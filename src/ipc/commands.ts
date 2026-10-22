@@ -398,8 +398,11 @@ export interface HelperVersionInfo {
 }
 
 export interface HelperUpdateInfo {
-  status: "available" | "deferred" | "interrupted" | "updated" | "unknown";
+  status: "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "unknown";
   detail?: string;
+  updated?: boolean;
+  interrupted?: boolean;
+  rolledBack?: boolean;
 }
 
 export interface HelperOfflineInfo {
@@ -427,7 +430,7 @@ function normalizeHelperCompatibility(value: string): HelperCompatibility {
 }
 
 function normalizeHelperUpdateStatus(value: string): HelperUpdateInfo["status"] {
-  return value === "available" || value === "deferred" || value === "interrupted" || value === "updated"
+  return value === "available" || value === "deferred" || value === "interrupted" || value === "updated" || value === "rolled_back"
     ? value
     : "unknown";
 }

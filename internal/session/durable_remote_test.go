@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1108,5 +1109,83 @@ func TestHelperOperationCompletionDoesNotRegress(t *testing.T) {
 	}
 	if err := manager.CancelHelperOperation(t.Context(), connected.ID, "retry-current"); err != nil {
 		t.Fatalf("cancel current operation: %v", err)
+	}
+}
+
+func TestCancelHelperOperationDoesNotBlockNextAutomaticTab(t *testing.T) {
+	started := make(chan struct{})
+	provider := newFakeDurableProvider()
+	var calls atomic.Int32
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		if calls.Add(1) == 1 {
+			ReportHelperOperation(ctx, "cancel-next-auto")
+			close(started)
+			<-ctx.Done()
+			return nil, context.Cause(ctx)
+		}
+		return provider, nil
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-cancel-next-auto", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "cancel-first", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil || first.Durable {
+		t.Fatalf("first ordinary tab = %+v, %v", first, err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("deployment did not start")
+	}
+	backgroundHelperDeployments.Lock()
+	deployment := backgroundHelperDeployments.entries[connected]
+	backgroundHelperDeployments.Unlock()
+	if deployment == nil {
+		t.Fatal("deployment disappeared before cancellation")
+	}
+	if err := manager.CancelHelperOperation(t.Context(), connected.ID, "cancel-next-auto"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-deployment.done:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled deployment did not complete")
+	}
+	connected.durableMu.Lock()
+	t.Logf("durable failure after explicit cancellation: %v", connected.durableFailure)
+	connected.durableMu.Unlock()
+	second, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "cancel-second", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil {
+		t.Fatalf("auto tab immediately after cancellation failed: %v", err)
+	}
+	if !second.Durable {
+		t.Fatalf("auto tab after cancellation = %+v; want usable durable provider", second)
+	}
+
+	unsafeManager := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), OpenAccess: true,
+		DurableResolver: DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) {
+			return nil, errors.New("unclassified helper safety failure")
+		}),
+	})
+	t.Cleanup(func() { _ = unsafeManager.Close() })
+	unsafeSession, err := unsafeManager.Connect(t.Context(), Asset{ID: "ssh-unsafe-error", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unsafeManager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: unsafeSession.ID, ClientID: "client", ChannelID: "unsafe-auto", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	}); err == nil {
+		t.Fatal("unclassified helper error unexpectedly fell back to ordinary SSH")
 	}
 }

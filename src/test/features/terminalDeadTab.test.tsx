@@ -709,6 +709,60 @@ describe("terminal dead-tab overlay", () => {
     expect(mounted.container.textContent).not.toContain("持久终端助手");
   });
 
+  it("keeps only the newest same-session status result when update finishes first", async () => {
+    let resolveStaleStatus: ((value: unknown) => void) | undefined;
+    const currentSHA = "e".repeat(64);
+    mocks.helperOperation
+      .mockResolvedValueOnce({
+        sessionId: "s1",
+        action: "status",
+        accepted: false,
+        local: { known: true, release: "current", protocol: 2, sha256: currentSHA },
+        running: { known: true, release: "running", protocol: 2, sha256: currentSHA },
+        compatibility: "compatible",
+        update: { status: "available" },
+      })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveStaleStatus = resolve;
+      }));
+    mocks.helperUpdate.mockResolvedValue({
+      sessionId: "s1",
+      action: "update_interrupt",
+      accepted: true,
+      local: { known: true, release: "updated", protocol: 2, sha256: "f".repeat(64) },
+      running: { known: true, release: "updated-running", protocol: 2, sha256: "f".repeat(64) },
+      compatibility: "compatible",
+      update: { status: "updated", updated: true, interrupted: true, rolledBack: false },
+    });
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("可以检查并执行助手更新"));
+
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    clickButton(mounted.container, "中断活动进程并更新");
+    await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", true));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("updated-running"));
+
+    resolveStaleStatus?.({
+      sessionId: "s1",
+      action: "status",
+      accepted: false,
+      local: { known: true, release: "stale-before-update", protocol: 2, sha256: "d".repeat(64) },
+      running: { known: true, release: "stale-running", protocol: 2, sha256: "d".repeat(64) },
+      compatibility: "compatible",
+      update: { status: "available" },
+    });
+    await flush();
+
+    expect(mounted.container.textContent).toContain("updated-running");
+    expect(mounted.container.textContent).not.toContain("stale-before-update");
+    expect(mounted.container.textContent).not.toContain("stale-running");
+  });
+
   it("shows real helper versions and sends explicit default/interrupt update actions", async () => {
     const localSHA = "a".repeat(64);
     const runningSHA = "b".repeat(64);
@@ -752,6 +806,47 @@ describe("terminal dead-tab overlay", () => {
     await waitFor(() => expect(mounted?.container.textContent).toContain("可以检查并执行助手更新"));
     clickButton(mounted.container, "中断活动进程并更新");
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", true));
+  });
+
+  it("renders structured rollback details from update errors", async () => {
+    const status = {
+      sessionId: "s1",
+      action: "status",
+      accepted: false,
+      local: { known: true, release: "v1.4.0", protocol: 2, sha256: "a".repeat(64) },
+      running: { known: true, release: "v1.3.9", protocol: 2, sha256: "b".repeat(64) },
+      compatibility: "compatible",
+      update: { status: "available" },
+    };
+    mocks.helperOperation.mockResolvedValue(status);
+    mocks.helperUpdate.mockRejectedValue({
+      code: "unavailable",
+      message: "helper update failed; previous daemon restored",
+      detail: {
+        ...status,
+        action: "update",
+        update: {
+          status: "rolled_back",
+          detail: "previous daemon restored",
+          updated: false,
+          interrupted: false,
+          rolledBack: true,
+        },
+      },
+    });
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("可以检查并执行助手更新"));
+
+    clickButton(mounted.container, "更新助手");
+
+    await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("已回滚助手二进制"));
+    expect(mounted.container.textContent).toContain("更新失败，已返回回滚结果");
+    expect(mounted.container.textContent).toContain("helper update failed; previous daemon restored");
   });
 
   it("requires an explicit offline SHA confirmation through the real terminal menu", async () => {

@@ -1240,6 +1240,9 @@ export type HelperOperationRequest = {
 export type HelperUpdateDTO = {
   status: string;
   detail?: string;
+  updated: boolean;
+  interrupted: boolean;
+  rolledBack: boolean;
 };
 
 export type HelperVersionDTO = {

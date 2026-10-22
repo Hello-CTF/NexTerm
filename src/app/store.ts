@@ -25,6 +25,7 @@ import {
   HELPER_DEFAULT_BUDGET_MS,
   helperOperationReducer,
   type HelperOperation,
+  type HelperOperationKind,
   type HelperOperationState,
 } from "../features/terminal/helperOperationState";
 import { useConnectHistory } from "../features/explorer/connectHistory";
@@ -504,7 +505,9 @@ interface UiState {
   helperProgress: Record<string, HelperProgressEvent>;
   helperOperations: HelperOperationState;
   helperOperationTabs: Record<string, string>;
+  helperOperationIntents: Record<string, { kind: HelperOperationKind; originalTabId?: string; sequence: number }>;
   helperRetries: Record<string, { tabId: string; operationId: string }>;
+  registerHelperOperationIntent: (tabId: string, kind: HelperOperationKind, originalTabId?: string) => void;
   setHelperProgress: (progress: HelperProgressEvent | null) => void;
   cancelHelperOperation: (tabId: string) => Promise<void>;
   retryHelperOperation: (tabId: string) => Promise<void>;
@@ -1018,6 +1021,7 @@ function migrateWorkspaceFileLocators(
 interface HelperTabContext {
   tabId: string;
   sessionId: string;
+  kind: HelperOperationKind;
   originalTabId?: string;
   quickConnect: boolean;
 }
@@ -1030,12 +1034,28 @@ function helperTabContext(state: UiState, tabId: string): HelperTabContext | nul
       return {
         tabId: tab.id,
         sessionId: tab.sessionId,
+        kind: tab.tabId ? "reattach" : "deploy",
         originalTabId: tab.tabId,
         quickConnect: Boolean(workspace.quickTarget && !workspace.assetId),
       };
     }
   }
   return null;
+}
+
+let helperOperationIntentSeq = 0;
+
+function latestHelperOperationIntent(state: UiState, sessionId: string): HelperTabContext | null {
+  let latest: HelperTabContext | null = null;
+  let sequence = 0;
+  for (const [tabId, intent] of Object.entries(state.helperOperationIntents)) {
+    if (intent.sequence < sequence) continue;
+    const context = helperTabContext(state, tabId);
+    if (context?.sessionId !== sessionId) continue;
+    latest = { ...context, kind: intent.kind, originalTabId: intent.originalTabId };
+    sequence = intent.sequence;
+  }
+  return latest;
 }
 
 function helperProgressContext(state: UiState, progress: HelperProgressEvent): HelperTabContext | null {
@@ -1045,14 +1065,16 @@ function helperProgressContext(state: UiState, progress: HelperProgressEvent): H
       if (context?.sessionId === progress.sessionId) return context;
     }
   }
-  const mapped = state.helperOperationTabs[progress.sessionId];
-  if (mapped) {
-    const context = helperTabContext(state, mapped);
-    if (context?.sessionId === progress.sessionId) return context;
-  }
   const pending = state.helperRetries[progress.sessionId];
   if (pending) {
     const context = helperTabContext(state, pending.tabId);
+    if (context?.sessionId === progress.sessionId) return context;
+  }
+  const intended = latestHelperOperationIntent(state, progress.sessionId);
+  if (intended) return intended;
+  const mapped = state.helperOperationTabs[progress.sessionId];
+  if (mapped) {
+    const context = helperTabContext(state, mapped);
     if (context?.sessionId === progress.sessionId) return context;
   }
   const activeWorkspace = state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
@@ -1887,6 +1909,7 @@ export const useUi = create<UiState>((set, get) => ({
       helperProgress: {},
       helperOperations: createHelperOperationState(),
       helperOperationTabs: {},
+      helperOperationIntents: {},
       helperRetries: {},
       sessionResyncFailed: false,
       sessionResyncCompleted: false,
@@ -1924,6 +1947,7 @@ export const useUi = create<UiState>((set, get) => ({
       helperProgress: {},
       helperOperations: createHelperOperationState(),
       helperOperationTabs: {},
+      helperOperationIntents: {},
       helperRetries: {},
       workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + 1,
       workspaceRuntime: {},
@@ -2236,7 +2260,17 @@ export const useUi = create<UiState>((set, get) => ({
   helperProgress: {},
   helperOperations: createHelperOperationState(),
   helperOperationTabs: {},
+  helperOperationIntents: {},
   helperRetries: {},
+  registerHelperOperationIntent: (tabId, kind, originalTabId) => {
+    helperOperationIntentSeq += 1;
+    set((st) => ({
+      helperOperationIntents: {
+        ...st.helperOperationIntents,
+        [tabId]: { kind, originalTabId, sequence: helperOperationIntentSeq },
+      },
+    }));
+  },
   setHelperProgress: (progress) => {
     if (!progress) return;
     set((st) => {
@@ -2285,7 +2319,7 @@ export const useUi = create<UiState>((set, get) => ({
           type: "start",
           tabId,
           operationId: operationID,
-          kind: context.originalTabId ? "reattach" : "deploy",
+          kind: context.kind,
           now,
           budgetMs: HELPER_DEFAULT_BUDGET_MS,
           deadline,
@@ -2501,6 +2535,8 @@ export const useUi = create<UiState>((set, get) => ({
       for (const [sessionId, retry] of Object.entries(retries)) {
         if (retry.tabId === tabId) delete retries[sessionId];
       }
+      const intents = { ...st.helperOperationIntents };
+      delete intents[tabId];
       const raw = { ...st.helperProgress };
       const context = helperTabContext(st, tabId);
       if (context) {
@@ -2510,6 +2546,7 @@ export const useUi = create<UiState>((set, get) => ({
       return {
         helperOperations: { ...st.helperOperations, operations },
         helperOperationTabs: tabs,
+        helperOperationIntents: intents,
         helperRetries: retries,
         helperProgress: raw,
       };

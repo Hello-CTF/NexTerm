@@ -113,7 +113,9 @@ func (r productionDurableResolver) ResolveDurable(ctx context.Context, transport
 		resolver := *r.ssh
 		scope := ipc.HelperProgressScopeFromContext(ctx)
 		if r.helpers != nil {
-			r.helpers.configureResolver(&resolver, scope.AssetID)
+			if err := r.helpers.configureResolver(&resolver, scope.AssetID); err != nil {
+				return nil, err
+			}
 		}
 		resolver.Progress = func(progressCtx context.Context, progress sshdaemon.HelperProgress) {
 			session.ReportHelperOperation(progressCtx, progress.OperationID)
@@ -135,8 +137,11 @@ type helperVersionDTO struct {
 }
 
 type helperUpdateDTO struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	Status      string `json:"status"`
+	Detail      string `json:"detail,omitempty"`
+	Updated     bool   `json:"updated"`
+	Interrupted bool   `json:"interrupted"`
+	RolledBack  bool   `json:"rolledBack"`
 }
 
 type helperOfflineDTO struct {
@@ -172,12 +177,26 @@ type productionHelperService struct {
 	offline map[string]trustedOfflineHelper
 }
 
-func (s *productionHelperService) configureResolver(resolver *sshdaemon.Resolver, assetID string) {
+func (s *productionHelperService) configureResolver(resolver *sshdaemon.Resolver, assetID string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if trusted, ok := s.offline[assetID]; ok {
-		resolver.HelperExecutable = trusted.path
+	trusted, ok := s.offline[assetID]
+	s.mu.Unlock()
+	if !ok {
+		return nil
 	}
+	source, err := sshdaemon.InspectExecutableContext(context.Background(), trusted.path)
+	if err != nil {
+		return fmt.Errorf("%w: revalidate offline helper: %v", sshdaemon.ErrTrust, err)
+	}
+	if !strings.EqualFold(source.Digest, trusted.sha256) {
+		return fmt.Errorf("%w: offline helper content changed; confirm the new SHA256 before use", sshdaemon.ErrDigestMismatch)
+	}
+	protocol, known := offlineHelperProtocol(source)
+	if !known || protocol != supervisor.ProtocolVersion {
+		return fmt.Errorf("%w: offline helper protocol changed or is no longer provable", sshdaemon.ErrTrust)
+	}
+	resolver.HelperExecutable = trusted.path
+	return nil
 }
 
 func (s *productionHelperService) resolver(assetID string) (*sshdaemon.Resolver, error) {
@@ -186,7 +205,9 @@ func (s *productionHelperService) resolver(assetID string) (*sshdaemon.Resolver,
 	}
 	resolver := *s.ssh
 	resolver.Progress = nil
-	s.configureResolver(&resolver, assetID)
+	if err := s.configureResolver(&resolver, assetID); err != nil {
+		return nil, err
+	}
 	return &resolver, nil
 }
 
@@ -218,8 +239,15 @@ func helperCompatibility(running helperVersionDTO) string {
 func helperDTOFromDaemon(sessionID, action string, daemon *sshdaemon.Daemon) helperOperationDTO {
 	local := helperRuntimeVersion(daemon.Update.Local, helperMetadataKnown(daemon.Update.Local))
 	running := helperRuntimeVersion(daemon.RunningMetadata, daemon.MetadataKnown)
-	update := &helperUpdateDTO{Status: "available", Detail: daemon.Update.Reason}
+	update := &helperUpdateDTO{
+		Status: "available", Updated: daemon.Update.Updated,
+		Interrupted: daemon.Update.Interrupted, RolledBack: daemon.Update.RolledBack,
+	}
 	switch {
+	case daemon.Update.RolledBack:
+		update.Status = "rolled_back"
+	case daemon.Update.Updated && daemon.Update.Interrupted:
+		update.Status = "interrupted"
 	case daemon.Update.Updated:
 		update.Status = "updated"
 	case daemon.Update.Interrupted:
@@ -227,9 +255,14 @@ func helperDTOFromDaemon(sessionID, action string, daemon *sshdaemon.Daemon) hel
 	case daemon.Update.Deferred:
 		update.Status = "deferred"
 	}
-	if daemon.Update.RolledBack {
-		update.Detail = strings.TrimSpace(update.Detail + " 已回滚助手二进制；原 shell 和其他进程不会因此复活")
+	details := make([]string, 0, 2)
+	if daemon.Update.Reason != "" {
+		details = append(details, daemon.Update.Reason)
 	}
+	if daemon.Update.RolledBack {
+		details = append(details, "已回滚助手二进制；原 shell 和其他进程不会因此复活")
+	}
+	update.Detail = strings.Join(details, "；")
 	return helperOperationDTO{
 		SessionID: sessionID, Action: action,
 		Local: local, Running: running, Compatibility: helperCompatibility(running), Update: update,
@@ -261,10 +294,10 @@ func (s *productionHelperService) ensure(ctx context.Context, sessionID, action 
 		resolver.DisableAutoInstall = true
 	}
 	daemon, err := resolver.EnsureDaemonWithOptions(ctx, client, sshdaemon.EnsureOptions{InterruptActive: action == "update_interrupt"})
-	if err != nil {
+	if daemon == nil {
 		return helperOperationDTO{}, err
 	}
-	return helperDTOFromDaemon(sessionID, action, daemon), nil
+	return helperDTOFromDaemon(sessionID, action, daemon), err
 }
 
 func helperManifestArchitecture(source sshdaemon.UploadSource) string {

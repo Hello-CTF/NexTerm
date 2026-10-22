@@ -87,8 +87,8 @@ function progress(overrides: Partial<HelperProgressEvent> = {}): HelperProgressE
   };
 }
 
-function current() {
-  const operation = useUi.getState().helperOperations.operations["tab-view-1"];
+function current(tabId = "tab-view-1") {
+  const operation = useUi.getState().helperOperations.operations[tabId];
   if (!operation) throw new Error("missing helper operation");
   return operation;
 }
@@ -190,5 +190,39 @@ describe("real helper progress integration", () => {
     expect(mocks.assetUpdate).not.toHaveBeenCalled();
     expect(mocks.helperOperation).not.toHaveBeenCalled();
     expect(useUi.getState().helperOperations.regularByAsset).toEqual({});
+  });
+
+  it("keeps a completed ordinary attach as deploy and preserves the current ordinary shell", async () => {
+    const st = useUi.getState();
+    st.registerHelperOperationIntent("tab-view-1", "deploy");
+    st.updateTab("tab-view-1", { tabId: "kernel-current" });
+    st.setHelperProgress(progress({ stage: "failed", done: true, cause: "deployment failed" }));
+
+    expect(current()).toMatchObject({ kind: "deploy", status: "awaiting_choice", originalSession: "not_applicable" });
+    await st.continueHelperOrdinary("tab-view-1");
+
+    expect(current()).toMatchObject({ kind: "deploy", choice: "ordinary", ordinary: "existing" });
+    const tab = useUi.getState().workspaces[0]?.panes[0]?.tabs[0];
+    expect(tab?.tabId).toBe("kernel-current");
+  });
+
+  it("routes a new operation to the explicitly registered newest view, not the previous operation's tab", () => {
+    const st = useUi.getState();
+    st.registerHelperOperationIntent("tab-view-1", "deploy");
+    st.setHelperProgress(progress({ operationId: "operation-1", stage: "ready", done: true }));
+    useUi.setState((state) => ({
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        panes: workspace.panes.map((pane) => ({
+          ...pane,
+          tabs: [...pane.tabs, { id: "tab-view-2", kind: "terminal", title: "second", sessionId: "session-1", closable: true }],
+        })),
+      })),
+    }));
+    st.registerHelperOperationIntent("tab-view-2", "deploy");
+    st.setHelperProgress(progress({ operationId: "operation-2", stage: "failed", done: true, cause: "second deployment failed" }));
+
+    expect(current("tab-view-2")).toMatchObject({ operationId: "operation-2", kind: "deploy", status: "awaiting_choice" });
+    expect(current("tab-view-1").operationId).not.toBe("operation-2");
   });
 });

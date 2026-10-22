@@ -968,6 +968,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					}
 					result, err := s.helpers.ensure(ctx, input.SessionID, action)
 					if err != nil {
+						if result.Update != nil && result.Update.RolledBack {
+							return result, ipc.NormalizeError(err).WithDetail(result)
+						}
 						return helperOperationDTO{}, terminalIPCError(err)
 					}
 					result.Accepted = action != "status"

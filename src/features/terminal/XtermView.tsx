@@ -889,6 +889,9 @@ export function XtermView(props: XtermViewProps) {
       const dimensions = coordinator.desiredGrid();
       if (!resume && !dimensions) return;
       attaching = true;
+      if (!containerId) {
+        useUi.getState().registerHelperOperationIntent(viewKey, resume ? "reattach" : "deploy", resume);
+      }
       try {
         let initialGrid = dimensions;
         let id: string;
@@ -1247,7 +1250,7 @@ export function XtermView(props: XtermViewProps) {
       term.dispose();
       termRef.current = null;
     };
-  }, [sessionId, containerId, resumeTabId, props.forceRegular]);
+  }, [sessionId, containerId, resumeTabId, props.forceRegular, viewKey]);
 
   useEffect(() => {
     const connected = props.sessionConnected === true;

@@ -1706,9 +1706,12 @@ func TestEnsureDaemonWithOptionsInterruptsDiscoveredContentAddressedUpdate(t *te
 func TestEnsureDaemonWithOptionsRollsBackDiscoveredContentAddressedUpdate(t *testing.T) {
 	h := newHelperUpdateHarness(t)
 	h.newClient.list = func(context.Context) ([]supervisor.Info, error) { return nil, errors.New("new daemon not ready") }
-	_, err := h.ensure(t.Context(), false)
+	daemon, err := h.ensure(t.Context(), false)
 	if err == nil || !strings.Contains(err.Error(), "without reviving interrupted shells") {
 		t.Fatalf("rollback error = %v", err)
+	}
+	if daemon == nil || !daemon.Update.RolledBack {
+		t.Fatalf("rollback result was not preserved: daemon=%+v", daemon)
 	}
 	if !h.oldRunning || h.newRunning {
 		t.Fatalf("rollback process state old=%v new=%v", h.oldRunning, h.newRunning)

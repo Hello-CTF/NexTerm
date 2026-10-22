@@ -170,6 +170,15 @@ function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
   return true;
 }
 
+function rollbackResultFromError(error: unknown): HelperOperationResult | null {
+  if (!error || typeof error !== "object") return null;
+  const detail = (error as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object") return null;
+  const candidate = detail as Partial<HelperOperationResult>;
+  if (typeof candidate.sessionId !== "string" || candidate.update?.rolledBack !== true) return null;
+  return candidate as HelperOperationResult;
+}
+
 // Desktop read-only preview depends on a logged-in server account ("account sync" link): a shared singleton polls
 // syncApi.status; the first subscribing TerminalPane starts it and it stops after all unmount; login/disconnect
 // reflects in the entry's visibility within at most PREVIEW_STATUS_POLL_MS. TerminalPane's mount environment does not guarantee
@@ -318,6 +327,13 @@ export function TerminalPane({
   const helperDetailsSessionRef = useRef(sessionId);
   helperDetailsSessionRef.current = sessionId;
   const previousHelperSessionRef = useRef(sessionId);
+  const helperRequestGenerationRef = useRef(0);
+  const nextHelperRequestGeneration = () => {
+    helperRequestGenerationRef.current += 1;
+    return helperRequestGenerationRef.current;
+  };
+  const helperRequestIsCurrent = (generation: number, requestSessionId: string) =>
+    helperRequestGenerationRef.current === generation && helperDetailsSessionRef.current === requestSessionId;
   const execTargetAssetRef = useRef(execTabAssetId ?? sessionAssetId);
   if (execTargetAssetRef.current === undefined && sessionAssetId !== undefined) {
     execTargetAssetRef.current = sessionAssetId;
@@ -1083,13 +1099,15 @@ export function TerminalPane({
     setRememberRegular(false);
   }, [helperOperation?.operationId]);
 
-  const runHelperAction = async (action: () => Promise<void>) => {
+  const runHelperAction = async (action: () => Promise<void>, generation?: number) => {
     if (helperActionBusy) return;
     setHelperActionBusy(true);
     try {
       await action();
     } catch (error) {
-      pushToast("error", `持久终端助手操作失败：${describeError(error)}`);
+      if (generation === undefined || helperRequestIsCurrent(generation, sessionId)) {
+        pushToast("error", `持久终端助手操作失败：${describeError(error)}`);
+      }
     } finally {
       setHelperActionBusy(false);
     }
@@ -1129,15 +1147,16 @@ export function TerminalPane({
   });
 
   const refreshHelperDetails = useCallback(async () => {
+    const generation = nextHelperRequestGeneration();
     setHelperPanelOpen(true);
     setHelperPanelError(null);
     try {
       const result = await terminalApi.helperOperation(sessionId, "", "status");
-      if (helperDetailsSessionRef.current !== sessionId) return;
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
       setHelperDetails(result);
       setOfflinePath(null);
     } catch (error) {
-      if (helperDetailsSessionRef.current !== sessionId) return;
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
       const message = describeError(error);
       setHelperPanelError(message);
       pushToast("error", `读取持久终端助手状态失败：${message}`);
@@ -1147,6 +1166,7 @@ export function TerminalPane({
   useEffect(() => {
     if (previousHelperSessionRef.current === sessionId) return;
     previousHelperSessionRef.current = sessionId;
+    helperRequestGenerationRef.current += 1;
     useUi.getState().dismissHelperOperation(storeTabId);
     setHelperPanelOpen(false);
     setHelperDetails(null);
@@ -1165,29 +1185,44 @@ export function TerminalPane({
     if (!selected?.trim()) return;
     const path = selected.trim();
     setHelperPanelOpen(true);
+    const generation = nextHelperRequestGeneration();
     await runHelperAction(async () => {
       const result = await terminalApi.helperOffline(sessionId, path);
-      if (helperDetailsSessionRef.current !== sessionId) return;
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
       setHelperDetails(result);
       setOfflinePath(path);
       setHelperPanelError(null);
-    });
+    }, generation);
   };
 
-  const confirmOfflineHelper = () => runHelperAction(async () => {
-    const offline = helperDetails?.offline;
-    if (!offlinePath || !offline) return;
-    const result = await terminalApi.helperOffline(sessionId, offlinePath, offline.sha256, true);
-    if (helperDetailsSessionRef.current !== sessionId) return;
-    setHelperDetails((current) => current ? { ...current, offline: result.offline } : result);
-  });
+  const confirmOfflineHelper = () => {
+    const generation = nextHelperRequestGeneration();
+    return runHelperAction(async () => {
+      const offline = helperDetails?.offline;
+      if (!offlinePath || !offline) return;
+      const result = await terminalApi.helperOffline(sessionId, offlinePath, offline.sha256, true);
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
+      setHelperDetails((current) => current ? { ...current, offline: result.offline } : result);
+    }, generation);
+  };
 
-  const updateHelper = (interruptActive: boolean) => runHelperAction(async () => {
-    const result = await terminalApi.helperUpdate(sessionId, interruptActive);
-    if (helperDetailsSessionRef.current !== sessionId) return;
-    setHelperDetails(result);
-    setHelperPanelError(null);
-  });
+  const updateHelper = (interruptActive: boolean) => {
+    const generation = nextHelperRequestGeneration();
+    return runHelperAction(async () => {
+      try {
+        const result = await terminalApi.helperUpdate(sessionId, interruptActive);
+        if (!helperRequestIsCurrent(generation, sessionId)) return;
+        setHelperDetails(result);
+        setHelperPanelError(null);
+      } catch (error) {
+        if (!helperRequestIsCurrent(generation, sessionId)) return;
+        const rollback = rollbackResultFromError(error);
+        if (!rollback) throw error;
+        setHelperDetails(rollback);
+        setHelperPanelError(describeError(error));
+      }
+    }, generation);
+  };
 
   const deferHelperUpdate = () => {
     setHelperDetails((current) => current?.update ? {

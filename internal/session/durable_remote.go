@@ -17,18 +17,19 @@ import (
 var errHelperDeploymentPending = fmt.Errorf("%w: helper deployment is still in progress", durable.ErrUnavailable)
 
 type backgroundHelperDeployment struct {
-	session     *Session
-	transport   *transportHandle
-	generation  uint64
-	sequence    uint64
-	operationID string
-	done        chan struct{}
-	sessionCtx  context.Context
-	ctx         context.Context
-	cancel      context.CancelFunc
-	stop        func() bool
-	provider    base.DurableProvider
-	err         error
+	session        *Session
+	transport      *transportHandle
+	generation     uint64
+	sequence       uint64
+	operationID    string
+	canceledByUser bool
+	done           chan struct{}
+	sessionCtx     context.Context
+	ctx            context.Context
+	cancel         context.CancelFunc
+	stop           func() bool
+	provider       base.DurableProvider
+	err            error
 }
 
 var backgroundHelperDeployments = struct {
@@ -197,6 +198,7 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 		entry.err = errors.New("helper resolver returned a nil provider")
 	}
 	backgroundHelperDeployments.Lock()
+	canceledByUser := entry.canceledByUser
 	if backgroundHelperDeployments.entries[session] == entry {
 		delete(backgroundHelperDeployments.entries, session)
 	}
@@ -212,6 +214,10 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 			session.durableFailure = nil
 			session.durableFailureAt = time.Time{}
 			session.durableCreateFailure = nil
+		} else if canceledByUser {
+			session.durableProvider = nil
+			session.durableFailure = nil
+			session.durableFailureAt = time.Time{}
 		} else {
 			session.durableProvider = nil
 			session.durableFailure = entry.err
@@ -266,6 +272,7 @@ func (m *Manager) CancelHelperOperation(ctx context.Context, sessionID, operatio
 	if entry == nil || entry.transport != transport || entry.generation != generation || entry.operationID != operationID {
 		return ErrStaleGeneration
 	}
+	entry.canceledByUser = true
 	entry.cancel()
 	return nil
 }

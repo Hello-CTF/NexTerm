@@ -132,7 +132,7 @@ func (r *Resolver) ensureOnHostWithClient(ctx context.Context, host Host, client
 		lastErr = cycleErr
 		if operationCtx.Err() != nil || attempt == maxEnsureAttempts || permanentHelperFailure(cycleErr) {
 			r.reportProgress(attemptCtx, HelperProgress{Step: helperProgressSteps, Stage: "failed", Done: true, Cause: cycleErr.Error()})
-			return nil, lastErr
+			return daemon, lastErr
 		}
 		r.reportProgress(attemptCtx, HelperProgress{Step: helperProgressSteps, Stage: "backoff", Cause: cycleErr.Error()})
 		backoff := r.RetryBackoff
