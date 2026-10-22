@@ -90,6 +90,7 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 		"mkdir -p " + shellQuote(filepath.Join(base, ".github", "scripts")),
 		"cp " + shellQuote(filepath.Join(root, ".github", "native-matrix.json")) + " " + shellQuote(filepath.Join(base, ".github", "native-matrix.json")),
 		"cp " + shellQuote(filepath.Join(root, ".github", "scripts", "helper-matrix.mjs")) + " " + shellQuote(filepath.Join(base, ".github", "scripts", "helper-matrix.mjs")),
+		"cp " + shellQuote(filepath.Join(root, ".github", "scripts", "helper-metadata.mjs")) + " " + shellQuote(filepath.Join(base, ".github", "scripts", "helper-metadata.mjs")),
 		"cp " + shellQuote(filepath.Join(root, "wails.json")) + " " + shellQuote(filepath.Join(root, "package.json")) + " " + shellQuote(filepath.Join(root, "go.mod")) + " " + shellQuote(filepath.Join(root, "go.sum")) + " " + shellQuote(filepath.Join(root, "LICENSE")) + " " + shellQuote(base),
 	}, "\n")
 	result := runScript(script, base, nil)

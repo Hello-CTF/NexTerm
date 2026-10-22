@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMakensis } from "./lib/makensis.mjs";
+import { readHostHelperProtocolMetadata } from "../.github/scripts/helper-metadata.mjs";
 import { commitLabel, sourceState } from "./lib/mobile.mjs";
 import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
 import { parseReleaseVersion, parseSemVer } from "./lib/semver.mjs";
@@ -414,20 +415,14 @@ const cachedHelperBinaryMetadata = new Map();
 
 function helperProtocolMetadata() {
   if (cachedHelperProtocolMetadata) return cachedHelperProtocolMetadata;
-  const raw = output("go", ["run", "-mod=readonly", "./cmd/nexterm-helper", "--metadata"], {
-    env: buildEnvironment(HOST_OS, HOST_ARCH, "helper"),
-  });
-  let metadata;
   try {
-    metadata = JSON.parse(raw);
+    cachedHelperProtocolMetadata = readHostHelperProtocolMetadata({
+      cwd: ROOT,
+      env: { ...buildEnvironment(HOST_OS, HOST_ARCH, "helper"), SOURCE_DATE_EPOCH: String(SOURCE_DATE_EPOCH), TZ: "UTC" },
+    });
   } catch (error) {
-    die(`helper metadata is not valid JSON: ${error.message}`);
+    die(error.message);
   }
-  if (!Number.isInteger(metadata.protocol) || metadata.protocol <= 0) die(`helper metadata has invalid protocol ${metadata.protocol}`);
-  if (!Array.isArray(metadata.features) || metadata.features.some((feature) => typeof feature !== "string" || feature === "")) {
-    die("helper metadata features must be non-empty strings");
-  }
-  cachedHelperProtocolMetadata = { protocol: metadata.protocol, features: [...metadata.features].sort() };
   return cachedHelperProtocolMetadata;
 }
 

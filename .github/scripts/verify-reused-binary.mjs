@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readHostHelperProtocolMetadata } from "./helper-metadata.mjs";
 import { helperTarget } from "./helper-matrix.mjs";
 import { binaryManifestProblems, helperMetadataManifestProblems, loadManifest } from "../../scripts/lib/build-manifest.mjs";
 
@@ -29,6 +30,14 @@ const problems = binaryManifestProblems({
   file,
   expect: { id, goos, goarch, goarm: helper?.goarm || "", tags: ["production"], cgo, stripped: true, version, commit },
 });
-if (id.startsWith("helper-")) problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch }));
+if (id.startsWith("helper-")) {
+  let expected;
+  try {
+    expected = readHostHelperProtocolMetadata({ cwd: ROOT });
+  } catch (error) {
+    die(`cannot read host helper protocol/features: ${error.message}`);
+  }
+  problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol, features: expected.features }));
+}
 if (problems.length) die(`reused binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
 console.warn(`${id}: verified reused production binary sha256:${manifest.artifact.sha256}`);

@@ -48,6 +48,23 @@ case "$BASE_REF" in
     ;;
 esac
 
+HELPERS_DIR="${NEXTERM_HELPERS_DIR:-$ROOT/target/go-build}"
+case "$HELPERS_DIR" in
+  /*) ;;
+  *) HELPERS_DIR="$ROOT/$HELPERS_DIR" ;;
+esac
+verify_helpers() {
+  while IFS='|' read -r HELPER_OS HELPER_ARCH HELPER_NAME; do
+    HELPER="$HELPERS_DIR/$HELPER_NAME"
+    node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$HELPER" "helper-$HELPER_OS-$HELPER_ARCH" "$HELPER_OS" "$HELPER_ARCH" 0
+  done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
+}
+if [ -n "${NEXTERM_HELPERS_DIR:-}" ]; then
+  [ -d "$HELPERS_DIR" ] || { echo "[lzc-build] error: helpers directory does not exist: $HELPERS_DIR" >&2; exit 1; }
+  echo "[lzc-build]     using matching-host helper evidence from: $HELPERS_DIR"
+  verify_helpers
+fi
+
 echo "[lzc-build] 2/4 building the frontend (node scripts/build.mjs frontend -> dist/)"
 cd "$ROOT"
 
@@ -75,20 +92,18 @@ echo "[lzc-build]     inject scripts ready: $CONTENT/lazycat-injects"
 
 echo "[lzc-build] 3/4 building the server and nine SSH target helpers"
 node scripts/build.mjs server --release --os=linux --arch="$LZC_ARCH"
-HELPERS_DIR="${NEXTERM_HELPERS_DIR:-$ROOT/target/go-build}"
-if [ -n "${NEXTERM_HELPERS_DIR:-}" ]; then
-  echo "[lzc-build]     using matching-host helper evidence from: $HELPERS_DIR"
-else
+if [ -z "${NEXTERM_HELPERS_DIR:-}" ]; then
   node scripts/build.mjs helpers --release
 fi
 [ -d "$HELPERS_DIR" ] || { echo "[lzc-build] error: helpers directory does not exist: $HELPERS_DIR" >&2; exit 1; }
+if [ -z "${NEXTERM_HELPERS_DIR:-}" ]; then
+  verify_helpers
+fi
 rm -rf "$IMAGE_CONTEXT"
 mkdir -p "$IMAGE_CONTEXT"
 install -m 0755 "$ROOT/target/go-build/nexterm-server-linux-${LZC_ARCH}" "$IMAGE_CONTEXT/nexterm-server"
 while IFS='|' read -r HELPER_OS HELPER_ARCH HELPER_NAME; do
-  HELPER="$HELPERS_DIR/$HELPER_NAME"
-  node .github/scripts/verify-reused-binary.mjs "$HELPER" "helper-$HELPER_OS-$HELPER_ARCH" "$HELPER_OS" "$HELPER_ARCH" 0
-  install -m 0755 "$HELPER" "$IMAGE_CONTEXT/$HELPER_NAME"
+  install -m 0755 "$HELPERS_DIR/$HELPER_NAME" "$IMAGE_CONTEXT/$HELPER_NAME"
 done < <(node .github/scripts/helper-matrix.mjs --shell)
 install -m 0644 "$HERE/Dockerfile" "$IMAGE_CONTEXT/Dockerfile"
 install -m 0755 "$HERE/entrypoint.sh" "$IMAGE_CONTEXT/entrypoint.sh"

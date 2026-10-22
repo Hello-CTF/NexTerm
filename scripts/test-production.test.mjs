@@ -13,6 +13,7 @@ const FIXTURE_FILES = [
   "wails.json",
   ".github/native-matrix.json",
   ".github/scripts/helper-matrix.mjs",
+  ".github/scripts/helper-metadata.mjs",
   "scripts/build.mjs",
   "scripts/test-production.mjs",
   "scripts/lib/build-manifest.mjs",

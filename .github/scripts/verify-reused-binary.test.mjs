@@ -7,12 +7,14 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createBinaryManifest } from "../../scripts/lib/build-manifest.mjs";
+import { readHostHelperProtocolMetadata } from "./helper-metadata.mjs";
 import { helperTargets } from "./helper-matrix.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SCRIPT = path.join(ROOT, ".github/scripts/verify-reused-binary.mjs");
 const HEAD = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const VERSION = "1.2.3";
+const CURRENT_METADATA = readHostHelperProtocolMetadata({ cwd: ROOT });
 
 function fixture(t, target) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-reused-helper-test-"));
@@ -35,8 +37,8 @@ function fixture(t, target) {
     source_date_epoch: 1,
   });
   Object.assign(manifest, {
-    protocol: 1,
-    features: ["exec"],
+    protocol: CURRENT_METADATA.protocol,
+    features: [...CURRENT_METADATA.features],
     sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
     binary_metadata_verified: true,
     metadata_host: { os: target.os, arch: target.arch },
@@ -65,6 +67,9 @@ for (const target of helperTargets()) {
 }
 
 for (const [name, edit, expected] of [
+  ["wrong protocol", (manifest) => { manifest.protocol = 1; }, /protocol/],
+  ["wrong features", (manifest) => { manifest.features = ["exec"]; }, /features/],
+  ["missing features", (manifest) => { delete manifest.features; }, /features/],
   ["stale placeholder version", (manifest) => { manifest.version = "0.0.0"; }, /version/],
   ["placeholder runtime sha256", (manifest) => { manifest.sha256 = "0".repeat(64); }, /sha256/],
   ["unexecuted cross metadata", (manifest) => {
