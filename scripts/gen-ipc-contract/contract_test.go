@@ -600,6 +600,114 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 	}
 }
 
+func TestVaultCredentialVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	tests := []struct {
+		name   string
+		scope  string
+		nested bool
+		input  string
+		output string
+	}{
+		{name: "vault_status", scope: "vault", input: "Record<string, never>", output: "VaultStatus"},
+		{name: "vault_init_master", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
+		{name: "vault_init_dpapi", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
+		{name: "vault_unlock", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
+		{name: "vault_lock", scope: "vault", input: "Record<string, never>", output: "unknown"},
+		{name: "vault_set_autolock", scope: "vault", input: "VaultAutoLockRequest", output: "unknown"},
+		{name: "vault_change_password", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
+		{name: "vault_set_credential", scope: "vault", nested: true, input: "CredentialSetRequest", output: "Record<string, string>"},
+		{name: "vault_list_credentials", scope: "vault", input: "Record<string, never>", output: "CredentialDTO[]"},
+		{name: "vault_delete_credential", scope: "vault", input: "IDRequest", output: "unknown"},
+		{name: "vault_reveal_credential", scope: "vault", input: "IDRequest", output: "RevealedCredentialDTO"},
+		{name: "vault_generate_key", scope: "vault", nested: true, input: "VaultGenerateKeyRequest", output: "GeneratedKeyDTO"},
+		{name: "credential_update", scope: "credential", nested: true, input: "CredentialUpdateRequest", output: "unknown"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != test.scope || command.Nested != test.nested {
+				t.Fatalf("metadata = scope:%q nested:%t, want scope:%q nested:%t", command.Scope, command.Nested, test.scope, test.nested)
+			}
+			if command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected channel/stream metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input {
+				t.Fatalf("input = %q, want %q", input.TS, test.input)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 13 {
+		t.Fatalf("selected vault/credential command count = %d, want 13", len(selected))
+	}
+	for name, command := range commands {
+		if strings.HasPrefix(name, "vault_") && !selected[name] {
+			t.Errorf("vault command %q is missing from the vertical inventory", name)
+		}
+		if (command.Scope == "vault" || command.Scope == "credential") && !selected[name] {
+			t.Errorf("unexpected command %q joined the vault/credential vertical scopes", name)
+		}
+	}
+
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	declarationTests := []struct {
+		name   string
+		want   []string
+		absent []string
+	}{
+		{name: "VaultStatus", want: []string{"initialized: boolean;", "mode: string;", "unlocked: boolean;", "autoLockMinutes: number;", "passwordless: boolean;", "systemProtection: boolean;"}, absent: []string{"\n  password:", "\n  secret:"}},
+		{name: "VaultPasswordRequest", want: []string{"password?: string;", "oldPassword?: string;", "newPassword?: string;"}},
+		{name: "VaultAutoLockRequest", want: []string{"minutes: number | null;"}},
+		{name: "CredentialSetRequest", want: []string{"id?: string;", "name: string;", "kind: string;", "secret: string;", "source?: string | null;", "passphrase?: string | null;"}},
+		{name: "CredentialUpdateRequest", want: []string{"id: string;", "name?: string | null;", "secret?: string | null;", "source?: string | null;", "passphrase?: string | null;"}},
+		{name: "CredentialDTO", want: []string{"usedBy: AssetRef[];", "source: string | null;", "refPath: string | null;", "hasPassphrase: boolean;"}, absent: []string{"\n  secret:", "\n  value:", "\n  passphrase:"}},
+		{name: "RevealedCredentialDTO", want: []string{"kind: string;", "value: string;", "source: string | null;", "refPath: string | null;", "passphrase: string | null;"}},
+		{name: "VaultGenerateKeyRequest", want: []string{"name: string;", "algorithm?: string;", "passphrase?: string;"}},
+		{name: "GeneratedKeyDTO", want: []string{"id: string;", "name: string;", "algorithm: string;", "fingerprint: string;", "publicKey: string;"}, absent: []string{"\n  privateKey:", "\n  secret:", "\n  passphrase:", "\n  value:"}},
+	}
+	for _, test := range declarationTests {
+		declaration := declarations[test.name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", test.name)
+			continue
+		}
+		for _, want := range test.want {
+			if !strings.Contains(declaration.Body, want) {
+				t.Errorf("%s declaration is missing %q:\n%s", test.name, want, declaration.Body)
+			}
+		}
+		for _, absent := range test.absent {
+			if strings.Contains(declaration.Body, absent) {
+				t.Errorf("%s declaration unexpectedly exposes %q:\n%s", test.name, absent, declaration.Body)
+			}
+		}
+	}
+}
+
 func TestConsumedJSONFieldRenameFailsDriftCheck(t *testing.T) {
 	baseline := generateForTest(t, nil)
 	root := repositoryRoot(t)

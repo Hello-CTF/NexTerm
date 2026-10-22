@@ -510,9 +510,12 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "credential_update": {
+      scope: "credential",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.credentialUpdateRequest", ts: "CredentialUpdateRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "cron_get": {
       scope: "cron",
@@ -2085,64 +2088,100 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "vault_change_password": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.vaultPasswordRequest", ts: "VaultPasswordRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "vault_delete_credential": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "vault_generate_key": {
+      scope: "vault",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.vaultGenerateKeyRequest", ts: "VaultGenerateKeyRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.generatedKeyDTO", ts: "GeneratedKeyDTO" },
     },
     "vault_init_dpapi": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.vaultPasswordRequest", ts: "VaultPasswordRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "vault_init_master": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.vaultPasswordRequest", ts: "VaultPasswordRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "vault_list_credentials": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.credentialDTO", ts: "CredentialDTO[]" },
     },
     "vault_lock": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "any", ts: "unknown" },
     },
     "vault_reveal_credential": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.revealedCredentialDTO", ts: "RevealedCredentialDTO" },
     },
     "vault_set_autolock": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.vaultAutoLockRequest", ts: "VaultAutoLockRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "vault_set_credential": {
+      scope: "vault",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.credentialSetRequest", ts: "CredentialSetRequest" },
+      output: { go: "map[string]string", ts: "Record<string, string>" },
     },
     "vault_status": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/vault.Status", ts: "VaultStatus" },
     },
     "vault_unlock": {
+      scope: "vault",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.vaultPasswordRequest", ts: "VaultPasswordRequest" },
+      output: { go: "any", ts: "unknown" },
     },
   },
   legacyCommands: [
@@ -2197,7 +2236,6 @@ export const ipcContractManifest = {
     "biometric_unlock",
     "command_count",
     "command_query",
-    "credential_update",
     "db_columns",
     "db_connect",
     "db_disconnect",
@@ -2308,18 +2346,6 @@ export const ipcContractManifest = {
     "transcript_read",
     "transcript_search",
     "transcript_sync_opt_in",
-    "vault_change_password",
-    "vault_delete_credential",
-    "vault_generate_key",
-    "vault_init_dpapi",
-    "vault_init_master",
-    "vault_list_credentials",
-    "vault_lock",
-    "vault_reveal_credential",
-    "vault_set_autolock",
-    "vault_set_credential",
-    "vault_status",
-    "vault_unlock",
   ] as const,
 } as const;
 
@@ -2495,6 +2521,10 @@ export interface IPCCommandTypeMap {
   "asset_update": {
     input: contractTypes.AssetPatchRequest;
     output: contractTypes.AssetDTO;
+  };
+  "credential_update": {
+    input: contractTypes.CredentialUpdateRequest;
+    output: unknown;
   };
   "cron_get": {
     input: contractTypes.CronJobRequest;
@@ -3002,6 +3032,54 @@ export interface IPCCommandTypeMap {
   };
   "terminal_write": {
     input: contractTypes.TerminalWriteRequest;
+    output: unknown;
+  };
+  "vault_change_password": {
+    input: contractTypes.VaultPasswordRequest;
+    output: unknown;
+  };
+  "vault_delete_credential": {
+    input: contractTypes.IDRequest;
+    output: unknown;
+  };
+  "vault_generate_key": {
+    input: contractTypes.VaultGenerateKeyRequest;
+    output: contractTypes.GeneratedKeyDTO;
+  };
+  "vault_init_dpapi": {
+    input: contractTypes.VaultPasswordRequest;
+    output: unknown;
+  };
+  "vault_init_master": {
+    input: contractTypes.VaultPasswordRequest;
+    output: unknown;
+  };
+  "vault_list_credentials": {
+    input: Record<string, never>;
+    output: contractTypes.CredentialDTO[];
+  };
+  "vault_lock": {
+    input: Record<string, never>;
+    output: unknown;
+  };
+  "vault_reveal_credential": {
+    input: contractTypes.IDRequest;
+    output: contractTypes.RevealedCredentialDTO;
+  };
+  "vault_set_autolock": {
+    input: contractTypes.VaultAutoLockRequest;
+    output: unknown;
+  };
+  "vault_set_credential": {
+    input: contractTypes.CredentialSetRequest;
+    output: Record<string, string>;
+  };
+  "vault_status": {
+    input: Record<string, never>;
+    output: contractTypes.VaultStatus;
+  };
+  "vault_unlock": {
+    input: contractTypes.VaultPasswordRequest;
     output: unknown;
   };
 }

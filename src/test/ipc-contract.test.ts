@@ -459,6 +459,85 @@ describe("asset, group and known-host facade IPC contracts", () => {
   });
 });
 
+describe("vault and credential facade IPC contracts", () => {
+  it("preserves the exact envelopes for all 13 commands, including explicit empty secrets", async () => {
+    const calls = captureRpc();
+    const { vaultApi } = await import("../ipc/commands");
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "vault_status", payload: null, invoke: () => vaultApi.status() },
+      { command: "vault_init_master", payload: { password: "" }, invoke: () => vaultApi.initMaster("") },
+      { command: "vault_init_dpapi", payload: { password: "" }, invoke: () => vaultApi.initDpapi() },
+      { command: "vault_unlock", payload: { password: "" }, invoke: () => vaultApi.unlock("") },
+      { command: "vault_lock", payload: null, invoke: () => vaultApi.lock() },
+      { command: "vault_set_autolock", payload: { minutes: 0 }, invoke: () => vaultApi.setAutoLock(0) },
+      { command: "vault_change_password", payload: { oldPassword: "", newPassword: "" }, invoke: () => vaultApi.changePassword("", "") },
+      {
+        command: "vault_set_credential",
+        payload: { id: "cred-1", name: "deploy-key", kind: "private_key", secret: "fake-private-key", source: "inline", passphrase: "" },
+        invoke: () => vaultApi.setCredential("deploy-key", "private_key", "fake-private-key", { id: "cred-1", source: "inline", passphrase: "" }),
+      },
+      { command: "vault_list_credentials", payload: null, invoke: () => vaultApi.listCredentials() },
+      { command: "vault_delete_credential", payload: { id: "cred-1" }, invoke: () => vaultApi.deleteCredential("cred-1") },
+      { command: "vault_reveal_credential", payload: { id: "cred-1" }, invoke: () => vaultApi.revealCredential("cred-1") },
+      {
+        command: "credential_update",
+        payload: { id: "cred-1", name: "renamed", secret: "", source: "file", passphrase: "" },
+        invoke: () => vaultApi.updateCredential("cred-1", { name: "renamed", secret: "", source: "file", passphrase: "" }),
+      },
+      {
+        command: "vault_generate_key",
+        payload: { name: "generated-key", algorithm: "ed25519", passphrase: "" },
+        invoke: () => vaultApi.generateKey("generated-key", "ed25519", ""),
+      },
+    ];
+
+    expect(cases).toHaveLength(13);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(13);
+  });
+
+  it("omits unset credential fields without normalizing explicit empty values", async () => {
+    const calls = captureRpc();
+    const { call, vaultApi } = await import("../ipc/commands");
+
+    await vaultApi.setCredential("database", "password", "");
+    await vaultApi.updateCredential("cred-1", {});
+    await vaultApi.generateKey("default-key");
+    await call("credential_update", { args: { id: "cred-1", source: "" } });
+
+    expect(calls).toHaveLength(4);
+    expectManifestEnvelope(calls[0], "vault_set_credential", { name: "database", kind: "password", secret: "" });
+    expectManifestEnvelope(calls[1], "credential_update", { id: "cred-1" });
+    expectManifestEnvelope(calls[2], "vault_generate_key", { name: "default-key" });
+    expectManifestEnvelope(calls[3], "credential_update", { id: "cred-1", source: "" });
+  });
+
+  it("passes status, usage, reveal and generated public-key results through unchanged", async () => {
+    const status = { initialized: true, mode: "master", unlocked: false, autoLockMinutes: 0, passwordless: false, systemProtection: false };
+    const credential = { id: "cred-1", name: "deploy", kind: "private_key", createdAt: 1, updatedAt: 2, usedBy: [{ id: "asset-1", name: "Web", kind: "ssh" }], source: "file", refPath: "/tmp/fake-key", hasPassphrase: true };
+    const revealed = { kind: "private_key", value: "fake-private-key", source: "file", refPath: "/tmp/fake-key", passphrase: null };
+    const generated = { id: "cred-2", name: "generated", algorithm: "ed25519", fingerprint: "SHA256:fake", publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeDemoKey" };
+    const calls = captureRpc({
+      vault_status: status,
+      vault_list_credentials: [credential],
+      vault_reveal_credential: revealed,
+      vault_generate_key: generated,
+    });
+    const { vaultApi } = await import("../ipc/commands");
+
+    await expect(vaultApi.status()).resolves.toEqual(status);
+    await expect(vaultApi.listCredentials()).resolves.toEqual([credential]);
+    await expect(vaultApi.revealCredential("cred-1")).resolves.toEqual(revealed);
+    await expect(vaultApi.generateKey("generated", "ed25519")).resolves.toEqual(generated);
+
+    expect(calls).toHaveLength(4);
+    expectManifestEnvelope(calls[3], "vault_generate_key", { name: "generated", algorithm: "ed25519" });
+  });
+});
+
 describe("ai_edit_resend wire contract", () => {
   it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();

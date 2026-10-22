@@ -75,6 +75,8 @@ var contractScopes = []scopeSpec{
 	}},
 	{name: "group", commands: []string{"group_create", "group_delete", "group_list", "group_update"}},
 	{name: "known-host", commands: []string{"known_host_accept", "known_host_list", "known_host_remove"}},
+	{name: "vault", prefixes: []string{"vault_"}},
+	{name: "credential", commands: []string{"credential_update"}},
 	{name: "ai-roster", prefixes: []string{"ai_roster_"}},
 	{name: "ai-watch", prefixes: []string{"ai_watch_"}},
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},

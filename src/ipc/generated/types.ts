@@ -160,6 +160,12 @@ export type AssetProbeResultDTO = {
   durationMs: number;
 };
 
+export type AssetRef = {
+  id: string;
+  name: string;
+  kind: string;
+};
+
 export type AssetSearchDTO = {
   assets: AssetDTO[];
   total: number;
@@ -429,6 +435,35 @@ export type ConversationRecoverySummary = {
   resumableRunId: string | null;
   interruptedRunIds: string[];
   truncated: boolean;
+};
+
+export type CredentialDTO = {
+  id: string;
+  name: string;
+  kind: string;
+  createdAt: number;
+  updatedAt: number;
+  usedBy: AssetRef[];
+  source: string | null;
+  refPath: string | null;
+  hasPassphrase: boolean;
+};
+
+export type CredentialSetRequest = {
+  id?: string;
+  name: string;
+  kind: string;
+  secret: string;
+  source?: string | null;
+  passphrase?: string | null;
+};
+
+export type CredentialUpdateRequest = {
+  id: string;
+  name?: string | null;
+  secret?: string | null;
+  source?: string | null;
+  passphrase?: string | null;
 };
 
 export type CronJob = {
@@ -872,6 +907,14 @@ export type ForwardRuleSettingsDTO = {
 export type ForwardRuleStartRequest = {
   id: string;
   sessionId: string;
+};
+
+export type GeneratedKeyDTO = {
+  id: string;
+  name: string;
+  algorithm: string;
+  fingerprint: string;
+  publicKey: string;
 };
 
 export type GrantRule = {
@@ -1485,6 +1528,14 @@ export type RepairUndecryptableResult = {
   repaired: boolean;
 };
 
+export type RevealedCredentialDTO = {
+  kind: string;
+  value: string;
+  source: string | null;
+  refPath: string | null;
+  passphrase: string | null;
+};
+
 export type RosterAttachmentDTO = {
   entry: RosterEntry;
   resolution: string;
@@ -1833,6 +1884,31 @@ export type TerminalWriteRequest = {
   data: number[];
   clientId: string;
   broadcast?: TerminalBroadcastWriteOptions | null;
+};
+
+export type VaultAutoLockRequest = {
+  minutes: number | null;
+};
+
+export type VaultGenerateKeyRequest = {
+  name: string;
+  algorithm?: string;
+  passphrase?: string;
+};
+
+export type VaultPasswordRequest = {
+  password?: string;
+  oldPassword?: string;
+  newPassword?: string;
+};
+
+export type VaultStatus = {
+  initialized: boolean;
+  mode: string;
+  unlocked: boolean;
+  autoLockMinutes: number;
+  passwordless: boolean;
+  systemProtection: boolean;
 };
 
 export type WatchConditionDTO = {

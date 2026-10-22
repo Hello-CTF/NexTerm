@@ -233,8 +233,7 @@ export type AuditCountDto = { total: number, };
 
 export type TerminalExitEvent = { tabId: string, exitCode: number | null, version: number, };
 
-export type VaultStatusDto = { initialized: boolean, 
-mode: string, unlocked: boolean, autoLockMinutes: number, passwordless: boolean, systemProtection: boolean, };
+export type VaultStatusDto = import("./generated/types").VaultStatus;
 
 export type SshImportAction = "add" | "skip-duplicate" | "conflict-alias" | "conflict-endpoint" | "blocked-jump";
 
@@ -253,8 +252,7 @@ hosts: SshImportHostDto[], keys: SshImportKeyDto[], diagnostics: SshImportDiagno
 export type SshImportApplyDto = { assetsCreated: number, assetsUpdated: number,
 credentialsCreated: number, credentialsUpdated: number, skipped: number, warnings: string[], };
 
-export type GeneratedKeyDto = { id: string, name: string, algorithm: string,
-fingerprint: string, publicKey: string, };
+export type GeneratedKeyDto = import("./generated/types").GeneratedKeyDTO;
 
 export type UpdateStatusDto = { available: boolean, currentVersion: string, version: string,
 notes: string, prerelease: boolean, assetName: string, assetSize: number, canInstall: boolean,
