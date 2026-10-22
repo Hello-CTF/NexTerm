@@ -27,6 +27,7 @@ function installWebEnv() {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => void storage.set(key, value),
     },
+    dispatchEvent: vi.fn(),
   });
 }
 
@@ -397,6 +398,64 @@ describe("logTail IPC wire contract", () => {
     expect(calls).toHaveLength(1);
     expectManifestEnvelope(calls[0], "log_tail_start", request);
     expect(calls[0]?.args).not.toHaveProperty("maxConcurrent");
+  });
+});
+
+describe("asset, group and known-host facade IPC contracts", () => {
+  it("preserves the exact envelopes for all 16 commands and successful mutation notifications", async () => {
+    const calls = captureRpc();
+    const { assetApi } = await import("../ipc/commands");
+    const fullKey = "AAAAC3NzaC1lZDI1NTE5AAAAIFakeDemoKey";
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "asset_list", payload: null, invoke: () => assetApi.list() },
+      { command: "asset_get", payload: { id: "asset-1" }, invoke: () => assetApi.get("asset-1") },
+      { command: "asset_create", payload: { kind: "ssh", name: "Web", options: { nested: [1, true, null] } }, invoke: () => assetApi.create({ kind: "ssh", name: "Web", options: { nested: [1, true, null] } }) },
+      { command: "asset_update", payload: { id: "asset-1", groupId: null, options: { free: "form" } }, invoke: () => assetApi.update({ id: "asset-1", groupId: null, options: { free: "form" } }) },
+      { command: "asset_read_key_file", payload: { path: "/tmp/example-key" }, invoke: () => assetApi.readKeyFile("/tmp/example-key") },
+      { command: "asset_delete", payload: { id: "asset-1" }, invoke: () => assetApi.delete("asset-1") },
+      { command: "asset_search", payload: { q: "web" }, invoke: () => assetApi.search("web") },
+      { command: "asset_search_meta", payload: { q: "web" }, invoke: () => assetApi.searchMeta("web") },
+      { command: "asset_probe_batch", payload: { assetIds: ["asset-1", "asset-2"], timeoutMs: 2500, maxConcurrent: 8 }, invoke: () => assetApi.probeBatch(["asset-1", "asset-2"], 2500, 8) },
+      { command: "group_list", payload: null, invoke: () => assetApi.groupList() },
+      { command: "group_create", payload: { name: "Production", parentId: "group-parent" }, invoke: () => assetApi.groupCreate("Production", "group-parent") },
+      { command: "group_update", payload: { id: "group-1", name: "Staging", parentId: null }, invoke: () => assetApi.groupUpdate("group-1", "Staging", null) },
+      { command: "group_delete", payload: { id: "group-1" }, invoke: () => assetApi.groupDelete("group-1") },
+      { command: "known_host_list", payload: null, invoke: () => assetApi.knownHostList() },
+      { command: "known_host_accept", payload: { host: "10.0.0.8", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:abc", key: fullKey }, invoke: () => assetApi.knownHostAccept("10.0.0.8", 22, "ssh-ed25519", "SHA256:abc", fullKey) },
+      { command: "known_host_remove", payload: { id: "known-1" }, invoke: () => assetApi.knownHostRemove("known-1") },
+    ];
+
+    expect(cases).toHaveLength(16);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(16);
+    expect(window.dispatchEvent).toHaveBeenCalledTimes(6);
+  });
+
+  it("preserves search metadata and omits unset optional fields without adding trust side effects", async () => {
+    const metadata = { assets: [], total: 101, truncated: true };
+    const calls = captureRpc({ asset_search_meta: metadata });
+    const { assetApi } = await import("../ipc/commands");
+
+    await expect(assetApi.searchMeta("missing")).resolves.toEqual(metadata);
+    await assetApi.create({ kind: "local", name: "Local" });
+    await assetApi.update({ id: "asset-1", groupId: null });
+    await assetApi.probeBatch(["asset-1"]);
+    await assetApi.groupCreate("Root");
+    await assetApi.groupUpdate("group-1", undefined, null);
+    await assetApi.knownHostAccept("10.0.0.8", 22, "ssh-ed25519", "SHA256:abc");
+
+    expect(calls).toHaveLength(7);
+    expectManifestEnvelope(calls[0], "asset_search_meta", { q: "missing" });
+    expectManifestEnvelope(calls[1], "asset_create", { kind: "local", name: "Local" });
+    expectManifestEnvelope(calls[2], "asset_update", { id: "asset-1", groupId: null });
+    expectManifestEnvelope(calls[3], "asset_probe_batch", { assetIds: ["asset-1"] });
+    expectManifestEnvelope(calls[4], "group_create", { name: "Root" });
+    expectManifestEnvelope(calls[5], "group_update", { id: "group-1", parentId: null });
+    expectManifestEnvelope(calls[6], "known_host_accept", { host: "10.0.0.8", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" });
+    expect(window.dispatchEvent).toHaveBeenCalledTimes(4);
   });
 });
 

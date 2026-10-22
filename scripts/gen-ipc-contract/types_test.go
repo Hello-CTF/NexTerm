@@ -84,6 +84,31 @@ func TestEmbeddedStructFieldsRemainTyped(t *testing.T) {
 	}
 }
 
+func TestOptionalIPCValueMapsToNullableWireValue(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	typeParam := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), types.Universe.Lookup("any").Type())
+	optional := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "optionalIPCValue", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "Set", types.Typ[types.Bool], false),
+			types.NewField(token.NoPos, pkg, "Value", types.NewPointer(typeParam), false),
+		}, []string{"", ""}),
+		nil,
+	)
+	optional.SetTypeParams([]*types.TypeParam{typeParam})
+	instantiated, err := types.Instantiate(nil, optional, []types.Type{types.Typ[types.String]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := newTypeRegistry().ref(instantiated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.TS != "string | null" || reference.Manifest != "string | null" {
+		t.Fatalf("optional IPC value mapped to %+v, want nullable string", reference)
+	}
+}
+
 func TestUnresolvedEmbeddedPointerRemainsUnknown(t *testing.T) {
 	pkg := types.NewPackage("example.com/sync", "sync")
 	link := types.NewNamed(

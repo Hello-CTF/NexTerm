@@ -353,46 +353,55 @@
       "stream": "none"
     },
     "asset_create": {
+      "scope": "asset",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "asset_delete": {
+      "scope": "asset",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "asset_get": {
+      "scope": "asset",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "asset_list": {
+      "scope": "asset",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "asset_probe_batch": {
+      "scope": "asset",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "asset_read_key_file": {
+      "scope": "asset",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "asset_search": {
+      "scope": "asset",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "asset_search_meta": {
+      "scope": "asset",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "asset_update": {
+      "scope": "asset",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -870,21 +879,25 @@
       "stream": "none"
     },
     "group_create": {
+      "scope": "group",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "group_delete": {
+      "scope": "group",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "group_list": {
+      "scope": "group",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "group_update": {
+      "scope": "group",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -938,16 +951,19 @@
       "stream": "none"
     },
     "known_host_accept": {
+      "scope": "known-host",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "known_host_list": {
+      "scope": "known-host",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "known_host_remove": {
+      "scope": "known-host",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1852,15 +1868,6 @@
     "app_restart",
     "app_update_check",
     "app_update_install",
-    "asset_create",
-    "asset_delete",
-    "asset_get",
-    "asset_list",
-    "asset_probe_batch",
-    "asset_read_key_file",
-    "asset_search",
-    "asset_search_meta",
-    "asset_update",
     "audit_count",
     "audit_query",
     "biometric_disable",
@@ -1923,13 +1930,6 @@
     "fs_upload_chunk",
     "fs_upload_commit",
     "fs_write",
-    "group_create",
-    "group_delete",
-    "group_list",
-    "group_update",
-    "known_host_accept",
-    "known_host_list",
-    "known_host_remove",
     "layout_get",
     "layout_put",
     "local_file_read",

@@ -357,6 +357,101 @@ void generatedOutputs;
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
 
+  it("types asset, group and known-host commands without changing facade or trust semantics", () => {
+    const probe = resolve("src/test/__ipc_asset_known_host_contract_probe.ts");
+    const source = `
+import { assetApi, call, type Asset, type AssetGroup, type AssetSearchResponse } from "../ipc/commands";
+import type { IPCInput, IPCOutput } from "../ipc/generated/manifest";
+import type { AssetProbeBatchDto, KnownHostDto } from "../ipc/types";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+type ContractChecks = [
+  Assert<Equal<IPCOutput<"asset_delete">, unknown>>,
+  Assert<Equal<IPCOutput<"group_delete">, unknown>>,
+  Assert<Equal<IPCOutput<"known_host_list">, unknown>>,
+  Assert<Equal<IPCOutput<"known_host_accept">, unknown>>,
+  Assert<Equal<IPCOutput<"known_host_remove">, unknown>>,
+  Assert<Equal<IPCOutput<"asset_get">["options"], unknown>>,
+  Assert<Equal<IPCInput<"asset_create">["options"], unknown>>,
+  Assert<Equal<IPCInput<"asset_update">["options"], unknown>>,
+  Assert<Equal<IPCInput<"asset_update">["groupId"], string | null | undefined>>,
+  Assert<Equal<IPCInput<"asset_probe_batch">["timeoutMs"], number | undefined>>,
+  Assert<Equal<IPCInput<"known_host_accept">["key"], string | undefined>>,
+  Assert<Equal<IPCOutput<"asset_search_meta">["truncated"], boolean>>,
+];
+const contractChecks: ContractChecks = [true, true, true, true, true, true, true, true, true, true, true, true];
+void contractChecks;
+
+const listed: Promise<Asset[]> = assetApi.list();
+const fetched: Promise<Asset> = assetApi.get("asset-1");
+const created: Promise<Asset> = assetApi.create({ kind: "ssh", name: "Web" });
+const updated: Promise<Asset> = assetApi.update({ id: "asset-1", groupId: null });
+const futureUpdated: Promise<Asset> = assetApi.update({ id: "asset-1", futureField: { free: true } });
+const searched: Promise<Asset[]> = assetApi.search("web");
+const searchMeta: Promise<AssetSearchResponse> = assetApi.searchMeta("web");
+const probed: Promise<AssetProbeBatchDto> = assetApi.probeBatch(["asset-1"]);
+const groups: Promise<AssetGroup[]> = assetApi.groupList();
+const groupCreated: Promise<AssetGroup> = assetApi.groupCreate("Production");
+const groupUpdated: Promise<AssetGroup> = assetApi.groupUpdate("group-1", undefined, null);
+const groupDeleted: Promise<void> = assetApi.groupDelete("group-1");
+const knownHosts: Promise<KnownHostDto[]> = assetApi.knownHostList();
+const accepted: Promise<void> = assetApi.knownHostAccept("10.0.0.8", 22, "ssh-ed25519", "SHA256:abc");
+const acceptedWithKey: Promise<void> = assetApi.knownHostAccept("10.0.0.8", 22, "ssh-ed25519", "SHA256:abc", "AAAAC3NzaC1lZDI1NTE5AAAAIFakeDemoKey");
+const removed: Promise<void> = assetApi.knownHostRemove("known-1");
+void [listed, fetched, created, updated, futureUpdated, searched, searchMeta, probed, groups, groupCreated, groupUpdated, groupDeleted, knownHosts, accepted, acceptedWithKey, removed];
+
+void call("asset_list");
+void call("asset_get", { id: "asset-1" });
+void call("asset_create", { args: { kind: "ssh", name: "Web", options: { free: [1, true, null] } } });
+void call("asset_update", { args: { id: "asset-1", groupId: null } });
+void call("asset_update", { args: { id: "asset-1" } });
+void call("asset_read_key_file", { path: "/tmp/example-key" });
+void call("asset_delete", { id: "asset-1" });
+void call("asset_search", { q: "web" });
+void call("asset_search_meta", { q: "web" });
+void call("asset_probe_batch", { args: { assetIds: ["asset-1"] } });
+void call("group_list");
+void call("group_create", { name: "Production" });
+void call("group_update", { id: "group-1", parentId: null });
+void call("group_delete", { id: "group-1" });
+void call("known_host_list");
+void call("known_host_accept", { host: "10.0.0.8", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" });
+void call("known_host_accept", { host: "10.0.0.8", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:abc", key: "AAAAC3NzaC1lZDI1NTE5AAAAIFakeDemoKey" });
+void call("known_host_remove", { id: "known-1" });
+
+// @ts-expect-error typed asset commands reject the legacy generic output escape
+void call<Asset[]>("asset_list");
+// @ts-expect-error nested asset creation rejects flat input
+void call("asset_create", { kind: "ssh", name: "Web" });
+// @ts-expect-error asset creation still requires a name
+void call("asset_create", { args: { kind: "ssh" } });
+// @ts-expect-error partial update retains its required identity
+void call("asset_update", { args: { groupId: null } });
+// @ts-expect-error nullable numeric patches do not accept strings
+void call("asset_update", { args: { id: "asset-1", port: "22" } });
+// @ts-expect-error probe batches require asset ids
+void call("asset_probe_batch", { args: { timeoutMs: 2500 } });
+// @ts-expect-error known-host ports remain numeric
+void call("known_host_accept", { host: "10.0.0.8", port: "22", keyType: "ssh-ed25519", fingerprint: "SHA256:abc" });
+// @ts-expect-error complete public key material remains text
+void call("known_host_accept", { host: "10.0.0.8", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:abc", key: 42 });
+
+async function generatedOutputs() {
+  const search = await call("asset_search_meta", { q: "web" });
+  const total: number = search.total;
+  const truncated: boolean = search.truncated;
+  const options: unknown = search.assets[0].options;
+  void [total, truncated, options];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
   it("types the consumer-priority session terminal vertical without narrowing legacy fallbacks", () => {
     const probe = resolve("src/test/__ipc_session_terminal_contract_probe.ts");
     const source = `

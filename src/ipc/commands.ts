@@ -590,22 +590,24 @@ async function assetWrite<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export const assetApi = {
-  list: () => call<Asset[]>("asset_list"),
-  get: (id: string) => call<Asset>("asset_get", { id }),
+  list: () => call("asset_list") as Promise<Asset[]>,
+  get: (id: string) => call("asset_get", { id }) as Promise<Asset>,
   create: (args: Partial<Asset> & { kind: string; name: string }) =>
-    assetWrite(() => call<Asset>("asset_create", { args })),
+    assetWrite(() => call("asset_create", { args }) as Promise<Asset>),
   update: (args: { id: string } & Record<string, unknown>) =>
-    assetWrite(() => call<Asset>("asset_update", { args })),
-  readKeyFile: (path: string) => call<string>("asset_read_key_file", { path }),
-  delete: (id: string) => assetWrite(() => call<void>("asset_delete", { id })),
-  search: (q: string) => call<Asset[]>("asset_search", { q }),
-  searchMeta: (q: string) => call<AssetSearchResponse>("asset_search_meta", { q }),
-  groupList: () => call<AssetGroup[]>("group_list"),
+    assetWrite(() => call("asset_update", {
+      args: args as unknown as import("./generated/types").AssetPatchRequest,
+    }) as Promise<Asset>),
+  readKeyFile: (path: string) => call("asset_read_key_file", { path }),
+  delete: (id: string) => assetWrite(() => call("asset_delete", { id }) as Promise<void>),
+  search: (q: string) => call("asset_search", { q }) as Promise<Asset[]>,
+  searchMeta: (q: string) => call("asset_search_meta", { q }) as Promise<AssetSearchResponse>,
+  groupList: () => call("group_list") as Promise<AssetGroup[]>,
   groupCreate: (name: string, parentId?: string) =>
-    assetWrite(() => call<AssetGroup>("group_create", { name, parentId })),
+    assetWrite(() => call("group_create", { name, parentId }) as Promise<AssetGroup>),
   groupUpdate: (id: string, name?: string, parentId?: string | null) =>
-    assetWrite(() => call<AssetGroup>("group_update", { id, name, parentId })),
-  groupDelete: (id: string) => assetWrite(() => call<void>("group_delete", { id })),
+    assetWrite(() => call("group_update", { id, name, parentId }) as Promise<AssetGroup>),
+  groupDelete: (id: string) => assetWrite(() => call("group_delete", { id }) as Promise<void>),
   snippetList: () => call<import("./types").SnippetDto[]>("snippet_list"),
   snippetCreate: (name: string, body: string, groupId?: string, sort?: number) =>
     call<{ id: string }>("snippet_create", { name, body, groupId, sort }),
@@ -625,13 +627,13 @@ export const assetApi = {
   commandCount: (args: Record<string, unknown> = {}) =>
     call<import("./types").AuditCountDto>("command_count", { args }),
   probeBatch: (assetIds: string[], timeoutMs?: number, maxConcurrent?: number) =>
-    call<import("./types").AssetProbeBatchDto>("asset_probe_batch", {
+    call("asset_probe_batch", {
       args: { assetIds, timeoutMs, maxConcurrent },
-    }),
-  knownHostList: () => call<import("./types").KnownHostDto[]>("known_host_list"),
+    }) as Promise<import("./types").AssetProbeBatchDto>,
+  knownHostList: () => call("known_host_list") as Promise<import("./types").KnownHostDto[]>,
   knownHostAccept: (host: string, port: number, keyType: string, fingerprint: string, key?: string) =>
-    call<void>("known_host_accept", { host, port, keyType, fingerprint, key }),
-  knownHostRemove: (id: string) => call<void>("known_host_remove", { id }),
+    call("known_host_accept", { host, port, keyType, fingerprint, key }) as Promise<void>,
+  knownHostRemove: (id: string) => call("known_host_remove", { id }) as Promise<void>,
 };
 
 function normEntryPath<T extends { path: string }>(e: T): T {

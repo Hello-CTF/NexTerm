@@ -67,14 +67,89 @@ export type AssetBulkEditTarget = {
   expectedUpdatedAt: number;
 };
 
+export type AssetDTO = {
+  id: string;
+  groupId: string | null;
+  kind: string;
+  name: string;
+  host: string | null;
+  port: number | null;
+  username: string | null;
+  authKind: string | null;
+  keyPath: string | null;
+  credId: string | null;
+  options: unknown;
+  tags: string;
+  note: string;
+  sort: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
+  builtin: boolean;
+};
+
+export type AssetGroupDTO = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  sort: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type AssetGroupInputRequest = {
+  name: string;
+  parentId?: string | null;
+  sort?: number;
+};
+
+export type AssetGroupPatchRequest = {
+  id: string;
+  name?: string | null;
+  parentId?: string | null;
+  sort?: number | null;
+};
+
+export type AssetInputRequest = {
+  groupId?: string | null;
+  kind: string;
+  name: string;
+  host?: string | null;
+  port?: number | null;
+  username?: string | null;
+  authKind?: string | null;
+  keyPath?: string | null;
+  credId?: string | null;
+  options?: unknown;
+  tags?: string;
+  note?: string;
+  sort?: number;
+};
+
+export type AssetPatchRequest = {
+  id: string;
+  groupId?: string | null;
+  name?: string | null;
+  host?: string | null;
+  port?: number | null;
+  username?: string | null;
+  authKind?: string | null;
+  keyPath?: string | null;
+  credId?: string | null;
+  options?: unknown;
+  tags?: string | null;
+  note?: string | null;
+  sort?: number | null;
+};
+
 export type AssetProbeBatchDTO = {
   results: AssetProbeResultDTO[];
 };
 
 export type AssetProbeBatchRequest = {
   assetIds: string[];
-  timeoutMs: number;
-  maxConcurrent: number;
+  timeoutMs?: number;
+  maxConcurrent?: number;
 };
 
 export type AssetProbeResultDTO = {
@@ -83,6 +158,12 @@ export type AssetProbeResultDTO = {
   kind?: string;
   error?: string;
   durationMs: number;
+};
+
+export type AssetSearchDTO = {
+  assets: AssetDTO[];
+  total: number;
+  truncated: boolean;
 };
 
 export type AttachedTabDTO = {
@@ -817,6 +898,14 @@ export type HostShareStreamRequest = {
   streamId: string;
 };
 
+export type IDRequest = {
+  id?: string;
+  q?: string;
+  name?: string;
+  body?: string;
+  path?: string;
+};
+
 export type ImportBundleRequest = {
   bundle: SyncBundle;
   force: boolean;
@@ -936,6 +1025,14 @@ export type KindOptInPatch = {
   aiPermission?: boolean | null;
   aiGrant?: boolean | null;
   preferences?: boolean | null;
+};
+
+export type KnownHostRequest = {
+  host: string;
+  port: number;
+  keyType: string;
+  fingerprint: string;
+  key?: string;
 };
 
 export type Link = {
