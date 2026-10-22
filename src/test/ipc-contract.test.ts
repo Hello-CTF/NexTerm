@@ -900,6 +900,115 @@ describe("platform, update and biometric facade IPC contracts", () => {
   });
 });
 
+describe("forward runtime facade IPC contracts", () => {
+  it("preserves all seven flat envelopes and existing result shapes", async () => {
+    const environment = { available: true, platform: "other", listenHost: "127.0.0.1" };
+    const spec = {
+      id: "forward-1",
+      sessionId: "session-1",
+      hostId: "asset-1",
+      status: "reconnecting",
+      error: "reconnecting session",
+      listenHost: "127.0.0.1",
+      listenPort: 13306,
+      targetHost: "db.internal",
+      targetPort: 5432,
+      kind: "local",
+      createdAt: 1,
+    };
+    const calls = captureRpc({
+      forward_env: environment,
+      forward_create: spec,
+      forward_create_socks: spec,
+      forward_create_remote: spec,
+      forward_list: [spec],
+      forward_retry: spec,
+    });
+    const { forwardApi } = await import("../ipc/commands");
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "forward_env", payload: null, invoke: async () => expect(await forwardApi.env()).toEqual(environment) },
+      {
+        command: "forward_create",
+        payload: { sessionId: "session-1", listenPort: 13306, targetHost: "db.internal", targetPort: 5432 },
+        invoke: async () => expect(await forwardApi.create("session-1", 13306, "db.internal", 5432)).toEqual(spec),
+      },
+      {
+        command: "forward_create_socks",
+        payload: { sessionId: "session-1", listenPort: 1080, acknowledgeRisk: true },
+        invoke: async () => expect(await forwardApi.createSocks("session-1", 1080, true)).toEqual(spec),
+      },
+      {
+        command: "forward_create_remote",
+        payload: { sessionId: "session-1", bindHost: "0.0.0.0", bindPort: 18080, targetHost: "127.0.0.1", targetPort: 8080, acknowledgeRisk: true },
+        invoke: async () => expect(await forwardApi.createRemote("session-1", "0.0.0.0", 18080, "127.0.0.1", 8080, true)).toEqual(spec),
+      },
+      { command: "forward_list", payload: null, invoke: async () => expect(await forwardApi.list()).toEqual([spec]) },
+      {
+        command: "forward_retry",
+        payload: { id: "forward-1", sessionId: "session-1" },
+        invoke: async () => expect(await forwardApi.retry("forward-1", "session-1")).toEqual(spec),
+      },
+      {
+        command: "forward_remove",
+        payload: { id: "forward-1" },
+        invoke: async () => expect(await forwardApi.remove("forward-1")).toBeNull(),
+      },
+    ];
+
+    expect(cases).toHaveLength(7);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(7);
+  });
+
+  it("omits default and false risk acknowledgements and all empty retry session forms", async () => {
+    const calls = captureRpc();
+    const { forwardApi } = await import("../ipc/commands");
+
+    await forwardApi.create("session-1", 13306, "db.internal", 5432);
+    await forwardApi.createSocks("session-1", 1080);
+    await forwardApi.createSocks("session-1", 1080, false);
+    await forwardApi.createRemote("session-1", "127.0.0.1", 18080, "127.0.0.1", 8080);
+    await forwardApi.createRemote("session-1", "127.0.0.1", 18080, "127.0.0.1", 8080, false);
+    await forwardApi.retry("forward-1");
+    await forwardApi.retry("forward-1", undefined);
+    await forwardApi.retry("forward-1", "");
+
+    expect(calls).toHaveLength(8);
+    expectManifestEnvelope(calls[0], "forward_create", {
+      sessionId: "session-1",
+      listenPort: 13306,
+      targetHost: "db.internal",
+      targetPort: 5432,
+    });
+    expectManifestEnvelope(calls[1], "forward_create_socks", { sessionId: "session-1", listenPort: 1080 });
+    expectManifestEnvelope(calls[2], "forward_create_socks", { sessionId: "session-1", listenPort: 1080 });
+    expectManifestEnvelope(calls[3], "forward_create_remote", {
+      sessionId: "session-1",
+      bindHost: "127.0.0.1",
+      bindPort: 18080,
+      targetHost: "127.0.0.1",
+      targetPort: 8080,
+    });
+    expectManifestEnvelope(calls[4], "forward_create_remote", {
+      sessionId: "session-1",
+      bindHost: "127.0.0.1",
+      bindPort: 18080,
+      targetHost: "127.0.0.1",
+      targetPort: 8080,
+    });
+    for (const call of calls.slice(0, 5)) {
+      expect(call.args).not.toHaveProperty("acknowledgeRisk");
+    }
+    for (const [index, call] of calls.slice(5).entries()) {
+      expect(call.args).not.toHaveProperty("sessionId");
+      expectManifestEnvelope(calls[index + 5], "forward_retry", { id: "forward-1" });
+    }
+  });
+});
+
 describe("ai_edit_resend wire contract", () => {
   it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();

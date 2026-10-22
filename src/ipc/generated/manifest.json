@@ -725,36 +725,43 @@
       "stream": "none"
     },
     "forward_create": {
+      "scope": "forward",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "forward_create_remote": {
+      "scope": "forward",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "forward_create_socks": {
+      "scope": "forward",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "forward_env": {
+      "scope": "forward",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "forward_list": {
+      "scope": "forward",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "forward_remove": {
+      "scope": "forward",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "forward_retry": {
+      "scope": "forward",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1953,13 +1960,6 @@
     "audit_query",
     "command_count",
     "command_query",
-    "forward_create",
-    "forward_create_remote",
-    "forward_create_socks",
-    "forward_env",
-    "forward_list",
-    "forward_remove",
-    "forward_retry",
     "layout_get",
     "layout_put",
     "memory_create",

@@ -898,39 +898,60 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchDTO", ts: "AssetProbeBatchDTO" },
     },
     "forward_create": {
+      scope: "forward",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/forward.CreateLocalArgs", ts: "CreateLocalArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/forward.Spec", ts: "Spec" },
     },
     "forward_create_remote": {
+      scope: "forward",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/forward.CreateRemoteArgs", ts: "CreateRemoteArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/forward.Spec", ts: "Spec" },
     },
     "forward_create_socks": {
+      scope: "forward",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/forward.CreateSocksArgs", ts: "CreateSocksArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/forward.Spec", ts: "Spec" },
     },
     "forward_env": {
+      scope: "forward",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/forward.Environment", ts: "Environment" },
     },
     "forward_list": {
+      scope: "forward",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/forward.Spec", ts: "Spec[]" },
     },
     "forward_remove": {
+      scope: "forward",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/forward.removeRequest", ts: "RemoveRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "forward_retry": {
+      scope: "forward",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/forward.retryRequest", ts: "RetryRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/forward.Spec", ts: "Spec" },
     },
     "forward_rule_delete": {
       scope: "forward-rule",
@@ -2448,13 +2469,6 @@ export const ipcContractManifest = {
     "audit_query",
     "command_count",
     "command_query",
-    "forward_create",
-    "forward_create_remote",
-    "forward_create_socks",
-    "forward_env",
-    "forward_list",
-    "forward_remove",
-    "forward_retry",
     "layout_get",
     "layout_put",
     "memory_create",
@@ -2925,6 +2939,34 @@ export interface IPCCommandTypeMap {
   "exec_batch_test_login": {
     input: contractTypes.AssetProbeBatchRequest;
     output: contractTypes.AssetProbeBatchDTO;
+  };
+  "forward_create": {
+    input: contractTypes.CreateLocalArgs;
+    output: contractTypes.Spec;
+  };
+  "forward_create_remote": {
+    input: contractTypes.CreateRemoteArgs;
+    output: contractTypes.Spec;
+  };
+  "forward_create_socks": {
+    input: contractTypes.CreateSocksArgs;
+    output: contractTypes.Spec;
+  };
+  "forward_env": {
+    input: Record<string, never>;
+    output: contractTypes.Environment;
+  };
+  "forward_list": {
+    input: Record<string, never>;
+    output: contractTypes.Spec[];
+  };
+  "forward_remove": {
+    input: contractTypes.RemoveRequest;
+    output: unknown;
+  };
+  "forward_retry": {
+    input: contractTypes.RetryRequest;
+    output: contractTypes.Spec;
   };
   "forward_rule_delete": {
     input: contractTypes.ForwardRuleRequest;

@@ -1332,6 +1332,107 @@ func TestDockerUntypedOutputsRemainUnknown(t *testing.T) {
 	}
 }
 
+func TestForwardRuntimeVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	tests := []struct {
+		name   string
+		input  string
+		output string
+	}{
+		{name: "forward_env", input: "Record<string, never>", output: "Environment"},
+		{name: "forward_create", input: "CreateLocalArgs", output: "Spec"},
+		{name: "forward_create_socks", input: "CreateSocksArgs", output: "Spec"},
+		{name: "forward_create_remote", input: "CreateRemoteArgs", output: "Spec"},
+		{name: "forward_list", input: "Record<string, never>", output: "Spec[]"},
+		{name: "forward_retry", input: "RetryRequest", output: "Spec"},
+		{name: "forward_remove", input: "RemoveRequest", output: "unknown"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != "forward" || command.Nested || command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected forward runtime metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input {
+				t.Fatalf("input = %q, want %q", input.TS, test.input)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 7 {
+		t.Fatalf("selected forward runtime command count = %d, want 7", len(selected))
+	}
+	for name, command := range commands {
+		if strings.HasPrefix(name, "forward_") && !strings.HasPrefix(name, "forward_rule_") && !selected[name] {
+			t.Errorf("forward runtime command %q is missing from the explicit inventory", name)
+		}
+		if command.Scope == "forward" && !selected[name] {
+			t.Errorf("unexpected command %q joined the forward runtime scope", name)
+		}
+	}
+	if command := commands["forward_rule_list"]; command.Scope != "forward-rule" {
+		t.Fatalf("saved rules must remain a separate scope: %+v", command)
+	}
+
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	declarationTests := []struct {
+		name   string
+		want   []string
+		absent []string
+	}{
+		{name: "Environment", want: []string{"available: boolean;", "platform: string;", "listenHost: string;", "reason?: string;"}},
+		{name: "Spec", want: []string{"id: string;", "sessionId: string;", "hostId?: string;", "status: string;", "error?: string;", "listenHost: string;", "listenPort: number;", "targetHost: string | null;", "targetPort: number | null;", "kind: string;", "createdAt: number;"}, absent: []string{"listenHost?:", "targetHost?:", "targetPort?:", "autoStart", "assetId", "stopped"}},
+		{name: "CreateLocalArgs", want: []string{"sessionId: string;", "listenPort: number;", "targetHost: string;", "targetPort: number;"}, absent: []string{"acknowledgeRisk", "autoStart"}},
+		{name: "CreateSocksArgs", want: []string{"sessionId: string;", "listenPort: number;", "acknowledgeRisk?: boolean;"}, absent: []string{"targetHost", "targetPort", "autoStart"}},
+		{name: "CreateRemoteArgs", want: []string{"sessionId: string;", "bindHost: string;", "bindPort: number;", "targetHost: string;", "targetPort: number;", "acknowledgeRisk?: boolean;"}, absent: []string{"bindHost?:", "bindPort?:", "targetHost?:", "targetPort?:", "autoStart"}},
+		{name: "RetryRequest", want: []string{"id: string;", "sessionId?: string;"}, absent: []string{"sessionId: string;"}},
+		{name: "RemoveRequest", want: []string{"id: string;"}},
+	}
+	for _, test := range declarationTests {
+		declaration := declarations[test.name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", test.name)
+			continue
+		}
+		for _, want := range test.want {
+			if !strings.Contains(declaration.Body, want) {
+				t.Errorf("%s declaration is missing %q:\n%s", test.name, want, declaration.Body)
+			}
+		}
+		for _, absent := range test.absent {
+			if strings.Contains(declaration.Body, absent) {
+				t.Errorf("%s declaration unexpectedly contains %q:\n%s", test.name, absent, declaration.Body)
+			}
+		}
+	}
+	if rendered := registry.render(); strings.Contains(rendered, "ExposureRisk") {
+		t.Fatalf("confirmation error detail leaked into a normal forward output DTO:\n%s", rendered)
+	}
+}
+
 func TestConsumedJSONFieldRenameFailsDriftCheck(t *testing.T) {
 	baseline := generateForTest(t, nil)
 	root := repositoryRoot(t)

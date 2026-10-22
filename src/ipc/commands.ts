@@ -1306,20 +1306,20 @@ export const sshImportApi = {
 export type ForwardSpec = import("./types").ForwardSpecDto & { listenHost?: string };
 
 export const forwardApi = {
-  env: () => call<import("./types").ForwardEnvDto>("forward_env"),
+  env: (): Promise<import("./types").ForwardEnvDto> => call("forward_env"),
   create: (sessionId: string, listenPort: number, targetHost: string, targetPort: number) =>
-    call<ForwardSpec>("forward_create", {
+    call("forward_create", {
       sessionId,
       listenPort,
       targetHost,
       targetPort,
-    }),
+    }) as Promise<ForwardSpec>,
   createSocks: (sessionId: string, listenPort: number, acknowledgeRisk = false) =>
-    call<ForwardSpec>("forward_create_socks", {
+    call("forward_create_socks", {
       sessionId,
       listenPort,
       ...(acknowledgeRisk ? { acknowledgeRisk: true } : {}),
-    }),
+    }) as Promise<ForwardSpec>,
   createRemote: (
     sessionId: string,
     bindHost: string,
@@ -1328,20 +1328,20 @@ export const forwardApi = {
     targetPort: number,
     acknowledgeRisk = false,
   ) =>
-    call<ForwardSpec>("forward_create_remote", {
+    call("forward_create_remote", {
       sessionId,
       bindHost,
       bindPort,
       targetHost,
       targetPort,
       ...(acknowledgeRisk ? { acknowledgeRisk: true } : {}),
-    }),
-  list: () => call<ForwardSpec[]>("forward_list"),
-  retry: (id: string, sessionId?: string) => call<ForwardSpec>("forward_retry", {
+    }) as Promise<ForwardSpec>,
+  list: () => call("forward_list") as Promise<ForwardSpec[]>,
+  retry: (id: string, sessionId?: string) => call("forward_retry", {
     id,
     ...(sessionId ? { sessionId } : {}),
-  }),
-  remove: (id: string) => call<void>("forward_remove", { id }),
+  }) as Promise<ForwardSpec>,
+  remove: (id: string) => call("forward_remove", { id }) as Promise<void>,
 };
 
 export const syncApi = {
