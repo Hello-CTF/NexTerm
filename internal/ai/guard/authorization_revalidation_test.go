@@ -2,6 +2,7 @@ package guard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -223,5 +224,110 @@ func TestAuthorizationAdmissionRechecksGenerationAfterTargetValidation(t *testin
 	close(release)
 	if err := <-done; err == nil {
 		t.Fatal("revoke completed during target validation but the old admission succeeded")
+	}
+}
+
+type generationFaultSettings struct {
+	*memorySettings
+	failKey  string
+	failures int
+}
+
+func (s *generationFaultSettings) SettingSet(_ context.Context, key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if key == s.failKey && s.failures > 0 {
+		s.failures--
+		return errors.New("injected generation write failure")
+	}
+	s.values[key] = value
+	return nil
+}
+
+func newLegacyGenerationSettings(t *testing.T) *generationFaultSettings {
+	t.Helper()
+	settings := &generationFaultSettings{memorySettings: &memorySettings{values: make(map[string]string)}}
+	grants, err := json.Marshal(map[string]DeviceGrant{
+		"device-a": {DeviceID: "device-a", Kinds: []GrantKind{GrantKindTerminalWrite}, Permanent: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := json.Marshal([]GrantRule{{ID: "rule-a", DeviceID: "device-a", Action: "write_file", Path: "/var/log/**"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.values[DeviceGrantsSettingKey] = string(grants)
+	settings.values[GrantRulesSettingKey] = string(rules)
+	return settings
+}
+
+func evaluateGenerationRule(manager *Grants) Decision {
+	return manager.EvaluateResource(context.Background(), Config{Mode: ReadWrite}, Confirm(KindWriteFS, "write"), nil, "device-a", "write_file", "run-generation-retry", Resource{Action: "write_file", Path: "/var/log/app.log"})
+}
+
+func persistedAuthorizationGenerations(t *testing.T, settings *generationFaultSettings) (string, string) {
+	t.Helper()
+	var grants map[string]deviceGrantRecord
+	if err := json.Unmarshal([]byte(settings.values[DeviceGrantsSettingKey]), &grants); err != nil {
+		t.Fatal(err)
+	}
+	var rules []grantRuleRecord
+	if err := json.Unmarshal([]byte(settings.values[GrantRulesSettingKey]), &rules); err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("persisted rules = %+v", rules)
+	}
+	return grants["device-a"].Generation, rules[0].Generation
+}
+
+func TestAuthorizationGenerationPartialPersistenceFailureRetries(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		failKey string
+	}{
+		{name: "rule_succeeds_grant_fails", failKey: DeviceGrantsSettingKey},
+		{name: "grant_succeeds_rule_fails", failKey: GrantRulesSettingKey},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			settings := newLegacyGenerationSettings(t)
+			settings.failKey = test.failKey
+			settings.failures = 1
+			manager, err := NewGrants(context.Background(), settings, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision := evaluateGenerationRule(manager); decision.Action != ActionDeny {
+				t.Fatalf("failed generation write decision = %+v", decision)
+			}
+
+			decision := evaluateGenerationRule(manager)
+			if decision.Action != ActionAllow || decision.Authorization == nil {
+				t.Fatalf("generation write retry = %+v", decision)
+			}
+			fresh, err := NewGrants(context.Background(), settings, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := fresh.RevalidateAuthorization(context.Background(), decision.Authorization); err != nil {
+				t.Fatalf("retry used a generation absent from persistent storage: %v", err)
+			}
+			grantGeneration, ruleGeneration := persistedAuthorizationGenerations(t, settings)
+			if grantGeneration == "" || ruleGeneration != decision.Authorization.Generation {
+				t.Fatalf("persisted generations do not match final decision: grant=%q rule=%q decision=%+v", grantGeneration, ruleGeneration, decision.Authorization)
+			}
+
+			grantDecision := manager.Evaluate(context.Background(), Config{Mode: ReadWrite}, Confirm(KindProcess, "write"), nil, "device-a", "send_keys", "run-generation-retry")
+			if grantDecision.Action != ActionAllow || grantDecision.Authorization == nil {
+				t.Fatalf("grant retry = %+v", grantDecision)
+			}
+			if err := fresh.RevalidateAuthorization(context.Background(), grantDecision.Authorization); err != nil {
+				t.Fatalf("grant retry used an unpersisted generation: %v", err)
+			}
+			if grantGeneration != grantDecision.Authorization.Generation {
+				t.Fatalf("persisted grant generation %q does not match decision %+v", grantGeneration, grantDecision.Authorization)
+			}
+		})
 	}
 }

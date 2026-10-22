@@ -773,3 +773,74 @@ func TestAuthorizationGenerationMigrationPreservesSettingTimestamp(t *testing.T)
 		t.Fatalf("migrated generation was not shared across managers: %v", err)
 	}
 }
+
+func TestAuthorizationGenerationGORMFailureRetryUsesPersistedState(t *testing.T) {
+	for _, failure := range []string{"update_error", "missing_row"} {
+		t.Run(failure, func(t *testing.T) {
+			database := dbtest.NewFixture(t).OpenStore(t)
+			ctx := ipc.WithUserID(context.Background(), "owner-generation-retry-"+failure)
+			manager, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := manager.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindTerminalWrite}); err != nil {
+				t.Fatal(err)
+			}
+			key := guard.DeviceGrantsSettingKeyForUser(ctx)
+			raw, found, err := database.SettingGet(ctx, key)
+			if err != nil || !found {
+				t.Fatalf("grant setting = %t, %v", found, err)
+			}
+			var records map[string]guard.DeviceGrant
+			if err := json.Unmarshal([]byte(raw), &records); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(records)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw = string(encoded)
+			if err := database.SettingSet(ctx, key, raw); err != nil {
+				t.Fatal(err)
+			}
+			manager, err = guard.NewGrants(ctx, database, nil, guard.WithShared(false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			evaluate := func(evalCtx context.Context) guard.Decision {
+				return manager.Evaluate(evalCtx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "write"), nil, "asset-a", "send_keys", "run-generation-retry")
+			}
+			var decision guard.Decision
+			switch failure {
+			case "update_error":
+				canceled, cancel := context.WithCancel(ctx)
+				cancel()
+				decision = evaluate(canceled)
+			case "missing_row":
+				result := database.GORM().WithContext(ctx).Where(store.Setting{Key: key}).Delete(&store.Setting{})
+				if result.Error != nil || result.RowsAffected != 1 {
+					t.Fatalf("delete setting: rows=%d err=%v", result.RowsAffected, result.Error)
+				}
+				decision = evaluate(ctx)
+				if err := database.SettingSet(ctx, key, raw); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if decision.Action != guard.ActionDeny {
+				t.Fatalf("failed generation write decision = %+v", decision)
+			}
+
+			decision = evaluate(ctx)
+			if decision.Action != guard.ActionAllow || decision.Authorization == nil {
+				t.Fatalf("generation write retry = %+v", decision)
+			}
+			fresh, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := fresh.RevalidateAuthorization(ctx, decision.Authorization); err != nil {
+				t.Fatalf("retry used a generation absent from persistent storage: %v", err)
+			}
+		})
+	}
+}

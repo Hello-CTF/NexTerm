@@ -247,31 +247,40 @@ func (g *Grants) persistGenerationValue(ctx context.Context, key string, value a
 func (g *Grants) ensureGenerations(ctx context.Context, entry *grantState) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	nextGrants := cloneGrantMap(entry.grants)
 	grantsChanged := false
-	for id, grant := range entry.grants {
+	for id, grant := range nextGrants {
 		if grant.generation == "" {
 			grant.generation = ids.New()
-			entry.grants[id] = grant
+			nextGrants[id] = grant
 			grantsChanged = true
 		}
 	}
+	nextRules := append([]GrantRule(nil), entry.rules...)
 	rulesChanged := false
-	for index, rule := range entry.rules {
+	for index, rule := range nextRules {
 		if rule.generation == "" {
 			rule.generation = ids.New()
-			entry.rules[index] = rule
+			nextRules[index] = rule
 			rulesChanged = true
 		}
 	}
+	var grantErr error
 	if grantsChanged {
-		if err := g.persistGenerationValue(ctx, DeviceGrantsSettingKeyForUser(ctx), entry.grants); err != nil {
-			return err
-		}
+		grantErr = g.persistGenerationValue(ctx, DeviceGrantsSettingKeyForUser(ctx), nextGrants)
+	}
+	var ruleErr error
+	if rulesChanged {
+		ruleErr = g.persistGenerationValue(ctx, GrantRulesSettingKeyForUser(ctx), nextRules)
+	}
+	if err := errors.Join(grantErr, ruleErr); err != nil {
+		return err
+	}
+	if grantsChanged {
+		entry.grants = nextGrants
 	}
 	if rulesChanged {
-		if err := g.persistGenerationValue(ctx, GrantRulesSettingKeyForUser(ctx), entry.rules); err != nil {
-			return err
-		}
+		entry.rules = nextRules
 	}
 	return nil
 }
