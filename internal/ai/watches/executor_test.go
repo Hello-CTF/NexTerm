@@ -342,7 +342,7 @@ func TestExecutorDuplicateDeliveryDeduplicatedByConsumer(t *testing.T) {
 	// First executor: the delivery succeeds but the acknowledgement fails —
 	// the crash window that forces a duplicate redelivery.
 	sink := newChanSink()
-	wrapped := &ackFailStore{Store: backend, failures: 100}
+	wrapped := &ackFailStore{Store: backend, failures: 1}
 	first, err := NewExecutor(ctx, wrapped, sink, ExecutorOptions{
 		Now: newTestClock().Now, DispatchInterval: 10 * time.Millisecond, RetryBackoff: time.Millisecond,
 	})
@@ -353,9 +353,14 @@ func TestExecutorDuplicateDeliveryDeduplicatedByConsumer(t *testing.T) {
 	if _, err := first.Watch(ctx, WatchParams{TargetID: "target-1", Condition: containsCondition("ready")}); err != nil {
 		t.Fatal(err)
 	}
-	close(gate)
-	if err := first.Start(ctx); err != nil {
-		t.Fatal(err)
+	// Keep the source gated and drive one outbox pass per executor. A running
+	// dispatcher may legally retry again before Stop, outside this exact boundary.
+	events, err := first.engine.Observe(ctx, "target-1", "identity-1", 0, []byte("ready"))
+	if err != nil || len(events) != 1 {
+		t.Fatalf("fire = %+v, %v", events, err)
+	}
+	if delivered, err := first.DispatchOnce(ctx); err == nil || delivered != 0 {
+		t.Fatalf("dispatch with lost ack = %d, %v", delivered, err)
 	}
 	firstDelivery := waitDelivery(t, sink)
 	if err := first.Stop(ctx); err != nil {
@@ -369,8 +374,8 @@ func TestExecutorDuplicateDeliveryDeduplicatedByConsumer(t *testing.T) {
 	// Second executor redelivers the same logical fire: the consumer dedupes
 	// by the fixed DeliveryID, so only one logical event exists.
 	second := newTestExecutor(t, backend, sink)
-	if err := second.Start(ctx); err != nil {
-		t.Fatal(err)
+	if delivered, err := second.DispatchOnce(ctx); err != nil || delivered != 1 {
+		t.Fatalf("redelivery dispatch = %d, %v", delivered, err)
 	}
 	duplicate := waitDelivery(t, sink)
 	if duplicate.Event.DeliveryID != firstDelivery.Event.DeliveryID ||
