@@ -404,6 +404,81 @@ describe("attempt budget and event fencing", () => {
       now: NOW + 5_100,
     })).toBe(state);
   });
+
+  it("never recycles the first operation ID after consecutive retries and serialization", () => {
+    let state = apply(started({ operationId: "op-a" }), {
+      type: "attemptFailed",
+      tabId: "tab",
+      operationId: "op-a",
+      attempt: 1,
+      now: NOW + 100,
+      reason: failure("permanent"),
+    }, {
+      type: "retry",
+      tabId: "tab",
+      operationId: "op-a",
+      newOperationId: "op-b",
+      now: NOW + 200,
+    }, {
+      type: "attemptFailed",
+      tabId: "tab",
+      operationId: "op-b",
+      attempt: 1,
+      now: NOW + 300,
+      reason: failure("permanent"),
+    });
+    state = JSON.parse(JSON.stringify(state)) as HelperOperationState;
+
+    const reused = helperOperationReducer(state, {
+      type: "retry",
+      tabId: "tab",
+      operationId: "op-b",
+      newOperationId: "op-a",
+      now: NOW + 400,
+    });
+    expect(reused).toBe(state);
+    state = reused;
+    expect(current(state)).toMatchObject({
+      operationId: "op-b",
+      status: "awaiting_choice",
+      attempt: 1,
+    });
+
+    const firstOperationEvents: HelperOperationAction[] = [
+      { type: "progress", tabId: "tab", operationId: "op-a", attempt: 1, now: NOW + 500, stage: "ready" },
+      { type: "succeeded", tabId: "tab", operationId: "op-a", attempt: 1, now: NOW + 500 },
+      { type: "attemptFailed", tabId: "tab", operationId: "op-a", attempt: 1, now: NOW + 500, reason: failure() },
+      { type: "observe", tabId: "tab", operationId: "op-a", attempt: 1, now: NOW + 500, activity: { known: true, active: true } },
+      { type: "tick", tabId: "tab", operationId: "op-a", attempt: 1, now: NOW + 500 },
+      { type: "cleanupFailed", tabId: "tab", operationId: "op-a", attempt: 1, reason: { code: "old_cleanup" } },
+    ];
+    for (const action of firstOperationEvents) {
+      expect(helperOperationReducer(state, action)).toBe(state);
+    }
+  });
+
+  it("does not start a retired operation ID in another tab", () => {
+    const state = apply(started({ operationId: "op-a" }), {
+      type: "attemptFailed",
+      tabId: "tab",
+      operationId: "op-a",
+      attempt: 1,
+      now: NOW + 100,
+      reason: failure("permanent"),
+    }, {
+      type: "retry",
+      tabId: "tab",
+      operationId: "op-a",
+      newOperationId: "op-b",
+      now: NOW + 200,
+    });
+
+    expect(helperOperationReducer(state, startAction({
+      tabId: "tab-b",
+      operationId: "op-a",
+      now: NOW + 300,
+    }))).toBe(state);
+  });
 });
 
 describe("choices and truthful outcomes", () => {

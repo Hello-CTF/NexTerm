@@ -85,6 +85,7 @@ export interface HelperRegularPreference {
 export interface HelperOperationState {
   operations: Record<string, HelperOperation>;
   regularByAsset: Record<string, HelperRegularPreference>;
+  usedOperationIds: string[];
 }
 
 interface HelperOperationScope {
@@ -197,8 +198,8 @@ function validBudget(now: number, budgetMs: number): boolean {
   return Number.isFinite(now) && Number.isFinite(budgetMs) && budgetMs > 0;
 }
 
-function operationIdInUse(state: HelperOperationState, operationId: string): boolean {
-  return Object.values(state.operations).some((operation) => operation.operationId === operationId);
+function operationIdWasUsed(state: HelperOperationState, operationId: string): boolean {
+  return state.usedOperationIds.includes(operationId);
 }
 
 function operationForTab(
@@ -240,7 +241,7 @@ function isAwaitingOrRunning(operation: HelperOperation): boolean {
 }
 
 export function createHelperOperationState(): HelperOperationState {
-  return { operations: {}, regularByAsset: {} };
+  return { operations: {}, regularByAsset: {}, usedOperationIds: [] };
 }
 
 export function helperOperationReducer(
@@ -250,12 +251,12 @@ export function helperOperationReducer(
   switch (action.type) {
     case "start": {
       const existing = state.operations[action.tabId];
-      if ((existing && isAwaitingOrRunning(existing)) || operationIdInUse(state, action.operationId)) {
+      if ((existing && isAwaitingOrRunning(existing)) || operationIdWasUsed(state, action.operationId)) {
         return state;
       }
       const budgetMs = action.budgetMs ?? HELPER_DEFAULT_BUDGET_MS;
       if (!validBudget(action.now, budgetMs)) return state;
-      return updateOperation(state, makeOperation({
+      const operation = makeOperation({
         tabId: action.tabId,
         operationId: action.operationId,
         kind: action.kind,
@@ -264,7 +265,11 @@ export function helperOperationReducer(
         assetId: action.assetId ?? null,
         quickConnect: action.quickConnect ?? false,
         originalTabId: action.originalTabId,
-      }));
+      });
+      return {
+        ...updateOperation(state, operation),
+        usedOperationIds: [...state.usedOperationIds, operation.operationId],
+      };
     }
     case "progress": {
       const operation = scopedOperation(state, action);
@@ -370,13 +375,13 @@ export function helperOperationReducer(
       if (
         !operation ||
         operation.status !== "awaiting_choice" ||
-        operationIdInUse(state, action.newOperationId)
+        operationIdWasUsed(state, action.newOperationId)
       ) {
         return state;
       }
       const budgetMs = action.budgetMs ?? operation.budgetMs;
       if (!validBudget(action.now, budgetMs)) return state;
-      return updateOperation(state, makeOperation({
+      const retry = makeOperation({
         tabId: operation.tabId,
         operationId: action.newOperationId,
         kind: operation.kind,
@@ -385,7 +390,11 @@ export function helperOperationReducer(
         assetId: operation.assetId,
         quickConnect: operation.quickConnect,
         originalTabId: operation.originalTabId,
-      }));
+      });
+      return {
+        ...updateOperation(state, retry),
+        usedOperationIds: [...state.usedOperationIds, retry.operationId],
+      };
     }
     case "continueOrdinary": {
       const operation = operationForTab(state, action.tabId, action.operationId);
