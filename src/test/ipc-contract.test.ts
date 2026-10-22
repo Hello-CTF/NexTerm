@@ -1009,6 +1009,85 @@ describe("forward runtime facade IPC contracts", () => {
   });
 });
 
+describe("operations facade IPC contracts", () => {
+  it("preserves all 12 envelopes, dynamic layout data, import warnings and normal conflict results", async () => {
+    const layoutData = { v: 3, workspaces: [{ id: "workspace-1", nested: [true, null] }] };
+    const layoutResult = { revision: 7, updatedAt: 1234, data: layoutData };
+    const conflict = { saved: false, revision: 8, conflict: true };
+    const preview = {
+      source: "ssh-config",
+      path: "/home/demo/.ssh/config",
+      hosts: [{ id: "host-1", alias: "web", warnings: ["verify the path"] }],
+      keys: [],
+      diagnostics: [{ code: "host-pattern-skipped", source: "config:12", message: "wildcard skipped" }],
+      truncated: false,
+    };
+    const applied = {
+      assetsCreated: 1,
+      assetsUpdated: 0,
+      credentialsCreated: 1,
+      credentialsUpdated: 0,
+      skipped: 2,
+      warnings: ["one entry was skipped"],
+    };
+    const calls = captureRpc({
+      layout_get: layoutResult,
+      layout_put: conflict,
+      ssh_import_preview: preview,
+      ssh_import_apply: applied,
+    });
+    const { assetApi, layoutApi, sshImportApi } = await import("../ipc/commands");
+    const layoutJSON = JSON.stringify(layoutData);
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "snippet_list", payload: null, invoke: () => assetApi.snippetList() },
+      { command: "snippet_create", payload: { name: "Logs", body: "tail -f app.log", groupId: "group-1", sort: 0 }, invoke: () => assetApi.snippetCreate("Logs", "tail -f app.log", "group-1", 0) },
+      { command: "snippet_update", payload: { id: "snippet-1", name: "Logs", body: "tail -f app.log", groupId: null, sort: 0 }, invoke: () => assetApi.snippetUpdate("snippet-1", "Logs", "tail -f app.log", { groupId: null, sort: 0 }) },
+      { command: "snippet_delete", payload: { id: "snippet-1" }, invoke: () => assetApi.snippetDelete("snippet-1") },
+      { command: "audit_query", payload: { sessionId: "session-1", assetId: "asset-1", source: "user", kind: "connect", limit: 100, offset: 200 }, invoke: () => assetApi.auditQuery({ sessionId: "session-1", assetId: "asset-1", source: "user", kind: "connect", limit: 100, offset: 200 }) },
+      { command: "audit_count", payload: { sessionId: "session-1", assetId: "asset-1", source: "user", kind: "connect" }, invoke: () => assetApi.auditCount({ sessionId: "session-1", assetId: "asset-1", source: "user", kind: "connect" }) },
+      { command: "command_query", payload: { sessionId: "session-1", assetId: "asset-1", userId: "user-1", limit: 100, offset: 200 }, invoke: () => assetApi.commandQuery({ sessionId: "session-1", assetId: "asset-1", userId: "user-1", limit: 100, offset: 200 }) },
+      { command: "command_count", payload: { sessionId: "session-1", assetId: "asset-1", userId: "user-1" }, invoke: () => assetApi.commandCount({ sessionId: "session-1", assetId: "asset-1", userId: "user-1" }) },
+      { command: "layout_get", payload: null, invoke: async () => expect(await layoutApi.get()).toEqual(layoutResult) },
+      { command: "layout_put", payload: { data: layoutJSON, revision: 7 }, invoke: () => expect(layoutApi.put(layoutJSON, 7)).resolves.toEqual(conflict) },
+      { command: "ssh_import_preview", payload: { source: "ssh-config", path: "/home/demo/.ssh/config", confirmed: true }, invoke: () => expect(sshImportApi.preview({ source: "ssh-config", path: "/home/demo/.ssh/config", confirmed: true })).resolves.toEqual(preview) },
+      {
+        command: "ssh_import_apply",
+        payload: { source: "ssh-config", path: "/home/demo/.ssh/config", confirmed: true, groupId: "group-1", tags: "prod, 欧洲", hosts: [{ id: "host-1", action: "import" }], keys: [{ id: "key-1", action: "skip" }] },
+        invoke: () => expect(sshImportApi.apply({ source: "ssh-config", path: "/home/demo/.ssh/config", confirmed: true, groupId: "group-1", tags: "prod, 欧洲", hosts: [{ id: "host-1", action: "import" }], keys: [{ id: "key-1", action: "skip" }] })).resolves.toEqual(applied),
+      },
+    ];
+
+    expect(cases).toHaveLength(12);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(12);
+  });
+
+  it("omits only unset optional fields without changing explicit clear and zero semantics", async () => {
+    const calls = captureRpc();
+    const { assetApi, sshImportApi } = await import("../ipc/commands");
+
+    await assetApi.snippetCreate("Logs", "tail -f app.log");
+    await assetApi.snippetUpdate("snippet-1", "Logs", "tail -f app.log");
+    await assetApi.snippetUpdate("snippet-1", "Logs", "tail -f app.log", { sort: 0 });
+    await assetApi.auditCount();
+    await assetApi.commandCount();
+    await sshImportApi.preview({ source: "ssh-home", path: undefined });
+    await sshImportApi.apply({ source: "ssh-home", path: undefined, hosts: [], keys: [] });
+
+    expect(calls).toHaveLength(7);
+    expectManifestEnvelope(calls[0], "snippet_create", { name: "Logs", body: "tail -f app.log" });
+    expectManifestEnvelope(calls[1], "snippet_update", { id: "snippet-1", name: "Logs", body: "tail -f app.log" });
+    expectManifestEnvelope(calls[2], "snippet_update", { id: "snippet-1", name: "Logs", body: "tail -f app.log", sort: 0 });
+    expectManifestEnvelope(calls[3], "audit_count", {});
+    expectManifestEnvelope(calls[4], "command_count", {});
+    expectManifestEnvelope(calls[5], "ssh_import_preview", { source: "ssh-home" });
+    expectManifestEnvelope(calls[6], "ssh_import_apply", { source: "ssh-home", hosts: [], keys: [] });
+  });
+});
+
 describe("ai_edit_resend wire contract", () => {
   it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();

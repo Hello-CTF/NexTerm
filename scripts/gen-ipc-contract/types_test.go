@@ -166,6 +166,75 @@ func TestConsumerCommandInputProjectsDBQueryWithoutLimit(t *testing.T) {
 	}
 }
 
+func TestOperationsConsumerProjections(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
+	newRequest := func(name string, fields []*types.Var, tags []string) types.Type {
+		return types.NewNamed(
+			types.NewTypeName(token.NoPos, pkg, name, nil),
+			types.NewStruct(fields, tags),
+			nil,
+		)
+	}
+	stringPointer := types.NewPointer(types.Typ[types.String])
+	for _, test := range []struct {
+		command string
+		request types.Type
+		want    string
+	}{
+		{
+			command: "snippet_delete",
+			request: newRequest("idRequest", []*types.Var{
+				types.NewField(token.NoPos, pkg, "ID", types.Typ[types.String], false),
+				types.NewField(token.NoPos, pkg, "Q", types.Typ[types.String], false),
+				types.NewField(token.NoPos, pkg, "Name", types.Typ[types.String], false),
+				types.NewField(token.NoPos, pkg, "Body", types.Typ[types.String], false),
+				types.NewField(token.NoPos, pkg, "Path", types.Typ[types.String], false),
+			}, []string{`json:"id"`, `json:"q"`, `json:"name"`, `json:"body"`, `json:"path"`}),
+			want: "{\n  id: string;\n}",
+		},
+		{
+			command: "audit_count",
+			request: newRequest("auditQueryRequest", []*types.Var{
+				types.NewField(token.NoPos, pkg, "SessionID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "AssetID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "Source", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "Kind", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "Limit", types.Typ[types.Int64], false),
+				types.NewField(token.NoPos, pkg, "Offset", types.Typ[types.Int64], false),
+			}, []string{`json:"sessionId"`, `json:"assetId"`, `json:"source"`, `json:"kind"`, `json:"limit"`, `json:"offset"`}),
+			want: "{\n  sessionId?: string | null;\n  assetId?: string | null;\n  source?: string | null;\n  kind?: string | null;\n}",
+		},
+		{
+			command: "command_count",
+			request: newRequest("commandLogQueryRequest", []*types.Var{
+				types.NewField(token.NoPos, pkg, "SessionID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "AssetID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "UserID", stringPointer, false),
+				types.NewField(token.NoPos, pkg, "Limit", types.Typ[types.Int64], false),
+				types.NewField(token.NoPos, pkg, "Offset", types.Typ[types.Int64], false),
+			}, []string{`json:"sessionId"`, `json:"assetId"`, `json:"userId"`, `json:"limit"`, `json:"offset"`}),
+			want: "{\n  sessionId?: string | null;\n  assetId?: string | null;\n  userId?: string | null;\n}",
+		},
+	} {
+		t.Run(test.command, func(t *testing.T) {
+			projected, err := projectConsumerCommandInput(test.command, test.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reference, err := newTypeRegistry().ref(projected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reference.TS != test.want {
+				t.Fatalf("projected %s input = %q, want %q", test.command, reference.TS, test.want)
+			}
+			if test.command != "snippet_delete" && (strings.Contains(reference.TS, "limit") || strings.Contains(reference.TS, "offset")) {
+				t.Fatalf("%s acquired query-only pagination fields: %s", test.command, reference.TS)
+			}
+		})
+	}
+}
+
 func TestRedisScanResultUsesExactWireTuple(t *testing.T) {
 	for _, test := range []struct {
 		name        string

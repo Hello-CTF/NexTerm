@@ -573,9 +573,9 @@ export interface LayoutSaveResult {
 }
 
 export const layoutApi = {
-  get: () => call<LayoutDto>("layout_get"),
-  put: (data: string, revision: number) =>
-    call<LayoutSaveResult>("layout_put", { args: { data, revision } }),
+  get: (): Promise<LayoutDto> => call("layout_get"),
+  put: (data: string, revision: number): Promise<LayoutSaveResult> =>
+    call("layout_put", { args: { data, revision } }),
 };
 
 export interface Asset {
@@ -639,24 +639,24 @@ export const assetApi = {
   groupUpdate: (id: string, name?: string, parentId?: string | null) =>
     assetWrite(() => call("group_update", { id, name, parentId }) as Promise<AssetGroup>),
   groupDelete: (id: string) => assetWrite(() => call("group_delete", { id }) as Promise<void>),
-  snippetList: () => call<import("./types").SnippetDto[]>("snippet_list"),
+  snippetList: (): Promise<import("./types").SnippetDto[]> => call("snippet_list"),
   snippetCreate: (name: string, body: string, groupId?: string, sort?: number) =>
-    call<{ id: string }>("snippet_create", { name, body, groupId, sort }),
+    call("snippet_create", { name, body, groupId, sort }) as Promise<{ id: string }>,
   snippetUpdate: (
     id: string,
     name: string,
     body: string,
     patch: { groupId?: string | null; sort?: number } = {},
-  ) => call<void>("snippet_update", { id, name, body, ...patch }),
-  snippetDelete: (id: string) => call<void>("snippet_delete", { id }),
+  ) => call("snippet_update", { id, name, body, ...patch }) as Promise<void>,
+  snippetDelete: (id: string) => call("snippet_delete", { id }) as Promise<void>,
   auditQuery: (args: Record<string, unknown> = {}) =>
-    call<import("./types").AuditEntryDto[]>("audit_query", { args }),
+    call("audit_query", { args: args as unknown as IPCInput<"audit_query"> }) as Promise<import("./types").AuditEntryDto[]>,
   auditCount: (args: Record<string, unknown> = {}) =>
-    call<import("./types").AuditCountDto>("audit_count", { args }),
+    call("audit_count", { args: args as unknown as IPCInput<"audit_count"> }) as Promise<import("./types").AuditCountDto>,
   commandQuery: (args: Record<string, unknown> = {}) =>
-    call<import("./types").CommandEntryDto[]>("command_query", { args }),
+    call("command_query", { args: args as unknown as IPCInput<"command_query"> }) as Promise<import("./types").CommandEntryDto[]>,
   commandCount: (args: Record<string, unknown> = {}) =>
-    call<import("./types").AuditCountDto>("command_count", { args }),
+    call("command_count", { args: args as unknown as IPCInput<"command_count"> }) as Promise<import("./types").AuditCountDto>,
   probeBatch: (assetIds: string[], timeoutMs?: number, maxConcurrent?: number) =>
     call("asset_probe_batch", {
       args: { assetIds, timeoutMs, maxConcurrent },
@@ -1293,14 +1293,16 @@ export type SshImportItemAction = "import" | "overwrite" | "skip";
 
 export const sshImportApi = {
   preview: (args: { source: SshImportSource; path?: string; confirmed?: boolean }) =>
-    call<import("./types").SshImportPreviewDto>("ssh_import_preview", { args }),
+    call("ssh_import_preview", { args }) as Promise<import("./types").SshImportPreviewDto>,
   apply: (args: {
     source: SshImportSource;
     path?: string;
     confirmed?: boolean;
+    groupId?: string;
+    tags?: string;
     hosts: { id: string; action: SshImportItemAction }[];
     keys: { id: string; action: SshImportItemAction }[];
-  }) => call<import("./types").SshImportApplyDto>("ssh_import_apply", { args }),
+  }) => call("ssh_import_apply", { args }) as Promise<import("./types").SshImportApplyDto>,
 };
 
 export type ForwardSpec = import("./types").ForwardSpecDto & { listenHost?: string };

@@ -411,11 +411,13 @@
       "stream": "none"
     },
     "audit_count": {
+      "scope": "audit",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "audit_query": {
+      "scope": "audit",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -445,11 +447,13 @@
       "stream": "none"
     },
     "command_count": {
+      "scope": "command-log",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "command_query": {
+      "scope": "command-log",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -1031,11 +1035,13 @@
       "stream": "none"
     },
     "layout_get": {
+      "scope": "layout",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "layout_put": {
+      "scope": "layout",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -1443,31 +1449,37 @@
       "stream": "none"
     },
     "snippet_create": {
+      "scope": "snippet",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "snippet_delete": {
+      "scope": "snippet",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "snippet_list": {
+      "scope": "snippet",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "snippet_update": {
+      "scope": "snippet",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "ssh_import_apply": {
+      "scope": "ssh-import",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "ssh_import_preview": {
+      "scope": "ssh-import",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -1956,12 +1968,6 @@
     "ai_test_provider",
     "ai_usage_summary",
     "app_info",
-    "audit_count",
-    "audit_query",
-    "command_count",
-    "command_query",
-    "layout_get",
-    "layout_put",
     "memory_create",
     "memory_delete",
     "memory_edit",
@@ -1974,12 +1980,6 @@
     "session_line_exec",
     "session_probe",
     "session_probe_host_key",
-    "snippet_create",
-    "snippet_delete",
-    "snippet_list",
-    "snippet_update",
-    "ssh_import_apply",
-    "ssh_import_preview",
     "terminal_attach_tab",
     "terminal_claim",
     "terminal_close_tab",
