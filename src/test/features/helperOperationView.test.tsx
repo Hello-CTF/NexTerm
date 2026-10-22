@@ -156,6 +156,18 @@ describe("HelperOperationView", () => {
     expect(view.container.textContent).toContain("协议不兼容；不会替换正在运行的助手");
   });
 
+  it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])(
+    "preserves prototype-named custom stage %s without throwing",
+    (stage) => {
+      let view: MountedView | undefined;
+      expect(() => {
+        view = renderView({ stage });
+      }).not.toThrow();
+      if (!view) throw new Error("Helper operation view was not mounted");
+      expect(definition(view.container, "阶段")).toBe(stage);
+    },
+  );
+
   it("offers retry, warned ordinary and cancel controls without manufacturing an outcome", () => {
     const onRetryPersistent = vi.fn();
     const onContinueOrdinary = vi.fn();

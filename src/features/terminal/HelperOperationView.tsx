@@ -47,22 +47,22 @@ export interface HelperOperationViewProps {
   onInterruptAndUpdate?: () => void;
 }
 
-const STAGE_LABELS: Record<string, string> = {
-  discover: "检测远端环境",
-  probe: "查找已有持久终端助手",
-  cache: "检查助手缓存",
-  upload: "上传持久终端助手",
-  verify: "校验持久终端助手",
-  start: "启动持久终端助手",
-  ready: "持久终端助手已就绪",
-  failed: "持久终端助手操作失败",
-  update: "更新持久终端助手",
-  rollback: "回滚持久终端助手",
-};
+const STAGE_LABELS = new Map<string, string>([
+  ["discover", "检测远端环境"],
+  ["probe", "查找已有持久终端助手"],
+  ["cache", "检查助手缓存"],
+  ["upload", "上传持久终端助手"],
+  ["verify", "校验持久终端助手"],
+  ["start", "启动持久终端助手"],
+  ["ready", "持久终端助手已就绪"],
+  ["failed", "持久终端助手操作失败"],
+  ["update", "更新持久终端助手"],
+  ["rollback", "回滚持久终端助手"],
+]);
 
 function stageText(stage: string): string {
   const value = stage.trim();
-  return STAGE_LABELS[value] ?? (value || "未知");
+  return STAGE_LABELS.get(value) ?? (value || "未知");
 }
 
 function textOrUnknown(value: string | null | undefined): string {
