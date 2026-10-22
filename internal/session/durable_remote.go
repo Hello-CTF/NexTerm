@@ -214,7 +214,7 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 			session.durableFailure = nil
 			session.durableFailureAt = time.Time{}
 			session.durableCreateFailure = nil
-		} else if canceledByUser {
+		} else if canceledByUser && errors.Is(entry.err, context.Canceled) {
 			session.durableProvider = nil
 			session.durableFailure = nil
 			session.durableFailureAt = time.Time{}

@@ -1189,3 +1189,69 @@ func TestCancelHelperOperationDoesNotBlockNextAutomaticTab(t *testing.T) {
 		t.Fatal("unclassified helper error unexpectedly fell back to ordinary SSH")
 	}
 }
+
+func TestCancelHelperOperationPreservesNonCancellationFailure(t *testing.T) {
+	started := make(chan struct{})
+	var calls atomic.Int32
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		if calls.Add(1) == 1 {
+			ReportHelperOperation(ctx, "cancel-preserves-safety")
+			close(started)
+			<-ctx.Done()
+			return nil, errors.New("unclassified helper safety failure after user cancellation")
+		}
+		<-ctx.Done()
+		return nil, context.Cause(ctx)
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-cancel-preserves-safety", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "cancel-safety-first", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil || first.Durable {
+		t.Fatalf("first ordinary tab = %+v, %v", first, err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("deployment did not start")
+	}
+	backgroundHelperDeployments.Lock()
+	deployment := backgroundHelperDeployments.entries[connected]
+	backgroundHelperDeployments.Unlock()
+	if deployment == nil {
+		t.Fatal("deployment disappeared before cancellation")
+	}
+	if err := manager.CancelHelperOperation(t.Context(), connected.ID, "cancel-preserves-safety"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-deployment.done:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled deployment did not complete")
+	}
+	connected.durableMu.Lock()
+	failure := connected.durableFailure
+	connected.durableMu.Unlock()
+	if failure == nil {
+		t.Fatal("non-cancellation resolver failure was discarded after user cancellation")
+	}
+	second, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "cancel-safety-second", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err == nil {
+		t.Fatalf("auto tab after non-cancellation failure = %+v; want fail closed", second)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("auto tab returned cancellation instead of the resolver safety failure: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("resolver calls after cached safety failure = %d, want 1", got)
+	}
+}

@@ -143,21 +143,13 @@ func TestHelperDTOFromDaemonReportsEvidenceAndRealUpdateOutcome(t *testing.T) {
 	}
 }
 
-func writeOfflineHelperFixture(t *testing.T, protocol int, verified bool) (string, sshdaemon.UploadSource) {
+func writeOfflineHelperManifest(t *testing.T, path string, protocol int, verified bool) {
 	t.Helper()
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	content, err := os.ReadFile(executable)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "offline-helper")
-	if err := os.WriteFile(path, content, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	initial, err := sshdaemon.InspectExecutable(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +166,7 @@ func writeOfflineHelperFixture(t *testing.T, protocol int, verified bool) (strin
 		"sha256":                   initial.Digest,
 		"binary_metadata_verified": verified,
 		"platform":                 map[string]any{"os": initial.GOOS, "arch": helperManifestArchitecture(initial), "cgo": cgo, "goarm": initial.GOARM},
-		"artifact":                 map[string]any{"size_bytes": len(content), "sha256": initial.Digest},
+		"artifact":                 map[string]any{"size_bytes": info.Size(), "sha256": initial.Digest},
 	}
 	if verified {
 		manifest["protocol"] = protocol
@@ -187,6 +179,23 @@ func writeOfflineHelperFixture(t *testing.T, protocol int, verified bool) (strin
 	if err := os.WriteFile(path+".manifest.json", raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeOfflineHelperFixture(t *testing.T, protocol int, verified bool) (string, sshdaemon.UploadSource) {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "offline-helper")
+	if err := os.WriteFile(path, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeOfflineHelperManifest(t, path, protocol, verified)
 	source, err := sshdaemon.InspectExecutable(path)
 	if err != nil {
 		t.Fatal(err)
@@ -241,8 +250,8 @@ func TestHelperOfflineTrustRequiresActualSHAAndVerifiedProtocol(t *testing.T) {
 					t.Fatalf("offline confirmation = %+v", confirmed)
 				}
 				service.configureResolver(resolver, assetID)
-				if resolver.HelperExecutable != path {
-					t.Fatalf("resolver helper = %q, want confirmed path %q", resolver.HelperExecutable, path)
+				if resolver.HelperExecutable != path || resolver.HelperSHA256 != source.Digest {
+					t.Fatalf("resolver helper/digest = %q/%q, want %q/%q", resolver.HelperExecutable, resolver.HelperSHA256, path, source.Digest)
 				}
 			} else {
 				if err == nil {
@@ -303,12 +312,98 @@ func TestOfflineTrustRejectsConfirmedPathReplacement(t *testing.T) {
 	if _, err := sshdaemon.InspectExecutable(path); err != nil {
 		t.Fatal(err)
 	}
-	resolver := &sshdaemon.Resolver{HelperExecutable: "/packaged/helper"}
+	resolver := &sshdaemon.Resolver{HelperExecutable: "/packaged/helper", HelperSHA256: "packaged-sha"}
 	if err := service.configureResolver(resolver, assetID); err == nil {
 		t.Fatal("confirmed path replacement was trusted")
 	}
-	if resolver.HelperExecutable != "/packaged/helper" {
-		t.Fatalf("resolver changed after rejected replacement: %q", resolver.HelperExecutable)
+	if resolver.HelperExecutable != "/packaged/helper" || resolver.HelperSHA256 != "packaged-sha" {
+		t.Fatalf("resolver changed after rejected replacement: %q/%q", resolver.HelperExecutable, resolver.HelperSHA256)
+	}
+}
+
+func TestOfflineTrustRejectsReplacementDuringDeployment(t *testing.T) {
+	oldPath, newPath := buildHelperUpdateBinaries(t)
+	writeOfflineHelperManifest(t, oldPath, supervisor.ProtocolVersion, true)
+	writeOfflineHelperManifest(t, newPath, supervisor.ProtocolVersion, true)
+	oldSource, err := sshdaemon.InspectExecutable(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSource, err := sshdaemon.InspectExecutable(newPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, manager, sessionID := newHelperUpdateService(t, oldPath)
+	if _, err := service.inspectOffline(t.Context(), sessionID, oldPath, oldSource.Digest, true); err != nil {
+		t.Fatal(err)
+	}
+	connected, err := manager.Session(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := manager.TransportFor(t.Context(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, ok := transport.(*transportssh.Client)
+	if !ok {
+		t.Fatalf("offline deployment transport = %T", transport)
+	}
+	resolver := &sshdaemon.Resolver{
+		HelperExecutable: "/packaged/helper",
+		StartTimeout:     5 * time.Second,
+		EnsureTimeout:    30 * time.Second,
+	}
+	if err := service.configureResolver(resolver, connected.Asset().ID); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.HelperExecutable != oldPath {
+		t.Fatalf("configured helper = %q, want confirmed path %q", resolver.HelperExecutable, oldPath)
+	}
+	replaced := false
+	uploaded := false
+	probed := false
+	discovers := 0
+	resolver.Progress = func(_ context.Context, progress sshdaemon.HelperProgress) {
+		if progress.Stage == "discover" {
+			discovers++
+			if !replaced {
+				replaced = true
+				content, err := os.ReadFile(newPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(oldPath, content, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				manifest, err := os.ReadFile(newPath + ".manifest.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(oldPath+".manifest.json", manifest, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if replaced && progress.Stage == "upload" {
+			uploaded = true
+		}
+		if replaced && progress.Stage == "probe" && strings.Contains(progress.Path, newSource.Digest) {
+			probed = true
+		}
+	}
+	daemon, err := resolver.EnsureDaemon(t.Context(), client)
+	if !replaced {
+		t.Fatal("helper was not replaced during deployment")
+	}
+	if uploaded || probed || daemon != nil {
+		t.Fatalf("unconfirmed replacement was used: upload=%v probe=%v daemon=%+v err=%v", uploaded, probed, daemon, err)
+	}
+	if !errors.Is(err, sshdaemon.ErrDigestMismatch) {
+		t.Fatalf("deployment replacement error = %v, want ErrDigestMismatch", err)
+	}
+	if discovers != 1 {
+		t.Fatalf("digest failure used %d deployment attempts, want permanent failure", discovers)
 	}
 }
 

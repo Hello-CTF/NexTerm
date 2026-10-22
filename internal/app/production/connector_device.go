@@ -196,6 +196,7 @@ func (s *productionHelperService) configureResolver(resolver *sshdaemon.Resolver
 		return fmt.Errorf("%w: offline helper protocol changed or is no longer provable", sshdaemon.ErrTrust)
 	}
 	resolver.HelperExecutable = trusted.path
+	resolver.HelperSHA256 = trusted.sha256
 	return nil
 }
 
