@@ -696,14 +696,15 @@ func TestPullRequestNativeScopeCoversPlatformFilesAndModuleManifests(t *testing.
 	}
 }
 
-func TestHelperMatrixHasNineDirectTargetsAndFailsReleaseCrossEvidenceClosed(t *testing.T) {
+func TestHelperMatrixHasNineDirectTargetsAndThreeEvidenceRepresentatives(t *testing.T) {
 	var entries []struct {
-		Runner string `json:"runner"`
-		OS     string `json:"os"`
-		Arch   string `json:"arch"`
-		Kind   string `json:"kind"`
-		Smoke  bool   `json:"smoke"`
-		Cross  bool   `json:"cross"`
+		Runner         string `json:"runner"`
+		OS             string `json:"os"`
+		Arch           string `json:"arch"`
+		Kind           string `json:"kind"`
+		Smoke          bool   `json:"smoke"`
+		Cross          bool   `json:"cross"`
+		Representative bool   `json:"representative"`
 	}
 	if err := json.Unmarshal([]byte(readRepositoryFile(t, ".github/native-matrix.json")), &entries); err != nil {
 		t.Fatal(err)
@@ -711,6 +712,7 @@ func TestHelperMatrixHasNineDirectTargetsAndFailsReleaseCrossEvidenceClosed(t *t
 	helpers := make(map[string]bool)
 	smoke := make(map[string]bool)
 	cross := make(map[string]bool)
+	representatives := make(map[string]bool)
 	for _, entry := range entries {
 		if entry.Kind != "helper" {
 			continue
@@ -725,6 +727,9 @@ func TestHelperMatrixHasNineDirectTargetsAndFailsReleaseCrossEvidenceClosed(t *t
 		}
 		if entry.Cross {
 			cross[key] = true
+		}
+		if entry.Representative {
+			representatives[key] = true
 		}
 		if entry.Runner == "" {
 			t.Errorf("helper target %s has no runner", key)
@@ -750,16 +755,22 @@ func TestHelperMatrixHasNineDirectTargetsAndFailsReleaseCrossEvidenceClosed(t *t
 			t.Errorf("hosted-runner cross target %s is not explicit", key)
 		}
 	}
+	if len(representatives) != 3 || !representatives["linux/amd64"] || !representatives["windows/amd64"] || !representatives["darwin/arm64"] {
+		t.Errorf("metadata representatives = %v, want linux/amd64, windows/amd64 and darwin/arm64", representatives)
+	}
 
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
 	version := requireJob(t, ci, "version")
 	requireRunContaining(t, version, ".github/scripts/helper-matrix.mjs --matrix")
 	native := requireJob(t, ci, "native")
 	build := requireRunContaining(t, native, "node scripts/build.mjs ${{ matrix.kind }} --release --repro-check")
-	for _, required := range []string{"matrix.kind == 'helper'", "matrix.cross", "inputs.release_version", "--require-evidence"} {
+	for _, required := range []string{"matrix.kind == 'helper'", "matrix.representative", "--require-evidence"} {
 		if !strings.Contains(build.Run, required) {
 			t.Errorf("helper build evidence gate is missing %q: %s", required, build.Run)
 		}
+	}
+	if strings.Contains(build.Run, "inputs.release_version") {
+		t.Errorf("helper evidence gate must not expand to every release target: %s", build.Run)
 	}
 
 	release := loadWorkflow(t, ".github/workflows/release.yml")

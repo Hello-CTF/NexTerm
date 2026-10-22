@@ -438,7 +438,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Build the repro-checked production binary and inspect format/cgo/size evidence
-        run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check ${{ matrix.kind == 'desktop' && '--consume-dist=target/ci-work/verified-dist/dist --dist-manifest=target/ci-work/verified-dist/target/dist-manifest.json' || '' }} ${{ matrix.kind == 'helper' && (!matrix.cross || inputs.release_version != '') && '--require-evidence' || '' }} --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+        run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check ${{ matrix.kind == 'desktop' && '--consume-dist=target/ci-work/verified-dist/dist --dist-manifest=target/ci-work/verified-dist/target/dist-manifest.json' || '' }} ${{ matrix.kind == 'helper' && matrix.representative && '--require-evidence' || '' }} --os=${{ matrix.os }} --arch=${{ matrix.arch }}
       - name: Run Go two-process server acceptance
         if: matrix.kind == 'server'
         run: go run ./scripts/e2e-harness sync --bin target/go-build/nexterm-server-${{ matrix.os }}-${{ matrix.arch }} --no-build

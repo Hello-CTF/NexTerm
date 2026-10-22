@@ -34,7 +34,7 @@ const HELP_TEXT = `#!/usr/bin/env node
  * release tag in CI); the wails.json/package.json versions are 0.0.0 placeholders.
  *
  *   node scripts/build.mjs                         # frontend + host debug desktop
- *   node scripts/build.mjs release                 # frontend + desktop with nine verified helpers
+ *   node scripts/build.mjs release                 # frontend + desktop with nine helpers and representative evidence
  *   node scripts/build.mjs helpers --release       # all nine targets; executes metadata only on matching hosts
  *   node scripts/build.mjs frontend --repro-check
  *   node scripts/build.mjs frontend --consume-dist=DIR --dist-manifest=PATH
@@ -488,8 +488,8 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
         log(`helper binary metadata verification failed: ${error.message}`);
       }
     } else {
-      manifest.binary_metadata_verified = false;
-      log(`helper final ${goos}/${goarch} --metadata not executed on ${HOST_OS}/${HOST_ARCH}; matching real-host evidence remains required`);
+      Object.assign(manifest, { binary_metadata_verified: false, metadata_status: "not-run", cross_compiled: true, untested: true });
+      log(`helper final ${goos}/${goarch} --metadata not executed on ${HOST_OS}/${HOST_ARCH}; recorded as untested cross-compiled output`);
     }
   }
   const destination = path.resolve(ROOT, option("binary-manifest", `${file}.manifest.json`));
@@ -538,7 +538,11 @@ function validateBinaryForPackaging(outputPath, kind, goos, goarch, reuseEvidenc
     problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol, features: expected.features }));
   }
   if (problems.length) die(`--package-only binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
-  log(`${kind}-${goos}-${goarch}: reusing verified production binary sha256:${manifest.artifact.sha256}`);
+  if (kind === "helper" && manifest.binary_metadata_verified === false) {
+    log(`${kind}-${goos}-${goarch}: reusing untested cross-compiled helper; metadata not-run; sha256:${manifest.artifact.sha256}`);
+  } else {
+    log(`${kind}-${goos}-${goarch}: reusing verified production binary sha256:${manifest.artifact.sha256}`);
+  }
 }
 
 function reproduceBinary(args, outputPath, kind, goos, goarch) {
@@ -758,6 +762,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
 
 function packagedHelperAssertions(directory, relativeDirectory, checkMode) {
   const checks = [];
+  const expectedMetadata = helperProtocolMetadata();
   for (const target of helperTargets()) {
     const packaged = path.join(directory, relativeDirectory, target.name);
     const input = path.resolve(ROOT, option("helpers-dir", "target/go-build"), target.name);
@@ -779,6 +784,12 @@ function packagedHelperAssertions(directory, relativeDirectory, checkMode) {
       }
       checks.push(assertion(`${label}-sha256`, packagedDigest === inputDigest,
           `package SHA256=${packagedDigest}; input SHA256=${inputDigest}`));
+      const manifest = loadManifest(`${input}.manifest.json`);
+      const evidenceProblems = helperMetadataManifestProblems({ manifest, goos: target.os, goarch: target.arch, protocol: expectedMetadata.protocol, features: expectedMetadata.features });
+      const evidenceDetail = evidenceProblems.length > 0 ? evidenceProblems.join("; ") : manifest.binary_metadata_verified === true
+        ? `verified metadata protocol=${manifest.protocol}; sha256=${manifest.sha256}`
+        : "untested: cross-compiled; metadata not-run";
+      checks.push(assertion(`${label}-evidence`, evidenceProblems.length === 0, evidenceDetail));
       if (checkMode) checks.push(assertion(`${label}-executable`, (packagedStat.mode & 0o111) !== 0,
           `package mode=${(packagedStat.mode & 0o777).toString(8)}; executable bit required`));
     } catch (error) {
@@ -1042,6 +1053,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     assertions: inspected.assertions,
     status: assertionsFailed ? "failed" : metadataPending ? "cross-compiled" : "passed",
   };
+  if (kind === "helper" && metadataPending) Object.assign(report, { metadata_status: "not-run", untested: true });
   if (kind === "helper" && inspected.helperMetadata) Object.assign(report, inspected.helperMetadata);
   const destination = path.resolve(ROOT, option("output", `${file}.artifact.json`));
   fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -1056,7 +1068,7 @@ function requireReportPassed(report) {
   const assertionsPassed = Array.isArray(report.assertions) && report.assertions.length > 0 && report.assertions.every((item) => item.status === "passed");
   const ready = report.status === "passed" && assertionsPassed;
   if (!ready) {
-    die(`${report.id} is not release-ready (${report.status}); every artifact needs passing file/content/static/cgo checks and matching-host helper metadata evidence`);
+    die(`${report.id} is not release-ready (${report.status}); every artifact needs passing file/content/static/cgo checks and required representative helper metadata evidence`);
   }
 }
 

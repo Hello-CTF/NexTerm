@@ -13,6 +13,7 @@ import {
   missingHelperArchiveMembers,
   selectNativeMatrix,
 } from "./helper-matrix.mjs";
+import { requiresHelperExecutionEvidence } from "./helper-metadata.mjs";
 import {
   binaryManifestProblems,
   createBinaryManifest,
@@ -124,7 +125,7 @@ test("helper manifest binds GOARM, runtime metadata host and runtime sha256 to t
 
 test("helper manifest rejects stale, placeholder or mismatched execution evidence", (t) => {
   for (const [name, edit, pattern] of [
-    ["unverified", (manifest) => { manifest.binary_metadata_verified = false; }, /verified/],
+    ["unverified", (manifest) => { manifest.binary_metadata_verified = false; }, /not-run/],
     ["missing GOARM", (manifest) => { delete manifest.platform.goarm; }, /GOARM/],
     ["wrong metadata host", (manifest) => { manifest.metadata_host.arch = "amd64"; }, /host/],
     ["placeholder sha256", (manifest) => { manifest.sha256 = "0".repeat(64); }, /sha256/],
@@ -139,4 +140,41 @@ test("helper manifest rejects stale, placeholder or mismatched execution evidenc
       assert.ok([...binaryProblems, ...metadataProblems].some((problem) => pattern.test(problem)), JSON.stringify({ binaryProblems, metadataProblems }));
     });
   }
+});
+
+test("metadata representatives are exactly linux amd64, windows amd64 and darwin arm64", () => {
+  assert.deepEqual(helperTargets().filter((target) => requiresHelperExecutionEvidence(target.os, target.arch)).map((target) => `${target.os}/${target.arch}`), [
+    "linux/amd64",
+    "darwin/arm64",
+    "windows/amd64",
+  ]);
+});
+
+function notRunFixture(t) {
+  const { file, manifest } = manifestFixture(t);
+  Object.assign(manifest, { binary_metadata_verified: false, metadata_status: "not-run", cross_compiled: true, untested: true });
+  delete manifest.protocol;
+  delete manifest.features;
+  delete manifest.sha256;
+  delete manifest.metadata_host;
+  return { file, manifest };
+}
+
+test("non-representative helper accepts a well-formed untested not-run record", (t) => {
+  const { manifest } = notRunFixture(t);
+  assert.deepEqual(helperMetadataManifestProblems({ manifest, goos: "linux", goarch: "armv7", protocol: 1, features: ["exec"] }), []);
+});
+
+test("representative helper cannot substitute a not-run record for execution evidence", (t) => {
+  const { manifest } = notRunFixture(t);
+  assert.ok(helperMetadataManifestProblems({ manifest, goos: "linux", goarch: "amd64", protocol: 1, features: ["exec"] }).some((problem) => /representative/.test(problem)));
+});
+
+test("not-run records reject partial execution fields and verified records reject mixed not-run state", (t) => {
+  const partial = notRunFixture(t);
+  partial.manifest.protocol = 1;
+  assert.ok(helperMetadataManifestProblems({ manifest: partial.manifest, goos: "linux", goarch: "armv7", protocol: 1, features: ["exec"] }).some((problem) => /execution fields/.test(problem)));
+  const mixed = manifestFixture(t);
+  mixed.manifest.metadata_status = "not-run";
+  assert.ok(helperMetadataManifestProblems({ manifest: mixed.manifest, goos: "linux", goarch: "armv7", protocol: 1, features: ["exec"] }).some((problem) => /mixed/.test(problem)));
 });

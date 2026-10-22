@@ -61,7 +61,7 @@ verify_helpers() {
 }
 if [ -n "${NEXTERM_HELPERS_DIR:-}" ]; then
   [ -d "$HELPERS_DIR" ] || { echo "[lzc-build] error: helpers directory does not exist: $HELPERS_DIR" >&2; exit 1; }
-  echo "[lzc-build]     using matching-host helper evidence from: $HELPERS_DIR"
+  echo "[lzc-build]     using helper binaries and metadata records from: $HELPERS_DIR"
   verify_helpers
 fi
 

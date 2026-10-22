@@ -261,7 +261,7 @@ tasks:
       - node scripts/build.mjs helpers --release
 
   package:
-    summary: Package the host desktop with nine verified helpers and enforce artifact evidence
+    summary: Package the host desktop with nine helpers and representative metadata evidence
     cmds:
       - node scripts/build.mjs release
 

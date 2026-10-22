@@ -35,7 +35,7 @@ Options:
   --bin PATH          server binary (default target/go-build/nexterm-server-linux-<arch>)
   --web DIR           frontend dist directory (default dist)
   --arch ARCH         Linux server architecture: amd64 or arm64 (default amd64)
-  --helpers-dir DIR   verified nine-target helper binaries and manifests
+  --helpers-dir DIR   nine-target helper binaries and metadata records
   --require-evidence  fail unless the artifact report passes every assertion
   -h, --help          show this help
 PACK_HELP_EOF
@@ -141,7 +141,7 @@ package_full() {
 ARTIFACT="$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz"
 (cd "$ROOT" && package_full)
 
-report_args=(--kind=server-archive --os=linux "--arch=$ARCH" "--file=$ARTIFACT")
+report_args=(--kind=server-archive --os=linux "--arch=$ARCH" "--file=$ARTIFACT" "--helpers-dir=$HELPERS_DIR")
 if [ "$REQUIRE_EVIDENCE" -ne 0 ]; then
   report_args+=(--require-evidence)
 fi

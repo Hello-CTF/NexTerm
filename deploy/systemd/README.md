@@ -147,10 +147,12 @@ configuration — and finishes with `enable --now`.
 
 Keep all nine target helpers beside `nexterm-server`: Linux
 amd64/arm64/armv7/riscv64/loong64, macOS amd64/arm64, and Windows
-amd64/arm64 (`.exe`). On a matching host, verify only the helper for that
-host's actual OS and architecture before using it for an offline target. Do
-not execute a cross-compiled helper as a substitute for target acceptance.
-The metadata JSON includes the protocol and the executing file's SHA-256:
+amd64/arm64 (`.exe`). Build metadata acceptance uses three representatives:
+Linux amd64, Windows amd64, and macOS arm64. The other six targets are
+marked as untested cross-compiled helpers with metadata not-run; do not
+present them as target-accepted. This archive does not record real SSH
+deployment acceptance. Execute `--metadata` only on the actual target host;
+its JSON includes the protocol and the executing file's SHA-256:
 
 ```sh
 /opt/nexterm/nexterm-helper-linux-amd64 --metadata  # x86_64 host

@@ -160,7 +160,7 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 		if err := copyFile(helper, destination, 0o755); err != nil {
 			return err
 		}
-		if err := writeHelperFixtureManifest(destination, target.goos, target.arch, version, metadata.Protocol, metadata.Features); err != nil {
+		if err := writeHelperFixtureManifest(destination, target.goos, target.arch, target.representative, version, metadata.Protocol, metadata.Features); err != nil {
 			return err
 		}
 	}
@@ -184,20 +184,21 @@ fs.writeFileSync(process.env.DIST_MANIFEST, JSON.stringify(manifest));`
 }
 
 type helperFixtureTarget struct {
-	goos string
-	arch string
-	name string
+	goos           string
+	arch           string
+	name           string
+	representative bool
 }
 
 var helperFixtureTargets = []helperFixtureTarget{
-	{goos: "linux", arch: "amd64", name: "nexterm-helper-linux-amd64"},
+	{goos: "linux", arch: "amd64", name: "nexterm-helper-linux-amd64", representative: true},
 	{goos: "linux", arch: "arm64", name: "nexterm-helper-linux-arm64"},
 	{goos: "linux", arch: "armv7", name: "nexterm-helper-linux-armv7"},
 	{goos: "linux", arch: "riscv64", name: "nexterm-helper-linux-riscv64"},
 	{goos: "linux", arch: "loong64", name: "nexterm-helper-linux-loong64"},
 	{goos: "darwin", arch: "amd64", name: "nexterm-helper-darwin-amd64"},
-	{goos: "darwin", arch: "arm64", name: "nexterm-helper-darwin-arm64"},
-	{goos: "windows", arch: "amd64", name: "nexterm-helper-windows-amd64.exe"},
+	{goos: "darwin", arch: "arm64", name: "nexterm-helper-darwin-arm64", representative: true},
+	{goos: "windows", arch: "amd64", name: "nexterm-helper-windows-amd64.exe", representative: true},
 	{goos: "windows", arch: "arm64", name: "nexterm-helper-windows-arm64.exe"},
 }
 
@@ -209,7 +210,7 @@ func copyFile(source, destination string, mode os.FileMode) error {
 	return os.WriteFile(destination, contents, mode)
 }
 
-func writeHelperFixtureManifest(file, goos, arch, version string, protocol int, features []string) error {
+func writeHelperFixtureManifest(file, goos, arch string, representative bool, version string, protocol int, features []string) error {
 	if err := writeBinaryManifest(file, "helper", goos, arch, "0", version, "unknown"); err != nil {
 		return err
 	}
@@ -222,16 +223,24 @@ func writeHelperFixtureManifest(file, goos, arch, version string, protocol int, 
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return err
 	}
-	binaryBytes, err := os.ReadFile(file)
-	if err != nil {
-		return err
+	if representative {
+		// Representative entries are synthetic validator fixtures, not platform evidence.
+		binaryBytes, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256(binaryBytes)
+		manifest["protocol"] = protocol
+		manifest["features"] = features
+		manifest["sha256"] = fmt.Sprintf("%x", digest)
+		manifest["binary_metadata_verified"] = true
+		manifest["metadata_host"] = map[string]string{"os": goos, "arch": arch}
+	} else {
+		manifest["binary_metadata_verified"] = false
+		manifest["metadata_status"] = "not-run"
+		manifest["cross_compiled"] = true
+		manifest["untested"] = true
 	}
-	digest := sha256.Sum256(binaryBytes)
-	manifest["protocol"] = protocol
-	manifest["features"] = features
-	manifest["sha256"] = fmt.Sprintf("%x", digest)
-	manifest["binary_metadata_verified"] = true
-	manifest["metadata_host"] = map[string]string{"os": goos, "arch": arch}
 	if arch == "armv7" {
 		manifest["platform"].(map[string]interface{})["goarm"] = "7"
 	}
@@ -396,13 +405,33 @@ func runDesktopDistChecks(root, version, goos, goarch string) []checkResult {
 		fmt.Sprintf("rc=%d assertions=%v stderr=%q", tampered.rc, tamperedAssertions, tampered.stderr))
 
 	for _, scenario := range []struct {
-		name    string
-		want    string
-		edit    func(map[string]interface{})
-		tamper  bool
-		version string
-		env     []string
+		name       string
+		want       string
+		edit       func(map[string]interface{})
+		helperName string
+		helperEdit func(map[string]interface{})
+		tamper     bool
+		version    string
+		env        []string
 	}{
+		{
+			name:       "helper protocol mismatch",
+			want:       "protocol",
+			helperName: "nexterm-helper-linux-amd64",
+			helperEdit: func(manifest map[string]interface{}) { manifest["protocol"] = 1 },
+		},
+		{
+			name:       "helper features mismatch",
+			want:       "features",
+			helperName: "nexterm-helper-linux-amd64",
+			helperEdit: func(manifest map[string]interface{}) { manifest["features"] = []string{"exec"} },
+		},
+		{
+			name:       "helper features missing",
+			want:       "features",
+			helperName: "nexterm-helper-linux-amd64",
+			helperEdit: func(manifest map[string]interface{}) { delete(manifest, "features") },
+		},
 		{
 			name: "updater public key mismatch",
 			want: "updater public key SHA-256",
@@ -461,11 +490,37 @@ func runDesktopDistChecks(root, version, goos, goarch string) []checkResult {
 		if scenarioVersion == "" {
 			scenarioVersion = version
 		}
+		var helperManifestPath string
+		var helperManifestRaw []byte
+		if scenario.helperName != "" {
+			helperManifestPath = filepath.Join(repo, "target", "go-build", scenario.helperName+".manifest.json")
+			helperManifestRaw, err = os.ReadFile(helperManifestPath)
+			if err != nil {
+				fatalf("%v", err)
+			}
+			var helperManifest map[string]interface{}
+			if err := json.Unmarshal(helperManifestRaw, &helperManifest); err != nil {
+				fatalf("%v", err)
+			}
+			scenario.helperEdit(helperManifest)
+			updated, err := json.MarshalIndent(helperManifest, "", "  ")
+			if err != nil {
+				fatalf("%v", err)
+			}
+			if err := os.WriteFile(helperManifestPath, append(updated, '\n'), 0o644); err != nil {
+				fatalf("%v", err)
+			}
+		}
 		assets := filepath.Join(repo, "release-assets")
 		if err := os.RemoveAll(assets); err != nil {
 			fatalf("%v", err)
 		}
 		result := runDesktopPackage(repo, binary, scenarioVersion, goos, goarch, scenario.env...)
+		if helperManifestPath != "" {
+			if err := os.WriteFile(helperManifestPath, helperManifestRaw, 0o644); err != nil {
+				fatalf("%v", err)
+			}
+		}
 		_, statErr := os.Stat(assets)
 		c.check("desktop package rejects "+scenario.name,
 			result.rc != 0 && strings.Contains(result.stderr, scenario.want) && os.IsNotExist(statErr),

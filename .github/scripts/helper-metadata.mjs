@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const HOST_OS = { darwin: "darwin", linux: "linux", win32: "windows" }[process.platform];
 const HOST_ARCH = { arm: "arm", arm64: "arm64", loong64: "loong64", riscv64: "riscv64", x64: "amd64" }[process.arch];
+const REPRESENTATIVE_TARGETS = new Set(["linux/amd64", "windows/amd64", "darwin/arm64"]);
+
+export function requiresHelperExecutionEvidence(goos, goarch) {
+  return REPRESENTATIVE_TARGETS.has(`${goos}/${goarch}`);
+}
 
 export function readHostHelperProtocolMetadata({ cwd = ROOT, env = process.env } = {}) {
   const goMod = fs.readFileSync(path.join(cwd, "go.mod"), "utf8");

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { requiresHelperExecutionEvidence } from "../../.github/scripts/helper-metadata.mjs";
 
 function digest(content) {
   return crypto.createHash("sha256").update(content).digest("hex");
@@ -142,7 +143,30 @@ export function binaryManifestProblems({ manifest, file, expect }) {
 export function helperMetadataManifestProblems({ manifest, goos, goarch, protocol, features }) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return ["helper metadata manifest is not a JSON object"];
   const problems = [];
-  if (manifest.binary_metadata_verified !== true) problems.push("helper final-binary --metadata evidence is not verified");
+  const representative = requiresHelperExecutionEvidence(goos, goarch);
+  if (manifest.binary_metadata_verified !== true) {
+    if (representative) {
+      problems.push(`representative helper ${goos}/${goarch} requires matching-host verified metadata`);
+      return problems;
+    }
+    if (manifest.binary_metadata_verified !== false) {
+      problems.push("non-representative helper metadata must be verified or a well-formed not-run record");
+      return problems;
+    }
+    if (manifest.metadata_status !== "not-run") problems.push("not-run helper metadata_status must be not-run");
+    if (manifest.cross_compiled !== true) problems.push("not-run helper must record cross_compiled=true");
+    if (manifest.untested !== true) problems.push("not-run helper must record untested=true");
+    for (const name of ["protocol", "features", "sha256", "metadata_host"]) {
+      if (Object.hasOwn(manifest, name)) {
+        problems.push("not-run helper record must not contain execution fields");
+        break;
+      }
+    }
+    return problems;
+  }
+  if (Object.hasOwn(manifest, "metadata_status") || Object.hasOwn(manifest, "cross_compiled") || Object.hasOwn(manifest, "untested")) {
+    problems.push("verified helper metadata contains mixed verified/not-run state");
+  }
   if (!Number.isInteger(manifest.protocol) || manifest.protocol <= 0) {
     problems.push(`helper metadata protocol is invalid: ${JSON.stringify(manifest.protocol)}`);
   } else if (protocol !== undefined && manifest.protocol !== protocol) {

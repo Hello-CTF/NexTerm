@@ -55,7 +55,8 @@
     "os": "linux",
     "arch": "amd64",
     "kind": "helper",
-    "smoke": true
+    "smoke": true,
+    "representative": true
   },
   {
     "runner": "ubuntu-24.04-arm",
@@ -94,13 +95,15 @@
     "runner": "macos-15",
     "os": "darwin",
     "arch": "arm64",
-    "kind": "helper"
+    "kind": "helper",
+    "representative": true
   },
   {
     "runner": "windows-latest",
     "os": "windows",
     "arch": "amd64",
-    "kind": "helper"
+    "kind": "helper",
+    "representative": true
   },
   {
     "runner": "windows-11-arm",

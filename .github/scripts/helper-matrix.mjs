@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { requiresHelperExecutionEvidence } from "./helper-metadata.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MATRIX = JSON.parse(fs.readFileSync(path.join(ROOT, ".github/native-matrix.json"), "utf8"));
@@ -30,11 +31,14 @@ export function helperTargets() {
     const row = byTarget.get(key);
     if (!row) throw new Error(`native matrix is missing helper target ${key}`);
     byTarget.delete(key);
+    const representative = requiresHelperExecutionEvidence(target.os, target.arch);
+    if ((row.representative === true) !== representative) throw new Error(`helper representative policy mismatch for ${key}`);
     return {
       ...target,
       runner: row.runner,
       smoke: row.smoke === true,
       cross: row.cross === true,
+      representative,
       name: `nexterm-helper-${target.os}-${target.arch}${target.os === "windows" ? ".exe" : ""}`,
     };
   });

@@ -40,4 +40,8 @@ if (id.startsWith("helper-")) {
   problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol, features: expected.features }));
 }
 if (problems.length) die(`reused binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
-console.warn(`${id}: verified reused production binary sha256:${manifest.artifact.sha256}`);
+if (id.startsWith("helper-") && manifest.binary_metadata_verified === false) {
+  console.warn(`${id}: untested cross-compiled helper; metadata not-run; sha256:${manifest.artifact.sha256}`);
+} else {
+  console.warn(`${id}: verified reused production binary sha256:${manifest.artifact.sha256}`);
+}
