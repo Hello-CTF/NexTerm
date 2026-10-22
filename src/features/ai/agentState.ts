@@ -121,7 +121,13 @@ export function isValidHandleName(handle: string): boolean {
   return HANDLE_PATTERN.test(handle);
 }
 
+// handleAtHostCwd renders the target as handle@host:cwd. Host or cwd can be
+// honestly unknown (the roster contract does not evidence them yet): a
+// missing cwd drops the :cwd suffix and a missing host drops the @host part
+// entirely, so the row never claims a target identity it does not have.
 export function handleAtHostCwd(ref: AgentHandleRef): string {
+  if (ref.host === "") return ref.handle;
+  if (ref.cwd === "") return `${ref.handle}@${ref.host}`;
   return `${ref.handle}@${ref.host}:${ref.cwd}`;
 }
 

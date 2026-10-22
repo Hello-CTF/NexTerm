@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent as ReactDragEvent } from "react";
 import { ask, askChoice, promptText } from "../../ui/dialogs";
-import { aiApi, assetApi, modelApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
+import { aiApi, assetApi, modelApi, terminalApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "../../ipc/types";
 import {
@@ -25,6 +25,21 @@ import { DESKTOP } from "../../ipc/env";
 import { ModelPanel } from "./ModelPanel";
 import { GrantPanel } from "./GrantPanel";
 import { CronPanel } from "./CronPanel";
+import { AgentRosterPanel } from "./AgentRosterPanel";
+import { AgentRunHistoryPanel } from "./AgentRunHistoryPanel";
+import { AgentToolCard } from "./AgentToolCard";
+import { WatchPanel } from "./WatchPanel";
+import { createAgentRosterApi, createAgentRunHistoryApi } from "./agentProduction";
+import {
+  ToolHandleRegistry,
+  approvalFromConfirmCard,
+  buildAgentToolCall,
+  runSummaryFromAttempt,
+} from "./agentToolData";
+import { refreshAgentRosterSnapshot, useAgentRosterSnapshot } from "./agentRosterSnapshot";
+import type { AgentApprovalDecision, AgentRosterEntry, AgentToolCall } from "./agentTypes";
+import { watchPanelApi } from "../../ipc/watchApi";
+import { useAuth } from "../auth/store";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
 import { ProductionWriteRiskNotice } from "../production/ProductionWarning";
@@ -51,6 +66,7 @@ import {
   type QuestionItem,
   type StatusLine,
   type SubagentTimeline,
+  type ToolItem,
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
@@ -691,6 +707,23 @@ function AiChatTab({
   const getSnapshot = useCallback(() => stream.getState(), [stream]);
   const conv = useSyncExternalStore(subscribe, getSnapshot);
 
+  // Tool-card handle tracking: the verified roster handle of each tool call
+  // is captured from the actual toolCall/toolResult event stream (live,
+  // replayed, and cross-restart resumed alike) instead of ever being
+  // re-derived. The registry fails closed on conflicting evidence, and the
+  // roster snapshot joins host/cwd/presence through real ai_roster_list data.
+  const toolHandlesRef = useRef<ToolHandleRegistry | null>(null);
+  if (toolHandlesRef.current === null) toolHandlesRef.current = new ToolHandleRegistry();
+  const [toolHandleVersion, setToolHandleVersion] = useState(0);
+  const lastRefreshedHandleVersionRef = useRef(0);
+  const pushAgentEvent = useCallback(
+    (generation: number, ev: Record<string, unknown>): ReturnType<typeof stream.pushEvent> => {
+      if (toolHandlesRef.current?.record(generation, ev)) setToolHandleVersion((version) => version + 1);
+      return stream.pushEvent(generation, ev);
+    },
+    [stream],
+  );
+
   const [input, setInput] = useState(draft ?? "");
   const onDraftChangeRef = useRef(onDraftChange);
   onDraftChangeRef.current = onDraftChange;
@@ -699,6 +732,8 @@ function AiChatTab({
   }, [input]);
   const [questionInput, setQuestionInput] = useState("");
   const [submittingCardId, setSubmittingCardId] = useState<string | null>(null);
+  const submittingCardIdRef = useRef(submittingCardId);
+  submittingCardIdRef.current = submittingCardId;
   const [syncNotice, setSyncNotice] = useState<{
     generation: number;
     phase: "syncing" | "synced" | "failed";
@@ -834,6 +869,8 @@ function AiChatTab({
     canConfirm: boolean;
     submittedNames: string[];
   } | null>(null);
+  const productionConfirmRef = useRef(productionConfirm);
+  productionConfirmRef.current = productionConfirm;
   const handleProductionState = useCallback((canConfirm: boolean, submittedNames: string[]) => {
     const cardId = confirmCard?.id;
     if (!cardId) return;
@@ -869,6 +906,13 @@ function AiChatTab({
   onConversationChangeRef.current = onConversationChange;
   const updateConversationId = useCallback((id: string | undefined, title?: string) => {
     if (!isLifecycleActive()) return;
+    if (conversationIdRef.current !== id) {
+      // A real conversation switch invalidates the tool-handle tracking of
+      // the previous conversation; replayed events of the new one re-record.
+      toolHandlesRef.current?.clear();
+      setToolHandleVersion(0);
+      lastRefreshedHandleVersionRef.current = 0;
+    }
     conversationIdRef.current = id;
     restoreBindingRef.current = id === undefined
       ? null
@@ -923,6 +967,8 @@ function AiChatTab({
   const [permOpen, setPermOpen] = useState(false);
   const [grantOpen, setGrantOpen] = useState(false);
   const [cronOpen, setCronOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [watchOpen, setWatchOpen] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [refs, setRefs] = useState<RefChip[]>([]);
   const [atOpen, setAtOpen] = useState(false);
@@ -998,7 +1044,10 @@ function AiChatTab({
   }, [permOpen, loadPermission]);
 
   useEffect(() => {
-    if (!conversationId) setCronOpen(false);
+    if (!conversationId) {
+      setCronOpen(false);
+      setAgentOpen(false);
+    }
   }, [conversationId]);
 
   const savePerm = async (next: AiPermissionConfig) => {
@@ -1169,7 +1218,7 @@ function AiChatTab({
         if (!hasOutcome) {
           const terminalEvent = terminalEventOf(terminalRun);
           if (terminalEvent) {
-            stream.pushEvent(operation.generation, terminalEvent);
+            pushAgentEvent(operation.generation, terminalEvent);
             stream.flush();
           }
         }
@@ -1336,7 +1385,7 @@ function AiChatTab({
       (events) => {
         for (const event of events) {
           if (!isLifecycleActive()) return;
-          const result = stream.pushEvent(generation, event as Record<string, unknown>);
+          const result = pushAgentEvent(generation, event as Record<string, unknown>);
           if (result.accepted) applied += 1;
           maybeOpenAiCreatedTerminal(generation, event as Record<string, unknown>, result);
           if (result.terminal) settleRestoredRun(generation);
@@ -1346,7 +1395,7 @@ function AiChatTab({
       { shouldContinue: isLifecycleActive },
     );
     return { applied, failed };
-  }, [stream, isLifecycleActive, maybeOpenAiCreatedTerminal, settleRestoredRun]);
+  }, [stream, isLifecycleActive, maybeOpenAiCreatedTerminal, settleRestoredRun, pushAgentEvent]);
 
   const catchUpRunEvents = useCallback((
     generation: number,
@@ -1414,7 +1463,7 @@ function AiChatTab({
       if (!hasOutcome) {
         const event = terminalEventOf(run);
         if (event) {
-          stream.pushEvent(generation, event);
+          pushAgentEvent(generation, event);
           stream.flush();
         }
       }
@@ -1442,11 +1491,11 @@ function AiChatTab({
     return () => window.clearInterval(timer);
   }, [activeRun?.generation, activeRun?.jobId, activeRun?.settled]);
 
-  const replayRestoredIfBound = (jobId: string) => {
+  const replayRestoredIfBound = useCallback((jobId: string) => {
     const restored = restoredChannelRef.current;
     if (!restored || restored.jobId !== jobId) return;
     void replayRunEvents(restored.generation, jobId);
-  };
+  }, [replayRunEvents]);
 
   const armExpiryWatch = useCallback((jobId: string) => {
     const restored = restoredChannelRef.current;
@@ -1516,7 +1565,7 @@ function AiChatTab({
         (events) => {
           for (const event of events) {
             if (!isRestoreActive(restoreGeneration, id)) return;
-            stream.pushEvent(generation, event as Record<string, unknown>);
+            pushAgentEvent(generation, event as Record<string, unknown>);
           }
           if (isRestoreActive(restoreGeneration, id)) stream.flush();
         },
@@ -1551,7 +1600,7 @@ function AiChatTab({
         }
         return;
       }
-      const result = stream.pushEvent(generation, ev);
+      const result = pushAgentEvent(generation, ev);
       if (result.gap) resyncRun(generation, resumable.run.id);
       maybeOpenAiCreatedTerminal(generation, ev, result);
       if (!result.terminal) return;
@@ -1593,6 +1642,7 @@ function AiChatTab({
     runControl,
     pushToast,
     tabKey,
+    pushAgentEvent,
   ]);
 
   const restoreConversation = useCallback(
@@ -1721,7 +1771,7 @@ function AiChatTab({
         }
         return;
       }
-      const result = stream.pushEvent(run.generation, ev);
+      const result = pushAgentEvent(run.generation, ev);
       if (result.gap && current.jobId) resyncRun(run.generation, current.jobId);
       maybeOpenAiCreatedTerminal(run.generation, ev, result);
       if (!result.terminal) return;
@@ -1782,7 +1832,7 @@ function AiChatTab({
     } catch (e) {
       const current = activeRunRef.current;
       if (isLifecycleActive() && isCurrentAiRun(current, run.generation)) {
-        const result = stream.pushEvent(run.generation, {
+        const result = pushAgentEvent(run.generation, {
           type: "error",
           message: describeError(e),
         });
@@ -1931,6 +1981,56 @@ function AiChatTab({
     }
   };
 
+  // One formal confirmation path shared by the card buttons and the agent
+  // approval delegate: the busy guard, takeover/restored-channel routing,
+  // failure replay/resync and interaction resolution are never a reduced
+  // copy. Returns whether the decision reached the backend.
+  const submitConfirmCard = useCallback(
+    async (
+      card: ConfirmItem,
+      decision: "allow" | "allow_session" | "allow_persistent" | "deny",
+      environmentNames?: string[],
+    ): Promise<boolean> => {
+      const run = activeRunRef.current;
+      const id = run?.jobId;
+      if (!run || !id) {
+        pushToast("info", "当前任务正在启动，请稍后重试。");
+        return false;
+      }
+      if (submittingCardIdRef.current) return false;
+      setSubmittingCardId(card.id);
+      try {
+        const input = confirmationInput(
+          { jobId: id, callId: card.callId, nonce: card.nonce },
+          decision,
+          environmentNames,
+        );
+        const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
+        if (run.kind === "takeover") {
+          await aiApi.takeoverConfirm(input);
+        } else if (channel) {
+          await aiApi.confirm(input, channel);
+        } else {
+          await aiApi.confirm(input);
+        }
+      } catch (e) {
+        pushToast("error", `确认失败：${describeError(e)}`);
+        if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
+          void replayHitl(run.generation, id);
+        }
+        replayRestoredIfBound(id);
+        return false;
+      } finally {
+        setSubmittingCardId(null);
+      }
+      if (isCurrentAiRun(activeRunRef.current, run.generation)) {
+        stream.resolveInteraction(run.generation, card.id, card.nonce, CONFIRM_RESOLUTION[decision]);
+      }
+      return true;
+    },
+    [stream, pushToast, replayHitl, replayRestoredIfBound],
+  );
+
   const confirm = async (decision: "allow" | "allow_session" | "allow_persistent" | "deny") => {
     const run = activeRunRef.current;
     const card = confirmCard;
@@ -1946,34 +2046,11 @@ function AiChatTab({
     if (card.requiredEnvironmentNames) {
       if (currentProductionConfirm === null || !currentProductionConfirm.canConfirm) return;
     }
-    setSubmittingCardId(card.id);
-    try {
-      const input = confirmationInput(
-        { jobId: id, callId: card.callId, nonce: card.nonce },
-        decision,
-        card.requiredEnvironmentNames && currentProductionConfirm ? currentProductionConfirm.submittedNames : undefined,
-      );
-      const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
-      if (run.kind === "takeover") {
-        await aiApi.takeoverConfirm(input);
-      } else if (channel) {
-        await aiApi.confirm(input, channel);
-      } else {
-        await aiApi.confirm(input);
-      }
-    } catch (e) {
-      pushToast("error", `确认失败：${describeError(e)}`);
-      if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
-        void replayHitl(run.generation, id);
-      }
-      replayRestoredIfBound(id);
-      return;
-    } finally {
-      setSubmittingCardId(null);
-    }
-    if (isCurrentAiRun(activeRunRef.current, run.generation)) {
-      stream.resolveInteraction(run.generation, card.id, card.nonce, CONFIRM_RESOLUTION[decision]);
-    }
+    await submitConfirmCard(
+      card,
+      decision,
+      card.requiredEnvironmentNames && currentProductionConfirm ? currentProductionConfirm.submittedNames : undefined,
+    );
   };
 
   const answer = async (option?: string) => {
@@ -2013,6 +2090,214 @@ function AiChatTab({
       stream.resolveInteraction(run.generation, card.id, card.nonce, `已回答：${text}`);
     }
   };
+
+  // Agent production wiring: the reviewed roster/history panels consume the
+  // real generated IPC through the adapter (no unsafeCall), and the approval
+  // delegate maps reviewed decisions onto the pending HITL interaction.
+  const authUser = useAuth((s) => s.user);
+  const agentOwnerId = authUser?.id ?? "";
+  const agentOwnerName = authUser?.display_name || authUser?.username || "";
+  const resolveAgentApproval = useCallback(
+    async (requestId: string, decision: AgentApprovalDecision) => {
+      const run = activeRunRef.current;
+      const card = pendingInteraction(stream.getState(), run?.generation ?? null, "confirm");
+      if (!run?.jobId || !card || card.requestId !== requestId) {
+        throw { code: "conflict", message: "审批请求不存在或已解决，请稍后刷新重试" };
+      }
+      // The same production challenge gate as the card buttons: only the
+      // user's actual typed names, bound to this exact card, reach the
+      // backend — never an auto-echoed or missing answer.
+      let environmentNames: string[] | undefined;
+      if (card.requiredEnvironmentNames) {
+        const challenge = productionConfirmRef.current;
+        if (!challenge || challenge.cardId !== card.id || !challenge.canConfirm) {
+          throw { code: "conflict", message: "生产环境挑战未完成：请先在确认卡片中输入环境名称" };
+        }
+        environmentNames = challenge.submittedNames;
+      }
+      const mapped =
+        decision === "approve_once"
+          ? "allow"
+          : decision === "approve_session"
+            ? "allow_session"
+            : decision === "approve_persistent"
+              ? "allow_persistent"
+              : "deny";
+      const submitted = await submitConfirmCard(card, mapped, environmentNames);
+      if (!submitted) {
+        throw { code: "internal", message: "审批提交失败，请重试" };
+      }
+    },
+    [stream, submitConfirmCard],
+  );
+  const agentRosterApi = useMemo(
+    () =>
+      conversationId === undefined
+        ? null
+        : createAgentRosterApi({
+            conversationId,
+            identity: { ownerId: agentOwnerId, ownerName: agentOwnerName },
+            activeJobId: () => activeRunRef.current?.jobId ?? "",
+            resolveApproval: resolveAgentApproval,
+          }),
+    [conversationId, agentOwnerId, agentOwnerName, resolveAgentApproval],
+  );
+  const agentHistoryApi = useMemo(() => createAgentRunHistoryApi(), []);
+  const watchOwner = agentOwnerId === "" ? "local" : agentOwnerId;
+
+  // The roster snapshot joins the recorded handles onto real roster rows,
+  // with an independent slot per conversation. It reloads once per
+  // recorded-handle change, and again when the slot is empty (for example
+  // after a store reset): a handle the roster never covers stays honestly
+  // unknown instead of spinning reloads, and a failed load never retries in
+  // a loop.
+  const rosterSnapshot = useAgentRosterSnapshot(conversationId);
+  const rosterByHandle = useMemo(() => {
+    const map = new Map<string, AgentRosterEntry>();
+    for (const entry of rosterSnapshot ?? []) map.set(entry.handle, entry);
+    return map;
+  }, [rosterSnapshot]);
+  useEffect(() => {
+    if (!conversationId || !agentRosterApi || toolHandleVersion === 0) return;
+    if (lastRefreshedHandleVersionRef.current === toolHandleVersion && rosterSnapshot !== null) return;
+    lastRefreshedHandleVersionRef.current = toolHandleVersion;
+    void refreshAgentRosterSnapshot(agentRosterApi, conversationId);
+  }, [conversationId, agentRosterApi, toolHandleVersion, rosterSnapshot]);
+  const runRowsByJobId = useMemo(() => {
+    const map = new Map<string, (typeof conversationRuns)[number]>();
+    for (const row of conversationRuns) map.set(row.id, row);
+    return map;
+  }, [conversationRuns]);
+  const agentToolCallFor = useCallback(
+    (item: ToolItem): AgentToolCall | null => {
+      const lookup = toolHandlesRef.current?.lookup(item.attempt, item.callId) ?? { kind: "unknown" as const };
+      if (lookup.kind !== "handle") return null;
+      const attempt = conv.attempts.find((candidate) => candidate.generation === item.attempt);
+      const run = attempt
+        ? runSummaryFromAttempt(attempt.outcome, attempt.jobId ? runRowsByJobId.get(attempt.jobId) : undefined)
+        : null;
+      const confirm = [...conv.items]
+        .reverse()
+        .find(
+          (candidate): candidate is ConfirmItem =>
+            candidate.role === "confirm" &&
+            candidate.callId === item.callId &&
+            (item.attempt === null || candidate.attempt === item.attempt),
+        );
+      return buildAgentToolCall(
+        item,
+        lookup.handle,
+        rosterByHandle.get(lookup.handle),
+        run,
+        approvalFromConfirmCard(confirm),
+      );
+    },
+    [conv.attempts, conv.items, runRowsByJobId, rosterByHandle],
+  );
+  const submitAgentApproval = useCallback(
+    (requestId: string, decision: AgentApprovalDecision) => {
+      void resolveAgentApproval(requestId, decision).catch((error: unknown) => {
+        pushToast("error", `审批失败：${describeError(error)}`);
+      });
+    },
+    [resolveAgentApproval, pushToast],
+  );
+  const mentionAgentHandle = useCallback((token: string) => {
+    setInput((prev) => {
+      const base = prev.replace(/\s+$/, "");
+      return base === "" ? `${token} ` : `${base} ${token} `;
+    });
+    inputRef.current?.focus();
+  }, []);
+  const openAgentTerminal = useCallback(
+    (tabId: string, entry: AgentRosterEntry) => {
+      const state = useUi.getState();
+      for (const workspace of state.workspaces) {
+        for (const pane of workspace.panes) {
+          const existing = pane.tabs.find((tab) => tab.tabId === tabId);
+          if (existing) {
+            state.setActiveWorkspace(workspace.id);
+            state.setActivePane(pane.id, workspace.id);
+            state.setActiveTab(existing.id);
+            return;
+          }
+        }
+      }
+      // No live view yet: resolve the owning session through the real backend
+      // tab lists (live first, then durable per session), then attach a
+      // terminal tab bound to that durable backend tab — never a new shell.
+      void (async () => {
+        try {
+          const live = await terminalApi.listLive();
+          const liveMatches = live.filter((tab) => tab.tabId === tabId);
+          if (liveMatches.length > 1) {
+            // Fail closed: ambiguous backend ownership never picks arbitrarily.
+            pushToast("error", `句柄 ${entry.handle} 的终端在多个会话中命中，无法安全定位`);
+            return;
+          }
+          let sessionId = liveMatches[0]?.sessionId;
+          if (sessionId === undefined) {
+            // Probe durable tabs only on sessions that can answer (connected,
+            // durable-capable ssh/device), tolerating individual failures so
+            // one broken session never masks another session's hit.
+            const candidates = state.sessions.filter(
+              (session) =>
+                session.status === "connected" && (session.kind === "ssh" || session.kind === "device"),
+            );
+            const probed = await Promise.allSettled(
+              candidates.map(async (session) => {
+                const rows = await terminalApi.listDurable(session.id);
+                return rows.some((row) => row.id === tabId) ? session.id : undefined;
+              }),
+            );
+            const hits = probed
+              .filter((result): result is PromiseFulfilledResult<string | undefined> => result.status === "fulfilled")
+              .map((result) => result.value)
+              .filter((id): id is string => id !== undefined);
+            const failures = probed.length - probed.filter((result) => result.status === "fulfilled").length;
+            if (hits.length > 1) {
+              pushToast("error", `句柄 ${entry.handle} 的终端在多个会话中命中，无法安全定位`);
+              return;
+            }
+            if (hits.length === 0) {
+              pushToast(
+                "error",
+                failures > 0
+                  ? `无法定位句柄 ${entry.handle} 的终端会话：已搜索会话均未命中，另有 ${failures} 个会话搜索失败`
+                  : `无法定位句柄 ${entry.handle} 的终端会话（可能已断开或已退出），请刷新句柄列表`,
+              );
+              return;
+            }
+            sessionId = hits[0];
+          }
+          const session = state.sessions.find((item) => item.id === sessionId);
+          if (!session) {
+            pushToast("error", `句柄 ${entry.handle} 的终端会话不在当前会话列表中，请刷新句柄列表`);
+            return;
+          }
+          const workspaceId = state.ensureWorkspace({
+            kind: "session",
+            sessionId: session.id,
+            assetId: session.assetId ?? undefined,
+            title: session.name,
+            assetKind: session.kind,
+          });
+          state.setActiveWorkspace(workspaceId);
+          state.addTab({
+            id: nextTabId(`term-${session.id}`),
+            kind: "terminal",
+            title: entry.handle,
+            sessionId: session.id,
+            tabId,
+            closable: true,
+          });
+        } catch (e) {
+          pushToast("error", `打开句柄终端失败：${describeError(e)}`);
+        }
+      })();
+    },
+    [pushToast],
+  );
 
   const stop = () => {
     void requestCancellation(false);
@@ -2262,7 +2547,7 @@ function AiChatTab({
         if (type === "done" || type === "error" || type === "canceled") dispose();
         return;
       }
-      const result = stream.pushEvent(run.generation, ev);
+      const result = pushAgentEvent(run.generation, ev);
       if (result.accepted && type === "paused") {
         updateTakeoverPaused(activeRunRef.current?.jobId ?? run.jobId, true);
       } else if (result.accepted && type === "resumed") {
@@ -2461,7 +2746,7 @@ function AiChatTab({
       }
       const current = activeRunRef.current;
       if (isLifecycleActive() && isCurrentAiRun(current, run.generation)) {
-        const result = stream.pushEvent(run.generation, {
+        const result = pushAgentEvent(run.generation, {
           type: "error",
           message: describeError(e),
         });
@@ -2500,6 +2785,26 @@ function AiChatTab({
           onClick={() => setCronOpen((v) => !v)}
         >
           <IconClock size={14} />
+        </button>
+        <button
+          className={`nx-icon-btn nx-icon-btn-sm ${agentOpen ? "is-active" : ""}`}
+          title={
+            conversationId
+              ? "当前会话的 Agent 句柄与 run 历史"
+              : "Agent 句柄挂在会话上：先发送消息开始一个会话"
+          }
+          disabled={!conversationId}
+          onClick={() => setAgentOpen((v) => !v)}
+        >
+          <IconBot size={14} />
+        </button>
+        <button
+          className={`nx-icon-btn nx-icon-btn-sm ${watchOpen ? "is-active" : ""}`}
+          title="Watch 监视"
+          aria-expanded={watchOpen}
+          onClick={() => setWatchOpen((v) => !v)}
+        >
+          <IconMonitor size={14} />
         </button>
         <button
           className={`nx-icon-btn nx-icon-btn-sm ${historyOpen ? "is-active" : ""}`}
@@ -2743,6 +3048,32 @@ function AiChatTab({
         />
       )}
 
+      {agentOpen && conversationId && agentRosterApi && (
+        // Keyed by conversation: a switch remounts both panels, so the first
+        // committed frame of the new conversation can never show, and the
+        // composer can never mention, the previous conversation's rows —
+        // regardless of how the new conversation's load settles or fails.
+        <>
+          <AgentRosterPanel
+            key={`roster-${conversationId}`}
+            api={agentRosterApi}
+            onMention={mentionAgentHandle}
+            onOpened={openAgentTerminal}
+          />
+          <AgentRunHistoryPanel
+            key={`history-${conversationId}`}
+            api={agentHistoryApi}
+            scope={{ ownerId: agentOwnerId, conversationId }}
+          />
+        </>
+      )}
+
+      {watchOpen && (
+        <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60">
+          <WatchPanel api={watchPanelApi} owner={watchOwner} onClose={() => setWatchOpen(false)} />
+        </div>
+      )}
+
       {grantOpen && <GrantPanel onClose={() => setGrantOpen(false)} />}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -2815,6 +3146,9 @@ function AiChatTab({
                   onApprovePlan={handleApprovePlan}
                   onRetry={handleRetryRun}
                   onEdit={handleEditResend}
+                  agentToolCall={item.role === "tool" ? agentToolCallFor(item) : null}
+                  onAgentApproval={submitAgentApproval}
+                  agentApprovalBusy={submittingCardId !== null}
                 />
               </div>
             );
@@ -3387,6 +3721,9 @@ const ChatBubble = memo(function ChatBubble({
   onApprovePlan,
   onRetry,
   onEdit,
+  agentToolCall,
+  onAgentApproval,
+  agentApprovalBusy,
 }: {
   item: ChatItem;
   streaming: boolean;
@@ -3394,6 +3731,9 @@ const ChatBubble = memo(function ChatBubble({
   onApprovePlan: () => void;
   onRetry: (item: ChatItem) => void;
   onEdit: (item: ChatItem) => void;
+  agentToolCall: AgentToolCall | null;
+  onAgentApproval: (requestId: string, decision: AgentApprovalDecision) => void;
+  agentApprovalBusy: boolean;
 }) {
   if (item.role === "user") {
     return (
@@ -3491,7 +3831,21 @@ const ChatBubble = memo(function ChatBubble({
   if (item.role === "plan") {
     return <PlanBubble item={item} approved={planApproved} onApprove={onApprovePlan} />;
   }
-  if (item.role === "tool") return <ToolBubble item={item} />;
+  if (item.role === "tool") {
+    // A tool call with a verified roster handle renders the reviewed agent
+    // tool card (roster-joined identity, run evidence and approval actions);
+    // anything else keeps the plain bubble and claims no roster identity.
+    if (agentToolCall) {
+      return (
+        <AgentToolCard
+          call={agentToolCall}
+          onApproval={onAgentApproval}
+          approvalBusy={agentApprovalBusy}
+        />
+      );
+    }
+    return <ToolBubble item={item} />;
+  }
   return null;
 });
 

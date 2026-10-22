@@ -33,6 +33,9 @@ export interface AgentRunSummary {
 
 export interface AgentRosterEntry {
   handle: string;
+  // The display alias is the only renamable field; the handle itself is
+  // permanent and never changes, so mentions keep resolving durably.
+  alias: string;
   host: string;
   cwd: string;
   ownerId: string;
@@ -40,7 +43,9 @@ export interface AgentRosterEntry {
   isMine: boolean;
   production: boolean;
   persistent: boolean;
-  incarnation: number;
+  // The backend incarnation is an opaque durable-identity string, never a
+  // sequence number; it is carried for exact-identity operations, not display.
+  incarnation: string;
   presence: AgentPresence;
   evidence: AgentEvidence | null;
   releasePending: boolean;
@@ -80,7 +85,7 @@ export interface AgentRecoverySummary {
   truncated: boolean;
 }
 
-export type AgentApprovalDecision = "approve_once" | "approve_session" | "deny";
+export type AgentApprovalDecision = "approve_once" | "approve_session" | "approve_persistent" | "deny";
 
 export interface AgentApproval {
   requestId: string;
@@ -96,7 +101,10 @@ export interface AgentToolCall {
   ownerName: string;
   isMine: boolean;
   production: boolean;
-  persistent: boolean;
+  // null means the roster contract cannot evidence persistence right now
+  // (no row in the snapshot, or the snapshot could not load): the card shows
+  // nothing instead of claiming either durable or non-persistent.
+  persistent: boolean | null;
   presence: AgentPresence;
   state: "running" | "ok" | "error" | "unknown";
   exitCode: number | null;

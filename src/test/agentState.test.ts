@@ -105,6 +105,12 @@ describe("agentState handle formatting", () => {
     expect(mentionToken(ref)).toBe("@build");
   });
 
+  it("renders honestly unknown host or cwd without fabricating identity", () => {
+    expect(handleAtHostCwd({ handle: "build", host: "", cwd: "" })).toBe("build");
+    expect(handleAtHostCwd({ handle: "build", host: "web-01", cwd: "" })).toBe("build@web-01");
+    expect(handleAtHostCwd({ handle: "build", host: "", cwd: "/srv/app" })).toBe("build");
+  });
+
   it("validates handle names against mention-unsafe characters", () => {
     expect(isValidHandleName("build")).toBe(true);
     expect(isValidHandleName("build-2_x")).toBe(true);

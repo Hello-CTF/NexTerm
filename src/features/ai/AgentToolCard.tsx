@@ -28,6 +28,7 @@ const TONE_BADGE: Record<AgentStateTone, string> = {
 const APPROVAL_LABEL: Record<AgentApprovalDecision, string> = {
   approve_once: "已批准一次",
   approve_session: "已本会话批准",
+  approve_persistent: "已永久批准",
   deny: "已拒绝",
 };
 
@@ -106,7 +107,7 @@ export function AgentToolCard({
               所有者：{call.ownerName}
             </span>
           )}
-          {!call.persistent && <span className="nx-count">非持久目标</span>}
+          {call.persistent === false && <span className="nx-count">非持久目标</span>}
           {!autoWriteAllowed(call.presence) && (
             <span className="text-[var(--nx-fg-warning)]">自动写入已禁止</span>
           )}
