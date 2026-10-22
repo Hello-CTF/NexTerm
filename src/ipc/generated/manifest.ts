@@ -558,34 +558,52 @@ export const ipcContractManifest = {
       output: { go: "any", ts: "unknown" },
     },
     "db_columns": {
+      scope: "db",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/db.columnsRequest", ts: "ColumnsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/db.TableDescribe", ts: "TableDescribe" },
     },
     "db_connect": {
+      scope: "db",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/db.connectRequest", ts: "ConnectRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/db.ConnectResult", ts: "ConnectResult" },
     },
     "db_disconnect": {
+      scope: "db",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/db.connectionRequest", ts: "ConnectionRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "db_query": {
+      scope: "db",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{ConnID string \"json:\\\"connId\\\"\"; SQL string \"json:\\\"sql\\\"\"; TimeoutMS *uint64 \"json:\\\"timeoutMs,omitempty\\\"\"}", ts: "{\n  connId: string;\n  sql: string;\n  timeoutMs?: number | null;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/db.QueryResult", ts: "QueryResult" },
     },
     "db_schemas": {
+      scope: "db",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/db.connectionRequest", ts: "ConnectionRequest" },
+      output: { go: "[]string", ts: "string[]" },
     },
     "db_tables": {
+      scope: "db",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/db.tablesRequest", ts: "TablesRequest" },
+      output: { go: "[]string", ts: "string[]" },
     },
     "desktop_tray_get": {
       nested: false,
@@ -1396,24 +1414,36 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.productionSettingsDTO", ts: "ProductionSettingsDTO" },
     },
     "redis_command": {
+      scope: "redis",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/db.redisCommandRequest", ts: "RedisCommandRequest" },
+      output: { go: "string", ts: "string" },
     },
     "redis_inspect": {
+      scope: "redis",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/db.redisKeyRequest", ts: "RedisKeyRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/db.RedisKeyView", ts: "RedisKeyView" },
     },
     "redis_scan": {
+      scope: "redis",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/db.redisScanRequest", ts: "RedisScanRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/db.RedisScanResult", ts: "[number, string[]]" },
     },
     "redis_set_ttl": {
+      scope: "redis",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/db.redisTTLRequest", ts: "RedisTTLRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "remote_account_admin_create_user": {
       scope: "remote",
@@ -2375,12 +2405,6 @@ export const ipcContractManifest = {
     "biometric_unlock",
     "command_count",
     "command_query",
-    "db_columns",
-    "db_connect",
-    "db_disconnect",
-    "db_query",
-    "db_schemas",
-    "db_tables",
     "desktop_tray_get",
     "desktop_tray_set",
     "forward_create",
@@ -2399,10 +2423,6 @@ export const ipcContractManifest = {
     "memory_index",
     "memory_settings_get",
     "memory_settings_set",
-    "redis_command",
-    "redis_inspect",
-    "redis_scan",
-    "redis_set_ttl",
     "session_connect",
     "session_connect_quick",
     "session_line_exec",
@@ -2639,6 +2659,34 @@ export interface IPCCommandTypeMap {
   "cron_unregister": {
     input: contractTypes.CronJobRequest;
     output: unknown;
+  };
+  "db_columns": {
+    input: contractTypes.ColumnsRequest;
+    output: contractTypes.TableDescribe;
+  };
+  "db_connect": {
+    input: contractTypes.ConnectRequest;
+    output: contractTypes.ConnectResult;
+  };
+  "db_disconnect": {
+    input: contractTypes.ConnectionRequest;
+    output: unknown;
+  };
+  "db_query": {
+    input: {
+  connId: string;
+  sql: string;
+  timeoutMs?: number | null;
+};
+    output: contractTypes.QueryResult;
+  };
+  "db_schemas": {
+    input: contractTypes.ConnectionRequest;
+    output: string[];
+  };
+  "db_tables": {
+    input: contractTypes.TablesRequest;
+    output: string[];
   };
   "docker_action": {
     input: {
@@ -3122,6 +3170,22 @@ export interface IPCCommandTypeMap {
   "production_settings_set": {
     input: contractTypes.ProductionSettingsUpdateRequest;
     output: contractTypes.ProductionSettingsDTO;
+  };
+  "redis_command": {
+    input: contractTypes.RedisCommandRequest;
+    output: string;
+  };
+  "redis_inspect": {
+    input: contractTypes.RedisKeyRequest;
+    output: contractTypes.RedisKeyView;
+  };
+  "redis_scan": {
+    input: contractTypes.RedisScanRequest;
+    output: [number, string[]];
+  };
+  "redis_set_ttl": {
+    input: contractTypes.RedisTTLRequest;
+    output: unknown;
   };
   "remote_account_admin_create_user": {
     input: contractTypes.RemoteAdminCreateUserRequest;

@@ -113,9 +113,9 @@ export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string
 fallbackModel?: string | null,
 maxTokens?: number | null, };
 
-export type QueryResultDto = { columns: Array<string>, rows: Array<Array<JsonValue>>, rowsAffected: number, durationMs: number, truncated: boolean, error: string | null, };
+export type QueryResultDto = { columns: Array<string>, rows: Array<Array<unknown>>, rowsAffected: number, durationMs: number, truncated: boolean, error: string | null, };
 
-export type RedisKeyViewDto = { key: string, keyType: string, ttl: number, value: JsonValue, };
+export type RedisKeyViewDto = { key: string, keyType: string, ttl: number, value: unknown, };
 
 export type ScreenSnapshotDto = { text: string, lines: Array<string>, cursorRow: number, cursorCol: number, cols: number, rows: number, altScreen: boolean, lastOutputMsAgo: number, };
 

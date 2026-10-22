@@ -137,6 +137,75 @@ func TestUnresolvedEmbeddedPointerRemainsUnknown(t *testing.T) {
 	}
 }
 
+func TestConsumerCommandInputProjectsDBQueryWithoutLimit(t *testing.T) {
+	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/db", "db")
+	request := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkg, "queryRequest", nil),
+		types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "ConnID", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "SQL", types.Typ[types.String], false),
+			types.NewField(token.NoPos, pkg, "Limit", types.NewPointer(types.Typ[types.Uint64]), false),
+			types.NewField(token.NoPos, pkg, "TimeoutMS", types.NewPointer(types.Typ[types.Uint64]), false),
+		}, []string{`json:"connId"`, `json:"sql"`, `json:"limit,omitempty"`, `json:"timeoutMs,omitempty"`}),
+		nil,
+	)
+	projected, err := projectConsumerCommandInput("db_query", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := newTypeRegistry().ref(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  connId: string;\n  sql: string;\n  timeoutMs?: number | null;\n}"
+	if reference.TS != want {
+		t.Fatalf("projected db_query input = %q, want %q", reference.TS, want)
+	}
+	if strings.Contains(reference.TS, "limit") {
+		t.Fatalf("db_query acquired a facade-inaccessible limit: %s", reference.TS)
+	}
+}
+
+func TestRedisScanResultUsesExactWireTuple(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		packagePath string
+		typeName    string
+		tuple       bool
+	}{
+		{name: "redis scan result", packagePath: "github.com/Hello-CTF/NexTerm/internal/db", typeName: "RedisScanResult", tuple: true},
+		{name: "same name elsewhere", packagePath: "example.com/db", typeName: "RedisScanResult"},
+		{name: "same package other type", packagePath: "github.com/Hello-CTF/NexTerm/internal/db", typeName: "OtherScanResult"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := types.NewPackage(test.packagePath, "db")
+			named := types.NewNamed(
+				types.NewTypeName(token.NoPos, pkg, test.typeName, nil),
+				types.NewStruct([]*types.Var{
+					types.NewField(token.NoPos, pkg, "Cursor", types.Typ[types.Uint64], false),
+					types.NewField(token.NoPos, pkg, "Keys", types.NewSlice(types.Typ[types.String]), false),
+				}, []string{"", ""}),
+				nil,
+			)
+			registry := newTypeRegistry()
+			reference, err := registry.ref(named)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.tuple {
+				if reference.TS != "[number, string[]]" || reference.Manifest != "[number, string[]]" {
+					t.Fatalf("RedisScanResult mapped to %+v, want wire tuple", reference)
+				}
+				if len(registry.declarations) != 0 {
+					t.Fatalf("RedisScanResult acquired a struct declaration: %+v", registry.declarations)
+				}
+			} else if reference.TS == "[number, string[]]" || reference.Manifest == "[number, string[]]" {
+				t.Fatalf("unrelated named type acquired the Redis wire tuple: %+v", reference)
+			}
+		})
+	}
+}
+
 func TestConsumerCommandInputProjectsOnlyRealFSReadFields(t *testing.T) {
 	pkg := types.NewPackage("github.com/Hello-CTF/NexTerm/internal/app/production", "production")
 	request := types.NewNamed(

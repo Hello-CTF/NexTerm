@@ -1010,24 +1010,21 @@ export interface TableDescribe {
 }
 
 export const dbApi = {
-  connect: (assetId: string) =>
-    call<{ connId: string }>("db_connect", { args: { assetId } }),
-  disconnect: (connId: string) => call<void>("db_disconnect", { connId }),
-  schemas: (connId: string) => call<string[]>("db_schemas", { connId }),
-  tables: (connId: string, schema?: string) =>
-    call<string[]>("db_tables", { connId, schema }),
+  connect: (assetId: string) => call("db_connect", { args: { assetId } }),
+  disconnect: (connId: string) => call("db_disconnect", { connId }) as Promise<void>,
+  schemas: (connId: string) => call("db_schemas", { connId }),
+  tables: (connId: string, schema?: string) => call("db_tables", { connId, schema }),
   columns: (connId: string, table: string, schema?: string) =>
-    call<TableDescribe>("db_columns", { connId, table, schema }),
+    call("db_columns", { connId, table, schema }) as Promise<TableDescribe>,
   query: (connId: string, sql: string, timeoutMs?: number) =>
-    call<QueryResult>("db_query", { connId, sql, timeoutMs }),
+    call("db_query", { connId, sql, timeoutMs }) as Promise<QueryResult>,
   redisScan: (connId: string, cursor?: number, pattern?: string, count?: number) =>
-    call<[number, string[]]>("redis_scan", { connId, cursor, pattern, count }),
+    call("redis_scan", { connId, cursor, pattern, count }),
   redisInspect: (connId: string, key: string) =>
-    call<import("./types").RedisKeyViewDto>("redis_inspect", { connId, key }),
-  redisCommand: (connId: string, args: string[]) =>
-    call<string>("redis_command", { connId, args }),
+    call("redis_inspect", { connId, key }) as Promise<import("./types").RedisKeyViewDto>,
+  redisCommand: (connId: string, args: string[]) => call("redis_command", { connId, args }),
   redisSetTtl: (connId: string, key: string, seconds: number) =>
-    call<void>("redis_set_ttl", { connId, key, seconds }),
+    call("redis_set_ttl", { connId, key, seconds }) as Promise<void>,
 };
 
 export interface ProviderConfig {

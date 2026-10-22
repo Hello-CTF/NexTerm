@@ -52,7 +52,7 @@ func TestGeneratedContractMetadata(t *testing.T) {
 	if got := typeIdentifier(commands["fs_cancel"].Input); got != "github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest" {
 		t.Fatalf("fs_cancel input = %q", got)
 	}
-	for _, name := range []string{"app_platform", "db_connect"} {
+	for _, name := range []string{"app_platform"} {
 		if legacy, ok := commands[name]; !ok || legacy.Input != nil || legacy.Scope != "" {
 			t.Fatalf("legacy command %q must have a name without DTO metadata: %+v", name, legacy)
 		}
@@ -968,6 +968,121 @@ func TestDockerVerticalContracts(t *testing.T) {
 		if entry := manifest[start : start+end]; !strings.Contains(entry, `streamPayload: "unknown"`) {
 			t.Fatalf("%s stream payload must remain unknown:\n%s", name, entry)
 		}
+	}
+}
+
+func TestDBRedisVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	queryInput := "{\n  connId: string;\n  sql: string;\n  timeoutMs?: number | null;\n}"
+	tests := []struct {
+		name   string
+		scope  string
+		nested bool
+		input  string
+		output string
+	}{
+		{name: "db_connect", scope: "db", nested: true, input: "ConnectRequest", output: "ConnectResult"},
+		{name: "db_disconnect", scope: "db", input: "ConnectionRequest", output: "unknown"},
+		{name: "db_schemas", scope: "db", input: "ConnectionRequest", output: "string[]"},
+		{name: "db_tables", scope: "db", input: "TablesRequest", output: "string[]"},
+		{name: "db_columns", scope: "db", input: "ColumnsRequest", output: "TableDescribe"},
+		{name: "db_query", scope: "db", input: queryInput, output: "QueryResult"},
+		{name: "redis_scan", scope: "redis", input: "RedisScanRequest", output: "[number, string[]]"},
+		{name: "redis_inspect", scope: "redis", input: "RedisKeyRequest", output: "RedisKeyView"},
+		{name: "redis_command", scope: "redis", input: "RedisCommandRequest", output: "string"},
+		{name: "redis_set_ttl", scope: "redis", input: "RedisTTLRequest", output: "unknown"},
+	}
+	selected := make(map[string]bool, len(tests))
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != test.scope || command.Nested != test.nested {
+				t.Fatalf("metadata = scope:%q nested:%t, want scope:%q nested:%t", command.Scope, command.Nested, test.scope, test.nested)
+			}
+			if command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected channel/stream metadata: %+v", command)
+			}
+			if command.Input == nil || command.Output == nil {
+				t.Fatalf("selected command must carry input/output DTO metadata: %+v", command)
+			}
+			if got := typeIdentifier(command.Input); got == "In" || got == "Out" {
+				t.Fatalf("generic wrapper type %q leaked into input", got)
+			}
+			if got := typeIdentifier(command.Output); got == "In" || got == "Out" {
+				t.Fatalf("generic wrapper type %q leaked into output", got)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input {
+				t.Fatalf("input = %q, want %q", input.TS, test.input)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output.TS != test.output {
+				t.Fatalf("output = %q, want %q", output.TS, test.output)
+			}
+			selected[test.name] = true
+		})
+	}
+	if len(selected) != 10 {
+		t.Fatalf("selected DB/Redis command count = %d, want 10", len(selected))
+	}
+	for name, command := range commands {
+		inventory := strings.HasPrefix(name, "db_") || strings.HasPrefix(name, "redis_")
+		if inventory && !selected[name] {
+			t.Errorf("command %q is missing from the DB/Redis vertical inventory", name)
+		}
+		if (command.Scope == "db" || command.Scope == "redis") && !selected[name] {
+			t.Errorf("unexpected command %q joined the DB/Redis vertical scopes", name)
+		}
+	}
+
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	declarationTests := []struct {
+		name   string
+		want   []string
+		absent []string
+	}{
+		{name: "QueryResult", want: []string{"columns: string[];", "rows: unknown[][];", "rowsAffected: number;", "durationMs: number;", "truncated: boolean;", "error: string | null;"}},
+		{name: "TableColumn", want: []string{"default: string | null;"}, absent: []string{"default?:"}},
+		{name: "RedisKeyView", want: []string{"keyType: string;", "ttl: number;", "value: unknown;"}},
+		{name: "TablesRequest", want: []string{"schema?: string;"}, absent: []string{"schema?: string | null;"}},
+		{name: "ColumnsRequest", want: []string{"schema?: string;", "table: string;"}, absent: []string{"schema?: string | null;"}},
+		{name: "RedisScanRequest", want: []string{"cursor?: number | null;", "pattern?: string | null;", "count?: number | null;"}},
+		{name: "RedisCommandRequest", want: []string{"connId: string;", "args: string[];"}},
+		{name: "RedisTTLRequest", want: []string{"key: string;", "seconds: number;"}},
+	}
+	for _, test := range declarationTests {
+		declaration := declarations[test.name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", test.name)
+			continue
+		}
+		for _, want := range test.want {
+			if !strings.Contains(declaration.Body, want) {
+				t.Errorf("%s declaration is missing %q:\n%s", test.name, want, declaration.Body)
+			}
+		}
+		for _, absent := range test.absent {
+			if strings.Contains(declaration.Body, absent) {
+				t.Errorf("%s declaration unexpectedly exposes %q:\n%s", test.name, absent, declaration.Body)
+			}
+		}
+	}
+	if declaration := registry.declarations[typeIdentifier(commands["redis_scan"].Output)]; declaration != nil {
+		t.Fatalf("RedisScanResult must use its wire tuple, not a struct declaration: %+v", declaration)
 	}
 }
 

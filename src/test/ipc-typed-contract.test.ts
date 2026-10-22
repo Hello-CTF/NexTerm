@@ -776,6 +776,103 @@ void generatedOutputs;
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
 
+  it("types database and Redis without widening query limits or dynamic JSON", () => {
+    const probe = resolve("src/test/__ipc_db_redis_vertical_contract_probe.ts");
+    const source = `
+import { call, dbApi, type QueryResult, type TableDescribe } from "../ipc/commands";
+import type { IPCInput, IPCOutput } from "../ipc/generated/manifest";
+import type { QueryResultDto, RedisKeyViewDto } from "../ipc/types";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+const disconnectUnknown: Assert<Equal<IPCOutput<"db_disconnect">, unknown>> = true;
+const ttlUnknown: Assert<Equal<IPCOutput<"redis_set_ttl">, unknown>> = true;
+const rowsUnknown: Assert<Equal<IPCOutput<"db_query">["rows"][number][number], unknown>> = true;
+const redisValueUnknown: Assert<Equal<IPCOutput<"redis_inspect">["value"], unknown>> = true;
+const scanTuple: Assert<Equal<IPCOutput<"redis_scan">, [number, string[]]>> = true;
+const tableSchema: Assert<Equal<IPCInput<"db_tables">["schema"], string | undefined>> = true;
+const columnSchema: Assert<Equal<IPCInput<"db_columns">["schema"], string | undefined>> = true;
+const queryTimeout: Assert<Equal<IPCInput<"db_query">["timeoutMs"], number | null | undefined>> = true;
+const scanCursor: Assert<Equal<IPCInput<"redis_scan">["cursor"], number | null | undefined>> = true;
+const scanPattern: Assert<Equal<IPCInput<"redis_scan">["pattern"], string | null | undefined>> = true;
+const scanCount: Assert<Equal<IPCInput<"redis_scan">["count"], number | null | undefined>> = true;
+const columnDefault: Assert<Equal<IPCOutput<"db_columns">["columns"][number]["default"], string | null>> = true;
+const queryError: Assert<Equal<IPCOutput<"db_query">["error"], string | null>> = true;
+const manualRowsUnknown: Assert<Equal<QueryResultDto["rows"][number][number], unknown>> = true;
+const manualRedisUnknown: Assert<Equal<RedisKeyViewDto["value"], unknown>> = true;
+void [disconnectUnknown, ttlUnknown, rowsUnknown, redisValueUnknown, scanTuple, tableSchema, columnSchema, queryTimeout, scanCursor, scanPattern, scanCount, columnDefault, queryError, manualRowsUnknown, manualRedisUnknown];
+
+const connected: Promise<{ connId: string }> = dbApi.connect("asset-1");
+const disconnected: Promise<void> = dbApi.disconnect("conn-1");
+const schemas: Promise<string[]> = dbApi.schemas("conn-1");
+const tables: Promise<string[]> = dbApi.tables("conn-1", "");
+const columns: Promise<TableDescribe> = dbApi.columns("conn-1", "orders", "");
+const queried: Promise<QueryResult> = dbApi.query("conn-1", "SELECT 1", 0);
+const scanned: Promise<[number, string[]]> = dbApi.redisScan("conn-1", 0, "", 0);
+const inspected: Promise<RedisKeyViewDto> = dbApi.redisInspect("conn-1", "");
+const command: Promise<string> = dbApi.redisCommand("conn-1", ["SET", "key", ""]);
+const ttl: Promise<void> = dbApi.redisSetTtl("conn-1", "", 0);
+void [connected, disconnected, schemas, tables, columns, queried, scanned, inspected, command, ttl];
+
+void call("db_connect", { args: { assetId: "" } });
+void call("db_disconnect", { connId: "conn-1" });
+void call("db_schemas", { connId: "conn-1" });
+void call("db_tables", { connId: "conn-1", schema: "" });
+void call("db_columns", { connId: "conn-1", table: "orders", schema: "" });
+void call("db_query", { connId: "conn-1", sql: "SELECT 1", timeoutMs: 0 });
+void call("db_query", { connId: "conn-1", sql: "SELECT 1", timeoutMs: null });
+void call("redis_scan", { connId: "conn-1", cursor: 0, pattern: "", count: 0 });
+void call("redis_scan", { connId: "conn-1", cursor: null, pattern: null, count: null });
+void call("redis_inspect", { connId: "conn-1", key: "" });
+void call("redis_command", { connId: "conn-1", args: ["SET", "key", ""] });
+void call("redis_set_ttl", { connId: "conn-1", key: "", seconds: 0 });
+
+// @ts-expect-error typed database commands reject the legacy generic output escape
+void call<QueryResult>("db_query", { connId: "conn-1", sql: "SELECT 1" });
+// @ts-expect-error only db_connect uses a nested envelope
+void call("db_connect", { assetId: "asset-1" });
+// @ts-expect-error table schema is optional but not nullable
+void call("db_tables", { connId: "conn-1", schema: null });
+// @ts-expect-error column schema is optional but not nullable
+void call("db_columns", { connId: "conn-1", table: "orders", schema: null });
+// @ts-expect-error the backend limit is deliberately absent from the consumer projection
+void call("db_query", { connId: "conn-1", sql: "SELECT 1", limit: 10 });
+// @ts-expect-error Redis args are a flat request field, not a nested envelope
+void call("redis_command", { args: { connId: "conn-1", args: ["PING"] } });
+// @ts-expect-error Redis cursor remains numeric
+void call("redis_scan", { connId: "conn-1", cursor: "0" });
+// @ts-expect-error the query facade does not widen its optional timeout to null
+void dbApi.query("conn-1", "SELECT 1", null);
+// @ts-expect-error the Redis scan facade does not widen optional fields to null
+void dbApi.redisScan("conn-1", null);
+// @ts-expect-error the table facade keeps schema non-nullable
+void dbApi.tables("conn-1", null);
+
+async function generatedOutputs() {
+  const result = await call("db_query", { connId: "conn-1", sql: "SELECT 1" });
+  const cell: unknown = result.rows[0][0];
+  const truncated: boolean = result.truncated;
+  const rowsAffected: number = result.rowsAffected;
+  const queryError: string | null = result.error;
+  // @ts-expect-error dynamic query cells require runtime narrowing
+  const cellText: string = result.rows[0][0];
+  const view = await call("redis_inspect", { connId: "conn-1", key: "key" });
+  const value: unknown = view.value;
+  // @ts-expect-error dynamic Redis JSON requires runtime narrowing
+  const valueText: string = view.value;
+  const [cursor, keys] = await call("redis_scan", { connId: "conn-1" });
+  const nextCursor: number = cursor;
+  const scannedKeys: string[] = keys;
+  void [cell, truncated, rowsAffected, queryError, cellText, value, valueText, nextCursor, scannedKeys];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
   it("types the consumer-priority session terminal vertical without narrowing legacy fallbacks", () => {
     const probe = resolve("src/test/__ipc_session_terminal_contract_probe.ts");
     const source = `

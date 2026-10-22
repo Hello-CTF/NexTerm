@@ -83,6 +83,8 @@ var contractScopes = []scopeSpec{
 	{name: "ai-skills", prefixes: []string{"ai_skills_"}},
 	{name: "ai-grant", prefixes: []string{"ai_grant_"}},
 	{name: "docker", prefixes: []string{"docker_"}},
+	{name: "db", prefixes: []string{"db_"}},
+	{name: "redis", prefixes: []string{"redis_"}},
 	{name: "fs", prefixes: []string{"fs_"}},
 	{name: "local-file", prefixes: []string{"local_file_", "local_folder_"}},
 	{name: "mount", prefixes: []string{"mount_"}},
@@ -231,37 +233,65 @@ func extractContracts(loaded []*packages.Package) ([]commandContract, error) {
 			var extractionErr error
 			ast.Inspect(file, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
-				if !ok || len(call.Args) != 3 {
+				if !ok || (len(call.Args) != 3 && len(call.Args) != 4) {
 					return true
 				}
-				registration := registrationName(pkg, call)
-				if registration == "" {
+				registration := ""
+				var names []string
+				nested := false
+				wrapped := false
+				handlerIndex := 2
+				inputIndex := 2
+				parameterCount := 3
+				if len(call.Args) == 3 {
+					registration = registrationName(pkg, call)
+					if registration != "" {
+						names = commandNames(pkg, call.Args[1], loaded, declarations, nil)
+						nested = registration == "RegisterNested"
+					}
+				} else {
+					var name string
+					name, nested, wrapped = databaseCommandRegistration(pkg, call)
+					if wrapped {
+						if name != "" {
+							names = []string{name}
+						}
+						handlerIndex = 3
+						inputIndex = 1
+						parameterCount = 2
+					}
+				}
+				if registration == "" && !wrapped {
 					return true
 				}
-				names := commandNames(pkg, call.Args[1], loaded, declarations, nil)
 				if len(names) == 0 {
 					extractionErr = fmt.Errorf("non-constant IPC command registration at %s", pkg.Fset.Position(call.Args[1].Pos()))
 					return false
 				}
 				for _, name := range names {
+					if registration != "" && pkg.PkgPath == "github.com/Hello-CTF/NexTerm/internal/db" {
+						if _, ok := nestedOverrides[name]; ok {
+							continue
+						}
+					}
 					scope, selected := selectedScope(name)
-					usage := inspectChannelUsage(pkg, call.Args[2], declarations)
-					nested := registration == "RegisterNested"
+					usage := inspectChannelUsage(pkg, call.Args[handlerIndex], declarations)
+					commandNested := nested
 					if override, ok := nestedOverrides[name]; ok {
-						nested = override
+						commandNested = override
 					}
 					contract := commandContract{
-						Name: name, Nested: nested,
+						Name: name, Nested: commandNested,
 						Channel: usage.channel, Stream: streamKind(usage),
 					}
 					if selected {
-						signature, ok := pkg.TypesInfo.TypeOf(call.Args[2]).Underlying().(*types.Signature)
-						if !ok || signature.Params().Len() != 3 || signature.Results().Len() != 2 {
+						signature, ok := pkg.TypesInfo.TypeOf(call.Args[handlerIndex]).Underlying().(*types.Signature)
+						if !ok || signature.Params().Len() != parameterCount || signature.Results().Len() != 2 {
 							commandsByName[name] = commandContract{Name: name, Scope: "invalid"}
 							continue
 						}
 						contract.Scope = scope
-						input, err := projectConsumerCommandInput(name, signature.Params().At(2).Type())
+						input, err := projectConsumerCommandInput(name, signature.Params().At(inputIndex).Type())
 						if err != nil {
 							extractionErr = fmt.Errorf("project %s input: %w", name, err)
 							return false
@@ -369,6 +399,22 @@ func resolveConsumerCommandOutputType(identifier string, loaded []*packages.Pack
 	return nil, fmt.Errorf("output type package %s is not loaded", packagePath)
 }
 
+func databaseCommandRegistration(pkg *packages.Package, call *ast.CallExpr) (string, bool, bool) {
+	if pkg.PkgPath != "github.com/Hello-CTF/NexTerm/internal/db" || len(call.Args) != 4 {
+		return "", false, false
+	}
+	function := calledFunction(pkg, call.Fun)
+	if function == nil || function.Name() != "registerCommand" || function.Pkg() == nil ||
+		function.Pkg().Path() != "github.com/Hello-CTF/NexTerm/internal/db" {
+		return "", false, false
+	}
+	value := pkg.TypesInfo.Types[call.Args[2]].Value
+	if value == nil || value.Kind() != constant.Bool {
+		return "", false, false
+	}
+	return commandName(pkg, call.Args[1]), constant.BoolVal(value), true
+}
+
 func registrationNestedOverrides(loaded []*packages.Package) map[string]bool {
 	overrides := make(map[string]bool)
 	for _, pkg := range loaded {
@@ -378,17 +424,12 @@ func registrationNestedOverrides(loaded []*packages.Package) map[string]bool {
 		for _, file := range pkg.Syntax {
 			ast.Inspect(file, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
-				if !ok || len(call.Args) != 4 {
+				if !ok {
 					return true
 				}
-				function := calledFunction(pkg, call.Fun)
-				if function == nil || function.Name() != "registerCommand" {
-					return true
-				}
-				name := commandName(pkg, call.Args[1])
-				value := pkg.TypesInfo.Types[call.Args[2]].Value
-				if name != "" && value != nil && value.Kind() == constant.Bool {
-					overrides[name] = constant.BoolVal(value)
+				name, nested, ok := databaseCommandRegistration(pkg, call)
+				if ok && name != "" {
+					overrides[name] = nested
 				}
 				return true
 			})
