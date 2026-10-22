@@ -1,12 +1,14 @@
 package ssh
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,6 +145,102 @@ func TestInspectExecutableRejectsManifestArchitectureMismatch(t *testing.T) {
 	}
 	if _, err := InspectExecutable(path); !errors.Is(err, ErrTrust) {
 		t.Fatalf("architecture mismatch = %v, want trust failure", err)
+	}
+}
+
+func buildVersionedInspectionBinary(t *testing.T, version string) string {
+	t.Helper()
+	const module = "example.invalid/inspection"
+	directory := t.TempDir()
+	proxyRoot := filepath.Join(directory, "proxy")
+	versions := filepath.Join(proxyRoot, module, "@v")
+	if err := os.MkdirAll(versions, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	goMod := []byte("module " + module + "\n\ngo 1.26\n")
+	if err := os.WriteFile(filepath.Join(versions, version+".mod"), goMod, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info := fmt.Sprintf(`{"Version":%q,"Time":"2024-01-01T00:00:00Z"}`, version)
+	if err := os.WriteFile(filepath.Join(versions, version+".info"), []byte(info), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versions, "list"), []byte(version+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := os.Create(filepath.Join(versions, version+".zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zipWriter := zip.NewWriter(archive)
+	for _, entry := range []struct {
+		name string
+		body []byte
+	}{
+		{name: "go.mod", body: goMod},
+		{name: "main.go", body: []byte("package main\nfunc main() {}\n")},
+	} {
+		writer, err := zipWriter.Create(module + "@" + version + "/" + entry.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write(entry.body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(directory, "bin")
+	if err := os.Mkdir(output, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	proxyURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(proxyRoot)}).String()
+	command := exec.Command("go", "install", module+"@"+version)
+	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=-buildvcs=false", "GOBIN="+output, "GOPROXY="+proxyURL, "GOSUMDB=off", "GOWORK=off")
+	if raw, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build versioned binary through local module proxy: %v: %s", err, raw)
+	}
+	name := "inspection"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(output, name)
+}
+
+func TestInspectExecutableRejectsManifestVersionConflict(t *testing.T) {
+	path := buildVersionedInspectionBinary(t, "v1.2.3")
+	source, err := InspectExecutable(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Version != "v1.2.3" {
+		t.Fatalf("build-info version = %q, want v1.2.3", source.Version)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := map[string]any{
+		"schema_version": 1,
+		"kind":           "go-binary",
+		"version":        "v9.9.9",
+		"platform":       map[string]any{"os": runtime.GOOS, "arch": runtime.GOARCH, "cgo": "0"},
+		"artifact":       map[string]any{"size_bytes": info.Size(), "sha256": source.Digest},
+	}
+	raw, _ := json.Marshal(manifest)
+	if err := os.WriteFile(path+".manifest.json", raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = InspectExecutable(path)
+	if err == nil {
+		t.Fatal("conflicting build-info and manifest versions were accepted")
+	}
+	if !errors.Is(err, ErrTrust) || !strings.Contains(err.Error(), "version") {
+		t.Fatalf("conflicting build-info and manifest versions = %v, want trust conflict", err)
 	}
 }
 

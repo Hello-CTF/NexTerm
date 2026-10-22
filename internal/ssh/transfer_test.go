@@ -174,6 +174,9 @@ func TestFallbackHostOnlyRetriesUnavailableSFTP(t *testing.T) {
 		{name: "trust", err: ErrTrust},
 		{name: "cancellation", err: context.Canceled},
 		{name: "disconnect", err: base.ErrDisconnected},
+		{name: "wrapped EOF", err: fmt.Errorf("request SFTP subsystem: %w", io.EOF)},
+		{name: "wrapped network closed", err: fmt.Errorf("request SFTP subsystem: %w", net.ErrClosed)},
+		{name: "subsystem negotiation reset", err: errors.New("request SFTP subsystem: connection reset by peer")},
 		{name: "generic failure", err: errors.New("SFTP write failed")},
 	} {
 		t.Run(test.name, func(t *testing.T) {

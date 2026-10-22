@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -199,6 +203,37 @@ func TestLaunchCommandsDoNotAssumeSetsidOnMacOSOrWindows(t *testing.T) {
 		if !strings.Contains(script, fragment) {
 			t.Fatalf("Windows launch script lacks %q: %s", fragment, script)
 		}
+	}
+}
+
+func TestDarwinLaunchCommandHostShell(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS host-shell regression")
+	}
+	directory := t.TempDir()
+	stateDir := filepath.Join(directory, "daemon state")
+	helper := filepath.Join(directory, "helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := Target{GOOS: "darwin", GOARCH: runtime.GOARCH}
+	command, err := target.LaunchCommand(helper, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	process := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	process.WaitDelay = time.Second
+	if output, err := process.CombinedOutput(); err != nil {
+		t.Fatalf("Darwin launch failed through host shell: %v: %s", err, output)
+	}
+	info, err := os.Stat(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("state directory mode = %o, want 700", got)
 	}
 }
 

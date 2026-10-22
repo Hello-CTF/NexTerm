@@ -218,8 +218,12 @@ func applyExecutableManifest(source *UploadSource, size int64) error {
 	if manifestCommit != "" {
 		source.Commit = manifestCommit
 	}
-	if version := strings.TrimSpace(manifest.Version); version != "" {
-		source.Version = version
+	manifestVersion := strings.TrimSpace(manifest.Version)
+	if source.Version != "" && manifestVersion != "" && source.Version != manifestVersion {
+		return fmt.Errorf("%w: executable manifest version %q conflicts with Go build metadata %q", ErrTrust, manifestVersion, source.Version)
+	}
+	if manifestVersion != "" {
+		source.Version = manifestVersion
 	}
 	source.ManifestPath = manifestPath
 	return nil

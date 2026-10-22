@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -73,8 +74,9 @@ func transferError(stage TransferStage, path string, cause error) error {
 func IsSFTPUnavailable(err error) bool {
 	if err == nil || errors.Is(err, fs.ErrPermission) || errors.Is(err, ErrNoExec) ||
 		errors.Is(err, ErrProtocol) || errors.Is(err, ErrTrust) || errors.Is(err, ErrDigestMismatch) ||
-		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, base.ErrDisconnected) || errors.Is(err, base.ErrClosed) || errors.Is(err, base.ErrExitStatusMissing) {
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, base.ErrDisconnected) || errors.Is(err, base.ErrClosed) ||
+		errors.Is(err, base.ErrExitStatusMissing) {
 		return false
 	}
 	if errors.Is(err, ErrSFTPUnavailable) || errors.Is(err, base.ErrUnsupported) {
@@ -86,8 +88,7 @@ func IsSFTPUnavailable(err error) bool {
 			return false
 		}
 	}
-	return strings.Contains(message, "request sftp subsystem") ||
-		strings.Contains(message, "ssh: subsystem request failed") ||
+	return strings.Contains(message, "ssh: subsystem request failed") ||
 		strings.Contains(message, "sftp subsystem") && strings.Contains(message, "unavailable")
 }
 

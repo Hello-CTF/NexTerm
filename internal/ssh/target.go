@@ -312,11 +312,13 @@ func (t Target) LaunchCommand(binary, stateDir string) (string, error) {
 	}
 	if t.GOOS != "windows" {
 		launcher := "setsid"
+		chmodCommand := "chmod 700 -- "
 		if t.GOOS == "darwin" {
 			launcher = "nohup"
+			chmodCommand = "chmod 700 "
 		}
 		logPath := remoteTargetJoin(t, stateDir, "helper.log")
-		return "mkdir -p -- " + quoteShell(stateDir) + " && chmod 700 -- " + quoteShell(stateDir) +
+		return "mkdir -p -- " + quoteShell(stateDir) + " && " + chmodCommand + quoteShell(stateDir) +
 			" && { " + launcher + " " + quoteShell(binary) + " " + supervisor.HelperCommand + " --state-dir " + quoteShell(stateDir) +
 			" >>" + quoteShell(logPath) + " 2>&1 </dev/null & }", nil
 	}
