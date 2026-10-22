@@ -755,8 +755,8 @@ describe("desktop platform, update and biometric facade IPC contracts", () => {
       { command: "app_restart", payload: null, invoke: async () => expect(await appUpdateApi.restart()).toEqual(restartResult) },
       { command: "biometric_status", payload: null, invoke: () => biometricApi.status() },
       { command: "biometric_unlock", payload: null, invoke: () => biometricApi.unlock() },
-      { command: "biometric_enable", payload: { password: "master-password" }, invoke: async () => expect(await biometricApi.enable("master-password")).toBeUndefined() },
-      { command: "biometric_disable", payload: null, invoke: async () => expect(await biometricApi.disable()).toBeUndefined() },
+      { command: "biometric_enable", payload: { password: "master-password" }, invoke: async () => expect(await biometricApi.enable("master-password")).toBeNull() },
+      { command: "biometric_disable", payload: null, invoke: async () => expect(await biometricApi.disable()).toBeNull() },
     ];
 
     expect(cases).toHaveLength(11);

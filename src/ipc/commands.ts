@@ -216,8 +216,8 @@ export interface BiometricUnlockResult {
 export const biometricApi = {
   status: (): Promise<BiometricStatus> => call("biometric_status"),
   unlock: (): Promise<BiometricUnlockResult> => call("biometric_unlock"),
-  enable: (password: string) => ignoreResult(call("biometric_enable", { password })),
-  disable: () => ignoreResult(call("biometric_disable")),
+  enable: (password: string): Promise<void> => call("biometric_enable", { password }) as Promise<void>,
+  disable: (): Promise<void> => call("biometric_disable") as Promise<void>,
 };
 
 import type { UpdateResultDto, UpdateStatusDto } from "./types";
