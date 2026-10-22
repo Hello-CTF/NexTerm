@@ -217,6 +217,69 @@ describe("remote desktop facade IPC contracts", () => {
   });
 });
 
+describe("sync vertical facade IPC contracts", () => {
+  it("preserves the exact envelopes for all 22 newly typed commands and both link-set facades", async () => {
+    const calls = captureRpc();
+    const { syncApi } = await import("../ipc/commands");
+    const { remoteLinkApi } = await import("../ipc/remoteApi");
+    const bundle = { protocol: 1, origin: "desktop", exportedAt: 10, groups: [], assets: [], creds: [] };
+    const linkPatch = { url: "https://sync.example.com", username: "alice", password: "login-password", insecure: false };
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "sync_digest", payload: null, invoke: () => syncApi.digest() },
+      { command: "sync_export", payload: { assetIds: ["asset-1"], withCreds: true }, invoke: () => syncApi.exportAssets(["asset-1"], true) },
+      { command: "sync_import", payload: { bundle, force: false }, invoke: () => syncApi.importBundle(bundle, false) },
+      { command: "sync_bundle_read", payload: { path: "/tmp/sync-bundle.nex", password: "bundle-password" }, invoke: () => syncApi.readBundleFile("/tmp/sync-bundle.nex", "bundle-password") },
+      { command: "sync_bundle_write", payload: { path: "/tmp/sync-bundle.nex", content: "encrypted-bundle-content", password: "bundle-password" }, invoke: () => syncApi.writeBundleFile("/tmp/sync-bundle.nex", "encrypted-bundle-content", "bundle-password") },
+      { command: "sync_link_get", payload: null, invoke: () => syncApi.linkGet() },
+      { command: "sync_link_set", payload: linkPatch, invoke: () => syncApi.linkSet(linkPatch) },
+      { command: "sync_link_set", payload: linkPatch, invoke: () => remoteLinkApi.linkSet(linkPatch) },
+      { command: "sync_status", payload: null, invoke: () => syncApi.status() },
+      { command: "sync_wake", payload: null, invoke: () => syncApi.wake() },
+      { command: "sync_apply_objects", payload: { objects: [{ id: "object-1", kind: "preference", payload: { nested: [1, true, null] } }] }, invoke: () => syncApi.applyObjects([{ id: "object-1", kind: "preference", payload: { nested: [1, true, null] } }]) },
+      { command: "sync_collect_assets", payload: { includeDeleted: true, afterId: "asset-1", limit: 64 }, invoke: () => syncApi.collectAssets(true, "asset-1", 64) },
+      { command: "sync_collect_tombstones", payload: { afterId: "tombstone-1", limit: 32 }, invoke: () => syncApi.collectTombstones("tombstone-1", 32) },
+      { command: "sync_collect_credentials", payload: { revealSecrets: true, afterId: "credential-1", limit: 16 }, invoke: () => syncApi.collectCredentials(true, "credential-1", 16) },
+      { command: "sync_collect_known_hosts", payload: { afterId: "host-1", limit: 8 }, invoke: () => syncApi.collectKnownHosts("host-1", 8) },
+      { command: "sync_collect_ai_profiles", payload: { revealSecrets: true, afterId: "profile-1", limit: 4 }, invoke: () => syncApi.collectAIProfiles(true, "profile-1", 4) },
+      { command: "sync_collect_ai_permission", payload: null, invoke: () => syncApi.collectAIPermission() },
+      { command: "sync_collect_ai_grants", payload: null, invoke: () => syncApi.collectAIGrants() },
+      { command: "sync_collect_preferences", payload: null, invoke: () => syncApi.collectPreferences() },
+      { command: "sync_preferences_get", payload: null, invoke: () => syncApi.preferencesGet() },
+      { command: "sync_preferences_set", payload: { set: { theme: "dark", "custom.nested": { enabled: true } } }, invoke: () => syncApi.preferencesUpdate({ set: { theme: "dark", "custom.nested": { enabled: true } } }) },
+      { command: "sync_kind_opt_in_get", payload: null, invoke: () => syncApi.kindOptInGet() },
+      { command: "sync_kind_opt_in_set", payload: { knownHost: true, aiProfile: false }, invoke: () => syncApi.kindOptInSet({ knownHost: true, aiProfile: false }) },
+    ];
+
+    expect(cases).toHaveLength(23);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(23);
+  });
+
+  it("preserves optional omission for links, bundle passwords and scoped preference updates", async () => {
+    const calls = captureRpc();
+    const { syncApi } = await import("../ipc/commands");
+    const { remoteLinkApi } = await import("../ipc/remoteApi");
+
+    await syncApi.linkSet({ username: "alice" });
+    await remoteLinkApi.linkSet({ password: "updated-password" });
+    await syncApi.readBundleFile("/tmp/sync-bundle.nex");
+    await syncApi.writeBundleFile("/tmp/sync-bundle.nex", "bundle-content");
+    await syncApi.preferencesUpdate({ clear: ["theme"] });
+    await syncApi.kindOptInSet({ knownHost: false });
+
+    expect(calls).toHaveLength(6);
+    expectManifestEnvelope(calls[0], "sync_link_set", { username: "alice" });
+    expectManifestEnvelope(calls[1], "sync_link_set", { password: "updated-password" });
+    expectManifestEnvelope(calls[2], "sync_bundle_read", { path: "/tmp/sync-bundle.nex" });
+    expectManifestEnvelope(calls[3], "sync_bundle_write", { path: "/tmp/sync-bundle.nex", content: "bundle-content" });
+    expectManifestEnvelope(calls[4], "sync_preferences_set", { clear: ["theme"] });
+    expectManifestEnvelope(calls[5], "sync_kind_opt_in_set", { knownHost: false });
+  });
+});
+
 describe("cron IPC wire contract", () => {
   it("uses the generated flat envelope for cron_register", async () => {
     const calls = captureRpc();

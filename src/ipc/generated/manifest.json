@@ -1376,56 +1376,67 @@
       "stream": "none"
     },
     "sync_apply_objects": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_bundle_read": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_bundle_write": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_collect_ai_grants": {
+      "scope": "sync",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "sync_collect_ai_permission": {
+      "scope": "sync",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "sync_collect_ai_profiles": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_collect_assets": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_collect_credentials": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_collect_known_hosts": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_collect_preferences": {
+      "scope": "sync",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "sync_collect_tombstones": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -1437,31 +1448,37 @@
       "stream": "none"
     },
     "sync_digest": {
+      "scope": "sync",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "sync_export": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_import": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_kind_opt_in_get": {
+      "scope": "sync",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "sync_kind_opt_in_set": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_link_get": {
+      "scope": "sync",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1479,16 +1496,19 @@
       "stream": "none"
     },
     "sync_link_set": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "sync_preferences_get": {
+      "scope": "sync",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "sync_preferences_set": {
+      "scope": "sync",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -1500,11 +1520,13 @@
       "stream": "none"
     },
     "sync_status": {
+      "scope": "sync",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "sync_wake": {
+      "scope": "sync",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1939,28 +1961,6 @@
     "snippet_update",
     "ssh_import_apply",
     "ssh_import_preview",
-    "sync_apply_objects",
-    "sync_bundle_read",
-    "sync_bundle_write",
-    "sync_collect_ai_grants",
-    "sync_collect_ai_permission",
-    "sync_collect_ai_profiles",
-    "sync_collect_assets",
-    "sync_collect_credentials",
-    "sync_collect_known_hosts",
-    "sync_collect_preferences",
-    "sync_collect_tombstones",
-    "sync_digest",
-    "sync_export",
-    "sync_import",
-    "sync_kind_opt_in_get",
-    "sync_kind_opt_in_set",
-    "sync_link_get",
-    "sync_link_set",
-    "sync_preferences_get",
-    "sync_preferences_set",
-    "sync_status",
-    "sync_wake",
     "system_insets",
     "terminal_attach_tab",
     "terminal_claim",

@@ -1569,59 +1569,92 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "sync_apply_objects": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ApplyObjectsRequest", ts: "ApplyObjectsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ApplyObjectsResult", ts: "ApplyObjectsResult" },
     },
     "sync_bundle_read": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.BundleFileRequest", ts: "BundleFileRequest" },
+      output: { go: "string", ts: "string" },
     },
     "sync_bundle_write": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.BundleFileRequest", ts: "BundleFileRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.BundleWriteResult", ts: "BundleWriteResult | null" },
     },
     "sync_collect_ai_grants": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectAIGrants", ts: "CollectAIGrants" },
     },
     "sync_collect_ai_permission": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectAIPermission", ts: "CollectAIPermission" },
     },
     "sync_collect_ai_profiles": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectAIProfilesRequest", ts: "CollectAIProfilesRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectAIProfilesResult", ts: "CollectAIProfilesResult" },
     },
     "sync_collect_assets": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectAssetsRequest", ts: "CollectAssetsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectAssetsResult", ts: "CollectAssetsResult" },
     },
     "sync_collect_credentials": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectCredentialsRequest", ts: "CollectCredentialsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectCredentialsResult", ts: "CollectCredentialsResult" },
     },
     "sync_collect_known_hosts": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectKnownHostsRequest", ts: "CollectKnownHostsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectKnownHostsResult", ts: "CollectKnownHostsResult" },
     },
     "sync_collect_preferences": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/sync.CollectPreference", ts: "CollectPreference[]" },
     },
     "sync_collect_tombstones": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectTombstonesRequest", ts: "CollectTombstonesRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectTombstonesResult", ts: "CollectTombstonesResult" },
     },
     "sync_compare": {
       scope: "sync",
@@ -1632,34 +1665,52 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CompareResult", ts: "CompareResult" },
     },
     "sync_digest": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.SyncDigest", ts: "SyncDigest" },
     },
     "sync_export": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ExportBundleRequest", ts: "ExportBundleRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.SyncBundle", ts: "SyncBundle" },
     },
     "sync_import": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ImportBundleRequest", ts: "ImportBundleRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ImportReport", ts: "ImportReport" },
     },
     "sync_kind_opt_in_get": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.KindOptIn", ts: "KindOptIn" },
     },
     "sync_kind_opt_in_set": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.KindOptInPatch", ts: "KindOptInPatch" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.KindOptIn", ts: "KindOptIn" },
     },
     "sync_link_get": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.Link", ts: "Link" },
     },
     "sync_link_mfa": {
       scope: "sync",
@@ -1678,19 +1729,28 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.LinkResult", ts: "LinkResult" },
     },
     "sync_link_set": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.LinkPatch", ts: "LinkPatch" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.LinkResult", ts: "LinkResult" },
     },
     "sync_preferences_get": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.PreferenceScopeView", ts: "PreferenceScopeView" },
     },
     "sync_preferences_set": {
+      scope: "sync",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.PreferenceUpdate", ts: "PreferenceUpdate" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.PreferenceScopeView", ts: "PreferenceScopeView" },
     },
     "sync_repair_undecryptable": {
       scope: "sync",
@@ -1701,14 +1761,20 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RepairUndecryptableResult", ts: "RepairUndecryptableResult" },
     },
     "sync_status": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.Status", ts: "Status" },
     },
     "sync_wake": {
+      scope: "sync",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "struct{}", ts: "Record<string, never>" },
     },
     "system_insets": {
       nested: false,
@@ -2167,28 +2233,6 @@ export const ipcContractManifest = {
     "snippet_update",
     "ssh_import_apply",
     "ssh_import_preview",
-    "sync_apply_objects",
-    "sync_bundle_read",
-    "sync_bundle_write",
-    "sync_collect_ai_grants",
-    "sync_collect_ai_permission",
-    "sync_collect_ai_profiles",
-    "sync_collect_assets",
-    "sync_collect_credentials",
-    "sync_collect_known_hosts",
-    "sync_collect_preferences",
-    "sync_collect_tombstones",
-    "sync_digest",
-    "sync_export",
-    "sync_import",
-    "sync_kind_opt_in_get",
-    "sync_kind_opt_in_set",
-    "sync_link_get",
-    "sync_link_set",
-    "sync_preferences_get",
-    "sync_preferences_set",
-    "sync_status",
-    "sync_wake",
     "system_insets",
     "terminal_attach_tab",
     "terminal_claim",
@@ -2659,9 +2703,77 @@ export interface IPCCommandTypeMap {
     input: contractTypes.SessionIDRequest;
     output: boolean;
   };
+  "sync_apply_objects": {
+    input: contractTypes.ApplyObjectsRequest;
+    output: contractTypes.ApplyObjectsResult;
+  };
+  "sync_bundle_read": {
+    input: contractTypes.BundleFileRequest;
+    output: string;
+  };
+  "sync_bundle_write": {
+    input: contractTypes.BundleFileRequest;
+    output: contractTypes.BundleWriteResult | null;
+  };
+  "sync_collect_ai_grants": {
+    input: Record<string, never>;
+    output: contractTypes.CollectAIGrants;
+  };
+  "sync_collect_ai_permission": {
+    input: Record<string, never>;
+    output: contractTypes.CollectAIPermission;
+  };
+  "sync_collect_ai_profiles": {
+    input: contractTypes.CollectAIProfilesRequest;
+    output: contractTypes.CollectAIProfilesResult;
+  };
+  "sync_collect_assets": {
+    input: contractTypes.CollectAssetsRequest;
+    output: contractTypes.CollectAssetsResult;
+  };
+  "sync_collect_credentials": {
+    input: contractTypes.CollectCredentialsRequest;
+    output: contractTypes.CollectCredentialsResult;
+  };
+  "sync_collect_known_hosts": {
+    input: contractTypes.CollectKnownHostsRequest;
+    output: contractTypes.CollectKnownHostsResult;
+  };
+  "sync_collect_preferences": {
+    input: Record<string, never>;
+    output: contractTypes.CollectPreference[];
+  };
+  "sync_collect_tombstones": {
+    input: contractTypes.CollectTombstonesRequest;
+    output: contractTypes.CollectTombstonesResult;
+  };
   "sync_compare": {
     input: Record<string, never>;
     output: contractTypes.CompareResult;
+  };
+  "sync_digest": {
+    input: Record<string, never>;
+    output: contractTypes.SyncDigest;
+  };
+  "sync_export": {
+    input: contractTypes.ExportBundleRequest;
+    output: contractTypes.SyncBundle;
+  };
+  "sync_import": {
+    input: contractTypes.ImportBundleRequest;
+    output: contractTypes.ImportReport;
+  };
+  "sync_kind_opt_in_get": {
+    input: Record<string, never>;
+    output: contractTypes.KindOptIn;
+  };
+  "sync_kind_opt_in_set": {
+    input: contractTypes.KindOptInPatch;
+    output: contractTypes.KindOptIn;
+  };
+  "sync_link_get": {
+    input: Record<string, never>;
+    output: contractTypes.Link;
   };
   "sync_link_mfa": {
     input: contractTypes.LinkMFARequest;
@@ -2671,9 +2783,29 @@ export interface IPCCommandTypeMap {
     input: contractTypes.LinkResetPasswordRequest;
     output: contractTypes.LinkResult;
   };
+  "sync_link_set": {
+    input: contractTypes.LinkPatch;
+    output: contractTypes.LinkResult;
+  };
+  "sync_preferences_get": {
+    input: Record<string, never>;
+    output: contractTypes.PreferenceScopeView;
+  };
+  "sync_preferences_set": {
+    input: contractTypes.PreferenceUpdate;
+    output: contractTypes.PreferenceScopeView;
+  };
   "sync_repair_undecryptable": {
     input: contractTypes.RepairUndecryptableRequest;
     output: contractTypes.RepairUndecryptableResult;
+  };
+  "sync_status": {
+    input: Record<string, never>;
+    output: contractTypes.Status;
+  };
+  "sync_wake": {
+    input: Record<string, never>;
+    output: Record<string, never>;
   };
   "target_set_create": {
     input: contractTypes.TargetSetCreateRequest;
