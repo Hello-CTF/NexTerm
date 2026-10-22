@@ -31,45 +31,73 @@ function rosterEntry(partial: Partial<AgentRosterEntry> = {}): AgentRosterEntry 
 }
 
 describe("ToolHandleRegistry", () => {
-  it("records verified handles from toolCall and toolResult events", () => {
+  it("records verified handles from toolCall and toolResult events of one run", () => {
     const registry = new ToolHandleRegistry();
-    expect(registry.record({ type: "toolCall", id: "call-1", handle: "build" })).toBe(true);
-    expect(registry.lookup("call-1")).toEqual({ kind: "handle", handle: "build" });
+    expect(registry.record(1, { type: "toolCall", id: "call-1", handle: "build" })).toBe(true);
+    expect(registry.lookup(1, "call-1")).toEqual({ kind: "handle", handle: "build" });
     expect(registry.handles()).toEqual(["build"]);
     // The same handle through the result event is not a change.
-    expect(registry.record({ type: "toolResult", id: "call-1", handle: "build" })).toBe(false);
-    expect(registry.lookup("call-1")).toEqual({ kind: "handle", handle: "build" });
+    expect(registry.record(1, { type: "toolResult", id: "call-1", handle: "build" })).toBe(false);
+    expect(registry.lookup(1, "call-1")).toEqual({ kind: "handle", handle: "build" });
   });
 
   it("ignores handle-less, id-less and non-tool events without clearing evidence", () => {
     const registry = new ToolHandleRegistry();
-    registry.record({ type: "toolCall", id: "call-1", handle: "build" });
-    expect(registry.record({ type: "toolResult", id: "call-1" })).toBe(false);
-    expect(registry.record({ type: "toolCall", id: "call-1", handle: "" })).toBe(false);
-    expect(registry.record({ type: "toolCall", handle: "deploy" })).toBe(false);
-    expect(registry.record({ type: "delta", id: "call-2", handle: "deploy" })).toBe(false);
-    expect(registry.lookup("call-1")).toEqual({ kind: "handle", handle: "build" });
-    expect(registry.lookup("call-2")).toEqual({ kind: "unknown" });
+    registry.record(1, { type: "toolCall", id: "call-1", handle: "build" });
+    expect(registry.record(1, { type: "toolResult", id: "call-1" })).toBe(false);
+    expect(registry.record(1, { type: "toolCall", id: "call-1", handle: "" })).toBe(false);
+    expect(registry.record(1, { type: "toolCall", handle: "deploy" })).toBe(false);
+    expect(registry.record(1, { type: "delta", id: "call-2", handle: "deploy" })).toBe(false);
+    expect(registry.lookup(1, "call-1")).toEqual({ kind: "handle", handle: "build" });
+    expect(registry.lookup(1, "call-2")).toEqual({ kind: "unknown" });
   });
 
-  it("fails closed to ambiguous when one call id carries conflicting handles", () => {
+  it("scopes records to their run: a second run reusing the id never borrows the first run's handle", () => {
     const registry = new ToolHandleRegistry();
-    registry.record({ type: "toolCall", id: "call-1", handle: "build" });
-    expect(registry.record({ type: "toolResult", id: "call-1", handle: "deploy" })).toBe(true);
-    expect(registry.lookup("call-1")).toEqual({ kind: "ambiguous" });
-    // Ambiguity is permanent: later agreeing evidence never reopens the call.
-    expect(registry.record({ type: "toolResult", id: "call-1", handle: "build" })).toBe(false);
-    expect(registry.lookup("call-1")).toEqual({ kind: "ambiguous" });
-    expect(registry.handles()).toEqual([]);
+    registry.record(1, { type: "toolCall", id: "c1", handle: "build" });
+    // Run 2 reuses the same call id against a non-roster target: no handle.
+    expect(registry.lookup(2, "c1")).toEqual({ kind: "unknown" });
+    // Run 2's own verified handle is its own, not a conflict with run 1's.
+    expect(registry.record(2, { type: "toolCall", id: "c1", handle: "deploy" })).toBe(true);
+    expect(registry.lookup(2, "c1")).toEqual({ kind: "handle", handle: "deploy" });
+    expect(registry.lookup(1, "c1")).toEqual({ kind: "handle", handle: "build" });
+    expect(registry.handles()).toEqual(["build", "deploy"]);
+  });
+
+  it("marks only the conflicting call ambiguous, never both runs' history", () => {
+    const registry = new ToolHandleRegistry();
+    registry.record(1, { type: "toolCall", id: "c1", handle: "build" });
+    expect(registry.record(1, { type: "toolResult", id: "c1", handle: "deploy" })).toBe(true);
+    expect(registry.lookup(1, "c1")).toEqual({ kind: "ambiguous" });
+    // Ambiguity stays with that call: another run's same-id call is unaffected.
+    registry.record(2, { type: "toolCall", id: "c1", handle: "deploy" });
+    expect(registry.lookup(2, "c1")).toEqual({ kind: "handle", handle: "deploy" });
+    // Later agreeing evidence never reopens the ambiguous call.
+    expect(registry.record(1, { type: "toolResult", id: "c1", handle: "build" })).toBe(false);
+    expect(registry.lookup(1, "c1")).toEqual({ kind: "ambiguous" });
+    expect(registry.handles()).toEqual(["deploy"]);
+  });
+
+  it("keeps the toolCall's verified handle for a handle-less toolResult of the same run", () => {
+    const registry = new ToolHandleRegistry();
+    registry.record(3, { type: "toolCall", id: "c1", handle: "build" });
+    expect(registry.record(3, { type: "toolResult", id: "c1" })).toBe(false);
+    expect(registry.lookup(3, "c1")).toEqual({ kind: "handle", handle: "build" });
+  });
+
+  it("resolves history items without a run generation as unknown", () => {
+    const registry = new ToolHandleRegistry();
+    registry.record(1, { type: "toolCall", id: "c1", handle: "build" });
+    expect(registry.lookup(null, "c1")).toEqual({ kind: "unknown" });
   });
 
   it("keeps calls isolated and clears on conversation switch", () => {
     const registry = new ToolHandleRegistry();
-    registry.record({ type: "toolCall", id: "call-1", handle: "build" });
-    registry.record({ type: "toolCall", id: "call-2", handle: "deploy" });
-    expect(registry.lookup("call-2")).toEqual({ kind: "handle", handle: "deploy" });
+    registry.record(1, { type: "toolCall", id: "call-1", handle: "build" });
+    registry.record(1, { type: "toolCall", id: "call-2", handle: "deploy" });
+    expect(registry.lookup(1, "call-2")).toEqual({ kind: "handle", handle: "deploy" });
     registry.clear();
-    expect(registry.lookup("call-1")).toEqual({ kind: "unknown" });
+    expect(registry.lookup(1, "call-1")).toEqual({ kind: "unknown" });
     expect(registry.handles()).toEqual([]);
   });
 });
@@ -182,7 +210,9 @@ describe("buildAgentToolCall", () => {
     const call = buildAgentToolCall(toolItem({ summary: "ok", ok: true }), "ghost", undefined, null, null);
     expect(call.handle).toEqual({ handle: "ghost", host: "", cwd: "" });
     expect(call.presence).toBe("unverifiable");
-    expect(call.persistent).toBe(false);
+    // Missing roster evidence means unknown persistence, never a claimed
+    // non-persistent target.
+    expect(call.persistent).toBeNull();
     expect(call.production).toBe(false);
     expect(call.ownerName).toBe("");
   });

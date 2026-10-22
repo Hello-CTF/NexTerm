@@ -107,7 +107,7 @@ export function AgentToolCard({
               所有者：{call.ownerName}
             </span>
           )}
-          {!call.persistent && <span className="nx-count">非持久目标</span>}
+          {call.persistent === false && <span className="nx-count">非持久目标</span>}
           {!autoWriteAllowed(call.presence) && (
             <span className="text-[var(--nx-fg-warning)]">自动写入已禁止</span>
           )}

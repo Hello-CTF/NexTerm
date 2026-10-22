@@ -287,7 +287,70 @@ describe("AiSidebar agent tool card mounting", () => {
     expect(text).toContain("ghost");
     expect(text).not.toContain("ghost@");
     expect(text).toContain("无法验证");
-    expect(text).toContain("非持久目标");
+    // An empty list cannot evidence persistence: no claimed non-persistent
+    // target, and automatic writes stay forbidden without evidence.
+    expect(text).not.toContain("非持久目标");
+    expect(text).toContain("自动写入已禁止");
+  });
+
+  it("keeps unknown identity when the roster list fails to load", async () => {
+    mocks.call.mockImplementation((cmd: string) => {
+      if (cmd === "ai_roster_list") return Promise.reject(new Error("backend down"));
+      if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
+      if (cmd === "ai_run_history") return Promise.resolve({ entries: [], nextCursor: null });
+      if (cmd === "ai_run_recovery_summary") return Promise.resolve(null);
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
+    await send(view!, "deploy");
+    await emit({ type: "toolCall", id: "call-1", name: "exec_commands", display: "exec_commands", handle: "build" });
+    await flushUntil(() => agentCard(view!, "call-1") !== null);
+    // The failed load neither spins retries nor claims roster metadata.
+    await flush();
+    const card = agentCard(view!, "call-1")!;
+    const text = card.textContent ?? "";
+    expect(text).toContain("build");
+    expect(text).not.toContain("build@");
+    expect(text).toContain("无法验证");
+    expect(text).not.toContain("非持久目标");
+    expect(text).toContain("自动写入已禁止");
+    expect(mocks.call.mock.calls.filter((call) => call[0] === "ai_roster_list").length).toBeLessThanOrEqual(2);
+  });
+
+  it("scopes handles to their run: a second run reusing the call id borrows nothing", async () => {
+    await send(view!, "first deploy");
+    await emit({ type: "toolCall", id: "c1", name: "exec_commands", display: "exec_commands", handle: "build" });
+    await flushUntil(() => agentCard(view!, "c1") !== null);
+    await flushUntil(() => agentCard(view!, "c1")!.textContent?.includes("build@web-01:/srv/app") === true);
+    await emit({ type: "done", answer: "first done" });
+    await flush();
+
+    // Second run reuses the same call id without any handle: its tool item
+    // keeps the plain bubble and never borrows the first run's identity.
+    await send(view!, "second deploy");
+    await emit({ type: "toolCall", id: "c1", name: "exec_commands", display: "exec_commands" });
+    await emit({ type: "toolResult", id: "c1", ok: true, summary: "第二轮输出", text: "第二轮输出", exitCode: 0 });
+    await flush();
+    expect(view!.container.querySelectorAll('[data-call-id="c1"]')).toHaveLength(1);
+    expect(view!.container.textContent).toContain("第二轮输出");
+
+    // A second run with its own verified handle renders its own card; the
+    // first run's card keeps its original identity.
+    mocks.call.mockImplementation((cmd: string) => {
+      if (cmd === "ai_roster_list") {
+        return Promise.resolve([
+          rosterListRow(),
+          { ...rosterListRow("deploy", "tab-agent-2"), host: "web-02", cwd: "/srv/b" },
+        ]);
+      }
+      if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
+      if (cmd === "ai_run_history") return Promise.resolve({ entries: [], nextCursor: null });
+      if (cmd === "ai_run_recovery_summary") return Promise.resolve(null);
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
+    await emit({ type: "toolCall", id: "c2", name: "exec_commands", display: "exec_commands", handle: "deploy" });
+    await flushUntil(() => agentCard(view!, "c2") !== null);
+    await flushUntil(() => agentCard(view!, "c2")!.textContent?.includes("deploy@web-02:/srv/b") === true);
+    expect(agentCard(view!, "c1")!.textContent).toContain("build@web-01:/srv/app");
   });
 
   it("resolves the card's pending approval through the real HITL delegate", async () => {
@@ -354,6 +417,97 @@ describe("AiSidebar agent tool card mounting", () => {
       decision: "allow",
       environmentNames: ["production"],
     });
+  });
+
+  it("keeps each conversation's own roster identity across AI tab switches (A→B→A)", async () => {
+    // Two AI tabs with bound conversations, each producing a handle-verified
+    // tool card. The per-conversation snapshot slots must survive the other
+    // tab's load, so switching back never falls back to unknown.
+    mocks.chat.mockImplementation((args: { conversationId?: string }) =>
+      Promise.resolve({ jobId: `job-${args.conversationId}`, conversationId: args.conversationId ?? "conv-a" }),
+    );
+    mocks.conversationList.mockResolvedValue([
+      { id: "conv-a", title: "Conv A", createdAt: 0, updatedAt: 0 },
+      { id: "conv-b", title: "Conv B", createdAt: 0, updatedAt: 0 },
+    ]);
+    mocks.messages.mockImplementation((id: string) =>
+      Promise.resolve([
+        {
+          id: `m-${id}`,
+          conversationId: id,
+          role: "user",
+          content: { role: "user", content: `hello ${id}`, imageCount: 0 },
+          tokensIn: null,
+          tokensOut: null,
+          createdAt: 1,
+        },
+      ]),
+    );
+    mocks.call.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "ai_roster_list") {
+        const conversationId = (args as { conversationId?: string }).conversationId;
+        if (conversationId === "conv-a") {
+          return Promise.resolve([
+            { ...rosterListRow("build-a", "tab-a1"), host: "web-a", cwd: "/srv/a" },
+          ]);
+        }
+        return Promise.resolve([
+          { ...rosterListRow("build-b", "tab-b1"), host: "web-b", cwd: "/srv/b" },
+        ]);
+      }
+      if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
+      if (cmd === "ai_run_history") return Promise.resolve({ entries: [], nextCursor: null });
+      if (cmd === "ai_run_recovery_summary") return Promise.resolve(null);
+      if (cmd === "ai_watch_list") return Promise.resolve([]);
+      if (cmd === "ai_watch_targets") return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
+    act(() => {
+      useUi.setState({
+        aiBoards: {
+          [GLOBAL_AI_BOARD_KEY]: {
+            tabs: [
+              { id: "tab-a", title: "Conv A", conversationId: "conv-a" },
+              { id: "tab-b", title: "Conv B", conversationId: "conv-b" },
+            ],
+            activeTabId: "tab-a",
+          },
+        },
+      });
+    });
+    view?.unmount();
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
+
+    // Tab A produces its card and loads conv-a's snapshot.
+    await send(view!, "deploy from A");
+    await emit({ type: "toolCall", id: "call-a", name: "exec_commands", display: "exec_commands", handle: "build-a" });
+    await flushUntil(() => agentCard(view!, "call-a")?.textContent?.includes("build-a@web-a:/srv/a") === true);
+
+    // Switch to tab B, produce its card and load conv-b's snapshot.
+    act(() => {
+      useUi.getState().setActiveAiTab(GLOBAL_AI_BOARD_KEY, "tab-b");
+    });
+    await flush();
+    await send(view!, "deploy from B");
+    await emit({ type: "toolCall", id: "call-b", name: "exec_commands", display: "exec_commands", handle: "build-b" });
+    await flushUntil(() => agentCard(view!, "call-b")?.textContent?.includes("build-b@web-b:/srv/b") === true);
+
+    // Switch back to A with no new tool events: A's card must still use
+    // conv-a's own rows, not an unknown fallback.
+    act(() => {
+      useUi.getState().setActiveAiTab(GLOBAL_AI_BOARD_KEY, "tab-a");
+    });
+    await flush();
+    expect(agentCard(view!, "call-a")!.textContent).toContain("build-a@web-a:/srv/a");
+    expect(agentCard(view!, "call-a")!.textContent).not.toContain("无法验证");
+    // And back to B: B's identity is intact as well.
+    act(() => {
+      useUi.getState().setActiveAiTab(GLOBAL_AI_BOARD_KEY, "tab-b");
+    });
+    await flush();
+    expect(agentCard(view!, "call-b")!.textContent).toContain("build-b@web-b:/srv/b");
+    expect(agentCard(view!, "call-b")!.textContent).not.toContain("无法验证");
   });
 
   it("joins the same handle across the cross-restart HITL resume", async () => {

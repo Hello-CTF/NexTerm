@@ -718,7 +718,7 @@ function AiChatTab({
   const lastRefreshedHandleVersionRef = useRef(0);
   const pushAgentEvent = useCallback(
     (generation: number, ev: Record<string, unknown>): ReturnType<typeof stream.pushEvent> => {
-      if (toolHandlesRef.current?.record(ev)) setToolHandleVersion((version) => version + 1);
+      if (toolHandlesRef.current?.record(generation, ev)) setToolHandleVersion((version) => version + 1);
       return stream.pushEvent(generation, ev);
     },
     [stream],
@@ -2145,23 +2145,24 @@ function AiChatTab({
   const agentHistoryApi = useMemo(() => createAgentRunHistoryApi(), []);
   const watchOwner = agentOwnerId === "" ? "local" : agentOwnerId;
 
-  // The roster snapshot joins the recorded handles onto real roster rows;
-  // it reloads once per recorded-handle change, loads are shared in-flight,
-  // and a stale conversation's response never lands.
+  // The roster snapshot joins the recorded handles onto real roster rows,
+  // with an independent slot per conversation. It reloads once per
+  // recorded-handle change, and again when the slot is empty (for example
+  // after a store reset): a handle the roster never covers stays honestly
+  // unknown instead of spinning reloads, and a failed load never retries in
+  // a loop.
   const rosterSnapshot = useAgentRosterSnapshot(conversationId);
   const rosterByHandle = useMemo(() => {
     const map = new Map<string, AgentRosterEntry>();
     for (const entry of rosterSnapshot ?? []) map.set(entry.handle, entry);
     return map;
   }, [rosterSnapshot]);
-  // The snapshot reloads once per recorded-handle change; a handle the
-  // roster never covers stays honestly unknown instead of spinning reloads.
   useEffect(() => {
     if (!conversationId || !agentRosterApi || toolHandleVersion === 0) return;
-    if (lastRefreshedHandleVersionRef.current === toolHandleVersion) return;
+    if (lastRefreshedHandleVersionRef.current === toolHandleVersion && rosterSnapshot !== null) return;
     lastRefreshedHandleVersionRef.current = toolHandleVersion;
     void refreshAgentRosterSnapshot(agentRosterApi, conversationId);
-  }, [conversationId, agentRosterApi, toolHandleVersion]);
+  }, [conversationId, agentRosterApi, toolHandleVersion, rosterSnapshot]);
   const runRowsByJobId = useMemo(() => {
     const map = new Map<string, (typeof conversationRuns)[number]>();
     for (const row of conversationRuns) map.set(row.id, row);
@@ -2169,7 +2170,7 @@ function AiChatTab({
   }, [conversationRuns]);
   const agentToolCallFor = useCallback(
     (item: ToolItem): AgentToolCall | null => {
-      const lookup = toolHandlesRef.current?.lookup(item.callId) ?? { kind: "unknown" as const };
+      const lookup = toolHandlesRef.current?.lookup(item.attempt, item.callId) ?? { kind: "unknown" as const };
       if (lookup.kind !== "handle") return null;
       const attempt = conv.attempts.find((candidate) => candidate.generation === item.attempt);
       const run = attempt

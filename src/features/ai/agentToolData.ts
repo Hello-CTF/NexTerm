@@ -21,44 +21,57 @@ export type ToolHandleLookup =
   | { kind: "unknown" };
 
 // ToolHandleRegistry records the verified roster handle of each tool call as
-// the event stream delivers it. A handle-less event never clears the call's
-// recorded handle; a conflicting handle for the same call id marks the call
-// permanently ambiguous, so one call's handle is never used for another.
+// the event stream delivers it, scoped to the run that produced the call:
+// the backend accepts model-provided call ids without a cross-run uniqueness
+// guarantee, so records are keyed by (generation, callId) and a second run
+// reusing an id never borrows the first run's handle. Within one run a
+// handle-less toolResult never clears the toolCall's verified handle; a
+// conflicting handle marks only that call permanently ambiguous.
 export class ToolHandleRegistry {
   private records = new Map<string, { handle: string } | { ambiguous: true }>();
 
-  // record ingests one raw stream event and reports whether the registry
-  // changed (a new verified handle or a newly ambiguous call).
-  record(ev: Record<string, unknown>): boolean {
+  private key(generation: number, callId: string): string {
+    return `${generation}${callId}`;
+  }
+
+  // record ingests one raw stream event of the given run generation and
+  // reports whether the registry changed (a new verified handle or a newly
+  // ambiguous call).
+  record(generation: number, ev: Record<string, unknown>): boolean {
     if (ev.type !== "toolCall" && ev.type !== "toolResult") return false;
     const callId = typeof ev.id === "string" ? ev.id : "";
     if (callId === "") return false;
     const handle = typeof ev.handle === "string" && ev.handle !== "" ? ev.handle : null;
     if (handle === null) return false;
-    const current = this.records.get(callId);
+    const key = this.key(generation, callId);
+    const current = this.records.get(key);
     if (current === undefined) {
-      this.records.set(callId, { handle });
+      this.records.set(key, { handle });
       return true;
     }
     if ("ambiguous" in current) return false;
     if (current.handle === handle) return false;
-    this.records.set(callId, { ambiguous: true });
+    this.records.set(key, { ambiguous: true });
     return true;
   }
 
-  lookup(callId: string): ToolHandleLookup {
-    const current = this.records.get(callId);
+  // lookup resolves a tool item's handle. History items rebuilt from
+  // persisted messages carry no run generation (attempt null) and message
+  // rows never persist handles, so they honestly resolve unknown.
+  lookup(generation: number | null, callId: string): ToolHandleLookup {
+    if (generation === null) return { kind: "unknown" };
+    const current = this.records.get(this.key(generation, callId));
     if (current === undefined) return { kind: "unknown" };
     if ("ambiguous" in current) return { kind: "ambiguous" };
     return { kind: "handle", handle: current.handle };
   }
 
   handles(): string[] {
-    const out: string[] = [];
+    const out = new Set<string>();
     for (const record of this.records.values()) {
-      if (!("ambiguous" in record)) out.push(record.handle);
+      if (!("ambiguous" in record)) out.add(record.handle);
     }
-    return out;
+    return [...out];
   }
 
   clear(): void {
@@ -148,7 +161,7 @@ export function buildAgentToolCall(
     ownerName: rosterEntry?.ownerName ?? "",
     isMine: rosterEntry?.isMine ?? true,
     production: rosterEntry?.production ?? false,
-    persistent: rosterEntry !== undefined,
+    persistent: rosterEntry !== undefined ? rosterEntry.persistent : null,
     presence: rosterEntry?.presence ?? "unverifiable",
     state:
       item.summary === undefined

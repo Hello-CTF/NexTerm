@@ -101,7 +101,10 @@ export interface AgentToolCall {
   ownerName: string;
   isMine: boolean;
   production: boolean;
-  persistent: boolean;
+  // null means the roster contract cannot evidence persistence right now
+  // (no row in the snapshot, or the snapshot could not load): the card shows
+  // nothing instead of claiming either durable or non-persistent.
+  persistent: boolean | null;
   presence: AgentPresence;
   state: "running" | "ok" | "error" | "unknown";
   exitCode: number | null;
