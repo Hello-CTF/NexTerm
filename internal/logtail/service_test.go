@@ -34,9 +34,18 @@ func (c *fakeExecChannel) NextOutput(ctx context.Context) (base.OutputEvent, err
 	case event := <-c.events:
 		return event, nil
 	case <-c.done:
-		return base.OutputEvent{}, io.EOF
+		return c.nextOutputAfterDone()
 	case <-ctx.Done():
 		return base.OutputEvent{}, ctx.Err()
+	}
+}
+
+func (c *fakeExecChannel) nextOutputAfterDone() (base.OutputEvent, error) {
+	select {
+	case event := <-c.events:
+		return event, nil
+	default:
+		return base.OutputEvent{}, io.EOF
 	}
 }
 
@@ -136,16 +145,21 @@ func (s *recordingSink) Send(ctx context.Context, event Event) error {
 	s.mu.Lock()
 	s.events = append(s.events, event)
 	s.mu.Unlock()
-	select {
-	case s.notify <- struct{}{}:
-	default:
-	}
+	s.signal()
 	return nil
 }
 
 func (s *recordingSink) Close() error {
 	s.closed.Store(true)
+	s.signal()
 	return nil
+}
+
+func (s *recordingSink) signal() {
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
 }
 
 func (s *recordingSink) CloseGracefully() error {
@@ -181,6 +195,29 @@ func hasDone(events []Event) bool {
 
 func sourceFor(id string) Source {
 	return Source{SourceID: id, SessionID: id, Kind: SourceFile, Value: "/var/log/" + id + ".log"}
+}
+
+func TestFakeExecChannelDrainsQueuedOutputAfterDone(t *testing.T) {
+	channel := newFakeExecChannel(nil)
+	channel.send("stdout", false)
+	channel.send("stderr", true)
+	_ = channel.Close()
+
+	for _, want := range []struct {
+		text   string
+		stderr bool
+	}{
+		{text: "stdout"},
+		{text: "stderr", stderr: true},
+	} {
+		output, err := channel.nextOutputAfterDone()
+		if err != nil || string(output.Data) != want.text || output.Stderr != want.stderr {
+			t.Fatalf("output after done = %+v, %v; want %q, stderr %v", output, err, want.text, want.stderr)
+		}
+	}
+	if _, err := channel.nextOutputAfterDone(); !errors.Is(err, io.EOF) {
+		t.Fatalf("drained output error = %v, want EOF", err)
+	}
 }
 
 func TestServiceStreamsAttributedLinesWithoutPTY(t *testing.T) {
@@ -239,6 +276,7 @@ func TestServiceStreamsAttributedLinesWithoutPTY(t *testing.T) {
 	if first.ptyCalls.Load()+second.ptyCalls.Load() != 0 || first.bufferedExec.Load()+second.bufferedExec.Load() != 0 {
 		t.Fatal("log tail consumed PTY or buffered exec")
 	}
+	sink.waitFor(t, func([]Event) bool { return sink.closed.Load() })
 	if !sink.closed.Load() {
 		t.Fatal("event sink was not closed at run completion")
 	}
