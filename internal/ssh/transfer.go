@@ -266,13 +266,31 @@ func remoteExitCodeIs(err error, code int) bool {
 	return ok && actual == code
 }
 
+func remoteCommandNotFound(err error) bool {
+	if err == nil || errors.Is(err, fs.ErrPermission) || errors.Is(err, ErrNoExec) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no such file or directory")
+}
+
 func (h *ExecHost) Exists(ctx context.Context, path string) (bool, error) {
-	command := "if [ -e " + quoteShell(path) + " ] || [ -L " + quoteShell(path) + " ]; then printf 1; else printf 0; fi"
+	quoted := quoteShell(path)
+	stat := "stat -- "
+	if h.target.GOOS == "darwin" {
+		stat = "stat -f '%N' -- "
+	}
+	command := "if [ -e " + quoted + " ] || [ -L " + quoted + " ]; then printf 1; else " + stat + quoted + " >/dev/null && printf 1; fi"
 	if h.target.GOOS == "windows" {
-		command = powerShellCommand("powershell.exe", "if (Test-Path -LiteralPath "+quotePowerShell(path)+") { [Console]::Out.Write('1') } else { [Console]::Out.Write('0') }")
+		script := "$ErrorActionPreference='Stop'; try { Get-Item -LiteralPath " + quotePowerShell(path) + " -Force -ErrorAction Stop | Out-Null; [Console]::Out.Write('1') } " +
+			"catch [System.Management.Automation.ItemNotFoundException],[System.IO.FileNotFoundException],[System.IO.DirectoryNotFoundException] { [Console]::Out.Write('0') } " +
+			"catch { [Console]::Error.Write($_.Exception.Message); exit 73 }"
+		command = powerShellCommand("powershell.exe", script)
 	}
 	stdout, err := h.run(ctx, command)
 	if err != nil {
+		if remoteCommandNotFound(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	switch strings.TrimSpace(stdout) {

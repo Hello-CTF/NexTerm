@@ -205,7 +205,13 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 	for _, location := range ordered {
 		connection, err := r.findRunningDaemon(ctx, host, location, source)
 		if err != nil {
-			if daemonRefusal(err) || errors.Is(err, errUnsafeTemporaryRoot) || errors.Is(err, errRunningProcessEvidence) {
+			if daemonRefusal(err) || errors.Is(err, errRunningProcessEvidence) {
+				return nil, err
+			}
+			if errors.Is(err, errUnsafeTemporaryRoot) {
+				if len(ordered) > 1 {
+					continue
+				}
 				return nil, err
 			}
 			continue
@@ -229,6 +235,13 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 	}
 	var lastErr error
 	for _, location := range ordered {
+		if err := r.validateDeploymentLocation(ctx, host, location); err != nil {
+			lastErr = err
+			if len(ordered) > 1 && deploymentPathUnavailable(err) {
+				continue
+			}
+			return nil, err
+		}
 		for _, binary := range lookupPathBinaries(ctx, host, location.target) {
 			r.reportProgress(ctx, HelperProgress{Step: 2, Stage: "probe", Path: binary})
 			if err := probeTargetBinary(ctx, host, location.target, binary); err != nil {
@@ -417,6 +430,11 @@ func orderDeploymentLocations(ctx context.Context, host Host, locations []deploy
 		return nil, fmt.Errorf("%w: no helper deployment location", durable.ErrUnavailable)
 	}
 	for _, location := range locations {
+		if location.temporary {
+			if err := validateNexTermPaths(ctx, host, location); err != nil {
+				return nil, err
+			}
+		}
 		exists, err := host.Exists(ctx, location.paths.StateDir)
 		if err != nil {
 			return nil, helperUnavailable("inspect existing daemon state "+location.paths.StateDir, err)
@@ -726,11 +744,8 @@ func cachedTargetBinary(ctx context.Context, host Host, target Target, binary, d
 }
 
 func (r *Resolver) installTargetHelper(ctx context.Context, host Host, location deploymentLocation, source UploadSource) (string, error) {
-	if location.temporary {
-		r.reportProgress(ctx, HelperProgress{Step: 3, Stage: "fallback", Path: location.paths.Root, Cause: "using a verified private temporary helper root; OS temporary-directory cleanup can remove it and will require redeployment"})
-		if err := validateFallbackBase(ctx, host, location); err != nil {
-			return "", err
-		}
+	if err := r.validateDeploymentLocation(ctx, host, location); err != nil {
+		return "", err
 	}
 	if err := ensureTargetDirectories(ctx, host, location.target, location.paths); err != nil {
 		return "", err
@@ -1118,6 +1133,22 @@ func unsafeTemporaryError(err error) error {
 	return fmt.Errorf("%w: %w: %w", durable.ErrUnavailable, errUnsafeTemporaryRoot, err)
 }
 
+func validateNexTermPaths(ctx context.Context, host Host, location deploymentLocation) error {
+	if !location.temporary {
+		return nil
+	}
+	for _, directory := range []string{location.paths.Root, location.paths.BinDir, location.paths.StateDir} {
+		kind, err := remoteDirectoryKind(ctx, host, location.target, directory)
+		if err != nil {
+			return unsafeTemporaryError(err)
+		}
+		if kind != "missing" && kind != "directory" {
+			return fmt.Errorf("%w: %w: NexTerm private path %s is %s", durable.ErrUnavailable, errUnsafeTemporaryRoot, directory, kind)
+		}
+	}
+	return nil
+}
+
 func (r *Resolver) validateDeploymentLocation(ctx context.Context, host Host, location deploymentLocation) error {
 	if !location.temporary {
 		return nil
@@ -1126,14 +1157,7 @@ func (r *Resolver) validateDeploymentLocation(ctx context.Context, host Host, lo
 	if err := validateFallbackBase(ctx, host, location); err != nil {
 		return unsafeTemporaryError(err)
 	}
-	kind, err := remoteDirectoryKind(ctx, host, location.target, location.paths.StateDir)
-	if err != nil {
-		return unsafeTemporaryError(err)
-	}
-	if kind != "missing" && kind != "directory" {
-		return fmt.Errorf("%w: %w: temporary daemon state path %s is %s", durable.ErrUnavailable, errUnsafeTemporaryRoot, location.paths.StateDir, kind)
-	}
-	return nil
+	return validateNexTermPaths(ctx, host, location)
 }
 
 func validateFallbackBase(ctx context.Context, host Host, location deploymentLocation) error {

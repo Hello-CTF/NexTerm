@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -229,6 +230,126 @@ func TestReconnectOnceForJoinsExistingAttempt(t *testing.T) {
 				t.Fatalf("connector calls = %d, want one shared dial (%d)", got, initialCalls+1)
 			}
 		})
+	}
+}
+
+type heldReconnectJoinContext struct {
+	context.Context
+	waiting chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (c *heldReconnectJoinContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	select {
+	case <-c.release:
+	case <-c.Context.Done():
+	}
+	return c.Context.Done()
+}
+
+func TestReconnectJoinKeepsCompletedAttemptResult(t *testing.T) {
+	dialErr := errors.New("reconnect dial failed")
+	for _, api := range []string{"reconnect", "reconnect_once"} {
+		for _, firstFails := range []bool{false, true} {
+			for _, nextCompletes := range []bool{false, true} {
+				name := fmt.Sprintf("%s/first_fails=%t/next_completes=%t", api, firstFails, nextCompletes)
+				t.Run(name, func(t *testing.T) {
+					connector := newFakeConnector()
+					manager := newOpenReconnectOnceManager(t, connector)
+					asset := Asset{ID: "asset", Kind: KindSSH}
+					connected, err := manager.Connect(context.Background(), asset)
+					if err != nil {
+						t.Fatal(err)
+					}
+					firstGeneration := connected.generation + 1
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					firstStarted, nextStarted := make(chan struct{}), make(chan struct{})
+					firstRelease, nextRelease := make(chan struct{}), make(chan struct{})
+					releaseFirst := sync.OnceFunc(func() { close(firstRelease) })
+					releaseNext := sync.OnceFunc(func() { close(nextRelease) })
+					defer releaseFirst()
+					defer releaseNext()
+					connector.mu.Lock()
+					connector.connect = func(ctx context.Context, asset Asset, generation uint64, _ int) (base.Transport, error) {
+						started, release, fails := nextStarted, nextRelease, !firstFails
+						if generation == firstGeneration {
+							started, release, fails = firstStarted, firstRelease, firstFails
+						}
+						close(started)
+						select {
+						case <-release:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+						if fails {
+							return nil, dialErr
+						}
+						return newFakeTransport(asset.Kind, generation), nil
+					}
+					connector.mu.Unlock()
+					awaitSignal := func(signal <-chan struct{}) {
+						t.Helper()
+						select {
+						case <-signal:
+						case <-ctx.Done():
+							t.Fatal("reconnect did not reach the expected synchronization point")
+						}
+					}
+					awaitResult := func(result <-chan error, want error) {
+						t.Helper()
+						select {
+						case err := <-result:
+							if !errors.Is(err, want) {
+								t.Fatalf("reconnect error = %v, want %v", err, want)
+							}
+						case <-ctx.Done():
+							t.Fatal("reconnect did not finish")
+						}
+					}
+					firstResult := make(chan error, 1)
+					go func() { firstResult <- manager.ReconnectOnceFor(ctx, connected.ID, asset) }()
+					awaitSignal(firstStarted)
+					joinCtx := &heldReconnectJoinContext{Context: ctx, waiting: make(chan struct{}), release: make(chan struct{})}
+					releaseJoin := sync.OnceFunc(func() { close(joinCtx.release) })
+					defer releaseJoin()
+					joinResult := make(chan error, 1)
+					go func() {
+						if api == "reconnect_once" {
+							joinResult <- manager.ReconnectOnceFor(joinCtx, connected.ID, asset)
+						} else {
+							joinResult <- manager.Reconnect(joinCtx, connected.ID)
+						}
+					}()
+					// Hold the waiter after it captures the first attempt but before
+					// it receives completion, then replace the session's attempt.
+					awaitSignal(joinCtx.waiting)
+					releaseFirst()
+					var firstErr, nextErr error
+					if firstFails {
+						firstErr = dialErr
+					} else {
+						nextErr = dialErr
+					}
+					awaitResult(firstResult, firstErr)
+					nextResult := make(chan error, 1)
+					go func() { nextResult <- manager.ReconnectOnceFor(ctx, connected.ID, asset) }()
+					awaitSignal(nextStarted)
+					if nextCompletes {
+						releaseNext()
+						awaitResult(nextResult, nextErr)
+					}
+					releaseJoin()
+					awaitResult(joinResult, firstErr)
+					if !nextCompletes {
+						releaseNext()
+						awaitResult(nextResult, nextErr)
+					}
+				})
+			}
+		}
 	}
 }
 

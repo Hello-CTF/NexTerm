@@ -22,6 +22,7 @@ import (
 	"time"
 
 	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	transportssh "github.com/Hello-CTF/NexTerm/internal/transport/ssh"
@@ -660,5 +661,117 @@ func TestStageUploadOverInProcessSSHWhenSFTPIsRejected(t *testing.T) {
 	}
 	if server.sftp.Load() == 0 {
 		t.Fatal("test did not exercise the rejected SFTP subsystem")
+	}
+}
+
+func TestExecHostExistsDistinguishesPermissionFromMissing(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires an unprivileged POSIX user")
+	}
+	server := newExecTestSSHServer(t)
+	client := server.connect(t)
+	target := Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, DataRoot: t.TempDir()}
+	execHost, err := NewExecHost(client, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(target.DataRoot, "nexterm", "daemon")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target.DataRoot, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(target.DataRoot, 0o700) })
+	exists, err := execHost.Exists(context.Background(), stateDir)
+	if err == nil || exists {
+		t.Fatalf("permission-denied state = exists %v, err %v; want unknown", exists, err)
+	}
+	if err := os.Chmod(target.DataRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = execHost.Exists(context.Background(), stateDir)
+	if err != nil || !exists {
+		t.Fatalf("existing state = exists %v, err %v", exists, err)
+	}
+	exists, err = execHost.Exists(context.Background(), stateDir+"-missing")
+	if err != nil || exists {
+		t.Fatalf("definitely missing state = exists %v, err %v", exists, err)
+	}
+}
+
+func TestEnsureDaemonExecFallbackDoesNotMoveUnprovableState(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires an unprivileged POSIX user")
+	}
+	dataRoot := t.TempDir()
+	fallbackBase := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataRoot)
+	t.Setenv("HOME", dataRoot)
+	if runtime.GOOS == "darwin" {
+		t.Setenv("TMPDIR", fallbackBase)
+	} else {
+		t.Setenv("XDG_RUNTIME_DIR", fallbackBase)
+	}
+	stateDir := filepath.Join(dataRoot, "nexterm", "daemon")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataRoot, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dataRoot, 0o700) })
+
+	server := newExecTestSSHServer(t)
+	client := server.connect(t)
+	target := Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, DataRoot: dataRoot, Identity: strconv.Itoa(os.Geteuid())}
+	execHost, err := NewExecHost(client, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := NewFallbackHost(&clientHost{client: client}, execHost)
+	local := filepath.Join(t.TempDir(), "helper")
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = %q ] && [ \"$2\" = --probe ]; then printf '%%s\\n' %q; exit 0; fi\nexit 2\n", supervisor.HelperCommand, strconv.Itoa(supervisor.ProtocolVersion))
+	if err := os.WriteFile(local, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resolver := &Resolver{
+		HelperExecutable: local,
+		StartTimeout:     20 * time.Millisecond,
+		EnsureTimeout:    200 * time.Millisecond,
+		RetryBackoff:     -1,
+		hostFor: func(context.Context, *transportssh.Client) (Host, error) {
+			return host, nil
+		},
+	}
+	resolver.inspect = func(path string) (UploadSource, error) {
+		return UploadSource{Path: path, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Digest: contentSHA256(t, local)}, nil
+	}
+	_, err = resolver.EnsureDaemonWithOptions(context.Background(), client, EnsureOptions{})
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("EnsureDaemonWithOptions error = %v; want preserved permission uncertainty", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(fallbackBase, "nexterm")); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("unprovable original state caused fallback deployment: %v", statErr)
+	}
+	if mode, statErr := os.Stat(dataRoot); statErr != nil || mode.Mode().Perm() != 0 {
+		t.Fatalf("primary path was changed before proving state: mode=%v err=%v", mode.Mode().Perm(), statErr)
+	}
+	manager := session.NewManager(session.Config{
+		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+			return client, nil
+		}),
+		DurableResolver: resolver,
+	})
+	defer func() { _ = manager.Close() }()
+	connected, err := manager.Connect(context.Background(), session.Asset{ID: "ssh-unprovable-state", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.RecoverRemoteDurable(context.Background(), "0123456789abcdef0123456789abcdef", session.OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "recover", Cols: 80, Rows: 24,
+	})
+	if !errors.Is(err, fs.ErrPermission) || errors.Is(err, session.ErrTabNotFound) {
+		t.Fatalf("RecoverRemoteDurable error = %v; want original uncertainty, not tab-not-found", err)
 	}
 }

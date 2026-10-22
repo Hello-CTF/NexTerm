@@ -1979,6 +1979,41 @@ func TestEnsureDaemonDisableAutoInstallValidatesTemporaryCache(t *testing.T) {
 	}
 }
 
+func TestEnsureDaemonRejectsTemporaryRootSymlinkBeforePathStart(t *testing.T) {
+	host, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	base := "/tmp/nexterm-501"
+	root := base + "/nexterm"
+	host.pathBinary = "/usr/bin/nexterm-helper"
+	host.directories = map[string]bool{base: true}
+	host.directoryKinds = map[string]string{root: "symlink", root + "/bin": "directory", root + "/daemon": "directory"}
+	daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, errUnsafeTemporaryRoot) || daemon != nil {
+		t.Fatalf("root symlink PATH-only start daemon=%+v error=%v", daemon, err)
+	}
+	if host.running || len(host.uploads) != 0 || host.sawCommand("setsid") {
+		t.Fatalf("root symlink was used: running=%v uploads=%v commands=%v", host.running, host.uploads, host.commands)
+	}
+}
+
+func TestEnsureDaemonRejectsTemporaryBinSymlinkBeforeCachedStart(t *testing.T) {
+	host, resolver, _, _ := temporaryFallbackHarness(t, "501")
+	base := "/tmp/nexterm-501"
+	root := base + "/nexterm"
+	cached := root + "/bin/nexterm-helper-" + host.uploadDigest
+	host.directories = map[string]bool{base: true}
+	host.directoryKinds = map[string]string{root: "directory", root + "/bin": "symlink", root + "/daemon": "directory"}
+	host.exists = map[string]bool{cached: true}
+	host.digests = map[string]string{cached: host.uploadDigest}
+	resolver.DisableAutoInstall = true
+	daemon, err := resolver.EnsureDaemon(t.Context(), nil)
+	if !errors.Is(err, errUnsafeTemporaryRoot) || daemon != nil {
+		t.Fatalf("bin symlink cached start daemon=%+v error=%v", daemon, err)
+	}
+	if host.running || len(host.uploads) != 0 || host.sawCommand("setsid") {
+		t.Fatalf("bin symlink was used: running=%v uploads=%v commands=%v", host.running, host.uploads, host.commands)
+	}
+}
+
 func TestEnsureDaemonSkipsUnsafeXDGForPrivateTemporaryRoot(t *testing.T) {
 	host, resolver, _, _ := temporaryFallbackHarness(t, "501")
 	xdg := t.TempDir()
