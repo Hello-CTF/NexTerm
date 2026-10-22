@@ -354,18 +354,20 @@ func runSharing(h *harness) error {
 		}
 		return nil
 	}
-	if err := waitUntil(20*time.Second, "agent control channel online", func() bool {
-		return getStr(getMap(deviceRow(), "agent"), "current_url") != ""
-	}); err != nil {
-		return err
-	}
-	h.check("agent control channel comes online", getStr(getMap(deviceRow(), "agent"), "current_url") == baseURL, fmt.Sprintf("row=%v", deviceRow()))
-
-	fmt.Println("== owner creates a session through the bridge ==")
 	stateDigest, err := localStateDigest(filepath.Join(agentDir, "durable", "supervisor"))
 	if err != nil {
 		return err
 	}
+	if err := waitUntil(20*time.Second, "agent control channel online", func() bool {
+		agent := getMap(deviceRow(), "agent")
+		return getStr(agent, "current_url") == baseURL && getStr(agent, "state_digest") == stateDigest
+	}); err != nil {
+		return err
+	}
+	h.check("agent control channel comes online", getStr(getMap(deviceRow(), "agent"), "current_url") == baseURL &&
+		getStr(getMap(deviceRow(), "agent"), "state_digest") == stateDigest, fmt.Sprintf("row=%v", deviceRow()))
+
+	fmt.Println("== owner creates a session through the bridge ==")
 	relayHeader := http.Header{}
 	relayHeader.Set("Cookie", sessionCookie+"="+alice.cookie)
 	relay, _, err := dialWS(server.port, fmt.Sprintf("/fleet/devices/%s/bridge", deviceID), relayHeader)
@@ -669,12 +671,18 @@ func runSharing(h *harness) error {
 		}
 		return nil
 	}
+	bobStateDigest, err := localStateDigest(filepath.Join(bobAgentDir, "durable", "supervisor"))
+	if err != nil {
+		return err
+	}
 	if err := waitUntil(20*time.Second, "bob agent control channel online", func() bool {
-		return getStr(getMap(bobDeviceRow(), "agent"), "current_url") != ""
+		agent := getMap(bobDeviceRow(), "agent")
+		return getStr(agent, "current_url") == baseURL && getStr(agent, "state_digest") == bobStateDigest
 	}); err != nil {
 		return err
 	}
-	h.check("bob agent control channel comes online", getStr(getMap(bobDeviceRow(), "agent"), "current_url") == baseURL, fmt.Sprintf("row=%v", bobDeviceRow()))
+	h.check("bob agent control channel comes online", getStr(getMap(bobDeviceRow(), "agent"), "current_url") == baseURL &&
+		getStr(getMap(bobDeviceRow(), "agent"), "state_digest") == bobStateDigest, fmt.Sprintf("row=%v", bobDeviceRow()))
 	status, body, err = bob.request("POST", "/share/host-shares", map[string]interface{}{
 		"device_id": bobDeviceID, "recipient_username": "no-such-user", "write": false, "ttl_ms": 3600000,
 	}, true)
