@@ -17,22 +17,24 @@ import (
 var nextChannelID atomic.Uint64
 
 type channel struct {
-	session    *gossh.Session
-	stdin      io.WriteCloser
-	stdout     io.Reader
-	stderr     io.Reader
-	output     *base.OutputRouter
-	ctx        context.Context
-	cancel     context.CancelFunc
-	stop       func() bool
-	generation uint64
-	id         string
-	resizable  bool
-	waitOnce   sync.Once
-	waitDone   chan struct{}
-	waitErr    error
-	closeOnce  sync.Once
-	closeErr   error
+	session        *gossh.Session
+	stdin          io.WriteCloser
+	stdout         io.Reader
+	stderr         io.Reader
+	output         *base.OutputRouter
+	ctx            context.Context
+	cancel         context.CancelFunc
+	stop           func() bool
+	generation     uint64
+	id             string
+	resizable      bool
+	waitOnce       sync.Once
+	waitDone       chan struct{}
+	waitErr        error
+	closeOnce      sync.Once
+	closeErr       error
+	closeWriteOnce sync.Once
+	closeWriteErr  error
 }
 
 type sessionResult struct {
@@ -281,11 +283,13 @@ func (c *channel) Wait(ctx context.Context) error {
 }
 
 func (c *channel) CloseWrite() error {
-	err := c.stdin.Close()
-	if errors.Is(err, io.EOF) {
-		return nil
-	}
-	return err
+	c.closeWriteOnce.Do(func() {
+		c.closeWriteErr = c.stdin.Close()
+		if errors.Is(c.closeWriteErr, io.EOF) {
+			c.closeWriteErr = nil
+		}
+	})
+	return c.closeWriteErr
 }
 
 func (c *channel) Close() error {

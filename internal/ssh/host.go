@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -81,25 +82,26 @@ func (h *clientHost) Upload(ctx context.Context, localPath, remotePath string) (
 	return filesystem.Upload(ctx, localPath, remotePath, sshfs.TransferOptions{})
 }
 
-func (h *clientHost) UploadWithProgress(ctx context.Context, localPath, remotePath string, options sshfs.TransferOptions) (int64, error) {
+func (h *clientHost) UploadWithProgress(ctx context.Context, localPath, remotePath string, options sshfs.TransferOptions) (transferred int64, retErr error) {
 	filesystem, err := h.filesystem(ctx)
 	if err != nil {
 		return 0, err
 	}
 	_, gzipExitCode, gzipErr := h.Run(ctx, "command -v gzip >/dev/null 2>&1", probeTimeout)
 	compressedPath, compressed, compressErr := compressedHelperSource(localPath)
+	var cleanupErr *TransferError
+	if errors.As(compressErr, &cleanupErr) && cleanupErr.Stage == TransferStageCleanupGzip {
+		return 0, compressErr
+	}
 	if gzipErr == nil && gzipExitCode == 0 && compressErr == nil && compressed {
 		decompressed := remotePath
 		remoteCompressed := remotePath + ".gz"
 		defer func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), probeTimeout)
-			defer cancel()
-			_ = filesystem.Delete(cleanupCtx, remoteCompressed, false)
+			retErr = errors.Join(retErr, cleanupGzipUpload(filesystem, compressedPath, remoteCompressed))
 		}()
-		transferred, uploadErr := filesystem.Upload(ctx, compressedPath, remoteCompressed, options)
-		_ = os.Remove(compressedPath)
-		if uploadErr != nil {
-			return transferred, uploadErr
+		transferred, err := filesystem.Upload(ctx, compressedPath, remoteCompressed, options)
+		if err != nil {
+			return transferred, err
 		}
 		_, exitCode, runErr := h.Run(ctx, "gzip -dc < "+quoteShell(remoteCompressed)+" > "+quoteShell(decompressed), probeTimeout)
 		if runErr != nil {
@@ -110,13 +112,32 @@ func (h *clientHost) UploadWithProgress(ctx context.Context, localPath, remotePa
 		}
 		return transferred, nil
 	}
-	if compressedPath != "" {
-		_ = os.Remove(compressedPath)
-	}
-	return filesystem.Upload(ctx, localPath, remotePath, options)
+	temporaryCleanupErr := cleanupGzipUpload(nil, compressedPath, "")
+	transferred, retErr = filesystem.Upload(ctx, localPath, remotePath, options)
+	return transferred, errors.Join(retErr, temporaryCleanupErr)
 }
 
-func compressedHelperSource(localPath string) (string, bool, error) {
+type gzipDeleter interface {
+	Delete(context.Context, string, bool) error
+}
+
+func cleanupGzipUpload(filesystem gzipDeleter, localPath, remotePath string) (retErr error) {
+	if localPath != "" {
+		if err := os.Remove(localPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			retErr = errors.Join(retErr, transferError(TransferStageCleanupGzip, localPath, err))
+		}
+	}
+	if filesystem != nil && remotePath != "" {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+		defer cancel()
+		if err := filesystem.Delete(cleanupCtx, remotePath, false); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			retErr = errors.Join(retErr, transferError(TransferStageCleanupGzip, remotePath, err))
+		}
+	}
+	return retErr
+}
+
+func compressedHelperSource(localPath string) (result string, compressed bool, retErr error) {
 	info, err := os.Stat(localPath)
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 		return "", false, err
@@ -134,7 +155,7 @@ func compressedHelperSource(localPath string) (string, bool, error) {
 	removeTarget := true
 	defer func() {
 		if removeTarget {
-			_ = os.Remove(targetPath)
+			retErr = errors.Join(retErr, cleanupGzipUpload(nil, targetPath, ""))
 		}
 	}()
 	writer := gzip.NewWriter(target)
