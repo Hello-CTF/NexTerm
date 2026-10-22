@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { clickButton, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -124,5 +124,29 @@ describe("Mount disconnect confirmation (warning level)", () => {
     clickButton(mounted!.container.querySelector(".nx-modal")!, "确定");
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("Z:", "s1"));
     expect(mocks.toast).toHaveBeenCalledWith("error", "断开失败：device busy");
+  });
+
+  it("passes optional mount credentials only to create and clears them after success", async () => {
+    mocks.create.mockResolvedValue({ id: "m2", localPoint: "Z:", remote: "\\\\nas\\share", sessionId: "s1", managed: true, createdAt: 2 });
+    mounted = mountPanelWithDialogHost();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("nas"));
+
+    setInputValue(mounted!.container.querySelector('input[aria-label="本地挂载点"]')!, " Z: ");
+    setInputValue(mounted!.container.querySelector('input[aria-label="远端路径"]')!, " \\\\nas\\share ");
+    clickButton(mounted!.container, "使用其他凭据（可选）");
+    setInputValue(mounted!.container.querySelector('input[aria-label="挂载用户名（可选）"]')!, "alice");
+    setInputValue(mounted!.container.querySelector('input[aria-label="挂载密码（可选）"]')!, "mount-secret");
+    clickButton(mounted!.container, "挂载");
+
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith({
+      sessionId: "s1",
+      remotePath: "\\\\nas\\share",
+      localPoint: "Z:",
+      username: "alice",
+      password: "mount-secret",
+    }));
+    clickButton(mounted!.container, "使用其他凭据（可选）");
+    expect(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="挂载密码（可选）"]')?.value).toBe("");
+    expect(mounted!.container.textContent).not.toContain("mount-secret");
   });
 });

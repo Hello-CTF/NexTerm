@@ -797,6 +797,54 @@ export type FSCancelRequest = {
   attemptId?: string;
 };
 
+export type FSChunkUploadBeginDTO = {
+  uploadId: string;
+  chunkSize: number;
+};
+
+export type FSChunkUploadProgressDTO = {
+  received: number;
+  total: number;
+};
+
+export type FSEntryDTO = {
+  name: string;
+  path: string;
+  kind: string;
+  size: number;
+  mode: string;
+  owner: string | null;
+  group: string | null;
+  mtime: number;
+  symlinkTarget: string | null;
+};
+
+export type FSRangeReadDTO = {
+  path: string;
+  offset: number;
+  size: number;
+  contentBase64: string;
+  truncated: boolean;
+};
+
+export type FSReadDTO = {
+  path: string;
+  size: number;
+  contentBase64: string;
+};
+
+export type FSRootDTO = {
+  path: string;
+  label: string;
+};
+
+export type FSRootsDTO = {
+  pathStyle: string;
+  roots: FSRootDTO[];
+  homePath: string | null;
+  supported: boolean;
+};
+
 export type FindRequest = {
   batchId: string;
   sessionIds: string[];
@@ -1125,6 +1173,34 @@ export type Listener = {
   program: string;
 };
 
+export type LocalFileReadRangeRequest = {
+  path: string;
+  offset: number;
+  maxBytes?: number;
+};
+
+export type LocalFileReadRequest = {
+  path: string;
+  maxBytes?: number;
+};
+
+export type LocalFolderFileDTO = {
+  relativePath: string;
+  localPath: string;
+  size: number;
+  mtimeMs: number;
+};
+
+export type LocalFolderListDTO = {
+  name: string;
+  files: LocalFolderFileDTO[];
+  emptyDirs: string[];
+};
+
+export type LocalFolderListRequest = {
+  path: string;
+};
+
 export type LogTailCancelRequest = {
   runId: string;
 };
@@ -1160,6 +1236,33 @@ export type LogTailSource = {
 
 export type LogTailStartResult = {
   runId: string;
+};
+
+export type MountCreateArgs = {
+  sessionId: string;
+  remotePath: string;
+  localPoint: string;
+  username?: string;
+  password?: string;
+};
+
+export type MountEntryDTO = {
+  id: string;
+  localPoint: string;
+  remote: string;
+  sessionId: string | null;
+  createdAt: number | null;
+  managed: boolean;
+};
+
+export type MountListRequest = {
+  sessionId: string;
+  forceRefresh?: boolean;
+};
+
+export type MountRemoveArgs = {
+  localPoint: string;
+  sessionId?: string;
 };
 
 export type NameRequest = {

@@ -27,27 +27,43 @@ type typeRegistry struct {
 }
 
 var tsNameOverrides = map[string]string{
-	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest":   "FSCancelRequest",
-	"github.com/Hello-CTF/NexTerm/internal/app/production.groupDTO":          "AssetGroupDTO",
-	"github.com/Hello-CTF/NexTerm/internal/app/production.groupInputRequest": "AssetGroupInputRequest",
-	"github.com/Hello-CTF/NexTerm/internal/app/production.groupPatchRequest": "AssetGroupPatchRequest",
-	"github.com/Hello-CTF/NexTerm/internal/app/production.idRequest":         "IDRequest",
-	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Job":                      "CronJob",
-	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Lease":                    "CronLease",
-	"github.com/Hello-CTF/NexTerm/internal/ai/cron.RunState":                 "CronRunState",
-	"github.com/Hello-CTF/NexTerm/internal/execbatch.Request":                "ExecBatchRequest",
-	"github.com/Hello-CTF/NexTerm/internal/execbatch.Batch":                  "ExecBatch",
-	"github.com/Hello-CTF/NexTerm/internal/execbatch.Result":                 "ExecBatchResult",
-	"github.com/Hello-CTF/NexTerm/internal/execbatch.CancelResult":           "ExecBatchCancelResult",
-	"github.com/Hello-CTF/NexTerm/internal/forward.Rule":                     "ForwardRule",
-	"github.com/Hello-CTF/NexTerm/internal/forward.ruleRequest":              "ForwardRuleRequest",
-	"github.com/Hello-CTF/NexTerm/internal/forward.startRuleRequest":         "ForwardRuleStartRequest",
-	"github.com/Hello-CTF/NexTerm/internal/logtail.Request":                  "LogTailRequest",
-	"github.com/Hello-CTF/NexTerm/internal/logtail.Source":                   "LogTailSource",
-	"github.com/Hello-CTF/NexTerm/internal/logtail.StartResult":              "LogTailStartResult",
-	"github.com/Hello-CTF/NexTerm/internal/logtail.CancelResult":             "LogTailCancelResult",
-	"github.com/Hello-CTF/NexTerm/internal/store.ForwardRuleInput":           "ForwardRuleInput",
-	"github.com/Hello-CTF/NexTerm/internal/vault.Status":                     "VaultStatus",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest":           "FSCancelRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadBeginDTO":     "FSChunkUploadBeginDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadProgressDTO":  "FSChunkUploadProgressDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsEntryDTO":                "FSEntryDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsRangeReadDTO":            "FSRangeReadDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsReadDTO":                 "FSReadDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsRootDTO":                 "FSRootDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsRootsDTO":                "FSRootsDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.groupDTO":                  "AssetGroupDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.groupInputRequest":         "AssetGroupInputRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.groupPatchRequest":         "AssetGroupPatchRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.idRequest":                 "IDRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.localFileReadRangeRequest": "LocalFileReadRangeRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.localFileReadRequest":      "LocalFileReadRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.localFolderFileDTO":        "LocalFolderFileDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.localFolderListDTO":        "LocalFolderListDTO",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.localFolderListRequest":    "LocalFolderListRequest",
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Job":                              "CronJob",
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron.Lease":                            "CronLease",
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron.RunState":                         "CronRunState",
+	"github.com/Hello-CTF/NexTerm/internal/execbatch.Request":                        "ExecBatchRequest",
+	"github.com/Hello-CTF/NexTerm/internal/execbatch.Batch":                          "ExecBatch",
+	"github.com/Hello-CTF/NexTerm/internal/execbatch.Result":                         "ExecBatchResult",
+	"github.com/Hello-CTF/NexTerm/internal/execbatch.CancelResult":                   "ExecBatchCancelResult",
+	"github.com/Hello-CTF/NexTerm/internal/forward.Rule":                             "ForwardRule",
+	"github.com/Hello-CTF/NexTerm/internal/forward.ruleRequest":                      "ForwardRuleRequest",
+	"github.com/Hello-CTF/NexTerm/internal/forward.startRuleRequest":                 "ForwardRuleStartRequest",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.Request":                          "LogTailRequest",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.Source":                           "LogTailSource",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.StartResult":                      "LogTailStartResult",
+	"github.com/Hello-CTF/NexTerm/internal/logtail.CancelResult":                     "LogTailCancelResult",
+	"github.com/Hello-CTF/NexTerm/internal/mount.CreateArgs":                         "MountCreateArgs",
+	"github.com/Hello-CTF/NexTerm/internal/mount.Entry":                              "MountEntryDTO",
+	"github.com/Hello-CTF/NexTerm/internal/mount.RemoveArgs":                         "MountRemoveArgs",
+	"github.com/Hello-CTF/NexTerm/internal/mount.listRequest":                        "MountListRequest",
+	"github.com/Hello-CTF/NexTerm/internal/store.ForwardRuleInput":                   "ForwardRuleInput",
+	"github.com/Hello-CTF/NexTerm/internal/vault.Status":                             "VaultStatus",
 }
 
 var consumerOptionalRequestFields = map[string]map[string]bool{
@@ -79,12 +95,104 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 	"github.com/Hello-CTF/NexTerm/internal/app/production.knownHostRequest": {
 		"Key": true,
 	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.localFileReadRangeRequest": {
+		"MaxBytes": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.localFileReadRequest": {
+		"MaxBytes": true,
+	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.vaultGenerateKeyRequest": {
 		"Algorithm": true, "Passphrase": true,
 	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.vaultPasswordRequest": {
 		"Password": true, "OldPassword": true, "NewPassword": true,
 	},
+}
+
+type consumerRequestField struct {
+	name     string
+	optional bool
+}
+
+var consumerCommandRequestProjections = map[string][]consumerRequestField{
+	"fs_checksum":      {{name: "SessionID"}, {name: "Path"}, {name: "Algo", optional: true}},
+	"fs_chmod":         {{name: "SessionID"}, {name: "Path"}, {name: "Mode"}},
+	"fs_delete":        {{name: "SessionID"}, {name: "Path"}, {name: "IsDir"}},
+	"fs_download":      {{name: "SessionID"}, {name: "RemotePath"}, {name: "LocalPath"}, {name: "Resume", optional: true}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}},
+	"fs_extract":       {{name: "SessionID"}, {name: "Path"}},
+	"fs_list":          {{name: "SessionID"}, {name: "Path"}},
+	"fs_mkdir":         {{name: "SessionID"}, {name: "Path"}},
+	"fs_pack_download": {{name: "SessionID"}, {name: "RemotePath"}, {name: "LocalPath"}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}},
+	"fs_read":          {{name: "SessionID"}, {name: "Path"}, {name: "MaxBytes", optional: true}},
+	"fs_read_range":    {{name: "SessionID"}, {name: "Path"}, {name: "Offset"}, {name: "MaxBytes", optional: true}},
+	"fs_rename":        {{name: "SessionID"}, {name: "From"}, {name: "To"}},
+	"fs_roots":         {{name: "SessionID"}},
+	"fs_upload":        {{name: "SessionID"}, {name: "LocalPath"}, {name: "RemotePath"}, {name: "Resume", optional: true}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}},
+	"fs_upload_abort":  {{name: "SessionID"}, {name: "UploadID"}, {name: "TaskID"}, {name: "AttemptID"}},
+	"fs_upload_begin":  {{name: "SessionID"}, {name: "RemotePath"}, {name: "TotalSize"}, {name: "ChunkSize", optional: true}, {name: "TaskID"}, {name: "AttemptID"}},
+	"fs_upload_chunk":  {{name: "SessionID"}, {name: "UploadID"}, {name: "TaskID"}, {name: "AttemptID"}, {name: "Index"}, {name: "Size"}, {name: "SHA256"}, {name: "ContentBase64"}},
+	"fs_upload_commit": {{name: "SessionID"}, {name: "UploadID"}, {name: "TaskID"}, {name: "AttemptID"}},
+	"fs_write":         {{name: "SessionID"}, {name: "Path"}, {name: "ContentBase64"}, {name: "Backup"}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}},
+}
+
+func projectConsumerCommandInput(command string, value types.Type) (types.Type, error) {
+	projection, ok := consumerCommandRequestProjections[command]
+	if !ok {
+		return value, nil
+	}
+	structure, ok := types.Unalias(value).Underlying().(*types.Struct)
+	if !ok {
+		return nil, fmt.Errorf("request projection requires a struct, got %s", typeIdentifier(value))
+	}
+	fields := make([]*types.Var, 0, len(projection))
+	tags := make([]string, 0, len(projection))
+	seen := make(map[string]bool)
+	for _, projected := range projection {
+		if seen[projected.name] {
+			return nil, fmt.Errorf("request projection field %s is declared twice", projected.name)
+		}
+		seen[projected.name] = true
+		index := -1
+		for candidate := 0; candidate < structure.NumFields(); candidate++ {
+			if structure.Field(candidate).Name() == projected.name {
+				index = candidate
+				break
+			}
+		}
+		if index < 0 {
+			return nil, fmt.Errorf("request projection field %s is missing from %s", projected.name, typeIdentifier(value))
+		}
+		tag := structure.Tag(index)
+		if projected.optional {
+			var err error
+			tag, err = optionalConsumerFieldTag(tag)
+			if err != nil {
+				return nil, fmt.Errorf("request projection field %s: %w", projected.name, err)
+			}
+		}
+		fields = append(fields, structure.Field(index))
+		tags = append(tags, tag)
+	}
+	return types.NewStruct(fields, tags), nil
+}
+
+func optionalConsumerFieldTag(tag string) (string, error) {
+	jsonTag := reflect.StructTag(tag).Get("json")
+	parts := strings.Split(jsonTag, ",")
+	if parts[0] == "" {
+		return "", fmt.Errorf("optional field requires an explicit JSON name")
+	}
+	for _, option := range parts[1:] {
+		if option == "omitempty" || option == "omitzero" {
+			return tag, nil
+		}
+	}
+	original := `json:"` + jsonTag + `"`
+	if !strings.Contains(tag, original) {
+		return "", fmt.Errorf("cannot update JSON tag %q", tag)
+	}
+	replacement := `json:"` + strings.Join(append(parts, "omitempty"), ",") + `"`
+	return strings.Replace(tag, original, replacement, 1), nil
 }
 
 func newTypeRegistry() *typeRegistry {

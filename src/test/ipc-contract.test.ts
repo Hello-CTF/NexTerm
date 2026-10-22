@@ -538,6 +538,93 @@ describe("vault and credential facade IPC contracts", () => {
   });
 });
 
+describe("fs, desktop local-file and mount facade IPC contracts", () => {
+  it("preserves the exact envelopes for all 26 commands, including upload identity and mount secrets", async () => {
+    const mountEntry = { id: "mount-1", localPoint: "Z:", remote: "\\\\nas\\share", sessionId: "session-1", createdAt: 1, managed: true };
+    const calls = captureRpc({
+      fs_roots: { pathStyle: "posix", roots: [], homePath: null, supported: true },
+      fs_list: [],
+      fs_cancel: true,
+      mount_create: mountEntry,
+    });
+    const { fsApi, localFileApi, mountApi } = await import("../ipc/commands");
+    const identity = { sessionId: "session-1", taskId: "task-1", attemptId: "attempt-1" };
+    const upload = { ...identity, uploadId: "upload-1" };
+    const cases: Array<{ command: IPCCommandName; payload: unknown; invoke: () => Promise<unknown> }> = [
+      { command: "fs_roots", payload: { sessionId: "session-1" }, invoke: () => fsApi.roots("session-1") },
+      { command: "fs_list", payload: { sessionId: "session-1", path: "/remote" }, invoke: () => fsApi.list("session-1", "/remote") },
+      { command: "fs_read", payload: { sessionId: "session-1", path: "/remote/a.bin", maxBytes: 1024 }, invoke: () => fsApi.read("session-1", "/remote/a.bin", 1024) },
+      { command: "fs_read_range", payload: { sessionId: "session-1", path: "/remote/a.bin", offset: 32, maxBytes: 64 }, invoke: () => fsApi.readRange("session-1", "/remote/a.bin", 32, 64) },
+      { command: "fs_write", payload: { sessionId: "session-1", path: "/remote/a.bin", contentBase64: "AAEC/w==", backup: false, taskId: "task-1", attemptId: "attempt-1" }, invoke: () => fsApi.write("session-1", "/remote/a.bin", "AAEC/w==", false, "task-1", "attempt-1") },
+      { command: "fs_mkdir", payload: { sessionId: "session-1", path: "/remote/new" }, invoke: () => fsApi.mkdir("session-1", "/remote/new") },
+      { command: "fs_rename", payload: { sessionId: "session-1", from: "/remote/old", to: "/remote/new" }, invoke: () => fsApi.rename("session-1", "/remote/old", "/remote/new") },
+      { command: "fs_delete", payload: { sessionId: "session-1", path: "/remote/old", isDir: false }, invoke: () => fsApi.delete("session-1", "/remote/old", false) },
+      { command: "fs_chmod", payload: { sessionId: "session-1", path: "/remote/a.bin", mode: 0o644 }, invoke: () => fsApi.chmod("session-1", "/remote/a.bin", 0o644) },
+      { command: "fs_checksum", payload: { sessionId: "session-1", path: "/remote/a.bin", algo: "sha256" }, invoke: () => fsApi.checksum("session-1", "/remote/a.bin", "sha256") },
+      { command: "fs_upload", payload: { sessionId: "session-1", localPath: "C:\\local\\a.bin", remotePath: "/remote/a.bin", resume: true, taskId: "task-1", attemptId: "attempt-1" }, invoke: () => fsApi.upload("session-1", "C:\\local\\a.bin", "/remote/a.bin", true, "task-1", "attempt-1") },
+      { command: "fs_upload_begin", payload: { ...identity, remotePath: "/remote/a.bin", totalSize: 4, chunkSize: 1024 }, invoke: () => fsApi.uploadBegin({ ...identity, remotePath: "/remote/a.bin", totalSize: 4, chunkSize: 1024 }) },
+      { command: "fs_upload_chunk", payload: { ...upload, index: 0, size: 4, sha256: "3d1f57c984978ef98a18378c8166c1cb8ede02c03eeb6aee7e2f121dfeee3e56", contentBase64: "AAEC/w==" }, invoke: () => fsApi.uploadChunk({ ...upload, index: 0, size: 4, sha256: "3d1f57c984978ef98a18378c8166c1cb8ede02c03eeb6aee7e2f121dfeee3e56", contentBase64: "AAEC/w==" }) },
+      { command: "fs_upload_commit", payload: upload, invoke: () => fsApi.uploadCommit(upload) },
+      { command: "fs_upload_abort", payload: upload, invoke: () => fsApi.uploadAbort(upload) },
+      { command: "fs_download", payload: { sessionId: "session-1", remotePath: "/remote/a.bin", localPath: "C:\\local\\a.bin", resume: true, taskId: "task-1", attemptId: "attempt-1" }, invoke: () => fsApi.download("session-1", "/remote/a.bin", "C:\\local\\a.bin", true, "task-1", "attempt-1") },
+      { command: "fs_pack_download", payload: { sessionId: "session-1", remotePath: "/remote/dir", localPath: "C:\\local\\dir.tar.gz", taskId: "task-1", attemptId: "attempt-1" }, invoke: () => fsApi.packDownload("session-1", "/remote/dir", "C:\\local\\dir.tar.gz", "task-1", "attempt-1") },
+      { command: "fs_cancel", payload: { taskId: "task-1", attemptId: "attempt-1" }, invoke: () => expect(fsApi.cancel("task-1", "attempt-1")).resolves.toBe(true) },
+      { command: "fs_extract", payload: { sessionId: "session-1", path: "/remote/dir.tar.gz" }, invoke: () => fsApi.extract("session-1", "/remote/dir.tar.gz") },
+      { command: "local_folder_list", payload: { path: "C:\\local\\pics" }, invoke: () => localFileApi.listFolder("C:\\local\\pics") },
+      { command: "local_file_read", payload: { path: "C:\\local\\a.bin", maxBytes: 1024 }, invoke: () => localFileApi.read("C:\\local\\a.bin", 1024) },
+      { command: "local_file_read_range", payload: { path: "C:\\local\\a.bin", offset: 2, maxBytes: 4 }, invoke: () => localFileApi.readRange("C:\\local\\a.bin", 2, 4) },
+      { command: "mount_capability", payload: null, invoke: () => mountApi.capability() },
+      { command: "mount_list", payload: { sessionId: "session-1", forceRefresh: true }, invoke: () => mountApi.list({ sessionId: "session-1", forceRefresh: true }) },
+      { command: "mount_create", payload: { sessionId: "session-1", remotePath: "\\\\nas\\share", localPoint: "Z:", username: "alice", password: "mount-secret" }, invoke: () => expect(mountApi.create({ sessionId: "session-1", remotePath: "\\\\nas\\share", localPoint: "Z:", username: "alice", password: "mount-secret" })).resolves.toEqual(mountEntry) },
+      { command: "mount_remove", payload: { localPoint: "Z:", sessionId: "session-1" }, invoke: () => mountApi.remove("Z:", "session-1") },
+    ];
+
+    expect(cases).toHaveLength(26);
+    for (const [index, test] of cases.entries()) {
+      await test.invoke();
+      expectManifestEnvelope(calls[index], test.command, test.payload);
+    }
+    expect(calls).toHaveLength(26);
+  });
+
+  it("omits only facade-optional fields and passes base64, truncation and null results through unchanged", async () => {
+    const read = { path: "/remote/a.bin", size: 4, contentBase64: "AAEC/w==" };
+    const range = { path: "/remote/a.bin", offset: 16, size: 128, contentBase64: "AAEC/w==", truncated: true };
+    const localRead = { path: "C:\\local\\a.bin", size: 4, contentBase64: "AAEC/w==" };
+    const localRange = { path: "C:\\local\\a.bin", offset: 0, size: 4, contentBase64: "AAEC/w==", truncated: false };
+    const calls = captureRpc({
+      fs_read: read,
+      fs_read_range: range,
+      local_file_read: localRead,
+      local_file_read_range: localRange,
+    });
+    const { fsApi, localFileApi, mountApi } = await import("../ipc/commands");
+
+    await expect(fsApi.read("session-1", "/remote/a.bin")).resolves.toEqual(read);
+    await expect(fsApi.readRange("session-1", "/remote/a.bin", 16)).resolves.toEqual(range);
+    await fsApi.upload("session-1", "C:\\local\\a.bin", "/remote/a.bin");
+    await fsApi.download("session-1", "/remote/a.bin", "C:\\local\\a.bin");
+    await fsApi.packDownload("session-1", "/remote/dir", "C:\\local\\dir.tar.gz");
+    await expect(fsApi.write("session-1", "/remote/empty", "")).resolves.toBeNull();
+    await fsApi.cancel("task-1");
+    await expect(localFileApi.read("C:\\local\\a.bin")).resolves.toEqual(localRead);
+    await expect(localFileApi.readRange("C:\\local\\a.bin", 0)).resolves.toEqual(localRange);
+    await expect(mountApi.remove("Z:")).resolves.toBeNull();
+
+    expect(calls).toHaveLength(10);
+    expectManifestEnvelope(calls[0], "fs_read", { sessionId: "session-1", path: "/remote/a.bin" });
+    expectManifestEnvelope(calls[1], "fs_read_range", { sessionId: "session-1", path: "/remote/a.bin", offset: 16 });
+    expectManifestEnvelope(calls[2], "fs_upload", { sessionId: "session-1", localPath: "C:\\local\\a.bin", remotePath: "/remote/a.bin" });
+    expectManifestEnvelope(calls[3], "fs_download", { sessionId: "session-1", remotePath: "/remote/a.bin", localPath: "C:\\local\\a.bin" });
+    expectManifestEnvelope(calls[4], "fs_pack_download", { sessionId: "session-1", remotePath: "/remote/dir", localPath: "C:\\local\\dir.tar.gz" });
+    expectManifestEnvelope(calls[5], "fs_write", { sessionId: "session-1", path: "/remote/empty", contentBase64: "", backup: true });
+    expectManifestEnvelope(calls[6], "fs_cancel", { taskId: "task-1" });
+    expectManifestEnvelope(calls[7], "local_file_read", { path: "C:\\local\\a.bin" });
+    expectManifestEnvelope(calls[8], "local_file_read_range", { path: "C:\\local\\a.bin", offset: 0 });
+    expectManifestEnvelope(calls[9], "mount_remove", { localPoint: "Z:" });
+  });
+});
+
 describe("ai_edit_resend wire contract", () => {
   it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();

@@ -557,6 +557,119 @@ void generatedOutputs;
     expect(diagnostics, formatted(diagnostics)).toEqual([]);
   }, COMPILE_BUDGET_MS);
 
+  it("types fs, desktop local-file and mount commands without widening paths, bytes or secrets", () => {
+    const probe = resolve("src/test/__ipc_fs_local_mount_contract_probe.ts");
+    const source = `
+import {
+  call,
+  fsApi,
+  localFileApi,
+  mountApi,
+  type FileRootsDto,
+  type LocalFolderListDto,
+} from "../ipc/commands";
+import type { IPCInput, IPCOutput } from "../ipc/generated/manifest";
+import type { FileEntryDto, MountEntryDto } from "../ipc/types";
+
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+const readLimit: Assert<Equal<IPCInput<"fs_read">["maxBytes"], number | undefined>> = true;
+const rangeLimit: Assert<Equal<IPCInput<"local_file_read_range">["maxBytes"], number | undefined>> = true;
+const resume: Assert<Equal<IPCInput<"fs_upload">["resume"], boolean | undefined>> = true;
+const attempt: Assert<Equal<IPCInput<"fs_upload">["attemptId"], string | undefined>> = true;
+const chunkAttempt: Assert<Equal<IPCInput<"fs_upload_chunk">["attemptId"], string>> = true;
+const chunkBytes: Assert<Equal<IPCInput<"fs_upload_chunk">["contentBase64"], string>> = true;
+const mountPassword: Assert<Equal<IPCInput<"mount_create">["password"], string | undefined>> = true;
+const readBytes: Assert<Equal<IPCOutput<"fs_read">["contentBase64"], string>> = true;
+const truncated: Assert<Equal<IPCOutput<"fs_read_range">["truncated"], boolean>> = true;
+const writeUnknown: Assert<Equal<IPCOutput<"fs_write">, unknown>> = true;
+const removeUnknown: Assert<Equal<IPCOutput<"mount_remove">, unknown>> = true;
+const capability: Assert<Equal<IPCOutput<"mount_capability">, string | null>> = true;
+void [readLimit, rangeLimit, resume, attempt, chunkAttempt, chunkBytes, mountPassword, readBytes, truncated, writeUnknown, removeUnknown, capability];
+
+const roots: Promise<FileRootsDto> = fsApi.roots("session-1");
+const entries: Promise<FileEntryDto[]> = fsApi.list("session-1", "/remote");
+const written: Promise<void> = fsApi.write("session-1", "/remote/a.bin", "AAEC/w==");
+const uploaded: Promise<number> = fsApi.upload("session-1", "C:\\local\\a.bin", "/remote/a.bin");
+const canceled: Promise<boolean> = fsApi.cancel("task-1");
+const folder: Promise<LocalFolderListDto> = localFileApi.listFolder("C:\\local\\pics");
+const mounts: Promise<MountEntryDto[]> = mountApi.list({ sessionId: "session-1" });
+const mounted: Promise<MountEntryDto> = mountApi.create({ sessionId: "session-1", remotePath: "\\\\nas\\share", localPoint: "Z:" });
+const removed: Promise<void> = mountApi.remove("Z:");
+void [roots, entries, written, uploaded, canceled, folder, mounts, mounted, removed];
+
+void call("fs_read", { sessionId: "session-1", path: "/remote/a.bin" });
+void call("fs_read", { sessionId: "session-1", path: "/remote/a.bin", maxBytes: 0 });
+void call("fs_read_range", { sessionId: "session-1", path: "/remote/a.bin", offset: 0 });
+void call("fs_write", { args: { sessionId: "session-1", path: "/remote/a.bin", contentBase64: "AAEC/w==", backup: true } });
+void call("fs_upload", { sessionId: "session-1", localPath: "C:\\local\\a.bin", remotePath: "/remote/a.bin" });
+void call("fs_upload", { sessionId: "session-1", localPath: "C:\\local\\a.bin", remotePath: "/remote/a.bin", resume: false, taskId: "task-1", attemptId: "attempt-1" });
+void call("fs_upload_begin", { sessionId: "session-1", remotePath: "/remote/a.bin", totalSize: 4, taskId: "task-1", attemptId: "attempt-1" });
+void call("fs_upload_chunk", { sessionId: "session-1", uploadId: "upload-1", taskId: "task-1", attemptId: "attempt-1", index: 0, size: 4, sha256: "3d1f57c984978ef98a18378c8166c1cb8ede02c03eeb6aee7e2f121dfeee3e56", contentBase64: "AAEC/w==" });
+void call("fs_upload_commit", { sessionId: "session-1", uploadId: "upload-1", taskId: "task-1", attemptId: "attempt-1" });
+void call("fs_upload_abort", { sessionId: "session-1", uploadId: "upload-1", taskId: "task-1", attemptId: "attempt-1" });
+void call("fs_pack_download", { sessionId: "session-1", remotePath: "/remote/dir", localPath: "C:\\local\\dir.tar.gz" });
+void call("local_file_read", { path: "C:\\local\\a.bin", maxBytes: 0 });
+void call("local_file_read_range", { path: "C:\\local\\a.bin", offset: 0 });
+void call("mount_capability");
+void call("mount_list", { sessionId: "session-1", forceRefresh: false });
+void call("mount_create", { args: { sessionId: "session-1", remotePath: "\\\\nas\\share", localPoint: "Z:", password: "" } });
+void call("mount_remove", { localPoint: "Z:" });
+
+// @ts-expect-error typed fs commands reject the legacy generic output escape
+void call<{ path: string }>("fs_read", { sessionId: "session-1", path: "/remote/a.bin" });
+// @ts-expect-error reads do not acquire upload-only local paths
+void call("fs_read", { sessionId: "session-1", path: "/remote/a.bin", localPath: "C:\\local\\a.bin" });
+// @ts-expect-error remote read paths remain required
+void call("fs_read", { sessionId: "session-1" });
+// @ts-expect-error optional read limits remain numeric
+void call("fs_read", { sessionId: "session-1", path: "/remote/a.bin", maxBytes: "8MiB" });
+// @ts-expect-error nested writes reject flat input
+void call("fs_write", { sessionId: "session-1", path: "/remote/a.bin", contentBase64: "AAEC/w==", backup: true });
+// @ts-expect-error the facade's backup=true default does not make the wire field optional
+void call("fs_write", { args: { sessionId: "session-1", path: "/remote/a.bin", contentBase64: "AAEC/w==" } });
+// @ts-expect-error native and staged local paths remain strings
+void call("fs_upload", { sessionId: "session-1", localPath: 42, remotePath: "/remote/a.bin" });
+// @ts-expect-error upload begin does not acquire chunk content identity
+void call("fs_upload_begin", { sessionId: "session-1", remotePath: "/remote/a.bin", totalSize: 4, taskId: "task-1", attemptId: "attempt-1", sha256: "not-yet-read" });
+// @ts-expect-error chunked uploads require attempt identity
+void call("fs_upload_begin", { sessionId: "session-1", remotePath: "/remote/a.bin", totalSize: 4, taskId: "task-1" });
+// @ts-expect-error base64 content remains text rather than a number array
+void call("fs_upload_chunk", { sessionId: "session-1", uploadId: "upload-1", taskId: "task-1", attemptId: "attempt-1", index: 0, size: 4, sha256: "hash", contentBase64: [0, 1, 2, 255] });
+// @ts-expect-error pack download has no resume flag in its existing facade contract
+void call("fs_pack_download", { sessionId: "session-1", remotePath: "/remote/dir", localPath: "C:\\local\\dir.tar.gz", resume: true });
+// @ts-expect-error nested mount creation rejects flat input
+void call("mount_create", { sessionId: "session-1", remotePath: "\\\\nas\\share", localPoint: "Z:" });
+// @ts-expect-error mount secrets remain strings
+void call("mount_create", { args: { sessionId: "session-1", remotePath: "\\\\nas\\share", localPoint: "Z:", password: 42 } });
+// @ts-expect-error mount lists remain scoped to a session
+void call("mount_list", { forceRefresh: true });
+
+async function generatedOutputs() {
+  const read = await call("fs_read", { sessionId: "session-1", path: "/remote/a.bin" });
+  const contentBase64: string = read.contentBase64;
+  const range = await call("fs_read_range", { sessionId: "session-1", path: "/remote/a.bin", offset: 0 });
+  const truncated: boolean = range.truncated;
+  const roots = await call("fs_roots", { sessionId: "session-1" });
+  const generatedPathStyle: string = roots.pathStyle;
+  const folder = await call("local_folder_list", { path: "C:\\local\\pics" });
+  const nativePath: string = folder.files[0].localPath;
+  const mount = await call("mount_create", { args: { sessionId: "session-1", remotePath: "\\\\nas\\share", localPoint: "Z:", password: "secret" } });
+  const managed: boolean = mount.managed;
+  // @ts-expect-error mount results never echo the create secret
+  const password = mount.password;
+  const facadeRoots = await fsApi.roots("session-1");
+  const facadePathStyle: "windows" | "posix" | "unknown" = facadeRoots.pathStyle;
+  void [contentBase64, truncated, generatedPathStyle, nativePath, managed, password, facadePathStyle];
+}
+void generatedOutputs;
+`;
+    const diagnostics = compile([probe], { [probe]: source });
+    expect(diagnostics, formatted(diagnostics)).toEqual([]);
+  }, COMPILE_BUDGET_MS);
+
   it("types the consumer-priority session terminal vertical without narrowing legacy fallbacks", () => {
     const probe = resolve("src/test/__ipc_session_terminal_contract_probe.ts");
     const source = `

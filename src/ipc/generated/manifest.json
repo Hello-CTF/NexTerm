@@ -784,97 +784,115 @@
       "stream": "none"
     },
     "fs_cancel": {
-      "scope": "fs-cancel",
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_checksum": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_chmod": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_delete": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_download": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_extract": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_list": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_mkdir": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_pack_download": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_read": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_read_range": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_rename": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_roots": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_upload": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_upload_abort": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_upload_begin": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_upload_chunk": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_upload_commit": {
+      "scope": "fs",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "fs_write": {
+      "scope": "fs",
       "nested": true,
       "channel": false,
       "stream": "none"
@@ -980,16 +998,19 @@
       "stream": "none"
     },
     "local_file_read": {
+      "scope": "local-file",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "local_file_read_range": {
+      "scope": "local-file",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "local_folder_list": {
+      "scope": "local-file",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1048,21 +1069,25 @@
       "stream": "none"
     },
     "mount_capability": {
+      "scope": "mount",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "mount_create": {
+      "scope": "mount",
       "nested": true,
       "channel": false,
       "stream": "none"
     },
     "mount_list": {
+      "scope": "mount",
       "nested": false,
       "channel": false,
       "stream": "none"
     },
     "mount_remove": {
+      "scope": "mount",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1924,29 +1949,8 @@
     "forward_list",
     "forward_remove",
     "forward_retry",
-    "fs_checksum",
-    "fs_chmod",
-    "fs_delete",
-    "fs_download",
-    "fs_extract",
-    "fs_list",
-    "fs_mkdir",
-    "fs_pack_download",
-    "fs_read",
-    "fs_read_range",
-    "fs_rename",
-    "fs_roots",
-    "fs_upload",
-    "fs_upload_abort",
-    "fs_upload_begin",
-    "fs_upload_chunk",
-    "fs_upload_commit",
-    "fs_write",
     "layout_get",
     "layout_put",
-    "local_file_read",
-    "local_file_read_range",
-    "local_folder_list",
     "memory_create",
     "memory_delete",
     "memory_edit",
@@ -1954,10 +1958,6 @@
     "memory_index",
     "memory_settings_get",
     "memory_settings_set",
-    "mount_capability",
-    "mount_create",
-    "mount_list",
-    "mount_remove",
     "redis_command",
     "redis_inspect",
     "redis_scan",

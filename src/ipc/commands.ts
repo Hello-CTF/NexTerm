@@ -640,48 +640,37 @@ function normEntryPath<T extends { path: string }>(e: T): T {
   return { ...e, path: e.path.replace(/\\/g, "/") };
 }
 
-export interface FileRootDto {
-  path: string;
-  label: string;
-}
+export type FileRootDto = import("./generated/types").FSRootDTO;
 
-export interface FileRootsDto {
+export interface FileRootsDto extends Omit<import("./generated/types").FSRootsDTO, "pathStyle"> {
   pathStyle: "windows" | "posix" | "unknown";
-  roots: FileRootDto[];
-  homePath: string | null;
-  supported: boolean;
 }
 
 export const fsApi = {
   roots: async (sessionId: string) => {
-    const result = await call<FileRootsDto>("fs_roots", { sessionId });
+    const result = await call("fs_roots", { sessionId });
     return {
       ...result,
+      pathStyle: result.pathStyle as FileRootsDto["pathStyle"],
       roots: result.roots.map(normEntryPath),
       homePath: result.homePath?.replace(/\\/g, "/") ?? null,
     };
   },
   list: async (sessionId: string, path: string) => {
-    const list = await call<import("./types").FileEntryDto[]>("fs_list", {
+    const list = await call("fs_list", {
       sessionId,
       path,
     });
     return list.map(normEntryPath);
   },
   read: (sessionId: string, path: string, maxBytes?: number) =>
-    call<{ path: string; size: number; contentBase64: string }>("fs_read", {
+    call("fs_read", {
       sessionId,
       path,
       maxBytes,
     }),
   readRange: (sessionId: string, path: string, offset: number, maxBytes?: number) =>
-    call<{
-      path: string;
-      offset: number;
-      size: number;
-      contentBase64: string;
-      truncated: boolean;
-    }>("fs_read_range", {
+    call("fs_read_range", {
       sessionId,
       path,
       offset,
@@ -694,17 +683,17 @@ export const fsApi = {
     backup = true,
     taskId?: string,
     attemptId?: string,
-  ) => call<void>("fs_write", { args: { sessionId, path, contentBase64, backup, taskId, attemptId } }),
+  ) => call("fs_write", { args: { sessionId, path, contentBase64, backup, taskId, attemptId } }) as Promise<void>,
   mkdir: (sessionId: string, path: string) =>
-    call<void>("fs_mkdir", { sessionId, path }),
+    call("fs_mkdir", { sessionId, path }) as Promise<void>,
   rename: (sessionId: string, from: string, to: string) =>
-    call<void>("fs_rename", { sessionId, from, to }),
+    call("fs_rename", { sessionId, from, to }) as Promise<void>,
   delete: (sessionId: string, path: string, isDir: boolean) =>
-    call<void>("fs_delete", { sessionId, path, isDir }),
+    call("fs_delete", { sessionId, path, isDir }) as Promise<void>,
   chmod: (sessionId: string, path: string, mode: number) =>
-    call<void>("fs_chmod", { sessionId, path, mode }),
+    call("fs_chmod", { sessionId, path, mode }) as Promise<void>,
   checksum: (sessionId: string, path: string, algo?: string) =>
-    call<string>("fs_checksum", { sessionId, path, algo }),
+    call("fs_checksum", { sessionId, path, algo }),
   upload: (
     sessionId: string,
     localPath: string,
@@ -712,7 +701,7 @@ export const fsApi = {
     resume?: boolean,
     taskId?: string,
     attemptId?: string,
-  ) => call<number>("fs_upload", { sessionId, localPath, remotePath, resume, taskId, attemptId }),
+  ) => call("fs_upload", { sessionId, localPath, remotePath, resume, taskId, attemptId }),
   uploadBegin: (args: {
     sessionId: string;
     remotePath: string;
@@ -720,7 +709,7 @@ export const fsApi = {
     chunkSize?: number;
     taskId: string;
     attemptId: string;
-  }) => call<{ uploadId: string; chunkSize: number }>("fs_upload_begin", args),
+  }) => call("fs_upload_begin", args),
   uploadChunk: (args: {
     sessionId: string;
     uploadId: string;
@@ -730,11 +719,11 @@ export const fsApi = {
     size: number;
     sha256: string;
     contentBase64: string;
-  }) => call<{ received: number; total: number }>("fs_upload_chunk", args),
+  }) => call("fs_upload_chunk", args),
   uploadCommit: (args: { sessionId: string; uploadId: string; taskId: string; attemptId: string }) =>
-    call<number>("fs_upload_commit", args),
+    call("fs_upload_commit", args),
   uploadAbort: (args: { sessionId: string; uploadId: string; taskId: string; attemptId: string }) =>
-    call<void>("fs_upload_abort", args),
+    call("fs_upload_abort", args) as Promise<void>,
   download: (
     sessionId: string,
     remotePath: string,
@@ -742,59 +731,43 @@ export const fsApi = {
     resume?: boolean,
     taskId?: string,
     attemptId?: string,
-  ) => call<number>("fs_download", { sessionId, remotePath, localPath, resume, taskId, attemptId }),
+  ) => call("fs_download", { sessionId, remotePath, localPath, resume, taskId, attemptId }),
   packDownload: (sessionId: string, remotePath: string, localPath: string, taskId?: string, attemptId?: string) =>
-    call<number>("fs_pack_download", { sessionId, remotePath, localPath, taskId, attemptId }),
+    call("fs_pack_download", { sessionId, remotePath, localPath, taskId, attemptId }),
   cancel: (taskId: string, attemptId?: string) => call("fs_cancel", { taskId, attemptId }),
   extract: (sessionId: string, path: string) =>
-    call<string>("fs_extract", { sessionId, path }),
+    call("fs_extract", { sessionId, path }),
 };
 
-export interface LocalFolderFileDto {
-  relativePath: string;
-  localPath: string;
-  size: number;
-  mtimeMs: number;
-}
-
-export interface LocalFolderListDto {
-  name: string;
-  files: LocalFolderFileDto[];
-  emptyDirs: string[];
-}
+export type LocalFolderFileDto = import("./generated/types").LocalFolderFileDTO;
+export type LocalFolderListDto = import("./generated/types").LocalFolderListDTO;
 
 // Desktop-only commands (not registered in the server assembly): enumerate and read a local
 // folder picked via the native folder dialog, giving folder upload real OS paths.
 export const localFileApi = {
-  listFolder: (path: string) => call<LocalFolderListDto>("local_folder_list", { path }),
+  listFolder: (path: string) => call("local_folder_list", { path }),
   read: (path: string, maxBytes?: number) =>
-    call<{ path: string; size: number; contentBase64: string }>("local_file_read", {
+    call("local_file_read", {
       path,
       maxBytes,
     }),
   readRange: (path: string, offset: number, maxBytes?: number) =>
-    call<{
-      path: string;
-      offset: number;
-      size: number;
-      contentBase64: string;
-      truncated: boolean;
-    }>("local_file_read_range", { path, offset, maxBytes }),
+    call("local_file_read_range", { path, offset, maxBytes }),
 };
 
 export const mountApi = {
-  capability: () => call<string | null>("mount_capability"),
+  capability: () => call("mount_capability"),
   list: (options: { sessionId: string; forceRefresh?: boolean }) =>
-    call<import("./types").MountEntryDto[]>("mount_list", options),
+    call("mount_list", options),
   create: (args: {
     sessionId: string;
     remotePath: string;
     localPoint: string;
     username?: string;
     password?: string;
-  }) => call<import("./types").MountEntryDto>("mount_create", { args }),
+  }) => call("mount_create", { args }),
   remove: (localPoint: string, sessionId?: string) =>
-    call<void>("mount_remove", { localPoint, sessionId }),
+    call("mount_remove", { localPoint, sessionId }) as Promise<void>,
 };
 
 export interface ContainerSummary {

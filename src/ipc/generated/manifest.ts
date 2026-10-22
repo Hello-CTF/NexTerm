@@ -901,7 +901,7 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/forward.Rule", ts: "ForwardRule" },
     },
     "fs_cancel": {
-      scope: "fs-cancel",
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
@@ -909,94 +909,148 @@ export const ipcContractManifest = {
       output: { go: "bool", ts: "boolean" },
     },
     "fs_checksum": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; Algo string \"json:\\\"algo,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  algo?: string;\n}" },
+      output: { go: "string", ts: "string" },
     },
     "fs_chmod": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; Mode uint32 \"json:\\\"mode\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  mode: number;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "fs_delete": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; IsDir bool \"json:\\\"isDir\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  isDir: boolean;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "fs_download": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; RemotePath string \"json:\\\"remotePath\\\"\"; LocalPath string \"json:\\\"localPath\\\"\"; Resume bool \"json:\\\"resume,omitempty\\\"\"; TaskID string \"json:\\\"taskId,omitempty\\\"\"; AttemptID string \"json:\\\"attemptId,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  remotePath: string;\n  localPath: string;\n  resume?: boolean;\n  taskId?: string;\n  attemptId?: string;\n}" },
+      output: { go: "int64", ts: "number" },
     },
     "fs_extract": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n}" },
+      output: { go: "string", ts: "string" },
     },
     "fs_list": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n}" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.fsEntryDTO", ts: "FSEntryDTO[]" },
     },
     "fs_mkdir": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "fs_pack_download": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; RemotePath string \"json:\\\"remotePath\\\"\"; LocalPath string \"json:\\\"localPath\\\"\"; TaskID string \"json:\\\"taskId,omitempty\\\"\"; AttemptID string \"json:\\\"attemptId,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  remotePath: string;\n  localPath: string;\n  taskId?: string;\n  attemptId?: string;\n}" },
+      output: { go: "int64", ts: "number" },
     },
     "fs_read": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; MaxBytes int64 \"json:\\\"maxBytes,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  maxBytes?: number;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsReadDTO", ts: "FSReadDTO" },
     },
     "fs_read_range": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; Offset int64 \"json:\\\"offset\\\"\"; MaxBytes int64 \"json:\\\"maxBytes,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  offset: number;\n  maxBytes?: number;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsRangeReadDTO", ts: "FSRangeReadDTO" },
     },
     "fs_rename": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; From string \"json:\\\"from\\\"\"; To string \"json:\\\"to\\\"\"}", ts: "{\n  sessionId: string;\n  from: string;\n  to: string;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "fs_roots": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"}", ts: "{\n  sessionId: string;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsRootsDTO", ts: "FSRootsDTO" },
     },
     "fs_upload": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; LocalPath string \"json:\\\"localPath\\\"\"; RemotePath string \"json:\\\"remotePath\\\"\"; Resume bool \"json:\\\"resume,omitempty\\\"\"; TaskID string \"json:\\\"taskId,omitempty\\\"\"; AttemptID string \"json:\\\"attemptId,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  localPath: string;\n  remotePath: string;\n  resume?: boolean;\n  taskId?: string;\n  attemptId?: string;\n}" },
+      output: { go: "int64", ts: "number" },
     },
     "fs_upload_abort": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; UploadID string \"json:\\\"uploadId\\\"\"; TaskID string \"json:\\\"taskId\\\"\"; AttemptID string \"json:\\\"attemptId\\\"\"}", ts: "{\n  sessionId: string;\n  uploadId: string;\n  taskId: string;\n  attemptId: string;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "fs_upload_begin": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; RemotePath string \"json:\\\"remotePath\\\"\"; TotalSize int64 \"json:\\\"totalSize\\\"\"; ChunkSize int \"json:\\\"chunkSize,omitempty\\\"\"; TaskID string \"json:\\\"taskId\\\"\"; AttemptID string \"json:\\\"attemptId\\\"\"}", ts: "{\n  sessionId: string;\n  remotePath: string;\n  totalSize: number;\n  chunkSize?: number;\n  taskId: string;\n  attemptId: string;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadBeginDTO", ts: "FSChunkUploadBeginDTO" },
     },
     "fs_upload_chunk": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; UploadID string \"json:\\\"uploadId\\\"\"; TaskID string \"json:\\\"taskId\\\"\"; AttemptID string \"json:\\\"attemptId\\\"\"; Index int64 \"json:\\\"index\\\"\"; Size int64 \"json:\\\"size\\\"\"; SHA256 string \"json:\\\"sha256\\\"\"; ContentBase64 string \"json:\\\"contentBase64\\\"\"}", ts: "{\n  sessionId: string;\n  uploadId: string;\n  taskId: string;\n  attemptId: string;\n  index: number;\n  size: number;\n  sha256: string;\n  contentBase64: string;\n}" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadProgressDTO", ts: "FSChunkUploadProgressDTO" },
     },
     "fs_upload_commit": {
+      scope: "fs",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; UploadID string \"json:\\\"uploadId\\\"\"; TaskID string \"json:\\\"taskId\\\"\"; AttemptID string \"json:\\\"attemptId\\\"\"}", ts: "{\n  sessionId: string;\n  uploadId: string;\n  taskId: string;\n  attemptId: string;\n}" },
+      output: { go: "int64", ts: "number" },
     },
     "fs_write": {
+      scope: "fs",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; ContentBase64 string \"json:\\\"contentBase64\\\"\"; Backup bool \"json:\\\"backup\\\"\"; TaskID string \"json:\\\"taskId,omitempty\\\"\"; AttemptID string \"json:\\\"attemptId,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  contentBase64: string;\n  backup: boolean;\n  taskId?: string;\n  attemptId?: string;\n}" },
+      output: { go: "any", ts: "unknown" },
     },
     "group_create": {
       scope: "group",
@@ -1130,19 +1184,28 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "local_file_read": {
+      scope: "local-file",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFileReadRequest", ts: "LocalFileReadRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsReadDTO", ts: "FSReadDTO" },
     },
     "local_file_read_range": {
+      scope: "local-file",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFileReadRangeRequest", ts: "LocalFileReadRangeRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsRangeReadDTO", ts: "FSRangeReadDTO" },
     },
     "local_folder_list": {
+      scope: "local-file",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderListRequest", ts: "LocalFolderListRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderListDTO", ts: "LocalFolderListDTO" },
     },
     "log_tail_cancel": {
       scope: "log-tail",
@@ -1205,24 +1268,36 @@ export const ipcContractManifest = {
       stream: "none",
     },
     "mount_capability": {
+      scope: "mount",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*string", ts: "string | null" },
     },
     "mount_create": {
+      scope: "mount",
       nested: true,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/mount.CreateArgs", ts: "MountCreateArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/mount.Entry", ts: "MountEntryDTO" },
     },
     "mount_list": {
+      scope: "mount",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/mount.listRequest", ts: "MountListRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/mount.Entry", ts: "MountEntryDTO[]" },
     },
     "mount_remove": {
+      scope: "mount",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/mount.RemoveArgs", ts: "MountRemoveArgs" },
+      output: { go: "any", ts: "unknown" },
     },
     "preview_share_active": {
       scope: "preview-share",
@@ -2271,29 +2346,8 @@ export const ipcContractManifest = {
     "forward_list",
     "forward_remove",
     "forward_retry",
-    "fs_checksum",
-    "fs_chmod",
-    "fs_delete",
-    "fs_download",
-    "fs_extract",
-    "fs_list",
-    "fs_mkdir",
-    "fs_pack_download",
-    "fs_read",
-    "fs_read_range",
-    "fs_rename",
-    "fs_roots",
-    "fs_upload",
-    "fs_upload_abort",
-    "fs_upload_begin",
-    "fs_upload_chunk",
-    "fs_upload_commit",
-    "fs_write",
     "layout_get",
     "layout_put",
-    "local_file_read",
-    "local_file_read_range",
-    "local_folder_list",
     "memory_create",
     "memory_delete",
     "memory_edit",
@@ -2301,10 +2355,6 @@ export const ipcContractManifest = {
     "memory_index",
     "memory_settings_get",
     "memory_settings_set",
-    "mount_capability",
-    "mount_create",
-    "mount_list",
-    "mount_remove",
     "redis_command",
     "redis_inspect",
     "redis_scan",
@@ -2634,6 +2684,167 @@ export interface IPCCommandTypeMap {
     input: contractTypes.FSCancelRequest;
     output: boolean;
   };
+  "fs_checksum": {
+    input: {
+  sessionId: string;
+  path: string;
+  algo?: string;
+};
+    output: string;
+  };
+  "fs_chmod": {
+    input: {
+  sessionId: string;
+  path: string;
+  mode: number;
+};
+    output: unknown;
+  };
+  "fs_delete": {
+    input: {
+  sessionId: string;
+  path: string;
+  isDir: boolean;
+};
+    output: unknown;
+  };
+  "fs_download": {
+    input: {
+  sessionId: string;
+  remotePath: string;
+  localPath: string;
+  resume?: boolean;
+  taskId?: string;
+  attemptId?: string;
+};
+    output: number;
+  };
+  "fs_extract": {
+    input: {
+  sessionId: string;
+  path: string;
+};
+    output: string;
+  };
+  "fs_list": {
+    input: {
+  sessionId: string;
+  path: string;
+};
+    output: contractTypes.FSEntryDTO[];
+  };
+  "fs_mkdir": {
+    input: {
+  sessionId: string;
+  path: string;
+};
+    output: unknown;
+  };
+  "fs_pack_download": {
+    input: {
+  sessionId: string;
+  remotePath: string;
+  localPath: string;
+  taskId?: string;
+  attemptId?: string;
+};
+    output: number;
+  };
+  "fs_read": {
+    input: {
+  sessionId: string;
+  path: string;
+  maxBytes?: number;
+};
+    output: contractTypes.FSReadDTO;
+  };
+  "fs_read_range": {
+    input: {
+  sessionId: string;
+  path: string;
+  offset: number;
+  maxBytes?: number;
+};
+    output: contractTypes.FSRangeReadDTO;
+  };
+  "fs_rename": {
+    input: {
+  sessionId: string;
+  from: string;
+  to: string;
+};
+    output: unknown;
+  };
+  "fs_roots": {
+    input: {
+  sessionId: string;
+};
+    output: contractTypes.FSRootsDTO;
+  };
+  "fs_upload": {
+    input: {
+  sessionId: string;
+  localPath: string;
+  remotePath: string;
+  resume?: boolean;
+  taskId?: string;
+  attemptId?: string;
+};
+    output: number;
+  };
+  "fs_upload_abort": {
+    input: {
+  sessionId: string;
+  uploadId: string;
+  taskId: string;
+  attemptId: string;
+};
+    output: unknown;
+  };
+  "fs_upload_begin": {
+    input: {
+  sessionId: string;
+  remotePath: string;
+  totalSize: number;
+  chunkSize?: number;
+  taskId: string;
+  attemptId: string;
+};
+    output: contractTypes.FSChunkUploadBeginDTO;
+  };
+  "fs_upload_chunk": {
+    input: {
+  sessionId: string;
+  uploadId: string;
+  taskId: string;
+  attemptId: string;
+  index: number;
+  size: number;
+  sha256: string;
+  contentBase64: string;
+};
+    output: contractTypes.FSChunkUploadProgressDTO;
+  };
+  "fs_upload_commit": {
+    input: {
+  sessionId: string;
+  uploadId: string;
+  taskId: string;
+  attemptId: string;
+};
+    output: number;
+  };
+  "fs_write": {
+    input: {
+  sessionId: string;
+  path: string;
+  contentBase64: string;
+  backup: boolean;
+  taskId?: string;
+  attemptId?: string;
+};
+    output: unknown;
+  };
   "group_create": {
     input: contractTypes.AssetGroupInputRequest;
     output: contractTypes.AssetGroupDTO;
@@ -2694,6 +2905,18 @@ export interface IPCCommandTypeMap {
     input: contractTypes.IDRequest;
     output: unknown;
   };
+  "local_file_read": {
+    input: contractTypes.LocalFileReadRequest;
+    output: contractTypes.FSReadDTO;
+  };
+  "local_file_read_range": {
+    input: contractTypes.LocalFileReadRangeRequest;
+    output: contractTypes.FSRangeReadDTO;
+  };
+  "local_folder_list": {
+    input: contractTypes.LocalFolderListRequest;
+    output: contractTypes.LocalFolderListDTO;
+  };
   "log_tail_cancel": {
     input: contractTypes.LogTailCancelRequest;
     output: contractTypes.LogTailCancelResult;
@@ -2705,6 +2928,22 @@ export interface IPCCommandTypeMap {
   "log_tail_start": {
     input: contractTypes.LogTailRequest;
     output: contractTypes.LogTailStartResult;
+  };
+  "mount_capability": {
+    input: Record<string, never>;
+    output: string | null;
+  };
+  "mount_create": {
+    input: contractTypes.MountCreateArgs;
+    output: contractTypes.MountEntryDTO;
+  };
+  "mount_list": {
+    input: contractTypes.MountListRequest;
+    output: contractTypes.MountEntryDTO[];
+  };
+  "mount_remove": {
+    input: contractTypes.MountRemoveArgs;
+    output: unknown;
   };
   "preview_share_active": {
     input: contractTypes.PreviewShareActiveRequest;
