@@ -50,6 +50,12 @@ func (s *restartScriptServer) ServeHTTP(writer http.ResponseWriter, request *htt
 
 func composeRestartRuntime(t *testing.T, database *store.Store, providerURL string, existing ...*session.Manager) (*ProductionServices, string) {
 	t.Helper()
+	services, sessionID, _ := composeRestartRuntimeWithTransport(t, database, providerURL, existing...)
+	return services, sessionID
+}
+
+func composeRestartRuntimeWithTransport(t *testing.T, database *store.Store, providerURL string, existing ...*session.Manager) (*ProductionServices, string, *takeoverFakeTransport) {
+	t.Helper()
 	ctx := context.Background()
 	initTestVault(t, ctx, database)
 	restoring := len(existing) != 0 && existing[0] != nil
@@ -69,13 +75,14 @@ func composeRestartRuntime(t *testing.T, database *store.Store, providerURL stri
 	if err != nil {
 		t.Fatal(err)
 	}
+	transport := &takeoverFakeTransport{}
 	var sessions *session.Manager
 	if restoring {
 		sessions = existing[0]
 	} else {
 		sessions = session.NewManager(session.Config{
 			Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
-				return &outcomeFakeTransport{}, nil
+				return transport, nil
 			}),
 			OpenAccess: true,
 		})
@@ -102,7 +109,7 @@ func composeRestartRuntime(t *testing.T, database *store.Store, providerURL stri
 		services.closeAIRuntime()
 		_ = sessions.Close()
 	})
-	return services, sessionID
+	return services, sessionID, transport
 }
 
 func waitRestartRunStatus(t *testing.T, database *store.Store, jobID, status string) store.RunRow {
@@ -313,5 +320,81 @@ func TestProductionRestoreRebindsScopeOrReportsNoLiveSessionR2(t *testing.T) {
 				t.Fatalf("restored scope = %+v, want replacement %q without tab", scope, replacementID)
 			}
 		})
+	}
+}
+
+func TestProductionRestartPendingSendKeysRejectsReplacementEpisode(t *testing.T) {
+	testProductionRestartPendingSendKeysEpisode(t, true)
+}
+
+func TestProductionRestartPendingSendKeysAllowsSameEpisode(t *testing.T) {
+	testProductionRestartPendingSendKeysEpisode(t, false)
+}
+
+func testProductionRestartPendingSendKeysEpisode(t *testing.T, recreate bool) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	provider := httptest.NewServer(&guardProbeScript{keys: "touch /tmp/restart-episode"})
+	t.Cleanup(provider.Close)
+	firstStore, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, sessionID, transport := composeRestartRuntimeWithTransport(t, firstStore, provider.URL)
+	assetID := scopeSessionAssetID(t, first, session.WithOpenAccess(ctx), sessionID)
+	tab, err := first.Sessions.OpenTab(ctx, session.OpenTabOptions{
+		TabID: "tab-restart-episode", SessionID: sessionID, ClientID: "client-1", ChannelID: "channel-1", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &agent.SliceStream{}
+	response, err := first.Agent.Start(ctx, agent.ChatArgs{
+		Message: "run it", Scope: tools.Scope{SessionID: sessionID, TabID: tab.ID, AssetID: assetID},
+	}, agent.StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmation := waitOutcomeEvent(t, stream, "confirmRequired")
+	first.closeAIRuntime()
+	if err := firstStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if recreate {
+		if err := first.Sessions.CloseTab(tab.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := first.Sessions.OpenTab(ctx, session.OpenTabOptions{
+			TabID: tab.ID, SessionID: sessionID, ClientID: "client-1", ChannelID: "channel-1", Cols: 80, Rows: 24,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	secondStore, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = secondStore.Close() })
+	second, _, _ := composeRestartRuntimeWithTransport(t, secondStore, provider.URL, first.Sessions)
+	resumed := &agent.SliceStream{}
+	if err := second.Agent.ConfirmStream(ctx, agent.Confirmation{
+		JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow",
+	}, agent.StaticStream(resumed)); err != nil {
+		t.Fatal(err)
+	}
+	events := waitOutcomeClosed(t, resumed)
+	resultSeen, resultOK := false, false
+	for _, event := range events {
+		if event.Type == "toolResult" && event.ID == confirmation.ID {
+			resultSeen, resultOK = true, event.OK
+		}
+	}
+	if !resultSeen || resultOK == recreate {
+		t.Fatalf("restart tool result: seen=%t ok=%t recreate=%t events=%+v", resultSeen, resultOK, recreate, events)
+	}
+	writes := strings.Count(string(transport.written()), "touch /tmp/restart-episode")
+	if recreate && writes != 0 || !recreate && writes != 1 {
+		t.Fatalf("restart write count = %d, recreate=%t; written=%q", writes, recreate, transport.written())
 	}
 }

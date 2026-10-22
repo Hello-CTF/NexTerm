@@ -632,6 +632,7 @@ func (m *Manager) WriteInternal(ctx context.Context, tabID string, data []byte) 
 var (
 	ErrPasteModeChanged  = errors.New("terminal paste mode changed during write; input may be partially written; do not retry blindly")
 	ErrPasteVerification = errors.New("terminal paste mode verification failed after write; input may be partially written; do not retry blindly")
+	ErrTabEpisodeChanged = errors.New("terminal tab runtime episode changed before write")
 )
 
 func (m *Manager) WritePasteFor(ctx context.Context, tabID, text string) error {
@@ -750,6 +751,18 @@ func (m *Manager) writeInternalLocked(ctx context.Context, tab *Tab, data []byte
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if expected, ok := ctx.Value(expectedTabEpisodeContextKey{}).(expectedTabEpisode); ok {
+		tab.mu.Lock()
+		episode := tab.durableIdentity.Incarnation
+		if episode == "" {
+			episode = tab.runtimeEpisode
+		}
+		valid := !tab.closed && !tab.exited && tab.generation == generation && expected.tabID == tab.ID && expected.episode != "" && episode == expected.episode
+		tab.mu.Unlock()
+		if !valid {
+			return ErrTabEpisodeChanged
+		}
 	}
 	if err := writeChannelContext(ctx, channel, data); err != nil {
 		return err

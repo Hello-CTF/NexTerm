@@ -50,10 +50,11 @@ type MutationValidator func(context.Context) error
 type EnvironmentResolver func(context.Context, string) (string, error)
 
 type options struct {
-	shared              bool
-	targetValidator     TargetValidator
-	mutationValidator   MutationValidator
-	environmentResolver EnvironmentResolver
+	shared                 bool
+	targetValidator        TargetValidator
+	mutationValidator      MutationValidator
+	environmentResolver    EnvironmentResolver
+	revalidationAfterState func()
 }
 
 type Option func(*options)
@@ -72,6 +73,11 @@ func WithMutationValidator(validator MutationValidator) Option {
 
 func WithEnvironmentResolver(resolver EnvironmentResolver) Option {
 	return func(options *options) { options.environmentResolver = resolver }
+}
+
+// WithRevalidationAfterState registers a hook after loading the current authorization state.
+func WithRevalidationAfterState(hook func()) Option {
+	return func(options *options) { options.revalidationAfterState = hook }
 }
 
 type permissionState struct {

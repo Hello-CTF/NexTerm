@@ -52,13 +52,14 @@ func (r Resource) ProductionTarget() bool {
 // GrantRule is a persistent fine-grained allow rule: a limited scope for an action on a device.
 // An empty Path means the action is not path-limited (whole-device for that action); ExpiresAt 0 means permanent.
 type GrantRule struct {
-	ID        string `json:"id"`
-	DeviceID  string `json:"deviceId"`
-	Action    string `json:"action"`
-	Path      string `json:"path,omitempty"`
-	ExpiresAt int64  `json:"expiresAt,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID         string `json:"id"`
+	DeviceID   string `json:"deviceId"`
+	Action     string `json:"action"`
+	Path       string `json:"path,omitempty"`
+	ExpiresAt  int64  `json:"expiresAt,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
+	UpdatedAt  int64  `json:"updatedAt"`
+	generation string
 }
 
 var ruleActions = map[string]struct{}{

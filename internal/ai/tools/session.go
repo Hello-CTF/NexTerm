@@ -136,6 +136,25 @@ func (s *sessionTerminal) SessionAssetIdentity(ctx context.Context, sessionID st
 	return AssetIdentity{AssetID: asset.ID, ConfigFingerprint: asset.ConfigFingerprint}, nil
 }
 
+func (s *sessionTerminal) TabExecutionIdentity(ctx context.Context, tabID string) (string, string, AssetIdentity, error) {
+	snapshot, ok := s.manager.RosterRuntimeSnapshot(sessionRequestContext(ctx), tabID)
+	if !ok {
+		return "", "", AssetIdentity{}, session.ErrTabNotFound
+	}
+	if !snapshot.EpisodeOK {
+		return "", "", AssetIdentity{}, ErrAssetIdentityUnverifiable
+	}
+	asset := AssetIdentity{AssetID: snapshot.Asset.ID, ConfigFingerprint: snapshot.Asset.ConfigFingerprint}
+	return snapshot.SessionID, snapshot.Episode, asset, nil
+}
+
+func withTargetWriteBinding(ctx context.Context, target *TargetBinding) context.Context {
+	if target != nil && target.TabID != "" && target.RuntimeEpisode != "" {
+		return session.WithExpectedTabEpisode(ctx, target.TabID, target.RuntimeEpisode)
+	}
+	return ctx
+}
+
 // ListTerminalTabs enumerates the tabs visible to the caller with the exact
 // handle each is addressed by; the asset kind is resolved server-side so
 // privacy decisions never depend on client-supplied fields.
