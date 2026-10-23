@@ -240,8 +240,19 @@ func helperCompatibility(running helperVersionDTO) string {
 func helperDTOFromDaemon(sessionID, action string, daemon *sshdaemon.Daemon) helperOperationDTO {
 	local := helperRuntimeVersion(daemon.Update.Local, helperMetadataKnown(daemon.Update.Local))
 	running := helperRuntimeVersion(daemon.RunningMetadata, daemon.MetadataKnown)
+	matchingContent := local.Known && running.Known && local.SHA256 != "" &&
+		strings.EqualFold(local.SHA256, running.SHA256)
+	if matchingContent {
+		// Matching content identifies the same executable even when its local build info omits release metadata.
+		if local.Release == "" {
+			local.Release = running.Release
+		}
+		if local.Commit == "" {
+			local.Commit = running.Commit
+		}
+	}
 	update := &helperUpdateDTO{
-		Status: "available", Updated: daemon.Update.Updated,
+		Status: "unknown", Updated: daemon.Update.Updated,
 		Interrupted: daemon.Update.Interrupted, RolledBack: daemon.Update.RolledBack,
 	}
 	switch {
@@ -255,6 +266,11 @@ func helperDTOFromDaemon(sessionID, action string, daemon *sshdaemon.Daemon) hel
 		update.Status = "interrupted"
 	case daemon.Update.Deferred:
 		update.Status = "deferred"
+	case matchingContent:
+		update.Status = "current"
+	case local.Known && local.SHA256 != "" && running.Known && running.SHA256 != "" &&
+		local.Protocol != nil && running.Protocol != nil && *local.Protocol == *running.Protocol:
+		update.Status = "available"
 	}
 	details := make([]string, 0, 2)
 	if daemon.Update.Reason != "" {

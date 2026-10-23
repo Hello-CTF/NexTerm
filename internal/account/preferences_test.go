@@ -7,16 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 )
 
 func testPreferences(t *testing.T) *Preferences {
 	t.Helper()
-	db, err := store.OpenInMemory(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := dbtest.NewFixture(t).OpenStore(t)
 	return NewPreferences(db)
 }
 
@@ -45,6 +41,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"appearance.themeMode",
 		"input.selectionAutoCopy",
 		"terminal.closeAction",
+		"terminal.defaultMode",
 		"project.workspaceTemplates",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
@@ -126,6 +123,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"appearance.themeMode":          `"system"`,
 		"input.selectionAutoCopy":       "true",
 		"terminal.closeAction":          `"kill"`,
+		"terminal.defaultMode":          `"regular"`,
 		"project.workspaceTemplates":    `[{"v":1,"name":"project"}]`,
 		"keybinding.closeTab":           `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":      "null",
@@ -165,6 +163,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"appearance.themeMode":          {`"blue"`, "1", "null", "true"},
 		"input.selectionAutoCopy":       {`"true"`, "1", "null"},
 		"terminal.closeAction":          {`"background"`, "1", "null", "true"},
+		"terminal.defaultMode":          {`"auto"`, `"persistent"`, "1", "null", "true"},
 		"project.workspaceTemplates":    {`{"v":1}`, `"text"`, "null", "[invalid]"},
 		"keybinding.closeTab":           {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
@@ -290,6 +289,40 @@ func TestPreferencesDefaultsUpdateAndClear(t *testing.T) {
 	defaults, err = preferences.Defaults(ctx)
 	if err != nil || len(defaults) != 1 {
 		t.Fatalf("failed update must not write, defaults=%v err=%v", defaults, err)
+	}
+}
+
+func TestPreferencesTerminalDefaultModeIsolation(t *testing.T) {
+	preferences := testPreferences(t)
+	ctx := t.Context()
+	if _, err := preferences.UpdateDefaults(ctx, map[string]json.RawMessage{"terminal.defaultMode": json.RawMessage(`"durable"`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preferences.UpdateUserOverrides(ctx, "alice", map[string]json.RawMessage{"terminal.defaultMode": json.RawMessage(`"regular"`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	defaults, err := preferences.Defaults(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range []struct{ id, want string }{{"alice", `"regular"`}, {"bob", `"durable"`}} {
+		overrides, err := preferences.UserOverrides(ctx, user.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if effective := MergePreferences(defaults, overrides); string(effective["terminal.defaultMode"]) != user.want {
+			t.Fatalf("%s effective mode = %s, want %s", user.id, effective["terminal.defaultMode"], user.want)
+		}
+	}
+	if _, err := preferences.UpdateUserOverrides(ctx, "alice", map[string]json.RawMessage{"terminal.defaultMode": json.RawMessage(`"auto"`)}, nil); err == nil {
+		t.Fatal("invalid default mode was accepted")
+	}
+	overrides, err := preferences.UpdateUserOverrides(ctx, "alice", nil, []string{"terminal.defaultMode"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective := MergePreferences(defaults, overrides); string(effective["terminal.defaultMode"]) != `"durable"` {
+		t.Fatalf("cleared override did not restore durable default: %v", effective)
 	}
 }
 

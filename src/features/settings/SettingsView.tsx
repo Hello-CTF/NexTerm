@@ -4,8 +4,10 @@ import { aiApi, biometricApi, desktopTrayApi, vaultApi, type AiPermissionConfig 
 import { useUi } from "../../app/store";
 import {
   setTerminalCloseAction,
+  setTerminalDefaultMode,
   useTerminalPrefs,
   type TerminalCloseAction,
+  type TerminalDefaultMode,
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -84,6 +86,11 @@ const CLOSE_ACTION_OPTIONS: { value: TerminalCloseAction; label: string }[] = [
   { value: "detach", label: "转到后台" },
 ];
 
+const DEFAULT_MODE_OPTIONS: { value: TerminalDefaultMode; label: string }[] = [
+  { value: "durable", label: "持久终端" },
+  { value: "regular", label: "普通终端" },
+];
+
 function loadNavOpen(): boolean {
   try {
     return localStorage.getItem(NAV_OPEN_KEY) !== "collapsed";
@@ -104,6 +111,18 @@ export function SettingsView() {
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
   const setTerminalOsc52 = useUi((s) => s.setTerminalOsc52);
   const terminalPrefs = useTerminalPrefs();
+  const [terminalModeSaving, setTerminalModeSaving] = useState(false);
+  const saveTerminalMode = async (value: TerminalDefaultMode) => {
+    if (terminalModeSaving) return;
+    setTerminalModeSaving(true);
+    try {
+      await setTerminalDefaultMode(value);
+    } catch (error) {
+      pushToast("error", `保存默认终端模式失败：${describeError(error)}`);
+    } finally {
+      setTerminalModeSaving(false);
+    }
+  };
   const showCloseToTray = DESKTOP && isWindows();
   const [closeToTray, setCloseToTray] = useState(false);
   const [closeToTrayLoading, setCloseToTrayLoading] = useState(showCloseToTray);
@@ -484,6 +503,24 @@ export function SettingsView() {
             <span className={`nx-badge ${terminalOsc52 ? "nx-badge-amber" : ""}`}>
               {terminalOsc52 ? "OSC 52 已开启" : "OSC 52 已关闭"}
             </span>
+          </div>
+          <div className="mb-3.5 mt-3.5">
+            <div className="nx-setting-label mb-1.5">默认终端模式</div>
+            <div className="nx-segment" role="group" aria-label="默认终端模式" aria-busy={terminalModeSaving}>
+              {DEFAULT_MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`nx-segment-item ${terminalPrefs.defaultMode === option.value ? "is-active" : ""}`}
+                  aria-pressed={terminalPrefs.defaultMode === option.value}
+                  disabled={terminalModeSaving}
+                  onClick={() => void saveTerminalMode(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="nx-hint mt-1.5">用于选择“默认”的 SSH 资产新开的终端；资产单独设置优先，已有终端不变。</p>
           </div>
           <label className="flex cursor-pointer items-start gap-3">
             <div className="min-w-0 flex-1">

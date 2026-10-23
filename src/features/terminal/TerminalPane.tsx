@@ -4,7 +4,8 @@ import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { Cwd } from "./Cwd";
 import { Daemon } from "./Daemon";
-import { HelperOperationView } from "./HelperOperationView";
+import { helperStageText } from "./HelperOperationView";
+import { HelperOperationDialog } from "./HelperOperationDialog";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
 import {
@@ -270,8 +271,9 @@ export function TerminalPane({
   const [forceRegular, setForceRegular] = useState(false);
   const [ordinaryStarting, setOrdinaryStarting] = useState(false);
   const [helperActionBusy, setHelperActionBusy] = useState(false);
-  const [rememberRegular, setRememberRegular] = useState(false);
+  const [helperActionLabel, setHelperActionLabel] = useState("正在处理…");
   const [helperPanelOpen, setHelperPanelOpen] = useState(false);
+  const [helperStatusLoading, setHelperStatusLoading] = useState(false);
   const [helperDetails, setHelperDetails] = useState<HelperOperationResult | null>(null);
   const [helperPanelError, setHelperPanelError] = useState<string | null>(null);
   const [offlinePath, setOfflinePath] = useState<string | null>(null);
@@ -1095,21 +1097,22 @@ export function TerminalPane({
     }
   };
 
-  useEffect(() => {
-    setRememberRegular(false);
-  }, [helperOperation?.operationId]);
-
-  const runHelperAction = async (action: () => Promise<void>, generation?: number) => {
+  const runHelperAction = async (action: () => Promise<void>, generation?: number, label = "正在处理…") => {
     if (helperActionBusy) return;
     setHelperActionBusy(true);
+    setHelperStatusLoading(false);
+    setHelperActionLabel(label);
     try {
       await action();
     } catch (error) {
-      if (generation === undefined || helperRequestIsCurrent(generation, sessionId)) {
+      if (helperDetailsSessionRef.current === sessionId && (generation === undefined || helperRequestIsCurrent(generation, sessionId))) {
+        setHelperPanelError(describeError(error));
         pushToast("error", `持久终端助手操作失败：${describeError(error)}`);
       }
     } finally {
-      setHelperActionBusy(false);
+      if (helperDetailsSessionRef.current === sessionId && (generation === undefined || helperRequestIsCurrent(generation, sessionId))) {
+        setHelperActionBusy(false);
+      }
     }
   };
 
@@ -1125,12 +1128,13 @@ export function TerminalPane({
       setKernelTabId(null);
       setEpoch((value) => value + 1);
     }
+    closeHelperPanel();
   });
 
   const continueOrdinary = () => runHelperAction(async () => {
     const operation = helperOperation;
     if (!operation) return;
-    await useUi.getState().continueHelperOrdinary(storeTabId, rememberRegular);
+    await useUi.getState().continueHelperOrdinary(storeTabId, false);
     if (operation.kind === "reattach" && operation.originalTabId) {
       resumeRef.current = undefined;
       resumeAttemptedRef.current = false;
@@ -1140,16 +1144,20 @@ export function TerminalPane({
       setKernelTabId(null);
       setEpoch((value) => value + 1);
     }
+    closeHelperPanel();
   });
 
   const cancelHelper = () => runHelperAction(async () => {
     await useUi.getState().cancelHelperOperation(storeTabId);
+    closeHelperPanel();
   });
 
   const refreshHelperDetails = useCallback(async () => {
-    const generation = nextHelperRequestGeneration();
     setHelperPanelOpen(true);
+    if (helperActionBusy) return;
+    const generation = nextHelperRequestGeneration();
     setHelperPanelError(null);
+    setHelperStatusLoading(true);
     try {
       const result = await terminalApi.helperOperation(sessionId, "", "status");
       if (!helperRequestIsCurrent(generation, sessionId)) return;
@@ -1160,8 +1168,10 @@ export function TerminalPane({
       const message = describeError(error);
       setHelperPanelError(message);
       pushToast("error", `读取持久终端助手状态失败：${message}`);
+    } finally {
+      if (helperRequestIsCurrent(generation, sessionId)) setHelperStatusLoading(false);
     }
-  }, [sessionId, pushToast]);
+  }, [sessionId, pushToast, helperActionBusy]);
 
   useEffect(() => {
     if (previousHelperSessionRef.current === sessionId) return;
@@ -1169,6 +1179,8 @@ export function TerminalPane({
     helperRequestGenerationRef.current += 1;
     useUi.getState().dismissHelperOperation(storeTabId);
     setHelperPanelOpen(false);
+    setHelperActionBusy(false);
+    setHelperStatusLoading(false);
     setHelperDetails(null);
     setHelperPanelError(null);
     setOfflinePath(null);
@@ -1176,13 +1188,18 @@ export function TerminalPane({
 
   useEffect(() => {
     if (helperOperation?.status === "succeeded") {
-      void refreshHelperDetails();
+      useUi.getState().dismissHelperOperation(storeTabId, helperOperation.operationId);
+      setHelperPanelOpen(false);
     }
-  }, [helperOperation?.operationId, helperOperation?.status, refreshHelperDetails]);
+  }, [helperOperation?.operationId, helperOperation?.status, storeTabId]);
+
+  const closeHelperPanel = () => setHelperPanelOpen(false);
 
   const importOfflineHelper = async () => {
+    if (helperActionBusy) return;
+    const requestSessionId = sessionId;
     const selected = await promptText("离线 helper 本地路径（先核实 SHA-256 与协议，确认前不会用于部署）", "");
-    if (!selected?.trim()) return;
+    if (!selected?.trim() || helperDetailsSessionRef.current !== requestSessionId) return;
     const path = selected.trim();
     setHelperPanelOpen(true);
     const generation = nextHelperRequestGeneration();
@@ -1196,6 +1213,7 @@ export function TerminalPane({
   };
 
   const confirmOfflineHelper = () => {
+    if (helperActionBusy) return;
     const generation = nextHelperRequestGeneration();
     return runHelperAction(async () => {
       const offline = helperDetails?.offline;
@@ -1203,17 +1221,42 @@ export function TerminalPane({
       const result = await terminalApi.helperOffline(sessionId, offlinePath, offline.sha256, true);
       if (!helperRequestIsCurrent(generation, sessionId)) return;
       setHelperDetails((current) => current ? { ...current, offline: result.offline } : result);
+      if (result.offline?.trusted) {
+        closeHelperPanel();
+        pushToast("success", "已信任离线助手，后续连接将使用此文件");
+      }
     }, generation);
   };
 
   const updateHelper = (interruptActive: boolean) => {
+    if (helperActionBusy) return;
     const generation = nextHelperRequestGeneration();
     return runHelperAction(async () => {
       try {
+        if (interruptActive) {
+          const confirmed = await ask("更新将结束这台主机上由助手管理的所有活动终端和任务，且无法恢复。是否中断并更新？", {
+            title: "中断进程并更新", kind: "warning",
+          });
+          if (!confirmed || !helperRequestIsCurrent(generation, sessionId)) return;
+        }
         const result = await terminalApi.helperUpdate(sessionId, interruptActive);
         if (!helperRequestIsCurrent(generation, sessionId)) return;
         setHelperDetails(result);
         setHelperPanelError(null);
+        const status = result.update?.status;
+        if (status === "current" || status === "updated" || (status === "interrupted" && result.update?.updated)) {
+          setHelperPanelOpen(false);
+          pushToast("success", status === "current" ? "终端助手已是最新版本" : "终端助手已更新");
+        } else if (status === "deferred") {
+          setHelperPanelOpen(false);
+          pushToast("info", "当前有进程运行，助手更新已延后", {
+            label: "查看", onSelect: () => {
+              if (helperRequestIsCurrent(generation, sessionId)) setHelperPanelOpen(true);
+            },
+          });
+        } else {
+          setHelperPanelError(result.update?.detail || "暂时无法确认更新结果，请重新检查助手状态");
+        }
       } catch (error) {
         if (!helperRequestIsCurrent(generation, sessionId)) return;
         const rollback = rollbackResultFromError(error);
@@ -1221,14 +1264,16 @@ export function TerminalPane({
         setHelperDetails(rollback);
         setHelperPanelError(describeError(error));
       }
-    }, generation);
+    }, generation, "正在更新终端助手…");
   };
 
   const deferHelperUpdate = () => {
     setHelperDetails((current) => current?.update ? {
       ...current,
-      update: { status: "deferred", detail: "用户选择稍后更新；未请求中断或切换活动进程" },
+      update: { status: "deferred", detail: "已选择稍后更新" },
     } : current);
+    closeHelperPanel();
+    pushToast("info", "已推迟助手更新");
   };
 
   const startRecording = async () => {
@@ -2136,9 +2181,15 @@ export function TerminalPane({
         )}
       </div>
 
-      {(helperOperation || helperPanelOpen) && (
-        <div className="shrink-0">
-          <HelperOperationView
+      {helperOperation && ["running", "awaiting_choice"].includes(helperOperation.status) && (
+        <div role="status" aria-label="终端助手进度" className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 px-3 py-1 text-xs text-neutral-400">
+          <span className="min-w-0 flex-1 truncate">{helperOperation.status === "awaiting_choice" ? "持久终端需要处理" : helperStageText(helperOperation.stage)}</span>
+          <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setHelperPanelOpen(true)}>查看</button>
+        </div>
+      )}
+      {helperPanelOpen && visible !== false && (
+          <HelperOperationDialog
+            onClose={closeHelperPanel}
             stage={helperOperation?.stage ?? (helperPanelError ? "failed" : "ready")}
             reason={[helperOperation?.reason?.message, helperOperation?.cleanupFailure?.message, helperPanelError]
               .filter((value): value is string => Boolean(value))
@@ -2155,10 +2206,8 @@ export function TerminalPane({
             offlineTrust={helperDetails?.offline ?? null}
             update={helperDetails?.update ?? null}
             restoreFailure={helperOperation?.kind === "reattach" && helperOperation.originalSession === "not_restored"}
-            quickConnect={helperOperation?.quickConnect ?? false}
-            rememberRegular={helperOperation ? rememberRegular : undefined}
+            busyLabel={helperActionBusy ? helperActionLabel : helperStatusLoading ? "正在检查终端助手…" : helperRetryPending ? "正在重试…" : ordinaryStarting ? "正在打开普通终端…" : undefined}
             controlsDisabled={helperActionBusy || helperRetryPending || ordinaryStarting}
-            onRememberRegularChange={helperOperation && !helperOperation.quickConnect ? setRememberRegular : undefined}
             onRetryPersistent={helperOperation?.status === "awaiting_choice" ? () => void retryPersistent() : undefined}
             onContinueOrdinary={helperOperation?.status === "awaiting_choice" ? () => void continueOrdinary() : undefined}
             onCancel={helperOperation?.status === "running" || helperOperation?.status === "awaiting_choice"
@@ -2168,12 +2217,11 @@ export function TerminalPane({
               ? () => void confirmOfflineHelper()
               : undefined}
             onUpdate={helperDetails?.update?.status === "available" ? () => void updateHelper(false) : undefined}
-            onDeferUpdate={helperDetails?.update?.status === "available" ? deferHelperUpdate : undefined}
+            onDeferUpdate={helperDetails?.update && ["available", "deferred"].includes(helperDetails.update.status) ? deferHelperUpdate : undefined}
             onInterruptAndUpdate={helperDetails?.update && ["available", "deferred"].includes(helperDetails.update.status)
               ? () => void updateHelper(true)
               : undefined}
           />
-        </div>
       )}
 
       <TerminalKeysBar

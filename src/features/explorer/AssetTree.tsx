@@ -325,7 +325,7 @@ export function AssetTree() {
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
-  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean } | null>(null);
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean; inlineCount?: number } | null>(null);
   const [treeMenu, setTreeMenu] = useState<{ x: number; y: number } | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const assetRowElementsRef = useRef(new Map<string, HTMLDivElement>());
@@ -740,7 +740,7 @@ export function AssetTree() {
     }
   };
 
-  const buildRowMenu = (asset: Asset, full: boolean): MenuItem[] => {
+  const buildRowMenu = (asset: Asset, full: boolean, inlineCount = 0): MenuItem[] => {
     const remove: MenuItem | null = asset.builtin
       ? null
       : {
@@ -787,7 +787,7 @@ export function AssetTree() {
           }
         : null;
     return [
-      ...primary,
+      ...primary.slice(inlineCount),
       {
         kind: "item",
         label: "克隆",
@@ -838,7 +838,7 @@ export function AssetTree() {
       showIdentity={detailedIdentity || duplicateNames.has(asset.name.trim())}
       onDelete={() => void onDelete(asset)}
       onEdit={() => setEditingAsset(asset)}
-      onMore={(x, y, full) => setRowMenu({ x, y, asset, full })}
+      onMore={(x, y, full, inlineCount) => setRowMenu({ x, y, asset, full, inlineCount })}
       error={assetError?.id === asset.id ? assetError.message : null}
       onRetry={() => void runDeleteAsset(asset, useUi.getState().accountEpoch, assetError?.mode)}
       onDismissError={() => setAssetError(null)}
@@ -878,7 +878,7 @@ export function AssetTree() {
         detailedIdentity={detailedIdentity}
         onDelete={(asset) => void onDelete(asset)}
         onEdit={(asset) => setEditingAsset(asset)}
-        onMore={(asset, x, y, full) => setRowMenu({ x, y, asset, full })}
+        onMore={(asset, x, y, full, inlineCount) => setRowMenu({ x, y, asset, full, inlineCount })}
         onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
         onCreateIn={() => {
           setPresetGroup(group.id);
@@ -1166,7 +1166,7 @@ export function AssetTree() {
                 x: rowMenu.x,
                 y: rowMenu.y,
                 title: rowMenu.asset.name,
-                items: buildRowMenu(rowMenu.asset, rowMenu.full === true),
+                items: buildRowMenu(rowMenu.asset, rowMenu.full === true, rowMenu.inlineCount),
               }
             : null
         }
@@ -1221,7 +1221,7 @@ function AssetRow({
   showIdentity?: boolean;
   onDelete: () => void;
   onEdit: () => void;
-  onMore: (x: number, y: number, full?: boolean) => void;
+  onMore: (x: number, y: number, full?: boolean, inlineCount?: number) => void;
   error?: string | null;
   onRetry?: () => void;
   onDismissError?: () => void;
@@ -1231,8 +1231,6 @@ function AssetRow({
   onCancelMove?: () => void;
 }) {
   const coarse = useCoarsePointer();
-  const leftWidth = useUi((s) => s.leftWidth);
-  const compactActions = coarse || leftWidth - (level - 1) * 14 <= 225;
   const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
   const connecting = useUi((s) => s.connectingAssetIds.includes(asset.id));
   const connectionProblem = useConnectionProblem(assetConnectionProblemKey(asset.id));
@@ -1246,26 +1244,35 @@ function AssetRow({
   const envCount = env && typeof env === "object" && !Array.isArray(env) ? Object.keys(env).length : 0;
   const identityAreaRef = useRef<HTMLSpanElement>(null);
   const nameMeasureRef = useRef<HTMLSpanElement>(null);
-  const identityMeasureRef = useRef<HTMLSpanElement>(null);
-  const [identityFits, setIdentityFits] = useState(false);
+  const actionsRef = useRef<HTMLSpanElement>(null);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const actionCount = (inventoryOnly ? 0 : 1) + 1 + (asset.builtin ? 0 : 1);
+  const [inlineCount, setInlineCount] = useState(actionCount);
+  const [identitySpace, setIdentitySpace] = useState(true);
   useLayoutEffect(() => {
     const area = identityAreaRef.current;
     const nameNode = nameMeasureRef.current;
-    const measureNode = identityMeasureRef.current;
-    if (!showIdentity || !identity || !area || !nameNode || !measureNode) {
-      setIdentityFits(false);
-      return;
-    }
+    const actions = actionsRef.current;
+    const more = moreRef.current;
+    if (!area || !nameNode || !more) return;
     const measure = () => {
       const available = area.clientWidth;
-      const required = nameNode.getBoundingClientRect().width
-        + measureNode.getBoundingClientRect().width
-        + 8;
-      setIdentityFits(available === 0 || required <= available);
+      const nameWidth = nameNode.getBoundingClientRect().width;
+      setIdentitySpace(available === 0 || available - nameWidth > 6);
+      const actionsWidth = actions?.getBoundingClientRect().width ?? 0;
+      if (coarse || !actions || (available === 0 && actionsWidth === 0)) return;
+      const rowGap = parseFloat(getComputedStyle(area.parentElement!).columnGap) || 7;
+      const actionGap = parseFloat(getComputedStyle(actions).columnGap) || 2;
+      const buttonWidth = more.getBoundingClientRect().width || 22;
+      const total = available + actionsWidth + rowGap;
+      const remaining = total - nameWidth - rowGap - buttonWidth;
+      const identityWidth = showIdentity && identity ? Math.min(36, Math.max(0, remaining)) : 0;
+      setInlineCount(Math.max(0, Math.min(actionCount, Math.floor((remaining - identityWidth) / (buttonWidth + actionGap)))));
     };
     measure();
-    return watchAssetIdentityWidth([area, nameNode, measureNode], measure);
-  }, [showIdentity, identity, label]);
+    return watchAssetIdentityWidth([area, nameNode, more, ...(actions ? [actions] : [])], measure);
+  }, [coarse, actionCount, label, showIdentity, identity]);
+  const compactActions = coarse;
   const tip = [
     asset.name,
     target || targetSummary || (asset.builtin ? "本机" : ""),
@@ -1314,18 +1321,15 @@ function AssetRow({
       title={tip}
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
-      <span ref={identityAreaRef} className="nx-row-name min-w-0 flex-1 overflow-hidden whitespace-normal">
+      <span ref={identityAreaRef} className="nx-row-name min-w-0 flex-1 overflow-hidden">
         <span className="nx-asset-row-name break-all" style={{ whiteSpace: "normal", overflowX: "visible" }}>{label}</span>
-        {showIdentity && identity && identityFits && (
-          <span className="nx-asset-row-identity ml-1.5 text-[11px] text-neutral-400">{identity}</span>
+        {showIdentity && identity && identitySpace && (
+          <span className="nx-asset-row-identity text-[11px] text-neutral-400" title={identity}>{identity}</span>
         )}
       </span>
-      {showIdentity && identity && (
-        <span aria-hidden="true" className="nx-asset-row-measures pointer-events-none invisible whitespace-nowrap" style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}>
-          <span ref={nameMeasureRef} className="nx-asset-row-name-measure inline-block whitespace-nowrap">{label}</span>
-          <span ref={identityMeasureRef} className="nx-asset-row-identity-measure inline-block whitespace-nowrap text-[11px]">{identity}</span>
-        </span>
-      )}
+      <span aria-hidden="true" className="nx-asset-row-measures pointer-events-none invisible whitespace-nowrap" style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}>
+        <span ref={nameMeasureRef} className="nx-asset-row-name-measure inline-block whitespace-nowrap">{label}</span>
+      </span>
       {managed && <span className="nx-badge nx-badge-blue shrink-0" title={`由 ${inventorySourceLabel(managed.source)} 管理；来源字段只读`}>{inventorySourceLabel(managed.source)}</span>}
       {envCount > 0 && <span className="nx-badge nx-badge-amber" title={`${envCount} 个环境变量`}>env {envCount}</span>}
       {hidden && <span className="nx-badge">已隐藏</span>}
@@ -1347,6 +1351,7 @@ function AssetRow({
       )}
       {compactActions ? (
         <button
+          ref={moreRef}
           className="nx-icon-btn nx-icon-btn-sm nx-row-more"
           title="更多操作"
           aria-label={`更多操作 ${asset.name}`}
@@ -1360,8 +1365,8 @@ function AssetRow({
           ⋯
         </button>
       ) : (
-        <span className="nx-row-actions" onDoubleClick={(e) => e.stopPropagation()}>
-          {!inventoryOnly && (connecting ? (
+        <span ref={actionsRef} className="nx-row-actions" onDoubleClick={(e) => e.stopPropagation()}>
+          {!inventoryOnly && inlineCount > 0 && (connecting ? (
             <span
               className="nx-icon-btn nx-icon-btn-sm"
               title="连接中…"
@@ -1382,7 +1387,7 @@ function AssetRow({
               <IconPlay size={12} />
             </button>
           ))}
-          <button
+          {inlineCount > (inventoryOnly ? 0 : 1) && <button
             className="nx-icon-btn nx-icon-btn-sm"
             title="编辑"
             aria-label={`编辑 ${asset.name}`}
@@ -1392,8 +1397,8 @@ function AssetRow({
             }}
           >
             <IconEdit size={12} />
-          </button>
-          {!asset.builtin && (
+          </button>}
+          {!asset.builtin && inlineCount > (inventoryOnly ? 1 : 2) && (
             <button
               className="nx-icon-btn nx-icon-btn-sm is-danger"
               title="删除"
@@ -1407,13 +1412,14 @@ function AssetRow({
             </button>
           )}
           <button
-            className="nx-icon-btn nx-icon-btn-sm"
+            ref={moreRef}
+            className={`nx-icon-btn nx-icon-btn-sm ${inlineCount === 0 ? "nx-row-more" : ""}`}
             title="更多操作"
             aria-label={`更多操作 ${asset.name}`}
             onClick={(e) => {
               e.stopPropagation();
               const r = e.currentTarget.getBoundingClientRect();
-              onMore(r.left, r.bottom);
+              onMore(r.left, r.bottom, inlineCount < actionCount, inlineCount < actionCount ? inlineCount : 0);
             }}
           >
             ⋯
@@ -1517,7 +1523,7 @@ function GroupNode({
   detailedIdentity: boolean;
   onDelete: (a: Asset) => void;
   onEdit: (a: Asset) => void;
-  onMore: (a: Asset, x: number, y: number, full?: boolean) => void;
+  onMore: (a: Asset, x: number, y: number, full?: boolean, inlineCount?: number) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
   onCreateIn: () => void;
   onCreateChild: () => void;
@@ -1593,7 +1599,7 @@ function GroupNode({
       showIdentity={detailedIdentity || duplicateNames.has(a.name.trim())}
       onDelete={() => onDelete(a)}
       onEdit={() => onEdit(a)}
-      onMore={(x, y, full) => onMore(a, x, y, full)}
+      onMore={(x, y, full, inlineCount) => onMore(a, x, y, full, inlineCount)}
       error={assetError?.id === a.id ? assetError.message : null}
       onRetry={() => onRetryAssetDelete(a)}
       onDismissError={onDismissAssetError}
@@ -2014,8 +2020,10 @@ export function AssetEditor({
   const [startupCommand, setStartupCommand] = useState(
     typeof initial?.options?.startupCommand === "string" ? (initial.options.startupCommand as string) : "",
   );
-  const [terminalMode, setTerminalMode] = useState<"auto" | "regular">(
-    initial?.options?.terminalMode === "regular" ? "regular" : "auto",
+  const [terminalMode, setTerminalMode] = useState<"auto" | "durable" | "regular">(
+    initial?.options?.terminalMode === "regular" || initial?.options?.terminalMode === "durable"
+      ? initial.options.terminalMode
+      : "auto",
   );
   const [encoding, setEncoding] = useState(() => {
     const raw = typeof initial?.options?.encoding === "string" ? (initial.options.encoding as string) : "";
@@ -2259,7 +2267,7 @@ export function AssetEditor({
     setOrDelete("agentSocket", agentSocket);
     setOrDelete("certPath", certPath);
     setOrDelete("startupCommand", startupCommand);
-    if (groupKind === "ssh" && terminalMode === "regular") options.terminalMode = "regular";
+    if (groupKind === "ssh" && terminalMode !== "auto") options.terminalMode = terminalMode;
     else delete options.terminalMode;
     if (encoding !== "utf-8") options.encoding = encoding;
     else delete options.encoding;
@@ -2752,6 +2760,25 @@ export function AssetEditor({
             </>
           )}
 
+          {kind === "asset" && groupKind === "ssh" && (
+            <div className="nx-form-row">
+              <label className="nx-label" htmlFor={terminalModeId}>终端模式</label>
+              <select
+                id={terminalModeId}
+                className="nx-select"
+                value={terminalMode}
+                onChange={(e) => setTerminalMode(e.target.value as "auto" | "durable" | "regular")}
+              >
+                <option value="auto">默认（使用全局设置）</option>
+                <option value="durable">持久终端</option>
+                <option value="regular">普通终端</option>
+              </select>
+              <div className="nx-hint mt-1.5">
+                持久终端支持后台接管，普通终端随连接断开退出。仅影响以后新开的终端，已有会话保持不变。
+              </div>
+            </div>
+          )}
+
           {kind === "asset" && groupKind !== "local" && !inventoryOnly && (
             <>
               <fieldset disabled={managed !== null} className="contents">
@@ -3187,23 +3214,6 @@ export function AssetEditor({
                       )}
 
                       <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
-                        {groupKind === "ssh" && (
-                          <div className="nx-form-row">
-                            <label className="nx-label" htmlFor={terminalModeId}>终端模式</label>
-                            <select
-                              id={terminalModeId}
-                              className="nx-select"
-                              value={terminalMode}
-                              onChange={(e) => setTerminalMode(e.target.value as "auto" | "regular")}
-                            >
-                              <option value="auto">自动（持久功能不可用时回退）</option>
-                              <option value="regular">普通终端（不使用持久终端）</option>
-                            </select>
-                            <div className="nx-hint mt-1.5">
-                              ↳ 自动模式先打开普通终端并在后台部署持久助手，成功后仅后续新开或重连的终端使用持久模式；普通终端断开后不能从「后台会话」接管。普通模式只影响以后新开的终端，不会删除已有持久会话，已有会话仍可在「后台会话」查看并接管。
-                            </div>
-                          </div>
-                        )}
                         <div className="nx-form-row">
                           <label className="nx-label">启动命令</label>
                           <input

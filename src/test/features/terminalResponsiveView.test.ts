@@ -48,6 +48,8 @@ const harness = vi.hoisted(() => ({
   write: vi.fn(),
   detach: vi.fn(),
   setVisible: vi.fn(),
+  assetGet: vi.fn(),
+  web: true,
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -173,6 +175,7 @@ vi.mock("../../features/terminal/gridRuntimeAdapter", () => ({
   productionGridRuntime: { resize: harness.resize, flush: harness.flush },
 }));
 vi.mock("../../ipc/commands", () => ({
+  assetApi: { get: harness.assetGet },
   terminalApi: {
     attach: harness.attach,
     attachTab: harness.attachTab,
@@ -205,11 +208,13 @@ vi.mock("../../ipc/events", () => ({
     return vi.fn();
   },
 }));
-vi.mock("../../ipc/env", () => ({ clientId: () => "me", WEB: true }));
+vi.mock("../../ipc/env", () => ({ clientId: () => "me", get WEB() { return harness.web; } }));
 vi.mock("../../ui/dialogs", () => ({ ask: vi.fn() }));
 
 import { XtermView, type TerminalHandle, type XtermViewProps } from "../../features/terminal/XtermView";
 import { ask } from "../../ui/dialogs";
+import { registerAccountPreferenceStore, setTerminalDefaultMode } from "../../app/preferences";
+import { useUi } from "../../app/store";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -241,6 +246,12 @@ function props(overrides: Partial<XtermViewProps> = {}): XtermViewProps {
 }
 
 beforeEach(() => {
+  harness.web = true;
+  registerAccountPreferenceStore(null);
+  window.localStorage.clear();
+  registerAccountPreferenceStore(null);
+  useUi.setState({ sessions: [] });
+  harness.assetGet.mockReset().mockResolvedValue({ options: {} });
   harness.terminals.length = 0;
   harness.observers.length = 0;
   harness.channels.length = 0;
@@ -317,6 +328,55 @@ afterEach(() => {
 });
 
 describe("XtermView production grid lifecycle", () => {
+  it.each([
+    { assetMode: undefined, regular: true },
+    { assetMode: "auto", regular: true },
+    { assetMode: "durable", regular: false },
+    { assetMode: "regular", regular: true },
+  ])("applies the unregistered desktop default with asset mode $assetMode", async ({ assetMode, regular }) => {
+    harness.web = false;
+    await setTerminalDefaultMode("regular");
+    useUi.setState({ sessions: [{ id: "session", assetId: "asset", name: "host", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }] });
+    harness.assetGet.mockResolvedValue({ options: { terminalMode: assetMode } });
+    await show(props());
+
+    expect(harness.assetGet).toHaveBeenCalledWith("asset");
+    expect(harness.attach).toHaveBeenCalledWith("session", 36, 20, expect.anything(), ...(regular ? [false] : []));
+  });
+
+  it("lets the server resolve account defaults instead of forcing a device default", async () => {
+    harness.web = false;
+    await setTerminalDefaultMode("regular");
+    registerAccountPreferenceStore({ getView: async () => ({ defaults: {}, overrides: {} }), putOverrides: async () => {}, deleteOverrides: async () => {} });
+    await show(props());
+
+    expect(harness.assetGet).not.toHaveBeenCalled();
+    expect(harness.attach).toHaveBeenCalledWith("session", 36, 20, expect.anything());
+  });
+
+  it.each([undefined, "durable"])("applies the desktop account regular default while honoring asset mode %s", async (assetMode) => {
+    harness.web = false;
+    registerAccountPreferenceStore({ getView: async () => ({ defaults: {}, overrides: { "terminal.defaultMode": "regular" } }), putOverrides: async () => {}, deleteOverrides: async () => {} });
+    await flushMacrotask();
+    useUi.setState({ sessions: [{ id: "session", assetId: "asset", name: "host", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }] });
+    harness.assetGet.mockResolvedValue({ options: { terminalMode: assetMode } });
+    await show(props());
+
+    expect(harness.assetGet).toHaveBeenCalledWith("asset");
+    expect(harness.attach).toHaveBeenCalledWith("session", 36, 20, expect.anything(), ...(assetMode === "durable" ? [] : [false]));
+  });
+
+  it("keeps opening a terminal and reports when asset mode lookup fails", async () => {
+    harness.web = false;
+    await setTerminalDefaultMode("regular");
+    useUi.setState({ sessions: [{ id: "session", assetId: "asset", name: "host", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }], toasts: [] });
+    harness.assetGet.mockRejectedValue(new Error("lookup failed"));
+    await show(props());
+
+    expect(harness.attach).toHaveBeenCalledWith("session", 36, 20, expect.anything());
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("无法读取资产终端模式"))).toBe(true);
+  });
+
   it("reports attached shell and background capability before the attach callback", async () => {
     const events: string[] = [];
     await show(

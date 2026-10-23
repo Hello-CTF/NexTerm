@@ -8,7 +8,7 @@ import "@xterm/xterm/css/xterm.css";
 import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
 import { WEB, clientId } from "../../ipc/env";
 import { openExternalURL } from "../../ipc/wails";
-import { call, dockerApi, terminalApi } from "../../ipc/commands";
+import { assetApi, call, dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
@@ -22,6 +22,7 @@ import {
 import {
   getAppearancePrefs,
   getInputPrefs,
+  getTerminalPrefs,
   getResolvedTerminalTheme,
   subscribeAppearancePrefs,
 } from "../../app/preferences";
@@ -958,7 +959,20 @@ export function XtermView(props: XtermViewProps) {
           });
         } else {
           if (!dimensions) return;
-          const info = props.forceRegular
+          let regular = props.forceRegular === true;
+          if (!regular && !WEB && getTerminalPrefs().defaultMode === "regular") {
+            const current = useUi.getState().sessions.find((session) => session.id === sessionId);
+            if (current?.kind === "ssh") {
+              try {
+                const asset = current.assetId ? await assetApi.get(current.assetId) : null;
+                regular = asset?.options?.terminalMode !== "durable";
+              } catch (error) {
+                if (!disposed) useUi.getState().pushToast("error", `无法读取资产终端模式，将按主机配置打开：${describeError(error)}`);
+              }
+            }
+          }
+          if (disposed) return;
+          const info = regular
             ? await terminalApi.attach(sessionId, dimensions.cols, dimensions.rows, channel, false)
             : await terminalApi.attach(sessionId, dimensions.cols, dimensions.rows, channel);
           id = info.tabId;

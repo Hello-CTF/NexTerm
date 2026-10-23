@@ -1311,7 +1311,27 @@
     flex-wrap: nowrap;
   }
   .nx-asset-row > .nx-row-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     flex: 1 1 0%;
+  }
+  .nx-asset-row-name {
+    flex: 0 0 auto;
+    max-width: 100%;
+  }
+  .nx-asset-row-identity {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nx-asset-row > .nx-row-actions {
+    position: static;
+    flex: 0 0 auto;
+    padding-left: 0;
+    transform: none;
+    background: none;
   }
 
   .nx-card {

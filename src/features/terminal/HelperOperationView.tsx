@@ -1,4 +1,5 @@
 import { useId, type KeyboardEvent } from "react";
+import { IconLoader } from "../../ui/icons";
 
 export type HelperCompatibility = "compatible" | "incompatible" | "unknown";
 
@@ -18,7 +19,7 @@ export interface HelperOfflineTrustPresentation {
 }
 
 export interface HelperUpdatePresentation {
-  status: "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "unknown";
+  status: "current" | "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "unknown";
   detail?: string | null;
   updated?: boolean;
   interrupted?: boolean;
@@ -38,12 +39,10 @@ export interface HelperOperationViewProps {
   runningVersion?: HelperVersionPresentation | null;
   compatibility?: HelperCompatibility;
   restoreFailure?: boolean;
-  quickConnect?: boolean;
-  rememberRegular?: boolean;
   controlsDisabled?: boolean;
+  busyLabel?: string;
   offlineTrust?: HelperOfflineTrustPresentation | null;
   update?: HelperUpdatePresentation | null;
-  onRememberRegularChange?: (remember: boolean) => void;
   onRetryPersistent?: () => void;
   onContinueOrdinary?: () => void;
   onCancel?: () => void;
@@ -60,13 +59,19 @@ const STAGE_LABELS = new Map<string, string>([
   ["upload", "上传持久终端助手"],
   ["verify", "校验持久终端助手"],
   ["start", "启动持久终端助手"],
-  ["ready", "持久终端助手已就绪"],
+  ["ready", "持久终端已就绪"],
+  ["backoff", "连接暂时失败，正在重试"],
+  ["install_update", "准备终端助手更新"],
+  ["deferred", "当前有进程运行，更新已延后"],
+  ["switch", "切换终端助手"],
+  ["updated", "终端助手已更新"],
+  ["fallback", "正在使用普通终端"],
   ["failed", "持久终端助手操作失败"],
   ["update", "更新持久终端助手"],
   ["rollback", "回滚持久终端助手"],
 ]);
 
-function stageText(stage: string): string {
+export function helperStageText(stage: string): string {
   const value = stage.trim();
   return STAGE_LABELS.get(value) ?? (value || "未知");
 }
@@ -163,12 +168,10 @@ export function HelperOperationView({
   runningVersion,
   compatibility,
   restoreFailure = false,
-  quickConnect = false,
-  rememberRegular,
   controlsDisabled = false,
+  busyLabel,
   offlineTrust,
   update,
-  onRememberRegularChange,
   onRetryPersistent,
   onContinueOrdinary,
   onCancel,
@@ -182,16 +185,13 @@ export function HelperOperationView({
   const retryNoteId = `${id}-retry-note`;
   const ordinaryWarningId = `${id}-ordinary-warning`;
   const cancelNoteId = `${id}-cancel-note`;
-  const rememberNoteId = `${id}-remember-note`;
   const offlineTrustNoteId = `${id}-offline-trust-note`;
   const updateNoteId = `${id}-update-note`;
   const failed = stage === "failed" || restoreFailure;
   const showVersions =
     localVersion !== undefined || runningVersion !== undefined || compatibility !== undefined;
-  const showRemember =
-    !quickConnect && (rememberRegular !== undefined || onRememberRegularChange !== undefined);
   const showControls =
-    showRemember || onRetryPersistent !== undefined || onContinueOrdinary !== undefined || onCancel !== undefined;
+    onRetryPersistent !== undefined || onContinueOrdinary !== undefined || onCancel !== undefined;
   const offlineCompatibility = offlineTrust?.compatibility ?? "unknown";
   const canConfirmOfflineTrust =
     offlineTrust !== null &&
@@ -203,59 +203,67 @@ export function HelperOperationView({
   return (
     <section
       aria-labelledby={titleId}
-      className="flex flex-col gap-3 border-b border-neutral-800/60 bg-neutral-950/20 px-3 py-2 text-xs text-neutral-300"
+      className="flex flex-col gap-3 px-4 py-3 text-xs text-neutral-300"
     >
       <h2 id={titleId} className="font-medium text-neutral-100">
         持久终端助手
       </h2>
 
-      <div
-        role={failed ? "alert" : "status"}
-        aria-live={failed ? "assertive" : "polite"}
-        aria-atomic="true"
-        className={failed ? "text-red-300" : "text-neutral-300"}
-      >
-        <dl aria-label="后台操作状态" className="grid gap-1 sm:grid-cols-2">
-          <Definition term="阶段" value={stageText(stage)} />
-          <Definition term="原因" value={textOrUnknown(reason)} />
-          <Definition term="尝试次数" value={attemptText(attempt, maxAttempts)} />
-          <Definition term="截止时间" value={textOrUnknown(deadline)} />
-          {operationId !== undefined && <Definition term="操作 ID" value={textOrUnknown(operationId)} />}
-          {path !== undefined && <Definition term="路径" value={textOrUnknown(path)} />}
-          {transport !== undefined && <Definition term="传输" value={textOrUnknown(transport)} />}
-        </dl>
-      </div>
-
-      {showVersions && (
-        <div className="flex flex-col gap-2">
-          <div className="grid gap-2 md:grid-cols-2">
-            <VersionSection label="本地携带版本" version={localVersion} />
-            <VersionSection label="远端运行版本" version={runningVersion} />
-          </div>
-          <p className="text-neutral-400">
-            <span className="font-medium">兼容性：</span>
-            {compatibilityText(compatibility ?? "unknown")}
-          </p>
+      {busyLabel && <p role="status" className="flex items-center gap-2 text-neutral-300"><IconLoader size={13} className="animate-spin" />{busyLabel}</p>}
+      {!busyLabel && <p className={failed ? "text-red-300" : "text-neutral-300"} role={failed ? "alert" : "status"}>
+        {failed ? "持久终端暂时不可用" : helperStageText(stage)}
+      </p>}
+      <details className="text-neutral-400">
+        <summary tabIndex={0} className="cursor-pointer text-[11px]">诊断详情</summary>
+        <div
+          role={failed ? "alert" : "status"}
+          aria-live={failed ? "assertive" : "polite"}
+          aria-atomic="true"
+          className={failed ? "text-red-300" : "text-neutral-300"}
+        >
+          <dl aria-label="后台操作状态" className="grid gap-1 sm:grid-cols-2">
+            <Definition term="阶段" value={helperStageText(stage)} />
+            <Definition term="原因" value={textOrUnknown(reason)} />
+            <Definition term="尝试次数" value={attemptText(attempt, maxAttempts)} />
+            <Definition term="截止时间" value={textOrUnknown(deadline)} />
+            {operationId !== undefined && <Definition term="操作 ID" value={textOrUnknown(operationId)} />}
+            {path !== undefined && <Definition term="路径" value={textOrUnknown(path)} />}
+            {transport !== undefined && <Definition term="传输" value={textOrUnknown(transport)} />}
+          </dl>
         </div>
-      )}
+
+        {showVersions && (
+          <div className="flex flex-col gap-2">
+            <div className="grid gap-2 md:grid-cols-2">
+              <VersionSection label="本地携带版本" version={localVersion} />
+              <VersionSection label="远端运行版本" version={runningVersion} />
+            </div>
+            <p className="text-neutral-400">
+              <span className="font-medium">兼容性：</span>
+              {compatibilityText(compatibility ?? "unknown")}
+            </p>
+          </div>
+        )}
+
+      </details>
 
       {showControls && (
         <div className="flex flex-col gap-2 border-t border-neutral-800/60 pt-2">
           {onRetryPersistent && (
             <p id={retryNoteId} className="text-neutral-500">
-              重试会使用新的部署时间预算；操作结果仍以上报状态为准。
+              可以重新尝试安装持久终端。
             </p>
           )}
           {onContinueOrdinary && (
             <p id={ordinaryWarningId} className="text-[var(--nx-fg-warning)]">
               {restoreFailure
-                ? "原持久会话恢复失败。此操作会新建普通终端和新的 shell，不会恢复原会话；原远端进程状态未知，不能视为已终止。"
-                : "普通终端在断开后无法从后台会话接管。已有持久会话仍可单独查看和接管。"}
+                ? "将打开一个新的普通终端；原会话不会被恢复。"
+                : "普通终端在断开连接后结束，无法转到后台。"}
             </p>
           )}
           {onCancel && (
             <p id={cancelNoteId} className="text-neutral-500">
-              取消仅请求停止本次后台操作，不代表远端进程已终止或远端会话已清理。
+              停止本次安装，保留当前连接。
             </p>
           )}
           <div className="flex flex-wrap gap-2">
@@ -296,24 +304,6 @@ export function HelperOperationView({
               </button>
             )}
           </div>
-          {showRemember && (
-            <div>
-              <label className="flex items-center gap-2 text-neutral-300">
-                <input
-                  type="checkbox"
-                  checked={rememberRegular ?? false}
-                  disabled={controlsDisabled || !onRememberRegularChange}
-                  aria-describedby={rememberNoteId}
-                  onChange={(event) => onRememberRegularChange?.(event.currentTarget.checked)}
-                  onKeyDown={activateFromKeyboard}
-                />
-                <span>记住此资产以后使用普通终端</span>
-              </label>
-              <p id={rememberNoteId} className="mt-1 text-neutral-500">
-                仅影响此资产以后新开的终端；当前终端不变，已有持久会话仍可查看和接管。
-              </p>
-            </div>
-          )}
         </div>
       )}
 
@@ -359,19 +349,20 @@ export function HelperOperationView({
         >
           <h3 className="font-medium text-neutral-200">助手更新</h3>
           <div role="status" aria-live="polite" aria-atomic="true">
-            {update.status === "available" && <p>可以检查并执行助手更新。</p>}
-            {update.status === "deferred" && <p>更新已延后：不会主动中断活动 PTY 或其他 exec。</p>}
-            {update.status === "interrupted" && <p>已请求中断并更新。原有进程状态以实际结果为准。</p>}
-            {update.status === "updated" && !update.updated && <p>助手更新已完成；原有进程不会因更新或回滚而复活。</p>}
-            {update.status === "rolled_back" && <p>更新失败，已返回回滚结果。</p>}
-            {update.status === "unknown" && <p>更新结果未知，不能推断已更新、已延后或已中断。</p>}
-            {update.interrupted && <p>已明确中断活动进程。</p>}
-            {update.updated && <p>助手更新已完成；原有进程不会因更新或回滚而复活。</p>}
+            {update.status === "current" && <p>终端助手已是最新版本。</p>}
+            {update.status === "available" && <p>有可用的终端助手更新。</p>}
+            {update.status === "deferred" && <p>当前仍有进程运行，更新已延后。</p>}
+            {update.status === "interrupted" && <p>{update.updated ? "已中断活动进程并更新助手。" : "活动进程已中断，尚未确认更新完成。"}</p>}
+            {update.status === "updated" && !update.updated && <p>终端助手已更新。</p>}
+            {update.status === "rolled_back" && <p>更新失败，已恢复原助手。</p>}
+            {update.status === "unknown" && <p>暂时无法确认助手更新状态。</p>}
+            {update.interrupted && update.status !== "interrupted" && <p>已明确中断活动进程。</p>}
+            {update.updated && update.status !== "interrupted" && <p>终端助手已更新。</p>}
             {update.rolledBack && <p>已回滚助手二进制；原 shell 和其他进程不会复活。</p>}
-            {update.detail && <p className="mt-1 text-neutral-400">{update.detail}</p>}
-            <p id={updateNoteId} className="mt-1 text-[var(--nx-fg-warning)]">
-              活动进程存在时默认稍后更新；只有明确选择后才能中断。更新或回滚都不会复活原 shell 或其他进程。
-            </p>
+            {update.detail && <details className="mt-1 text-neutral-400"><summary tabIndex={0} className="cursor-pointer">更新详情</summary><p>{update.detail}</p></details>}
+            {(update.status === "available" || update.status === "deferred") && <p id={updateNoteId} className="mt-1 text-[var(--nx-fg-warning)]">
+              更新会保留正在运行的终端；如需中断进程，会再次确认。
+            </p>}
           </div>
           <div className="flex flex-wrap gap-2">
             {update.status === "available" && onUpdate && (
@@ -385,7 +376,7 @@ export function HelperOperationView({
                 更新助手
               </button>
             )}
-            {update.status === "available" && onDeferUpdate && (
+            {(update.status === "available" || update.status === "deferred") && onDeferUpdate && (
               <button
                 type="button"
                 className="nx-btn nx-btn-ghost nx-btn-sm"

@@ -79,6 +79,8 @@ describe("HelperOperationView", () => {
     const headingId = region?.getAttribute("aria-labelledby") ?? "";
     expect(document.getElementById(headingId)?.textContent).toBe("持久终端助手");
     expect(view.container.querySelector('[role="status"]')).not.toBeNull();
+    expect(view.container.querySelector("details")?.open).toBe(false);
+    expect([...view.container.querySelectorAll("dt")].every((node) => node.closest("details"))).toBe(true);
     expect(definition(view.container, "阶段")).toBe("上传持久终端助手");
     expect(definition(view.container, "原因")).toBe("SFTP 不可用，改用 exec");
     expect(definition(view.container, "尝试次数")).toBe("2/3");
@@ -181,8 +183,8 @@ describe("HelperOperationView", () => {
     });
     const before = view.container.textContent;
 
-    expect(view.container.textContent).toContain("断开后无法从后台会话接管");
-    expect(view.container.textContent).toContain("不代表远端进程已终止");
+    expect(view.container.textContent).toContain("无法转到后台");
+    expect(view.container.textContent).toContain("保留当前连接");
     click(buttonByText(view.container, "重试持久终端"));
     click(buttonByText(view.container, "继续使用普通终端"));
     click(buttonByText(view.container, "取消后台操作"));
@@ -227,46 +229,10 @@ describe("HelperOperationView", () => {
     expect(view.container.textContent).not.toContain("操作成功");
   });
 
-  it("scopes remembered regular mode to new terminals for one asset", () => {
-    const onRememberRegularChange = vi.fn();
-    const view = renderView({
-      stage: "failed",
-      rememberRegular: false,
-      onRememberRegularChange,
-      onContinueOrdinary: vi.fn(),
-    });
-
-    const checkbox = view.container.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if (!checkbox) throw new Error("Remember-regular checkbox not found");
-    expect(checkbox.checked).toBe(false);
-    expect(checkbox.closest("label")?.textContent).toContain("记住此资产以后使用普通终端");
-    const description = document.getElementById(checkbox.getAttribute("aria-describedby") ?? "");
-    expect(description?.textContent).toContain("仅影响此资产以后新开的终端");
-    expect(description?.textContent).toContain("已有持久会话仍可查看和接管");
-
-    checkbox.focus();
-    expect(keyDown(checkbox, " ").defaultPrevented).toBe(true);
-    expect(onRememberRegularChange).toHaveBeenCalledExactlyOnceWith(true);
-    expect(checkbox.checked).toBe(false);
-  });
-
-  it("suppresses all regular-mode memory UI for quick connect", () => {
-    const onRememberRegularChange = vi.fn();
-    const onContinueOrdinary = vi.fn();
-    const view = renderView({
-      stage: "failed",
-      quickConnect: true,
-      rememberRegular: false,
-      onRememberRegularChange,
-      onContinueOrdinary,
-    });
-
+  it("keeps asset preferences out of the helper dialog", () => {
+    const view = renderView({ stage: "failed", onContinueOrdinary: vi.fn() });
     expect(view.container.querySelector('input[type="checkbox"]')).toBeNull();
     expect(view.container.textContent).not.toContain("记住此资产");
-    expect(view.container.textContent).not.toContain("仅影响此资产");
-    click(buttonByText(view.container, "继续使用普通终端"));
-    expect(onContinueOrdinary).toHaveBeenCalledTimes(1);
-    expect(onRememberRegularChange).not.toHaveBeenCalled();
   });
 
   it("describes restore failure as a new ordinary shell, never a restored or killed remote", () => {
@@ -279,9 +245,8 @@ describe("HelperOperationView", () => {
     const before = view.container.textContent;
 
     expect(buttonByText(view.container, "新建普通终端")).toBeDefined();
-    expect(view.container.textContent).toContain("新的 shell");
-    expect(view.container.textContent).toContain("不会恢复原会话");
-    expect(view.container.textContent).toContain("原远端进程状态未知");
+    expect(view.container.textContent).toContain("新的普通终端");
+    expect(view.container.textContent).toContain("原会话不会被恢复");
     expect(view.container.textContent).not.toContain("已恢复原会话");
     expect(view.container.textContent).not.toContain("远端已终止");
 
@@ -350,8 +315,8 @@ describe("HelperOperationView", () => {
     const before = view.container.textContent;
 
     expect(view.container.textContent).toContain("检测到 2 个 PTY 和 1 个 exec");
-    expect(view.container.textContent).toContain("活动进程存在时默认稍后更新");
-    expect(view.container.textContent).toContain("更新或回滚都不会复活原 shell");
+    expect(view.container.textContent).toContain("更新会保留正在运行的终端");
+    expect(view.container.textContent).toContain("如需中断进程，会再次确认");
     click(buttonByText(view.container, "更新助手"));
     click(buttonByText(view.container, "稍后更新"));
     click(buttonByText(view.container, "中断活动进程并更新"));
@@ -367,13 +332,12 @@ describe("HelperOperationView", () => {
       update: { status: "deferred", detail: "仍有活动 PTY" },
     });
     expect(deferred.container.textContent).toContain("更新已延后");
-    expect(deferred.container.textContent).toContain("不会主动中断活动 PTY 或其他 exec");
+    expect(deferred.container.textContent).toContain("如需中断进程，会再次确认");
     deferred.unmount();
     mounted = undefined;
 
-    const interrupted = renderView({ update: { status: "interrupted" } });
-    expect(interrupted.container.textContent).toContain("已请求中断并更新");
-    expect(interrupted.container.textContent).toContain("更新或回滚都不会复活原 shell");
+    const interrupted = renderView({ update: { status: "interrupted", updated: true } });
+    expect(interrupted.container.textContent).toContain("已中断活动进程并更新助手");
     expect(interrupted.container.textContent).not.toContain("进程已复活");
   });
 });

@@ -290,11 +290,10 @@ describe("AssetEditor SSH connectivity", () => {
 
   it("saves ordinary terminal mode for one SSH asset", async () => {
     mountEditor();
-    expandAdvanced();
-    const mode = findSelect("普通终端（不使用持久终端）");
+    const mode = findSelect("默认（使用全局设置）");
     expect(mode.value).toBe("auto");
     setSelectValue(mode, "regular");
-    expect(mounted?.container.textContent).toContain("普通模式只影响以后新开的终端，不会删除已有持久会话，已有会话仍可在「后台会话」查看并接管");
+    expect(mounted?.container.textContent).toContain("仅影响以后新开的终端，已有会话保持不变");
     fillName("ordinary-ssh");
     fillHost("10.0.0.8");
     click(saveButton());
@@ -302,7 +301,20 @@ describe("AssetEditor SSH connectivity", () => {
     expect(createdPayload().options).toEqual({ terminalMode: "regular" });
   });
 
-  it("loads an SSH asset's ordinary terminal mode and clears it when switched to automatic", async () => {
+  it("offers persistent terminal mode in the basic form and saves an explicit override", async () => {
+    mountEditor();
+    const mode = findSelect("默认（使用全局设置）");
+    expect(advancedToggle().getAttribute("aria-expanded")).toBe("false");
+    expect([...mode.options].map((option) => option.value)).toEqual(["auto", "durable", "regular"]);
+    setSelectValue(mode, "durable");
+    fillName("durable-ssh");
+    fillHost("10.0.0.8");
+    click(saveButton());
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    expect(createdPayload().options).toEqual({ terminalMode: "durable" });
+  });
+
+  it.each(["regular", "durable"])("loads an SSH asset's %s terminal mode and clears its override when switched to default", async (initialMode) => {
     const initial = {
       id: "a-regular",
       kind: "ssh",
@@ -314,7 +326,7 @@ describe("AssetEditor SSH connectivity", () => {
       credId: null,
       keyPath: null,
       groupId: null,
-      options: { terminalMode: "regular" },
+      options: { terminalMode: initialMode },
       tags: "",
       note: "",
       sort: 0,
@@ -324,9 +336,8 @@ describe("AssetEditor SSH connectivity", () => {
       builtin: false,
     } as Asset;
     mountEditor(initial);
-    expandAdvanced();
-    const mode = findSelect("普通终端（不使用持久终端）");
-    expect(mode.value).toBe("regular");
+    const mode = findSelect("默认（使用全局设置）");
+    expect(mode.value).toBe(initialMode);
     setSelectValue(mode, "auto");
     click(saveButton());
     await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));

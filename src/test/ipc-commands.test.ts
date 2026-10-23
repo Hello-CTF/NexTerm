@@ -173,6 +173,15 @@ describe("desktop command envelopes", () => {
     });
   });
 
+  it("preserves the server's current helper status", async () => {
+    runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: {
+      sessionId: "host-a", action: "status", accepted: false,
+      local: { known: true }, running: { known: true }, compatibility: "compatible", update: { status: "current" },
+    } });
+    const { terminalApi } = await import("../ipc/commands");
+    expect((await terminalApi.helperOperation("host-a", "", "status")).update?.status).toBe("current");
+  });
+
   it("uses the same stable client identity when opening and executing a line tab", async () => {
     runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: "tab-1" });
     runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: null });

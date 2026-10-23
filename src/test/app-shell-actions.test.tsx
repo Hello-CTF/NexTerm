@@ -277,6 +277,7 @@ beforeEach(() => {
   mocks.dbConnect.mockResolvedValue({ connId: "db-conn" });
   mocks.updateCheck.mockResolvedValue(undefined);
   useUi.setState({
+    accountEpoch: useUi.getState().accountEpoch + 1,
     sessions: [],
     toasts: [],
     leftOpen: false,
@@ -384,9 +385,10 @@ describe("App workspace actions", () => {
     mounted = mountApp();
     await flush();
 
-    for (const label of ["容器", "磁盘挂载", "端口转发", "后台会话"]) {
+    for (const label of ["容器", "磁盘挂载", "端口转发"]) {
       await clickRail(label);
     }
+    expect(mounted.container.querySelector('button[aria-label="后台会话"]')).toBeNull();
 
     expect(allTabs().filter((tab) => ["docker", "mount", "forward", "background"].includes(tab.kind))).toEqual([]);
     expect(useUi.getState().workspaces).toHaveLength(workspace ? 1 : 0);
@@ -428,6 +430,9 @@ describe("App workspace actions", () => {
   it("keeps one background tab per owning host across A/B and repeated opens", async () => {
     const first = hostWorkspace("ws-a", "s1", "asset-1");
     const second = hostWorkspace("ws-b", "s2", "asset-2");
+    for (const workspace of [first, second]) {
+      workspace.panes[0].tabs.push({ id: `term-${workspace.id}`, kind: "terminal", title: "terminal", sessionId: workspace.sessionId, tabId: `kernel-${workspace.id}`, retainable: true, closable: true });
+    }
     useUi.setState({
       sessions: [sessionOf("s1"), sessionOf("s2")],
       workspaces: [first, second],
@@ -460,6 +465,50 @@ describe("App workspace actions", () => {
     }
     expect(useUi.getState().workspaces.some((workspace) => workspace.kind === "tools")).toBe(false);
     expect(useUi.getState().activeWorkspaceId).toBe(second.id);
+  });
+
+  it.each([false])("hides background sessions for a confirmed direct terminal: %s", async (retainable) => {
+    const terminal: AppTab = { id: "direct", kind: "terminal", title: "terminal", sessionId: "s1", tabId: "kernel-direct", retainable, closable: true };
+    useUi.setState({ sessions: [sessionOf("s1")], workspaces: [workspaceOf("s1", [terminal])], activeWorkspaceId: "ws" });
+    mounted = mountApp();
+    await flush();
+
+    expect(mounted.container.querySelector('button[aria-label="后台会话"]')).toBeNull();
+    act(() => useUi.getState().updateTab("direct", { retainable: true }));
+    expect(mounted.container.querySelector('button[aria-label="后台会话"]')).not.toBeNull();
+  });
+
+  it("keeps background access after the final durable tab is moved to the background", async () => {
+    const terminal: AppTab = { id: "last-durable", kind: "terminal", title: "terminal", sessionId: "s1", tabId: "kernel-last", retainable: true, closable: true };
+    useUi.setState({ sessions: [sessionOf("s1")], workspaces: [workspaceOf("s1", [terminal])], activeWorkspaceId: "ws" });
+    mounted = mountApp();
+    await flush();
+    act(() => useUi.setState({ workspaces: [workspaceOf("s1", [{ ...terminal, id: "direct", tabId: "kernel-direct", retainable: false }])] }));
+
+    expect(mounted.container.querySelector('button[aria-label="后台会话"]')).not.toBeNull();
+    await clickRail("后台会话");
+    expect(allTabs().some((tab) => tab.kind === "background")).toBe(true);
+  });
+
+  it("keeps an explicit discovery entry for SSH hosts before cold-restored capabilities arrive", async () => {
+    const workspace = workspaceOf("s1", [{ id: "restored", kind: "terminal", title: "terminal", sessionId: "s1", restorePending: true, closable: true }]);
+    workspace.assetKind = "ssh";
+    useUi.setState({ sessions: [sessionOf("s1")], workspaces: [workspace], activeWorkspaceId: "ws" });
+    mounted = mountApp();
+    await flush();
+
+    expect(mounted.container.querySelector('button[aria-label="后台会话"]')).not.toBeNull();
+  });
+
+  it("keeps an already opened background page accessible with only direct terminals", async () => {
+    const background: AppTab = { id: "background-ws", kind: "background", title: "后台会话", sessionId: "s1", closable: true };
+    useUi.setState({ sessions: [sessionOf("s1")], workspaces: [workspaceOf("s1", [background])], activeWorkspaceId: "ws" });
+    mounted = mountApp();
+    await flush();
+
+    expect(mounted.container.querySelector('button[aria-label="后台会话"]')).not.toBeNull();
+    await clickRail("后台会话");
+    expect(allTabs().filter((tab) => tab.kind === "background")).toHaveLength(1);
   });
 
   it("ordinary history opens preserve the existing filter", async () => {

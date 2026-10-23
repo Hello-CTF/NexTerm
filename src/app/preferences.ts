@@ -11,6 +11,7 @@ const THEME_MODE_PREFERENCE_KEY = "appearance.themeMode";
 export interface AccountPreferenceView {
   defaults: Record<string, unknown>;
   overrides: Record<string, unknown>;
+  deviceOnly?: boolean;
 }
 
 export interface AccountPreferenceStore {
@@ -26,7 +27,7 @@ export function createHttpPreferenceStore(): AccountPreferenceStore {
     async getView() {
       if (DESKTOP) {
         const status = await syncApi.status();
-        if (!status.userId) return { defaults: {}, overrides: {} };
+        if (!status.userId) return { defaults: {}, overrides: {}, deviceOnly: true };
         return syncApi.preferencesGet();
       }
       const { preferencesApi } = await import("../ipc/authApi");
@@ -55,6 +56,7 @@ export function createHttpPreferenceStore(): AccountPreferenceStore {
 let accountStore: AccountPreferenceStore | null = null;
 let accountDefaults: Record<string, unknown> = {};
 let accountOverrides: Record<string, unknown> = {};
+let deviceOnlyPreferences = false;
 let registerGeneration = 0;
 const accountListeners = new Set<() => void>();
 
@@ -68,6 +70,7 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
   registerGeneration += 1;
   const generation = registerGeneration;
   accountStore = store;
+  deviceOnlyPreferences = false;
   accountDefaults = {};
   accountOverrides = {};
   syncThemePreferenceLayers();
@@ -80,6 +83,7 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
       if (generation !== registerGeneration || store !== accountStore) return;
       accountDefaults = view.defaults;
       accountOverrides = view.overrides;
+      deviceOnlyPreferences = view.deviceOnly === true;
       syncThemePreferenceLayers();
       rebuildSnapshots();
       for (const listener of accountListeners) listener();
@@ -203,14 +207,17 @@ export function useInputPrefs(): InputPrefs {
 }
 
 export type TerminalCloseAction = "ask" | "kill" | "detach";
+export type TerminalDefaultMode = "durable" | "regular";
 
 export interface TerminalPrefs {
   closeAction: TerminalCloseAction;
+  defaultMode: TerminalDefaultMode;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
 const TERMINAL_CLOSE_ACTION_KEY = "terminal.closeAction";
-const TERMINAL_DEFAULTS: TerminalPrefs = { closeAction: "ask" };
+const TERMINAL_DEFAULT_MODE_KEY = "terminal.defaultMode";
+const TERMINAL_DEFAULTS: TerminalPrefs = { closeAction: "ask", defaultMode: "durable" };
 
 function loadTerminal(): TerminalPrefs {
   let local: Partial<TerminalPrefs> = {};
@@ -221,7 +228,14 @@ function loadTerminal(): TerminalPrefs {
     local = {};
   }
   const value = preferenceValue<unknown>(TERMINAL_CLOSE_ACTION_KEY, local.closeAction, TERMINAL_DEFAULTS.closeAction);
-  return { closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction };
+  // Account defaults must match the server's terminal creation policy; device values only apply without an account.
+  const defaultMode = terminalDefaultUsesAccount()
+    ? accountOverrides[TERMINAL_DEFAULT_MODE_KEY] ?? accountDefaults[TERMINAL_DEFAULT_MODE_KEY]
+    : local.defaultMode;
+  return {
+    closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction,
+    defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
+  };
 }
 
 let terminalPrefs: TerminalPrefs = loadTerminal();
@@ -231,11 +245,32 @@ export function getTerminalPrefs(): TerminalPrefs {
   return terminalPrefs;
 }
 
+export function terminalDefaultUsesAccount(): boolean {
+  return accountStore !== null && !deviceOnlyPreferences;
+}
+
+export async function setTerminalDefaultMode(value: TerminalDefaultMode): Promise<void> {
+  const store = terminalDefaultUsesAccount() ? accountStore : null;
+  const generation = registerGeneration;
+  if (store) {
+    await store.putOverrides({ [TERMINAL_DEFAULT_MODE_KEY]: value });
+    if (generation !== registerGeneration || accountStore !== store) return;
+    patchAccountOverrideCache({ [TERMINAL_DEFAULT_MODE_KEY]: value }, []);
+  } else {
+    const local = { ...terminalPrefs, defaultMode: value };
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify(local));
+  }
+  terminalPrefs = { ...terminalPrefs, defaultMode: value };
+  for (const listener of terminalListeners) listener();
+}
+
 export function setTerminalCloseAction(value: TerminalCloseAction): void {
   if (terminalPrefs.closeAction === value) return;
   terminalPrefs = { ...terminalPrefs, closeAction: value };
   try {
-    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify(terminalPrefs));
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, closeAction: value }));
   } catch {
   }
   // Account-level override: after registration, written to the user_setting backend for cross-device sync

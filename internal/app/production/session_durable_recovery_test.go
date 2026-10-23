@@ -5,6 +5,7 @@ package production
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -590,6 +593,68 @@ func TestProductionTerminalAttachFallsBackWhenDurableCreateBecomesUnavailable(t 
 	}
 	if provider.calls != 2 {
 		t.Fatalf("explicit durable Create calls = %d; want a retry after automatic fallback", provider.calls)
+	}
+}
+
+func TestProductionDefaultTerminalModeAndAssetOverride(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	preferences := account.NewPreferences(production.Services.Store)
+	if _, err := preferences.UpdateDefaults(t.Context(), map[string]json.RawMessage{"terminal.defaultMode": json.RawMessage(`"regular"`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	connected := connectRemoteSSHAsset(t, production)
+	response := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "default-regular", "client-a")
+	var attached attachedTabDTO
+	requireStoreTestResponse(t, response, &attached)
+	tab, err := production.Services.Sessions.Tab(attached.TabID)
+	if err != nil || tab.Info().Durable || len(resolver.recorded()) != 0 {
+		t.Fatalf("regular default started helper or durable tab: info=%+v err=%v", tab, err)
+	}
+	info, err := production.Services.Sessions.Session(connected.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	durableOptions := `{"terminalMode":"durable"}`
+	if _, err := production.Services.Store.AssetUpdate(t.Context(), info.Asset().ID, store.AssetPatch{OptionsJSON: &durableOptions}); err != nil {
+		t.Fatal(err)
+	}
+	response = dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "asset-durable", "client-a")
+	requireStoreTestResponse(t, response, &attached)
+	tab, err = production.Services.Sessions.Tab(attached.TabID)
+	if err != nil || !tab.Info().Durable || len(resolver.recorded()) != 1 {
+		t.Fatalf("asset durable mode failed to override regular default: info=%+v err=%v", tab, err)
+	}
+}
+
+func TestProductionTerminalModePreferenceOwnerOverride(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	owner := ipc.WithUserID(t.Context(), "terminal-owner")
+	asset, err := database.AssetCreate(owner, store.AssetInput{Kind: "ssh", Name: "inherits-default", OptionsJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preferences := account.NewPreferences(database)
+	if _, err := preferences.UpdateDefaults(owner, map[string]json.RawMessage{"terminal.defaultMode": json.RawMessage(`"regular"`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	resolve := newProductionTerminalModeResolver(database)
+	if got, err := resolve(owner, asset.ID); err != nil || got != session.TerminalModeRegular {
+		t.Fatalf("default mode = %q, %v", got, err)
+	}
+	if _, err := preferences.UpdateUserOverrides(owner, "terminal-owner", map[string]json.RawMessage{"terminal.defaultMode": json.RawMessage(`"durable"`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolve(owner, asset.ID); err != nil || got != session.TerminalModeAuto {
+		t.Fatalf("owner durable preference = %q, %v", got, err)
+	}
+	regularOptions := `{"terminalMode":"regular"}`
+	if _, err := database.AssetUpdate(owner, asset.ID, store.AssetPatch{OptionsJSON: &regularOptions}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolve(owner, asset.ID); err != nil || got != session.TerminalModeRegular {
+		t.Fatalf("asset regular override = %q, %v", got, err)
 	}
 }
 

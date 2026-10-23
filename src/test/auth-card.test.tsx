@@ -50,6 +50,15 @@ afterEach(() => {
 });
 
 describe("AuthCard signed-out account card", () => {
+  it("waits for automatic session restoration before offering login", async () => {
+    seed({ initialized: true, auth: "on" });
+    useAuth.setState({ gate: "loading" });
+    mounted = mountCard();
+    await flush();
+    expect(mounted.container.querySelector('[role="status"]')?.textContent).toContain("正在检查登录状态");
+    expect(mounted.container.querySelector("button")).toBeNull();
+  });
+
   it("shows only the auth-disabled explanation for auth=off, with no login or initialization entry", async () => {
     seed({ initialized: false, auth: "off" });
     mounted = mountCard();

@@ -52,6 +52,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 import { copyText } from "../../ui/clipboard";
+import { ask } from "../../ui/dialogs";
 
 export function SyncCard() {
   return (
@@ -88,9 +89,16 @@ function DesktopLinkCard() {
   const [link, setLink] = useState<AccountLink | null>(null);
   const [status, setStatus] = useState<DesktopSyncStatus | null>(null);
   const [draft, setDraft] = useState({ url: "", username: "", password: "", insecure: false });
-  const [draftEdited, setDraftEdited] = useState(false);
+  const draftEdited = useRef(false);
   const [step, setStep] = useState<LinkStep>({ kind: "form" });
-  const [busy, setBusy] = useState<null | "login" | "mfa" | "reset">(null);
+  const [busy, setBusy] = useState<null | "login" | "mfa" | "reset" | "logout">(null);
+  const [loaded, setLoaded] = useState(false);
+  const active = useRef(true);
+  const loadSequence = useRef(0);
+  const logoutPending = useRef(false);
+  const currentAccount = useRef("");
+  currentAccount.current = JSON.stringify([link?.url, status?.userId, status?.username, status?.loggedIn]);
+  const lastIdentity = useRef("");
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState("");
@@ -108,34 +116,55 @@ function DesktopLinkCard() {
   }, [savedInsecure]);
 
   const updateDraft = (patch: Partial<{ url: string; username: string; password: string; insecure: boolean }>) => {
-    setDraftEdited(true);
+    draftEdited.current = true;
     setDraft((d) => ({ ...d, ...patch }));
   };
 
   const load = useCallback(() => {
+    const sequence = ++loadSequence.current;
     setLoadError(null);
-    return Promise.all([
-      syncApi.linkGet().then((l) => {
+    return Promise.all([syncApi.linkGet(), syncApi.status()])
+      .then(([l, s]) => {
+        if (sequence !== loadSequence.current) return;
         setLink(l);
+        setStatus(s);
+        setLoaded(true);
         // On first load, backfill URL/username/insecure from the saved link; the password stays blank; unsaved edits are not overwritten
-        setDraft((d) => (draftEdited ? d : { ...d, url: l.url, username: l.username, insecure: l.insecure }));
-      }),
-      syncApi.status().then((s) => setStatus(s)),
-    ]).catch((e: unknown) => setLoadError(describeError(e)));
-  }, [draftEdited]);
+        setDraft((d) => (draftEdited.current ? d : { ...d, url: l.url, username: l.username, insecure: l.insecure }));
+        const identity = JSON.stringify([l.url, s.loggedIn, s.userId, s.username]);
+        if (lastIdentity.current !== identity) {
+          lastIdentity.current = identity;
+          void qc.invalidateQueries({ queryKey: ["sync-link"] });
+        }
+      })
+      .catch((e: unknown) => {
+        if (sequence === loadSequence.current) setLoadError(describeError(e));
+      });
+  }, [qc]);
 
   useEffect(() => {
+    active.current = true;
     void load();
     // When background auto-sync establishes the session or records a probe failure, it broadcasts via sync://status and the card auto-refreshes.
+    let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listenEvent("sync://status", () => void load()).then((off) => {
-      unlisten = off;
+    void listenEvent("sync://status", () => {
+      if (!disposed) void load();
+    }).then((off) => {
+      if (disposed) off();
+      else unlisten = off;
     });
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      active.current = false;
+      loadSequence.current += 1;
+      unlisten?.();
+    };
   }, [load]);
 
   const finishLogin = async () => {
     setStep({ kind: "form" });
+    setLoaded(false);
     void qc.invalidateQueries({ queryKey: ["sync-link"] });
     await load();
     pushToast("success", "登录信息已保存，自动同步已开启");
@@ -238,6 +267,37 @@ function DesktopLinkCard() {
     }
   };
 
+  const logout = async () => {
+    if (logoutPending.current || busy !== null || !status?.loggedIn) return;
+    const account = currentAccount.current;
+    logoutPending.current = true;
+    setBusy("logout");
+    setError(null);
+    try {
+      if (!(await ask("登出当前账号？本机将停止自动登录和同步，保留本地数据。", {
+        title: "登出账号", kind: "warning",
+      })) || !active.current || currentAccount.current !== account) return;
+      const [latestLink, latestStatus] = await Promise.all([syncApi.linkGet(), syncApi.status()]);
+      if (!active.current || JSON.stringify([latestLink.url, latestStatus.userId, latestStatus.username, latestStatus.loggedIn]) !== account) return;
+      loadSequence.current += 1;
+      const cleared = await remoteLinkApi.linkSet({ username: "", password: "" });
+      if (!active.current) return;
+      setLink(cleared);
+      setStatus(null);
+      setLoaded(false);
+      draftEdited.current = false;
+      setDraft((d) => ({ ...d, username: "", password: "" }));
+      void qc.invalidateQueries({ queryKey: ["sync-link"] });
+      await load();
+      pushToast("success", "已登出账号");
+    } catch (e) {
+      if (active.current) setError(describeError(e));
+    } finally {
+      logoutPending.current = false;
+      if (active.current) setBusy(null);
+    }
+  };
+
   const syncPaused = !!status?.paused || !!status?.vaultLocked;
   const connected = !!status?.loggedIn && !status.lastError && !syncPaused;
 
@@ -247,8 +307,10 @@ function DesktopLinkCard() {
       <div className="mb-1 flex items-center gap-2">
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{status?.loggedIn ? "服务端连接" : "账号同步"}</span>
-        {connected ? (
-          <span className="nx-badge nx-badge-green">已登录 {status?.username}</span>
+        {status?.loggedIn ? (
+          <span className={`nx-badge ${connected ? "nx-badge-green" : "nx-badge-amber"}`}>已登录 {status.username}</span>
+        ) : !loaded ? (
+          <span className="nx-badge">正在读取账号…</span>
         ) : status?.configured ? (
           <span className="nx-badge nx-badge-amber">待同步</span>
         ) : (
@@ -257,7 +319,7 @@ function DesktopLinkCard() {
       </div>
 
       <p className="nx-hint mb-3.5">
-        登录后，数据会自动在本机与云端之间同步；不登录也能继续本地使用。
+        {status?.loggedIn ? "数据会在本机与服务端之间自动同步。" : "登录后，数据会自动在本机与云端之间同步；不登录也能继续本地使用。"}
       </p>
 
       {loadError && (
@@ -271,7 +333,19 @@ function DesktopLinkCard() {
         </div>
       )}
 
-      {step.kind === "form" && (
+      {!loaded && !loadError && <p role="status" className="nx-hint">正在检查登录状态…</p>}
+
+      {step.kind === "form" && status?.loggedIn && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="nx-hint min-w-0 flex-1 break-all">{link?.url}</span>
+          <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy !== null} onClick={() => void logout()}>
+            {busy === "logout" ? "正在登出…" : "登出"}
+          </button>
+          {status.lastError && !syncPaused && <span className="nx-hint text-amber-300">上次同步失败：{status.lastError}</span>}
+        </div>
+      )}
+
+      {step.kind === "form" && loaded && !status?.loggedIn && (
         <>
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">

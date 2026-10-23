@@ -81,6 +81,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"appearance.themeMode":          {kind: preferenceKindEnumString, strings: []string{"system", "light", "dark"}},
 	"input.selectionAutoCopy":       {kind: preferenceKindBool},
 	"terminal.closeAction":          {kind: preferenceKindEnumString, strings: []string{"ask", "kill", "detach"}},
+	"terminal.defaultMode":          {kind: preferenceKindEnumString, strings: []string{"durable", "regular"}},
 	"project.workspaceTemplates":    {kind: preferenceKindProjectTemplates},
 	"keybinding.commandPalette":     {kind: preferenceKindBinding},
 	"keybinding.quickConnect":       {kind: preferenceKindBinding},

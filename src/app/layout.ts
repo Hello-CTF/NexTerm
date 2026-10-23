@@ -913,7 +913,9 @@ function mergeTerminalRuntimeTabs(
   for (const w of current) {
     for (const p of w.panes) {
       for (const t of p.tabs) {
-        if (t.kind === "terminal" && t.tabId) currentById.set(t.id, t);
+        if (t.kind === "terminal" && (t.tabId || (t.sessionId && !t.restorePending))) {
+          currentById.set(t.id, t);
+        }
       }
     }
   }
@@ -926,8 +928,11 @@ function mergeTerminalRuntimeTabs(
       ...p,
       tabs: p.tabs.map((t) => {
         const existing = t.kind === "terminal" ? currentById.get(t.id) : undefined;
-        if (!existing || existing.sessionId !== t.sessionId) return t;
+        if (!existing || existing.sessionId !== t.sessionId || existing.containerId !== t.containerId) return t;
         const recover = !t.tabId && t.restorePending && existing.tabId && existing.sessionId;
+        // Persistence marks unattached tabs for manual restoration on cold start.
+        // A same-client echo must not replace an in-flight attach with that placeholder.
+        const pendingAttach = !existing.tabId && !existing.restorePending && !t.tabId;
         if (!recover && existing.tabId !== t.tabId) return t;
         changed = true;
         preservedTabIds.add(t.id);
@@ -935,6 +940,7 @@ function mergeTerminalRuntimeTabs(
         return {
           ...t,
           ...(recover ? { tabId: existing.tabId, restorePending: undefined } : {}),
+          ...(pendingAttach ? { restorePending: undefined } : {}),
           shell: existing.shell,
           pendingDirectory: existing.pendingDirectory,
           dead: existing.dead,
@@ -1254,12 +1260,12 @@ export async function flushLayout(): Promise<void> {
   }
 }
 
-export function collectRemovedTerminals(next: PersistedLayout): { tabId: string; title: string }[] {
-  const before = new Map<string, string>();
+export function collectRemovedTerminals(next: PersistedLayout): { tabId: string; title: string; retainable?: boolean }[] {
+  const before = new Map<string, AppTab>();
   for (const w of useUi.getState().workspaces) {
     for (const p of w.panes) {
       for (const t of p.tabs) {
-        if (t.kind === "terminal" && t.tabId) before.set(t.tabId, t.title);
+        if (t.kind === "terminal" && t.tabId) before.set(t.tabId, t);
       }
     }
   }
@@ -1271,15 +1277,15 @@ export function collectRemovedTerminals(next: PersistedLayout): { tabId: string;
       }
     }
   }
-  const out: { tabId: string; title: string }[] = [];
-  for (const [tabId, title] of before) {
-    if (!after.has(tabId)) out.push({ tabId, title });
+  const out: { tabId: string; title: string; retainable?: boolean }[] = [];
+  for (const [tabId, tab] of before) {
+    if (!after.has(tabId)) out.push({ tabId, title: tab.title, retainable: tab.retainable });
   }
   return out;
 }
 
 export async function notifyBackgroundedTerminals(
-  removed: { tabId: string; title: string }[],
+  removed: { tabId: string; title: string; retainable?: boolean }[],
 ): Promise<void> {
   let live: Awaited<ReturnType<typeof terminalApi.listLive>>;
   try {
@@ -1290,8 +1296,9 @@ export async function notifyBackgroundedTerminals(
   for (const r of removed) {
     const hit = live.find((t) => t.tabId === r.tabId);
     if (!hit || hit.exited) continue;
-    const text =
-      hit.viewers > 1
+    const text = r.retainable !== true
+      ? `终端「${r.title}」的标签已被其他设备关闭`
+      : hit.viewers > 1
         ? `终端「${r.title}」的标签已被其他设备关闭，进程仍在运行，且仍有其他设备正在观看，可在「后台会话」里接管`
         : `终端「${r.title}」的标签已被其他设备关闭，进程仍在后台运行，可在「后台会话」里接管`;
     useUi.getState().pushToast("info", text);

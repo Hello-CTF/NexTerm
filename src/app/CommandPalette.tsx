@@ -7,6 +7,7 @@ import { describeError } from "../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { isMobile } from "./platform";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
+import { useBackgroundSessionsAccess } from "../features/terminal/backgroundSessionsAccess";
 import { insertSnippet } from "../features/explorer/snippetInsert";
 import { cloneAsset } from "../features/explorer/assetClone";
 import { isInventoryOnlyKind } from "../features/explorer/inventory";
@@ -137,6 +138,7 @@ export function CommandPalette({
     pushToast("info", `已取消隐藏「${asset.name}」`);
   }, [pushToast]);
 
+  const backgroundAvailable = useBackgroundSessionsAccess(workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[workspaces.length - 1]);
   const actions = useMemo<Action[]>(() => {
     const currentWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
       workspaces[workspaces.length - 1];
@@ -273,7 +275,7 @@ export function CommandPalette({
         icon: IconSettings,
         run: () => addTab({ id: "settings", kind: "settings", title: "设置", closable: true }),
       },
-      {
+      ...(backgroundAvailable ? [{
         id: "background",
         label: "打开后台会话",
         hint: "转入后台的终端进程",
@@ -295,7 +297,7 @@ export function CommandPalette({
             closable: true,
           });
         },
-      },
+      }] : []),
       {
         id: "history",
         label: "打开终端历史",
@@ -407,6 +409,7 @@ export function CommandPalette({
     }
     return list;
   }, [
+    backgroundAvailable,
     assets,
     snippets,
     hiddenIds,

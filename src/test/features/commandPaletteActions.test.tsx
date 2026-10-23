@@ -410,6 +410,7 @@ describe("command palette workspace actions", () => {
     const first = workspaceOf("ws-a", "session", "s1");
     const second = workspaceOf("ws-b", "session", "s2");
     second.assetId = "asset-2";
+    second.panes[0].tabs.push({ id: "durable", kind: "terminal", title: "terminal", sessionId: "s2", tabId: "kernel-durable", retainable: true, closable: true });
     useUi.setState({
       workspaces: [first, second],
       activeWorkspaceId: second.id,
@@ -446,13 +447,21 @@ describe("command palette workspace actions", () => {
       mounted?.unmount();
       mounted = undefined;
       await mountPalette({ onClose: vi.fn() });
-      click(optionByText(mounted!.container, "打开后台会话"));
-      await flush();
+      expect(mounted!.container.textContent).not.toContain("打开后台会话");
 
       expect(allTabs().filter((tab) => tab.kind === "forward" || tab.kind === "background")).toEqual([]);
       expect(mocks.toast).toHaveBeenCalledWith("info", "先连接一台主机（双击左侧资产）");
     },
   );
+
+  it.each([false])("does not offer background sessions for confirmed direct terminals: %s", async (retainable) => {
+    const workspace = workspaceOf("ws-direct", "session", "s1");
+    workspace.panes[0].tabs.push({ id: "direct", kind: "terminal", title: "terminal", sessionId: "s1", tabId: "kernel-direct", retainable, closable: true });
+    useUi.setState({ workspaces: [workspace], activeWorkspaceId: workspace.id });
+    await mountPalette({ onClose: vi.fn() });
+
+    expect(mounted!.container.textContent).not.toContain("打开后台会话");
+  });
 
   it("opens ordinary history without an asset filter override", async () => {
     await mountPalette({ onClose: vi.fn() });

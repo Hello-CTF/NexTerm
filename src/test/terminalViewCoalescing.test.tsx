@@ -200,6 +200,8 @@ vi.mock("../app/store", () => ({
 vi.mock("../app/preferences", () => ({
   getAppearancePrefs: () => ({ terminalFontSize: 13 }),
   getInputPrefs: () => ({ selectionAutoCopy: false }),
+  terminalDefaultUsesAccount: () => false,
+  getTerminalPrefs: () => ({ closeAction: "ask", defaultMode: "durable" }),
   getResolvedTerminalTheme: () => "dark",
   subscribeAppearancePrefs: () => () => undefined,
 }));

@@ -26,6 +26,8 @@ vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 import {
   flushLayout,
   mergeExitedTabs,
+  collectRemovedTerminals,
+  notifyBackgroundedTerminals,
   onRemoteChange,
   resetLayoutSyncForTest,
   serializeLayout,
@@ -126,6 +128,20 @@ describe("remote layout preserves exited terminal state", () => {
     expect(persistedTab).not.toHaveProperty("shell");
     expect(persistedTab).not.toHaveProperty("retainable");
     expect(persistedTab).not.toHaveProperty("pendingDirectory");
+  });
+
+  it.each([true, false, undefined])("reports remotely closed terminals according to observed background capability: %s", async (retainable) => {
+    seed([{ id: "pane", tabs: [{ ...terminal("removed"), retainable }] }]);
+    const next = serializeLayout(useUi.getState());
+    if (!next) throw new Error("Missing persisted layout");
+    next.workspaces[0].panes[0].tabs = [];
+    const removed = collectRemovedTerminals(next);
+    mocks.listLive.mockResolvedValue([liveTab("kernel-removed")]);
+
+    await notifyBackgroundedTerminals(removed);
+
+    expect(toastText()).toContain("标签已被其他设备关闭");
+    expect(toastText().includes("可在「后台会话」里接管")).toBe(retainable === true);
   });
 
   it("mergeExitedTabs keeps local exited over a stale remote copy and leaves clean layouts untouched", () => {
@@ -381,6 +397,67 @@ describe("remote layout preserves exited terminal state", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach", "s");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-new", "kill");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
+  });
+
+  it("keeps a new terminal attaching when its saved layout is echoed before helper installation finishes", async () => {
+    const pending: AppTab = {
+      ...terminal("installing"),
+      tabId: undefined,
+      retainable: undefined,
+      pendingDirectory: "/tmp/project",
+    };
+    seed([{ id: "pane", tabs: [pending] }]);
+    const persisted = serializeLayout(useUi.getState());
+    expect(persisted?.workspaces[0].panes[0].tabs[0].restorePending).toBe(true);
+    await flushLayout();
+    mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: persisted });
+
+    onRemoteChange(null);
+    await flushAsync();
+
+    const current = useUi.getState().workspaces[0].panes[0].tabs[0];
+    expect(current.restorePending).not.toBe(true);
+    expect(current.tabId).toBeUndefined();
+    expect(current.pendingDirectory).toBe("/tmp/project");
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+
+    useUi.getState().updateTab("installing", { tabId: "kernel-installed", retainable: true });
+    const attached = useUi.getState().workspaces[0].panes[0].tabs[0];
+    expect(attached.tabId).toBe("kernel-installed");
+    expect(attached.restorePending).not.toBe(true);
+  });
+
+  it("keeps cold-restored terminals pending instead of manufacturing an in-flight attachment", async () => {
+    seed([{ id: "pane", tabs: [{ ...terminal("restored"), tabId: undefined, restorePending: true }] }]);
+    const persisted = serializeLayout(useUi.getState());
+    await flushLayout();
+    mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: persisted });
+
+    onRemoteChange(null);
+    await flushAsync();
+
+    const current = useUi.getState().workspaces[0].panes[0].tabs[0];
+    expect(current.restorePending).toBe(true);
+    expect(current.tabId).toBeUndefined();
+  });
+
+  it.each([
+    { sessionId: "other-session", containerId: undefined },
+    { sessionId: "s", containerId: "other-container" },
+  ])("does not transfer an in-flight attachment to a changed target: %j", async (target) => {
+    seed([{ id: "pane", tabs: [{ ...terminal("installing"), tabId: undefined, pendingDirectory: "/tmp/project" }] }]);
+    const persisted = serializeLayout(useUi.getState());
+    if (!persisted) throw new Error("Missing persisted layout");
+    Object.assign(persisted.workspaces[0].panes[0].tabs[0], target);
+    await flushLayout();
+    mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: persisted });
+
+    onRemoteChange(null);
+    await flushAsync();
+
+    const current = useUi.getState().workspaces[0].panes[0].tabs[0];
+    expect(current.restorePending).toBe(true);
+    expect(current.pendingDirectory).toBeUndefined();
   });
 
   it("preserves runtime only for the same backend tab across remote layout moves", async () => {

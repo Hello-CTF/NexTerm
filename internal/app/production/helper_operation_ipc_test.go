@@ -145,6 +145,39 @@ func TestHelperDTOFromDaemonReportsEvidenceAndRealUpdateOutcome(t *testing.T) {
 	}
 }
 
+func TestHelperDTOFromDaemonOffersUpdatesOnlyForDifferentKnownContent(t *testing.T) {
+	local := supervisor.RuntimeMetadata{Protocol: supervisor.ProtocolVersion, SHA256: strings.Repeat("a", 64)}
+	running := supervisor.RuntimeMetadata{Version: "1.2.0", Commit: "release-commit", Protocol: supervisor.ProtocolVersion, SHA256: strings.Repeat("b", 64)}
+	for _, test := range []struct {
+		name    string
+		local   supervisor.RuntimeMetadata
+		running supervisor.RuntimeMetadata
+		known   bool
+		want    string
+	}{
+		{name: "different content", local: local, running: running, known: true, want: "available"},
+		{name: "same content", local: local, running: supervisor.RuntimeMetadata{Version: running.Version, Commit: running.Commit, Protocol: running.Protocol, SHA256: strings.ToUpper(local.SHA256)}, known: true, want: "current"},
+		{name: "missing local evidence", running: running, known: true, want: "unknown"},
+		{name: "missing running evidence", local: local, running: running, want: "unknown"},
+		{name: "missing running digest", local: local, running: supervisor.RuntimeMetadata{Protocol: supervisor.ProtocolVersion}, known: true, want: "unknown"},
+		{name: "incompatible protocol", local: local, running: supervisor.RuntimeMetadata{Protocol: supervisor.ProtocolVersion + 1, SHA256: running.SHA256}, known: true, want: "unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := helperDTOFromDaemon("session-a", "status", &sshdaemon.Daemon{
+				RunningMetadata: test.running,
+				MetadataKnown:   test.known,
+				Update:          sshdaemon.HelperUpdateStatus{Local: test.local},
+			})
+			if result.Update == nil || result.Update.Status != test.want {
+				t.Fatalf("update = %+v, want %s", result.Update, test.want)
+			}
+			if test.want == "current" && (result.Local.Release != running.Version || result.Local.Commit != running.Commit) {
+				t.Fatalf("same executable lost proven release metadata: %+v", result.Local)
+			}
+		})
+	}
+}
+
 func writeOfflineHelperManifest(t *testing.T, path string, protocol int, verified bool) {
 	t.Helper()
 	initial, err := sshdaemon.InspectExecutable(path)

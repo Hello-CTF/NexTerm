@@ -104,6 +104,7 @@ import { ProjectWorkspaceStrip } from "./ProjectWorkspaceStrip";
 import { ALL_PROJECTS, focusedWorkspaces } from "./projectFocus";
 import { TerminalPane } from "../features/terminal/TerminalPane";
 import { BackgroundSessions } from "../features/terminal/BackgroundSessions";
+import { useBackgroundSessionsAccess } from "../features/terminal/backgroundSessionsAccess";
 import { WorkspaceRestoreBanner } from "../features/terminal/WorkspaceRestoreBanner";
 import { TranscriptHistoryPanel } from "../features/terminal/TranscriptHistoryPanel";
 import { FileBrowser } from "../features/files/FileBrowser";
@@ -896,6 +897,7 @@ function AppShell() {
     }) ?? false);
   const activeSessionId = ws?.kind === "session" ? ws.sessionId : undefined;
   const activeSession = sessions.find((session) => session.id === activeSessionId);
+  const backgroundAvailable = useBackgroundSessionsAccess(ws);
   const connectedList = sessions.filter((s) => s.status === "connected");
   const connectedSessions = connectedList.length;
   const idleSessions = connectedList.filter(
@@ -1043,6 +1045,7 @@ function AppShell() {
 
   const openBackground = useCallback(() => {
     if (ws?.kind !== "session" || !ws.sessionId) return needSession();
+    if (!backgroundAvailable) return;
     useUi.getState().addTab({
       id: `background-${ws.id}`,
       kind: "background",
@@ -1050,7 +1053,7 @@ function AppShell() {
       sessionId: ws.sessionId,
       closable: true,
     });
-  }, [ws?.id, ws?.kind, ws?.sessionId, needSession]);
+  }, [ws?.id, ws?.kind, ws?.sessionId, backgroundAvailable, needSession]);
 
   const openHistory = useCallback(() => {
     useUi
@@ -1479,13 +1482,13 @@ function AppShell() {
     onClick: () => void;
     unavailableReason?: string;
   }[  ] = [
-    {
+    ...(backgroundAvailable ? [{
       key: "background",
       label: "后台会话",
       hint: "查看已转入后台的终端进程，并将其恢复到标签页",
       icon: IconActivity,
       onClick: openBackground,
-    },
+    }] : []),
     {
       key: "history",
       label: "终端历史",
@@ -1767,7 +1770,7 @@ function AppShell() {
           )}
           {ws?.restorePending && (
             <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
-              <span>「{ws.title}」的标签已恢复，连接尚未启动。请核对目标后手动连接。</span>
+              <span>连接「{ws.title}」后继续。</span>
               <button
                 type="button"
                 className="nx-btn-ghost"
@@ -2467,23 +2470,17 @@ function isSessionAlive(status: string): boolean {
 
 // Shared manual-restore placeholder for restorePending tabs: nothing mounts and no
 // connection is dialed until the user explicitly reconnects via reconnectRestoredTab.
-function RestoredTabPlaceholder({ tab, onClose }: { tab: AppTab; onClose: () => void }) {
+function RestoredTabPlaceholder({ tab }: { tab: AppTab }) {
   const reopen = () => {
     void reconnectRestoredTab(tab.id).then((result) => {
       if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
     });
   };
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
-      <span>
-        {tab.kind === "terminal"
-          ? "旧终端进程已结束，不会自动重新连接。"
-          : "旧文件目标已恢复，连接尚未启动，不会自动重新打开。"}
-      </span>
-      <div className="flex items-center gap-2">
-        <button type="button" className="nx-btn nx-btn-outline" onClick={reopen}>重新连接</button>
-        <button type="button" className="nx-btn nx-btn-outline" onClick={onClose}>关闭标签</button>
-      </div>
+    <div className="flex h-full items-center justify-center">
+      <button type="button" className="nx-btn nx-btn-outline" onClick={reopen}>
+        {tab.kind === "terminal" ? "连接终端" : "连接并打开"}
+      </button>
     </div>
   );
 }
@@ -2506,20 +2503,19 @@ const PaneForTab = memo(function PaneForTab({
   if (restorePending) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-400">
-        此标签的旧连接未启动。请核对工作区目标，然后点击上方“重新连接”。
+        连接主机后继续。
       </div>
     );
   }
   if (tab.kind === "terminal" && tab.containerId && tab.restorePending) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
-        <span>旧容器终端不会自动重新执行。请在 Docker 容器列表中重新打开。</span>
-        <button type="button" className="nx-btn nx-btn-outline" onClick={close}>关闭旧标签</button>
+        <span>请从容器列表打开终端。</span>
       </div>
     );
   }
   if (tab.restorePending && (tab.kind === "terminal" || tab.kind === "files" || tab.kind === "log")) {
-    return <RestoredTabPlaceholder tab={tab} onClose={close} />;
+    return <RestoredTabPlaceholder tab={tab} />;
   }
   switch (tab.kind) {
     case "terminal":

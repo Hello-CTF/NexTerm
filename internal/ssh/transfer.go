@@ -654,14 +654,22 @@ func StageUpload(ctx context.Context, host Host, target Target, source UploadSou
 	progressFn := func(event sshfs.Progress) {
 		if progress != nil {
 			resolver := Resolver{Progress: progress}
-			resolver.reportProgress(ctx, HelperProgress{Step: 4, Steps: helperProgressSteps, Stage: "upload", Transferred: event.Transferred, Total: event.Total, Done: event.Done})
+			resolver.reportProgress(ctx, HelperProgress{Step: 4, Steps: helperProgressSteps, Stage: "upload", Transferred: event.Transferred, Total: event.Total})
 		}
+	}
+	if progress != nil {
+		resolver := Resolver{Progress: progress}
+		resolver.reportProgress(ctx, HelperProgress{Step: 4, Stage: "upload", Transport: "sftp/exec", Path: staging})
 	}
 	if _, err := uploadHostWithProgress(ctx, host, source.Path, staging, sshfs.TransferOptions{Progress: progressFn}); err != nil {
 		return "", transferError(TransferStageUpload, staging, err)
 	}
 	if err := host.Chmod(ctx, staging, 0o700); err != nil {
 		return "", transferError(TransferStageChmod, staging, err)
+	}
+	if progress != nil {
+		resolver := Resolver{Progress: progress}
+		resolver.reportProgress(ctx, HelperProgress{Step: 5, Stage: "verify", Path: staging})
 	}
 	digest, err := host.ChecksumSHA256(ctx, staging)
 	if err != nil {

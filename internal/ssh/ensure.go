@@ -91,7 +91,7 @@ func (r *Resolver) reportProgress(ctx context.Context, progress HelperProgress) 
 	if progress.Cause == "" {
 		progress.Cause = progress.Error
 	}
-	if progress.Error == "" {
+	if progress.Error == "" && (progress.Stage == "failed" || progress.Stage == "backoff" || progress.Stage == "rollback") {
 		progress.Error = progress.Cause
 	}
 	progress.Percent = -1
@@ -251,7 +251,7 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 			connection, err := r.connectOrStartDaemon(ctx, host, location, binary, nil)
 			if err == nil {
 				connection.daemon.Temporary = location.temporary
-				return connection.daemon, nil
+				return daemonWithSource(connection, source), nil
 			}
 			lastErr = err
 			if daemonRefusal(err) || !deploymentPathUnavailable(err) {
@@ -291,7 +291,8 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 			if err != nil {
 				return nil, err
 			}
-			return connection.daemon, nil
+			connection.daemon.Temporary = location.temporary
+			return daemonWithSource(connection, source), nil
 		}
 		binary, err := r.installTargetHelper(ctx, host, location, *source)
 		if err == nil {
@@ -299,7 +300,7 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 			connection, err = r.connectOrStartDaemon(ctx, host, location, binary, nil)
 			if err == nil {
 				connection.daemon.Temporary = location.temporary
-				return connection.daemon, nil
+				return daemonWithSource(connection, source), nil
 			}
 		}
 		lastErr = err
@@ -312,6 +313,14 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("%w: no usable helper deployment location", durable.ErrUnavailable)
+}
+
+func daemonWithSource(connection *daemonConnection, source *UploadSource) *Daemon {
+	if source != nil {
+		connection.daemon.Update.Local = localHelperMetadata(*source)
+	}
+	connection.daemon.Update.Running = connection.metadata
+	return connection.daemon
 }
 
 func helperUnavailable(action string, err error) error {
@@ -581,6 +590,7 @@ func (r *Resolver) connectOrStartDaemon(ctx context.Context, host Host, location
 	if err := ensureRemoteDirectory(ctx, host, location.target, location.paths.StateDir, true); err != nil {
 		return nil, err
 	}
+	r.reportProgress(ctx, HelperProgress{Step: 5, Stage: "start", Path: binary})
 	if err := spawnTargetDaemon(ctx, host, location.target, binary, location.paths.StateDir); err != nil {
 		return nil, err
 	}
@@ -755,7 +765,7 @@ func (r *Resolver) installTargetHelper(ctx context.Context, host Host, location 
 	}
 	uploadCtx, cancel := context.WithTimeout(ctx, r.uploadTimeout())
 	defer cancel()
-	r.reportProgress(uploadCtx, HelperProgress{Step: 4, Stage: "upload", Transport: "sftp/exec", Path: location.paths.BinDir})
+	r.reportProgress(uploadCtx, HelperProgress{Step: 3, Stage: "cache", Path: location.paths.BinDir})
 	binary, err := StageUpload(uploadCtx, host, location.target, source, true, r.Progress)
 	if err != nil {
 		return binary, helperUnavailable("install target helper", err)

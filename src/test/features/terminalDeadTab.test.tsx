@@ -157,6 +157,7 @@ function seedTab(
     helperProgress: {},
     helperOperations: createHelperOperationState(),
     helperOperationTabs: {},
+    helperOperationIntents: {},
     helperRetries: {},
   });
   return tab;
@@ -326,6 +327,8 @@ describe("terminal dead-tab overlay", () => {
     failAttach("not_found");
     await waitFor(() => expect(overlay()).not.toBeNull());
 
+    expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
+    clickButton(mounted.container, "查看");
     clickButton(mounted.container, "新建普通终端");
 
     await waitFor(() => expect(harness.props?.forceRegular).toBe(true));
@@ -739,13 +742,14 @@ describe("terminal dead-tab overlay", () => {
     await flush();
     await openToolbarOverflow();
     await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("可以检查并执行助手更新"));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
 
     await openToolbarOverflow();
     await clickMenuItem("持久终端助手…");
+    mocks.ask.mockResolvedValueOnce(true);
     clickButton(mounted.container, "中断活动进程并更新");
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", true));
-    await waitFor(() => expect(mounted?.container.textContent).toContain("updated-running"));
+    await waitFor(() => expect(mounted?.container.querySelector('[role="dialog"]')).toBeNull());
 
     resolveStaleStatus?.({
       sessionId: "s1",
@@ -758,9 +762,129 @@ describe("terminal dead-tab overlay", () => {
     });
     await flush();
 
-    expect(mounted.container.textContent).toContain("updated-running");
+    expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
     expect(mounted.container.textContent).not.toContain("stale-before-update");
     expect(mounted.container.textContent).not.toContain("stale-running");
+  });
+
+  it("closes the helper window on later and Escape without requesting an update", async () => {
+    mocks.helperOperation.mockResolvedValue({
+      sessionId: "s1", action: "status", accepted: false,
+      local: { known: true, protocol: 2, sha256: "a".repeat(64) },
+      running: { known: true, protocol: 2, sha256: "b".repeat(64) },
+      compatibility: "compatible", update: { status: "available" },
+    });
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    expect(mounted.container.querySelector("details")?.open).toBe(false);
+    clickButton(mounted.container, "稍后更新");
+    expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(mocks.helperUpdate).not.toHaveBeenCalled();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("requires confirmation before interrupting active processes", async () => {
+    mocks.helperOperation.mockResolvedValue({
+      sessionId: "s1", action: "status", accepted: false,
+      local: { known: true, protocol: 2, sha256: "a".repeat(64) },
+      running: { known: true, protocol: 2, sha256: "b".repeat(64) },
+      compatibility: "compatible", update: { status: "available" },
+    });
+    mocks.ask.mockResolvedValueOnce(false);
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    clickButton(mounted.container, "中断活动进程并更新");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("无法恢复"), expect.objectContaining({ kind: "warning" }));
+    expect(mocks.helperUpdate).not.toHaveBeenCalled();
+    expect(mounted.container.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+  it.each(["current", "deferred"])("closes the update window with visible %s feedback", async (status) => {
+    const metadata = { known: true, protocol: 2, sha256: "a".repeat(64) };
+    mocks.helperOperation.mockResolvedValue({
+      sessionId: "s1", action: "status", accepted: false, local: metadata, running: metadata,
+      compatibility: "compatible", update: { status: "available" },
+    });
+    mocks.helperUpdate.mockResolvedValue({
+      sessionId: "s1", action: "update", accepted: true, local: metadata, running: metadata,
+      compatibility: "compatible", update: { status },
+    });
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    clickButton(mounted.container, "更新助手");
+    await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
+    await flush();
+    expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes(status === "current" ? "最新版本" : "更新已延后"))).toBe(true);
+  });
+
+  it("shows deployment as a compact status and removes it when ready", async () => {
+    seedTab({ tabId: undefined });
+    mounted = mountPane();
+    await flush();
+    const progress = {
+      sessionId: "s1", assetId: "asset-1", operationId: "first-install", attempt: 1, attempts: 3,
+      deadline: Date.now() + 600_000, step: 3, steps: 6, stage: "upload", transferred: 50, total: 100, percent: 50, done: false,
+    };
+    act(() => useUi.getState().setHelperProgress(progress));
+    expect(mounted.container.querySelector('[aria-label="终端助手进度"]')?.textContent).toContain("上传持久终端助手");
+    expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(mounted.container.textContent).not.toContain("尝试次数");
+    act(() => useUi.getState().setHelperProgress({ ...progress, stage: "ready", done: true }));
+    await flush();
+    expect(mounted.container.querySelector('[aria-label="终端助手进度"]')).toBeNull();
+    expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(mocks.helperOperation).not.toHaveBeenCalled();
+  });
+
+  it("keeps the update result when reopened while the update is still running", async () => {
+    const status = {
+      sessionId: "s1", action: "status", accepted: false,
+      local: { known: true, protocol: 2, sha256: "a".repeat(64) },
+      running: { known: true, protocol: 2, sha256: "b".repeat(64) },
+      compatibility: "compatible", update: { status: "available" },
+    };
+    let finishUpdate: ((value: unknown) => void) | undefined;
+    mocks.helperOperation.mockResolvedValue(status);
+    mocks.helperUpdate.mockImplementation(() => new Promise((resolve) => { finishUpdate = resolve; }));
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await flush();
+    clickButton(mounted.container, "更新助手");
+    await flush();
+    expect(mounted.container.textContent).toContain("正在更新终端助手");
+    const close = mounted.container.querySelector<HTMLButtonElement>('[aria-label="关闭助手窗口"]');
+    if (!close) throw new Error("Missing close button");
+    act(() => close.click());
+    await openToolbarOverflow();
+    await clickMenuItem("持久终端助手…");
+    await flush();
+    expect(mocks.helperOperation).toHaveBeenCalledTimes(1);
+    expect(mounted.container.textContent).toContain("正在更新终端助手");
+    finishUpdate?.({ ...status, action: "update", update: { status: "updated", updated: true } });
+    await flush();
+    expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("终端助手已更新"))).toBe(true);
   });
 
   it("shows real helper versions and sends explicit default/interrupt update actions", async () => {
@@ -799,11 +923,13 @@ describe("terminal dead-tab overlay", () => {
 
     clickButton(mounted.container, "更新助手");
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
-    await waitFor(() => expect(mounted?.container.textContent).toContain("助手更新已完成"));
+    await waitFor(() => expect(mounted?.container.querySelector('[role="dialog"]')).toBeNull());
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("终端助手已更新"))).toBe(true);
 
     await openToolbarOverflow();
     await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("可以检查并执行助手更新"));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    mocks.ask.mockResolvedValueOnce(true);
     clickButton(mounted.container, "中断活动进程并更新");
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", true));
   });
@@ -839,13 +965,13 @@ describe("terminal dead-tab overlay", () => {
     await flush();
     await openToolbarOverflow();
     await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("可以检查并执行助手更新"));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
 
     clickButton(mounted.container, "更新助手");
 
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
     await waitFor(() => expect(mounted?.container.textContent).toContain("已回滚助手二进制"));
-    expect(mounted.container.textContent).toContain("更新失败，已返回回滚结果");
+    expect(mounted.container.textContent).toContain("更新失败，已恢复原助手");
     expect(mounted.container.textContent).toContain("helper update failed; previous daemon restored");
   });
 

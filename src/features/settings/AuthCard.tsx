@@ -45,6 +45,7 @@ export function AuthCard() {
   const sessionsRequest = useRef(0);
   const passwordRequest = useRef(0);
   const status = useAuth((s) => s.status);
+  const gate = useAuth((s) => s.gate);
   const changePassword = useAuth((s) => s.changePassword);
   const logout = useAuth((s) => s.logout);
   const pendingRecoveryKey = useAuth((s) => s.pendingRecoveryKey);
@@ -230,6 +231,9 @@ export function AuthCard() {
   if (!user || (DESKTOP && !desktopScope)) {
     // The desktop has no account gate; a login button would only open a gate that does not exist: the whole card does not render, and the login entry is in SyncCard.
     if (!authAvailable()) return null;
+    if (gate === "loading") {
+      return <section className="nx-card"><p role="status" className="nx-hint">正在检查登录状态…</p></section>;
+    }
     if (status?.auth === "platform") {
       // Nothing to fill in under platform-hosted mode: the account is auto-established with the platform login. Reaching here means the platform session was not established
       // (typically direct access to the server port, bypassing the platform entry); give the reason instead of a dead button.
@@ -351,8 +355,8 @@ export function AuthCard() {
 
         {DESKTOP && (
           <p className="nx-hint mt-2">
-            本账号由「账号同步」的服务端连接登录，切换账号或重新登录在下方「账号同步」中操作；
-            退出登录与两步验证管理请在浏览器中打开服务端 Web 界面。
+            本账号由下方的服务端连接管理，可登出后切换账号。
+            两步验证管理请在浏览器中打开服务端 Web 界面。
           </p>
         )}
 

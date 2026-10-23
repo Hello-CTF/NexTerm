@@ -917,13 +917,32 @@ func TestEnsureDaemonUploadsWhenNoCompatibleBinary(t *testing.T) {
 		host.mu.Unlock()
 	}
 	resolver := testResolver(host, "/local/nexterm-desktop")
-	resolver.inspect = func(string) (UploadSource, error) { return fakeUploadSource(digest), nil }
+	source := fakeUploadSource(digest)
+	source.Version, source.Commit = "1.2.0", "release-commit"
+	resolver.inspect = func(string) (UploadSource, error) { return source, nil }
+	var progress []HelperProgress
+	resolver.Progress = func(_ context.Context, event HelperProgress) { progress = append(progress, event) }
 	daemon, err := resolver.EnsureDaemon(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if daemon.Binary != target {
 		t.Fatalf("daemon binary = %q; want %q", daemon.Binary, target)
+	}
+	if daemon.Update.Local.Version != source.Version || daemon.Update.Local.Commit != source.Commit || daemon.Update.Local.SHA256 != source.Digest || daemon.Update.Local.Protocol != supervisor.ProtocolVersion {
+		t.Fatalf("installed helper lost source metadata: %+v", daemon.Update.Local)
+	}
+	started := false
+	for _, event := range progress {
+		if event.Stage == "start" {
+			started = true
+		}
+		if event.Done && event.Stage != "ready" {
+			t.Fatalf("helper reported completion before readiness: %+v", event)
+		}
+	}
+	if !started || len(progress) == 0 || progress[len(progress)-1].Stage != "ready" || !progress[len(progress)-1].Done {
+		t.Fatalf("helper startup/readiness not reported: %+v", progress)
 	}
 	if len(host.uploads) != 1 {
 		t.Fatalf("uploads = %v; want one staged upload", host.uploads)
@@ -1913,6 +1932,9 @@ func TestEnsureDaemonUsesPrivateTemporaryFallbackAndReportsLifecycle(t *testing.
 			}
 			if fallback == nil || fallback.Path != wantRoot || !strings.Contains(fallback.Cause, "cleanup") {
 				t.Fatalf("temporary path or cleanup risk is not visible: %+v", events)
+			}
+			if fallback.Error != "" {
+				t.Fatalf("successful fallback was reported as an error: %+v", fallback)
 			}
 			if len(host.uploads) != 1 || !host.running {
 				t.Fatalf("fallback upload/start missing: uploads=%v running=%v", host.uploads, host.running)

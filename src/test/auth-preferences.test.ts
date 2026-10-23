@@ -5,6 +5,9 @@ import {
   registerAccountPreferenceStore,
   getAccountPreferenceStore,
   getAccountOverrides,
+  getTerminalPrefs,
+  setTerminalDefaultMode,
+  setTerminalCloseAction,
   type AccountPreferenceStore,
   type AccountPreferenceView,
 } from "../app/preferences";
@@ -210,6 +213,84 @@ describe("account-level keybinding overrides (M140 flat allowlisted keys)", () =
     const store = memoryStore({ "keybinding.newTerminal": "Mod+Shift+t" });
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
+  });
+});
+
+describe("default terminal mode preferences", () => {
+  it("keeps durable as the initial mode and saves an unregistered device choice", async () => {
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().defaultMode).toBe("durable");
+    await setTerminalDefaultMode("regular");
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+  });
+
+  it("follows server defaults and account overrides rather than a different device choice", async () => {
+    registerAccountPreferenceStore(null);
+    await setTerminalDefaultMode("regular");
+    const store = memoryStore({}, { "terminal.defaultMode": "durable" });
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    expect(getTerminalPrefs().defaultMode).toBe("durable");
+
+    await setTerminalDefaultMode("regular");
+    expect(store.puts).toContainEqual({ "terminal.defaultMode": "regular" });
+    expect(getAccountOverrides()["terminal.defaultMode"]).toBe("regular");
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+  });
+
+  it("leaves the effective choice unchanged when saving fails", async () => {
+    const store = memoryStore({ "terminal.defaultMode": "durable" });
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    vi.spyOn(store, "putOverrides").mockRejectedValue(new Error("storage unavailable"));
+
+    await expect(setTerminalDefaultMode("regular")).rejects.toThrow("storage unavailable");
+    expect(getTerminalPrefs().defaultMode).toBe("durable");
+    expect(getAccountOverrides()["terminal.defaultMode"]).toBe("durable");
+  });
+
+  it("keeps an unregistered desktop on device preferences when sync health refreshes", async () => {
+    registerAccountPreferenceStore(null);
+    await setTerminalDefaultMode("regular");
+    const store = memoryStore({});
+    vi.spyOn(store, "getView").mockResolvedValue({ defaults: {}, overrides: {}, deviceOnly: true });
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    await setTerminalDefaultMode("durable");
+    expect(store.puts).toEqual([]);
+    expect(getTerminalPrefs().defaultMode).toBe("durable");
+  });
+
+  it("does not copy an account terminal mode into device settings when changing the close action", async () => {
+    registerAccountPreferenceStore(null);
+    await setTerminalDefaultMode("regular");
+    const store = memoryStore({ "terminal.defaultMode": "durable" });
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    expect(getTerminalPrefs().defaultMode).toBe("durable");
+
+    setTerminalCloseAction("kill");
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    expect(getTerminalPrefs().closeAction).toBe("kill");
+  });
+
+  it("ignores a delayed save result after switching accounts", async () => {
+    const store = memoryStore({ "terminal.defaultMode": "durable" });
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    let finishSave: (() => void) | undefined;
+    vi.spyOn(store, "putOverrides").mockImplementation(() => new Promise<void>((resolve) => { finishSave = resolve; }));
+    const saving = setTerminalDefaultMode("regular");
+    registerAccountPreferenceStore(memoryStore({ "terminal.defaultMode": "durable" }));
+    await flushMacrotask();
+    finishSave?.();
+    await saving;
+    expect(getTerminalPrefs().defaultMode).toBe("durable");
+    expect(getAccountOverrides()["terminal.defaultMode"]).toBe("durable");
   });
 });
 

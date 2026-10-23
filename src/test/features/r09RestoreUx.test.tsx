@@ -381,11 +381,11 @@ describe("closed-tab restore UX", () => {
     mounted = mountApp();
     await flush();
 
-    expect(mounted?.container.textContent).toContain("不会自动重新连接");
+    expect(mounted?.container.textContent).toContain("连接终端");
     expect(mocks.terminalPaneProps.some((props) => props.storeTabId === "t1")).toBe(false);
 
     const reconnect = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
-      (button) => button.textContent?.trim() === "重新连接",
+      (button) => button.textContent?.trim() === "连接终端",
     );
     expect(reconnect).toBeDefined();
     click(reconnect as HTMLButtonElement);
@@ -413,7 +413,7 @@ describe("closed-tab restore UX", () => {
 describe("restorePending file and log tabs mount only after an explicit reconnect", () => {
   function reconnectButton(): HTMLButtonElement {
     const button = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
-      (candidate) => candidate.textContent?.trim() === "重新连接",
+      (candidate) => candidate.textContent?.trim() === "连接并打开",
     );
     if (!button) throw new Error("Reconnect button not found");
     return button;
@@ -433,7 +433,7 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     mounted = mountApp();
     await flush();
 
-    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    expect(mounted?.container.textContent).toContain("连接并打开");
     expect(mocks.fsRead).not.toHaveBeenCalled();
     expect(mocks.fsReadRange).not.toHaveBeenCalled();
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
@@ -460,7 +460,7 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     mounted = mountApp();
     await flush();
 
-    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    expect(mounted?.container.textContent).toContain("连接并打开");
     expect(mocks.fsReadRange).not.toHaveBeenCalled();
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
 
@@ -484,7 +484,7 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     mounted = mountApp();
     await flush();
 
-    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    expect(mounted?.container.textContent).toContain("连接并打开");
     expect(mocks.fsRoots).not.toHaveBeenCalled();
     expect(mocks.fsList).not.toHaveBeenCalled();
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
@@ -513,12 +513,12 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     mounted = mountApp();
     await flush();
 
-    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    expect(mounted?.container.textContent).toContain("连接并打开");
     click(reconnectButton());
     await flush();
 
     expect(useUi.getState().toasts.some((toast) => toast.text.includes("已删除"))).toBe(true);
-    expect(mounted?.container.textContent).toContain("不会自动重新打开");
+    expect(mounted?.container.textContent).toContain("连接并打开");
     expect(findTab("f1")?.restorePending).toBe(true);
     expect(mocks.fsRead).not.toHaveBeenCalled();
     expect(mocks.fsReadRange).not.toHaveBeenCalled();

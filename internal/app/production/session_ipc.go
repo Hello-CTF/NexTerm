@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -1165,7 +1166,7 @@ func productionTerminalMode(options map[string]any) (string, error) {
 		return session.TerminalModeAuto, nil
 	}
 	mode, ok := configured.(string)
-	if !ok || mode != session.TerminalModeAuto && mode != session.TerminalModeRegular {
+	if !ok || mode != session.TerminalModeAuto && mode != "durable" && mode != session.TerminalModeRegular {
 		return "", ipc.BadParam(errors.New("终端模式无效"))
 	}
 	return mode, nil
@@ -1185,7 +1186,32 @@ func newProductionTerminalModeResolver(database *store.Store) func(context.Conte
 		if err != nil {
 			return "", ipc.BadParam(err)
 		}
-		return productionTerminalMode(options)
+		mode, err := productionTerminalMode(options)
+		if err != nil || mode != session.TerminalModeAuto {
+			return mode, err
+		}
+		preferences := account.NewPreferences(database)
+		defaults, err := preferences.Defaults(ctx)
+		if err != nil {
+			return "", err
+		}
+		if userID, ok := ipc.UserIDFromContext(ctx); ok {
+			overrides, err := preferences.UserOverrides(ctx, userID)
+			if err != nil {
+				return "", err
+			}
+			defaults = account.MergePreferences(defaults, overrides)
+		}
+		var preferred string
+		if raw, ok := defaults["terminal.defaultMode"]; ok {
+			if err := json.Unmarshal(raw, &preferred); err != nil || preferred != "durable" && preferred != session.TerminalModeRegular {
+				return "", ipc.BadParam(errors.New("默认终端模式无效"))
+			}
+		}
+		if preferred == session.TerminalModeRegular {
+			return preferred, nil
+		}
+		return session.TerminalModeAuto, nil
 	}
 }
 
