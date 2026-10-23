@@ -28,6 +28,8 @@ export function planCI({ isPR, files = [], labels = [] }) {
   const scope = {
     quality: isPR && (go || tooling),
     unit: isPR && go,
+    // The race detector multiplies test time, so ordinary PRs skip it; full-ci opts in.
+    race: isPR && go && full,
     database: isPR && go,
     frontend: !isPR || native || frontend,
     frontendTests: isPR && frontend,

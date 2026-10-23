@@ -332,7 +332,7 @@ jobs:
       - name: Produce and validate the full archive with final evidence gates
         run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-evidence
       - name: Verify the archive carries the staged main binary bytes
-        run: node .github/scripts/verify-server-archive.mjs "target/release-assets/nexterm-server_linux_${{ matrix.arch }}_${NEXTERM_RELEASE_VERSION}.tar.gz" "target/go-build/nexterm-server-linux-${{ matrix.arch }}"
+        run: go run ./scripts/verify-server-archive "target/release-assets/nexterm-server_linux_${{ matrix.arch }}_${NEXTERM_RELEASE_VERSION}.tar.gz" "target/go-build/nexterm-server-linux-${{ matrix.arch }}"
       - name: Upload candidates and raw/final reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -367,6 +367,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.8
+          cache: true
       - name: Download the CI production agent binaries
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -416,6 +420,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.8
+          cache: true
       - name: Download the verified Android package
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -430,7 +438,7 @@ jobs:
           package="nexterm-desktop_android_arm64_${NEXTERM_RELEASE_VERSION}.apk"
           mkdir -p target/release-assets
           cp "target/release-work/mobile-input/nexterm.apk" "target/release-assets/$package"
-          node .github/scripts/mobile-evidence.mjs "target/release-assets/$package" mobile-android
+          go run ./scripts/mobile-evidence "target/release-assets/$package" mobile-android
       - name: Upload mobile candidates and raw/final reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -547,6 +555,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.8
+          cache: true
       - name: Download the signed iOS distribution IPA
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -556,7 +568,7 @@ jobs:
         env:
           GITHUB_SHA: ${{ github.sha }}
           IOS_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
-        run: node .github/scripts/mobile-evidence.mjs target/release-work/testflight-input/nexterm.ipa mobile-ios
+        run: go run ./scripts/mobile-evidence target/release-work/testflight-input/nexterm.ipa mobile-ios
       - name: Upload the signed IPA to TestFlight
         env:
           ASC_KEY_BASE64: ${{ secrets.NEXTERM_IOS_ASC_KEY_BASE64 }}

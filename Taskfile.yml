@@ -146,8 +146,6 @@ tasks:
       - node scripts/check-placeholders.mjs
       - node --test scripts/*.test.mjs
       - node --test .github/scripts/*.test.mjs
-      - python3 scripts/test-install-device.py
-      - python3 scripts/test-systemd-install.py
       - go run ./scripts/check-release-evidence
 
   check:ci-quality:

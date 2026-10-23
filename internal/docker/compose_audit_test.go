@@ -93,14 +93,17 @@ func TestComposeRedeployAuditProcessExit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// A short stream may finish and leave the registry before StreamDone runs.
 			done, err := service.StreamDone(id)
-			if err != nil {
+			if err != nil && !errors.Is(err, ErrStreamClosed) {
 				t.Fatal(err)
 			}
-			select {
-			case <-done:
-			case <-time.After(2 * time.Second):
-				t.Fatal("timed out waiting for compose stream")
+			if err == nil {
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+					t.Fatal("timed out waiting for compose stream")
+				}
 			}
 			event := waitComposeAudit(t, events)
 			if event.Kind != "docker_compose_redeploy" || event.ExitCode != test.code {

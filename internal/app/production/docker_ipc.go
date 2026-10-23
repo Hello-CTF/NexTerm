@@ -215,18 +215,23 @@ func (s *terminalCommandService) watchDockerStream(id string, stream ipc.BinaryS
 	}
 	s.sinks[id] = stream
 	s.mu.Unlock()
-	done, err := s.docker.StreamDone(id)
-	if err != nil {
-		return
-	}
-	go func() {
-		<-done
+	release := func() {
 		_ = stream.Close()
 		s.mu.Lock()
 		if s.sinks[id] == stream {
 			delete(s.sinks, id)
 		}
 		s.mu.Unlock()
+	}
+	done, err := s.docker.StreamDone(id)
+	if err != nil {
+		// The stream already finished and left the registry; release the sink now.
+		release()
+		return
+	}
+	go func() {
+		<-done
+		release()
 	}()
 }
 

@@ -21,7 +21,7 @@ both `ID` and `ID_LIKE`. An unrecognized or missing os-release prints a
 warning and continues: the installed layout is identical across systemd
 distributions.
 
-The automated suite (`scripts/test-systemd-install.py`) exercises detection
+The automated suite (`go test ./scripts/installer`) exercises detection
 against staged roots with stubbed `uname` and `systemctl`; live systemd and
 live distribution runs are outside it.
 

@@ -37,7 +37,6 @@ const nodeMajor = Number(process.versions.node.split(".")[0]);
 report("node", { ok: true, output: process.version }, () => nodeMajor >= 24, "Node 24 or newer");
 report("pnpm", versionOutput("pnpm", ["--version"]), (version) => version.split(".")[0] === pnpmRequirement, `pnpm ${pnpmRequirement}.x`);
 report("task", versionOutput("task", ["--version"]), (version) => version.replace(/^v/, "").split(".")[0] === "3", "Task v3 (CI uses v3.45.5)");
-report("python3", versionOutput("python3", ["--version"]), (version) => Number(version.split(".")[0]) === 3, "Python 3");
 report("wails3 (pinned go run)", versionOutput("go", ["run", `github.com/wailsapp/wails/v3/cmd/wails3@${wailsVersion}`, "version"], { ...process.env, GOTOOLCHAIN: goToolchain }), (version) => version === wailsVersion, wailsVersion);
 if (process.platform === "linux") {
   // Linux desktop builds link gtk4/webkitgtk-6.0 via cgo; CI installs the same

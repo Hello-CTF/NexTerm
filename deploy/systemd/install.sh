@@ -1282,7 +1282,32 @@ run_install() {
   reload_systemd
   manage_services
   rm -f "$INCOMPLETE_MARKER" "$FIRST_INSTALL_STATE" "$BACKUP_DIR/pending"
+  print_next_steps
   log "done"
+}
+
+# print_next_steps tells the operator how to reach the server it just
+# configured; the default loopback listener is unreachable from other machines.
+print_next_steps() {
+  local env_file="$ETC_DIR/nexterm.env" listen port
+  [ -f "$env_file" ] || return 0
+  listen="$(env_get "$env_file" NEXTERM_LISTEN)"
+  [ -n "$listen" ] || listen="0.0.0.0:8080"
+  port="${listen##*:}"
+  log "next steps:"
+  case "$listen" in
+    127.*|localhost:*|"[::1]":*)
+      log "  the web UI listens on $listen, reachable from this machine only"
+      log "  from your computer: ssh -L $port:$listen <user>@<this-server>, then open http://localhost:$port"
+      log "  for public access, put a TLS reverse proxy in front and list its source ranges in NEXTERM_TRUSTED_PROXY_CIDRS"
+      ;;
+    *)
+      log "  the web UI listens on $listen; open http://<this-server>:$port (use a TLS reverse proxy for public access)"
+      ;;
+  esac
+  log "  settings: ${env_file#$ROOT_PREFIX} (apply with: systemctl restart $SERVER_UNIT)"
+  log "  logs: journalctl -u $SERVER_UNIT"
+  log "  upgrade: run the installer again; undo the last upgrade with --rollback"
 }
 
 run_rollback() {
