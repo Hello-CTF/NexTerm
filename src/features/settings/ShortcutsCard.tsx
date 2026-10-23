@@ -13,7 +13,7 @@ import {
   type KeybindingActionId,
 } from "../../app/keybindings";
 import { setSelectionAutoCopy, useInputPrefs } from "../../app/preferences";
-import { IconChevronDown, IconChevronRight, IconCommand, IconEdit, IconRefresh } from "../../ui/icons";
+import { IconChevronDown, IconChevronRight, IconClose, IconCommand, IconEdit, IconRefresh } from "../../ui/icons";
 
 export function ShortcutsCard() {
   const bindings = useKeybindings();
@@ -113,6 +113,17 @@ export function ShortcutsCard() {
         >
           <IconEdit size={11} />
         </button>
+        {bindings[action.id] !== null && (
+          <button
+            type="button"
+            className="nx-icon-btn nx-icon-btn-sm shrink-0"
+            aria-label={`清除快捷键：${action.label}`}
+            title="清除快捷键"
+            onClick={() => setKeybinding(action.id, null)}
+          >
+            <IconClose size={11} />
+          </button>
+        )}
         {bindings[action.id] !== action.defaultBinding && (
           <button
             type="button"
@@ -140,7 +151,7 @@ export function ShortcutsCard() {
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        点击修改按钮后按下新组合键；按 Esc 取消，按 Backspace 或 Delete 清除。浏览器保留的组合键（如 Ctrl+T）在网页版中无法拦截。
+        点击修改按钮后按下新组合键，按 Esc 取消；点击 × 清除快捷键（也可在修改时按 Backspace 或 Delete）。浏览器保留的组合键（如 Ctrl+T）在网页版中无法拦截。
       </p>
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 min-[480px]:grid-cols-2">
         {KEYBINDING_ACTIONS.map(renderRow)}

@@ -69,6 +69,19 @@ afterEach(() => {
 });
 
 describe("shortcuts editor", () => {
+  it("clears a single binding with the clear button and restores it from default", () => {
+    const clear = row("closeTab").querySelector<HTMLButtonElement>('button[aria-label="清除快捷键：关闭当前标签"]');
+    expect(clear).not.toBeNull();
+    click(clear as HTMLButtonElement);
+    expect(getKeybinding("closeTab")).toBeNull();
+    expect(kbdText("closeTab")).toBe("未绑定");
+    expect(row("closeTab").querySelector('button[aria-label^="清除快捷键"]')).toBeNull();
+    expect(getKeybinding("newTerminal")).toBe("Mod+t");
+    const reset = row("closeTab").querySelector<HTMLButtonElement>('button[aria-label="恢复默认快捷键：关闭当前标签"]');
+    click(reset as HTMLButtonElement);
+    expect(getKeybinding("closeTab")).toBe("Mod+w");
+  });
+
   it("renders every action with its default binding", () => {
     expect(mounted?.container.querySelectorAll("[data-shortcut-row]").length).toBe(
       KEYBINDING_ACTIONS.length,
