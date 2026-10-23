@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement, type ReactNode } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, mount, waitFor, type MountedView } from "./reactTestUtils";
 
@@ -500,6 +500,26 @@ describe("connection problem visibility and retry", () => {
     click(retry!);
     await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(globalProblem(WEB.id)).toBeUndefined());
+  });
+
+  it("hides the asset-tree failure badge a minute after the failure", async () => {
+    mocks.sessionConnect.mockRejectedValueOnce(new Error("tree connection down"));
+    await connectAsset(WEB);
+    const view = mountWithClient(createElement(AssetTree));
+    const selector = `button[aria-label="重试连接 ${WEB.name}"]`;
+    await waitFor(() => expect(view.container.querySelector(selector)).not.toBeNull());
+
+    const key = assetConnectionProblemKey(WEB.id);
+    act(() => {
+      useUi.setState((state) => ({
+        connectionProblems: {
+          ...state.connectionProblems,
+          [key]: { ...state.connectionProblems[key], createdAt: Date.now() - 61_000 },
+        },
+      }));
+    });
+
+    await waitFor(() => expect(view.container.querySelector(selector)).toBeNull());
   });
 
   it("shows a global quick-target problem after reopening and retries the original target", async () => {

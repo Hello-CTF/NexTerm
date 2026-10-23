@@ -1195,6 +1195,21 @@ export function AssetTree() {
   );
 }
 
+// The row badge is a transient hint; the workspace problem log keeps the full record.
+const CONNECTION_BADGE_TTL_MS = 60_000;
+
+function useRecentProblem<T extends { createdAt: number }>(problem: T | undefined): T | undefined {
+  const expiresAt = problem ? problem.createdAt + CONNECTION_BADGE_TTL_MS : 0;
+  const [, setExpired] = useState(0);
+  const live = expiresAt > Date.now();
+  useEffect(() => {
+    if (!live) return;
+    const timer = window.setTimeout(() => setExpired(expiresAt), expiresAt - Date.now());
+    return () => window.clearTimeout(timer);
+  }, [expiresAt, live]);
+  return live ? problem : undefined;
+}
+
 function AssetRow({
   asset,
   level,
@@ -1233,7 +1248,7 @@ function AssetRow({
   const coarse = useCoarsePointer();
   const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
   const connecting = useUi((s) => s.connectingAssetIds.includes(asset.id));
-  const connectionProblem = useConnectionProblem(assetConnectionProblemKey(asset.id));
+  const connectionProblem = useRecentProblem(useConnectionProblem(assetConnectionProblemKey(asset.id)));
   const managed = assetInventoryMetadata(asset);
   const inventoryOnly = isInventoryOnlyKind(asset.kind);
   const label = asset.name;
