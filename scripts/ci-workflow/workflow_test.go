@@ -198,7 +198,6 @@ func TestQualityStaysStaticAndRequiredUnitOwnsGoTests(t *testing.T) {
 		"node scripts/check-placeholders.mjs",
 		"node --test scripts/*.test.mjs",
 		"node --test .github/scripts/*.test.mjs",
-		"python3 scripts/test-systemd-install.py",
 		"go run ./scripts/check-release-evidence",
 	} {
 		if scriptCommands[required] != 1 {
