@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened]
   workflow_call:
     inputs:
       release_version:
@@ -42,43 +42,25 @@ env:
 
 jobs:
   version:
-    name: Resolve release version
+    name: Plan checks and resolve version
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       version: ${{ steps.resolve.outputs.version }}
-      native-matrix: ${{ steps.matrix.outputs.value }}
+      native-matrix: ${{ steps.plan.outputs.matrix }}
+      scope: ${{ steps.plan.outputs.scope }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Select the PR native matrix scope
-        id: native-scope
+      - name: Select checks and group native builds by platform
+        id: plan
         env:
           IS_PR: ${{ github.event_name == 'pull_request' }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: |
-          full=false
-          if [ "$IS_PR" = "true" ]; then
-            if node -e 'process.exit(JSON.parse(process.env.PR_LABELS || "[]").includes("full-ci") ? 0 : 1)'; then
-              full=true
-            else
-              # Platform-specific Go files, module manifests, and build/CI
-              # configuration can break any native target, so they select the
-              # full native matrix instead of the smoke subset.
-              if git diff --name-only "$BASE_SHA...HEAD" | grep -E '^(build|\.github)/|(^|/)(go\.mod|go\.sum)$|(^|/)[^/]*_(darwin|linux|unix|windows)\.go$' >/dev/null; then
-                full=true
-              fi
-            fi
-          fi
-          echo "full=$full" >> "$GITHUB_OUTPUT"
-      - id: matrix
-        env:
-          IS_PR: ${{ github.event_name == 'pull_request' }}
-          FULL_NATIVE: ${{ steps.native-scope.outputs.full }}
-        run: echo "value=$(node .github/scripts/helper-matrix.mjs --matrix)" >> "$GITHUB_OUTPUT"
+        run: node .github/scripts/ci-plan.mjs
       - id: resolve
         env:
           INPUT_VERSION: ${{ inputs.release_version }}
@@ -97,6 +79,7 @@ jobs:
   frontend:
     name: Reproducible frontend
     needs: version
+    if: fromJSON(needs.version.outputs.scope).frontend
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -113,7 +96,11 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Frontend lint
+        if: fromJSON(needs.version.outputs.scope).frontendTests
         run: pnpm lint
+      - name: Frontend unit tests and coverage
+        if: fromJSON(needs.version.outputs.scope).frontendTests
+        run: pnpm test:coverage
       - name: Reproducible real frontend
         run: node scripts/build.mjs frontend --repro-check
       - name: Upload the verified frontend dist and manifest
@@ -129,6 +116,7 @@ jobs:
   quality:
     name: Go/Wails quality gates
     needs: version
+    if: fromJSON(needs.version.outputs.scope).quality
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -141,6 +129,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
+          cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.8
@@ -173,38 +162,9 @@ jobs:
         run: go vet ./...
 
   unit:
-    name: Go and frontend unit tests
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24.22.0
-          cache: pnpm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.8
-          cache: true
-      - name: Install Linux Wails cgo prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Go unit tests
-        run: go test -count=1 ./...
-      - name: Frontend unit tests
-        if: ${{ !cancelled() }}
-        run: pnpm test
-
-  race:
-    name: Go race detector
-    if: github.event_name == 'pull_request'
+    name: Go tests with race detector
+    needs: version
+    if: fromJSON(needs.version.outputs.scope).unit
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -223,77 +183,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Run all Go tests with the race detector
         run: go test -race -count=1 -p=${RACE_PACKAGE_PARALLELISM} ./...
-
-  production:
-    name: Desktop production-tag tests
-    if: github.event_name == 'pull_request'
-    needs: frontend
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24.22.0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.8
-          cache: true
-      - name: Install Linux Wails cgo prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
-      - name: Restore the pinned Wails CLI
-        id: wails-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/go/bin
-          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
-      - name: Install the pinned Wails CLI
-        run: |
-          if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
-            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
-          fi
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          export PATH="$(go env GOPATH)/bin:$PATH"
-          wails3 version
-      - name: Download the verified frontend dist
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: frontend-dist
-          path: target/ci-work/verified-dist
-      - name: Test and clean desktop production assets
-        env:
-          DIST_SOURCE: target/ci-work/verified-dist/dist
-          DIST_MANIFEST: target/ci-work/verified-dist/target/dist-manifest.json
-        run: wails3 task test:production
-
-  compile:
-    name: Compile tests (${{ matrix.os }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows
-            runner: windows-latest
-          - os: darwin
-            runner: macos-15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.8
-          cache: true
-      - name: Compile test binaries without executing TestMain or tests
-        run: go run -mod=readonly ./scripts/compile-only ./...
+      - name: Run terminal workloads that intentionally skip race instrumentation
+        run: go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'
 
   database:
+    needs: version
+    if: fromJSON(needs.version.outputs.scope).database
     name: Database contracts (${{ matrix.backend }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -389,7 +284,8 @@ jobs:
           fi
 
   native:
-    name: ${{ matrix.os }}/${{ matrix.arch }} ${{ matrix.kind }}
+    name: ${{ matrix.os }}/${{ matrix.arch }} (${{ join(matrix.kinds, ', ') }})
+    if: fromJSON(needs.version.outputs.scope).native
     needs: [frontend, version]
     timeout-minutes: 60
     env:
@@ -412,7 +308,7 @@ jobs:
           go-version: 1.26.8
           cache: true
       - name: Verify Windows PowerShell runtimes
-        if: matrix.os == 'windows' && matrix.arch == 'amd64' && matrix.kind == 'desktop'
+        if: github.event_name == 'pull_request' && fromJSON(needs.version.outputs.scope).unit && matrix.os == 'windows' && matrix.arch == 'amd64' && contains(matrix.kinds, 'desktop')
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -422,37 +318,80 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $pwshVersion -notmatch '^PowerShell 7\.') { throw "pwsh.exe 7.x version check failed" }
           Write-Output $pwshVersion
       - name: Run real Windows Go and loopback tests
-        if: matrix.os == 'windows' && matrix.arch == 'amd64' && matrix.kind == 'desktop'
+        if: github.event_name == 'pull_request' && fromJSON(needs.version.outputs.scope).unit && matrix.os == 'windows' && matrix.arch == 'amd64' && contains(matrix.kinds, 'desktop')
         shell: powershell
         timeout-minutes: 45
         run: |
           $ErrorActionPreference = 'Stop'
           & ./.github/scripts/windows-real-tests.ps1
       - name: Download the verified frontend dist
-        if: matrix.kind == 'desktop'
+        if: contains(matrix.kinds, 'desktop')
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: frontend-dist
           path: target/ci-work/verified-dist
       - name: Install Linux WebView prerequisites
-        if: matrix.os == 'linux' && matrix.kind == 'desktop'
+        if: matrix.os == 'linux' && contains(matrix.kinds, 'desktop')
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
-      - name: Build the repro-checked production binary and inspect format/cgo/size evidence
-        run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check ${{ matrix.kind == 'desktop' && '--consume-dist=target/ci-work/verified-dist/dist --dist-manifest=target/ci-work/verified-dist/target/dist-manifest.json' || '' }} ${{ matrix.kind == 'helper' && matrix.representative && '--require-evidence' || '' }} --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+      - name: Compile native platform tests without running TestMain
+        if: github.event_name == 'pull_request' && fromJSON(needs.version.outputs.scope).unit && contains(matrix.kinds, 'desktop') && ((matrix.os == 'windows' && matrix.arch == 'amd64') || (matrix.os == 'darwin' && matrix.arch == 'arm64'))
+        run: go run -mod=readonly ./scripts/compile-only ./...
+      - name: Test desktop production embedding
+        if: github.event_name == 'pull_request' && matrix.os == 'linux' && matrix.arch == 'amd64' && contains(matrix.kinds, 'desktop')
+        env:
+          DIST_SOURCE: target/ci-work/verified-dist/dist
+          DIST_MANIFEST: target/ci-work/verified-dist/target/dist-manifest.json
+        run: node scripts/test-production.mjs
+      - name: Build production binaries and verify artifact evidence
+        env:
+          NATIVE_TARGET: ${{ toJSON(matrix) }}
+          REPRO_CHECK: ${{ fromJSON(needs.version.outputs.scope).repro }}
+        run: node .github/scripts/build-native.mjs
       - name: Run Go two-process server acceptance
-        if: matrix.kind == 'server'
+        if: contains(matrix.kinds, 'server')
         run: go run ./scripts/e2e-harness sync --bin target/go-build/nexterm-server-${{ matrix.os }}-${{ matrix.arch }} --no-build
-      - name: Upload native runtime, production binary and artifact evidence
-        if: always()
+      - name: Upload desktop binary and evidence
+        if: ${{ !cancelled() && contains(matrix.kinds, 'desktop') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: native-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.kind }}
+          name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
           path: |
-            target/go-build/*.artifact.json
-            target/go-build/*.manifest.json
-            target/go-build/nexterm-${{ matrix.kind }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }}
+            target/go-build/nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}*
+            target/e2e-sync/report.json
+            target/e2e-sync/*.log
+          if-no-files-found: error
+          overwrite: true
+      - name: Upload server binary and evidence
+        if: ${{ !cancelled() && contains(matrix.kinds, 'server') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-${{ matrix.os }}-${{ matrix.arch }}-server
+          path: |
+            target/go-build/nexterm-server-${{ matrix.os }}-${{ matrix.arch }}*
+            target/e2e-sync/report.json
+            target/e2e-sync/*.log
+          if-no-files-found: error
+          overwrite: true
+      - name: Upload helper binary and evidence
+        if: ${{ !cancelled() && contains(matrix.kinds, 'helper') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-${{ matrix.os }}-${{ matrix.arch }}-helper
+          path: |
+            target/go-build/nexterm-helper-${{ matrix.os }}-${{ matrix.arch }}*
+            target/e2e-sync/report.json
+            target/e2e-sync/*.log
+          if-no-files-found: error
+          overwrite: true
+      - name: Upload agent binary and evidence
+        if: ${{ !cancelled() && contains(matrix.kinds, 'agent') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-${{ matrix.os }}-${{ matrix.arch }}-agent
+          path: |
+            target/go-build/nexterm-agent-${{ matrix.os }}-${{ matrix.arch }}*
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
@@ -461,7 +400,7 @@ jobs:
   mobile-compile:
     name: Mobile Go compile (${{ matrix.platform }})
     needs: [frontend, version]
-    if: github.event_name == 'pull_request'
+    if: fromJSON(needs.version.outputs.scope).mobile
     timeout-minutes: 60
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
@@ -616,11 +555,6 @@ jobs:
       - name: Verify the iOS toolchain
         if: matrix.platform == 'ios'
         run: xcodebuild -version
-      - name: Install Linux Wails cgo prerequisites
-        if: matrix.platform == 'android'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Restore the pinned Wails CLI
         id: wails-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -682,8 +616,8 @@ jobs:
 
   ios-dist:
     name: iOS App Store signed IPA
-    needs: [quality, frontend, version]
-    if: ${{ !failure() && !cancelled() && vars.NEXTERM_IOS_SIGNING == 'true' && (github.event_name == 'push' || inputs.release_version != '') }}
+    needs: [frontend, version]
+    if: vars.NEXTERM_IOS_SIGNING == 'true' && inputs.release_version != ''
     runs-on: macos-26
     timeout-minutes: 60
     env:
@@ -808,9 +742,6 @@ jobs:
       - frontend
       - quality
       - unit
-      - race
-      - production
-      - compile
       - database
       - native
       - mobile-compile
@@ -823,6 +754,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           EVENT_NAME: ${{ github.event_name }}
+          SCOPE: ${{ needs.version.outputs.scope }}
           IOS_SIGNING: ${{ vars.NEXTERM_IOS_SIGNING }}
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
@@ -831,15 +763,16 @@ jobs:
             const event = process.env.EVENT_NAME || "";
             const release = (process.env.RELEASE_VERSION || "") !== "";
             const iosSigning = process.env.IOS_SIGNING === "true";
-            // Only these jobs carry a job-level condition that can legitimately
-            // skip them; every other job must run and succeed on every event.
+            const scope = JSON.parse(process.env.SCOPE);
             const skipAllowed = {
-              unit: event !== "pull_request",
-              race: event !== "pull_request",
-              production: event !== "pull_request",
-              "mobile-compile": event !== "pull_request",
+              quality: !scope.quality,
+              unit: !scope.unit,
+              database: !scope.database,
+              frontend: !scope.frontend,
+              native: !scope.native,
+              "mobile-compile": !scope.mobile,
               mobile: event === "pull_request",
-              "ios-dist": !(iosSigning && (event === "push" || release)),
+              "ios-dist": !(iosSigning && release),
             };
             for (const [name, { result }] of Object.entries(results)) {
               console.log(`${name}: ${result}`);

@@ -16,7 +16,8 @@
     "runner": "macos-15",
     "os": "darwin",
     "arch": "arm64",
-    "kind": "desktop"
+    "kind": "desktop",
+    "smoke": true
   },
   {
     "runner": "macos-15-intel",

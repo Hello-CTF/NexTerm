@@ -163,7 +163,6 @@ tasks:
       - task: check:scripts
       - task: vet
       - task: bindings:check
-      - GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go run -mod=readonly ./scripts/compile-only ./...
 
   check:
     summary: Run fast integrity checks before Go, bindings and frontend quality gates

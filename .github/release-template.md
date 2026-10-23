@@ -21,6 +21,8 @@
 | Linux amd64 | `NexTerm-desktop_*_linux_amd64.deb`（`apt install ./NexTerm-desktop_*_linux_amd64.deb`，自动装 GTK4 / WebKitGTK 6.0 依赖） |
 | Linux ARM64 | `NexTerm-desktop_*_linux_arm64.deb`（`apt install ./NexTerm-desktop_*_linux_arm64.deb`，自动装 GTK4 / WebKitGTK 6.0 依赖） |
 
+Windows 安装器不含 Authenticode 签名，首次运行可能显示未知发布者；应用内更新仍使用 Minisign 校验。
+
 **移动端**
 
 | 平台 | 获取方式 |

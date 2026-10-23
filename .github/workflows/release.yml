@@ -46,11 +46,9 @@ jobs:
         env:
           NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
           NEXTERM_MINISIGN_PRIVATE_KEY: ${{ secrets.NEXTERM_MINISIGN_PRIVATE_KEY }}
-          NEXTERM_WINDOWS_CERT_BASE64: ${{ secrets.NEXTERM_WINDOWS_CERT_BASE64 }}
-          NEXTERM_WINDOWS_CERT_PASSWORD: ${{ secrets.NEXTERM_WINDOWS_CERT_PASSWORD }}
         run: |
           set -euo pipefail
-          for name in NEXTERM_MINISIGN_PUBLIC_KEY NEXTERM_MINISIGN_PRIVATE_KEY NEXTERM_WINDOWS_CERT_BASE64 NEXTERM_WINDOWS_CERT_PASSWORD; do
+          for name in NEXTERM_MINISIGN_PUBLIC_KEY NEXTERM_MINISIGN_PRIVATE_KEY; do
             if [[ -z "${!name}" ]]; then
               echo "::error::$name is required for a signed release"
               exit 1
@@ -143,12 +141,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.8
-          cache: false
-      - name: Install Linux Wails cgo prerequisites
-        if: matrix.os == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
+          cache: true
       - name: Install the pinned Wails CLI
         if: matrix.os == 'windows'
         shell: bash
@@ -220,20 +213,6 @@ jobs:
             cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/
             chmod +x "target/go-build/$helper"
           done < <(node .github/scripts/helper-matrix.mjs --shell)
-      - name: Import the Windows Authenticode certificate
-        if: matrix.os == 'windows'
-        shell: bash
-        env:
-          NEXTERM_WINDOWS_CERT_BASE64: ${{ secrets.NEXTERM_WINDOWS_CERT_BASE64 }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$NEXTERM_WINDOWS_CERT_BASE64" ]]; then
-            echo "::error::NEXTERM_WINDOWS_CERT_BASE64 is required for Windows release signing"
-            exit 1
-          fi
-          umask 077
-          echo "$NEXTERM_WINDOWS_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/nexterm-windows-authenticode.pfx"
-          test -s "$RUNNER_TEMP/nexterm-windows-authenticode.pfx"
       - name: Import the macOS signing identity (optional)
         if: matrix.os == 'darwin' && env.NEXTERM_MACOS_SIGNING == 'true'
         shell: bash
@@ -270,45 +249,6 @@ jobs:
           fi
       - name: Package the verified production desktop with updater evidence
         run: node scripts/build.mjs desktop --release --package --package-only --consume-dist=target/release-work/verified-dist/dist --dist-manifest=target/release-work/verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
-      - name: Sign and verify the Windows installer with Authenticode
-        if: matrix.os == 'windows'
-        shell: bash
-        env:
-          NEXTERM_WINDOWS_CERT_PASSWORD: ${{ secrets.NEXTERM_WINDOWS_CERT_PASSWORD }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$NEXTERM_WINDOWS_CERT_PASSWORD" ]]; then
-            echo "::error::NEXTERM_WINDOWS_CERT_PASSWORD is required for Windows release signing"
-            exit 1
-          fi
-          CERT="$RUNNER_TEMP/nexterm-windows-authenticode.pfx"
-          test -s "$CERT"
-          SIGNTOOL="$(command -v signtool || true)"
-          if [[ -z "$SIGNTOOL" ]]; then
-            SIGNTOOL="$(find "/c/Program Files (x86)/Windows Kits/10/bin" -type f -path '*/x64/signtool.exe' 2>/dev/null | sort -V | tail -1)"
-          fi
-          if [[ -z "$SIGNTOOL" ]]; then
-            echo "::error::signtool is required for Windows Authenticode release signing"
-            exit 1
-          fi
-          package_arch="${{ matrix.arch == 'amd64' && 'x64' || 'arm64' }}"
-          installer="target/release-assets/NexTerm_${NEXTERM_RELEASE_VERSION}_${package_arch}-setup.exe"
-          test -f "$installer"
-          CERT_HASH="$(certutil -p "$NEXTERM_WINDOWS_CERT_PASSWORD" -dump "$CERT" | awk '/Cert Hash\(sha1\):/ { value = $0; sub(/^[^:]*:/, "", value); gsub(/[[:space:]]/, "", value); if (length(value) == 40 && value ~ /^[0-9A-Fa-f]+$/) { print value } exit }')"
-          test -n "$CERT_HASH"
-          if certutil -user -store Root "$CERT_HASH" >/dev/null 2>&1; then
-            echo "Windows Authenticode certificate is already present in CurrentUser Root; leaving it unchanged"
-          else
-            trap 'certutil -user -delstore Root "$CERT_HASH"' EXIT
-            certutil -user -p "$NEXTERM_WINDOWS_CERT_PASSWORD" -importPFX Root "$CERT"
-          fi
-          MSYS_NO_PATHCONV=1 "$SIGNTOOL" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f "$CERT" /p "$NEXTERM_WINDOWS_CERT_PASSWORD" "$installer"
-          MSYS_NO_PATHCONV=1 "$SIGNTOOL" verify /pa "$installer"
-          node scripts/build.mjs report --kind=desktop-nsis --os=windows --arch=${{ matrix.arch }} --file="$installer" --require-evidence
-      - name: Clean up Windows signing material
-        if: always() && matrix.os == 'windows'
-        shell: bash
-        run: rm -f "$RUNNER_TEMP/nexterm-windows-authenticode.pfx"
       - name: Clean up macOS signing material (optional)
         if: always() && matrix.os == 'darwin' && env.NEXTERM_MACOS_SIGNING == 'true'
         shell: bash
