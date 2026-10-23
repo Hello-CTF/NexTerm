@@ -889,7 +889,8 @@ func TestReleaseDesktopReusesEquivalentNativeEvidence(t *testing.T) {
 	}
 	requireRunContaining(t, desktop, "security import")
 	requireRunContaining(t, desktop, "NEXTERM_MACOS_NOTARY_KEY_PATH")
-	requireRunContaining(t, desktop, `"$SIGNTOOL" sign`)
+	requireRunContaining(t, desktop, `MSYS_NO_PATHCONV=1 "$SIGNTOOL" sign /fd SHA256`)
+	requireRunContaining(t, desktop, `MSYS_NO_PATHCONV=1 "$SIGNTOOL" verify /pa`)
 	publish := requireJob(t, release, "publish")
 	for _, need := range []string{"desktop", "server", "mobile", "agent"} {
 		if !strings.Contains(expression(publish.If), "needs."+need+".result == 'success'") {
