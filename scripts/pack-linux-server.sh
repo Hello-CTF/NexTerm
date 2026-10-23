@@ -90,11 +90,13 @@ rm -f \
   "$OUT/nexterm-server_linux_${ARCH}_${VERSION}.tar.gz.artifact.json"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
+ARCHIVE_TOOL="$STAGE/.archive-tool"
+(cd "$ROOT" && go build -o "$ARCHIVE_TOOL" ./scripts/archive)
 
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEAD)}"
 
 tar_cz() {
-  python3 "$ROOT/scripts/lib/portable-archive.py" tar "$1" "$2" "$3" "$SOURCE_DATE_EPOCH"
+  "$ARCHIVE_TOOL" tar "$1" "$2" "$3" "$SOURCE_DATE_EPOCH"
 }
 
 package_full() {
@@ -115,7 +117,7 @@ package_full() {
   done
   install -m 0644 "$ROOT/LICENSE" "$dir/LICENSE"
   install -m 0644 "$ROOT/deploy/systemd/README.md" "$dir/README.md"
-  python3 "$ROOT/scripts/lib/portable-archive.py" copy-tree "$WEB" "$dir/web"
+  "$ARCHIVE_TOOL" copy-tree "$WEB" "$dir/web"
   tar_cz "$OUT/$name.tar.gz" "$STAGE" "$name"
   chmod 0644 "$OUT/$name.tar.gz"
 

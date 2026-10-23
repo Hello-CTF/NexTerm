@@ -40,37 +40,21 @@ VERSION="${NEXTERM_RELEASE_VERSION:-$(node -e 'const fs=require("fs"); const c=J
 export NEXTERM_RELEASE_VERSION="$VERSION"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEAD)}"
 
+TOOL_DIR="$(mktemp -d)"
+trap 'rm -rf "$TOOL_DIR"' EXIT
+ARCHIVE_TOOL="$TOOL_DIR/archive"
+(cd "$ROOT" && go build -o "$ARCHIVE_TOOL" ./scripts/archive)
+
 tar_cz() {
-  python3 "$ROOT/scripts/lib/portable-archive.py" tar "$1" "$2" "$3" "$SOURCE_DATE_EPOCH"
+  "$ARCHIVE_TOOL" tar "$1" "$2" "$3" "$SOURCE_DATE_EPOCH"
 }
 
 zip_pack() {
-  python3 - "$1" "$2/$3" "$3" "$SOURCE_DATE_EPOCH" <<'PY'
-import os
-import sys
-import time
-import zipfile
-
-artifact, source, member, epoch = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-info = zipfile.ZipInfo(member, date_time=time.gmtime(epoch)[:6])
-info.compress_type = zipfile.ZIP_DEFLATED
-info.external_attr = (0o100000 | 0o755) << 16
-with open(source, "rb") as handle:
-    data = handle.read()
-with zipfile.ZipFile(artifact, "w") as archive:
-    archive.writestr(info, data)
-PY
+  "$ARCHIVE_TOOL" zip "$1" "$2/$3" "$3" "$SOURCE_DATE_EPOCH"
 }
 
 zip_members() {
-  python3 - "$1" <<'PY'
-import sys
-import zipfile
-
-with zipfile.ZipFile(sys.argv[1]) as archive:
-    for name in archive.namelist():
-        print(name)
-PY
+  "$ARCHIVE_TOOL" list "$1"
 }
 
 sha256_of() {

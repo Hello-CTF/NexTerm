@@ -135,6 +135,18 @@ function output(command, args, options = {}) {
   return result.status === 0 ? (result.stdout || "") : null;
 }
 
+let archiveToolPath = null;
+
+// archiveTool builds scripts/archive once per run for reproducible tar/zip work.
+function archiveTool() {
+  if (archiveToolPath) return archiveToolPath;
+  const dir = path.join(ROOT, "target/package-work/tools");
+  fs.mkdirSync(dir, { recursive: true });
+  archiveToolPath = path.join(dir, process.platform === "win32" ? "archive.exe" : "archive");
+  run("go", ["build", "-o", archiveToolPath, "./scripts/archive"]);
+  return archiveToolPath;
+}
+
 function option(name, fallback) {
   return options[name] === undefined ? fallback : options[name];
 }
@@ -838,7 +850,7 @@ function agentArchiveBinaryAssertions(kind, file, goos, goarch) {
   try {
     const extracted = kind === "agent-archive"
       ? output("tar", ["-xzf", path.resolve(file), "-C", work, member], { allowFailure: true })
-      : output("python3", ["-m", "zipfile", "-e", path.resolve(file), work], { allowFailure: true });
+      : output(archiveTool(), ["extract", path.resolve(file), work], { allowFailure: true });
     checks.push(assertion(`${kind}-binary-extract`, extracted !== null, `extract ${member} from the final archive`));
     if (extracted === null) return checks;
     const packaged = path.join(work, member);
@@ -1139,9 +1151,8 @@ function packageLinuxDesktop(binary, goarch) {
   normalizeModes(dataDir);
   fs.chmodSync(path.join(dataDir, "usr/bin/nexterm-desktop"), 0o755);
   for (const target of helperTargets()) fs.chmodSync(path.join(dataDir, "usr/bin", target.name), 0o755);
-  const portableArchive = path.join(ROOT, "scripts/lib/portable-archive.py");
-  run("python3", [portableArchive, "tar", path.join(work, "control.tar.gz"), path.join(work, "control"), "control", String(SOURCE_DATE_EPOCH)]);
-  run("python3", [portableArchive, "tar", path.join(work, "data.tar.gz"), dataDir, "usr", String(SOURCE_DATE_EPOCH)]);
+  run(archiveTool(), ["tar", path.join(work, "control.tar.gz"), path.join(work, "control"), "control", String(SOURCE_DATE_EPOCH)]);
+  run(archiveTool(), ["tar", path.join(work, "data.tar.gz"), dataDir, "usr", String(SOURCE_DATE_EPOCH)]);
   fs.writeFileSync(path.join(work, "debian-binary"), "2.0\n");
   const deb = path.join(assets, `${name}.deb`);
   fs.rmSync(deb, { force: true });
