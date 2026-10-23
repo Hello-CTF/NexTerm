@@ -221,7 +221,7 @@ func TestCloseUnblocksInputPumpWithSlaveHeldOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = supervisor.Close() })
-	session := testScriptSession(t, supervisor, `stty raw -echo; tty; exec sleep 60`)
+	session := testScriptSession(t, supervisor, `stty raw -echo; tty; printf '\n'; exec sleep 60`)
 	attachment, err := supervisor.Attach(context.Background(), session.ID())
 	if err != nil {
 		t.Fatal(err)
