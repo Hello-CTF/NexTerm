@@ -219,7 +219,7 @@ func (c *classifier) classifyWrapper(name string, wrapper execWrapper, args []st
 		}
 		if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
 			if !stdin.ok {
-				return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
+				return Dangerous("管道把内容交给解释器执行，NexTerm 无法审查这些内容")
 			}
 
 			return Worst(Confirm(KindService, name+" 安装计划任务"), c.classifyText(stdin.text))

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
@@ -355,7 +354,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		deliveryCtx: deliveryContext,
 		forceCancel: forceCancel,
 		stream:      r.wrapStream(stream, jobID),
-		memory:      guard.NewMemory(),
+		memory:      r.conversationMemory(conversation.OwnerID, row.ConversationID, scope),
 		steer:       steer.NewQueue(r.config.MaxPendingSteers),
 		cancelSync:  newCancelSync(),
 		doneCh:      make(chan struct{}),

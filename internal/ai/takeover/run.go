@@ -497,7 +497,7 @@ func (m *Manager) handleInterrupt(iterCtx context.Context, state *runState, cont
 		state.pending = &pending{callID: interaction.CallID, nonce: context.ID}
 		state.pendingMu.Unlock()
 		args := hitl.WithNonce(json.RawMessage(interaction.Args), context.ID)
-		return state.emit(iterCtx, agent.Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: context.ID, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview})
+		return state.emit(iterCtx, agent.Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: context.ID, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview, SessionScope: interaction.SessionScope})
 	}
 	return errors.New("收到无法识别的接管 interrupt")
 }
@@ -631,12 +631,7 @@ func (e *actionExecution) sendKeys(ctx context.Context, input takeoverSendKeysAr
 			return tools.Fail(tools.ErrTerminalInputChanged), nil
 		}
 		if decision == "allow_session" {
-			for _, kind := range state.MemoryKinds {
-				e.state.memory.Add(kind)
-			}
-			if len(state.MemoryKinds) == 0 {
-				e.state.memory.Add(state.MemoryKind)
-			}
+			e.state.memory.Remember(state.SessionRuling())
 		}
 		if decision == "allow_persistent" {
 			if err := e.persistPermanentGrant(ctx, state); err != nil {
@@ -660,7 +655,10 @@ func (e *actionExecution) sendKeys(ctx context.Context, input takeoverSendKeysAr
 	}
 	if decision.Action == guard.ActionAsk {
 		info := tools.Interaction{Kind: "confirm", CallID: callID, Tool: "send_keys", Args: string(encodedArgs), Risk: ruling.Risk.String(), Rendered: tools.DisplaySendKeys(tools.Call{ID: callID, Name: "send_keys", Args: encodedArgs}, terminalInput, cursor), Reason: ruling.Reason}
-		state := tools.InteractionState{Kind: "confirm", CallID: callID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info}
+		if !decision.Production {
+			info.SessionScope = tools.SessionScope(ruling, guard.Resource{Action: "send_keys"})
+		}
+		state := tools.InteractionState{Kind: "confirm", CallID: callID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), MemoryPrograms: ruling.Programs, TerminalInput: terminalInput, TerminalCursor: cursor, Info: info}
 		return tools.Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	return e.writeKeys(ctx, callID, input)

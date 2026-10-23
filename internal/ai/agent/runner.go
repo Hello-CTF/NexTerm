@@ -44,6 +44,22 @@ type Runner struct {
 
 	conversationLocks sync.Map
 	titleInFlight     sync.Map
+	// sessionMemory keeps "本会话允许" approvals across the runs of one
+	// conversation and one target; see conversationMemory.
+	sessionMemory sync.Map
+}
+
+// conversationMemory returns the session approvals shared by every run of the
+// conversation against the same target. A different host, session, tab or
+// database connection gets its own memory, so an approval never follows the
+// conversation to another target.
+func (r *Runner) conversationMemory(ownerID, conversationID string, scope tools.Scope) *guard.Memory {
+	if conversationID == "" {
+		return guard.NewMemory()
+	}
+	key := strings.Join([]string{ownerID, conversationID, scope.AssetID, scope.SessionID, scope.TabID, scope.ConnID}, "\x00")
+	memory, _ := r.sessionMemory.LoadOrStore(key, guard.NewMemory())
+	return memory.(*guard.Memory)
 }
 
 func NewRunner(config Config) *Runner {
@@ -237,7 +253,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		}
 	}
 	stream = r.wrapStream(stream, jobID)
-	current := &job{id: jobID, ownerID: ownerID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync(), doneCh: make(chan struct{})}
+	current := &job{id: jobID, ownerID: ownerID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: r.conversationMemory(ownerID, conversationID, args.Scope), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync(), doneCh: make(chan struct{})}
 	current.capture = r.newJobCapture(jobID, conversationID)
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {

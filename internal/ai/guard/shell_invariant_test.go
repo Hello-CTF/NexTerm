@@ -175,8 +175,6 @@ EOF`,
 func TestDynamicConstructsAreUnknowable(t *testing.T) {
 	t.Parallel()
 	unknowable := []string{
-		`echo $x`,
-		`echo ${x}`,
 		`echo ${x:-default}`,
 		`echo ${!indirect}`,
 		`echo $((6*7))`,
@@ -187,9 +185,9 @@ func TestDynamicConstructsAreUnknowable(t *testing.T) {
 		`echo >(id)`,
 		`echo @(foo|bar)`,
 		`echo $'a\nb'`,
-		`cat $file`,
-		`ls $dir`,
 		`rm -rf $HOME`,
+		`sort $file`,
+		`/tmp/ls $dir`,
 		`echo x > $f`,
 		`echo x > ${f}`,
 		`echo x > "$(f)"`,

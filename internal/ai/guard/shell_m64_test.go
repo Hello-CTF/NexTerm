@@ -215,12 +215,6 @@ func TestM64CorpusClassifications(t *testing.T) {
 	for _, command := range safe {
 		t.Run(command, func(t *testing.T) {
 			ruling := ClassifyCommand(command, nil)
-			if command == `psql -c 'SELECT 1'` {
-				if ruling.Risk != NeedsConfirm {
-					t.Fatalf("ClassifyCommand(%q) = %v, want NeedsConfirm", command, ruling)
-				}
-				return
-			}
 			if ruling.Risk != Safe {
 				t.Fatalf("ClassifyCommand(%q) = %v, want Safe", command, ruling)
 			}

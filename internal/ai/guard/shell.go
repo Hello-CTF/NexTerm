@@ -445,7 +445,7 @@ func (c *classifier) classifyRedirects(redirs []*syntax.Redirect) (Ruling, *pipe
 	}
 
 	if writes > 0 && !(writes == 1 && lastWriteTarget == "/dev/null") {
-		result = Worst(result, Confirm(KindWriteFS, "包含文件重定向"))
+		result = Worst(result, Confirm(KindWriteFS, "会把输出写入文件"))
 	}
 	return result, stdin
 }
@@ -568,7 +568,7 @@ func (c *classifier) literalArgv(words []*syntax.Word) ([]string, bool, Ruling) 
 		argv = append(argv, text)
 	}
 	if !provable {
-		result = Worst(Indeterminate("命令包含动态替换，无法证明其内容"), result)
+		result = Worst(Indeterminate("命令里有 $(…)、变量拼出的命令名等动态内容，执行前无法确定实际会运行什么"), result)
 	}
 	return argv, provable, result
 }
@@ -714,6 +714,11 @@ func (c *classifier) classifyCallExpr(cmd *syntax.CallExpr, stdin pipeInput) Rul
 		return result
 	}
 	argv, provable, ruling := c.literalArgv(cmd.Args)
+	if !provable && result.Risk != Forbidden && c.plainReaderCall(cmd.Args) {
+		// The expansions are plain variables and the command only reads, so the
+		// unknown values cannot raise the risk; classify the rest as written.
+		return Worst(result, c.classifyArgv(argv, stdin))
+	}
 	result = Worst(result, ruling)
 	if !provable || result.Risk == Forbidden {
 		return result
@@ -723,6 +728,26 @@ func (c *classifier) classifyCallExpr(cmd *syntax.CallExpr, stdin pipeInput) Rul
 		return Worst(result, Indeterminate("命令名包含通配符"))
 	}
 	return Worst(result, c.classifyArgv(argv, stdin))
+}
+
+func (c *classifier) plainReaderCall(words []*syntax.Word) bool {
+	var name strings.Builder
+	for _, part := range words[0].Parts {
+		literal, ok := part.(*syntax.Lit)
+		if !ok {
+			return false
+		}
+		name.WriteString(literal.Value)
+	}
+	if !pureReaders[commandName(name.String())] || strings.ContainsAny(name.String(), `/\`) {
+		return false
+	}
+	for _, word := range words[1:] {
+		if !plainExpansionWord(word) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *classifier) classifyArgv(argv []string, stdin pipeInput) Ruling {
@@ -885,7 +910,7 @@ func (c *classifier) classifySu(args []string, stdin pipeInput) Ruling {
 	}
 	if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
 		if !stdin.ok {
-			return Worst(result, Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容"))
+			return Worst(result, Dangerous("管道把内容交给解释器执行，NexTerm 无法审查这些内容"))
 		}
 		return Worst(result, Confirm(KindSudo, "su 从标准输入执行命令"), c.classifyText(stdin.text))
 	}
@@ -1070,7 +1095,7 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 		if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
 
 			if !stdin.ok {
-				return Worst(result, Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容"))
+				return Worst(result, Dangerous("管道把内容交给解释器执行，NexTerm 无法审查这些内容"))
 			}
 			result = Worst(result, Confirm(KindUnknown, "Redis 客户端从标准输入执行命令"))
 			for _, line := range strings.Split(stdin.text, "\n") {
@@ -1082,8 +1107,22 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 		return result
 	case "mysql", "mariadb", "psql":
 		return c.classifyDatabaseClient(name, args, stdin)
-	case "sed", "awk", "gawk", "ed", "vim", "vi", "nano", "emacs":
-		return Confirm(KindUnknown, "命令具有编辑或执行子命令能力")
+	case "sed":
+		return classifySed(argv[0], args)
+	case "awk", "gawk", "mawk":
+		return ConfirmProgram(programKey(argv[0]), "awk 程序可以执行系统命令或写文件")
+	case "ed", "vim", "vi", "nano", "emacs":
+		return Confirm(KindUnknown, "编辑器可以修改文件或执行命令")
+	case "hostnamectl", "timedatectl", "localectl":
+		return classifySystemSetting(args)
+	case "mount":
+		return classifyMount(args)
+	case "nginx":
+		return classifyNginx(argv[0], args)
+	case "pip", "pip3", "npm", "pnpm", "yarn":
+		return classifyLanguagePackage(argv[0], name, args)
+	case "go":
+		return classifyGoTool(argv[0], args)
 	case "find":
 		return c.classifyFind(args)
 	case "tar":
@@ -1111,7 +1150,7 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 				return Dangerous("网络工具执行命令")
 			}
 		}
-		return Confirm(KindUnknown, "网络工具需要确认")
+		return ConfirmProgram(programKey(argv[0]), "网络工具可以收发任意数据")
 	case "ssh":
 		return c.classifySSH(args)
 	case "scp", "sftp", "rsync":
@@ -1140,11 +1179,14 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 	if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
 		return Indeterminate("管道输入进入无法识别的命令，无法安全分析")
 	}
-	return Confirm(KindUnknown, "未列入只读白名单的命令")
+	if versionQuery(args) && !strings.ContainsAny(argv[0], `/\`) {
+		return Allow()
+	}
+	return ConfirmProgram(programKey(argv[0]), "NexTerm 没有 "+name+" 的规则，无法确定它是否会修改系统")
 }
 
 var safeFirstToken = func() map[string]bool {
-	values := strings.Fields(`ls ll pwd cat head tail tac nl grep egrep fgrep rg cut sort uniq wc stat file tree diff comm jq xxd hexdump od strings ps pidof df du free vmstat iostat lscpu lsblk uname whoami id hostname hostnamectl uptime date cal env printenv which whereis type echo printf dmesg journalctl ss netstat ip ifconfig arp route ping traceroute dig nslookup host lsof top htop atop sar w who last history md5sum sha1sum sha256sum zcat zipinfo basename dirname readlink realpath getent ulimit tput resize lsb_release arch nproc true false sleep clear select show describe desc explain cd pushd popd tr base64 base32 seq shuf export unset readonly`)
+	values := strings.Fields(`ls ll pwd cat head tail tac nl grep egrep fgrep rg cut sort uniq wc stat file tree diff comm jq xxd hexdump od strings ps pidof df du free vmstat iostat lscpu lsblk uname whoami id hostname uptime date cal env printenv which whereis type echo printf dmesg journalctl ss netstat ip ifconfig arp route ping traceroute dig nslookup host lsof top htop atop sar w who last history md5sum sha1sum sha256sum zcat zipinfo basename dirname readlink realpath getent ulimit tput resize lsb_release arch nproc test [ findmnt lsmod lspci lsusb true false sleep clear select show describe desc explain cd pushd popd tr base64 base32 seq shuf export unset readonly`)
 	result := make(map[string]bool, len(values))
 	for _, value := range values {
 		result[value] = true
@@ -1153,6 +1195,9 @@ var safeFirstToken = func() map[string]bool {
 }()
 
 func (c *classifier) classifyInterpreter(name string, args []string, stdin pipeInput) Ruling {
+	if stdin.kind == stdinNone && interpreterVersionQuery(name, args) {
+		return Allow()
+	}
 	shell := isShellInterpreter(name)
 	var codes []string
 	for i := 0; i < len(args); i++ {
@@ -1197,7 +1242,7 @@ func (c *classifier) classifyInterpreter(name string, args []string, stdin pipeI
 	}
 	if len(codes) > 0 {
 		if shell {
-			result := Confirm(KindUnknown, "解释器或脚本执行需要确认")
+			result := Confirm(KindUnknown, "会运行脚本或解释器代码")
 			for _, code := range codes {
 				result = Worst(result, c.classifyText(code))
 			}
@@ -1210,10 +1255,10 @@ func (c *classifier) classifyInterpreter(name string, args []string, stdin pipeI
 			return Dangerous(name + " 执行文件中的代码，内容无法验证")
 		}
 		if !stdin.ok {
-			return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
+			return Dangerous("管道把内容交给解释器执行，NexTerm 无法审查这些内容")
 		}
 		if shell {
-			return Worst(Confirm(KindUnknown, "解释器或脚本执行需要确认"), c.classifyText(stdin.text))
+			return Worst(Confirm(KindUnknown, "会运行脚本或解释器代码"), c.classifyText(stdin.text))
 		}
 		return Dangerous(name + " 从标准输入执行代码")
 	}
@@ -1222,10 +1267,10 @@ func (c *classifier) classifyInterpreter(name string, args []string, stdin pipeI
 			return Dangerous(name + " 从标准输入执行代码")
 		}
 		if !strings.HasPrefix(arg, "-") {
-			return Confirm(KindUnknown, "解释器或脚本执行需要确认")
+			return Confirm(KindUnknown, "会运行脚本或解释器代码")
 		}
 	}
-	return Dangerous("解释器会话可执行任意代码")
+	return Dangerous("会打开可执行任意代码的解释器")
 }
 
 func dangerousInterpreterText(value string, rules []string) Ruling {
@@ -1246,14 +1291,15 @@ func containsDestructiveText(value string) bool {
 }
 
 func (c *classifier) classifyDatabaseClient(name string, args []string, stdin pipeInput) Ruling {
-	result := Confirm(KindDBWrite, "交互式数据库客户端需要确认")
+	result := Confirm(KindDBWrite, "数据库客户端可能修改数据")
+	var payloads []string
 	if stdin.kind == stdinFile {
 		return Dangerous("数据库客户端执行重定向 SQL 文件")
 	}
 	if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
 
 		if !stdin.ok {
-			return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
+			return Dangerous("管道把内容交给解释器执行，NexTerm 无法审查这些内容")
 		}
 		result = Worst(result, ClassifySQL(stdin.text, c.rules))
 	}
@@ -1296,8 +1342,21 @@ func (c *classifier) classifyDatabaseClient(name string, args []string, stdin pi
 			}
 		}
 		if payload != "" {
+			payloads = append(payloads, payload)
 			result = Worst(result, classifyDatabaseMetaCommand(name, payload, c))
 			result = Worst(result, ClassifySQL(payload, c.rules))
+		}
+	}
+	if stdin.kind == stdinNone && len(payloads) > 0 && dbClientReadOnly(name, args) {
+		readOnly := Allow()
+		for _, payload := range payloads {
+			if strings.Contains(payload, `\`) {
+				return result
+			}
+			readOnly = Worst(readOnly, classifyDatabaseMetaCommand(name, payload, c), ClassifySQL(payload, c.rules))
+		}
+		if readOnly.Risk == Safe {
+			return readOnly
 		}
 	}
 	return result
@@ -2731,12 +2790,37 @@ func classifyRedis(args []string) Ruling {
 func matchDangerRule(command string, rules []string) bool {
 	lower := strings.ToLower(command)
 	for _, rule := range rules {
-		rule = strings.TrimSpace(rule)
-		if rule != "" && strings.Contains(lower, strings.ToLower(rule)) {
+		rule = strings.ToLower(strings.TrimSpace(rule))
+		if rule != "" && containsRuleText(lower, rule) {
 			return true
 		}
 	}
 	return false
+}
+
+// containsRuleText matches a rule as whole words: an edge of the rule that is a
+// letter, digit or underscore must not continue a longer word, so "rm" matches
+// "rm -rf" and "sudo rm" but not "format" or "perm".
+func containsRuleText(text, rule string) bool {
+	for start := 0; start <= len(text)-len(rule); {
+		index := strings.Index(text[start:], rule)
+		if index < 0 {
+			return false
+		}
+		index += start
+		end := index + len(rule)
+		leftOK := !isWordByte(rule[0]) || index == 0 || !isWordByte(text[index-1])
+		rightOK := !isWordByte(rule[len(rule)-1]) || end == len(text) || !isWordByte(text[end])
+		if leftOK && rightOK {
+			return true
+		}
+		start = index + 1
+	}
+	return false
+}
+
+func isWordByte(value byte) bool {
+	return value == '_' || value >= '0' && value <= '9' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z'
 }
 
 func containsAny(values []string, targets ...string) bool {

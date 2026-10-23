@@ -332,6 +332,9 @@ type Interaction struct {
 	Commands []string
 	// RulePattern is the path scope an "always allow" decision will grant; empty means the action is not path-limited.
 	RulePattern string
+	// SessionScope describes what a session approval covers; empty means the
+	// card offers no session approval.
+	SessionScope string
 	// RequiredEnvironmentNames are the production environment names the
 	// confirmation must type back, computed from the real target set (for
 	// example a multi-target exec batch challenge).
@@ -343,6 +346,7 @@ type InteractionState struct {
 	CallID         string
 	MemoryKind     guard.Kind
 	MemoryKinds    []guard.Kind
+	MemoryPrograms []string
 	TerminalInput  string
 	TerminalCursor int
 	Info           Interaction
@@ -801,12 +805,7 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 			if guard.RuleActionNeedsPath(state.Resource.Action) && state.Resource.Path != "" {
 				e.Memory.AddPathRule(state.Resource.Action, guard.DirPattern(state.Resource.Path))
 			} else {
-				for _, kind := range state.MemoryKinds {
-					e.Memory.Add(kind)
-				}
-				if len(state.MemoryKinds) == 0 {
-					e.Memory.Add(state.MemoryKind)
-				}
+				e.Memory.Remember(state.SessionRuling())
 			}
 		}
 		if decision == "allow_persistent" {
@@ -939,10 +938,14 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 				}
 			}
 		}
-		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Authorization: decision.Authorization, Target: call.Target, Resource: resource, IsolatedTarget: isolatedTarget}
+		if !forcedConfirm && !isolatedTarget && !decision.Production {
+			info.SessionScope = SessionScope(ruling, resource)
+		}
+		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), MemoryPrograms: ruling.Programs, TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Authorization: decision.Authorization, Target: call.Target, Resource: resource, IsolatedTarget: isolatedTarget}
 		if forcedConfirm || isolatedTarget {
 			state.MemoryKind = ""
 			state.MemoryKinds = nil
+			state.MemoryPrograms = nil
 		}
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
@@ -984,6 +987,27 @@ func (e *Execution) executionResult(ctx context.Context, call Call, result Outpu
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	return result, nil
+}
+
+// SessionRuling rebuilds the ordinary confirmation a session approval records.
+func (s InteractionState) SessionRuling() guard.Ruling {
+	return guard.Ruling{Risk: guard.NeedsConfirm, Kind: s.MemoryKind, Kinds: s.MemoryKinds, Programs: s.MemoryPrograms}
+}
+
+// SessionScope describes what "本会话允许" covers for an ordinary confirmation:
+// writes under the file's directory, or the ruling's kinds and programs.
+func SessionScope(ruling guard.Ruling, resource guard.Resource) string {
+	if ruling.Risk != guard.NeedsConfirm {
+		return ""
+	}
+	if guard.RuleActionNeedsPath(resource.Action) && resource.Path != "" {
+		pattern := guard.DirPattern(resource.Path)
+		if dir, ok := strings.CutSuffix(pattern, "/**"); ok {
+			return "修改 " + dir + " 下的文件"
+		}
+		return "修改 " + pattern
+	}
+	return guard.SessionScope(ruling)
 }
 
 func errorsNewPlanModeOnly() error {

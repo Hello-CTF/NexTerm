@@ -243,10 +243,12 @@ func classifyStateChangingBuiltins(name string, args []string) (Ruling, bool) {
 		}
 		return Allow(), true
 	case "hostname":
-		if len(args) == 0 {
-			return Allow(), true
+		for _, arg := range args {
+			if !hostnameQueryOptions[arg] {
+				return Confirm(KindService, "主机名变更"), true
+			}
 		}
-		return Confirm(KindService, "主机名变更"), true
+		return Allow(), true
 	case "hostnamectl":
 		if len(args) == 0 || len(args) == 1 && args[0] == "status" {
 			return Allow(), true
@@ -309,4 +311,11 @@ func classifyStateChangingBuiltins(name string, args []string) (Ruling, bool) {
 	default:
 		return Ruling{}, false
 	}
+}
+
+// hostnameQueryOptions only print names or addresses; any other argument sets the host name.
+var hostnameQueryOptions = map[string]bool{
+	"-a": true, "--alias": true, "-A": true, "--all-fqdns": true, "-d": true, "--domain": true,
+	"-f": true, "--fqdn": true, "--long": true, "-i": true, "--ip-address": true, "-I": true,
+	"--all-ip-addresses": true, "-s": true, "--short": true, "-y": true, "--yp": true, "--nis": true,
 }

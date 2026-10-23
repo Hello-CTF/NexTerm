@@ -57,13 +57,17 @@ const (
 	KindSchedule     Kind = "schedule"
 	KindPermission   Kind = "perm"
 	KindDanger       Kind = "danger"
+	// KindProgram marks a command NexTerm has no rule for; Ruling.Programs names
+	// the programs, so a session approval covers exactly those programs.
+	KindProgram Kind = "program"
 )
 
 type Ruling struct {
-	Risk   Risk   `json:"risk"`
-	Kind   Kind   `json:"kind"`
-	Kinds  []Kind `json:"kinds,omitempty"`
-	Reason string `json:"reason"`
+	Risk     Risk     `json:"risk"`
+	Kind     Kind     `json:"kind"`
+	Kinds    []Kind   `json:"kinds,omitempty"`
+	Programs []string `json:"programs,omitempty"`
+	Reason   string   `json:"reason"`
 }
 
 func Allow(reason ...string) Ruling {
@@ -72,6 +76,11 @@ func Allow(reason ...string) Ruling {
 
 func Confirm(kind Kind, reason string) Ruling {
 	return Ruling{Risk: NeedsConfirm, Kind: kind, Kinds: []Kind{kind}, Reason: reason}
+}
+
+// ConfirmProgram asks before running a program NexTerm has no rule for.
+func ConfirmProgram(name, reason string) Ruling {
+	return Ruling{Risk: NeedsConfirm, Kind: KindProgram, Kinds: []Kind{KindProgram}, Programs: []string{name}, Reason: reason}
 }
 
 func Indeterminate(reason string) Ruling {
@@ -94,6 +103,7 @@ func Worst(rulings ...Ruling) Ruling {
 		}
 	}
 	result.Kinds = nil
+	result.Programs = nil
 	for _, ruling := range rulings {
 		if ruling.Risk != result.Risk {
 			continue
@@ -105,6 +115,15 @@ func Worst(rulings ...Ruling) Ruling {
 			}
 			if !seen {
 				result.Kinds = append(result.Kinds, kind)
+			}
+		}
+		for _, program := range ruling.Programs {
+			seen := false
+			for _, existing := range result.Programs {
+				seen = seen || existing == program
+			}
+			if !seen {
+				result.Programs = append(result.Programs, program)
 			}
 		}
 	}
@@ -177,19 +196,59 @@ type Decision struct {
 	Ruling        Ruling                `json:"ruling"`
 	Reason        string                `json:"reason,omitempty"`
 	Authorization *AuthorizationBinding `json:"authorization,omitempty"`
+	// Production reports a production target, which session approvals never cover.
+	Production bool `json:"production,omitempty"`
 }
 
 // DecideResource layers the path-level grants remembered for this session on top of Decide.
 // Production targets are never auto-authorized from session memory: the remembered kinds
 // and path rules are ignored so every production operation is explicitly confirmed.
 func DecideResource(config Config, ruling Ruling, memory *Memory, resource Resource) Decision {
-	if resource.ProductionTarget() {
+	production := resource.ProductionTarget()
+	if production {
 		memory = nil
 	}
+	decision := Decide(config, ruling, memory)
 	if ruling.Risk == NeedsConfirm && memory != nil && memory.CoversPathRule(resource.Action, resource.Path) {
-		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "本会话路径授权"}
+		decision = Decision{Action: ActionAllow, Ruling: ruling, Reason: "本会话路径授权"}
 	}
-	return Decide(config, ruling, memory)
+	decision.Production = production
+	return decision
+}
+
+var kindLabels = map[Kind]string{
+	KindSudo:         "sudo 提权",
+	KindWriteFS:      "文件写入",
+	KindService:      "服务与系统设置变更",
+	KindDockerMutate: "Docker 容器变更",
+	KindPackage:      "软件包安装与卸载",
+	KindProcess:      "新建终端",
+	KindDBWrite:      "数据库写入",
+	KindShellPipe:    "管道执行",
+	KindSchedule:     "定时提醒",
+	KindPermission:   "权限与属主变更",
+	"shell_history":  "读取 shell 历史",
+}
+
+// SessionScope describes what a session approval of the ruling covers, for the
+// confirmation card; it is empty when a session approval is not offered.
+func SessionScope(ruling Ruling) string {
+	if !Rememberable(ruling) {
+		return ""
+	}
+	parts := make([]string, 0, len(ruling.ApprovalKinds()))
+	for _, kind := range ruling.ApprovalKinds() {
+		if kind == KindProgram {
+			parts = append(parts, strings.Join(ruling.Programs, "、")+" 命令")
+			continue
+		}
+		label, ok := kindLabels[kind]
+		if !ok {
+			return ""
+		}
+		parts = append(parts, label)
+	}
+	return strings.Join(parts, "、")
 }
 
 func Decide(config Config, ruling Ruling, memory *Memory) Decision {
@@ -208,11 +267,7 @@ func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: "只读权限模式禁止此操作"}
 	}
 	if ruling.Risk == NeedsConfirm {
-		remembered := len(ruling.ApprovalKinds()) != 0
-		for _, kind := range ruling.ApprovalKinds() {
-			remembered = remembered && memory != nil && memory.Contains(kind)
-		}
-		if remembered {
+		if memory.Covers(ruling) {
 			return Decision{Action: ActionAllow, Ruling: ruling}
 		}
 		if config.Mode == Silent {
@@ -223,9 +278,10 @@ func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 }
 
 type Memory struct {
-	mu    sync.RWMutex
-	kinds map[Kind]struct{}
-	rules []pathRule
+	mu       sync.RWMutex
+	kinds    map[Kind]struct{}
+	programs map[string]struct{}
+	rules    []pathRule
 }
 
 type pathRule struct {
@@ -234,11 +290,69 @@ type pathRule struct {
 }
 
 func NewMemory() *Memory {
-	return &Memory{kinds: make(map[Kind]struct{})}
+	return &Memory{kinds: make(map[Kind]struct{}), programs: make(map[string]struct{})}
+}
+
+// Rememberable reports whether a session approval can cover the ruling: only
+// ordinary confirmations whose every kind can be remembered qualify.
+func Rememberable(ruling Ruling) bool {
+	if ruling.Risk != NeedsConfirm {
+		return false
+	}
+	kinds := ruling.ApprovalKinds()
+	if len(kinds) == 0 {
+		return false
+	}
+	for _, kind := range kinds {
+		switch kind {
+		case KindNone, KindDanger, KindUnknown:
+			return false
+		case KindProgram:
+			if len(ruling.Programs) == 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Remember records a session approval for every kind and program of the ruling.
+func (m *Memory) Remember(ruling Ruling) {
+	if m == nil || !Rememberable(ruling) {
+		return
+	}
+	for _, kind := range ruling.ApprovalKinds() {
+		m.Add(kind)
+	}
+	m.mu.Lock()
+	for _, program := range ruling.Programs {
+		m.programs[program] = struct{}{}
+	}
+	m.mu.Unlock()
+}
+
+// Covers reports whether earlier session approvals cover every kind and program of the ruling.
+func (m *Memory) Covers(ruling Ruling) bool {
+	if m == nil || !Rememberable(ruling) {
+		return false
+	}
+	for _, kind := range ruling.ApprovalKinds() {
+		if kind != KindProgram && !m.Contains(kind) {
+			return false
+		}
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, program := range ruling.Programs {
+		if _, ok := m.programs[program]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Memory) Add(kind Kind) {
-	if m == nil || kind == KindNone || kind == KindDanger || kind == KindUnknown {
+	if m == nil || kind == KindNone || kind == KindDanger || kind == KindUnknown || kind == KindProgram {
 		return
 	}
 	m.mu.Lock()
@@ -247,7 +361,7 @@ func (m *Memory) Add(kind Kind) {
 }
 
 func (m *Memory) Contains(kind Kind) bool {
-	if m == nil || kind == KindNone || kind == KindDanger || kind == KindUnknown {
+	if m == nil || kind == KindNone || kind == KindDanger || kind == KindUnknown || kind == KindProgram {
 		return false
 	}
 	m.mu.RLock()

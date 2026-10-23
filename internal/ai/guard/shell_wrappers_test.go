@@ -515,8 +515,8 @@ func TestR7GlobalOptionsAndClientEscapes(t *testing.T) {
 		})
 	}
 	confirm := []string{
-		`mysql -e 'select 1'`,
-		`psql -c 'SELECT 1'`,
+		`mysql -e 'select 1' --tee=/tmp/out`,
+		`psql -c 'SELECT 1' -o /tmp/out`,
 		`psql -c '\d'`,
 	}
 	for _, command := range confirm {

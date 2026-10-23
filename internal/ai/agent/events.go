@@ -40,8 +40,10 @@ type Event struct {
 	Handle      string
 	Commands    []string
 	RulePattern string
-	RequestID   string
-	Attempt     uint64
+	// SessionScope describes what a session approval covers; empty hides the option.
+	SessionScope string
+	RequestID    string
+	Attempt      uint64
 	// RequiredEnvironmentNames are the production environment names the
 	// confirmation must type back, resolved from the real target asset.
 	RequiredEnvironmentNames []string
@@ -108,6 +110,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		}
 		if e.RulePattern != "" {
 			payload["rulePattern"] = e.RulePattern
+		}
+		if e.SessionScope != "" {
+			payload["sessionScope"] = e.SessionScope
 		}
 		payload["confirmationNonce"] = e.Nonce
 		payload["requestId"], payload["attempt"] = e.RequestID, e.Attempt
