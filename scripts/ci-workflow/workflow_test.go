@@ -244,9 +244,15 @@ func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 	}
 
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
+	if len(ci.On.Push.Branches) != 0 {
+		t.Errorf("CI must not run on every push: %v", ci.On.Push.Branches)
+	}
+	if ci.On.PullRequest == nil {
+		t.Fatal("CI must run on pull requests")
+	}
 	ciRace := requireJob(t, ci, "race")
-	if got := ciRace.If; got != "github.event_name == 'push' && inputs.release_version == ''" {
-		t.Fatalf("race must run on master pushes without repeating for release tags, got %q", got)
+	if got := ciRace.If; got != "github.event_name == 'pull_request'" {
+		t.Fatalf("race must run on PRs without repeating for release tags, got %q", got)
 	}
 	if got := ciRace.Env["RACE_PACKAGE_PARALLELISM"]; got != "4" {
 		t.Fatalf("CI race package parallelism = %q, want the evidenced default 4", got)
@@ -378,7 +384,7 @@ func TestProductionJobRunsOnEveryPullRequestWithoutExpandingRace(t *testing.T) {
 		}
 	}
 	race := requireJob(t, ci, "race")
-	if got := expression(race.If); got != "github.event_name == 'push' && inputs.release_version == ''" {
+	if got := expression(race.If); got != "github.event_name == 'pull_request'" {
 		t.Fatalf("race job condition = %q", got)
 	}
 }
@@ -484,12 +490,13 @@ func TestCIOKAggregatesAllJobsAndRejectsUnsuccessfulResults(t *testing.T) {
 		wantOutput     string
 	}{
 		{
-			name:  "pull request with conditional jobs skipped",
+			name:  "race skip on a pull request",
 			event: "pull_request",
 			results: map[string]string{
 				"race": "skipped", "mobile": "skipped", "ios-dist": "skipped",
 			},
-			wantSuccess: true,
+			wantSuccess: false,
+			wantOutput:  "race=skipped",
 		},
 		{
 			name:  "master push without PR jobs",
@@ -534,8 +541,7 @@ func TestCIOKAggregatesAllJobsAndRejectsUnsuccessfulResults(t *testing.T) {
 			name:        "race skip on a push",
 			event:       "push",
 			results:     map[string]string{"race": "skipped"},
-			wantSuccess: false,
-			wantOutput:  "race=skipped",
+			wantSuccess: true,
 		},
 		{
 			name:        "production skip on a pull request",
