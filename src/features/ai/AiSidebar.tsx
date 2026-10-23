@@ -114,7 +114,6 @@ import {
   IconHistory,
   IconImage,
   IconInfo,
-  IconKey,
   IconList,
   IconLoader,
   IconMonitor,
@@ -138,9 +137,9 @@ interface RefChip {
 }
 
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "仅允许查看；设备长期授权和授权规则仅放行匹配的普通操作，其余操作均拒绝" },
-  { value: "read_write", label: "读写", hint: "只读操作直接执行；普通操作先确认，选择「本会话允许」后，本次对话内同类操作不再确认（文件写入限同目录）；高危或无法判断的操作仍逐次确认" },
-  { value: "silent", label: "自动执行", hint: "普通操作直接执行；高危或无法判断的操作仍逐次确认，禁止操作始终拒绝" },
+  { value: "read_only", label: "只读", hint: "AI 只能查看，修改一律拒绝；已开启免确认授权的操作除外" },
+  { value: "read_write", label: "读写", hint: "查看直接执行，修改前先问你；选「本会话允许」后，本次对话内同类操作不再询问" },
+  { value: "silent", label: "自动执行", hint: "普通修改直接执行，高危和无法判断的操作仍会问你" },
 ];
 
 const MODE_LABEL: Record<AiPermissionMode, string> = {
@@ -975,7 +974,6 @@ function AiChatTab({
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
   const [permError, setPermError] = useState<string | null>(null);
   const [permOpen, setPermOpen] = useState(false);
-  const [grantOpen, setGrantOpen] = useState(false);
   const [cronOpen, setCronOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [watchOpen, setWatchOpen] = useState(false);
@@ -2936,7 +2934,7 @@ function AiChatTab({
       )}
 
       {permOpen && (
-        <div className="max-h-[55%] min-w-0 shrink-0 overflow-x-hidden overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
+        <div className="max-h-[70%] min-w-0 shrink-0 overflow-x-hidden overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
           <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
             <IconShield size={12} />
             AI 权限
@@ -2962,69 +2960,62 @@ function AiChatTab({
             <div className="nx-hint px-2 py-3 text-center text-[11px]">权限读取中…</div>
           ) : (
             <>
-              <div className="mb-2 flex flex-col gap-0.5">
+              <div className="mb-1 flex items-center gap-1.5 text-[11px] text-neutral-300">
+                {permScope ? "这台主机的模式" : "默认模式"}
+                <span className="nx-spacer" />
+                {permScope &&
+                  (permDeviceOverride ? (
+                    <button
+                      className="text-[10.5px] text-neutral-500 hover:text-neutral-300"
+                      title="清除这台主机的专属模式，改用全局默认模式"
+                      onClick={followGlobalMode}
+                    >
+                      改为跟随全局
+                    </button>
+                  ) : (
+                    <span className="text-[10.5px] text-neutral-500">跟随全局默认</span>
+                  ))}
+              </div>
+              <div className="mb-1 grid grid-cols-3 gap-1" role="radiogroup" aria-label="AI 权限模式">
                 {MODE_OPTIONS.map((m) => (
                   <button
                     key={m.value}
-                    className={`nx-menu-item w-full flex-col items-start gap-0.5 ${
-                      perm.mode === m.value ? "bg-blue-500/15" : ""
-                    }`}
+                    role="radio"
+                    aria-checked={perm.mode === m.value}
+                    title={m.hint}
+                    className={`nx-btn nx-btn-xs justify-center ${perm.mode === m.value ? "nx-btn-primary" : "nx-btn-outline"}`}
                     onClick={() => switchMode(m.value)}
                   >
-                    <span className="nx-menu-label w-full">
-                      {perm.mode === m.value ? "● " : "○ "}
-                      {m.label}
-                    </span>
-                    <span className="nx-menu-hint w-full whitespace-normal font-sans">{m.hint}</span>
+                    {m.label}
                   </button>
                 ))}
-                {permScope && (
-                  <button
-                    className={`nx-menu-item w-full flex-col items-start gap-0.5 ${
-                      permDeviceOverride ? "" : "bg-blue-500/15"
-                    }`}
-                    onClick={followGlobalMode}
-                  >
-                    <span className="nx-menu-label w-full">
-                      {permDeviceOverride ? "○ " : "● "}
-                      跟随全局默认
-                    </span>
-                    <span className="nx-menu-hint w-full whitespace-normal font-sans">
-                      清除该设备的专属模式，改用全局默认模式
-                    </span>
-                  </button>
-                )}
               </div>
-              <div className="mb-2 px-2.5 text-[10.5px] leading-relaxed text-neutral-500">
-                {permScope
-                  ? "模式只对当前设备生效，换设备后按该设备自己的模式或全局默认处理。"
-                  : "模式是全局默认，对所有设备生效；在会话或终端标签里打开可为单台设备单独设置。"}
+              <div className="mb-2.5 text-[10.5px] leading-relaxed text-neutral-500">
+                {MODE_OPTIONS.find((m) => m.value === perm.mode)?.hint}
               </div>
 
-              <div className="mb-1 text-[11px] text-neutral-300">工作方式</div>
               <button
-                className={`nx-menu-item mb-0.5 w-full ${planMode ? "bg-blue-500/15" : ""}`}
+                type="button"
+                role="switch"
+                aria-checked={planMode}
+                className={`nx-menu-item mb-2.5 w-full ${planMode ? "bg-blue-500/15" : ""}`}
                 title={PLAN_MODE_HINT}
                 onClick={() => setPlanMode((v) => !v)}
               >
                 <span className={`shrink-0 ${planMode ? "text-blue-300" : "text-neutral-500"}`}>
                   <IconList size={12} />
                 </span>
-                <span className="nx-menu-label">
-                  {planMode ? "● " : "○ "}
-                  计划模式
-                </span>
-                <span className="nx-menu-hint">{planMode ? "已开启" : "已关闭"}</span>
+                <span className="nx-menu-label">计划模式</span>
+                <span className="nx-menu-hint">{planMode ? "已开启：先给方案，你确认后再执行" : "已关闭"}</span>
               </button>
-              <div className="mb-2 px-2.5 text-[10.5px] leading-relaxed text-neutral-500">
-                {planMode ? `${PLAN_MODE_HINT}；期间只读` : "直接执行"}
+
+              <div className="mb-1 border-t border-neutral-800/60 pt-2 text-[11px] text-neutral-300">免确认授权</div>
+              <div className="mb-2.5">
+                <GrantPanel currentAssetId={aiScopeAssetId} />
               </div>
 
-              <div className="mb-2 flex items-center gap-1.5">
-                <span className="shrink-0 text-neutral-500">
-                  <IconShield size={12} />
-                </span>
-                <span className="text-[11.5px] text-neutral-300">拦截规则</span>
+              <div className="flex items-center gap-1.5 border-t border-neutral-800/60 pt-2">
+                <span className="text-[11px] text-neutral-300">拦截规则</span>
                 <span className="nx-count">
                   {perm.dangerRules.length > 0 ? `${perm.dangerRules.length} 条` : "未设置"}
                 </span>
@@ -3041,9 +3032,8 @@ function AiChatTab({
                   去设置
                 </button>
               </div>
-
-              <div className="mt-2 border-t border-neutral-800/60 pt-1.5 text-[10px] leading-relaxed text-neutral-500">
-                命中禁止规则的操作始终拒绝；高危或无法判断的操作按当前权限模式处理，长期授权只覆盖普通需确认操作。
+              <div className="mt-1.5 text-[10px] leading-relaxed text-neutral-500">
+                高危和无法判断的操作始终询问，禁止的操作始终拒绝，任何模式和授权都不会跳过。
               </div>
             </>
           )}
@@ -3084,7 +3074,6 @@ function AiChatTab({
         </div>
       )}
 
-      {grantOpen && <GrantPanel onClose={() => setGrantOpen(false)} />}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
@@ -3595,19 +3584,12 @@ function AiChatTab({
               permError
                 ? "AI 权限读取失败（点击查看并重试）"
                 : perm
-                  ? `AI 权限与模式：${MODE_LABEL[perm.mode]}（${permScope ? "当前设备" : "全局默认"}，含计划模式，点击设置）`
+                  ? `AI 权限与模式：${MODE_LABEL[perm.mode]}（${permScope ? "这台主机" : "全局默认"}），含计划模式和免确认授权`
                   : "AI 权限与模式：读取中（点击设置）"
             }
             onClick={() => setPermOpen((v) => !v)}
           >
             <IconShield size={13} />
-          </button>
-          <button
-            className={`nx-icon-btn nx-icon-btn-sm ${grantOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
-            title="设备长期授权管理（默认关闭，按设备开启）"
-            onClick={() => setGrantOpen((v) => !v)}
-          >
-            <IconKey size={13} />
           </button>
           <button
             className="nx-icon-btn nx-icon-btn-sm text-red-400 hover:text-red-300"

@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import type { Asset } from "../../ipc/commands";
-import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   web: false,
@@ -17,7 +17,6 @@ const mocks = vi.hoisted(() => ({
   ruleRevoke: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
-  onClose: vi.fn(),
 }));
 
 vi.mock("../../features/fleet/clients", () => ({
@@ -101,16 +100,32 @@ function accountOf(role: AccountUser["role"]): AccountUser {
 
 let view: MountedView | null = null;
 
-function rowFor(name: string): HTMLElement {
-  const rows = [...view!.container.querySelectorAll<HTMLElement>("div.rounded-lg")];
-  const row = rows.find((r) => r.textContent?.includes(name));
-  if (!row) throw new Error(`row not found: ${name}`);
-  return row;
+const ASSETS_WITH_MANY = [
+  ...ASSETS,
+  asset("asset-3", "dev-k1"),
+  asset("asset-4", "dev-m4"),
+  asset("asset-5", "oirush-be"),
+];
+
+function text(): string {
+  return view!.container.textContent ?? "";
 }
 
-async function mountPanel(): Promise<void> {
-  view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
-  await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
+function checkbox(label: string): HTMLInputElement {
+  const input = view!.container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+  if (!input) throw new Error(`checkbox not found: ${label}`);
+  return input;
+}
+
+async function toggle(label: string): Promise<void> {
+  click(checkbox(label));
+  await flush();
+  await flush();
+}
+
+async function mountPanel(currentAssetId?: string): Promise<void> {
+  view = mount(createElement(GrantPanel, { currentAssetId }));
+  await flushUntil(() => !text().includes("读取授权…"));
   await flush();
 }
 
@@ -120,421 +135,211 @@ afterEach(async () => {
   view = null;
 });
 
-describe("GrantPanel long-term device grants", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.web = false;
-    mocks.assetList.mockResolvedValue(ASSETS);
-    mocks.fleetDevices.mockResolvedValue({ devices: [] });
-    mocks.grantList.mockResolvedValue([]);
-    mocks.ruleList.mockResolvedValue([]);
-    mocks.grantSet.mockImplementation((deviceId: string, kinds: string[]) =>
-      Promise.resolve({ deviceId, kinds, updatedAt: 1 }),
-    );
-    mocks.ask.mockResolvedValue(true);
-    useUi.setState({ pushToast: mocks.toast });
-    useAuth.setState({ user: null });
-  });
-
-  it("disables everything by default and explains the shared instance-scoped grant semantics", async () => {
-    await mountPanel();
-    const text = view!.container.textContent ?? "";
-    expect(text).toContain("默认关闭");
-    expect(text).toContain("桌面和明确开放部署使用共享授权");
-    expect(text).toContain("对当前 NexTerm 实例的所有会话生效");
-    expect(text).toContain("普通终端写入、命令执行和数据库查询无需逐次确认");
-    expect(text).toContain("只读模式下也会放行");
-    expect(text).toContain("高危或无法判断的操作仍按当前权限模式处理");
-    expect(text).toContain("禁止操作始终拒绝");
-    expect(text).toContain("请仅用于可信设备");
-    for (const name of ["生产 Web"]) {
-      expect(rowFor(name).textContent).toContain("未授权");
-    }
-    expect(view!.container.querySelectorAll("button").length).toBeGreaterThan(0);
-    expect(text).not.toContain("已授权：");
-  });
-
-  it("offers a fixed db_query grant for database assets and excludes them from rule device options", async () => {
-    await mountPanel();
-    const row = rowFor("数据库");
-    expect(row.textContent).toContain("MySQL");
-    expect(row.textContent).toContain("未授权");
-    expect(row.textContent).toContain("数据库查询");
-    // Database assets grant a fixed db_query kind: no kind toggles are offered.
-    expect(row.textContent).not.toContain("终端写入");
-    const text = view!.container.textContent ?? "";
-    expect(text).toContain("数据库资产仅支持数据库查询授权");
-    expect(text).not.toContain("数据库资产不支持设备授权");
-
-    clickButton(row, "开启授权");
-    await flush();
-    expect(mocks.ask).toHaveBeenCalledOnce();
-    const message = mocks.ask.mock.calls[0][0] as string;
-    expect(message).toContain("数据库");
-    expect(message).toContain("数据库查询");
-    expect(mocks.grantSet).toHaveBeenCalledWith("asset-2", ["db_query"]);
-    await flushUntil(() => rowFor("数据库").textContent?.includes("已授权：数据库查询") === true);
-
-    clickButton(view!.container, "添加规则");
-    await flush();
-    const options = [...view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!.options].map(
-      (o) => o.textContent,
-    );
-    expect(options).toContain("生产 Web");
-    expect(options).not.toContain("数据库");
-  });
-
-  it("revokes a database asset grant after confirmation", async () => {
-    mocks.grantList.mockResolvedValue([{ deviceId: "asset-2", kinds: ["db_query"], permanent: true, updatedAt: 1 }]);
-    await mountPanel();
-    expect(rowFor("数据库").textContent).toContain("已授权：数据库查询");
-    clickButton(rowFor("数据库"), "撤销");
-    await flushUntil(() => mocks.grantRevoke.mock.calls.length > 0);
-    expect(mocks.grantRevoke).toHaveBeenCalledWith("asset-2");
-    await flushUntil(() => rowFor("数据库").textContent?.includes("未授权") === true);
-  });
-
-  it("requires explicit confirmation before granting and grants the selected kinds", async () => {
-    await mountPanel();
-    clickButton(rowFor("生产 Web"), "开启授权");
-    await flush();
-    expect(mocks.ask).toHaveBeenCalledOnce();
-    const message = mocks.ask.mock.calls[0][0] as string;
-    expect(message).toContain("生产 Web");
-    expect(message).toContain("对当前 NexTerm 实例的所有会话生效");
-    expect(message).toContain("只读模式下也会放行");
-    expect(message).toContain("无需逐次确认");
-    expect(message).toContain("高危或无法判断的操作仍按当前权限模式处理");
-    expect(message).toContain("禁止操作始终拒绝");
-    expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["terminal_write"]);
-    await flushUntil(() => rowFor("生产 Web").textContent?.includes("已授权：终端写入") === true);
-    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已开启"));
-  });
-
-  it("can include command execution in the grant", async () => {
-    await mountPanel();
-    const row = rowFor("生产 Web");
-    clickButton(row, "○ 命令执行");
-    await flush();
-    clickButton(rowFor("生产 Web"), "开启授权");
-    await flush();
-    expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["terminal_write", "session_exec"]);
-  });
-
-  it("does not grant when confirmation is canceled", async () => {
-    mocks.ask.mockResolvedValue(false);
-    await mountPanel();
-    clickButton(rowFor("生产 Web"), "开启授权");
-    await flush();
-    expect(mocks.grantSet).not.toHaveBeenCalled();
-    expect(rowFor("生产 Web").textContent).toContain("未授权");
-  });
-
-  it("requires confirmation before revoking and explains the resulting permission-mode behavior", async () => {
-    mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
-    await mountPanel();
-    expect(rowFor("生产 Web").textContent).toContain("已授权：终端写入");
-    clickButton(rowFor("生产 Web"), "撤销");
-    await flushUntil(() => mocks.grantRevoke.mock.calls.length > 0);
-    expect(mocks.ask).toHaveBeenCalledOnce();
-    const message = mocks.ask.mock.calls[0][0] as string;
-    expect(message).toContain("生产 Web");
-    expect(message).toContain("将按当前权限模式处理");
-    expect(message).toContain("授权记录会从当前 NexTerm 实例删除");
-    expect(mocks.grantRevoke).toHaveBeenCalledWith("asset-1");
-    await flushUntil(() => rowFor("生产 Web").textContent?.includes("未授权") === true);
-    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("按当前权限模式处理"));
-  });
-
-  it("does not revoke when revocation is canceled", async () => {
-    mocks.ask.mockResolvedValue(false);
-    mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
-    await mountPanel();
-    clickButton(rowFor("生产 Web"), "撤销");
-    await flush();
-    expect(mocks.grantRevoke).not.toHaveBeenCalled();
-    expect(rowFor("生产 Web").textContent).toContain("已授权：终端写入");
-  });
-
-  it("shows list-loading errors and allows retry", async () => {
-    mocks.grantList.mockRejectedValueOnce(new Error("设备授权未配置"));
-    view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
-    await flushUntil(() => view!.container.textContent?.includes("加载失败") === true);
-    expect(view!.container.textContent).toContain("设备授权未配置");
-    clickButton(view!.container, "重试");
-    await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
-    expect(rowFor("生产 Web").textContent).toContain("未授权");
-  });
-
-  it("shows grant failures and leaves the device unauthorized", async () => {
-    mocks.grantSet.mockRejectedValue(new Error("设备授权种类仅支持 terminal_write/session_exec/db_query"));
-    await mountPanel();
-    clickButton(rowFor("生产 Web"), "开启授权");
-    await flush();
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("开启授权失败"));
-    expect(rowFor("生产 Web").textContent).toContain("未授权");
-  });
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.web = false;
+  mocks.assetList.mockResolvedValue(ASSETS_WITH_MANY);
+  mocks.fleetDevices.mockResolvedValue({ devices: [] });
+  mocks.grantList.mockResolvedValue([]);
+  mocks.ruleList.mockResolvedValue([]);
+  mocks.grantSet.mockImplementation((deviceId: string, kinds: string[]) => Promise.resolve({ deviceId, kinds, updatedAt: 1 }));
+  mocks.grantRevoke.mockResolvedValue(undefined);
+  mocks.ruleRevoke.mockResolvedValue(undefined);
+  mocks.ask.mockResolvedValue(true);
+  useUi.setState({ pushToast: mocks.toast });
+  useAuth.setState({ user: null });
 });
 
-describe("GrantPanel authorization rules", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.assetList.mockResolvedValue(ASSETS);
-    mocks.fleetDevices.mockResolvedValue({ devices: [] });
-    mocks.grantList.mockResolvedValue([]);
-    mocks.ruleList.mockResolvedValue([]);
-    mocks.ask.mockResolvedValue(true);
-    useUi.setState({ pushToast: mocks.toast });
+describe("GrantPanel lists only what matters", () => {
+  it("shows the current host and authorized hosts, never every asset", async () => {
+    mocks.grantList.mockResolvedValue([{ deviceId: "asset-4", kinds: ["session_exec"], updatedAt: 1 }]);
+    await mountPanel("asset-1");
+    expect(text()).toContain("这台主机");
+    expect(text()).toContain("生产 Web");
+    expect(text()).toContain("dev-m4");
+    expect(text()).toContain("执行命令");
+    expect(text()).not.toContain("dev-k1");
+    expect(text()).not.toContain("oirush-be");
   });
 
-  function ruleRow(scope: string): HTMLElement {
-    const rows = [...view!.container.querySelectorAll<HTMLElement>("div.rounded-lg")];
-    const row = rows.find((r) => r.textContent?.includes(scope));
-    if (!row) throw new Error(`rule row not found: ${scope}`);
-    return row;
-  }
-
-  it("shows rule scopes and expiration and explicitly marks permanent rules", async () => {
-    mocks.ruleList.mockResolvedValue([
-      { id: "rule-1", deviceId: "asset-1", action: "write_file", path: "/var/log/**", expiresAt: 0, createdAt: 1, updatedAt: 1 },
-      { id: "rule-2", deviceId: "asset-2", action: "exec_commands", path: "", expiresAt: 4102444800000, createdAt: 1, updatedAt: 1 },
-    ]);
+  it("finds another host through search and grants it", async () => {
     await mountPanel();
-    const permanent = ruleRow("/var/log/**");
-    expect(permanent.textContent).toContain("生产 Web");
-    expect(permanent.textContent).toContain("写入文件 /var/log/**");
-    expect(permanent.textContent).toContain("永久");
-    const expiring = ruleRow("执行命令");
-    expect(expiring.textContent).toContain("数据库");
-    expect(expiring.textContent).not.toContain("全部路径");
-    expect(expiring.textContent).toContain("过期");
-  });
-
-  it("requires confirmation before revoking a rule and calls revoke after confirmation", async () => {
-    mocks.ruleList.mockResolvedValue([
-      { id: "rule-1", deviceId: "asset-1", action: "write_file", path: "/var/log/**", expiresAt: 0, createdAt: 1, updatedAt: 1 },
-    ]);
-    await mountPanel();
-    clickButton(ruleRow("/var/log/**"), "撤销");
-    await flushUntil(() => mocks.ruleRevoke.mock.calls.length > 0);
-    expect(mocks.ask).toHaveBeenCalledOnce();
-    const message = mocks.ask.mock.calls[0][0] as string;
-    expect(message).toContain("生产 Web");
-    expect(message).toContain("/var/log/**");
-    expect(mocks.ruleRevoke).toHaveBeenCalledWith("rule-1");
-    await flushUntil(() => view!.container.textContent?.includes("写入文件 /var/log/**") === false);
-    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已撤销授权规则"));
-  });
-
-  it("confirms scope and expiration before calling ruleSet when adding a rule", async () => {
-    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
-      Promise.resolve({ id: "rule-new", deviceId, action, path, expiresAt, createdAt: 1, updatedAt: 1 }),
-    );
-    await mountPanel();
-    clickButton(view!.container, "添加规则");
+    expect(text()).toContain("没有其他主机开启免确认授权");
+    const search = view!.container.querySelector<HTMLInputElement>('input[aria-label="搜索要授权的主机"]')!;
+    setInputValue(search, "oirush");
     await flush();
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则动作']")!, "write_file");
-    setInputValue(view!.container.querySelector<HTMLInputElement>("input[aria-label='规则路径范围']")!, "/var/log/**");
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则有效期']")!, "7d");
-    clickButton(view!.container, "添加");
-    await flushUntil(() => mocks.ruleSet.mock.calls.length > 0);
-    expect(mocks.ask).toHaveBeenCalledOnce();
-    const message = mocks.ask.mock.calls[0][0] as string;
-    expect(message).toContain("生产 Web");
-    expect(message).toContain("写入文件 /var/log/**");
-    expect(message).toContain("7 天");
-    const [deviceId, action, path, expiresAt] = mocks.ruleSet.mock.calls[0];
-    expect(deviceId).toBe("asset-1");
-    expect(action).toBe("write_file");
-    expect(path).toBe("/var/log/**");
-    expect(expiresAt).toBeGreaterThan(Date.now());
-    await flushUntil(() => view!.container.textContent?.includes("写入文件 /var/log/**") === true);
-    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已添加授权规则"));
-  });
-
-  it("disables adding a file-write rule without a path and does not require a path for command rules", async () => {
-    await mountPanel();
-    clickButton(view!.container, "添加规则");
+    expect(text()).not.toContain("dev-k1");
+    clickButton(view!.container, "oirush-beSSH");
     await flush();
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
-    const addButton = () => [...view!.container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "添加");
-    expect(addButton()?.disabled).toBe(true);
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则动作']")!, "exec_commands");
-    expect(view!.container.querySelector("input[aria-label='规则路径范围']")).toBeNull();
-    expect(addButton()?.disabled).toBe(false);
+    await toggle("oirush-be：执行命令免确认");
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.grantSet).toHaveBeenCalledWith("asset-5", ["session_exec"]);
+    expect(text()).toContain("已授权主机1");
   });
 
-  it("does not call ruleSet when add confirmation is canceled", async () => {
-    mocks.ask.mockResolvedValue(false);
-    await mountPanel();
-    clickButton(view!.container, "添加规则");
-    await flush();
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
-    setInputValue(view!.container.querySelector<HTMLInputElement>("input[aria-label='规则路径范围']")!, "/var/log/**");
-    clickButton(view!.container, "添加");
-    await flush();
-    expect(mocks.ruleSet).not.toHaveBeenCalled();
-  });
-});
-
-describe("GrantPanel account-scoped grants (web)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.web = true;
-    mocks.assetList.mockResolvedValue(ASSETS);
-    mocks.fleetDevices.mockResolvedValue({ devices: [] });
-    mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
-    mocks.ruleList.mockResolvedValue([]);
-    mocks.grantSet.mockImplementation((deviceId: string, kinds: string[]) =>
-      Promise.resolve({ deviceId, kinds, updatedAt: 1 }),
-    );
-    mocks.ask.mockResolvedValue(true);
-    useUi.setState({ pushToast: mocks.toast });
-    useAuth.setState({ user: null });
-  });
-
-  it("gives a logged-in regular user full control of current-account grants", async () => {
-    useAuth.setState({ user: accountOf("user") });
-    await mountPanel();
-
-    const text = view!.container.textContent ?? "";
-    expect(text).not.toContain("当前账号不是超管");
-    expect(text).toContain("授权按账号隔离，仅对当前账号生效");
-    expect(rowFor("生产 Web").textContent).toContain("已授权：终端写入");
-    const buttons = [...view!.container.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.textContent);
-    expect(buttons).toContain("撤销");
-    expect(buttons).toContain("添加规则");
-
-    clickButton(rowFor("生产 Web"), "撤销");
-    await flushUntil(() => mocks.grantRevoke.mock.calls.length > 0);
-    expect(mocks.ask.mock.calls[0][0] as string).toContain("授权记录会从当前账号删除");
-    await flushUntil(() => rowFor("生产 Web").textContent?.includes("未授权") === true);
-
-    clickButton(rowFor("生产 Web"), "开启授权");
-    await flushUntil(() => mocks.grantSet.mock.calls.length > 0);
-    expect(mocks.ask.mock.calls[1][0] as string).toContain("授权按账号隔离，仅对当前账号生效");
-    expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["terminal_write"]);
-    await flushUntil(() => rowFor("生产 Web").textContent?.includes("已授权：终端写入") === true);
-  });
-
-  it("saves rules under the current account in account mode", async () => {
-    useAuth.setState({ user: accountOf("user") });
-    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
-      Promise.resolve({ id: "rule-new", deviceId, action, path, expiresAt, createdAt: 1, updatedAt: 1 }),
-    );
-    await mountPanel();
-    clickButton(view!.container, "添加规则");
-    await flush();
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则动作']")!, "exec_commands");
-    clickButton(view!.container, "添加");
-    await flushUntil(() => mocks.ruleSet.mock.calls.length > 0);
-    const message = mocks.ask.mock.calls[0][0] as string;
-    expect(message).toContain("规则保存在当前账号");
-    expect(mocks.ruleSet).toHaveBeenCalledWith("asset-1", "exec_commands", "", 0);
-  });
-
-  it("states shared instance-wide scope when no account is present", async () => {
-    mocks.grantList.mockResolvedValue([]);
-    await mountPanel();
-    const text = view!.container.textContent ?? "";
-    expect(text).toContain("桌面和明确开放部署使用共享授权");
-    expect(text).toContain("对当前 NexTerm 实例的所有会话生效");
-    expect(text).not.toContain("授权按账号隔离");
-    const buttons = [...view!.container.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.textContent);
-    expect(buttons).toContain("开启授权");
-  });
-
-  it("surfaces the server owner/target rejection for another account's asset and keeps the row unauthorized", async () => {
-    useAuth.setState({ user: accountOf("user") });
-    mocks.grantList.mockResolvedValue([]);
-    mocks.grantSet.mockRejectedValue(new Error("授权资产不存在或不属于当前用户"));
-    await mountPanel();
-    clickButton(rowFor("生产 Web"), "开启授权");
-    await flush();
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("授权资产不存在或不属于当前用户"));
-    expect(rowFor("生产 Web").textContent).toContain("未授权");
-  });
-});
-
-
-describe("GrantPanel fleet device grant targets", () => {
-  const GATEWAY = {
-    id: "d-1",
-    name: "边缘网关",
-    kind: "agent",
-    created_at: 1,
-    last_seen_at: 1,
-    revoked_at: 0,
-  };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.assetList.mockResolvedValue(ASSETS);
-    mocks.fleetDevices.mockResolvedValue({ devices: [GATEWAY] });
-    mocks.grantList.mockResolvedValue([]);
-    mocks.ruleList.mockResolvedValue([]);
-    mocks.grantSet.mockImplementation((deviceId: string, kinds: string[]) =>
-      Promise.resolve({ deviceId, kinds, updatedAt: 1 }),
-    );
-    mocks.ask.mockResolvedValue(true);
-    useUi.setState({ pushToast: mocks.toast });
-    useAuth.setState({ user: null });
-  });
-
-  it("uses device/<id> for fleet grant targets, shows a device badge, and omits revoked devices", async () => {
+  it("does not offer revoked fleet devices and keys devices by device/<id>", async () => {
     mocks.fleetDevices.mockResolvedValue({
-      devices: [GATEWAY, { ...GATEWAY, id: "d-2", name: "旧网关", revoked_at: 1720000000000 }],
+      devices: [
+        { id: "d1", name: "edge-live", revoked_at: 0 },
+        { id: "d2", name: "edge-gone", revoked_at: 5 },
+      ],
     });
-    await mountPanel();
-    const row = rowFor("边缘网关");
-    expect(row.textContent).toContain("未授权");
-    expect(row.textContent).toContain("设备");
-    expect(() => rowFor("旧网关")).toThrow();
-
-    clickButton(row, "开启授权");
+    await mountPanel("device/d1");
+    expect(text()).toContain("edge-live");
+    await toggle("edge-live：执行命令免确认");
+    expect(mocks.grantSet).toHaveBeenCalledWith("device/d1", ["session_exec"]);
+    const search = view!.container.querySelector<HTMLInputElement>('input[aria-label="搜索要授权的主机"]')!;
+    setInputValue(search, "edge");
     await flush();
-    expect(mocks.ask).toHaveBeenCalledOnce();
-    expect(mocks.ask.mock.calls[0][0] as string).toContain("边缘网关");
-    expect(mocks.grantSet).toHaveBeenCalledWith("device/d-1", ["terminal_write"]);
-    await flushUntil(() => rowFor("边缘网关").textContent?.includes("已授权：终端写入") === true);
+    expect(text()).not.toContain("edge-gone");
+  });
+});
+
+describe("GrantPanel switches", () => {
+  it("asks before enabling and does nothing when canceled", async () => {
+    mocks.ask.mockResolvedValueOnce(false);
+    await mountPanel("asset-1");
+    await toggle("生产 Web：执行命令免确认");
+    expect(mocks.ask.mock.calls[0][0]).toContain("即使在只读模式下也会放行");
+    expect(mocks.grantSet).not.toHaveBeenCalled();
   });
 
-  it("includes fleet devices in rule device options and saves rules with device/<id>", async () => {
-    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
-      Promise.resolve({ id: "rule-new", deviceId, action, path, expiresAt, createdAt: 1, updatedAt: 1 }),
-    );
-    await mountPanel();
-    clickButton(view!.container, "添加规则");
-    await flush();
-    const select = view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!;
-    const options = [...select.options].map((o) => o.textContent);
-    expect(options).toContain("边缘网关");
-    setSelectValue(select, "device/d-1");
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则动作']")!, "exec_commands");
-    clickButton(view!.container, "添加");
-    await flushUntil(() => mocks.ruleSet.mock.calls.length > 0);
-    expect(mocks.ask.mock.calls[0][0] as string).toContain("边缘网关");
-    const [deviceId, action, path, expiresAt] = mocks.ruleSet.mock.calls[0];
-    expect(deviceId).toBe("device/d-1");
-    expect(action).toBe("exec_commands");
-    expect(path).toBe("");
-    expect(expiresAt).toBe(0);
+  it("adds kinds one at a time and keeps the others when one is turned off", async () => {
+    await mountPanel("asset-1");
+    await toggle("生产 Web：执行命令免确认");
+    await toggle("生产 Web：终端输入免确认");
+    expect(mocks.grantSet).toHaveBeenLastCalledWith("asset-1", ["session_exec", "terminal_write"]);
+    mocks.ask.mockClear();
+    await toggle("生产 Web：执行命令免确认");
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.grantSet).toHaveBeenLastCalledWith("asset-1", ["terminal_write"]);
   });
 
-  it("falls back to asset-only targets without showing a load error when fleet device loading fails", async () => {
-    mocks.fleetDevices.mockRejectedValue(new Error("登录服务端账号后可用"));
-    await mountPanel();
-    expect(rowFor("生产 Web").textContent).toContain("未授权");
-    expect(view!.container.textContent ?? "").not.toContain("加载失败");
+  it("revokes the grant when the last kind is turned off, without asking", async () => {
+    mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["session_exec"], updatedAt: 1 }]);
+    await mountPanel("asset-1");
+    expect(checkbox("生产 Web：执行命令免确认").checked).toBe(true);
+    await toggle("生产 Web：执行命令免确认");
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.grantRevoke).toHaveBeenCalledWith("asset-1");
+    expect(checkbox("生产 Web：执行命令免确认").checked).toBe(false);
   });
 
-  it("renders the original id when a rule references an unknown device id", async () => {
+  it("offers only database queries for database assets and no path rules", async () => {
+    await mountPanel("asset-2");
+    expect(view!.container.querySelector('input[aria-label="数据库：数据库查询免确认"]')).not.toBeNull();
+    expect(view!.container.querySelector('input[aria-label="数据库：执行命令免确认"]')).toBeNull();
+    expect(text()).not.toContain("添加路径规则");
+    await toggle("数据库：数据库查询免确认");
+    expect(mocks.grantSet).toHaveBeenCalledWith("asset-2", ["db_query"]);
+  });
+
+  it("surfaces a failed grant and leaves the switch off", async () => {
+    mocks.grantSet.mockRejectedValueOnce(new Error("资产不属于当前账号"));
+    await mountPanel("asset-1");
+    await toggle("生产 Web：执行命令免确认");
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("资产不属于当前账号"));
+    expect(checkbox("生产 Web：执行命令免确认").checked).toBe(false);
+  });
+});
+
+describe("GrantPanel rules", () => {
+  it("lists rules with their expiry and revokes one without asking", async () => {
+    const now = Date.now();
     mocks.ruleList.mockResolvedValue([
-      { id: "rule-x", deviceId: "device/gone", action: "exec_commands", path: "", expiresAt: 0, createdAt: 1, updatedAt: 1 },
+      { id: "r1", deviceId: "asset-1", action: "edit_file", path: "/etc/nginx/**", expiresAt: 0, createdAt: 1 },
+      { id: "r2", deviceId: "asset-1", action: "exec_commands", path: "", expiresAt: now - 1000, createdAt: 1 },
     ]);
+    await mountPanel("asset-1");
+    expect(text()).toContain("修改文件 /etc/nginx/**");
+    expect(text()).toContain("永久");
+    expect(text()).toContain("已过期");
+    click(view!.container.querySelector<HTMLButtonElement>('button[aria-label="撤销规则：修改文件 /etc/nginx/**"]')!);
+    await flush();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.ruleRevoke).toHaveBeenCalledWith("r1");
+  });
+
+  it("confirms scope and a one-day default expiry before adding a rule", async () => {
+    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
+      Promise.resolve({ id: "r9", deviceId, action, path, expiresAt, createdAt: 1 }),
+    );
+    await mountPanel("asset-1");
+    clickButton(view!.container, "添加路径规则");
+    await flush();
+    const add = [...view!.container.querySelectorAll("button")].find((b) => b.textContent === "添加")!;
+    expect(add.disabled).toBe(true);
+    setInputValue(view!.container.querySelector<HTMLInputElement>('input[aria-label="规则路径范围"]')!, "/var/www/**");
+    await flush();
+    click(add);
+    await flush();
+    await flush();
+    expect(mocks.ask.mock.calls[0][0]).toContain("范围：修改文件 /var/www/**");
+    expect(mocks.ask.mock.calls[0][0]).toContain("有效期：1 天");
+    const [, action, path, expiresAt] = mocks.ruleSet.mock.calls[0];
+    expect([action, path]).toEqual(["edit_file", "/var/www/**"]);
+    expect(expiresAt).toBeGreaterThan(Date.now());
+    expect(text()).toContain("修改文件 /var/www/**");
+  });
+
+  it("does not need a path for command rules", async () => {
+    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
+      Promise.resolve({ id: "r8", deviceId, action, path, expiresAt, createdAt: 1 }),
+    );
+    await mountPanel("asset-1");
+    clickButton(view!.container, "添加路径规则");
+    await flush();
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>('select[aria-label="规则动作"]')!, "exec_commands");
+    await flush();
+    expect(view!.container.querySelector('input[aria-label="规则路径范围"]')).toBeNull();
+    click([...view!.container.querySelectorAll("button")].find((b) => b.textContent === "添加")!);
+    await flush();
+    await flush();
+    expect(mocks.ruleSet.mock.calls[0].slice(0, 3)).toEqual(["asset-1", "exec_commands", ""]);
+  });
+
+  it("revokes a host's grant and every rule together", async () => {
+    mocks.grantList.mockResolvedValue([{ deviceId: "asset-4", kinds: ["session_exec", "terminal_write"], updatedAt: 1 }]);
+    mocks.ruleList.mockResolvedValue([{ id: "r1", deviceId: "asset-4", action: "edit_file", path: "/etc/**", expiresAt: 0, createdAt: 1 }]);
     await mountPanel();
-    expect(view!.container.textContent ?? "").toContain("device/gone");
+    expect(text()).toContain("执行命令、终端输入、1 条规则");
+    clickButton(view!.container, "撤销");
+    await flush();
+    await flush();
+    expect(mocks.grantRevoke).toHaveBeenCalledWith("asset-4");
+    expect(mocks.ruleRevoke).toHaveBeenCalledWith("r1");
+    expect(text()).not.toContain("dev-m4");
+  });
+
+  it("renders the original id when a rule references an unknown host", async () => {
+    mocks.ruleList.mockResolvedValue([{ id: "r1", deviceId: "device/gone", action: "exec_commands", path: "", expiresAt: 0, createdAt: 1 }]);
+    await mountPanel();
+    expect(text()).toContain("device/gone");
+  });
+});
+
+describe("GrantPanel scope and loading", () => {
+  it("states the instance-wide scope without an account and the account scope with one", async () => {
+    await mountPanel();
+    expect(text()).toContain("对这个 NexTerm 实例的所有会话生效");
+    view!.unmount();
+    useAuth.setState({ user: accountOf("user") });
+    await mountPanel();
+    expect(text()).toContain("只对当前账号生效");
+  });
+
+  it("shows load errors and retries", async () => {
+    mocks.grantList.mockRejectedValueOnce(new Error("network down"));
+    await mountPanel();
+    expect(text()).toContain("授权加载失败：network down");
+    clickButton(view!.container, "重试");
+    await flushUntil(() => text().includes("已授权主机"));
+  });
+
+  it("keeps asset targets when fleet devices fail to load", async () => {
+    mocks.fleetDevices.mockRejectedValue(new Error("fleet offline"));
+    await mountPanel("asset-1");
+    expect(text()).toContain("生产 Web");
+    expect(text()).not.toContain("授权加载失败");
   });
 });

@@ -584,12 +584,12 @@ describe("AiSidebar permission request dialogs", () => {
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
     expect(mounted!.container.textContent).toContain("权限读取失败 · 权限服务不可用");
-    expect(mounted!.container.textContent).not.toContain("只读操作直接执行");
+    expect(mounted!.container.textContent).not.toContain("查看直接执行");
 
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
     clickButton(mounted!.container, "重试");
     await flush();
-    expect(mounted!.container.textContent).toContain("只读操作直接执行");
+    expect(mounted!.container.textContent).toContain("查看直接执行");
     expect(mounted!.container.textContent).not.toContain("格式化磁盘");
   });
 });

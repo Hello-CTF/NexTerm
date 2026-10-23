@@ -394,8 +394,8 @@ describe("AiSidebar stuck busy-state fixes", () => {
     click(shield);
     await flush();
 
-    expect(textOf(view!)).toContain("模式只对当前设备生效");
-    expect(textOf(view!)).toContain("○ 跟随全局默认");
+    expect(textOf(view!)).toContain("这台主机的模式");
+    expect(textOf(view!)).toContain("改为跟随全局");
 
     const readonlyOption = [...view!.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("只读"),
@@ -409,7 +409,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
 
     mocks.setPermission.mockClear();
     const follow = [...view!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("跟随全局默认"),
+      b.textContent?.includes("改为跟随全局"),
     )!;
     click(follow);
     await flush();

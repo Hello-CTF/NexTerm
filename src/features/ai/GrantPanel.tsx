@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { assetApi, type Asset } from "../../ipc/commands";
 import {
   grantApi,
@@ -13,30 +13,31 @@ import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { useAuth } from "../auth/store";
-import { IconClose, IconKey, IconLoader, IconPlus } from "../../ui/icons";
-
-const GRANT_KIND_OPTIONS: { value: AiGrantKind; label: string; hint: string }[] = [
-  { value: "terminal_write", label: "终端写入", hint: "AI 替你输入：按键直接发进终端" },
-  { value: "session_exec", label: "命令执行", hint: "仅放行需确认的普通 AI 命令；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝" },
-];
+import { IconChevronRight, IconClose, IconLoader, IconPlus, IconSearch } from "../../ui/icons";
 
 const KIND_LABEL: Record<AiGrantKind, string> = {
-  terminal_write: "终端写入",
-  session_exec: "命令执行",
+  terminal_write: "终端输入",
+  session_exec: "执行命令",
   db_query: "数据库查询",
 };
 
-// Database assets support exactly one grant kind: db_query covers the AI
-// database tools on connections resolved to that asset. The kind is fixed
-// (no toggles) and the grant binds to the real DB asset identity resolved at
-// use time — never to an SSH tunnel asset or an inline connection.
-const DB_GRANT_KINDS: AiGrantKind[] = ["db_query"];
+const KIND_HINT: Record<AiGrantKind, string> = {
+  terminal_write: "AI 在终端里输入普通内容时不再询问",
+  session_exec: "AI 执行普通命令时不再询问",
+  db_query: "AI 查询这个数据库时不再询问",
+};
 
-const RULE_ACTION_OPTIONS: { value: AiGrantRuleAction; label: string; needsPath: boolean; hint: string }[] = [
-  { value: "write_file", label: "写入文件", needsPath: true, hint: "只允许写匹配路径下的文件，如 /var/log/**" },
-  { value: "edit_file", label: "修改文件", needsPath: true, hint: "只允许修改匹配路径下的文件，如 /etc/nginx/**" },
-  { value: "exec_commands", label: "执行命令", needsPath: false, hint: "仅放行需确认的普通 AI 命令；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝" },
-  { value: "send_keys", label: "发送按键", needsPath: false, hint: "仅放行需确认的普通终端输入；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝" },
+// Database assets support exactly one grant kind: db_query covers the AI
+// database tools on connections resolved to that asset, never an SSH tunnel
+// asset or an inline connection.
+const TERMINAL_KINDS: AiGrantKind[] = ["session_exec", "terminal_write"];
+const DB_KINDS: AiGrantKind[] = ["db_query"];
+
+const RULE_ACTION_OPTIONS: { value: AiGrantRuleAction; label: string; needsPath: boolean }[] = [
+  { value: "edit_file", label: "修改文件", needsPath: true },
+  { value: "write_file", label: "写入文件", needsPath: true },
+  { value: "exec_commands", label: "执行命令", needsPath: false },
+  { value: "send_keys", label: "发送按键", needsPath: false },
 ];
 
 const RULE_ACTION_LABEL: Record<AiGrantRuleAction, string> = {
@@ -47,11 +48,11 @@ const RULE_ACTION_LABEL: Record<AiGrantRuleAction, string> = {
 };
 
 const RULE_EXPIRY_OPTIONS: { value: string; label: string; millis: number }[] = [
-  { value: "0", label: "永久", millis: 0 },
-  { value: "1h", label: "1 小时", millis: 3600_000 },
   { value: "1d", label: "1 天", millis: 86_400_000 },
+  { value: "1h", label: "1 小时", millis: 3600_000 },
   { value: "7d", label: "7 天", millis: 7 * 86_400_000 },
   { value: "30d", label: "30 天", millis: 30 * 86_400_000 },
+  { value: "0", label: "永久", millis: 0 },
 ];
 
 const ASSET_KIND_LABEL: Record<string, string> = {
@@ -66,9 +67,10 @@ const ASSET_KIND_LABEL: Record<string, string> = {
 };
 
 const DB_ASSET_KINDS = new Set(["mysql", "postgres", "redis"]);
+const SEARCH_LIMIT = 6;
 
-// Grant targets are real assets plus fleet devices, the latter keyed by the device/<id> pseudo asset id
-// (same form the guard store and session_connect_device use); only id/name/kind are ever rendered.
+// Grant targets are real assets plus fleet devices, the latter keyed by the
+// device/<id> pseudo asset id used by the guard store and device sessions.
 type GrantTarget = { id: string; name: string; kind: string };
 
 function ruleScopeText(rule: AiGrantRule): string {
@@ -80,32 +82,45 @@ function ruleExpiryText(rule: AiGrantRule, now: number): string {
   const expiresAt = rule.expiresAt ?? 0;
   if (expiresAt === 0) return "永久";
   if (expiresAt <= now) return "已过期";
-  return `${new Date(expiresAt).toLocaleString()} 过期`;
+  return `${new Date(expiresAt).toLocaleDateString()} 到期`;
 }
 
-export function GrantPanel({ onClose }: { onClose: () => void }) {
+function kindsOf(target: GrantTarget): AiGrantKind[] {
+  return DB_ASSET_KINDS.has(target.kind) ? DB_KINDS : TERMINAL_KINDS;
+}
+
+interface GrantState {
+  grants: Record<string, AiDeviceGrant>;
+  rules: AiGrantRule[];
+  setGrant: (target: GrantTarget, kind: AiGrantKind, on: boolean) => Promise<void>;
+  addRule: (target: GrantTarget, action: AiGrantRuleAction, path: string, expiry: string) => Promise<boolean>;
+  revokeRule: (rule: AiGrantRule) => Promise<void>;
+  revokeAll: (target: GrantTarget) => Promise<void>;
+  busy: string | null;
+}
+
+// GrantPanel manages long-term AI grants: the AI's current host first, then
+// only the hosts that already hold a grant or rule, and a search to grant
+// another host. Every other host stays out of the list.
+export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
   const pushToast = useUi((s) => s.pushToast);
-  // Grants are owner-scoped server-side (mutations are rejected for assets the caller does not own):
-  // a logged-in account manages only its own grants, while desktop and explicit open deployments
-  // share one instance-wide grant state.
+  // Grants are owner-scoped server-side: a logged-in account manages only its
+  // own grants, while desktop and explicit open deployments share one
+  // instance-wide grant state.
   const account = useAuth((s) => s.user);
-  const grantScopeNote = account
-    ? "授权按账号隔离，仅对当前账号生效，其他账号不可见"
-    : "桌面和明确开放部署使用共享授权，对当前 NexTerm 实例的所有会话生效";
-  const grantStoreName = account ? "当前账号" : "当前 NexTerm 实例";
+  const scopeNote = account
+    ? "授权只对当前账号生效。"
+    : "授权对这个 NexTerm 实例的所有会话生效，请只用于可信主机。";
+  const storeName = account ? "当前账号" : "当前 NexTerm 实例";
   const [assets, setAssets] = useState<Asset[] | null>(null);
   const [devices, setDevices] = useState<FleetDevice[]>([]);
   const [grants, setGrants] = useState<Record<string, AiDeviceGrant>>({});
-  const [drafts, setDrafts] = useState<Record<string, AiGrantKind[]>>({});
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [rules, setRules] = useState<AiGrantRule[]>([]);
-  const [ruleDevice, setRuleDevice] = useState("");
-  const [ruleAction, setRuleAction] = useState<AiGrantRuleAction>("write_file");
-  const [rulePath, setRulePath] = useState("");
-  const [ruleExpiry, setRuleExpiry] = useState("0");
-  const [ruleBusy, setRuleBusy] = useState(false);
-  const [ruleFormOpen, setRuleFormOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -113,8 +128,8 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
         assetApi.list(),
         grantApi.list(),
         grantApi.ruleList(),
-        // Fleet enumeration is additive: when the fleet link is unavailable (e.g. desktop logged out)
-        // the panel degrades to asset-only targets instead of failing the whole load.
+        // Fleet enumeration is additive: when the fleet link is unavailable
+        // (e.g. desktop logged out) the panel degrades to asset-only targets.
         fleetClient().devices().then(
           (r) => r.devices,
           () => [] as FleetDevice[],
@@ -136,328 +151,366 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     void reload();
   }, [reload]);
 
-  const kindsFor = (asset: GrantTarget): AiGrantKind[] => {
-    if (DB_ASSET_KINDS.has(asset.kind)) return DB_GRANT_KINDS;
-    return drafts[asset.id] ?? (grants[asset.id]?.kinds.length ? grants[asset.id].kinds : ["terminal_write"]);
-  };
+  // Revoked devices can no longer host sessions, so they are not offered as
+  // targets; rules that still reference them render by their id.
+  const targets: GrantTarget[] = useMemo(
+    () => [
+      ...(assets ?? []),
+      ...devices.filter((d) => d.revoked_at === 0).map((d) => ({ id: `device/${d.id}`, name: d.name, kind: "device" })),
+    ],
+    [assets, devices],
+  );
+  const targetOf = (id: string): GrantTarget => targets.find((t) => t.id === id) ?? { id, name: id, kind: "" };
 
-  const toggleKind = (asset: GrantTarget, kind: AiGrantKind) => {
-    const current = kindsFor(asset);
-    const next = current.includes(kind) ? current.filter((k) => k !== kind) : [...current, kind];
-    setDrafts((prev) => ({ ...prev, [asset.id]: next }));
-  };
-
-  const enableGrant = async (asset: GrantTarget) => {
-    const kinds = kindsFor(asset);
-    if (kinds.length === 0) return;
-    const scope = kinds.map((k) => KIND_LABEL[k]).join("、");
-    const confirmed = await ask(
-      `为「${asset.name}」开启设备长期授权？\n\n开启后，该设备上的${scope}无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。${grantScopeNote}。`,
-      { kind: "warning" },
-    );
-    if (!confirmed) return;
-    setBusy((prev) => ({ ...prev, [asset.id]: true }));
-    try {
-      const saved = await grantApi.set(asset.id, kinds);
-      setGrants((prev) => ({ ...prev, [asset.id]: saved }));
-      pushToast("success", `已开启「${asset.name}」的设备授权（${scope}）`);
-    } catch (e) {
-      pushToast("error", `开启授权失败：${describeError(e)}`);
-    } finally {
-      setBusy((prev) => ({ ...prev, [asset.id]: false }));
-    }
-  };
-
-  const revoke = async (asset: GrantTarget) => {
-    const scope = (grants[asset.id]?.kinds ?? []).map((k) => KIND_LABEL[k as AiGrantKind] ?? k).join("、");
-    const confirmed = await ask(
-      `撤销「${asset.name}」的设备授权？\n\n撤销后，该设备上的${scope || "终端写入、命令执行"}将按当前权限模式处理，授权记录会从${grantStoreName}删除。`,
-      { kind: "warning" },
-    );
-    if (!confirmed) return;
-    setBusy((prev) => ({ ...prev, [asset.id]: true }));
-    try {
-      await grantApi.revoke(asset.id);
-      setGrants((prev) => {
-        const next = { ...prev };
-        delete next[asset.id];
-        return next;
-      });
-      pushToast("success", `已撤销「${asset.name}」的设备授权，相关操作按当前权限模式处理`);
-    } catch (e) {
-      pushToast("error", `撤销授权失败：${describeError(e)}`);
-    } finally {
-      setBusy((prev) => ({ ...prev, [asset.id]: false }));
-    }
-  };
-
-  const actionNeedsPath = RULE_ACTION_OPTIONS.find((o) => o.value === ruleAction)?.needsPath ?? true;
-
-  const addRule = async () => {
-    const device = allTargets.find((a) => a.id === ruleDevice);
-    if (!device || ruleBusy) return;
-    const pattern = rulePath.trim();
-    if (actionNeedsPath && pattern === "") {
-      pushToast("error", `请填写${RULE_ACTION_LABEL[ruleAction]}规则的路径范围，例如 /var/log/**`);
-      return;
-    }
-    const expiry = RULE_EXPIRY_OPTIONS.find((o) => o.value === ruleExpiry) ?? RULE_EXPIRY_OPTIONS[0];
-    const scope = actionNeedsPath
-      ? `${RULE_ACTION_LABEL[ruleAction]} ${pattern}`
-      : RULE_ACTION_LABEL[ruleAction];
-    const confirmed = await ask(
-      `为「${device.name}」添加授权规则？\n\n范围：${scope}\n有效期：${expiry.label}\n\n匹配规则的普通 AI 操作无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。规则保存在${grantStoreName}，可随时撤销。`,
-      { kind: "warning" },
-    );
-    if (!confirmed) return;
-    setRuleBusy(true);
-    try {
-      const saved = await grantApi.ruleSet(
-        device.id,
-        ruleAction,
-        actionNeedsPath ? pattern : "",
-        expiry.millis === 0 ? 0 : Date.now() + expiry.millis,
+  const setGrant = async (target: GrantTarget, kind: AiGrantKind, on: boolean) => {
+    const current = grants[target.id]?.kinds ?? [];
+    const next = on ? [...new Set([...current, kind])] : current.filter((k) => k !== kind);
+    if (on) {
+      const confirmed = await ask(
+        `让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问？\n\n即使在只读模式下也会放行；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。`,
+        { title: "开启免确认授权", kind: "warning" },
       );
-      setRules((prev) => [...prev.filter((r) => r.id !== saved.id), saved]);
-      setRulePath("");
-      setRuleFormOpen(false);
-      pushToast("success", `已添加授权规则：${device.name} ${scope}`);
+      if (!confirmed) return;
+    }
+    setBusy(target.id);
+    try {
+      if (next.length === 0) {
+        await grantApi.revoke(target.id);
+        setGrants((prev) => {
+          const copy = { ...prev };
+          delete copy[target.id];
+          return copy;
+        });
+      } else {
+        const saved = await grantApi.set(target.id, next as AiGrantKind[]);
+        setGrants((prev) => ({ ...prev, [target.id]: saved }));
+      }
+      pushToast("success", on ? `「${target.name}」${KIND_LABEL[kind]}已免确认` : `「${target.name}」${KIND_LABEL[kind]}恢复为逐次确认`);
     } catch (e) {
-      pushToast("error", `添加授权规则失败：${describeError(e)}`);
+      pushToast("error", `${on ? "开启" : "关闭"}授权失败：${describeError(e)}`);
     } finally {
-      setRuleBusy(false);
+      setBusy(null);
+    }
+  };
+
+  const addRule = async (target: GrantTarget, action: AiGrantRuleAction, path: string, expiry: string) => {
+    const needsPath = RULE_ACTION_OPTIONS.find((o) => o.value === action)?.needsPath ?? true;
+    const pattern = path.trim();
+    if (needsPath && pattern === "") return false;
+    const option = RULE_EXPIRY_OPTIONS.find((o) => o.value === expiry) ?? RULE_EXPIRY_OPTIONS[0];
+    const scope = needsPath ? `${RULE_ACTION_LABEL[action]} ${pattern}` : RULE_ACTION_LABEL[action];
+    const confirmed = await ask(
+      `为「${target.name}」添加授权规则？\n\n范围：${scope}\n有效期：${option.label}\n\n匹配的普通操作不再询问，只读模式下也会放行；高危和无法判断的操作仍会询问。`,
+      { title: "添加授权规则", kind: "warning" },
+    );
+    if (!confirmed) return false;
+    setBusy(target.id);
+    try {
+      const saved = await grantApi.ruleSet(target.id, action, needsPath ? pattern : "", option.millis === 0 ? 0 : Date.now() + option.millis);
+      setRules((prev) => [...prev.filter((r) => r.id !== saved.id), saved]);
+      pushToast("success", `已添加规则：${target.name} ${scope}`);
+      return true;
+    } catch (e) {
+      pushToast("error", `添加规则失败：${describeError(e)}`);
+      return false;
+    } finally {
+      setBusy(null);
     }
   };
 
   const revokeRule = async (rule: AiGrantRule) => {
-    const device = allTargets.find((a) => a.id === rule.deviceId);
-    const confirmed = await ask(
-      `撤销授权规则「${device?.name ?? rule.deviceId} ${ruleScopeText(rule)}」？\n\n撤销后，相关操作将按当前权限模式处理，规则记录会从${grantStoreName}删除。`,
-      { kind: "warning" },
-    );
-    if (!confirmed) return;
-    setRuleBusy(true);
+    setBusy(rule.deviceId);
     try {
       await grantApi.ruleRevoke(rule.id);
       setRules((prev) => prev.filter((r) => r.id !== rule.id));
-      pushToast("success", "已撤销授权规则");
+      pushToast("success", `已撤销规则：${ruleScopeText(rule)}`);
     } catch (e) {
-      pushToast("error", `撤销授权规则失败：${describeError(e)}`);
+      pushToast("error", `撤销规则失败：${describeError(e)}`);
     } finally {
-      setRuleBusy(false);
+      setBusy(null);
     }
   };
 
-  // Revoked devices can no longer host sessions, so they are not offered as grant or rule targets;
-  // existing rules that reference them still render by name via allTargets/assetName fallback.
-  const deviceTargets: GrantTarget[] = devices
-    .filter((d) => d.revoked_at === 0)
-    .map((d) => ({ id: `device/${d.id}`, name: d.name, kind: "device" }));
-  const allTargets: GrantTarget[] = [...(assets ?? []), ...deviceTargets];
-  const assetName = (deviceId: string) => allTargets.find((a) => a.id === deviceId)?.name ?? deviceId;
-  // Grant targets include database assets (fixed db_query kind); rule targets
-  // exclude them because the rule actions only cover terminal tools.
-  const grantAssets: GrantTarget[] | null = assets === null ? null : [...assets, ...deviceTargets];
-  const ruleTargets: GrantTarget[] = [...(assets ?? []).filter((a) => !DB_ASSET_KINDS.has(a.kind)), ...deviceTargets];
-  const now = Date.now();
+  const revokeAll = async (target: GrantTarget) => {
+    const targetRules = rules.filter((r) => r.deviceId === target.id);
+    setBusy(target.id);
+    try {
+      if (grants[target.id]) await grantApi.revoke(target.id);
+      for (const rule of targetRules) await grantApi.ruleRevoke(rule.id);
+      setGrants((prev) => {
+        const copy = { ...prev };
+        delete copy[target.id];
+        return copy;
+      });
+      setRules((prev) => prev.filter((r) => r.deviceId !== target.id));
+      pushToast("success", `已撤销「${target.name}」的全部授权`);
+    } catch (e) {
+      pushToast("error", `撤销授权失败：${describeError(e)}`);
+      void reload();
+    } finally {
+      setBusy(null);
+    }
+  };
 
-  return (
-    <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
-      <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
-        <IconKey size={12} />
-        设备长期授权
-        <span className="nx-spacer" />
-        <button className="nx-icon-btn nx-icon-btn-sm" title="关闭" onClick={onClose}>
-          <IconClose size={11} />
+  const state: GrantState = { grants, rules, setGrant, addRule, revokeRule, revokeAll, busy };
+
+  if (loadError) {
+    return (
+      <div className="flex items-center gap-1.5 text-[11px] text-red-400">
+        <span className="min-w-0 flex-1 truncate">授权加载失败：{loadError}</span>
+        <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
+          重试
         </button>
       </div>
-
-      <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        {`设备长期授权默认关闭。开启后，普通终端写入、命令执行和数据库查询无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。${grantScopeNote}，请仅用于可信设备。数据库资产仅支持数据库查询授权。`}
+    );
+  }
+  if (assets === null) {
+    return (
+      <div className="flex items-center gap-1.5 py-1 text-[11px] text-neutral-500">
+        <IconLoader size={12} />
+        读取授权…
       </div>
+    );
+  }
 
-      {loadError && (
-        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-red-400">
-          <span className="min-w-0 flex-1 truncate">加载失败：{loadError}</span>
-          <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
-            重试
-          </button>
+  const current = currentAssetId ? targets.find((t) => t.id === currentAssetId) : undefined;
+  const authorizedIds = [...new Set([...Object.keys(grants), ...rules.map((r) => r.deviceId)])].filter((id) => id !== current?.id);
+  const authorized = authorizedIds.map(targetOf).sort((a, b) => a.name.localeCompare(b.name));
+  const needle = query.trim().toLowerCase();
+  const matches = needle
+    ? targets.filter((t) => t.id !== current?.id && !authorizedIds.includes(t.id) && t.name.toLowerCase().includes(needle)).slice(0, SEARCH_LIMIT)
+    : [];
+  const pickedTarget = picked && !authorizedIds.includes(picked) && picked !== current?.id ? targetOf(picked) : null;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {current && (
+        <div className="rounded-lg border border-neutral-800/60 px-2 py-1.5">
+          <div className="mb-1 flex items-center gap-1.5">
+            <span className="text-[10.5px] text-neutral-500">这台主机</span>
+            <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200">{current.name}</span>
+            <span className="nx-count">{ASSET_KIND_LABEL[current.kind] ?? current.kind}</span>
+          </div>
+          <HostGrantEditor target={current} state={state} />
         </div>
       )}
 
-      {!loadError && assets === null && (
-        <div className="flex items-center gap-1.5 py-1 text-[11px] text-neutral-500">
-          <IconLoader size={12} />
-          加载资产与授权状态…
+      <div>
+        <div className="mb-1 flex items-center gap-1.5 text-[11px] text-neutral-300">
+          {current ? "其他已授权主机" : "已授权主机"}
+          <span className="nx-count">{authorized.length}</span>
         </div>
-      )}
-
-      {grantAssets?.map((asset) => {
-        const grant = grants[asset.id];
-        const pending = busy[asset.id] === true;
-        return (
-          <div key={asset.id} className="mb-1 rounded-lg border border-neutral-800/60 px-2 py-1.5">
-            <div className="flex items-center gap-1.5">
-              <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200">{asset.name}</span>
-              <span className="nx-count">{ASSET_KIND_LABEL[asset.kind] ?? asset.kind}</span>
-              {grant ? (
+        {authorized.length === 0 && <div className="nx-hint text-[10.5px]">没有其他主机开启免确认授权。</div>}
+        {authorized.map((target) => {
+          const open = expanded === target.id;
+          const grant = grants[target.id];
+          const ruleCount = rules.filter((r) => r.deviceId === target.id).length;
+          const summary = [
+            ...(grant?.kinds ?? []).map((k) => KIND_LABEL[k as AiGrantKind] ?? k),
+            ...(ruleCount > 0 ? [`${ruleCount} 条规则`] : []),
+          ].join("、");
+          return (
+            <div key={target.id} className="mb-1 rounded-lg border border-neutral-800/60">
+              <div className="flex items-center gap-1.5 px-2 py-1">
                 <button
-                  className="nx-btn nx-btn-outline nx-btn-xs"
-                  disabled={pending}
-                  onClick={() => void revoke(asset)}
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                  aria-expanded={open}
+                  onClick={() => setExpanded(open ? null : target.id)}
                 >
-                  {pending ? "撤销中…" : "撤销"}
+                  <IconChevronRight size={10} className={`shrink-0 text-neutral-500 ${open ? "rotate-90" : ""}`} />
+                  <span className="min-w-0 truncate text-[11.5px] text-neutral-200">{target.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-[10.5px] text-green-300/90">{summary}</span>
                 </button>
-              ) : (
                 <button
-                  className="nx-btn nx-btn-outline nx-btn-xs"
-                  disabled={pending || kindsFor(asset).length === 0}
-                  onClick={() => void enableGrant(asset)}
+                  className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+                  disabled={busy === target.id}
+                  title="撤销这台主机的全部授权和规则"
+                  onClick={() => void revokeAll(target)}
                 >
-                  {pending ? "开启中…" : "开启授权"}
+                  {busy === target.id ? "处理中…" : "撤销"}
                 </button>
+              </div>
+              {open && (
+                <div className="border-t border-neutral-800/60 px-2 py-1.5">
+                  <HostGrantEditor target={target} state={state} />
+                </div>
               )}
             </div>
-            {grant ? (
-              <div className="mt-0.5 text-[10.5px] text-green-300">
-                已授权：{grant.kinds.map((k) => KIND_LABEL[k as AiGrantKind] ?? k).join("、")}
-              </div>
-            ) : DB_ASSET_KINDS.has(asset.kind) ? (
-              <div className="mt-1 flex flex-wrap items-center gap-1">
-                <span className="text-[10px] text-neutral-500">
-                  未授权 · 开启后仅覆盖数据库查询，授权绑定连接解析到的真实数据库资产
-                </span>
-              </div>
-            ) : (
-              <div className="mt-1 flex flex-wrap gap-1">
-                {GRANT_KIND_OPTIONS.map((opt) => {
-                  const active = kindsFor(asset).includes(opt.value);
-                  return (
-                    <button
-                      key={opt.value}
-                      className={`nx-btn nx-btn-outline nx-btn-xs ${active ? "border-blue-500/50 text-blue-300" : ""}`}
-                      title={opt.hint}
-                      onClick={() => toggleKind(asset, opt.value)}
-                    >
-                      {active ? "● " : "○ "}
-                      {opt.label}
-                    </button>
-                  );
-                })}
-                <span className="self-center text-[10px] text-neutral-500">未授权</span>
-              </div>
-            )}
+          );
+        })}
+      </div>
+
+      <div>
+        <div className="relative">
+          <IconSearch size={11} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" />
+          <input
+            className="nx-input w-full py-0.5 pl-6 text-[11px]"
+            placeholder="为其他主机授权：搜索主机名"
+            aria-label="搜索要授权的主机"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPicked(null);
+            }}
+          />
+        </div>
+        {matches.length > 0 && !pickedTarget && (
+          <div className="mt-1 flex flex-col" role="listbox" aria-label="匹配的主机">
+            {matches.map((target) => (
+              <button
+                key={target.id}
+                type="button"
+                role="option"
+                aria-selected={false}
+                className="nx-menu-item w-full"
+                onClick={() => setPicked(target.id)}
+              >
+                <span className="nx-menu-label">{target.name}</span>
+                <span className="nx-menu-hint">{ASSET_KIND_LABEL[target.kind] ?? target.kind}</span>
+              </button>
+            ))}
           </div>
-        );
-      })}
-
-      {!loadError && grantAssets !== null && grantAssets.length === 0 && (
-        <div className="py-1 text-[11px] text-neutral-500">暂无资产，添加资产后可在此管理授权。</div>
-      )}
-
-      <div className="mb-1.5 mt-2 flex items-center gap-1.5 border-t border-neutral-800/60 pt-2 text-[11.5px] font-medium text-neutral-200">
-        <IconKey size={12} />
-        授权规则
-        <span className="nx-count">{rules.length > 0 ? `${rules.length} 条` : "未设置"}</span>
-      </div>
-
-      <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        授权规则按设备、动作和路径范围放行，例如仅允许写入 /var/log/** 下的文件。规则可设有效期，到期自动失效，也可随时撤销。
-      </div>
-
-      {rules.map((rule) => (
-        <div key={rule.id} className="mb-1 flex items-center gap-1.5 rounded-lg border border-neutral-800/60 px-2 py-1.5">
-          <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200" title={ruleScopeText(rule)}>
-            {assetName(rule.deviceId)} · {ruleScopeText(rule)}
-          </span>
-          <span className={`shrink-0 text-[10.5px] ${(rule.expiresAt ?? 0) !== 0 && (rule.expiresAt ?? 0) <= now ? "text-red-300" : "text-neutral-500"}`}>
-            {ruleExpiryText(rule, now)}
-          </span>
-          <button
-            className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
-            disabled={ruleBusy}
-            onClick={() => void revokeRule(rule)}
-          >
-            撤销
-          </button>
-        </div>
-      ))}
-
-      {assets !== null && grantAssets !== null && ruleTargets.length > 0 && (
-        <div className="mt-2">
-          <button
-            type="button"
-            className="nx-btn nx-btn-outline nx-btn-xs"
-            aria-expanded={ruleFormOpen}
-            aria-controls="ai-grant-rule-form"
-            onClick={() => setRuleFormOpen((v) => !v)}
-          >
-            <IconPlus size={11} />
-            添加规则
-          </button>
-          {ruleFormOpen && (
-            <div id="ai-grant-rule-form" className="mt-1.5 rounded-lg border border-neutral-800/60 px-2 py-1.5">
-              <div className="flex flex-wrap items-center gap-1">
-                <select
-                  className="nx-input max-w-32 py-0.5 text-[11px]"
-                  aria-label="规则设备"
-                  value={ruleDevice}
-                  onChange={(event) => setRuleDevice(event.target.value)}
-                >
-                  <option value="">选择设备</option>
-                  {ruleTargets.map((asset) => (
-                    <option key={asset.id} value={asset.id}>
-                      {asset.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="nx-input py-0.5 text-[11px]"
-                  aria-label="规则动作"
-                  value={ruleAction}
-                  onChange={(event) => setRuleAction(event.target.value as AiGrantRuleAction)}
-                >
-                  {RULE_ACTION_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-                {actionNeedsPath && (
-                  <input
-                    className="nx-input min-w-36 flex-1 py-0.5 font-mono text-[11px]"
-                    placeholder="/var/log/**"
-                    aria-label="规则路径范围"
-                    value={rulePath}
-                    onChange={(event) => setRulePath(event.target.value)}
-                  />
-                )}
-                <select
-                  className="nx-input py-0.5 text-[11px]"
-                  aria-label="规则有效期"
-                  value={ruleExpiry}
-                  onChange={(event) => setRuleExpiry(event.target.value)}
-                >
-                  {RULE_EXPIRY_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="nx-btn nx-btn-outline"
-                  disabled={ruleBusy || ruleDevice === "" || (actionNeedsPath && rulePath.trim() === "")}
-                  onClick={() => void addRule()}
-                >
-                  {ruleBusy ? "保存中…" : "添加"}
-                </button>
-              </div>
-              <div className="mt-1 text-[10px] leading-relaxed text-neutral-500">
-                {RULE_ACTION_OPTIONS.find((o) => o.value === ruleAction)?.hint}
-              </div>
+        )}
+        {needle && matches.length === 0 && !pickedTarget && <div className="nx-hint mt-1 text-[10.5px]">没有匹配的未授权主机。</div>}
+        {pickedTarget && (
+          <div className="mt-1 rounded-lg border border-neutral-800/60 px-2 py-1.5">
+            <div className="mb-1 flex items-center gap-1.5">
+              <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200">{pickedTarget.name}</span>
+              <span className="nx-count">{ASSET_KIND_LABEL[pickedTarget.kind] ?? pickedTarget.kind}</span>
+              <button className="nx-icon-btn nx-icon-btn-sm" title="取消" onClick={() => setPicked(null)}>
+                <IconClose size={10} />
+              </button>
             </div>
+            <HostGrantEditor target={pickedTarget} state={state} />
+          </div>
+        )}
+      </div>
+
+      <div className="text-[10px] leading-relaxed text-neutral-500">{scopeNote}</div>
+    </div>
+  );
+}
+
+function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantState }) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [action, setAction] = useState<AiGrantRuleAction>("edit_file");
+  const [path, setPath] = useState("");
+  const [expiry, setExpiry] = useState(RULE_EXPIRY_OPTIONS[0].value);
+  const grant = state.grants[target.id];
+  const rules = state.rules.filter((r) => r.deviceId === target.id);
+  const busy = state.busy === target.id;
+  const now = Date.now();
+  const database = DB_ASSET_KINDS.has(target.kind);
+  const needsPath = RULE_ACTION_OPTIONS.find((o) => o.value === action)?.needsPath ?? true;
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-[10.5px] text-neutral-500">免确认</span>
+        {kindsOf(target).map((kind) => {
+          const on = grant?.kinds.includes(kind) ?? false;
+          return (
+            <label key={kind} className="flex cursor-pointer items-center gap-1 text-[11px] text-neutral-300" title={KIND_HINT[kind]}>
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5"
+                aria-label={`${target.name}：${KIND_LABEL[kind]}免确认`}
+                checked={on}
+                disabled={busy}
+                onChange={(event) => void state.setGrant(target, kind, event.target.checked)}
+              />
+              {KIND_LABEL[kind]}
+            </label>
+          );
+        })}
+      </div>
+      {!database && (
+        <>
+          {rules.map((rule) => (
+            <div key={rule.id} className="flex items-center gap-1.5 text-[11px]">
+              <span className="min-w-0 flex-1 truncate font-mono text-neutral-300" title={ruleScopeText(rule)}>
+                {ruleScopeText(rule)}
+              </span>
+              <span className={`shrink-0 text-[10.5px] ${(rule.expiresAt ?? 0) !== 0 && (rule.expiresAt ?? 0) <= now ? "text-red-300" : "text-neutral-500"}`}>
+                {ruleExpiryText(rule, now)}
+              </span>
+              <button
+                className="nx-icon-btn nx-icon-btn-sm shrink-0"
+                title={`撤销规则：${ruleScopeText(rule)}`}
+                aria-label={`撤销规则：${ruleScopeText(rule)}`}
+                disabled={busy}
+                onClick={() => void state.revokeRule(rule)}
+              >
+                <IconClose size={10} />
+              </button>
+            </div>
+          ))}
+          {formOpen ? (
+            <div className="flex flex-wrap items-center gap-1">
+              <select
+                className="nx-input py-0.5 text-[11px]"
+                aria-label="规则动作"
+                value={action}
+                onChange={(event) => setAction(event.target.value as AiGrantRuleAction)}
+              >
+                {RULE_ACTION_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              {needsPath && (
+                <input
+                  className="nx-input min-w-28 flex-1 py-0.5 font-mono text-[11px]"
+                  placeholder="/etc/nginx/**"
+                  aria-label="规则路径范围"
+                  value={path}
+                  onChange={(event) => setPath(event.target.value)}
+                />
+              )}
+              <select
+                className="nx-input py-0.5 text-[11px]"
+                aria-label="规则有效期"
+                value={expiry}
+                onChange={(event) => setExpiry(event.target.value)}
+              >
+                {RULE_EXPIRY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="nx-btn nx-btn-outline nx-btn-xs"
+                disabled={busy || (needsPath && path.trim() === "")}
+                onClick={() =>
+                  void state.addRule(target, action, path, expiry).then((saved) => {
+                    if (saved) {
+                      setPath("");
+                      setFormOpen(false);
+                    }
+                  })
+                }
+              >
+                添加
+              </button>
+              <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => setFormOpen(false)}>
+                取消
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="flex w-fit items-center gap-1 text-[10.5px] text-neutral-500 hover:text-neutral-300"
+              title="只对匹配的路径或动作免确认，例如只允许修改 /etc/nginx/** 下的文件"
+              onClick={() => setFormOpen(true)}
+            >
+              <IconPlus size={10} />
+              添加路径规则
+            </button>
           )}
-        </div>
+        </>
       )}
     </div>
   );

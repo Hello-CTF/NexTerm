@@ -157,8 +157,9 @@ describe("M134 AI copy", () => {
     click(view!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("设备长期授权和授权规则仅放行匹配的普通操作");
-    expect(text).toContain("高危或无法判断的操作仍逐次确认");
+    const readOnly = [...view!.container.querySelectorAll('[role="radio"]')].find((radio) => radio.textContent === "只读");
+    expect(readOnly?.getAttribute("title")).toContain("已开启免确认授权的操作除外");
+    expect(text).toContain("高危和无法判断的操作始终询问");
   });
 
   it("explains the model selector without BYOK jargon", async () => {
