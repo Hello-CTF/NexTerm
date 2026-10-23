@@ -2,7 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { click, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { buttonWithText, passwordField, submitPasswordForm } from "./passwordFormTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -150,18 +151,14 @@ describe("Desktop credential protection disable paths", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护");
   });
 
-  it("uses DPAPI migration instead of an empty password when the new password is left blank", async () => {
-    const { promptText } = await import("../../ui/dialogs");
-    vi.mocked(promptText)
-      .mockResolvedValueOnce("current-password")
-      .mockResolvedValueOnce("");
+  it("uses DPAPI migration instead of an empty password when both new fields are left blank", async () => {
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => (vaultCard()?.textContent ?? "").includes("已开启"));
 
-    const changeButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
-      (button) => button.textContent === "修改密码",
-    );
-    changeButton!.click();
+    click(buttonWithText(vaultCard()!, "修改密码")!);
+    await flushUntil(() => passwordField(vaultCard()!, "当前密码") !== null);
+    expect(vaultCard()?.textContent).toContain("将关闭密码保护");
+    await submitPasswordForm(vaultCard()!, { current: "current-password" }, "关闭密码保护");
     await flushUntil(() => mocks.initDpapi.mock.calls.length > 0);
 
     expect(mocks.initDpapi).toHaveBeenCalledWith("current-password");
@@ -169,27 +166,21 @@ describe("Desktop credential protection disable paths", () => {
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
   });
-
-  it("does not ask for a new password after old-password validation fails", async () => {
-    const { promptText } = await import("../../ui/dialogs");
-    vi.mocked(promptText).mockResolvedValue("wrong-password");
+  it("keeps the form open with the error when the current password is wrong", async () => {
     mocks.unlock.mockRejectedValueOnce({ code: "bad_master_password", message: "incorrect protection password" });
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => (vaultCard()?.textContent ?? "").includes("已开启"));
 
-    const changeButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
-      (button) => button.textContent === "修改密码",
-    );
-    changeButton!.click();
-    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    click(buttonWithText(vaultCard()!, "修改密码")!);
+    await flushUntil(() => passwordField(vaultCard()!, "当前密码") !== null);
+    await submitPasswordForm(vaultCard()!, { current: "wrong-password", next: "new-password-1" }, "确认修改");
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("保护密码错误：incorrect protection password"));
 
     expect(mocks.unlock).toHaveBeenCalledWith("wrong-password");
-    expect(promptText).toHaveBeenCalledTimes(1);
     expect(mocks.changePassword).not.toHaveBeenCalled();
     expect(mocks.initDpapi).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("error", "保护密码错误：incorrect protection password");
+    expect(passwordField(vaultCard()!, "当前密码")).not.toBeNull();
   });
-
   it("distinguishes local key storage from sync upload requirements in desktop copy", async () => {
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() =>
@@ -221,25 +212,21 @@ describe("Desktop passwordless vault", () => {
 
   it("sets a new password with an empty old password without asking for the old password", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
-    const { promptText } = await import("../../ui/dialogs");
-    vi.mocked(promptText).mockResolvedValue("brand-new-password");
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
 
-    const setButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
-      (b) => b.textContent === "设置密码",
-    )!;
-    setButton.click();
+    click(buttonWithText(vaultCard()!, "设置密码")!);
+    await flushUntil(() => passwordField(vaultCard()!, "新密码") !== null);
+    expect(passwordField(vaultCard()!, "当前密码")).toBeNull();
+    await submitPasswordForm(vaultCard()!, { next: "brand-new-password" }, "设置密码");
     await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
 
-    expect(promptText).toHaveBeenCalledTimes(1);
     expect(mocks.unlock).toHaveBeenCalledWith("");
     expect(mocks.changePassword).toHaveBeenCalledWith("", "brand-new-password");
     expect(mocks.initDpapi).not.toHaveBeenCalled();
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.toast).toHaveBeenCalledWith("success", "已开启密码保护 · 凭据不受影响");
   });
-
   it("migrates to system key protection with an empty password after disable-encryption confirmation", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
     const { ask, promptText } = await import("../../ui/dialogs");

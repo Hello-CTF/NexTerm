@@ -201,11 +201,13 @@ describe("desktop account card regular user", () => {
     mountCards("auth");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("修改密码"));
 
-    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="当前密码"]')!, "old-pass-123");
-    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="新密码（至少 8 位）"]')!, "new-pass-456");
-    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="确认新密码"]')!, "new-pass-456");
-    await flush();
     clickButton(mounted!.container, "修改密码");
+    await flush();
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="当前密码"]')!, "old-pass-123");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="新密码"]')!, "new-pass-456");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="确认新密码"]')!, "new-pass-456");
+    await flush();
+    clickButton(mounted!.container, "确认修改");
 
     await flushUntil(() => mocks.changePassword.mock.calls.length === 1);
     expect(mocks.changePassword).toHaveBeenCalledWith("old-pass-123", "new-pass-456");
@@ -222,11 +224,13 @@ describe("desktop account card regular user", () => {
     const { client } = mountCards("auth");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("修改密码"));
 
-    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="当前密码"]')!, "old-pass-123");
-    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="新密码（至少 8 位）"]')!, "new-pass-456");
-    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="确认新密码"]')!, "new-pass-456");
-    await flush();
     clickButton(mounted!.container, "修改密码");
+    await flush();
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="当前密码"]')!, "old-pass-123");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="新密码"]')!, "new-pass-456");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="确认新密码"]')!, "new-pass-456");
+    await flush();
+    clickButton(mounted!.container, "确认修改");
     await flushUntil(() => mocks.changePassword.mock.calls.length === 1);
 
     const bob = { ...ALICE, id: "u-bob", username: "bob" };
@@ -251,11 +255,13 @@ describe("desktop account card regular user", () => {
     mountCards("auth");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("修改密码"));
 
-    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="当前密码"]')!, "wrong-pass-1");
-    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="新密码（至少 8 位）"]')!, "new-pass-456");
-    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="确认新密码"]')!, "new-pass-456");
-    await flush();
     clickButton(mounted!.container, "修改密码");
+    await flush();
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="当前密码"]')!, "wrong-pass-1");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="新密码"]')!, "new-pass-456");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[aria-label="确认新密码"]')!, "new-pass-456");
+    await flush();
+    clickButton(mounted!.container, "确认修改");
 
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("当前密码不正确"));
   });

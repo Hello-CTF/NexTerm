@@ -16,6 +16,7 @@ import { copyText as copyToClipboard } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
 import { ServerSecurityLink } from "./ServerSecurityLink";
+import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
 import {
   IconCheckCircle,
   IconCopy,
@@ -80,19 +81,11 @@ export function AuthCard() {
       : null
     : pendingRecoveryKey;
 
-  const [oldPassword, setOldPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [pwdBusy, setPwdBusy] = useState(false);
-  const [pwdError, setPwdError] = useState<string | null>(null);
+  const [pwdOpen, setPwdOpen] = useState(false);
 
   useEffect(() => {
     passwordRequest.current += 1;
-    setOldPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
-    setPwdBusy(false);
-    setPwdError(null);
+    setPwdOpen(false);
   }, [accountKey]);
 
   const loadDevices = useCallback(() => {
@@ -143,44 +136,27 @@ export function AuthCard() {
     void loadSessions();
   }, [loadSessions]);
 
-  const submitPassword = async (e: FormEvent) => {
-    e.preventDefault();
+  // submitPassword runs from PasswordChangeForm, which validates the pair and
+  // shows a thrown error inline. A completion after an account switch is ignored.
+  const submitPassword = async (oldPassword: string, newPassword: string) => {
     if (!accountKey) return;
     const actionAccount = accountKey;
     const request = ++passwordRequest.current;
     const stillCurrent = () => accountKeyRef.current === actionAccount && passwordRequest.current === request;
-    setPwdError(null);
-    if (newPassword.length < 8) {
-      setPwdError("新密码至少 8 位");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPwdError("两次输入的密码不一致");
-      return;
-    }
-    setPwdBusy(true);
-    try {
-      if (DESKTOP) {
-        // Desktop: the DEK re-wrap happens inside the Go engine session; the recovery key is issued only in this response, so show it immediately.
-        const r = await remoteAccountApi.changePassword(oldPassword, newPassword);
-        if (r.recoveryKey) {
-          const recovery = { formatted: r.recoveryKey, canonical: r.recoveryKey };
-          desktopPendingRecoveryKeys.set(actionAccount, recovery);
-          if (stillCurrent()) setDesktopRecoveryState({ accountKey: actionAccount, recovery });
-        }
-      } else {
-        await changePassword(oldPassword, newPassword);
+    if (DESKTOP) {
+      // Desktop: the DEK re-wrap happens inside the Go engine session; the recovery key is issued only in this response, so show it immediately.
+      const r = await remoteAccountApi.changePassword(oldPassword, newPassword);
+      if (r.recoveryKey) {
+        const recovery = { formatted: r.recoveryKey, canonical: r.recoveryKey };
+        desktopPendingRecoveryKeys.set(actionAccount, recovery);
+        if (stillCurrent()) setDesktopRecoveryState({ accountKey: actionAccount, recovery });
       }
-      if (!stillCurrent()) return;
-      setOldPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      pushToast("success", "密码已修改，其他设备上的会话已退出");
-    } catch (err) {
-      if (stillCurrent()) setPwdError(describeError(err));
-    } finally {
-      if (stillCurrent()) setPwdBusy(false);
+    } else {
+      await changePassword(oldPassword, newPassword);
     }
+    if (!stillCurrent()) return;
+    setPwdOpen(false);
+    pushToast("success", "密码已修改，其他设备上的会话已退出");
   };
 
   const revokeDevice = async (device: AccountDevice) => {
@@ -408,43 +384,18 @@ export function AuthCard() {
           <p className="nx-hint mb-3">
             修改密码会用新密码重新加密数据密钥，服务端已保存的加密内容不受影响。修改成功后会签发新的恢复密钥（旧的立即作废），并退出其他设备上的会话。
           </p>
-          <form onSubmit={(e) => void submitPassword(e)} className="flex flex-col gap-2">
-            <input
-              className="nx-input max-w-[280px]"
-              type="password"
-              placeholder="当前密码"
-              value={oldPassword}
-              autoComplete="current-password"
-              onChange={(e) => setOldPassword(e.target.value)}
+          {pwdOpen ? (
+            <PasswordChangeForm
+              requireCurrent
+              submitLabel="确认修改"
+              onSubmit={submitPassword}
+              onCancel={() => setPwdOpen(false)}
             />
-            <input
-              className="nx-input max-w-[280px]"
-              type="password"
-              placeholder="新密码（至少 8 位）"
-              value={newPassword}
-              autoComplete="new-password"
-              onChange={(e) => setNewPassword(e.target.value)}
-            />
-            <input
-              className="nx-input max-w-[280px]"
-              type="password"
-              placeholder="确认新密码"
-              value={confirmPassword}
-              autoComplete="new-password"
-              onChange={(e) => setConfirmPassword(e.target.value)}
-            />
-            {pwdError && (
-              <div className="nx-alert nx-alert-danger flex items-start gap-2">
-                <IconXCircle size={13} className="mt-0.5 shrink-0" />
-                <span>{pwdError}</span>
-              </div>
-            )}
-            <div>
-              <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={pwdBusy || !oldPassword || !newPassword}>
-                {pwdBusy ? "修改中…" : "修改密码"}
-              </button>
-            </div>
-          </form>
+          ) : (
+            <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => setPwdOpen(true)}>
+              修改密码
+            </button>
+          )}
         </section>
       )}
 

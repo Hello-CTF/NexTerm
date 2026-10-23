@@ -10,6 +10,7 @@ import {
   type TerminalDefaultMode,
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
+import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { isMobile, isWindows } from "../../app/platform";
 import { ModelManager } from "../ai/ModelPanel";
@@ -169,6 +170,7 @@ export function SettingsView() {
 
   const [protPwd, setProtPwd] = useState("");
   const [pendingEnable, setPendingEnable] = useState(false);
+  const [vaultPasswordOpen, setVaultPasswordOpen] = useState(false);
   const [autoLockDraft, setAutoLockDraft] = useState("");
 
   const qc = useQueryClient();
@@ -249,58 +251,36 @@ export function SettingsView() {
       .catch((e) => pushToast("error", describeError(e)));
   };
 
-  const changeVaultPassword = async () => {
-    const old = vaultPasswordless
-      ? ""
-      : await promptText("输入当前保护密码：", "", { secret: true });
-    if (old === null) return;
-    try {
-      await vaultApi.unlock(old);
-    } catch (e) {
-      pushToast("error", describeError(e));
-      return;
-    }
-    const next = await promptText(
-      vaultPasswordless
-        ? "设置保护密码（至少 8 位）："
-        : "输入新密码（至少 8 位，留空则关闭密码保护）：",
-      "",
-      { secret: true },
-    );
-    if (next === null) return;
-    if (vaultPasswordless && next === "") return;
-    if (next.length > 0 && next.length < 8) {
-      pushToast("error", "新密码至少 8 位");
-      return;
-    }
-    try {
-      if (next === "" && systemProtection) {
-        await vaultApi.initDpapi(old);
-        pushToast("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
-      } else {
-        await vaultApi.changePassword(old, next);
-        // On iOS/Android with biometric material enrolled, silently re-store it with the new password after a change; otherwise biometric unlock would consistently fail
-        if (next !== "" && isMobile()) {
-          try {
-            const bio = await biometricApi.status();
-            if (bio.canEvaluate && bio.hasMaterial) await biometricApi.enable(next);
-          } catch {
-            // A failed re-store only means the password unlock is needed again next time
-          }
+  // changeVaultPassword runs from PasswordChangeForm: it verifies the current
+  // password, then sets the new one. An empty new password removes password
+  // protection; errors are thrown so the form shows them inline.
+  const changeVaultPassword = async (old: string, next: string) => {
+    await vaultApi.unlock(old);
+    if (next === "" && systemProtection) {
+      await vaultApi.initDpapi(old);
+      pushToast("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
+    } else {
+      await vaultApi.changePassword(old, next);
+      // On iOS/Android with biometric material enrolled, silently re-store it with the new password after a change; otherwise biometric unlock would consistently fail
+      if (next !== "" && isMobile()) {
+        try {
+          const bio = await biometricApi.status();
+          if (bio.canEvaluate && bio.hasMaterial) await biometricApi.enable(next);
+        } catch {
+          // A failed re-store only means the password unlock is needed again next time
         }
-        pushToast(
-          "success",
-          next === ""
-            ? "已关闭密码保护 · 凭据不受影响"
-            : vaultPasswordless
-              ? "已开启密码保护 · 凭据不受影响"
-              : "密码已修改 · 凭据不受影响",
-        );
       }
-      refreshVault();
-    } catch (e) {
-      pushToast("error", describeError(e));
+      pushToast(
+        "success",
+        next === ""
+          ? "已关闭密码保护 · 凭据不受影响"
+          : vaultPasswordless
+            ? "已开启密码保护 · 凭据不受影响"
+            : "密码已修改 · 凭据不受影响",
+      );
     }
+    setVaultPasswordOpen(false);
+    refreshVault();
   };
 
   const disableVaultEncryption = async () => {
@@ -823,7 +803,7 @@ export function SettingsView() {
                       .catch((e) => pushToast("error", describeError(e)));
                   });
                 } else if (vaultPasswordless) {
-                  void changeVaultPassword();
+                  setVaultPasswordOpen(true);
                 } else {
                   setProtPwd("");
                   setPendingEnable(true);
@@ -870,12 +850,26 @@ export function SettingsView() {
             </div>
           )}
 
-          {vault?.mode === "master" && (
+          {vault?.mode === "master" && vaultPasswordOpen && (
+            <div className="mt-3">
+              <PasswordChangeForm
+                requireCurrent={!vaultPasswordless}
+                submitLabel={vaultPasswordless ? "设置密码" : "确认修改"}
+                allowEmpty={!vaultPasswordless}
+                emptyLabel="关闭密码保护"
+                onSubmit={changeVaultPassword}
+                onCancel={() => setVaultPasswordOpen(false)}
+              />
+              <p className="nx-hint mt-1.5 text-[11px]">保护密码只用于这台设备上的凭据库，忘记后已保存的凭据无法恢复。</p>
+            </div>
+          )}
+
+          {vault?.mode === "master" && !vaultPasswordOpen && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {!vaultPasswordless && <span className="nx-hint">锁定与解锁在「凭据」页</span>}
               <button
                 className={`nx-btn nx-btn-sm ${vaultPasswordless ? "nx-btn-primary" : "nx-btn-outline"}`}
-                onClick={() => void changeVaultPassword()}
+                onClick={() => setVaultPasswordOpen(true)}
               >
                 {vaultPasswordless ? "设置密码" : "修改密码"}
               </button>

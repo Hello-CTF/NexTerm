@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { buttonWithText, passwordField, submitPasswordForm } from "./passwordFormTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -215,19 +216,14 @@ describe("SettingsView first-run credential protection guidance", () => {
 
   it("uses the change-password flow with an empty old password when setting a password in a passwordless vault", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
-    const { promptText } = await import("../../ui/dialogs");
-    vi.mocked(promptText).mockResolvedValue("brand-new-password");
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("加密已启用 · 未设密码");
 
-    const setButton = Array.from(vaultCard()!.querySelectorAll("button")).find(
-      (b) => b.textContent === "设置密码",
-    )!;
-    setButton.click();
+    click(buttonWithText(vaultCard()!, "设置密码")!);
+    await flushUntil(() => passwordField(vaultCard()!, "新密码") !== null);
+    await submitPasswordForm(vaultCard()!, { next: "brand-new-password" }, "设置密码");
     await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
 
-    expect(promptText).toHaveBeenCalledTimes(1);
-    expect(promptText).toHaveBeenCalledWith("设置保护密码（至少 8 位）：", "", { secret: true });
     expect(mocks.unlock).toHaveBeenCalledWith("");
     expect(mocks.changePassword).toHaveBeenCalledWith("", "brand-new-password");
     expect(mocks.initMaster).not.toHaveBeenCalled();
@@ -235,40 +231,40 @@ describe("SettingsView first-run credential protection guidance", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已开启密码保护 · 凭据不受影响");
     await flushUntil(() => mocks.vaultStatus.mock.calls.length >= 2);
   });
-
   it("enters the set-password flow instead of reinitializing when the passwordless vault toggle is changed", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
-    const { promptText } = await import("../../ui/dialogs");
-    vi.mocked(promptText).mockResolvedValue("brand-new-password");
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("加密已启用 · 未设密码");
 
-    protectionToggle()!.click();
+    click(protectionToggle()!);
+    await flushUntil(() => passwordField(vaultCard()!, "新密码") !== null);
+    await submitPasswordForm(vaultCard()!, { next: "brand-new-password" }, "设置密码");
     await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
 
     expect(mocks.initMaster).not.toHaveBeenCalled();
-    expect(passwordInput()).toBeNull();
     expect(mocks.changePassword).toHaveBeenCalledWith("", "brand-new-password");
+    await flushUntil(() => passwordInput() === null);
   });
-
-  it("treats a blank new password as cancellation and does not change the password", async () => {
+  it("cannot set an empty or mismatched password and cancels without changes", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
-    const { promptText } = await import("../../ui/dialogs");
-    vi.mocked(promptText).mockResolvedValue("");
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("加密已启用 · 未设密码");
 
-    const setButton = Array.from(vaultCard()!.querySelectorAll("button")).find(
-      (b) => b.textContent === "设置密码",
-    )!;
-    setButton.click();
-    await flushUntil(() => vi.mocked(promptText).mock.calls.length > 0);
+    click(buttonWithText(vaultCard()!, "设置密码")!);
+    await flushUntil(() => passwordField(vaultCard()!, "新密码") !== null);
+    expect(buttonWithText(vaultCard()!, "设置密码")?.disabled).toBe(true);
+    setInputValue(passwordField(vaultCard()!, "新密码")!, "brand-new-password");
+    setInputValue(passwordField(vaultCard()!, "确认新密码")!, "brand-new-passw0rd");
+    await flush();
+    expect(vaultCard()?.textContent).toContain("两次输入不一致");
+    expect(buttonWithText(vaultCard()!, "设置密码")?.disabled).toBe(true);
+    click(buttonWithText(vaultCard()!, "取消")!);
     await flush();
 
+    expect(passwordField(vaultCard()!, "新密码")).toBeNull();
     expect(mocks.changePassword).not.toHaveBeenCalled();
     expect(mocks.initMaster).not.toHaveBeenCalled();
   });
-
   it("uses an empty password to disable protection when the toggle is switched off", async () => {
     mocks.vaultStatus.mockResolvedValue(MASTER_VAULT);
     const { ask, promptText } = await import("../../ui/dialogs");

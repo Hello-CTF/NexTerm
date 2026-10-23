@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { clickButton, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
+import { passwordField, submitPasswordForm } from "./passwordFormTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -59,6 +60,8 @@ function vaultCard(): HTMLElement | null {
 
 async function changePassword(): Promise<void> {
   clickButton(vaultCard()!, "修改密码");
+  await flushUntil(() => passwordField(vaultCard()!, "当前密码") !== null);
+  await submitPasswordForm(vaultCard()!, { current: "old-master-password", next: "new-master-password" }, "确认修改");
   await flushUntil(() => mocks.changePassword.mock.calls.length === 1);
 }
 
@@ -79,9 +82,6 @@ beforeEach(() => {
   mocks.changePassword.mockResolvedValue(undefined);
   mocks.bioStatus.mockResolvedValue({ available: true, canEvaluate: true, hasMaterial: true });
   mocks.bioEnable.mockResolvedValue(undefined);
-  mocks.promptText
-    .mockResolvedValueOnce("old-master-password")
-    .mockResolvedValueOnce("new-master-password");
 });
 
 afterEach(() => {
