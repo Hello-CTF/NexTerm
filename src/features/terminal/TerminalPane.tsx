@@ -1198,7 +1198,7 @@ export function TerminalPane({
     if (durable) return;
     // This tab started as a regular terminal while the helper deployed; only new tabs become durable.
     setHelperReady(true);
-    pushToast("success", "持久终端已就绪：当前标签仍是普通终端，新建的标签可转到后台", {
+    pushToast("success", "持久终端已就绪：当前标签仍是普通终端，新建的标签将是持久终端", {
       label: "新建持久标签",
       onSelect: () => {
         const session = useUi.getState().sessions.find((item) => item.id === sessionId);

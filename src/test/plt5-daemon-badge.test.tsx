@@ -19,11 +19,11 @@ function badgeText(durable: boolean, sessionKind?: string): string {
 
 describe("Daemon", () => {
   it("shows the daemon badge for durable tabs", () => {
-    expect(badgeText(true, "ssh")).toContain("守护终端");
+    expect(badgeText(true, "ssh")).toContain("持久终端");
   });
 
   it("shows the direct-connection badge for volatile tabs", () => {
-    expect(badgeText(false, "ssh")).toContain("直接连接");
+    expect(badgeText(false, "ssh")).toContain("普通终端");
   });
 
   it("hides for container and line-mode sessions", () => {
@@ -46,7 +46,7 @@ describe("Daemon helper states", () => {
   });
 
   it("keeps durable tabs labelled as daemon terminals regardless of helper state", () => {
-    expect(render({ durable: true, sessionKind: "ssh", helper: { state: "ready" } }).textContent).toContain("守护终端");
+    expect(render({ durable: true, sessionKind: "ssh", helper: { state: "ready" } }).textContent).toContain("持久终端");
   });
 
   it("opens the helper from the badge on SSH tabs", () => {

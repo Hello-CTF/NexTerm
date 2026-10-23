@@ -15,17 +15,17 @@ export interface DaemonProps {
 export function Daemon({ durable, sessionKind, helper, onOpenHelper }: DaemonProps) {
   if (sessionKind === "winrm" || sessionKind === "docker") return null;
   let className = "nx-badge";
-  let label = "直接连接";
-  let title = "直接连接：进程随会话断开而退出，不会转入后台会话";
+  let label = "普通终端";
+  let title = "普通终端：断开连接后进程即结束，无法转入后台";
   let busy = false;
   if (durable) {
     className = "nx-badge nx-badge-green";
-    label = "守护终端";
-    title = "进程由 NexTerm 后台托管：断开连接或重启应用后，可在「后台会话」接管";
+    label = "持久终端";
+    title = "持久终端：断开连接或重启应用后进程继续运行，可在「后台会话」接管";
   } else if (helper?.state === "installing") {
     className = "nx-badge nx-badge-blue";
     label = "正在启用持久终端";
-    title = `${helper.stage}。当前标签是普通终端，完成后新建的标签可转到后台`;
+    title = `${helper.stage}…当前标签是普通终端，完成后新建的标签将是持久终端`;
     busy = true;
   } else if (helper?.state === "attention") {
     className = "nx-badge nx-badge-amber";
@@ -33,8 +33,8 @@ export function Daemon({ durable, sessionKind, helper, onOpenHelper }: DaemonPro
     title = helper.message ? `持久终端暂时不可用：${helper.message}` : "持久终端暂时不可用，点击查看选项";
   } else if (helper?.state === "ready") {
     className = "nx-badge nx-badge-blue";
-    label = "直接连接 · 持久已就绪";
-    title = "持久终端助手已就绪。当前标签仍是普通终端，新建的标签可转到后台";
+    label = "普通终端 · 持久已就绪";
+    title = "持久终端已就绪。当前标签仍是普通终端，新建的标签将是持久终端";
   }
   const content = (
     <>
