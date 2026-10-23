@@ -41,6 +41,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   const [editing, setEditing] = useState<Snippet | "new" | null>(null);
   const [runbookOpen, setRunbookOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const modalRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const layer = useOverlayFocus(true, modalRef);
@@ -123,11 +124,26 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
     trapOverlayTab(event, modalRef.current);
   };
 
+  if (runbookOpen) {
+    return (
+      <RunbookPanel
+        snippets={snippets.data ?? []}
+        onBack={() => setRunbookOpen(false)}
+        onClose={onClose}
+      />
+    );
+  }
+
+  const needle = query.trim().toLowerCase();
+  const visible = (snippets.data ?? []).filter(
+    (s) => !needle || s.name.toLowerCase().includes(needle) || s.body.toLowerCase().includes(needle),
+  );
+
   return (
     <div className="nx-overlay" onClick={onClose}>
       <div
         ref={modalRef}
-        className="nx-modal flex max-w-[420px] flex-col"
+        className="nx-modal flex nx-modal-md max-h-[80vh] flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -138,15 +154,33 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
         <div className="nx-modal-header shrink-0">
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">命令片段</span>
           <div className="nx-spacer" />
+          <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" title="新建片段" onClick={() => setEditing("new")}>
+            <IconPlus size={12} />
+            新建片段
+          </button>
           <button
-            className="nx-icon-btn nx-icon-btn-sm"
-            title="新建片段"
-            onClick={() => setEditing("new")}
+            type="button"
+            className="nx-btn nx-btn-sm"
+            title="按顺序在多台主机上执行多个片段或命令"
+            onClick={() => setRunbookOpen(true)}
           >
-            <IconPlus size={14} />
+            <IconPlay size={12} />
+            执行流程
           </button>
         </div>
-        <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
+        <div className="nx-modal-body flex min-h-[320px] flex-1 flex-col overflow-y-auto">
+          <p className="nx-hint mb-2.5">
+            「插入」只把命令写进终端输入行，不按回车；「执行」写入后按回车。内容包含换行或控制字符时会先让你确认。
+          </p>
+          {(snippets.data?.length ?? 0) > 6 && (
+            <input
+              className="nx-input mb-2"
+              placeholder="搜索片段名称或命令"
+              aria-label="搜索片段"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          )}
           {snippets.isPending && (
             <div className="flex items-center gap-2 px-1 py-6 text-[12px] text-neutral-500">
               <IconLoader size={13} className="animate-spin" /> 正在加载片段…
@@ -163,78 +197,80 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
             </div>
           )}
           {snippets.data && snippets.data.length === 0 && (
-            <div className="nx-hint px-1 py-8 text-center">
-              还没有片段 — 点右上角 + 新建一个。
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
+              <span className="nx-empty-icon">
+                <IconCommand size={18} />
+              </span>
+              <div className="nx-hint">把常用命令存成片段，以后一键插入或执行。</div>
+              <button type="button" className="nx-btn nx-btn-sm" onClick={() => setEditing("new")}>
+                <IconPlus size={12} />
+                新建第一个片段
+              </button>
             </div>
           )}
-          {snippets.data?.map((s) => {
-            const insertLabel = `插入片段「${s.name}」`;
-            const executeLabel = `执行片段「${s.name}」`;
-            return (
-              <div key={s.id} className="nx-row nx-row-reserve-actions mb-0.5">
-                <IconCommand size={13} className="shrink-0 text-neutral-500" />
-                <span className="min-w-0 flex-1 truncate text-[12.5px]">{s.name}</span>
-                <span className="nx-row-actions">
+          {snippets.data && snippets.data.length > 0 && visible.length === 0 && (
+            <div className="nx-hint py-6 text-center">没有匹配的片段。</div>
+          )}
+          <div className="flex flex-col gap-1">
+            {visible.map((s) => {
+              const insertLabel = `插入片段「${s.name}」`;
+              const executeLabel = `执行片段「${s.name}」`;
+              const preview = s.body.split("\n")[0];
+              return (
+                <div key={s.id} data-snippet-row className="flex items-center gap-2 rounded-md border border-neutral-800/70 px-2.5 py-1.5">
+                  <IconCommand size={13} className="shrink-0 text-neutral-500" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[12.5px] text-neutral-200">{s.name}</div>
+                    <div className="truncate font-mono text-[11px] text-neutral-500" title={s.body}>
+                      {preview}
+                      {s.body.includes("\n") ? " …" : ""}
+                    </div>
+                  </div>
                   <button
-                    className="nx-icon-btn nx-icon-btn-sm"
+                    className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
                     title="插入到当前终端"
                     aria-label={insertLabel}
                     disabled={deletingId === s.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void insert(s);
-                    }}
+                    onClick={() => void insert(s)}
                   >
-                    <IconInsert size={12} />
+                    <IconInsert size={11} />
+                    插入
                   </button>
                   <button
-                    className="nx-icon-btn nx-icon-btn-sm"
+                    className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
                     title="在当前终端执行"
                     aria-label={executeLabel}
                     disabled={deletingId === s.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void execute(s);
-                    }}
+                    onClick={() => void execute(s)}
                   >
-                    <IconPlay size={12} />
+                    <IconPlay size={11} />
+                    执行
                   </button>
                   <button
-                    className="nx-icon-btn nx-icon-btn-sm"
+                    className="nx-icon-btn nx-icon-btn-sm shrink-0"
                     title="编辑片段"
                     aria-label={`编辑片段「${s.name}」`}
                     disabled={deletingId === s.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditing(s);
-                    }}
+                    onClick={() => setEditing(s)}
                   >
                     <IconEdit size={12} />
                   </button>
                   <button
-                    className="nx-icon-btn nx-icon-btn-sm is-danger"
+                    className="nx-icon-btn nx-icon-btn-sm is-danger shrink-0"
                     title="删除片段"
                     aria-label={`删除片段「${s.name}」`}
                     disabled={deletingId === s.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void remove(s);
-                    }}
+                    onClick={() => void remove(s)}
                   >
-                    {deletingId === s.id ? (
-                      <IconLoader size={12} className="animate-spin" />
-                    ) : (
-                      <IconTrash size={12} />
-                    )}
+                    {deletingId === s.id ? <IconLoader size={12} className="animate-spin" /> : <IconTrash size={12} />}
                   </button>
-                </span>
-              </div>
-            );
-          })}
+                </div>
+              );
+            })}
+          </div>
         </div>
         <div className="nx-modal-footer shrink-0">
-          <span className="nx-hint mr-auto">插入仅写入输入行，不自动执行；执行会在写入后回车提交；包含回车、换行或控制字符时需先确认。</span>
-          <button type="button" className="nx-btn" onClick={() => setRunbookOpen(true)}>Runbook</button>
+          <div className="nx-spacer" />
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
             关闭
           </button>
@@ -250,7 +286,6 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           }}
         />
       )}
-      {runbookOpen && <RunbookPanel snippets={snippets.data ?? []} onClose={() => setRunbookOpen(false)} />}
       {promptElement}
     </div>
   );
@@ -341,7 +376,7 @@ function SnippetEditor({
     >
       <div
         ref={modalRef}
-        className="nx-modal flex max-w-[420px] flex-col"
+        className="nx-modal flex nx-modal-md flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -371,15 +406,19 @@ function SnippetEditor({
             <textarea
               id={bodyId}
               className="nx-textarea font-mono text-[11.5px]"
-              rows={4}
+              rows={8}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="docker ps --format '{{.Names}}'"
               aria-describedby={hintId}
             />
-            <div id={hintId} className="nx-hint mt-1.5">
-              <div>变量：{"{{service}}"} 必填，{"{{service=nginx}}"} 设默认值，{"{{service|multiline}}"} 使用多行输入；内建变量：{"{{asset.name}}"}、{"{{asset.host}}"}、{"{{asset.tags}}"}。</div>
-              <div className="mt-1">↳ 插入仅写入输入行，不自动执行；执行会在写入后回车提交；包含回车、换行或控制字符时需先确认。</div>
+            <div id={hintId} className="nx-hint mt-1.5 leading-relaxed">
+              <div>
+                可以用变量，运行时会让你填写：<code>{"{{service}}"}</code> 必填，<code>{"{{service=nginx}}"}</code> 带默认值，<code>{"{{service|multiline}}"}</code> 多行输入。
+              </div>
+              <div className="mt-1">
+                自动填入当前主机信息：<code>{"{{asset.name}}"}</code> 名称、<code>{"{{asset.host}}"}</code> 地址、<code>{"{{asset.tags}}"}</code> 标签。
+              </div>
             </div>
           </div>
           {error && (

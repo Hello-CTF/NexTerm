@@ -104,7 +104,7 @@ function TypedEnvironmentConfirmationDialog({
     <div className="nx-overlay" onClick={onCancel}>
       <div
         ref={modalRef}
-        className="nx-modal max-w-[560px]"
+        className="nx-modal nx-modal-md"
         role="dialog"
         aria-modal="true"
         aria-label={`确认生产环境${action}`}

@@ -1020,7 +1020,7 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
     <div className="nx-overlay z-[70]" onClick={() => void requestClose()}>
       <div
         ref={modalRef}
-        className="nx-modal max-w-[760px]"
+        className="nx-modal nx-modal-lg"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

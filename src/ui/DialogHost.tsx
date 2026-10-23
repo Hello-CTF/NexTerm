@@ -383,7 +383,7 @@ export function DialogHost() {
       <div className="nx-overlay" onClick={cancelActive}>
         <div
           ref={modalRef}
-          className="nx-modal max-w-[440px]"
+          className="nx-modal nx-modal-sm"
           role={warning ? "alertdialog" : "dialog"}
           aria-modal="true"
           aria-labelledby={titleId}
@@ -461,7 +461,7 @@ export function DialogHost() {
       <div className="nx-overlay" onClick={cancelActive}>
         <div
           ref={modalRef}
-          className="nx-modal max-w-[420px]"
+          className="nx-modal nx-modal-sm"
           role={warning ? "alertdialog" : "dialog"}
           aria-modal="true"
           aria-labelledby={titleId}

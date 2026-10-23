@@ -227,7 +227,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
       <div className="nx-overlay" onClick={phase === "applying" ? undefined : onClose}>
         <div
           ref={modalRef}
-          className="nx-modal flex max-w-[560px] flex-col"
+          className="nx-modal flex nx-modal-md flex-col"
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}

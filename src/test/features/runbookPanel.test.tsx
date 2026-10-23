@@ -254,14 +254,14 @@ describe("RunbookPanel", () => {
     addSnippet("snippet-one");
     addSnippet("snippet-two");
     startRun();
-    await flushUntil(() => document.body.textContent?.includes("填写 Runbook 步骤变量") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("填写步骤变量") ?? false);
     expect(mocks.advance).not.toHaveBeenCalled();
     const prompt = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
-      (dialog) => dialog.textContent?.includes("填写 Runbook 步骤变量"),
+      (dialog) => dialog.textContent?.includes("填写步骤变量"),
     );
     if (!prompt) throw new Error("variable prompt not found");
     clickButton(prompt, "继续");
-    await flushUntil(() => text().includes("确认以下已渲染命令"));
+    await flushUntil(() => text().includes("确认下面要执行的命令"));
 
     expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({
       stepNumber: 1,
@@ -305,12 +305,12 @@ describe("RunbookPanel", () => {
       return Promise.resolve(next);
     }).mockImplementationOnce((input: { stepNumber: number }) => Promise.resolve(finishCurrentStep(input.stepNumber)));
     addSnippet("snippet-one");
-    setSelectValue(panel().container.querySelector('select[aria-label="Runbook 确认策略"]')!, "production_only");
+    setSelectValue(panel().container.querySelector('select[aria-label="执行前确认"]')!, "production_only");
     click(targetCheckbox("s1"));
     clickButton(panel().container, "开始运行");
-    await flushUntil(() => document.body.textContent?.includes("填写 Runbook 步骤变量") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("填写步骤变量") ?? false);
     const prompt = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
-      (dialog) => dialog.textContent?.includes("填写 Runbook 步骤变量"),
+      (dialog) => dialog.textContent?.includes("填写步骤变量"),
     );
     if (!prompt) throw new Error("variable prompt not found");
     clickButton(prompt, "继续");
@@ -351,12 +351,12 @@ describe("RunbookPanel", () => {
       return Promise.resolve(next);
     }).mockImplementationOnce((input: { stepNumber: number }) => Promise.resolve(finishCurrentStep(input.stepNumber)));
     addSnippet("snippet-one");
-    setSelectValue(panel().container.querySelector('select[aria-label="Runbook 确认策略"]')!, "production_only");
+    setSelectValue(panel().container.querySelector('select[aria-label="执行前确认"]')!, "production_only");
     click(targetCheckbox("s1"));
     clickButton(panel().container, "开始运行");
-    await flushUntil(() => document.body.textContent?.includes("填写 Runbook 步骤变量") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("填写步骤变量") ?? false);
     const prompt = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
-      (dialog) => dialog.textContent?.includes("填写 Runbook 步骤变量"),
+      (dialog) => dialog.textContent?.includes("填写步骤变量"),
     );
     if (!prompt) throw new Error("variable prompt not found");
     clickButton(prompt, "继续");
@@ -394,11 +394,11 @@ describe("RunbookPanel", () => {
     expect(mocks.prepare).toHaveBeenCalledTimes(1);
     expect(mocks.advance).toHaveBeenCalledTimes(1);
     expect(text()).toContain("已跳过");
-    expect(panel().container.querySelector('[data-testid="runbook-step-results-1"]')?.textContent).toContain("非零退出");
+    expect(panel().container.querySelector('[data-testid="runbook-step-results-1"]')?.textContent).toContain("命令失败");
     clickButton(panel().container, "查看本次运行历史");
     await flushUntil(() => panel().container.querySelector('[data-testid="runbook-history"]') !== null);
     const history = panel().container.querySelector('[data-testid="runbook-history"]')!;
-    expect(history.textContent).toContain("runbook-history");
+    expect(history.querySelector('[title^="流程 runbook-history"]')).not.toBeNull();
     expect(history.textContent).toContain("到第 1 / 2 步");
     expect(history.textContent).toContain("ssh-s1");
     expect(history.textContent).toContain("remote_exit");
@@ -415,7 +415,7 @@ describe("RunbookPanel", () => {
     await flushUntil(() => text().includes("确认并执行第 1 步"));
     clickButton(panel().container, "确认并执行第 1 步");
     await flushUntil(() => mocks.advance.mock.calls.length === 1);
-    clickButton(panel().container, "取消 Runbook");
+    clickButton(panel().container, "取消执行");
     await flushUntil(() => mocks.cancel.mock.calls.length === 1);
     expect(mocks.cancel).toHaveBeenCalledWith(mocks.start.mock.calls[0][0].runId);
     await act(async () => {
@@ -438,7 +438,7 @@ describe("RunbookPanel", () => {
     addSnippet("snippet-two");
     startRun();
     await flushUntil(() => mocks.prepare.mock.calls.length === 1);
-    clickButton(panel().container, "取消 Runbook");
+    clickButton(panel().container, "取消执行");
     await flushUntil(() => text().includes("已取消"));
     if (!currentState) throw new Error("run not started");
     const stale = structuredClone(currentState);
@@ -462,7 +462,7 @@ describe("RunbookPanel", () => {
     });
     mocks.cancel.mockResolvedValue(undefined);
     addSnippet("snippet-two");
-    setSelectValue(panel().container.querySelector('select[aria-label="Runbook 确认策略"]')!, "production_only");
+    setSelectValue(panel().container.querySelector('select[aria-label="执行前确认"]')!, "production_only");
     startRun();
     await flushUntil(() => mocks.start.mock.calls.length === 1);
     const runId = mocks.start.mock.calls[0][0].runId as string;
@@ -486,7 +486,7 @@ describe("RunbookPanel", () => {
     const pendingPrepare = deferred<RunbookRunState>();
     mocks.prepare.mockReturnValue(pendingPrepare.promise);
     addSnippet("snippet-two");
-    setSelectValue(panel().container.querySelector('select[aria-label="Runbook 确认策略"]')!, "production_only");
+    setSelectValue(panel().container.querySelector('select[aria-label="执行前确认"]')!, "production_only");
     startRun();
     await flushUntil(() => mocks.prepare.mock.calls.length === 1);
     if (!currentState) throw new Error("run not started");
@@ -537,7 +537,7 @@ describe("RunbookPanel", () => {
     expect(mocks.advance).toHaveBeenCalledTimes(1);
     expect(mocks.prepare).toHaveBeenCalledTimes(2);
 
-    clickButton(panel().container, "取消 Runbook");
+    clickButton(panel().container, "取消执行");
     await flushUntil(() => mocks.cancel.mock.calls.length === 1);
     await act(async () => {
       pendingCancel.resolve(canceledState());

@@ -93,7 +93,7 @@ export function BroadcastPickerModal(props: {
     <div className="nx-overlay" onClick={props.onClose}>
       <div
         ref={modalRef}
-        className="nx-modal max-w-[560px]"
+        className="nx-modal nx-modal-md"
         role="dialog"
         aria-modal="true"
         aria-label="命令广播目标"

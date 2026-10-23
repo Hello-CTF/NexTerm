@@ -741,7 +741,7 @@ describe("snippets panel", () => {
   it("renders the empty state", async () => {
     mocks.snippetList.mockResolvedValue([]);
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("还没有片段"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("把常用命令存成片段"));
   });
 
   it("surfaces a list failure with a retry that refetches", async () => {
@@ -848,7 +848,7 @@ describe("snippets panel", () => {
     await waitFor(() => expect(mocks.snippetCreate).toHaveBeenCalledWith("两段", "echo a\necho b"));
     await waitFor(() => expect(mounted!.container.textContent).toContain("两段"));
 
-    const rows = [...mounted.container.querySelectorAll(".nx-row")];
+    const rows = [...mounted.container.querySelectorAll("[data-snippet-row]")];
     const createdRow = rows.find((r) => r.textContent?.includes("两段"));
     if (!createdRow) throw new Error("Created snippet row not found");
     click(buttonByTitle(createdRow, "插入到当前终端"));

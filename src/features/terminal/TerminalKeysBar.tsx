@@ -164,7 +164,7 @@ export function TerminalKeysBar({ onSend, onFocus, broadcastCount }: TerminalKey
     <div className="nx-overlay" onClick={() => setConfigOpen(false)}>
       <div
         ref={modalRef}
-        className="nx-modal max-w-[400px]"
+        className="nx-modal nx-modal-sm"
         role="dialog"
         aria-modal="true"
         aria-label="终端按键配置"

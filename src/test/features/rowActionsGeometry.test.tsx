@@ -263,17 +263,16 @@ describe("persistent row action bar DOM contract", () => {
     ]);
   });
 
-  it("gives snippet rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
+  it("keeps snippet action buttons visible on every row", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
-    const row = [...mounted!.container.querySelectorAll<HTMLElement>(".nx-row")].find((r) =>
+    const row = [...mounted!.container.querySelectorAll<HTMLElement>("[data-snippet-row]")].find((r) =>
       r.textContent?.includes("check container status"),
     );
     if (!row) throw new Error("snippet row not found: check container status");
-    expect(row.className).toContain("nx-row-reserve-actions");
-    expect(actionLabels(row)).toEqual([
+    expect([...row.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.getAttribute("aria-label"))).toEqual([
       "插入片段「check container status」",
       "执行片段「check container status」",
       "编辑片段「check container status」",

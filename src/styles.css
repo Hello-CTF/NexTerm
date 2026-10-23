@@ -1629,6 +1629,23 @@
     box-shadow: var(--shadow-pop);
   }
 
+  /* Three standard dialog sizes: small for confirmations and short forms,
+     medium for lists and longer forms, large for multi-step workflows. The
+     large size keeps a minimum height so a workflow does not jump in size as
+     it fills in. */
+  .nx-modal-sm {
+    max-width: 440px;
+  }
+
+  .nx-modal-md {
+    max-width: 640px;
+  }
+
+  .nx-modal-lg {
+    max-width: 960px;
+    min-height: min(640px, 100%);
+  }
+
   .nx-modal-header {
     display: flex;
     flex: 0 0 auto;

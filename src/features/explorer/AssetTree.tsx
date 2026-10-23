@@ -1907,7 +1907,7 @@ function GroupRenameDialog({
     <div className="nx-overlay" onClick={() => void requestClose()}>
       <div
         ref={modalRef}
-        className="nx-modal flex max-w-[340px] flex-col"
+        className="nx-modal flex nx-modal-sm flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -2537,7 +2537,7 @@ export function AssetEditor({
     <div className="nx-overlay" onClick={() => void requestClose()}>
       <div
         ref={modalRef}
-        className="nx-modal flex max-w-[380px] flex-col"
+        className="nx-modal flex nx-modal-sm flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

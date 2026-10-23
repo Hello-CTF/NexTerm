@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { clickButton, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 import type { ProjectTemplate } from "../../app/projectTemplates";
 import type { Workspace } from "../../app/store";
 import type { ProjectInventory } from "../../app/projectFocus";
@@ -44,6 +44,7 @@ vi.mock("../../ipc/commands", () => ({
 import { useUi } from "../../app/store";
 import { projectFocusForGroup } from "../../app/projectFocus";
 import { ProjectTemplatePanel } from "../../features/explorer/ProjectTemplatePanel";
+import { ProjectSelector } from "../../features/explorer/ProjectSelector";
 import { executeProjectTemplateCommands, type ProjectCommandDependencies } from "../../features/terminal/projectTemplateCommands";
 
 const groups = [
@@ -107,14 +108,14 @@ afterEach(() => {
 
 describe("project template panel", () => {
   it("saves the selected project with per-tab commands and no runtime identifiers", async () => {
-    mounted = mount(createElement(ProjectTemplatePanel, { groups }));
-    clickButton(mounted.container, "保存当前");
+    mounted = mount(createElement(ProjectTemplatePanel, { groups, onClose: () => undefined }));
+    clickButton(mounted.container, "保存当前工作区");
     const command = mounted.container.querySelector<HTMLInputElement>('input[aria-label="启动命令：host / logs"]')!;
     setInputValue(command, "tail -f app.log");
     clickButton(mounted.container, "保存模板");
     await flushUntil(() => {
       const saveCurrent = [...mounted!.container.querySelectorAll("button")]
-        .find((button) => button.textContent?.trim() === "保存当前");
+        .find((button) => button.textContent?.trim() === "保存当前工作区");
       return mocks.create.mock.calls.length === 1 &&
         !mounted!.container.textContent?.includes("模板名称") && saveCurrent?.disabled === false;
     });
@@ -128,15 +129,14 @@ describe("project template panel", () => {
 
   it("lists, opens and closes without forcing focus, with an explicit focus action", async () => {
     mocks.list.mockResolvedValue([savedTemplate()]);
-    mounted = mount(createElement(ProjectTemplatePanel, { groups }));
-    clickButton(mounted.container, "项目模板（0）");
+    mounted = mount(createElement(ProjectTemplatePanel, { groups, onClose: () => undefined }));
     await flushUntil(() => mounted!.container.textContent?.includes("Daily") ?? false);
 
     clickButton(mounted.container, "打开");
     await flushUntil(() => mocks.open.mock.calls.length === 1);
     await flush();
     expect(useUi.getState().activeProject).toBe(projectFocusForGroup("project"));
-    clickButton(mounted.container, "关闭项目");
+    clickButton(mounted.container, "关闭本项目工作区");
     await flushUntil(() => mocks.close.mock.calls.length === 1);
     await flush();
     expect(mocks.close.mock.calls[0][0]).toBe(projectFocusForGroup("project"));
@@ -146,8 +146,7 @@ describe("project template panel", () => {
 
   it("does not delete when A's confirmation resolves after an account switch", async () => {
     mocks.list.mockResolvedValue([savedTemplate()]);
-    mounted = mount(createElement(ProjectTemplatePanel, { groups }));
-    clickButton(mounted.container, "项目模板（0）");
+    mounted = mount(createElement(ProjectTemplatePanel, { groups, onClose: () => undefined }));
     await flushUntil(() => mounted!.container.textContent?.includes("Daily") ?? false);
 
     let resolveAsk!: (value: boolean) => void;
@@ -171,8 +170,7 @@ describe("project template panel", () => {
 
   it("does not rename when A's prompt resolves after an account switch", async () => {
     mocks.list.mockResolvedValue([savedTemplate()]);
-    mounted = mount(createElement(ProjectTemplatePanel, { groups }));
-    clickButton(mounted.container, "项目模板（0）");
+    mounted = mount(createElement(ProjectTemplatePanel, { groups, onClose: () => undefined }));
     await flushUntil(() => mounted!.container.textContent?.includes("Daily") ?? false);
 
     let resolvePrompt!: (value: string | null) => void;
@@ -239,8 +237,7 @@ describe("production confirmation for template startup commands", () => {
 
   async function openTemplateWithChallenge(): Promise<void> {
     mocks.list.mockResolvedValue([commandTemplate()]);
-    mounted = mount(createElement(ProjectTemplatePanel, { groups }));
-    clickButton(mounted.container, "项目模板（0）");
+    mounted = mount(createElement(ProjectTemplatePanel, { groups, onClose: () => undefined }));
     await flushUntil(() => mounted!.container.textContent?.includes("Daily") ?? false);
     clickButton(mounted.container, "打开");
     await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境执行"]') !== null);
@@ -317,8 +314,7 @@ describe("production confirmation for template startup commands", () => {
     openThroughRealCommands();
     mocks.prepareBroadcast.mockRejectedValueOnce(legacyChallenge());
     mocks.list.mockResolvedValue([commandTemplate()]);
-    mounted = mount(createElement(ProjectTemplatePanel, { groups }));
-    clickButton(mounted.container, "项目模板（0）");
+    mounted = mount(createElement(ProjectTemplatePanel, { groups, onClose: () => undefined }));
     await flushUntil(() => mounted!.container.textContent?.includes("Daily") ?? false);
     clickButton(mounted.container, "打开");
 
@@ -326,5 +322,20 @@ describe("production confirmation for template startup commands", () => {
     expect(document.body.querySelector('[role="dialog"][aria-label="确认生产环境执行"]')).toBeNull();
     expect(mocks.prepareBroadcast).toHaveBeenCalledTimes(1);
     expect(mocks.write).not.toHaveBeenCalled();
+  });
+});
+
+describe("ProjectSelector template entry", () => {
+  it("keeps templates collapsed until the toggle is used and closes from the panel", async () => {
+    mounted = mount(createElement(ProjectSelector, { groups }));
+    await flush();
+    expect(mounted.container.querySelector('section[aria-label="项目模板"]')).toBeNull();
+    click(mounted.container.querySelector('button[aria-label="项目模板"]')!);
+    await flush();
+    expect(mounted.container.querySelector('section[aria-label="项目模板"]')).not.toBeNull();
+    expect(mounted.container.textContent).toContain("存成模板");
+    click(mounted.container.querySelector('button[aria-label="收起项目模板"]')!);
+    await flush();
+    expect(mounted.container.querySelector('section[aria-label="项目模板"]')).toBeNull();
   });
 });

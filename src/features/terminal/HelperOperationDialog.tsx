@@ -27,7 +27,7 @@ export function HelperOperationDialog({ onClose, ...props }: HelperOperationView
         aria-modal="true"
         aria-label="持久终端组件"
         tabIndex={-1}
-        className="nx-modal relative max-w-[480px]"
+        className="nx-modal relative nx-modal-sm"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           event.stopPropagation();

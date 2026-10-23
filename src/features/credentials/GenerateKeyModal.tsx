@@ -73,7 +73,7 @@ export function GenerateKeyModal({
     <div className="nx-overlay" onClick={onClose}>
       <div
         ref={modalRef}
-        className="nx-modal flex max-w-[480px] flex-col"
+        className="nx-modal flex nx-modal-sm flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

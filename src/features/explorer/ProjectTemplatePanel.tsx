@@ -20,6 +20,7 @@ import type { BroadcastProductionChallenge } from "../production/productionChall
 import { ask, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
+import { IconClose } from "../../ui/icons";
 
 interface ProductionPrompt {
   challenge: BroadcastProductionChallenge;
@@ -28,14 +29,15 @@ interface ProductionPrompt {
   resolve(environmentNames: string[] | null): void;
 }
 
-export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[] }) {
+// ProjectTemplatePanel saves the open workspaces as a reusable template and
+// reopens them later. It is opened from the project selector and closes itself.
+export function ProjectTemplatePanel({ groups, onClose }: { groups: readonly AssetGroup[]; onClose: () => void }) {
   const activeProject = useUi((state) => state.activeProject);
   const workspaces = useUi((state) => state.workspaces);
   const inventory = useUi((state) => state.projectInventory);
   const setActiveProject = useUi((state) => state.setActiveProject);
   const pushToast = useUi((state) => state.pushToast);
   const accountEpoch = useUi((state) => state.accountEpoch);
-  const [expanded, setExpanded] = useState(false);
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
   const [draft, setDraft] = useState<ProjectTemplateDraft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -43,7 +45,6 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
   const [productionPrompt, setProductionPrompt] = useState<ProductionPrompt | null>(null);
 
   useEffect(() => {
-    if (!expanded) return;
     let current = true;
     setError(null);
     void Promise.resolve().then(() => createProjectTemplateRepository().list()).then((items) => {
@@ -54,7 +55,7 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
     return () => {
       current = false;
     };
-  }, [expanded]);
+  }, []);
 
   const reload = async () => {
     const items = await createProjectTemplateRepository().list();
@@ -162,28 +163,31 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
   });
 
   return (
-    <section className="px-2 pb-2" aria-label="项目模板">
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          className="nx-btn nx-btn-ghost nx-btn-sm flex-1 justify-start"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          项目模板（{templates.length}）
+    <section className="mx-2 mb-2 min-w-0 rounded-md border border-neutral-800/70 p-2" aria-label="项目模板">
+      <div className="mb-1 flex items-center gap-1">
+        <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-neutral-200">项目模板</span>
+        <button type="button" className="nx-icon-btn nx-icon-btn-sm" title="收起项目模板" aria-label="收起项目模板" onClick={onClose}>
+          <IconClose size={11} />
         </button>
-        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy} onClick={beginSave}>
-          保存当前
+      </div>
+      <div className="mb-1.5 text-[10.5px] leading-relaxed text-neutral-500">
+        把现在打开的工作区（连接、分屏和启动命令）存成模板，下次一键全部打开。
+      </div>
+      <div className="flex flex-wrap gap-1">
+        <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" disabled={busy} onClick={beginSave}>
+          保存当前工作区
         </button>
-        <button
-          type="button"
-          className="nx-btn nx-btn-ghost nx-btn-sm"
-          disabled={busy || activeProject === ALL_PROJECTS}
-          title="关闭当前项目工作区；可保留的终端只 detach，不 kill"
-          onClick={closeCurrent}
-        >
-          关闭项目
-        </button>
+        {activeProject !== ALL_PROJECTS && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-xs"
+            disabled={busy}
+            title="关闭这个项目的所有工作区；能保留的终端会转到后台，不会结束进程"
+            onClick={closeCurrent}
+          >
+            关闭本项目工作区
+          </button>
+        )}
       </div>
       {error && <div role="alert" className="mt-1 break-words text-[11px] text-red-300">{error}</div>}
       {draft && (
@@ -223,10 +227,10 @@ export function ProjectTemplatePanel({ groups }: { groups: readonly AssetGroup[]
           </div>
         </div>
       )}
-      {expanded && !draft && (
+      {!draft && (
         <div className="mt-1 flex flex-col gap-1">
           {templates.length === 0 ? (
-            <span className="py-1 text-[11px] text-neutral-500">还没有项目模板</span>
+            <span className="py-1 text-[11px] text-neutral-500">还没有模板。先打开要用的连接和分屏，再点「保存当前工作区」。</span>
           ) : templates.map((template) => (
             <div key={template.id} className="rounded border border-neutral-800/60 px-2 py-1.5 text-[11px]">
               <div className="truncate font-medium text-neutral-200" title={template.name}>{template.name}</div>

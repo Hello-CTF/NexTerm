@@ -465,7 +465,7 @@ export function BulkMaintenanceDialog({ sessions, onClose }: { sessions: Session
     <div className="nx-overlay" onClick={onClose}>
       <div
         ref={modalRef}
-        className="nx-modal flex max-h-[88vh] max-w-[900px] flex-col"
+        className="nx-modal flex max-h-[88vh] nx-modal-lg flex-col"
         role="dialog"
         aria-modal="true"
         aria-label="批量主机维护"
