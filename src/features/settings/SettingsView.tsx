@@ -11,6 +11,7 @@ import {
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
+import { onSettingsSection } from "./settingsNavigation";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { isMobile, isWindows } from "../../app/platform";
 import { ModelManager } from "../ai/ModelPanel";
@@ -54,26 +55,60 @@ import {
   IconZap,
 } from "../../ui/icons";
 
-// Settings section navigation: small tabs jump directly to the corresponding section; targets are nodes always rendered in this view.
+// Settings are split into a few groups shown one at a time; each group lists
+// its sections in the navigation. Hidden groups stay mounted, so switching
+// groups never drops an open form.
+type SettingsGroupId = "general" | "ai" | "security" | "account";
+
+const SETTINGS_GROUPS: readonly { id: SettingsGroupId; label: string; icon: typeof IconMonitor }[] = [
+  { id: "general", label: "通用", icon: IconSettings },
+  { id: "ai", label: "AI", icon: IconSparkles },
+  { id: "security", label: "安全", icon: IconLock },
+  { id: "account", label: "账号与同步", icon: IconServer },
+];
+
 const SETTINGS_SECTIONS = [
-  { id: "settings-appearance", label: "外观", icon: IconMonitor },
-  { id: "settings-terminal", label: "终端", icon: IconTerminal },
-  { id: "settings-ai-model", label: "AI 模型", icon: IconSparkles },
-  { id: "settings-ai-rules", label: "AI 拦截", icon: IconShield },
-  { id: "settings-ai-skills", label: "AI 技能", icon: IconLayers },
-  { id: "settings-memory", label: "长期记忆", icon: IconBot },
-  { id: "settings-vault", label: "凭据保护", icon: IconLock },
-  { id: "settings-known-hosts", label: "已知主机", icon: IconShieldCheck },
-  { id: "settings-production", label: "生产安全", icon: IconAlert },
-  { id: "settings-account", label: "账号同步", icon: IconServer },
-  { id: "settings-bundle", label: "资产包", icon: IconArchive },
-  { id: "settings-share", label: "分享", icon: IconGlobe },
-  { id: "settings-shortcuts", label: "快捷键", icon: IconCommand },
-  { id: "settings-update", label: "软件更新", icon: IconDownload },
+  { id: "settings-appearance", label: "外观", icon: IconMonitor, group: "general" },
+  { id: "settings-terminal", label: "终端", icon: IconTerminal, group: "general" },
+  { id: "settings-shortcuts", label: "快捷键", icon: IconCommand, group: "general" },
+  { id: "settings-update", label: "软件更新", icon: IconDownload, group: "general" },
+  { id: "settings-ai-model", label: "模型", icon: IconSparkles, group: "ai" },
+  { id: "settings-ai-rules", label: "拦截规则", icon: IconShield, group: "ai" },
+  { id: "settings-ai-skills", label: "技能", icon: IconLayers, group: "ai" },
+  { id: "settings-memory", label: "记忆", icon: IconBot, group: "ai" },
+  { id: "settings-vault", label: "凭据保护", icon: IconLock, group: "security" },
+  { id: "settings-known-hosts", label: "已知主机", icon: IconShieldCheck, group: "security" },
+  { id: "settings-production", label: "生产安全", icon: IconAlert, group: "security" },
+  { id: "settings-account", label: "账号同步", icon: IconServer, group: "account" },
+  { id: "settings-bundle", label: "资产包", icon: IconArchive, group: "account" },
+  { id: "settings-share", label: "分享", icon: IconGlobe, group: "account" },
 ].filter((section) => {
   if (section.id === "settings-update") return DESKTOP;
   return true;
-}) as readonly { id: string; label: string; icon: typeof IconMonitor }[];
+}) as readonly { id: string; label: string; icon: typeof IconMonitor; group: SettingsGroupId }[];
+
+function groupOfSection(id: string): SettingsGroupId {
+  return SETTINGS_SECTIONS.find((section) => section.id === id)?.group ?? "general";
+}
+
+const GROUP_KEY = "nexterm.settingsGroup.v1";
+
+function loadGroup(): SettingsGroupId {
+  try {
+    const saved = localStorage.getItem(GROUP_KEY);
+    return SETTINGS_GROUPS.some((group) => group.id === saved) ? (saved as SettingsGroupId) : "general";
+  } catch {
+    return "general";
+  }
+}
+
+function saveGroup(group: SettingsGroupId): void {
+  try {
+    localStorage.setItem(GROUP_KEY, group);
+  } catch {
+    // The group choice is a convenience; failing to remember it is harmless.
+  }
+}
 
 function jumpToSection(id: string): void {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -194,15 +229,42 @@ export function SettingsView() {
     setNavOpenState(open);
     saveNavOpen(open);
   };
-  const [activeSection, setActiveSection] = useState<string>(SETTINGS_SECTIONS[0].id);
-  const jump = (id: string) => {
-    setActiveSection(id);
-    jumpToSection(id);
+  const [group, setGroupState] = useState<SettingsGroupId>(() =>
+    !DESKTOP && window.location.hash === "#settings-account" ? "account" : loadGroup(),
+  );
+  const groupSections = SETTINGS_SECTIONS.filter((section) => section.group === group);
+  const [activeSection, setActiveSection] = useState<string>(groupSections[0]?.id ?? SETTINGS_SECTIONS[0].id);
+  const openGroup = (next: SettingsGroupId) => {
+    setGroupState(next);
+    saveGroup(next);
+    setActiveSection(SETTINGS_SECTIONS.find((section) => section.group === next)?.id ?? SETTINGS_SECTIONS[0].id);
+    contentRef.current?.scrollTo?.({ top: 0 });
   };
+  const jump = (id: string) => {
+    const target = groupOfSection(id);
+    if (target !== group) {
+      setGroupState(target);
+      saveGroup(target);
+      // The section only gets a layout once its group is shown.
+      requestAnimationFrame(() => jumpToSection(id));
+    } else {
+      jumpToSection(id);
+    }
+    setActiveSection(id);
+  };
+
+  // Links from elsewhere in the app open the section's group, then scroll.
+  const jumpRef = useRef(jump);
+  jumpRef.current = jump;
+  useEffect(() => onSettingsSection((id) => jumpRef.current(id)), []);
 
   useEffect(() => {
     if (DESKTOP || window.location.hash !== "#settings-account") return;
-    const frame = requestAnimationFrame(() => jump("settings-account"));
+    // The initial group is already "account" for this link; only scroll.
+    const frame = requestAnimationFrame(() => {
+      setActiveSection("settings-account");
+      jumpToSection("settings-account");
+    });
     return () => cancelAnimationFrame(frame);
   }, []);
 
@@ -216,8 +278,9 @@ export function SettingsView() {
     const update = () => {
       frame = null;
       const top = el.getBoundingClientRect().top;
-      let current: string = SETTINGS_SECTIONS[0].id;
-      for (const s of SETTINGS_SECTIONS) {
+      const visible = SETTINGS_SECTIONS.filter((section) => section.group === group);
+      let current: string = visible[0]?.id ?? SETTINGS_SECTIONS[0].id;
+      for (const s of visible) {
         const node = el.querySelector<HTMLElement>(`#${s.id}`);
         if (node && node.getBoundingClientRect().top - top <= 64) current = s.id;
       }
@@ -233,7 +296,7 @@ export function SettingsView() {
       el.removeEventListener("scroll", onScroll);
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [group]);
 
   const saveAutoLock = () => {
     const trimmed = autoLockDraft.trim();
@@ -326,7 +389,7 @@ export function SettingsView() {
     setRuleDraft(rulePrefill);
     setRuleDraftOpen(true);
     useUi.getState().setAiRulePrefill(null);
-    document.getElementById("settings-ai-rules")?.scrollIntoView({ block: "start" });
+    jumpRef.current("settings-ai-rules");
   }, [rulePrefill]);
 
   const saveRules = async (rules: string[]) => {
@@ -411,19 +474,20 @@ export function SettingsView() {
             className="flex gap-1.5 overflow-x-auto px-5 py-1.5 md:hidden"
             data-testid="settings-nav-chips"
           >
-            {SETTINGS_SECTIONS.map((s) => (
+            {SETTINGS_GROUPS.map((g) => (
               <button
-                key={s.id}
+                key={g.id}
                 type="button"
-                className="nx-chip shrink-0"
-                onClick={() => jump(s.id)}
+                className={`nx-chip shrink-0 ${g.id === group ? "is-active" : ""}`}
+                aria-pressed={g.id === group}
+                onClick={() => openGroup(g.id)}
               >
-                {s.label}
+                {g.label}
               </button>
             ))}
           </div>
           <div
-            className="hidden md:flex md:flex-col md:gap-1 md:p-2"
+            className="hidden md:flex md:flex-col md:gap-0.5 md:p-2"
             data-testid="settings-nav-toc"
           >
             <button
@@ -436,42 +500,57 @@ export function SettingsView() {
             >
               {navOpen ? <IconChevronLeft size={13} /> : <IconChevronRight size={13} />}
             </button>
-            {navOpen ? (
-              SETTINGS_SECTIONS.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`w-full rounded-md px-2 py-1.5 text-left text-[13px] whitespace-nowrap transition-colors ${
-                    s.id === activeSection
-                      ? "bg-neutral-800/70 text-neutral-100"
-                      : "text-neutral-400 hover:bg-neutral-800/45 hover:text-neutral-200"
-                  }`}
-                  aria-current={s.id === activeSection ? "true" : undefined}
-                  onClick={() => jump(s.id)}
-                >
-                  {s.label}
-                </button>
-              ))
-            ) : (
-              SETTINGS_SECTIONS.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`nx-icon-btn self-center${s.id === activeSection ? " is-active" : ""}`}
-                  title={s.label}
-                  aria-label={s.label}
-                  aria-current={s.id === activeSection ? "true" : undefined}
-                  onClick={() => jump(s.id)}
-                >
-                  <s.icon size={14} />
-                </button>
-              ))
-            )}
+            {navOpen
+              ? SETTINGS_GROUPS.map((g) => (
+                  <div key={g.id} className="flex flex-col">
+                    <button
+                      type="button"
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium whitespace-nowrap transition-colors ${
+                        g.id === group ? "text-neutral-100" : "text-neutral-400 hover:bg-neutral-800/45 hover:text-neutral-200"
+                      }`}
+                      aria-expanded={g.id === group}
+                      onClick={() => openGroup(g.id)}
+                    >
+                      <g.icon size={13} />
+                      {g.label}
+                    </button>
+                    {g.id === group &&
+                      SETTINGS_SECTIONS.filter((section) => section.group === g.id).map((section) => (
+                        <button
+                          key={section.id}
+                          type="button"
+                          className={`w-full rounded-md py-1 pl-7 pr-2 text-left text-[12.5px] whitespace-nowrap transition-colors ${
+                            section.id === activeSection
+                              ? "bg-neutral-800/70 text-neutral-100"
+                              : "text-neutral-400 hover:bg-neutral-800/45 hover:text-neutral-200"
+                          }`}
+                          aria-current={section.id === activeSection ? "true" : undefined}
+                          onClick={() => jump(section.id)}
+                        >
+                          {section.label}
+                        </button>
+                      ))}
+                  </div>
+                ))
+              : SETTINGS_GROUPS.map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    className={`nx-icon-btn self-center${g.id === group ? " is-active" : ""}`}
+                    title={g.label}
+                    aria-label={g.label}
+                    aria-current={g.id === group ? "true" : undefined}
+                    onClick={() => openGroup(g.id)}
+                  >
+                    <g.icon size={14} />
+                  </button>
+                ))}
           </div>
         </nav>
 
         <div className="min-w-0 flex-1 overflow-y-auto" ref={contentRef}>
           <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 p-5">
+        <div className="flex flex-col gap-4" hidden={group !== "general"} data-settings-group="general">
         <div id="settings-appearance" className="scroll-mt-12">
           <AppearanceCard />
         </div>
@@ -569,6 +648,17 @@ export function SettingsView() {
           )}
         </section>
 
+        <div id="settings-shortcuts" className="scroll-mt-12">
+          <ShortcutsCard />
+        </div>
+
+        {DESKTOP && (
+          <div id="settings-update" className="scroll-mt-12">
+            <UpdateCard />
+          </div>
+        )}
+        </div>
+        <div className="flex flex-col gap-4" hidden={group !== "ai"} data-settings-group="ai">
         <section id="settings-ai-model" className="nx-card scroll-mt-12">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <IconSparkles size={15} className="text-blue-300" />
@@ -752,7 +842,8 @@ export function SettingsView() {
         <div id="settings-memory" className="scroll-mt-12">
           <MemoryCard />
         </div>
-
+        </div>
+        <div className="flex flex-col gap-4" hidden={group !== "security"} data-settings-group="security">
         <section id="settings-vault" className="nx-card scroll-mt-12">
           <div className="mb-1 flex items-center gap-2">
             <IconLock size={15} className="text-neutral-400" />
@@ -914,7 +1005,8 @@ export function SettingsView() {
         </div>
 
         <ProductionSettingsPanel />
-
+        </div>
+        <div className="flex flex-col gap-4" hidden={group !== "account"} data-settings-group="account">
         <div id="settings-account" className="scroll-mt-12">
           <SyncCard />
         </div>
@@ -926,16 +1018,7 @@ export function SettingsView() {
         <div id="settings-share" className="scroll-mt-12">
           <ShareCard />
         </div>
-
-        <div id="settings-shortcuts" className="scroll-mt-12">
-          <ShortcutsCard />
         </div>
-
-        {DESKTOP && (
-          <div id="settings-update" className="scroll-mt-12">
-            <UpdateCard />
-          </div>
-        )}
           </div>
         </div>
       </div>

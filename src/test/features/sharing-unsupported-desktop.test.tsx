@@ -18,6 +18,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { ShareCard } from "../../features/settings/ShareCard";
+import { onSettingsSection } from "../../features/settings/settingsNavigation";
 
 let mounted: MountedView | undefined;
 
@@ -29,15 +30,9 @@ afterEach(() => {
 });
 
 describe("Share card - desktop logged out", () => {
-  it("renders login guidance without requests and scrolls the button to the Account Sync section", async () => {
+  it("renders login guidance without requests and links the button to the Account Sync section", async () => {
     vi.stubGlobal("fetch", mocks.fetch);
     mocks.status.mockResolvedValue({ configured: false, loggedIn: false, seq: 0, verifiedAt: 0, lastError: "" });
-    const scrollIntoView = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
-    // The share card lives inside the settings page, so the "Account Sync" section must exist; add a target node to verify the scroll behavior.
-    const anchor = document.createElement("div");
-    anchor.id = "settings-account";
-    document.body.appendChild(anchor);
     mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("登录服务端账号后可用") ?? false);
 
@@ -46,7 +41,11 @@ describe("Share card - desktop logged out", () => {
 
     const guide = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("去设置"));
     expect(guide).toBeTruthy();
+    // The settings view opens the section's group before scrolling.
+    const requested = vi.fn();
+    const stop = onSettingsSection(requested);
     click(guide as HTMLButtonElement);
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    stop();
+    expect(requested).toHaveBeenCalledWith("settings-account");
   });
 });

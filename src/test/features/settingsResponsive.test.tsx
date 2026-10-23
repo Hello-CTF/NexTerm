@@ -71,6 +71,7 @@ function withClient(node: React.ReactElement): MountedView {
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+  localStorage.clear();
   useUi.setState({ pushToast: mocks.toast });
   mocks.getPermission.mockResolvedValue(PERMISSIONS);
   mocks.vaultStatus.mockResolvedValue(VAULT);
@@ -235,6 +236,7 @@ describe("SettingsView responsive structure", () => {
   });
 
   it("saves edited rules on Enter but not during IME composition", async () => {
+    localStorage.setItem("nexterm.settingsGroup.v1", "ai");
     mounted = withClient(createElement(SettingsView));
     await flush();
     const input = mounted.container.querySelector<HTMLInputElement>(

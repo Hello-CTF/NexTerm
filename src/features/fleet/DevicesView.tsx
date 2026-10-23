@@ -35,6 +35,7 @@ import { formatTime, isOnline, ONLINE_THRESHOLD_MS, relativeTime } from "./forma
 import { BaseUrlsSection } from "./BaseUrlsSection";
 import { MetricsPanel } from "./MetricsPanel";
 import { oneLineInstallCommand, oneLineInstallCommandWindows, shellQuote } from "./installCommand";
+import { showSettingsSection } from "../settings/settingsNavigation";
 
 const ENROLL_TTL_OPTIONS = [
   { label: "5 分钟", ms: 5 * 60_000 },
@@ -95,18 +96,10 @@ function FleetUnsupported() {
   );
 }
 
-// openAccountSyncSettings opens the settings tab and scrolls to the "account sync" section; the settings page mounts asynchronously,
-// so poll for the target node and give up after about 1 second.
-function openAccountSyncSettings(attempt = 0): void {
-  if (attempt === 0) {
-    useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
-  }
-  const target = document.getElementById("settings-account");
-  if (target) {
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-    return;
-  }
-  if (attempt < 20) window.setTimeout(() => openAccountSyncSettings(attempt + 1), 50);
+// openAccountSyncSettings opens the settings tab on the "account sync" section.
+function openAccountSyncSettings(): void {
+  useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+  showSettingsSection("settings-account");
 }
 
 interface DeviceCardProps {

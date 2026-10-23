@@ -639,6 +639,7 @@ describe("SettingsView skills navigation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
+    localStorage.clear();
     mocks.call.mockImplementation(async (cmd: string) => {
       if (cmd === "ai_skills_list") return [WIRE_ENTRY];
       if (cmd === "vault_status") {
@@ -654,6 +655,7 @@ describe("SettingsView skills navigation", () => {
   });
 
   it("shows the AI skills section and loads it through the production API", async () => {
+    localStorage.setItem("nexterm.settingsGroup.v1", "ai");
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mounted = mount(createElement(QueryClientProvider, { client }, createElement(SettingsView)));
 
@@ -662,7 +664,7 @@ describe("SettingsView skills navigation", () => {
         "[data-testid='settings-nav-toc'] button, [data-testid='settings-nav-chips'] button",
       ),
     ].map((button) => button.textContent?.trim());
-    expect(navLabels).toContain("AI 技能");
+    expect(navLabels).toContain("技能");
     const section = mounted.container.querySelector("#settings-ai-skills");
     expect(section).not.toBeNull();
 

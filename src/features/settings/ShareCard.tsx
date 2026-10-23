@@ -42,6 +42,7 @@ import {
   IconRefresh,
   IconXCircle,
 } from "../../ui/icons";
+import { showSettingsSection } from "./settingsNavigation";
 
 // All TTL options fall within the server-side minShareTTL(1 minute)-maxShareTTL(30 days) bounds;
 // the 24h default aligns with the server defaultHostShareTTL, and ttl_ms is always sent explicitly on submit.
@@ -83,9 +84,7 @@ function ShareUnsupported() {
         <button
           type="button"
           className="nx-btn nx-btn-outline nx-btn-sm"
-          onClick={() =>
-            document.getElementById("settings-account")?.scrollIntoView({ behavior: "smooth", block: "start" })
-          }
+          onClick={() => showSettingsSection("settings-account")}
         >
           去设置 → 账号同步登录
         </button>

@@ -80,10 +80,12 @@ function tocToggle(): HTMLButtonElement {
   return el;
 }
 
-const SECTION_LABELS = [
-  "外观", "终端", "AI 模型", "AI 拦截", "AI 技能", "长期记忆",
-  "凭据保护", "已知主机", "生产安全", "账号同步", "资产包", "分享", "快捷键",
-];
+const GROUP_LABELS = ["通用", "AI", "安全", "账号与同步"];
+const GENERAL_TOC = ["通用", "外观", "终端", "快捷键", "AI", "安全", "账号与同步"];
+
+function groupShown(id: string): boolean {
+  return mounted!.container.querySelector<HTMLElement>(`[data-settings-group="${id}"]`)?.hidden === false;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -119,128 +121,103 @@ describe("Settings section navigation", () => {
     ).toBeNull();
   });
 
-  it("renders every section chip with a real target section", async () => {
+  it("groups the sections and shows one group at a time", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
-    expect(chips().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
-    const ids = [
-      "settings-appearance", "settings-terminal", "settings-ai-model", "settings-ai-rules",
+    expect(chips().map((c) => c.textContent?.trim())).toEqual(GROUP_LABELS);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(GENERAL_TOC);
+    expect(groupShown("general")).toBe(true);
+    expect(groupShown("ai")).toBe(false);
+    // Hidden groups stay mounted, so every section keeps a real target.
+    for (const id of [
+      "settings-appearance", "settings-terminal", "settings-shortcuts", "settings-ai-model", "settings-ai-rules",
       "settings-memory", "settings-vault", "settings-known-hosts", "settings-production",
-      "settings-account", "settings-bundle", "settings-share", "settings-shortcuts",
-    ];
-    for (const id of ids) {
+      "settings-account", "settings-bundle", "settings-share",
+    ]) {
       expect(document.getElementById(id), `missing section #${id}`).not.toBeNull();
     }
   });
 
-  it("uses native keyboard-accessible buttons for chips and scrolls to the corresponding section on click", async () => {
+  it("switches groups from the chips and remembers the choice", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     for (const chip of chips()) {
       expect(chip.tagName).toBe("BUTTON");
-      expect(chip.disabled).toBe(false);
     }
-    const target = document.getElementById("settings-vault")!;
-    const vaultChip = chips().find((c) => c.textContent?.trim() === "凭据保护")!;
-    click(vaultChip);
-    expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    click(chips().find((c) => c.textContent?.trim() === "安全")!);
+    await flush();
+    expect(groupShown("security")).toBe(true);
+    expect(groupShown("general")).toBe(false);
+    expect(localStorage.getItem("nexterm.settingsGroup.v1")).toBe("security");
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["通用", "AI", "安全", "凭据保护", "已知主机", "生产安全", "账号与同步"]);
+
+    mounted.unmount();
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    expect(groupShown("security")).toBe(true);
   });
 
-  it("scrolls to a section from the wide-screen TOC and marks it current", async () => {
+  it("scrolls to a section of the open group from the TOC and marks it current", async () => {
     mounted = withClient(createElement(SettingsView));
+    await flush();
+    click(tocButtons().find((c) => c.textContent?.trim() === "安全")!);
     await flush();
     const target = document.getElementById("settings-vault")!;
     const vaultEntry = tocButtons().find((c) => c.textContent?.trim() === "凭据保护")!;
     click(vaultEntry);
+    await flush();
     expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
-    expect(vaultEntry.getAttribute("aria-current")).toBe("true");
-    expect(vaultEntry.className).toContain("bg-neutral-800/70");
+    const current = tocButtons().find((c) => c.getAttribute("aria-current") === "true");
+    expect(current?.textContent?.trim()).toBe("凭据保护");
+    expect(current?.className).toContain("bg-neutral-800/70");
   });
 
-  it("keeps icon navigation after collapsing the wide-screen TOC and restores all sections after expansion", async () => {
+  it("shows group icons after collapsing the TOC and restores the sections after expanding", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const toggle = tocToggle();
     expect(toggle.getAttribute("aria-label")).toBe("收起设置目录");
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    for (const button of tocButtons()) {
-      expect(button.className).toContain("whitespace-nowrap");
-    }
-
-    click(tocButtons().find((c) => c.textContent?.trim() === "凭据保护")!);
     click(toggle);
     await flush();
     expect(tocToggle().getAttribute("aria-label")).toBe("展开设置目录");
     expect(tocToggle().getAttribute("aria-expanded")).toBe("false");
     const icons = tocButtons();
-    expect(icons.map((b) => b.getAttribute("aria-label"))).toEqual(SECTION_LABELS);
-    expect(icons.map((b) => b.getAttribute("title"))).toEqual(SECTION_LABELS);
-    const active = icons.find((b) => b.getAttribute("aria-current") === "true");
-    expect(active?.getAttribute("aria-label")).toBe("凭据保护");
-    expect(active?.className).toContain("is-active");
-
-    const target = document.getElementById("settings-terminal")!;
-    click(icons.find((b) => b.getAttribute("aria-label") === "终端")!);
-    expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
-
+    expect(icons.map((b) => b.getAttribute("aria-label"))).toEqual(GROUP_LABELS);
+    expect(icons.find((b) => b.getAttribute("aria-current") === "true")?.getAttribute("aria-label")).toBe("通用");
+    click(icons.find((b) => b.getAttribute("aria-label") === "AI")!);
+    await flush();
+    expect(groupShown("ai")).toBe(true);
     click(tocToggle());
     await flush();
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["通用", "AI", "模型", "拦截规则", "技能", "记忆", "安全", "账号与同步"]);
   });
 
   it("persists TOC expansion state to local storage", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
-    expect(tocToggle().getAttribute("aria-expanded")).toBe("true");
-
     click(tocToggle());
     await flush();
     expect(localStorage.getItem("nexterm.settingsNav.v1")).toBe("collapsed");
-
     mounted.unmount();
     mounted = withClient(createElement(SettingsView));
     await flush();
     expect(tocToggle().getAttribute("aria-expanded")).toBe("false");
-    expect(tocButtons().map((b) => b.getAttribute("aria-label"))).toEqual(SECTION_LABELS);
-
     click(tocToggle());
     await flush();
     expect(localStorage.getItem("nexterm.settingsNav.v1")).toBe("open");
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
   });
 
-  it("follows the current section in the wide-screen TOC after the content scrolls", async () => {
+  it("follows the current section of the open group after the content scrolls", async () => {
+    localStorage.setItem("nexterm.settingsGroup.v1", "ai");
     mounted = withClient(createElement(SettingsView));
     await flush();
     const scrollContainer = mounted.container.querySelector<HTMLElement>("div.overflow-y-auto");
     expect(scrollContainer).not.toBeNull();
-
-    // Simulate scroll position: ai-model is the last section whose top crossed the threshold, the rest sit outside the threshold or higher up
-    const offsets: Record<string, number> = {
-      "settings-appearance": -300,
-      "settings-terminal": -120,
-      "settings-ai-model": 30,
-    };
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
-      this: Element,
-    ) {
-      const top =
-        this === scrollContainer ? 0 : this.id in offsets ? offsets[this.id] : 1000;
-      return {
-        top,
-        bottom: top + 100,
-        left: 0,
-        right: 100,
-        width: 100,
-        height: 100,
-        x: 0,
-        y: top,
-        toJSON: () => ({}),
-      } as DOMRect;
+    const offsets: Record<string, number> = { "settings-ai-model": -120, "settings-ai-rules": 30 };
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const top = this === scrollContainer ? 0 : this.id in offsets ? offsets[this.id] : 1000;
+      return { top, bottom: top + 100, left: 0, right: 100, width: 100, height: 100, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
     });
-
-    // rAF synchronization: the scroll listener batches via requestAnimationFrame; executed synchronously in the test for immediate assertions
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       cb(0);
       return 0;
@@ -248,14 +225,8 @@ describe("Settings section navigation", () => {
     act(() => {
       scrollContainer!.dispatchEvent(new Event("scroll"));
     });
-
     const current = tocButtons().find((c) => c.getAttribute("aria-current") === "true");
-    expect(current?.textContent?.trim()).toBe("AI 模型");
-    expect(
-      tocButtons()
-        .find((c) => c.textContent?.trim() === "AI 模型")
-        ?.className.includes("bg-neutral-800/70"),
-    ).toBe(true);
+    expect(current?.textContent?.trim()).toBe("拦截规则");
   });
 });
 

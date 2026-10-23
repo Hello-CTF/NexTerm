@@ -182,6 +182,7 @@ import {
   IconSplitH,
   IconMergeH,
 } from "../ui/icons";
+import { showSettingsSection } from "../features/settings/settingsNavigation";
 
 const TAB_ICON = {
   terminal: IconTerminal,
@@ -1015,7 +1016,7 @@ function AppShell() {
   const openSyncSettings = useCallback(() => {
     openSettings();
     window.location.hash = "#settings-account";
-    window.setTimeout(() => document.getElementById("settings-account")?.scrollIntoView({ block: "start" }), 0);
+    showSettingsSection("settings-account");
   }, [openSettings]);
 
   useEffect(() => {
