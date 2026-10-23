@@ -20,10 +20,13 @@ test("frontend PRs run coverage and production builds without Go race or databas
   assert.ok(matrix.include.some(({ os }) => os === "darwin"));
 });
 
-test("Go changes keep the entire race suite, real database contracts and both mobile compiles", () => {
+test("Go changes run the full Go suite, real database contracts and both mobile compiles", () => {
   const { scope } = planCI({ isPR: true, files: ["internal/session/session.go"] });
   for (const gate of ["quality", "unit", "database", "mobile", "native", "frontend"]) assert.equal(scope[gate], true, gate);
   assert.equal(scope.frontendTests, false);
+  // The race detector is opt-in: it multiplies the suite time.
+  assert.equal(scope.race, false);
+  assert.equal(planCI({ isPR: true, files: ["internal/session/session.go"], labels: ["full-ci"] }).scope.race, true);
 });
 
 test("release builds retain every target and reproducibility without rerunning PR checks", () => {

@@ -162,7 +162,7 @@ jobs:
         run: go vet ./...
 
   unit:
-    name: Go tests with race detector
+    name: Go tests
     needs: version
     if: fromJSON(needs.version.outputs.scope).unit
     runs-on: ubuntu-latest
@@ -181,9 +181,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
-      - name: Run all Go tests with the race detector
-        run: go test -race -count=1 -p=${RACE_PACKAGE_PARALLELISM} ./...
+      - name: Run all Go tests
+        if: ${{ !fromJSON(needs.version.outputs.scope).race }}
+        run: go test -count=1 ./...
+      - name: Run all Go tests with the race detector (full-ci)
+        if: fromJSON(needs.version.outputs.scope).race
+        run: go test -race -count=1 -timeout=25m -p=${RACE_PACKAGE_PARALLELISM} ./...
       - name: Run terminal workloads that intentionally skip race instrumentation
+        if: fromJSON(needs.version.outputs.scope).race
         run: go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'
 
   database:
