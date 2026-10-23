@@ -31,9 +31,9 @@ NexTerm puts remote operations in one window: connect over SSH, WinRM, or the de
 ## Features
 
 - **🤖 AI that does the work**: 20+ tools for commands, files, Docker, and terminal output; commands and diffs are shown before they run, with plan mode, per-host and per-path grants, scheduled tasks, and long-term memory. Works with any OpenAI-compatible API, with DeepSeek, Kimi, GLM, and Ollama presets.
-- **🖥️ Persistent terminals**: SSH sessions with persistent terminals enabled and managed device sessions keep running after you close the tab, restart the app, or lose the network, and can be re-attached from any signed-in device with missed output replayed. When the helper is unavailable the tab falls back to a regular terminal, which ends on disconnect. Includes shared viewing, command blocks, searchable history and replay, split panes, broadcast, and snippets.
-- **🧰 Everyday operations**: SFTP, WinRM, and device file browsing with in-place editing; Docker containers, logs, and images; MySQL/MariaDB, PostgreSQL, and Redis; local forwarding and SOCKS5; host import from `~/.ssh/config` or Termius (macOS only).
-- **🛰️ Devices and sharing**: enroll the device agent with one command; devices connect outward and report metrics. Share a terminal as a time-limited public link or with registered users, read-only by default and revocable, without handing over passwords or keys.
+- **🖥️ Persistent terminals**: SSH sessions with persistent terminals enabled and managed device sessions keep running after you close the tab, restart the app, or lose the network, and can be re-attached from any signed-in device with missed output replayed. When the persistent-terminal component cannot be enabled on the host, the tab falls back to a regular terminal, which ends on disconnect. Includes shared viewing, command blocks, searchable history and replay, split panes, broadcast, and snippets.
+- **🧰 Everyday operations**: SFTP, WinRM, and device file browsing with in-place editing; Docker containers, logs, and images; MySQL/MariaDB, PostgreSQL, and Redis; local forwarding and SOCKS5; host import from `~/.ssh/config` or Termius (macOS only) with single-hop `ProxyJump`; add multi-hop entries manually.
+- **🛰️ Devices and sharing**: enroll the device agent with one command; devices connect outward and report metrics. Share a terminal as a time-limited public link or with registered users (terminal only, no files, forwarding, or AI), read-only by default and revocable, without handing over passwords or keys; browser mode can grant write access, and public links created on desktop are read-only.
 - **🔐 Self-hosted**: multi-user accounts with TOTP; end-to-end encrypted sync; a credential vault (master password, DPAPI/Keychain, or biometrics); audit logs; SQLite, PostgreSQL, MySQL, or MariaDB. In browser mode, terminals and workspaces live on the server and survive closing the page.
 
 <table>
@@ -59,10 +59,11 @@ Get the latest build from [Releases](https://github.com/Hello-CTF/NexTerm/releas
 | macOS (arm64 / amd64) | `nexterm-desktop_macos_<arch>_x.y.z.dmg` |
 | Linux desktop (amd64 / arm64) | `nexterm-desktop_linux_<arch>_x.y.z.deb`, install with `apt install ./<package>.deb` |
 | Linux server | See [Deploy the server](#deploy-the-server) |
-| Android / iOS / iPadOS (preview) | `nexterm-desktop_android_arm64_x.y.z.apk` / TestFlight invitation |
-| LazyCat MicroServer | App Store |
+| Android (preview, arm64) | `nexterm-desktop_android_arm64_x.y.z.apk` |
+| iOS / iPadOS (preview) | TestFlight invitation; releases do not ship an IPA |
+| LazyCat MicroServer (amd64) | App Store |
 
-The desktop app checks for updates automatically and verifies them against `SHA256SUMS`. If macOS cannot verify the developer, choose "Open Anyway" in System Settings → Privacy & Security; if it reports the app is damaged, run `xattr -dr com.apple.quarantine /Applications/NexTerm.app`.
+Mobile builds are previews and are not officially supported until real-device signing is verified. The desktop app checks for updates automatically and verifies them against `SHA256SUMS`. Windows installers are not code-signed; if Windows reports an unknown publisher, choose "More info → Run anyway". If macOS cannot verify the developer, choose "Open Anyway" in System Settings → Privacy & Security; if it reports the app is damaged, run `xattr -dr com.apple.quarantine /Applications/NexTerm.app`.
 
 **Quick start**: add an SSH or WinRM asset (or use the built-in "This device") → initialize the vault in Settings → Credential protection before saving passwords or keys → optionally add a model in Settings → AI models → optionally sign in under Settings → Account sync to sync across devices. The protection password only unlocks this device; if you forget it, saved credentials cannot be recovered.
 
@@ -74,16 +75,16 @@ On Linux with systemd (amd64 / arm64), run as root:
 curl -fsSL https://nexterm.work/install.sh | sudo bash
 ```
 
-The script downloads the latest server archive, verifies it against `SHA256SUMS`, and runs the bundled `install.sh`: it creates the `nexterm` user and directories, generates the master key, creates the `admin` super-admin and prints its initial password once (it must be changed at first login), then starts `nexterm-server`. Running it again upgrades in place and keeps configuration and data. Pin a version with `-s -- --version 1.2.2`, or download `nexterm-server_linux_<arch>_x.y.z.tar.gz`, extract it, and run `sudo ./install.sh`.
+The script downloads the latest server archive, verifies it against `SHA256SUMS`, and runs the bundled `install.sh`: it creates the `nexterm` user and directories, generates the master key, creates the `admin` super-admin and prints its initial password once in the installer output (write it down; it must be changed at first login, or preset it with `NEXTERM_ADMIN_PASSWORD`), then starts `nexterm-server`. Running it again upgrades in place with a brief service restart and keeps configuration and data; add `--rollback` to undo the last upgrade. Pin a version with `curl -fsSL https://nexterm.work/install.sh | sudo bash -s -- --version x.y.z`, or download `nexterm-server_linux_<arch>_x.y.z.tar.gz`, extract it, and run `sudo ./install.sh`.
 
-- The service listens on `127.0.0.1:8080` and requires sign-in by default; settings live in `/etc/nexterm/nexterm.env`, then run `systemctl restart nexterm-server`.
+- The service listens on `127.0.0.1:8080` and requires sign-in by default; from your computer, run `ssh -L 8080:127.0.0.1:8080 user@server` and open `http://localhost:8080`; settings live in `/etc/nexterm/nexterm.env`, then run `systemctl restart nexterm-server`.
 - For public access, put a TLS reverse proxy in front, have it overwrite `X-Forwarded-Proto`, and list its source ranges in `NEXTERM_TRUSTED_PROXY_CIDRS`.
 - SQLite is the default; use `NEXTERM_DB=postgres|mysql|mariadb` with `NEXTERM_DB_DSN` for an external database, with one server instance per database.
 - Back up `/var/lib/nexterm`, `/etc/nexterm/master.key`, and any external database. See the bundled `README.md` and `nexterm-server --help` for every option.
 
-**LazyCat MicroServer**: install from the App Store; built-in port forwarding is unavailable, so use the platform's forwarding.
+**LazyCat MicroServer**: install from the App Store (amd64 devices only for now); built-in port forwarding is unavailable, so use the platform's forwarding.
 
-**Device enrollment**: a super-admin sets the enrollment address in Devices and issues a one-time enrollment code; run the one-line command shown there on the device (as a regular user on Linux/macOS, in PowerShell on Windows). The agent starts automatically at user login.
+**Device enrollment**: a super-admin sets the enrollment address in Devices (in browser mode, or in the desktop app signed in to a server account) and issues a one-time enrollment code; run the one-line command shown there on the device (as a regular user on Linux/macOS, in PowerShell on Windows). The agent starts automatically at user login.
 
 ## Development
 
