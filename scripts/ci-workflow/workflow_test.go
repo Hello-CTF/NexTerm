@@ -245,6 +245,9 @@ func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
 	ciRace := requireJob(t, ci, "race")
+	if got := ciRace.If; got != "github.event_name == 'push' && inputs.release_version == ''" {
+		t.Fatalf("race must run on master pushes without repeating for release tags, got %q", got)
+	}
 	if got := ciRace.Env["RACE_PACKAGE_PARALLELISM"]; got != "4" {
 		t.Fatalf("CI race package parallelism = %q, want the evidenced default 4", got)
 	}
@@ -375,7 +378,7 @@ func TestProductionJobRunsOnEveryPullRequestWithoutExpandingRace(t *testing.T) {
 		}
 	}
 	race := requireJob(t, ci, "race")
-	if got := expression(race.If); got != "github.event_name == 'push' || inputs.release_version != ''" {
+	if got := expression(race.If); got != "github.event_name == 'push' && inputs.release_version == ''" {
 		t.Fatalf("race job condition = %q", got)
 	}
 }

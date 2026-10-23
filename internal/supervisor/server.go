@@ -65,6 +65,9 @@ func (s *Server) SocketPath() string {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return context.Cause(ctx)
+	}
 	s.shutdownOnce.Do(func() {
 		s.mu.Lock()
 		s.closed = true
