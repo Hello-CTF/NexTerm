@@ -18,8 +18,8 @@ while [ $# -gt 0 ]; do
 Usage: scripts/pack-agent.sh [options]
 
 Package the five device-agent release archives from verified CI binaries:
-NexTerm-agent_<version>_<linux|darwin>_<arch>.tar.gz (tar root: nexterm-agent)
-and NexTerm-agent_<version>_windows_amd64.zip (zip root: nexterm-agent.exe).
+nexterm-agent_<linux|macos>_<arch>_<version>.tar.gz (tar root: nexterm-agent)
+and nexterm-agent_windows_amd64_<version>.zip (zip root: nexterm-agent.exe).
 scripts/build.mjs owns compilation/versioning.
 
 Options:
@@ -95,14 +95,16 @@ for spec in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
   mkdir -p "$stage"
   install -m 0755 "$bin" "$stage/$member"
   if [ "$os" = "windows" ]; then
-    artifact="$OUT/NexTerm-agent_${VERSION}_windows_${arch}.zip"
+    artifact="$OUT/nexterm-agent_windows_${arch}_${VERSION}.zip"
     rm -f "$artifact" "$artifact.artifact.json"
     zip_pack "$artifact" "$stage" "$member"
     members="$(zip_members "$artifact")"
     [ "$members" = "$member" ] || { echo "zip root must contain only $member, got: $members" >&2; exit 1; }
     kind="agent-zip"
   else
-    artifact="$OUT/NexTerm-agent_${VERSION}_${os}_${arch}.tar.gz"
+    public_os="$os"
+    [ "$os" = "darwin" ] && public_os="macos"
+    artifact="$OUT/nexterm-agent_${public_os}_${arch}_${VERSION}.tar.gz"
     rm -f "$artifact" "$artifact.artifact.json"
     tar_cz "$artifact" "$stage" "$member"
     tar_members="$(tar -tzf "$artifact")"

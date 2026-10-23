@@ -49,7 +49,7 @@ const HELP_TEXT = `#!/usr/bin/env node
  *   node scripts/build.mjs agent --release --os=linux --arch=amd64
  *   node scripts/build.mjs helper --release --repro-check --os=linux --arch=arm64
  *   node scripts/build.mjs report --kind=server-archive --os=linux --arch=amd64 \\
- *     --file=target/release-assets/NexTerm-server_<version>_linux_amd64.tar.gz --require-evidence
+ *     --file=target/release-assets/nexterm-server_linux_amd64_<version>.tar.gz --require-evidence
  `;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -911,7 +911,7 @@ function packageAssertions(kind, file, goos, goarch) {
   }
   if (kind === "server-archive") {
     const checks = [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "server archive is not gzip compressed")];
-    const root = `NexTerm-server_${VERSION}_linux_${goarch}`;
+    const root = `nexterm-server_linux_${goarch}_${VERSION}`;
     const required = [
       "nexterm-server", "nexterm-server.service", "nexterm-onlyserver.service",
       "nexterm.env.example", "onlyserver.env.example", "LICENSE", "README.md", "web/index.html",
@@ -1109,7 +1109,7 @@ function debVersion(version) {
 
 function packageLinuxDesktop(binary, goarch) {
   const assets = path.resolve(ROOT, option("assets-dir", "target/release-assets"));
-  const name = `NexTerm-desktop_${VERSION}_linux_${goarch}`;
+  const name = `nexterm-desktop_linux_${goarch}_${VERSION}`;
   const work = path.join(ROOT, "target/package-work/linux-desktop", goarch);
   const dataDir = path.join(work, "data");
   fs.rmSync(work, { recursive: true, force: true });
@@ -1173,8 +1173,7 @@ function packageDarwin(binary, goarch) {
   run("codesign", ["--verify", "--deep", "--strict", app]);
   fs.symlinkSync("/Applications", path.join(work, "Applications"));
   fs.mkdirSync(assets, { recursive: true });
-  const architecture = goarch === "arm64" ? "aarch64" : "x86_64";
-  const dmg = path.join(assets, `NexTerm_${VERSION}_${architecture}.dmg`);
+  const dmg = path.join(assets, `nexterm-desktop_macos_${goarch}_${VERSION}.dmg`);
   fs.rmSync(dmg, { force: true });
   run("hdiutil", ["create", "-volname", "NexTerm", "-srcfolder", work, "-ov", "-format", "UDZO", dmg]);
   run("hdiutil", ["verify", dmg]);
@@ -1205,8 +1204,7 @@ function packageWindows(binary, goarch) {
   if (!fs.existsSync(bootstrapper)) die("Wails did not generate the WebView2 bootstrapper");
   const icon = path.join(ROOT, "public/brand/icon.ico");
   if (!fs.existsSync(icon)) die("Windows icon.ico asset is missing");
-  const setupArch = goarch === "amd64" ? "x64" : "arm64";
-  const installer = path.join(assets, `NexTerm_${VERSION}_${setupArch}-setup.exe`);
+  const installer = path.join(assets, `nexterm-desktop_windows_${goarch}_${VERSION}.exe`);
   const defines = [
     `NEXTERM_BINARY=${binary}`,
     `NEXTERM_VERSION=${VERSION}`,

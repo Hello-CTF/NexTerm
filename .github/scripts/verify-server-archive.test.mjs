@@ -36,14 +36,14 @@ test("server archive byte evidence accepts the intact archive and rejects tamper
   fs.writeFileSync(`${binary}.manifest.json`, JSON.stringify({
     artifact: { size_bytes: mainBytes.length, sha256: sha256(mainBytes) },
   }));
-  const archive = writeArchive(directory, "NexTerm-server_1.2.3_linux_amd64", mainBytes);
+  const archive = writeArchive(directory, "nexterm-server_linux_amd64_1.2.3", mainBytes);
   const run = () => spawnSync(process.execPath, [script, archive, binary], { cwd: directory, encoding: "utf8" });
 
   const accepted = run();
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.match(accepted.stderr, /carries the staged main binary/);
 
-  const tamperedArchive = writeArchive(directory, "NexTerm-server_1.2.3_linux_amd64-tampered", Buffer.from("server main binary fixture!"));
+  const tamperedArchive = writeArchive(directory, "nexterm-server_linux_amd64_1.2.3-tampered", Buffer.from("server main binary fixture!"));
   const tampered = spawnSync(process.execPath, [script, tamperedArchive, binary], { cwd: directory, encoding: "utf8" });
   assert.notEqual(tampered.status, 0);
   assert.match(tampered.stderr, /does not match the staged CI binary/);
@@ -65,7 +65,7 @@ test("server archive byte evidence rejects link redirection and duplicate member
   }));
 
   const build = (builder, ...args) => {
-    const root = `NexTerm-server_1.2.3_linux_amd64-${args[0]}`;
+    const root = `nexterm-server_linux_amd64_1.2.3-${args[0]}`;
     const archive = path.join(directory, `${root}.tar.gz`);
     execFileSync("python3", ["-c", builder, archive, root, ...args.slice(1)], { encoding: "utf8" });
     return archive;
@@ -133,7 +133,7 @@ with tarfile.open(archive, "w:gz") as tar:
   assert.match(duplicate.stderr, /duplicate member names/);
 
   // The intact archive from the same fixture still passes.
-  const intact = writeArchive(directory, "NexTerm-server_1.2.3_linux_amd64", mainBytes);
+  const intact = writeArchive(directory, "nexterm-server_linux_amd64_1.2.3", mainBytes);
   assert.equal(run(intact).status, 0);
 });
 
@@ -151,7 +151,7 @@ test("server archive byte evidence rejects non-canonical members that would over
   // name only normalizes onto the same extraction path ("."/empty segment)
   // would overwrite them during a real unpack, so the header policy rejects it.
   const build = (builder, label) => {
-    const root = `NexTerm-server_1.2.3_linux_amd64-${label}`;
+    const root = `nexterm-server_linux_amd64_1.2.3-${label}`;
     const archive = path.join(directory, `${root}.tar.gz`);
     execFileSync("python3", ["-c", builder, archive, root, binary], { encoding: "utf8" });
     return archive;
@@ -195,7 +195,7 @@ with tarfile.open(archive, "w:gz") as tar:
   assert.match(trailing.stderr, /trailing slash/);
 
   // The intact archive from the same fixture still passes.
-  const intact = writeArchive(directory, "NexTerm-server_1.2.3_linux_amd64", mainBytes);
+  const intact = writeArchive(directory, "nexterm-server_linux_amd64_1.2.3", mainBytes);
   assert.equal(run(intact).status, 0);
 });
 
@@ -212,7 +212,7 @@ test("server archive byte evidence rejects members under non-directory paths", (
   // The canonical main member carries the exact staged bytes; the conflicting
   // member is placed before and after it because archive order must not matter.
   const build = (builder, label) => {
-    const root = `NexTerm-server_1.2.3_linux_amd64-${label}`;
+    const root = `nexterm-server_linux_amd64_1.2.3-${label}`;
     const archive = path.join(directory, `${root}.tar.gz`);
     execFileSync("python3", ["-c", builder, archive, root, binary], { encoding: "utf8" });
     return archive;
@@ -289,14 +289,14 @@ test("server archive byte evidence rejects missing members, manifests and layout
   }));
 
   const stage = path.join(directory, "stage-empty");
-  fs.mkdirSync(path.join(stage, "NexTerm-server_1.2.3_linux_amd64"), { recursive: true });
+  fs.mkdirSync(path.join(stage, "nexterm-server_linux_amd64_1.2.3"), { recursive: true });
   const emptyArchive = path.join(directory, "empty.tar.gz");
-  execFileSync("tar", ["-czf", emptyArchive, "-C", stage, "NexTerm-server_1.2.3_linux_amd64"], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+  execFileSync("tar", ["-czf", emptyArchive, "-C", stage, "nexterm-server_linux_amd64_1.2.3"], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
   const missing = spawnSync(process.execPath, [script, emptyArchive, binary], { cwd: directory, encoding: "utf8" });
   assert.notEqual(missing.status, 0);
   assert.match(missing.stderr, /missing the main binary member/);
 
-  const goodArchive = writeArchive(directory, "NexTerm-server_1.2.3_linux_amd64", mainBytes);
+  const goodArchive = writeArchive(directory, "nexterm-server_linux_amd64_1.2.3", mainBytes);
   fs.rmSync(manifestPath);
   const noManifest = spawnSync(process.execPath, [script, goodArchive, binary], { cwd: directory, encoding: "utf8" });
   assert.notEqual(noManifest.status, 0);

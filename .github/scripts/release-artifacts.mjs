@@ -16,32 +16,35 @@ export function desktopNativeMatrix() {
   return entries;
 }
 
+const publicOS = { windows: "windows", darwin: "macos", linux: "linux", android: "android" };
+
+// releaseAssetName is the single naming rule for published files:
+// nexterm-<kind>_<os>_<arch>_<version>.<ext>, with macOS spelled "macos".
+export function releaseAssetName(kind, os, arch, version, ext) {
+  const name = publicOS[os];
+  if (!name) throw new Error(`unsupported release OS: ${os}`);
+  if (arch !== "amd64" && arch !== "arm64") throw new Error(`unsupported release architecture: ${arch}`);
+  return `nexterm-${kind}_${name}_${arch}_${version}.${ext}`;
+}
+
 function desktopArtifact({ os, arch }, version) {
-  if (os === "windows") {
-    const packageArch = { amd64: "x64", arm64: "arm64" }[arch];
-    if (!packageArch) throw new Error(`unsupported Windows desktop architecture: ${arch}`);
-    return [`NexTerm_${version}_${packageArch}-setup.exe`, `desktop-nsis-windows-${arch}`];
-  }
-  if (os === "darwin") {
-    const packageArch = { amd64: "x86_64", arm64: "aarch64" }[arch];
-    if (!packageArch) throw new Error(`unsupported macOS desktop architecture: ${arch}`);
-    return [`NexTerm_${version}_${packageArch}.dmg`, `desktop-dmg-darwin-${arch}`];
-  }
-  if (os === "linux") return [`NexTerm-desktop_${version}_linux_${arch}.deb`, `desktop-linux-deb-linux-${arch}`];
+  if (os === "windows") return [releaseAssetName("desktop", os, arch, version, "exe"), `desktop-nsis-windows-${arch}`];
+  if (os === "darwin") return [releaseAssetName("desktop", os, arch, version, "dmg"), `desktop-dmg-darwin-${arch}`];
+  if (os === "linux") return [releaseAssetName("desktop", os, arch, version, "deb"), `desktop-linux-deb-linux-${arch}`];
   throw new Error(`unsupported native desktop OS: ${os}`);
 }
 
 export function releaseArtifacts(version) {
   const artifacts = desktopNativeMatrix().map((entry) => desktopArtifact(entry, version));
   artifacts.push(
-    [`NexTerm_${version}_android.apk`, "mobile-android"],
-    [`NexTerm-agent_${version}_windows_amd64.zip`, "agent-zip-windows-amd64"],
+    [releaseAssetName("desktop", "android", "arm64", version, "apk"), "mobile-android"],
+    [releaseAssetName("agent", "windows", "amd64", version, "zip"), "agent-zip-windows-amd64"],
   );
   for (const arch of ["amd64", "arm64"]) {
     artifacts.push(
-      [`NexTerm-server_${version}_linux_${arch}.tar.gz`, `server-archive-linux-${arch}`],
-      [`NexTerm-agent_${version}_linux_${arch}.tar.gz`, `agent-archive-linux-${arch}`],
-      [`NexTerm-agent_${version}_darwin_${arch}.tar.gz`, `agent-archive-darwin-${arch}`],
+      [releaseAssetName("server", "linux", arch, version, "tar.gz"), `server-archive-linux-${arch}`],
+      [releaseAssetName("agent", "linux", arch, version, "tar.gz"), `agent-archive-linux-${arch}`],
+      [releaseAssetName("agent", "darwin", arch, version, "tar.gz"), `agent-archive-darwin-${arch}`],
     );
   }
   return new Map(artifacts);

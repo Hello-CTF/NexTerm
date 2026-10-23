@@ -83,7 +83,9 @@ if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
   die "需要 curl 或 wget 下载发布资产"
 fi
 
-ASSET="NexTerm-agent_${VERSION}_${OS}_${ARCH}.tar.gz"
+ASSET_OS="$OS"
+[ "$OS" = "darwin" ] && ASSET_OS="macos"
+ASSET="nexterm-agent_${ASSET_OS}_${ARCH}_${VERSION}.tar.gz"
 ASSET_URL="$RELEASE_BASE/v$VERSION/$ASSET"
 SUMS_URL="$RELEASE_BASE/v$VERSION/SHA256SUMS"
 

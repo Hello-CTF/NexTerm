@@ -86,8 +86,8 @@ done
 
 mkdir -p "$OUT"
 rm -f \
-  "$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz" \
-  "$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz.artifact.json"
+  "$OUT/nexterm-server_linux_${ARCH}_${VERSION}.tar.gz" \
+  "$OUT/nexterm-server_linux_${ARCH}_${VERSION}.tar.gz.artifact.json"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
@@ -98,7 +98,7 @@ tar_cz() {
 }
 
 package_full() {
-  local name="NexTerm-server_${VERSION}_linux_${ARCH}"
+  local name="nexterm-server_linux_${ARCH}_${VERSION}"
   local dir="$STAGE/$name"
   local unit env_file member helper_os helper_arch helper_name
   mkdir -p "$dir"
@@ -138,7 +138,7 @@ package_full() {
   done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
 }
 
-ARTIFACT="$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz"
+ARTIFACT="$OUT/nexterm-server_linux_${ARCH}_${VERSION}.tar.gz"
 (cd "$ROOT" && package_full)
 
 report_args=(--kind=server-archive --os=linux "--arch=$ARCH" "--file=$ARTIFACT" "--helpers-dir=$HELPERS_DIR")

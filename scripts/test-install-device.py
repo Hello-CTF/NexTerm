@@ -132,7 +132,8 @@ def check(name: str, ok: bool, detail: object = "") -> None:
 
 
 def asset_name(version: str, os_name: str, arch: str) -> str:
-    return f"NexTerm-agent_{version}_{os_name}_{arch}.tar.gz"
+    public_os = "macos" if os_name == "darwin" else os_name
+    return f"nexterm-agent_{public_os}_{arch}_{version}.tar.gz"
 
 
 ALL_ASSETS = [(os_name, arch) for os_name in ("linux", "darwin") for arch in ("amd64", "arm64")]
@@ -204,7 +205,7 @@ class Harness:
             hashes[name] = hashlib.sha256((self.release / name).read_bytes()).hexdigest()
         if sums_builder is None:
             lines = [f"{hashes[asset_name(VERSION, os_name, arch)]}  {asset_name(VERSION, os_name, arch)}" for os_name, arch in ALL_ASSETS]
-            lines.append(f"{'0' * 64}  NexTerm-desktop_{VERSION}_linux_amd64.deb")
+            lines.append(f"{'0' * 64}  nexterm-desktop_linux_amd64_{VERSION}.deb")
             sums_text = "\n".join(lines) + "\n"
         else:
             sums_text = sums_builder(hashes)
@@ -378,7 +379,7 @@ def test_checksum_mismatch() -> None:
 
 
 def test_checksum_missing_entry() -> None:
-    harness = Harness(sums_builder=lambda hashes: f"{'a' * 64}  NexTerm-desktop_{VERSION}_linux_amd64.deb\n")
+    harness = Harness(sums_builder=lambda hashes: f"{'a' * 64}  nexterm-desktop_linux_amd64_{VERSION}.deb\n")
     try:
         result = harness.run(*harness.base_args())
         check("missing SHA256SUMS entry reports a clear error", result.returncode == 1 and "SHA256SUMS" in result.stderr, result.stderr)

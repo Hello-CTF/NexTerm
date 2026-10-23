@@ -332,7 +332,7 @@ jobs:
       - name: Produce and validate the full archive with final evidence gates
         run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-evidence
       - name: Verify the archive carries the staged main binary bytes
-        run: node .github/scripts/verify-server-archive.mjs "target/release-assets/NexTerm-server_${NEXTERM_RELEASE_VERSION}_linux_${{ matrix.arch }}.tar.gz" "target/go-build/nexterm-server-linux-${{ matrix.arch }}"
+        run: node .github/scripts/verify-server-archive.mjs "target/release-assets/nexterm-server_linux_${{ matrix.arch }}_${NEXTERM_RELEASE_VERSION}.tar.gz" "target/go-build/nexterm-server-linux-${{ matrix.arch }}"
       - name: Upload candidates and raw/final reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -427,7 +427,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          package="NexTerm_${NEXTERM_RELEASE_VERSION}_android.apk"
+          package="nexterm-desktop_android_arm64_${NEXTERM_RELEASE_VERSION}.apk"
           mkdir -p target/release-assets
           cp "target/release-work/mobile-input/nexterm.apk" "target/release-assets/$package"
           node .github/scripts/mobile-evidence.mjs "target/release-assets/$package" mobile-android

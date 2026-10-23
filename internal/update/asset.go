@@ -10,26 +10,24 @@ import (
 	"strings"
 )
 
-// matchAsset selects the release asset by GOOS/GOARCH; the version segment position is not fixed, so prefix plus suffix
-// anchoring is used (the Linux desktop package prefix NexTerm-desktop_ avoids mismatched NexTerm-server_ packages).
+// matchAsset selects the desktop package named nexterm-desktop_<os>_<arch>_<version>.<ext>;
+// the version is matched by prefix plus suffix so pre-release versions need no parsing.
 func matchAsset(release Release, goos, goarch string) (Asset, bool) {
-	var prefix, suffix string
-	switch goos + "/" + goarch {
-	case "windows/amd64":
-		prefix, suffix = "NexTerm_", "_x64-setup.exe"
-	case "windows/arm64":
-		prefix, suffix = "NexTerm_", "_arm64-setup.exe"
-	case "darwin/amd64":
-		prefix, suffix = "NexTerm_", "_x86_64.dmg"
-	case "darwin/arm64":
-		prefix, suffix = "NexTerm_", "_aarch64.dmg"
-	case "linux/amd64":
-		prefix, suffix = "NexTerm-desktop_", "_linux_amd64.deb"
-	case "linux/arm64":
-		prefix, suffix = "NexTerm-desktop_", "_linux_arm64.deb"
+	var platform, suffix string
+	switch goos {
+	case "windows":
+		platform, suffix = "windows", ".exe"
+	case "darwin":
+		platform, suffix = "macos", ".dmg"
+	case "linux":
+		platform, suffix = "linux", ".deb"
 	default:
 		return Asset{}, false
 	}
+	if goarch != "amd64" && goarch != "arm64" {
+		return Asset{}, false
+	}
+	prefix := "nexterm-desktop_" + platform + "_" + goarch + "_"
 	for _, asset := range release.Assets {
 		if strings.HasPrefix(asset.Name, prefix) && strings.HasSuffix(asset.Name, suffix) {
 			return asset, true

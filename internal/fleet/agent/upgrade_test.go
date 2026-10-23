@@ -139,13 +139,13 @@ func TestValidateReleaseVersion(t *testing.T) {
 }
 
 func TestReleaseAssetName(t *testing.T) {
-	if got := releaseAssetName("1.2.3", "linux", "amd64"); got != "NexTerm-agent_1.2.3_linux_amd64.tar.gz" {
+	if got := releaseAssetName("1.2.3", "linux", "amd64"); got != "nexterm-agent_linux_amd64_1.2.3.tar.gz" {
 		t.Fatalf("linux asset = %q", got)
 	}
-	if got := releaseAssetName("1.2.3", "darwin", "arm64"); got != "NexTerm-agent_1.2.3_darwin_arm64.tar.gz" {
+	if got := releaseAssetName("1.2.3", "darwin", "arm64"); got != "nexterm-agent_macos_arm64_1.2.3.tar.gz" {
 		t.Fatalf("darwin asset = %q", got)
 	}
-	if got := releaseAssetName("1.2.3", "windows", "amd64"); got != "NexTerm-agent_1.2.3_windows_amd64.zip" {
+	if got := releaseAssetName("1.2.3", "windows", "amd64"); got != "nexterm-agent_windows_amd64_1.2.3.zip" {
 		t.Fatalf("windows asset = %q", got)
 	}
 	if agentBinaryName("windows") != "nexterm-agent.exe" || agentBinaryName("linux") != "nexterm-agent" {
@@ -155,15 +155,15 @@ func TestReleaseAssetName(t *testing.T) {
 
 func TestParseSHA256SUMS(t *testing.T) {
 	digest := strings.Repeat("a", 64)
-	content := "# comment\n\n" + digest + "  NexTerm-agent_1.2.3_linux_amd64.tar.gz\n" +
-		strings.Repeat("B", 64) + " *NexTerm-agent_1.2.3_windows_amd64.zip\n" +
+	content := "# comment\n\n" + digest + "  nexterm-agent_linux_amd64_1.2.3.tar.gz\n" +
+		strings.Repeat("B", 64) + " *nexterm-agent_windows_amd64_1.2.3.zip\n" +
 		"short\n"
 	sums := parseSHA256SUMS([]byte(content))
-	if sums["NexTerm-agent_1.2.3_linux_amd64.tar.gz"] != digest {
-		t.Fatalf("tar entry = %q", sums["NexTerm-agent_1.2.3_linux_amd64.tar.gz"])
+	if sums["nexterm-agent_linux_amd64_1.2.3.tar.gz"] != digest {
+		t.Fatalf("tar entry = %q", sums["nexterm-agent_linux_amd64_1.2.3.tar.gz"])
 	}
-	if sums["NexTerm-agent_1.2.3_windows_amd64.zip"] != strings.Repeat("b", 64) {
-		t.Fatalf("zip entry (binary marker, case folding) = %q", sums["NexTerm-agent_1.2.3_windows_amd64.zip"])
+	if sums["nexterm-agent_windows_amd64_1.2.3.zip"] != strings.Repeat("b", 64) {
+		t.Fatalf("zip entry (binary marker, case folding) = %q", sums["nexterm-agent_windows_amd64_1.2.3.zip"])
 	}
 }
 
@@ -327,7 +327,7 @@ func TestUpgradeInvalidVersionSkipsNetwork(t *testing.T) {
 
 func TestExtractAgentBinaryFromZip(t *testing.T) {
 	dir := t.TempDir()
-	archivePath := filepath.Join(dir, "NexTerm-agent_1.2.3_windows_amd64.zip")
+	archivePath := filepath.Join(dir, "nexterm-agent_windows_amd64_1.2.3.zip")
 	if err := os.WriteFile(archivePath, buildZip(t, "nexterm-agent.exe", []byte("mz-agent")), 0o644); err != nil {
 		t.Fatal(err)
 	}

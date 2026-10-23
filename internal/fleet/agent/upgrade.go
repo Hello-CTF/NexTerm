@@ -204,7 +204,10 @@ func releaseAssetName(version, goos, goarch string) string {
 	if goos == "windows" {
 		ext = ".zip"
 	}
-	return "NexTerm-agent_" + version + "_" + goos + "_" + goarch + ext
+	if goos == "darwin" {
+		goos = "macos"
+	}
+	return "nexterm-agent_" + goos + "_" + goarch + "_" + version + ext
 }
 
 func agentBinaryName(goos string) string {

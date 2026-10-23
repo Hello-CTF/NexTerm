@@ -74,7 +74,7 @@ func updateIPCDebArchiveWithPath(t *testing.T, version, binaryPath string) (stri
 	writeMember("debian-binary", []byte("2.0\n"))
 	writeMember("control.tar.gz", controlTarGz.Bytes())
 	writeMember("data.tar.gz", dataTarGz.Bytes())
-	return fmt.Sprintf("NexTerm-desktop_%s_linux_%s.deb", version, runtime.GOARCH), archive.Bytes()
+	return fmt.Sprintf("nexterm-desktop_linux_%s_%s.deb", runtime.GOARCH, version), archive.Bytes()
 }
 
 func updateIPCFixture(t *testing.T, version string) (*httptest.Server, string, []byte) {
@@ -88,10 +88,10 @@ func updateIPCFixtureArchive(t *testing.T, version, archiveName string, archive 
 	digest := sha256.Sum256(archive)
 	assets := []map[string]any{
 		{"name": archiveName, "size": len(archive)},
-		{"name": "NexTerm_" + version + "_x64-setup.exe"},
-		{"name": "NexTerm_" + version + "_arm64-setup.exe"},
-		{"name": "NexTerm_" + version + "_aarch64.dmg"},
-		{"name": "NexTerm_" + version + "_x86_64.dmg"},
+		{"name": "nexterm-desktop_windows_amd64_" + version + ".exe"},
+		{"name": "nexterm-desktop_windows_arm64_" + version + ".exe"},
+		{"name": "nexterm-desktop_macos_arm64_" + version + ".dmg"},
+		{"name": "nexterm-desktop_macos_amd64_" + version + ".dmg"},
 		{"name": "SHA256SUMS"},
 	}
 	var sums strings.Builder
@@ -321,7 +321,7 @@ func TestUpdateInstallIPCPreservesLinuxDebErrors(t *testing.T) {
 		{
 			name: "invalid deb",
 			archive: func(t *testing.T) (string, []byte) {
-				return fmt.Sprintf("NexTerm-desktop_0.3.0_linux_%s.deb", runtime.GOARCH), []byte("not a deb")
+				return fmt.Sprintf("nexterm-desktop_linux_%s_0.3.0.deb", runtime.GOARCH), []byte("not a deb")
 			},
 			message: func(string) string { return "不是合法的 deb 包" },
 		},
@@ -375,18 +375,10 @@ func TestUpdateInstallIPCPreservesPlatformInstallerFailure(t *testing.T) {
 	var archiveName, wantPrefix string
 	switch runtime.GOOS {
 	case "darwin":
-		arch := "x86_64"
-		if runtime.GOARCH == "arm64" {
-			arch = "aarch64"
-		}
-		archiveName = "NexTerm_0.3.0_" + arch + ".dmg"
+		archiveName = "nexterm-desktop_macos_" + runtime.GOARCH + "_0.3.0.dmg"
 		wantPrefix = "hdiutil attach 失败: "
 	case "windows":
-		arch := "x64"
-		if runtime.GOARCH == "arm64" {
-			arch = "arm64"
-		}
-		archiveName = "NexTerm_0.3.0_" + arch + "-setup.exe"
+		archiveName = "nexterm-desktop_windows_" + runtime.GOARCH + "_0.3.0.exe"
 		wantPrefix = "NSIS 静默安装失败: "
 	default:
 		t.Skip("macOS and Windows installer errors")

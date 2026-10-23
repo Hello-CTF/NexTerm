@@ -22,12 +22,12 @@ test("desktop release artifacts follow every native matrix row without changing 
   const artifacts = releaseArtifacts(version);
   assert.equal(artifacts.size, 14);
   for (const name of [
-    `NexTerm_${version}_x64-setup.exe`,
-    `NexTerm_${version}_arm64-setup.exe`,
-    `NexTerm_${version}_aarch64.dmg`,
-    `NexTerm_${version}_x86_64.dmg`,
-    `NexTerm-desktop_${version}_linux_amd64.deb`,
-    `NexTerm-desktop_${version}_linux_arm64.deb`,
+    `nexterm-desktop_windows_amd64_${version}.exe`,
+    `nexterm-desktop_windows_arm64_${version}.exe`,
+    `nexterm-desktop_macos_arm64_${version}.dmg`,
+    `nexterm-desktop_macos_amd64_${version}.dmg`,
+    `nexterm-desktop_linux_amd64_${version}.deb`,
+    `nexterm-desktop_linux_arm64_${version}.deb`,
   ]) {
     assert.ok(artifacts.has(name), name);
   }

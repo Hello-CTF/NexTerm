@@ -3215,7 +3215,7 @@ def test_real_root_postgres_relative_db_password_file() -> None:
 
 def test_real_server_archive_smoke() -> None:
     archive_dir = ROOT / "target/release-assets"
-    candidates = sorted(archive_dir.glob("NexTerm-server_*_linux_*.tar.gz")) if archive_dir.is_dir() else []
+    candidates = sorted(archive_dir.glob("nexterm-server_linux_*_*.tar.gz")) if archive_dir.is_dir() else []
     env_archive = os.environ.get("NEXTERM_TEST_SERVER_ARCHIVE")
     archive = pathlib.Path(env_archive) if env_archive else (candidates[-1] if candidates else None)
     if archive is None:

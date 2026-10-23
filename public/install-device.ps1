@@ -44,7 +44,7 @@ switch ($arch) {
 }
 
 $ReleaseBase = 'https://github.com/Hello-CTF/NexTerm/releases/download'
-$Asset = "NexTerm-agent_${Version}_windows_${AssetArch}.zip"
+$Asset = "nexterm-agent_windows_${AssetArch}_${Version}.zip"
 $AssetUrl = "$ReleaseBase/v$Version/$Asset"
 $SumsUrl = "$ReleaseBase/v$Version/SHA256SUMS"
 

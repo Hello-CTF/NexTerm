@@ -111,7 +111,7 @@ func sumsFor(archiveName string, archive []byte) string {
 
 func linuxFixture(t *testing.T, version string, corruptChecksum bool) *releaseFixture {
 	t.Helper()
-	archiveName := "NexTerm-desktop_" + version + "_linux_amd64.deb"
+	archiveName := "nexterm-desktop_linux_amd64_" + version + ".deb"
 	archive := debArchive(t, version, "new-binary-"+version)
 	checksums := sumsFor(archiveName, archive)
 	if corruptChecksum {

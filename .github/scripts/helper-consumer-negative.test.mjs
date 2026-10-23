@@ -124,7 +124,7 @@ for (const [name, edit, expected] of CASES) {
     const result = runServer(current);
     assert.notEqual(result.status, 0, result.stdout);
     assert.match(result.stderr, expected);
-    assert.equal(fs.existsSync(path.join(current.out, `NexTerm-server_${VERSION}_linux_amd64.tar.gz`)), false);
+    assert.equal(fs.existsSync(path.join(current.out, `nexterm-server_linux_amd64_${VERSION}.tar.gz`)), false);
   });
 
   test(`LazyCat rejects ${name} in supplied helper evidence`, (t) => {
