@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Apple, Check, Copy, Download, ExternalLink, Fingerprint, Laptop, Monitor, Server, Smartphone, type LucideIcon } from "lucide-react";
+import { Apple, Check, Copy, Download, Fingerprint, Laptop, Monitor, Server, Smartphone, type LucideIcon } from "lucide-react";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const latestRelease = `${repository}/releases/latest`;
@@ -32,13 +32,19 @@ const text = {
     names: { windows: "Windows", macos: "macOS", linux: "Linux 桌面", server: "Linux 服务端", android: "Android", ios: "iOS / iPadOS", lazycat: "懒猫微服" },
     archNames: { amd64: "x64", arm64: "ARM64" }, macArchNames: { amd64: "Intel", arm64: "Apple Silicon" },
     detected: "已识别你的设备", choose: "选择其他系统",
+    serverGuide: [
+      ["安装", "创建 nexterm 用户与目录，生成 master key，创建超管 admin 并在终端打印一次初始密码（首次登录需修改），然后启动服务。"],
+      ["访问", "默认只监听 127.0.0.1:8080。在你的电脑上执行 ssh -L 8080:127.0.0.1:8080 用户@服务器，再打开 http://localhost:8080；公网访问请前置带 TLS 的反向代理。"],
+      ["配置", "/etc/nexterm/nexterm.env，修改后执行 systemctl restart nexterm-server。默认 SQLite，也可切换 PostgreSQL / MySQL / MariaDB。"],
+      ["升级", "再次执行同一条命令，配置和数据都会保留；需要撤销时加 --rollback。"],
+    ],
     download: "下载", version: "最新版本", loading: "正在读取最新版本…", unavailable: "无法读取最新版本，请前往 Releases 下载。",
-    allReleases: "全部版本与校验文件", copy: "复制", copied: "已复制",
+    copy: "复制", copied: "已复制",
     notes: {
       windows: "运行安装器即可；首次运行可能提示未知发布者。",
       macos: "打开后拖入「应用程序」。Intel 芯片的 Mac 请切换到 Intel。",
       linux: "下载后执行：",
-      server: "在带 systemd 的 Linux 服务器上以 root 执行一键安装（或下载安装包后运行包内 install.sh）：",
+      server: "在带 systemd 的 Linux 服务器（amd64 / arm64）上以 root 执行：",
       android: "预览版，适用于 arm64 设备。",
       ios: "预览版通过 TestFlight 测试邀请安装，Release 不提供 IPA。",
       lazycat: "在懒猫微服的应用中心搜索 NexTerm 安装。",
@@ -48,13 +54,19 @@ const text = {
     names: { windows: "Windows", macos: "macOS", linux: "Linux desktop", server: "Linux server", android: "Android", ios: "iOS / iPadOS", lazycat: "LazyCat" },
     archNames: { amd64: "x64", arm64: "ARM64" }, macArchNames: { amd64: "Intel", arm64: "Apple Silicon" },
     detected: "Detected your device", choose: "Choose another system",
+    serverGuide: [
+      ["Install", "Creates the nexterm user and directories, generates the master key, creates the admin super-admin and prints its initial password once (change it at first login), then starts the service."],
+      ["Access", "Listens on 127.0.0.1:8080 by default. On your computer run ssh -L 8080:127.0.0.1:8080 user@server and open http://localhost:8080; for public access, put a TLS reverse proxy in front."],
+      ["Configure", "/etc/nexterm/nexterm.env, then systemctl restart nexterm-server. SQLite by default; PostgreSQL, MySQL, and MariaDB are supported."],
+      ["Upgrade", "Run the same command again; configuration and data are kept. Add --rollback to undo the last upgrade."],
+    ],
     download: "Download", version: "Latest version", loading: "Loading the latest version…", unavailable: "The latest version could not be loaded; download it from Releases.",
-    allReleases: "All releases and checksums", copy: "Copy", copied: "Copied",
+    copy: "Copy", copied: "Copied",
     notes: {
       windows: "Run the installer; the first launch may show an unknown publisher.",
       macos: "Open it and drag NexTerm into Applications. On an Intel Mac, switch to Intel.",
       linux: "After downloading, run:",
-      server: "On a Linux server with systemd, run the one-line installer as root (or download the archive and run its install.sh):",
+      server: "On a Linux server with systemd (amd64 / arm64), run as root:",
       android: "Preview build for arm64 devices.",
       ios: "The preview installs through a TestFlight invitation; releases do not ship an IPA.",
       lazycat: "Search for NexTerm in the LazyCat app center.",
@@ -173,7 +185,6 @@ export function DownloadPicker({ language }: { language: Language }) {
           <div>
             <strong>{t.names[platform.id]}</strong>
             <span>
-              {detected?.platform === platform.id ? `${t.detected} · ` : ""}
               {release ? `${t.version} v${release.version}` : releaseError ? t.unavailable : t.loading}
             </span>
           </div>
@@ -192,18 +203,22 @@ export function DownloadPicker({ language }: { language: Language }) {
 
         <p className="download-note">{t.notes[platform.id]}</p>
         {platform.id === "server" && <CopyCommand command={installCommand} language={language} />}
+        {platform.id === "server" && (
+          <dl className="download-steps">
+            {t.serverGuide.map(([term, description]) => (
+              <div key={term}><dt>{term}</dt><dd>{description}</dd></div>
+            ))}
+          </dl>
+        )}
         {platform.id === "linux" && <CopyCommand command={`sudo apt install ./${assetName ?? `nexterm-desktop_linux_${effectiveArch}_<version>.deb`}`} language={language} />}
 
-        <div className="download-actions">
-          {platform.asset && (
+        {platform.asset && (
+          <div className="download-actions">
             <a className="button button-primary" href={assetUrl ?? latestRelease} target={assetUrl ? undefined : "_blank"} rel="noreferrer">
               <Download size={17} />{t.download} {t.names[platform.id]}{effectiveArch && platform.archs.length > 1 ? ` · ${archNames[effectiveArch]}` : ""}
             </a>
-          )}
-          <a className="button button-secondary" href={latestRelease} target="_blank" rel="noreferrer">
-            {t.allReleases} <ExternalLink size={15} />
-          </a>
-        </div>
+          </div>
+        )}
         {assetName && <p className="download-file">{assetName}</p>}
       </div>
     </div>

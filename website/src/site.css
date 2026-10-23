@@ -254,6 +254,9 @@ h3 { color: var(--text); font-size: 15px; font-weight: 700; letter-spacing: -.01
 .command-copy { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--panel); color: var(--text-secondary); font-size: 12.5px; font-weight: 650; cursor: pointer; }
 .command-copy:hover { border-color: var(--accent); color: var(--text); }
 .download-panel .download-actions { justify-content: flex-start; margin-top: 20px; }
+.download-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; margin-top: 18px; }
+.download-steps dt { color: var(--text); font-size: 13.5px; font-weight: 700; }
+.download-steps dd { margin-top: 4px; font-size: 13.5px; line-height: 1.65; overflow-wrap: anywhere; }
 .download-file { margin-top: 10px; color: var(--text-muted); font: 12px/1.5 var(--mono); overflow-wrap: anywhere; }
 .download-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 36px; }
 
@@ -285,6 +288,7 @@ h3 { color: var(--text); font-size: 15px; font-weight: 700; letter-spacing: -.01
 }
 @media (max-width: 520px) {
   .download-panel { padding: 18px; }
+  .download-steps { grid-template-columns: 1fr; }
   .download-panel .download-actions .button { width: 100%; }
   .hero-actions, .download-actions { flex-direction: column; width: 100%; }
   .hero-actions .button, .download-actions .button { width: 100%; }

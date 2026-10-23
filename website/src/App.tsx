@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import {
-  Activity, ArrowRight, Bot, CalendarClock, Container, Database, Download, Eye, FolderTree, History,
+  Activity, Bot, CalendarClock, Container, Database, Download, Eye, FolderTree, History,
   KeyRound, Layers, Lock, Moon, Network, Radio, ScrollText, Share2, ShieldCheck, Smartphone,
   SquareTerminal, Sun, Users, Workflow,
 } from "lucide-react";
@@ -9,10 +9,6 @@ import { DownloadPicker } from "./Download";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const releases = `${repository}/releases/latest`;
-const deployDocs = {
-  zh: `${repository}/blob/master/README.md#部署服务端`,
-  en: `${repository}/blob/master/README_EN.md#deploy-the-server`,
-};
 type Language = "zh" | "en";
 type Theme = "dark" | "light";
 type Item = [title: string, text: string];
@@ -38,7 +34,7 @@ const copy = {
     trustKicker: "安全与自托管", trustTitle: "数据留在你自己的机器上",
     trust: [["端到端加密同步", "桌面端的资产、片段和凭据跨设备同步，服务端只保存密文。"], ["凭据保险库", "桌面和移动端使用主密码或系统级保护（DPAPI / Keychain），移动端支持生物识别，支持空闲自动锁定；浏览器模式凭据由服务端 master key 保护的凭据库加密，与端到端加密同步不同。"], ["多用户与双因素", "服务端多账号、TOTP 双因素认证、登录设备管理。"], ["审计日志", "用户与 AI 的命令、文件写入、设备上下线都有记录。"], ["AI 护栏", "命令分级、输出脱敏、只读或可执行模式。"], ["选择你的数据库", "默认 SQLite，服务端支持 PostgreSQL、MySQL 和 MariaDB。"]] as Item[],
     platformKicker: "下载", platformTitle: "装在桌面，部署到服务器，或在手机上接着用",
-    install: "部署服务端", footerIssue: "问题反馈", privacy: "隐私政策", license: "MIT License",
+    footerIssue: "问题反馈", privacy: "隐私政策", license: "MIT License",
   },
   en: {
     nav: ["AI", "Sessions", "Toolbox", "Security", "Download"], home: "NexTerm home", themeDark: "Switch to light theme", themeLight: "Switch to dark theme", language: "中",
@@ -56,7 +52,7 @@ const copy = {
     trustKicker: "Security and self-hosting", trustTitle: "Your data stays on your machines",
     trust: [["End-to-end encrypted sync", "Desktop assets, snippets, and credentials sync across devices; the server only stores ciphertext."], ["Credential vault", "Desktop and mobile use a master password or OS-level protection (DPAPI / Keychain), with biometric unlock on mobile and idle auto-lock. Browser-mode credentials are instead encrypted by the server-side vault protected by its master key, not by end-to-end encrypted sync."], ["Multi-user and 2FA", "Server accounts, TOTP two-factor authentication, and signed-in device management."], ["Audit log", "Commands, file writes, and device online events from both users and the AI are recorded."], ["AI guardrails", "Command risk classification, output redaction, and read-only or execute modes."], ["Your database", "SQLite by default; the server also supports PostgreSQL, MySQL, and MariaDB."]] as Item[],
     platformKicker: "Download", platformTitle: "On your desktop, on your server, or on your phone",
-    install: "Deploy the server", footerIssue: "Issues", privacy: "Privacy Policy", license: "MIT License",
+    footerIssue: "Issues", privacy: "Privacy Policy", license: "MIT License",
   },
 };
 
@@ -194,9 +190,6 @@ function App() {
         <div className="container">
           <SectionHeading kicker={t.platformKicker} title={t.platformTitle} />
           <DownloadPicker language={language} />
-          <div className="download-actions">
-            <a className="button button-secondary" href={deployDocs[language]} target="_blank" rel="noreferrer">{t.install} <ArrowRight size={16} /></a>
-          </div>
         </div>
       </section>
     </main>
