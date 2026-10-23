@@ -671,7 +671,7 @@ describe("terminal dead-tab overlay", () => {
     mounted = mountPane();
     await flush();
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
+    await clickMenuItem("持久终端组件…");
     act(() => {
       useUi.getState().setHelperProgress({
         sessionId: "s1",
@@ -711,7 +711,7 @@ describe("terminal dead-tab overlay", () => {
 
     expect(useUi.getState().helperOperations.operations.t1).toBeUndefined();
     expect(mounted.container.textContent).not.toContain("stale-release");
-    expect(mounted.container.textContent).not.toContain("持久终端助手");
+    expect(mounted.container.textContent).not.toContain("持久终端组件");
   });
 
   it("keeps only the newest same-session status result when update finishes first", async () => {
@@ -743,11 +743,11 @@ describe("terminal dead-tab overlay", () => {
     mounted = mountPane();
     await flush();
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    await clickMenuItem("持久终端组件…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("持久终端组件有可用更新"));
 
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
+    await clickMenuItem("持久终端组件…");
     mocks.ask.mockResolvedValueOnce(true);
     clickButton(mounted.container, "中断活动进程并更新");
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", true));
@@ -780,15 +780,15 @@ describe("terminal dead-tab overlay", () => {
     mounted = mountPane();
     await flush();
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    await clickMenuItem("持久终端组件…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("持久终端组件有可用更新"));
     expect(mounted.container.querySelector("details")?.open).toBe(false);
     clickButton(mounted.container, "稍后更新");
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
     expect(mocks.helperUpdate).not.toHaveBeenCalled();
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    await clickMenuItem("持久终端组件…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("持久终端组件有可用更新"));
     act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
   });
@@ -805,8 +805,8 @@ describe("terminal dead-tab overlay", () => {
     mounted = mountPane();
     await flush();
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    await clickMenuItem("持久终端组件…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("持久终端组件有可用更新"));
     clickButton(mounted.container, "中断活动进程并更新");
     await flush();
     expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("无法恢复"), expect.objectContaining({ kind: "warning" }));
@@ -828,9 +828,9 @@ describe("terminal dead-tab overlay", () => {
     mounted = mountPane();
     await flush();
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
-    clickButton(mounted.container, "更新助手");
+    await clickMenuItem("持久终端组件…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("持久终端组件有可用更新"));
+    clickButton(mounted.container, "更新组件");
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
     await flush();
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
@@ -846,9 +846,9 @@ describe("terminal dead-tab overlay", () => {
       deadline: Date.now() + 600_000, step: 3, steps: 6, stage: "upload", transferred: 50, total: 100, percent: 50, done: false,
     };
     act(() => useUi.getState().setHelperProgress(progress));
-    const badge = () => mounted?.container.querySelector('button[aria-label$="查看持久终端助手"]');
+    const badge = () => mounted?.container.querySelector('button[aria-label$="查看持久终端组件"]');
     expect(badge()?.textContent).toContain("正在启用持久终端");
-    expect(badge()?.getAttribute("title")).toContain("上传持久终端助手");
+    expect(badge()?.getAttribute("title")).toContain("上传持久终端组件");
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
     expect(mounted.container.textContent).not.toContain("尝试次数");
     act(() => useUi.getState().setHelperProgress({ ...progress, stage: "ready", done: true }));
@@ -873,23 +873,23 @@ describe("terminal dead-tab overlay", () => {
     mounted = mountPane();
     await flush();
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
+    await clickMenuItem("持久终端组件…");
     await flush();
-    clickButton(mounted.container, "更新助手");
+    clickButton(mounted.container, "更新组件");
     await flush();
-    expect(mounted.container.textContent).toContain("正在更新终端助手");
-    const close = mounted.container.querySelector<HTMLButtonElement>('[aria-label="关闭助手窗口"]');
+    expect(mounted.container.textContent).toContain("正在更新持久终端组件");
+    const close = mounted.container.querySelector<HTMLButtonElement>('[aria-label="关闭持久终端组件窗口"]');
     if (!close) throw new Error("Missing close button");
     act(() => close.click());
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
+    await clickMenuItem("持久终端组件…");
     await flush();
     expect(mocks.helperOperation).toHaveBeenCalledTimes(1);
-    expect(mounted.container.textContent).toContain("正在更新终端助手");
+    expect(mounted.container.textContent).toContain("正在更新持久终端组件");
     finishUpdate?.({ ...status, action: "update", update: { status: "updated", updated: true } });
     await flush();
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
-    expect(useUi.getState().toasts.some((toast) => toast.text.includes("终端助手已更新"))).toBe(true);
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("持久终端组件已更新"))).toBe(true);
   });
 
   it("shows real helper versions and sends explicit default/interrupt update actions", async () => {
@@ -916,7 +916,7 @@ describe("terminal dead-tab overlay", () => {
     await flush();
 
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
+    await clickMenuItem("持久终端组件…");
 
     await waitFor(() => expect(mounted?.container.textContent).toContain("v1.4.0"));
     expect(mounted.container.textContent).toContain("local-commit");
@@ -926,14 +926,14 @@ describe("terminal dead-tab overlay", () => {
     expect(mounted.container.textContent).toContain("协议兼容；发布版本不同不妨碍继续");
     expect(mocks.helperOperation).toHaveBeenCalledWith("s1", "", "status");
 
-    clickButton(mounted.container, "更新助手");
+    clickButton(mounted.container, "更新组件");
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
     await waitFor(() => expect(mounted?.container.querySelector('[role="dialog"]')).toBeNull());
-    expect(useUi.getState().toasts.some((toast) => toast.text.includes("终端助手已更新"))).toBe(true);
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("持久终端组件已更新"))).toBe(true);
 
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    await clickMenuItem("持久终端组件…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("持久终端组件有可用更新"));
     mocks.ask.mockResolvedValueOnce(true);
     clickButton(mounted.container, "中断活动进程并更新");
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", true));
@@ -969,14 +969,14 @@ describe("terminal dead-tab overlay", () => {
     mounted = mountPane();
     await flush();
     await openToolbarOverflow();
-    await clickMenuItem("持久终端助手…");
-    await waitFor(() => expect(mounted?.container.textContent).toContain("有可用的终端助手更新"));
+    await clickMenuItem("持久终端组件…");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("持久终端组件有可用更新"));
 
-    clickButton(mounted.container, "更新助手");
+    clickButton(mounted.container, "更新组件");
 
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
-    await waitFor(() => expect(mounted?.container.textContent).toContain("已回滚助手二进制"));
-    expect(mounted.container.textContent).toContain("更新失败，已恢复原助手");
+    await waitFor(() => expect(mounted?.container.textContent).toContain("已恢复为更新前的版本"));
+    expect(mounted.container.textContent).toContain("更新失败，已恢复为原版本");
     expect(mounted.container.textContent).toContain("helper update failed; previous daemon restored");
   });
 
@@ -1004,7 +1004,7 @@ describe("terminal dead-tab overlay", () => {
     await flush();
 
     await openToolbarOverflow();
-    await clickMenuItem("导入离线 helper…");
+    await clickMenuItem("导入离线组件文件…");
 
     await waitFor(() => expect(mounted?.container.textContent).toContain(sha256));
     expect(mounted.container.textContent).toContain("协议兼容；发布版本不同不妨碍继续");

@@ -25,7 +25,7 @@ export function HelperOperationDialog({ onClose, ...props }: HelperOperationView
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-label="持久终端助手"
+        aria-label="持久终端组件"
         tabIndex={-1}
         className="nx-modal relative max-w-[480px]"
         onClick={(event) => event.stopPropagation()}
@@ -34,7 +34,7 @@ export function HelperOperationDialog({ onClose, ...props }: HelperOperationView
           if (layer.isTopmost()) trapOverlayTab(event, modalRef.current);
         }}
       >
-        <button ref={closeRef} type="button" aria-label="关闭助手窗口" className="nx-icon-btn absolute top-2 right-2" onClick={onClose}>
+        <button ref={closeRef} type="button" aria-label="关闭持久终端组件窗口" className="nx-icon-btn absolute top-2 right-2" onClick={onClose}>
           <IconClose size={14} />
         </button>
         <HelperOperationView {...props} />

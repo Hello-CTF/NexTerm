@@ -49,8 +49,8 @@ export function Daemon({ durable, sessionKind, helper, onOpenHelper }: DaemonPro
     <button
       type="button"
       className={`${className} cursor-pointer`}
-      title={`${title}（点击查看持久终端助手）`}
-      aria-label={`${label}，查看持久终端助手`}
+      title={`${title}（点击查看持久终端组件）`}
+      aria-label={`${label}，查看持久终端组件`}
       onClick={onOpenHelper}
     >
       {content}

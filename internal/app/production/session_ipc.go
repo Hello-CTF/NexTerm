@@ -948,7 +948,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				switch action {
 				case "cancel", "retry":
 					if input.OperationID == "" {
-						return helperOperationDTO{}, ipc.BadParam(errors.New("助手操作缺少 operationId"))
+						return helperOperationDTO{}, ipc.BadParam(errors.New("持久终端操作缺少操作标识"))
 					}
 					var err error
 					if action == "cancel" {
@@ -977,7 +977,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					result.Accepted = action != "status"
 					return result, nil
 				default:
-					return helperOperationDTO{}, ipc.BadParam(errors.New("未知的助手操作"))
+					return helperOperationDTO{}, ipc.BadParam(errors.New("未知的持久终端操作"))
 				}
 			})
 		},

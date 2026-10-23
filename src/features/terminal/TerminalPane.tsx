@@ -1111,7 +1111,7 @@ export function TerminalPane({
     } catch (error) {
       if (helperDetailsSessionRef.current === sessionId && (generation === undefined || helperRequestIsCurrent(generation, sessionId))) {
         setHelperPanelError(describeError(error));
-        pushToast("error", `持久终端助手操作失败：${describeError(error)}`);
+        pushToast("error", `持久终端组件操作失败：${describeError(error)}`);
       }
     } finally {
       if (helperDetailsSessionRef.current === sessionId && (generation === undefined || helperRequestIsCurrent(generation, sessionId))) {
@@ -1171,7 +1171,7 @@ export function TerminalPane({
       if (!helperRequestIsCurrent(generation, sessionId)) return;
       const message = describeError(error);
       setHelperPanelError(message);
-      pushToast("error", `读取持久终端助手状态失败：${message}`);
+      pushToast("error", `读取持久终端组件状态失败：${message}`);
     } finally {
       if (helperRequestIsCurrent(generation, sessionId)) setHelperStatusLoading(false);
     }
@@ -1212,7 +1212,7 @@ export function TerminalPane({
     // A toast instead of opening the dialog keeps focus with whatever the user is typing.
     pushToast(
       helperOperation.kind === "reattach" ? "error" : "info",
-      helperOperation.kind === "reattach" ? "原持久终端恢复失败，请选择重试或新开普通终端" : "持久终端暂时不可用，当前标签使用普通终端",
+      helperOperation.kind === "reattach" ? "原持久终端恢复失败，请选择重试或新建普通终端" : "持久终端暂时不可用，当前标签使用普通终端",
       { label: "查看选项", onSelect: () => setHelperPanelOpen(true) },
     );
   }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
@@ -1232,7 +1232,7 @@ export function TerminalPane({
   const importOfflineHelper = async () => {
     if (helperActionBusy) return;
     const requestSessionId = sessionId;
-    const selected = await promptText("离线 helper 本地路径（先核实 SHA-256 与协议，确认前不会用于部署）", "");
+    const selected = await promptText("离线组件文件的本地路径（请先核对 SHA-256 与协议，确认前不会用于部署）", "");
     if (!selected?.trim() || helperDetailsSessionRef.current !== requestSessionId) return;
     const path = selected.trim();
     setHelperPanelOpen(true);
@@ -1257,7 +1257,7 @@ export function TerminalPane({
       setHelperDetails((current) => current ? { ...current, offline: result.offline } : result);
       if (result.offline?.trusted) {
         closeHelperPanel();
-        pushToast("success", "已信任离线助手，后续连接将使用此文件");
+        pushToast("success", "已信任所选的离线组件文件，后续连接将使用它");
       }
     }, generation);
   };
@@ -1268,7 +1268,7 @@ export function TerminalPane({
     return runHelperAction(async () => {
       try {
         if (interruptActive) {
-          const confirmed = await ask("更新将结束这台主机上由助手管理的所有活动终端和任务，且无法恢复。是否中断并更新？", {
+          const confirmed = await ask("更新将结束这台主机上所有持久终端中运行的进程，且无法恢复。是否中断并更新？", {
             title: "中断进程并更新", kind: "warning",
           });
           if (!confirmed || !helperRequestIsCurrent(generation, sessionId)) return;
@@ -1280,16 +1280,16 @@ export function TerminalPane({
         const status = result.update?.status;
         if (status === "current" || status === "updated" || (status === "interrupted" && result.update?.updated)) {
           setHelperPanelOpen(false);
-          pushToast("success", status === "current" ? "终端助手已是最新版本" : "终端助手已更新");
+          pushToast("success", status === "current" ? "持久终端组件已是最新版本" : "持久终端组件已更新");
         } else if (status === "deferred") {
           setHelperPanelOpen(false);
-          pushToast("info", "当前有进程运行，助手更新已延后", {
+          pushToast("info", "当前有进程在运行，组件更新已延后", {
             label: "查看", onSelect: () => {
               if (helperRequestIsCurrent(generation, sessionId)) setHelperPanelOpen(true);
             },
           });
         } else {
-          setHelperPanelError(result.update?.detail || "暂时无法确认更新结果，请重新检查助手状态");
+          setHelperPanelError(result.update?.detail || "暂时无法确认更新结果，请重新检查组件状态");
         }
       } catch (error) {
         if (!helperRequestIsCurrent(generation, sessionId)) return;
@@ -1298,7 +1298,7 @@ export function TerminalPane({
         setHelperDetails(rollback);
         setHelperPanelError(describeError(error));
       }
-    }, generation, "正在更新终端助手…");
+    }, generation, "正在更新持久终端组件…");
   };
 
   const deferHelperUpdate = () => {
@@ -1307,7 +1307,7 @@ export function TerminalPane({
       update: { status: "deferred", detail: "已选择稍后更新" },
     } : current);
     closeHelperPanel();
-    pushToast("info", "本次先不更新助手，下次查看状态时仍会提示");
+    pushToast("info", "暂不更新，下次查看持久终端状态时仍会提示");
   };
 
   const startRecording = async () => {
@@ -1544,11 +1544,11 @@ export function TerminalPane({
           { kind: "separator" },
           {
             kind: "item",
-            label: "持久终端助手…",
+            label: "持久终端组件…",
             onSelect: () => void refreshHelperDetails(),
           },
           ...(!WEB
-            ? ([{ kind: "item", label: "导入离线 helper…", onSelect: () => void importOfflineHelper() }] satisfies MenuItem[])
+            ? ([{ kind: "item", label: "导入离线组件文件…", onSelect: () => void importOfflineHelper() }] satisfies MenuItem[])
             : []),
         ] satisfies MenuItem[])
       : []),
@@ -2236,7 +2236,7 @@ export function TerminalPane({
             offlineTrust={helperDetails?.offline ?? null}
             update={helperDetails?.update ?? null}
             restoreFailure={helperOperation?.kind === "reattach" && helperOperation.originalSession === "not_restored"}
-            busyLabel={helperActionBusy ? helperActionLabel : helperStatusLoading ? "正在检查终端助手…" : helperRetryPending ? "正在重试…" : ordinaryStarting ? "正在打开普通终端…" : undefined}
+            busyLabel={helperActionBusy ? helperActionLabel : helperStatusLoading ? "正在检查持久终端组件…" : helperRetryPending ? "正在重试…" : ordinaryStarting ? "正在打开普通终端…" : undefined}
             controlsDisabled={helperActionBusy || helperRetryPending || ordinaryStarting}
             onRetryPersistent={helperOperation?.status === "awaiting_choice" ? () => void retryPersistent() : undefined}
             onContinueOrdinary={helperOperation?.status === "awaiting_choice" ? () => void continueOrdinary() : undefined}

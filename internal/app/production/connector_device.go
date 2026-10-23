@@ -277,7 +277,7 @@ func helperDTOFromDaemon(sessionID, action string, daemon *sshdaemon.Daemon) hel
 		details = append(details, daemon.Update.Reason)
 	}
 	if daemon.Update.RolledBack {
-		details = append(details, "已回滚助手二进制；原 shell 和其他进程不会因此复活")
+		details = append(details, "已恢复为更新前的版本；更新时结束的进程不会恢复")
 	}
 	update.Detail = strings.Join(details, "；")
 	return helperOperationDTO{

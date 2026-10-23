@@ -77,11 +77,11 @@ describe("HelperOperationView", () => {
 
     const region = view.container.querySelector("section");
     const headingId = region?.getAttribute("aria-labelledby") ?? "";
-    expect(document.getElementById(headingId)?.textContent).toBe("持久终端助手");
+    expect(document.getElementById(headingId)?.textContent).toBe("持久终端组件");
     expect(view.container.querySelector('[role="status"]')).not.toBeNull();
     expect(view.container.querySelector("details")?.open).toBe(false);
     expect([...view.container.querySelectorAll("dt")].every((node) => node.closest("details"))).toBe(true);
-    expect(definition(view.container, "阶段")).toBe("上传持久终端助手");
+    expect(definition(view.container, "阶段")).toBe("上传持久终端组件");
     expect(definition(view.container, "原因")).toBe("SFTP 不可用，改用 exec");
     expect(definition(view.container, "尝试次数")).toBe("2/3");
     expect(definition(view.container, "截止时间")).toBe("2026-10-22T11:10:00.000Z");
@@ -155,7 +155,7 @@ describe("HelperOperationView", () => {
     });
 
     expect(definition(view.container, "阶段")).toBe("vendor_specific_stage");
-    expect(view.container.textContent).toContain("协议不兼容；不会替换正在运行的助手");
+    expect(view.container.textContent).toContain("协议不兼容；正在运行的组件不会被自动替换");
   });
 
   it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])(
@@ -266,7 +266,7 @@ describe("HelperOperationView", () => {
       },
       onConfirmOfflineTrust,
     });
-    const trust = sectionByLabel(view.container, "离线 helper 信任");
+    const trust = sectionByLabel(view.container, "信任离线组件文件");
     const before = trust.textContent;
 
     expect(trust.textContent).toContain(OFFLINE_SHA);
@@ -291,7 +291,7 @@ describe("HelperOperationView", () => {
       offlineTrust: { fileName: "raw-helper", sha256, protocol: 7, compatibility },
       onConfirmOfflineTrust,
     });
-    const trust = sectionByLabel(view.container, "离线 helper 信任");
+    const trust = sectionByLabel(view.container, "信任离线组件文件");
     const confirm = buttonByText(trust, "确认 SHA-256 并信任离线文件");
 
     expect(confirm.disabled).toBe(true);
@@ -317,7 +317,7 @@ describe("HelperOperationView", () => {
     expect(view.container.textContent).toContain("检测到 2 个 PTY 和 1 个 exec");
     expect(view.container.textContent).toContain("更新会保留正在运行的终端");
     expect(view.container.textContent).toContain("如需中断进程，会再次确认");
-    click(buttonByText(view.container, "更新助手"));
+    click(buttonByText(view.container, "更新组件"));
     click(buttonByText(view.container, "稍后更新"));
     click(buttonByText(view.container, "中断活动进程并更新"));
     expect(onUpdate).toHaveBeenCalledTimes(1);
@@ -337,7 +337,7 @@ describe("HelperOperationView", () => {
     mounted = undefined;
 
     const interrupted = renderView({ update: { status: "interrupted", updated: true } });
-    expect(interrupted.container.textContent).toContain("已中断活动进程并更新助手");
+    expect(interrupted.container.textContent).toContain("已中断运行中的进程并完成更新");
     expect(interrupted.container.textContent).not.toContain("进程已复活");
   });
 });

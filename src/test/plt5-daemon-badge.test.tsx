@@ -40,7 +40,7 @@ describe("Daemon helper states", () => {
   }
 
   it("shows installation, attention, and readiness on regular SSH tabs", () => {
-    expect(render({ durable: false, sessionKind: "ssh", helper: { state: "installing", stage: "上传持久终端助手" } }).textContent).toContain("正在启用持久终端");
+    expect(render({ durable: false, sessionKind: "ssh", helper: { state: "installing", stage: "上传持久终端组件" } }).textContent).toContain("正在启用持久终端");
     expect(render({ durable: false, sessionKind: "ssh", helper: { state: "attention" } }).textContent).toContain("持久终端需处理");
     expect(render({ durable: false, sessionKind: "ssh", helper: { state: "ready" } }).textContent).toContain("持久已就绪");
   });

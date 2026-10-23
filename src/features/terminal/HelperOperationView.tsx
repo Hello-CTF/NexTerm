@@ -54,21 +54,21 @@ export interface HelperOperationViewProps {
 
 const STAGE_LABELS = new Map<string, string>([
   ["discover", "检测远端环境"],
-  ["probe", "查找已有持久终端助手"],
-  ["cache", "检查助手缓存"],
-  ["upload", "上传持久终端助手"],
-  ["verify", "校验持久终端助手"],
-  ["start", "启动持久终端助手"],
+  ["probe", "查找已有持久终端组件"],
+  ["cache", "检查持久终端组件缓存"],
+  ["upload", "上传持久终端组件"],
+  ["verify", "校验持久终端组件"],
+  ["start", "启动持久终端组件"],
   ["ready", "持久终端已就绪"],
   ["backoff", "连接暂时失败，正在重试"],
-  ["install_update", "准备终端助手更新"],
+  ["install_update", "准备持久终端组件更新"],
   ["deferred", "当前有进程运行，更新已延后"],
-  ["switch", "切换终端助手"],
-  ["updated", "终端助手已更新"],
+  ["switch", "切换持久终端组件"],
+  ["updated", "持久终端组件已更新"],
   ["fallback", "正在使用普通终端"],
-  ["failed", "持久终端助手操作失败"],
-  ["update", "更新持久终端助手"],
-  ["rollback", "回滚持久终端助手"],
+  ["failed", "持久终端组件操作失败"],
+  ["update", "更新持久终端组件"],
+  ["rollback", "回滚持久终端组件"],
 ]);
 
 export function helperStageText(stage: string): string {
@@ -100,7 +100,7 @@ function compatibilityText(compatibility: HelperCompatibility): string {
     case "compatible":
       return "协议兼容；发布版本不同不妨碍继续。";
     case "incompatible":
-      return "协议不兼容；不会替换正在运行的助手。";
+      return "协议不兼容；正在运行的组件不会被自动替换。";
     case "unknown":
       return "兼容性未知，不能推断可安全继续。";
   }
@@ -206,7 +206,7 @@ export function HelperOperationView({
       className="flex flex-col gap-3 px-4 py-3 text-xs text-neutral-300"
     >
       <h2 id={titleId} className="font-medium text-neutral-100">
-        持久终端助手
+        持久终端组件
       </h2>
 
       {busyLabel && <p role="status" className="flex items-center gap-2 text-neutral-300"><IconLoader size={13} className="animate-spin" />{busyLabel}</p>}
@@ -304,10 +304,10 @@ export function HelperOperationView({
 
       {offlineTrust && (
         <section
-          aria-label="离线 helper 信任"
+          aria-label="信任离线组件文件"
           className="flex flex-col gap-2 rounded border border-neutral-800/70 p-2"
         >
-          <h3 className="font-medium text-neutral-200">离线 helper 信任</h3>
+          <h3 className="font-medium text-neutral-200">信任离线组件文件</h3>
           <p id={offlineTrustNoteId} className="text-[var(--nx-fg-warning)]">
             只有核对 SHA-256 且协议兼容后才能信任；发布版本不同本身不代表不兼容。
           </p>
@@ -339,27 +339,27 @@ export function HelperOperationView({
 
       {update && (
         <section
-          aria-label="助手更新"
+          aria-label="组件更新"
           className="flex flex-col gap-2 rounded border border-neutral-800/70 p-2"
         >
-          <h3 className="font-medium text-neutral-200">助手更新</h3>
+          <h3 className="font-medium text-neutral-200">组件更新</h3>
           <div role="status" aria-live="polite" aria-atomic="true">
-            {update.status === "current" && <p>终端助手已是最新版本。</p>}
-            {update.status === "available" && <p>有可用的终端助手更新。</p>}
+            {update.status === "current" && <p>持久终端组件已是最新版本。</p>}
+            {update.status === "available" && <p>持久终端组件有可用更新。</p>}
             {update.status === "deferred" && <p>当前仍有进程运行，更新已延后。</p>}
-            {update.status === "interrupted" && <p>{update.updated ? "已中断活动进程并更新助手。" : "活动进程已中断，尚未确认更新完成。"}</p>}
-            {update.status === "updated" && !update.updated && <p>终端助手已更新。</p>}
-            {update.status === "rolled_back" && <p>更新失败，已恢复原助手。</p>}
+            {update.status === "interrupted" && <p>{update.updated ? "已中断运行中的进程并完成更新。" : "活动进程已中断，尚未确认更新完成。"}</p>}
+            {update.status === "updated" && !update.updated && <p>持久终端组件已更新。</p>}
+            {update.status === "rolled_back" && <p>更新失败，已恢复为原版本。</p>}
             {update.status === "unknown" && (
               <p>
                 {compatibility === "incompatible"
-                  ? "远端助手版本不兼容，下次建立持久终端时会自动替换为本机携带的版本。"
-                  : "暂时无法确认助手更新状态。"}
+                  ? "主机上运行的组件版本不兼容，NexTerm 不会自动替换它；可选择中断进程并更新。"
+                  : "暂时无法确认更新状态。"}
               </p>
             )}
             {update.interrupted && update.status !== "interrupted" && <p>已明确中断活动进程。</p>}
-            {update.updated && update.status !== "interrupted" && <p>终端助手已更新。</p>}
-            {update.rolledBack && <p>已回滚助手二进制；原 shell 和其他进程不会复活。</p>}
+            {update.updated && update.status !== "interrupted" && <p>持久终端组件已更新。</p>}
+            {update.rolledBack && <p>已恢复为更新前的版本；更新时结束的进程不会恢复。</p>}
             {update.detail && <details className="mt-1 text-neutral-400"><summary tabIndex={0} className="cursor-pointer">更新详情</summary><p>{update.detail}</p></details>}
             {(update.status === "available" || update.status === "deferred") && <p id={updateNoteId} className="mt-1 text-[var(--nx-fg-warning)]">
               更新会保留正在运行的终端；如需中断进程，会再次确认。
@@ -374,7 +374,7 @@ export function HelperOperationView({
                 onClick={onUpdate}
                 onKeyDown={activateFromKeyboard}
               >
-                更新助手
+                更新组件
               </button>
             )}
             {(update.status === "available" || update.status === "deferred") && onDeferUpdate && (

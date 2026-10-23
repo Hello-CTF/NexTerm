@@ -2426,7 +2426,7 @@ export const useUi = create<UiState>((set, get) => ({
   retryHelperOperation: async (tabId) => {
     const st = get();
     const operation = st.helperOperations.operations[tabId];
-    if (!operation || operation.status !== "awaiting_choice") throw new Error("当前助手操作不能重试");
+    if (!operation || operation.status !== "awaiting_choice") throw new Error("当前持久终端操作不能重试");
     const context = helperTabContext(st, tabId);
     if (!context) throw new Error("终端所属会话已不存在");
     if (operation.operationId.startsWith("local-restore-")) {
