@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from "react";
 import {
-  Activity, ArrowRight, Bot, CalendarClock, Container, Database, Download, Eye, FolderTree, Fingerprint, History,
-  KeyRound, Laptop, Layers, Link, Lock, Monitor, Moon, Network, Radio, ScrollText, Server, Share2, ShieldCheck, Smartphone,
+  Activity, ArrowRight, Bot, CalendarClock, Container, Database, Download, Eye, FolderTree, History,
+  KeyRound, Layers, Link, Lock, Moon, Network, Radio, ScrollText, Share2, ShieldCheck, Smartphone,
   SquareTerminal, Sun, Users, Workflow,
 } from "lucide-react";
 import { FeatureDemo, type DemoMode } from "./Demos";
+import { DownloadPicker } from "./Download";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const releases = `${repository}/releases/latest`;
@@ -20,7 +21,6 @@ type View = [name: DemoMode, label: string, title: string, alt: string];
 const integrations = ["SSH", "WinRM", "SFTP", "Docker", "MySQL", "MariaDB", "PostgreSQL", "Redis", "SOCKS5", "OpenAI API", "DeepSeek", "Kimi", "GLM", "Ollama"];
 const toolboxIcons = [FolderTree, Container, Database, Network, Activity, Link, Share2, Layers, SquareTerminal];
 const trustIcons = [Lock, KeyRound, Users, ScrollText, ShieldCheck, Database];
-const platformIcons = [Monitor, Laptop, Monitor, Server, Smartphone, Fingerprint];
 
 const copy = {
   zh: {
@@ -40,7 +40,6 @@ const copy = {
     trustKicker: "安全与自托管", trustTitle: "数据留在你自己的机器上",
     trust: [["端到端加密同步", "桌面端的资产、片段和凭据跨设备同步，服务端只保存密文。"], ["凭据保险库", "桌面和移动端使用主密码或系统级保护（DPAPI / Keychain），移动端支持生物识别，支持空闲自动锁定；浏览器模式凭据由服务端 master key 保护的凭据库加密，与端到端加密同步不同。"], ["多用户与双因素", "服务端多账号、TOTP 双因素认证、登录设备管理。"], ["审计日志", "用户与 AI 的命令、文件写入、设备上下线都有记录。"], ["AI 护栏", "命令分级、输出脱敏、只读或可执行模式。"], ["选择你的数据库", "默认 SQLite，服务端支持 PostgreSQL、MySQL 和 MariaDB。"]] as Item[],
     platformKicker: "下载", platformTitle: "装在桌面，部署到服务器，或在手机上接着用",
-    platforms: [["Windows", "10 / 11 · x64 / ARM64"], ["macOS", "Apple Silicon / Intel"], ["Linux 桌面", "deb · amd64 / arm64"], ["Linux 服务端", "浏览器访问 · 多用户"], ["移动端预览", "Android · iOS / iPadOS"], ["懒猫微服", "应用商店一键安装"]] as Item[],
     install: "部署服务端", footerIssue: "问题反馈", privacy: "隐私政策", license: "MIT License",
   },
   en: {
@@ -60,7 +59,6 @@ const copy = {
     trustKicker: "Security and self-hosting", trustTitle: "Your data stays on your machines",
     trust: [["End-to-end encrypted sync", "Desktop assets, snippets, and credentials sync across devices; the server only stores ciphertext."], ["Credential vault", "Desktop and mobile use a master password or OS-level protection (DPAPI / Keychain), with biometric unlock on mobile and idle auto-lock. Browser-mode credentials are instead encrypted by the server-side vault protected by its master key, not by end-to-end encrypted sync."], ["Multi-user and 2FA", "Server accounts, TOTP two-factor authentication, and signed-in device management."], ["Audit log", "Commands, file writes, and device online events from both users and the AI are recorded."], ["AI guardrails", "Command risk classification, output redaction, and read-only or execute modes."], ["Your database", "SQLite by default; the server also supports PostgreSQL, MySQL, and MariaDB."]] as Item[],
     platformKicker: "Download", platformTitle: "On your desktop, on your server, or on your phone",
-    platforms: [["Windows", "10 / 11 · x64 / ARM64"], ["macOS", "Apple Silicon / Intel"], ["Linux desktop", "deb · amd64 / arm64"], ["Linux server", "Browser access · multi-user"], ["Mobile preview", "Android · iOS / iPadOS"], ["Lazycat", "Install from the app center"]] as Item[],
     install: "Deploy the server", footerIssue: "Issues", privacy: "Privacy Policy", license: "MIT License",
   },
 };
@@ -204,14 +202,8 @@ function App() {
       <section className="section" id="download">
         <div className="container">
           <SectionHeading kicker={t.platformKicker} title={t.platformTitle} />
-          <div className="platform-grid">
-            {t.platforms.map(([title, text], index) => {
-              const Icon = platformIcons[index];
-              return <div className="platform" key={title}>{Icon && <Icon size={20} />}<div><strong>{title}</strong><span>{text}</span></div></div>;
-            })}
-          </div>
+          <DownloadPicker language={language} />
           <div className="download-actions">
-            <a className="button button-primary" href={releases} target="_blank" rel="noreferrer"><Download size={17} />{t.download}</a>
             <a className="button button-secondary" href={deployDocs[language]} target="_blank" rel="noreferrer">{t.install} <ArrowRight size={16} /></a>
           </div>
         </div>

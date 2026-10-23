@@ -1,0 +1,211 @@
+import { useEffect, useState } from "react";
+import { Apple, Check, Copy, Download, ExternalLink, Fingerprint, Laptop, Monitor, Server, Smartphone, type LucideIcon } from "lucide-react";
+
+const repository = "https://github.com/Hello-CTF/NexTerm";
+const latestRelease = `${repository}/releases/latest`;
+const installCommand = "curl -fsSL https://nexterm.work/install.sh | sudo bash";
+
+type Language = "zh" | "en";
+type Arch = "amd64" | "arm64";
+type PlatformId = "windows" | "macos" | "linux" | "server" | "android" | "ios" | "lazycat";
+
+interface Platform {
+  id: PlatformId;
+  icon: LucideIcon;
+  archs: Arch[];
+  // asset returns the release file name for this platform, or null when it ships elsewhere.
+  asset: ((arch: Arch, version: string) => string) | null;
+}
+
+const platforms: Platform[] = [
+  { id: "windows", icon: Monitor, archs: ["amd64", "arm64"], asset: (arch, version) => `nexterm-desktop_windows_${arch}_${version}.exe` },
+  { id: "macos", icon: Apple, archs: ["arm64", "amd64"], asset: (arch, version) => `nexterm-desktop_macos_${arch}_${version}.dmg` },
+  { id: "linux", icon: Laptop, archs: ["amd64", "arm64"], asset: (arch, version) => `nexterm-desktop_linux_${arch}_${version}.deb` },
+  { id: "server", icon: Server, archs: ["amd64", "arm64"], asset: (arch, version) => `nexterm-server_linux_${arch}_${version}.tar.gz` },
+  { id: "android", icon: Smartphone, archs: ["arm64"], asset: (_arch, version) => `nexterm-desktop_android_arm64_${version}.apk` },
+  { id: "ios", icon: Smartphone, archs: [], asset: null },
+  { id: "lazycat", icon: Fingerprint, archs: [], asset: null },
+];
+
+const text = {
+  zh: {
+    names: { windows: "Windows", macos: "macOS", linux: "Linux 桌面", server: "Linux 服务端", android: "Android", ios: "iOS / iPadOS", lazycat: "懒猫微服" },
+    archNames: { amd64: "x64", arm64: "ARM64" }, macArchNames: { amd64: "Intel", arm64: "Apple Silicon" },
+    detected: "已识别你的设备", choose: "选择其他系统",
+    download: "下载", version: "最新版本", loading: "正在读取最新版本…", unavailable: "无法读取最新版本，请前往 Releases 下载。",
+    allReleases: "全部版本与校验文件", copy: "复制", copied: "已复制",
+    notes: {
+      windows: "运行安装器即可；首次运行可能提示未知发布者。",
+      macos: "打开后拖入「应用程序」。Intel 芯片的 Mac 请切换到 Intel。",
+      linux: "下载后执行：",
+      server: "在带 systemd 的 Linux 服务器上以 root 执行一键安装（或下载安装包后运行包内 install.sh）：",
+      android: "预览版，适用于 arm64 设备。",
+      ios: "预览版通过 TestFlight 测试邀请安装，Release 不提供 IPA。",
+      lazycat: "在懒猫微服的应用中心搜索 NexTerm 安装。",
+    },
+  },
+  en: {
+    names: { windows: "Windows", macos: "macOS", linux: "Linux desktop", server: "Linux server", android: "Android", ios: "iOS / iPadOS", lazycat: "LazyCat" },
+    archNames: { amd64: "x64", arm64: "ARM64" }, macArchNames: { amd64: "Intel", arm64: "Apple Silicon" },
+    detected: "Detected your device", choose: "Choose another system",
+    download: "Download", version: "Latest version", loading: "Loading the latest version…", unavailable: "The latest version could not be loaded; download it from Releases.",
+    allReleases: "All releases and checksums", copy: "Copy", copied: "Copied",
+    notes: {
+      windows: "Run the installer; the first launch may show an unknown publisher.",
+      macos: "Open it and drag NexTerm into Applications. On an Intel Mac, switch to Intel.",
+      linux: "After downloading, run:",
+      server: "On a Linux server with systemd, run the one-line installer as root (or download the archive and run its install.sh):",
+      android: "Preview build for arm64 devices.",
+      ios: "The preview installs through a TestFlight invitation; releases do not ship an IPA.",
+      lazycat: "Search for NexTerm in the LazyCat app center.",
+    },
+  },
+};
+
+interface Detection { platform: PlatformId; arch: Arch }
+
+interface UserAgentData {
+  getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string; platform?: string }>;
+}
+
+// detectDevice reads the user agent; Chromium's client hints refine the CPU
+// architecture, which the user agent string reports as x64 even on ARM Windows.
+async function detectDevice(): Promise<Detection> {
+  const ua = navigator.userAgent;
+  let platform: PlatformId = "windows";
+  if (/Android/i.test(ua)) platform = "android";
+  else if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) platform = "ios";
+  else if (/Windows/i.test(ua)) platform = "windows";
+  else if (/Macintosh|Mac OS X/i.test(ua)) platform = "macos";
+  else if (/Linux|X11|CrOS/i.test(ua)) platform = "linux";
+  // Browsers report Intel on every Mac, so Apple Silicon is the better default there.
+  let arch: Arch = /arm64|aarch64/i.test(ua) || platform === "macos" ? "arm64" : "amd64";
+  const hints = (navigator as Navigator & { userAgentData?: UserAgentData }).userAgentData;
+  if (hints?.getHighEntropyValues) {
+    try {
+      const values = await hints.getHighEntropyValues(["architecture"]);
+      if (values.architecture === "arm") arch = "arm64";
+      else if (values.architecture === "x86") arch = "amd64";
+    } catch {
+      // Keep the user-agent guess.
+    }
+  }
+  return { platform, arch };
+}
+
+interface Release { version: string; assets: Map<string, string> }
+
+async function fetchLatestRelease(): Promise<Release> {
+  const response = await fetch("https://api.github.com/repos/Hello-CTF/NexTerm/releases/latest", { headers: { Accept: "application/vnd.github+json" } });
+  if (!response.ok) throw new Error(`GitHub API ${response.status}`);
+  const body = await response.json() as { tag_name: string; assets: { name: string; browser_download_url: string }[] };
+  return { version: body.tag_name.replace(/^v/, ""), assets: new Map(body.assets.map((asset) => [asset.name, asset.browser_download_url])) };
+}
+
+function CopyCommand({ command, language }: { command: string; language: Language }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div className="command">
+      <code>{command}</code>
+      <button type="button" className="command-copy" onClick={() => void copy()} aria-label={text[language].copy}>
+        {copied ? <Check size={15} /> : <Copy size={15} />}
+        <span>{copied ? text[language].copied : text[language].copy}</span>
+      </button>
+    </div>
+  );
+}
+
+export function DownloadPicker({ language }: { language: Language }) {
+  const t = text[language];
+  const [detected, setDetected] = useState<Detection | null>(null);
+  const [selected, setSelected] = useState<PlatformId>("windows");
+  const [arch, setArch] = useState<Arch>("amd64");
+  const [release, setRelease] = useState<Release | null>(null);
+  const [releaseError, setReleaseError] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void detectDevice().then((device) => {
+      if (!active) return;
+      setDetected(device);
+      setSelected(device.platform);
+      setArch(device.arch);
+    });
+    fetchLatestRelease().then((latest) => active && setRelease(latest)).catch(() => active && setReleaseError(true));
+    return () => { active = false; };
+  }, []);
+
+  const platform = platforms.find((item) => item.id === selected) ?? platforms[0];
+  const effectiveArch = platform.archs.includes(arch) ? arch : platform.archs[0];
+  const assetName = platform.asset && effectiveArch && release ? platform.asset(effectiveArch, release.version) : null;
+  const assetUrl = assetName ? release?.assets.get(assetName) : undefined;
+  const PlatformIcon = platform.icon;
+  const archNames = platform.id === "macos" ? t.macArchNames : t.archNames;
+
+  return (
+    <div className="download-picker">
+      <div className="download-tabs" role="tablist" aria-label={t.choose}>
+        {platforms.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button key={item.id} type="button" role="tab" aria-selected={item.id === selected}
+              className={`download-tab ${item.id === selected ? "is-active" : ""}`} onClick={() => setSelected(item.id)}>
+              <Icon size={16} />
+              <span>{t.names[item.id]}</span>
+              {detected?.platform === item.id && <span className="download-detected" title={t.detected} />}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="download-panel" role="tabpanel">
+        <div className="download-head">
+          <PlatformIcon size={22} />
+          <div>
+            <strong>{t.names[platform.id]}</strong>
+            <span>
+              {detected?.platform === platform.id ? `${t.detected} · ` : ""}
+              {release ? `${t.version} v${release.version}` : releaseError ? t.unavailable : t.loading}
+            </span>
+          </div>
+        </div>
+
+        {platform.archs.length > 1 && (
+          <div className="download-archs" role="group">
+            {platform.archs.map((value) => (
+              <button key={value} type="button" className={`download-arch ${value === effectiveArch ? "is-active" : ""}`}
+                aria-pressed={value === effectiveArch} onClick={() => setArch(value)}>
+                {archNames[value]}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <p className="download-note">{t.notes[platform.id]}</p>
+        {platform.id === "server" && <CopyCommand command={installCommand} language={language} />}
+        {platform.id === "linux" && <CopyCommand command={`sudo apt install ./${assetName ?? `nexterm-desktop_linux_${effectiveArch}_<version>.deb`}`} language={language} />}
+
+        <div className="download-actions">
+          {platform.asset && (
+            <a className="button button-primary" href={assetUrl ?? latestRelease} target={assetUrl ? undefined : "_blank"} rel="noreferrer">
+              <Download size={17} />{t.download} {t.names[platform.id]}{effectiveArch && platform.archs.length > 1 ? ` · ${archNames[effectiveArch]}` : ""}
+            </a>
+          )}
+          <a className="button button-secondary" href={latestRelease} target="_blank" rel="noreferrer">
+            {t.allReleases} <ExternalLink size={15} />
+          </a>
+        </div>
+        {assetName && <p className="download-file">{assetName}</p>}
+      </div>
+    </div>
+  );
+}
