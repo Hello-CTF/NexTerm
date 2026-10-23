@@ -343,9 +343,36 @@ func (b *CommandBackend) runResult(ctx context.Context, args []string) (CommandR
 		if message == "" {
 			message = strings.TrimSpace(result.Stdout)
 		}
-		return CommandResult{}, fmt.Errorf("docker command exited with code %d: %s", *result.ExitCode, message)
+		failure := fmt.Errorf("docker command exited with code %d: %s", *result.ExitCode, message)
+		if reason := classifyCommandFailure(*result.ExitCode, message); reason != nil {
+			return CommandResult{}, fmt.Errorf("%w: %w", reason, failure)
+		}
+		return CommandResult{}, failure
 	}
 	return result, nil
+}
+
+// classifyCommandFailure recognizes the host-level reasons a docker CLI run
+// fails, so callers can tell "no Docker here" apart from a failed operation.
+// A missing binary is only reported when the shell names docker itself, which
+// keeps commands missing inside a container from being misread.
+func classifyCommandFailure(code int, message string) error {
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "docker: command not found"),
+		strings.Contains(lower, "docker: not found"),
+		strings.Contains(lower, "'docker' is not recognized"),
+		strings.Contains(lower, "\"docker\": executable file not found"),
+		code == 127 && strings.Contains(lower, "docker"):
+		return ErrNotInstalled
+	case strings.Contains(lower, "permission denied") && strings.Contains(lower, "docker"):
+		return ErrAccessDenied
+	case strings.Contains(lower, "cannot connect to the docker daemon"),
+		strings.Contains(lower, "is the docker daemon running"),
+		strings.Contains(lower, "error during connect"):
+		return ErrDaemonUnavailable
+	}
+	return nil
 }
 
 func (b *CommandBackend) open(ctx context.Context, command string, width, height uint) (CommandStream, error) {

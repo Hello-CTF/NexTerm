@@ -16,6 +16,10 @@ var (
 	ErrNoBackend     = errors.New("docker backend unavailable")
 	ErrStreamClosed  = errors.New("docker stream closed")
 	ErrInvalidAction = errors.New("invalid docker action")
+	// The following classify a failed docker CLI run on the target host.
+	ErrNotInstalled      = errors.New("docker is not installed on this host")
+	ErrDaemonUnavailable = errors.New("docker daemon is not reachable")
+	ErrAccessDenied      = errors.New("docker access denied for this user")
 )
 
 type ContainerSummary struct {

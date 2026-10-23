@@ -1310,6 +1310,15 @@ func terminalIPCError(err error) error {
 	if errors.Is(err, docker.ErrStreamClosed) {
 		return ipc.WrapError(ipc.CodeDisconnected, err.Error(), err)
 	}
+	if errors.Is(err, docker.ErrNotInstalled) {
+		return ipc.WrapError(ipc.Code("docker_not_installed"), "这台主机没有安装 Docker", err)
+	}
+	if errors.Is(err, docker.ErrAccessDenied) {
+		return ipc.WrapError(ipc.Code("docker_forbidden"), "当前登录用户没有权限访问 Docker，可将该用户加入 docker 用户组后重新连接", err)
+	}
+	if errors.Is(err, docker.ErrDaemonUnavailable) {
+		return ipc.WrapError(ipc.Code("docker_unavailable"), "Docker 服务未运行或无法连接，请在主机上启动 Docker 后重试", err)
+	}
 	if errors.Is(err, docker.ErrUnsupported) || errors.Is(err, docker.ErrNoBackend) || errors.Is(err, durable.ErrUnavailable) {
 		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err)
 	}

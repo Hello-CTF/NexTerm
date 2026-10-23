@@ -6,7 +6,7 @@ import { dockerApi, terminalApi, type ContainerSummary, type ImageSummary } from
 import { useUi } from "../../app/store";
 import { createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
-import { describeDockerError } from "./dockerErrors";
+import { describeDockerError, isDockerNotInstalled } from "./dockerErrors";
 import "../../ui/skeleton.css";
 import {
   IconArrowLeft,
@@ -101,6 +101,19 @@ function TableQueryBody({
           </td>
         </tr>
       </>
+    );
+  }
+  if (error && isDockerNotInstalled(error)) {
+    return (
+      <tr>
+        <td colSpan={colSpan} className="nx-table-empty">
+          这台主机没有安装 Docker，安装后点击重试。
+          <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
+            <IconRefresh size={12} />
+            重试
+          </button>
+        </td>
+      </tr>
     );
   }
   if (error) {
@@ -640,7 +653,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           {containers.data
             ? `${running} 运行中 / 共 ${cRows.length}`
             : containers.isError
-              ? "容器状态加载失败"
+              ? isDockerNotInstalled(containers.error) ? "未安装 Docker" : "容器状态加载失败"
               : "容器状态加载中"}
         </span>
         <div className="nx-spacer" />

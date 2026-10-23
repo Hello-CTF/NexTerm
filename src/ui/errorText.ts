@@ -21,6 +21,9 @@ const ERROR_CODE_LABELS: Record<string, string> = {
   ssh: "SSH 错误",
   sftp: "SFTP 错误",
   winrm: "WinRM 错误",
+  docker_not_installed: "未安装 Docker",
+  docker_unavailable: "Docker 不可用",
+  docker_forbidden: "没有 Docker 权限",
 };
 
 export function describeError(e: unknown): string {

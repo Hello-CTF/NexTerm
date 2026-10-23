@@ -11,7 +11,23 @@ const DOCKER_UNAVAILABLE_HINTS: { pattern: RegExp; hint: string }[] = [
   },
 ];
 
+// Codes the backend uses when the host itself cannot run Docker; their
+// messages are already user-facing.
+const DOCKER_HOST_CODES = new Set(["docker_not_installed", "docker_unavailable", "docker_forbidden"]);
+
+function dockerErrorCode(e: unknown): string {
+  return e && typeof e === "object" && typeof (e as { code?: unknown }).code === "string" ? (e as { code: string }).code : "";
+}
+
+export function isDockerNotInstalled(e: unknown): boolean {
+  return dockerErrorCode(e) === "docker_not_installed";
+}
+
 export function describeDockerError(e: unknown): string {
+  if (DOCKER_HOST_CODES.has(dockerErrorCode(e))) {
+    const message = (e as { message?: unknown }).message;
+    if (typeof message === "string" && message) return message;
+  }
   const raw = describeError(e);
   for (const { pattern, hint } of DOCKER_UNAVAILABLE_HINTS) {
     if (pattern.test(raw)) return `${raw} · ${hint}`;
