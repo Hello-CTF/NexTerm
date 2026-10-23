@@ -602,7 +602,7 @@ jobs:
           fi
           "$APKSIGNER" --version
           "$AAPT2" version
-          node .github/scripts/mobile-evidence.mjs bin/nexterm.apk mobile-android
+          go run ./scripts/mobile-evidence bin/nexterm.apk mobile-android
           node --input-type=module -e '
             import fs from "node:fs";
             const report = JSON.parse(fs.readFileSync("bin/nexterm.apk.artifact.json", "utf8"));
