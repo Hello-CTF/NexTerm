@@ -205,11 +205,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
   .demo-footer > span:last-child { display: none; }
 }
 
-.integrations { border-block: 1px solid var(--border); background: var(--bg-raised); }
-.integrations-inner { display: flex; align-items: center; gap: 24px; padding: 22px 0; }
-.integrations-inner > span { flex: none; color: var(--text-muted); font-size: 12px; font-weight: 650; }
-.integrations ul { display: flex; flex-wrap: wrap; gap: 8px; }
-.integrations li { padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font: 12px/1.3 var(--mono); }
 
 .section { padding: 112px 0; }
 .section-muted { border-block: 1px solid var(--border); background: var(--bg-muted); }
@@ -282,7 +277,6 @@ h3 { color: var(--text); font-size: 15px; font-weight: 700; letter-spacing: -.01
   .hero { padding-top: 112px; }
   .view-tabs { margin-top: 48px; max-width: 100%; overflow-x: auto; }
   .view-tabs button { flex: none; padding: 0 12px; }
-  .integrations-inner { flex-direction: column; align-items: flex-start; gap: 12px; }
   .section { padding: 76px 0; }
   .point-grid { grid-template-columns: 1fr; }
   .footer-inner { flex-wrap: wrap; }
@@ -300,3 +294,4 @@ h3 { color: var(--text); font-size: 15px; font-weight: 700; letter-spacing: -.01
   html { scroll-behavior: auto; }
   .button, .tool-card, .view-tabs button { transition: none; }
 }
+
