@@ -97,24 +97,24 @@ describe("dynamic inventory dialog", () => {
   it("discovers read-only candidates and syncs only selected Docker keys", async () => {
     clickButton(mounted!.container, "Docker contexts");
     setSelectValue(mounted!.container.querySelector<HTMLSelectElement>("#inventory-group")!, "g1");
-    clickButton(mounted!.container, "发现");
+    clickButton(mounted!.container, "预览");
     await waitFor(() => expect(mocks.discover).toHaveBeenCalledWith("docker-context", undefined));
     await waitFor(() => expect(mounted!.container.querySelectorAll('input[aria-label^="选择清单项"]').length).toBe(2));
     const local = mounted!.container.querySelector<HTMLInputElement>('input[aria-label="选择清单项 local"]')!;
     expect(local.checked).toBe(true);
     click(local);
-    clickButton(mounted!.container, "同步选中项");
+    clickButton(mounted!.container, "同步选中的主机");
     await waitFor(() => expect(mocks.sync).toHaveBeenCalledWith({ source: "docker-context", groupId: "g1", keys: ["context/prod"] }));
     expect(mounted!.container.textContent).toContain("新增 1");
   });
 
   it("requires confirmation before synchronizing an empty selection", async () => {
     clickButton(mounted!.container, "Docker contexts");
-    clickButton(mounted!.container, "发现");
+    clickButton(mounted!.container, "预览");
     await waitFor(() => expect(mocks.discover).toHaveBeenCalledWith("docker-context", undefined));
     await waitFor(() => expect(mounted!.container.querySelectorAll('input[aria-label^="选择清单项"]').length).toBe(2));
     clickButton(mounted!.container, "全不选");
-    clickButton(mounted!.container, "同步选中项");
+    clickButton(mounted!.container, "同步选中的主机");
     await flush();
     expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("移除此来源在当前账号下导入的全部资产"), expect.objectContaining({ kind: "warning" }));
     expect(mocks.sync).not.toHaveBeenCalled();
@@ -136,11 +136,11 @@ describe("dynamic inventory dialog", () => {
     mocks.watchStatus.mockResolvedValue({ watching: true, path: "/home/a/.ssh/config", groupId: "g1", lastSyncAt: 1, lastResult: null, lastError: "" });
     mounted = mountDialog();
     clickButton(mounted!.container, "Docker contexts");
-    clickButton(mounted!.container, "发现");
+    clickButton(mounted!.container, "预览");
     await waitFor(() => expect(mocks.discover).toHaveBeenCalledWith("docker-context", undefined));
     await waitFor(() => expect(mounted!.container.querySelectorAll('input[aria-label^="选择清单项"]').length).toBe(2));
     clickButton(mounted!.container, "全不选");
-    clickButton(mounted!.container, "同步选中项");
+    clickButton(mounted!.container, "同步选中的主机");
     await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
 
     // Account switch: the epoch bumps, the asset tree remounts the dialog, and the account
@@ -176,9 +176,9 @@ describe("dynamic inventory dialog", () => {
   it("starts SSH watching with the selected path and group", async () => {
     setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!, "/tmp/config");
     setSelectValue(mounted!.container.querySelector<HTMLSelectElement>("#inventory-group")!, "g1");
-    clickButton(mounted!.container, "启用 watch 并同步");
+    clickButton(mounted!.container, "立即同步并开启自动同步");
     await waitFor(() => expect(mocks.setWatch).toHaveBeenCalledWith({ enabled: true, path: "/tmp/config", groupId: "g1" }));
-    expect(mounted!.container.textContent).toContain("停止 watch");
+    expect(mounted!.container.textContent).toContain("关闭自动同步");
     expect(mounted!.container.textContent).toContain("新增 1");
   });
 
@@ -200,7 +200,7 @@ describe("dynamic inventory dialog", () => {
       resolveWatch = resolve;
     }));
     setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!, "/home/a/.ssh/config");
-    clickButton(mounted!.container, "启用 watch 并同步");
+    clickButton(mounted!.container, "立即同步并开启自动同步");
     await waitFor(() => expect(mocks.setWatch).toHaveBeenCalledWith({ enabled: true, path: "/home/a/.ssh/config" }));
 
     // Account switch: the epoch bumps, the asset tree remounts the dialog, and the account
@@ -249,12 +249,12 @@ describe("dynamic inventory dialog", () => {
     const path = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!;
     const group = mounted!.container.querySelector<HTMLSelectElement>("#inventory-group")!;
     await waitFor(() => expect(mocks.watchStatus).toHaveBeenCalled());
-    await waitFor(() => expect(mounted!.container.textContent).toContain("停止 watch"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("关闭自动同步"));
     await waitFor(() => {
       expect(path.value).toBe("/custom/ssh-config");
       expect(group.value).toBe("g1");
     });
-    clickButton(mounted!.container, "发现");
+    clickButton(mounted!.container, "预览");
     await waitFor(() => expect(mocks.discover).toHaveBeenCalledWith("ssh-config", "/custom/ssh-config"));
     clickButton(mounted!.container, "同步全部");
     await waitFor(() => expect(mocks.sync).toHaveBeenCalledWith({ source: "ssh-config", path: "/custom/ssh-config", groupId: "g1" }));
@@ -262,10 +262,10 @@ describe("dynamic inventory dialog", () => {
 
   it("states the Kubernetes inventory-only context and one-shot pod exec boundary", () => {
     clickButton(mounted!.container, "Kubernetes");
-    expect(mounted!.container.textContent).toContain("当前 kubectl context 的 pods");
-    expect(mounted!.container.textContent).toContain("context 仅作清单与导航记录");
-    expect(mounted!.container.textContent).toContain("pod 支持一次性 exec");
-    expect(mounted!.container.textContent).toContain("不创建交互式终端");
+    expect(mounted!.container.textContent).toContain("当前 context 下的 pods");
+    expect(mounted!.container.textContent).toContain("不会修改集群");
+    expect(mounted!.container.textContent).toContain("可以对 pod 执行一次性命令");
+    expect(mounted!.container.textContent).toContain("不能打开交互式终端");
   });
 
   it("executes a discovered docker context target through the dialog", async () => {
@@ -274,7 +274,7 @@ describe("dynamic inventory dialog", () => {
     });
     mocks.discover.mockResolvedValue(EXEC_DISCOVERY);
     clickButton(mounted!.container, "Docker contexts");
-    clickButton(mounted!.container, "发现");
+    clickButton(mounted!.container, "预览");
     await flush();
     await waitFor(() => expect(mounted!.container.querySelectorAll('input[aria-label^="选择清单项"]').length).toBe(1));
 
@@ -307,7 +307,7 @@ describe("dynamic inventory dialog", () => {
   it("offers exec only for executable kubernetes candidates", async () => {
     mocks.discover.mockResolvedValue(K8S_DISCOVERY);
     clickButton(mounted!.container, "Kubernetes");
-    clickButton(mounted!.container, "发现");
+    clickButton(mounted!.container, "预览");
     await flush();
     await waitFor(() => expect(mounted!.container.querySelectorAll('input[aria-label^="选择清单项"]').length).toBe(2));
 
@@ -329,7 +329,7 @@ describe("dynamic inventory dialog", () => {
     });
     mocks.discover.mockResolvedValue(EXEC_DISCOVERY);
     clickButton(mounted!.container, "Docker contexts");
-    clickButton(mounted!.container, "发现");
+    clickButton(mounted!.container, "预览");
     await flush();
     await waitFor(() => expect(mounted!.container.querySelectorAll('input[aria-label^="选择清单项"]').length).toBe(1));
     clickButton(mounted!.container, "执行命令");

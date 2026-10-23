@@ -19,7 +19,7 @@ import { InventoryTargetActions, targetExecutable, type InventoryTargetSession }
 
 const SOURCE_ORDER: InventorySource[] = ["ssh-config", "docker-context", "kubernetes"];
 const SOURCE_LABEL: Record<InventorySource, string> = {
-  "ssh-config": "SSH config",
+  "ssh-config": "SSH 配置文件",
   "docker-context": "Docker contexts",
   kubernetes: "Kubernetes",
 };
@@ -197,9 +197,12 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
         }}
       >
         <div className="nx-modal-header shrink-0">
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">动态清单源</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">同步外部主机列表</span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
+          <p className="nx-hint mb-3">
+            让资产树跟随外部来源更新：来源里添加、修改或删除的主机，会同步到下面选择的分组。和「导入」不同，同步来的主机由来源管理，来源里删掉后这里也会移除；手动添加的主机不受影响。
+          </p>
           <div className="nx-segment mb-3" aria-label="清单来源">
             {SOURCE_ORDER.map((item) => (
               <button
@@ -222,9 +225,9 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="nx-form-row">
-            <label className="nx-label" htmlFor="inventory-group">同步到 managed group</label>
+            <label className="nx-label" htmlFor="inventory-group">同步到分组</label>
             <select id="inventory-group" className="nx-select" value={groupId} disabled={busy !== null || (source === "ssh-config" && watching)} onChange={(event) => setGroupId(event.target.value)}>
-              <option value="">默认（{DEFAULT_GROUP[source]}）</option>
+              <option value="">新建或沿用「{DEFAULT_GROUP[source]}」分组</option>
               {(groups.data ?? []).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
             </select>
           </div>
@@ -243,24 +246,27 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 autoComplete="off"
               />
               <div className="nx-hint mt-1.5">
-                复用 OpenSSH Include 解析；watch 每 2 秒重读。解析失败保留最后快照，源文件删除按空清单软删除 managed 资产。
+                留空使用 ~/.ssh/config，会一并读取其中 Include 的文件。
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy !== null} onClick={() => void setWatch(!watching)}>
                   {busy === "watch" ? <IconLoader size={12} className="animate-spin" /> : null}
-                  {watching ? "停止 watch" : "启用 watch 并同步"}
+                  {watching ? "关闭自动同步" : "立即同步并开启自动同步"}
                 </button>
-                {watching && watchQuery.data?.path && <span className="nx-badge">watching: {watchQuery.data.path}</span>}
+                {watching && watchQuery.data?.path && <span className="nx-badge nx-badge-green">正在跟随 {watchQuery.data.path}</span>}
+              </div>
+              <div className="nx-hint mt-1.5">
+                开启后每 2 秒检查一次文件，有改动就同步。文件写错暂时读不出来时保留上次结果；文件被删除时，会移除从它同步来的主机。
               </div>
               {watchQuery.data?.lastError && <div className="mt-2 text-[12px] text-red-300" role="alert">后台同步失败：{watchQuery.data.lastError}</div>}
             </div>
           )}
 
           {source === "docker-context" && (
-            <div className="nx-hint mb-3">只读执行 docker context ls。导入为 Docker context 清单记录，不修改 context，也不假定已有终端传输。</div>
+            <div className="nx-hint mb-3">读取 docker context ls 的结果，不会修改任何 context。同步来的 context 只是一条记录，可以查看和执行一次性命令，不能打开终端。</div>
           )}
           {source === "kubernetes" && (
-            <div className="nx-hint mb-3">只读发现 contexts 与当前 kubectl context 的 pods。context 仅作清单与导航记录；pod 支持一次性 exec，不创建交互式终端。</div>
+            <div className="nx-hint mb-3">读取 kubectl 的 contexts，以及当前 context 下的 pods，不会修改集群。可以对 pod 执行一次性命令，不能打开交互式终端。</div>
           )}
 
           {error && (
@@ -269,12 +275,12 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {busy === "discover" && <div className="nx-empty" role="status"><IconLoader size={16} className="animate-spin" />正在只读发现…</div>}
+          {busy === "discover" && <div className="nx-empty" role="status"><IconLoader size={16} className="animate-spin" />正在读取来源…</div>}
 
           {discovery && busy !== "discover" && (
-            <section aria-label={`${inventorySourceLabel(source)} 候选`}>
+            <section aria-label={`${inventorySourceLabel(source)} 中找到的主机`}>
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px] text-neutral-400">
-                <span>{items.length} 个候选 · 本次同步 {selectedCount} 个</span>
+                <span>找到 {items.length} 个 · 将同步 {selectedCount} 个</span>
                 {source !== "ssh-config" && items.length > 0 && (
                   <>
                     <button type="button" className="nx-link" onClick={() => setSelected(new Set(items.map((item) => item.key)))}>全选</button>
@@ -283,7 +289,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 )}
               </div>
               {items.length === 0 ? (
-                <div className="nx-empty"><IconServer size={18} /><span className="text-[12px] text-neutral-400">来源当前没有列出候选；同步空清单可移除该来源已管理的资产。</span></div>
+                <div className="nx-empty"><IconServer size={18} /><span className="text-[12px] text-neutral-400">来源里没有找到主机；现在同步会移除之前从这个来源同步来的主机。</span></div>
               ) : (
                 <div className="flex max-h-[320px] flex-col gap-1.5 overflow-y-auto">
                   {items.map((item) => {
@@ -345,7 +351,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                   })}
                 </div>
               )}
-              {source !== "ssh-config" && <div className="nx-hint mt-2">同步仅保留勾选的 source-managed 项；取消勾选会软删除该来源管理项，不影响手工资产或其他来源。</div>}
+              {source !== "ssh-config" && <div className="nx-hint mt-2">只同步勾选的项；取消勾选的项如果之前同步过，会从资产树移除。手动添加的主机和其他来源不受影响。</div>}
             </section>
           )}
 
@@ -361,7 +367,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
           )}
           {(result?.warnings.length || discovery?.warnings.length) ? (
             <div className="mt-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11.5px] text-amber-300">
-              <div className="mb-1 flex items-center gap-1"><IconAlert size={12} />同步提示</div>
+              <div className="mb-1 flex items-center gap-1"><IconAlert size={12} />注意</div>
               {(result?.warnings.length ? result.warnings : discovery?.warnings ?? []).map((warning, index) => <div key={index}>{warning}</div>)}
             </div>
           ) : null}
@@ -370,10 +376,10 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
           <button type="button" className="nx-btn nx-btn-ghost" disabled={busy !== null} onClick={onClose}>关闭</button>
           <div className="nx-spacer" />
           <button type="button" className="nx-btn nx-btn-outline" disabled={busy !== null} onClick={() => void runDiscover()}>
-            {busy === "discover" ? "发现中…" : discovery ? "重新发现" : "发现"}
+            {busy === "discover" ? "读取中…" : discovery ? "重新读取" : "预览"}
           </button>
           <button type="button" className="nx-btn nx-btn-primary" disabled={busy !== null || !discovery} onClick={() => void runSync()}>
-            {busy === "sync" ? "同步中…" : source === "ssh-config" ? "同步全部" : "同步选中项"}
+            {busy === "sync" ? "同步中…" : source === "ssh-config" ? "同步全部" : "同步选中的主机"}
           </button>
         </div>
       </div>

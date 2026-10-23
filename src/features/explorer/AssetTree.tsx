@@ -997,8 +997,8 @@ export function AssetTree() {
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="动态清单源：SSH config、Docker contexts、Kubernetes"
-          aria-label="动态清单源"
+          title="同步外部主机列表：SSH 配置文件、Docker contexts、Kubernetes"
+          aria-label="同步外部主机列表"
           onClick={() => setInventoryOpen(true)}
         >
           <IconGlobe size={14} />
@@ -1291,7 +1291,7 @@ function AssetRow({
   const tip = [
     asset.name,
     target || targetSummary || (asset.builtin ? "本机" : ""),
-    managed ? `由 ${inventorySourceLabel(managed.source)} 管理 · 来源字段只读` : "",
+    managed ? `由 ${inventorySourceLabel(managed.source)} 同步 · 名称和连接信息随来源更新` : "",
     asset.builtin ? "内置资产 · 不可删除" : "",
     hidden ? "已隐藏" : "",
     connectionProblem ? `连接失败：${connectionProblem.summary}` : "",
@@ -1345,7 +1345,7 @@ function AssetRow({
       <span aria-hidden="true" className="nx-asset-row-measures pointer-events-none invisible whitespace-nowrap" style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}>
         <span ref={nameMeasureRef} className="nx-asset-row-name-measure inline-block whitespace-nowrap">{label}</span>
       </span>
-      {managed && <span className="nx-badge nx-badge-blue shrink-0" title={`由 ${inventorySourceLabel(managed.source)} 管理；来源字段只读`}>{inventorySourceLabel(managed.source)}</span>}
+      {managed && <span className="nx-badge nx-badge-blue shrink-0" title={`由 ${inventorySourceLabel(managed.source)} 同步；名称和连接信息随来源更新，不能在这里修改`}>{inventorySourceLabel(managed.source)}</span>}
       {envCount > 0 && <span className="nx-badge nx-badge-amber" title={`${envCount} 个环境变量`}>env {envCount}</span>}
       {hidden && <span className="nx-badge">已隐藏</span>}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
@@ -2565,7 +2565,7 @@ export function AssetEditor({
         >
           {managed && (
             <div className="mb-3 rounded-md border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] text-blue-300" role="note">
-              由 {inventorySourceLabel(managed.source)} 动态管理。名称、分组、端点、认证与来源选项只读；图标、标签、备注及其他用户选项可编辑。
+              由 {inventorySourceLabel(managed.source)} 同步。名称、分组、地址、认证方式和来源选项随来源更新，不能在这里修改；图标、标签、备注和其他选项可以编辑。
             </div>
           )}
           {kind === "asset" && (

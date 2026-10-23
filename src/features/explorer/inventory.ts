@@ -29,7 +29,7 @@ export function assetInventoryMetadata(asset?: Pick<Asset, "options"> | null): A
 export function inventorySourceLabel(source: string): string {
   switch (source) {
     case "ssh-config":
-      return "SSH config";
+      return "SSH 配置文件";
     case "docker-context":
       return "Docker context";
     case "kubernetes":

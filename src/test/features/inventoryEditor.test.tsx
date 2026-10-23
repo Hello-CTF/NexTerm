@@ -99,7 +99,7 @@ afterEach(() => {
 describe("managed asset editing and cloning", () => {
   it("disables source fields and saves only user-owned changes", async () => {
     mounted = mountWithClient(createElement(AssetEditor, { kind: "asset", initial: MANAGED, onClose: vi.fn(), onSaved: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("由 SSH config 动态管理"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("由 SSH 配置文件 同步"));
     const name = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="web-01"]')!;
     const host = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="1.2.3.4"]')!;
     const tags = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="用逗号分隔，如 production, 欧洲"]')!;
