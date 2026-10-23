@@ -294,6 +294,10 @@ jobs:
           package_arch="${{ matrix.arch == 'amd64' && 'x64' || 'arm64' }}"
           installer="target/release-assets/NexTerm_${NEXTERM_RELEASE_VERSION}_${package_arch}-setup.exe"
           test -f "$installer"
+          CERT_HASH="$(certutil -p "$NEXTERM_WINDOWS_CERT_PASSWORD" -dump "$CERT" | awk '/Cert Hash\(sha1\):/ { sub(/\r$/, "", $3); print $3; exit }')"
+          test -n "$CERT_HASH"
+          trap 'certutil -user -delstore Root "$CERT_HASH"' EXIT
+          certutil -user -p "$NEXTERM_WINDOWS_CERT_PASSWORD" -importPFX Root "$CERT"
           MSYS_NO_PATHCONV=1 "$SIGNTOOL" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f "$CERT" /p "$NEXTERM_WINDOWS_CERT_PASSWORD" "$installer"
           MSYS_NO_PATHCONV=1 "$SIGNTOOL" verify /pa "$installer"
           node scripts/build.mjs report --kind=desktop-nsis --os=windows --arch=${{ matrix.arch }} --file="$installer" --require-evidence

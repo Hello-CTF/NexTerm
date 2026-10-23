@@ -827,6 +827,37 @@ func TestReleaseWindowsToolingProvenanceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestReleaseWindowsAuthenticodeUsesEphemeralCurrentUserRoot(t *testing.T) {
+	release := loadWorkflow(t, ".github/workflows/release.yml")
+	desktop := requireJob(t, release, "desktop")
+	signing := requireRunContaining(t, desktop, `MSYS_NO_PATHCONV=1 "$SIGNTOOL" sign /fd SHA256`)
+	if got := signing.If; got != "matrix.os == 'windows'" {
+		t.Fatalf("Windows Authenticode condition = %q", got)
+	}
+
+	run := normalize(signing.Run)
+	commands := []string{
+		`CERT_HASH="$(certutil -p "$NEXTERM_WINDOWS_CERT_PASSWORD" -dump "$CERT" | awk '/Cert Hash\(sha1\):/ { sub(/\r$/, "", $3); print $3; exit }')"`,
+		`test -n "$CERT_HASH"`,
+		`trap 'certutil -user -delstore Root "$CERT_HASH"' EXIT`,
+		`certutil -user -p "$NEXTERM_WINDOWS_CERT_PASSWORD" -importPFX Root "$CERT"`,
+		`MSYS_NO_PATHCONV=1 "$SIGNTOOL" sign /fd SHA256`,
+		`MSYS_NO_PATHCONV=1 "$SIGNTOOL" verify /pa "$installer"`,
+	}
+	positions := make([]int, len(commands))
+	for index, command := range commands {
+		positions[index] = strings.Index(run, command)
+		if positions[index] < 0 {
+			t.Errorf("Windows Authenticode step is missing %q", command)
+		}
+	}
+	for index := 1; index < len(positions); index++ {
+		if positions[index-1] >= 0 && positions[index] >= 0 && positions[index-1] >= positions[index] {
+			t.Errorf("Windows Authenticode step must run %q before %q", commands[index-1], commands[index])
+		}
+	}
+}
+
 func TestReleaseDesktopReusesEquivalentNativeEvidence(t *testing.T) {
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
 	input, ok := ci.On.WorkflowCall.Inputs["updater_public_key"]
