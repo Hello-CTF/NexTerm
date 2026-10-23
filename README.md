@@ -17,7 +17,7 @@
 
 **中文** | [English](README_EN.md)
 
-[官网](https://nexterm.work/) · [下载](https://github.com/Hello-CTF/NexTerm/releases/latest) · [部署服务端](#服务端与设备接入)
+[官网](https://nexterm.work/) · [下载](https://github.com/Hello-CTF/NexTerm/releases/latest) · [部署服务端](#部署服务端)
 
 </div>
 
@@ -26,103 +26,15 @@
   <img src="website/public/images/shell-dark.jpg" alt="NexTerm 的 Shell 终端与命令块界面" />
 </picture>
 
-图片使用示例数据。可在[官网](https://nexterm.work/)点击体验终端、AI、文件和回放演示。
+NexTerm 把远程运维放进一个窗口：通过 SSH、WinRM 或设备 agent 连接主机，让 AI 助手在你确认后排查和修复问题，再处理文件、容器、数据库、设备监控和终端分享。图片使用示例数据，可在[官网](https://nexterm.work/)体验在线演示。
 
-NexTerm 把远程运维的完整流程放进一个窗口：通过 SSH、WinRM 或 NexTerm 设备 agent 连接主机，让 AI 助手在你确认后排查和修复问题，再处理文件、容器、数据库、设备监控和终端分享，全程不用切换工具。成功启用持久终端的 SSH 会话和受管设备持久会话可在后台继续运行并重新接管；WinRM 非交互终端随关闭结束。
+## 功能
 
-<table>
-<tr>
-<td width="33%" valign="top">
-
-**🤖 会动手的 AI**<br/>
-20+ 工具覆盖终端、文件和 Docker，支持计划模式、diff 预览和按主机授权。
-
-</td>
-<td width="33%" valign="top">
-
-**🖥️ 可接管的持久终端**<br/>
-成功启用 durable/helper 的 SSH 会话和受管设备持久会话在 App 重启、网络中断后可恢复，可从任意已登录设备接管。
-
-</td>
-<td width="33%" valign="top">
-
-**🧰 内置日常运维**<br/>
-SFTP 与在线编辑、Docker、MySQL、PostgreSQL、Redis、端口转发和 SSH 配置导入。
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-**🛰️ 设备管理**<br/>
-一行命令安装 agent，设备主动外连，查看 CPU、内存、磁盘指标并打开远程终端。
-
-</td>
-<td valign="top">
-
-**🔗 终端分享**<br/>
-限时、可吊销的终端链接，默认只读，无需交出密码或私钥。
-
-</td>
-<td valign="top">
-
-**🔐 自托管**<br/>
-多用户服务端与双因素认证、端到端加密同步、凭据保险库和审计日志。
-
-</td>
-</tr>
-</table>
-
-## 亮点
-
-### 🤖 会动手的 AI 助手
-
-- **20+ 内置工具**：执行命令；读写和编辑文件；查看 Docker 容器与日志；读取终端输出；派生子任务。
-- **控制权在你手里**：只读或可执行模式、计划模式；执行前展示命令或文件 diff，可「允许一次」「本轮允许」或「拒绝」，高危操作始终询问。
-- **按主机授权**：按资产授予执行命令、写文件、发送按键等权限，可限定路径（如 `/etc/nginx/**`），有效期 1 小时到 30 天。
-- **终端接管**：AI 可以在你正在使用的终端里直接输入，按 Esc 随时收回控制。
-- **定时任务与长期记忆**：按 cron 表达式定时运行 AI 任务；长期记忆拒绝写入密钥类内容。
-- **任意模型**：OpenAI 兼容接口，内置 DeepSeek、Kimi、GLM、Ollama 预设，支持回退模型、代理和用量统计。
-
-### 🖥️ 持久终端与接管
-
-- **后台会话**：成功启用 durable/helper 的 SSH 会话和受管设备持久会话在关闭标签、App 重启或网络中断后继续运行，可从任意已登录设备接管并补回错过的输出。SSH helper 不可用时，降级后的普通 SSH PTY 在关闭或断开后无法恢复。本机、WinRM 非交互与容器 exec 终端随关闭结束。
-- **多设备协同**：多台设备可同时观看同一终端，同一时间一台输入。
-- **命令块、历史与回放**：每条命令折叠成块；自动录制输出、键盘输入和窗口尺寸变化，支持搜索和时间轴回放。记录默认仅本地保存、不参与同步；可逐条开启端到端加密同步，也可逐条删除。
-- **效率**：多标签、分屏、命令广播、快速连接、命令面板、片段和可自定义快捷键。
-
-> [!WARNING]
-> 终端历史会原样记录键盘输入，包括密码和令牌。
-
-### 🧰 日常运维，一个窗口搞定
-
-- **文件**：SFTP、WinRM 与设备文件浏览，上传下载，在线编辑（保存前自动备份），大日志分页查看，跟随终端目录。
-- **Docker**：容器、日志、资源统计、镜像管理，一键 exec 进入容器。
-- **数据库**：MySQL/MariaDB 与 PostgreSQL 的 SQL 编辑器和表结构浏览，Redis 键浏览。
-- **端口转发**：本地转发与 SOCKS5 代理，断线自动重连。
-- **导入**：从 `~/.ssh/config` 或 Termius 导入主机和密钥，先预览冲突；支持单跳 `ProxyJump` 映射，不自动带入来源分组、标签或 SSH 证书，多跳 `ProxyJump` 条目暂不支持自动导入。Termius 导入目前仅支持 macOS；其他桌面平台禁用入口，移动/Web 不显示入口，且没有手动 KeySource 替代路径。
-
-PostgreSQL 与普通 SSH/SFTP 无需远端 agent，agent 仅用于设备管理。
-
-### 🛰️ 设备管理与分享
-
-- **设备 agent**：一行命令接入主机，设备主动连回服务端，上报 CPU、内存和磁盘指标，无需暴露 SSH 即可打开远程终端和文件。
-- **公开终端预览分享**：为已有实时会话创建限时公开链接。获得链接的人在有效期内无需登录即可访问；链接默认只读，浏览器模式可显式授权写入，桌面中继创建的预览目前只读，均可随时吊销。分享无需提供主机密码或私钥。
-- **注册用户主机分享**：把某台主机的终端会话分享给其他注册用户（仅终端，不含文件、转发、设备管理或 AI）。对方通过专用分享入口打开终端；默认只读，可显式授权写入，并可随时吊销。分享无需提供主机密码或私钥。
-
-> [!CAUTION]
-> 读写权限允许对方在终端中输入，请仅授予可信对象。
-
-### 🔐 自托管，安全默认
-
-- **账号与同步**：服务端内置多用户账号与 TOTP 双因素认证，超管可创建用户或开放注册；同步数据按账号隔离并端到端加密。桌面端登录后自动同步资产、分组、片段、凭据及可选配置。
-- **凭据保险库**：主密码或系统级保护（DPAPI / 钥匙串），移动端支持生物识别解锁，可闲置自动锁定。
-- **服务端凭据保护**：浏览器模式保存的凭据由服务端 master key 保护的凭据库加密；这与桌面端跨设备同步的端到端加密不同，服务端可解密凭据以建立连接。请妥善保护数据目录和 master key。
-- **审计日志**：用户与 AI 的命令、文件写入和设备事件都有记录。
-- **选择你的数据库**：默认 SQLite，服务端也支持 PostgreSQL、MySQL 和 MariaDB。
-- **桌面与浏览器**：浏览器模式下，终端进程和工作区保存在服务器上，关闭网页后仍可继续。
-
-## 截图
+- **🤖 会动手的 AI**：20+ 工具覆盖命令、文件、Docker 和终端输出；执行前展示命令或 diff，支持计划模式、按主机和路径授权、定时任务和长期记忆；兼容任意 OpenAI 接口，内置 DeepSeek、Kimi、GLM、Ollama 预设。
+- **🖥️ 持久终端**：启用持久终端的 SSH 会话和受管设备会话在关闭标签、App 重启或断网后继续运行，可从任意已登录设备接管并补回输出；助手不可用时退回普通终端，普通终端断开即结束。支持多设备同看、命令块、历史搜索与回放、分屏、命令广播和片段。
+- **🧰 日常运维**：SFTP/WinRM/设备文件浏览与在线编辑；Docker 容器、日志与镜像；MySQL/MariaDB、PostgreSQL 与 Redis；本地转发与 SOCKS5；从 `~/.ssh/config` 或 Termius（仅 macOS）导入主机。
+- **🛰️ 设备与分享**：一行命令接入设备 agent，设备主动外连并上报指标；终端可分享为限时公开链接或分享给注册用户，默认只读、可随时吊销，无需交出密码或私钥。
+- **🔐 自托管**：多用户与 TOTP 双因素认证；端到端加密同步；凭据保险库（主密码、DPAPI/钥匙串或生物识别）；审计日志；数据库可选 SQLite、PostgreSQL、MySQL、MariaDB。浏览器模式下终端和工作区保存在服务端，关掉网页也能继续。
 
 <table>
 <tr>
@@ -137,107 +49,52 @@ PostgreSQL 与普通 SSH/SFTP 无需远端 agent，agent 仅用于设备管理�
 </tr>
 </table>
 
-## 下载与安装
+## 下载
 
-从 [Releases](https://github.com/Hello-CTF/NexTerm/releases/latest) 下载最新版本。
+从 [Releases](https://github.com/Hello-CTF/NexTerm/releases/latest) 下载：
 
-| 平台 | 安装包 | 安装方式 |
-| --- | --- | --- |
-| Windows 10/11（x64 / ARM64） | `NexTerm_x.y.z_<架构>-setup.exe` | 运行安装器。 |
-| macOS（Apple Silicon / Intel） | `NexTerm_x.y.z_<架构>.dmg` | 打开后拖入「应用程序」。 |
-| Linux 桌面（amd64 / arm64） | `NexTerm-desktop_x.y.z_linux_<架构>.deb` | `apt install ./<包名>.deb` |
-| Linux 服务器 | `NexTerm-server_x.y.z_linux_<架构>.tar.gz` | 见[服务端与设备接入](#服务端与设备接入)。 |
-| Android（预览） | `NexTerm_x.y.z_android.apk` | 预览版：arm64 设备直接安装。 |
-| iOS / iPadOS（预览） | TestFlight | 预览版：使用 NexTerm 的 TestFlight 测试邀请安装；Release 不提供 IPA 资产。 |
-| 懒猫微服 | 应用中心 | 在应用中心安装 NexTerm。 |
+| 平台 | 安装包 |
+| --- | --- |
+| Windows 10/11（amd64 / arm64） | `nexterm-desktop_windows_<架构>_x.y.z.exe` |
+| macOS（arm64 / amd64） | `nexterm-desktop_macos_<架构>_x.y.z.dmg` |
+| Linux 桌面（amd64 / arm64） | `nexterm-desktop_linux_<架构>_x.y.z.deb`，用 `apt install ./<包名>.deb` 安装 |
+| Linux 服务器 | 见[部署服务端](#部署服务端) |
+| Android / iOS / iPadOS（预览） | `nexterm-desktop_android_arm64_x.y.z.apk` / TestFlight 邀请 |
+| 懒猫微服 | 应用中心 |
 
-> [!NOTE]
-> 移动端（Android / iOS / iPadOS）目前为预览版，完成真实设备签名验收前不作为正式支持平台。
+桌面版会自动检查更新，安装前按 `SHA256SUMS` 校验。macOS 提示无法验证开发者时，在「系统设置 → 隐私与安全性」点「仍要打开」；提示已损坏则执行 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。
 
-> [!TIP]
-> macOS 首次打开提示无法验证开发者时，在「系统设置 → 隐私与安全性」中点「仍要打开」；提示应用已损坏则执行 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。
+**快速开始**：新建 SSH 或 WinRM 资产（也可用内置的「当前设备」）→ 在「设置 → 凭据保护」初始化凭据库后保存密码或私钥 →（可选）在「设置 → AI 模型」接入模型 →（可选）在「设置 → 账号同步」登录服务端，多设备同步。保护密码只用于本机解锁，忘记后已保存的凭据无法恢复。
 
-### 快速开始
+## 部署服务端
 
-1. **添加主机**：新建 SSH 或 WinRM 资产，也可以直接使用内置的「当前设备」。
-2. **初始化凭据库**：保存密码或私钥前，先在 **设置 → 凭据保护** 初始化凭据库，否则无法保存。Windows/macOS 可使用系统级密钥免密保护（DPAPI/钥匙串）；Linux 桌面端请设置至少 8 位保护密码。设置保护密码后，每次启动都要输入该密码解锁；也可按需开启闲置自动锁定。
-3. **接入模型（可选）**：在 **设置 → AI 模型** 新增模型档案，填写 OpenAI 兼容接口地址和模型名称，按端点要求填写 API Key（无鉴权的本地端点可留空），然后保存。
-4. **同步（可选）**：桌面端不登录也可本地使用；在 **设置 → 账号同步** 登录后自动在多设备间同步。
+在带 systemd 的 Linux（amd64 / arm64）上以 root 运行：
 
-> [!IMPORTANT]
-> 保护密码仅用于本机解锁，不会上传或随账号同步；忘记后已保存的凭据无法恢复。
+```bash
+curl -fsSL https://nexterm.work/install.sh | sudo bash
+```
 
-<details>
-<summary><strong>自动更新</strong></summary>
+脚本下载最新服务端包，按 `SHA256SUMS` 校验后执行包内的 `install.sh`：创建 `nexterm` 用户和目录，生成 master key，创建超管 `admin` 并在控制台打印一次初始密码（首次登录需修改），然后启动 `nexterm-server`。重复运行即升级，配置和数据保留。指定版本加 `-s -- --version 1.2.2`；也可以下载 `nexterm-server_linux_<架构>_x.y.z.tar.gz` 解压后执行 `sudo ./install.sh`。
 
-桌面版启动后自动检查一次更新，发现新版本时显示顶部横幅；在「设置 → 软件更新」查看当前版本、新版本和安装包大小，并下载安装。更新说明见对应 Release；预发布版接收预发布更新，正式版仅接收正式版；安装前按 Release 附带的 `SHA256SUMS` 校验。服务端不自动更新，请按部署包内说明升级。
+- 服务默认只监听 `127.0.0.1:8080` 且要求登录；配置在 `/etc/nexterm/nexterm.env`，改完执行 `systemctl restart nexterm-server`。
+- 公网访问请前置带 TLS 的反向代理，代理覆盖设置 `X-Forwarded-Proto`，并把代理来源 IP 段写入 `NEXTERM_TRUSTED_PROXY_CIDRS`。
+- 默认使用 SQLite；用 `NEXTERM_DB=postgres|mysql|mariadb` 和 `NEXTERM_DB_DSN` 切换外部数据库，同一数据库只运行一个实例。
+- 备份 `/var/lib/nexterm`、`/etc/nexterm/master.key` 和外部数据库。完整说明见包内 `README.md` 和 `nexterm-server --help`。
 
-</details>
+**懒猫微服**：应用中心安装即可用，内置端口转发不可用，请使用平台转发。
 
-## 服务端与设备接入
+**设备接入**：超管在「设备管理」配置接入地址并签发一次性接入码，在设备上执行面板给出的一行命令（Linux/macOS 用普通用户，Windows 用 PowerShell），agent 会随用户登录自动启动。
 
-### Linux 服务器
-
-1. 解压 server 包后按包内 `README.md` 创建 `nexterm` 用户、安装二进制、unit 和 env 文件，并执行 `systemctl daemon-reload`。
-2. 首次启动会在控制台打印一次性初始化码（systemd 下用 `journalctl -u nexterm-server` 查看）。
-3. 在浏览器输入初始化码，并设置超管用户名和密码。
-
-- systemd 的监听地址、访问控制、数据目录和 Web 目录分别在 `/etc/nexterm/nexterm.env`、`/etc/nexterm/onlyserver.env` 配置；访问控制默认开启（`NEXTERM_AUTH=on`），无论监听地址如何均要求登录。
-- 自身数据默认存入 SQLite，也可通过 `NEXTERM_DB=postgres|mysql|mariadb` 和 `NEXTERM_DB_DSN` 使用 PostgreSQL、MySQL 或 MariaDB；远程数据库密码可放入 `NEXTERM_DB_PASSWORD_FILE` 指定的 0600 文件，连接池由 `NEXTERM_DB_MAX_OPEN_CONNS` 控制。同一个数据库仅运行一个服务端实例。
-- 备份时保留完整数据目录和凭据库根密钥；使用外部数据库时还需备份该数据库。
-- 完整选项见 `nexterm-server --help`。
-
-<details>
-<summary><strong>公网部署与反向代理</strong></summary>
-
-公网部署请只监听回环地址，并前置带 TLS 的反向代理。代理应覆盖设置 `X-Forwarded-Proto`；将代理的来源 IP 段写入 `NEXTERM_TRUSTED_PROXY_CIDRS`（逗号分隔，例如 `127.0.0.1/32`），登录 Cookie 才会在代理 HTTPS 请求上设置 `Secure`，其他来源的转发头不会被信任。
-
-</details>
-
-### 懒猫微服
-
-应用中心安装后直接使用，终端进程和数据保存在微服上；NexTerm 内置端口转发不可用，对外提供远端端口请使用平台转发。从源码产包运行 `bash lazycat/build.sh`；当前仅接受 `LZC_ARCH=amd64`，arm64 会在构建前明确报错。
-
-### 设备接入
-
-1. 接入地址由超管在「设备管理」配置。
-2. 接入码也在此处（浏览器模式，或桌面端登录服务端账号后）签发，一次性、限时有效。
-3. Linux/macOS 用普通用户执行面板的一行命令，Windows 执行 PowerShell 命令，自动下载并安装 nexterm-agent，并配置随用户登录启动（systemd --user / launchd / Windows 计划任务）。
-
-设备凭证原文仅保存在设备本地，服务端只存散列；接入后，设备在线时可远程打开终端，吊销后凭证立即失效且不可恢复。
-
-## 从源码构建与测试
+## 开发
 
 工具链：Go 1.26、Node 24+、pnpm。
 
 ```bash
-pnpm install
-pnpm build
-go build ./...
-```
-
-常规质量检查（需安装 task）：
-
-```bash
+pnpm install && pnpm build && go build ./...
 task check
 ```
 
-<details>
-<summary><strong>数据库集成测试</strong></summary>
-
-外部数据库使用同一套集成测试，测试库必须独立于业务库：
-
-```bash
-NEXTERM_TEST_DB_BACKEND=postgres NEXTERM_TEST_DB_DSN='postgres://nexterm:password@127.0.0.1:5432/nexterm_test?sslmode=disable' task test:database
-```
-
-`NEXTERM_TEST_DB_BACKEND` 也可设为 `mysql` 或 `mariadb`，DSN 使用对应驱动格式。未设置时运行 SQLite；显式选择外部数据库必须提供可用 DSN。
-
-</details>
-
-## 贡献与提交规范
-
-从最新 `master` 切分支，经 PR 合回；PR 标题和提交消息遵循 Conventional Commits。PR 说明要解决的问题、具体改动和验证方式，用户可感知的变化及行为变化都要写清楚。提交前完成全部质量检查；开发、评审和协作约定见 [AGENTS.md](AGENTS.md)。
+从最新 `master` 切分支，经 PR 合回；提交和 PR 标题遵循 Conventional Commits。开发、测试和协作约定见 [AGENTS.md](AGENTS.md)，本地数据库环境见 [deploy/dev/README.md](deploy/dev/README.md)。
 
 ## License
 

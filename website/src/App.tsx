@@ -9,8 +9,8 @@ import { FeatureDemo, type DemoMode } from "./Demos";
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const releases = `${repository}/releases/latest`;
 const deployDocs = {
-  zh: `${repository}/blob/master/README.md#服务端与设备接入`,
-  en: `${repository}/blob/master/README_EN.md#server-and-device-enrollment`,
+  zh: `${repository}/blob/master/README.md#部署服务端`,
+  en: `${repository}/blob/master/README_EN.md#deploy-the-server`,
 };
 type Language = "zh" | "en";
 type Theme = "dark" | "light";
