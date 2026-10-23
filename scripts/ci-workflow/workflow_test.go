@@ -154,8 +154,8 @@ func TestQualityStaysStaticAndRequiredUnitOwnsGoTests(t *testing.T) {
 		}
 	}
 	unit := requireJob(t, ci, "unit")
-	if unit.If != "" {
-		t.Fatalf("unit job must remain required on every event, got condition %q", unit.If)
+	if got := expression(unit.If); got != "github.event_name == 'pull_request'" {
+		t.Fatalf("unit job must run on PRs rather than repeat for release tags, got condition %q", got)
 	}
 	requireRun(t, unit, "go test -count=1 ./...")
 
@@ -534,8 +534,7 @@ func TestCIOKAggregatesAllJobsAndRejectsUnsuccessfulResults(t *testing.T) {
 			name:        "unit skip on a push",
 			event:       "push",
 			results:     map[string]string{"unit": "skipped"},
-			wantSuccess: false,
-			wantOutput:  "unit=skipped",
+			wantSuccess: true,
 		},
 		{
 			name:        "race skip on a push",
@@ -892,6 +891,11 @@ func TestReleaseDesktopReusesEquivalentNativeEvidence(t *testing.T) {
 	requireRunContaining(t, desktop, "NEXTERM_MACOS_NOTARY_KEY_PATH")
 	requireRunContaining(t, desktop, `"$SIGNTOOL" sign`)
 	publish := requireJob(t, release, "publish")
+	for _, need := range []string{"desktop", "server", "mobile", "agent"} {
+		if !strings.Contains(expression(publish.If), "needs."+need+".result == 'success'") {
+			t.Errorf("publish does not require %s success: %q", need, publish.If)
+		}
+	}
 	requireRun(t, publish, "node .github/scripts/release-evidence.mjs target/release-work/candidate")
 }
 

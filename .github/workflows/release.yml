@@ -501,7 +501,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.desktop.result == 'success' && needs.server.result == 'success' && needs.mobile.result == 'success' && needs.agent.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
