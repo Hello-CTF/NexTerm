@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -279,7 +280,7 @@ func TestProductionTerminalConnectRequiresOptIn(t *testing.T) {
 	if strings.Contains(result.Text, "未配置资产连接建立") {
 		t.Fatalf("connect surface left as an unconfigured boundary: %+v", result)
 	}
-	if !strings.Contains(result.Text, "opt-in") {
+	if !strings.Contains(result.Text, guard.ErrConnectOptInRequired.Error()) {
 		t.Fatalf("opt-in decline not surfaced: %+v", result)
 	}
 	if got := dials.count(); got != 0 {
@@ -401,7 +402,7 @@ func TestProductionTerminalConnectDeadTransportDialsThroughPublicOptIn(t *testin
 	if strings.Contains(declined.Text, "请手动重连") || strings.Contains(declined.Text, "请先手动连接") {
 		t.Fatalf("dead transport still told to reconnect manually: %+v", declined)
 	}
-	if !strings.Contains(declined.Text, "opt-in") {
+	if !strings.Contains(declined.Text, guard.ErrConnectOptInRequired.Error()) {
 		t.Fatalf("dead-transport connect did not reach the opt-in gate: %+v", declined)
 	}
 	if got := dials.count(); got != 1 {
@@ -409,7 +410,7 @@ func TestProductionTerminalConnectDeadTransportDialsThroughPublicOptIn(t *testin
 	}
 	// Unknown assets never reach the dialer at all.
 	unknown := registry.Execute(ctx, "job", tools.Scope{}, connectCreateCall("asset-missing"), nil)
-	if unknown.OK || strings.Contains(unknown.Text, "opt-in") {
+	if unknown.OK || strings.Contains(unknown.Text, guard.ErrConnectOptInRequired.Error()) {
 		t.Fatalf("unknown asset reached the connector: %+v", unknown)
 	}
 	if got := dials.count(); got != 1 {
@@ -513,7 +514,7 @@ func TestProductionTerminalConnectSessionDeletedInterleaveDialsHealthy(t *testin
 	if declined.OK {
 		t.Fatalf("connect without opt-in succeeded after the interleaved deletion: %+v", declined)
 	}
-	if !strings.Contains(declined.Text, "opt-in") {
+	if !strings.Contains(declined.Text, guard.ErrConnectOptInRequired.Error()) {
 		t.Fatalf("deleted-session connect did not reach the opt-in gate: %+v", declined)
 	}
 	if strings.Contains(declined.Text, "无效或无权") || strings.Contains(declined.Text, "请手动") {
@@ -611,7 +612,7 @@ func TestProductionTerminalConnectTransportInterleaveDialsHealthy(t *testing.T) 
 	if declined.OK {
 		t.Fatalf("connect without opt-in succeeded after the interleaved deletion: %+v", declined)
 	}
-	if !strings.Contains(declined.Text, "opt-in") {
+	if !strings.Contains(declined.Text, guard.ErrConnectOptInRequired.Error()) {
 		t.Fatalf("transport-gone connect did not reach the opt-in gate: %+v", declined)
 	}
 	if strings.Contains(declined.Text, "无效或无权") || strings.Contains(declined.Text, "请手动") {
@@ -720,7 +721,7 @@ func TestProductionTerminalConnectTransportDisconnectedReconnectsHealthy(t *test
 	if declined.OK {
 		t.Fatalf("connect without opt-in succeeded after the interleaved disconnect: %+v", declined)
 	}
-	if !strings.Contains(declined.Text, "opt-in") {
+	if !strings.Contains(declined.Text, guard.ErrConnectOptInRequired.Error()) {
 		t.Fatalf("disconnected-session connect did not reach the opt-in gate: %+v", declined)
 	}
 	if strings.Contains(declined.Text, "无效或无权") || strings.Contains(declined.Text, "请手动") {

@@ -16,7 +16,7 @@ const (
 
 var (
 	// ErrConnectOptInRequired rejects connects of disconnected assets without an explicit opt-in.
-	ErrConnectOptInRequired = errors.New("连接未连接资产需要显式 opt-in")
+	ErrConnectOptInRequired = errors.New("未在「生产安全 → 自动连接」中允许自动连接该主机")
 	// ErrConnectOwnerMismatch rejects connects to assets owned by another identity.
 	ErrConnectOwnerMismatch = errors.New("资产不属于当前身份")
 	// ErrConnectHostKeyUnknown rejects targets whose host key is not in the known-host database;
@@ -29,7 +29,7 @@ var (
 	ErrConnectVaultUnavailable = errors.New("目标资产凭据不可用")
 	// ErrConnectProductionConfirmationRequired rejects connects to production assets without
 	// the explicit production confirmation evidence.
-	ErrConnectProductionConfirmationRequired = errors.New("生产环境资产连接需要显式生产确认")
+	ErrConnectProductionConfirmationRequired = errors.New("未在「生产安全 → 自动连接」中允许自动连接生产环境主机")
 )
 
 // ConnectAuthorization carries the evidence evaluated before an opt-in connect of a

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { deferred, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -190,38 +190,47 @@ describe("ProductionSettingsPanel", () => {
     expect(toggles.every((toggle) => !toggle.checked)).toBe(true);
   });
 
-  it("saves an opt-in as an explicit patch and reflects the returned settings", async () => {
+  it("keeps the production column disabled until auto-connect is on", async () => {
     mounted = mount(createElement(ProductionSettingsPanel));
     await flush();
-    await flushUntil(() => mounted!.container.querySelector('input[aria-label="广播连接生产环境资产"]') !== null);
+    await flushUntil(() => mounted!.container.querySelector('input[aria-label="广播：也自动连接生产环境主机"]') !== null);
+    const production = mounted.container.querySelector<HTMLInputElement>('input[aria-label="广播：也自动连接生产环境主机"]');
+    expect(production?.disabled).toBe(true);
+  });
 
-    const toggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="广播连接生产环境资产"]');
+  it("saves an opt-in as an explicit patch and reflects the returned settings", async () => {
+    settingsGet({ ...DEFAULT_DTO, broadcastConnectOptIn: true });
+    mounted = mount(createElement(ProductionSettingsPanel));
+    await flush();
+    await flushUntil(() => mounted!.container.querySelector('input[aria-label="广播：也自动连接生产环境主机"]') !== null);
+
+    const toggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="广播：也自动连接生产环境主机"]');
     if (!toggle) throw new Error("opt-in toggle not found");
     await clickAndFlush(toggle);
     await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
     expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { broadcastConnectProductionOptIn: true });
-    await flushUntil(() => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="广播连接生产环境资产"]')?.checked === true);
+    await flushUntil(() => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="广播：也自动连接生产环境主机"]')?.checked === true);
   });
 
   it("saves the AI terminal connect opt-ins as explicit patches", async () => {
     mounted = mount(createElement(ProductionSettingsPanel));
     await flush();
-    await flushUntil(() => mounted!.container.querySelector('input[aria-label="AI 终端连接未连接资产"]') !== null);
+    await flushUntil(() => mounted!.container.querySelector('input[aria-label="AI 打开终端：自动连接未连接的主机"]') !== null);
 
-    const toggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="AI 终端连接未连接资产"]');
+    const toggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="AI 打开终端：自动连接未连接的主机"]');
     if (!toggle) throw new Error("AI terminal opt-in toggle not found");
     await clickAndFlush(toggle);
     await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
     expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { aiTerminalConnectOptIn: true });
-    await flushUntil(() => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="AI 终端连接未连接资产"]')?.checked === true);
+    await flushUntil(() => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="AI 打开终端：自动连接未连接的主机"]')?.checked === true);
 
-    const productionToggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="AI 终端连接生产环境资产"]');
+    const productionToggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="AI 打开终端：也自动连接生产环境主机"]');
     if (!productionToggle) throw new Error("AI terminal production opt-in toggle not found");
     await clickAndFlush(productionToggle);
     expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { aiTerminalConnectProductionOptIn: true });
   });
 
-  it("adds and removes environment names and saves the whole list", async () => {
+  it("saves the whole environment list on every add and remove", async () => {
     mounted = mount(createElement(ProductionSettingsPanel));
     await flush();
     await flushUntil(() => mounted!.container.querySelector('input[aria-label="新增生产环境名"]') !== null);
@@ -229,18 +238,15 @@ describe("ProductionSettingsPanel", () => {
     const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="新增生产环境名"]');
     if (!input) throw new Error("name input not found");
     setInputValue(input, "live");
-    click(mounted.container.querySelector('button[aria-label="添加生产环境名"]')!);
+    await clickAndFlush(mounted.container.querySelector('button[aria-label="添加生产环境名"]')!);
+    expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { productionEnvironments: ["live"] });
     setInputValue(input, "canary");
-    click(mounted.container.querySelector('button[aria-label="添加生产环境名"]')!);
-    expect(mounted.container.textContent).toContain("canary");
-
-    const saveButton = [...mounted.container.querySelectorAll("button")].find(
-      (candidate) => candidate.textContent?.trim() === "保存列表",
-    );
-    if (!saveButton) throw new Error("save button not found");
-    await clickAndFlush(saveButton);
-    await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
+    await clickAndFlush(mounted.container.querySelector('button[aria-label="添加生产环境名"]')!);
+    await flushUntil(() => mounted!.container.textContent?.includes("canary") === true);
     expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { productionEnvironments: ["live", "canary"] });
+
+    await clickAndFlush(mounted.container.querySelector('button[aria-label="移除生产环境名 live"]')!);
+    expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { productionEnvironments: ["canary"] });
   });
 
   it("refreshes mounted consumers after the environment list is saved, without an account switch", async () => {
@@ -255,12 +261,7 @@ describe("ProductionSettingsPanel", () => {
     const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="新增生产环境名"]');
     if (!input) throw new Error("name input not found");
     setInputValue(input, "staging");
-    click(mounted.container.querySelector('button[aria-label="添加生产环境名"]')!);
-    const saveButton = [...mounted.container.querySelectorAll("button")].find(
-      (candidate) => candidate.textContent?.trim() === "保存列表",
-    );
-    if (!saveButton) throw new Error("save button not found");
-    await clickAndFlush(saveButton);
+    await clickAndFlush(mounted.container.querySelector('button[aria-label="添加生产环境名"]')!);
     await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
 
     // The save invalidates and reloads the classification at the current
