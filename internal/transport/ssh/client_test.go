@@ -746,6 +746,25 @@ func TestSSHWindowsRootsProbeFailuresAreNotUnavailable(t *testing.T) {
 		})
 	}
 
+	for name, stderr := range map[string]string{
+		"localized bash": "bash: 行 1: %s: 未找到命令",
+		"localized cmd":  "'%s' 不是内部或外部命令，也不是可运行的程序",
+		"localized sh":   "sh: %s: Befehl nicht gefunden",
+	} {
+		t.Run("command not found "+name, func(t *testing.T) {
+			executor := &targetExecutor{}
+			executor.handle = func(command string) (base.ExecResult, error) {
+				code := 127
+				return base.ExecResult{Stderr: fmt.Sprintf(stderr, strings.Fields(command)[0]), ExitCode: &code}, nil
+			}
+			filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/home/alice"}}
+			roots, err := filesystem.Roots(context.Background())
+			if err != nil || roots.PathStyle != base.PathStylePOSIX {
+				t.Fatalf("localized command-not-found fallback = %+v, %v", roots, err)
+			}
+		})
+	}
+
 	t.Run("typed exec unsupported falls back", func(t *testing.T) {
 		executor := &targetExecutor{}
 		executor.handle = func(command string) (base.ExecResult, error) {

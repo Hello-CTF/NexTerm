@@ -227,7 +227,7 @@ func (f *sftpFileSystem) executeWindowsRoots(ctx context.Context, shell string) 
 	if result.ExitCode == nil {
 		return document, false, base.ErrExitStatusMissing
 	}
-	if windowsCommandNotFound(result) {
+	if windowsCommandNotFound(result, shell) {
 		return document, false, nil
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Stdout)), &document); err != nil {
@@ -242,12 +242,15 @@ func (f *sftpFileSystem) executeWindowsRoots(ctx context.Context, shell string) 
 	return document, true, nil
 }
 
-func windowsCommandNotFound(result base.ExecResult) bool {
+func windowsCommandNotFound(result base.ExecResult, shell string) bool {
 	if result.ExitCode == nil || *result.ExitCode != 127 && *result.ExitCode != 9009 {
 		return false
 	}
 	message := strings.ToLower(result.Stdout + "\n" + result.Stderr)
-	for _, fragment := range []string{"not recognized", "not found", "command not found", "no such file or directory", "unknown command"} {
+	// POSIX shells report "<command>: ..." and cmd reports "'<command>' ..." in the
+	// host's language, so the command name identifies a localized not-found message.
+	shell = strings.ToLower(shell)
+	for _, fragment := range []string{"not recognized", "not found", "command not found", "no such file or directory", "unknown command", shell + ":", "'" + shell + "'"} {
 		if strings.Contains(message, fragment) {
 			return true
 		}
