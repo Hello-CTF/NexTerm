@@ -293,7 +293,7 @@ describe("AssetEditor SSH connectivity", () => {
     const mode = findSelect("默认（使用全局设置）");
     expect(mode.value).toBe("auto");
     setSelectValue(mode, "regular");
-    expect(mounted?.container.textContent).toContain("仅影响以后新开的终端，已有会话保持不变");
+    expect(mounted?.container.textContent).toContain("只影响新开的终端");
     fillName("ordinary-ssh");
     fillHost("10.0.0.8");
     click(saveButton());

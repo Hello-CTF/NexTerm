@@ -2770,11 +2770,11 @@ export function AssetEditor({
                 onChange={(e) => setTerminalMode(e.target.value as "auto" | "durable" | "regular")}
               >
                 <option value="auto">默认（使用全局设置）</option>
-                <option value="durable">持久终端</option>
-                <option value="regular">普通终端</option>
+                <option value="durable">持久终端（断开后可在后台接管）</option>
+                <option value="regular">普通终端（随连接断开结束）</option>
               </select>
               <div className="nx-hint mt-1.5">
-                持久终端支持后台接管，普通终端随连接断开退出。仅影响以后新开的终端，已有会话保持不变。
+                持久终端首次连接会自动安装助手，安装期间先使用普通终端，完成后新开的标签生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
               </div>
             </div>
           )}

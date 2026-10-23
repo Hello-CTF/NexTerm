@@ -87,7 +87,7 @@ const CLOSE_ACTION_OPTIONS: { value: TerminalCloseAction; label: string }[] = [
 ];
 
 const DEFAULT_MODE_OPTIONS: { value: TerminalDefaultMode; label: string }[] = [
-  { value: "durable", label: "持久终端" },
+  { value: "durable", label: "持久终端（推荐）" },
   { value: "regular", label: "普通终端" },
 ];
 
@@ -520,7 +520,12 @@ export function SettingsView() {
                 </button>
               ))}
             </div>
-            <p className="nx-hint mt-1.5">用于选择“默认”的 SSH 资产新开的终端；资产单独设置优先，已有终端不变。</p>
+            <p className="nx-hint mt-1.5">
+              {terminalPrefs.defaultMode === "durable"
+                ? "持久终端断开后进程继续运行，可在「后台会话」接管。首次连接主机时会自动安装助手，安装期间先使用普通终端。"
+                : "普通终端随连接断开而结束，不会在主机上安装助手。"}
+              资产单独设置优先；只影响新开的终端。
+            </p>
           </div>
           <label className="flex cursor-pointer items-start gap-3">
             <div className="min-w-0 flex-1">

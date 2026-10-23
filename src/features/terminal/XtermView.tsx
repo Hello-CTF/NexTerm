@@ -23,6 +23,7 @@ import {
   getAppearancePrefs,
   getInputPrefs,
   getTerminalPrefs,
+  waitAccountPreferences,
   getResolvedTerminalTheme,
   subscribeAppearancePrefs,
 } from "../../app/preferences";
@@ -960,6 +961,11 @@ export function XtermView(props: XtermViewProps) {
         } else {
           if (!dimensions) return;
           let regular = props.forceRegular === true;
+          const preferencesLoading = !regular && !WEB ? waitAccountPreferences() : null;
+          if (preferencesLoading) {
+            await preferencesLoading;
+            if (disposed) return;
+          }
           if (!regular && !WEB && getTerminalPrefs().defaultMode === "regular") {
             const current = useUi.getState().sessions.find((session) => session.id === sessionId);
             if (current?.kind === "ssh") {
@@ -967,7 +973,7 @@ export function XtermView(props: XtermViewProps) {
                 const asset = current.assetId ? await assetApi.get(current.assetId) : null;
                 regular = asset?.options?.terminalMode !== "durable";
               } catch (error) {
-                if (!disposed) useUi.getState().pushToast("error", `无法读取资产终端模式，将按主机配置打开：${describeError(error)}`);
+                if (!disposed) useUi.getState().pushToast("error", `无法读取资产终端模式，本次按持久终端打开：${describeError(error)}`);
               }
             }
           }

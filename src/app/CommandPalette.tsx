@@ -278,7 +278,7 @@ export function CommandPalette({
       ...(backgroundAvailable ? [{
         id: "background",
         label: "打开后台会话",
-        hint: "转入后台的终端进程",
+        hint: "查看主机上转入后台的终端进程",
         icon: IconActivity,
         run: () => {
           const current = useUi.getState();

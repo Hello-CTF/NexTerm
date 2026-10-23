@@ -215,12 +215,7 @@ export function HelperOperationView({
       </p>}
       <details className="text-neutral-400">
         <summary tabIndex={0} className="cursor-pointer text-[11px]">诊断详情</summary>
-        <div
-          role={failed ? "alert" : "status"}
-          aria-live={failed ? "assertive" : "polite"}
-          aria-atomic="true"
-          className={failed ? "text-red-300" : "text-neutral-300"}
-        >
+        <div className={failed ? "text-red-300" : "text-neutral-300"}>
           <dl aria-label="后台操作状态" className="grid gap-1 sm:grid-cols-2">
             <Definition term="阶段" value={helperStageText(stage)} />
             <Definition term="原因" value={textOrUnknown(reason)} />
@@ -355,7 +350,13 @@ export function HelperOperationView({
             {update.status === "interrupted" && <p>{update.updated ? "已中断活动进程并更新助手。" : "活动进程已中断，尚未确认更新完成。"}</p>}
             {update.status === "updated" && !update.updated && <p>终端助手已更新。</p>}
             {update.status === "rolled_back" && <p>更新失败，已恢复原助手。</p>}
-            {update.status === "unknown" && <p>暂时无法确认助手更新状态。</p>}
+            {update.status === "unknown" && (
+              <p>
+                {compatibility === "incompatible"
+                  ? "远端助手版本不兼容，下次建立持久终端时会自动替换为本机携带的版本。"
+                  : "暂时无法确认助手更新状态。"}
+              </p>
+            )}
             {update.interrupted && update.status !== "interrupted" && <p>已明确中断活动进程。</p>}
             {update.updated && update.status !== "interrupted" && <p>终端助手已更新。</p>}
             {update.rolledBack && <p>已回滚助手二进制；原 shell 和其他进程不会复活。</p>}

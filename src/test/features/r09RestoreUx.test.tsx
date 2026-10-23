@@ -381,11 +381,11 @@ describe("closed-tab restore UX", () => {
     mounted = mountApp();
     await flush();
 
-    expect(mounted?.container.textContent).toContain("连接终端");
+    expect(mounted?.container.textContent).toContain("新开终端");
     expect(mocks.terminalPaneProps.some((props) => props.storeTabId === "t1")).toBe(false);
 
     const reconnect = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
-      (button) => button.textContent?.trim() === "连接终端",
+      (button) => button.textContent?.trim() === "新开终端",
     );
     expect(reconnect).toBeDefined();
     click(reconnect as HTMLButtonElement);

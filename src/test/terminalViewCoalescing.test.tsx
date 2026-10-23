@@ -202,6 +202,7 @@ vi.mock("../app/preferences", () => ({
   getInputPrefs: () => ({ selectionAutoCopy: false }),
   terminalDefaultUsesAccount: () => false,
   getTerminalPrefs: () => ({ closeAction: "ask", defaultMode: "durable" }),
+  waitAccountPreferences: () => null,
   getResolvedTerminalTheme: () => "dark",
   subscribeAppearancePrefs: () => () => undefined,
 }));

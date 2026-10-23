@@ -3,7 +3,7 @@ import { XtermView, type TerminalHandle } from "./XtermView";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { Cwd } from "./Cwd";
-import { Daemon } from "./Daemon";
+import { Daemon, type DaemonHelperState } from "./Daemon";
 import { helperStageText } from "./HelperOperationView";
 import { HelperOperationDialog } from "./HelperOperationDialog";
 import { resolveWinrmMode } from "./terminalPolicy";
@@ -34,7 +34,7 @@ import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } f
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, type BroadcastState, type Workspace } from "../../app/store";
+import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, resetTerminalTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -274,6 +274,7 @@ export function TerminalPane({
   const [helperActionLabel, setHelperActionLabel] = useState("正在处理…");
   const [helperPanelOpen, setHelperPanelOpen] = useState(false);
   const [helperStatusLoading, setHelperStatusLoading] = useState(false);
+  const [helperReady, setHelperReady] = useState(false);
   const [helperDetails, setHelperDetails] = useState<HelperOperationResult | null>(null);
   const [helperPanelError, setHelperPanelError] = useState<string | null>(null);
   const [offlinePath, setOfflinePath] = useState<string | null>(null);
@@ -1181,17 +1182,47 @@ export function TerminalPane({
     setHelperPanelOpen(false);
     setHelperActionBusy(false);
     setHelperStatusLoading(false);
+    setHelperReady(false);
     setHelperDetails(null);
     setHelperPanelError(null);
     setOfflinePath(null);
   }, [sessionId, storeTabId]);
 
   useEffect(() => {
-    if (helperOperation?.status === "succeeded") {
-      useUi.getState().dismissHelperOperation(storeTabId, helperOperation.operationId);
-      setHelperPanelOpen(false);
-    }
-  }, [helperOperation?.operationId, helperOperation?.status, storeTabId]);
+    if (helperOperation?.status !== "succeeded") return;
+    useUi.getState().dismissHelperOperation(storeTabId, helperOperation.operationId);
+    setHelperPanelOpen(false);
+    if (durable) return;
+    // This tab started as a regular terminal while the helper deployed; only new tabs become durable.
+    setHelperReady(true);
+    pushToast("success", "持久终端已就绪：当前标签仍是普通终端，新开的标签可转到后台", {
+      label: "新开持久标签",
+      onSelect: () => {
+        const session = useUi.getState().sessions.find((item) => item.id === sessionId);
+        if (session) void openTerminalTab(session, undefined, myPaneId ?? undefined);
+      },
+    });
+  }, [helperOperation?.operationId, helperOperation?.status, storeTabId, durable, pushToast, sessionId, myPaneId]);
+
+  useEffect(() => {
+    if (helperOperation?.status !== "awaiting_choice") return;
+    // A toast instead of opening the dialog keeps focus with whatever the user is typing.
+    pushToast(
+      helperOperation.kind === "reattach" ? "error" : "info",
+      helperOperation.kind === "reattach" ? "原持久终端恢复失败，请选择重试或新开普通终端" : "持久终端暂时不可用，当前标签使用普通终端",
+      { label: "查看选项", onSelect: () => setHelperPanelOpen(true) },
+    );
+  }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
+
+  const helperBadge: DaemonHelperState | null = helperOperation?.status === "running"
+    ? { state: "installing", stage: helperStageText(helperOperation.stage) }
+    : helperOperation?.status === "awaiting_choice"
+      ? { state: "attention", message: helperOperation.reason?.message }
+      : helperReady ? { state: "ready" } : null;
+  const openHelper = () => {
+    if (helperOperation) setHelperPanelOpen(true);
+    else void refreshHelperDetails();
+  };
 
   const closeHelperPanel = () => setHelperPanelOpen(false);
 
@@ -1273,7 +1304,7 @@ export function TerminalPane({
       update: { status: "deferred", detail: "已选择稍后更新" },
     } : current);
     closeHelperPanel();
-    pushToast("info", "已推迟助手更新");
+    pushToast("info", "本次先不更新助手，下次查看状态时仍会提示");
   };
 
   const startRecording = async () => {
@@ -1749,7 +1780,9 @@ export function TerminalPane({
           </span>
         )}
         <Cwd cwd={cwd} />
-        {kernelTabId && <Daemon durable={durable} sessionKind={sessionKind} />}
+        {(kernelTabId || helperBadge) && (
+          <Daemon durable={durable} sessionKind={sessionKind} helper={helperBadge} onOpenHelper={openHelper} />
+        )}
         {previewShareEnabled && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
         <div className="nx-spacer" />
 
@@ -2181,12 +2214,6 @@ export function TerminalPane({
         )}
       </div>
 
-      {helperOperation && ["running", "awaiting_choice"].includes(helperOperation.status) && (
-        <div role="status" aria-label="终端助手进度" className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 px-3 py-1 text-xs text-neutral-400">
-          <span className="min-w-0 flex-1 truncate">{helperOperation.status === "awaiting_choice" ? "持久终端需要处理" : helperStageText(helperOperation.stage)}</span>
-          <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setHelperPanelOpen(true)}>查看</button>
-        </div>
-      )}
       {helperPanelOpen && visible !== false && (
           <HelperOperationDialog
             onClose={closeHelperPanel}

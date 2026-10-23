@@ -31,3 +31,28 @@ describe("Daemon", () => {
     expect(badgeText(true, "winrm")).toBe("");
   });
 });
+
+describe("Daemon helper states", () => {
+  function render(props: Parameters<typeof Daemon>[0]) {
+    const view = mount(createElement(Daemon, props));
+    mounted.push(view);
+    return view.container;
+  }
+
+  it("shows installation, attention, and readiness on regular SSH tabs", () => {
+    expect(render({ durable: false, sessionKind: "ssh", helper: { state: "installing", stage: "上传持久终端助手" } }).textContent).toContain("正在启用持久终端");
+    expect(render({ durable: false, sessionKind: "ssh", helper: { state: "attention" } }).textContent).toContain("持久终端需处理");
+    expect(render({ durable: false, sessionKind: "ssh", helper: { state: "ready" } }).textContent).toContain("持久已就绪");
+  });
+
+  it("keeps durable tabs labelled as daemon terminals regardless of helper state", () => {
+    expect(render({ durable: true, sessionKind: "ssh", helper: { state: "ready" } }).textContent).toContain("守护终端");
+  });
+
+  it("opens the helper from the badge on SSH tabs", () => {
+    let opened = 0;
+    const container = render({ durable: false, sessionKind: "ssh", onOpenHelper: () => { opened += 1; } });
+    container.querySelector("button")?.click();
+    expect(opened).toBe(1);
+  });
+});

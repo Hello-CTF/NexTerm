@@ -1,23 +1,59 @@
+import { IconLoader } from "../../ui/icons";
+
+export type DaemonHelperState =
+  | { state: "installing"; stage: string }
+  | { state: "attention"; message?: string }
+  | { state: "ready" };
+
 export interface DaemonProps {
   durable: boolean;
   sessionKind?: string;
+  helper?: DaemonHelperState | null;
+  onOpenHelper?: () => void;
 }
 
-export function Daemon({ durable, sessionKind }: DaemonProps) {
+export function Daemon({ durable, sessionKind, helper, onOpenHelper }: DaemonProps) {
   if (sessionKind === "winrm" || sessionKind === "docker") return null;
+  let className = "nx-badge";
+  let label = "直接连接";
+  let title = "直接连接：进程随会话断开而退出，不会转入后台会话";
+  let busy = false;
   if (durable) {
-    return (
-      <span
-        className="nx-badge nx-badge-green"
-        title="进程由 NexTerm 后台托管：断开连接或重启应用后，可在「后台会话」接管"
-      >
-        守护终端
-      </span>
-    );
+    className = "nx-badge nx-badge-green";
+    label = "守护终端";
+    title = "进程由 NexTerm 后台托管：断开连接或重启应用后，可在「后台会话」接管";
+  } else if (helper?.state === "installing") {
+    className = "nx-badge nx-badge-blue";
+    label = "正在启用持久终端";
+    title = `${helper.stage}。当前标签是普通终端，完成后新开的标签可转到后台`;
+    busy = true;
+  } else if (helper?.state === "attention") {
+    className = "nx-badge nx-badge-amber";
+    label = "持久终端需处理";
+    title = helper.message ? `持久终端暂时不可用：${helper.message}` : "持久终端暂时不可用，点击查看选项";
+  } else if (helper?.state === "ready") {
+    className = "nx-badge nx-badge-blue";
+    label = "直接连接 · 持久已就绪";
+    title = "持久终端助手已就绪。当前标签仍是普通终端，新开的标签可转到后台";
+  }
+  const content = (
+    <>
+      {busy && <IconLoader size={11} className="animate-spin" />}
+      {label}
+    </>
+  );
+  if (!onOpenHelper || sessionKind !== "ssh") {
+    return <span className={className} title={title}>{content}</span>;
   }
   return (
-    <span className="nx-badge" title="直接连接：进程随会话断开而退出，不会转入后台会话">
-      直接连接
-    </span>
+    <button
+      type="button"
+      className={`${className} cursor-pointer`}
+      title={`${title}（点击查看持久终端助手）`}
+      aria-label={`${label}，查看持久终端助手`}
+      onClick={onOpenHelper}
+    >
+      {content}
+    </button>
   );
 }

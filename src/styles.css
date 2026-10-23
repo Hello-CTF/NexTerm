@@ -1421,6 +1421,21 @@
     border-radius: 9999px;
     background: var(--color-amber-400);
   }
+  .nx-rail-count {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 9999px;
+    background: var(--color-green-600);
+    color: white;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 14px;
+    text-align: center;
+  }
 
   .nx-menu {
     position: fixed;

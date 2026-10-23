@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, flushMacrotask, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flush, flushMacrotask, mount, setInputValue, waitFor, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   historyProps: [] as { workspaceId?: string; assetId?: string }[],
   terminalPaneProps: [] as { storeTabId: string }[],
   renameTab: vi.fn(),
+  listLive: vi.fn(async () => [] as unknown[]),
+  listDurable: vi.fn(async () => [] as unknown[]),
 }));
 
 const envState = vi.hoisted(() => ({
@@ -74,7 +76,7 @@ vi.mock("../ipc/commands", () => ({
       lastError: null,
     }),
   },
-  terminalApi: { renameTab: mocks.renameTab },
+  terminalApi: { renameTab: mocks.renameTab, listLive: mocks.listLive, listDurable: mocks.listDurable },
   dbApi: { connect: mocks.dbConnect },
 }));
 vi.mock("../ipc/wails", () => ({
@@ -476,6 +478,27 @@ describe("App workspace actions", () => {
     expect(mounted.container.querySelector('button[aria-label="后台会话"]')).toBeNull();
     act(() => useUi.getState().updateTab("direct", { retainable: true }));
     expect(mounted.container.querySelector('button[aria-label="后台会话"]')).not.toBeNull();
+  });
+
+  it("keeps the background entry with a count on SSH hosts that only have direct terminals", async () => {
+    const terminal: AppTab = { id: "direct", kind: "terminal", title: "terminal", sessionId: "s1", tabId: "kernel-direct", retainable: false, closable: true };
+    const workspace = workspaceOf("s1", [terminal]);
+    workspace.assetKind = "ssh";
+    mocks.listDurable.mockResolvedValue([
+      { id: "old-durable", dead: false },
+      { id: "kernel-direct", dead: false },
+      { id: "finished", dead: true },
+    ]);
+    mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
+    useUi.setState({ sessions: [sessionOf("s1")], workspaces: [workspace], activeWorkspaceId: "ws" });
+    mounted = mountApp();
+    await flush();
+
+    const entry = () => mounted?.container.querySelector('button[aria-label="后台会话"]');
+    expect(entry()).not.toBeNull();
+    await waitFor(() => expect(entry()?.querySelector(".nx-rail-count")?.textContent).toBe("1"));
+    await clickRail("后台会话");
+    expect(allTabs().some((tab) => tab.kind === "background")).toBe(true);
   });
 
   it("keeps background access after the final durable tab is moved to the background", async () => {

@@ -57,6 +57,7 @@ let accountStore: AccountPreferenceStore | null = null;
 let accountDefaults: Record<string, unknown> = {};
 let accountOverrides: Record<string, unknown> = {};
 let deviceOnlyPreferences = false;
+let accountViewLoading: Promise<void> | null = null;
 let registerGeneration = 0;
 const accountListeners = new Set<() => void>();
 
@@ -76,8 +77,11 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
   syncThemePreferenceLayers();
   rebuildSnapshots();
   for (const listener of accountListeners) listener();
-  if (!store) return;
-  void store
+  if (!store) {
+    accountViewLoading = null;
+    return;
+  }
+  const loading = store
     .getView()
     .then((view) => {
       if (generation !== registerGeneration || store !== accountStore) return;
@@ -88,7 +92,18 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
       rebuildSnapshots();
       for (const listener of accountListeners) listener();
     })
-    .catch(() => undefined);
+    .catch(() => undefined)
+    .finally(() => {
+      if (accountViewLoading === loading) accountViewLoading = null;
+    });
+  accountViewLoading = loading;
+}
+
+// waitAccountPreferences waits briefly for an in-flight account preference load so
+// decisions such as the default terminal mode do not read empty account layers.
+export function waitAccountPreferences(timeoutMs = 3000): Promise<void> | null {
+  if (!accountViewLoading) return null;
+  return Promise.race([accountViewLoading, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
 }
 
 export function getAccountPreferenceStore(): AccountPreferenceStore | null {
