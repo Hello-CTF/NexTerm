@@ -827,6 +827,70 @@ func TestReleaseWindowsToolingProvenanceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestReleaseWindowsAuthenticodeUsesEphemeralCurrentUserRoot(t *testing.T) {
+	release := loadWorkflow(t, ".github/workflows/release.yml")
+	desktop := requireJob(t, release, "desktop")
+	signing := requireRunContaining(t, desktop, `MSYS_NO_PATHCONV=1 "$SIGNTOOL" sign /fd SHA256`)
+	if got := signing.If; got != "matrix.os == 'windows'" {
+		t.Fatalf("Windows Authenticode condition = %q", got)
+	}
+
+	const certHash = "0123456789abcdef0123456789abcdef01234567"
+	parser := `/Cert Hash\(sha1\):/ { value = $0; sub(/^[^:]*:/, "", value); gsub(/[[:space:]]/, "", value); if (length(value) == 40 && value ~ /^[0-9A-Fa-f]+$/) { print value } exit }`
+	for _, test := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"unspaced CRLF", "Cert Hash(sha1): " + certHash + "\r\n", certHash + "\n"},
+		{"spaced CRLF", "Cert Hash(sha1): 01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef 01 23 45 67\r\n", certHash + "\n"},
+		{"wrong length", "Cert Hash(sha1): abc\r\n", ""},
+		{"non hex", "Cert Hash(sha1): 0123456789abcdef0123456789abcdef0123456g\r\n", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command := exec.Command("awk", parser)
+			command.Stdin = strings.NewReader(test.input)
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("run certificate hash parser: %v: %s", err, output)
+			}
+			if string(output) != test.want {
+				t.Fatalf("certificate hash parser output = %q, want %q", output, test.want)
+			}
+		})
+	}
+
+	run := normalize(signing.Run)
+	ownership := `if certutil -user -store Root "$CERT_HASH" >/dev/null 2>&1; then echo "Windows Authenticode certificate is already present in CurrentUser Root; leaving it unchanged" else trap 'certutil -user -delstore Root "$CERT_HASH"' EXIT certutil -user -p "$NEXTERM_WINDOWS_CERT_PASSWORD" -importPFX Root "$CERT" fi`
+	commands := []string{
+		`CERT_HASH="$(certutil -p "$NEXTERM_WINDOWS_CERT_PASSWORD" -dump "$CERT" | awk '` + parser + `')"`,
+		`test -n "$CERT_HASH"`,
+		ownership,
+		`MSYS_NO_PATHCONV=1 "$SIGNTOOL" sign /fd SHA256`,
+		`MSYS_NO_PATHCONV=1 "$SIGNTOOL" verify /pa "$installer"`,
+	}
+	positions := make([]int, len(commands))
+	for index, command := range commands {
+		positions[index] = strings.Index(run, command)
+		if positions[index] < 0 {
+			t.Errorf("Windows Authenticode step is missing %q", command)
+		}
+	}
+	for index := 1; index < len(positions); index++ {
+		if positions[index-1] >= 0 && positions[index] >= 0 && positions[index-1] >= positions[index] {
+			t.Errorf("Windows Authenticode step must run %q before %q", commands[index-1], commands[index])
+		}
+	}
+	for _, command := range []string{
+		`certutil -user -delstore Root`,
+		`certutil -user -p "$NEXTERM_WINDOWS_CERT_PASSWORD" -importPFX Root`,
+	} {
+		if got := strings.Count(run, command); got != 1 {
+			t.Errorf("Windows Authenticode ownership command %q occurs %d times, want one conditional occurrence", command, got)
+		}
+	}
+}
+
 func TestReleaseDesktopReusesEquivalentNativeEvidence(t *testing.T) {
 	ci := loadWorkflow(t, ".github/workflows/ci.yml")
 	input, ok := ci.On.WorkflowCall.Inputs["updater_public_key"]
