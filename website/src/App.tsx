@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import {
   Activity, ArrowRight, Bot, CalendarClock, Container, Database, Download, Eye, FolderTree, Fingerprint, History,
-  KeyRound, Laptop, Layers, Link, Lock, Monitor, Moon, Network, Radio, ScrollText, Server, ShieldCheck, Smartphone,
+  KeyRound, Laptop, Layers, Link, Lock, Monitor, Moon, Network, Radio, ScrollText, Server, Share2, ShieldCheck, Smartphone,
   SquareTerminal, Sun, Users, Workflow,
 } from "lucide-react";
 import { FeatureDemo, type DemoMode } from "./Demos";
@@ -18,7 +18,7 @@ type Item = [title: string, text: string];
 type View = [name: DemoMode, label: string, title: string, alt: string];
 
 const integrations = ["SSH", "WinRM", "SFTP", "Docker", "MySQL", "MariaDB", "PostgreSQL", "Redis", "SOCKS5", "OpenAI API", "DeepSeek", "Kimi", "GLM", "Ollama"];
-const toolboxIcons = [FolderTree, Container, Database, Network, Activity, Link, Layers, SquareTerminal];
+const toolboxIcons = [FolderTree, Container, Database, Network, Activity, Link, Share2, Layers, SquareTerminal];
 const trustIcons = [Lock, KeyRound, Users, ScrollText, ShieldCheck, Database];
 const platformIcons = [Monitor, Laptop, Monitor, Server, Smartphone, Fingerprint];
 
@@ -154,7 +154,7 @@ function App() {
             <div className="point-grid">
               {t.aiPoints.map(([title, text], index) => {
                 const Icon = [Bot, Workflow, KeyRound, Eye, CalendarClock, Radio][index];
-                return <article className="point" key={title}><Icon size={18} /><div><h3>{title}</h3><p>{text}</p></div></article>;
+                return <article className="point" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
               })}
             </div>
           </div>
@@ -169,7 +169,7 @@ function App() {
             <div className="point-grid point-grid-single">
               {t.sessionPoints.map(([title, text], index) => {
                 const Icon = [SquareTerminal, Smartphone, History, Layers][index];
-                return <article className="point" key={title}><Icon size={18} /><div><h3>{title}</h3><p>{text}</p></div></article>;
+                return <article className="point" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
               })}
             </div>
           </div>
@@ -183,7 +183,7 @@ function App() {
           <div className="tool-grid">
             {t.toolbox.map(([title, text], index) => {
               const Icon = toolboxIcons[index];
-              return <article className="tool-card" key={title}><span className="tool-icon"><Icon size={18} /></span><h3>{title}</h3><p>{text}</p></article>;
+              return <article className="tool-card" key={title}><span className="tool-icon">{Icon && <Icon size={18} />}</span><h3>{title}</h3><p>{text}</p></article>;
             })}
           </div>
         </div>
@@ -195,7 +195,7 @@ function App() {
           <div className="trust-grid">
             {t.trust.map(([title, text], index) => {
               const Icon = trustIcons[index];
-              return <article className="trust-item" key={title}><Icon size={18} /><div><h3>{title}</h3><p>{text}</p></div></article>;
+              return <article className="trust-item" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
             })}
           </div>
         </div>
@@ -207,7 +207,7 @@ function App() {
           <div className="platform-grid">
             {t.platforms.map(([title, text], index) => {
               const Icon = platformIcons[index];
-              return <div className="platform" key={title}><Icon size={20} /><div><strong>{title}</strong><span>{text}</span></div></div>;
+              return <div className="platform" key={title}>{Icon && <Icon size={20} />}<div><strong>{title}</strong><span>{text}</span></div></div>;
             })}
           </div>
           <div className="download-actions">
