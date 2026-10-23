@@ -66,12 +66,40 @@ export function call<T>(cmd: IPCCommandName, args?: Record<string, unknown>): Pr
   return invoke<T>(cmd, args);
 }
 
+// SYNCED_WRITES change data the account sync carries. After one succeeds the
+// desktop wakes a sync round, so the edit reaches other devices in moments
+// instead of on the next periodic round.
+const SYNCED_WRITES = new Set([
+  "asset_create", "asset_update", "asset_delete",
+  "group_create", "group_update", "group_delete",
+  "snippet_create", "snippet_update", "snippet_delete",
+  "credential_update", "vault_set_credential", "vault_delete_credential",
+  "known_host_accept", "known_host_remove",
+  "ai_set_permission", "ai_model_save", "ai_model_delete", "ai_model_activate",
+  "ai_grant_set", "ai_grant_revoke", "ai_grant_rule_set", "ai_grant_rule_revoke",
+  "sync_preferences_set", "inventory_sync", "transcript_sync_opt_in", "transcript_delete",
+]);
+export const SYNC_WAKE_DELAY_MS = 2000;
+let syncWakeTimer: ReturnType<typeof setTimeout> | null = null;
+
+// scheduleSyncWake debounces bursts such as an import into one sync round.
+function scheduleSyncWake(cmd: string): void {
+  if (!SYNCED_WRITES.has(cmd)) return;
+  if (syncWakeTimer !== null) clearTimeout(syncWakeTimer);
+  syncWakeTimer = setTimeout(() => {
+    syncWakeTimer = null;
+    void callDesktop("sync_wake").catch(() => undefined);
+  }, SYNC_WAKE_DELAY_MS);
+}
+
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
     if (WEB) {
       return await callWeb<T>(cmd, args);
     }
-    return await callDesktop<T>(cmd, args);
+    const result = await callDesktop<T>(cmd, args);
+    scheduleSyncWake(cmd);
+    return result;
   } catch (e) {
     throw toAppError(e);
   }

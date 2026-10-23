@@ -262,6 +262,24 @@ func (c *remoteClient) ids(ctx context.Context, knownHead ...string) (*IDsRespon
 	}
 }
 
+// wait blocks until the server head differs from knownHead or the server's
+// wait timeout passes.
+func (c *remoteClient) wait(ctx context.Context, knownHead string) (*WaitResponse, error) {
+	var response WaitResponse
+	status, rpcErr, err := c.post(ctx, "/sync/v2/wait", WaitRequest{Protocol: ProtocolVersion, KnownHead: knownHead}, &response, false)
+	if err != nil {
+		return nil, err
+	}
+	switch status {
+	case http.StatusOK:
+		return &response, nil
+	case http.StatusUnauthorized:
+		return nil, errSessionExpired
+	default:
+		return nil, remoteStatusError(status, rpcErr)
+	}
+}
+
 func (c *remoteClient) get(ctx context.Context, path string, out any) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
 	if err != nil {

@@ -149,6 +149,12 @@ func (s *Service) Start(ctx context.Context) error {
 		ticker := time.NewTicker(s.syncPeriod)
 		defer ticker.Stop()
 		s.probeSavedLink(runCtx)
+		watching := make(chan struct{})
+		go func() {
+			defer close(watching)
+			s.watchRemote(runCtx)
+		}()
+		defer func() { <-watching }()
 		for {
 			s.syncBackground(runCtx)
 			select {
@@ -160,6 +166,51 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+const (
+	remoteWaitIdleRetry  = 15 * time.Second
+	remoteWaitMaxBackoff = time.Minute
+)
+
+// watchRemote long-polls the server so a push from another device starts a
+// sync round within moments rather than on the next polling period.
+func (s *Service) watchRemote(ctx context.Context) {
+	ctx = vault.WithBackground(ctx)
+	// handled is the newest head this loop already reacted to; it follows the
+	// saved cursor whenever a round moves it, so this device's own pushes do
+	// not trigger another round, and a failed round is not re-triggered for
+	// the same head.
+	handled, seenCursor := "", ""
+	backoff := time.Second
+	for ctx.Err() == nil {
+		client, cursorHead, ok, err := s.engine.remoteWaitTarget(ctx)
+		if err != nil || !ok {
+			if sleepContext(ctx, remoteWaitIdleRetry) != nil {
+				return
+			}
+			continue
+		}
+		if cursorHead != seenCursor {
+			seenCursor, handled = cursorHead, cursorHead
+		}
+		response, err := client.wait(ctx, handled)
+		switch {
+		case ctx.Err() != nil:
+			return
+		case err != nil:
+			if sleepContext(ctx, backoff) != nil {
+				return
+			}
+			backoff = min(backoff*2, remoteWaitMaxBackoff)
+			continue
+		}
+		backoff = time.Second
+		if response.Changed && response.Head != handled {
+			handled = response.Head
+			s.wake()
+		}
+	}
 }
 
 func (s *Service) syncBackground(ctx context.Context) {

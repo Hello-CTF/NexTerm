@@ -383,6 +383,7 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 	if kind == KindCredential {
 		if err := e.requireVault(ctx); err != nil {
 			report.PullSkipped++
+			report.leftPending = true
 			report.warnf("凭据 %s 暂缓应用：凭据库未解锁，解锁后下一轮同步自动重试", object.ID)
 			return nil
 		}

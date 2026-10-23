@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -44,11 +46,16 @@ type SyncReport struct {
 	Warnings      []string `json:"warnings,omitempty"`
 
 	unresolvedRefs map[string]bool
+	// leftPending marks an object this round deliberately left unreconciled
+	// (a credential while the vault is locked, or a missing dependency), so the
+	// next round must list every server ID again instead of trusting the head.
+	leftPending bool
 }
 
 // markUnresolvedRef marks an object applied in reference-degraded form (a dependency has not arrived): the engine must not record reconciliation,
 // staying unreconciled so the next round re-pulls it and recovery happens automatically once the dependency arrives.
 func (report *SyncReport) markUnresolvedRef(id string) {
+	report.leftPending = true
 	if report.unresolvedRefs == nil {
 		report.unresolvedRefs = map[string]bool{}
 	}
@@ -220,6 +227,19 @@ func (e *Engine) loadKindOptIn(ctx context.Context, userID string) (kindOptIn, e
 	return kindOptIn{knownHost: knownHost, aiProfile: aiProfile, aiPermission: aiPermission, aiGrant: aiGrant, preferences: preferences}, nil
 }
 
+// key encodes the opt-in snapshot; a reconciled cursor is valid only for the snapshot it was reconciled under.
+func (o kindOptIn) key() string {
+	flags := []bool{o.knownHost, o.aiProfile, o.aiPermission, o.aiGrant, o.preferences}
+	encoded := make([]byte, len(flags))
+	for i, flag := range flags {
+		encoded[i] = '0'
+		if flag {
+			encoded[i] = '1'
+		}
+	}
+	return "optin:" + string(encoded)
+}
+
 // allowsRemote decides whether a remote object (including tombstones) may be applied this round; hard-off kinds are neither applied nor reconciled,
 // staying unreconciled so a later round with opt-in enabled can pull and merge them.
 func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
@@ -290,6 +310,11 @@ func (e *Engine) Sync(ctx context.Context, config RemoteConfig) (SyncReport, err
 			return report, nil
 		}
 		report.Conflicts++
+		// Another device pushed at the same moment: back off a random moment so
+		// both do not collide again on the retry.
+		if err := sleepContext(ctx, conflictBackoff(attempt)); err != nil {
+			return report, err
+		}
 	}
 	err := ipc.NewError(ipc.CodeForbidden, "同步冲突次数过多，请稍后重试")
 	e.logSyncRound(userID, report, err)
@@ -485,6 +510,22 @@ func (e *Engine) resetSession() {
 	e.pending = map[string]*pendingLinkLogin{}
 }
 
+// remoteWaitTarget returns the logged-in session's client and the head this
+// device last saved, or ok=false without a session.
+func (e *Engine) remoteWaitTarget(ctx context.Context) (client *remoteClient, cursorHead string, ok bool, err error) {
+	e.sessionMu.Lock()
+	session := e.session
+	e.sessionMu.Unlock()
+	if session == nil {
+		return nil, "", false, nil
+	}
+	cursor, err := e.loadCursor(ctx, session.userID)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return session.client, cursor.Head, true, nil
+}
+
 func (e *Engine) hasSession() bool {
 	e.sessionMu.Lock()
 	defer e.sessionMu.Unlock()
@@ -500,15 +541,18 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	if err != nil {
 		return false, err
 	}
-	idsResponse, err := session.client.ids(ctx)
+	cursor, err := e.loadCursor(ctx, userID)
 	if err != nil {
 		return false, err
 	}
-	server := make(map[string]IDEntry, len(idsResponse.Entries))
-	for _, entry := range idsResponse.Entries {
-		server[entry.ID] = entry
+	// A cursor saved by a fully reconciled round under the same opt-ins lets the
+	// server answer "unchanged" instead of listing every object ID again.
+	var knownHead []string
+	if cursor.Head != "" && cursor.ReconciledFor == optIn.key() {
+		knownHead = append(knownHead, cursor.Head)
 	}
-	cursor, err := e.loadCursor(ctx, userID)
+	cursor.ReconciledFor = ""
+	idsResponse, err := session.client.ids(ctx, knownHead...)
 	if err != nil {
 		return false, err
 	}
@@ -516,11 +560,21 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	if err != nil {
 		return false, err
 	}
-	unreconciled := make([]string, 0, len(server))
-	for _, entry := range idsResponse.Entries {
-		state, found := syncStates[entry.ID]
-		if !found || state.blobHash != entry.BlobHash {
-			unreconciled = append(unreconciled, entry.ID)
+	server := make(map[string]IDEntry, len(idsResponse.Entries))
+	unreconciled := make([]string, 0, len(idsResponse.Entries))
+	if idsResponse.Unchanged && len(knownHead) > 0 {
+		// The server is exactly as the last reconciled round left it, and that
+		// round recorded every server object in sync_state.
+		for id, state := range syncStates {
+			server[id] = IDEntry{ID: id, BlobHash: state.blobHash}
+		}
+	} else {
+		for _, entry := range idsResponse.Entries {
+			server[entry.ID] = entry
+			state, found := syncStates[entry.ID]
+			if !found || state.blobHash != entry.BlobHash {
+				unreconciled = append(unreconciled, entry.ID)
+			}
 		}
 	}
 	completed, err := e.pullAllAndApply(ctx, session, &cursor, unreconciled, report, optIn)
@@ -595,6 +649,10 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		return false, err
 	} else if !completed {
 		report.warnf("收尾拉取超过页数上限，剩余对象将在下一轮同步")
+		report.leftPending = true
+	}
+	if !report.leftPending {
+		cursor.ReconciledFor = optIn.key()
 	}
 	if err := e.saveCursor(ctx, userID, cursor); err != nil {
 		return false, err
@@ -635,8 +693,18 @@ func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cu
 			returned++
 		}
 		// The cursor advances only via next_seq (cursor objects); catch-up IDs do not affect the cursor position or completion decision.
+		advanced := pullResponse.NextSeq != cursor.Seq
 		cursor.Seq = pullResponse.NextSeq
 		cursor.Head = pullResponse.Head
+		if advanced && returned > 0 {
+			// Checkpoint every applied page so an interrupted large pull resumes here.
+			// The checkpoint is never marked reconciled; the round end decides that.
+			checkpoint := *cursor
+			checkpoint.ReconciledFor = ""
+			if err := e.saveCursor(ctx, session.userID, checkpoint); err != nil {
+				return false, err
+			}
+		}
 		if pullResponse.CursorDone && len(remaining) == 0 {
 			return true, nil
 		}
@@ -652,6 +720,23 @@ func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cu
 	}
 	e.logger.Warn("sync pull exceeded page bound; deferring to next round", "remaining", len(remaining))
 	return false, nil
+}
+
+// conflictBackoff returns a randomized delay that grows with each head conflict.
+func conflictBackoff(attempt int) time.Duration {
+	base := time.Duration(100*(attempt+1)) * time.Millisecond
+	return base + time.Duration(rand.Int64N(int64(base)))
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func takePushBatch(objects []WireObject, hashes []string) (batch []WireObject, batchHashes []string, rest []WireObject, restHashes []string) {
@@ -672,6 +757,10 @@ func takePushBatch(objects []WireObject, hashes []string) (batch []WireObject, b
 type syncCursor struct {
 	Seq  int64  `json:"seq"`
 	Head string `json:"head"`
+	// ReconciledFor is the opt-in snapshot of the round that saved this cursor
+	// with every server object reconciled; empty means the next round must list
+	// all server IDs.
+	ReconciledFor string `json:"reconciledFor,omitempty"`
 }
 
 func cursorSettingKey(userID string) string {

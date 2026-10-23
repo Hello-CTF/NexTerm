@@ -116,6 +116,8 @@ func (h *ObjectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveIDs(w, r, userID)
 	case "/sync/v2/delete":
 		h.serveDelete(w, r, userID)
+	case "/sync/v2/wait":
+		h.serveWait(w, r, userID)
 	default:
 		http.NotFound(w, r)
 	}
@@ -143,6 +145,7 @@ func (h *ObjectHandler) serveDelete(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	h.logger.Info("sync delete", "user", userID, "max_seq", maxSeq)
+	notifyHeadChanged(userID)
 	_ = ipc.Emit(r.Context(), h.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: userID})
 	writeSyncJSON(w, http.StatusOK, DeleteResponse{Protocol: ProtocolVersion, Head: head, MaxSeq: maxSeq, Deleted: true})
 }
@@ -173,6 +176,7 @@ func (h *ObjectHandler) servePush(w http.ResponseWriter, r *http.Request, userID
 	}
 	h.logger.Info("sync push", "user", userID, "received", len(request.Objects), "applied", applied, "skipped", skipped, "max_seq", maxSeq)
 	if applied > 0 {
+		notifyHeadChanged(userID)
 		_ = ipc.Emit(r.Context(), h.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: userID})
 	}
 	writeSyncJSON(w, http.StatusOK, PushResponse{

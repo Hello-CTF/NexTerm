@@ -36,6 +36,10 @@ type testSyncServer struct {
 	db       *store.Store
 	accounts *account.Accounts
 	logins   atomic.Int64
+	// idsFull and idsUnchanged count ids responses that listed every object
+	// and responses that only confirmed an unchanged head.
+	idsFull      atomic.Int64
+	idsUnchanged atomic.Int64
 
 	failNextPushWith409 bool
 	dropObjectID        string
@@ -70,6 +74,7 @@ func newTestSyncServerOn(t *testing.T, db *store.Store) *testSyncServer {
 	mux.Handle("POST /sync/v2/delete", server.requireSession(server.requireCSRF(NewObjectHandler(db.GORM(), nil))))
 	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.GORM(), nil)))
 	mux.Handle("POST /sync/v2/ids", server.requireSession(server.maybePostIDs(NewObjectHandler(db.GORM(), nil))))
+	mux.Handle("POST /sync/v2/wait", server.requireSession(NewObjectHandler(db.GORM(), nil)))
 	server.Server = httptest.NewServer(mux)
 	t.Cleanup(server.Server.Close)
 	return server
@@ -78,7 +83,19 @@ func newTestSyncServerOn(t *testing.T, db *store.Store) *testSyncServer {
 // maybePostIDs runs a one-shot action after the ids service (drop an object row / concurrent update) to construct reconciliation edge scenarios.
 func (s *testSyncServer) maybePostIDs(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
+		recorder := httptest.NewRecorder()
+		next.ServeHTTP(recorder, r)
+		for key, values := range recorder.Header() {
+			w.Header()[key] = values
+		}
+		w.WriteHeader(recorder.Code)
+		body := recorder.Body.Bytes()
+		_, _ = w.Write(body)
+		if bytes.Contains(body, []byte(`"unchanged":true`)) {
+			s.idsUnchanged.Add(1)
+		} else {
+			s.idsFull.Add(1)
+		}
 		if s.dropObjectID != "" {
 			id := s.dropObjectID
 			s.dropObjectID = ""
