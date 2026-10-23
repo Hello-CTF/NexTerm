@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { Check, FileCode2, Folder, Pause, Play, RotateCcw, Server, SquareTerminal } from "lucide-react";
+import { Check, FileCode2, Folder, Pause, Play, RotateCcw, Server, SquareTerminal, X } from "lucide-react";
 import { formatReplayClock, TranscriptReplay, type ReplayChunk, type ReplaySink } from "../../src/features/terminal/transcriptReplay";
 import "@xterm/xterm/css/xterm.css";
 
@@ -17,7 +17,8 @@ const copy = {
     reasoning: "我先检查容器资源，再决定是否需要重启。",
     diagnosis: "api-server 的内存使用率较高。重启操作需要确认。",
     approval: "需要你确认", allow: "模拟允许一次", deny: "拒绝",
-    approved: "已模拟执行重启，健康检查通过。", denied: "已拒绝，没有执行任何操作。",
+    approved: "重启完成，健康检查通过，内存回落到 214MiB。", denied: "已拒绝，没有执行任何操作。容器保持原状，可以改用其他排查方式。",
+    skipped: "未执行",
     reset: "重置演示", readOnly: "只读示例 · 点击文件切换预览",
     modified: "预览修改", original: "原始文件",
     replayHint: "拖动时间轴查看任意时刻的终端输出",
@@ -31,7 +32,8 @@ const copy = {
     reasoning: "I'll inspect container resources before considering a restart.",
     diagnosis: "api-server is close to its memory limit. A restart needs approval.",
     approval: "Your approval is required", allow: "Simulate allow once", deny: "Deny",
-    approved: "Restart simulated. The health check passes.", denied: "Restart denied. Nothing was run.",
+    approved: "Restart finished. The health check passes and memory dropped to 214MiB.", denied: "Restart denied. Nothing was run, and the container is unchanged.",
+    skipped: "Not run",
     reset: "Reset demo", readOnly: "Read-only sample · Select a file to preview",
     modified: "Preview change", original: "Original file",
     replayHint: "Drag the timeline to inspect terminal output at any point",
@@ -169,11 +171,54 @@ function AiDemo({ language }: { language: Language }) {
       <div className="demo-ai-message"><span className="demo-avatar">N</span><span>{t.reasoning}</span></div>
       <div className="demo-tool-call"><div><SquareTerminal size={14} /><code>docker stats --no-stream</code><Check size={13} /></div><pre>{"NAME          CPU %   MEM USAGE / LIMIT\napi-server    4.8%    812MiB / 1GiB\npostgres      0.7%    126MiB / 2GiB"}</pre></div>
       <div className="demo-ai-message"><span className="demo-avatar">N</span><span>{t.diagnosis}</span></div>
-      <div className="demo-approval"><strong>{t.approval}</strong><code>docker restart api-server</code>
-        {decision === "pending" ? <div className="demo-approval-actions"><button type="button" onClick={() => setDecision("approved")}>{t.allow}</button><button type="button" onClick={() => setDecision("denied")}>{t.deny}</button></div> : <div className="demo-ai-result" role="status"><span>{decision === "approved" ? t.approved : t.denied}</span><button type="button" onClick={() => setDecision("pending")}><RotateCcw size={12} />{t.reset}</button></div>}
-      </div>
+      {decision === "pending" ? <div className="demo-approval"><strong>{t.approval}</strong><code>docker restart api-server</code>
+        <div className="demo-approval-actions"><button type="button" onClick={() => setDecision("approved")}>{t.allow}</button><button type="button" onClick={() => setDecision("denied")}>{t.deny}</button></div>
+      </div> : decision === "approved" ? <>
+        <div className="demo-tool-call"><div><SquareTerminal size={14} /><code>docker restart api-server</code><Check size={13} /></div><pre>api-server</pre></div>
+        <div className="demo-tool-call"><div><SquareTerminal size={14} /><code>curl -s localhost:8080/healthz && docker stats --no-stream api-server</code><Check size={13} /></div><pre>{"{\"status\":\"ok\"}\nNAME          CPU %   MEM USAGE / LIMIT\napi-server    1.2%    214MiB / 1GiB"}</pre></div>
+        <div className="demo-ai-message"><span className="demo-avatar">N</span><span>{t.approved}</span></div>
+      </> : <>
+        <div className="demo-tool-call demo-tool-skipped"><div><SquareTerminal size={14} /><code>docker restart api-server</code><X size={13} /></div><pre>{t.skipped}</pre></div>
+        <div className="demo-ai-message"><span className="demo-avatar">N</span><span>{t.denied}</span></div>
+      </>}
+      {decision !== "pending" && <div className="demo-ai-result"><button type="button" onClick={() => setDecision("pending")}><RotateCcw size={12} />{t.reset}</button></div>}
     </div>
   </div>;
+}
+
+type Token = [string, string | null];
+
+// highlightLine colors the sample files by their syntax; it covers only what the samples use.
+function highlightLine(file: DemoFile, line: string): Token[] {
+  if (file === "README.md") {
+    if (/^#/.test(line)) return [[line, "tok-heading"]];
+    const list = /^(\s*(?:-|\d+\.)\s)(.*)$/.exec(line);
+    if (list) return [[list[1], "tok-punct"], ...highlightInline(list[2])];
+    return highlightInline(line);
+  }
+  const comment = line.indexOf("#");
+  if (comment >= 0 && !/["']/.test(line.slice(0, comment))) return [...highlightLine(file, line.slice(0, comment)), [line.slice(comment), "tok-comment"]];
+  if (file === "docker-compose.yml") {
+    const key = /^(\s*-?\s*)([\w.-]+)(:)(.*)$/.exec(line);
+    if (key) return [[key[1], "tok-punct"], [key[2], "tok-key"], [key[3], "tok-punct"], ...highlightValue(key[4])];
+    const item = /^(\s*-\s)(.*)$/.exec(line);
+    if (item) return [[item[1], "tok-punct"], ...highlightValue(item[2])];
+    return highlightValue(line);
+  }
+  const directive = /^(\s*)([\w_]+)(.*)$/.exec(line);
+  if (directive) return [[directive[1], null], [directive[2], "tok-key"], ...highlightValue(directive[3])];
+  return [[line, "tok-punct"]];
+}
+
+function highlightValue(text: string): Token[] {
+  return text.split(/("[^"]*"|\b\d+(?:\.\d+)*[a-z]*\b|[{}[\];,])/).filter(Boolean).map((part) => [
+    part,
+    part.startsWith("\"") ? "tok-string" : /^\d/.test(part) ? "tok-number" : /^[{}[\];,]$/.test(part) ? "tok-punct" : null,
+  ]);
+}
+
+function highlightInline(text: string): Token[] {
+  return text.split(/(\S+\.(?:yml|conf|md))/).filter(Boolean).map((part) => [part, /\.(?:yml|conf|md)$/.test(part) ? "tok-string" : null]);
 }
 
 function FilesDemo({ language }: { language: Language }) {
@@ -189,7 +234,7 @@ function FilesDemo({ language }: { language: Language }) {
         {(Object.keys(fileContents) as DemoFile[]).map((name) => <button key={name} type="button" className={file === name ? "selected" : ""} onClick={() => { setFile(name); setChanged(false); }} aria-current={file === name ? "page" : undefined}><FileCode2 size={14} />{name}</button>)}
       </nav>
       <div className="demo-editor"><div className="demo-editor-bar"><span>{file}</span><span>{t.readOnly}</span></div>
-        <div className="demo-code" aria-label={file}>{content.map((line, index) => <div key={index}><span>{index + 1}</span><code>{line || "\u00a0"}</code></div>)}</div>
+        <div className="demo-code" aria-label={file}>{content.map((line, index) => <div key={index}><span>{index + 1}</span><code>{line ? highlightLine(file, line).map(([text, kind], part) => kind ? <span key={part} className={kind}>{text}</span> : text) : "\u00a0"}</code></div>)}</div>
       </div>
     </div>
     <div className="demo-footer"><Server size={13} />SFTP · web-01<button type="button" onClick={() => { setFile("nginx.conf"); setChanged((value) => !value); }}>{changed && file === "nginx.conf" ? t.original : t.modified}</button></div>
@@ -197,7 +242,7 @@ function FilesDemo({ language }: { language: Language }) {
 }
 
 function sink(terminal: Terminal): ReplaySink {
-  return { reset: () => terminal.reset(), write: (data) => terminal.write(data), resize: (cols, rows) => terminal.resize(cols, rows) };
+  return { reset: () => terminal.reset(), write: (data, callback) => terminal.write(data, callback), resize: (cols, rows) => terminal.resize(cols, rows) };
 }
 
 function ReplayDemo({ language }: { language: Language }) {

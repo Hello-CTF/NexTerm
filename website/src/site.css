@@ -163,6 +163,14 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .demo-code > div { display: flex; min-width: max-content; }
 .demo-code > div > span { width: 40px; flex: none; padding-right: 12px; color: #626a78; text-align: right; user-select: none; }
 .demo-code code { padding-right: 16px; font: inherit; white-space: pre; }
+.demo-code .tok-key { color: #7aa2f7; }
+.demo-code .tok-string { color: #9ece6a; }
+.demo-code .tok-number { color: #ff9e64; }
+.demo-code .tok-comment { color: #626a78; font-style: italic; }
+.demo-code .tok-heading { color: #e0af68; font-weight: 600; }
+.demo-code .tok-punct { color: #89929f; }
+.demo-tool-skipped > div > svg:last-child { color: #e06c75; }
+.demo-tool-skipped pre { color: var(--text-muted); }
 .demo-replay-controls { display: flex; min-height: 45px; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--border); }
 .demo-replay-controls button, .demo-replay-controls select { display: inline-flex; min-height: 28px; align-items: center; gap: 6px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel); padding: 2px 9px; color: var(--text); font-size: 11px; cursor: pointer; }
 .demo-replay-controls input { min-width: 0; flex: 1; accent-color: var(--accent); cursor: pointer; }
