@@ -257,7 +257,7 @@ describe("SyncCard comparison clock hint", () => {
     mounted = mount(createElement(QueryClientProvider, { client }, createElement(SyncCard)));
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("web-01"));
-    await flushUntil(() => !(mounted!.container.textContent ?? "").includes("正在读取本机与云端数据"));
+    await flushUntil(() => !(mounted!.container.textContent ?? "").includes("正在读取本机与服务端数据"));
 
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("请保持各设备时钟准确");

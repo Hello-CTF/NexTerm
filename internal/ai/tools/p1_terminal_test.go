@@ -495,7 +495,7 @@ func TestTerminalCreateConnectStages(t *testing.T) {
 		registry.deps.ResolveAssetSession = func(context.Context, string) (string, error) { return "", resolveErr }
 		result := registry.Execute(context.Background(), "job", Scope{SessionID: "s1", TabID: "t1"},
 			p1Call("c", "terminal_create", `{"asset_id":"a1","connect":true}`), nil)
-		if result.OK || !strings.Contains(result.Text, "未配置资产连接建立") || !strings.Contains(result.Text, resolveErr.Error()) {
+		if result.OK || !strings.Contains(result.Text, "当前环境不支持由 AI 自动连接主机") || !strings.Contains(result.Text, resolveErr.Error()) {
 			t.Fatalf("result = %+v", result)
 		}
 	})

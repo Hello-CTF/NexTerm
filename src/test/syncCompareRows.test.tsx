@@ -28,7 +28,7 @@ function text(): string {
 describe("compareSummary summary statistics", () => {
   it("covers loading, empty, different, and fully synchronized states", () => {
     expect(compareSummary(null)).toBe("读取中…");
-    expect(compareSummary([])).toBe("本机与云端都还没有可同步的内容");
+    expect(compareSummary([])).toBe("本机与服务端都还没有可同步的内容");
     expect(compareSummary(ROWS)).toBe("共 4 条 · 一致 1 条 · 差异 3 条");
     expect(compareSummary([{ id: "x", kind: "asset", name: "a", state: "same" }])).toBe("共 1 条 · 一致 1 条");
   });
@@ -43,7 +43,7 @@ describe("CompareDetails row rendering", () => {
     clickButton(mounted.container, "对比详情");
     await flush();
     expect(text()).toContain("web-01");
-    expect(text()).toContain("云端较新");
+    expect(text()).toContain("服务端较新");
     expect(text()).toContain("生产环境");
     expect(text()).toContain("仅本机");
     expect(text()).toContain("root 密码");
@@ -86,19 +86,19 @@ describe("CompareDetails row rendering", () => {
     expect(text()).toContain("读取中…");
     clickButton(mounted.container, "对比详情");
     await flush();
-    expect(text()).toContain("正在读取本机与云端数据…");
+    expect(text()).toContain("正在读取本机与服务端数据…");
 
     mounted.unmount();
     mounted = mount(createElement(CompareDetails, { rows: null, error: true }));
     clickButton(mounted.container, "对比详情");
     await flush();
-    expect(text()).not.toContain("正在读取本机与云端数据…");
+    expect(text()).not.toContain("正在读取本机与服务端数据…");
   });
 
   it("shows the empty-state message after expanding an empty row array", async () => {
     mounted = mount(createElement(CompareDetails, { rows: [] }));
     clickButton(mounted.container, "对比详情");
     await flush();
-    expect(text()).toContain("本机与云端都还没有可同步的内容。");
+    expect(text()).toContain("本机与服务端都还没有可同步的内容。");
   });
 });

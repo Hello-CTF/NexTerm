@@ -144,7 +144,7 @@ func TestBuildCompareRowsAssembly(t *testing.T) {
 	localTomb := mustEntity(t, "l2", KindTombstone, tombstoneObject{TargetKind: KindGroup, DeletedAt: 20})
 	shared := mustEntity(t, "s1", KindSnippet, snippetObject{ID: "s1", Name: "共享片段", Body: "a", UpdatedAt: 30})
 	sharedRemote := mustEntity(t, "s1", KindSnippet, snippetObject{ID: "s1", Name: "共享片段", Body: "b", UpdatedAt: 40})
-	remoteOnly := mustEntity(t, "r1", KindAsset, assetObject{ID: "r1", Name: "云端资产", UpdatedAt: 50})
+	remoteOnly := mustEntity(t, "r1", KindAsset, assetObject{ID: "r1", Name: "服务端资产", UpdatedAt: 50})
 	remoteTomb := mustEntity(t, "r2", KindTombstone, tombstoneObject{TargetKind: KindAsset, DeletedAt: 60})
 	localForUndecryptable := mustEntity(t, "u1", KindGroup, groupObject{ID: "u1", Name: "密钥外分组", UpdatedAt: 70})
 

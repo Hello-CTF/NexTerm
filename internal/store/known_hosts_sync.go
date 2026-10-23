@@ -65,70 +65,70 @@ func syncOptInValue(enabled bool) string {
 
 func (s *Store) KnownHostSyncOptIn(ctx context.Context, userID string) (bool, error) {
 	if userID == "" {
-		return false, badParam(fmt.Errorf("known_host 同步 opt-in 需要用户身份"))
+		return false, badParam(fmt.Errorf("开启已知主机同步需要先登录账号"))
 	}
 	return s.syncOptInGet(ctx, knownHostOptInKey(userID))
 }
 
 func (s *Store) SetKnownHostSyncOptIn(ctx context.Context, userID string, enabled bool) error {
 	if userID == "" {
-		return badParam(fmt.Errorf("known_host 同步 opt-in 需要用户身份"))
+		return badParam(fmt.Errorf("开启已知主机同步需要先登录账号"))
 	}
 	return s.SettingSet(ctx, knownHostOptInKey(userID), syncOptInValue(enabled))
 }
 
 func (s *Store) AIProfileSyncOptIn(ctx context.Context, userID string) (bool, error) {
 	if userID == "" {
-		return false, badParam(fmt.Errorf("AI 模型档案同步 opt-in 需要用户身份"))
+		return false, badParam(fmt.Errorf("开启 AI 模型档案同步需要先登录账号"))
 	}
 	return s.syncOptInGet(ctx, aiProfileOptInKey(userID))
 }
 
 func (s *Store) SetAIProfileSyncOptIn(ctx context.Context, userID string, enabled bool) error {
 	if userID == "" {
-		return badParam(fmt.Errorf("AI 模型档案同步 opt-in 需要用户身份"))
+		return badParam(fmt.Errorf("开启 AI 模型档案同步需要先登录账号"))
 	}
 	return s.SettingSet(ctx, aiProfileOptInKey(userID), syncOptInValue(enabled))
 }
 
 func (s *Store) AIPermissionSyncOptIn(ctx context.Context, userID string) (bool, error) {
 	if userID == "" {
-		return false, badParam(fmt.Errorf("AI 权限同步 opt-in 需要用户身份"))
+		return false, badParam(fmt.Errorf("开启 AI 权限同步需要先登录账号"))
 	}
 	return s.syncOptInGet(ctx, "sync.optin.ai_permission."+userID)
 }
 
 func (s *Store) SetAIPermissionSyncOptIn(ctx context.Context, userID string, enabled bool) error {
 	if userID == "" {
-		return badParam(fmt.Errorf("AI 权限同步 opt-in 需要用户身份"))
+		return badParam(fmt.Errorf("开启 AI 权限同步需要先登录账号"))
 	}
 	return s.SettingSet(ctx, "sync.optin.ai_permission."+userID, syncOptInValue(enabled))
 }
 
 func (s *Store) PreferencesSyncOptIn(ctx context.Context, userID string) (bool, error) {
 	if userID == "" {
-		return false, badParam(fmt.Errorf("外观与快捷键同步 opt-in 需要用户身份"))
+		return false, badParam(fmt.Errorf("开启外观与快捷键同步需要先登录账号"))
 	}
 	return s.syncOptInGet(ctx, "sync.optin.preferences."+userID)
 }
 
 func (s *Store) SetPreferencesSyncOptIn(ctx context.Context, userID string, enabled bool) error {
 	if userID == "" {
-		return badParam(fmt.Errorf("外观与快捷键同步 opt-in 需要用户身份"))
+		return badParam(fmt.Errorf("开启外观与快捷键同步需要先登录账号"))
 	}
 	return s.SettingSet(ctx, "sync.optin.preferences."+userID, syncOptInValue(enabled))
 }
 
 func (s *Store) AIGrantSyncOptIn(ctx context.Context, userID string) (bool, error) {
 	if userID == "" {
-		return false, badParam(fmt.Errorf("AI 授权同步 opt-in 需要用户身份"))
+		return false, badParam(fmt.Errorf("开启 AI 授权同步需要先登录账号"))
 	}
 	return s.syncOptInGet(ctx, "sync.optin.ai_grant."+userID)
 }
 
 func (s *Store) SetAIGrantSyncOptIn(ctx context.Context, userID string, enabled bool) error {
 	if userID == "" {
-		return badParam(fmt.Errorf("AI 授权同步 opt-in 需要用户身份"))
+		return badParam(fmt.Errorf("开启 AI 授权同步需要先登录账号"))
 	}
 	return s.SettingSet(ctx, "sync.optin.ai_grant."+userID, syncOptInValue(enabled))
 }

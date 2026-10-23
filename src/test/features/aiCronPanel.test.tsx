@@ -171,7 +171,7 @@ describe("CronPanel", () => {
     expect(mocks.list).toHaveBeenCalledWith(CONV_ID);
   });
 
-  it("shows the bound host name and unattended exec_commands guidance", async () => {
+  it("shows the bound host name and unattended command guidance", async () => {
     mounted = mount(
       createElement(CronPanel, {
         conversationId: CONV_ID,
@@ -183,8 +183,8 @@ describe("CronPanel", () => {
 
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("绑定主机：prod-host");
-    expect(text).toContain("不调用 terminal_create");
-    expect(text).toContain("使用 exec_commands");
+    expect(text).toContain("不会新建终端");
+    expect(text).toContain("明确要求 AI 直接执行命令");
   });
 
   it("reloads jobs for the new conversation after switching conversations", async () => {

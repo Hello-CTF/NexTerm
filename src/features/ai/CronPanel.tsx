@@ -446,7 +446,7 @@ export function CronPanel({
         </div>
       )}
       <p className="nx-hint mb-2 text-[11px]">
-        到达设定时间后，AI 将基于当前会话自动执行任务。需要人工确认或被禁止的操作会被拒绝，原因记录在「上次错误」中。无人值守任务不调用 terminal_create；需要执行 shell 命令时，请在提示词中明确要求使用 exec_commands。
+        到达设定时间后，AI 将基于当前会话自动执行任务。需要人工确认或被禁止的操作会被拒绝，原因记录在「上次错误」中。无人值守任务不会新建终端；需要执行命令时，请在提示词中明确要求 AI 直接执行命令。
       </p>
 
       {registerOpen && draft ? (

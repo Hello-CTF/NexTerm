@@ -43,7 +43,7 @@ func syncCompareToken(session *remoteSession, optIn kindOptIn) string {
 }
 
 func repairStale() error {
-	return ipc.NewError(ipc.CodeForbidden, "本机或云端数据已变化，请刷新对比结果后重新确认")
+	return ipc.NewError(ipc.CodeForbidden, "本机或服务端数据已变化，请刷新对比结果后重新确认")
 }
 
 // RepairUndecryptable is called only after a desktop user confirms one compare row. It rechecks
@@ -60,7 +60,7 @@ func (s *Service) RepairUndecryptable(ctx context.Context, request RepairUndecry
 		return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeBadParam, "本机副本校验信息不完整")
 	}
 	if request.Action == "clear-cloud" && (request.LocalKind != "" || request.LocalPayloadHash != "") {
-		return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeBadParam, "清除云端副本时不能提供本机副本")
+		return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeBadParam, "清除服务端副本时不能提供本机副本")
 	}
 
 	// Service.Sync acquires settingsMu before engine.opMu; keep that order so a
@@ -125,7 +125,7 @@ func (s *Service) RepairUndecryptable(ctx context.Context, request RepairUndecry
 		return RepairUndecryptableResult{}, repairStale()
 	}
 	if _, _, err := tryOpenObject(session.dek, pullResponse.Objects[0].Blob, request.ID); err == nil {
-		return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeForbidden, "云端对象现在可以读取，请刷新对比结果")
+		return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeForbidden, "服务端对象现在可以读取，请刷新对比结果")
 	}
 
 	// Read local data after checking the cloud. Clearing must search every
@@ -159,7 +159,7 @@ func (s *Service) RepairUndecryptable(ctx context.Context, request RepairUndecry
 			return RepairUndecryptableResult{}, err
 		}
 		if response.Applied != 1 {
-			return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeForbidden, "云端未确认修复，请刷新对比结果")
+			return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeForbidden, "服务端未确认修复，请刷新对比结果")
 		}
 		return RepairUndecryptableResult{Repaired: true}, nil
 	}
@@ -189,7 +189,7 @@ func (s *Service) RepairUndecryptable(ctx context.Context, request RepairUndecry
 		return RepairUndecryptableResult{}, err
 	}
 	if !response.Deleted {
-		return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeForbidden, "云端未确认清除，请刷新对比结果")
+		return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeForbidden, "服务端未确认清除，请刷新对比结果")
 	}
 	return RepairUndecryptableResult{Repaired: true}, nil
 }

@@ -588,8 +588,8 @@ describe("SyncCard (web account sync)", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("云端较新"); // a1 has a newer cloud revision
-    expect(text).toContain("仅云端"); // a3 is cloud-only
+    expect(text).toContain("服务端较新"); // a1 has a newer cloud revision
+    expect(text).toContain("仅服务端"); // a3 is cloud-only
     expect(text).toContain("仅本机"); // g1/db-02 are local-only
   });
 
@@ -651,7 +651,7 @@ describe("SyncCard (web account sync)", () => {
 
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
-    await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
+    await flushUntil(() => mounted!.container.textContent?.includes("服务端较新"));
     // The button count is 0 (the winner set is empty), and no push should be triggered
     expect(mounted.container.textContent).toContain("待推送 0 项");
   });
@@ -747,9 +747,9 @@ describe("SyncCard (web account sync)", () => {
 
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
-    await flushUntil(() => mounted!.container.textContent?.includes("云端对象在读取期间发生变化") ?? false);
+    await flushUntil(() => mounted!.container.textContent?.includes("服务端对象在读取期间发生变化") ?? false);
     clickButton(mounted.container, "刷新对比");
-    await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
+    await flushUntil(() => mounted!.container.textContent?.includes("服务端较新"));
     // Cloud is newer, the winner set is empty, no push should happen
     expect(mounted.container.textContent).toContain("待推送 0 项");
     expect(mocks.syncPush).not.toHaveBeenCalled();

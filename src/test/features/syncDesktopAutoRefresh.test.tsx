@@ -111,7 +111,7 @@ describe("Desktop account sync card - automatic status refresh", () => {
     await flushUntil(() =>
       document.body.textContent?.includes("已登录 alice") === true &&
       document.body.textContent?.includes("已知主机 已关闭") === true &&
-      document.body.textContent?.includes("云端 0 个对象") === true,
+      document.body.textContent?.includes("服务端 0 个对象") === true,
     );
     expect(mocks.status.mock.calls.length).toBeGreaterThan(statusCalls);
   });
@@ -158,7 +158,7 @@ describe("Desktop login controls", () => {
     await flushUntil(() => mounted!.container.textContent?.includes("已登录 alice") === true);
     clickButton(mounted.container, "登出");
     await flush();
-    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("保留本地数据"), expect.objectContaining({ kind: "warning" }));
+    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("本机和服务端的数据都会保留"), expect.objectContaining({ kind: "warning" }));
     expect(mocks.linkSet).not.toHaveBeenCalled();
     expect(mounted.container.textContent).toContain("已登录 alice");
   });

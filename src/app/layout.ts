@@ -667,7 +667,7 @@ export async function reviewPendingLayoutRestore(): Promise<void> {
       title: "恢复账号工作区",
       choices: [
         { key: "restore", label: "恢复并预览", primary: true },
-        { key: "later", label: "稍后再说", hint: "云端布局保留，本设备暂不写入账号布局" },
+        { key: "later", label: "稍后再说", hint: "服务端布局保留，本设备暂不写入账号布局" },
       ],
     });
     if (epoch !== accountEpoch || pendingRestore !== candidate) return;

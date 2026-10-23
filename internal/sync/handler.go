@@ -134,7 +134,7 @@ func (h *ObjectHandler) serveDelete(w http.ResponseWriter, r *http.Request, user
 	head, maxSeq, err := h.store.deleteObject(r.Context(), userID, request.ID, request.KnownHead, request.BlobHash)
 	if errors.Is(err, errHeadMismatch) {
 		writeSyncError(w, http.StatusConflict, ipc.NewError(ipc.CodeForbidden,
-			"云端对象已变化，请重新获取同步清单后再确认清除"))
+			"服务端对象已变化，请重新获取同步清单后再确认清除"))
 		return
 	}
 	if err != nil {
@@ -163,7 +163,7 @@ func (h *ObjectHandler) servePush(w http.ResponseWriter, r *http.Request, userID
 	if errors.Is(err, errHeadMismatch) {
 		h.logger.Warn("sync push head conflict", "user", userID, "known_head", shortSyncHead(request.KnownHead))
 		writeSyncError(w, http.StatusConflict, ipc.NewError(ipc.CodeForbidden,
-			"云端同步状态已变化：其他设备已更新或回滚了数据，请先拉取并合并，再推送本机变更"))
+			"服务端同步状态已变化：其他设备已更新或回滚了数据，请先拉取并合并，再推送本机变更"))
 		return
 	}
 	if err != nil {

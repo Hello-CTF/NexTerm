@@ -163,7 +163,7 @@ export function AccountCard() {
     const actionEpoch = identityEpoch.current;
     const stillCurrent = () => currentIdentity.current === actionIdentity && identityEpoch.current === actionEpoch;
     const ok = await ask(
-      `重置用户「${target.username}」？\n\n对方的数据密钥、所有会话和两步验证绑定将被清除；\n对方下次登录须设置新密码，云端密文需从仍持有数据的设备重新同步。`,
+      `重置用户「${target.username}」？\n\n对方的数据密钥、所有会话和两步验证绑定将被清除；\n对方下次登录须设置新密码，服务端密文需从仍持有数据的设备重新同步。`,
       { title: "重置用户", kind: "warning" },
     );
     if (!ok || !stillCurrent()) return;
@@ -227,7 +227,7 @@ export function AccountCard() {
       </div>
 
       <p className="nx-hint mb-3">
-        管理员创建的用户可使用初始密码登录。禁用会使用户的所有会话立即失效；重置会清除数据密钥、所有会话和两步验证绑定，用户下次登录须设置新密码，并重新同步云端密文。管理员无法获取或解密用户数据。
+        管理员创建的用户可使用初始密码登录。禁用会使用户的所有会话立即失效；重置会清除数据密钥、所有会话和两步验证绑定，用户下次登录须设置新密码，并重新同步服务端密文。管理员无法获取或解密用户数据。
       </p>
 
       {createOpen && (

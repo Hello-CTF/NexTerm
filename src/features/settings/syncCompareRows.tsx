@@ -43,28 +43,28 @@ export const COMPARE_KIND_LABELS: Record<string, string> = {
 export function compareRowLabel(state: CompareRowState): { text: string; tone: string; hint: string } {
   switch (state) {
     case "local-only":
-      return { text: "仅本机", tone: "", hint: "云端还没有这条。推送会新建。" };
+      return { text: "仅本机", tone: "", hint: "服务端还没有这条。推送会新建。" };
     case "remote-only":
-      return { text: "仅云端", tone: "", hint: "本机还没有这条，拉取并应用会新建。" };
+      return { text: "仅服务端", tone: "", hint: "本机还没有这条，拉取并应用会新建。" };
     case "same":
       return { text: "已一致", tone: "nx-badge-green", hint: "两边内容相同。" };
     case "local-newer":
-      return { text: "本机较新", tone: "nx-badge-amber", hint: "本机版本较新，推送会覆盖云端。" };
+      return { text: "本机较新", tone: "nx-badge-amber", hint: "本机版本较新，推送会覆盖服务端。" };
     case "remote-newer":
-      return { text: "云端较新", tone: "nx-badge-amber", hint: "云端版本较新，拉取并应用会覆盖本机。" };
+      return { text: "服务端较新", tone: "nx-badge-amber", hint: "服务端版本较新，拉取并应用会覆盖本机。" };
     case "local-deleted":
       return { text: "本机已删", tone: "nx-badge-amber", hint: "这条在本机已删除。" };
     case "remote-deleted":
-      return { text: "云端已删", tone: "nx-badge-amber", hint: "这条在云端已被删除。" };
+      return { text: "服务端已删", tone: "nx-badge-amber", hint: "这条在服务端已被删除。" };
     case "remote-undecryptable":
-      return { text: "无法解密", tone: "nx-badge-amber", hint: "云端对象与当前数据密钥不匹配或已损坏；自动同步已跳过此对象，修复需要手动确认。" };
+      return { text: "无法解密", tone: "nx-badge-amber", hint: "服务端对象与当前数据密钥不匹配或已损坏；自动同步已跳过此对象，修复需要手动确认。" };
   }
 }
 
 // compareSummary summary line: rows null means still reading; the diff segment is hidden when everything matches.
 export function compareSummary(rows: CompareRowView[] | null): string {
   if (!rows) return "读取中…";
-  if (rows.length === 0) return "本机与云端都还没有可同步的内容";
+  if (rows.length === 0) return "本机与服务端都还没有可同步的内容";
   const sameCount = rows.filter((r) => r.state === "same").length;
   return (
     `共 ${rows.length} 条 · 一致 ${sameCount} 条` +
@@ -105,7 +105,7 @@ export function CompareDetails({ rows, error, onUndecryptableAction, actionsBusy
         <div id={panelId} className="mt-2">
           {rows && (
             <div className="max-h-[320px] overflow-y-auto rounded border border-neutral-800/60">
-              {rows.length === 0 && <div className="nx-hint px-2.5 py-3 text-[12px]">本机与云端都还没有可同步的内容。</div>}
+              {rows.length === 0 && <div className="nx-hint px-2.5 py-3 text-[12px]">本机与服务端都还没有可同步的内容。</div>}
               {rows.map((r) => {
                 const label = compareRowLabel(r.state);
                 return (
@@ -127,7 +127,7 @@ export function CompareDetails({ rows, error, onUndecryptableAction, actionsBusy
                           onClick={() => onUndecryptableAction(r.id, "retry")}>重试读取</button>
                         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={actionsBusy}
                           onClick={() => onUndecryptableAction(r.id, r.hasLocalRepairCopy ? "restore-local" : "clear-cloud")}>
-                          {r.hasLocalRepairCopy ? "用本机副本修复" : "清除云端副本"}
+                          {r.hasLocalRepairCopy ? "用本机副本修复" : "清除服务端副本"}
                         </button>
                       </span>
                     )}
@@ -136,7 +136,7 @@ export function CompareDetails({ rows, error, onUndecryptableAction, actionsBusy
               })}
             </div>
           )}
-          {!rows && !error && <div className="nx-hint py-3 text-[12px]">正在读取本机与云端数据…</div>}
+          {!rows && !error && <div className="nx-hint py-3 text-[12px]">正在读取本机与服务端数据…</div>}
         </div>
       )}
     </div>

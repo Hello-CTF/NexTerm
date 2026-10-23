@@ -103,7 +103,7 @@ describe("desktop sync console row-by-row comparison", () => {
     mounted = mountSyncCard();
     await flushUntil(() => mocks.compare.mock.calls.length > 0 && text().includes("共 2 条"));
     expect(mocks.compare).toHaveBeenCalledTimes(1);
-    expect(text()).toContain("云端 2 个对象");
+    expect(text()).toContain("服务端 2 个对象");
     expect(text()).toContain("共 2 条 · 一致 1 条 · 差异 1 条");
 
     clickButton(mounted.container, "对比详情");
@@ -122,10 +122,10 @@ describe("desktop sync console row-by-row comparison", () => {
       warnings: [],
     });
     clickButton(mounted.container, "刷新对比");
-    await flushUntil(() => mocks.compare.mock.calls.length >= 2 && text().includes("云端 3 个对象"));
+    await flushUntil(() => mocks.compare.mock.calls.length >= 2 && text().includes("服务端 3 个对象"));
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => text().includes("部署片段"));
-    expect(text()).toContain("云端较新");
+    expect(text()).toContain("服务端较新");
     expect(text()).not.toContain("web-01");
   });
 

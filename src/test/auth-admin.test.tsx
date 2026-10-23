@@ -209,7 +209,7 @@ describe("AccountCard superadmin user management", () => {
     expect(question).toContain("数据密钥");
     expect(question).toContain("所有会话");
     expect(question).toContain("两步验证绑定");
-    expect(question).toContain("云端密文需从仍持有数据的设备重新同步");
+    expect(question).toContain("服务端密文需从仍持有数据的设备重新同步");
     await flushUntil(() => mocks.resetUser.mock.calls.length > 0);
     expect(mocks.resetUser).toHaveBeenCalledWith("u-alice");
   });

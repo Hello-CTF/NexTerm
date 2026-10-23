@@ -40,7 +40,7 @@ describe("Shared SyncOptInSection toggles", () => {
     const labels = [...mounted!.container.querySelectorAll("label")];
     expect(labels.length).toBe(5);
     const rendered = labels.map((l) => l.textContent ?? "");
-    expect(rendered[0]).toBe("同步已知主机（主机信任）默认开启。关闭后不再同步主机信任，也不会删除云端已有副本。");
+    expect(rendered[0]).toBe("同步已知主机（主机信任）默认开启。关闭后不再同步主机信任，也不会删除服务端已有副本。");
     expect(rendered[1]).toBe("同步 AI 模型档案默认开启。关闭后不再同步模型档案；含 API 密钥的档案仅在凭据库解锁时同步。");
     expect(rendered[2]).toBe("同步 AI 权限与拦截规则默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。");
     expect(rendered[3]).toBe("同步 AI 授权与权限模式默认开启。设备授权、路径授权规则与设备权限模式端到端加密同步；会话内临时授权不同步。");
@@ -126,19 +126,19 @@ describe("Both consoles render identical toggle copy without divergence", () => 
     expect(SYNC_CONSOLE_TITLE).toBe("账号同步");
     expect(SYNC_AUTO_BADGE).toBe("自动同步");
     expect(SYNC_INTERVAL_LABEL).toBe("每 60 秒");
-    expect(SYNC_MERGE_GUIDE).toBe("数据会自动在本机与云端之间同步。");
+    expect(SYNC_MERGE_GUIDE).toBe("数据会自动在本机与服务端之间同步。");
   });
 
   it("distinguishes content-type opt-out from per-transcript cloud deletion in both consoles", () => {
     for (const [name, source] of consoleSources) {
-      expect(source, name).toContain("关闭上方内容类型开关不会删除云端已有副本");
-      expect(source, name).toContain("关闭单条录像同步会删除其云端副本，本机记录保留");
+      expect(source, name).toContain("关闭上方内容类型开关不会删除服务端已有副本");
+      expect(source, name).toContain("关闭单条录像同步会删除其服务端副本，本机记录保留");
     }
   });
 
   it("uses identical cloud object count copy on web and desktop, with desktop obtaining the count through sync_compare", () => {
     for (const [name, source] of consoleSources) {
-      expect(source, name).toContain("云端 {");
+      expect(source, name).toContain("服务端 {");
       expect(source, name).toContain("个对象");
     }
   });

@@ -443,7 +443,7 @@ describe("AuthGate reset_required forced password change", () => {
     const resetText = mounted.container.textContent ?? "";
     expect(resetText).toContain("当前临时密码仅用于本次验证");
     expect(resetText).toContain("数据密钥、所有会话和两步验证绑定已清除");
-    expect(resetText).toContain("云端密文需从仍持有数据的设备重新同步");
+    expect(resetText).toContain("服务端密文需从仍持有数据的设备重新同步");
     expect(resetText).not.toContain("旧密码与加密数据已被清除");
     const resetInputs = mounted.container.querySelectorAll("input");
     setInputValue(resetInputs[0], "temp-pw-123");

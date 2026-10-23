@@ -274,7 +274,7 @@ function DesktopLinkCard() {
     setBusy("logout");
     setError(null);
     try {
-      if (!(await ask("登出当前账号？本机将停止自动登录和同步，保留本地数据。", {
+      if (!(await ask("登出当前账号？本机将停止自动登录和同步；本机和服务端的数据都会保留。", {
         title: "登出账号", kind: "warning",
       })) || !active.current || currentAccount.current !== account) return;
       const [latestLink, latestStatus] = await Promise.all([syncApi.linkGet(), syncApi.status()]);
@@ -319,7 +319,7 @@ function DesktopLinkCard() {
       </div>
 
       <p className="nx-hint mb-3.5">
-        {status?.loggedIn ? "数据会在本机与服务端之间自动同步。" : "登录后，数据会自动在本机与云端之间同步；不登录也能继续本地使用。"}
+        {status?.loggedIn ? "数据会在本机与服务端之间自动同步。" : "登录后，数据会自动在本机与服务端之间同步；不登录也能继续本地使用。"}
       </p>
 
       {loadError && (
@@ -476,7 +476,7 @@ function DesktopLinkCard() {
       {step.kind === "reset" && (
         <div className="flex flex-col gap-2">
           <p className="nx-hint">
-            账号被管理员重置，必须先设置新密码。数据密钥、所有会话和两步验证绑定已清除；设置新密码后会签发新的数据密钥与一次性恢复密钥，云端密文需从仍持有数据的设备重新同步。
+            账号被管理员重置，必须先设置新密码。数据密钥、所有会话和两步验证绑定已清除；设置新密码后会签发新的数据密钥与一次性恢复密钥，服务端密文需从仍持有数据的设备重新同步。
           </p>
           <div className="flex items-center gap-2">
             <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass">
@@ -714,11 +714,11 @@ function DesktopSyncConsole() {
     try {
       const { ask } = await import("../../ui/dialogs");
       const confirmed = action === "restore-local"
-        ? await ask(`将本机「${row.name}」覆盖云端无法解密的对象？此操作会替换云端原有密文。`, {
-          title: "用本机副本修复云端对象", kind: "warning",
+        ? await ask(`将本机「${row.name}」覆盖服务端无法解密的对象？此操作会替换服务端原有密文。`, {
+          title: "用本机副本修复服务端对象", kind: "warning",
         })
-        : await ask(`本次对比没有可用的本机对象 ${id}。确认清除这条无法解密、类型未知的云端副本？`, {
-          title: "清除无法解密的云端副本", kind: "warning",
+        : await ask(`本次对比没有可用的本机对象 ${id}。确认清除这条无法解密、类型未知的服务端副本？`, {
+          title: "清除无法解密的服务端副本", kind: "warning",
         });
       if (!confirmed) return;
       if (seq !== compareSeqRef.current) throw new Error("对比结果已变化，请刷新后再操作");
@@ -728,8 +728,8 @@ function DesktopSyncConsole() {
         remoteBlobHash: row.remoteBlobHash,
         ...(hasLocal ? { localKind: row.kind, localPayloadHash: row.localPayloadHash } : {}),
       });
-      if (!response.repaired) throw new Error("云端未确认操作，请刷新对比结果");
-      pushToast("success", action === "restore-local" ? "云端对象已用本机副本修复" : "云端副本已清除");
+      if (!response.repaired) throw new Error("服务端未确认操作，请刷新对比结果");
+      pushToast("success", action === "restore-local" ? "服务端对象已用本机副本修复" : "服务端副本已清除");
       await loadCompare();
       await load();
     } catch (cause) {
@@ -746,7 +746,7 @@ function DesktopSyncConsole() {
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
         <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
-        {compareRemote !== null && <span className="nx-hint">云端 {compareRemote} 个对象</span>}
+        {compareRemote !== null && <span className="nx-hint">服务端 {compareRemote} 个对象</span>}
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
         <div className="nx-spacer" />
         <button
@@ -827,7 +827,7 @@ function DesktopSyncConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          关闭上方内容类型开关不会删除云端已有副本；在「终端历史」关闭单条录像同步会删除其云端副本，本机记录保留。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
+          关闭上方内容类型开关不会删除服务端已有副本；在「终端历史」关闭单条录像同步会删除其服务端副本，本机记录保留。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
         </div>
       </div>
     </section>
@@ -1254,7 +1254,7 @@ async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverr
   for (let offset = 0; offset < pending.length; offset += 256) {
     const batch = pending.slice(offset, offset + 256);
     const page = await syncV2Api.pull(ids.max_seq, batch.map((entry) => entry.id));
-    if (page.head !== ids.head) throw new Error("云端对象在读取期间发生变化，请重试读取对比结果");
+    if (page.head !== ids.head) throw new Error("服务端对象在读取期间发生变化，请重试读取对比结果");
     const pulled = new Map(page.objects.map((object) => [object.id, object]));
     for (const entry of batch) {
       let wire = pulled.get(entry.id);
@@ -1262,11 +1262,11 @@ async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverr
         // A batch may exceed the response byte budget. A single ID is always
         // returned even when its blob is larger than that budget.
         const single = await syncV2Api.pull(ids.max_seq, [entry.id]);
-        if (single.head !== ids.head) throw new Error("云端对象在读取期间发生变化，请重试读取对比结果");
+        if (single.head !== ids.head) throw new Error("服务端对象在读取期间发生变化，请重试读取对比结果");
         wire = single.objects.find((object) => object.id === entry.id);
       }
       if (!wire || wire.seq !== entry.seq) {
-        throw new Error(`云端对象 ${entry.id} 未按同步清单返回，请重试读取对比结果`);
+        throw new Error(`服务端对象 ${entry.id} 未按同步清单返回，请重试读取对比结果`);
       }
       try {
         const object = await decodeRemoteObject(entry, wire.blob, dek);
@@ -1420,14 +1420,14 @@ interface Snapshot {
 async function currentUndecryptableObject(expected: UndecryptableEntry, dek: Uint8Array): Promise<{ head: string; blobHash: string }> {
   const ids = await syncV2Api.ids();
   const entry = ids.entries?.find((candidate) => candidate.id === expected.id);
-  if (!entry) throw new Error("云端对象已不存在，请重试读取对比结果");
+  if (!entry) throw new Error("服务端对象已不存在，请重试读取对比结果");
   if (entry.seq !== expected.seq || entry.blob_hash !== expected.blobHash) {
-    throw new Error("云端对象在对比后发生变化，请刷新对比结果");
+    throw new Error("服务端对象在对比后发生变化，请刷新对比结果");
   }
   const pulled = await syncV2Api.pull(ids.max_seq, [expected.id]);
   const wire = pulled.objects.find((candidate) => candidate.id === expected.id);
   if (pulled.head !== ids.head || !wire || wire.seq !== entry.seq) {
-    throw new Error("云端对象在检查期间发生变化，请重试读取对比结果");
+    throw new Error("服务端对象在检查期间发生变化，请重试读取对比结果");
   }
   try {
     await decodeRemoteObject(entry, wire.blob, dek);
@@ -1435,7 +1435,7 @@ async function currentUndecryptableObject(expected: UndecryptableEntry, dek: Uin
     if (!(error instanceof CryptoError && error.code === "decrypt")) throw error;
     return { head: ids.head, blobHash: entry.blob_hash };
   }
-  throw new Error("云端对象现已可读取，请刷新对比结果后再操作");
+  throw new Error("服务端对象现已可读取，请刷新对比结果后再操作");
 }
 
 export interface WebSyncResult extends Snapshot {
@@ -1452,8 +1452,8 @@ function snapshotFromParts(local: LocalCollection, remote: RemoteState): Snapsho
     undecryptableEntries: remote.undecryptableEntries,
     warnings: [...local.warnings, ...remote.undecryptableIds.map((id) =>
       local.entities.some((entity) => entity.id === id)
-        ? `云端对象 ${id} 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复`
-        : `云端对象 ${id} 解密失败，已跳过；本次对比没有可用的同 ID 本机副本，可在对比详情中重试读取或确认清除云端副本；也可从持有正确数据密钥的设备重新同步`)],
+        ? `服务端对象 ${id} 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复`
+        : `服务端对象 ${id} 解密失败，已跳过；本次对比没有可用的同 ID 本机副本，可在对比详情中重试读取或确认清除服务端副本；也可从持有正确数据密钥的设备重新同步`)],
     head: remote.head,
     maxSeq: remote.maxSeq,
   };
@@ -1748,12 +1748,12 @@ function CompareConsole() {
       }
       const row = rows?.find((candidate) => candidate.id === id && candidate.state === "remote-undecryptable");
       if (!row) throw new Error("对比结果已变化，请重试读取");
-      if (!row.undecryptableEntry) throw new Error("对比结果缺少云端版本，请刷新对比结果");
+      if (!row.undecryptableEntry) throw new Error("对比结果缺少服务端版本，请刷新对比结果");
       if (action === "restore-local") {
         if (!row.local) throw new Error("本机已没有同 ID 副本，请重试读取");
         const { ask } = await import("../../ui/dialogs");
-        if (!(await ask(`将本机「${row.name}」覆盖云端无法解密的对象？此操作会替换云端原有密文。`, {
-          title: "用本机副本修复云端对象", kind: "warning",
+        if (!(await ask(`将本机「${row.name}」覆盖服务端无法解密的对象？此操作会替换服务端原有密文。`, {
+          title: "用本机副本修复服务端对象", kind: "warning",
         }))) return;
         if (!stillCurrent()) return;
         const localNow = await loadLocalEntities(view, dek);
@@ -1770,15 +1770,15 @@ function CompareConsole() {
         if (!stillCurrent()) return;
         if (!(await optInMatches(view, stillCurrent))) throw new Error("内容类型设置已变化，请刷新对比结果");
         const response = await syncV2Api.push(cloud.head, objects);
-        if (response.applied !== 1) throw new Error("云端未确认修复，请重试读取对比结果");
+        if (response.applied !== 1) throw new Error("服务端未确认修复，请重试读取对比结果");
         remoteCaches.delete(dek);
         await load(view, epoch);
         return;
       }
       if (row.local) throw new Error("本机有同 ID 副本，请先重试读取并选择本机修复");
       const { ask } = await import("../../ui/dialogs");
-      if (!(await ask(`本次对比没有可用的本机对象 ${id}。确认清除这条无法解密、类型未知的云端副本？其他设备若仍保存旧的本地副本，之后同步可能重新上传。`, {
-        title: "清除无法解密的云端副本", kind: "warning",
+      if (!(await ask(`本次对比没有可用的本机对象 ${id}。确认清除这条无法解密、类型未知的服务端副本？其他设备若仍保存旧的本地副本，之后同步可能重新上传。`, {
+        title: "清除无法解密的服务端副本", kind: "warning",
       }))) return;
       if (!stillCurrent()) return;
       const localNow = await loadLocalEntities({ knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true }, dek);
@@ -1795,13 +1795,13 @@ function CompareConsole() {
       if (!stillCurrent()) return;
       if (!(await optInMatches(view, stillCurrent))) throw new Error("内容类型设置已变化，请刷新对比结果");
       const response = await syncV2Api.deleteObject(cloud.head, id, cloud.blobHash);
-      if (!response.deleted) throw new Error("云端未确认清除，请重试读取对比结果");
+      if (!response.deleted) throw new Error("服务端未确认清除，请重试读取对比结果");
       remoteCaches.delete(dek);
       await load(view, epoch);
     } catch (cause) {
       if (stillCurrent()) {
         setRepairError(cause instanceof AuthApiError && cause.status === 409
-          ? "云端数据已变化，请重试读取后再次操作"
+          ? "服务端数据已变化，请重试读取后再次操作"
           : describeError(cause));
       }
     } finally {
@@ -1858,7 +1858,7 @@ function CompareConsole() {
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
         <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
-        <span className="nx-hint">云端 {remote ? remote.length + undecryptableIds.length : "…"} 个对象</span>
+        <span className="nx-hint">服务端 {remote ? remote.length + undecryptableIds.length : "…"} 个对象</span>
         <div className="nx-spacer" />
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
         <button className="nx-btn nx-btn-outline nx-btn-sm" disabled={refreshBusy || repairBusyId !== null || !kindOptIn}
@@ -1874,7 +1874,7 @@ function CompareConsole() {
       <p className="nx-hint mb-3">
         {SYNC_MERGE_GUIDE}
         {lastSuccessAt !== null && `上次同步：${formatTime(lastSuccessAt)}。`}
-        {refreshBusy ? "正在读取本机与云端数据…" : `当前待应用 ${applySet.length} 项，待推送 ${pushCount} 项。`}
+        {refreshBusy ? "正在读取本机与服务端数据…" : `当前待应用 ${applySet.length} 项，待推送 ${pushCount} 项。`}
       </p>
 
       {kindOptIn && <SyncOptInSection value={kindOptIn} busy={optInBusy} onChange={(patch) => void updateKindOptIn(patch)} />}
@@ -1912,7 +1912,7 @@ function CompareConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          终端录像默认不同步，可在「终端历史」中单独开启。关闭上方内容类型开关不会删除云端已有副本；在「终端历史」关闭单条录像同步会删除其云端副本，本机记录保留。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
+          终端录像默认不同步，可在「终端历史」中单独开启。关闭上方内容类型开关不会删除服务端已有副本；在「终端历史」关闭单条录像同步会删除其服务端副本，本机记录保留。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
         </div>
       </div>
     </section>

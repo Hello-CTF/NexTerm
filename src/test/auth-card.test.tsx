@@ -106,7 +106,7 @@ describe("AuthCard signed-out account card", () => {
     await flush();
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("账号当前未登录");
-    expect(text).toContain("登录后，数据会自动在本机与云端之间同步；不登录也能继续本地使用");
-    expect(text).not.toContain("读取云端副本进行对比，不会自动推送或应用，需手动触发");
+    expect(text).toContain("登录后，数据会自动在本机与服务端之间同步；不登录也能继续本地使用");
+    expect(text).not.toContain("读取服务端副本进行对比，不会自动推送或应用，需手动触发");
   });
 });

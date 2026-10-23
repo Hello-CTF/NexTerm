@@ -1749,7 +1749,7 @@ function AppShell() {
               <span>
                 {layoutRestore.preview
                   ? `已预览账号中的 ${layoutRestore.count} 个工作区。请确认目标与标签，然后完成恢复或撤销。`
-                  : `账号中有 ${layoutRestore.count} 个工作区待确认恢复；本设备暂不覆盖云端布局。`}
+                  : `账号中有 ${layoutRestore.count} 个工作区待确认恢复；本设备暂不覆盖服务端布局。`}
               </span>
               {layoutRestore.preview ? (
                 <>

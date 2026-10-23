@@ -5,7 +5,7 @@ import { IconChevronDown, IconChevronRight } from "../../ui/icons";
 export const SYNC_CONSOLE_TITLE = "账号同步";
 export const SYNC_AUTO_BADGE = "自动同步";
 export const SYNC_INTERVAL_LABEL = "每 60 秒";
-export const SYNC_MERGE_GUIDE = "数据会自动在本机与云端之间同步。";
+export const SYNC_MERGE_GUIDE = "数据会自动在本机与服务端之间同步。";
 
 interface SyncOptInItem {
   key: keyof SyncKindOptIn;
@@ -19,7 +19,7 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     key: "knownHost",
     summary: "已知主机",
     label: "同步已知主机（主机信任）",
-    hint: "默认开启。关闭后不再同步主机信任，也不会删除云端已有副本。",
+    hint: "默认开启。关闭后不再同步主机信任，也不会删除服务端已有副本。",
   },
   {
     key: "aiProfile",

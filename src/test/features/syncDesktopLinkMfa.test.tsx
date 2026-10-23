@@ -82,7 +82,7 @@ function seedForm() {
 function consoleReady(): boolean {
   return document.body.textContent?.includes("立即同步") === true &&
     document.body.textContent?.includes("已知主机 已开启") === true &&
-    document.body.textContent?.includes("云端 0 个对象") === true;
+    document.body.textContent?.includes("服务端 0 个对象") === true;
 }
 
 async function waitForConsole(): Promise<void> {

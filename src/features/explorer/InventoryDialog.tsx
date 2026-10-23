@@ -113,7 +113,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
     const epoch = accountEpoch;
     if (source !== "ssh-config" && selected.size === 0) {
       const confirmed = await ask(
-        "本次没有勾选任何候选。继续会软删除此来源在当前 owner 下管理的全部资产；手工资产和其他来源不受影响。",
+        "本次没有勾选任何主机。继续会移除此来源在当前账号下导入的全部资产；手动添加的资产和其他来源的资产不受影响。",
         { title: "同步为空清单", kind: "warning" },
       );
       if (!confirmed || isStale(epoch)) return;

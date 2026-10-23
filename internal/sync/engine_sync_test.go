@@ -352,7 +352,7 @@ func TestEngineWrongDEKQuarantineBlocksAutomaticOverwrite(t *testing.T) {
 	assetID := ids.New()
 	putDeviceAsset(t, deviceA, store.AssetRow{ID: assetID, Kind: "ssh", Name: "旧密钥资产", CreatedAt: 100, UpdatedAt: 100})
 	localID := ids.New()
-	putDeviceAsset(t, deviceA, store.AssetRow{ID: localID, Kind: "ssh", Name: "旧密钥下的云端资产", CreatedAt: 100, UpdatedAt: 100})
+	putDeviceAsset(t, deviceA, store.AssetRow{ID: localID, Kind: "ssh", Name: "旧密钥下的服务端资产", CreatedAt: 100, UpdatedAt: 100})
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	putDeviceAsset(t, deviceB, store.AssetRow{ID: localID, Kind: "ssh", Name: "本机已有副本", CreatedAt: 100, UpdatedAt: 200})
 	serverBlobHash := func(id string) string {
@@ -415,7 +415,7 @@ func TestEngineWrongDEKQuarantineBlocksAutomaticOverwrite(t *testing.T) {
 	}
 
 	// Once another client explicitly repairs the cloud blob under the new DEK, normal merge resumes.
-	plaintext, err := marshalObject(assetObject{ID: assetID, Kind: "ssh", Name: "云端已修复", CreatedAt: 100, UpdatedAt: 300})
+	plaintext, err := marshalObject(assetObject{ID: assetID, Kind: "ssh", Name: "服务端已修复", CreatedAt: 100, UpdatedAt: 300})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestEngineWrongDEKQuarantineBlocksAutomaticOverwrite(t *testing.T) {
 	pushRemote(blob)
 	report = syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	asset, err := deviceB.db.AssetGet(ctx, assetID)
-	if err != nil || asset.Name != "云端已修复" || report.Applied == 0 {
+	if err != nil || asset.Name != "服务端已修复" || report.Applied == 0 {
 		t.Fatalf("repaired cloud object was not applied: asset=%+v report=%+v err=%v", asset, report, err)
 	}
 }

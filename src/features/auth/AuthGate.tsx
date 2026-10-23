@@ -562,7 +562,7 @@ function ResetRequiredForm() {
         <span className="nx-card-title">必须先设置新密码</span>
       </div>
       <p className="nx-hint">
-        当前临时密码仅用于本次验证；数据密钥、所有会话和两步验证绑定已清除。设置新密码后会签发新的数据密钥，云端密文需从仍持有数据的设备重新同步。
+        当前临时密码仅用于本次验证；数据密钥、所有会话和两步验证绑定已清除。设置新密码后会签发新的数据密钥，服务端密文需从仍持有数据的设备重新同步。
       </p>
       <Field label="当前临时密码" value={tempPassword} onChange={setTempPassword} type="password" autoComplete="current-password" />
       <Field label="新密码" value={newPassword} onChange={setNewPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
@@ -616,7 +616,7 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
         <span className="nx-card-title">用恢复密钥重置</span>
       </div>
       <p className="nx-hint">
-        重置后，旧密码、数据密钥、所有会话和两步验证绑定将失效；请从仍持有数据的设备重新同步云端密文。
+        重置后，旧密码、数据密钥、所有会话和两步验证绑定将失效；请从仍持有数据的设备重新同步服务端密文。
       </p>
       <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
       <Field label="恢复密钥" value={recoveryKey} onChange={setRecoveryKey} mono placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autoComplete="off" />

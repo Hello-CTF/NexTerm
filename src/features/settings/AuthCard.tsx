@@ -295,7 +295,7 @@ export function AuthCard() {
         </div>
         <p className="nx-hint mb-3">
           当前未登录{status?.auth === "loopback" ? "(这台服务器允许匿名使用)" : ""}。
-          登录后，数据会自动在本机与云端之间同步；不登录也能继续本地使用。
+          登录后，数据会自动在本机与服务端之间同步；不登录也能继续本地使用。
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
@@ -355,7 +355,7 @@ export function AuthCard() {
 
         {DESKTOP && (
           <p className="nx-hint mt-2">
-            本账号由下方的服务端连接管理，可登出后切换账号。
+            本账号由「服务端连接」管理，登出后可切换账号。
             两步验证管理请在浏览器中打开服务端 Web 界面。
           </p>
         )}
@@ -406,7 +406,7 @@ export function AuthCard() {
             <span className="nx-card-title">修改密码</span>
           </div>
           <p className="nx-hint mb-3">
-            修改密码会用新密码重新加密数据密钥，云端已保存的加密内容不受影响。修改成功后会签发新的恢复密钥（旧的立即作废），并退出其他设备上的会话。
+            修改密码会用新密码重新加密数据密钥，服务端已保存的加密内容不受影响。修改成功后会签发新的恢复密钥（旧的立即作废），并退出其他设备上的会话。
           </p>
           <form onSubmit={(e) => void submitPassword(e)} className="flex flex-col gap-2">
             <input

@@ -277,7 +277,7 @@ func TestProductionTerminalConnectRequiresOptIn(t *testing.T) {
 	if result.OK {
 		t.Fatalf("connect without opt-in succeeded: %+v", result)
 	}
-	if strings.Contains(result.Text, "未配置资产连接建立") {
+	if strings.Contains(result.Text, "当前环境不支持由 AI 自动连接主机") {
 		t.Fatalf("connect surface left as an unconfigured boundary: %+v", result)
 	}
 	if !strings.Contains(result.Text, guard.ErrConnectOptInRequired.Error()) {

@@ -566,7 +566,7 @@ describe("inventory target actions", () => {
     // note and B cannot cancel it or start a replacement.
     act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
     await flush();
-    expect(m.container.textContent).toContain("切换到 owner-a 后可取消");
+    expect(m.container.textContent).toContain("切换回发起该操作的账号后才能取消");
     expect(mocks.call).toHaveBeenCalledTimes(1);
     const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
     expect(execButton()?.disabled).toBe(true);

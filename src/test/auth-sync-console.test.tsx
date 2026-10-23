@@ -358,14 +358,14 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("云端对象 a-1 解密失败"));
+    await flushUntil(() => text().includes("服务端对象 a-1 解密失败"));
     expect(text()).toContain("已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复");
     expect(text()).toContain("无法解密");
-    expect(text()).toContain("云端 1 个对象");
+    expect(text()).toContain("服务端 1 个对象");
     expect(text()).toContain("待推送 0 项");
     await runAutoSync();
     expect(mocks.syncPush).not.toHaveBeenCalled();
-    expect(text()).toContain("云端对象 a-1 解密失败");
+    expect(text()).toContain("服务端对象 a-1 解密失败");
     expect(text()).toContain("无法解密");
   });
 
@@ -390,7 +390,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     const { runWebSync } = await import("../features/settings/SyncCard");
     const result = await runWebSync(new Uint8Array(DEK), { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
 
-    expect(result?.warnings).toContain("云端对象 a-1 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复");
+    expect(result?.warnings).toContain("服务端对象 a-1 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复");
     expect(result?.pushed).toBe(0);
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -408,13 +408,13 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("云端对象 cloud-only 解密失败"));
-    expect(text()).toContain("本次对比没有可用的同 ID 本机副本，可在对比详情中重试读取或确认清除云端副本");
+    await flushUntil(() => text().includes("服务端对象 cloud-only 解密失败"));
+    expect(text()).toContain("本次对比没有可用的同 ID 本机副本，可在对比详情中重试读取或确认清除服务端副本");
     expect(text()).toContain("无法解密");
-    expect(text()).toContain("云端 1 个对象");
+    expect(text()).toContain("服务端 1 个对象");
     await runAutoSync();
     await flushUntil(() => mocks.syncIds.mock.calls.some(([head]) => head === "head-1"));
-    expect(text()).toContain("云端对象 cloud-only 解密失败");
+    expect(text()).toContain("服务端对象 cloud-only 解密失败");
     expect(text()).toContain("无法解密");
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -435,12 +435,12 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("云端对象 budget-b 解密失败"));
+    await flushUntil(() => text().includes("服务端对象 budget-b 解密失败"));
 
-    expect(text()).toContain("云端对象 budget-a 解密失败");
+    expect(text()).toContain("服务端对象 budget-a 解密失败");
     expect(mocks.syncPull).toHaveBeenCalledWith(88, ["budget-a", "budget-b"]);
     expect(mocks.syncPull).toHaveBeenCalledWith(88, ["budget-b"]);
-    expect(text()).toContain("云端 2 个对象");
+    expect(text()).toContain("服务端 2 个对象");
   });
 
   it("reports an index/pull head change instead of silently omitting a cloud row", async () => {
@@ -453,10 +453,10 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     });
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("云端对象在读取期间发生变化"));
+    await flushUntil(() => text().includes("服务端对象在读取期间发生变化"));
 
     expect(mocks.syncPull).toHaveBeenCalledWith(5, ["changing"]);
-    expect(text()).not.toContain("本机与云端都还没有可同步的内容");
+    expect(text()).not.toContain("本机与服务端都还没有可同步的内容");
   });
 
   it.each([
@@ -476,8 +476,8 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     openDetails();
     await flushUntil(() => text().includes("同步失败："));
 
-    expect(text()).not.toContain(`云端对象 ${id} 解密失败`);
-    expect(text()).not.toContain("清除云端副本");
+    expect(text()).not.toContain(`服务端对象 ${id} 解密失败`);
+    expect(text()).not.toContain("清除服务端副本");
     expect(mocks.syncDelete).not.toHaveBeenCalled();
   });
 
@@ -497,7 +497,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     await flushUntil(() => text().includes("当前环境不支持 Web Crypto"));
 
     expect(text()).not.toContain("解密失败，已跳过");
-    expect(text()).not.toContain("清除云端副本");
+    expect(text()).not.toContain("清除服务端副本");
     expect(mocks.syncDelete).not.toHaveBeenCalled();
   });
 
@@ -599,7 +599,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     currentBlob = readableBlob;
     currentHead = "head-2";
     clickButton(mounted.container, "用本机副本修复");
-    await flushUntil(() => text().includes("云端对象在对比后发生变化"));
+    await flushUntil(() => text().includes("服务端对象在对比后发生变化"));
 
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -620,9 +620,9 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("清除云端副本"));
+    await flushUntil(() => text().includes("清除服务端副本"));
     currentBlob = invalidBlob;
-    clickButton(mounted.container, "清除云端副本");
+    clickButton(mounted.container, "清除服务端副本");
     await flushUntil(() => text().includes("操作失败："));
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
@@ -631,7 +631,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
   it.each([
     { action: "用本机副本修复", id: "a-1", hasLocalCopy: true },
-    { action: "清除云端副本", id: "cloud-only", hasLocalCopy: false },
+    { action: "清除服务端副本", id: "cloud-only", hasLocalCopy: false },
   ])("rejects $action when another device replaces the same ID with another undecryptable blob", async ({ action, id, hasLocalCopy }) => {
     if (hasLocalCopy) mocks.collectAssets.mockResolvedValue({
       assets: [{ id, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 }],
@@ -658,7 +658,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     await flushUntil(() => text().includes(action));
     replaced = true;
     clickButton(mounted.container, action);
-    await flushUntil(() => text().includes("云端对象在对比后发生变化"));
+    await flushUntil(() => text().includes("服务端对象在对比后发生变化"));
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush).not.toHaveBeenCalled();
@@ -667,7 +667,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
   it.each([
     { action: "用本机副本修复", id: "a-1", hasLocalCopy: true },
-    { action: "清除云端副本", id: "cloud-only", hasLocalCopy: false },
+    { action: "清除服务端副本", id: "cloud-only", hasLocalCopy: false },
   ])("rejects $action when sync kind settings change after confirmation", async ({ action, id, hasLocalCopy }) => {
     if (hasLocalCopy) mocks.collectAssets.mockResolvedValue({
       assets: [{ id, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 }],
@@ -714,7 +714,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     }));
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("清除云端副本"));
+    await flushUntil(() => text().includes("清除服务端副本"));
 
     blob = bytesToBase64(await sealSyncObject(DEK, utf8Bytes('{"id":"cloud-only","name":"recovered","updatedAt":2}'), "cloud-only", "asset"));
     head = "head-2";
@@ -748,17 +748,17 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     });
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("清除云端副本"));
+    await flushUntil(() => text().includes("清除服务端副本"));
 
     mocks.ask.mockResolvedValueOnce(false);
-    clickButton(mounted.container, "清除云端副本");
+    clickButton(mounted.container, "清除服务端副本");
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
     expect(mocks.syncDelete).not.toHaveBeenCalled();
 
-    clickButton(mounted.container, "清除云端副本");
+    clickButton(mounted.container, "清除服务端副本");
     await flushUntil(() => mocks.syncDelete.mock.calls.length === 1);
     expect(mocks.syncDelete).toHaveBeenCalledWith("head-1", "cloud-only", "hash-1");
-    await flushUntil(() => text().includes("本机与云端都还没有可同步的内容"));
+    await flushUntil(() => text().includes("本机与服务端都还没有可同步的内容"));
   });
 
   it("refuses cloud deletion when a locked local credential makes collection incomplete", async () => {
@@ -769,8 +769,8 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     });
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("清除云端副本"));
-    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => text().includes("清除服务端副本"));
+    clickButton(mounted.container, "清除服务端副本");
     await flushUntil(() => text().includes("本机内容读取不完整"));
 
     expect(mocks.syncDelete).not.toHaveBeenCalled();
@@ -784,8 +784,8 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     });
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("清除云端副本"));
-    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => text().includes("清除服务端副本"));
+    clickButton(mounted.container, "清除服务端副本");
     await flushUntil(() => text().includes("本机现在已有同 ID 副本"));
 
     expect(mocks.syncDelete).not.toHaveBeenCalled();
@@ -800,8 +800,8 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     }]);
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("清除云端副本"));
-    clickButton(mounted.container, "清除云端副本");
+    await flushUntil(() => text().includes("清除服务端副本"));
+    clickButton(mounted.container, "清除服务端副本");
     await flushUntil(() => text().includes("本机现在已有同 ID 会话记录"));
 
     expect(mocks.syncDelete).not.toHaveBeenCalled();
@@ -817,9 +817,9 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("清除云端副本"));
-    clickButton(mounted.container, "清除云端副本");
-    await flushUntil(() => text().includes("云端数据已变化，请重试读取后再次操作"));
+    await flushUntil(() => text().includes("清除服务端副本"));
+    clickButton(mounted.container, "清除服务端副本");
+    await flushUntil(() => text().includes("服务端数据已变化，请重试读取后再次操作"));
 
     expect(text()).toContain("无法解密");
     expect(mocks.syncDelete).toHaveBeenCalledWith("head-1", "cloud-only", "hash-1");
@@ -872,7 +872,7 @@ describe("applySet deduplication and second-sync convergence (P1-2)", () => {
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("云端已删"));
+    await flushUntil(() => text().includes("服务端已删"));
     await runAutoSync();
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     expect(mocks.applyObjects).toHaveBeenCalledWith([
@@ -910,7 +910,7 @@ describe("applySet deduplication and second-sync convergence (P1-2)", () => {
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("云端已删"));
+    await flushUntil(() => text().includes("服务端已删"));
     await runAutoSync();
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     const [objects] = mocks.applyObjects.mock.calls[0] as [{ id: string; kind: string; payload: Record<string, unknown> }[]];

@@ -116,7 +116,7 @@ describe("dynamic inventory dialog", () => {
     clickButton(mounted!.container, "全不选");
     clickButton(mounted!.container, "同步选中项");
     await flush();
-    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("软删除"), expect.objectContaining({ kind: "warning" }));
+    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("移除此来源在当前账号下导入的全部资产"), expect.objectContaining({ kind: "warning" }));
     expect(mocks.sync).not.toHaveBeenCalled();
   });
 
@@ -348,7 +348,7 @@ describe("dynamic inventory dialog", () => {
       useAuth.setState({ user: { id: "user-b", username: "b", display_name: "B", role: "user", state: "active", must_change_password: false, mfa_enabled: false, created_at: 1, updated_at: 1, last_login_at: 1 } });
     });
     await flush();
-    expect(mounted!.container.textContent).toContain("切换到 user-a 后可取消");
+    expect(mounted!.container.textContent).toContain("切换回发起该操作的账号后才能取消");
 
     await act(async () => { resolveExec({ output: "A-SECRET\n", exitCode: 0 }); });
     await flush();

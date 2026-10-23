@@ -1362,7 +1362,7 @@ func (r *Registry) connectAssetSession(ctx context.Context, jobID string, call C
 		return "", AssetIdentity{}, &failure
 	}
 	if r.deps.AssetConnector == nil {
-		failure := Fail(fmt.Errorf("解析资产会话失败: %v；未配置资产连接建立（connect=true 需要环境支持）", resolveErr))
+		failure := Fail(fmt.Errorf("解析资产会话失败: %v；当前环境不支持由 AI 自动连接主机", resolveErr))
 		return "", AssetIdentity{}, &failure
 	}
 	connectedID, connectErr := r.deps.AssetConnector.ConnectAsset(ctx, assetID)

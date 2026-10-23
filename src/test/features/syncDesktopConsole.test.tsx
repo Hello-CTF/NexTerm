@@ -77,7 +77,7 @@ async function waitForConsole(extraText?: string): Promise<void> {
   await flushUntil(() =>
     document.body.textContent?.includes("立即同步") === true &&
     document.body.textContent?.includes("已知主机 已开启") === true &&
-    document.body.textContent?.includes("云端 0 个对象") === true &&
+    document.body.textContent?.includes("服务端 0 个对象") === true &&
     (!extraText || document.body.textContent.includes(extraText)),
   );
 }
@@ -140,7 +140,7 @@ describe("Desktop account sync console", () => {
       id: "asset-1", action: "restore-local", userId: "u-1", compareToken: "compare-1",
       remoteSeq: 7, remoteBlobHash: "blob-hash", localKind: "asset", localPayloadHash: "payload-hash",
     });
-    expect(mocks.toast).toHaveBeenCalledWith("success", "云端对象已用本机副本修复");
+    expect(mocks.toast).toHaveBeenCalledWith("success", "服务端对象已用本机副本修复");
   });
 
   it("does not modify the cloud when the user cancels clearing a cloud-only object", async () => {
@@ -154,7 +154,7 @@ describe("Desktop account sync console", () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => (document.body.textContent ?? "").includes("差异 1 条"));
     click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("对比详情")) as HTMLButtonElement);
-    click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("清除云端副本")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("清除服务端副本")) as HTMLButtonElement);
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
     expect(mocks.repair).not.toHaveBeenCalled();
   });
@@ -185,8 +185,8 @@ describe("Desktop account sync console", () => {
 
     const consoleCard = [...document.querySelectorAll("section.nx-card")].find((c) => c.textContent?.includes("立即同步"));
     expect(consoleCard?.querySelector(".nx-card-title")?.textContent).toBe("账号同步");
-    expect(consoleCard?.textContent).toContain("数据会自动在本机与云端之间同步。");
-    expect(consoleCard?.textContent).toContain("云端 0 个对象");
+    expect(consoleCard?.textContent).toContain("数据会自动在本机与服务端之间同步。");
+    expect(consoleCard?.textContent).toContain("服务端 0 个对象");
 
     const knownHost = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(
       (c) => c.closest("label")?.textContent?.includes("同步已知主机"),
@@ -284,7 +284,7 @@ describe("Desktop account sync console", () => {
     await waitForConsole();
 
     expect(document.body.textContent).toContain(
-      "关闭上方内容类型开关不会删除云端已有副本；在「终端历史」关闭单条录像同步会删除其云端副本，本机记录保留。",
+      "关闭上方内容类型开关不会删除服务端已有副本；在「终端历史」关闭单条录像同步会删除其服务端副本，本机记录保留。",
     );
   });
 });

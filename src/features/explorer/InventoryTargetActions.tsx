@@ -438,7 +438,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           {(isCancelPending || isCancelFailed || (isRunning && !isIgnored)) && <div className="text-[11px] text-neutral-400">执行中…</div>}
           {liveOp !== null && liveOp.ownerKey !== ownerKey && (
             <div role="note" className="text-[11px] text-amber-300">
-              操作仍在目标上执行；切换到 {liveOp.ownerKey} 后可取消
+              操作仍在目标上执行；切换回发起该操作的账号后才能取消
             </div>
           )}
           {isIgnored && !isCancelPending && !isCancelFailed && (

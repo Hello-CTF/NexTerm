@@ -151,7 +151,7 @@ export function ShortcutsCard() {
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        点击修改按钮后按下新组合键，按 Esc 取消；点击 × 清除快捷键（也可在修改时按 Backspace 或 Delete）。浏览器保留的组合键（如 Ctrl+T）在网页版中无法拦截。
+        点击编辑图标后按下新组合键，按 Esc 取消，按 Backspace 或 Delete 清空；也可点击 × 清除。浏览器保留的组合键（如 Ctrl+T）在网页版中无法拦截。
       </p>
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 min-[480px]:grid-cols-2">
         {KEYBINDING_ACTIONS.map(renderRow)}

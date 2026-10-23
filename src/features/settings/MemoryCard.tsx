@@ -367,7 +367,7 @@ export function MemoryCard() {
             </button>
           </div>
           <p className="nx-hint text-[11px]">
-            请勿写入密码、token、api_key 等密钥：默认策略会拒绝保存整条记忆；替换策略会将密钥值替换为 [REDACTED] 后保存。已脱敏的条目会带「已脱敏」标记。
+            请勿写入密码、令牌、API 密钥等敏感信息：默认策略会拒绝保存整条记忆；替换策略会把敏感内容替换为 [REDACTED] 后保存，并标记为「已脱敏」。
           </p>
           {formError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2 text-[12px]" role="alert">
