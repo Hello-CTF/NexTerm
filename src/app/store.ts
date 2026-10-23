@@ -127,6 +127,9 @@ export interface AppTab {
   dead?: boolean;
   exited?: boolean;
   retainable?: boolean;
+  // durable is reported by the backend once the terminal attaches; SSH tabs
+  // can only move to the background when they run on the durable helper.
+  durable?: boolean;
   renamedByUser?: boolean;
   closeError?: string;
   restorePending?: boolean;
@@ -3053,17 +3056,21 @@ function detachBlockOf(
   t: AppTab,
   sessions: SessionInfo[],
   assetKind?: string,
-): "exec" | "winrm" | "local" | "unknown" | null {
+): "exec" | "winrm" | "local" | "regular" | "unknown" | null {
   if (t.containerId) return "exec";
   const kind = t.sessionId ? sessions.find((s) => s.id === t.sessionId)?.kind : undefined;
   if (kind === "winrm" || (!kind && assetKind === "winrm")) return "winrm";
+  // A regular SSH PTY ends with the connection, so it never offers "background".
+  // durable is undefined until the backend reports it; retainable decides until then.
+  if ((kind === "ssh" || (!kind && assetKind === "ssh")) && t.durable === false) return "regular";
   if (t.retainable === true) return null;
   if (kind === "local" || (!kind && assetKind === "local")) return "local";
   return "unknown";
 }
 
-function detachBlockLabel(block: "exec" | "winrm" | "local" | "unknown"): string {
+function detachBlockLabel(block: "exec" | "winrm" | "local" | "regular" | "unknown"): string {
   if (block === "exec") return "容器 exec";
+  if (block === "regular") return "普通";
   if (block === "winrm") return "WinRM 非交互";
   if (block === "local") return "本地";
   return "其他";
@@ -3355,7 +3362,7 @@ export function closeActionHint(t: AppTab): string | undefined {
   if (block === "exec") return "结束容器 exec 进程";
   if (block === "winrm") return "结束 WinRM 非交互进程";
   if (block === "local") return "结束本地进程";
-  if (block === "unknown") return "结束进程";
+  if (block === "regular" || block === "unknown") return "结束进程";
   const action = getTerminalPrefs().closeAction;
   if (action === "kill") return "结束进程";
   if (action === "detach") return "转入后台运行";
@@ -3505,7 +3512,16 @@ async function requestCloseTabWithAction(
   const block = detachBlockOf(target, st.sessions, ws.assetKind);
   if (block) {
     const action = decided ?? getTerminalPrefs().closeAction;
-    if (decided !== undefined || action !== "kill") {
+    if (block === "regular" && (decided !== undefined || action !== "kill")) {
+      // A regular SSH terminal has a single outcome, so offer only the red close action.
+      const { askChoice } = await import("../ui/dialogs");
+      const choice = await askChoice(`「${target.title}」是普通终端，进程随连接结束，不能转到后台。`, {
+        title: `关闭「${target.title}」`,
+        level: "warning",
+        choices: [{ key: "kill", label: "直接关闭", hint: "结束进程，无法恢复", danger: true }],
+      });
+      if (choice !== "kill") return;
+    } else if (decided !== undefined || action !== "kill") {
       const { ask } = await import("../ui/dialogs");
       const ok = await ask(
         `「${target.title}」是${detachBlockLabel(block)}终端，不支持转入后台。\n关闭会结束这个进程，仍要关闭？`,

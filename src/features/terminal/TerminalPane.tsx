@@ -753,7 +753,10 @@ export function TerminalPane({
       setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
     }
     if (p.cwd !== undefined) setCwd(p.cwd || null);
-    if (p.durable !== undefined) setDurable(p.durable);
+    if (p.durable !== undefined) {
+      setDurable(p.durable);
+      useUi.getState().updateTab(storeTabId, { durable: p.durable });
+    }
     if (p.title) applyBackendTabTitle(storeTabId, p.title);
   }, [storeTabId]);
   useEffect(() => {
@@ -1195,8 +1198,8 @@ export function TerminalPane({
     if (durable) return;
     // This tab started as a regular terminal while the helper deployed; only new tabs become durable.
     setHelperReady(true);
-    pushToast("success", "持久终端已就绪：当前标签仍是普通终端，新开的标签可转到后台", {
-      label: "新开持久标签",
+    pushToast("success", "持久终端已就绪：当前标签仍是普通终端，新建的标签可转到后台", {
+      label: "新建持久标签",
       onSelect: () => {
         const session = useUi.getState().sessions.find((item) => item.id === sessionId);
         if (session) void openTerminalTab(session, undefined, myPaneId ?? undefined);

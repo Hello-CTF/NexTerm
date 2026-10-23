@@ -855,7 +855,7 @@ describe("terminal dead-tab overlay", () => {
     await flush();
     expect(badge()?.textContent).toContain("持久已就绪");
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
-    expect(useUi.getState().toasts.find((toast) => toast.text.includes("持久终端已就绪"))?.action?.label).toBe("新开持久标签");
+    expect(useUi.getState().toasts.find((toast) => toast.text.includes("持久终端已就绪"))?.action?.label).toBe("新建持久标签");
     expect(mocks.helperOperation).not.toHaveBeenCalled();
   });
 

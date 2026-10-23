@@ -253,6 +253,7 @@ function tabIcon(t: AppTab) {
 
 function tabTooltip(t: AppTab, unread: boolean): string {
   const notes: string[] = [];
+  if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
   if (unread) notes.push("有新输出");
   if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
@@ -2270,7 +2271,16 @@ function PaneGroup({
                 }}
                 title={tabTooltip(t, unread)}
               >
-                <Icon size={13} />
+                <span className="relative flex shrink-0">
+                  <Icon size={13} />
+                  {t.kind === "terminal" && t.durable === true && (
+                    <span
+                      className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-emerald-400"
+                      role="img"
+                      aria-label="持久终端"
+                    />
+                  )}
+                </span>
                 <TabStripTitle tab={t} />
                 {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
                 {t.closeError && (

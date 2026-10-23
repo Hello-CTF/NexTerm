@@ -945,6 +945,7 @@ function mergeTerminalRuntimeTabs(
           pendingDirectory: existing.pendingDirectory,
           dead: existing.dead,
           retainable: existing.retainable,
+          durable: existing.durable,
           closeError: existing.closeError,
         };
       }),

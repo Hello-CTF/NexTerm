@@ -4,12 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
+  askChoice: vi.fn(),
   askChoiceRemember: vi.fn(),
   closeTab: vi.fn(),
   listLive: vi.fn(),
   listDurable: vi.fn(),
 }));
-vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoiceRemember: mocks.askChoiceRemember }));
+vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoice: mocks.askChoice, askChoiceRemember: mocks.askChoiceRemember }));
 vi.mock("../../ipc/commands", () => ({
   dbApi: {},
   sessionApi: {},
@@ -246,6 +247,32 @@ describe("terminal close preference dispatch", () => {
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(tabsRemaining()).toEqual([{ ...tab, exited: false }]);
+  });
+
+  it("offers only a destructive close for a regular SSH terminal", async () => {
+    const tab = { ...terminal(), durable: false };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    setTerminalCloseAction("detach");
+    mocks.askChoice.mockResolvedValueOnce("kill");
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    const options = mocks.askChoice.mock.calls[0][1] as { choices: { key: string; danger?: boolean }[] };
+    expect(options.choices).toEqual([expect.objectContaining({ key: "kill", danger: true })]);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
+    expect(tabsRemaining()).toEqual([]);
+  });
+
+  it("keeps a regular SSH terminal open when its close dialog is dismissed", async () => {
+    const tab = { ...terminal(), durable: false };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.askChoice.mockResolvedValueOnce(null);
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(tabsRemaining()).toHaveLength(1);
   });
 
   it("uses the close preference instead of an implicit kill when the backend no longer lists the tab", async () => {

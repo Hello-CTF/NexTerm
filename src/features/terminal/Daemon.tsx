@@ -25,7 +25,7 @@ export function Daemon({ durable, sessionKind, helper, onOpenHelper }: DaemonPro
   } else if (helper?.state === "installing") {
     className = "nx-badge nx-badge-blue";
     label = "正在启用持久终端";
-    title = `${helper.stage}。当前标签是普通终端，完成后新开的标签可转到后台`;
+    title = `${helper.stage}。当前标签是普通终端，完成后新建的标签可转到后台`;
     busy = true;
   } else if (helper?.state === "attention") {
     className = "nx-badge nx-badge-amber";
@@ -34,7 +34,7 @@ export function Daemon({ durable, sessionKind, helper, onOpenHelper }: DaemonPro
   } else if (helper?.state === "ready") {
     className = "nx-badge nx-badge-blue";
     label = "直接连接 · 持久已就绪";
-    title = "持久终端助手已就绪。当前标签仍是普通终端，新开的标签可转到后台";
+    title = "持久终端助手已就绪。当前标签仍是普通终端，新建的标签可转到后台";
   }
   const content = (
     <>
