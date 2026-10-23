@@ -104,6 +104,14 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "ai_conversation_compact", func(ctx context.Context, _ *ipc.Call, args struct {
+				ConversationID string `json:"conversationId"`
+			}) (CompactResult, error) {
+				result, err := r.CompactConversation(ctx, args.ConversationID)
+				return result, agentIPCError(err)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "ai_steer", func(ctx context.Context, _ *ipc.Call, args struct {
 				JobID   string `json:"jobId"`
 				Message string `json:"message"`

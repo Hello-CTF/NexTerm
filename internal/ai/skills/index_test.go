@@ -62,7 +62,7 @@ func TestBuildIndexRejectsInvalidDocument(t *testing.T) {
 	}
 }
 
-func TestDefaultIndexParses(t *testing.T) {
+func TestNoBuiltInSkillsShip(t *testing.T) {
 	manager, err := skills.NewManager(t.Context(), newMemorySettings())
 	if err != nil {
 		t.Fatal(err)
@@ -71,14 +71,34 @@ func TestDefaultIndexParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Name != "skill-format" || entries[0].Source != skills.SourceEmbedded {
-		t.Fatalf("entries = %+v", entries)
+	if len(entries) != 0 {
+		t.Fatalf("entries = %+v, want none until the user writes a skill", entries)
 	}
-	dispatch, err := manager.Dispatch(t.Context(), "skill-format")
+	catalog, err := manager.SkillCatalog(t.Context())
+	if err != nil || len(catalog) != 0 {
+		t.Fatalf("catalog = %+v, %v", catalog, err)
+	}
+}
+
+func TestSkillCatalogListsOnlyEnabledSkills(t *testing.T) {
+	manager, err := skills.NewManager(t.Context(), newMemorySettings())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dispatch.Digest == "" || dispatch.Body == "" {
-		t.Fatalf("dispatch = %+v", dispatch)
+	description, body := "检查 nginx 配置", "nginx -t\n"
+	for _, input := range []skills.OverrideInput{
+		{Name: "nginx-check", Description: &description, Body: &body},
+		{Name: "old-check", Description: &description, Body: &body, Disabled: true},
+	} {
+		if _, err := manager.SaveOverride(t.Context(), input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	catalog, err := manager.SkillCatalog(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 1 || catalog[0].Name != "nginx-check" || catalog[0].Description != description {
+		t.Fatalf("catalog = %+v, want only the enabled skill", catalog)
 	}
 }

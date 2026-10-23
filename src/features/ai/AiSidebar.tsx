@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent as ReactDragEvent } from "react";
 import { ask, askChoice, promptText } from "../../ui/dialogs";
 import { aiApi, assetApi, modelApi, terminalApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
+import { productionSkillsApi } from "../settings/skillsApi";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "../../ipc/types";
 import {
@@ -195,6 +196,8 @@ const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "allow_persistent" 
   allow_persistent: "已永久允许（可随时在授权管理中撤销）",
   deny: "已拒绝",
 };
+
+type SlashItem = { key: string; label: string; hint: string; run: () => void };
 
 const CONFIRM_HELP =
   "「允许一次」只放行这一次；「本会话允许」在本次对话中不再询问同类操作；「永久允许」写入授权管理，可随时撤销。高危、无法判断和生产环境的操作每次都会询问。想让某类操作每次都先确认，可在「设置 → AI 拦截规则」中添加。";
@@ -980,6 +983,13 @@ function AiChatTab({
   const [images, setImages] = useState<string[]>([]);
   const [refs, setRefs] = useState<RefChip[]>([]);
   const [atOpen, setAtOpen] = useState(false);
+  // Typing "/" at the start of the message opens the command menu: built-in
+  // commands first, then the user's enabled skills. Lists load when the menu
+  // opens and reload the next time.
+  const [skillOptions, setSkillOptions] = useState<{ name: string; description: string }[] | null>(null);
+  const [modelOptions, setModelOptions] = useState<{ id: string; name: string; model: string; active: boolean }[] | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [compacting, setCompacting] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<{ id: string; title: string; updatedAt: number }[]>([]);
   const [runStatusByConv, setRunStatusByConv] = useState<Record<string, "running" | "interrupted">>({});
@@ -1091,6 +1101,50 @@ function AiChatTab({
       }
     })();
   };
+
+  const slashQuery = /^\/([a-z0-9-]*)$/.exec(input)?.[1] ?? null;
+  const modelQuery = /^\/model\s+(.*)$/i.exec(input)?.[1] ?? null;
+  useEffect(() => {
+    if (slashQuery === null) {
+      setSkillOptions(null);
+      return;
+    }
+    if (skillOptions !== null) return;
+    let alive = true;
+    productionSkillsApi.list().then(
+      (entries) => {
+        if (alive) setSkillOptions(entries.filter((entry) => !entry.disabled).map(({ name, description }) => ({ name, description })));
+      },
+      () => {
+        if (alive) setSkillOptions([]);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [slashQuery, skillOptions]);
+  useEffect(() => {
+    if (modelQuery === null) {
+      setModelOptions(null);
+      return;
+    }
+    if (modelOptions !== null) return;
+    let alive = true;
+    modelApi.overview().then(
+      (view) => {
+        if (alive) setModelOptions(view.profiles.map((profile) => ({ id: profile.id, name: profile.name, model: profile.model, active: profile.id === view.activeId })));
+      },
+      () => {
+        if (alive) setModelOptions([]);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [modelQuery, modelOptions]);
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [slashQuery, modelQuery]);
 
   const refCandidates = useMemo<RefChip[]>(() => {
     const out: RefChip[] = [];
@@ -2492,6 +2546,96 @@ function AiChatTab({
     if (/\s/.test(prevCh)) setAtOpen(true);
   };
 
+  const pickSkill = (name: string) => {
+    setInput(`/${name} `);
+    inputRef.current?.focus();
+  };
+
+  const compactConversation = async () => {
+    const id = conversationIdRef.current;
+    if (!id) {
+      pushToast("info", "当前还没有对话内容，不需要压缩");
+      return;
+    }
+    if (busy) {
+      pushToast("info", "这一轮仍在运行，结束后再压缩");
+      return;
+    }
+    setCompacting(true);
+    try {
+      const result = await aiApi.compactConversation(id);
+      pushToast("success", `已把 ${result.messages} 条消息压缩成摘要，之后的回答基于摘要`);
+      await restoreConversation(id);
+    } catch (e) {
+      pushToast("error", `压缩失败：${describeError(e)}`);
+    } finally {
+      setCompacting(false);
+    }
+  };
+
+  const switchModel = async (profile: { id: string; name: string }) => {
+    setInput("");
+    try {
+      await modelApi.activate(profile.id);
+      useUi.getState().bumpModelProfilesRevision();
+      pushToast("success", `已切换到 ${profile.name}`);
+    } catch (e) {
+      pushToast("error", `切换模型失败：${describeError(e)}`);
+    }
+  };
+
+  const slashCommands: SlashItem[] = [
+    { key: "new", label: "/new", hint: "新建对话", run: () => { setInput(""); newConversation(); } },
+    {
+      key: "plan",
+      label: "/plan",
+      hint: planMode ? "关闭计划模式" : "开启计划模式：先给方案，确认后再执行",
+      run: () => {
+        setInput("");
+        setPlanMode((value) => !value);
+        pushToast("info", planMode ? "已关闭计划模式" : "已开启计划模式");
+      },
+    },
+    { key: "model", label: "/model", hint: "切换模型", run: () => setInput("/model ") },
+    {
+      key: "compact",
+      label: "/compact",
+      hint: compacting ? "正在压缩…" : "把当前对话压缩成摘要，节省上下文",
+      run: () => {
+        setInput("");
+        void compactConversation();
+      },
+    },
+    { key: "permissions", label: "/permissions", hint: "打开 AI 权限与免确认授权", run: () => { setInput(""); setPermOpen(true); } },
+  ];
+  const slashMenuOpen = slashQuery !== null || modelQuery !== null;
+  const slashItems: SlashItem[] =
+    modelQuery !== null
+      ? (modelOptions ?? [])
+          .filter((profile) => `${profile.name} ${profile.model}`.toLowerCase().includes(modelQuery.trim().toLowerCase()))
+          .map((profile) => ({
+            key: `model:${profile.id}`,
+            label: profile.name,
+            hint: profile.active ? `${profile.model} · 当前` : profile.model,
+            run: () => void switchModel(profile),
+          }))
+      : slashQuery !== null
+        ? [
+            ...slashCommands.filter((command) => command.key.startsWith(slashQuery)),
+            ...(skillOptions ?? [])
+              .filter((skill) => skill.name.includes(slashQuery))
+              .map((skill) => ({ key: `skill:${skill.name}`, label: `/${skill.name}`, hint: skill.description, run: () => pickSkill(skill.name) })),
+          ].slice(0, 10)
+        : [];
+  const slashEmptyText =
+    modelQuery !== null
+      ? modelOptions === null
+        ? "读取模型…"
+        : modelOptions.length === 0
+          ? "还没有配置模型"
+          : "没有匹配的模型"
+      : "没有匹配的命令或技能";
+
   const pickRef = (ref: RefChip) => {
     setRefs((prev) => (prev.some((r) => r.id === ref.id) ? prev : [...prev, ref]));
     setInput((prev) => prev.replace(/@[^@\s]*$/, ""));
@@ -3502,6 +3646,31 @@ function AiChatTab({
           </div>
         )}
 
+        {slashMenuOpen && (
+          <div className="mb-1.5 max-h-56 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1" role="listbox" aria-label="命令与技能">
+            {slashItems.length === 0 ? (
+              <div className="px-2 py-1.5 text-[11.5px] text-neutral-500">{slashEmptyText}</div>
+            ) : (
+              slashItems.map((item, index) => (
+                <button
+                  key={item.key}
+                  role="option"
+                  aria-selected={index === slashIndex}
+                  className={`nx-menu-item w-full ${index === slashIndex ? "bg-neutral-800/70" : ""}`}
+                  onMouseEnter={() => setSlashIndex(index)}
+                  onClick={() => item.run()}
+                >
+                  <span className="nx-menu-label">{item.label}</span>
+                  <span className="nx-menu-hint truncate">{item.hint}</span>
+                </button>
+              ))
+            )}
+            {modelQuery === null && skillOptions !== null && skillOptions.length === 0 && (
+              <div className="border-t border-neutral-800/70 px-2 pt-1.5 text-[10.5px] text-neutral-500">在「设置 → AI 技能」里写好的技能也会出现在这里。</div>
+            )}
+          </div>
+        )}
+
         {atOpen && refCandidates.length > 0 && (
           <div className="mb-1.5 max-h-40 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1">
             {refCandidates.map((r) => (
@@ -3525,8 +3694,8 @@ function AiChatTab({
               ? "运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到"
               : sessionId
                 ? DESKTOP
-                  ? "向 NexTerm 提问，@ 引用资产或终端标签"
-                  : "向 NexTerm 提问，@ 引用资产或终端标签，可直接粘贴图片"
+                  ? "向 NexTerm 提问，@ 引用资产或终端标签，/ 命令与技能"
+                  : "向 NexTerm 提问，@ 引用资产或终端标签，/ 命令与技能，可直接粘贴图片"
                 : "未连接会话（仍可全局提问）"
           }
           aria-label="消息输入"
@@ -3535,6 +3704,19 @@ function AiChatTab({
           onChange={(e) => onInputChange(e.target.value)}
           onPaste={onPaste}
           onKeyDown={(e) => {
+            if (slashMenuOpen && slashItems.length > 0) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                setSlashIndex((index) => (index + step + slashItems.length) % slashItems.length);
+                return;
+              }
+              if ((e.key === "Enter" && !e.shiftKey && !isImeKeyEvent(e)) || e.key === "Tab") {
+                e.preventDefault();
+                slashItems[Math.min(slashIndex, slashItems.length - 1)].run();
+                return;
+              }
+            }
             if (e.key === "Escape" && atOpen) {
               e.preventDefault();
               setAtOpen(false);
@@ -3813,6 +3995,16 @@ const ChatBubble = memo(function ChatBubble({
   }
   if (item.role === "confirm" || item.role === "question") {
     return <InteractionRecord item={item} />;
+  }
+  if (item.role === "compact") {
+    return (
+      <details className="rounded-lg border border-dashed border-neutral-800 px-2.5 py-1.5 text-[11px] text-neutral-500">
+        <summary className="cursor-pointer select-none">
+          已压缩上下文{item.messages > 0 ? `（${item.messages} 条消息）` : ""}，之后的回答基于下面的摘要
+        </summary>
+        <div className="mt-1.5 whitespace-pre-wrap text-[11.5px] leading-relaxed text-neutral-400">{item.text}</div>
+      </details>
+    );
   }
   if (item.role === "outcome") {
     if (item.outcome === "error") {

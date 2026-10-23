@@ -14,6 +14,8 @@ type fakeSkillLoader struct {
 
 func (f *fakeSkillLoader) LoadSkillSchema() Schema { return f.schema }
 
+func (f *fakeSkillLoader) SkillCatalog(context.Context) ([]SkillSummary, error) { return nil, nil }
+
 func (f *fakeSkillLoader) LoadSkill(_ context.Context, args json.RawMessage) Output {
 	f.gotArgs = append(json.RawMessage(nil), args...)
 	return f.output

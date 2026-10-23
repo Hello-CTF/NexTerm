@@ -92,6 +92,12 @@ export type ChatItem =
       resolution?: string;
     })
   | (ItemBase & {
+      // compact marks where /compact replaced earlier history with a summary.
+      role: "compact";
+      text: string;
+      messages: number;
+    })
+  | (ItemBase & {
       role: "outcome";
       outcome: "done" | "error" | "canceled";
       text: string;
@@ -1003,6 +1009,11 @@ export function historyToItems(
       }
       if (structured === "planSubmitted") {
         items.push({ id: `h${seq++}`, attempt: null, role: "plan", text: historyString(raw, "plan") });
+        continue;
+      }
+      if (structured === "summary") {
+        const messages = Number(historyField(raw, "messages") ?? 0);
+        items.push({ id: `h${seq++}`, attempt: null, role: "compact", text: historyString(raw, "summary"), messages: messages || 0 });
         continue;
       }
       continue;

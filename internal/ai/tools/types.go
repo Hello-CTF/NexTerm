@@ -550,6 +550,15 @@ type ExecTargetSet struct {
 type SkillLoader interface {
 	LoadSkillSchema() Schema
 	LoadSkill(context.Context, json.RawMessage) Output
+	// SkillCatalog lists the caller's enabled skills so the prompt can tell the
+	// model which skills exist and when each one applies.
+	SkillCatalog(context.Context) ([]SkillSummary, error)
+}
+
+// SkillSummary is one enabled skill as the prompt presents it.
+type SkillSummary struct {
+	Name        string
+	Description string
 }
 
 // skillLoaderConfigured reports whether a skills backend is actually

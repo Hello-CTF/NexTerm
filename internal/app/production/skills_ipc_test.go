@@ -16,7 +16,7 @@ import (
 )
 
 // These tests exercise the production skills wiring end to end: the real
-// settings store, the real embedded index, the real dispatcher, and the
+// settings store, the real dispatcher, and the
 // construction the production module registration performs
 // (skills.NewManager over the store with the shared flag, then
 // skills.RegisterIPC). They pin the contract the runtime registration must
@@ -69,69 +69,43 @@ func openSkillsTestStore(t *testing.T) *store.Store {
 	return database
 }
 
-func TestSkillsIPCProductionEmbeddedRoundTrip(t *testing.T) {
+func TestSkillsIPCProductionCustomRoundTrip(t *testing.T) {
 	database := openSkillsTestStore(t)
 	dispatcher := registerProductionSkillsIPC(t, database, true)
 	ctx := t.Context()
 
-	response := dispatchSkillsIPC(ctx, dispatcher, skills.CommandList, `{}`)
 	var entries []skills.Entry
-	requireSkillsIPCResponse(t, response, &entries)
-	var embedded *skills.Entry
-	for index := range entries {
-		if entries[index].Name == "skill-format" {
-			embedded = &entries[index]
-		}
-	}
-	if embedded == nil {
-		t.Fatalf("embedded skill-format missing from list: %+v", entries)
-	}
-	if embedded.Source != skills.SourceEmbedded || embedded.Disabled || embedded.Overridden || embedded.Digest == "" {
-		t.Fatalf("embedded entry = %+v", embedded)
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandList, `{}`), &entries)
+	if len(entries) != 0 {
+		t.Fatalf("NexTerm ships no built-in skills, got %+v", entries)
 	}
 
-	response = dispatchSkillsIPC(ctx, dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`)
-	var baseline skills.Dispatch
-	requireSkillsIPCResponse(t, response, &baseline)
-	if baseline.Source != skills.SourceEmbedded || baseline.Body == "" || baseline.Digest != embedded.Digest {
-		t.Fatalf("baseline dispatch = %+v", baseline)
+	var created skills.Entry
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandSaveOverride, `{"name":"nginx-check","description":"检查 nginx 配置并重载","body":"先运行 nginx -t\n"}`), &created)
+	if created.Source != skills.SourceCustom || created.Disabled || created.Digest == "" {
+		t.Fatalf("created entry = %+v", created)
 	}
-	// The pinned digest is exactly the digest of the dispatched material —
-	// no more, no less.
+	var baseline skills.Dispatch
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandDispatch, `{"name":"nginx-check"}`), &baseline)
+	if baseline.Body != "先运行 nginx -t\n" || baseline.Digest != created.Digest {
+		t.Fatalf("dispatch = %+v", baseline)
+	}
+	// The pinned digest is exactly the digest of the dispatched material.
 	if want := skills.DigestOf(skills.Skill{Name: baseline.Name, Description: baseline.Description, Body: baseline.Body}); baseline.Digest != want {
 		t.Fatalf("dispatch digest = %q, want digest of dispatched material %q", baseline.Digest, want)
 	}
 
-	response = dispatchSkillsIPC(ctx, dispatcher, skills.CommandSaveOverride, `{"name":"skill-format","description":"格式说明（实例定制）"}`)
-	var saved skills.Entry
-	requireSkillsIPCResponse(t, response, &saved)
-	if !saved.Overridden || saved.Override == nil || saved.Override.Description == nil || saved.Override.Body != nil {
-		t.Fatalf("saved entry = %+v", saved)
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandSaveOverride, `{"name":"nginx-check","description":"检查并重载 nginx","body":"先运行 nginx -t，再 reload\n"}`), &created)
+	var updated skills.Dispatch
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandDispatch, `{"name":"nginx-check"}`), &updated)
+	if updated.Description != "检查并重载 nginx" || updated.Digest == baseline.Digest {
+		t.Fatalf("update did not change the material: %+v", updated)
 	}
 
-	response = dispatchSkillsIPC(ctx, dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`)
-	var overridden skills.Dispatch
-	requireSkillsIPCResponse(t, response, &overridden)
-	if overridden.Description != "格式说明（实例定制）" || overridden.Body != baseline.Body {
-		t.Fatalf("overridden dispatch = %+v", overridden)
-	}
-	if overridden.Digest == baseline.Digest {
-		t.Fatal("override did not change the pinned digest")
-	}
-	if want := skills.DigestOf(skills.Skill{Name: overridden.Name, Description: overridden.Description, Body: overridden.Body}); overridden.Digest != want {
-		t.Fatalf("override digest = %q, want %q", overridden.Digest, want)
-	}
-
-	response = dispatchSkillsIPC(ctx, dispatcher, skills.CommandDeleteOverride, `{"name":"skill-format"}`)
-	if !response.OK {
+	if response := dispatchSkillsIPC(ctx, dispatcher, skills.CommandDeleteOverride, `{"name":"nginx-check"}`); !response.OK {
 		t.Fatalf("delete response = %+v", response)
 	}
-	response = dispatchSkillsIPC(ctx, dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`)
-	var reverted skills.Dispatch
-	requireSkillsIPCResponse(t, response, &reverted)
-	if reverted.Digest != baseline.Digest || reverted.Description != baseline.Description {
-		t.Fatalf("delete did not revert the embedded material: %+v", reverted)
-	}
+	requireSkillsIPCCode(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandDispatch, `{"name":"nginx-check"}`), ipc.CodeNotFound)
 }
 
 func TestSkillsIPCProductionOwnerIsolationSurvivesRestart(t *testing.T) {
@@ -140,21 +114,11 @@ func TestSkillsIPCProductionOwnerIsolationSurvivesRestart(t *testing.T) {
 	ctxA := ipc.WithUserID(t.Context(), "owner-a")
 	ctxB := ipc.WithUserID(t.Context(), "owner-b")
 
-	response := dispatchSkillsIPC(ctxA, dispatcher, skills.CommandSaveOverride, `{"name":"skill-format","body":"owner A body\n"}`)
-	if !response.OK {
-		t.Fatalf("owner A save response = %+v", response)
-	}
-	response = dispatchSkillsIPC(ctxA, dispatcher, skills.CommandSaveOverride, `{"name":"owner-a-custom","description":"A custom","body":"custom body\n"}`)
+	response := dispatchSkillsIPC(ctxA, dispatcher, skills.CommandSaveOverride, `{"name":"owner-a-custom","description":"A custom","body":"owner A body\n"}`)
 	if !response.OK {
 		t.Fatalf("owner A custom save response = %+v", response)
 	}
 
-	response = dispatchSkillsIPC(ctxB, dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`)
-	var dispatchB skills.Dispatch
-	requireSkillsIPCResponse(t, response, &dispatchB)
-	if strings.Contains(dispatchB.Body, "owner A") {
-		t.Fatalf("owner A's override leaked to owner B: %+v", dispatchB)
-	}
 	requireSkillsIPCCode(t, dispatchSkillsIPC(ctxB, dispatcher, skills.CommandDispatch, `{"name":"owner-a-custom"}`), ipc.CodeNotFound)
 
 	// The real store persists each owner under its own settings key.
@@ -168,7 +132,7 @@ func TestSkillsIPCProductionOwnerIsolationSurvivesRestart(t *testing.T) {
 	// A fresh manager over the same store — the process-restart path — keeps
 	// owner A's overrides and still isolates owner B.
 	restarted := registerProductionSkillsIPC(t, database, false)
-	response = dispatchSkillsIPC(ctxA, restarted, skills.CommandDispatch, `{"name":"skill-format"}`)
+	response = dispatchSkillsIPC(ctxA, restarted, skills.CommandDispatch, `{"name":"owner-a-custom"}`)
 	var dispatchA skills.Dispatch
 	requireSkillsIPCResponse(t, response, &dispatchA)
 	if dispatchA.Body != "owner A body\n" {
@@ -211,13 +175,13 @@ func TestSkillsIPCProductionDisabledAndCustomLifecycle(t *testing.T) {
 	dispatcher := registerProductionSkillsIPC(t, database, false)
 	ctx := ipc.WithUserID(t.Context(), "owner-a")
 
-	response := dispatchSkillsIPC(ctx, dispatcher, skills.CommandSaveOverride, `{"name":"skill-format","disabled":true}`)
+	response := dispatchSkillsIPC(ctx, dispatcher, skills.CommandSaveOverride, `{"name":"disk-report","description":"整理磁盘占用","body":"用 df -h\n","disabled":true}`)
 	if !response.OK {
 		t.Fatalf("disable response = %+v", response)
 	}
-	requireSkillsIPCCode(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`), ipc.CodeBadParam)
+	requireSkillsIPCCode(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandDispatch, `{"name":"disk-report"}`), ipc.CodeBadParam)
 	var material skills.Dispatch
-	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandMaterial, `{"name":"skill-format"}`), &material)
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandMaterial, `{"name":"disk-report"}`), &material)
 	if material.Body == "" || material.Digest == "" {
 		t.Fatalf("disabled material must stay readable for Settings: %+v", material)
 	}
@@ -303,20 +267,20 @@ func TestSkillsIPCProductionSurfacesShareOverridesAndDigests(t *testing.T) {
 	ctxA := ipc.WithUserID(t.Context(), "owner-a")
 	ctxB := ipc.WithUserID(t.Context(), "owner-b")
 
-	response := dispatchSkillsIPC(ctxA, dispatcher, skills.CommandSaveOverride, `{"name":"skill-format","description":"实例格式说明","body":"custom body\n"}`)
+	response := dispatchSkillsIPC(ctxA, dispatcher, skills.CommandSaveOverride, `{"name":"ops-check","description":"实例格式说明","body":"custom body\n"}`)
 	var saved skills.Entry
 	requireSkillsIPCResponse(t, response, &saved)
-	if !saved.Overridden {
+	if saved.Source != skills.SourceCustom || saved.Digest == "" {
 		t.Fatalf("saved entry = %+v", saved)
 	}
 
 	var dispatched skills.Dispatch
-	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctxA, dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`), &dispatched)
-	output := loadSkillThroughRegistry(registry, ctxA, "skill-format")
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctxA, dispatcher, skills.CommandDispatch, `{"name":"ops-check"}`), &dispatched)
+	output := loadSkillThroughRegistry(registry, ctxA, "ops-check")
 	if !output.OK {
 		t.Fatalf("load_skill output = %+v", output)
 	}
-	for _, fragment := range []string{"skill: skill-format", "digest: " + dispatched.Digest, "实例格式说明", "custom body\n"} {
+	for _, fragment := range []string{"skill: ops-check", "digest: " + dispatched.Digest, "实例格式说明", "custom body\n"} {
 		if !strings.Contains(output.Text, fragment) {
 			t.Fatalf("load_skill text missing %q:\n%s", fragment, output.Text)
 		}
@@ -324,31 +288,24 @@ func TestSkillsIPCProductionSurfacesShareOverridesAndDigests(t *testing.T) {
 
 	// Disabling preserves the overridden fields, the same payload the
 	// Settings UI sends when toggling an overridden skill off.
-	if response := dispatchSkillsIPC(ctxA, dispatcher, skills.CommandSaveOverride, `{"name":"skill-format","description":"实例格式说明","body":"custom body\n","disabled":true}`); !response.OK {
+	if response := dispatchSkillsIPC(ctxA, dispatcher, skills.CommandSaveOverride, `{"name":"ops-check","description":"实例格式说明","body":"custom body\n","disabled":true}`); !response.OK {
 		t.Fatalf("disable response = %+v", response)
 	}
-	output = loadSkillThroughRegistry(registry, ctxA, "skill-format")
+	output = loadSkillThroughRegistry(registry, ctxA, "ops-check")
 	if output.OK || !strings.Contains(output.Text, "禁用") {
 		t.Fatalf("disabled load_skill output = %+v", output)
 	}
 	var material skills.Dispatch
-	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctxA, dispatcher, skills.CommandMaterial, `{"name":"skill-format"}`), &material)
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctxA, dispatcher, skills.CommandMaterial, `{"name":"ops-check"}`), &material)
 	if material.Body != "custom body\n" {
 		t.Fatalf("disabled material must stay readable for Settings: %+v", material)
 	}
 
-	outputB := loadSkillThroughRegistry(registry, ctxB, "skill-format")
-	if !outputB.OK || strings.Contains(outputB.Text, "custom body\n") || strings.Contains(outputB.Text, "实例格式说明") {
-		t.Fatalf("owner A's override leaked to owner B's load_skill: %+v", outputB)
+	outputB := loadSkillThroughRegistry(registry, ctxB, "ops-check")
+	if outputB.OK || strings.Contains(outputB.Text, "custom body\n") || strings.Contains(outputB.Text, "实例格式说明") {
+		t.Fatalf("owner A's skill leaked to owner B's load_skill: %+v", outputB)
 	}
-	var dispatchedB skills.Dispatch
-	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctxB, dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`), &dispatchedB)
-	if dispatchedB.Digest == dispatched.Digest {
-		t.Fatal("owner B's dispatch must pin the embedded material, not owner A's override")
-	}
-	if !strings.Contains(outputB.Text, "digest: "+dispatchedB.Digest) {
-		t.Fatalf("owner B's load_skill does not pin owner B's dispatch digest %q:\n%s", dispatchedB.Digest, outputB.Text)
-	}
+	requireSkillsIPCCode(t, dispatchSkillsIPC(ctxB, dispatcher, skills.CommandDispatch, `{"name":"ops-check"}`), ipc.CodeNotFound)
 }
 
 // Legacy shared behavior: with the desktop/open shared flag, ownerless
@@ -360,16 +317,16 @@ func TestSkillsIPCProductionLegacySharedLoadSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response := dispatchSkillsIPC(t.Context(), dispatcher, skills.CommandSaveOverride, `{"name":"skill-format","body":"shared body\n"}`)
+	response := dispatchSkillsIPC(t.Context(), dispatcher, skills.CommandSaveOverride, `{"name":"ops-check","description":"共享检查","body":"shared body\n"}`)
 	if !response.OK {
 		t.Fatalf("shared save response = %+v", response)
 	}
-	output := loadSkillThroughRegistry(registry, t.Context(), "skill-format")
+	output := loadSkillThroughRegistry(registry, t.Context(), "ops-check")
 	if !output.OK || !strings.Contains(output.Text, "shared body\n") {
 		t.Fatalf("legacy shared load_skill output = %+v", output)
 	}
 	var dispatched skills.Dispatch
-	requireSkillsIPCResponse(t, dispatchSkillsIPC(t.Context(), dispatcher, skills.CommandDispatch, `{"name":"skill-format"}`), &dispatched)
+	requireSkillsIPCResponse(t, dispatchSkillsIPC(t.Context(), dispatcher, skills.CommandDispatch, `{"name":"ops-check"}`), &dispatched)
 	if !strings.Contains(output.Text, dispatched.Digest) {
 		t.Fatalf("load_skill digest %q does not pin the IPC dispatch digest %q", output.Text, dispatched.Digest)
 	}

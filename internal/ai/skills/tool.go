@@ -23,10 +23,9 @@ var _ tools.SkillLoader = (*Manager)(nil)
 func (m *Manager) LoadSkillSchema() tools.Schema {
 	return tools.Schema{
 		Name: LoadSkillToolName,
-		Description: "Load a skill by name and return its Markdown instruction material, pinned with the " +
-			"sha256 digest of exactly the returned content. Skills are per-owner instruction documents " +
-			"managed in Settings; overrides and disables are honored, so the material returned is exactly " +
-			"what this owner would dispatch.",
+		Description: "Load one of the user's skills by name and return its Markdown instructions. " +
+			"The available skills and when to use each are listed under [Available Skills]; load a " +
+			"matching skill before starting the task, then follow it.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -38,6 +37,22 @@ func (m *Manager) LoadSkillSchema() tools.Schema {
 			"required": []any{"name"},
 		},
 	}
+}
+
+// SkillCatalog lists the caller's enabled skills for the prompt.
+func (m *Manager) SkillCatalog(ctx context.Context) ([]tools.SkillSummary, error) {
+	entries, err := m.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	catalog := make([]tools.SkillSummary, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Disabled {
+			continue
+		}
+		catalog = append(catalog, tools.SkillSummary{Name: entry.Name, Description: entry.Description})
+	}
+	return catalog, nil
 }
 
 // LoadSkill resolves the effective material for the model through the

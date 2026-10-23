@@ -29,6 +29,16 @@ describe("structured history mapping", () => {
     expect(items[1]).toMatchObject({ text: "历史回答", attempt: null });
   });
 
+  it("maps a /compact summary row to a compact marker", () => {
+    const items = historyToItems(state, [
+      msg("user", { role: "user", content: "旧问题" }),
+      msg("summary", { type: "summary", summary: "已重启 nginx，下一步看日志", messages: 6 }),
+      msg("user", { role: "user", content: "新问题" }),
+    ]);
+    expect(items.map((i) => i.role)).toEqual(["user", "compact", "user"]);
+    expect(items[1]).toMatchObject({ text: "已重启 nginx，下一步看日志", messages: 6 });
+  });
+
   it("folds tool call/result rows into a single tool item", () => {
     const items = historyToItems(state, [
       msg("user", { role: "user", content: "Inspect logs" }),

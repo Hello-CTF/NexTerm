@@ -147,7 +147,7 @@ func (h *compactionHandler) summarizeAll(ctx context.Context, contextMsgs []*sch
 func (h *compactionHandler) mergeSummaries(ctx context.Context, texts []string) (string, error) {
 	combined := strings.Join(texts, "\n\n")
 	for depth := 0; len(combined) > h.summaryChunkBytes() && depth < 8; depth++ {
-		groups := packSummaryGroups(texts, h.summaryChunkBytes()-len(summaryMergeInstruction())-128)
+		groups := packSummaryGroups(texts, max(h.summaryChunkBytes()-len(summarySystemInstruction())-len(summaryMergeInstruction())-128, 256))
 		merged := make([]string, 0, len(groups))
 		for _, group := range groups {
 			response, err := h.generate(ctx, []*schema.Message{
@@ -207,16 +207,33 @@ func summaryResponseText(response *schema.Message) (string, error) {
 	return text, nil
 }
 
+// historySummaryInstruction asks for a handoff summary: the model that
+// continues sees only this summary and the newest messages, so it must keep
+// everything needed to carry on without rediscovering it.
 func historySummaryInstruction() string {
-	return "Compress the above conversation history into a Chinese summary. Must preserve: 1) the user's key requirements, constraints, and preferences; 2) the commands that were run, working directories, and host/container/session identifiers; 3) the outcome of each tool call (success or failure, key output, errors and how they were fixed); 4) the file paths involved and the key points of the modifications; 5) unfinished steps and the next-step plan. Write in short bullet points; do not repeat pleasantries or repeated output."
+	return "Summarize the conversation above for the assistant that will continue it. That assistant will see only " +
+		"this summary and the newest messages, so make the summary self-sufficient. Write it in the language the " +
+		"conversation uses and keep it proportional: a short exchange needs a few lines, a long multi-step task needs detail. Preserve:\n" +
+		"1. The user's latest request and what it actually asks for, including ambiguity already resolved. Quote a long " +
+		"request's actual ask, since long messages may be cut. If several requests are open, say which one governs the next step.\n" +
+		"2. Constraints and preferences still in force. Keep decisions already settled apart from questions still open.\n" +
+		"3. What was actually done, at high fidelity: the exact commands, the hosts, containers, sessions and working " +
+		"directories they ran in, the file paths touched, whether each step succeeded or failed, and the results themselves " +
+		"(key output values, error lines). Keep only the final working version of any change; drop resolved errors.\n" +
+		"4. What is still unknown or unverified. If a step claimed success that was never checked, say it is unverified.\n" +
+		"5. The plan forward: the exact next command or action, the remaining steps, decisions already made for them, and " +
+		"obstacles you can foresee.\n" +
+		"Do not add pleasantries or repeat long outputs; keep identifiers and key values exact."
 }
 
 func summarySystemInstruction() string {
-	return "You are an ops session history compressor. Output only the summary body: no pleasantries, no restating of the instructions."
+	return "You write handoff summaries of operations sessions. Output only the summary itself, without pleasantries or restating these instructions."
 }
 
 func summaryMergeInstruction() string {
-	return "The following summary segments come from adjacent fragments of the same session history; merge them into one continuous Chinese summary, preserving all key facts (commands, paths, tool outcomes, unfinished steps) and removing duplicates:"
+	return "The following summary segments come from consecutive parts of the same conversation. Merge them into one " +
+		"summary in the conversation's language, keeping every key fact (the latest request, constraints, commands and " +
+		"their results, paths, unverified claims, the plan forward) and removing duplicates:"
 }
 
 func splitSystemPrefix(messages []*schema.Message) ([]*schema.Message, []*schema.Message) {

@@ -282,6 +282,11 @@ func (r *Runner) initializeEino(current *job) error {
 			messages = append(messages, schema.UserMessage(injection.Prompt))
 		}
 	}
+	if catalog, err := r.config.Tools.SkillCatalog(current.ctx); err != nil {
+		return err
+	} else if len(catalog) > 0 {
+		messages = append(messages, schema.UserMessage(skillCatalogPrompt(catalog)))
+	}
 	messages = append(messages, userMessage(current.args))
 	if r.config.Memory != nil {
 		scope, err := r.memoryScope(current.ctx)
@@ -947,4 +952,16 @@ func min64(value, maximum uint64) uint64 {
 		return maximum
 	}
 	return value
+}
+
+// skillCatalogPrompt tells the model which skills exist and when each applies.
+// A message that starts with /<name> asks for that skill explicitly.
+func skillCatalogPrompt(catalog []tools.SkillSummary) string {
+	var prompt strings.Builder
+	prompt.WriteString("[Available Skills]\nThe user wrote these skills. When the task matches a skill's description, " +
+		"or the user's message starts with /<skill name>, call load_skill with that name first and follow it.\n")
+	for _, skill := range catalog {
+		fmt.Fprintf(&prompt, "- %s: %s\n", skill.Name, skill.Description)
+	}
+	return prompt.String()
 }

@@ -30,6 +30,11 @@
       "channel": true,
       "stream": "json"
     },
+    "ai_conversation_compact": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "ai_conversation_create": {
       "nested": false,
       "channel": false,
@@ -1946,6 +1951,7 @@
     "ai_chat",
     "ai_circuit_status",
     "ai_confirm",
+    "ai_conversation_compact",
     "ai_conversation_create",
     "ai_conversation_delete",
     "ai_conversation_list",

@@ -106,6 +106,15 @@ func composeAssetIdentityResolvers(deps Dependencies) Dependencies {
 
 // acquireOperationFlight marks the operation in-flight until the returned
 // release runs; a busy operation reports acquired=false.
+// SkillCatalog returns the caller's enabled skills, or nothing without a
+// skills backend.
+func (r *Registry) SkillCatalog(ctx context.Context) ([]SkillSummary, error) {
+	if r == nil || !skillLoaderConfigured(r.deps.Skills) {
+		return nil, nil
+	}
+	return r.deps.Skills.SkillCatalog(ctx)
+}
+
 func (r *Registry) acquireOperationFlight(key string) (release func(), acquired bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

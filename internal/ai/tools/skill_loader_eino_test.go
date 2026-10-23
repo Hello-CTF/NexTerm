@@ -95,14 +95,25 @@ func TestExecutionToolsExposeLoadSkillOnlyWhenConfigured(t *testing.T) {
 	}
 }
 
+// seedSkill creates one enabled custom skill for the caller; NexTerm ships no built-in skills.
+func seedSkill(t *testing.T, manager *skills.Manager, ctx context.Context, name string) {
+	t.Helper()
+	description := "检查服务状态"
+	body := "Markdown steps: run systemctl status first.\n"
+	if _, err := manager.SaveOverride(ctx, skills.OverrideInput{Name: name, Description: &description, Body: &body}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadSkillEinoToolExecutesThroughTheRealGraph(t *testing.T) {
 	// Unattended mode is the strictest path: the read-only classification is
 	// what keeps the tool usable there.
 	execution, manager := newSkillExecution(t, false, guard.Unattended, false)
 	ctx := ipc.WithUserID(t.Context(), "owner-a")
+	seedSkill(t, manager, ctx, "service-check")
 
-	content := invokeLoadSkill(t, execution, ctx, `{"name":"skill-format"}`)
-	dispatch, err := manager.Dispatch(ctx, "skill-format")
+	content := invokeLoadSkill(t, execution, ctx, `{"name":"service-check"}`)
+	dispatch, err := manager.Dispatch(ctx, "service-check")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,11 +142,11 @@ func TestLoadSkillEinoToolHonorsOverrideDisabledAndOwners(t *testing.T) {
 
 	description := "实例格式说明"
 	body := "custom body\n"
-	if _, err := manager.SaveOverride(ctxA, skills.OverrideInput{Name: "skill-format", Description: &description, Body: &body}); err != nil {
+	if _, err := manager.SaveOverride(ctxA, skills.OverrideInput{Name: "ops-check", Description: &description, Body: &body}); err != nil {
 		t.Fatal(err)
 	}
-	contentA := invokeLoadSkill(t, execution, ctxA, `{"name":"skill-format"}`)
-	dispatchA, err := manager.Dispatch(ctxA, "skill-format")
+	contentA := invokeLoadSkill(t, execution, ctxA, `{"name":"ops-check"}`)
+	dispatchA, err := manager.Dispatch(ctxA, "ops-check")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,19 +156,20 @@ func TestLoadSkillEinoToolHonorsOverrideDisabledAndOwners(t *testing.T) {
 		}
 	}
 
-	contentB := invokeLoadSkill(t, execution, ctxB, `{"name":"skill-format"}`)
-	if !strings.Contains(contentB, `"ok":true`) || strings.Contains(contentB, "custom body") || strings.Contains(contentB, description) {
-		t.Fatalf("owner A's override leaked to owner B: %s", contentB)
+	contentB := invokeLoadSkill(t, execution, ctxB, `{"name":"ops-check"}`)
+	if !strings.Contains(contentB, `"ok":false`) || strings.Contains(contentB, "custom body") || strings.Contains(contentB, description) {
+		t.Fatalf("owner A's skill leaked to owner B: %s", contentB)
 	}
+	seedSkill(t, manager, ctxB, "ops-check")
 
-	if _, err := manager.SaveOverride(ctxA, skills.OverrideInput{Name: "skill-format", Description: &description, Body: &body, Disabled: true}); err != nil {
+	if _, err := manager.SaveOverride(ctxA, skills.OverrideInput{Name: "ops-check", Description: &description, Body: &body, Disabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	contentA = invokeLoadSkill(t, execution, ctxA, `{"name":"skill-format"}`)
+	contentA = invokeLoadSkill(t, execution, ctxA, `{"name":"ops-check"}`)
 	if !strings.Contains(contentA, `"ok":false`) || !strings.Contains(contentA, "禁用") {
 		t.Fatalf("disabled load_skill result = %s", contentA)
 	}
-	if contentB = invokeLoadSkill(t, execution, ctxB, `{"name":"skill-format"}`); !strings.Contains(contentB, `"ok":true`) {
+	if contentB = invokeLoadSkill(t, execution, ctxB, `{"name":"ops-check"}`); !strings.Contains(contentB, `"ok":true`) {
 		t.Fatalf("owner B must stay enabled: %s", contentB)
 	}
 }
@@ -173,8 +185,9 @@ func TestLoadSkillEinoToolStaysAvailableInPlanMode(t *testing.T) {
 		t.Fatalf("plan-mode tool list = %v", names)
 	}
 	ctx := ipc.WithUserID(t.Context(), "owner-a")
-	content := invokeLoadSkill(t, planned, ctx, `{"name":"skill-format"}`)
-	dispatch, err := manager.Dispatch(ctx, "skill-format")
+	seedSkill(t, manager, ctx, "ops-check")
+	content := invokeLoadSkill(t, planned, ctx, `{"name":"ops-check"}`)
+	dispatch, err := manager.Dispatch(ctx, "ops-check")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,11 +199,12 @@ func TestLoadSkillEinoToolStaysAvailableInPlanMode(t *testing.T) {
 func TestLoadSkillEinoToolServesLegacySharedStateInReadOnlyMode(t *testing.T) {
 	execution, manager := newSkillExecution(t, true, guard.ReadOnly, false)
 	body := "shared body\n"
-	if _, err := manager.SaveOverride(t.Context(), skills.OverrideInput{Name: "skill-format", Body: &body}); err != nil {
+	description := "共享检查"
+	if _, err := manager.SaveOverride(t.Context(), skills.OverrideInput{Name: "ops-check", Description: &description, Body: &body}); err != nil {
 		t.Fatal(err)
 	}
-	content := invokeLoadSkill(t, execution, t.Context(), `{"name":"skill-format"}`)
-	dispatch, err := manager.Dispatch(t.Context(), "skill-format")
+	content := invokeLoadSkill(t, execution, t.Context(), `{"name":"ops-check"}`)
+	dispatch, err := manager.Dispatch(t.Context(), "ops-check")
 	if err != nil {
 		t.Fatal(err)
 	}

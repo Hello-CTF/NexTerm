@@ -167,6 +167,16 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 			carrying = false
 		case historyTypeFileChange, historyTypePlanSubmitted:
 			continue
+		case historyTypeSummary:
+			// A /compact summary replaces everything before it.
+			if persisted.Summary == "" {
+				continue
+			}
+			messages = append(messages[:0], schema.UserMessage("[History Summary]\n"+persisted.Summary))
+			carrying = false
+			groupCalls = map[string]struct{}{}
+			groupAnswered = map[string]struct{}{}
+			groupToolEnd = -1
 		default:
 			if persisted.Content == "" {
 				continue

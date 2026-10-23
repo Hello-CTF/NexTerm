@@ -1206,6 +1206,9 @@ export interface TakeoverRunResult {
 }
 
 export const aiApi = {
+  // compactConversation folds the conversation's history into one saved summary.
+  compactConversation: (conversationId: string) =>
+    call<{ messages: number }>("ai_conversation_compact", { conversationId }),
   chat: (
     args: {
       conversationId?: string;

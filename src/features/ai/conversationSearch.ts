@@ -24,6 +24,7 @@ export function searchableTextOf(item: ChatItem): string {
     case "question":
       return [item.question, ...item.options].join("\n");
     case "outcome":
+    case "compact":
       return item.text;
   }
 }
