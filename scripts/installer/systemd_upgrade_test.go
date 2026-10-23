@@ -503,7 +503,6 @@ func TestSystemdInstallUpgradeCombinationMatrix(t *testing.T) {
 	for _, c := range combos {
 		c := c
 		t.Run(fmt.Sprintf("%s/fail=%s/env=%s/key=%s/active=%t", c.mode, c.failure, c.envOrigin, c.key, c.active), func(t *testing.T) {
-			t.Parallel()
 			s := newSandbox(t, stubOptions{})
 			if c.mode == "upgrade" {
 				s.seedLegacyBinary()
