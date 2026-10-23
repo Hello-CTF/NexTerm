@@ -92,6 +92,8 @@ export interface AgentApproval {
   nonce: string;
   attempt: number;
   decision: AgentApprovalDecision | null;
+  // sessionScope names what a session approval covers; absent hides that choice.
+  sessionScope?: string;
 }
 
 export interface AgentToolCall {

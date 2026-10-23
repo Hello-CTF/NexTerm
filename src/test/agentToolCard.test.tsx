@@ -94,13 +94,13 @@ describe("AgentToolCard", () => {
     const onApproval = vi.fn();
     mountCard(
       toolCall({
-        approval: { requestId: "req-9", nonce: "n-1", attempt: 2, decision: null },
+        approval: { requestId: "req-9", nonce: "n-1", attempt: 2, decision: null, sessionScope: "服务与系统设置变更" },
       }),
       onApproval,
     );
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("等待审批");
-    expect(text).toContain("req-9");
+    expect(text).toContain("等待你确认");
+    expect(view!.container.querySelector('[title^="请求 req-9"]')).not.toBeNull();
 
     clickButton(view!.container, "批准一次");
     expect(onApproval).toHaveBeenCalledWith("req-9", "approve_once");
@@ -127,7 +127,7 @@ describe("AgentToolCard", () => {
       toolCall({
         isMine: false,
         ownerName: "bob",
-        approval: { requestId: "req-9", nonce: "n-1", attempt: 1, decision: null },
+        approval: { requestId: "req-9", nonce: "n-1", attempt: 1, decision: null, sessionScope: "服务与系统设置变更" },
       }),
     );
     const text = view!.container.textContent ?? "";

@@ -113,6 +113,7 @@ import {
   IconEdit,
   IconHistory,
   IconImage,
+  IconInfo,
   IconKey,
   IconList,
   IconLoader,
@@ -138,7 +139,7 @@ interface RefChip {
 
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
   { value: "read_only", label: "只读", hint: "仅允许查看；设备长期授权和授权规则仅放行匹配的普通操作，其余操作均拒绝" },
-  { value: "read_write", label: "读写", hint: "只读操作直接执行；普通操作先确认，选择「本轮允许此类」后，本轮同类操作不再确认（文件写入限同目录）；高危或无法判断的操作仍逐次确认" },
+  { value: "read_write", label: "读写", hint: "只读操作直接执行；普通操作先确认，选择「本会话允许」后，本次对话内同类操作不再确认（文件写入限同目录）；高危或无法判断的操作仍逐次确认" },
   { value: "silent", label: "自动执行", hint: "普通操作直接执行；高危或无法判断的操作仍逐次确认，禁止操作始终拒绝" },
 ];
 
@@ -191,10 +192,19 @@ export function aiCreatedTerminalOf(ev: Record<string, unknown>): AiCreatedTermi
 
 const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "allow_persistent" | "deny", string> = {
   allow: "已允许一次",
-  allow_session: "本轮已允许此类",
+  allow_session: "本会话已允许此类",
   allow_persistent: "已永久允许（可随时在授权管理中撤销）",
   deny: "已拒绝",
 };
+
+const CONFIRM_HELP =
+  "「允许一次」只放行这一次；「本会话允许」在本次对话中不再询问同类操作；「永久允许」写入授权管理，可随时撤销。高危、无法判断和生产环境的操作每次都会询问。想让某类操作每次都先确认，可在「设置 → AI 拦截规则」中添加。";
+
+function confirmTitle(risk: string | undefined): string {
+  if (risk === "danger") return "高危操作，需要你确认";
+  if (risk === "unknowable") return "无法判断影响，需要你确认";
+  return "需要你确认";
+}
 
 const RULE_CAPABLE_TOOLS = new Set(["write_file", "edit_file", "exec_commands", "send_keys"]);
 
@@ -3160,7 +3170,9 @@ function AiChatTab({
             <div
               ref={confirmCardRef}
               tabIndex={-1}
-              className="nx-alert mt-2.5 outline-none"
+              role="group"
+              aria-label={`${confirmTitle(confirmCard.risk)}：${toolLabel(confirmCard.tool)}`}
+              className={`${confirmCard.risk === "danger" ? "nx-alert nx-alert-danger" : "nx-alert"} mt-2.5 outline-none`}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
@@ -3170,10 +3182,20 @@ function AiChatTab({
               }}
             >
               <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
-                <IconAlert size={13} />
-                需要你确认
+                <IconShield size={13} className="shrink-0" />
+                <span className="min-w-0 truncate">{confirmTitle(confirmCard.risk)}</span>
                 <span className="nx-spacer" />
-                <span className="nx-badge nx-badge-amber">{toolLabel(confirmCard.tool)}</span>
+                <span className={confirmCard.risk === "danger" ? "nx-badge nx-badge-red" : "nx-badge nx-badge-amber"}>
+                  {toolLabel(confirmCard.tool)}
+                </span>
+                <span
+                  className="shrink-0 cursor-help text-neutral-500"
+                  title={CONFIRM_HELP}
+                  aria-label={CONFIRM_HELP}
+                  role="img"
+                >
+                  <IconInfo size={12} />
+                </span>
               </div>
               <ConfirmBody card={confirmCard} />
               {productionNames && (
@@ -3183,47 +3205,47 @@ function AiChatTab({
                   onStateChange={handleProductionState}
                 />
               )}
-              <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
-                如需更严格控制，可添加拦截规则；如需减少确认，可选择「本轮允许此类」或调整权限模式。按 Esc 默认拒绝。
-              </div>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
-                  className="nx-btn nx-btn-primary nx-btn-xs"
+                  className={`nx-btn ${confirmCard.risk === "danger" ? "nx-btn-danger-solid" : "nx-btn-primary"} nx-btn-xs`}
+                  title="只允许这一次"
                   disabled={submittingCardId === confirmCard.id || productionBlocked}
                   onClick={() => void confirm("allow")}
                 >
                   允许一次
                 </button>
-                <button
-                  className="nx-btn nx-btn-outline nx-btn-xs"
-                  disabled={submittingCardId === confirmCard.id || productionBlocked}
-                  onClick={() => void confirm("allow_session")}
-                >
-                  本轮允许此类
-                </button>
+                {confirmCard.sessionScope && (
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-xs"
+                    title={`本次对话中不再询问：${confirmCard.sessionScope}`}
+                    disabled={submittingCardId === confirmCard.id || productionBlocked}
+                    onClick={() => void confirm("allow_session")}
+                  >
+                    本会话允许
+                  </button>
+                )}
                 {confirmCard.risk === "needs_confirm" && RULE_CAPABLE_TOOLS.has(confirmCard.tool) && (
-                  <span className="inline-flex flex-wrap items-center gap-1">
-                    <button
-                      className="nx-btn nx-btn-outline nx-btn-xs"
-                      title={`${permanentScopeText(confirmCard)}；仅覆盖普通需确认操作，高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝；可随时在授权管理中撤销`}
-                      disabled={submittingCardId === confirmCard.id || productionBlocked}
-                      onClick={() => void confirm("allow_persistent")}
-                    >
-                      永久允许
-                    </button>
-                    <span className="text-[10px] text-neutral-500">{permanentScopeText(confirmCard)}</span>
-                  </span>
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-xs"
+                    title={`${permanentScopeText(confirmCard)}；高危或无法判断的操作仍会询问，可随时在授权管理中撤销`}
+                    disabled={submittingCardId === confirmCard.id || productionBlocked}
+                    onClick={() => void confirm("allow_persistent")}
+                  >
+                    永久允许
+                  </button>
                 )}
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs"
+                  title="拒绝后 AI 会收到「用户拒绝了此操作」（Esc）"
                   disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("deny")}
                 >
                   拒绝
                 </button>
+                <span className="nx-spacer" />
                 {interceptionRuleFromCard(confirmCard) && (
                   <button
-                    className="nx-btn nx-btn-outline nx-btn-xs"
+                    className="text-[10.5px] text-neutral-500 underline-offset-2 hover:text-neutral-300 hover:underline"
                     title="打开设置中的拦截规则，并预填当前操作"
                     onClick={() => {
                       const rule = interceptionRuleFromCard(confirmCard);
@@ -3233,10 +3255,15 @@ function AiChatTab({
                       ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
                     }}
                   >
-                    去设置拦截规则
+                    以后都拦截
                   </button>
                 )}
               </div>
+              {confirmCard.sessionScope && (
+                <div className="mt-1.5 text-[10.5px] leading-relaxed text-neutral-500">
+                  「本会话允许」后，本次对话内不再询问：{confirmCard.sessionScope}
+                </div>
+              )}
             </div>
           )}
 
@@ -3697,6 +3724,20 @@ function toolLabel(tool: string): string {
       return "发送按键";
     case "read_screen":
       return "读取屏幕";
+    case "terminal_create":
+      return "新建终端";
+    case "docker_exec":
+      return "容器内执行";
+    case "docker_control":
+      return "容器操作";
+    case "db_query":
+      return "数据库查询";
+    case "redis_command":
+      return "Redis 命令";
+    case "send_reminder":
+      return "定时提醒";
+    case "shell_history":
+      return "读取 shell 历史";
     default:
       return tool;
   }
@@ -3872,33 +3913,53 @@ function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   );
 }
 
+const POLICY_DENIED_PREFIX = "权限策略已拒绝: ";
+const USER_DENIED_TEXT = "用户拒绝了此操作";
+
+// blockedOutcome recognizes the two refusals the backend reports as tool
+// failures, so the card shows them as interceptions rather than errors.
+function blockedOutcome(text: string): { by: "policy" | "user"; reason: string } | null {
+  const trimmed = text.trim();
+  if (trimmed.startsWith(POLICY_DENIED_PREFIX)) return { by: "policy", reason: trimmed.slice(POLICY_DENIED_PREFIX.length) };
+  if (trimmed === USER_DENIED_TEXT) return { by: "user", reason: "" };
+  return null;
+}
+
 function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
   const [open, setOpen] = useState(false);
   const running = item.summary === undefined;
   const full = item.text ?? "";
   const preview = item.summary ?? "";
-  const expandable = full.length > preview.length;
-  const body = open ? full : preview;
+  const blocked = !running && !item.ok && !item.panic ? blockedOutcome(full || preview) : null;
+  const expandable = !blocked && full.length > preview.length;
+  const body = blocked ? (blocked.by === "policy" ? `拦截原因：${blocked.reason}` : "你拒绝了这次操作，未执行。") : open ? full : preview;
   return (
     <div
       className="rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]"
       aria-busy={running}
     >
       <div className="flex items-center gap-1.5">
-        <span className="nx-badge nx-badge-purple font-mono">{item.name}</span>
+        <span className="nx-badge nx-badge-purple" title={item.name}>{toolLabel(item.name)}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.display}>
           {item.display}
         </span>
-        <span className="sr-only">{running ? "工具执行中" : item.panic ? "工具执行出错" : item.ok ? "工具执行成功" : "工具执行失败"}</span>
+        <span className="sr-only">
+          {running ? "工具执行中" : item.panic ? "工具执行出错" : item.ok ? "工具执行成功" : blocked ? (blocked.by === "policy" ? "已被权限策略拦截" : "你已拒绝") : "工具执行失败"}
+        </span>
         {item.panic && !running ? <span className="nx-badge nx-badge-red">出错</span> : null}
-        {running ? (
+        {blocked ? (
+          <span className={blocked.by === "policy" ? "nx-badge nx-badge-amber" : "nx-badge"}>
+            <IconShield size={10} className="mr-0.5 inline" />
+            {blocked.by === "policy" ? "已拦截" : "已拒绝"}
+          </span>
+        ) : running ? (
           <IconLoader size={11} className="animate-spin text-amber-300" />
         ) : item.ok ? (
           <IconCheck size={12} className="text-green-300" />
         ) : (
           <IconXCircle size={12} className="text-red-300" />
         )}
-        {!running && item.exitCode !== null && item.exitCode !== undefined && (
+        {!running && !blocked && item.exitCode !== null && item.exitCode !== undefined && (
           <span className="font-mono text-[10px] text-neutral-500">{item.exitCode}</span>
         )}
       </div>
@@ -4062,6 +4123,11 @@ function ConfirmBody({ card }: { card: ConfirmItem }) {
           {card.rendered}
         </pre>
         {urlBlock}
+        {card.reason ? (
+          <div className="mb-1.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
+            {card.reason}
+          </div>
+        ) : null}
       </>
     );
   }

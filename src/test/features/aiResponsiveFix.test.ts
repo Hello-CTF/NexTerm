@@ -202,7 +202,7 @@ describe("M119 AI responsive fixes", () => {
     expect(body).not.toBeNull();
     expect(body!.textContent).toContain("rm -rf");
     const submit = [...alert!.querySelectorAll("button")];
-    expect(submit.length).toBeGreaterThanOrEqual(4);
+    expect(submit.map((button) => button.textContent)).toEqual(expect.arrayContaining(["允许一次", "拒绝"]));
   });
 
   it("makes the UsageRing details reachable by keyboard focus, not hover only", () => {

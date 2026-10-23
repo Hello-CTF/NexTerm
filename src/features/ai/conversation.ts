@@ -70,6 +70,9 @@ export type ChatItem =
       risk?: string;
       commands?: string[];
       rulePattern?: string;
+      // sessionScope names what "本会话允许" covers; absent means the card
+      // offers no session approval (risky, production or cross-target calls).
+      sessionScope?: string;
       requestId?: string;
       hitlAttempt?: number;
       resolution?: string;
@@ -690,6 +693,7 @@ export function applyAiEvent(
             risk: typeof ev.risk === "string" ? ev.risk : undefined,
             commands: commands && commands.length > 0 ? commands : undefined,
             rulePattern: typeof ev.rulePattern === "string" ? ev.rulePattern : undefined,
+            sessionScope: typeof ev.sessionScope === "string" && ev.sessionScope !== "" ? ev.sessionScope : undefined,
             ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),
             ...interactionIdentityOf(ev),
           },

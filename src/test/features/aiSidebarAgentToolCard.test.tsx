@@ -365,9 +365,9 @@ describe("AiSidebar agent tool card mounting", () => {
       requestId: "req-1",
       attempt: 1,
     });
-    await flushUntil(() => agentCard(view!, "call-1")?.textContent?.includes("等待审批") === true);
+    await flushUntil(() => agentCard(view!, "call-1")?.textContent?.includes("等待你确认") === true);
     const card = agentCard(view!, "call-1")!;
-    expect(card.textContent).toContain("请求 req-1");
+    expect(card.querySelector('[title^="请求 req-1"]')).not.toBeNull();
 
     await clickButtonFlush(card, "批准一次");
     await flushUntil(() => mocks.confirm.mock.calls.length > 0);
@@ -393,7 +393,7 @@ describe("AiSidebar agent tool card mounting", () => {
       attempt: 1,
       requiredEnvironmentNames: ["production"],
     });
-    await flushUntil(() => agentCard(view!, "call-1")?.textContent?.includes("等待审批") === true);
+    await flushUntil(() => agentCard(view!, "call-1")?.textContent?.includes("等待你确认") === true);
 
     // The delegate refuses before the challenge is answered with typed names.
     await clickButtonFlush(agentCard(view!, "call-1")!, "批准一次");
@@ -576,8 +576,8 @@ describe("AiSidebar agent tool card mounting", () => {
     await flushUntil(() => agentCard(view!, "call-9")!.textContent?.includes("build@web-01:/srv/app") === true);
     const card = agentCard(view!, "call-9")!;
     expect(card.textContent).toContain("生产环境");
-    expect(card.textContent).toContain("等待审批");
-    expect(card.textContent).toContain("请求 req-9");
+    expect(card.textContent).toContain("等待你确认");
+    expect(card.querySelector('[title^="请求 req-9"]')).not.toBeNull();
 
     await emit({
       type: "toolResult",

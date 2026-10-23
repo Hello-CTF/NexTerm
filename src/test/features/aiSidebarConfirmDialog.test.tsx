@@ -180,11 +180,11 @@ describe("AiSidebar permission request dialogs", () => {
     expect(text).toContain("$ systemctl restart nginx");
     expect(text).toContain("包含 URL");
     expect(text).toContain("http://example.com/install.sh");
-    expect(text).toContain("按 Esc 默认拒绝");
+    const deny = [...(mounted?.container.querySelectorAll("button") ?? [])].find((button) => button.textContent === "拒绝");
+    expect(deny?.getAttribute("title")).toContain("Esc");
     const permanent = permanentButton();
     expect(permanent).not.toBeNull();
     expect(permanent?.getAttribute("title")).toContain("永久允许该设备执行普通命令");
-    expect(text).toContain("永久允许该设备执行普通命令");
     expect(permanent?.getAttribute("title")).toContain("可随时在授权管理中撤销");
   });
 
@@ -471,23 +471,62 @@ describe("AiSidebar permission request dialogs", () => {
     expect(call.message).toContain("构建机");
   });
 
-  it("syncs allow-for-this-run decisions and result copy", async () => {
+  it("offers a session approval that names its scope and syncs the decision", async () => {
     await sendAndEmit([
       {
         type: "confirmRequired",
         id: "call-round",
         tool: "exec_commands",
-        rendered: "$ ls",
+        rendered: "$ terraform plan",
         risk: "needs_confirm",
-        commands: ["ls"],
+        commands: ["terraform plan"],
+        sessionScope: "terraform 命令",
         confirmationNonce: "n-round",
       },
     ]);
-    clickButton(mounted!.container, "本轮允许此类");
+    expect(mounted!.container.textContent).toContain("本次对话内不再询问：terraform 命令");
+    clickButton(mounted!.container, "本会话允许");
     await flush();
     expect(mocks.confirm.mock.calls[0][0].decision).toBe("allow_session");
-    expect(mounted!.container.textContent).toContain("本轮已允许此类");
-    expect(mounted!.container.textContent).not.toContain("本会话允许此类");
+    expect(mounted!.container.textContent).toContain("本会话已允许此类");
+  });
+
+  it("shows policy and user refusals as interceptions instead of failures", async () => {
+    await sendAndEmit([
+      { type: "toolCall", id: "call-policy", name: "exec_commands", display: "rm -rf /data" },
+      { type: "toolResult", id: "call-policy", ok: false, summary: "权限策略已拒绝: 只读权限模式禁止此操作", text: "权限策略已拒绝: 只读权限模式禁止此操作", exitCode: 1 },
+      { type: "toolCall", id: "call-user", name: "write_file", display: "/etc/hosts" },
+      { type: "toolResult", id: "call-user", ok: false, summary: "用户拒绝了此操作", text: "用户拒绝了此操作", exitCode: 1 },
+      { type: "toolCall", id: "call-failed", name: "exec_commands", display: "false" },
+      { type: "toolResult", id: "call-failed", ok: false, summary: "exit status 1", text: "exit status 1", exitCode: 1 },
+    ]);
+    const text = mounted!.container.textContent ?? "";
+    expect(text).toContain("已拦截");
+    expect(text).toContain("拦截原因：只读权限模式禁止此操作");
+    expect(text).toContain("你拒绝了这次操作，未执行。");
+    expect(text).toContain("exit status 1");
+    expect(text.split("已拦截").length - 1).toBe(1);
+  });
+
+  it("hides the session approval when the backend offers no scope", async () => {
+    await sendAndEmit([
+      {
+        type: "confirmRequired",
+        id: "call-danger",
+        tool: "exec_commands",
+        rendered: "$ kill -9 1",
+        risk: "danger",
+        reason: "进程终止",
+        commands: ["kill -9 1"],
+        confirmationNonce: "n-danger",
+      },
+    ]);
+    const labels = [...mounted!.container.querySelectorAll("button")].map((button) => button.textContent);
+    expect(labels).toContain("允许一次");
+    expect(labels).not.toContain("本会话允许");
+    expect(labels).not.toContain("永久允许");
+    expect(mounted!.container.textContent).toContain("高危操作，需要你确认");
+    expect(mounted!.container.textContent).toContain("进程终止");
   });
 
   it("uses structured commands for command interception rules and preview.path for file rules", async () => {
@@ -503,7 +542,7 @@ describe("AiSidebar permission request dialogs", () => {
         confirmationNonce: "n-rule-command",
       },
     ]);
-    clickButton(mounted!.container, "去设置拦截规则");
+    clickButton(mounted!.container, "以后都拦截");
     await flush();
     expect(useUi.getState().aiRulePrefill).toBe("ls -l\npwd");
 
@@ -524,7 +563,7 @@ describe("AiSidebar permission request dialogs", () => {
         confirmationNonce: "n-rule-file",
       },
     ]);
-    clickButton(mounted!.container, "去设置拦截规则");
+    clickButton(mounted!.container, "以后都拦截");
     await flush();
     expect(useUi.getState().aiRulePrefill).toBe("/etc/nginx/nginx.conf");
   });
@@ -539,7 +578,7 @@ describe("AiSidebar permission request dialogs", () => {
         confirmationNonce: "n-unsupported",
       },
     ]);
-    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "去设置拦截规则")).toBe(false);
+    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "以后都拦截")).toBe(false);
 
     mocks.getPermission.mockRejectedValueOnce(new Error("权限服务不可用"));
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);

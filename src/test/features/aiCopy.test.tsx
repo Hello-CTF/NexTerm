@@ -149,7 +149,7 @@ describe("M134 AI copy", () => {
     expect(allow).not.toBeNull();
     const alert = allow!.closest(".nx-alert");
     expect(alert).not.toBeNull();
-    expect(alert!.textContent).toContain("可添加拦截规则");
+    expect(alert!.querySelector('[role="img"]')?.getAttribute("title")).toContain("「设置 → AI 拦截规则」");
     expect(alert!.textContent).not.toContain("自定义危险操作");
   });
 

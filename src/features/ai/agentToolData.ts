@@ -84,6 +84,8 @@ export class ToolHandleRegistry {
 // approval section rather than presenting a resolved card as pending.
 const RESOLUTION_DECISION: Record<string, AgentApprovalDecision> = {
   已允许一次: "approve_once",
+  本会话已允许此类: "approve_session",
+  // Label stamped by earlier versions on conversations saved before the rename.
   本轮已允许此类: "approve_session",
   "已永久允许（可随时在授权管理中撤销）": "approve_persistent",
   已拒绝: "deny",
@@ -102,6 +104,7 @@ export function approvalFromConfirmCard(card: ConfirmItem | null | undefined): A
     nonce: card.nonce,
     attempt: card.hitlAttempt ?? 1,
     decision: card.resolution === undefined ? null : RESOLUTION_DECISION[card.resolution],
+    ...(card.sessionScope ? { sessionScope: card.sessionScope } : {}),
   };
 }
 

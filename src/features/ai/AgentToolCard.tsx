@@ -124,8 +124,8 @@ export function AgentToolCard({
         (approval.decision === null ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-1 border-t border-neutral-800 pt-1.5">
             <IconShield size={11} className="shrink-0 text-amber-300" />
-            <span className="text-[10.5px] text-neutral-400">
-              等待审批 · 请求 {approval.requestId} · 第 {approval.attempt} 次
+            <span className="text-[10.5px] text-neutral-400" title={`请求 ${approval.requestId} · 第 ${approval.attempt} 次`}>
+              等待你确认
             </span>
             <span className="nx-spacer" />
             <button
@@ -136,14 +136,16 @@ export function AgentToolCard({
             >
               批准一次
             </button>
-            <button
-              className="nx-btn nx-btn-outline nx-btn-xs"
-              disabled={approvalBusy || !call.isMine}
-              title={call.isMine ? "本会话内同类调用不再询问" : "仅所有者可审批"}
-              onClick={() => onApproval?.(approval.requestId, "approve_session")}
-            >
-              本会话批准
-            </button>
+            {approval.sessionScope && (
+              <button
+                className="nx-btn nx-btn-outline nx-btn-xs"
+                disabled={approvalBusy || !call.isMine}
+                title={call.isMine ? `本次对话中不再询问：${approval.sessionScope}` : "仅所有者可审批"}
+                onClick={() => onApproval?.(approval.requestId, "approve_session")}
+              >
+                本会话批准
+              </button>
+            )}
             <button
               className="nx-btn nx-btn-outline nx-btn-xs"
               disabled={approvalBusy || !call.isMine}
@@ -156,7 +158,7 @@ export function AgentToolCard({
         ) : (
           <div className="mt-1.5 border-t border-neutral-800 pt-1.5 text-[10.5px] text-neutral-500">
             <IconShield size={10} className="mr-1 inline shrink-0" />
-            {APPROVAL_LABEL[approval.decision]} · 请求 {approval.requestId}
+            <span title={`请求 ${approval.requestId}`}>{APPROVAL_LABEL[approval.decision]}</span>
           </div>
         ))}
 

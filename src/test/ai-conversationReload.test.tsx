@@ -235,7 +235,7 @@ describe("AiSidebar history reload", () => {
     expect(text()).toContain("已完成修改");
     expect(text()).toContain("reload 完成");
 
-    const execBadges = text().split("exec_commands").length - 1;
+    const execBadges = view!.container.querySelectorAll('[title="exec_commands"]').length;
     expect(execBadges).toBe(1);
   });
 

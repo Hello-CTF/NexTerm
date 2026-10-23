@@ -667,7 +667,7 @@ export function SettingsView() {
             )}
           </div>
           <p className="nx-hint mb-3.5">
-            命令命中规则后，读写与完全静默模式下每次先向你确认，只读与无人值守模式下直接拒绝；子串匹配，忽略大小写。
+            命令、文件路径或 SQL 命中规则后，读写与自动执行模式下每次先向你确认，只读与无人值守模式下直接拒绝。按整词匹配、忽略大小写，例如 rm 会命中 rm -rf，但不会命中 format。
           </p>
 
           {aiPerm && aiPerm.dangerRules.length > 0 && (
