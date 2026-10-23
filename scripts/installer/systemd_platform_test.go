@@ -390,3 +390,23 @@ func TestSystemdBootstrapRunsInServiceWorkingDirectory(t *testing.T) {
 	want, _ := filepath.EvalSymlinks(s.path("var/lib/nexterm"))
 	expect(t, got == want, "the bootstrap must run in the service's WorkingDirectory: %q != %q", got, want)
 }
+
+func TestSystemdInstallPrintsNextSteps(t *testing.T) {
+	s := newSandbox(t, stubOptions{})
+	got := s.mustInstall(s.payload("v1"), installOptions{})
+	for _, line := range []string{
+		"next steps:",
+		"the web UI listens on 127.0.0.1:8080, reachable from this machine only",
+		"ssh -L 8080:127.0.0.1:8080 <user>@<this-server>, then open http://localhost:8080",
+		"settings: /etc/nexterm/nexterm.env (apply with: systemctl restart nexterm-server.service)",
+		"logs: journalctl -u nexterm-server.service",
+	} {
+		expect(t, strings.Contains(got.stdout, line), "stdout lacks %q: %s", line, got.stdout)
+	}
+	expect(t, strings.Index(got.stdout, "next steps:") < strings.Index(got.stdout, "install: done"), "next steps must precede done")
+
+	// A server already exposed on all interfaces is pointed at its own address.
+	s.write("etc/nexterm/nexterm.env", strings.Replace(s.read("etc/nexterm/nexterm.env"), "NEXTERM_LISTEN=127.0.0.1:8080", "NEXTERM_LISTEN=0.0.0.0:9000", 1))
+	upgrade := s.mustInstall(s.payload("v2"), installOptions{})
+	expect(t, strings.Contains(upgrade.stdout, "open http://<this-server>:9000") && !strings.Contains(upgrade.stdout, "ssh -L"), "stdout: %s", upgrade.stdout)
+}
