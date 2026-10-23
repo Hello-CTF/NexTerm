@@ -24,7 +24,8 @@ const copy = {
     heroLead: "一个工作台", heroAccent: "管好每一台服务器",
     intro: "可接管的持久终端、会动手的 AI 助手，加上文件、容器、数据库与设备管理。桌面开箱即用，也能部署成团队服务端。",
     download: "下载 NexTerm", source: "GitHub 源码",
-    views: [["shell", "终端", "deploy@web-01 — 终端与命令块", "NexTerm 的 Shell 终端与命令块界面"], ["ai", "AI 助手", "AI 助手 — 排查 API 延迟", "NexTerm 的 AI 助手对话与命令确认界面"], ["files", "文件", "web-01 — 远程文件", "NexTerm 的 SFTP 文件树与远程编辑界面"], ["replay", "回放", "终端历史 — 时间轴回放", "NexTerm 的终端历史时间轴回放界面"]] as View[],
+    views: [["shell", "终端", "deploy@web-01 — 终端与命令块", "NexTerm 的 Shell 终端与命令块界面"], ["files", "文件", "web-01 — 远程文件", "NexTerm 的 SFTP 文件树与远程编辑界面"], ["docker", "Docker", "web-01 — 容器", "NexTerm 的 Docker 容器列表、日志与启停界面"], ["db", "数据库", "app — SQL 查询", "NexTerm 的数据库表浏览与 SQL 查询界面"]] as View[],
+    aiWindow: "AI 助手 — 排查 API 延迟", replayWindow: "终端历史 — 时间轴回放",
     aiKicker: "AI 助手", aiTitle: "不只给建议，而是真的动手", aiText: "AI 读取当前主机的终端、文件和容器上下文，直接执行排查与修复。每一步都看得见，写操作需要你点头。",
     aiPoints: [["20+ 内置工具", "执行命令、读写和编辑文件、查看 Docker 容器与日志、读取终端输出，可派生子任务并行处理。"], ["先计划，再执行", "计划模式先给出方案；写操作展示命令或文件 diff，可允许一次、本会话允许或拒绝，高危操作始终询问。"], ["按主机授权", "按资产授予执行命令、写文件、发送按键等权限，可限定路径（如 /etc/nginx/**），有效期 1 小时到 30 天。"], ["接管你的终端", "AI 可以在你正在使用的终端里直接输入，按 Esc 随时收回控制。"], ["定时任务与长期记忆", "用 cron 表达式让 AI 定时巡检；长期记忆保存环境约定，拒绝写入密钥类内容。"], ["任意模型", "OpenAI 兼容接口，内置 DeepSeek、Kimi、GLM、Ollama 预设，支持回退模型和代理；本地模型无需 API Key。"]] as Item[],
     sessionKicker: "持久终端", sessionTitle: "关掉窗口，持久终端还在", sessionText: "成功启用 durable/helper 的 SSH shell 和受管设备持久 shell 在后台持续运行。App 重启、网络中断或换一台设备，都能重新接管并补回错过的输出；WinRM 非交互终端随关闭结束。",
@@ -42,7 +43,8 @@ const copy = {
     heroLead: "One workbench for", heroAccent: "every server you run",
     intro: "Re-attachable persistent terminals and an AI assistant that does the work, plus files, containers, databases, and devices. Ready on your desktop, or deploy it as a server for your team.",
     download: "Download NexTerm", source: "View on GitHub",
-    views: [["shell", "Terminal", "deploy@web-01 — terminal and command blocks", "NexTerm shell terminal and command blocks"], ["ai", "AI assistant", "AI assistant — investigating API latency", "NexTerm AI assistant and command confirmation"], ["files", "Files", "web-01 — remote files", "NexTerm SFTP file tree and remote editor"], ["replay", "Replay", "Terminal history — timeline replay", "NexTerm terminal history timeline"]] as View[],
+    views: [["shell", "Terminal", "deploy@web-01 — terminal and command blocks", "NexTerm shell terminal and command blocks"], ["files", "Files", "web-01 — remote files", "NexTerm SFTP file tree and remote editor"], ["docker", "Docker", "web-01 — containers", "NexTerm Docker container list, logs and controls"], ["db", "Database", "app — SQL query", "NexTerm database table browser and SQL query"]] as View[],
+    aiWindow: "AI assistant — investigating API latency", replayWindow: "Terminal history — timeline replay",
     aiKicker: "AI assistant", aiTitle: "Not just advice. It does the work.", aiText: "The assistant reads the terminal, files, and containers of the current host, then investigates and fixes. Every step is visible, and writes wait for your approval.",
     aiPoints: [["20+ built-in tools", "Run commands, read and edit files, inspect Docker containers and logs, read terminal output, and spawn sub-tasks to work in parallel."], ["Plan, then execute", "Plan mode proposes first. Writes show the command or file diff: allow once, allow for this conversation, or deny. High-risk actions always ask."], ["Per-host grants", "Grant command, file-write, or keystroke permissions per asset, scoped to paths like /etc/nginx/**, for 1 hour to 30 days."], ["Drives your live terminal", "The assistant can type into the terminal you are using. Press Esc to take control back at any time."], ["Scheduled jobs and memory", "Run AI checks on a cron schedule. Long-term memory keeps your environment conventions and rejects secrets."], ["Bring any model", "Any OpenAI-compatible endpoint, with DeepSeek, Kimi, GLM, and Ollama presets, fallback models, and proxies. Local models need no API key."]] as Item[],
     sessionKicker: "Persistent sessions", sessionTitle: "Close the window. Persistent shells stay.", sessionText: "SSH shells with the durable helper successfully enabled and persistent managed-device shells keep running in the background. After an app restart, a dropped network, or a device switch, take them over and catch up on missed output; WinRM non-interactive terminals end when closed.",
@@ -143,7 +145,7 @@ function App() {
               })}
             </div>
           </div>
-          <Window title={t.views[1][2]} className="split-window"><FeatureDemo mode="ai" language={language} /></Window>
+          <Window title={t.aiWindow} className="split-window"><FeatureDemo mode="ai" language={language} /></Window>
         </div>
       </section>
 
@@ -158,7 +160,7 @@ function App() {
               })}
             </div>
           </div>
-          <Window title={t.views[3][2]} className="split-window"><FeatureDemo mode="replay" language={language} /></Window>
+          <Window title={t.replayWindow} className="split-window"><FeatureDemo mode="replay" language={language} /></Window>
         </div>
       </section>
 

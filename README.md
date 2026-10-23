@@ -60,7 +60,7 @@ NexTerm 把远程运维放进一个窗口：通过 SSH、WinRM 或设备 agent �
 | Linux 桌面（amd64 / arm64） | `nexterm-desktop_linux_<架构>_x.y.z.deb`，用 `apt install ./<包名>.deb` 安装 |
 | Linux 服务器 | 见[部署服务端](#部署服务端) |
 | Android（预览，arm64） | `nexterm-desktop_android_arm64_x.y.z.apk` |
-| iOS / iPadOS（预览） | TestFlight 邀请安装，Release 不提供 IPA |
+| iOS / iPadOS（预览） | [加入 TestFlight 测试](https://testflight.apple.com/join/ds62pzPz)，Release 不提供 IPA |
 | 懒猫微服（amd64） | 应用中心 |
 
 移动端为预览版，完成真机签名验收前不作为正式支持平台。桌面版会自动检查更新，安装前按 `SHA256SUMS` 校验。Windows 安装包没有代码签名，提示未知发布者时选择「更多信息 → 仍要运行」。macOS 提示无法验证开发者时，在「系统设置 → 隐私与安全性」点「仍要打开」；提示已损坏则执行 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。

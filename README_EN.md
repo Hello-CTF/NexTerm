@@ -60,7 +60,7 @@ Get the latest build from [Releases](https://github.com/Hello-CTF/NexTerm/releas
 | Linux desktop (amd64 / arm64) | `nexterm-desktop_linux_<arch>_x.y.z.deb`, install with `apt install ./<package>.deb` |
 | Linux server | See [Deploy the server](#deploy-the-server) |
 | Android (preview, arm64) | `nexterm-desktop_android_arm64_x.y.z.apk` |
-| iOS / iPadOS (preview) | TestFlight invitation; releases do not ship an IPA |
+| iOS / iPadOS (preview) | [Join the TestFlight beta](https://testflight.apple.com/join/ds62pzPz); releases do not ship an IPA |
 | LazyCat MicroServer (amd64) | App Store |
 
 Mobile builds are previews and are not officially supported until real-device signing is verified. The desktop app checks for updates automatically and verifies them against `SHA256SUMS`. Windows installers are not code-signed; if Windows reports an unknown publisher, choose "More info → Run anyway". If macOS cannot verify the developer, choose "Open Anyway" in System Settings → Privacy & Security; if it reports the app is damaged, run `xattr -dr com.apple.quarantine /Applications/NexTerm.app`.

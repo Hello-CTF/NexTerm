@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { Check, FileCode2, Folder, Pause, Play, RotateCcw, Server, SquareTerminal, X } from "lucide-react";
+import { Box, Check, Database, FileCode2, Folder, Pause, Play, RotateCcw, Server, SquareTerminal, Table2, X } from "lucide-react";
 import { formatReplayClock, TranscriptReplay, type ReplayChunk, type ReplaySink } from "../../src/features/terminal/transcriptReplay";
 import "@xterm/xterm/css/xterm.css";
 
-export type DemoMode = "shell" | "ai" | "files" | "replay";
+export type DemoMode = "shell" | "ai" | "files" | "replay" | "docker" | "db";
 type Language = "zh" | "en";
 
 const copy = {
@@ -23,6 +23,10 @@ const copy = {
     modified: "预览修改", original: "原始文件",
     replayHint: "拖动时间轴查看任意时刻的终端输出",
     play: "播放", pause: "暂停", speed: "回放倍速", progress: "回放进度",
+    docker: "容器", containers: "容器", logs: "日志", restart: "重启", stop: "停止", start: "启动",
+    running: "运行中", stopped: "已停止", restarting: "重启中",
+    database: "数据库", tables: "表", run: "运行", rows: "行", dangerQuery: "试试 DELETE",
+    dangerNote: "DELETE / DROP 等危险语句执行前会要求确认。示例中不会执行。",
   },
   en: {
     sample: "Interactive demo · Sample data, no live connection",
@@ -38,6 +42,10 @@ const copy = {
     modified: "Preview change", original: "Original file",
     replayHint: "Drag the timeline to inspect terminal output at any point",
     play: "Play", pause: "Pause", speed: "Replay speed", progress: "Replay position",
+    docker: "Containers", containers: "Containers", logs: "Logs", restart: "Restart", stop: "Stop", start: "Start",
+    running: "Running", stopped: "Stopped", restarting: "Restarting",
+    database: "Database", tables: "Tables", run: "Run", rows: "rows", dangerQuery: "Try DELETE",
+    dangerNote: "Dangerous statements such as DELETE or DROP ask for confirmation first. The sample never runs them.",
   },
 } as const;
 
@@ -308,11 +316,114 @@ function ReplayDemo({ language }: { language: Language }) {
   </div>;
 }
 
+type ContainerState = "running" | "stopped" | "restarting";
+
+const containerRows = [
+  { name: "api-server", image: "nexterm/api:2.4", cpu: "4.8%", mem: "812MiB", logs: ["15:12:40 INFO  GET /healthz 200 7ms", "15:12:42 INFO  GET /api/projects 200 39ms", "15:12:44 WARN  GET /api/reports 200 584ms", "15:12:45 INFO  GET /healthz 200 7ms"] },
+  { name: "postgres", image: "postgres:16", cpu: "0.7%", mem: "126MiB", logs: ["LOG:  checkpoint starting: time", "LOG:  checkpoint complete: wrote 42 buffers", "LOG:  database system is ready to accept connections"] },
+  { name: "redis", image: "redis:7", cpu: "0.2%", mem: "18MiB", logs: ["1:M * Ready to accept connections tcp", "1:M * DB saved on disk", "1:M * Background saving terminated with success"] },
+  { name: "nginx", image: "nginx:1.27", cpu: "0.1%", mem: "9MiB", logs: ["10.0.0.8 - - \"GET / HTTP/1.1\" 200 612", "10.0.0.8 - - \"GET /api/projects HTTP/1.1\" 200 1840"] },
+];
+
+function DockerDemo({ language }: { language: Language }) {
+  const t = copy[language];
+  const [selected, setSelected] = useState(0);
+  const [states, setStates] = useState<ContainerState[]>(containerRows.map(() => "running"));
+  const container = containerRows[selected];
+  const state = states[selected];
+  const setState = (index: number, next: ContainerState) => setStates((current) => current.map((value, i) => (i === index ? next : value)));
+  const restart = () => {
+    setState(selected, "restarting");
+    const index = selected;
+    window.setTimeout(() => setState(index, "running"), 900);
+  };
+  const label = (value: ContainerState) => (value === "running" ? t.running : value === "stopped" ? t.stopped : t.restarting);
+  return <div className="demo-scene demo-docker">
+    <Header language={language} title={t.docker} host="web-01 · Docker" />
+    <div className="demo-docker-grid">
+      <div className="demo-docker-table" role="listbox" aria-label={t.containers}>
+        {containerRows.map((row, index) => <button key={row.name} type="button" role="option" aria-selected={selected === index} className={selected === index ? "selected" : ""} onClick={() => setSelected(index)}>
+          <i className={`demo-dot ${states[index]}`} />
+          <span className="demo-docker-name">{row.name}</span>
+          <span className="demo-docker-image">{row.image}</span>
+          <span className="demo-docker-stat">{states[index] === "stopped" ? "—" : row.cpu}</span>
+          <span className="demo-docker-stat">{states[index] === "stopped" ? "—" : row.mem}</span>
+        </button>)}
+      </div>
+      <div className="demo-docker-logs">
+        <div className="demo-editor-bar"><span><Box size={12} /> {container.name} · {label(state)}</span>
+          <span className="demo-docker-actions">
+            <button type="button" disabled={state !== "running"} onClick={restart}><RotateCcw size={12} />{t.restart}</button>
+            {state === "stopped"
+              ? <button type="button" onClick={() => setState(selected, "running")}><Play size={12} />{t.start}</button>
+              : <button type="button" disabled={state !== "running"} onClick={() => setState(selected, "stopped")}><Pause size={12} />{t.stop}</button>}
+          </span>
+        </div>
+        <pre aria-label={t.logs}>{state === "stopped" ? "" : container.logs.join("\n")}</pre>
+      </div>
+    </div>
+    <div className="demo-footer"><Server size={13} />{containerRows.length} {t.containers}<span>docker · web-01</span></div>
+  </div>;
+}
+
+const tableData: Record<string, { columns: string[]; rows: string[][] }> = {
+  orders: { columns: ["id", "customer", "total", "status"], rows: [["1042", "acme", "¥ 1,280", "paid"], ["1041", "globex", "¥ 860", "shipped"], ["1040", "initech", "¥ 2,400", "paid"], ["1039", "acme", "¥ 320", "refunded"]] },
+  users: { columns: ["id", "name", "role", "last_login"], rows: [["7", "alice", "admin", "2026-10-23"], ["8", "bob", "ops", "2026-10-22"], ["9", "carol", "dev", "2026-10-20"]] },
+  products: { columns: ["sku", "name", "stock"], rows: [["NX-01", "Terminal Pro", "128"], ["NX-02", "Sync Seat", "64"], ["NX-03", "Device Agent", "512"]] },
+};
+
+function DatabaseDemo({ language }: { language: Language }) {
+  const t = copy[language];
+  const [table, setTable] = useState("orders");
+  const [query, setQuery] = useState("SELECT * FROM orders ORDER BY id DESC LIMIT 4;");
+  const [result, setResult] = useState<string | null>("orders");
+  const [warning, setWarning] = useState(false);
+  const pick = (name: string) => {
+    setTable(name);
+    setQuery(`SELECT * FROM ${name} LIMIT 4;`);
+    setResult(name);
+    setWarning(false);
+  };
+  const run = () => {
+    if (/^\s*(delete|drop|truncate|update)\b/i.test(query)) {
+      setWarning(true);
+      return;
+    }
+    setWarning(false);
+    setResult(table);
+  };
+  const data = result ? tableData[result] : null;
+  return <div className="demo-scene demo-db">
+    <Header language={language} title={t.database} host="app · PostgreSQL" />
+    <div className="demo-files-grid">
+      <nav className="demo-file-tree" aria-label={t.tables}><div><Database size={14} />app / public</div>
+        {Object.keys(tableData).map((name) => <button key={name} type="button" className={table === name ? "selected" : ""} onClick={() => pick(name)} aria-current={table === name ? "page" : undefined}><Table2 size={14} />{name}</button>)}
+      </nav>
+      <div className="demo-editor">
+        <div className="demo-db-query">
+          <textarea aria-label="SQL" value={query} spellCheck={false} onChange={(event) => setQuery(event.target.value)} />
+          <div>
+            <button type="button" className="primary" onClick={run}><Play size={12} />{t.run}</button>
+            <button type="button" onClick={() => { setQuery(`DELETE FROM ${table};`); setWarning(false); }}>{t.dangerQuery}</button>
+          </div>
+        </div>
+        {warning ? <div className="demo-db-warning" role="status">{t.dangerNote}</div> : data && <div className="demo-db-result">
+          <table><thead><tr>{data.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+            <tbody>{data.rows.map((row) => <tr key={row[0]}>{row.map((cell, index) => <td key={index}>{cell}</td>)}</tr>)}</tbody></table>
+        </div>}
+      </div>
+    </div>
+    <div className="demo-footer"><Check size={13} />{data && !warning ? `${data.rows.length} ${t.rows}` : "—"}<span>PostgreSQL 16</span></div>
+  </div>;
+}
+
 export function FeatureDemo({ mode, language }: { mode: DemoMode; language: Language }) {
   return <div className="feature-demo" data-mode={mode}>
     {mode === "shell" && <ShellDemo language={language} />}
     {mode === "ai" && <AiDemo language={language} />}
     {mode === "files" && <FilesDemo language={language} />}
     {mode === "replay" && <ReplayDemo language={language} />}
+    {mode === "docker" && <DockerDemo language={language} />}
+    {mode === "db" && <DatabaseDemo language={language} />}
   </div>;
 }

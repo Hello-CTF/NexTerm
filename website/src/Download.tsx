@@ -4,6 +4,7 @@ import { Apple, Check, Copy, Download, Fingerprint, Laptop, Monitor, Server, Sma
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const latestRelease = `${repository}/releases/latest`;
 const installCommand = "curl -fsSL https://nexterm.work/install.sh | sudo bash";
+const testFlightLink = "https://testflight.apple.com/join/ds62pzPz";
 
 type Language = "zh" | "en";
 type Arch = "amd64" | "arm64";
@@ -38,7 +39,7 @@ const text = {
       ["配置", "/etc/nexterm/nexterm.env，修改后执行 systemctl restart nexterm-server。默认 SQLite，也可切换 PostgreSQL / MySQL / MariaDB。请备份 /var/lib/nexterm 和 /etc/nexterm/master.key。"],
       ["升级", "再次执行同一条命令即可升级，服务会短暂重启，配置和数据都会保留；需要撤销时加 --rollback。"],
     ],
-    download: "下载", version: "最新版本", loading: "正在读取最新版本…", unavailable: "无法读取最新版本，请前往 Releases 下载。",
+    download: "下载", testflight: "加入 TestFlight 测试", version: "最新版本", loading: "正在读取最新版本…", unavailable: "无法读取最新版本，请前往 Releases 下载。",
     copy: "复制", copied: "已复制",
     notes: {
       windows: "运行安装器即可。安装包没有代码签名，提示未知发布者时选择「更多信息 → 仍要运行」。",
@@ -46,7 +47,7 @@ const text = {
       linux: "下载后执行：",
       server: "在带 systemd 的 Linux 服务器（amd64 / arm64）上执行（需要 root 权限）：",
       android: "预览版，适用于 arm64 设备。",
-      ios: "预览版通过 TestFlight 测试邀请安装，Release 不提供 IPA。",
+      ios: "预览版通过 TestFlight 安装：在 iPhone 或 iPad 上打开下面的链接，按提示安装 TestFlight 后加入测试。",
       lazycat: "在懒猫微服的应用中心搜索 NexTerm 安装，目前仅支持 amd64 机型。",
     },
   },
@@ -60,7 +61,7 @@ const text = {
       ["Configure", "/etc/nexterm/nexterm.env, then systemctl restart nexterm-server. SQLite by default; PostgreSQL, MySQL, and MariaDB are supported. Back up /var/lib/nexterm and /etc/nexterm/master.key."],
       ["Upgrade", "Run the same command again; the service restarts briefly and configuration and data are kept. Add --rollback to undo the last upgrade."],
     ],
-    download: "Download", version: "Latest version", loading: "Loading the latest version…", unavailable: "The latest version could not be loaded; download it from Releases.",
+    download: "Download", testflight: "Join the TestFlight beta", version: "Latest version", loading: "Loading the latest version…", unavailable: "The latest version could not be loaded; download it from Releases.",
     copy: "Copy", copied: "Copied",
     notes: {
       windows: "Run the installer. It is not code-signed; if Windows reports an unknown publisher, choose More info → Run anyway.",
@@ -68,7 +69,7 @@ const text = {
       linux: "After downloading, run:",
       server: "On a Linux server with systemd (amd64 / arm64), run with root privileges:",
       android: "Preview build for arm64 devices.",
-      ios: "The preview installs through a TestFlight invitation; releases do not ship an IPA.",
+      ios: "The preview installs through TestFlight: open the link below on your iPhone or iPad and follow the prompts.",
       lazycat: "Search for NexTerm in the LazyCat app center; amd64 devices only for now.",
     },
   },
@@ -76,12 +77,9 @@ const text = {
 
 interface Detection { platform: PlatformId; arch: Arch }
 
-interface UserAgentData {
-  getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string; platform?: string }>;
-}
-
-// detectDevice reads the user agent; Chromium's client hints refine the CPU
-// architecture, which the user agent string reports as x64 even on ARM Windows.
+// detectDevice reads the platform from the user agent. Macs default to Apple
+// Silicon and every other platform to amd64, the most common build; visitors
+// on another architecture pick it below.
 async function detectDevice(): Promise<Detection> {
   const ua = navigator.userAgent;
   let platform: PlatformId = "windows";
@@ -90,19 +88,7 @@ async function detectDevice(): Promise<Detection> {
   else if (/Windows/i.test(ua)) platform = "windows";
   else if (/Macintosh|Mac OS X/i.test(ua)) platform = "macos";
   else if (/Linux|X11|CrOS/i.test(ua)) platform = "linux";
-  // Browsers report Intel on every Mac, so Apple Silicon is the better default there.
-  let arch: Arch = /arm64|aarch64/i.test(ua) || platform === "macos" ? "arm64" : "amd64";
-  const hints = (navigator as Navigator & { userAgentData?: UserAgentData }).userAgentData;
-  if (hints?.getHighEntropyValues) {
-    try {
-      const values = await hints.getHighEntropyValues(["architecture"]);
-      if (values.architecture === "arm") arch = "arm64";
-      else if (values.architecture === "x86") arch = "amd64";
-    } catch {
-      // Keep the user-agent guess.
-    }
-  }
-  return { platform, arch };
+  return { platform, arch: platform === "macos" ? "arm64" : "amd64" };
 }
 
 interface Release { version: string; assets: Map<string, string> }
@@ -216,6 +202,13 @@ export function DownloadPicker({ language }: { language: Language }) {
           <div className="download-actions">
             <a className="button button-primary" href={assetUrl ?? latestRelease} target={assetUrl ? undefined : "_blank"} rel="noreferrer">
               <Download size={17} />{t.download} {t.names[platform.id]}{effectiveArch && platform.archs.length > 1 ? ` · ${archNames[effectiveArch]}` : ""}
+            </a>
+          </div>
+        )}
+        {platform.id === "ios" && (
+          <div className="download-actions">
+            <a className="button button-primary" href={testFlightLink} target="_blank" rel="noreferrer">
+              <Download size={17} />{t.testflight}
             </a>
           </div>
         )}
