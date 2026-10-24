@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useUi, type WorkspaceRestoreStatus } from "../../app/store";
+import { IconClose } from "../../ui/icons";
 import {
   classifyRestoredWorkspace,
   collectWorkspaceRestoreCandidates,
@@ -11,6 +12,9 @@ interface RestoreItem extends WorkspaceRestoreCandidate {
   status: WorkspaceRestoreStatus;
   detail?: string;
 }
+
+// A fully restored banner stays just long enough to be read, then goes away on its own.
+const RESTORED_LINGER_MS = 3000;
 
 function statusText(item: RestoreItem): string {
   if (item.status === "waiting") return "等待重连";
@@ -54,16 +58,25 @@ export function WorkspaceRestoreBanner() {
     });
   }, [candidates, results, workspaces]);
 
-  const hasHost = items.some((item) => item.kind === "session");
-  const visibleItems = hasHost ? items : items.filter((item) => results[item.workspaceId]);
-  const pendingCount = visibleItems.filter(
-    (item) => item.kind === "session" && item.eligible && item.status !== "success" && item.status !== "skipped",
-  ).length;
-  const successCount = visibleItems.filter((item) => item.kind === "session" && item.status === "success").length;
+  const hosts = items.filter((item) => item.kind === "session");
+  const isOpen = (item: RestoreItem) => item.eligible && item.status !== "success" && item.status !== "skipped";
+  const pendingCount = hosts.filter(isOpen).length;
+  const failedCount = hosts.filter((item) => item.status === "failed").length;
+  const successCount = hosts.filter((item) => item.status === "success").length;
+  const skippedCount = items.filter((item) => item.status === "skipped").length;
   const eligibleIds = candidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.workspaceId);
   const selectedIds = [...selected].filter((id) => eligibleIds.includes(id));
+  const restored = pendingCount === 0 && successCount > 0;
+  // Nothing to reconnect and nothing reconnected: skipped-only workspaces are not worth a banner.
+  const hidden = !ready || dismissed || (pendingCount === 0 && successCount === 0);
 
-  if (!ready || dismissed || visibleItems.length === 0) return null;
+  useEffect(() => {
+    if (hidden || !restored || running) return;
+    const timer = window.setTimeout(dismiss, RESTORED_LINGER_MS);
+    return () => window.clearTimeout(timer);
+  }, [hidden, restored, running, dismiss]);
+
+  if (hidden) return null;
 
   const openSelection = () => {
     if (!expanded) setSelected(new Set(eligibleIds));
@@ -72,81 +85,105 @@ export function WorkspaceRestoreBanner() {
   const run = async (ids?: string[]) => {
     if (running) return;
     setRunning(true);
-    setExpanded(true);
     try {
       await reconnectRestoredWorkspaces(ids);
     } finally {
       setRunning(false);
     }
+    // Failures need their reason on screen; a clean run does not.
+    if (Object.values(useUi.getState().workspaceRestoreResults).some((result) => result.status === "failed")) {
+      setExpanded(true);
+    }
   };
-  const summary = pendingCount > 0
-    ? `${pendingCount} 个主机工作区需要重新连接`
-    : successCount > 0
-      ? `工作区恢复完成：${successCount} 个主机工作区已连接`
-      : "没有可自动重连的主机工作区";
+  const skippedNote = skippedCount > 0 ? `，${skippedCount} 个已跳过` : "";
+  const summary = running
+    ? "正在重连工作区…"
+    : restored
+      ? `已恢复 ${successCount} 个工作区${skippedNote}`
+      : failedCount > 0
+        ? `${failedCount} 个主机工作区连接失败`
+        : `${pendingCount} 个主机工作区需要重新连接`;
+  const listable = expanded && !restored;
 
   return (
     <section
       aria-label="工作区恢复"
-      className="shrink-0 border-b border-amber-500/30 bg-amber-950/30 text-xs text-[var(--nx-fg-warning)]"
+      className="relative shrink-0 border-b border-neutral-800/60 bg-neutral-900 text-xs text-neutral-300"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && expanded) setExpanded(false);
+      }}
     >
-      <div className="flex flex-wrap items-center gap-2 px-4 py-2">
-        <span>{summary}</span>
+      <div className="flex flex-wrap items-center gap-2 px-4 py-1.5">
+        <span className={failedCount > 0 && !running ? "text-red-300" : undefined}>{summary}</span>
+        {!restored && (
+          <>
+            <button
+              type="button"
+              className="nx-btn nx-btn-success nx-btn-sm"
+              disabled={running || eligibleIds.length === 0}
+              onClick={() => void run()}
+            >
+              {running ? "正在重连…" : "全部重连"}
+            </button>
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost nx-btn-sm"
+              aria-expanded={expanded}
+              onClick={openSelection}
+            >
+              选择…
+            </button>
+          </>
+        )}
         <button
           type="button"
-          className="nx-btn-ghost"
-          disabled={running || eligibleIds.length === 0}
-          onClick={() => void run()}
-        >
-          {running ? "正在重连…" : "全部重连"}
-        </button>
-        <button type="button" className="nx-btn-ghost" aria-expanded={expanded} onClick={openSelection}>
-          选择…
-        </button>
-        <button
-          type="button"
-          className="nx-btn-ghost ml-auto"
+          className="nx-icon-btn nx-icon-btn-sm ml-auto"
           aria-label="关闭工作区恢复提示"
+          title="关闭"
           onClick={dismiss}
         >
-          关闭
+          <IconClose size={12} />
         </button>
       </div>
-      {expanded && (
-        <div className="border-t border-amber-500/20 px-4 py-2">
+      {listable && (
+        <div className="absolute left-4 top-full z-30 mt-1 w-[min(440px,calc(100%-2rem))] rounded-lg border border-neutral-700 bg-neutral-900 p-2 shadow-lg">
           <ul aria-label="可恢复工作区" className="flex flex-col gap-1.5">
-            {visibleItems.map((item) => {
-              const selectable = item.eligible && item.status !== "success" && item.status !== "skipped";
+            {items.map((item) => {
+              const selectable = isOpen(item);
               return (
                 <li key={item.workspaceId} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <label className="flex min-w-0 items-center gap-2">
-                    <input
-                      type="checkbox"
-                      aria-label={`选择 ${item.title}`}
-                      checked={selectedIds.includes(item.workspaceId)}
-                      disabled={!selectable || running}
-                      onChange={(event) => {
-                        setSelected((current) => {
-                          const next = new Set(current);
-                          if (event.target.checked) next.add(item.workspaceId);
-                          else next.delete(item.workspaceId);
-                          return next;
-                        });
-                      }}
-                    />
-                    <span className="truncate">{item.title}</span>
-                  </label>
-                  <span className={item.status === "failed" ? "text-red-300" : "text-amber-300"}>
+                  {selectable ? (
+                    <label className="flex min-w-0 items-center gap-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`选择 ${item.title}`}
+                        checked={selectedIds.includes(item.workspaceId)}
+                        disabled={running}
+                        onChange={(event) => {
+                          setSelected((current) => {
+                            const next = new Set(current);
+                            if (event.target.checked) next.add(item.workspaceId);
+                            else next.delete(item.workspaceId);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span className="truncate">{item.title}</span>
+                    </label>
+                  ) : (
+                    <span className="min-w-0 truncate pl-5 text-neutral-400">{item.title}</span>
+                  )}
+                  <span className={item.status === "failed" ? "text-red-300" : "text-neutral-400"}>
                     {statusText(item)}
                   </span>
-                  {item.detail && <span className="text-[var(--nx-fg-warning)]/70">{item.detail}</span>}
+                  {item.detail && <span className="text-neutral-500">{item.detail}</span>}
                 </li>
               );
             })}
           </ul>
           <button
             type="button"
-            className="nx-btn-ghost mt-2"
+            className="nx-btn nx-btn-outline nx-btn-sm mt-2"
             disabled={running || selectedIds.length === 0}
             onClick={() => void run(selectedIds)}
           >

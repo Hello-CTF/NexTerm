@@ -749,6 +749,17 @@
     color: #fff;
   }
 
+  /* The recommended action in a prompt: the one the user is expected to take. */
+  .nx-btn-success {
+    background: var(--color-green-600);
+    color: #fff;
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.08) inset;
+  }
+  .nx-btn-success:hover:not(:disabled) {
+    background: var(--color-green-500);
+    color: #fff;
+  }
+
   .nx-btn-ghost {
     background: transparent;
     color: var(--nx-fg-soft);

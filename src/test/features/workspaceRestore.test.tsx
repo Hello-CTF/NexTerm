@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, clickButton, deferred, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, clickButton, deferred, flush, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
 import type { SessionInfo } from "../../ipc/commands";
 import type { AppTab, ConnectOutcome, Workspace } from "../../app/store";
 
@@ -183,6 +183,40 @@ describe("workspace restore readiness and banner", () => {
     await flush();
   });
 
+  it("closes itself shortly after every workspace is reconnected", async () => {
+    vi.useFakeTimers();
+    try {
+      seed([hostWorkspace("ws")]);
+      const view = mountBanner();
+      const banner = () => view.container.querySelector('section[aria-label="工作区恢复"]');
+      clickButton(view.container, "全部重连");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(useUi.getState().workspaceRestoreResults.ws?.status).toBe("success");
+      expect(banner()?.textContent).toContain("已恢复 1 个工作区");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3500);
+      });
+      expect(banner()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays open with the reason when a reconnect fails", async () => {
+    seed([hostWorkspace("ws-ok"), hostWorkspace("ws-bad")]);
+    mocks.sessionConnect.mockImplementation(async (assetId: string) => {
+      if (assetId === "asset-ws-bad") throw new Error("refused");
+      return connectedSession(`${assetId}-session`, assetId);
+    });
+    const view = mountBanner();
+    clickButton(view.container, "全部重连");
+    await flushUntil(() => (view.container.textContent ?? "").includes("1 个主机工作区连接失败"));
+    expect(view.container.textContent).toContain("refused");
+    expect(view.container.querySelector('input[aria-label="选择 ws-bad"]')).not.toBeNull();
+  });
+
   it("keeps dismissal for the current session without persistent storage", async () => {
     seed([hostWorkspace("ws")]);
     const view = mountBanner();
@@ -301,8 +335,7 @@ describe("workspace restore queue", () => {
     expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
     expect(mocks.sessionConnect).toHaveBeenCalledWith("asset-normal");
     expect(mocks.dbConnect).not.toHaveBeenCalled();
-    expect(view.container.textContent).toContain("容器 exec 不会自动重新执行");
-    expect(view.container.textContent).toContain("原资产已删除");
+    expect(view.container.textContent).toContain("已恢复 1 个工作区，4 个已跳过");
     expectFocusPreserved();
   });
 

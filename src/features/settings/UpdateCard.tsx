@@ -96,7 +96,7 @@ export function UpdateCard() {
         {showInstall && (
           <button
             type="button"
-            className="nx-btn nx-btn-primary nx-btn-sm"
+            className="nx-btn nx-btn-success nx-btn-sm"
             onClick={() => void update.installUpdate()}
           >
             <IconDownload size={12} />
@@ -154,7 +154,7 @@ export function UpdateCard() {
           {DESKTOP && (
             <button
               type="button"
-              className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
+              className="nx-btn nx-btn-success nx-btn-sm shrink-0"
               disabled={restarting}
               onClick={() => void update.restart()}
             >

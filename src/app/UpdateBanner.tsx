@@ -64,7 +64,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
         <div className="nx-spacer" />
         <button
           type="button"
-          className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
+          className="nx-btn nx-btn-success nx-btn-sm shrink-0"
           disabled={restarting}
           onClick={() => void restart()}
         >
@@ -88,7 +88,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
       <div className="nx-spacer" />
       <button
         type="button"
-        className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+        className="nx-btn nx-btn-success nx-btn-sm shrink-0"
         onClick={onOpenSettings}
       >
         查看更新
