@@ -91,7 +91,9 @@ type Tab struct {
 	durable    base.DurableAttachment
 	ephemeral  bool
 	retainable bool
-	shell      Shell
+	// regularRemote marks an SSH tab on a plain PTY: it ends with its connection, so it can never run in the background.
+	regularRemote bool
+	shell         Shell
 
 	mu           sync.Mutex
 	cols         uint32
@@ -190,7 +192,7 @@ func (t *Tab) infoLocked() TabInfo {
 	return TabInfo{
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
-		Exited: t.exited, Retainable: t.retainable || !t.ephemeral, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
+		Exited: t.exited, Retainable: t.retainable || !t.ephemeral && !t.regularRemote, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
 		Title: t.title, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
 	}
 }
@@ -476,7 +478,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	}
 	tab := &Tab{
 		ID: tabID, SessionID: session.ID, session: session, terminal: terminal, fanout: m.newOutputFanout(),
-		ephemeral: options.Ephemeral, retainable: options.Retainable, cols: cols, rows: rows, encoding: canonicalEncoding(encoding),
+		ephemeral: options.Ephemeral, retainable: options.Retainable, regularRemote: kind == KindSSH && options.Durable == nil, cols: cols, rows: rows, encoding: canonicalEncoding(encoding),
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		exited: options.Durable != nil && options.Durable.Recover && options.Durable.RecoveredExited,
 		shell:  shell,

@@ -155,6 +155,7 @@ type attachedTabDTO struct {
 	Viewers        int     `json:"viewers"`
 	Exited         bool    `json:"exited"`
 	Retainable     bool    `json:"retainable"`
+	Durable        bool    `json:"durable"`
 	Ephemeral      bool    `json:"ephemeral"`
 	Encoding       string  `json:"encoding,omitempty"`
 	Title          string  `json:"title,omitempty"`
@@ -1020,6 +1021,14 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 
 func (s *terminalCommandService) closeSessionTab(ctx context.Context, call *ipc.Call, input terminalIDRequest) error {
 	if input.Mode == "detach" {
+		// A regular remote PTY cannot run without its viewer; detaching would only orphan the process.
+		tab, err := s.sessions.TabFor(ctx, input.TabID)
+		if err != nil {
+			return err
+		}
+		if !tab.Info().Retainable {
+			return session.ErrUnsupported
+		}
 		return s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
 	}
 	if input.Mode == "kill" {
@@ -1036,7 +1045,8 @@ func (s *terminalCommandService) closeSessionTab(ctx context.Context, call *ipc.
 	if err != nil {
 		return err
 	}
-	if kind := connected.Asset().Kind; kind == session.KindSSH || kind == session.KindDevice {
+	// Without an explicit mode only a durable remote terminal goes to the background; a regular PTY just closes.
+	if kind := connected.Asset().Kind; (kind == session.KindSSH || kind == session.KindDevice) && tab.Info().Durable {
 		return s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
 	}
 	return s.sessions.CloseTabFor(ctx, input.TabID)
@@ -1256,7 +1266,7 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-		Retainable: info.Retainable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
+		Retainable: info.Retainable, Durable: info.Durable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
 		AttachmentID: info.AttachmentID,
 	}
 }

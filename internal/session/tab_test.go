@@ -516,8 +516,10 @@ func TestLocalExplicitBackgroundRejectsFailuresWithoutMutation(t *testing.T) {
 func TestNonEphemeralExplicitBackgroundKeepsDetachSemantics(t *testing.T) {
 	manager, connector, _, connected := openTestSession(t, KindSSH)
 	tab := openTestTab(t, manager, connected, "client-a", "ssh-background")
-	if info := tab.Info(); !info.Retainable {
-		t.Fatalf("ordinary SSH TabInfo = %+v, want retainable", info)
+	// A regular SSH PTY ends with its connection; the manager still detaches a viewer on request, but the tab
+	// must not advertise itself as able to run in the background.
+	if info := tab.Info(); info.Retainable {
+		t.Fatalf("ordinary SSH TabInfo = %+v, want not retainable", info)
 	}
 	if err := manager.BackgroundTab(context.Background(), tab.ID, "client-a"); err != nil {
 		t.Fatal(err)

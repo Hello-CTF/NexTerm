@@ -1988,10 +1988,12 @@ export function TerminalPane({
                 useUi.getState().updateTab(storeTabId, {
                   shell: info.shell ?? "unknown",
                   retainable: info.retainable === true,
+                  ...(info.durable === undefined ? {} : { durable: info.durable }),
                   exited: info.exited,
                   dead: false,
                   closeError: undefined,
                 });
+                if (info.durable !== undefined) setDurable(info.durable);
                 if (info.encoding) setEncoding(info.encoding);
                 if (info.title) applyBackendTabTitle(storeTabId, info.title);
               }}

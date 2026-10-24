@@ -82,6 +82,9 @@ function sortEntries(list: FileEntryDto[]): FileEntryDto[] {
 }
 
 const TREE_ROW_HEIGHT = 28;
+// Rows just outside the viewport that stay mounted; the window is the visible rows plus a few on each side.
+const TREE_OVERSCAN = 4;
+const ERROR_ROW_HEIGHT = 56;
 const TREE_VIRTUALIZE_THRESHOLD = 60;
 
 type TreeRowActions = {
@@ -1085,11 +1088,14 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     return [...indexes, at].sort((a, b) => a - b);
   }, []);
 
+  // Entry rows are one line of identical height, so it is measured once from a real row instead of observing every
+  // mounted row; touch layouts make rows taller than the desktop default.
+  const [entryRowHeight, setEntryRowHeight] = useState(TREE_ROW_HEIGHT);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => treeDropRef.current,
-    estimateSize: () => TREE_ROW_HEIGHT,
-    overscan: 12,
+    estimateSize: (index) => (rowsRef.current[index]?.error ? ERROR_ROW_HEIGHT : entryRowHeight),
+    overscan: TREE_OVERSCAN,
     enabled: virtualized,
     scrollMargin: listOffset,
     initialRect: { width: 260, height: 600 },
@@ -1099,6 +1105,26 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     },
     rangeExtractor,
   });
+
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el || !virtualized) return;
+    const row = el.querySelector<HTMLElement>('[role="treeitem"]');
+    if (!row) return;
+    const measure = () => {
+      const next = Math.round(row.getBoundingClientRect().height);
+      if (next > 0) setEntryRowHeight((cur) => (Math.abs(cur - next) < 1 ? cur : next));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [virtualized, rows.length]);
+
+  useEffect(() => {
+    if (virtualized) virtualizer.measure();
+  }, [virtualized, entryRowHeight, virtualizer]);
 
   // The root-listing error banner sits above the rows inside the same scroller.
   useLayoutEffect(() => {
@@ -1464,9 +1490,10 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                 key={item.key}
                 role="none"
                 data-index={item.index}
-                ref={virtualizer.measureElement}
+                // Only error rows have a variable height; every other row uses the single measured height.
+                ref={rows[item.index]?.error ? virtualizer.measureElement : undefined}
                 className="absolute left-0 top-0 w-full"
-                style={{ transform: `translateY(${item.start - listOffset}px)` }}
+                style={{ transform: `translateY(${item.start - listOffset}px)`, contain: "layout style" }}
               >
                 {renderRow(item.index)}
               </div>

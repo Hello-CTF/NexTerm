@@ -182,6 +182,7 @@ export type AttachedTabDTO = {
   viewers: number;
   exited: boolean;
   retainable: boolean;
+  durable: boolean;
   ephemeral: boolean;
   encoding?: string;
   title?: string;

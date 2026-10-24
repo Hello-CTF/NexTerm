@@ -1680,7 +1680,9 @@ export const useUi = create<UiState>((set, get) => ({
         const kind = st.sessions.find((session) => session.id === target.sessionId)?.kind
           ?? st.workspaces.find((workspace) => workspace.id === wsId)?.assetKind;
         remote = !target.containerId && (kind === "ssh" || kind === "device");
-        closeMode = mode ?? (remote && target.exited !== true ? "detach" : undefined);
+        // A regular remote PTY ends with its connection and can never run in the background, whatever was asked.
+        const regularRemote = remote && (target.durable === false || (target.durable === undefined && target.retainable === false));
+        closeMode = regularRemote && target.exited !== true ? "kill" : (mode ?? (remote && target.exited !== true ? "detach" : undefined));
         if (remote) {
           await terminalApi.closeTab(target.tabId, closeMode, target.sessionId);
         } else {
@@ -3062,7 +3064,8 @@ function detachBlockOf(
   if (kind === "winrm" || (!kind && assetKind === "winrm")) return "winrm";
   // A regular SSH PTY ends with the connection, so it never offers "background".
   // durable is undefined until the backend reports it; retainable decides until then.
-  if ((kind === "ssh" || (!kind && assetKind === "ssh")) && t.durable === false) return "regular";
+  // Until the durable flag arrives, a remote tab that reports itself as not retainable is a regular PTY too.
+  if ((kind === "ssh" || (!kind && assetKind === "ssh")) && (t.durable === false || (t.durable === undefined && t.retainable === false))) return "regular";
   if (t.retainable === true) return null;
   if (kind === "local" || (!kind && assetKind === "local")) return "local";
   return "unknown";

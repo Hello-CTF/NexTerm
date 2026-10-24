@@ -93,6 +93,7 @@ export interface XtermViewProps {
     viewers: number;
     exited: boolean;
     retainable?: boolean;
+    durable?: boolean;
     encoding?: string;
     title?: string;
     shell?: "powershell" | "cmd" | "posix" | "unknown";
@@ -321,6 +322,7 @@ export function XtermView(props: XtermViewProps) {
       exited: boolean;
       ephemeral?: boolean;
       retainable?: boolean;
+      durable?: boolean;
       encoding?: string;
       title?: string;
       shell?: "powershell" | "cmd" | "posix" | "unknown";
@@ -917,6 +919,7 @@ export function XtermView(props: XtermViewProps) {
             title: info.title,
             shell: info.shell,
             retainable: info.retainable,
+            durable: info.durable,
             ephemeral: info.ephemeral,
             attachmentId: info.attachmentId,
           });
@@ -952,6 +955,7 @@ export function XtermView(props: XtermViewProps) {
             exited: info.exited,
             shell: info.shell,
             retainable: info.retainable,
+            durable: info.durable,
             attachmentId: info.attachmentId,
             // session_open_line_tab creates an Ephemeral tab: a cap refusal
             // must take the recovery path, never the ordinary detach that
@@ -993,6 +997,7 @@ export function XtermView(props: XtermViewProps) {
             title: info.title,
             shell: info.shell,
             retainable: info.retainable,
+            durable: info.durable,
             ephemeral: info.ephemeral,
             attachmentId: info.attachmentId,
           });
@@ -1082,6 +1087,7 @@ export function XtermView(props: XtermViewProps) {
             title: info.title,
             shell: info.shell,
             retainable: info.retainable,
+            durable: info.durable,
             ephemeral: info.ephemeral,
             attachmentId: info.attachmentId,
           });

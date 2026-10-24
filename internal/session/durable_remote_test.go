@@ -1453,3 +1453,47 @@ func TestCancellingADurableWaiterDoesNotCancelTheDeployment(t *testing.T) {
 		return connected.durableProvider == provider
 	})
 }
+
+// A regular SSH PTY ends with its connection, so it must never claim it can run in the background; a durable
+// tab and a local tab keep reporting it.
+func TestTabInfoRetainableOnlyForTabsThatCanRunInTheBackground(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	resolver := &countingResolver{provider: provider}
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := t.Context()
+
+	ssh, err := manager.Connect(ctx, Asset{ID: "ssh-regular", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	regular, err := manager.OpenTab(ctx, OpenTabOptions{SessionID: ssh.ID, ClientID: "c", ChannelID: "regular", Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regular.Durable || regular.Retainable {
+		t.Fatalf("regular SSH tab = %+v; it cannot run in the background", regular)
+	}
+
+	durableTab, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: ssh.ID, ClientID: "c", ChannelID: "durable", Cols: 80, Rows: 24, Durable: &DurableTabOptions{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !durableTab.Durable || !durableTab.Retainable {
+		t.Fatalf("durable tab = %+v; it can run in the background", durableTab)
+	}
+
+	local, err := manager.Connect(ctx, Asset{ID: "local-shell", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	localTab, err := manager.OpenTab(ctx, OpenTabOptions{SessionID: local.ID, ClientID: "c", ChannelID: "local", Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !localTab.Retainable {
+		t.Fatalf("local tab = %+v; local behaviour must not change", localTab)
+	}
+}

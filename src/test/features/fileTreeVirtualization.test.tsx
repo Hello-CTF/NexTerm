@@ -228,7 +228,7 @@ describe("FileTree virtualization", () => {
     mounted = mountTree();
     await waitFor(() => expect(items().length).toBeGreaterThan(0));
 
-    expect(items().length).toBeLessThan(100);
+    expect(items().length).toBeLessThan(60);
     expect(mounted.container.textContent).toContain("5001 项");
     const first = itemByPath("~/sub")!;
     expect(first.getAttribute("aria-level")).toBe("1");
@@ -245,7 +245,7 @@ describe("FileTree virtualization", () => {
     expect(event.defaultPrevented).toBe(true);
     await waitFor(() => expect(itemByPath(LAST.path)).toBeTruthy());
     await waitFor(() => expect(document.activeElement).toBe(itemByPath(LAST.path)));
-    expect(items().length).toBeLessThan(100);
+    expect(items().length).toBeLessThan(60);
     expect(itemByPath(LAST.path)!.getAttribute("aria-posinset")).toBe(String(HOME.length));
 
     keyDown(itemByPath(LAST.path)!, "Home");
@@ -280,7 +280,7 @@ describe("FileTree virtualization", () => {
     expect(itemByPath("~/sub")!.getAttribute("aria-expanded")).toBe("true");
     expect(itemByPath("~/sub/inner.txt")!.getAttribute("aria-level")).toBe("2");
     expect(itemByPath("~/sub/inner.txt")!.getAttribute("aria-setsize")).toBe("1");
-    expect(items().length).toBeLessThan(100);
+    expect(items().length).toBeLessThan(60);
 
     click(itemByPath("~/sub")!);
     await waitFor(() => expect(itemByPath("~/sub/inner.txt")).toBeUndefined());
