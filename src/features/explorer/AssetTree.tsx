@@ -2199,6 +2199,18 @@ export function AssetEditor({
   const [passphrase, setPassphrase] = useState("");
   const [vaultCredId, setVaultCredId] = useState(boundIsVaultKey ? (initial?.credId ?? "") : "");
 
+  // The credential list loads after the first render, so the initial state above cannot know the bound
+  // key yet; fill it in once, and never override what the user has already picked.
+  const vaultBindingAppliedRef = useRef(false);
+  useEffect(() => {
+    if (vaultBindingAppliedRef.current || !initial?.credId || !boundIsVaultKey || boundIsRefKey) return;
+    vaultBindingAppliedRef.current = true;
+    if (keyOriginTouchedRef.current || initial.keyPath) return;
+    setKeyOrigin("vault");
+    setVaultMode("existing");
+    setVaultCredId((current) => current || (initial.credId ?? ""));
+  }, [initial?.credId, initial?.keyPath, boundIsVaultKey, boundIsRefKey]);
+
   useEffect(() => {
     if (keyOriginTouchedRef.current || !boundIsRefKey) return;
     setKeyOrigin("ref");
