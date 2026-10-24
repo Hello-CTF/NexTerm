@@ -765,6 +765,30 @@ func TestSSHWindowsRootsProbeFailuresAreNotUnavailable(t *testing.T) {
 		})
 	}
 
+	// Bastions and non-bash login shells print the not-found text on stdout, and some report exit 0.
+	for name, result := range map[string]base.ExecResult{
+		"zsh text with exit 0":       {Stdout: "zsh:1: command not found: powershell.exe\n", ExitCode: intPtr(0)},
+		"fish text with exit 0":      {Stdout: "fish: Unknown command: powershell.exe\n", ExitCode: intPtr(0)},
+		"banner noise with exit 0":   {Stdout: "Welcome to the jump host\n", ExitCode: intPtr(0)},
+		"zsh text with exit 1":       {Stdout: "zsh:1: command not found: powershell.exe\n", ExitCode: intPtr(1)},
+		"localized text with exit 1": {Stderr: "bash: 行 1: powershell.exe: 未找到命令", ExitCode: intPtr(1)},
+	} {
+		t.Run("non-PowerShell host "+name, func(t *testing.T) {
+			executor := &targetExecutor{}
+			executor.handle = func(command string) (base.ExecResult, error) {
+				answer := result
+				answer.Stdout = strings.ReplaceAll(answer.Stdout, "powershell.exe", strings.Fields(command)[0])
+				answer.Stderr = strings.ReplaceAll(answer.Stderr, "powershell.exe", strings.Fields(command)[0])
+				return answer, nil
+			}
+			filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/home/alice"}}
+			roots, err := filesystem.Roots(context.Background())
+			if err != nil || roots.PathStyle != base.PathStylePOSIX {
+				t.Fatalf("non-PowerShell fallback = %+v, %v", roots, err)
+			}
+		})
+	}
+
 	t.Run("typed exec unsupported falls back", func(t *testing.T) {
 		executor := &targetExecutor{}
 		executor.handle = func(command string) (base.ExecResult, error) {
@@ -1087,3 +1111,5 @@ func assertConnEcho(t *testing.T, conn net.Conn, message string) {
 		t.Fatal(err)
 	}
 }
+
+func intPtr(value int) *int { return &value }

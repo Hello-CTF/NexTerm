@@ -230,7 +230,14 @@ func (f *sftpFileSystem) executeWindowsRoots(ctx context.Context, shell string) 
 	if windowsCommandNotFound(result, shell) {
 		return document, false, nil
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Stdout)), &document); err != nil {
+	output := strings.TrimSpace(result.Stdout)
+	if err := json.Unmarshal([]byte(output), &document); err != nil {
+		// A POSIX host answers with its own shell's error text (zsh, fish, a localized bash), and
+		// some bastions report that as exit 0. Only output shaped like our JSON document means
+		// PowerShell actually ran, so anything else is "not a PowerShell host".
+		if !strings.HasPrefix(output, "{") && (*result.ExitCode == 0 || commandNotFoundText(result, shell)) {
+			return document, false, nil
+		}
 		if *result.ExitCode != 0 {
 			return document, true, windowsExecResultError(result)
 		}
@@ -246,6 +253,10 @@ func windowsCommandNotFound(result base.ExecResult, shell string) bool {
 	if result.ExitCode == nil || *result.ExitCode != 127 && *result.ExitCode != 9009 {
 		return false
 	}
+	return commandNotFoundText(result, shell)
+}
+
+func commandNotFoundText(result base.ExecResult, shell string) bool {
 	message := strings.ToLower(result.Stdout + "\n" + result.Stderr)
 	// POSIX shells report "<command>: ..." and cmd reports "'<command>' ..." in the
 	// host's language, so the command name identifies a localized not-found message.
