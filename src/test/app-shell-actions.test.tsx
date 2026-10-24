@@ -484,13 +484,15 @@ describe("App workspace actions", () => {
     const terminal: AppTab = { id: "direct", kind: "terminal", title: "terminal", sessionId: "s1", tabId: "kernel-direct", retainable: false, closable: true };
     const workspace = workspaceOf("s1", [terminal]);
     workspace.assetKind = "ssh";
+    workspace.assetId = "asset-1";
+    const owned = { ...sessionOf("s1"), assetId: "asset-1" };
     mocks.listDurable.mockResolvedValue([
       { id: "old-durable", dead: false },
       { id: "kernel-direct", dead: false },
       { id: "finished", dead: true },
     ]);
-    mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
-    useUi.setState({ sessions: [sessionOf("s1")], workspaces: [workspace], activeWorkspaceId: "ws" });
+    mocks.sessionList.mockResolvedValue([owned]);
+    useUi.setState({ sessions: [owned], workspaces: [workspace], activeWorkspaceId: "ws" });
     mounted = mountApp();
     await flush();
 

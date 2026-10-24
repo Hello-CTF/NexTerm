@@ -150,7 +150,7 @@ describe("desktop background durable account scope", () => {
     try {
       await flushUntil(() => mocks.syncHandlers.length === 1);
       await flush();
-      expect(view.container.textContent).toContain("待查找持久终端");
+      expect(view.container.textContent).toContain("尚未查找的终端");
 
       account = { id: "a", username: "alice" };
       act(() => { for (const handler of [...mocks.syncHandlers]) handler(); });
@@ -164,7 +164,7 @@ describe("desktop background durable account scope", () => {
       act(() => { for (const handler of [...mocks.syncHandlers]) handler(); });
       expect(view.container.textContent).not.toContain("账号 A 的私有任务");
       await flush();
-      expect(view.container.textContent).toContain("待查找持久终端");
+      expect(view.container.textContent).toContain("尚未查找的终端");
       act(() => useUi.setState({ sessions: [connected] }));
       await flushUntil(() => view.container.textContent?.includes("账号 B 的私有任务") ?? false);
       act(() => useUi.setState({ sessions: [{ ...connected, status: "disconnected" }] }));
@@ -173,7 +173,7 @@ describe("desktop background durable account scope", () => {
       act(() => { for (const handler of [...mocks.syncHandlers]) handler(); });
       expect(view.container.textContent).not.toContain("账号 B 的私有任务");
       await flush();
-      expect(view.container.textContent).toContain("待查找持久终端");
+      expect(view.container.textContent).toContain("尚未查找的终端");
       expect([...Array(window.localStorage.length)].some((_, index) =>
         window.localStorage.getItem(window.localStorage.key(index) ?? "")?.includes("私有任务") ?? false)).toBe(false);
     } finally {

@@ -1490,8 +1490,8 @@ function AppShell() {
       key: "background",
       label: "后台会话",
       hint: backgroundCount
-        ? `${backgroundCount} 个终端在后台运行，可恢复到标签页`
-        : "查看已转入后台的终端进程，并将其恢复到标签页",
+        ? `${backgroundCount} 个终端在这台主机后台运行，点击查看`
+        : "查看这台主机上在后台运行的终端，并接管回标签页",
       icon: IconActivity,
       onClick: openBackground,
       badge: backgroundCount ?? undefined,

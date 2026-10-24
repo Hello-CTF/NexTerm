@@ -180,8 +180,8 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("当前没有可查看的后台终端"));
-      expect(view.container.textContent).toContain("普通模式只影响以后新开的终端；已有持久会话不会被删除，仍可在这里查看并接管");
+      await waitFor(() => expect(view.container.textContent).toContain("这台主机上没有在后台运行的终端"));
+      expect(view.container.textContent).toContain("持久终端关闭标签后会继续在主机上运行并出现在这里；普通模式的终端关闭后会结束");
     } finally {
       view.unmount();
     }
@@ -320,7 +320,7 @@ describe("BackgroundSessions host-scoped view", () => {
       await flush();
       await waitFor(() => expect(view.container.textContent).toContain("SSH disconnected"));
       expect(view.container.textContent).toContain("已有后台");
-      expect(view.container.textContent).not.toContain("当前主机没有在后台运行的终端");
+      expect(view.container.textContent).not.toContain("这台主机上没有在后台运行的终端");
     } finally {
       view.unmount();
     }
@@ -343,12 +343,12 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      expect(view.container.textContent).toContain("主机：主机一");
-      expect(view.container.textContent).toContain("重连后才能查找远端持久终端");
+      expect(view.container.textContent).toContain("主机一");
+      expect(view.container.textContent).toContain("连接主机后才能确认是否仍在运行");
       expect(mocks.listDurable).not.toHaveBeenCalled();
 
       await act(async () => {
-        actionButton(view, "重连并查找").click();
+        actionButton(view, "连接并查找").click();
         await flush();
       });
       await waitFor(() => expect(mocks.reconnectSession).toHaveBeenCalledWith("s1"));
@@ -377,17 +377,17 @@ describe("BackgroundSessions host-scoped view", () => {
     try {
       await flush();
       await act(async () => {
-        actionButton(view, "重连并查找").click();
+        actionButton(view, "连接并查找").click();
         await flush();
       });
-      await waitFor(() => expect(toastText()).toContain("重连主机失败：重连未能启动"));
+      await waitFor(() => expect(toastText()).toContain("重新连接失败：重连未能启动"));
       expect(useUi.getState().workspaceRuntime["ws-host"]?.problems?.[0]).toMatchObject({
         connectionKey: assetConnectionProblemKey("asset-host-one"),
         summary: "重连未能启动",
       });
 
       await act(async () => {
-        actionButton(view, "重连并查找").click();
+        actionButton(view, "连接并查找").click();
         await flush();
       });
       await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("s1"));
@@ -417,7 +417,7 @@ describe("BackgroundSessions host-scoped view", () => {
       });
       const row = [...view.container.querySelectorAll("tbody tr")].find((candidate) => candidate.textContent?.includes("持续编译"));
       expect(row?.textContent).toContain("待核实");
-      expect(row?.textContent).toContain("重连并查找");
+      expect(row?.textContent).toContain("连接并查找");
       expect(row?.textContent).not.toContain("接管");
       expect(row?.textContent).not.toContain("结束进程");
       expect(mocks.closeTab).not.toHaveBeenCalled();
@@ -445,7 +445,7 @@ describe("BackgroundSessions host-scoped view", () => {
       await flush();
       await waitFor(() => expect(view.container.textContent).toContain("快速连接的终端"));
       expect(mocks.listDurable).toHaveBeenCalledWith("s1");
-      expect(view.container.textContent).not.toContain("重连并查找");
+      expect(view.container.textContent).not.toContain("连接并查找");
       expect(mocks.connectSession).not.toHaveBeenCalled();
     } finally {
       view.unmount();
@@ -468,7 +468,7 @@ describe("BackgroundSessions host-scoped view", () => {
       await flush();
       const row = [...view.container.querySelectorAll("tbody tr")].find((candidate) => candidate.textContent?.includes("布局里的任务"));
       expect(row?.textContent).toContain("待核实");
-      expect(row?.textContent).toContain("重连并查找");
+      expect(row?.textContent).toContain("连接并查找");
       expect(row?.textContent).not.toContain("接管");
       expect(mocks.listDurable).not.toHaveBeenCalled();
     } finally {
@@ -501,7 +501,7 @@ describe("BackgroundSessions host-scoped view", () => {
     mocks.listDurable.mockClear();
     const second = mountHost();
     try {
-      const row = [...second.container.querySelectorAll("tbody tr")].find((candidate) => candidate.textContent?.includes("待查找持久终端"));
+      const row = [...second.container.querySelectorAll("tbody tr")].find((candidate) => candidate.textContent?.includes("尚未查找的终端"));
       expect(row?.textContent).toContain("待核实");
       expect(row?.textContent).not.toContain("接管");
       expect(second.container.textContent).not.toContain("远端任务");
@@ -510,7 +510,7 @@ describe("BackgroundSessions host-scoped view", () => {
       mocks.connectSession.mockResolvedValue({ ...s1, id: "fresh-host", assetId: "asset-host-one" });
       mocks.listDurable.mockResolvedValue([{ id: "saved-shell", cols: 80, rows: 24, dead: false, title: "远端任务" }]);
       await act(async () => {
-        actionButton(second, "重连并查找").click();
+        actionButton(second, "连接并查找").click();
         await flush();
       });
       await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-host"));
@@ -547,12 +547,12 @@ describe("BackgroundSessions host-scoped view", () => {
     try {
       await flush();
       expect(second.container.textContent).not.toContain("仅账号 A 可见");
-      expect(second.container.textContent).toContain("重连并查找");
+      expect(second.container.textContent).toContain("连接并查找");
       expect(mocks.listDurable).not.toHaveBeenCalled();
       mocks.connectSession.mockResolvedValue({ ...s1, id: "fresh-a", assetId: "asset-host-one" });
       mocks.listDurable.mockResolvedValue([]);
       await act(async () => {
-        actionButton(second, "重连并查找").click();
+        actionButton(second, "连接并查找").click();
         await flush();
       });
       await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-a"));
@@ -582,7 +582,7 @@ describe("BackgroundSessions host-scoped view", () => {
           ? { ...session, status: "disconnected" as const } : session) }));
       });
       expect(view.container.textContent).not.toContain("账号 A 的任务");
-      expect(view.container.textContent).toContain("待查找持久终端");
+      expect(view.container.textContent).toContain("尚未查找的终端");
     } finally {
       view.unmount();
     }
@@ -646,7 +646,7 @@ describe("BackgroundSessions host-scoped view", () => {
       await flush();
       expect(mocks.listDurable).not.toHaveBeenCalled();
       await act(async () => {
-        actionButton(view, "重连并查找").click();
+        actionButton(view, "连接并查找").click();
         await flush();
       });
       await waitFor(() => expect(mocks.connectSession).toHaveBeenCalledWith("asset-host-one"));
@@ -677,7 +677,7 @@ describe("BackgroundSessions host-scoped view", () => {
       await flush();
       expect(mocks.listDurable).not.toHaveBeenCalled();
       await act(async () => {
-        actionButton(view, "重连并查找").click();
+        actionButton(view, "连接并查找").click();
         await flush();
       });
       await waitFor(() => expect(mocks.connectDevice).toHaveBeenCalledWith("dev-1", "设备一"));
@@ -712,7 +712,7 @@ describe("BackgroundSessions host-scoped view", () => {
       expect(view.container.textContent).not.toContain("不能接管");
       expect(mocks.listDurable).not.toHaveBeenCalled();
       await act(async () => {
-        actionButton(view, "重连并查找").click();
+        actionButton(view, "连接并查找").click();
         await flush();
       });
       expect(mocks.reconnectSession).not.toHaveBeenCalled();
@@ -735,14 +735,14 @@ describe("BackgroundSessions host-scoped view", () => {
     try {
       await flush();
       await waitFor(() => expect(view.container.textContent).toContain("旧任务"));
-      expect(view.container.textContent).not.toContain("重连并查找");
+      expect(view.container.textContent).not.toContain("连接并查找");
       expect(mocks.listDurable).not.toHaveBeenCalled();
       await act(async () => {
         actionButton(view, "接管").click();
         await flush();
       });
       expect(view.container.textContent).toContain("旧任务");
-      expect(toastText()).toContain("目标主机会话未连接");
+      expect(toastText()).toContain("主机未连接，请先重新连接再接管");
       expect(useUi.getState().workspaces.flatMap((workspace) => workspace.panes)
         .flatMap((pane) => pane.tabs).some((tab) => tab.tabId === "old-shell")).toBe(false);
     } finally {
@@ -759,7 +759,7 @@ describe("BackgroundSessions host-scoped view", () => {
     try {
       await flush();
       expect(mocks.listLive).not.toHaveBeenCalled();
-      expect(view.container.textContent).toContain("无法确定后台会话所属主机");
+      expect(view.container.textContent).toContain("不知道该查看哪台主机");
       expect(view.container.textContent).not.toContain("构建");
     } finally {
       view.unmount();
@@ -775,15 +775,15 @@ describe("BackgroundSessions host-scoped view", () => {
       await flush();
       await waitFor(() => expect(view.container.querySelectorAll('tr[aria-hidden="true"]').length).toBeGreaterThan(0));
       expect(view.container.textContent).toContain("加载中");
-      expect(view.container.textContent).not.toContain("当前主机没有在后台运行的终端");
+      expect(view.container.textContent).not.toContain("这台主机上没有在后台运行的终端");
 
       await act(async () => {
         pending.resolve([]);
         await pending.promise;
       });
-      expect(view.container.textContent).toContain("当前主机没有在后台运行的终端");
+      expect(view.container.textContent).toContain("这台主机上没有在后台运行的终端");
       expect(view.container.querySelector('tr[aria-hidden="true"]')).toBeNull();
-      expect(view.container.textContent).not.toContain("读取后台会话失败");
+      expect(view.container.textContent).not.toContain("无法读取后台会话");
     } finally {
       view.unmount();
     }
@@ -810,9 +810,9 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("读取后台会话失败"));
+      await waitFor(() => expect(view.container.textContent).toContain("无法读取后台会话"));
       expect(view.container.textContent).toContain("database unavailable");
-      expect(view.container.textContent).not.toContain("当前主机没有在后台运行的终端");
+      expect(view.container.textContent).not.toContain("这台主机上没有在后台运行的终端");
     } finally {
       view.unmount();
     }
@@ -1033,9 +1033,9 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      expect(view.container.textContent).not.toContain("待查找持久终端");
+      expect(view.container.textContent).not.toContain("尚未查找的终端");
       expect(view.container.textContent).not.toContain("第一个工作区的任务");
-      expect(view.container.textContent).not.toContain("重连并查找");
+      expect(view.container.textContent).not.toContain("连接并查找");
     } finally {
       view.unmount();
     }
@@ -1180,7 +1180,7 @@ describe("BackgroundSessions host-scoped view", () => {
         await flush();
       });
       expect(view.container.textContent).not.toContain("新发现任务");
-      expect(view.container.textContent).toContain("待查找持久终端");
+      expect(view.container.textContent).toContain("尚未查找的终端");
       expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
     } finally {
       view.unmount();
