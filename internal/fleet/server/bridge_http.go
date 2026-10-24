@@ -54,7 +54,7 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 	}
 	capabilities, _ := s.registry.Capabilities(deviceID)
 	if !servesPurpose(capabilities, purpose) {
-		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, errPurposeUnsupported.Error())))
+		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, purposeUnsupportedMessage(purpose))))
 		return
 	}
 	user, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})

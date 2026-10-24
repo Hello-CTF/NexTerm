@@ -19,7 +19,7 @@ const bridgeWaitTimeout = 60 * time.Second
 var (
 	errDeviceOffline      = errors.New("设备不在线")
 	errBridgeNotPending   = errors.New("桥接请求不存在或已超时")
-	errPurposeUnsupported = errors.New("设备代理不支持该桥接用途")
+	errPurposeUnsupported = errors.New("该设备代理版本过旧，不支持此通道，请在设备上升级 NexTerm agent 后重试")
 )
 
 type controlChannel struct {
@@ -234,6 +234,15 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID, purpose string) 
 	request.abandoned = true
 	r.mu.Unlock()
 	return nil, errDeviceOffline
+}
+
+// purposeUnsupportedMessage names the missing capability and the next step; a purpose absent from hello means the
+// agent predates it (or is not wired for it), and upgrading the agent is the only remedy.
+func purposeUnsupportedMessage(purpose string) string {
+	if purpose == "" {
+		purpose = agent.PurposeTerminal
+	}
+	return "该设备代理版本过旧，不支持「" + purpose + "」通道，请在设备上升级 NexTerm agent 后重试"
 }
 
 // servesPurpose reports whether an agent advertised the requested bridge purpose.

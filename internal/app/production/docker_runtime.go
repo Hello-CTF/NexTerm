@@ -7,6 +7,7 @@ import (
 	"io"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -69,12 +70,12 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 				}
 				return docker.NewMobyBackend(client), nil
 			}
-			if connected.Asset().Kind == session.KindDevice {
-				return nil, fmt.Errorf("%w: device Docker SDK", base.ErrUnsupported)
-			}
 			transport, err := sessions.TransportFor(ctx, sessionID)
 			if err != nil {
 				return nil, err
+			}
+			if connected.Asset().Kind == session.KindDevice {
+				return newDeviceDockerSDKBackend(ctx, transport, deviceDockerSocket)
 			}
 			dialer, ok := transport.(base.Dialer)
 			if !ok {
@@ -172,6 +173,9 @@ type dockerCommandOpener struct {
 func (o dockerCommandOpener) OpenCommand(ctx context.Context, command string, width, height uint) (docker.CommandStream, error) {
 	opener, ok := o.transport.(base.ExecStreamTransport)
 	if !ok {
+		if _, isDevice := o.transport.(*device.Transport); isDevice {
+			return nil, deviceDockerStreamsUnavailable{}
+		}
 		return nil, fmt.Errorf("%w: exec stream", base.ErrUnsupported)
 	}
 	channel, err := opener.OpenExec(ctx, command, base.ExecOptions{})
@@ -216,3 +220,45 @@ func (c *dockerCommandChannel) NextOutput(ctx context.Context) (base.OutputEvent
 
 var _ docker.CommandStream = (*dockerCommandChannel)(nil)
 var _ io.ReadWriteCloser = (*dockerCommandChannel)(nil)
+
+const (
+	deviceDockerSocket       = "/var/run/docker.sock"
+	deviceDockerProbeTimeout = 15 * time.Second
+)
+
+// newDeviceDockerSDKBackend reaches the device's Docker Engine socket through a forward bridge, the same way the SSH
+// path uses a streamlocal channel, so container exec, log streaming and stats work without a streamed exec channel.
+// Windows agents expose Docker through a named pipe that the forward bridge cannot dial, so they keep the CLI backend.
+func newDeviceDockerSDKBackend(ctx context.Context, transport base.Transport, socket string) (docker.Backend, error) {
+	deviceTransport, ok := transport.(*device.Transport)
+	if !ok {
+		return nil, fmt.Errorf("%w: device Docker dialer", base.ErrUnsupported)
+	}
+	if deviceTransport.Platform() == "windows" {
+		return nil, fmt.Errorf("%w: Windows 设备代理的 Docker 使用命名管道，无法通过桥接访问", base.ErrUnsupported)
+	}
+	// The client dials lazily, so probe the socket once: an unreachable socket must fall back to the CLI backend
+	// instead of failing every SDK mutation later.
+	probeCtx, cancel := context.WithTimeout(ctx, deviceDockerProbeTimeout)
+	defer cancel()
+	conn, err := deviceTransport.DialContext(probeCtx, "unix", socket)
+	if err != nil {
+		return nil, fmt.Errorf("%w: 无法连接设备上的 Docker 套接字: %v", base.ErrUnsupported, err)
+	}
+	_ = conn.Close()
+	client, err := docker.NewSSHStreamlocalClient(socket, deviceTransport)
+	if err != nil {
+		return nil, err
+	}
+	return docker.NewMobyBackend(client), nil
+}
+
+// deviceDockerStreamsUnavailable is the user-facing reason a device cannot stream container exec or logs: both need
+// the Docker socket bridge (the CLI fallback has no streamed exec channel on devices).
+type deviceDockerStreamsUnavailable struct{}
+
+func (deviceDockerStreamsUnavailable) Error() string {
+	return "无法通过设备代理连接 Docker 套接字，容器终端与日志流暂不可用：请确认设备上 Docker 正在运行、代理账号有权访问 /var/run/docker.sock，并把设备代理升级到最新版；Windows 设备代理暂不支持"
+}
+
+func (deviceDockerStreamsUnavailable) Unwrap() error { return docker.ErrUnsupported }

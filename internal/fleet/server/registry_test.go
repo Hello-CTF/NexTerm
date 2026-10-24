@@ -307,3 +307,15 @@ func TestRequestBridgeAdvertisedPurpose(t *testing.T) {
 		t.Fatalf("bridges = %d, want 0", count)
 	}
 }
+
+func TestPurposeUnsupportedMessageNamesPurposeAndUpgrade(t *testing.T) {
+	for _, purpose := range []string{"forward", ""} {
+		message := purposeUnsupportedMessage(purpose)
+		if !strings.Contains(message, "升级") {
+			t.Fatalf("message %q for %q should tell the user to upgrade the agent", message, purpose)
+		}
+	}
+	if !strings.Contains(purposeUnsupportedMessage("forward"), "forward") || !strings.Contains(purposeUnsupportedMessage(""), "terminal") {
+		t.Fatal("message should name the missing purpose, defaulting to terminal")
+	}
+}
