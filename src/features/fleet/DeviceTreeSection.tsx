@@ -153,7 +153,7 @@ export function DeviceTreeSection() {
         if (disabledReason === null) void connectDevice(device);
       },
     });
-    items.push({ kind: "item", label: "详情", icon: <IconInfo size={13} />, hint: "打开设备管理视图", onSelect: openDevicesTab });
+    items.push({ kind: "item", label: "详情", icon: <IconInfo size={13} />, hint: "在设备页查看", onSelect: openDevicesTab });
     if (device.revoked_at === 0) items.push(
       { kind: "separator" },
       {
@@ -162,7 +162,7 @@ export function DeviceTreeSection() {
         icon: <IconTrash size={13} />,
         danger: true,
         disabled: busyId === device.id,
-        hint: "凭证立即失效，设备保留为已吊销状态",
+        hint: "凭证立即失效",
         onSelect: () => void revoke(device),
       },
     );

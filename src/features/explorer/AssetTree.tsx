@@ -325,7 +325,7 @@ export function AssetTree() {
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
-  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean; inlineCount?: number } | null>(null);
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset } | null>(null);
   const [treeMenu, setTreeMenu] = useState<{ x: number; y: number } | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const assetRowElementsRef = useRef(new Map<string, HTMLDivElement>());
@@ -740,85 +740,71 @@ export function AssetTree() {
     }
   };
 
-  const buildRowMenu = (asset: Asset, full: boolean, inlineCount = 0): MenuItem[] => {
-    const remove: MenuItem | null = asset.builtin
-      ? null
-      : {
-          kind: "item",
-          label: "删除",
-          icon: <IconClose size={13} />,
-          danger: true,
-          onSelect: () => void onDelete(asset),
-        };
-    const primary: MenuItem[] = full
-      ? [
-          ...(!isInventoryOnlyKind(asset.kind) ? [{
-            kind: "item" as const,
-            label: "连接",
-            icon: <IconPlay size={13} />,
-            onSelect: () => void connectAsset(asset),
-          }] : []),
-          {
-            kind: "item",
-            label: "编辑",
-            icon: <IconEdit size={13} />,
-            onSelect: () => setEditingAsset(asset),
-          },
-          ...(remove ? [remove] : []),
-          { kind: "separator" },
-        ]
-      : [];
-    const copySsh: MenuItem | null = sshCommandCopyable(asset)
-      ? {
-          kind: "item",
-          label: "复制 SSH 命令",
-          icon: <IconTerminal size={13} />,
-          onSelect: () => void onCopySshCommand(asset),
-        }
-      : null;
-    const connectAs: MenuItem | null =
-      !WEB && asset.kind === "ssh" && asset.host?.trim()
-        ? {
-            kind: "item",
-            label: "用其他用户名连接",
-            icon: <IconPlug size={13} />,
-            hint: "走快速连接，用密码或 agent 认证",
-            onSelect: () => void onConnectAsUser(asset),
-          }
-        : null;
-    return [
-      ...primary.slice(inlineCount),
+  // Single menu definition shared by right-click, the "..." button and the keyboard menu key.
+  const buildRowMenu = (asset: Asset): MenuItem[] => {
+    const connectable = !isInventoryOnlyKind(asset.kind);
+    const canConnectAs = !WEB && asset.kind === "ssh" && Boolean(asset.host?.trim());
+    const main: MenuItem[] = [
+      ...(connectable
+        ? [{ kind: "item" as const, label: "连接", icon: <IconPlay size={13} />, onSelect: () => void connectAsset(asset) }]
+        : []),
+      { kind: "item", label: "编辑", icon: <IconEdit size={13} />, onSelect: () => setEditingAsset(asset) },
+    ];
+    const share: MenuItem[] = [
       {
         kind: "item",
         label: "克隆",
         icon: <IconCopy size={13} />,
-        hint: "共用原资产的凭据引用与私钥路径",
+        hint: "共用原资产的登录凭据",
         onSelect: () => void onClone(asset),
       },
-      ...(copySsh ? [copySsh] : []),
-      ...(connectAs ? [connectAs] : []),
+      ...(sshCommandCopyable(asset)
+        ? [{
+            kind: "item" as const,
+            label: "复制 SSH 命令",
+            icon: <IconTerminal size={13} />,
+            hint: "粘贴到任意终端使用",
+            onSelect: () => void onCopySshCommand(asset),
+          }]
+        : []),
+      ...(canConnectAs
+        ? [{
+            kind: "item" as const,
+            label: "用其他用户名连接",
+            icon: <IconPlug size={13} />,
+            hint: "临时输入，不会保存",
+            onSelect: () => void onConnectAsUser(asset),
+          }]
+        : []),
       {
         kind: "item",
         label: "复制链接",
         icon: <IconGlobe size={13} />,
-        hint: "nexterm:// 链接，可打开 NexTerm 客户端",
+        hint: "用 NexTerm 打开此资产",
         onSelect: () => copyAssetDeepLink(asset.id),
       },
+    ];
+    const careful: MenuItem[] = [
       isHidden(asset.id)
-        ? {
-            kind: "item",
-            label: "取消隐藏",
-            icon: <IconEye size={13} />,
-            onSelect: () => onUnhide(asset),
-          }
+        ? { kind: "item", label: "取消隐藏", icon: <IconEye size={13} />, onSelect: () => onUnhide(asset) }
         : {
             kind: "item",
             label: "隐藏",
             icon: <IconEyeOff size={13} />,
-            hint: "仅界面隐藏",
+            hint: "只在列表隐藏，不会删除",
             onSelect: () => onHide(asset),
           },
+      ...(asset.builtin
+        ? []
+        : [{
+            kind: "item" as const,
+            label: "删除",
+            icon: <IconClose size={13} />,
+            danger: true,
+            onSelect: () => void onDelete(asset),
+          }]),
     ];
+    return [...main, { kind: "separator" }, ...share, { kind: "separator" }, ...careful];
   };
 
   const registerAssetRow = (asset: Asset, node: HTMLDivElement | null) => {
@@ -838,7 +824,7 @@ export function AssetTree() {
       showIdentity={detailedIdentity || duplicateNames.has(asset.name.trim())}
       onDelete={() => void onDelete(asset)}
       onEdit={() => setEditingAsset(asset)}
-      onMore={(x, y, full, inlineCount) => setRowMenu({ x, y, asset, full, inlineCount })}
+      onMore={(x, y) => setRowMenu({ x, y, asset })}
       error={assetError?.id === asset.id ? assetError.message : null}
       onRetry={() => void runDeleteAsset(asset, useUi.getState().accountEpoch, assetError?.mode)}
       onDismissError={() => setAssetError(null)}
@@ -878,7 +864,7 @@ export function AssetTree() {
         detailedIdentity={detailedIdentity}
         onDelete={(asset) => void onDelete(asset)}
         onEdit={(asset) => setEditingAsset(asset)}
-        onMore={(asset, x, y, full, inlineCount) => setRowMenu({ x, y, asset, full, inlineCount })}
+        onMore={(asset, x, y) => setRowMenu({ x, y, asset })}
         onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
         onCreateIn={() => {
           setPresetGroup(group.id);
@@ -1166,7 +1152,7 @@ export function AssetTree() {
                 x: rowMenu.x,
                 y: rowMenu.y,
                 title: rowMenu.asset.name,
-                items: buildRowMenu(rowMenu.asset, rowMenu.full === true, rowMenu.inlineCount),
+                items: buildRowMenu(rowMenu.asset),
               }
             : null
         }
@@ -1236,7 +1222,7 @@ function AssetRow({
   showIdentity?: boolean;
   onDelete: () => void;
   onEdit: () => void;
-  onMore: (x: number, y: number, full?: boolean, inlineCount?: number) => void;
+  onMore: (x: number, y: number) => void;
   error?: string | null;
   onRetry?: () => void;
   onDismissError?: () => void;
@@ -1322,13 +1308,19 @@ function AssetRow({
       }}
       onContextMenu={(e) => {
         e.preventDefault();
-        onMore(e.clientX, e.clientY, coarse);
+        onMore(e.clientX, e.clientY);
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           if (!inventoryOnly) void connectAsset(asset);
+          return;
+        }
+        if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+          e.preventDefault();
+          const rect = e.currentTarget.getBoundingClientRect();
+          onMore(rect.left, rect.bottom);
           return;
         }
         treeRowKeyDown(e);
@@ -1373,7 +1365,7 @@ function AssetRow({
           onClick={(e) => {
             e.stopPropagation();
             const r = e.currentTarget.getBoundingClientRect();
-            onMore(r.left, r.bottom, true);
+            onMore(r.left, r.bottom);
           }}
           onDoubleClick={(e) => e.stopPropagation()}
         >
@@ -1434,7 +1426,7 @@ function AssetRow({
             onClick={(e) => {
               e.stopPropagation();
               const r = e.currentTarget.getBoundingClientRect();
-              onMore(r.left, r.bottom, inlineCount < actionCount, inlineCount < actionCount ? inlineCount : 0);
+              onMore(r.left, r.bottom);
             }}
           >
             ⋯
@@ -1538,7 +1530,7 @@ function GroupNode({
   detailedIdentity: boolean;
   onDelete: (a: Asset) => void;
   onEdit: (a: Asset) => void;
-  onMore: (a: Asset, x: number, y: number, full?: boolean, inlineCount?: number) => void;
+  onMore: (a: Asset, x: number, y: number) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
   onCreateIn: () => void;
   onCreateChild: () => void;
@@ -1614,7 +1606,7 @@ function GroupNode({
       showIdentity={detailedIdentity || duplicateNames.has(a.name.trim())}
       onDelete={() => onDelete(a)}
       onEdit={() => onEdit(a)}
-      onMore={(x, y, full, inlineCount) => onMore(a, x, y, full, inlineCount)}
+      onMore={(x, y) => onMore(a, x, y)}
       error={assetError?.id === a.id ? assetError.message : null}
       onRetry={() => onRetryAssetDelete(a)}
       onDismissError={onDismissAssetError}

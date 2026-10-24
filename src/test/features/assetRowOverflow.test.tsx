@@ -218,7 +218,7 @@ describe("asset row actions on fine pointers", () => {
     if (!more) throw new Error("more button not found");
     click(more);
     await flush();
-    expect(menuLabels()).toEqual(["克隆", "复制 SSH 命令", "复制链接", "隐藏"]);
+    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
   });
 
   it("uses the full overflow menu when the sidebar becomes too narrow for the action strip", async () => {
@@ -232,7 +232,7 @@ describe("asset row actions on fine pointers", () => {
     expect(row.querySelectorAll(".nx-row-actions button")).toHaveLength(1);
     openOverflow(row);
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "删除", "克隆", "复制 SSH 命令", "复制链接", "隐藏"]);
+    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
 
     act(() => useUi.setState({ leftWidth: 248 }));
     setRowWidths(row, 260, 75);
@@ -261,9 +261,7 @@ describe("asset name priority in narrow sidebars", () => {
       .toEqual(["连接", "编辑", "删除", "更多操作"]);
     click(root.querySelector<HTMLButtonElement>('button[title="更多操作"]')!);
     await flush();
-    expect(menuLabels()).toContain("删除");
-    expect(menuLabels()).not.toContain("连接");
-    expect(menuLabels()).toContain("编辑");
+    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
   });
 
   it("updates root and grouped asset identities as available row width changes", async () => {
@@ -377,7 +375,7 @@ describe("asset row actions on coarse pointers", () => {
 
     openOverflow(rowByName(mounted!.container, "web-1"));
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "删除", "克隆", "复制 SSH 命令", "复制链接", "隐藏"]);
+    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
     await waitFor(() => expect(document.activeElement?.textContent).toContain("连接"));
   });
 
@@ -411,7 +409,7 @@ describe("asset row actions on coarse pointers", () => {
     await flush();
     mocks.ask.mockResolvedValueOnce(false);
     const deleteItem = [...document.querySelectorAll('[role="menuitem"]')].find((b) =>
-      b.textContent?.includes("删除"),
+      b.querySelector(".nx-menu-label")?.textContent === "删除",
     );
     if (!deleteItem) throw new Error("delete item not found");
     click(deleteItem);
@@ -446,7 +444,7 @@ describe("asset row actions on coarse pointers", () => {
     expect(mocks.connect).not.toHaveBeenCalled();
   });
 
-  it("offers the full action set on context menu as well", async () => {
+  it("offers the same menu on context menu as on the overflow button", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
@@ -458,7 +456,7 @@ describe("asset row actions on coarse pointers", () => {
       );
     });
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "删除", "克隆", "复制 SSH 命令", "复制链接", "隐藏"]);
+    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
   });
 
   it("collapses group row actions into an overflow menu as well", async () => {
@@ -481,5 +479,61 @@ describe("asset row actions on coarse pointers", () => {
     if (!rename) throw new Error("rename item not found");
     click(rename);
     await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
+  });
+});
+
+describe("one menu for right-click, overflow button and keyboard", () => {
+  function menuSnapshot(): { label: string; hint: string }[] {
+    return [...document.querySelectorAll('[role="menuitem"]')].map((b) => ({
+      label: b.querySelector(".nx-menu-label")?.textContent ?? "",
+      hint: b.querySelector(".nx-menu-hint")?.textContent ?? "",
+    }));
+  }
+
+  async function closeMenu(): Promise<void> {
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await flush();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  }
+
+  it("shows identical items, hints and order for every entry point on desktop", async () => {
+    stubPointer(false);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    const row = rowByName(mounted!.container, "web-1");
+
+    act(() => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
+    });
+    await flush();
+    const viaContext = menuSnapshot();
+    expect(viaContext.map((item) => item.label)).toEqual(
+      ["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"],
+    );
+    expect(viaContext.find((item) => item.label === "隐藏")?.hint).not.toBe("");
+    await closeMenu();
+
+    const more = row.querySelector<HTMLButtonElement>('button[aria-label="更多操作 web-1"]');
+    if (!more) throw new Error("more button not found");
+    click(more);
+    await flush();
+    expect(menuSnapshot()).toEqual(viaContext);
+    await closeMenu();
+
+    act(() => {
+      row.focus();
+      row.dispatchEvent(new KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(menuSnapshot()).toEqual(viaContext);
+    await closeMenu();
+
+    act(() => {
+      row.dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(menuSnapshot()).toEqual(viaContext);
   });
 });
