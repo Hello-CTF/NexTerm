@@ -1873,13 +1873,37 @@ func (m *Manager) startPump(tab *Tab, channel *channelHandle, generation uint64)
 	return started
 }
 
+// pumpThroughputEvery is the cadence of the capture-only output throughput line.
+var pumpThroughputEvery = 10 * time.Second
+
+// logPumpThroughput logs byte and chunk deltas for one tab (counts only, never content) until the pump ends.
+func logPumpThroughput(ctx context.Context, logger *slog.Logger, sessionID, tabID string, bytes, chunks *atomic.Int64) {
+	ticker := time.NewTicker(pumpThroughputEvery)
+	defer ticker.Stop()
+	var lastBytes, lastChunks int64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !logger.Enabled(ctx, slog.LevelDebug) {
+				continue
+			}
+			b, c := bytes.Load(), chunks.Load()
+			logger.Debug("tab output throughput", "session", sessionID, "tab", tabID,
+				"bytes", b-lastBytes, "chunks", c-lastChunks, "interval_ms", pumpThroughputEvery.Milliseconds())
+			lastBytes, lastChunks = b, c
+		}
+	}
+}
+
 func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle, generation uint64) {
 	defer channel.Close()
 	buffer := make([]byte, 64<<10)
 	var readErr error
 	// Debug-only first-output diagnostics: byte counts only, never terminal content.
 	pumpStart := time.Now()
-	var pumpBytes atomic.Int64
+	var pumpBytes, pumpChunks atomic.Int64
 	firstOutputLogged := false
 	if m.logger.Enabled(ctx, slog.LevelDebug) {
 		m.logger.Debug("tab output pump started", "session", tab.SessionID, "tab", tab.ID)
@@ -1890,6 +1914,7 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 			})
 			defer timer.Stop()
 		}
+		go logPumpThroughput(ctx, m.logger, tab.SessionID, tab.ID, &pumpBytes, &pumpChunks)
 	}
 	for {
 		// A paused subscriber with a full coalescer stalls the PTY read:
@@ -1909,6 +1934,7 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 		count, err := channel.Read(buffer)
 		if count > 0 {
 			pumpBytes.Add(int64(count))
+			pumpChunks.Add(1)
 			if !firstOutputLogged {
 				firstOutputLogged = true
 				m.logger.Debug("tab first output", "session", tab.SessionID, "tab", tab.ID,

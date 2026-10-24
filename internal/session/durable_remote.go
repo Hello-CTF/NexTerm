@@ -110,21 +110,58 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 	}
 	session.durableMu.Unlock()
 
-	session.mu.Lock()
-	if session.closed || session.status != StatusConnected {
+	entry, started, err := m.ensureBackgroundHelper(session, transport, generation, true)
+	if err != nil {
+		return nil, err
+	}
+	if !started {
+		return nil, errHelperDeploymentPending
+	}
+	// Only an already-fast resolver can satisfy the current tab. This wait never
+	// cancels or fails the deployment; slower helpers continue in background.
+	timer := time.NewTimer(50 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-entry.done:
+		m.logger.Debug("helper deployment finished within the first-tab wait", "session", session.ID, "ok", entry.err == nil)
+		session.mu.Lock()
+		current := session.transport == transport && session.generation == generation
 		session.mu.Unlock()
-		return nil, ErrDisconnected
+		if !current {
+			return nil, ErrStaleGeneration
+		}
+		if entry.err == nil && entry.provider != nil {
+			return entry.provider, nil
+		}
+		return nil, entry.err
+	case <-timer.C:
+		m.logger.Debug("helper deployment still running after the first-tab wait; tab will use a regular PTY", "session", session.ID, "waited_ms", 50)
+		return nil, errHelperDeploymentPending
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
+}
+
+// ensureBackgroundHelper returns the helper deployment for this session
+// generation, starting one when none is running. started reports whether this
+// call launched it. It never waits for the deployment and holds no durableMu. A session that is still
+// reconnecting may deploy (requireConnected false); only the first-tab path insists on a connected session.
+func (m *Manager) ensureBackgroundHelper(session *Session, transport *transportHandle, generation uint64, requireConnected bool) (entry *backgroundHelperDeployment, started bool, err error) {
+	session.mu.Lock()
+	if session.closed || requireConnected && session.status != StatusConnected {
+		session.mu.Unlock()
+		return nil, false, ErrDisconnected
 	}
 	if session.transport != transport || session.generation != generation {
 		session.mu.Unlock()
-		return nil, ErrStaleGeneration
+		return nil, false, ErrStaleGeneration
 	}
 	backgroundHelperDeployments.Lock()
 	if entry := backgroundHelperDeployments.entries[session]; entry != nil {
 		if entry.transport == transport && entry.generation == generation {
 			backgroundHelperDeployments.Unlock()
 			session.mu.Unlock()
-			return nil, errHelperDeploymentPending
+			return entry, false, nil
 		}
 		delete(backgroundHelperDeployments.entries, session)
 		entry.cancel()
@@ -134,7 +171,7 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 		baseCtx = m.ctx
 	}
 	deploymentCtx, cancel := context.WithCancel(baseCtx)
-	entry := &backgroundHelperDeployment{
+	entry = &backgroundHelperDeployment{
 		session: session, transport: transport, generation: generation, done: make(chan struct{}), sessionCtx: baseCtx, ctx: deploymentCtx, cancel: cancel,
 	}
 	helperDeploymentSequence++
@@ -161,31 +198,9 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 		backgroundHelperDeployments.Unlock()
 		entry.stop()
 		cancel()
-		return nil, fmt.Errorf("%w: manager is closing", durable.ErrUnavailable)
+		return nil, false, fmt.Errorf("%w: manager is closing", durable.ErrUnavailable)
 	}
-	// Only an already-fast resolver can satisfy the current tab. This wait never
-	// cancels or fails the deployment; slower helpers continue in background.
-	timer := time.NewTimer(50 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-entry.done:
-		m.logger.Debug("helper deployment finished within the first-tab wait", "session", session.ID, "ok", entry.err == nil)
-		session.mu.Lock()
-		current := session.transport == transport && session.generation == generation
-		session.mu.Unlock()
-		if !current {
-			return nil, ErrStaleGeneration
-		}
-		if entry.err == nil && entry.provider != nil {
-			return entry.provider, nil
-		}
-		return nil, entry.err
-	case <-timer.C:
-		m.logger.Debug("helper deployment still running after the first-tab wait; tab will use a regular PTY", "session", session.ID, "waited_ms", 50)
-		return nil, errHelperDeploymentPending
-	case <-ctx.Done():
-		return nil, context.Cause(ctx)
-	}
+	return entry, true, nil
 }
 
 func isPureCancellation(err error) bool {
@@ -409,6 +424,26 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 			return provider, nil
 		}
 	}
+	if kind == KindSSH {
+		// Deploying while holding durableMu would stall every first tab of the session behind this call (the tab
+		// open path and fallback notice need the same lock), so no SSH deployment may run under it.
+		if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport &&
+			!retryFailure && m.now().Sub(session.durableFailureAt) < 30*time.Second {
+			err := session.durableFailure
+			session.durableMu.Unlock()
+			return nil, err
+		}
+		session.durableMu.Unlock()
+		session.mu.Lock()
+		current := session.transport == transport && session.generation == generation
+		session.mu.Unlock()
+		if current {
+			// The session's own transport shares the single background deployment; callers only wait.
+			return m.awaitSSHHelper(ctx, session, transport, generation, retryFailure)
+		}
+		// A reconnect candidate is not installed yet, so it resolves on its own, still outside the lock.
+		return m.resolveSSHCandidate(ctx, session, transport, generation)
+	}
 	defer session.durableMu.Unlock()
 	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport &&
 		!retryFailure && m.now().Sub(session.durableFailureAt) < 30*time.Second {
@@ -419,7 +454,33 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 	resolveCtx := ipc.WithHelperProgressScope(ctx, ipc.HelperProgressScope{SessionID: session.ID, AssetID: session.Asset().ID})
 	provider, err := m.resolver.ResolveDurable(resolveCtx, transport.Transport)
 	if err != nil {
-		if kind == KindSSH && sshHelperUnavailable(err) && ctx.Err() == nil {
+		return nil, err
+	}
+	session.durableProvider = provider
+	session.durableFailure = nil
+	session.durableFailureAt = time.Time{}
+	session.durableCreateFailure = nil
+	session.durableGen = generation
+	session.durableTransport = transport
+	return provider, nil
+}
+
+// resolveSSHCandidate resolves the helper for a transport that is not yet the session's current one (a reconnect in
+// progress) without holding durableMu while the helper is resolved.
+func (m *Manager) resolveSSHCandidate(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (base.DurableProvider, error) {
+	// Candidates are serialized per session so two reconnect attempts never deploy to the same host at once.
+	session.helperCandidateMu.Lock()
+	defer session.helperCandidateMu.Unlock()
+	session.durableMu.Lock()
+	session.durableFailure = nil
+	session.durableFailureAt = time.Time{}
+	session.durableMu.Unlock()
+	resolveCtx := ipc.WithHelperProgressScope(ctx, ipc.HelperProgressScope{SessionID: session.ID, AssetID: session.Asset().ID})
+	provider, err := m.resolver.ResolveDurable(resolveCtx, transport.Transport)
+	session.durableMu.Lock()
+	defer session.durableMu.Unlock()
+	if err != nil {
+		if sshHelperUnavailable(err) && ctx.Err() == nil {
 			session.durableProvider = nil
 			session.durableFailure = err
 			session.durableFailureAt = m.now()
@@ -435,6 +496,39 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 	session.durableGen = generation
 	session.durableTransport = transport
 	return provider, nil
+}
+
+// awaitSSHHelper waits for the background helper deployment of this session generation, starting it when
+// none is running. With retryFailure a failed deployment is retried once from scratch.
+func (m *Manager) awaitSSHHelper(ctx context.Context, session *Session, transport *transportHandle, generation uint64, retryFailure bool) (base.DurableProvider, error) {
+	for attempt := 0; ; attempt++ {
+		entry, started, err := m.ensureBackgroundHelper(session, transport, generation, false)
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case <-entry.done:
+			if entry.err == nil && entry.provider != nil {
+				session.mu.Lock()
+				current := session.transport == transport && session.generation == generation
+				session.mu.Unlock()
+				if !current {
+					return nil, ErrStaleGeneration
+				}
+				return entry.provider, nil
+			}
+			// Retry only when this call joined a deployment someone else started and it failed; a deployment this
+			// call started itself already is the fresh attempt.
+			if !retryFailure || started || attempt > 0 {
+				if entry.err == nil {
+					return nil, errors.New("helper resolver returned a nil provider")
+				}
+				return nil, entry.err
+			}
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+	}
 }
 
 func sshHelperUnavailable(err error) bool {
@@ -506,6 +600,18 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 		return nil, err
 	}
 
+	// Listing runs on a poll. A recorded deployment failure must stay in force for this connection, otherwise
+	// every poll after the failure cache expires would redeploy against a host where the helper cannot run.
+	if kind == KindSSH {
+		session.durableMu.Lock()
+		failure := session.durableFailure
+		// Only "this host cannot run the helper" is sticky; transient failures keep the normal retry window.
+		known := failure != nil && sshHelperUnavailable(failure) && session.durableProvider == nil && session.durableGen == generation && session.durableTransport == transport
+		session.durableMu.Unlock()
+		if known {
+			return nil, failure
+		}
+	}
 	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, false)
 	if err != nil {
 		return nil, err

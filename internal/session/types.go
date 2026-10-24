@@ -323,6 +323,7 @@ type Session struct {
 	statusErr           error
 
 	durableMu            sync.Mutex
+	helperCandidateMu    sync.Mutex
 	durableProvider      base.DurableProvider
 	durableGen           uint64
 	durableTransport     *transportHandle

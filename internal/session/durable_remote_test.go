@@ -1268,3 +1268,188 @@ func TestCancelHelperOperationPreservesNonCancellationFailure(t *testing.T) {
 		})
 	}
 }
+
+// An explicit durable request (for example listing background tabs) arriving while the helper deploys
+// must join the single background deployment instead of deploying under durableMu, otherwise the first
+// tab of the session stays blocked until the whole deployment ends.
+func TestOpenTabSSHIsNotBlockedByExplicitDurableRequestDuringDeployment(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		calls.Add(1)
+		started <- struct{}{}
+		select {
+		case <-release:
+			return provider, nil
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		_ = manager.Close()
+	})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-explicit-during-deploy", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected.mu.Lock()
+	transport, generation := connected.transport, connected.generation
+	connected.mu.Unlock()
+
+	type providerResult struct {
+		provider base.DurableProvider
+		err      error
+	}
+	explicit := make(chan providerResult, 1)
+	go func() {
+		got, err := manager.durableProviderFor(context.Background(), connected, transport, KindSSH, generation, false)
+		explicit <- providerResult{provider: got, err: err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("explicit request did not start a deployment")
+	}
+
+	opened := make(chan error, 1)
+	var info TabInfo
+	go func() {
+		var openErr error
+		info, openErr = manager.OpenTab(context.Background(), OpenTabOptions{
+			SessionID: connected.ID, ClientID: "client", ChannelID: "first", Cols: 80, Rows: 24,
+			Durable: &DurableTabOptions{}, DurableFallback: true,
+		})
+		opened <- openErr
+	}()
+	select {
+	case err := <-opened:
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Durable || info.FallbackNotice == "" {
+			t.Fatalf("first tab = %+v; want an ordinary PTY while the helper deploys", info)
+		}
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("the first tab was blocked behind the deployment started by an explicit request")
+	}
+
+	close(release)
+	select {
+	case result := <-explicit:
+		if result.err != nil || result.provider != provider {
+			t.Fatalf("explicit request = %v, %v; want the deployed provider", result.provider, result.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("explicit request did not finish after the deployment completed")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("resolver ran %d times; want a single shared deployment", got)
+	}
+}
+
+func TestListRemoteDurableDoesNotRedeployAfterARecordedFailure(t *testing.T) {
+	resolver := &countingResolver{err: fmt.Errorf("%w: helper cannot run here", durable.ErrUnavailable)}
+	var offset atomic.Int64
+	manager := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver,
+		Now: func() time.Time { return time.Unix(1_700_000_000, 0).Add(time.Duration(offset.Load())) },
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-list-failure", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ListRemoteDurable(t.Context(), connected.ID); err == nil {
+		t.Fatal("first listing succeeded; want the deployment failure")
+	}
+	if resolver.callCount() != 1 {
+		t.Fatalf("resolver calls = %d; want 1", resolver.callCount())
+	}
+	offset.Store(int64(time.Minute))
+	if _, err := manager.ListRemoteDurable(t.Context(), connected.ID); err == nil {
+		t.Fatal("second listing succeeded; want the recorded failure")
+	}
+	if resolver.callCount() != 1 {
+		t.Fatalf("resolver calls = %d after the cache window; a poll must not redeploy", resolver.callCount())
+	}
+}
+
+// A deployment started by the call itself is the fresh attempt: with retryFailure it must not run twice.
+func TestExplicitDurableRequestDeploysOnceWhenItStartsTheDeployment(t *testing.T) {
+	resolver := &countingResolver{err: fmt.Errorf("%w: helper cannot run here", durable.ErrUnavailable)}
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-retry-once", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected.mu.Lock()
+	transport, generation := connected.transport, connected.generation
+	connected.mu.Unlock()
+	if _, err := manager.durableProviderFor(t.Context(), connected, transport, KindSSH, generation, true); err == nil {
+		t.Fatal("deployment succeeded; want the failure")
+	}
+	if got := resolver.callCount(); got != 1 {
+		t.Fatalf("resolver ran %d times; want 1 for a deployment this call started", got)
+	}
+}
+
+// Cancelling a caller that is only waiting must not cancel the shared deployment.
+func TestCancellingADurableWaiterDoesNotCancelTheDeployment(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	resolver := DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+			return provider, nil
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+	})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		_ = manager.Close()
+	})
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-waiter-cancel", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected.mu.Lock()
+	transport, generation := connected.transport, connected.generation
+	connected.mu.Unlock()
+
+	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, err := manager.durableProviderFor(waiterCtx, connected, transport, KindSSH, generation, false)
+		waiterDone <- err
+	}()
+	<-started
+	cancelWaiter()
+	if err := <-waiterDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiter err = %v; want context.Canceled", err)
+	}
+
+	close(release)
+	waitFor(t, func() bool {
+		connected.durableMu.Lock()
+		defer connected.durableMu.Unlock()
+		return connected.durableProvider == provider
+	})
+}
