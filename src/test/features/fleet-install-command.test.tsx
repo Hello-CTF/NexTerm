@@ -127,7 +127,7 @@ async function openIssuedPanel(): Promise<void> {
   mounted = mountWithClient(createElement(DevicesView));
   await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
   click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
-  click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+  click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
   await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
 }
 

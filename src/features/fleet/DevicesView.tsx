@@ -6,7 +6,8 @@
 // The metrics panel lives in ./MetricsPanel (with the CPU 24h trend line in ./MetricsChart), reused directly here;
 // no separate chart logic is implemented.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { type FleetBaseURLEntry, type FleetDevice } from "../../ipc/fleetApi";
@@ -20,8 +21,11 @@ import { describeError } from "../../ui/errorText";
 import { copyText as copyToClipboard } from "../../ui/clipboard";
 import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
+import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import {
   IconCheckCircle,
+  IconChevronDown,
+  IconChevronUp,
   IconCopy,
   IconInfo,
   IconMonitor,
@@ -80,7 +84,7 @@ function FleetUnsupported() {
               登录服务端账号后可用
             </div>
             <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">
-              设备接入与远程终端依赖服务端账号体系。在「设置 → 账号同步」登录服务端账号后，即可管理接入设备、签发接入码并打开远程终端。
+              设备接入与远程终端依赖服务端账号体系。在「设置 → 账号同步」登录服务端账号后，即可管理接入的设备、生成接入码并打开远程终端。
             </div>
           </div>
           <button
@@ -102,6 +106,31 @@ function openAccountSyncSettings(): void {
   showSettingsSection("settings-account");
 }
 
+const PLATFORM_LABELS: Record<string, string> = { darwin: "macOS", linux: "Linux", windows: "Windows" };
+
+function platformLabel(platform: string): string {
+  return PLATFORM_LABELS[platform.toLowerCase()] ?? platform;
+}
+
+function IconMoreDots({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <circle cx="3" cy="8" r="1.3" />
+      <circle cx="8" cy="8" r="1.3" />
+      <circle cx="13" cy="8" r="1.3" />
+    </svg>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-0.5 text-[12px]">
+      <dt className="nx-hint">{label}</dt>
+      <dd className="m-0 min-w-0 break-words text-neutral-200">{children}</dd>
+    </div>
+  );
+}
+
 interface DeviceCardProps {
   device: FleetDevice;
   now: number;
@@ -114,22 +143,26 @@ interface DeviceCardProps {
 function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: DeviceCardProps) {
   const { pushToast } = useUi();
   const [metricsOpen, setMetricsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [busy, setBusy] = useState(false);
   const revoked = device.revoked_at !== 0;
   const agent = device.agent;
-  // Heartbeat-determined online state feeds the badge hint text: event-driven online state defers to the control channel.
-  const heartbeatOnline = agent ? isOnline(agent.last_seen_at || device.last_seen_at, now) : false;
+  const lastSeenAt = agent?.last_seen_at || device.last_seen_at;
+  // Heartbeat-determined online state feeds the status hint: event-driven online state defers to the control channel.
+  const heartbeatOnline = agent ? isOnline(lastSeenAt, now) : false;
 
   const revoke = async () => {
-    const ok = await ask(`吊销设备「${device.name}」？\n\n吊销后设备凭证立即失效、控制通道断开，且不可恢复。`, {
-      title: "吊销设备",
-      kind: "warning",
-    });
+    const ok = await ask(
+      `撤销设备「${device.name}」的接入？\n\n撤销后，这台设备的登录凭据立即失效、远程连接会断开，且无法恢复。设备上的文件和程序不会被删除；要再次使用，需要重新生成接入码并重新接入。`,
+      { title: "撤销接入", kind: "warning" },
+    );
     if (!ok) return;
     setBusy(true);
     try {
       await fleetClient().revoke(device.id);
-      pushToast("success", `已吊销「${device.name}」`);
+      pushToast("success", `已撤销「${device.name}」的接入`);
       onRevoked(device.id);
     } catch (e) {
       pushToast("error", describeError(e));
@@ -152,7 +185,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
     try {
       const r = await fleetClient().setAutostart(device.id, desired);
       onPatch(device.id, { agent: { ...agent, desired_autostart: r.desired_autostart } });
-      pushToast("success", `已将「${device.name}」的期望自启动设为${r.desired_autostart ? "开启" : "关闭"}`);
+      pushToast("success", `已${r.desired_autostart ? "开启" : "关闭"}「${device.name}」的随登录自动启动`);
     } catch (e) {
       pushToast("error", describeError(e));
     } finally {
@@ -166,131 +199,207 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
   const hasServiceReport = Boolean(serviceState && (serviceState.installed || serviceState.enabled || serviceState.active || serviceState.last_reconcile_at));
   const autostartActual = Boolean(serviceState?.installed && serviceState?.enabled);
   const runningText = !hasServiceReport ? "未上报" : serviceState?.active ? "运行中" : "未运行";
-  const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== autostartActual);
+  const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== autostartActual && !revoked);
+  const serviceError = serviceState?.last_error;
+
+  const openMenu = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const items: MenuItem[] = [];
+    items.push({ kind: "item", label: "复制设备名称", onSelect: () => copyText(device.name, pushToast, "设备名称") });
+    if (agent?.current_url) {
+      const url = agent.current_url;
+      items.push({ kind: "item", label: "复制接入地址", onSelect: () => copyText(url, pushToast, "接入地址") });
+    }
+    items.push({ kind: "separator" });
+    items.push({ kind: "item", label: "撤销接入…", icon: <IconTrash size={12} />, danger: true, disabled: busy, onSelect: () => void revoke() });
+    setMenu({ x: rect.left, y: rect.bottom + 4, items, title: device.name });
+  };
+
+  const statusLabel = revoked ? "已撤销接入" : agent ? (online ? "在线" : "离线") : "未安装设备代理";
+  const statusTone = revoked ? "text-red-300" : online ? "text-green-300" : "text-neutral-300";
+  const statusTitle = !agent || revoked
+    ? undefined
+    : online
+      ? heartbeatOnline ? "最近 3 分钟内有心跳" : "控制通道实时在线"
+      : `最近一次上报：${lastSeenAt ? formatTime(lastSeenAt) : "从未"}`;
+
+  const lastSeenText = lastSeenAt ? (
+    <time dateTime={new Date(lastSeenAt).toISOString()} title={formatTime(lastSeenAt)}>
+      {relativeTime(lastSeenAt, now)}上报
+    </time>
+  ) : (
+    <span>尚未上报</span>
+  );
 
   return (
     <section className={`nx-card ${revoked ? "opacity-60" : ""}`}>
-      <div className="mb-1 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <IconMonitor size={15} className="text-neutral-400" />
         <span className="nx-card-title min-w-0 break-all">{device.name}</span>
-        <span className="nx-badge shrink-0">{device.kind}</span>
-        {revoked ? (
-          <span className="nx-badge nx-badge-red shrink-0">已吊销</span>
-        ) : agent ? (
-          <span
-            className={`nx-badge shrink-0 ${online ? "nx-badge-green" : ""}`}
-            title={online ? (heartbeatOnline ? "最近 3 分钟内有心跳" : "控制通道实时在线") : `最近心跳 ${relativeTime(agent.last_seen_at || device.last_seen_at, now)}`}
-          >
-            {online ? "在线" : "离线"}
-          </span>
-        ) : null}
+        <span className={`inline-flex shrink-0 items-center gap-1.5 text-[12px] ${statusTone}`} title={statusTitle}>
+          <span className="nx-dot" aria-hidden="true" />
+          {statusLabel}
+        </span>
+        {agent?.platform && <span className="nx-hint shrink-0">{platformLabel(agent.platform)}</span>}
         {isAdmin && device.owner && (
           <span className="nx-badge nx-badge-blue shrink-0" title={`所有者 ${device.owner.username}`}>
             {device.owner.username}
           </span>
         )}
         <div className="nx-spacer" />
-        {!revoked && agent?.terminal_enabled && (
+        {!revoked && agent && online && agent.terminal_enabled && (
           <button
             type="button"
-            className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-            disabled={!online}
-            title={online ? "打开这台设备的工作区" : "设备离线，无法打开工作区"}
+            className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
+            title="在这台设备上打开工作区"
             onClick={() => void connectDevice(device)}
           >
             <IconTerminal size={11} />
-            工作区
+            打开工作区
           </button>
         )}
-        {!revoked && agent && (
+        {!revoked && agent && !online && (
           <button
             type="button"
-            className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-            onClick={() => setMetricsOpen(!metricsOpen)}
-            aria-expanded={metricsOpen}
+            className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+            aria-expanded={reasonOpen}
+            onClick={() => setReasonOpen(!reasonOpen)}
           >
-            指标
+            离线原因
           </button>
         )}
         {!revoked && (
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-            disabled={busy}
-            title="吊销后设备凭证立即失效，不可恢复"
-            onClick={() => void revoke()}
+            aria-label="更多操作"
+            aria-haspopup="menu"
+            onClick={openMenu}
           >
-            <IconTrash size={11} />
-            吊销
+            <IconMoreDots size={14} />
           </button>
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px] text-neutral-300">
-        <span className="nx-hint">创建于 {formatTime(device.created_at)}</span>
-        <span className="nx-hint">最近心跳 {relativeTime(agent?.last_seen_at || device.last_seen_at, now)}</span>
-        {revoked && <span className="text-red-300">吊销于 {formatTime(device.revoked_at)}</span>}
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-neutral-400">
+        {revoked ? (
+          <span className="text-red-300">撤销于 {formatTime(device.revoked_at)}</span>
+        ) : agent ? (
+          <>
+            {lastSeenText}
+            {agent.app_version && <span>· v{agent.app_version}</span>}
+            {online && !agent.terminal_enabled && <span>· 这台设备未开启远程终端</span>}
+          </>
+        ) : (
+          <span>{device.kind === "browser" ? "浏览器设备" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
+        )}
       </div>
 
-      {agent && (
-        <div className="mt-2 flex flex-col gap-2 border-t border-neutral-800/60 pt-2">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px] text-neutral-300">
-            <span>
-              平台 <b className="font-mono">{agent.platform || "未知"}</b>
-              {agent.app_version && <span className="nx-hint"> · v{agent.app_version}</span>}
-            </span>
-            <span className="min-w-0 break-all">
-              当前接入{" "}
-              {agent.current_url ? (
-                <code className="nx-code font-mono text-[11.5px]">{agent.current_url}</code>
-              ) : (
-                <span className="nx-hint">未上报</span>
-              )}
-            </span>
-            <span>
-              远程终端{" "}
-              <b>{agent.terminal_enabled ? "开启" : "关闭"}</b>
-            </span>
+      {!revoked && agent && !online && reasonOpen && (
+        <div className="nx-alert nx-alert-info mt-2 text-[12px]">
+          <div>
+            设备{lastSeenAt ? `在 ${formatTime(lastSeenAt)} 之后就没有再联系服务器` : "还没有联系过服务器"}。常见原因：设备关机或断网、后台服务没有运行。
           </div>
+          <div className="mt-1 text-neutral-400">
+            先确认设备已开机联网；若后台服务没有运行，可在设备上重新执行 <code className="nx-code font-mono">nexterm-agent install</code>。仍无法恢复时，用页面右上角的「接入新设备」重新接入。
+          </div>
+        </div>
+      )}
 
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-neutral-300">
-            <label className="flex items-center gap-1.5" title="期望自启动：服务端保存的目标状态，设备代理下次连接时应用">
+      {!revoked && autostartDrift && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-amber-300" role="status">
+          <span>
+            {agent?.desired_autostart
+              ? "已设置随用户登录自动启动，但当前没有生效"
+              : "已设置不自动启动，但后台服务当前仍会随登录启动"}
+          </span>
+          {!online && <span className="nx-hint">设备离线，上线后才会调整</span>}
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+            onClick={() => setDetailsOpen(true)}
+          >
+            查看详情
+          </button>
+        </div>
+      )}
+      {!revoked && serviceError && (
+        <div className="mt-1 min-w-0 break-all text-[12px] text-red-300" title={serviceError}>
+          后台服务报错：{serviceError}
+        </div>
+      )}
+
+      {!revoked && agent && (
+        <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-neutral-800/60 pt-2">
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+            onClick={() => setDetailsOpen(!detailsOpen)}
+            aria-expanded={detailsOpen}
+          >
+            {detailsOpen ? <IconChevronUp size={11} /> : <IconChevronDown size={11} />}
+            详情
+          </button>
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+            onClick={() => setMetricsOpen(!metricsOpen)}
+            aria-expanded={metricsOpen}
+          >
+            指标
+          </button>
+        </div>
+      )}
+
+      {!revoked && agent && detailsOpen && (
+        <dl className="m-0 mt-2 flex flex-col gap-1.5">
+          <DetailRow label="创建时间">{formatTime(device.created_at)}</DetailRow>
+          <DetailRow label="版本">{agent.app_version ? `v${agent.app_version}` : "未上报"}</DetailRow>
+          <DetailRow label="系统平台">{agent.platform ? platformLabel(agent.platform) : "未知"}</DetailRow>
+          <DetailRow label="接入地址">
+            {agent.current_url ? (
+              <span className="flex flex-wrap items-center gap-2">
+                <code className="nx-code min-w-0 break-all font-mono text-[11.5px]">{agent.current_url}</code>
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+                  aria-label="复制接入地址"
+                  onClick={() => copyText(agent.current_url, pushToast, "接入地址")}
+                >
+                  <IconCopy size={11} />
+                  复制
+                </button>
+              </span>
+            ) : (
+              <span className="nx-hint">未上报</span>
+            )}
+          </DetailRow>
+          <DetailRow label="远程终端">
+            <b>{agent.terminal_enabled ? "开启" : "关闭"}</b>
+            <span className="nx-hint"> · {agent.terminal_enabled ? "允许在这台设备上打开终端" : "不允许在这台设备上打开终端"}（此处仅展示）</span>
+          </DetailRow>
+          <DetailRow label="随登录自动启动">
+            <label className="flex flex-wrap items-center gap-1.5">
               <input
                 type="checkbox"
                 checked={agent.desired_autostart}
-                disabled={busy || revoked}
+                disabled={busy}
                 onChange={() => void toggleAutostart()}
               />
-              期望自启动
-            </label>
-            <span>
-              实际自启动{" "}
-              <b>{hasServiceReport ? (autostartActual ? "已启用" : "未启用") : "未上报"}</b>
-              {autostartDrift && !revoked && (
-                <span className="nx-badge nx-badge-amber ml-2" title={serviceState?.last_error || "实际自启动与期望不一致"}>
-                  未生效
-                </span>
-              )}
-            </span>
-            <span>
-              运行状态{" "}
-              <b>{runningText}</b>
-            </span>
-            {serviceState?.last_error && (
-              <span className="min-w-0 break-all text-red-300" title={serviceState.last_error}>
-                服务错误：{serviceState.last_error}
+              <span>{agent.desired_autostart ? "已设置自动启动" : "未设置自动启动"}</span>
+              <span className="nx-hint">
+                · 当前{hasServiceReport ? (autostartActual ? "已生效" : "未生效") : "未上报"}
               </span>
-            )}
-            {!online && !revoked && (
-              <span className="nx-hint text-[11px]">设备离线：修改只会保存为期望状态，上线后生效</span>
-            )}
-          </div>
+            </label>
+            {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：修改只会保存为期望状态，上线后生效</div>}
+          </DetailRow>
+          <DetailRow label="后台服务">{runningText}</DetailRow>
+        </dl>
+      )}
 
-          {metricsOpen && (
-            <div className="border-t border-neutral-800/60 pt-2">
-              <MetricsPanel deviceId={device.id} online={online} />
-            </div>
-          )}
+      {!revoked && agent && metricsOpen && (
+        <div className="mt-2 border-t border-neutral-800/60 pt-2">
+          <MetricsPanel deviceId={device.id} online={online} />
         </div>
       )}
 
@@ -299,6 +408,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
           该设备未安装设备代理，没有运行状态和指标。
         </div>
       )}
+      {createPortal(<ContextMenu state={menu} onClose={() => setMenu(null)} />, document.body)}
     </section>
   );
 }
@@ -704,7 +814,7 @@ export function DevicesView() {
               style={{ maxWidth: 360 }}
               value={deviceQuery}
               aria-label="搜索设备"
-              placeholder="搜索设备"
+              placeholder="按名称、平台或地址搜索"
               onChange={(e) => setDeviceQuery(e.target.value)}
             />
             <select
@@ -717,7 +827,7 @@ export function DevicesView() {
               <option value="all">全部</option>
               <option value="online">在线</option>
               <option value="offline">离线</option>
-              <option value="revoked">已吊销</option>
+              <option value="revoked">已撤销接入</option>
             </select>
             {(deviceQuery.trim() !== "" || deviceFilter !== "all") && (
               <span className="nx-hint text-[11px]">
@@ -725,7 +835,7 @@ export function DevicesView() {
               </span>
             )}
             {deviceFilter !== "revoked" && hiddenRevokedCount > 0 && (
-              <span className="nx-hint text-[11px]">已隐藏 {hiddenRevokedCount} 台已吊销设备（选「已吊销」可见）</span>
+              <span className="nx-hint text-[11px]">已隐藏 {hiddenRevokedCount} 台已撤销接入的设备（过滤选「已撤销接入」可见）</span>
             )}
           </div>
         )}
@@ -739,7 +849,7 @@ export function DevicesView() {
             {!issued ? (
               <>
                 <p className="nx-hint mb-3">
-                  签发一次性接入码，并在设备上执行接入命令。接入码只能使用一次，到期自动作废。
+                  先生成一个一次性接入码，再到要接入的机器上执行命令，机器就会出现在这个列表里。接入码只能使用一次，到期自动作废。
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
@@ -760,11 +870,11 @@ export function DevicesView() {
                     disabled={issuing || baseUrlsStatus !== "ready"}
                     onClick={() => void issueEnrollCode()}
                   >
-                    {issuing ? "签发中…" : "签发接入码"}
+                    {issuing ? "生成中…" : "生成接入码"}
                   </button>
                   {baseUrlsStatus !== "ready" && (
                     <span className="nx-hint text-[11px]">
-                      {baseUrlsStatus === "loading" ? "接入地址读取中，成功后才能签发。" : "接入地址读取失败，请在下方重试后签发。"}
+                      {baseUrlsStatus === "loading" ? "接入地址读取中，读取成功后才能生成接入码。" : "接入地址读取失败，请在下方重试后再生成接入码。"}
                     </span>
                   )}
                 </div>
@@ -855,7 +965,7 @@ export function DevicesView() {
                   )}
                   <div className="flex flex-wrap items-center gap-2 border-t border-red-500/20 pt-2">
                     <span className="text-[12px] text-neutral-200">
-                      执行完成后刷新列表：设备接入即上线，从设备卡片打开「终端」。
+                      命令执行完成后刷新列表，设备会出现在这里；在线后可点设备卡片上的「打开工作区」。
                     </span>
                     <button type="button" className="nx-btn nx-btn-primary nx-btn-sm shrink-0" disabled={loading} onClick={() => void load()}>
                       <IconRefresh size={12} className={loading ? "animate-spin" : ""} />
@@ -880,7 +990,15 @@ export function DevicesView() {
         )}
 
         {devices !== null && devices.length === 0 && !error && (
-          <div className="nx-hint py-2 text-center text-[12px]">还没有接入设备，请选择右上角「接入新设备」并按提示操作。</div>
+          <div className="flex flex-col items-center gap-2 py-4 text-center">
+            <div className="nx-hint text-[12px]">还没有接入设备。生成接入码后，在目标机器上执行一条命令即可接入。</div>
+            {!enrollOpen && (
+              <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => setEnrollOpen(true)}>
+                <IconPlus size={12} />
+                开始接入
+              </button>
+            )}
+          </div>
         )}
         {devices !== null && devices.length > 0 && visibleDevices?.length === 0 && (
           <div className="nx-hint py-2 text-center text-[12px]">没有符合当前搜索或过滤条件的设备。</div>
@@ -927,7 +1045,7 @@ export function DevicesView() {
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>
           <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-          设备列表由服务端按角色过滤：普通用户只看自己的设备，超级管理员看全部。
+          你只能看到自己接入的设备；超级管理员可以看到所有人的设备。
         </span>
       </div>
     </div>

@@ -52,6 +52,25 @@ import { useUi } from "../../app/store";
 
 const NOW = Date.now();
 
+function buttonByText(root: ParentNode | null | undefined, text: string): HTMLButtonElement | undefined {
+  return [...(root?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === text);
+}
+
+function expandDetails(card: Element | null | undefined): void {
+  const toggle = buttonByText(card, "详情");
+  if (!toggle) throw new Error("details toggle not found");
+  if (toggle.getAttribute("aria-expanded") !== "true") click(toggle);
+}
+
+function pickMenuItem(card: Element | null | undefined, label: string): void {
+  const more = card?.querySelector<HTMLButtonElement>('button[aria-label="更多操作"]');
+  if (!more) throw new Error("more button not found");
+  click(more);
+  const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) => b.textContent?.includes(label));
+  if (!item) throw new Error(`menu item ${label} not found`);
+  click(item);
+}
+
 const SUPERADMIN = {
   id: "u-1",
   username: "root",
@@ -328,6 +347,9 @@ describe("Device management view - device list and metrics", () => {
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
     expect(card?.textContent).toContain("在线");
+    expect(card?.textContent).toContain("上报");
+    expect(card?.textContent).not.toContain("https://nexterm.example.com");
+    expandDetails(card);
     expect(card?.textContent).toContain("https://nexterm.example.com");
 
     const metricsButton = [...(card?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "指标");
@@ -651,7 +673,7 @@ describe("Device management view - device list and metrics", () => {
     expect(cardOf("db-02")).toBeTruthy();
     expect(cardOf("browser-01")).toBeTruthy();
     expect(cardOf("old-laptop")).toBeFalsy();
-    expect(document.body.textContent).toContain("已隐藏 1 台已吊销设备");
+    expect(document.body.textContent).toContain("已隐藏 1 台已撤销接入的设备");
     expect(calls).toHaveLength(requestCount);
   });
 
@@ -682,8 +704,9 @@ describe("Device management view - device list and metrics", () => {
     const target = cardOf("needle-device");
     expect(target?.textContent).toContain("owner-59");
     expect([...(target?.querySelectorAll("button") ?? [])].map((button) => button.textContent?.trim())).toEqual(
-      expect.arrayContaining(["工作区", "指标", "吊销"]),
+      expect.arrayContaining(["打开工作区", "详情", "指标"]),
     );
+    expect(target?.querySelector('button[aria-label="更多操作"]')).not.toBeNull();
     expect(document.activeElement).toBe(search);
 
     setInputValue(search, "");
@@ -832,13 +855,13 @@ describe("Device management view - device list and metrics", () => {
 
       enrollPanelShown = true;
       click(enrollButton);
-      expect(document.body.textContent).toContain("签发接入码");
+      expect(document.body.textContent).toContain("生成接入码");
       expect(firstItem?.style.transform).toBe("translateY(-160px)");
 
       enrollPanelShown = false;
       click(enrollButton);
       await flush();
-      expect(document.body.textContent).not.toContain("签发接入码");
+      expect(document.body.textContent).not.toContain("生成接入码");
       expect(firstItem?.style.transform).toBe("translateY(-40px)");
     } finally {
       rectSpy.mockRestore();
@@ -903,7 +926,7 @@ describe("Device management view - device list and metrics", () => {
       expect(firstItem?.style.transform).toBe("translateY(-160px)");
 
       const issueButton = [...document.querySelectorAll("button")].find(
-        (button) => button.textContent?.trim() === "签发接入码",
+        (button) => button.textContent?.trim() === "生成接入码",
       );
       if (!issueButton) throw new Error("Issue-code button not found");
       issuedShown = true;
@@ -941,6 +964,9 @@ describe("Device management view - device list and metrics", () => {
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("db-02"));
     expect(card?.textContent).toContain("离线");
+    expect(buttonByText(card, "打开工作区")).toBeUndefined();
+    expect(buttonByText(card, "离线原因")).toBeDefined();
+    expandDetails(card);
     expect(card?.textContent).toContain("设备离线：修改只会保存为期望状态，上线后生效");
     expect(card?.textContent).toContain("未运行");
   });
@@ -959,8 +985,8 @@ describe("Device management view - device list and metrics", () => {
     const filter = document.querySelector<HTMLSelectElement>('select[aria-label="设备状态过滤"]') as HTMLSelectElement;
     setSelectValue(filter, "revoked");
     const revokedCard = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("old-laptop"));
-    expect(revokedCard?.textContent).toContain("已吊销");
-    expect([...(revokedCard?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.includes("吊销"))).toBe(false);
+    expect(revokedCard?.textContent).toContain("已撤销接入");
+    expect(revokedCard?.querySelectorAll("button")).toHaveLength(0);
   });
 
   it("shows enrollment guidance for an empty list and an error with retry for a failed list request", async () => {
@@ -986,7 +1012,7 @@ describe("Device management view - enrollment code issuance", () => {
 
     const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
     click(openButton as HTMLButtonElement);
-    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码");
+    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码");
     click(issueButton as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
 
@@ -1001,7 +1027,7 @@ describe("Device management view - enrollment code issuance", () => {
     expect(text).toContain("高级说明：多地址、手动接入与服务管理");
     expect(text).toContain("执行完成后刷新列表");
     expect(text).toContain("随用户登录自动启动");
-    expect(text).toContain("设备接入即上线");
+    expect(text).toContain("设备会出现在这里");
     expect(text).not.toContain("第 1 步");
     const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
     expect(text).toContain(
@@ -1058,7 +1084,7 @@ describe("Device management view - enrollment code issuance", () => {
     const enrollToggle = () =>
       [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement;
     click(enrollToggle());
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成") as HTMLButtonElement);
@@ -1076,7 +1102,7 @@ describe("Device management view - enrollment code issuance", () => {
     expect(enrollToggle().getAttribute("aria-expanded")).toBe("false");
     click(enrollToggle());
     expect(enrollToggle().getAttribute("aria-expanded")).toBe("true");
-    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "签发接入码")).toBe(true);
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "生成接入码")).toBe(true);
     expect(document.body.textContent).not.toContain("fleet-code-1");
     await flush();
 
@@ -1085,7 +1111,7 @@ describe("Device management view - enrollment code issuance", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
     click(enrollToggle());
     expect(enrollToggle().getAttribute("aria-expanded")).toBe("true");
-    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "签发接入码")).toBe(true);
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "生成接入码")).toBe(true);
     expect(document.body.textContent).not.toContain("fleet-code-1");
     await flush();
   });
@@ -1098,7 +1124,7 @@ describe("Device management view - enrollment code issuance", () => {
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
 
     vi.stubGlobal("navigator", { clipboard: undefined });
@@ -1143,7 +1169,7 @@ describe("Device management view - enrollment code issuance", () => {
     mounted = mountWithClient(createElement(DevicesView));
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
-    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement;
+    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement;
     expect(issueButton.disabled).toBe(true);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "展开编辑") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("接入地址读取中") ?? false);
@@ -1182,12 +1208,12 @@ describe("Device management view - revocation and autostart", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
-    const revokeButton = [...(card?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.includes("吊销"));
-    click(revokeButton as HTMLButtonElement);
+    pickMenuItem(card, "撤销接入");
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-1/revoke"));
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("不可恢复");
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("无法恢复");
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("重新接入");
     expect(calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length).toBeGreaterThanOrEqual(2);
   });
 
@@ -1199,8 +1225,7 @@ describe("Device management view - revocation and autostart", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
-    const revokeButton = [...(card?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.includes("吊销"));
-    click(revokeButton as HTMLButtonElement);
+    pickMenuItem(card, "撤销接入");
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
 
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
@@ -1213,6 +1238,7 @@ describe("Device management view - revocation and autostart", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
+    expandDetails(card);
     const checkbox = card?.querySelector<HTMLInputElement>('input[type="checkbox"]');
     expect(checkbox?.checked).toBe(true);
     click(checkbox as HTMLInputElement);
@@ -1231,6 +1257,7 @@ describe("Device management view - revocation and autostart", () => {
     await flushUntil(() => document.body.textContent?.includes("db-02") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("db-02"));
+    expandDetails(card);
     const checkbox = card?.querySelector<HTMLInputElement>('input[type="checkbox"]');
     expect(checkbox?.checked).toBe(false);
     click(checkbox as HTMLInputElement);
@@ -1265,11 +1292,12 @@ describe("Device management view - autostart drift from installed/enabled", () =
     await flushUntil(() => document.body.textContent?.includes("drift-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
-    expect(card?.textContent).toContain("实际自启动");
-    expect(card?.textContent).toContain("已启用");
-    expect(card?.textContent).toContain("运行状态");
+    expect(card?.textContent).not.toContain("没有生效");
+    expect(card?.querySelector('[role="status"]')).toBeNull();
+    expandDetails(card);
+    expect(card?.textContent).toContain("当前已生效");
+    expect(card?.textContent).toContain("后台服务");
     expect(card?.textContent).toContain("未运行");
-    expect(card?.textContent).not.toContain("未生效");
   });
 
   it("reports ineffective drift when disabled but the process is running", async () => {
@@ -1279,9 +1307,78 @@ describe("Device management view - autostart drift from installed/enabled", () =
     await flushUntil(() => document.body.textContent?.includes("drift-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
-    expect(card?.textContent).toContain("未启用");
-    expect(card?.textContent).toContain("未生效");
+    expect(card?.querySelector('[role="status"]')?.textContent).toContain("已设置随用户登录自动启动，但当前没有生效");
+    expandDetails(card);
+    expect(card?.textContent).toContain("当前未生效");
     expect(card?.textContent).toContain("运行中");
+  });
+});
+
+describe("Device management view - card layout", () => {
+  it("offers the workspace as the primary action when online and explains the offline reason otherwise", async () => {
+    route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("db-02") ?? false);
+    const cardOf = (name: string) => [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes(name));
+
+    expect(buttonByText(cardOf("web-01"), "打开工作区")).toBeDefined();
+    expect(buttonByText(cardOf("web-01"), "离线原因")).toBeUndefined();
+
+    const offline = cardOf("db-02");
+    expect(offline?.textContent).not.toContain("常见原因");
+    click(buttonByText(offline, "离线原因") as HTMLButtonElement);
+    expect(offline?.textContent).toContain("常见原因");
+    expect(offline?.textContent).toContain("接入新设备");
+  });
+
+  it("hides internal jargon and shows relative time with the absolute time on hover", async () => {
+    route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
+
+    expect(card?.textContent).not.toContain("吊销");
+    expect(card?.textContent).not.toContain("期望自启动");
+    expect(card?.querySelector("time")?.getAttribute("title")).toBe(formatTime(AGENT_DEVICE.agent.last_seen_at));
+    expect(card?.textContent).toContain("Linux");
+  });
+
+  it("shows the terminal switch meaning and a copyable address in the details, without a drift warning when consistent", async () => {
+    route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
+
+    expect(card?.querySelector('[role="status"]')).toBeNull();
+    expandDetails(card);
+    expect(card?.textContent).toContain("允许在这台设备上打开终端");
+    expect(card?.querySelector('button[aria-label="复制接入地址"]')).not.toBeNull();
+    expect(card?.querySelector("code")?.textContent).toBe("https://nexterm.example.com");
+  });
+
+  it("warns when autostart is switched off but the service still starts on login", async () => {
+    route(
+      fleetHandler({
+        devices: {
+          devices: [
+            {
+              ...AGENT_DEVICE,
+              id: "d-rev",
+              name: "rev-drift",
+              agent: { ...AGENT_DEVICE.agent, desired_autostart: false, service_state: { installed: true, enabled: true, active: true, last_reconcile_at: NOW - 60_000 } },
+            },
+          ],
+        },
+      }),
+    );
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("rev-drift") ?? false);
+    const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("rev-drift"));
+    expect(card?.querySelector('[role="status"]')?.textContent).toContain("已设置不自动启动");
   });
 });
 
@@ -1294,7 +1391,7 @@ describe("Device management view - enrollment command shell quoting", () => {
 
     const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
     click(openButton as HTMLButtonElement);
-    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码");
+    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码");
     click(issueButton as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
 
@@ -1333,7 +1430,7 @@ describe("Device management view - account switching isolation", () => {
     await flushUntil(() => document.body.textContent?.includes("2 个地址") ?? false);
     const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
     click(openButton as HTMLButtonElement);
-    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码");
+    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码");
     click(issueButton as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("old-admin-code") ?? false);
 
@@ -1393,7 +1490,7 @@ describe("Device management view - account isolation during issuance", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
     await flushUntil(() => issueCalls === 1);
 
     // Switching to a regular user while issuance is in flight: the render-time reset has already cleared the enrollment panel and issuing.
@@ -1414,11 +1511,11 @@ describe("Device management view - account isolation during issuance", () => {
     await flush();
     await flush();
     expect(document.body.textContent).not.toContain("old-admin-code");
-    expect(document.body.textContent).not.toContain("签发中");
+    expect(document.body.textContent).not.toContain("生成中");
 
     // The new account can reopen the enrollment panel and issue normally; issuing is not stuck by the old finally.
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("new-user-code") ?? false);
     expect(document.body.textContent).not.toContain("old-admin-code");
   });
@@ -1445,22 +1542,21 @@ describe("Device management view - real-time online/offline events", () => {
     await flush();
     expect(cardOf("db-02")?.textContent).toContain("离线");
 
-    // db-02 comes online: the badge flips immediately, the offline hint disappears, no list request is fired.
+    // db-02 comes online: the status flips immediately, the offline action disappears, no list request is fired.
     act(() => handler({ deviceId: "d-2", online: true }));
     await flush();
     expect(cardOf("db-02")?.textContent).toContain("在线");
-    expect(cardOf("db-02")?.textContent).not.toContain("设备离线: 修改只会保存为期望状态");
+    expect(buttonByText(cardOf("db-02"), "打开工作区")).toBeUndefined();
+    expect(buttonByText(cardOf("db-02"), "离线原因")).toBeUndefined();
     expect(calls.length).toBe(fetchesBefore);
 
-    // web-01 goes offline: the badge turns offline, the terminal button is disabled, and again no list request is fired.
+    // web-01 goes offline: the status turns offline, the workspace button is replaced by the offline-reason action, and again no list request is fired.
     act(() => handler({ deviceId: "d-1", online: false }));
     await flush();
     const webCard = cardOf("web-01");
     expect(webCard?.textContent).toContain("离线");
-    const terminalButton = [...(webCard?.querySelectorAll("button") ?? [])].find(
-      (b) => b.textContent?.trim() === "工作区",
-    );
-    expect(terminalButton?.disabled).toBe(true);
+    expect(buttonByText(webCard, "打开工作区")).toBeUndefined();
+    expect(buttonByText(webCard, "离线原因")).toBeDefined();
     expect(calls.length).toBe(fetchesBefore);
   });
 });

@@ -291,7 +291,7 @@ describe("Device management - desktop logged in", () => {
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
     await flushUntil(() => mocks.serverVersion.mock.calls.length === 1);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("desk-code-1") ?? false);
 
     expect(mocks.issueEnrollCode).toHaveBeenCalledWith(15 * 60_000);
@@ -311,7 +311,8 @@ describe("Device management - desktop logged in", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = cardOf("web-01") as HTMLElement;
-    click([...card.querySelectorAll("button")].find((b) => b.textContent?.includes("吊销")) as HTMLButtonElement);
+    click(card.querySelector<HTMLButtonElement>('button[aria-label="更多操作"]') as HTMLButtonElement);
+    click([...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) => b.textContent?.includes("撤销接入")) as HTMLButtonElement);
     await flushUntil(() => mocks.revoke.mock.calls.length === 1);
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
@@ -325,6 +326,7 @@ describe("Device management - desktop logged in", () => {
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
+    click([...(cardOf("web-01")?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "详情") as HTMLButtonElement);
     const checkbox = cardOf("web-01")?.querySelector<HTMLInputElement>('input[type="checkbox"]') as HTMLInputElement;
     expect(checkbox.checked).toBe(true);
     click(checkbox);
