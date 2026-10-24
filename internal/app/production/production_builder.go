@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,7 +152,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	var sshResolver *sshdaemon.Resolver
 	executablePath, executableErr := os.Executable()
 	if executableErr == nil {
-		sshResolver = &sshdaemon.Resolver{Executable: executablePath}
+		sshResolver = &sshdaemon.Resolver{Executable: executablePath, UploadBytesPerSecond: helperUploadLimitFromEnv(config.Config.Logger)}
 	} else {
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}
@@ -572,3 +574,20 @@ func openProductionStore(ctx context.Context, config ProductionConfig) (*store.S
 	}
 	return store.OpenWithOptions(ctx, filepath.Join(config.DataDir, "data.db"), store.OpenOptions{Logger: config.Config.Logger})
 }
+
+// helperUploadLimitFromEnv reads the optional helper upload cap in KiB/s; unset or invalid means unlimited.
+func helperUploadLimitFromEnv(logger *slog.Logger) int64 {
+	raw := strings.TrimSpace(os.Getenv("NEXTERM_HELPER_UPLOAD_KIB_PER_SEC"))
+	if raw == "" {
+		return 0
+	}
+	kib, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || kib <= 0 || kib > maxHelperUploadKiBPerSec {
+		logger.Warn("ignoring NEXTERM_HELPER_UPLOAD_KIB_PER_SEC; the helper upload stays unlimited", "value", raw)
+		return 0
+	}
+	return kib << 10
+}
+
+// maxHelperUploadKiBPerSec keeps the byte conversion far from overflow.
+const maxHelperUploadKiBPerSec = 1 << 30

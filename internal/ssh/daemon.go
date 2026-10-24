@@ -130,6 +130,9 @@ type Resolver struct {
 	// RetryBackoff is the initial delay between complete cycles. It is not an
 	// additional attempt and remains inside EnsureTimeout.
 	RetryBackoff time.Duration
+	// UploadBytesPerSecond optionally caps the helper upload so it cannot fill a slow link shared with
+	// the interactive shell. Zero, the default, leaves the upload unlimited.
+	UploadBytesPerSecond int64
 	// Progress receives helper installation and update progress. It is optional.
 	Progress func(context.Context, HelperProgress)
 

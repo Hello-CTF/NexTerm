@@ -21,6 +21,42 @@ type TransferOptions struct {
 	ProgressInterval time.Duration
 	BufferSize       int
 	Progress         func(Progress)
+	// MaxBytesPerSecond caps the upload rate so a background transfer cannot starve
+	// interactive traffic sharing the same SSH connection. Zero means unlimited.
+	MaxBytesPerSecond int64
+}
+
+// PaceWriter limits the sustained write rate of w. A non-positive rate returns w unchanged.
+func PaceWriter(ctx context.Context, w io.Writer, bytesPerSecond int64) io.Writer {
+	if bytesPerSecond <= 0 {
+		return w
+	}
+	return &pacedWriter{ctx: ctx, w: w, rate: bytesPerSecond, start: time.Now()}
+}
+
+type pacedWriter struct {
+	ctx   context.Context
+	w     io.Writer
+	rate  int64
+	start time.Time
+	sent  int64
+}
+
+func (p *pacedWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	p.sent += int64(n)
+	// Sleep until the cumulative average falls back to the cap; bursts are repaid, not forgiven.
+	due := p.start.Add(time.Duration(float64(p.sent) / float64(p.rate) * float64(time.Second)))
+	if wait := time.Until(due); wait > 0 && err == nil {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-p.ctx.Done():
+			return n, context.Cause(p.ctx)
+		}
+	}
+	return n, err
 }
 
 func (o TransferOptions) normalized() (TransferOptions, error) {
@@ -85,7 +121,7 @@ func (f *FS) Upload(ctx context.Context, localPath, remotePath string, options T
 	stop := context.AfterFunc(ctx, func() { local.Close() })
 	defer stop()
 	reporter := newProgressReporter(options, offset, total)
-	written, err := copyBuffer(ctx, remote, local, reporter.advance, make([]byte, options.BufferSize), total-offset)
+	written, err := copyBuffer(ctx, PaceWriter(ctx, remote, options.MaxBytesPerSecond), local, reporter.advance, make([]byte, options.BufferSize), total-offset)
 	transferred := offset + written
 	if err != nil {
 		return transferred, fmt.Errorf("upload %s: %w", remotePath, err)

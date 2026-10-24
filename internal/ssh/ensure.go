@@ -766,7 +766,7 @@ func (r *Resolver) installTargetHelper(ctx context.Context, host Host, location 
 	uploadCtx, cancel := context.WithTimeout(ctx, r.uploadTimeout())
 	defer cancel()
 	r.reportProgress(uploadCtx, HelperProgress{Step: 3, Stage: "cache", Path: location.paths.BinDir})
-	binary, err := StageUpload(uploadCtx, host, location.target, source, true, r.Progress)
+	binary, err := StageUploadLimited(uploadCtx, host, location.target, source, true, r.Progress, r.UploadBytesPerSecond)
 	if err != nil {
 		return binary, helperUnavailable("install target helper", err)
 	}

@@ -459,7 +459,7 @@ func UploadExec(ctx context.Context, opener ExecOpener, target Target, localPath
 		copyErrors <- err
 	}()
 
-	transferred, copyErr := copyExecStream(ctx, channel, local, info.Size(), options)
+	transferred, copyErr := copyExecStream(ctx, sshfs.PaceWriter(ctx, channel, options.MaxBytesPerSecond), local, info.Size(), options)
 	closeWriteErr := channel.CloseWrite()
 	waitErr := channel.Wait(ctx)
 	_ = channel.Close()
@@ -556,6 +556,11 @@ func (b *cappedTransferBuffer) String() string { return b.buffer.String() }
 // StageUpload installs a standalone helper with lock, staged digest, executable
 // mode, probe, rename and visible cleanup failures.
 func StageUpload(ctx context.Context, host Host, target Target, source UploadSource, probe bool, progress func(context.Context, HelperProgress)) (result string, retErr error) {
+	return StageUploadLimited(ctx, host, target, source, probe, progress, 0)
+}
+
+// StageUploadLimited is StageUpload with an optional upload rate cap (bytes per second, zero for none).
+func StageUploadLimited(ctx context.Context, host Host, target Target, source UploadSource, probe bool, progress func(context.Context, HelperProgress), maxBytesPerSecond int64) (result string, retErr error) {
 	if host == nil {
 		return "", fmt.Errorf("staged upload requires a host")
 	}
@@ -661,7 +666,7 @@ func StageUpload(ctx context.Context, host Host, target Target, source UploadSou
 		resolver := Resolver{Progress: progress}
 		resolver.reportProgress(ctx, HelperProgress{Step: 4, Stage: "upload", Transport: "sftp/exec", Path: staging})
 	}
-	if _, err := uploadHostWithProgress(ctx, host, source.Path, staging, sshfs.TransferOptions{Progress: progressFn}); err != nil {
+	if _, err := uploadHostWithProgress(ctx, host, source.Path, staging, sshfs.TransferOptions{Progress: progressFn, MaxBytesPerSecond: maxBytesPerSecond}); err != nil {
 		return "", transferError(TransferStageUpload, staging, err)
 	}
 	if err := host.Chmod(ctx, staging, 0o700); err != nil {
