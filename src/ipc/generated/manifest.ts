@@ -670,6 +670,22 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsArmRequest", ts: "DiagnosticsArmRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsStatusDTO", ts: "DiagnosticsStatusDTO" },
     },
+    "diagnostics_clear": {
+      scope: "diagnostics",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsStatusDTO", ts: "DiagnosticsStatusDTO" },
+    },
+    "diagnostics_delete": {
+      scope: "diagnostics",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsPathRequest", ts: "DiagnosticsPathRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsStatusDTO", ts: "DiagnosticsStatusDTO" },
+    },
     "diagnostics_open_folder": {
       scope: "diagnostics",
       nested: false,
@@ -685,6 +701,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsPathRequest", ts: "DiagnosticsPathRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsPackDTO", ts: "DiagnosticsPackDTO" },
+    },
+    "diagnostics_report_frontend": {
+      scope: "diagnostics",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsFrontendReport", ts: "DiagnosticsFrontendReport" },
+      output: { go: "any", ts: "unknown" },
     },
     "diagnostics_status": {
       scope: "diagnostics",
@@ -2893,6 +2917,14 @@ export interface IPCCommandTypeMap {
     input: contractTypes.DiagnosticsArmRequest;
     output: contractTypes.DiagnosticsStatusDTO;
   };
+  "diagnostics_clear": {
+    input: Record<string, never>;
+    output: contractTypes.DiagnosticsStatusDTO;
+  };
+  "diagnostics_delete": {
+    input: contractTypes.DiagnosticsPathRequest;
+    output: contractTypes.DiagnosticsStatusDTO;
+  };
   "diagnostics_open_folder": {
     input: contractTypes.DiagnosticsPathRequest;
     output: unknown;
@@ -2900,6 +2932,10 @@ export interface IPCCommandTypeMap {
   "diagnostics_pack": {
     input: contractTypes.DiagnosticsPathRequest;
     output: contractTypes.DiagnosticsPackDTO;
+  };
+  "diagnostics_report_frontend": {
+    input: contractTypes.DiagnosticsFrontendReport;
+    output: unknown;
   };
   "diagnostics_status": {
     input: Record<string, never>;

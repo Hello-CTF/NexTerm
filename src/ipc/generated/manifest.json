@@ -553,6 +553,18 @@
       "channel": false,
       "stream": "none"
     },
+    "diagnostics_clear": {
+      "scope": "diagnostics",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "diagnostics_delete": {
+      "scope": "diagnostics",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "diagnostics_open_folder": {
       "scope": "diagnostics",
       "nested": false,
@@ -560,6 +572,12 @@
       "stream": "none"
     },
     "diagnostics_pack": {
+      "scope": "diagnostics",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "diagnostics_report_frontend": {
       "scope": "diagnostics",
       "nested": false,
       "channel": false,

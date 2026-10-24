@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { diagnosticsApi, type DiagnosticsCapture, type DiagnosticsStatus } from "../../ipc/diagnosticsApi";
 import { toAppError } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
+import { ask } from "../../ui/dialogs";
 import { formatBytes } from "../../ui/format";
-import { IconActivity, IconArchive, IconFolderOpen, IconLoader } from "../../ui/icons";
+import { IconActivity, IconArchive, IconFolderOpen, IconLoader, IconTrash } from "../../ui/icons";
 
 function formatTime(timeMs: number): string {
   return timeMs > 0 ? new Date(timeMs).toLocaleString() : "";
@@ -81,6 +82,34 @@ export function DiagnosticsCard() {
     }
   };
 
+  const remove = async (capture: DiagnosticsCapture) => {
+    if (!(await ask(`删除调试记录 ${capture.name}？\n\n文件夹和已打包的压缩包都会被删除，无法恢复。`, { kind: "warning" }))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await diagnosticsApi.remove(capture.path);
+      if (mounted.current) setStatus(next);
+    } catch (e) {
+      fail(e);
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  };
+
+  const clearAll = async () => {
+    if (!(await ask("清空全部调试记录？\n\n除本次正在记录的以外，所有文件夹和压缩包都会被删除，无法恢复。", { kind: "warning" }))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await diagnosticsApi.clear();
+      if (mounted.current) setStatus(next);
+    } catch (e) {
+      fail(e);
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  };
+
   // Non-admin accounts on a server cannot use these commands; keep the navigation target but say why it is empty.
   if (forbidden) {
     return (
@@ -132,25 +161,28 @@ export function DiagnosticsCard() {
         </div>
       )}
 
-      <label className="flex cursor-pointer items-start gap-3">
-        <input
-          type="checkbox"
-          className="mt-0.5 h-4 w-4 shrink-0"
-          checked={status?.armed ?? false}
-          disabled={status === null || busy}
-          onChange={(e) => void toggle(e.target.checked)}
-        />
-        <span className="min-w-0 flex-1">
-          <span className="block text-[13px] text-neutral-100">下次启动时开启调试模式（仅一次）</span>
-          <span className="nx-hint mt-1 block">
-            开启后，下次启动应用时会把性能剖析数据、调试日志和系统信息（版本、系统、CPU 核数等）保存到本机文件夹，
-            方便打包发给我们排查问题。日志已对密码、令牌、私钥做脱敏，不记录终端输出和输入的命令；但仍可能包含主机名或地址、
-            用户名、文件路径和资产/会话 ID，发送前请自行检查。记录期间应用会略有变慢，最长 30 分钟，文件夹约 200 MB 封顶。只对下一次启动生效，
-            启动后开关会自动关闭。
-          </span>
-        </span>
-      </label>
-      {status?.armed && <p className="nx-hint mt-2">已开启：请重启应用以开始记录。</p>}
+      <p className="nx-hint">
+        只对下一次启动生效，最长 30 分钟、约 200 MB，期间会略慢。会记录性能数据、调试日志、系统信息和界面性能统计，不含终端输入输出；已对密码、令牌、私钥脱敏，发送前请自行检查主机名、路径等信息。
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {status?.armed ? (
+          <>
+            <span className="text-[12.5px] text-neutral-200">已开启，重启应用后开始记录（仅一次）</span>
+            <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy} onClick={() => void toggle(false)}>
+              取消
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="nx-btn nx-btn-primary nx-btn-sm"
+            disabled={status === null || busy}
+            onClick={() => void toggle(true)}
+          >
+            开启下次启动的调试模式
+          </button>
+        )}
+      </div>
 
       {error && (
         <div className="nx-alert nx-alert-danger mt-3" role="alert">
@@ -160,7 +192,18 @@ export function DiagnosticsCard() {
 
       {captures.length > 0 && (
         <div className="mt-4">
-          <div className="mb-1 text-[12px] text-neutral-400">历史记录</div>
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-[12px] text-neutral-400">历史记录</span>
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost nx-btn-sm ml-auto"
+              disabled={busy || captures.every((c) => c.path === activeDir)}
+              onClick={() => void clearAll()}
+            >
+              <IconTrash size={12} />
+              清空全部记录
+            </button>
+          </div>
           <ul className="flex flex-col gap-2">
             {captures.map((capture) => (
               <li key={capture.name} className="rounded border border-neutral-800 px-2 py-1.5 text-[12.5px]">
@@ -190,6 +233,18 @@ export function DiagnosticsCard() {
                     {busy ? <IconLoader size={12} className="animate-spin" /> : <IconArchive size={12} />}
                     打包
                   </button>
+                  {capture.path !== activeDir && (
+                    <button
+                      type="button"
+                      className="nx-btn nx-btn-outline nx-btn-sm is-danger"
+                      aria-label={`删除 ${capture.name}`}
+                      disabled={busy}
+                      onClick={() => void remove(capture)}
+                    >
+                      <IconTrash size={12} />
+                      删除
+                    </button>
+                  )}
                 </div>
                 {(packed[capture.name] || capture.archive) && (
                   <div className="nx-hint mt-1 break-all">压缩包：{packed[capture.name] || capture.archive}</div>

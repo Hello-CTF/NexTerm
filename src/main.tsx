@@ -1,3 +1,4 @@
+import { startFrontendProbeIfCapturing } from "./features/diagnostics/frontendProbe";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -50,6 +51,7 @@ function mount(node: React.ReactNode): void {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>{node}</React.StrictMode>,
   );
+  void startFrontendProbeIfCapturing();
 }
 
 function wireDesktopShell(): void {

@@ -79,7 +79,7 @@ func (h *fanoutHandler) Handle(ctx context.Context, record slog.Record) error {
 	if h.primary.Enabled(ctx, record.Level) {
 		err = h.primary.Handle(ctx, record.Clone())
 	}
-	if tee := h.tee(); tee != nil && tee.Enabled(ctx, record.Level) {
+	if tee := h.tee(); tee != nil && tee.Enabled(ctx, record.Level) && debugRecordAllowed(record) {
 		if teeErr := tee.Handle(ctx, record); err == nil {
 			err = teeErr
 		}
@@ -102,4 +102,22 @@ func (h *fanoutHandler) WithGroup(name string) slog.Handler {
 		return h
 	}
 	return h.derive(h.primary.WithGroup(name), handlerOp{group: name})
+}
+
+// debugRecordAllowed keeps request and response payloads out of the debug capture. Debug records that carry
+// such attributes (for example a framework logging the arguments of every IPC call, which include typed
+// keystrokes) are dropped; Info and above are never filtered.
+func debugRecordAllowed(record slog.Record) bool {
+	if record.Level > slog.LevelDebug {
+		return true
+	}
+	allowed := true
+	record.Attrs(func(attr slog.Attr) bool {
+		switch attr.Key {
+		case "args", "result", "data", "payload", "body":
+			allowed = false
+		}
+		return allowed
+	})
+	return allowed
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/Hello-CTF/NexTerm/internal/diagcapture"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -131,10 +132,14 @@ func (f *desktopStreamFactory) dispatch(event *application.CustomEvent) error {
 }
 
 func (s *desktopStream) SendBinary(ctx context.Context, data []byte) error {
-	return s.send(ctx, desktopBinaryEvent{
+	err := s.send(ctx, desktopBinaryEvent{
 		Type: desktopBinaryEventType,
 		Data: base64.StdEncoding.EncodeToString(data),
 	})
+	if err == nil {
+		diagcapture.RecordEvent("stream:binary", len(data))
+	}
+	return err
 }
 
 func (s *desktopStream) SendJSON(ctx context.Context, data json.RawMessage) error {
@@ -147,7 +152,11 @@ func (s *desktopStream) SendJSON(ctx context.Context, data json.RawMessage) erro
 	if decoder.More() {
 		return ipc.BadParam(errors.New("invalid JSON stream event: multiple values"))
 	}
-	return s.send(ctx, payload)
+	err := s.send(ctx, payload)
+	if err == nil {
+		diagcapture.RecordEvent("stream:json", len(data))
+	}
+	return err
 }
 
 func (s *desktopStream) send(ctx context.Context, payload any) error {

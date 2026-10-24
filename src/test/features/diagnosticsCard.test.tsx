@@ -9,11 +9,18 @@ const mocks = vi.hoisted(() => ({
   arm: vi.fn(),
   openFolder: vi.fn(),
   pack: vi.fn(),
+  remove: vi.fn(),
+  clear: vi.fn(),
+  ask: vi.fn(),
 }));
 
 vi.mock("../../ipc/diagnosticsApi", () => ({
   diagnosticsApi: mocks,
 }));
+vi.mock("../../ui/dialogs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/dialogs")>();
+  return { ...actual, ask: mocks.ask };
+});
 
 import { DiagnosticsCard } from "../../features/settings/DiagnosticsCard";
 
@@ -27,11 +34,14 @@ const idle = {
   captures: [] as Array<{ name: string; path: string; sizeBytes: number; timeMs: number; archive?: string }>,
 };
 
-function checkbox(): HTMLInputElement {
-  const el = mounted?.container.querySelector<HTMLInputElement>('input[type="checkbox"]');
-  if (!el) throw new Error("checkbox missing");
+function button(label: string): HTMLButtonElement {
+  const el = [...(mounted?.container.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === label);
+  if (!el) throw new Error(`button missing: ${label}`);
   return el;
 }
+
+const hasButton = (label: string) =>
+  [...(mounted?.container.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === label);
 
 function text(): string {
   return mounted?.container.textContent ?? "";
@@ -39,6 +49,7 @@ function text(): string {
 
 beforeEach(() => {
   for (const fn of Object.values(mocks)) fn.mockReset();
+  mocks.ask.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -47,21 +58,76 @@ afterEach(() => {
 });
 
 describe("DiagnosticsCard", () => {
-  it("arms the next launch through IPC and reflects the returned status", async () => {
+  it("arms the next launch with a button and shows a cancel button once armed", async () => {
     mocks.status.mockResolvedValue(idle);
-    mocks.arm.mockResolvedValue({ ...idle, armed: true });
+    mocks.arm.mockResolvedValueOnce({ ...idle, armed: true }).mockResolvedValueOnce(idle);
     mounted = mount(createElement(DiagnosticsCard));
-    await flushUntil(() => !checkbox().disabled);
-    expect(text()).toContain("下次启动时开启调试模式（仅一次）");
-    expect(text()).toContain("不记录终端输出");
-    expect(checkbox().checked).toBe(false);
+    await flushUntil(() => hasButton("开启下次启动的调试模式") && !button("开启下次启动的调试模式").disabled);
+    expect(mounted.container.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(text()).toContain("发送前请自行检查");
 
     await act(async () => {
-      checkbox().click();
+      button("开启下次启动的调试模式").click();
     });
-    await flushUntil(() => checkbox().checked);
-    expect(mocks.arm).toHaveBeenCalledWith(true);
-    expect(text()).toContain("请重启应用以开始记录");
+    await flushUntil(() => hasButton("取消"));
+    expect(mocks.arm).toHaveBeenLastCalledWith(true);
+    expect(text()).toContain("重启应用后开始记录");
+    expect(hasButton("开启下次启动的调试模式")).toBe(false);
+
+    await act(async () => {
+      button("取消").click();
+    });
+    await flushUntil(() => hasButton("开启下次启动的调试模式"));
+    expect(mocks.arm).toHaveBeenLastCalledWith(false);
+  });
+
+  it("deletes one record after confirmation and never offers deleting the running capture", async () => {
+    const running = "/logs/debug-capture/20260102T000000Z";
+    const old = "/logs/debug-capture/20260101T000000Z";
+    const both = {
+      ...idle,
+      active: true,
+      activeDir: running,
+      captures: [
+        { name: "20260102T000000Z", path: running, sizeBytes: 1, timeMs: 0 },
+        { name: "20260101T000000Z", path: old, sizeBytes: 1, timeMs: 0 },
+      ],
+    };
+    mocks.status.mockResolvedValue(both);
+    mocks.remove.mockResolvedValue({ ...both, captures: [both.captures[0]] });
+    mounted = mount(createElement(DiagnosticsCard));
+    await flushUntil(() => text().includes("历史记录"));
+    expect(mounted.container.querySelector('[aria-label="删除 20260102T000000Z"]')).toBeNull();
+
+    await act(async () => {
+      mounted!.container.querySelector<HTMLButtonElement>('[aria-label="删除 20260101T000000Z"]')!.click();
+    });
+    await flushUntil(() => mocks.remove.mock.calls.length > 0);
+    expect(mocks.ask).toHaveBeenCalled();
+    expect(mocks.remove).toHaveBeenCalledWith(old);
+    await flushUntil(() => mounted!.container.querySelector('[aria-label="删除 20260101T000000Z"]') === null);
+  });
+
+  it("does not delete when the confirmation is declined, and clears everything on confirm", async () => {
+    const dir = "/logs/debug-capture/20260101T000000Z";
+    const withOne = { ...idle, captures: [{ name: "20260101T000000Z", path: dir, sizeBytes: 1, timeMs: 0 }] };
+    mocks.status.mockResolvedValue(withOne);
+    mocks.clear.mockResolvedValue(idle);
+    mounted = mount(createElement(DiagnosticsCard));
+    await flushUntil(() => hasButton("清空全部记录"));
+
+    mocks.ask.mockResolvedValueOnce(false);
+    await act(async () => {
+      button("清空全部记录").click();
+    });
+    await flush();
+    expect(mocks.clear).not.toHaveBeenCalled();
+
+    await act(async () => {
+      button("清空全部记录").click();
+    });
+    await flushUntil(() => mocks.clear.mock.calls.length === 1);
+    await flushUntil(() => !text().includes("历史记录"));
   });
 
   it("shows the active banner with folder actions and packs the running capture", async () => {
@@ -100,23 +166,24 @@ describe("DiagnosticsCard", () => {
     expect(mounted.container.querySelector('[aria-label="打包 old"]')).not.toBeNull();
   });
 
-  it("shows an error when arming fails and keeps the toggle unchanged", async () => {
+  it("shows an error when arming fails and stays unarmed", async () => {
     mocks.status.mockResolvedValue(idle);
     mocks.arm.mockRejectedValue({ code: "io", message: "无法更新调试模式开关：disk full" });
     mounted = mount(createElement(DiagnosticsCard));
-    await flushUntil(() => !checkbox().disabled);
+    await flushUntil(() => hasButton("开启下次启动的调试模式") && !button("开启下次启动的调试模式").disabled);
     await act(async () => {
-      checkbox().click();
+      button("开启下次启动的调试模式").click();
     });
     await flushUntil(() => text().includes("disk full"));
-    expect(checkbox().checked).toBe(false);
+    expect(hasButton("开启下次启动的调试模式")).toBe(true);
+    expect(hasButton("取消")).toBe(false);
   });
 
   it("explains the missing permission instead of leaving an empty section", async () => {
     mocks.status.mockRejectedValue({ code: "forbidden", message: "仅管理员可使用诊断功能" });
     mounted = mount(createElement(DiagnosticsCard));
     await flushUntil(() => text().includes("仅管理员可以使用调试模式"));
-    expect(mounted?.container.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(hasButton("开启下次启动的调试模式")).toBe(false);
   });
 
   it("surfaces status load failures", async () => {

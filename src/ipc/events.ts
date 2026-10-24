@@ -1,3 +1,4 @@
+import { noteEvent } from "./probeHooks";
 import { WEB } from "./env";
 import {
   newBinaryChannel,
@@ -299,8 +300,12 @@ export function createAiChannel(
 
 export function listenEvent<T>(
   event: string,
-  handler: (payload: T) => void,
+  rawHandler: (payload: T) => void,
 ): Promise<UnlistenFn> {
+  const handler = (payload: T) => {
+    noteEvent(event);
+    rawHandler(payload);
+  };
   if (WEB) {
     const off = subscribeEvent(event, (payload) => handler(payload as T));
     return Promise.resolve(off);

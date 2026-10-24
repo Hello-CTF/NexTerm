@@ -19,6 +19,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/applog"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
@@ -73,10 +74,16 @@ type Session struct {
 	capped   atomic.Bool
 	stopOnce sync.Once
 
+	feMu   sync.Mutex
+	feSize int64
+
 	prevMutex int
 	detachTee func()
 	logFile   *os.File
 	statsFile *os.File
+	eventFile *os.File
+	events    *eventAggregator
+	ipc       *ipcAggregator
 }
 
 var (
@@ -127,6 +134,13 @@ func Start(ctx context.Context, paths platform.Paths, logger *applog.Logger, inf
 		_ = s.logFile.Close()
 		return nil, err
 	}
+	if s.eventFile, err = s.create(EventStatsFile); err != nil {
+		_ = s.logFile.Close()
+		_ = s.statsFile.Close()
+		return nil, err
+	}
+	s.events = newEventAggregator(s.eventFile, o.Now)
+	s.ipc = newIPCAggregator()
 	if logger != nil {
 		s.detachTee = logger.AttachDebugTee(&capWriter{s: s, w: s.logFile})
 	}
@@ -141,6 +155,11 @@ func Start(ctx context.Context, paths platform.Paths, logger *applog.Logger, inf
 	runCtx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
 	active = s
+	eventSink.Store(s.events)
+	applog.SetIPCObserver(func(c applog.IPCCall) {
+		s.ipc.add(ipcCall{cmd: c.Cmd, elapsedMs: c.ElapsedMs, ok: c.OK, argsBytes: c.ArgsBytes, resultLen: c.ResultBytes, at: c.Time})
+	})
+	store.SetSlowQueryCapture(true)
 	s.spawn(runCtx)
 	return s, nil
 }
@@ -200,8 +219,19 @@ func (s *Session) writeMeta(start time.Time, info Info) error {
 	o := s.opts
 	fmt.Fprintf(&b, "settings: cpu_first=%s cpu_later_at=%s cpu_later=%s trace=%s goroutine_fast=%s/%s goroutine_slow=%s profile_every=%s stats_every=%s max_duration=%s max_bytes=%d mutex_fraction=%d block_rate=%s\n",
 		o.CPUFirst, o.CPULaterAt, o.CPULater, o.TraceFor, o.GoroutineFast, o.GoroutineFastFor, o.GoroutineSlow, o.ProfileEvery, o.StatsEvery, o.MaxDuration, o.MaxBytes, o.MutexFraction, o.BlockRate)
+	b.WriteString(filesLegend)
 	return os.WriteFile(filepath.Join(s.dir, "meta.txt"), []byte(b.String()), 0o600)
 }
+
+const filesLegend = `files:
+  app.debug.log: debug-level application log (IPC calls are reduced to name, duration and sizes; slow database queries to duration, rows, table and operation)
+  runtime-stats.jsonl: every stats interval, Go runtime plus process CPU, RSS, open file descriptors, GC pause and thread counts
+  event-stats.jsonl: per stats window, count and bytes of events emitted to the web view per topic (stream:binary is terminal output)
+  frontend-perf.jsonl: performance windows reported by the web view
+  ipc-summary.json: written at stop; per IPC command count, errors, total/p50/p95/max ms, byte totals and the slowest calls
+  cpu-*.pprof, trace-first-20s.out, profiles/, goroutines/: Go profiles and goroutine dumps
+  only names, counts, sizes and durations are recorded; never arguments, results, terminal bytes, commands, hosts or paths
+`
 
 // sanitizeArgs masks connection strings and anything the log redactor recognises; the environment is never read.
 func sanitizeArgs(args []string) []string {
@@ -280,6 +310,7 @@ func (s *Session) spawn(ctx context.Context) {
 	run("goroutines", s.runGoroutines)
 	run("profiles", s.runProfiles)
 	run("stats", s.runStats)
+	run("events", func(ctx context.Context) { s.runEventStats(ctx, s.events) })
 	go func() {
 		if sleep(ctx, s.opts.MaxDuration) {
 			s.finish("max duration reached")
@@ -400,17 +431,18 @@ func (s *Session) runStats(ctx context.Context) {
 	}
 	w := &capWriter{s: s, w: s.statsFile}
 	enc := json.NewEncoder(w)
+	var sampler processSampler
 	for {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
-		_ = enc.Encode(map[string]any{
-			"t":          time.Now().UTC().Format(time.RFC3339Nano),
-			"elapsedSec": int64(s.elapsed().Seconds()),
-			"goroutines": runtime.NumGoroutine(),
-			"heapAlloc":  m.HeapAlloc,
-			"gcCount":    m.NumGC,
-			"threads":    threadCount(), // OS threads created so far
-		})
+		line := sampler.fields(&m)
+		line["t"] = time.Now().UTC().Format(time.RFC3339Nano)
+		line["elapsedSec"] = int64(s.elapsed().Seconds())
+		line["goroutines"] = runtime.NumGoroutine()
+		line["heapAlloc"] = m.HeapAlloc
+		line["gcCount"] = m.NumGC
+		line["threads"] = threadCount() // OS threads created so far
+		_ = enc.Encode(line)
 		if !sleep(ctx, s.opts.StatsEvery) {
 			return
 		}
@@ -435,6 +467,13 @@ func (s *Session) finish(reason string) {
 		defer close(s.done)
 		s.cancel()
 		s.wg.Wait()
+		eventSink.Store(nil)
+		applog.SetIPCObserver(nil)
+		store.SetSlowQueryCapture(false)
+		s.events.flush()
+		if err := s.ipc.write(s.dir); err != nil {
+			s.warn("write "+IPCSummaryFile, err)
+		}
 		if s.detachTee != nil {
 			s.detachTee()
 		}
@@ -457,6 +496,7 @@ func (s *Session) finish(reason string) {
 		}
 		_ = s.logFile.Close()
 		_ = s.statsFile.Close()
+		_ = s.eventFile.Close()
 		activeMu.Lock()
 		if active == s {
 			active = nil

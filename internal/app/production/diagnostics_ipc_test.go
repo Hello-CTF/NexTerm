@@ -102,3 +102,92 @@ func TestDiagnosticsServerModeAuthorizationAndOpenFolder(t *testing.T) {
 	open := owner.WithOpenAccess(context.Background())
 	requireStoreTestResponse(t, dispatchDiagnostics(open, dispatcher, "diagnostics_status", `null`), &status)
 }
+
+func TestDiagnosticsDeleteAndClearProtectTheActiveCapture(t *testing.T) {
+	dispatcher, service := newDiagnosticsTestDispatcher(t, true)
+	ctx := context.Background()
+	root := diagcapture.Root(service.paths)
+	names := []string{"20260101T000000Z", "20260102T000000Z", "20260103T000000Z"}
+	for _, name := range names {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	active := filepath.Join(root, names[2])
+	service.activeDir = func() string { return active }
+
+	var status diagnosticsStatusDTO
+	requireStoreTestResponse(t, dispatchDiagnostics(ctx, dispatcher, "diagnostics_delete", `{"path":`+quote(filepath.Join(root, names[0]))+`}`), &status)
+	if len(status.Captures) != 2 {
+		t.Fatalf("after delete: %+v", status.Captures)
+	}
+	if response := dispatchDiagnostics(ctx, dispatcher, "diagnostics_delete", `{"path":`+quote(active)+`}`); response.OK {
+		t.Fatal("the active capture must not be deletable")
+	}
+	for _, bad := range []string{"", "../x", service.paths.DataDir} {
+		if response := dispatchDiagnostics(ctx, dispatcher, "diagnostics_delete", `{"path":`+quote(bad)+`}`); response.OK {
+			t.Fatalf("delete %q must be rejected", bad)
+		}
+	}
+	requireStoreTestResponse(t, dispatchDiagnostics(ctx, dispatcher, "diagnostics_clear", `null`), &status)
+	if len(status.Captures) != 1 || status.Captures[0].Name != names[2] {
+		t.Fatalf("clear must keep only the active capture: %+v", status.Captures)
+	}
+	member := ipc.WithRole(ipc.WithUserID(ctx, "u1"), "member")
+	serverDispatcher, _ := newDiagnosticsTestDispatcher(t, false)
+	if response := dispatchDiagnostics(member, serverDispatcher, "diagnostics_clear", `null`); response.OK {
+		t.Fatal("non-admin must not clear captures")
+	}
+}
+
+func TestDiagnosticsFrontendReportIsValidatedAndOnlyAcceptedDuringACapture(t *testing.T) {
+	dispatcher, _ := newDiagnosticsTestDispatcher(t, true)
+	ctx := context.Background()
+	if response := dispatchDiagnostics(ctx, dispatcher, "diagnostics_report_frontend", `{"kind":"window","fps":60}`); response.OK {
+		t.Fatal("a report without a running capture must be rejected")
+	}
+	if response := dispatchDiagnostics(ctx, dispatcher, "diagnostics_report_frontend", `{"kind":"other"}`); response.OK {
+		t.Fatal("an unknown kind must be rejected")
+	}
+
+	long := make([]byte, 300)
+	for i := range long {
+		long[i] = 'a'
+	}
+	report := diagnosticsFrontendReport{
+		Kind: "window", Fps: 58.5, Agent: string(long),
+		IPC: []diagnosticsNamedValue{{Name: "terminal_list\n" + string(long), Value: 3}},
+	}
+	line, err := report.encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Agent string                  `json:"agent"`
+		Fps   float64                 `json:"fps"`
+		IPC   []diagnosticsNamedValue `json:"ipc"`
+	}
+	if err := json.Unmarshal(line, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len([]rune(decoded.Agent)) != diagnosticsMaxName || len([]rune(decoded.IPC[0].Name)) != diagnosticsMaxName || decoded.Fps != 58.5 {
+		t.Fatalf("report was not bounded: %+v", decoded)
+	}
+	for _, r := range decoded.IPC[0].Name {
+		if r == '\n' {
+			t.Fatal("control characters must be stripped from names")
+		}
+	}
+	items := make([]diagnosticsNamedValue, diagnosticsMaxItems+10)
+	line, err = diagnosticsFrontendReport{Kind: "window", IPC: items}.encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bounded struct {
+		IPC []diagnosticsNamedValue `json:"ipc"`
+	}
+	_ = json.Unmarshal(line, &bounded)
+	if len(bounded.IPC) != diagnosticsMaxItems {
+		t.Fatalf("list length = %d, want the cap %d", len(bounded.IPC), diagnosticsMaxItems)
+	}
+}

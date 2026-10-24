@@ -1,3 +1,4 @@
+import { noteIpcCall } from "./probeHooks";
 import { WEB } from "./env";
 import { clientId, httpUrl } from "./env";
 import { describeError } from "../ui/errorText";
@@ -93,6 +94,7 @@ function scheduleSyncWake(cmd: string): void {
 }
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  noteIpcCall(cmd);
   try {
     if (WEB) {
       return await callWeb<T>(cmd, args);

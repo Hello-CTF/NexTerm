@@ -163,6 +163,7 @@ func newStore(db *gorm.DB, logger *slog.Logger) *Store {
 		logger = slog.Default()
 	}
 	_ = db.Callback().Create().Before("gorm:create").Register("nexterm:conflict_conditions", preserveConflictConditions)
+	registerSlowQueryCallbacks(db, logger)
 	sqlDB, _ := db.DB()
 	backfillCtx, backfillCancel := context.WithCancel(context.Background())
 	s := &Store{db: db, sqlDB: sqlDB, logger: logger, backend: BackendSQLite, backfillCtx: backfillCtx, backfillCancel: backfillCancel}

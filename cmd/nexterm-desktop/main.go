@@ -89,6 +89,7 @@ func run(args []string) int {
 			return ipc.ErrEventsUnavailable
 		}
 		wailsApp.Event.Emit(string(event.Event), event.Payload)
+		diagcapture.RecordEvent(string(event.Event), diagcapture.PayloadSize(event.Payload))
 		return nil
 	})
 	production, err := production.NewProduction(context.Background(), production.ProductionConfig{
@@ -119,7 +120,7 @@ func run(args []string) int {
 	wailsApp = application.New(application.Options{
 		Name:        "NexTerm",
 		Description: "NexTerm desktop client",
-		Logger:      logger.Logger,
+		Logger:      logger.WailsLogger(),
 		ErrorHandler: func(err error) {
 			logger.Error("Wails error", "error", err)
 		},

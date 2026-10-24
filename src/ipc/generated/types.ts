@@ -708,6 +708,36 @@ export type DiagnosticsCaptureDTO = {
   archive?: string;
 };
 
+export type DiagnosticsFrontendReport = {
+  kind: string;
+  agent?: string;
+  viewWidth?: number;
+  viewHeight?: number;
+  windowMs?: number;
+  lagMaxMs?: number;
+  lagP95Ms?: number;
+  fps?: number;
+  maxFrameGapMs?: number;
+  mutations?: number;
+  domChurn?: DiagnosticsNamedValue[];
+  animations?: number;
+  ipc?: DiagnosticsNamedValue[];
+  events?: DiagnosticsNamedValue[];
+  storeSets?: number;
+  storeKeys?: DiagnosticsNamedValue[];
+  domNodes?: number;
+  xterms?: number;
+  hidden?: boolean;
+  longTasks?: number;
+  longTaskMsMax?: number;
+  heapUsedMB?: number;
+};
+
+export type DiagnosticsNamedValue = {
+  name: string;
+  value: number;
+};
+
 export type DiagnosticsPackDTO = {
   path: string;
 };
