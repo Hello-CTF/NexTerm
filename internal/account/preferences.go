@@ -59,7 +59,6 @@ const (
 	preferenceKindEnumString
 	preferenceKindBool
 	preferenceKindBinding
-	preferenceKindProjectTemplates
 )
 
 type preferenceSpec struct {
@@ -82,7 +81,6 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"input.selectionAutoCopy":       {kind: preferenceKindBool},
 	"terminal.closeAction":          {kind: preferenceKindEnumString, strings: []string{"ask", "kill", "detach"}},
 	"terminal.defaultMode":          {kind: preferenceKindEnumString, strings: []string{"durable", "regular"}},
-	"project.workspaceTemplates":    {kind: preferenceKindProjectTemplates},
 	"keybinding.commandPalette":     {kind: preferenceKindBinding},
 	"keybinding.quickConnect":       {kind: preferenceKindBinding},
 	"keybinding.newTerminal":        {kind: preferenceKindBinding},
@@ -244,16 +242,6 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 			return "", invalidPreferenceValue(key)
 		}
 		return strconv.Quote(normalized), nil
-	case preferenceKindProjectTemplates:
-		trimmed := bytes.TrimSpace(raw)
-		if len(trimmed) > 1024*1024 || len(trimmed) < 2 || trimmed[0] != '[' || !json.Valid(trimmed) {
-			return "", invalidPreferenceValue(key)
-		}
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, trimmed); err != nil {
-			return "", invalidPreferenceValue(key)
-		}
-		return compact.String(), nil
 	}
 	return "", invalidPreferenceValue(key)
 }

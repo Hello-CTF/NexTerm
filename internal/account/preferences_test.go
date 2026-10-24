@@ -42,7 +42,6 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"input.selectionAutoCopy",
 		"terminal.closeAction",
 		"terminal.defaultMode",
-		"project.workspaceTemplates",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
 		"keybinding.newTerminal",
@@ -124,7 +123,6 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"input.selectionAutoCopy":       "true",
 		"terminal.closeAction":          `"kill"`,
 		"terminal.defaultMode":          `"regular"`,
-		"project.workspaceTemplates":    `[{"v":1,"name":"project"}]`,
 		"keybinding.closeTab":           `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":      "null",
 		"keybinding.reclaimTakeover":    `"Mod+Shift+s"`,
@@ -164,7 +162,6 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"input.selectionAutoCopy":       {`"true"`, "1", "null"},
 		"terminal.closeAction":          {`"background"`, "1", "null", "true"},
 		"terminal.defaultMode":          {`"auto"`, `"persistent"`, "1", "null", "true"},
-		"project.workspaceTemplates":    {`{"v":1}`, `"text"`, "null", "[invalid]"},
 		"keybinding.closeTab":           {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {
