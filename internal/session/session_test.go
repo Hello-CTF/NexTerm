@@ -567,6 +567,13 @@ func TestCreateTabDetachedRouting(t *testing.T) {
 	manager, connector, terminals, connected := openTestSession(t, KindSSH)
 	provider := newFakeDurableProvider()
 	manager.resolver = DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) { return provider, nil })
+	// Automatic durable terminals only use a helper that is already resolved.
+	connectedSession, err := manager.Session(connected.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = manager.automaticDurableProvider(context.Background(), connectedSession, connectedSession.transport, connectedSession.generation)
+	waitHelperSettled(t, manager, connected.ID)
 	info, err := manager.CreateTab(context.Background(), CreateTabOptions{
 		SessionID: connected.ID, Title: "构建机", Command: "make -j4",
 	})

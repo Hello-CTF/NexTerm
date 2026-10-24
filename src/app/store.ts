@@ -3414,7 +3414,11 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
     abnormalDisconnectNotices.delete(p.sessionId);
   }
   if (p.status === "failed" && !retryableFailed) {
-    if (p.error) state.pushToast("error", `会话失败：${p.error}`);
+    // A first connect that stops at an unconfirmed host key is answered by the confirmation dialog and an
+    // automatic second attempt (connectWithHostKeyConfirm), so a toast here would only be noise.
+    const awaitingHostKeyDialog = (p.errorCode === "host_key_pending" || p.errorCode === "host_key_changed") &&
+      current?.status !== "reconnecting" && current?.status !== "connected" && attempt === 0;
+    if (p.error && !awaitingHostKeyDialog) state.pushToast("error", `会话失败：${p.error}`);
     return;
   }
   if (p.status !== "disconnected" && !retryableFailed) return;

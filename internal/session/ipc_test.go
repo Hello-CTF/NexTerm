@@ -96,10 +96,11 @@ func TestIPCErrorHostKeyMessageIsActionable(t *testing.T) {
 	if got.Code != ipc.CodeHostKeyPending {
 		t.Fatalf("code = %s, want host_key_pending", got.Code)
 	}
-	for _, want := range []string{"确认", "SHA256:abc"} {
-		if !strings.Contains(got.Message, want) {
-			t.Fatalf("message = %q, want it to contain %q", got.Message, want)
-		}
+	if !strings.Contains(got.Message, "确认") || strings.Contains(got.Message, "SHA256") {
+		t.Fatalf("message = %q, want an actionable hint without the raw fingerprint", got.Message)
+	}
+	if detail, ok := got.Detail.(hostKeyDetail); !ok || detail.Fingerprint != "SHA256:abc" {
+		t.Fatalf("detail = %#v, want the fingerprint carried for the confirmation dialog", got.Detail)
 	}
 }
 

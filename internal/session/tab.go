@@ -134,6 +134,8 @@ type Tab struct {
 	renameAttempts   map[string]*durableRenameAttempt
 	streamEpoch      string
 	outputWake       chan struct{}
+	firstOutput      chan struct{}
+	firstOutputOnce  sync.Once
 	recovery         *recoveryRing
 
 	catchUpRemaining int64
@@ -310,10 +312,17 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	}
 	var provider base.DurableProvider
 	var fallbackCause error
+	var deferDeployment bool
 	if options.Durable != nil {
 		var err error
 		if kind == KindSSH && options.DurableFallback && !options.Durable.Recover {
-			provider, err = m.automaticDurableProvider(ctx, session, transport, generation)
+			// Never deploy before the ordinary shell exists; see deferHelperDeployment.
+			var settled bool
+			provider, err, settled = m.settledAutomaticDurable(session, transport, generation)
+			if !settled {
+				err = errHelperDeploymentPending
+				deferDeployment = true
+			}
 		} else {
 			provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, !options.DurableFallback)
 		}
@@ -467,7 +476,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		writeGate:  make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
-		streamEpoch: ids.New(), outputWake: make(chan struct{}),
+		streamEpoch: ids.New(), outputWake: make(chan struct{}), firstOutput: make(chan struct{}),
 	}
 	if options.Durable == nil {
 		tab.runtimeEpisode = ids.New()
@@ -564,6 +573,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	}
 	if (options.Durable == nil || !options.Durable.Recover) && startupCommand != "" && startupCommandSupported(kind) {
 		_ = writeChannelContext(ctx, channel, []byte(startupCommand+"\n"))
+	}
+	if deferDeployment {
+		m.deferHelperDeployment(session, transport, generation, tab)
 	}
 	if fallbackCause != nil {
 		if options.Detached {
@@ -1877,6 +1889,9 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 		}
 		count, err := channel.Read(buffer)
 		if count > 0 {
+			if tab.firstOutput != nil {
+				tab.firstOutputOnce.Do(func() { close(tab.firstOutput) })
+			}
 			chunk := append([]byte(nil), buffer[:count]...)
 			feedErr := m.feed(ctx, tab, generation, chunk)
 			if feedErr != nil && ctx.Err() != nil {

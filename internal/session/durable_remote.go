@@ -93,22 +93,68 @@ func cancelStaleBackgroundHelper(session *Session, transport *transportHandle, g
 	completedHelperDeployments.Unlock()
 }
 
-func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (base.DurableProvider, error) {
+// settledAutomaticDurable reports an already-known outcome for the automatic
+// durable terminal without touching the network: a resolved provider, a recent
+// failure, or ok=false when nothing is known yet. It never starts a deployment.
+func (m *Manager) settledAutomaticDurable(session *Session, transport *transportHandle, generation uint64) (base.DurableProvider, error, bool) {
 	if m.resolver == nil || transport == nil {
-		return nil, ErrUnsupported
+		return nil, ErrUnsupported, true
 	}
 	session.durableMu.Lock()
+	defer session.durableMu.Unlock()
 	if session.durableProvider != nil && session.durableGen == generation && session.durableTransport == transport {
-		provider := session.durableProvider
-		session.durableMu.Unlock()
-		return provider, nil
+		return session.durableProvider, nil, true
 	}
 	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport && m.now().Sub(session.durableFailureAt) < 30*time.Second {
-		err := session.durableFailure
-		session.durableMu.Unlock()
-		return nil, err
+		return nil, session.durableFailure, true
 	}
-	session.durableMu.Unlock()
+	return nil, nil, false
+}
+
+// helperDeploymentSettle is how long the shell must stay quiet after its first
+// output before the helper deployment opens extra channels on the same SSH
+// connection. helperDeploymentGrace bounds the wait for a shell that prints
+// nothing at all.
+var (
+	helperDeploymentSettle = 400 * time.Millisecond
+	helperDeploymentGrace  = 3 * time.Second
+)
+
+// deferHelperDeployment starts the background helper deployment only after the
+// ordinary shell of tab has produced its first screen. Bastion hosts commonly
+// serve one interactive channel well and stall or reject extra channels opened
+// while the shell is still starting, so the shell channel always goes first.
+func (m *Manager) deferHelperDeployment(session *Session, transport *transportHandle, generation uint64, tab *Tab) {
+	graceDelay, settleDelay := helperDeploymentGrace, helperDeploymentSettle
+	m.startGoroutine(func() {
+		grace := time.NewTimer(graceDelay)
+		defer grace.Stop()
+		select {
+		case <-tab.firstOutput:
+			settle := time.NewTimer(settleDelay)
+			defer settle.Stop()
+			select {
+			case <-settle.C:
+			case <-tab.ctx.Done():
+				return
+			}
+		case <-grace.C:
+		case <-tab.ctx.Done():
+			return
+		case <-m.ctx.Done():
+			return
+		}
+		if tab.ctx.Err() != nil || !transport.Transport.IsAlive() {
+			return
+		}
+		_, _ = m.automaticDurableProvider(m.ctx, session, transport, generation)
+	})
+}
+
+func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (base.DurableProvider, error) {
+	if provider, err, settled := m.settledAutomaticDurable(session, transport, generation); settled {
+		return provider, err
+	}
 
 	session.mu.Lock()
 	if session.closed || session.status != StatusConnected {

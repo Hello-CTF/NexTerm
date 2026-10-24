@@ -136,6 +136,7 @@ func TestCreateTabSSHHelperFallbackPreservesNoticeAfterRename(t *testing.T) {
 	if first.Durable || first.Title != "regular shell" || first.FallbackNotice == "" {
 		t.Fatalf("first tab = %+v; want titled ordinary PTY and fallback notice", first)
 	}
+	waitHelperSettled(t, manager, connected.ID)
 	second, err := manager.CreateTab(t.Context(), CreateTabOptions{SessionID: connected.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +176,7 @@ func TestOpenTabSSHExplicitRetryAfterHelperBecomesAvailable(t *testing.T) {
 	if first := open("auto-first", true); first.Durable || first.FallbackNotice == "" {
 		t.Fatalf("first tab = %+v; want ordinary PTY with fallback notice", first)
 	}
+	waitHelperSettled(t, manager, connected.ID)
 	if second := open("auto-second", true); second.Durable || attempts != 1 {
 		t.Fatalf("second tab = %+v, attempts = %d; automatic startup should use short failure cache", second, attempts)
 	}
@@ -453,6 +455,7 @@ func TestCreateTabSSHFailedCommandDoesNotConsumeFallbackNotice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitHelperSettled(t, manager, connected.ID)
 	if info.FallbackNotice == "" || info.Durable || resolver.callCount() != 1 {
 		t.Fatalf("successful retry = %+v, helper attempts = %d", info, resolver.callCount())
 	}
@@ -468,12 +471,21 @@ func TestOpenTabSSHDoesNotFallbackAfterUnclassifiedHelperError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = manager.OpenTab(t.Context(), OpenTabOptions{
-		SessionID: connected.ID, ClientID: "client", ChannelID: "channel", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{}, DurableFallback: true,
-	})
-	if !errors.Is(err, resolverErr) || connector.transport(0).channelCount() != 0 {
-		t.Fatalf("OpenTab = %v, PTY channels = %d; want original error and no fallback", err, connector.transport(0).channelCount())
+	open := func(channel string) error {
+		_, err := manager.OpenTab(t.Context(), OpenTabOptions{
+			SessionID: connected.ID, ClientID: "client", ChannelID: channel, Cols: 80, Rows: 24,
+			Durable: &DurableTabOptions{}, DurableFallback: true,
+		})
+		return err
+	}
+	// The first tab never waits for the helper, so it is an ordinary shell.
+	if err := open("first"); err != nil {
+		t.Fatalf("first OpenTab = %v; want an ordinary shell", err)
+	}
+	waitHelperSettled(t, manager, connected.ID)
+	err = open("second")
+	if !errors.Is(err, resolverErr) || connector.transport(0).channelCount() != 1 {
+		t.Fatalf("second OpenTab = %v, PTY channels = %d; want original error and no fallback", err, connector.transport(0).channelCount())
 	}
 }
 
@@ -498,6 +510,7 @@ func TestOpenTabSSHCreateUnavailableFallsBackAndCachesFailure(t *testing.T) {
 		if info.Durable || (info.FallbackNotice != "") != (index == 0) {
 			t.Fatalf("attempt %d tab = %+v; want ordinary PTY and first notice only", index, info)
 		}
+		waitHelperSettled(t, manager, connected.ID)
 	}
 	if provider.createCalls != 1 || resolver.callCount() != 1 || connector.transport(0).channelCount() != 2 {
 		t.Fatalf("create calls = %d, resolver calls = %d, PTY channels = %d", provider.createCalls, resolver.callCount(), connector.transport(0).channelCount())
@@ -1004,9 +1017,17 @@ func TestHelperOperationCancelAndRetryFenceGenerationAndOperation(t *testing.T) 
 	if err != nil || opened.Durable {
 		t.Fatalf("ordinary tab = %+v, %v", opened, err)
 	}
-	mu.Lock()
-	first := attempts[0]
-	mu.Unlock()
+	var first *attempt
+	for deadline := time.Now().Add(time.Second); first == nil && time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		mu.Lock()
+		if len(attempts) > 0 {
+			first = attempts[0]
+		}
+		mu.Unlock()
+	}
+	if first == nil {
+		t.Fatal("first helper operation did not start")
+	}
 	select {
 	case <-first.started:
 	case <-time.After(time.Second):
@@ -1168,8 +1189,16 @@ func TestCancelHelperOperationDoesNotBlockNextAutomaticTab(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auto tab immediately after cancellation failed: %v", err)
 	}
-	if !second.Durable {
-		t.Fatalf("auto tab after cancellation = %+v; want usable durable provider", second)
+	if second.Durable {
+		t.Fatalf("auto tab right after cancellation = %+v; the new deployment must not delay the shell", second)
+	}
+	waitHelperSettled(t, manager, connected.ID)
+	third, err := manager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "cancel-third", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	})
+	if err != nil || !third.Durable {
+		t.Fatalf("auto tab after the redeployment = %+v, %v; want usable durable provider", third, err)
 	}
 
 	unsafeManager := NewManager(Config{
@@ -1183,6 +1212,13 @@ func TestCancelHelperOperationDoesNotBlockNextAutomaticTab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := unsafeManager.OpenTab(t.Context(), OpenTabOptions{
+		SessionID: unsafeSession.ID, ClientID: "client", ChannelID: "unsafe-first", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{}, DurableFallback: true,
+	}); err != nil {
+		t.Fatalf("first tab = %v; want an ordinary shell", err)
+	}
+	waitHelperSettled(t, unsafeManager, unsafeSession.ID)
 	if _, err := unsafeManager.OpenTab(t.Context(), OpenTabOptions{
 		SessionID: unsafeSession.ID, ClientID: "client", ChannelID: "unsafe-auto", Cols: 80, Rows: 24,
 		Durable: &DurableTabOptions{}, DurableFallback: true,
