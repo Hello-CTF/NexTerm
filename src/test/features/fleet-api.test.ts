@@ -88,6 +88,17 @@ describe("fleetApi live contract", () => {
     });
   });
 
+  it("sets terminal access with POST /fleet/devices/{id}/terminal-access, an enabled flag, and CSRF", async () => {
+    const calls = capture();
+    vi.stubGlobal("fetch", mocks.fetch);
+    setCsrfToken("csrf-9");
+
+    await fleetApi.setTerminalAccess("d 2", false);
+
+    expect(calls[0]).toMatchObject({ url: "/fleet/devices/d%202/terminal-access", method: "POST", body: { enabled: false } });
+    expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
+  });
+
   it("gets metrics with GET /fleet/devices/{id}/metrics and an optional since_ms query parameter", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);

@@ -13,7 +13,9 @@ import (
 
 type Logger struct {
 	*slog.Logger
-	file *os.File
+	file  *os.File
+	level *slog.LevelVar
+	tee   *teeState
 }
 
 func NewLogger(paths platform.Paths, stderr io.Writer) (*Logger, error) {
@@ -29,11 +31,38 @@ func NewLogger(paths platform.Paths, stderr io.Writer) (*Logger, error) {
 			writer = io.MultiWriter(stderr, file)
 		}
 	}
+	level := &slog.LevelVar{}
+	level.Set(slog.LevelInfo)
+	tee := &teeState{}
+	primary := slog.NewTextHandler(writer, &slog.HandlerOptions{Level: level})
 	logger := &Logger{
-		Logger: slog.New(NewRedactingHandler(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: slog.LevelInfo}))),
+		Logger: slog.New(NewRedactingHandler(newFanoutHandler(primary, tee))),
 		file:   file,
+		level:  level,
+		tee:    tee,
 	}
 	return logger, err
+}
+
+// Level exposes the level of the primary sinks (console and log file); it defaults to Info.
+func (l *Logger) Level() *slog.LevelVar {
+	if l == nil {
+		return nil
+	}
+	return l.level
+}
+
+// AttachDebugTee mirrors every record at Debug level and above to w, in addition to the regular sinks.
+// Records pass through the redacting handler first, so w never sees unmasked secrets. A record enabled for
+// the primary sinks is written to them once; the tee only adds a second copy. The returned function detaches
+// the tee; attaching a new tee replaces the previous one.
+func (l *Logger) AttachDebugTee(w io.Writer) (detach func()) {
+	if l == nil || l.tee == nil || w == nil {
+		return func() {}
+	}
+	cfg := &teeConfig{w: &lockedWriter{w: w}}
+	l.tee.cfg.Store(cfg)
+	return func() { l.tee.cfg.CompareAndSwap(cfg, nil) }
 }
 
 func NewRedactingHandler(next slog.Handler) slog.Handler {

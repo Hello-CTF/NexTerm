@@ -41,6 +41,12 @@ export interface FleetDevice {
   agent?: FleetAgentInfo;
 }
 
+// server_version is absent when talking to an older server.
+export interface FleetDeviceList {
+  devices: FleetDevice[];
+  server_version?: string;
+}
+
 export interface FleetMetricsSample {
   ts: number;
   cpu_pct: number;
@@ -73,7 +79,7 @@ export interface FleetEnrollCode {
 }
 
 export const fleetApi = {
-  devices: () => request<{ devices: FleetDevice[] }>("GET", "/fleet/devices"),
+  devices: () => request<FleetDeviceList>("GET", "/fleet/devices"),
 
   issueEnrollCode: (ttlMs: number, userId?: string) =>
     request<FleetEnrollCode>("POST", "/device/enroll-codes", {
@@ -89,6 +95,14 @@ export const fleetApi = {
       "POST",
       `/fleet/devices/${encodeURIComponent(id)}/autostart`,
       { desired },
+      { csrf: true },
+    ),
+
+  setTerminalAccess: (id: string, enabled: boolean) =>
+    request<{ ok: boolean; terminal_enabled: boolean }>(
+      "POST",
+      `/fleet/devices/${encodeURIComponent(id)}/terminal-access`,
+      { enabled },
       { csrf: true },
     ),
 

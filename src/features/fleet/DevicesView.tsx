@@ -131,8 +131,16 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
+// A version is comparable only when it looks like a release (x.y.z); "dev", "0.0.0" and empty values are not.
+function releaseVersion(raw: string | undefined | null): string | null {
+  const v = (raw ?? "").trim().replace(/^v/i, "");
+  if (!/^\d+\.\d+\.\d+/.test(v) || /^0\.0\.0(?![\d.])/.test(v)) return null;
+  return v;
+}
+
 interface DeviceCardProps {
   device: FleetDevice;
+  serverVersion: string | null;
   now: number;
   online: boolean;
   isAdmin: boolean;
@@ -140,7 +148,7 @@ interface DeviceCardProps {
   onRevoked: (id: string) => void;
 }
 
-function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: DeviceCardProps) {
+function DeviceCard({ device, serverVersion: listServerVersion, now, online, isAdmin, onPatch, onRevoked }: DeviceCardProps) {
   const { pushToast } = useUi();
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -192,6 +200,40 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
       setBusy(false);
     }
   };
+
+  const toggleTerminal = async () => {
+    if (!agent) return;
+    const enabled = !agent.terminal_enabled;
+    if (!enabled) {
+      const ok = await ask(
+        `关闭「${device.name}」的远程终端？\n\n关闭后，这台设备将拒绝新的远程终端、文件和端口转发连接，「打开工作区」也不可用。已经打开的连接不会被强制断开，会保持到你自己关闭为止。之后可以随时重新开启。${online ? "" : "\n\n设备当前离线，设备本身会在下次连接服务器后同步这项设置。"}`,
+        { title: "关闭远程终端", kind: "warning" },
+      );
+      if (!ok) return;
+    } else if (!online) {
+      const ok = await ask(
+        `设备「${device.name}」当前离线。\n\n此次修改会先保存在服务器上，设备下次连接服务器后生效。`,
+        { title: "设备离线", kind: "info" },
+      );
+      if (!ok) return;
+    }
+    setBusy(true);
+    try {
+      const r = await fleetClient().setTerminalAccess(device.id, enabled);
+      onPatch(device.id, { agent: { ...agent, terminal_enabled: r.terminal_enabled } });
+      pushToast("success", `已${r.terminal_enabled ? "开启" : "关闭"}「${device.name}」的远程终端`);
+    } catch (e) {
+      pushToast("error", describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The agent only self-upgrades when the control protocol is incompatible (version_mismatch), not on every version
+  // difference, so this note stays informational and makes no promise about upgrading.
+  const agentRelease = releaseVersion(agent?.app_version);
+  const serverRelease = releaseVersion(listServerVersion);
+  const versionBehind = Boolean(!revoked && agent && online && agentRelease && serverRelease && agentRelease !== serverRelease);
 
   // reconcile semantics (internal/fleet/agent/runtime.go): desired=true aligns with installed&&enabled,
   // active is only whether the process is running right now, shown separately and not part of drift judgment.
@@ -287,13 +329,21 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
         ) : agent ? (
           <>
             {lastSeenText}
-            {agent.app_version && <span>· v{agent.app_version}</span>}
-            {online && !agent.terminal_enabled && <span>· 这台设备未开启远程终端</span>}
+            {agent.app_version && <span>· v{agent.app_version.replace(/^v/i, "")}</span>}
+            <span className={agent.terminal_enabled ? "" : "text-amber-300"}>
+              · 远程终端{agent.terminal_enabled ? "已开启" : "已关闭"}
+            </span>
           </>
         ) : (
           <span>{device.kind === "browser" ? "浏览器设备" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
         )}
       </div>
+
+      {versionBehind && (
+        <div className="nx-hint mt-1 text-[11px]" role="note">
+          代理版本 {agentRelease}，服务端 {serverRelease}。版本不同不影响使用；仅当控制通道协议不兼容时，代理才会自动升级，否则需要在设备上手动更新。
+        </div>
+      )}
 
       {!revoked && agent && !online && reasonOpen && (
         <div className="nx-alert nx-alert-info mt-2 text-[12px]">
@@ -354,7 +404,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
       {!revoked && agent && detailsOpen && (
         <dl className="m-0 mt-2 flex flex-col gap-1.5">
           <DetailRow label="创建时间">{formatTime(device.created_at)}</DetailRow>
-          <DetailRow label="版本">{agent.app_version ? `v${agent.app_version}` : "未上报"}</DetailRow>
+          <DetailRow label="代理版本">{agent.app_version ? `v${agent.app_version.replace(/^v/i, "")}` : "未上报"}</DetailRow>
           <DetailRow label="系统平台">{agent.platform ? platformLabel(agent.platform) : "未知"}</DetailRow>
           <DetailRow label="接入地址">
             {agent.current_url ? (
@@ -375,13 +425,24 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
             )}
           </DetailRow>
           <DetailRow label="远程终端">
-            <b>{agent.terminal_enabled ? "开启" : "关闭"}</b>
-            <span className="nx-hint"> · {agent.terminal_enabled ? "允许在这台设备上打开终端" : "不允许在这台设备上打开终端"}（此处仅展示）</span>
+            <label className="flex flex-wrap items-center gap-1.5">
+              <input
+                type="checkbox"
+                aria-label="远程终端"
+                checked={agent.terminal_enabled}
+                disabled={busy}
+                onChange={() => void toggleTerminal()}
+              />
+              <span>{agent.terminal_enabled ? "已开启" : "已关闭"}</span>
+              <span className="nx-hint">· {agent.terminal_enabled ? "允许新建终端、文件和端口转发连接" : "拒绝新建远程连接，已打开的连接不受影响"}</span>
+            </label>
+            {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：服务器立即按新设置拒绝或放行，设备上线后同步</div>}
           </DetailRow>
           <DetailRow label="随登录自动启动">
             <label className="flex flex-wrap items-center gap-1.5">
               <input
                 type="checkbox"
+                aria-label="随登录自动启动"
                 checked={agent.desired_autostart}
                 disabled={busy}
                 onChange={() => void toggleAutostart()}
@@ -419,6 +480,7 @@ export function DevicesView() {
   const account = useFleetAccount();
   const authStatus = useAuth((s) => s.status);
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
+  const [listServerVersion, setListServerVersion] = useState<string | null>(null);
   const [deviceQuery, setDeviceQuery] = useState("");
   const [deviceFilter, setDeviceFilter] = useState<"all" | "online" | "offline" | "revoked">("all");
   const [baseUrls, setBaseUrls] = useState<FleetBaseURLEntry[]>([]);
@@ -460,6 +522,7 @@ export function DevicesView() {
     accountEpoch.current += 1;
     versionSeq.current += 1;
     setDevices(null);
+    setListServerVersion(null);
     setDeviceQuery("");
     setDeviceFilter("all");
     setBaseUrls([]);
@@ -502,6 +565,7 @@ export function DevicesView() {
       .then((r) => {
         if (seq === loadSeq.current) {
           setDevices(r.devices);
+          setListServerVersion(r.server_version || null);
           qc.setQueryData(["fleet-devices", userId], r);
         }
       })
@@ -528,6 +592,7 @@ export function DevicesView() {
       .then((r) => {
         if (seq === loadSeq.current) {
           setDevices(r.devices);
+          setListServerVersion(r.server_version || null);
           qc.setQueryData(["fleet-devices", userId], r);
         }
       })
@@ -768,6 +833,7 @@ export function DevicesView() {
     <DeviceCard
       key={d.id}
       device={d}
+      serverVersion={listServerVersion}
       now={now}
       online={onlineOf(d)}
       isAdmin={Boolean(isAdmin)}

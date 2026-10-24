@@ -11,6 +11,7 @@ import (
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	production "github.com/Hello-CTF/NexTerm/internal/app/production"
 	"github.com/Hello-CTF/NexTerm/internal/applog"
+	"github.com/Hello-CTF/NexTerm/internal/diagcapture"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
@@ -69,6 +70,9 @@ func run(args []string) int {
 	previousLogger := slog.Default()
 	slog.SetDefault(logger.Logger)
 	defer slog.SetDefault(previousLogger)
+	if capture := diagcapture.StartIfRequested(context.Background(), paths, logger, diagcapture.Info{Mode: "desktop", Args: args}, invocation.DebugCapture); capture != nil {
+		defer capture.Stop()
+	}
 	assets, err := newDesktopAssets(invocation.WebRoot)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))

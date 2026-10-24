@@ -127,6 +127,9 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector, services.Events, services.stagedBlobs, services.desktop)
 	}
 	services.terminalCommands.fsUploads = services.fsUploads
+	if services.Database != nil {
+		services.terminalCommands.databases = services.Database
+	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status
 	}
@@ -337,6 +340,12 @@ func productionModules(services ProductionServices) []Module {
 	modules = append(modules, Module{Name: "biometric", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 		return registerBiometricCommands(dispatcher, platformBiometric{}, biometricVaultState(services))
 	}})
+	if services.dataDir != "" {
+		diagnostics := newDiagnosticsService(services.dataDir, services.desktop)
+		modules = append(modules, Module{Name: "diagnostics", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+			return registerDiagnosticsCommands(dispatcher, diagnostics)
+		}})
+	}
 	modules = append(modules, Module{Name: "system-insets", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 		return ipc.Register(dispatcher, "system_insets", func(ctx context.Context, _ *ipc.Call, _ struct{}) (ScreenInsets, error) {
 			if services.ScreenInsets == nil {

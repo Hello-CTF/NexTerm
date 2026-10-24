@@ -38,6 +38,7 @@ type Invocation struct {
 	PprofAddr      string
 	SyncOnly       bool
 	RequireVault   bool
+	DebugCapture   bool
 	Help           bool
 	Version        bool
 }
@@ -56,6 +57,13 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 		DBDSN:          getenv("NEXTERM_DB_DSN"),
 		DBPasswordFile: getenv("NEXTERM_DB_PASSWORD_FILE"),
 		PprofAddr:      getenv(pprof.EnvAddr),
+	}
+	if raw := strings.TrimSpace(getenv("NEXTERM_DEBUG_CAPTURE")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Invocation{}, fmt.Errorf("invalid NEXTERM_DEBUG_CAPTURE value %q (want 1 or 0)", raw)
+		}
+		invocation.DebugCapture = enabled
 	}
 	dbMaxOpenConnsEnv := getenv("NEXTERM_DB_MAX_OPEN_CONNS")
 	commandSeen := false
@@ -80,6 +88,18 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 				return Invocation{}, fmt.Errorf("invalid --sync-only value: %w", err)
 			}
 			invocation.SyncOnly = value
+			continue
+		}
+		if argument == "--debug-capture" {
+			invocation.DebugCapture = true
+			continue
+		}
+		if strings.HasPrefix(argument, "--debug-capture=") {
+			value, err := strconv.ParseBool(strings.TrimPrefix(argument, "--debug-capture="))
+			if err != nil {
+				return Invocation{}, fmt.Errorf("invalid --debug-capture value: %w", err)
+			}
+			invocation.DebugCapture = value
 			continue
 		}
 		if argument == "--require-vault" {
@@ -230,6 +250,8 @@ Flags:
   --pprof-addr ADDR   Serve pprof debug endpoints on ADDR (env NEXTERM_PPROF_ADDR);
                       disabled by default, loopback only (a bare ":PORT" binds 127.0.0.1)
                       unless an explicit wildcard like 0.0.0.0 is given
+  --debug-capture     Record profiles and verbose redacted logs for this run only
+                      (env NEXTERM_DEBUG_CAPTURE=1); output goes to <data-dir>/logs/debug-capture
   --version           Print the version
   -h, --help          Print this help
 `, program, defaultCommand)

@@ -65,6 +65,7 @@ func newRemoteAPIFixture(t *testing.T) *remoteAPIFixture {
 	mux.Handle("GET /fleet/devices/{id}/metrics", fixture.session(http.HandlerFunc(fixture.serveFleetMetrics)))
 	mux.Handle("POST /fleet/devices/{id}/revoke", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveFleetRevoke))))
 	mux.Handle("POST /fleet/devices/{id}/autostart", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveFleetAutostart))))
+	mux.Handle("POST /fleet/devices/{id}/terminal-access", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveFleetTerminalAccess))))
 	mux.Handle("POST /device/enroll-codes", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveEnrollCode))))
 	mux.Handle("GET /fleet/base-urls", fixture.session(http.HandlerFunc(fixture.serveBaseURLsGet)))
 	mux.Handle("PUT /fleet/base-urls", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveBaseURLsPut))))
@@ -378,7 +379,7 @@ func (f *remoteAPIFixture) serveFleetDevices(w http.ResponseWriter, _ *http.Requ
 		writeSyncError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失，请重新登录"))
 		return
 	}
-	writeSyncJSON(w, http.StatusOK, map[string]any{"devices": []map[string]any{
+	writeSyncJSON(w, http.StatusOK, map[string]any{"server_version": "9.9.9-test", "devices": []map[string]any{
 		{"id": "d-1", "name": "edge-01", "kind": "agent", "created_at": 1, "last_seen_at": 2, "revoked_at": 0,
 			"owner": map[string]any{"id": "u-1", "username": "alice"},
 			"agent": map[string]any{"platform": "linux/amd64", "app_version": "1.0.0", "desired_autostart": true,
@@ -419,6 +420,17 @@ func (f *remoteAPIFixture) serveFleetAutostart(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeSyncJSON(w, http.StatusOK, map[string]any{"ok": true, "desired_autostart": request.Desired})
+}
+
+func (f *remoteAPIFixture) serveFleetTerminalAccess(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Enabled == nil {
+		writeSyncError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeBadParam, "缺少 enabled"))
+		return
+	}
+	writeSyncJSON(w, http.StatusOK, map[string]any{"ok": true, "terminal_enabled": *request.Enabled})
 }
 
 func (f *remoteAPIFixture) serveEnrollCode(w http.ResponseWriter, r *http.Request) {
@@ -529,7 +541,7 @@ func TestRemoteAPIListDevicesSendsSessionCookie(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(devices.Devices) != 1 || devices.Devices[0].ID != "d-1" {
+	if len(devices.Devices) != 1 || devices.Devices[0].ID != "d-1" || devices.ServerVersion != "9.9.9-test" {
 		t.Fatalf("devices = %+v", devices)
 	}
 	agent := devices.Devices[0].Agent
@@ -666,6 +678,9 @@ func TestRemoteAPITypedMethodsDecode(t *testing.T) {
 	requireCode(t, client.RevokeMyDevice(ctx, "missing"), ipc.CodeNotFound)
 	requireCode(t, client.RevokeDevice(ctx, "missing"), ipc.CodeNotFound)
 	if err := client.SetDeviceAutostart(ctx, "d-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetDeviceTerminalAccess(ctx, "d-1", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.RevokeHostShare(ctx, "hs-1"); err != nil {

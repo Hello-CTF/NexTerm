@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -117,8 +119,21 @@ func (r productionDurableResolver) ResolveDurable(ctx context.Context, transport
 				return nil, err
 			}
 		}
+		deployStart := time.Now()
+		lastStage := ""
+		var stageMu sync.Mutex
 		resolver.Progress = func(progressCtx context.Context, progress sshdaemon.HelperProgress) {
 			session.ReportHelperOperation(progressCtx, progress.OperationID)
+			// Debug capture aid: one line per stage change (not per transferred chunk); no paths of user data or content.
+			stageMu.Lock()
+			stageChanged := progress.Stage != lastStage || progress.Done || progress.Error != ""
+			lastStage = progress.Stage
+			stageMu.Unlock()
+			if stageChanged {
+				slog.Debug("helper deployment progress", "session", scope.SessionID, "operation", progress.OperationID,
+					"stage", progress.Stage, "step", progress.Step, "steps", progress.Steps, "attempt", progress.Attempt,
+					"done", progress.Done, "error", progress.Error, "elapsed_ms", time.Since(deployStart).Milliseconds())
+			}
 			if r.events != nil && scope.AssetID != "" {
 				_ = ipc.Emit(progressCtx, r.events, ipc.TopicHelperProgress, productionHelperProgressEvent(scope, progress))
 			}

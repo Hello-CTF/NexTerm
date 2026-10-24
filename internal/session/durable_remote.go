@@ -169,6 +169,7 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 	defer timer.Stop()
 	select {
 	case <-entry.done:
+		m.logger.Debug("helper deployment finished within the first-tab wait", "session", session.ID, "ok", entry.err == nil)
 		session.mu.Lock()
 		current := session.transport == transport && session.generation == generation
 		session.mu.Unlock()
@@ -180,6 +181,7 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 		}
 		return nil, entry.err
 	case <-timer.C:
+		m.logger.Debug("helper deployment still running after the first-tab wait; tab will use a regular PTY", "session", session.ID, "waited_ms", 50)
 		return nil, errHelperDeploymentPending
 	case <-ctx.Done():
 		return nil, context.Cause(ctx)
@@ -214,7 +216,15 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 	session := entry.session
 	resolveCtx := ipc.WithHelperProgressScope(entry.ctx, ipc.HelperProgressScope{SessionID: session.ID, AssetID: session.Asset().ID})
 	resolveCtx = withHelperOperationReporter(resolveCtx, entry)
+	deployStart := time.Now()
+	m.logger.Debug("background helper deployment started", "session", session.ID, "generation", entry.generation, "sequence", entry.sequence)
 	provider, err := m.resolver.ResolveDurable(resolveCtx, entry.transport.Transport)
+	finish := []any{"session", session.ID, "generation", entry.generation, "sequence", entry.sequence,
+		"ok", err == nil && provider != nil, "elapsed_ms", time.Since(deployStart).Milliseconds()}
+	if err != nil {
+		finish = append(finish, "error", err.Error())
+	}
+	m.logger.Debug("background helper deployment finished", finish...)
 	entry.provider, entry.err = provider, err
 	if entry.err == nil && entry.provider == nil {
 		entry.err = errors.New("helper resolver returned a nil provider")

@@ -388,3 +388,70 @@ func TestValidateExecutionAssetIdentityBoundRequiresExactMatch(t *testing.T) {
 		t.Fatalf("replaced asset not rejected: %+v err=%v", failure, err)
 	}
 }
+
+// A mixed batch keeps the replaced-asset check for its SSH targets; only the
+// identity-exempt device session is left unbound, with a visible note.
+func mixedBatchRegistry(t *testing.T, current AssetIdentity, batchCalls *int) *Registry {
+	t.Helper()
+	fake := &identityFakeTerminal{tabFakeTerminal: newTabFake(fakeTab("t1", "s1", "$ ", 0))}
+	fake.setIdentity(current)
+	registry := p1Registry(fake)
+	registry.deps.ResolveExecTargetIdentities = func(_ context.Context, _, _ []string) (ExecTargetSet, []AssetIdentity, error) {
+		return ExecTargetSet{SessionIDs: []string{"s-dev", "s-ssh"}, IdentityExemptSessionIDs: []string{"s-dev"}}, []AssetIdentity{identityA}, nil
+	}
+	registry.deps.ExecBatch = func(_ context.Context, _ execbatch.Request) (execbatch.Batch, error) {
+		*batchCalls++
+		return execbatch.Batch{Results: []execbatch.Result{{SessionID: "s-ssh", AssetID: "a1", Status: execbatch.StatusSuccess, Stdout: "ok"}}}, nil
+	}
+	return registry
+}
+
+func TestExecCommandsMixedBatchKeepsSSHIdentityBinding(t *testing.T) {
+	scope := Scope{SessionID: "s1", TabID: "t1"}
+	call := p1Call("c", "exec_commands", `{"commands":["ls"],"asset_ids":["device/d1","a1"]}`)
+	call.AssetIdentities = []AssetIdentity{identityA}
+
+	calls := 0
+	replaced := mixedBatchRegistry(t, identityB, &calls).Execute(context.Background(), "job", scope, call, nil)
+	if replaced.OK || !strings.Contains(replaced.Text, "被替换") || calls != 0 {
+		t.Fatalf("replaced SSH target in a mixed batch ran: calls=%d %+v", calls, replaced)
+	}
+
+	ok := mixedBatchRegistry(t, identityA, &calls).Execute(context.Background(), "job", scope, call, nil)
+	if !ok.OK || calls != 1 {
+		t.Fatalf("matching mixed batch = calls=%d %+v", calls, ok)
+	}
+	if !strings.Contains(ok.Notes, "受管设备") || strings.Contains(ok.Notes, "资产身份不可验证") {
+		t.Fatalf("mixed batch note = %q", ok.Notes)
+	}
+
+	// A bound identity that disagrees with the SSH target still fails closed.
+	call.AssetIdentities = []AssetIdentity{identityB}
+	mismatch := mixedBatchRegistry(t, identityA, &calls).Execute(context.Background(), "job", scope, call, nil)
+	if mismatch.OK || calls != 1 {
+		t.Fatalf("bound identity mismatch ran: calls=%d %+v", calls, mismatch)
+	}
+}
+
+func TestComposeExecTargetIdentitiesSkipsOnlyExemptSessions(t *testing.T) {
+	fake := newTabFake(fakeTab("t1", "s1", "$ ", 0))
+	fake.bindSessionAsset("s-ssh", identityA)
+	fake.bindSessionAsset("s-dev", AssetIdentity{AssetID: "device/d1"})
+	deps := Dependencies{Terminal: fake, PollInterval: time.Millisecond}
+	deps.ResolveExecTargets = func(_ context.Context, _, _ []string) (ExecTargetSet, error) {
+		return ExecTargetSet{SessionIDs: []string{"s-dev", "s-ssh"}, IdentityExemptSessionIDs: []string{"s-dev"}}, nil
+	}
+	registry := NewRegistry(deps)
+	_, identities, err := registry.deps.ResolveExecTargetIdentities(context.Background(), nil, nil)
+	if err != nil || len(identities) != 1 || identities[0] != identityA {
+		t.Fatalf("identities = %+v err=%v", identities, err)
+	}
+	// Without the exemption the same device session unbinds the whole batch.
+	deps.ResolveExecTargets = func(_ context.Context, _, _ []string) (ExecTargetSet, error) {
+		return ExecTargetSet{SessionIDs: []string{"s-dev", "s-ssh"}}, nil
+	}
+	registry = NewRegistry(deps)
+	if _, _, err := registry.deps.ResolveExecTargetIdentities(context.Background(), nil, nil); !errors.Is(err, ErrAssetIdentityUnverifiable) {
+		t.Fatalf("non-exempt unevidenced target err = %v", err)
+	}
+}

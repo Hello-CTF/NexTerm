@@ -622,6 +622,8 @@ func resolveProductionExecTargets(ctx context.Context, services *ProductionServi
 			return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeForbidden, "多主机目标与在线会话身份或类型不匹配")
 		}
 		targets.SessionIDs = append(targets.SessionIDs, sessionID)
+		// Kind was verified above; a device has no identity fingerprint, so only it is exempt from asset binding.
+		targets.IdentityExemptSessionIDs = append(targets.IdentityExemptSessionIDs, sessionID)
 		// A device has no environment tag: treat the batch as production so the owner always confirms.
 		targets.Production = true
 	}

@@ -111,3 +111,35 @@ func TestLoggerRedactsValuesInsideSensitiveWithGroup(t *testing.T) {
 		}
 	}
 }
+
+func TestDebugTeeDoesNotDoubleLogAndReachesEarlierDerivedLoggers(t *testing.T) {
+	paths := platform.NewPaths(t.TempDir())
+	logger, err := NewLogger(paths, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.Close()
+	derived := logger.With("tab_id", "t1")
+	derived.Debug("before tee")
+	var tee bytes.Buffer
+	detach := logger.AttachDebugTee(&tee)
+	derived.Debug("debug line", "password", "hunter2")
+	derived.Info("info line")
+	detach()
+	derived.Debug("after detach")
+
+	got := tee.String()
+	if !strings.Contains(got, "debug line") || !strings.Contains(got, "tab_id=t1") || strings.Contains(got, "hunter2") {
+		t.Fatalf("tee output = %q", got)
+	}
+	if strings.Contains(got, "before tee") || strings.Contains(got, "after detach") {
+		t.Fatalf("tee output outside the attach window: %q", got)
+	}
+	if strings.Count(got, "info line") != 1 {
+		t.Fatalf("info line must appear once in the tee: %q", got)
+	}
+	file, _ := os.ReadFile(paths.LogFile)
+	if strings.Count(string(file), "info line") != 1 || strings.Contains(string(file), "debug line") {
+		t.Fatalf("regular log changed by tee: %q", file)
+	}
+}

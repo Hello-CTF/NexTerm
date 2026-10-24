@@ -2,15 +2,18 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import { createPortal } from "react-dom";
 import type { ExecBatchConfirmationTarget } from "../../ipc/execBatchApi";
 import {
+  MANAGED_DEVICE_ENVIRONMENT,
+  MANAGED_DEVICE_ENVIRONMENT_HINT,
+  environmentDisplayLabel,
   evaluateEnvironmentConfirmation,
+  isManagedDeviceEnvironment,
   targetKey,
   type EnvironmentConfirmationChallenge,
 } from "../production/environmentConfirmation";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconAlert, IconClose } from "../../ui/icons";
 
-// Mirrors guard.ManagedDeviceEnvironment: the environment the server assigns to devices, which carry no environment tag.
-export const MANAGED_DEVICE_ENVIRONMENT = "managed-device";
+export { MANAGED_DEVICE_ENVIRONMENT };
 
 export interface ProductionConfirmationDialogChallenge {
   targetSetHash: string;
@@ -81,7 +84,7 @@ function TypedEnvironmentConfirmationDialog({
   }, [layer]);
 
   const missingEnvironmentNames = !challenge.requiredEnvironmentNames?.length;
-  const hasManagedDevice = challenge.productionTargets.some((target) => target.environment === MANAGED_DEVICE_ENVIRONMENT);
+  const hasManagedDevice = challenge.productionTargets.some((target) => isManagedDeviceEnvironment(target.environment));
   const environmentChallenge: EnvironmentConfirmationChallenge = useMemo(
     () => ({
       targetSetHash: challenge.targetSetHash,
@@ -134,7 +137,7 @@ function TypedEnvironmentConfirmationDialog({
           </p>
           {hasManagedDevice && (
             <p role="note" className="mb-3 text-[11px] leading-relaxed text-neutral-300">
-              受管设备没有环境标记，系统无法判断它是否为生产环境，因此执行前需要你确认；请在对应目标输入环境名 {MANAGED_DEVICE_ENVIRONMENT}。
+              {MANAGED_DEVICE_ENVIRONMENT_HINT}
             </p>
           )}
           {missingEnvironmentNames && (
@@ -153,7 +156,7 @@ function TypedEnvironmentConfirmationDialog({
                   <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-neutral-100" title={target.hostname || target.sessionName}>
                     {target.hostname || target.sessionName}
                   </span>
-                  <span className="nx-badge nx-badge-amber shrink-0">{target.environment}</span>
+                  <span className="nx-badge nx-badge-amber shrink-0">{environmentDisplayLabel(target.environment)}</span>
                 </div>
                 {target.hostname && target.sessionName !== target.hostname && (
                   <div className="mt-1 truncate text-[11px] text-neutral-400">会话：{target.sessionName}</div>

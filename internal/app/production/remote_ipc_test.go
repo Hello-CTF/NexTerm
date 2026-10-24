@@ -73,6 +73,16 @@ func TestRemoteCommandsDesktopFlow(t *testing.T) {
 		t.Fatalf("autostart = %+v", autostart)
 	}
 
+	response = dispatchHostKeyTest(t, production, "remote_fleet_device_terminal_access", `{"args":{"deviceId":"d-1","enabled":false}}`)
+	var terminalAccess struct {
+		OK              bool `json:"ok"`
+		TerminalEnabled bool `json:"terminal_enabled"`
+	}
+	requireStoreTestResponse(t, response, &terminalAccess)
+	if !terminalAccess.OK || terminalAccess.TerminalEnabled {
+		t.Fatalf("terminal access = %+v", terminalAccess)
+	}
+
 	response = dispatchHostKeyTest(t, production, "remote_fleet_device_revoke", `{"args":{"deviceId":""}}`)
 	if response.OK || response.Error == nil || response.Error.Code != "bad_param" {
 		t.Fatalf("empty deviceId = %+v, want bad_param", response)

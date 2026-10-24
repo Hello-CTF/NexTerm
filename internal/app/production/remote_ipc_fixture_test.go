@@ -199,6 +199,16 @@ func newRemoteTestMux(t *testing.T, f *remoteTestAccounts) http.Handler {
 		}
 		remoteTestWriteJSON(w, http.StatusOK, map[string]any{"ok": true, "desired_autostart": request.Desired})
 	}))))
+	mux.Handle("POST /fleet/devices/{id}/terminal-access", session(csrf(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			remoteTestWriteError(w, http.StatusBadRequest, ipc.CodeBadParam, "请求体不是合法 JSON")
+			return
+		}
+		remoteTestWriteJSON(w, http.StatusOK, map[string]any{"ok": true, "terminal_enabled": request.Enabled})
+	}))))
 	mux.Handle("/", realServer.Handler())
 	return mux
 }

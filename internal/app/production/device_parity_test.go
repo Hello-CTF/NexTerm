@@ -128,6 +128,9 @@ func TestProductionAITargetResolutionIncludesOnlyExplicitOwnedDevices(t *testing
 	if !targets.Production {
 		t.Fatal("device targets have no environment tag and must require confirmation")
 	}
+	if len(targets.IdentityExemptSessionIDs) != 1 || targets.IdentityExemptSessionIDs[0] != connected.ID {
+		t.Fatalf("only the verified device session may skip identity binding: %+v", targets)
+	}
 	for name, test := range map[string]struct {
 		assets []string
 		tags   []string

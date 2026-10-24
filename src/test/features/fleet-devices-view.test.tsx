@@ -227,6 +227,10 @@ function fleetHandler(overrides?: {
       const desired = Boolean((body as { desired?: boolean } | undefined)?.desired);
       return { payload: { ok: true, desired_autostart: desired } };
     }
+    if (/\/terminal-access$/.test(url) && method === "POST") {
+      const enabled = Boolean((body as { enabled?: boolean } | undefined)?.enabled);
+      return { payload: { ok: true, terminal_enabled: enabled } };
+    }
     if (url === "/fleet/base-urls" && method === "PUT") {
       return { payload: { base_urls: (overrides?.baseUrls as { base_urls: unknown[] } | undefined)?.base_urls ?? BASE_URLS } };
     }
@@ -1239,7 +1243,7 @@ describe("Device management view - revocation and autostart", () => {
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
     expandDetails(card);
-    const checkbox = card?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    const checkbox = card?.querySelector<HTMLInputElement>('input[aria-label="随登录自动启动"]');
     expect(checkbox?.checked).toBe(true);
     click(checkbox as HTMLInputElement);
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-1/autostart"));
@@ -1258,7 +1262,7 @@ describe("Device management view - revocation and autostart", () => {
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("db-02"));
     expandDetails(card);
-    const checkbox = card?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    const checkbox = card?.querySelector<HTMLInputElement>('input[aria-label="随登录自动启动"]');
     expect(checkbox?.checked).toBe(false);
     click(checkbox as HTMLInputElement);
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-2/autostart"));
@@ -1268,6 +1272,116 @@ describe("Device management view - revocation and autostart", () => {
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("期望状态");
     const autostartCall = calls.find((c) => c.url === "/fleet/devices/d-2/autostart");
     expect(autostartCall?.body).toEqual({ desired: true });
+  });
+});
+
+describe("Device management view - remote terminal switch and version note", () => {
+  function cardWith(name: string) {
+    return [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes(name));
+  }
+
+  it("states the remote terminal state on the card in plain Chinese", async () => {
+    route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    expect(cardWith("web-01")?.textContent).toContain("远程终端已开启");
+    expect(cardWith("db-02")?.textContent).toContain("远程终端已关闭");
+  });
+
+  it("turns the remote terminal on with one click, even for an offline device after its info dialog", async () => {
+    const calls = route(fleetHandler());
+    mocks.ask.mockResolvedValue(true);
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("db-02") ?? false);
+
+    const card = cardWith("db-02");
+    expandDetails(card);
+    const checkbox = card?.querySelector<HTMLInputElement>('input[aria-label="远程终端"]');
+    expect(checkbox?.checked).toBe(false);
+    click(checkbox as HTMLInputElement);
+    await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-2/terminal-access"));
+
+    expect(calls.find((c) => c.url === "/fleet/devices/d-2/terminal-access")?.body).toEqual({ enabled: true });
+    await flushUntil(() => cardWith("db-02")?.textContent?.includes("远程终端已开启") ?? false);
+  });
+
+  it("enables an online device without any confirmation", async () => {
+    const calls = route(
+      fleetHandler({ devices: { devices: [{ ...AGENT_DEVICE, agent: { ...AGENT_DEVICE.agent, terminal_enabled: false } }] } }),
+    );
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    const card = cardWith("web-01");
+    expandDetails(card);
+    click(card?.querySelector<HTMLInputElement>('input[aria-label="远程终端"]') as HTMLInputElement);
+    await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-1/terminal-access"));
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+  });
+
+  it("asks before turning it off, explains existing connections stay open, and sends nothing when cancelled", async () => {
+    const calls = route(fleetHandler());
+    mocks.ask.mockResolvedValue(false);
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    const card = cardWith("web-01");
+    expandDetails(card);
+    const checkbox = card?.querySelector<HTMLInputElement>('input[aria-label="远程终端"]') as HTMLInputElement;
+    click(checkbox);
+    await flushUntil(() => mocks.ask.mock.calls.length === 1);
+    const message = String(mocks.ask.mock.calls[0]?.[0]);
+    expect(message).toContain("拒绝新的远程终端");
+    expect(message).toContain("不会被强制断开");
+    await flush();
+    expect(calls.some((c) => c.url.endsWith("/terminal-access"))).toBe(false);
+
+    mocks.ask.mockResolvedValue(true);
+    click(checkbox);
+    await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-1/terminal-access"));
+    expect(calls.find((c) => c.url === "/fleet/devices/d-1/terminal-access")?.body).toEqual({ enabled: false });
+    await flushUntil(() => cardWith("web-01")?.textContent?.includes("远程终端已关闭") ?? false);
+  });
+
+  it("notes a differing agent version only when both are release versions and the device is online", async () => {
+    route(
+      fleetHandler({
+        devices: {
+          server_version: "0.3.0",
+          devices: [
+            { ...AGENT_DEVICE, id: "d-old", name: "old-01", agent: { ...AGENT_DEVICE.agent, app_version: "0.2.2" } },
+            { ...AGENT_DEVICE, id: "d-same", name: "same-01", agent: { ...AGENT_DEVICE.agent, app_version: "v0.3.0" } },
+            { ...AGENT_DEVICE, id: "d-dev", name: "dev-01", agent: { ...AGENT_DEVICE.agent, app_version: "dev" } },
+            { ...AGENT_DEVICE, id: "d-zero", name: "zero-01", agent: { ...AGENT_DEVICE.agent, app_version: "0.0.0" } },
+            OFFLINE_DEVICE,
+          ],
+        },
+      }),
+    );
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("old-01") ?? false);
+
+    expect(cardWith("old-01")?.textContent).toContain("代理版本 0.2.2，服务端 0.3.0");
+    expect(cardWith("old-01")?.textContent).toContain("仅当控制通道协议不兼容时");
+    for (const name of ["same-01", "dev-01", "zero-01", "db-02"]) {
+      expect(cardWith(name)?.textContent).not.toContain("服务端 0.3.0");
+    }
+  });
+
+  it("shows no version note when the server does not report its version", async () => {
+    route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    expect(cardWith("web-01")?.textContent).not.toContain("服务端");
   });
 });
 
@@ -1354,7 +1468,7 @@ describe("Device management view - card layout", () => {
 
     expect(card?.querySelector('[role="status"]')).toBeNull();
     expandDetails(card);
-    expect(card?.textContent).toContain("允许在这台设备上打开终端");
+    expect(card?.textContent).toContain("允许新建终端、文件和端口转发连接");
     expect(card?.querySelector('button[aria-label="复制接入地址"]')).not.toBeNull();
     expect(card?.querySelector("code")?.textContent).toBe("https://nexterm.example.com");
   });

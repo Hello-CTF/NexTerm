@@ -1,6 +1,7 @@
 package production
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -511,7 +512,7 @@ func TestTestLoginIPCValidation(t *testing.T) {
 	}
 }
 
-func TestTestLoginIPCPortOnlyAssetsAreNotReportedAsVerified(t *testing.T) {
+func TestTestLoginIPCWinRMStaysPortOnly(t *testing.T) {
 	production := newHostKeyTestProduction(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -528,14 +529,12 @@ func TestTestLoginIPCPortOnlyAssetsAreNotReportedAsVerified(t *testing.T) {
 		}
 	}()
 	port := listener.Addr().(*net.TCPAddr).Port
-	response := dispatchHostKeyTest(t, production, "asset_create",
-		`{"args":{"kind":"mysql","name":"login-mysql","host":"127.0.0.1","port":`+itoa(port)+`,"username":"root"}}`)
 	var asset assetDTO
-	requireStoreTestResponse(t, response, &asset)
-	closed := dispatchHostKeyTest(t, production, "asset_create",
-		`{"args":{"kind":"redis","name":"login-redis","host":"127.0.0.1","port":`+itoa(closedProbePort(t))+`}}`)
+	requireStoreTestResponse(t, dispatchHostKeyTest(t, production, "asset_create",
+		`{"args":{"kind":"winrm","name":"login-winrm-open","host":"127.0.0.1","port":`+itoa(port)+`,"username":"root"}}`), &asset)
 	var closedAsset assetDTO
-	requireStoreTestResponse(t, closed, &closedAsset)
+	requireStoreTestResponse(t, dispatchHostKeyTest(t, production, "asset_create",
+		`{"args":{"kind":"winrm","name":"login-winrm-closed","host":"127.0.0.1","port":`+itoa(closedProbePort(t))+`}}`), &closedAsset)
 
 	byID := testLoginResultsByID(t, dispatchTestLoginBatch(t, production, 2000, asset.ID, closedAsset.ID))
 	if result := byID[asset.ID]; !result.Reachable || result.Kind != loginKindPortOnly || !strings.Contains(result.Error, "没有验证账号") {
@@ -543,5 +542,86 @@ func TestTestLoginIPCPortOnlyAssetsAreNotReportedAsVerified(t *testing.T) {
 	}
 	if result := byID[closedAsset.ID]; result.Reachable || result.Kind != "refused" || strings.Contains(result.Error, "SSH") {
 		t.Fatalf("closed port-only test login = %+v", result)
+	}
+}
+
+// fakeRedisServer answers every RESP command header with reply and returns the listener port.
+func fakeRedisServer(t *testing.T, reply string) int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				reader := bufio.NewReader(conn)
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if !strings.HasPrefix(line, "*") {
+						continue
+					}
+					_, _ = reader.ReadString('\n')
+					name, _ := reader.ReadString('\n')
+					if strings.EqualFold(strings.TrimSpace(name), "hello") && strings.HasPrefix(reply, "+") {
+						// The client expects a map for the HELLO handshake.
+						_, _ = conn.Write([]byte("*0\r\n"))
+						continue
+					}
+					_, _ = conn.Write([]byte(reply))
+				}
+			}()
+		}
+	}()
+	return listener.Addr().(*net.TCPAddr).Port
+}
+
+func TestTestLoginIPCDatabaseAssetsReportWhatWasVerified(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	create := func(kind, name string, port int) string {
+		t.Helper()
+		var asset assetDTO
+		requireStoreTestResponse(t, dispatchHostKeyTest(t, production, "asset_create",
+			`{"args":{"kind":"`+kind+`","name":"`+name+`","host":"127.0.0.1","port":`+itoa(port)+`,"username":"app"}}`), &asset)
+		return asset.ID
+	}
+	okRedis := create("redis", "db-ok", fakeRedisServer(t, "+PONG\r\n"))
+	deniedRedis := create("redis", "db-denied", fakeRedisServer(t, "-NOAUTH Authentication required.\r\n"))
+	closedMySQL := create("mysql", "db-closed", closedProbePort(t))
+	closedPostgres := create("postgres", "db-closed-pg", closedProbePort(t))
+
+	byID := testLoginResultsByID(t, dispatchTestLoginBatch(t, production, 3000, okRedis, deniedRedis, closedMySQL, closedPostgres))
+	if result := byID[okRedis]; !result.Reachable || result.Kind != "" || result.Error != "" {
+		t.Fatalf("verified redis login = %+v", result)
+	}
+	if result := byID[deniedRedis]; result.Reachable || result.Kind != "auth" || !strings.Contains(result.Error, "Redis") {
+		t.Fatalf("denied redis login = %+v", result)
+	}
+	for _, id := range []string{closedMySQL, closedPostgres} {
+		if result := byID[id]; result.Reachable || result.Kind != "refused" || strings.Contains(result.Error, "SSH") {
+			t.Fatalf("closed database login = %+v", result)
+		}
+	}
+	requireNoManagedSessions(t, production)
+}
+
+func TestTestLoginIPCDatabaseWithoutServiceFallsBackToPortOnly(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	var asset assetDTO
+	requireStoreTestResponse(t, dispatchHostKeyTest(t, production, "asset_create",
+		`{"args":{"kind":"redis","name":"db-fallback","host":"127.0.0.1","port":`+itoa(fakeRedisServer(t, "+PONG\r\n"))+`}}`), &asset)
+	production.Services.terminalCommands.databases = nil
+	result := testLoginResultsByID(t, dispatchTestLoginBatch(t, production, 2000, asset.ID))[asset.ID]
+	if !result.Reachable || result.Kind != loginKindPortOnly {
+		t.Fatalf("fallback login = %+v", result)
 	}
 }

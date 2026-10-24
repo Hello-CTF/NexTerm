@@ -30,6 +30,7 @@ vi.mock("../../features/settings/AppearanceCard", () => ({ AppearanceCard: () =>
 vi.mock("../../features/settings/SyncBundleCard", () => ({ SyncBundleCard: () => null }));
 vi.mock("../../features/settings/ShareCard", () => ({ ShareCard: () => null }));
 vi.mock("../../features/settings/ShortcutsCard", () => ({ ShortcutsCard: () => null }));
+vi.mock("../../features/settings/DiagnosticsCard", () => ({ DiagnosticsCard: () => null }));
 vi.mock("../../features/production/ProductionSettingsPanel", () => ({ ProductionSettingsPanel: () => null }));
 vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));
 

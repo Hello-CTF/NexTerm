@@ -541,6 +541,29 @@ type Database interface {
 type ExecTargetSet struct {
 	SessionIDs []string
 	Production bool
+	// IdentityExemptSessionIDs lists targets that have no asset identity
+	// source (managed devices). Only the resolver sets it, after verifying the
+	// session kind; every other target still needs a complete bound identity.
+	IdentityExemptSessionIDs []string
+}
+
+// IdentityBoundSessionIDs returns the targets that must carry an asset
+// identity, in target order.
+func (t ExecTargetSet) IdentityBoundSessionIDs() []string {
+	if len(t.IdentityExemptSessionIDs) == 0 {
+		return t.SessionIDs
+	}
+	exempt := make(map[string]struct{}, len(t.IdentityExemptSessionIDs))
+	for _, id := range t.IdentityExemptSessionIDs {
+		exempt[id] = struct{}{}
+	}
+	bound := make([]string, 0, len(t.SessionIDs))
+	for _, id := range t.SessionIDs {
+		if _, skip := exempt[id]; !skip {
+			bound = append(bound, id)
+		}
+	}
+	return bound
 }
 
 // SkillLoader is the skills-service seam consumed by the read-only

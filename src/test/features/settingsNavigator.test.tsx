@@ -81,7 +81,7 @@ function tocToggle(): HTMLButtonElement {
 }
 
 const GROUP_LABELS = ["通用", "AI", "安全", "账号与同步"];
-const GENERAL_TOC = ["通用", "外观", "终端", "快捷键", "AI", "安全", "账号与同步"];
+const GENERAL_TOC = ["通用", "外观", "终端", "快捷键", "诊断与调试", "AI", "安全", "账号与同步"];
 
 function groupShown(id: string): boolean {
   return mounted!.container.querySelector<HTMLElement>(`[data-settings-group="${id}"]`)?.hidden === false;

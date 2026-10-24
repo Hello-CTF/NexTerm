@@ -427,6 +427,30 @@ describe("AiSidebar agent production mounting", () => {
     });
   });
 
+  it("explains managed-device confirmation in plain Chinese while the typed value stays managed-device", async () => {
+    await send(view!, "Question A");
+    await flushUntil(() => useUi.getState().aiBusy === true);
+    emit({
+      type: "confirmRequired",
+      id: "call-9",
+      tool: "exec_commands",
+      rendered: "$ uptime",
+      confirmationNonce: "n-9",
+      requestId: "req-9",
+      attempt: 1,
+      requiredEnvironmentNames: ["managed-device"],
+    });
+    await flushUntil(() => textOf(view!).includes("需要你确认"));
+    const text = textOf(view!);
+    expect(text).toContain("受管设备（无环境标签，按生产环境处理）");
+    expect(text).toContain("每台主机都需要输入确认");
+    const envInput = view!.container.querySelector<HTMLInputElement>('input[aria-label="输入环境名 managed-device"]');
+    if (!envInput) throw new Error("environment input not found");
+    setInputValue(envInput, "managed-device");
+    await flush();
+    expect(view!.container.textContent).not.toContain("环境名不匹配");
+  });
+
   it("replays HITL state and surfaces the failure when an approval submission fails", async () => {
     await send(view!, "Question A");
     await flushUntil(() => useUi.getState().aiBusy === true);

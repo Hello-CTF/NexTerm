@@ -37,10 +37,16 @@ type terminalCommandService struct {
 	fsUploads    *fsChunkUploadRegistry
 	desktop      bool
 	helpers      *productionHelperService
+	databases    databaseLoginTester
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
 	sinks      map[string]ipc.BinaryStream
+}
+
+// databaseLoginTester opens and closes a stored database asset without registering the handle.
+type databaseLoginTester interface {
+	TestAsset(ctx context.Context, assetID string, timeout time.Duration) error
 }
 
 type dockerTabInfo struct {

@@ -186,3 +186,50 @@ func TestParseCLIPprofAddr(t *testing.T) {
 		}
 	}
 }
+
+func TestParseCLIDebugCapture(t *testing.T) {
+	env := func(value string) func(string) string {
+		return func(key string) string {
+			if key == "NEXTERM_DEBUG_CAPTURE" {
+				return value
+			}
+			return ""
+		}
+	}
+	cases := []struct {
+		name    string
+		args    []string
+		env     string
+		want    bool
+		wantErr bool
+	}{
+		{name: "default off"},
+		{name: "flag", args: []string{"--debug-capture"}, want: true},
+		{name: "flag true", args: []string{"--debug-capture=true"}, want: true},
+		{name: "flag overrides env", args: []string{"--debug-capture=false"}, env: "1"},
+		{name: "env on", env: "1", want: true},
+		{name: "env off", env: "0"},
+		{name: "bad flag value", args: []string{"--debug-capture=maybe"}, wantErr: true},
+		{name: "bad env value", env: "maybe", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			invocation, err := ParseCLI(tc.args, CommandServe, env(tc.env))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if invocation.DebugCapture != tc.want {
+				t.Fatalf("DebugCapture = %v, want %v", invocation.DebugCapture, tc.want)
+			}
+		})
+	}
+	if !strings.Contains(Usage("x", CommandServe), "--debug-capture") {
+		t.Fatal("usage must document --debug-capture")
+	}
+}

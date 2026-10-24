@@ -24,6 +24,11 @@ type remoteAutostartRequest struct {
 	Desired  bool   `json:"desired"`
 }
 
+type remoteTerminalAccessRequest struct {
+	DeviceID string `json:"deviceId"`
+	Enabled  bool   `json:"enabled"`
+}
+
 type remoteEnrollCodeRequest struct {
 	TTLMS  int64  `json:"ttlMs"`
 	UserID string `json:"userId,omitempty"`
@@ -92,6 +97,14 @@ func registerRemoteCommands(dispatcher *ipc.Dispatcher, syncService *syncservice
 					return syncservice.RemoteAutostartResult{}, badEmpty("deviceId")
 				}
 				return remote.SetDeviceAutostart(ctx, input.DeviceID, input.Desired)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, "remote_fleet_device_terminal_access", func(ctx context.Context, _ *ipc.Call, input remoteTerminalAccessRequest) (syncservice.RemoteTerminalAccessResult, error) {
+				if input.DeviceID == "" {
+					return syncservice.RemoteTerminalAccessResult{}, badEmpty("deviceId")
+				}
+				return remote.SetDeviceTerminalAccess(ctx, input.DeviceID, input.Enabled)
 			})
 		},
 		func() error {

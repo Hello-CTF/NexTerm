@@ -84,8 +84,13 @@ func composeAssetIdentityResolvers(deps Dependencies) Dependencies {
 			if err != nil {
 				return ExecTargetSet{}, nil, err
 			}
-			resolved := make([]AssetIdentity, 0, len(targets.SessionIDs))
-			for _, sessionID := range targets.SessionIDs {
+			boundIDs := targets.IdentityBoundSessionIDs()
+			if len(boundIDs) == 0 {
+				// Only identity-less targets (devices): nothing to bind.
+				return targets, nil, ErrAssetIdentityUnverifiable
+			}
+			resolved := make([]AssetIdentity, 0, len(boundIDs))
+			for _, sessionID := range boundIDs {
 				identity, err := identities.SessionAssetIdentity(ctx, sessionID)
 				if err != nil {
 					return ExecTargetSet{}, nil, err
@@ -434,7 +439,7 @@ func (r *Registry) bindCallAssetIdentities(ctx context.Context, jobID string, ca
 			failure := Fail(fmt.Errorf("身份解析失败: %w", err))
 			return &failure
 		}
-		if err := validateTargetIdentitySet(targets.SessionIDs, identities); err != nil {
+		if err := validateTargetIdentitySet(targets.IdentityBoundSessionIDs(), identities); err != nil {
 			failure := Fail(fmt.Errorf("身份解析失败: %w", err))
 			return &failure
 		}

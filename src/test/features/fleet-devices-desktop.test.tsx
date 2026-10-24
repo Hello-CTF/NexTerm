@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => {
     issueEnrollCode: vi.fn(),
     revoke: vi.fn(),
     setAutostart: vi.fn(),
+    setTerminalAccess: vi.fn(),
     metrics: vi.fn(),
     baseUrls: vi.fn(),
     putBaseUrls: vi.fn(),
@@ -60,6 +61,7 @@ vi.mock("../../ipc/remoteApi", async (importOriginal) => {
       issueEnrollCode: mocks.issueEnrollCode,
       revoke: mocks.revoke,
       setAutostart: mocks.setAutostart,
+      setTerminalAccess: mocks.setTerminalAccess,
       metrics: mocks.metrics,
       baseUrls: mocks.baseUrls,
       putBaseUrls: mocks.putBaseUrls,
@@ -327,7 +329,7 @@ describe("Device management - desktop logged in", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...(cardOf("web-01")?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "详情") as HTMLButtonElement);
-    const checkbox = cardOf("web-01")?.querySelector<HTMLInputElement>('input[type="checkbox"]') as HTMLInputElement;
+    const checkbox = cardOf("web-01")?.querySelector<HTMLInputElement>('input[aria-label="随登录自动启动"]') as HTMLInputElement;
     expect(checkbox.checked).toBe(true);
     click(checkbox);
     await flushUntil(() => mocks.setAutostart.mock.calls.length === 1);

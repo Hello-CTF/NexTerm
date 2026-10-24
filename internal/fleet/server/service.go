@@ -56,13 +56,14 @@ const (
 )
 
 const (
-	auditKindDeviceEnroll    = "device_enroll"
-	auditKindDeviceRevoke    = "device_revoke"
-	auditKindDeviceAutostart = "device_autostart"
-	auditKindDeviceFailover  = "device_failover"
-	auditKindDeviceTerminal  = "device_terminal"
-	auditKindDeviceOnline    = "device_online"
-	auditKindDeviceOffline   = "device_offline"
+	auditKindDeviceEnroll         = "device_enroll"
+	auditKindDeviceRevoke         = "device_revoke"
+	auditKindDeviceAutostart      = "device_autostart"
+	auditKindDeviceTerminalToggle = "device_terminal_toggle"
+	auditKindDeviceFailover       = "device_failover"
+	auditKindDeviceTerminal       = "device_terminal"
+	auditKindDeviceOnline         = "device_online"
+	auditKindDeviceOffline        = "device_offline"
 )
 
 type Config struct {
@@ -704,14 +705,41 @@ func (s *Service) SetDesiredAutostart(ctx context.Context, identity *account.Ide
 	if updated.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
 	}
-	if config, err := s.AgentDesiredConfig(ctx, deviceID); err == nil {
-		s.registry.PushControl(deviceID, controlMessage{
-			Type:              "config",
-			DesiredAutostart:  &config.DesiredAutostart,
-			MetricsIntervalMS: &config.MetricsIntervalMS,
-			TerminalEnabled:   &config.TerminalEnabled,
-		})
+	s.pushDesiredConfig(ctx, deviceID)
+	return nil
+}
+
+// pushDesiredConfig sends the stored desired config to the connected agent; offline agents pick it up on their next sync.
+func (s *Service) pushDesiredConfig(ctx context.Context, deviceID string) {
+	config, err := s.AgentDesiredConfig(ctx, deviceID)
+	if err != nil {
+		return
 	}
+	s.registry.PushControl(deviceID, controlMessage{
+		Type:              "config",
+		DesiredAutostart:  &config.DesiredAutostart,
+		MetricsIntervalMS: &config.MetricsIntervalMS,
+		TerminalEnabled:   &config.TerminalEnabled,
+	})
+}
+
+// SetTerminalEnabled switches remote terminal access for a device (same owner-only authorization and audit as autostart).
+// It gates new terminal/file/forward bridges server-side (AuthorizeDeviceTerminal, bridge_http.go) and is pushed to a connected
+// agent, which then refuses new bridge requests; bridges that are already open are not torn down.
+func (s *Service) SetTerminalEnabled(ctx context.Context, identity *account.Identity, deviceID string, enabled bool) error {
+	if _, err := s.authorize(ctx, identity, deviceID, "terminal_toggle", auditKindDeviceTerminalToggle); err != nil {
+		return err
+	}
+	deviceAgent := query.Use(s.db).DeviceAgent
+	updated, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).
+		UpdateColumns(map[string]any{"terminal_enabled": enabled})
+	if err != nil {
+		return dbError(err)
+	}
+	if updated.RowsAffected == 0 {
+		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
+	}
+	s.pushDesiredConfig(ctx, deviceID)
 	return nil
 }
 

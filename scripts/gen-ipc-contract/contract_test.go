@@ -256,6 +256,7 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 		{name: "remote_fleet_base_urls_get", scope: "remote"},
 		{name: "remote_fleet_base_urls_put", scope: "remote", nested: true},
 		{name: "remote_fleet_device_autostart", scope: "remote", nested: true},
+		{name: "remote_fleet_device_terminal_access", scope: "remote", nested: true},
 		{name: "remote_fleet_device_metrics", scope: "remote", nested: true},
 		{name: "remote_fleet_device_revoke", scope: "remote", nested: true},
 		{name: "remote_fleet_devices", scope: "remote"},
@@ -294,8 +295,8 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 28 {
-		t.Fatalf("selected remote desktop command count = %d, want 28", len(selected))
+	if len(selected) != 29 {
+		t.Fatalf("selected remote desktop command count = %d, want 29", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "remote" || command.Scope == "preview-share") && !selected[name] {
@@ -1416,6 +1417,11 @@ func TestForwardRuntimeVerticalContracts(t *testing.T) {
 		}
 		if command.Scope == "forward" && !selected[name] {
 			t.Errorf("unexpected command %q joined the forward runtime scope", name)
+		}
+	}
+	for _, name := range []string{"diagnostics_status", "diagnostics_arm", "diagnostics_open_folder", "diagnostics_pack"} {
+		if command := commands[name]; command.Scope != "diagnostics" || command.Input == nil {
+			t.Fatalf("%s must be a typed diagnostics command: %+v", name, command)
 		}
 	}
 	if command := commands["forward_rule_list"]; command.Scope != "forward-rule" {

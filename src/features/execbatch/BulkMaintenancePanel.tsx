@@ -23,6 +23,10 @@ import {
 } from "./maintenanceApi";
 
 const MAX_TARGETS = 64;
+// Per-asset requests are issued by a small worker pool so a cancel can stop queueing between assets.
+const LOGIN_CONCURRENCY = 8;
+const LOGIN_TIMEOUT_MS = 10000;
+const DATABASE_KINDS = new Set(["mysql", "postgres", "redis"]);
 
 type MaintenanceResult = {
   assetId: string;
@@ -48,6 +52,29 @@ export function maintenanceTargets(assets: readonly Asset[]): TargetSetPickerTar
   }));
 }
 
+// Connection-test targets: SSH hosts get a real handshake and login; database assets get a
+// real login only for the kinds the database workspace can open.
+export function loginTestTargets(assets: readonly Asset[]): TargetSetPickerTarget[] {
+  return assets.filter((asset) => (asset.kind === "ssh" || DATABASE_KINDS.has(asset.kind)) && !asset.builtin).map((asset) => ({
+    id: asset.id,
+    label: asset.name,
+    sessionName: asset.name,
+    endpoint: asset.host ? `${asset.username ? `${asset.username}@` : ""}${asset.host}${asset.port ? `:${asset.port}` : ""}` : null,
+    tags: [assetKindLabel(asset.kind), ...assetTagValues(asset.tags)],
+    workspaceNames: [],
+    envCount: assetEnvCount(asset),
+  }));
+}
+
+function assetKindLabel(kind: string): string {
+  switch (kind) {
+    case "mysql": return "MySQL";
+    case "postgres": return "PostgreSQL";
+    case "redis": return "Redis";
+    default: return kind.toUpperCase();
+  }
+}
+
 function assignment(choice: string): string | undefined {
   if (choice === "keep") return undefined;
   if (choice === "clear") return "";
@@ -58,7 +85,7 @@ function markerLines(result: ExecBatchResult): Set<string> {
   return new Set(result.stdout.split(/\r?\n/).map((line) => line.trim().split(/\s+/, 1)[0]));
 }
 
-type LoginTone = "ok" | "partial" | "warn" | "fail";
+type LoginTone = "ok" | "partial" | "warn" | "fail" | "canceled";
 
 type LoginResult = {
   assetId: string;
@@ -85,7 +112,10 @@ const LOGIN_FAILURE_KINDS: Record<string, { status: string; tone: LoginTone; ret
   proxy: { status: "代理连接失败", tone: "fail", retryable: true },
   handshake: { status: "协议握手失败", tone: "fail", retryable: true },
   config: { status: "配置有误", tone: "fail", retryable: false },
-  canceled: { status: "已取消", tone: "fail", retryable: true },
+  tls: { status: "TLS 校验失败", tone: "fail", retryable: true },
+  database: { status: "数据库不可用", tone: "fail", retryable: true },
+  tunnel: { status: "跳板不可用", tone: "fail", retryable: true },
+  canceled: { status: "已取消", tone: "canceled", retryable: false },
   not_found: { status: "资产不存在", tone: "fail", retryable: false },
   unsupported: { status: "不支持测试", tone: "fail", retryable: false },
   internal: { status: "测试出错", tone: "fail", retryable: true },
@@ -96,16 +126,30 @@ const LOGIN_TONE_CLASS: Record<LoginTone, string> = {
   partial: "text-amber-300",
   warn: "text-amber-300",
   fail: "text-red-300",
+  canceled: "text-neutral-400",
 };
+
+type LoginRun = { canceled: boolean; settled: Set<string>; inFlight: Set<string> };
+
+function canceledLoginResult(assetId: string, label: string, inFlight: boolean): LoginResult {
+  return {
+    assetId, label, tone: "canceled", status: "已取消", retryable: false,
+    detail: inFlight
+      ? "已取消。这台的检测请求已经发出，结果不采用，可以稍后单独重测"
+      : "已取消，这台还没有开始测试",
+  };
+}
 
 export function describeLoginResult(
   result: AssetProbeResultDTO,
   assetKind: string | undefined,
   label: string,
+  hasCredential = true,
 ): LoginResult {
   const base = { assetId: result.assetId, label };
   if (result.reachable) {
-    if (result.kind === "port_only" || (assetKind !== "ssh" && assetKind !== "docker" && assetKind !== "local")) {
+    const database = assetKind !== undefined && DATABASE_KINDS.has(assetKind);
+    if (result.kind === "port_only" || (assetKind !== "ssh" && assetKind !== "docker" && assetKind !== "local" && !database)) {
       return {
         ...base, tone: "partial", status: "仅端口通", retryable: false,
         detail: `${result.error || "仅确认端口可以连通，没有验证账号和密码"}（${result.durationMs} ms）`,
@@ -113,6 +157,14 @@ export function describeLoginResult(
     }
     if (assetKind === "local") {
       return { ...base, tone: "ok", status: "本机可用", retryable: false, detail: "本机终端无需登录" };
+    }
+    if (database) {
+      return {
+        ...base, tone: "ok", status: "已登录数据库", retryable: false,
+        detail: hasCredential
+          ? `已用资产绑定的凭据登录数据库并通过连通检查，没有执行任何 SQL（${result.durationMs} ms）`
+          : `已连上并通过连通检查，但这条资产没有绑定凭据，是按无密码方式登录的，没有执行任何 SQL（${result.durationMs} ms）`,
+      };
     }
     return {
       ...base, tone: "ok", status: "已验证登录", retryable: false,
@@ -135,6 +187,7 @@ export function summarizeLoginResults(results: readonly LoginResult[]): string {
   if (count("partial") > 0) parts.push(`仅端口通 ${count("partial")}`);
   if (count("warn") > 0) parts.push(`需确认指纹 ${count("warn")}`);
   parts.push(`失败 ${count("fail")}`);
+  if (count("canceled") > 0) parts.push(`已取消 ${count("canceled")}`);
   return parts.join(" · ");
 }
 
@@ -172,17 +225,24 @@ function MaintenanceResults({ title, results }: { title: string; results: Mainte
   );
 }
 
+function isRetryable(result: LoginResult): boolean {
+  return result.tone !== "ok" && result.tone !== "partial" && result.tone !== "canceled" && result.retryable;
+}
+
 function LoginResults({
   results,
   busy,
   onRetry,
+  onResume,
 }: {
   results: LoginResult[];
   busy: boolean;
   onRetry: () => void;
+  onResume: () => void;
 }) {
   const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
-  const retryable = results.filter((result) => result.tone !== "ok" && result.tone !== "partial" && result.retryable).length;
+  const retryable = results.filter(isRetryable).length;
+  const canceled = results.filter((result) => result.tone === "canceled").length;
   const copy = async () => {
     try {
       await copyText(loginResultsText(results));
@@ -199,6 +259,9 @@ function LoginResults({
         {retryable > 0 && (
           <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onRetry}>重试未通过项（{retryable}）</button>
         )}
+        {canceled > 0 && (
+          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onResume}>测试已取消项（{canceled}）</button>
+        )}
         <button type="button" className="nx-btn nx-btn-sm" onClick={() => void copy()}>
           {copied === "ok" ? "已复制" : copied === "failed" ? "复制失败" : "复制结果"}
         </button>
@@ -206,7 +269,7 @@ function LoginResults({
       {results.map((result) => (
         <div key={result.assetId} className="flex items-start gap-2 border-t border-neutral-800/50 py-1.5 text-[11px] first:border-t-0" data-asset-id={result.assetId} data-tone={result.tone}>
           <span className="w-36 shrink-0 truncate text-neutral-300" title={result.assetId}>{result.label}</span>
-          <span className={`w-20 shrink-0 ${LOGIN_TONE_CLASS[result.tone]}`}>{result.status}</span>
+          <span className={`w-24 shrink-0 ${LOGIN_TONE_CLASS[result.tone]}`}>{result.status}</span>
           <span className="min-w-0 flex-1 whitespace-pre-wrap break-all text-neutral-400">{result.detail}</span>
         </div>
       ))}
@@ -221,12 +284,17 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
   const credentialsQuery = useQuery({ queryKey: ["credentials"], queryFn: () => vaultApi.listCredentials(), retry: false });
   const assets = useMemo(() => assetsQuery.data ?? [], [assetsQuery.data]);
   const targets = useMemo(() => maintenanceTargets(assets), [assets]);
+  const loginTargets = useMemo(() => loginTestTargets(assets), [assets]);
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState<"edit" | "deploy" | "login" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editResults, setEditResults] = useState<MaintenanceResult[]>([]);
   const [deployResults, setDeployResults] = useState<MaintenanceResult[]>([]);
   const [loginResults, setLoginResults] = useState<LoginResult[]>([]);
+  const [loginSelected, setLoginSelected] = useState<string[]>([]);
+  const [loginProgress, setLoginProgress] = useState<{ done: number; total: number } | null>(null);
+  const loginRunRef = useRef<LoginRun | null>(null);
+  const loginPendingIds = useRef<string[]>([]);
   const [groupChoice, setGroupChoice] = useState("keep");
   const [jumpChoice, setJumpChoice] = useState("keep");
   const [credentialChoice, setCredentialChoice] = useState("keep");
@@ -247,11 +315,17 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
     setSelected((current) => current.filter((id) => available.has(id)));
   }, [targets]);
 
+  useEffect(() => {
+    const available = new Set(loginTargets.map((target) => target.id));
+    setLoginSelected((current) => current.filter((id) => available.has(id)));
+  }, [loginTargets]);
+
   useEffect(
     () => () => {
       const active = activeDeployRef.current;
       activeDeployRef.current = null;
       if (active) void execBatchApi.cancel(active).catch(() => undefined);
+      if (loginRunRef.current) loginRunRef.current.canceled = true;
     },
     [],
   );
@@ -394,40 +468,97 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
     });
   };
 
-  const testLogin = async (retryOnly = false) => {
+  const runLoginTest = async (ids: string[], merge: boolean) => {
     if (busy) return;
     setError(null);
-    if (selectedAssets.length === 0 && !retryOnly) {
-      setError("请至少选择一个 SSH 资产");
-      return;
-    }
-    if (selectedAssets.length > MAX_TARGETS) {
-      setError(`每次最多维护 ${MAX_TARGETS} 个资产`);
-      return;
-    }
-    const retryIds = new Set(loginResults.filter((result) => result.tone !== "ok" && result.tone !== "partial" && result.retryable).map((result) => result.assetId));
-    const ids = retryOnly ? [...retryIds] : selectedAssets.map((asset) => asset.id);
     if (ids.length === 0) return;
-    if (!retryOnly) setLoginResults([]);
-    setBusy("login");
-    try {
-      const response = await maintenanceApi.testLogin(ids);
-      const fresh = response.results.map((result) => describeLoginResult(
-        result,
-        assets.find((candidate) => candidate.id === result.assetId)?.kind,
-        resultLabel(result.assetId),
-      ));
+    if (ids.length > MAX_TARGETS) {
+      setError(`每次最多测试 ${MAX_TARGETS} 个资产`);
+      return;
+    }
+    const run: LoginRun = { canceled: false, settled: new Set(), inFlight: new Set() };
+    loginRunRef.current = run;
+    const order = new Map(ids.map((id, index) => [id, index]));
+    const settle = (fresh: LoginResult) => {
+      run.settled.add(fresh.assetId);
       setLoginResults((current) => {
-        if (!retryOnly) return fresh;
-        const byId = new Map(fresh.map((result) => [result.assetId, result]));
-        return current.map((result) => byId.get(result.assetId) ?? result);
+        const exists = current.some((result) => result.assetId === fresh.assetId);
+        const next = exists
+          ? current.map((result) => (result.assetId === fresh.assetId ? fresh : result))
+          : [...current, fresh];
+        return merge ? next : next.sort((x, y) => (order.get(x.assetId) ?? 0) - (order.get(y.assetId) ?? 0));
       });
-    } catch (cause) {
-      setError(describeError(cause));
-    } finally {
+      setLoginProgress({ done: run.settled.size, total: ids.length });
+    };
+    if (!merge) setLoginResults([]);
+    setLoginProgress({ done: 0, total: ids.length });
+    setBusy("login");
+    let cursor = 0;
+    const worker = async () => {
+      while (!run.canceled && cursor < ids.length) {
+        const id = ids[cursor++];
+        run.inFlight.add(id);
+        const target = assets.find((candidate) => candidate.id === id);
+        try {
+          const response = await maintenanceApi.testLogin([id], LOGIN_TIMEOUT_MS, 1);
+          if (run.canceled) return;
+          const result = response.results.find((candidate) => candidate.assetId === id) ?? response.results[0]
+            ?? { assetId: id, reachable: false, kind: "internal", error: "", durationMs: 0 };
+          settle(describeLoginResult(result, target?.kind, resultLabel(id), Boolean(target?.credId)));
+        } catch (cause) {
+          if (run.canceled) return;
+          settle(describeLoginResult(
+            { assetId: id, reachable: false, kind: "internal", error: describeError(cause), durationMs: 0 },
+            target?.kind, resultLabel(id),
+          ));
+        } finally {
+          run.inFlight.delete(id);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(LOGIN_CONCURRENCY, ids.length) }, worker));
+    if (loginRunRef.current === run && !run.canceled) {
+      loginRunRef.current = null;
       setBusy(null);
+      setLoginProgress(null);
     }
   };
+
+  // Cancel stops queueing and releases the UI at once. Requests already sent cannot be
+  // interrupted (each is bounded by the probe timeout), so their late results are dropped.
+  const cancelLoginTest = () => {
+    const run = loginRunRef.current;
+    if (!run || run.canceled) return;
+    run.canceled = true;
+    loginRunRef.current = null;
+    const pending = loginPendingIds.current.filter((id) => !run.settled.has(id));
+    setLoginResults((current) => {
+      const have = new Set(current.map((result) => result.assetId));
+      const added = pending.filter((id) => !have.has(id) || current.find((result) => result.assetId === id)?.tone === "canceled")
+        .map((id) => canceledLoginResult(id, resultLabel(id), run.inFlight.has(id)));
+      const replaced = new Set(added.map((result) => result.assetId));
+      return [...current.filter((result) => !replaced.has(result.assetId)), ...added];
+    });
+    setBusy(null);
+    setLoginProgress(null);
+  };
+
+  const startLoginTest = (ids: string[], merge: boolean) => {
+    loginPendingIds.current = ids;
+    void runLoginTest(ids, merge);
+  };
+
+  const testLogin = () => {
+    if (busy) return;
+    if (loginSelected.length === 0) {
+      setError("请至少选择一个要测试的资产");
+      return;
+    }
+    startLoginTest(loginSelected, false);
+  };
+
+  const retryLogin = () => startLoginTest(loginResults.filter(isRetryable).map((result) => result.assetId), true);
+  const resumeCanceled = () => startLoginTest(loginResults.filter((result) => result.tone === "canceled").map((result) => result.assetId), true);
 
   return (
     <section className="nx-pane" aria-label="批量主机维护" data-testid="bulk-maintenance-panel">
@@ -526,14 +657,43 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
         <details className="rounded border border-neutral-800/70 p-2.5">
           <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconPlug size={12} className="mr-1 inline" />连接测试</summary>
           <div className="mt-2 text-[10px] text-neutral-500">
-            检查所选主机能不能连上并登录：会核对主机指纹和账号凭据，但不会打开终端，也不会执行任何命令。
-            遇到没信任过的主机指纹时不会自动信任，请先到终端里核对并确认，再回来重新测试。
-            只确认了端口能连通的资产会标为“仅端口通”，说明账号密码还没有验证。
+            SSH 主机：核对主机指纹和账号凭据，不打开终端、不执行命令。遇到没信任过的主机指纹时不会自动信任，请先到终端里核对并确认，再回来重新测试。
+            MySQL、PostgreSQL、Redis：用资产绑定的凭据连接并做一次连通检查，不执行任何 SQL，也不保存连接；TLS 证书校验按资产设置进行，不会自动信任。
+            其他类型只确认端口能连通，会标为“仅端口通”，说明账号密码还没有验证。
           </div>
-          <button type="button" className="nx-btn mt-3" disabled={busy !== null} onClick={() => void testLogin()}>
-            {busy === "login" ? "正在测试…（每台最多等待 10 秒）" : "开始连接测试"}
-          </button>
-          {loginResults.length > 0 && <LoginResults results={loginResults} busy={busy !== null} onRetry={() => void testLogin(true)} />}
+          <div className="mt-2" data-testid="login-test-targets">
+            <TargetSetPicker
+              targets={loginTargets}
+              selectedIds={loginSelected}
+              onChange={setLoginSelected}
+              disabled={busy !== null}
+              maxTargets={MAX_TARGETS}
+              legend="测试对象"
+              emptyMessage="没有可测试的资产。"
+              searchAriaLabel="搜索连接测试对象"
+              metadataError={assetsQuery.isError ? describeError(assetsQuery.error) : null}
+            />
+            {selected.length > 0 && (
+              <button
+                type="button"
+                className="nx-btn nx-btn-sm mb-2"
+                disabled={busy !== null}
+                onClick={() => setLoginSelected(selected)}
+              >沿用上方已选的 {selected.length} 个 SSH 资产</button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className="nx-btn" disabled={busy !== null} onClick={testLogin}>
+              {busy === "login" ? `正在测试 ${loginProgress?.done ?? 0}/${loginProgress?.total ?? 0}…` : "开始连接测试"}
+            </button>
+            {busy === "login" && (
+              <button type="button" className="nx-btn" onClick={cancelLoginTest}>取消测试</button>
+            )}
+            {busy === "login" && <span className="text-[10px] text-neutral-500">每台最多等待 10 秒；取消后已发出的请求结果不采用</span>}
+          </div>
+          {loginResults.length > 0 && (
+            <LoginResults results={loginResults} busy={busy !== null} onRetry={retryLogin} onResume={resumeCanceled} />
+          )}
         </details>
       </div>
 

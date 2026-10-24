@@ -547,6 +547,30 @@
       "channel": false,
       "stream": "none"
     },
+    "diagnostics_arm": {
+      "scope": "diagnostics",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "diagnostics_open_folder": {
+      "scope": "diagnostics",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "diagnostics_pack": {
+      "scope": "diagnostics",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "diagnostics_status": {
+      "scope": "diagnostics",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "docker_action": {
       "scope": "docker",
       "nested": true,
@@ -1261,6 +1285,12 @@
       "stream": "none"
     },
     "remote_fleet_device_revoke": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_device_terminal_access": {
       "scope": "remote",
       "nested": true,
       "channel": false,

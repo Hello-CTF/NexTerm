@@ -184,6 +184,9 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 			// identity resolver itself resolved when it has them, else on the
 			// plain resolver, never on a nil call.
 			identityNote = "；资产身份不可验证（未配置身份解析，操作未绑定资产身份）"
+			if len(targets.IdentityExemptSessionIDs) > 0 && len(targets.IdentityBoundSessionIDs()) == 0 {
+				identityNote = "；目标全部为受管设备，没有资产身份指纹，操作未绑定资产身份"
+			}
 			if len(targets.SessionIDs) == 0 {
 				if r.deps.ResolveExecTargets == nil {
 					return Fail(errors.New("资产身份不可验证且未配置多主机目标解析"))
@@ -202,21 +205,25 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 			// Validate the tool's own resolution first: exactly one complete
 			// identity per target session, no duplicates, before anything else
 			// runs.
-			if err := validateTargetIdentitySet(targets.SessionIDs, identities); err != nil {
+			boundIDs := targets.IdentityBoundSessionIDs()
+			if err := validateTargetIdentitySet(boundIDs, identities); err != nil {
 				return Fail(err)
+			}
+			if len(targets.IdentityExemptSessionIDs) > 0 {
+				identityNote = "；受管设备目标没有资产身份指纹，未绑定身份（其余 SSH 目标仍校验资产是否被替换）"
 			}
 			if len(call.AssetIdentities) > 0 {
 				// The pre-resolved identities bound to the operation key stay a
 				// separate sequence: validate them independently and require
 				// both sequences to agree per index and as multisets.
-				if err := validateBoundTargetIdentities(targets.SessionIDs, identities, call.AssetIdentities); err != nil {
+				if err := validateBoundTargetIdentities(boundIDs, identities, call.AssetIdentities); err != nil {
 					return Fail(err)
 				}
 			}
 			// Re-validate every target's currently bound identity at execution
 			// time: a replaced asset never receives the mutation and the old
 			// result is never attributed to it.
-			if failure, checkErr := r.validateExecutionTargetIdentities(ctx, targets.SessionIDs, identities); checkErr != nil {
+			if failure, checkErr := r.validateExecutionTargetIdentities(ctx, boundIDs, identities); checkErr != nil {
 				return failure
 			}
 		}
@@ -325,8 +332,12 @@ func (r *Registry) prepareExecBatchProduction(ctx context.Context, jobID string,
 			challenge.Detail = required.IPCDetail()
 		}
 	}
+	deviceNote := ""
+	if len(targets.IdentityExemptSessionIDs) > 0 {
+		deviceNote = "；其中受管设备没有环境标签，按生产环境处理，每台主机都需要输入确认"
+	}
 	return Output{
-		Text:     fmt.Sprintf("生产环境多主机执行需要确认（%d 个目标，%d 条命令）；尚未执行任何命令", len(targets.SessionIDs), len(args.Commands)),
+		Text:     fmt.Sprintf("生产环境多主机执行需要确认（%d 个目标，%d 条命令）%s；尚未执行任何命令", len(targets.SessionIDs), len(args.Commands), deviceNote),
 		ExitCode: 1, ProductionChallenge: challenge,
 	}
 }

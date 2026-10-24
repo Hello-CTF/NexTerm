@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -271,7 +274,19 @@ func (s *terminalCommandService) testLoginAssetTarget(ctx context.Context, targe
 	switch target.kind {
 	case session.KindSSH, session.KindDocker:
 		err = s.testLoginSSHAsset(ctx, target, timeout)
-	case session.KindWinRM, "mysql", "postgres", "redis":
+	case "mysql", "postgres", "redis":
+		if s.databases != nil {
+			err = s.databases.TestAsset(ctx, target.assetID, timeout)
+			if err != nil && ctx.Err() == nil {
+				result.Kind, result.Error = db.DescribeTestFailure(err, target.kind, databaseEndpoint(target))
+				slog.Warn("asset test login failed", "asset", target.assetID, "kind", result.Kind, "error", errorWithoutDetail(err))
+				return result
+			}
+			break
+		}
+		portOnly = true
+		err = s.probeSSHReachability(ctx, target, timeout)
+	case session.KindWinRM:
 		portOnly = true
 		err = s.probeSSHReachability(ctx, target, timeout)
 	default:
@@ -300,6 +315,24 @@ func (s *terminalCommandService) testLoginAssetTarget(ctx context.Context, targe
 	result.Kind, result.Error = describeNonConnectLoginFailure(err)
 	slog.Warn("asset test login failed", "asset", target.assetID, "kind", result.Kind, "error", err)
 	return result
+}
+
+// databaseEndpoint labels a database asset for user-facing messages.
+func databaseEndpoint(target assetProbeTarget) string {
+	if target.options.Port > 0 {
+		return net.JoinHostPort(target.options.Host, strconv.Itoa(int(target.options.Port)))
+	}
+	return target.options.Host
+}
+
+// errorWithoutDetail keeps driver errors out of logs: they can embed server banners
+// or account names, so only the error type and ipc code are recorded.
+func errorWithoutDetail(err error) string {
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		return fmt.Sprintf("%T code=%s", err, appErr.Code)
+	}
+	return fmt.Sprintf("%T", err)
 }
 
 // loginKindPortOnly marks a reachable result that did not verify credentials.

@@ -696,6 +696,35 @@ export type DeviceGrant = {
   updatedAt: number;
 };
 
+export type DiagnosticsArmRequest = {
+  armed: boolean;
+};
+
+export type DiagnosticsCaptureDTO = {
+  name: string;
+  path: string;
+  sizeBytes: number;
+  timeMs: number;
+  archive?: string;
+};
+
+export type DiagnosticsPackDTO = {
+  path: string;
+};
+
+export type DiagnosticsPathRequest = {
+  path: string;
+};
+
+export type DiagnosticsStatusDTO = {
+  armed: boolean;
+  active: boolean;
+  activeDir?: string;
+  root: string;
+  canOpenFolder: boolean;
+  captures: DiagnosticsCaptureDTO[];
+};
+
 export type DigestEntry = {
   id: string;
   name: string;
@@ -1885,6 +1914,7 @@ export type RemoteFleetDevice = {
 
 export type RemoteFleetDevices = {
   devices: RemoteFleetDevice[];
+  server_version?: string;
 };
 
 export type RemoteFleetOwner = {
@@ -1997,6 +2027,16 @@ export type RemoteShareLink = {
 
 export type RemoteShareLinks = {
   links: RemoteShareLink[];
+};
+
+export type RemoteTerminalAccessRequest = {
+  deviceId: string;
+  enabled: boolean;
+};
+
+export type RemoteTerminalAccessResult = {
+  ok: boolean;
+  terminal_enabled: boolean;
 };
 
 export type RemoveRequest = {

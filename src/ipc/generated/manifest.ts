@@ -662,6 +662,38 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.desktopTraySetRequest", ts: "DesktopTraySetRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.desktopTrayDTO", ts: "DesktopTrayDTO" },
     },
+    "diagnostics_arm": {
+      scope: "diagnostics",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsArmRequest", ts: "DiagnosticsArmRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsStatusDTO", ts: "DiagnosticsStatusDTO" },
+    },
+    "diagnostics_open_folder": {
+      scope: "diagnostics",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsPathRequest", ts: "DiagnosticsPathRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "diagnostics_pack": {
+      scope: "diagnostics",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsPathRequest", ts: "DiagnosticsPathRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsPackDTO", ts: "DiagnosticsPackDTO" },
+    },
+    "diagnostics_status": {
+      scope: "diagnostics",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsStatusDTO", ts: "DiagnosticsStatusDTO" },
+    },
     "docker_action": {
       scope: "docker",
       nested: true,
@@ -1614,6 +1646,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteDeviceRequest", ts: "RemoteDeviceRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
+    },
+    "remote_fleet_device_terminal_access": {
+      scope: "remote",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteTerminalAccessRequest", ts: "RemoteTerminalAccessRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteTerminalAccessResult", ts: "RemoteTerminalAccessResult" },
     },
     "remote_fleet_devices": {
       scope: "remote",
@@ -2849,6 +2889,22 @@ export interface IPCCommandTypeMap {
     input: contractTypes.DesktopTraySetRequest;
     output: contractTypes.DesktopTrayDTO;
   };
+  "diagnostics_arm": {
+    input: contractTypes.DiagnosticsArmRequest;
+    output: contractTypes.DiagnosticsStatusDTO;
+  };
+  "diagnostics_open_folder": {
+    input: contractTypes.DiagnosticsPathRequest;
+    output: unknown;
+  };
+  "diagnostics_pack": {
+    input: contractTypes.DiagnosticsPathRequest;
+    output: contractTypes.DiagnosticsPackDTO;
+  };
+  "diagnostics_status": {
+    input: Record<string, never>;
+    output: contractTypes.DiagnosticsStatusDTO;
+  };
   "docker_action": {
     input: {
   sessionId: string;
@@ -3431,6 +3487,10 @@ export interface IPCCommandTypeMap {
   "remote_fleet_device_revoke": {
     input: contractTypes.RemoteDeviceRequest;
     output: contractTypes.RemoteOK;
+  };
+  "remote_fleet_device_terminal_access": {
+    input: contractTypes.RemoteTerminalAccessRequest;
+    output: contractTypes.RemoteTerminalAccessResult;
   };
   "remote_fleet_devices": {
     input: Record<string, never>;

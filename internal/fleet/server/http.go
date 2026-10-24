@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
 const (
@@ -103,6 +105,7 @@ var fleetRoutePatterns = []string{
 	"GET /fleet/devices",
 	"POST /fleet/devices/{id}/revoke",
 	"POST /fleet/devices/{id}/autostart",
+	"POST /fleet/devices/{id}/terminal-access",
 	"GET /fleet/devices/{id}/metrics",
 	"GET /fleet/devices/{id}/bridge",
 	"GET /fleet/base-urls",
@@ -152,6 +155,7 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	session("GET /fleet/devices", s.serveDeviceList)
 	sessionCSRF("POST /fleet/devices/{id}/revoke", s.serveDeviceRevoke)
 	sessionCSRF("POST /fleet/devices/{id}/autostart", s.serveDeviceAutostart)
+	sessionCSRF("POST /fleet/devices/{id}/terminal-access", s.serveDeviceTerminalAccess)
 	session("GET /fleet/devices/{id}/metrics", s.serveDeviceMetrics)
 	session("GET /fleet/devices/{id}/bridge", s.serveDeviceBridgeRelay)
 
@@ -350,6 +354,12 @@ type agentView struct {
 	StateDigest      string       `json:"state_digest,omitempty"`
 }
 
+// deviceListView is the GET /fleet/devices body. ServerVersion is additive: older clients ignore it.
+type deviceListView struct {
+	Devices       []deviceView `json:"devices"`
+	ServerVersion string       `json:"server_version"`
+}
+
 type deviceView struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
@@ -393,7 +403,7 @@ func (s *Service) serveDeviceList(w http.ResponseWriter, r *http.Request) {
 		}
 		views = append(views, view)
 	}
-	writeFleetJSON(w, http.StatusOK, map[string][]deviceView{"devices": views})
+	writeFleetJSON(w, http.StatusOK, deviceListView{Devices: views, ServerVersion: version.Version})
 }
 
 func (s *Service) serveDeviceRevoke(w http.ResponseWriter, r *http.Request) {
@@ -419,6 +429,28 @@ func (s *Service) serveDeviceAutostart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true, "desired_autostart": request.Desired})
+}
+
+type terminalAccessRequest struct {
+	// A pointer so a missing field is rejected instead of silently meaning "off".
+	Enabled *bool `json:"enabled"`
+}
+
+func (s *Service) serveDeviceTerminalAccess(w http.ResponseWriter, r *http.Request) {
+	var request terminalAccessRequest
+	if err := decodeFleetJSON(w, r, &request); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	if request.Enabled == nil {
+		writeFleetFailure(w, ipc.BadParam(errors.New("缺少 enabled 字段")))
+		return
+	}
+	if err := s.SetTerminalEnabled(r.Context(), identityFrom(r), r.PathValue("id"), *request.Enabled); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true, "terminal_enabled": *request.Enabled})
 }
 
 func (s *Service) serveDeviceMetrics(w http.ResponseWriter, r *http.Request) {

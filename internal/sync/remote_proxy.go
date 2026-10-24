@@ -27,6 +27,11 @@ type RemoteAutostartResult struct {
 	DesiredAutostart bool `json:"desired_autostart"`
 }
 
+type RemoteTerminalAccessResult struct {
+	OK              bool `json:"ok"`
+	TerminalEnabled bool `json:"terminal_enabled"`
+}
+
 type RemotePasswordChangeResult struct {
 	OK          bool   `json:"ok"`
 	RecoveryKey string `json:"recoveryKey,omitempty"`
@@ -93,6 +98,13 @@ func (p *RemoteProxy) SetDeviceAutostart(ctx context.Context, deviceID string, d
 		return client.SetDeviceAutostart(ctx, deviceID, desired)
 	})
 	return RemoteAutostartResult{OK: err == nil, DesiredAutostart: desired}, err
+}
+
+func (p *RemoteProxy) SetDeviceTerminalAccess(ctx context.Context, deviceID string, enabled bool) (RemoteTerminalAccessResult, error) {
+	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
+		return client.SetDeviceTerminalAccess(ctx, deviceID, enabled)
+	})
+	return RemoteTerminalAccessResult{OK: err == nil, TerminalEnabled: enabled}, err
 }
 
 func (p *RemoteProxy) CreateEnrollCode(ctx context.Context, ttlMS int64, userID string) (*RemoteEnrollCode, error) {

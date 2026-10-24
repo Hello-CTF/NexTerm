@@ -51,6 +51,8 @@ type RemoteFleetDevice struct {
 
 type RemoteFleetDevices struct {
 	Devices []RemoteFleetDevice `json:"devices"`
+	// ServerVersion is empty when talking to an older server that does not report it.
+	ServerVersion string `json:"server_version,omitempty"`
 }
 
 type RemoteMetricsSample struct {
@@ -225,6 +227,10 @@ func (c *remoteClient) RevokeDevice(ctx context.Context, deviceID string) error 
 
 func (c *remoteClient) SetDeviceAutostart(ctx context.Context, deviceID string, desired bool) error {
 	return c.api(ctx, http.MethodPost, "/fleet/devices/"+url.PathEscape(deviceID)+"/autostart", map[string]bool{"desired": desired}, nil)
+}
+
+func (c *remoteClient) SetDeviceTerminalAccess(ctx context.Context, deviceID string, enabled bool) error {
+	return c.api(ctx, http.MethodPost, "/fleet/devices/"+url.PathEscape(deviceID)+"/terminal-access", map[string]bool{"enabled": enabled}, nil)
 }
 
 func (c *remoteClient) CreateEnrollCode(ctx context.Context, ttlMS int64, userID string) (*RemoteEnrollCode, error) {

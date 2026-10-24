@@ -39,6 +39,7 @@ var contractScopes = []scopeSpec{
 		"forward_retry",
 	}},
 	{name: "forward-rule", prefixes: []string{"forward_rule_"}},
+	{name: "diagnostics", prefixes: []string{"diagnostics_"}},
 	{name: "services", prefixes: []string{"services_"}},
 	{name: "inventory", prefixes: []string{"inventory_"}},
 	{name: "production", prefixes: []string{"production_"}},

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
@@ -308,6 +310,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Retainable && (kind != KindLocal || !options.Ephemeral || options.Durable != nil) {
 		return TabInfo{}, ErrInvalidOptions
 	}
+	openStart := time.Now()
 	var provider base.DurableProvider
 	var fallbackCause error
 	if options.Durable != nil {
@@ -326,6 +329,13 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			}
 			fallbackCause = err
 			options.Durable = nil
+		}
+		if fallbackCause != nil {
+			m.logger.Debug("open tab: durable provider unavailable, using regular PTY",
+				"session", session.ID, "tab", tabID, "cause", fallbackCause.Error(), "elapsed_ms", time.Since(openStart).Milliseconds())
+		} else {
+			m.logger.Debug("open tab: durable provider ready",
+				"session", session.ID, "tab", tabID, "recover", options.Durable.Recover, "elapsed_ms", time.Since(openStart).Milliseconds())
 		}
 	}
 	if err := validateEncoding(encoding); err != nil {
@@ -378,6 +388,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			if cleanupErr == nil && opened == nil && kind == KindSSH && options.DurableFallback && !options.Durable.Recover &&
 				sshHelperUnavailable(err) && ctx.Err() == nil && transport.Transport.IsAlive() {
 				session.cacheDurableCreateFailure(transport, generation, err)
+				m.logger.Debug("open tab: durable create failed, retrying with regular PTY",
+					"session", session.ID, "tab", tabID, "cause", err.Error(), "elapsed_ms", time.Since(openStart).Milliseconds())
 				options.Durable = nil
 				fallback, fallbackErr := m.OpenTab(ctx, options)
 				if fallbackErr != nil {
@@ -415,9 +427,12 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if term == "" {
 			term = "xterm-256color"
 		}
+		ptyStart := time.Now()
 		opened, err := ptyTransport.OpenPTY(ctx, base.PTYOptions{
 			Cols: options.Cols, Rows: options.Rows, Term: term, ExpectedGeneration: transport.Generation(),
 		})
+		m.logger.Debug("open tab: OpenPTY returned",
+			"session", session.ID, "tab", tabID, "ok", err == nil, "pty_ms", time.Since(ptyStart).Milliseconds(), "elapsed_ms", time.Since(openStart).Milliseconds())
 		if opened != nil {
 			channel = newChannelHandle(opened)
 		}
@@ -445,6 +460,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if err != nil {
 		return TabInfo{}, errors.Join(err, cleanup())
 	}
+	m.logger.Debug("open tab: terminal created",
+		"session", session.ID, "tab", tabID, "cols", cols, "rows", rows, "elapsed_ms", time.Since(openStart).Milliseconds())
 
 	tabCtx, cancel := context.WithCancel(m.ctx)
 	shell := ShellUnknown
@@ -1860,6 +1877,20 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	defer channel.Close()
 	buffer := make([]byte, 64<<10)
 	var readErr error
+	// Debug-only first-output diagnostics: byte counts only, never terminal content.
+	pumpStart := time.Now()
+	var pumpBytes atomic.Int64
+	firstOutputLogged := false
+	if m.logger.Enabled(ctx, slog.LevelDebug) {
+		m.logger.Debug("tab output pump started", "session", tab.SessionID, "tab", tab.ID)
+		for _, after := range []time.Duration{time.Second, 5 * time.Second} {
+			timer := time.AfterFunc(after, func() {
+				m.logger.Debug("tab output pump progress", "session", tab.SessionID, "tab", tab.ID,
+					"bytes", pumpBytes.Load(), "elapsed_ms", after.Milliseconds())
+			})
+			defer timer.Stop()
+		}
+	}
 	for {
 		// A paused subscriber with a full coalescer stalls the PTY read:
 		// output backpressure reaches the shell instead of growing memory.
@@ -1877,6 +1908,12 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 		}
 		count, err := channel.Read(buffer)
 		if count > 0 {
+			pumpBytes.Add(int64(count))
+			if !firstOutputLogged {
+				firstOutputLogged = true
+				m.logger.Debug("tab first output", "session", tab.SessionID, "tab", tab.ID,
+					"bytes", count, "elapsed_ms", time.Since(pumpStart).Milliseconds())
+			}
 			chunk := append([]byte(nil), buffer[:count]...)
 			feedErr := m.feed(ctx, tab, generation, chunk)
 			if feedErr != nil && ctx.Err() != nil {

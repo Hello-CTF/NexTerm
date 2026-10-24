@@ -19,6 +19,7 @@ import (
 	production "github.com/Hello-CTF/NexTerm/internal/app/production"
 	"github.com/Hello-CTF/NexTerm/internal/applog"
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
+	"github.com/Hello-CTF/NexTerm/internal/diagcapture"
 	fleetagent "github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
@@ -143,6 +144,9 @@ func run(args []string) int {
 	previousLogger := slog.Default()
 	slog.SetDefault(logger.Logger)
 	defer slog.SetDefault(previousLogger)
+	if capture := diagcapture.StartIfRequested(context.Background(), paths, logger, diagcapture.Info{Mode: "server", Args: args}, invocation.DebugCapture); capture != nil {
+		defer capture.Stop()
+	}
 	pprofServer, err := pprof.Start(logger.Logger, invocation.PprofAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))

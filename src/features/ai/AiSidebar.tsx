@@ -46,7 +46,10 @@ import { Markdown } from "./Markdown";
 import { ProductionWriteRiskNotice } from "../production/ProductionWarning";
 import { useAssetProductionClassification } from "../production/productionSettings";
 import {
+  MANAGED_DEVICE_ENVIRONMENT_HINT,
+  environmentDisplayLabel,
   evaluateEnvironmentConfirmation,
+  isManagedDeviceEnvironment,
   targetKey,
   type EnvironmentConfirmationChallenge,
 } from "../production/environmentConfirmation";
@@ -4375,10 +4378,13 @@ function ProductionEnvironmentChallenge({
         <IconAlert size={12} />
         生产环境写入风险：AI 写入将需要逐次输入实际环境名确认，本会话不会记住授权。
       </div>
+      {names.some(isManagedDeviceEnvironment) && (
+        <p className="mb-1.5 text-[11px] leading-relaxed text-neutral-300">{MANAGED_DEVICE_ENVIRONMENT_HINT}</p>
+      )}
       <ul className="flex flex-col gap-1.5" aria-label="生产环境名列表">
         {state.targets.map(({ target, typed, missing, matches }) => (
           <li key={targetKey(target)} className="flex items-center gap-2 text-[11px]">
-            <span className="nx-badge nx-badge-amber shrink-0">{target.environment}</span>
+            <span className="nx-badge nx-badge-amber shrink-0">{environmentDisplayLabel(target.environment)}</span>
             <input
               className="nx-input font-mono text-xs"
               aria-label={`输入环境名 ${target.environment}`}

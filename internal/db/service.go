@@ -100,32 +100,71 @@ func (s *Service) Close() error {
 }
 
 func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult, error) {
-	inline, err := s.connectionArgs(ctx, args)
+	connection, err := s.open(ctx, args)
 	if err != nil {
 		return ConnectResult{}, err
 	}
+
+	id, err := s.newID()
+	if err != nil {
+		_ = connection.Close()
+		return ConnectResult{}, internalError("生成数据库连接 ID", err)
+	}
+	if err := ipc.CheckAccountSession(ctx); err != nil {
+		return ConnectResult{}, errors.Join(err, connection.Close())
+	}
+	s.mu.Lock()
+	loginSessionID := ipc.AccountSessionID(ctx)
+	if _, revoked := s.revokedLoginSessions[loginSessionID]; loginSessionID != "" && revoked {
+		s.mu.Unlock()
+		return ConnectResult{}, errors.Join(ipc.NewError(ipc.CodeForbidden, "登录会话已失效"), connection.Close())
+	}
+	if s.closed {
+		s.mu.Unlock()
+		_ = connection.Close()
+		return ConnectResult{}, ipc.NewError(ipc.CodeDisconnected, "连接已断开：数据库服务已关闭，请重新连接")
+	}
+	s.conns[id] = connection
+	s.owners[id] = ipc.OwnerID(ctx)
+	if args.AssetID != "" {
+		s.assetIDs[id] = args.AssetID
+	}
+	if loginSessionID != "" {
+		s.loginSessions[id] = map[string]struct{}{loginSessionID: {}}
+	}
+	s.mu.Unlock()
+	return ConnectResult{ConnID: id}, nil
+}
+
+// open dials and authenticates without registering the handle. Connect and TestAsset share it so a
+// connection test follows exactly the TLS, tunnel and credential rules of a real connect.
+func (s *Service) open(ctx context.Context, args ConnectArgs) (managedConnection, error) {
+	inline, err := s.connectionArgs(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 	tlsConfig, err := makeTLSConfig(inline.Host, inline.TLS)
 	if err != nil {
-		return ConnectResult{}, badParam(err)
+		return nil, badParam(err)
 	}
 
 	kind := strings.ToLower(inline.Kind)
 	switch kind {
 	case "mysql", "postgres", "redis":
 	default:
-		return ConnectResult{}, badParam(fmt.Errorf("不支持的数据库类型 %s", inline.Kind))
+		return nil, badParam(fmt.Errorf("不支持的数据库类型 %s", inline.Kind))
 	}
 	var dialContext DialContextFunc
 	if inline.viaAssetID != "" {
 		if s.newDialer == nil {
-			return ConnectResult{}, ipc.NewError(ipc.CodeUnsupported, "数据库 SSH 隧道未配置")
+			return nil, ipc.NewError(ipc.CodeUnsupported, "数据库 SSH 隧道未配置")
 		}
 		dialContext, err = s.newDialer(ctx, inline.viaAssetID)
 		if err != nil {
-			return ConnectResult{}, err
+			return nil, err
 		}
 		if dialContext == nil {
-			return ConnectResult{}, ipc.NewError(ipc.CodeUnsupported, "数据库 SSH 隧道拨号器未配置")
+			return nil, ipc.NewError(ipc.CodeUnsupported, "数据库 SSH 隧道拨号器未配置")
 		}
 	}
 
@@ -168,7 +207,7 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 		if inline.Database != "" {
 			database, err = strconv.Atoi(inline.Database)
 			if err != nil || database < 0 {
-				return ConnectResult{}, badParam(fmt.Errorf("Redis 数据库编号必须是非负整数"))
+				return nil, badParam(fmt.Errorf("Redis 数据库编号必须是非负整数"))
 			}
 		}
 		connection, err = s.openRedis(ctx, RedisConfig{
@@ -182,38 +221,10 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 		})
 	}
 	if err != nil {
-		return ConnectResult{}, err
+		return nil, err
 	}
 
-	id, err := s.newID()
-	if err != nil {
-		_ = connection.Close()
-		return ConnectResult{}, internalError("生成数据库连接 ID", err)
-	}
-	if err := ipc.CheckAccountSession(ctx); err != nil {
-		return ConnectResult{}, errors.Join(err, connection.Close())
-	}
-	s.mu.Lock()
-	loginSessionID := ipc.AccountSessionID(ctx)
-	if _, revoked := s.revokedLoginSessions[loginSessionID]; loginSessionID != "" && revoked {
-		s.mu.Unlock()
-		return ConnectResult{}, errors.Join(ipc.NewError(ipc.CodeForbidden, "登录会话已失效"), connection.Close())
-	}
-	if s.closed {
-		s.mu.Unlock()
-		_ = connection.Close()
-		return ConnectResult{}, ipc.NewError(ipc.CodeDisconnected, "连接已断开：数据库服务已关闭，请重新连接")
-	}
-	s.conns[id] = connection
-	s.owners[id] = ipc.OwnerID(ctx)
-	if args.AssetID != "" {
-		s.assetIDs[id] = args.AssetID
-	}
-	if loginSessionID != "" {
-		s.loginSessions[id] = map[string]struct{}{loginSessionID: {}}
-	}
-	s.mu.Unlock()
-	return ConnectResult{ConnID: id}, nil
+	return connection, nil
 }
 
 func (s *Service) Disconnect(ctx context.Context, id string) error {

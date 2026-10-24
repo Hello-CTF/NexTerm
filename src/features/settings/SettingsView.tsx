@@ -26,9 +26,11 @@ import { SyncCard } from "./SyncCard";
 import { SyncBundleCard } from "./SyncBundleCard";
 import { ShareCard } from "./ShareCard";
 import { UpdateCard } from "./UpdateCard";
+import { DiagnosticsCard } from "./DiagnosticsCard";
 import { describeError } from "../../ui/errorText";
 import { DESKTOP } from "../../ipc/env";
 import {
+  IconActivity,
   IconAlert,
   IconArchive,
   IconBot,
@@ -72,6 +74,7 @@ const SETTINGS_SECTIONS = [
   { id: "settings-terminal", label: "终端", icon: IconTerminal, group: "general" },
   { id: "settings-shortcuts", label: "快捷键", icon: IconCommand, group: "general" },
   { id: "settings-update", label: "软件更新", icon: IconDownload, group: "general" },
+  { id: "settings-diagnostics", label: "诊断与调试", icon: IconActivity, group: "general" },
   { id: "settings-ai-model", label: "模型", icon: IconSparkles, group: "ai" },
   { id: "settings-ai-rules", label: "拦截规则", icon: IconShield, group: "ai" },
   { id: "settings-ai-skills", label: "技能", icon: IconLayers, group: "ai" },
@@ -657,6 +660,10 @@ export function SettingsView() {
             <UpdateCard />
           </div>
         )}
+
+        <div id="settings-diagnostics" className="scroll-mt-12">
+          <DiagnosticsCard />
+        </div>
         </div>
         <div className="flex flex-col gap-4" hidden={group !== "ai"} data-settings-group="ai">
         <section id="settings-ai-model" className="nx-card scroll-mt-12">

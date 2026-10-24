@@ -182,7 +182,8 @@ describe("ProductionConfirmationDialog typed environment confirmation", () => {
         onConfirm: () => undefined,
       }),
     );
-    expect(dialog().textContent).toContain("受管设备没有环境标记");
+    expect(dialog().textContent).toContain("受管设备没有环境标签，因此一律按生产环境处理");
+    expect(dialog().textContent).toContain("受管设备（无环境标签，按生产环境处理）");
     const confirm = [...dialog().querySelectorAll<HTMLButtonElement>("button")].find(
       (candidate) => candidate.textContent?.trim() === "确认执行（1）",
     );

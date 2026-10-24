@@ -36,6 +36,7 @@ const KIND_LABELS: Record<string, string> = {
   device_offline: "设备离线",
   device_revoke: "设备吊销",
   device_autostart: "设备自启动",
+  device_terminal_toggle: "设备远程终端开关",
   device_failover: "设备切换接入",
   device_terminal: "设备终端",
 };

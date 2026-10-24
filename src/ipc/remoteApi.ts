@@ -6,7 +6,7 @@
 import { call } from "./commands";
 import type { RemoteHostShareIdentity, RemoteMetricsRequest } from "./generated/types";
 import type { AccountLink } from "./types";
-import type { FleetBaseURLEntry, FleetDevice, FleetEnrollCode, FleetMetricsResponse } from "./fleetApi";
+import type { FleetBaseURLEntry, FleetDeviceList, FleetEnrollCode, FleetMetricsResponse } from "./fleetApi";
 import type { HostShareView, ShareLinkView } from "./sharingApi";
 import type { AccountDevice, AccountUser } from "./authApi";
 
@@ -109,7 +109,7 @@ export const remotePreviewApi = {
 };
 
 export const remoteFleetApi = {
-  devices: () => call("remote_fleet_devices") as Promise<{ devices: FleetDevice[] }>,
+  devices: () => call("remote_fleet_devices") as Promise<FleetDeviceList>,
 
   issueEnrollCode: (ttlMs: number, userId?: string) =>
     call("remote_fleet_enroll_code", { args: { ttlMs, ...(userId ? { userId } : {}) } }) as Promise<FleetEnrollCode>,
@@ -119,6 +119,9 @@ export const remoteFleetApi = {
 
   setAutostart: (id: string, desired: boolean) =>
     call("remote_fleet_device_autostart", { args: { deviceId: id, desired } }) as Promise<{ ok: boolean; desired_autostart: boolean }>,
+
+  setTerminalAccess: (id: string, enabled: boolean) =>
+    call("remote_fleet_device_terminal_access", { args: { deviceId: id, enabled } }) as Promise<{ ok: boolean; terminal_enabled: boolean }>,
 
   metrics: (id: string, sinceMs?: number) =>
     call("remote_fleet_device_metrics", {

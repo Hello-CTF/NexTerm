@@ -162,7 +162,7 @@ describe("session and terminal facade IPC contracts", () => {
 });
 
 describe("remote desktop facade IPC contracts", () => {
-  it("preserves the exact envelopes for all 28 surveyed commands", async () => {
+  it("preserves the exact envelopes for all 29 surveyed commands", async () => {
     const calls = captureRpc();
     const {
       remoteAccountApi,
@@ -184,6 +184,7 @@ describe("remote desktop facade IPC contracts", () => {
       { command: "remote_fleet_base_urls_get", payload: null, invoke: () => remoteFleetApi.baseUrls() },
       { command: "remote_fleet_base_urls_put", payload: { entries: [{ url: "https://sync.example.com", insecure: false }] }, invoke: () => remoteFleetApi.putBaseUrls([{ url: "https://sync.example.com", insecure: false }]) },
       { command: "remote_fleet_device_autostart", payload: { deviceId: "device-1", desired: true }, invoke: () => remoteFleetApi.setAutostart("device-1", true) },
+      { command: "remote_fleet_device_terminal_access", payload: { deviceId: "device-1", enabled: false }, invoke: () => remoteFleetApi.setTerminalAccess("device-1", false) },
       { command: "remote_fleet_device_metrics", payload: { deviceId: "device-1" }, invoke: () => remoteFleetApi.metrics("device-1") },
       { command: "remote_fleet_device_revoke", payload: { deviceId: "device-1" }, invoke: () => remoteFleetApi.revoke("device-1") },
       { command: "remote_fleet_devices", payload: null, invoke: () => remoteFleetApi.devices() },
@@ -208,12 +209,12 @@ describe("remote desktop facade IPC contracts", () => {
       },
     ];
 
-    expect(cases).toHaveLength(28);
+    expect(cases).toHaveLength(29);
     for (const [index, test] of cases.entries()) {
       await test.invoke();
       expectManifestEnvelope(calls[index], test.command, test.payload);
     }
-    expect(calls).toHaveLength(28);
+    expect(calls).toHaveLength(29);
   });
 
   it("preserves explicitly provided optional fields and clear-cloud omissions", async () => {
