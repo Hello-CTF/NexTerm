@@ -121,7 +121,7 @@ function App() {
           <h1>{t.heroLead}<br /><span className="accent-text">{t.heroAccent}</span></h1>
           <p className="hero-copy">{t.intro}</p>
           <div className="hero-actions">
-            <a className="button button-primary" href={releases} target="_blank" rel="noreferrer"><Download size={17} />{t.download}</a>
+            <a className="button button-primary" href="#download"><Download size={17} />{t.download}</a>
             <a className="button button-secondary" href={repository} target="_blank" rel="noreferrer"><GithubIcon size={17} />{t.source}</a>
           </div>
           <div className="view-tabs" role="tablist" aria-label={t.nav[0]}>

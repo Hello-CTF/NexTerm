@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Apple, Check, Copy, Download, Fingerprint, Laptop, Monitor, Server, Smartphone, type LucideIcon } from "lucide-react";
+import { Apple, Check, Copy, Download, ExternalLink, Fingerprint, Laptop, Monitor, Server, Smartphone, type LucideIcon } from "lucide-react";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const latestRelease = `${repository}/releases/latest`;
+const releasesPage = `${repository}/releases`;
 const installCommand = "curl -fsSL https://nexterm.work/install.sh | sudo bash";
 const testFlightLink = "https://testflight.apple.com/join/ds62pzPz";
 
@@ -163,6 +164,10 @@ export function DownloadPicker({ language }: { language: Language }) {
             </button>
           );
         })}
+        <a className="download-tab" href={releasesPage} target="_blank" rel="noreferrer">
+          <ExternalLink size={16} />
+          <span>Releases</span>
+        </a>
       </div>
 
       <div className="download-panel" role="tabpanel">

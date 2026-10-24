@@ -273,6 +273,7 @@ h3 { color: var(--text); font-size: 15px; font-weight: 700; letter-spacing: -.01
 .download-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .download-tab { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: var(--text-secondary); font-size: 13px; font-weight: 650; cursor: pointer; transition: border-color 160ms ease, background 160ms ease, color 160ms ease; }
 .download-tab:hover { border-color: var(--border-strong); color: var(--text); }
+a.download-tab { text-decoration: none; }
 .download-tab.is-active { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
 .download-detected { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); }
 .download-panel { padding: 24px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel); }
