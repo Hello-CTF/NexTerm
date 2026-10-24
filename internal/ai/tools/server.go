@@ -228,7 +228,7 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 		}
 	}
 	if len(targets.SessionIDs) == 0 || len(targets.SessionIDs) > execbatch.MaxTargets {
-		return Fail(invalid("多主机目标必须包含 1-%d 个已连接 SSH 会话", execbatch.MaxTargets))
+		return Fail(invalid("多主机目标必须包含 1-%d 个已连接 SSH 或设备会话", execbatch.MaxTargets))
 	}
 	seen := make(map[string]struct{}, len(targets.SessionIDs))
 	for _, sessionID := range targets.SessionIDs {

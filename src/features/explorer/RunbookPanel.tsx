@@ -65,14 +65,14 @@ function statusClass(status: string): string {
 function collectTargets(sessions: readonly SessionInfo[], assets: readonly Asset[]): TargetSetPickerTarget[] {
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
   return sessions
-    .filter((session) => session.kind === "ssh" && session.status === "connected")
+    .filter((session) => (session.kind === "ssh" || session.kind === "device") && session.status === "connected")
     .map((session) => {
       const asset = session.assetId ? assetsById.get(session.assetId) : undefined;
       return {
         id: session.id,
         label: asset?.name.trim() || session.name,
         sessionName: session.name,
-        endpoint: asset?.host ?? null,
+        endpoint: asset?.host ?? (session.kind === "device" ? "受管设备 · 执行前需确认" : null),
         tags: assetTagValues(asset?.tags ?? ""),
         workspaceNames: [],
         envCount: 0,
@@ -321,7 +321,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
       return;
     }
     if (selected.length === 0) {
-      setError("请至少选择一个已连接 SSH 会话");
+      setError("请至少选择一个已连接的 SSH 或受管设备会话");
       return;
     }
     setHistory(null);

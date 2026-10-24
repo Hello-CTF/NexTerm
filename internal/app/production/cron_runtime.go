@@ -179,6 +179,11 @@ func (e cronConnectEvidence) asset(ctx context.Context, assetID string) (store.A
 }
 
 func (e cronConnectEvidence) OwnerMatch(ctx context.Context, _ cron.Trigger, assetID string) (bool, error) {
+	if strings.HasPrefix(assetID, "device/") {
+		// Devices are connected through their agent and carry no host key, credential or environment, so
+		// the connect gates have no evidence to evaluate; never fall through to the SSH asset lookup.
+		return false, ipc.NewError(ipc.CodeDisconnected, "受管设备当前未连接，定时任务不会自动连接设备；请先在设备页连接该设备，或让设备保持在线后再运行")
+	}
 	// The scope validator enforces owner scoping for account users and shared
 	// visibility for desktop/open mode.
 	err := productionScopeValidator(e.services).validateScopeAsset(ctx, assetID)

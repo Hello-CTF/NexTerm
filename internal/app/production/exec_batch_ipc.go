@@ -10,6 +10,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/transport/device"
 )
 
 type execBatchIPCService struct {
@@ -129,7 +130,7 @@ func (r execBatchResolver) Resolve(ctx context.Context, sessionID string) (execb
 		return execbatch.Target{}, err
 	}
 	info := connected.Info()
-	if info.Kind != session.KindSSH {
+	if info.Kind != session.KindSSH && info.Kind != session.KindDevice {
 		return execbatch.Target{}, fmt.Errorf("%w: %s is %s", execbatch.ErrUnsupported, sessionID, info.Kind)
 	}
 	if info.Status != session.StatusConnected {
@@ -145,6 +146,15 @@ func (r execBatchResolver) Resolve(ctx context.Context, sessionID string) (execb
 	target := execbatch.Target{
 		SessionID: info.ID, SessionName: info.Name, AssetID: info.AssetID,
 		Transport: transport, Generation: transport.Generation(),
+	}
+	if deviceTransport, ok := transport.(*device.Transport); ok && deviceTransport.Platform() == "windows" {
+		return execbatch.Target{}, unsupportedReason{message: "Windows 设备暂不支持批量执行（命令按 POSIX shell 编写），请改用终端手动操作", sentinel: execbatch.ErrUnsupported}
+	}
+	if info.Kind == session.KindDevice {
+		// Devices have no asset row or environment tag; the unknown environment is classified as
+		// production-equivalent so the typed confirmation always gates execution.
+		target.Environment = guard.ManagedDeviceEnvironment
+		return target, nil
 	}
 	if info.AssetID == "" {
 		return target, nil

@@ -146,6 +146,8 @@ func (s *Service) probeHealthTarget(ctx context.Context, batchID string, target 
 		result.Error = ErrDisconnected.Error()
 		return result
 	}
+	// The probe runs one fixed read-only command, so managed devices are probed without the
+	// typed production confirmation that Execute requires.
 	resolved, err := s.resolver.Resolve(ctx, target.SessionID)
 	if err != nil {
 		result.Error = err.Error()

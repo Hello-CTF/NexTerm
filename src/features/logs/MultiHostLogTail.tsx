@@ -117,7 +117,7 @@ function collectTargets(
 ): TargetSetPickerTarget[] {
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
   return sessions
-    .filter((session) => session.kind === "ssh" && session.status === "connected")
+    .filter((session) => (session.kind === "ssh" || session.kind === "device") && session.status === "connected")
     .map((session) => {
       const asset = session.assetId ? assetsById.get(session.assetId) : undefined;
       const sources = workspaces.filter((workspace) => workspaceIncludesSession(workspace, session.id));
@@ -128,7 +128,7 @@ function collectTargets(
         id: session.id,
         label: asset?.name.trim() || session.name,
         sessionName: session.name,
-        endpoint: host ? `${username ? `${username}@` : ""}${host}` : null,
+        endpoint: host ? `${username ? `${username}@` : ""}${host}` : session.kind === "device" ? "受管设备" : null,
         tags: assetTagValues(asset?.tags ?? ""),
         workspaceNames: [...new Set(sources.map((workspace) => workspace.title || workspace.id))],
         envCount: assetEnvCount(asset),
@@ -272,7 +272,7 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
     setRunError(null);
     setSaveMessage(null);
     if (selectedIds.length === 0) {
-      setRunError("请至少选择一个已连接 SSH 会话");
+      setRunError("请至少选择一个已连接的 SSH 或受管设备会话");
       return;
     }
     if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > MAX_CONCURRENT) {
@@ -410,7 +410,7 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
         <span className="nx-badge nx-badge-amber" title="只执行只读日志命令，无需生产确认">
           只读 · 无 PTY
         </span>
-        <span className="nx-hint">仅当前已连接 SSH，不自动连接</span>
+        <span className="nx-hint">仅当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不自动连接</span>
       </div>
 
       <div className="flex max-h-[46%] min-h-[220px] flex-col gap-3 overflow-y-auto border-b border-neutral-800/70 px-3 py-3">

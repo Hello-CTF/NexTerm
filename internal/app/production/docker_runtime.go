@@ -171,11 +171,12 @@ type dockerCommandOpener struct {
 }
 
 func (o dockerCommandOpener) OpenCommand(ctx context.Context, command string, width, height uint) (docker.CommandStream, error) {
+	// Device exec streams have no stdin or PTY, so they cannot back interactive container exec.
+	if _, isDevice := o.transport.(*device.Transport); isDevice {
+		return nil, deviceDockerStreamsUnavailable{}
+	}
 	opener, ok := o.transport.(base.ExecStreamTransport)
 	if !ok {
-		if _, isDevice := o.transport.(*device.Transport); isDevice {
-			return nil, deviceDockerStreamsUnavailable{}
-		}
 		return nil, fmt.Errorf("%w: exec stream", base.ErrUnsupported)
 	}
 	channel, err := opener.OpenExec(ctx, command, base.ExecOptions{})

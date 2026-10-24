@@ -135,7 +135,7 @@ export function DriftComparePanel({
 
   const start = () => {
     if (selectedIds.length === 0) {
-      setError("请至少选择一个已连接 SSH 会话");
+      setError("请至少选择一个已连接的 SSH 或受管设备会话");
       return;
     }
     if (selectedIds.length > MAX_TARGETS) {

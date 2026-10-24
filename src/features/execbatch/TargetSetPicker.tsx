@@ -37,7 +37,7 @@ export function TargetSetPicker({
   maxTargets,
   metadataError,
   legend = "目标会话",
-  emptyMessage = "没有已连接的 SSH 会话。请先手动连接目标，批量执行不会自动连接。",
+  emptyMessage = "没有已连接的 SSH 或受管设备会话。请先手动连接目标，批量执行不会自动连接。",
   searchAriaLabel = "搜索批量执行目标",
 }: {
   targets: readonly TargetSetPickerTarget[];
@@ -151,7 +151,7 @@ export function TargetSetPicker({
             ))}
             {filtered.length === 0 && (
               <div className="col-span-full px-2 py-3 text-[11px] text-neutral-500">
-                没有匹配当前搜索的已连接 SSH 会话。
+                没有匹配当前搜索的已连接会话。
               </div>
             )}
           </div>

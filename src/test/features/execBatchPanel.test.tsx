@@ -178,7 +178,7 @@ afterEach(() => {
 });
 
 describe("ExecBatchPanel", () => {
-  it("uses only connected SSH targets and renders distinct result states", async () => {
+  it("offers only connected SSH and managed-device targets and renders distinct result states", async () => {
     const batch: ExecBatch = {
       batchId: "batch-ui-test",
       command: "hostname",
@@ -211,13 +211,14 @@ describe("ExecBatchPanel", () => {
     mocks.execute.mockResolvedValue(batch);
     mounted = mountPanel();
     await flush();
-    expect(visibleTargetIds()).toEqual(["s1", "s2", "s6"]);
+    expect(visibleTargetIds()).toEqual(["s1", "s2", "s5", "s6"]);
+    expect(text()).toContain("device-online");
+    expect(text()).toContain("受管设备 · 执行前需确认");
     expect(text()).toContain("ssh-one");
     expect(text()).toContain("ssh-two");
     expect(text()).toContain("ssh-three");
     expect(text()).not.toContain("ssh-offline");
     expect(text()).not.toContain("local-online");
-    expect(text()).not.toContain("device-online");
     expect(text()).not.toContain("docker-online");
 
     setInputValue(commandInput(), "hostname");

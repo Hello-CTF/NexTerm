@@ -66,7 +66,7 @@ function collectTargets(
 ): TargetSetPickerTarget[] {
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
   return sessions
-    .filter((session) => session.kind === "ssh" && session.status === "connected")
+    .filter((session) => (session.kind === "ssh" || session.kind === "device") && session.status === "connected")
     .map((session) => {
       const asset = session.assetId ? assetsById.get(session.assetId) : undefined;
       const sources = workspaces.filter((workspace) => workspaceIncludesSession(workspace, session.id));
@@ -77,7 +77,7 @@ function collectTargets(
         id: session.id,
         label: asset?.name.trim() || session.name,
         sessionName: session.name,
-        endpoint: host ? `${username ? `${username}@` : ""}${host}` : null,
+        endpoint: host ? `${username ? `${username}@` : ""}${host}` : session.kind === "device" ? "受管设备 · 执行前需确认" : null,
         tags: assetTagValues(asset?.tags ?? ""),
         workspaceNames: [...new Set(sources.map((workspace) => workspace.title || workspace.id))],
         envCount: assetEnvCount(asset),
@@ -262,7 +262,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       return;
     }
     if (selectedIds.length === 0) {
-      setError("请至少选择一个已连接 SSH 会话");
+      setError("请至少选择一个已连接的 SSH 或受管设备会话");
       return;
     }
     if (selectedIds.length > MAX_TARGETS) {
@@ -425,7 +425,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       <div className="nx-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
         <h2 className="nx-toolbar-title">多主机工具</h2>
-        <span className="nx-hint">仅当前已连接 SSH · 手动触发</span>
+        <span className="nx-hint">仅当前已连接的 SSH / 受管设备 · 手动触发 · 受管设备没有环境标记，执行前需要你确认</span>
         <span className="nx-spacer" />
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "execute"} disabled={running || prompting} onClick={() => setView("execute")}>批量执行</button>
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "drift"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("drift"); }}>漂移对比</button>

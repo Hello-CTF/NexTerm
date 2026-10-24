@@ -24,6 +24,11 @@ func ProductionEnvironmentsSettingKeyForUser(ctx context.Context) string {
 // list adds to them, so a configuration mistake cannot unguard production.
 var builtInProductionEnvironments = []string{"production", "prod"}
 
+// ManagedDeviceEnvironment is the environment recorded for managed-device
+// targets. Devices carry no environment tag, so batch execution treats them as
+// production-equivalent: the owner must confirm before anything runs.
+const ManagedDeviceEnvironment = "managed-device"
+
 // IsBuiltInProductionEnvironment reports whether the environment is one of the
 // built-in production names.
 func IsBuiltInProductionEnvironment(environment string) bool {
@@ -92,7 +97,7 @@ func IsProductionEnvironment(ctx context.Context, settings Settings, environment
 	if strings.TrimSpace(environment) == "" {
 		return false, nil
 	}
-	if IsBuiltInProductionEnvironment(environment) {
+	if IsBuiltInProductionEnvironment(environment) || environmentMatches(ManagedDeviceEnvironment, environment) {
 		return true, nil
 	}
 	configured, err := ConfiguredProductionEnvironments(ctx, settings)

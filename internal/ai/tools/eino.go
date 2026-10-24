@@ -149,7 +149,7 @@ var einoNames = []string{
 }
 
 var einoDescriptions = map[string]string{
-	"exec_commands":    "Execute shell commands sequentially in the current session (1-20 commands). Optional asset_ids and tags instead select the current owner's already-connected SSH sessions without auto-connecting; tags must all match, and asset_ids plus tags means their intersection. Production targets require confirmation. For a remote SSH/device host, use this tool to inspect that host's shell history; shell_history is limited to the current desktop process OS user in a local scope.",
+	"exec_commands":    "Execute shell commands sequentially in the current session (1-20 commands). Optional asset_ids and tags instead select the current owner's already-connected SSH sessions without auto-connecting; tags must all match, and asset_ids plus tags means their intersection. Managed devices can be targeted only by naming their asset id (device/<id>) in asset_ids, never by tags; devices have no environment tag, so they are always treated as production and require confirmation. Production targets require confirmation. For a remote SSH/device host, use this tool to inspect that host's shell history; shell_history is limited to the current desktop process OS user in a local scope.",
 	"read_file":        "Read a UTF-8 text file and record the content version for subsequent writes.",
 	"write_file":       "Create a new file atomically without overwriting existing files; overwriting an existing file requires user authorization, keeps a backup, and may overwrite external changes made after confirmation; before writing, the file must be read or confirmed to not exist.",
 	"list_dir":         "List directory contents, at most 500 entries.",

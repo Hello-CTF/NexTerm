@@ -9,6 +9,9 @@ import {
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconAlert, IconClose } from "../../ui/icons";
 
+// Mirrors guard.ManagedDeviceEnvironment: the environment the server assigns to devices, which carry no environment tag.
+export const MANAGED_DEVICE_ENVIRONMENT = "managed-device";
+
 export interface ProductionConfirmationDialogChallenge {
   targetSetHash: string;
   requiredEnvironmentNames?: string[];
@@ -78,6 +81,7 @@ function TypedEnvironmentConfirmationDialog({
   }, [layer]);
 
   const missingEnvironmentNames = !challenge.requiredEnvironmentNames?.length;
+  const hasManagedDevice = challenge.productionTargets.some((target) => target.environment === MANAGED_DEVICE_ENVIRONMENT);
   const environmentChallenge: EnvironmentConfirmationChallenge = useMemo(
     () => ({
       targetSetHash: challenge.targetSetHash,
@@ -128,6 +132,11 @@ function TypedEnvironmentConfirmationDialog({
               ? "服务端资产元数据将以下目标标记为生产环境。请逐目标输入实际环境名完成确认；取消不会发送待确认输入。"
               : "服务端资产元数据将以下目标标记为生产环境。请逐目标输入实际环境名完成确认；取消不会执行任何命令。"}
           </p>
+          {hasManagedDevice && (
+            <p role="note" className="mb-3 text-[11px] leading-relaxed text-neutral-300">
+              受管设备没有环境标记，系统无法判断它是否为生产环境，因此执行前需要你确认；请在对应目标输入环境名 {MANAGED_DEVICE_ENVIRONMENT}。
+            </p>
+          )}
           {missingEnvironmentNames && (
             <div role="alert" className="mb-3 rounded border border-red-900/60 bg-red-950/20 px-2.5 py-2 text-[11px] text-red-300">
               生产确认响应缺少必需的环境名，无法确认；请取消操作。

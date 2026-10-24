@@ -78,7 +78,7 @@ export function ProcessFinderPanel({
     setMessage(null);
     setForwardDraft(null);
     if (selectedIds.length === 0) {
-      setRowError("请至少选择一个已连接 SSH 会话");
+      setRowError("请至少选择一个已连接的 SSH 或受管设备会话");
       return;
     }
     if (!queryValue.trim()) {

@@ -250,14 +250,14 @@ export function CommandPalette({
       {
         id: "exec-batch",
         label: "批量执行命令",
-        hint: "已连接 SSH",
+        hint: "已连接 SSH / 设备",
         icon: IconZap,
         run: () => addTab({ id: "exec-batch", kind: "execBatch", title: "批量执行", closable: true }),
       },
       {
         id: MULTI_HOST_LOG_TAB_ID,
         label: "多主机日志合并",
-        hint: "文件 / journalctl / Docker · 已连接 SSH",
+        hint: "文件 / journalctl / Docker · 已连接 SSH / 设备",
         icon: IconCommand,
         run: () => addTab({ id: createMultiHostLogTabId(), kind: "log", title: "多主机日志", closable: true }),
       },

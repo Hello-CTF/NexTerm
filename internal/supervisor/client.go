@@ -92,16 +92,35 @@ type ExecSpec struct {
 // error. Cancelling ctx kills the process (the connection drop makes the
 // supervisor terminate the one-shot session).
 func (c *Client) Exec(ctx context.Context, spec ExecSpec) (stdout, stderr []byte, exitCode int, signal string, err error) {
+	exitCode, signal, err = c.ExecStream(ctx, spec, func(isStderr bool, data []byte) error {
+		if isStderr {
+			stderr = append(stderr, data...)
+		} else {
+			stdout = append(stdout, data...)
+		}
+		if len(stdout)+len(stderr) > c.maxExecOutput {
+			return fmt.Errorf("%w: exec output exceeds limit of %d bytes", ErrUnavailable, c.maxExecOutput)
+		}
+		return nil
+	})
+	return stdout, stderr, exitCode, signal, err
+}
+
+// ExecStream runs a non-PTY command like Exec but hands each output chunk to onOutput as it arrives instead of
+// buffering, so long-running commands (tail -F) can be consumed incrementally. onOutput returning an error kills
+// the process and ends the call with that error. The data slice is only valid during the callback. Cancelling ctx
+// kills the process.
+func (c *Client) ExecStream(ctx context.Context, spec ExecSpec, onOutput func(stderr bool, data []byte) error) (exitCode int, signal string, err error) {
 	if len(spec.Command) == 0 || spec.Command[0] == "" {
-		return nil, nil, -1, "", fmt.Errorf("%w: exec command is required", ErrInvalidInput)
+		return -1, "", fmt.Errorf("%w: exec command is required", ErrInvalidInput)
 	}
 	conn, err := c.dialConn(ctx)
 	if err != nil {
-		return nil, nil, -1, "", err
+		return -1, "", err
 	}
 	defer func() { _ = conn.Close() }()
 	if !slices.Contains(conn.features, featureExec) {
-		return nil, nil, -1, "", fmt.Errorf("%w: supervisor does not support non-PTY exec", ErrUnsupported)
+		return -1, "", fmt.Errorf("%w: supervisor does not support non-PTY exec", ErrUnsupported)
 	}
 	noPTY := false
 	kind, _, err := conn.request(ctx, frameCreate, createMsg{
@@ -112,10 +131,10 @@ func (c *Client) Exec(ctx context.Context, spec ExecSpec) (stdout, stderr []byte
 		Pty:     &noPTY,
 	})
 	if err != nil {
-		return nil, nil, -1, "", err
+		return -1, "", err
 	}
 	if kind != frameCreated {
-		return nil, nil, -1, "", protocolMismatch(kind)
+		return -1, "", protocolMismatch(kind)
 	}
 	stopWatch := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopWatch()
@@ -123,45 +142,40 @@ func (c *Client) Exec(ctx context.Context, spec ExecSpec) (stdout, stderr []byte
 		kind, payload, readErr := readFrame(conn.conn)
 		if readErr != nil {
 			if ctx.Err() != nil {
-				return stdout, stderr, -1, "", context.Cause(ctx)
+				return -1, "", context.Cause(ctx)
 			}
-			return stdout, stderr, -1, "", fmt.Errorf("%w: read exec stream: %v", base.ErrDisconnected, readErr)
+			return -1, "", fmt.Errorf("%w: read exec stream: %v", base.ErrDisconnected, readErr)
 		}
 		switch kind {
 		case frameExecOutput:
 			stream, data, parseErr := parseExecOutput(payload)
 			if parseErr != nil {
-				return stdout, stderr, -1, "", parseErr
+				return -1, "", parseErr
 			}
-			switch stream {
-			case streamStdout:
-				stdout = append(stdout, data...)
-			case streamStderr:
-				stderr = append(stderr, data...)
-			default:
-				return stdout, stderr, -1, "", fmt.Errorf("%w: exec output stream %d", ErrProtocol, stream)
+			if stream != streamStdout && stream != streamStderr {
+				return -1, "", fmt.Errorf("%w: exec output stream %d", ErrProtocol, stream)
 			}
-			if len(stdout)+len(stderr) > c.maxExecOutput {
-				return stdout, stderr, -1, "", fmt.Errorf("%w: exec output exceeds limit of %d bytes", ErrUnavailable, c.maxExecOutput)
+			if cbErr := onOutput(stream == streamStderr, data); cbErr != nil {
+				return -1, "", cbErr
 			}
 		case frameExit:
 			var msg exitMsg
 			if err := unmarshalFrame(payload, &msg); err != nil {
-				return stdout, stderr, -1, "", err
+				return -1, "", err
 			}
 			code := -1
 			if msg.Code != nil {
 				code = *msg.Code
 			}
-			return stdout, stderr, code, msg.Signal, nil
+			return code, msg.Signal, nil
 		case frameError, frameFatal:
 			var msg errorMsg
 			if err := unmarshalFrame(payload, &msg); err != nil {
-				return stdout, stderr, -1, "", err
+				return -1, "", err
 			}
-			return stdout, stderr, -1, "", decodedError(msg)
+			return -1, "", decodedError(msg)
 		default:
-			return stdout, stderr, -1, "", protocolMismatch(kind)
+			return -1, "", protocolMismatch(kind)
 		}
 	}
 }

@@ -82,7 +82,7 @@ export function ServicesPanel({
     }, `systemctl ${action} -- ${unit.trim()}`);
   };
 
-  const selectionError = selectedIds.length === 0 ? "请至少选择一个已连接 SSH 会话" : null;
+  const selectionError = selectedIds.length === 0 ? "请至少选择一个已连接的 SSH 或受管设备会话" : null;
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="systemd 服务管理" data-testid="services-panel">

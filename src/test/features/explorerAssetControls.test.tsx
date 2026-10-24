@@ -1377,7 +1377,7 @@ describe("asset bulk maintenance entry", () => {
     await waitFor(() => expect(document.body.querySelector('[role="dialog"][aria-label="批量主机维护"]')).not.toBeNull());
     expect(document.body.textContent).toContain("批量编辑");
     expect(document.body.textContent).toContain("部署公钥");
-    expect(document.body.textContent).toContain("test login");
+    expect(document.body.textContent).toContain("连接测试");
 
     const close = document.body.querySelector<HTMLButtonElement>('button[aria-label="关闭批量维护"]');
     if (!close) throw new Error("bulk maintenance close button not found");

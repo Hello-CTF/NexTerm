@@ -166,6 +166,32 @@ describe("ProductionConfirmationDialog typed environment confirmation", () => {
     expect(confirm.disabled).toBe(false);
   });
 
+  it("explains that managed devices have no environment tag and still requires typing the name", () => {
+    mounted = mountWithClient(
+      createElement(ProductionConfirmationDialog, {
+        challenge: {
+          targetSetHash: "a".repeat(64),
+          requiredEnvironmentNames: ["managed-device"],
+          productionTargets: [
+            { sessionId: "d1", sessionName: "edge-1", assetId: "device/d1", hostname: "edge-1", environment: "managed-device" },
+          ],
+        },
+        contentHash: "b".repeat(64),
+        command: "uptime",
+        onCancel: () => undefined,
+        onConfirm: () => undefined,
+      }),
+    );
+    expect(dialog().textContent).toContain("受管设备没有环境标记");
+    const confirm = [...dialog().querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.textContent?.trim() === "确认执行（1）",
+    );
+    if (!confirm) throw new Error("confirm button not found");
+    expect(confirm.disabled).toBe(true);
+    setInputValue(environmentInput("edge-1"), "managed-device");
+    expect(confirm.disabled).toBe(false);
+  });
+
   it("reports a cross-target mismatch and stays locked", () => {
     mounted = mountWithClient(
       createElement(ProductionConfirmationDialog, {

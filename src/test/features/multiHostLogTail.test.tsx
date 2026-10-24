@@ -80,6 +80,7 @@ const sessions: SessionInfo[] = [
   { id: "s2", assetId: null, name: "host-two", kind: "ssh", status: "connected", tabs: [], createdAt: 0 },
   { id: "s3", assetId: null, name: "offline", kind: "ssh", status: "disconnected", tabs: [], createdAt: 0 },
   { id: "s4", assetId: null, name: "local", kind: "local", status: "connected", tabs: [], createdAt: 0 },
+  { id: "s5", assetId: "device/d1", name: "edge-device", kind: "device", status: "connected", tabs: [], createdAt: 0 },
 ];
 
 let mounted: MountedView | undefined;
@@ -145,6 +146,13 @@ afterEach(() => {
 });
 
 describe("MultiHostLogTail", () => {
+  it("lists connected managed devices as selectable log sources", () => {
+    mounted = mountPanel();
+    expect(target("s5").disabled).toBe(false);
+    expect(panel().container.textContent).toContain("edge-device");
+    expect(panel().container.textContent).toContain("Windows 设备暂不支持");
+  });
+
   it("keeps failed hosts visible while merging and prefixing healthy sources", async () => {
     mounted = mountPanel();
     expect(panel().container.querySelector('input[value="s3"]')).toBeNull();

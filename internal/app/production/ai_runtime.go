@@ -560,6 +560,7 @@ func resolveProductionExecTargets(ctx context.Context, services *ProductionServi
 		return tools.ExecTargetSet{}, err
 	}
 	candidates := make([]store.AssetRow, 0, len(assetIDs))
+	var deviceAssetIDs []string
 	if len(assetIDs) > 0 {
 		seen := make(map[string]struct{}, len(assetIDs))
 		for _, assetID := range assetIDs {
@@ -567,12 +568,23 @@ func resolveProductionExecTargets(ctx context.Context, services *ProductionServi
 				continue
 			}
 			seen[assetID] = struct{}{}
+			if strings.HasPrefix(assetID, "device/") {
+				// Devices have no tags, so they can only be named explicitly; ownership is checked before any session lookup.
+				if len(tags) > 0 {
+					return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeBadParam, "受管设备没有标签，不能与 tags 过滤同时使用: "+assetID)
+				}
+				if err := productionScopeValidator(services).validateScopeAsset(validationCtx, assetID); err != nil {
+					return tools.ExecTargetSet{}, err
+				}
+				deviceAssetIDs = append(deviceAssetIDs, assetID)
+				continue
+			}
 			asset, err := services.Store.AssetGetLive(validationCtx, assetID)
 			if err != nil {
 				return tools.ExecTargetSet{}, productionScopeError(err)
 			}
 			if asset.Kind != session.KindSSH {
-				return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeUnsupported, "多主机 exec_commands 只支持 SSH 资产: "+assetID)
+				return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeUnsupported, "多主机 exec_commands 只支持 SSH 资产和受管设备（device/...）: "+assetID)
 			}
 			if !productionAssetMatchesTags(asset, tags) {
 				return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeBadParam, "显式资产不匹配 tags 过滤: "+assetID)
@@ -590,12 +602,29 @@ func resolveProductionExecTargets(ctx context.Context, services *ProductionServi
 			}
 		}
 	}
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && len(deviceAssetIDs) == 0 {
 		return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeDisconnected, "没有匹配的当前用户 SSH 资产；不会自动连接")
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
-	targets := tools.ExecTargetSet{SessionIDs: make([]string, 0, len(candidates))}
+	sort.Strings(deviceAssetIDs)
+	targets := tools.ExecTargetSet{SessionIDs: make([]string, 0, len(candidates)+len(deviceAssetIDs))}
 	resolver := productionScopeValidator(services)
+	for _, assetID := range deviceAssetIDs {
+		sessionID, err := resolver.liveSessionForAsset(validationCtx, assetID)
+		if err != nil {
+			return tools.ExecTargetSet{}, ipc.WrapError(ipc.CodeDisconnected, "设备 "+assetID+" 没有健康的在线会话；多主机执行不会自动连接设备，请先在设备页连接", err)
+		}
+		connected, err := services.Sessions.SessionFor(validationCtx, sessionID)
+		if err != nil {
+			return tools.ExecTargetSet{}, productionScopeError(err)
+		}
+		if connected.Asset().ID != assetID || connected.Info().Kind != session.KindDevice {
+			return tools.ExecTargetSet{}, ipc.NewError(ipc.CodeForbidden, "多主机目标与在线会话身份或类型不匹配")
+		}
+		targets.SessionIDs = append(targets.SessionIDs, sessionID)
+		// A device has no environment tag: treat the batch as production so the owner always confirms.
+		targets.Production = true
+	}
 	connect := newSurfaceConnector(services, TargetSetConnectOptInSettingKeyForUser, TargetSetConnectProductionOptInSettingKeyForUser)
 	for _, asset := range candidates {
 		sessionID, err := resolver.liveSessionForAsset(validationCtx, asset.ID)

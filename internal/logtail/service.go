@@ -264,12 +264,12 @@ func (s *Service) executeSource(run *activeRun, source Source, semaphore chan st
 	}
 	source.SessionName = target.SessionName
 	if target.Transport == nil || !target.Transport.IsAlive() {
-		run.emitStatus(run.ctx, source, StatusFailed, "SSH transport is disconnected")
+		run.emitStatus(run.ctx, source, StatusFailed, "连接已断开，请重新连接后再试")
 		return
 	}
 	opener, ok := target.Transport.(base.ExecStreamTransport)
 	if !ok {
-		run.emitStatus(run.ctx, source, StatusFailed, "SSH transport does not support streamed exec")
+		run.emitStatus(run.ctx, source, StatusFailed, "当前连接不支持流式执行，无法跟随日志")
 		return
 	}
 	generation := target.Generation
@@ -287,7 +287,7 @@ func (s *Service) executeSource(run *activeRun, source Source, semaphore chan st
 	defer channel.Close()
 	ordered, ok := channel.(base.OrderedOutput)
 	if !ok {
-		run.emitStatus(run.ctx, source, StatusFailed, "SSH exec channel does not expose ordered output")
+		run.emitStatus(run.ctx, source, StatusFailed, "执行通道不支持有序输出，无法跟随日志")
 		return
 	}
 	if !run.emitStatus(run.ctx, source, StatusRunning, "") {
