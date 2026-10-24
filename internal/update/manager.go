@@ -29,6 +29,9 @@ type Status struct {
 	AssetSize         int64  `json:"assetSize"`
 	CanInstall        bool   `json:"canInstall"`
 	UnavailableReason string `json:"unavailableReason"`
+	// Channel names how this platform receives updates when the app cannot install them itself (see
+	// externalChannel). It is empty where in-app updates apply, and it is not a failure.
+	Channel string `json:"channel"`
 }
 
 type Result struct {
@@ -86,6 +89,12 @@ func (m *Manager) Check(ctx context.Context) Status {
 		return status
 	}
 	if err := platformSupported(m.GOOS, m.GOARCH); err != nil {
+		// Platforms that update through a store or a manual download are not a failed check, and there is
+		// nothing to ask the release API about.
+		if channel := externalChannel(m.GOOS); channel != "" {
+			status.Channel = channel
+			return status
+		}
 		return fail(err.Error())
 	}
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)

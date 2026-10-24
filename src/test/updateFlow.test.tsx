@@ -130,6 +130,16 @@ describe("updateVerdict three states and separation of available/canInstall", ()
     ).toBe("check-failed");
   });
 
+  it("external channel: platforms that update elsewhere are not a failed check", () => {
+    expect(
+      updateVerdict({
+        status: makeStatus({ available: false, version: "", assetName: "", assetSize: 0, canInstall: false, channel: "app-store" }),
+        checking: false,
+        checkError: null,
+      }),
+    ).toBe("external");
+  });
+
   it("idle and checking states", () => {
     expect(updateVerdict({ status: null, checking: false, checkError: null })).toBe("idle");
     expect(updateVerdict({ status: null, checking: true, checkError: null })).toBe("checking");
@@ -178,6 +188,24 @@ describe("UpdateCard check flow", () => {
     clickButton(mounted.container, "立即检查");
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("已是最新"));
     expect(mocks.check).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["app-store", "TestFlight"],
+    ["release", "Releases"],
+  ])("explains the %s update channel instead of reporting a failure", async (channel, hint) => {
+    mocks.check.mockResolvedValue(
+      makeStatus({ available: false, version: "", assetName: "", assetSize: 0, canInstall: false, channel }),
+    );
+    mounted = mount(createElement(UpdateCard));
+    await act(async () => {
+      await useUpdateStore.getState().check();
+    });
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes(hint));
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("不在应用内更新");
+    expect(text).not.toContain("检查失败");
+    expect([...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.includes("立即检查"))).toBe(false);
   });
 
   it("disables the button and shows checking state while a check is in flight", async () => {

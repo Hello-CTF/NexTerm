@@ -222,6 +222,21 @@ func TestCheckDegradesToUnavailableReason(t *testing.T) {
 	}
 }
 
+func TestCheckReportsAnExternalChannelInsteadOfAFailureOnMobile(t *testing.T) {
+	for goos, channel := range map[string]string{"ios": "app-store", "android": "release"} {
+		// The API address is unreachable on purpose: these platforms must not be checked over the network.
+		manager := &Manager{CurrentVersion: "1.2.4", GOOS: goos, GOARCH: "arm64", APIURL: "http://127.0.0.1:1/releases"}
+		status := manager.Check(context.Background())
+		if status.Channel != channel || status.UnavailableReason != "" || status.Available {
+			t.Fatalf("%s status = %+v, want channel %q with no failure", goos, status, channel)
+		}
+	}
+	other := (&Manager{CurrentVersion: "1.2.4", GOOS: "plan9", GOARCH: "amd64", APIURL: "http://127.0.0.1:1/releases"}).Check(context.Background())
+	if other.Channel != "" || other.UnavailableReason == "" {
+		t.Fatalf("an unknown platform must still report that it is unsupported: %+v", other)
+	}
+}
+
 func TestCheckServerModeReportsCanInstallFalse(t *testing.T) {
 	fixture := linuxFixture(t, "0.3.0", false)
 	server := fixture.server(t)

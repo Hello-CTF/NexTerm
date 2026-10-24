@@ -2694,6 +2694,7 @@ export type UpdateStatus = {
   assetSize: number;
   canInstall: boolean;
   unavailableReason: string;
+  channel: string;
 };
 
 export type VaultAutoLockRequest = {

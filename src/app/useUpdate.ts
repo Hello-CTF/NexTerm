@@ -11,6 +11,7 @@ export type UpdateVerdict =
   | "uptodate"
   | "available"
   | "unavailable"
+  | "external"
   | "check-failed";
 
 export interface UpdateInstallState {
@@ -155,6 +156,8 @@ export function updateVerdict(
   if (s.checkError) return "check-failed";
   const status = s.status;
   if (!status) return s.checking ? "checking" : "idle";
+  // Platforms that update through a store or a manual download have nothing to check; that is not a failure.
+  if (status.channel) return "external";
   if (status.available) return status.canInstall ? "available" : "unavailable";
   if (status.unavailableReason) return "check-failed";
   return "uptodate";

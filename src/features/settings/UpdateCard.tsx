@@ -21,11 +21,19 @@ function verdictBadge(verdict: UpdateVerdict): { text: string; tone: string } {
       return { text: "有更新", tone: "nx-badge-green" };
     case "unavailable":
       return { text: "有更新 · 不可安装", tone: "nx-badge-amber" };
+    case "external":
+      return { text: "不在应用内更新", tone: "" };
     case "check-failed":
       return { text: "检查失败", tone: "nx-badge-red" };
     default:
       return { text: "未检查", tone: "" };
   }
+}
+
+// externalChannelNote says where updates come from on platforms that cannot install them inside the app.
+function externalChannelNote(channel: string | undefined): string {
+  if (channel === "app-store") return "iOS / iPadOS 版本通过 TestFlight 或 App Store 更新，请在对应的应用里查看新版本。";
+  return "此平台不支持应用内更新，请到 Releases 页面下载新的安装包。";
 }
 
 export function UpdateCard() {
@@ -69,6 +77,9 @@ export function UpdateCard() {
           {status.prerelease ? " · 预发布" : ""}
         </p>
       )}
+      {verdict === "external" && (
+        <p className="mb-2 text-[12.5px] text-neutral-300">{externalChannelNote(status?.channel)}</p>
+      )}
       {blockReason && (
         <p className="mb-2 text-[12px] text-amber-300">{blockReason}</p>
       )}
@@ -80,19 +91,21 @@ export function UpdateCard() {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          className="nx-btn nx-btn-outline nx-btn-sm"
-          disabled={checking}
-          onClick={() => void update.check()}
-        >
-          {checking ? (
-            <IconLoader size={12} className="animate-spin" />
-          ) : (
-            <IconRefresh size={12} />
-          )}
-          {checking ? "正在检查…" : "立即检查"}
-        </button>
+        {verdict !== "external" && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-outline nx-btn-sm"
+            disabled={checking}
+            onClick={() => void update.check()}
+          >
+            {checking ? (
+              <IconLoader size={12} className="animate-spin" />
+            ) : (
+              <IconRefresh size={12} />
+            )}
+            {checking ? "正在检查…" : "立即检查"}
+          </button>
+        )}
         {showInstall && (
           <button
             type="button"
