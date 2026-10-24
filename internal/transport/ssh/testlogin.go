@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -226,4 +227,85 @@ func checkLoginHostKey(ctx context.Context, store HostKeyStore, host string, por
 		return &HostKeyError{Pending: true, Presented: key}
 	}
 	return &HostKeyError{Presented: key, Known: knownSameType}
+}
+
+// DescribeLoginFailure turns a test-login or reachability error into a stable
+// result kind plus a plain-language message that names the next step. It never
+// echoes the underlying error text, so credential material and file contents
+// cannot reach the UI. portOnly selects wording for TCP-only probes, where no
+// SSH protocol is involved. Kinds are the ConnectError kinds, plus
+// "credential" for local credential problems (unreadable private key, wrong
+// passphrase, missing agent) and "internal" for unclassified errors.
+func DescribeLoginFailure(err error, portOnly bool) (kind, message string) {
+	if err == nil {
+		return "", ""
+	}
+	var connectErr *ConnectError
+	if !errors.As(err, &connectErr) {
+		return "internal", "测试没有完成，请重试；如果反复出现，请查看应用日志"
+	}
+	target := "目标主机"
+	if connectErr.Host != "" {
+		target = endpointString(connectErr.Host, connectErr.Port)
+	}
+	if connectErr.Jump != "" {
+		target += "（经由跳板机 " + connectErr.Jump + "）"
+	}
+	var keyErr *HostKeyError
+	errors.As(connectErr, &keyErr)
+	switch connectErr.Kind {
+	case ErrorKindAuth:
+		if connectErr.Op == "authentication setup" {
+			return "credential", target + " 的登录凭据不可用：" + credentialProblem(connectErr.Err)
+		}
+		return "auth", target + " 已连通，但账号或凭据被拒绝。请检查用户名、密码或私钥是否正确，以及该账号是否允许登录"
+	case ErrorKindHostKeyPending:
+		fingerprint := ""
+		if keyErr != nil {
+			fingerprint = "（指纹 " + keyErr.Presented.Fingerprint + "）"
+		}
+		return string(connectErr.Kind), target + " 的主机指纹还没有被信任" + fingerprint + "，连接测试不会自动信任它。请先打开该主机的终端，核对指纹并确认后再重新测试"
+	case ErrorKindHostKeyChanged:
+		fingerprint := ""
+		if keyErr != nil {
+			fingerprint = "（新指纹 " + keyErr.Presented.Fingerprint + "）"
+		}
+		return string(connectErr.Kind), target + " 的主机指纹和上次记录的不一样" + fingerprint + "。可能是服务器重装过，也可能被人冒充，请先向管理员核对，确认无误后再在终端里选择替换"
+	case ErrorKindCanceled:
+		return string(connectErr.Kind), "已取消"
+	}
+	if portOnly {
+		switch connectErr.Kind {
+		case ErrorKindConfig:
+			return string(connectErr.Kind), "配置无效，请检查主机地址和端口"
+		case ErrorKindDNS:
+			return string(connectErr.Kind), "无法解析 " + target + " 的主机名，请检查地址是否拼写正确"
+		case ErrorKindRefused:
+			return string(connectErr.Kind), target + " 拒绝了连接，请确认服务已启动且端口正确"
+		case ErrorKindTimeout:
+			return string(connectErr.Kind), "连接 " + target + " 超时，请检查网络和防火墙"
+		case ErrorKindProxy:
+			return string(connectErr.Kind), "通过代理连接 " + target + " 失败，请检查代理设置"
+		}
+		return string(connectErr.Kind), "无法连到 " + target + "，请检查网络和防火墙"
+	}
+	return string(connectErr.Kind), connectErr.UserMessage()
+}
+
+func credentialProblem(err error) string {
+	text := ""
+	if err != nil {
+		text = err.Error()
+	}
+	switch {
+	case strings.Contains(text, "read SSH private key"):
+		return "读取不到私钥文件，请检查路径和文件权限"
+	case strings.Contains(text, "parse encrypted SSH private key"):
+		return "私钥口令不正确，或私钥格式不受支持"
+	case strings.Contains(text, "parse SSH private key"):
+		return "私钥无法识别；如果私钥设置了口令，请在凭据里补上口令"
+	case strings.Contains(text, "agent"):
+		return "SSH agent 不可用，请确认 agent 已启动并加载了密钥"
+	}
+	return "请检查资产的认证设置"
 }

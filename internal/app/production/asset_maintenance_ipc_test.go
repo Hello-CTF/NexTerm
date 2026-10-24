@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -362,7 +363,7 @@ func TestTestLoginIPCRealHandshakeFailureClasses(t *testing.T) {
 	if result := byID[okAssetID]; !result.Reachable || result.Kind != "" {
 		t.Fatalf("real handshake test login = %+v", result)
 	}
-	if result := byID[authAssetID]; result.Reachable || result.Kind != "auth" || !strings.Contains(result.Error, "认证失败") {
+	if result := byID[authAssetID]; result.Reachable || result.Kind != "auth" || !strings.Contains(result.Error, "被拒绝") {
 		t.Fatalf("auth failure test login = %+v", result)
 	}
 	if result := byID[pendingAssetID]; result.Reachable || result.Kind != "host_key_pending" {
@@ -410,7 +411,7 @@ func TestTestLoginIPCHostKeyChanged(t *testing.T) {
 	if len(batch.Results) != 1 || batch.Results[0].Reachable || batch.Results[0].Kind != "host_key_changed" {
 		t.Fatalf("rotated key test login = %+v", batch.Results)
 	}
-	if !strings.Contains(batch.Results[0].Error, "不一致") {
+	if !strings.Contains(batch.Results[0].Error, "不一样") {
 		t.Fatalf("changed key error lacks mismatch guidance: %q", batch.Results[0].Error)
 	}
 	if listed := knownHostTestFingerprints(t, production); len(listed) != 1 || listed[0] != gossh.FingerprintSHA256(firstKey.PublicKey()) {
@@ -507,5 +508,40 @@ func TestTestLoginIPCValidation(t *testing.T) {
 	response = dispatchHostKeyTest(t, production, "exec_batch_test_login", `{"args":`+string(payload)+`}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("oversized batch response = %+v", response)
+	}
+}
+
+func TestTestLoginIPCPortOnlyAssetsAreNotReportedAsVerified(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	port := listener.Addr().(*net.TCPAddr).Port
+	response := dispatchHostKeyTest(t, production, "asset_create",
+		`{"args":{"kind":"mysql","name":"login-mysql","host":"127.0.0.1","port":`+itoa(port)+`,"username":"root"}}`)
+	var asset assetDTO
+	requireStoreTestResponse(t, response, &asset)
+	closed := dispatchHostKeyTest(t, production, "asset_create",
+		`{"args":{"kind":"redis","name":"login-redis","host":"127.0.0.1","port":`+itoa(closedProbePort(t))+`}}`)
+	var closedAsset assetDTO
+	requireStoreTestResponse(t, closed, &closedAsset)
+
+	byID := testLoginResultsByID(t, dispatchTestLoginBatch(t, production, 2000, asset.ID, closedAsset.ID))
+	if result := byID[asset.ID]; !result.Reachable || result.Kind != loginKindPortOnly || !strings.Contains(result.Error, "没有验证账号") {
+		t.Fatalf("port-only test login = %+v", result)
+	}
+	if result := byID[closedAsset.ID]; result.Reachable || result.Kind != "refused" || strings.Contains(result.Error, "SSH") {
+		t.Fatalf("closed port-only test login = %+v", result)
 	}
 }

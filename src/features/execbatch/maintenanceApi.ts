@@ -24,6 +24,6 @@ export const maintenanceApi = {
   },
   deployPublicKey: (request: DeployPublicKeyRequest): Promise<ExecBatch> =>
     call("exec_batch_deploy_public_key", request),
-  testLogin: (assetIds: string[], timeoutMs = 5000, maxConcurrent = 8): Promise<AssetProbeBatchDTO> =>
+  testLogin: (assetIds: string[], timeoutMs = 10000, maxConcurrent = 8): Promise<AssetProbeBatchDTO> =>
     call("exec_batch_test_login", { args: { assetIds, timeoutMs, maxConcurrent } }),
 };

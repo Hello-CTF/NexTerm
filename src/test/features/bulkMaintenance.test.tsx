@@ -220,56 +220,91 @@ describe("BulkMaintenancePanel", () => {
     const offline = mounted!.container.querySelector('[data-asset-id="b"]');
     expect(offline?.textContent).toContain("没有可复用的已连接 SSH 会话");
 
-    clickButton(mounted!.container, "test login / 连接测试");
+    clickButton(mounted!.container, "开始连接测试");
     await flushUntil(() => mocks.testLogin.mock.calls.length === 1
-      && (mounted?.container.textContent.includes("SSH 握手成功（12 ms）") ?? false));
+      && (mounted?.container.textContent.includes("已验证登录") ?? false));
     expect(mocks.testLogin).toHaveBeenCalledWith(["a", "b"]);
-    const loginResults = mounted!.container.querySelector('[aria-label="test login 逐目标结果"]');
-    expect(loginResults?.querySelector('[data-asset-id="a"]')?.textContent).toContain("SSH 握手成功（12 ms）");
-    expect(loginResults?.querySelector('[data-asset-id="b"]')?.textContent).toContain("连接被拒绝：connection refused");
+    const loginResults = mounted!.container.querySelector('[aria-label="连接测试结果"]');
+    expect(loginResults?.querySelector('[data-asset-id="a"]')?.textContent).toContain("已验证登录");
+    expect(loginResults?.querySelector('[data-asset-id="b"]')?.textContent).toContain("端口不通");
   });
 
-  it("presents each test-login failure class accurately instead of raw kinds", async () => {
+  it("classifies every test-login outcome with a plain status and keeps the backend next step", async () => {
     const more = [asset("c", "host-c", 30), asset("d", "host-d", 40), asset("e", "host-e", 50), asset("f", "host-f", 60)];
     mocks.assetList.mockResolvedValue([...assets, ...more].map((item) => ({ ...item })));
     mocks.testLogin.mockResolvedValue({
       results: [
-        { assetId: "a", reachable: false, kind: "network", error: "dial tcp: no route to host", durationMs: 5 },
-        { assetId: "b", reachable: false, kind: "host_key_changed", error: "host key mismatch", durationMs: 6 },
-        { assetId: "c", reachable: false, kind: "auth", error: "permission denied", durationMs: 7 },
-        { assetId: "d", reachable: false, kind: "vault", error: "凭据库已锁定", durationMs: 8 },
-        { assetId: "e", reachable: false, kind: "config", error: "asset host is required", durationMs: 9 },
-        {
-          assetId: "f",
-          reachable: false,
-          kind: "host_key_pending",
-          error: "首次连接 f.example.com:22 需要确认主机指纹（SHA256:pending），请与服务器管理员核对后确认是否信任该主机",
-          durationMs: 10,
-        },
+        { assetId: "a", reachable: false, kind: "network", error: "无法连到 a:22，请检查网络和防火墙", durationMs: 5 },
+        { assetId: "b", reachable: false, kind: "host_key_changed", error: "指纹和上次记录的不一样", durationMs: 6 },
+        { assetId: "c", reachable: false, kind: "auth", error: "账号或凭据被拒绝", durationMs: 7 },
+        { assetId: "d", reachable: false, kind: "vault", error: "请先解锁密码库", durationMs: 8 },
+        { assetId: "e", reachable: false, kind: "config", error: "资产配置不完整或无效", durationMs: 9 },
+        { assetId: "f", reachable: false, kind: "host_key_pending", error: "主机指纹还没有被信任（指纹 SHA256:pending）", durationMs: 10 },
       ],
     });
     await mountPanel();
     for (const id of ["a", "b", "c", "d", "e", "f"]) click(target(id));
-    clickButton(mounted!.container, "test login / 连接测试");
+    clickButton(mounted!.container, "开始连接测试");
     await flushUntil(() => mocks.testLogin.mock.calls.length === 1
-      && (mounted?.container.textContent.includes("凭据库不可用：凭据库已锁定") ?? false));
-    const loginResults = mounted!.container.querySelector('[aria-label="test login 逐目标结果"]');
-    expect(loginResults?.querySelector('[data-asset-id="a"]')?.textContent).toContain("网络不可达：dial tcp: no route to host");
-    expect(loginResults?.querySelector('[data-asset-id="b"]')?.textContent).toContain("主机密钥已变更：host key mismatch");
-    expect(loginResults?.querySelector('[data-asset-id="c"]')?.textContent).toContain("认证失败：permission denied");
-    expect(loginResults?.querySelector('[data-asset-id="d"]')?.textContent).toContain("凭据库不可用：凭据库已锁定");
-    expect(loginResults?.querySelector('[data-asset-id="e"]')?.textContent).toContain("配置无效：asset host is required");
-    // A pending host key keeps its own class with the actionable backend guidance; the
-    // panel never auto-accepts it (the result row offers no trust action).
-    const pendingRow = loginResults?.querySelector('[data-asset-id="f"]');
-    expect(pendingRow?.textContent).toContain("主机密钥待确认：首次连接 f.example.com:22 需要确认主机指纹（SHA256:pending），请与服务器管理员核对后确认是否信任该主机");
-    expect(pendingRow?.querySelector("button")).toBeNull();
-    for (const raw of ["network：", "host_key_changed：", "host_key_pending：", "auth：", "vault：", "config："]) {
-      expect(mounted!.container.textContent).not.toContain(raw);
+      && (mounted?.container.textContent.includes("需确认指纹") ?? false));
+    const loginResults = mounted!.container.querySelector('[aria-label="连接测试结果"]');
+    const row = (id: string) => loginResults?.querySelector(`[data-asset-id="${id}"]`);
+    expect(row("a")?.textContent).toContain("网络不通");
+    expect(row("b")?.textContent).toContain("指纹变了");
+    expect(row("b")?.getAttribute("data-tone")).toBe("warn");
+    expect(row("c")?.textContent).toContain("登录被拒绝");
+    expect(row("d")?.textContent).toContain("密码库未解锁");
+    expect(row("d")?.textContent).toContain("请先解锁密码库");
+    expect(row("e")?.textContent).toContain("配置有误");
+    expect(row("f")?.textContent).toContain("需确认指纹");
+    expect(row("f")?.textContent).toContain("SHA256:pending");
+    // The panel never offers to trust a host key from a test result.
+    expect(row("f")?.querySelector("button")).toBeNull();
+    expect(loginResults?.textContent).toContain("共 6 个 · 已验证 0 · 需确认指纹 2 · 失败 4");
+    for (const raw of ["network", "host_key_changed", "host_key_pending", "vault"]) {
+      expect(loginResults?.textContent).not.toContain(raw);
     }
-    // SSH assets get a real handshake, not a "TCP reachable / unauthenticated" label.
-    expect(mounted!.container.textContent).toContain("真实 host-key+凭据握手");
-    expect(mounted!.container.textContent).not.toContain("不代表凭据已完成认证");
+  });
+
+  it("never shows a port-only result as a verified login", async () => {
+    const database = { ...asset("c", "db-c", 30), kind: "mysql" } as Asset;
+    mocks.assetList.mockResolvedValue([...assets, database].map((item) => ({ ...item })));
+    const { describeLoginResult } = await import("../../features/execbatch/BulkMaintenancePanel");
+    const portOnly = describeLoginResult(
+      { assetId: "c", reachable: true, kind: "port_only", error: "仅确认端口可以连通，没有验证账号和密码", durationMs: 3 },
+      "mysql",
+      "db-c",
+    );
+    expect(portOnly.tone).toBe("partial");
+    expect(portOnly.status).toBe("仅端口通");
+    expect(portOnly.detail).toContain("没有验证账号和密码");
+    // Even without the backend marker, a non-SSH reachable result is not a verified login.
+    expect(describeLoginResult({ assetId: "c", reachable: true, durationMs: 3 }, "redis", "r").tone).toBe("partial");
+    expect(describeLoginResult({ assetId: "a", reachable: true, durationMs: 3 }, "ssh", "a").tone).toBe("ok");
+  });
+
+  it("retries only unresolved failures and merges the new results in place", async () => {
+    mocks.testLogin
+      .mockResolvedValueOnce({
+        results: [
+          { assetId: "a", reachable: true, durationMs: 4 },
+          { assetId: "b", reachable: false, kind: "timeout", error: "连接 b:22 超时，请检查网络和防火墙", durationMs: 10000 },
+        ],
+      })
+      .mockResolvedValueOnce({ results: [{ assetId: "b", reachable: true, durationMs: 8 }] });
+    await mountPanel();
+    click(target("a"));
+    click(target("b"));
+    clickButton(mounted!.container, "开始连接测试");
+    await flushUntil(() => mounted?.container.textContent.includes("重试未通过项（1）") ?? false);
+    clickButton(mounted!.container, "重试未通过项（1）");
+    await flushUntil(() => mocks.testLogin.mock.calls.length === 2
+      && (mounted?.container.textContent.includes("已验证 2") ?? false));
+    expect(mocks.testLogin).toHaveBeenLastCalledWith(["b"]);
+    const loginResults = mounted!.container.querySelector('[aria-label="连接测试结果"]');
+    expect(loginResults?.querySelector('[data-asset-id="a"]')?.textContent).toContain("已验证登录");
+    expect(loginResults?.querySelector('[data-asset-id="b"]')?.textContent).toContain("已验证登录");
+    expect(mounted!.container.textContent).not.toContain("重试未通过项");
   });
 
   it("requires production confirmation before retrying deploy with bound hashes", async () => {

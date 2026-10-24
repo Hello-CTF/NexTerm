@@ -203,10 +203,10 @@ func shellSingleQuote(value string) string {
 
 func (s *terminalCommandService) testLoginAssetBatch(ctx context.Context, input assetProbeBatchRequest) (assetProbeBatchDTO, error) {
 	if len(input.AssetIDs) == 0 {
-		return assetProbeBatchDTO{}, ipc.BadParam(fmt.Errorf("asset test login requires at least one asset id"))
+		return assetProbeBatchDTO{}, ipc.BadParam(fmt.Errorf("连接测试至少需要选择一个资产"))
 	}
 	if len(input.AssetIDs) > maxAssetProbeBatch {
-		return assetProbeBatchDTO{}, ipc.BadParam(fmt.Errorf("asset test login is limited to %d assets", maxAssetProbeBatch))
+		return assetProbeBatchDTO{}, ipc.BadParam(fmt.Errorf("连接测试一次最多 %d 个资产", maxAssetProbeBatch))
 	}
 	timeout := clampProbeTimeout(input.TimeoutMS, 5*time.Second)
 	limit := input.MaxConcurrent
@@ -240,7 +240,7 @@ func (s *terminalCommandService) testLoginAssetBatch(ctx context.Context, input 
 	}
 	for index := range targets {
 		if ctx.Err() != nil {
-			results[index] = canceledAssetProbeResult(targets[index].assetID)
+			results[index] = canceledLoginResult(targets[index].assetID)
 			continue
 		}
 		jobs <- index
@@ -253,7 +253,7 @@ func (s *terminalCommandService) testLoginAssetBatch(ctx context.Context, input 
 func (s *terminalCommandService) testLoginAssetTarget(ctx context.Context, target assetProbeTarget, timeout time.Duration) (result assetProbeResultDTO) {
 	result.AssetID = target.assetID
 	if target.failure != nil {
-		return *target.failure
+		return localizedProbeFailure(*target.failure)
 	}
 	started := time.Now()
 	defer func() { result.DurationMS = time.Since(started).Milliseconds() }()
@@ -263,37 +263,75 @@ func (s *terminalCommandService) testLoginAssetTarget(ctx context.Context, targe
 	}
 	if target.options.Host == "" {
 		result.Kind = "config"
-		result.Error = "asset host is required"
+		result.Error = "资产没有填写主机地址，请先补全后再测试"
 		return result
 	}
 	var err error
+	portOnly := false
 	switch target.kind {
 	case session.KindSSH, session.KindDocker:
 		err = s.testLoginSSHAsset(ctx, target, timeout)
 	case session.KindWinRM, "mysql", "postgres", "redis":
+		portOnly = true
 		err = s.probeSSHReachability(ctx, target, timeout)
 	default:
 		result.Kind = "unsupported"
-		result.Error = fmt.Sprintf("asset kind %s cannot be probed", target.kind)
+		result.Error = "这类资产暂不支持连接测试"
 		return result
 	}
 	if err == nil {
 		result.Reachable = true
+		if portOnly {
+			// Reachable without a login check; the UI must not present this as authenticated.
+			result.Kind = loginKindPortOnly
+			result.Error = "仅确认端口可以连通，没有验证账号和密码"
+		}
 		return result
 	}
 	if ctx.Err() != nil {
-		return canceledAssetProbeResult(target.assetID)
+		return canceledLoginResult(target.assetID)
 	}
 	var connectErr *ssh.ConnectError
 	if errors.As(err, &connectErr) {
-		result.Kind = string(connectErr.Kind)
-		result.Error = connectErr.UserMessage()
+		result.Kind, result.Error = ssh.DescribeLoginFailure(connectErr, portOnly)
 		slog.Warn("asset test login failed", "asset", target.assetID, "kind", result.Kind, "error", connectErr)
 		return result
 	}
-	result.Kind = probeFailureKind(err)
-	result.Error = err.Error()
+	result.Kind, result.Error = describeNonConnectLoginFailure(err)
+	slog.Warn("asset test login failed", "asset", target.assetID, "kind", result.Kind, "error", err)
 	return result
+}
+
+// loginKindPortOnly marks a reachable result that did not verify credentials.
+const loginKindPortOnly = "port_only"
+
+// describeNonConnectLoginFailure maps failures that happen before any network
+// work (credential lookup, asset configuration) to fixed user-facing text.
+// The underlying error is logged by the caller, never returned.
+func describeNonConnectLoginFailure(err error) (kind, message string) {
+	switch probeFailureKind(err) {
+	case "vault":
+		return "vault", "密码库还没有解锁，或这条资产绑定的凭据读不出来。请先解锁密码库，再检查资产绑定的凭据"
+	case "config":
+		return "config", "资产配置不完整或无效，请检查主机、端口、用户名和认证方式"
+	case "unsupported":
+		return "unsupported", "当前环境不支持连接测试"
+	case "not_found":
+		return "not_found", "资产不存在，可能已被删除，请刷新后重试"
+	}
+	return "internal", "测试没有完成，请重试；如果反复出现，请查看应用日志"
+}
+
+// localizedProbeFailure rewrites pre-resolved failures from the shared probe
+// resolver with the same wording the test-login results use.
+func localizedProbeFailure(failure assetProbeResultDTO) assetProbeResultDTO {
+	switch failure.Kind {
+	case "not_found":
+		failure.Error = "资产不存在，可能已被删除，请刷新后重试"
+	case "config":
+		failure.Error = "资产配置不完整或无效，请检查主机、端口、用户名和认证方式"
+	}
+	return failure
 }
 
 // testLoginSSHAsset runs a real host-key and credential handshake without
@@ -302,7 +340,7 @@ func (s *terminalCommandService) testLoginAssetTarget(ctx context.Context, targe
 // ssh.TestLogin check never persists trust.
 func (s *terminalCommandService) testLoginSSHAsset(ctx context.Context, target assetProbeTarget, timeout time.Duration) error {
 	if s.sshConnector == nil {
-		return ipc.NewError(ipc.CodeUnsupported, "SSH test login is unavailable")
+		return ipc.NewError(ipc.CodeUnsupported, "SSH 连接测试不可用")
 	}
 	config, err := s.sshConnector.sshConfig(ctx, target.options, 0, []string{target.assetID})
 	if err != nil {
@@ -311,4 +349,8 @@ func (s *terminalCommandService) testLoginSSHAsset(ctx context.Context, target a
 	stripProbeAgentForwarding(&config)
 	config.ConnectTimeout = timeout
 	return ssh.TestLogin(ctx, config)
+}
+
+func canceledLoginResult(assetID string) assetProbeResultDTO {
+	return assetProbeResultDTO{AssetID: assetID, Kind: "canceled", Error: "已取消，没有测试"}
 }

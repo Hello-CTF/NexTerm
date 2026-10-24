@@ -9,6 +9,7 @@ import {
 } from "../../ipc/execBatchApi";
 import { getProductionChallenge, type ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
+import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { IconClose, IconEdit, IconKey, IconPlay, IconPlug, IconServer } from "../../ui/icons";
 import { assetTagValues } from "../explorer/assetSearch";
@@ -17,6 +18,7 @@ import { TargetSetPicker, type TargetSetPickerTarget } from "./TargetSetPicker";
 import {
   maintenanceApi,
   type AssetBulkEditIPCRequest,
+  type AssetProbeResultDTO,
   type DeployPublicKeyRequest,
 } from "./maintenanceApi";
 
@@ -56,38 +58,88 @@ function markerLines(result: ExecBatchResult): Set<string> {
   return new Set(result.stdout.split(/\r?\n/).map((line) => line.trim().split(/\s+/, 1)[0]));
 }
 
-// Accurate per-class labels for the real handshake probe (network/host-key/auth/vault/config);
-// anything unmapped stays visible as the raw kind instead of being mislabeled.
-const PROBE_KIND_LABELS: Record<string, string> = {
-  network: "网络不可达",
-  unreachable: "主机不可达",
-  refused: "连接被拒绝",
-  dns: "DNS 解析失败",
-  timeout: "连接超时",
-  host_key_pending: "主机密钥待确认",
-  host_key_changed: "主机密钥已变更",
-  auth: "认证失败",
-  vault: "凭据库不可用",
-  config: "配置无效",
-  proxy: "跳板/代理连接失败",
-  handshake: "握手失败",
-  canceled: "已取消",
-  not_found: "资产不存在",
-  unsupported: "不支持探测",
-  internal: "内部错误",
+type LoginTone = "ok" | "partial" | "warn" | "fail";
+
+type LoginResult = {
+  assetId: string;
+  label: string;
+  tone: LoginTone;
+  status: string;
+  detail: string;
+  retryable: boolean;
 };
 
-function probeFailureLabel(kind: string | undefined): string {
-  if (!kind) return "连接失败";
-  return PROBE_KIND_LABELS[kind] ?? `连接失败（${kind}）`;
+// Status label, tone and retry eligibility per backend result kind. The backend message
+// already carries the next step, so the label only names the outcome.
+const LOGIN_FAILURE_KINDS: Record<string, { status: string; tone: LoginTone; retryable: boolean }> = {
+  host_key_pending: { status: "需确认指纹", tone: "warn", retryable: true },
+  host_key_changed: { status: "指纹变了", tone: "warn", retryable: true },
+  auth: { status: "登录被拒绝", tone: "fail", retryable: true },
+  credential: { status: "凭据不可用", tone: "fail", retryable: true },
+  vault: { status: "密码库未解锁", tone: "fail", retryable: true },
+  refused: { status: "端口不通", tone: "fail", retryable: true },
+  timeout: { status: "连接超时", tone: "fail", retryable: true },
+  dns: { status: "域名解析失败", tone: "fail", retryable: true },
+  unreachable: { status: "网络不通", tone: "fail", retryable: true },
+  network: { status: "网络不通", tone: "fail", retryable: true },
+  proxy: { status: "代理连接失败", tone: "fail", retryable: true },
+  handshake: { status: "协议握手失败", tone: "fail", retryable: true },
+  config: { status: "配置有误", tone: "fail", retryable: false },
+  canceled: { status: "已取消", tone: "fail", retryable: true },
+  not_found: { status: "资产不存在", tone: "fail", retryable: false },
+  unsupported: { status: "不支持测试", tone: "fail", retryable: false },
+  internal: { status: "测试出错", tone: "fail", retryable: true },
+};
+
+const LOGIN_TONE_CLASS: Record<LoginTone, string> = {
+  ok: "text-green-300",
+  partial: "text-amber-300",
+  warn: "text-amber-300",
+  fail: "text-red-300",
+};
+
+export function describeLoginResult(
+  result: AssetProbeResultDTO,
+  assetKind: string | undefined,
+  label: string,
+): LoginResult {
+  const base = { assetId: result.assetId, label };
+  if (result.reachable) {
+    if (result.kind === "port_only" || (assetKind !== "ssh" && assetKind !== "docker" && assetKind !== "local")) {
+      return {
+        ...base, tone: "partial", status: "仅端口通", retryable: false,
+        detail: `${result.error || "仅确认端口可以连通，没有验证账号和密码"}（${result.durationMs} ms）`,
+      };
+    }
+    if (assetKind === "local") {
+      return { ...base, tone: "ok", status: "本机可用", retryable: false, detail: "本机终端无需登录" };
+    }
+    return {
+      ...base, tone: "ok", status: "已验证登录", retryable: false,
+      detail: `能连上，主机指纹和登录凭据都验证通过（${result.durationMs} ms）`,
+    };
+  }
+  const known = result.kind ? LOGIN_FAILURE_KINDS[result.kind] : undefined;
+  return {
+    ...base,
+    tone: known?.tone ?? "fail",
+    status: known?.status ?? "连接失败",
+    retryable: known?.retryable ?? true,
+    detail: result.error || "没有拿到失败原因，请重试",
+  };
 }
 
-// SSH and Docker assets get a real host-key+credential handshake (M13); other kinds keep the
-// TCP reachability probe, which says nothing about authentication.
-function probeSuccessLabel(assetKind: string | undefined): string {
-  if (assetKind === "ssh" || assetKind === "docker") return "SSH 握手成功";
-  if (assetKind === "local") return "本地可用";
-  return "TCP 连接可达";
+export function summarizeLoginResults(results: readonly LoginResult[]): string {
+  const count = (tone: LoginTone) => results.filter((result) => result.tone === tone).length;
+  const parts = [`共 ${results.length} 个`, `已验证 ${count("ok")}`];
+  if (count("partial") > 0) parts.push(`仅端口通 ${count("partial")}`);
+  if (count("warn") > 0) parts.push(`需确认指纹 ${count("warn")}`);
+  parts.push(`失败 ${count("fail")}`);
+  return parts.join(" · ");
+}
+
+function loginResultsText(results: readonly LoginResult[]): string {
+  return results.map((result) => `${result.label}\t${result.status}\t${result.detail}`).join("\n");
 }
 
 function deployResult(result: ExecBatchResult): { ok: boolean; detail: string } {
@@ -120,6 +172,48 @@ function MaintenanceResults({ title, results }: { title: string; results: Mainte
   );
 }
 
+function LoginResults({
+  results,
+  busy,
+  onRetry,
+}: {
+  results: LoginResult[];
+  busy: boolean;
+  onRetry: () => void;
+}) {
+  const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
+  const retryable = results.filter((result) => result.tone !== "ok" && result.tone !== "partial" && result.retryable).length;
+  const copy = async () => {
+    try {
+      await copyText(loginResultsText(results));
+      setCopied("ok");
+    } catch {
+      setCopied("failed");
+    }
+  };
+  return (
+    <div className="mt-2 rounded border border-neutral-800/70 px-2 py-1.5" aria-label="连接测试结果">
+      <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px]">
+        <span className="font-medium text-neutral-300" role="status">{summarizeLoginResults(results)}</span>
+        <span className="flex-1" />
+        {retryable > 0 && (
+          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onRetry}>重试未通过项（{retryable}）</button>
+        )}
+        <button type="button" className="nx-btn nx-btn-sm" onClick={() => void copy()}>
+          {copied === "ok" ? "已复制" : copied === "failed" ? "复制失败" : "复制结果"}
+        </button>
+      </div>
+      {results.map((result) => (
+        <div key={result.assetId} className="flex items-start gap-2 border-t border-neutral-800/50 py-1.5 text-[11px] first:border-t-0" data-asset-id={result.assetId} data-tone={result.tone}>
+          <span className="w-36 shrink-0 truncate text-neutral-300" title={result.assetId}>{result.label}</span>
+          <span className={`w-20 shrink-0 ${LOGIN_TONE_CLASS[result.tone]}`}>{result.status}</span>
+          <span className="min-w-0 flex-1 whitespace-pre-wrap break-all text-neutral-400">{result.detail}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionInfo[]; onClose?: () => void }) {
   const qc = useQueryClient();
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
@@ -132,7 +226,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
   const [error, setError] = useState<string | null>(null);
   const [editResults, setEditResults] = useState<MaintenanceResult[]>([]);
   const [deployResults, setDeployResults] = useState<MaintenanceResult[]>([]);
-  const [loginResults, setLoginResults] = useState<MaintenanceResult[]>([]);
+  const [loginResults, setLoginResults] = useState<LoginResult[]>([]);
   const [groupChoice, setGroupChoice] = useState("keep");
   const [jumpChoice, setJumpChoice] = useState("keep");
   const [credentialChoice, setCredentialChoice] = useState("keep");
@@ -300,11 +394,10 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
     });
   };
 
-  const testLogin = async () => {
+  const testLogin = async (retryOnly = false) => {
     if (busy) return;
     setError(null);
-    setLoginResults([]);
-    if (selectedAssets.length === 0) {
+    if (selectedAssets.length === 0 && !retryOnly) {
       setError("请至少选择一个 SSH 资产");
       return;
     }
@@ -312,20 +405,23 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
       setError(`每次最多维护 ${MAX_TARGETS} 个资产`);
       return;
     }
+    const retryIds = new Set(loginResults.filter((result) => result.tone !== "ok" && result.tone !== "partial" && result.retryable).map((result) => result.assetId));
+    const ids = retryOnly ? [...retryIds] : selectedAssets.map((asset) => asset.id);
+    if (ids.length === 0) return;
+    if (!retryOnly) setLoginResults([]);
     setBusy("login");
     try {
-      const response = await maintenanceApi.testLogin(selectedAssets.map((asset) => asset.id));
-      setLoginResults(response.results.map((result) => {
-        const asset = assets.find((candidate) => candidate.id === result.assetId);
-        return {
-          assetId: result.assetId,
-          label: resultLabel(result.assetId),
-          ok: result.reachable,
-          detail: result.reachable
-            ? `${probeSuccessLabel(asset?.kind)}（${result.durationMs} ms）`
-            : `${probeFailureLabel(result.kind)}：${result.error || "不可达"}`,
-        };
-      }));
+      const response = await maintenanceApi.testLogin(ids);
+      const fresh = response.results.map((result) => describeLoginResult(
+        result,
+        assets.find((candidate) => candidate.id === result.assetId)?.kind,
+        resultLabel(result.assetId),
+      ));
+      setLoginResults((current) => {
+        if (!retryOnly) return fresh;
+        const byId = new Map(fresh.map((result) => [result.assetId, result]));
+        return current.map((result) => byId.get(result.assetId) ?? result);
+      });
     } catch (cause) {
       setError(describeError(cause));
     } finally {
@@ -428,12 +524,16 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
         </details>
 
         <details className="rounded border border-neutral-800/70 p-2.5">
-          <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconPlug size={12} className="mr-1 inline" />test login</summary>
-          <div className="mt-2 text-[10px] text-neutral-500">SSH 与 Docker 资产执行真实 host-key+凭据握手（不注册会话、不自动接受未知主机密钥）；其他资产仅 TCP 可达性探测，不代表凭据已认证。</div>
+          <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconPlug size={12} className="mr-1 inline" />连接测试</summary>
+          <div className="mt-2 text-[10px] text-neutral-500">
+            检查所选主机能不能连上并登录：会核对主机指纹和账号凭据，但不会打开终端，也不会执行任何命令。
+            遇到没信任过的主机指纹时不会自动信任，请先到终端里核对并确认，再回来重新测试。
+            只确认了端口能连通的资产会标为“仅端口通”，说明账号密码还没有验证。
+          </div>
           <button type="button" className="nx-btn mt-3" disabled={busy !== null} onClick={() => void testLogin()}>
-            {busy === "login" ? "正在测试…" : "test login / 连接测试"}
+            {busy === "login" ? "正在测试…（每台最多等待 10 秒）" : "开始连接测试"}
           </button>
-          {loginResults.length > 0 && <MaintenanceResults title="test login 逐目标结果" results={loginResults} />}
+          {loginResults.length > 0 && <LoginResults results={loginResults} busy={busy !== null} onRetry={() => void testLogin(true)} />}
         </details>
       </div>
 
