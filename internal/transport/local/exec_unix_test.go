@@ -58,7 +58,9 @@ func TestExecTimeoutKillsProcessTree(t *testing.T) {
 	transport := unixTransport(t)
 	pidPath := filepath.Join(t.TempDir(), "child.pid")
 	command := fmt.Sprintf("sleep 1000 & child=$!; printf '%%s' \"$child\" > %s; wait \"$child\"", shellQuote(pidPath))
-	_, err := transport.Exec(context.Background(), command, base.ExecOptions{Timeout: 400 * time.Millisecond})
+	// The timeout must outlast a loaded machine starting the shell and writing the PID file, or the test
+	// would time out before the child it needs to track exists.
+	_, err := transport.Exec(context.Background(), command, base.ExecOptions{Timeout: 3 * time.Second})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout error = %v", err)
 	}

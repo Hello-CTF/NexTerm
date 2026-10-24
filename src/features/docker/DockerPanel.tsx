@@ -143,6 +143,11 @@ function TableQueryBody({
   return <>{children}</>;
 }
 
+// Docker refuses to remove a container that is running, paused or restarting, so only settled ones are offered.
+function canRemoveContainer(c: ContainerSummary): boolean {
+  return c.state === "exited" || c.state === "created" || c.state === "dead";
+}
+
 function isUntaggedImage(i: ImageSummary): boolean {
   return !(i.repository && i.repository !== "<none>");
 }
@@ -469,6 +474,12 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     if (!keys.length || bulkBusy) return;
     const isContainer = tab === "containers";
     const label = isContainer ? "容器" : "镜像";
+    const removableContainers = isContainer ? cRows.filter((c) => picked.has(c.id) && canRemoveContainer(c)) : [];
+    const skippedContainers = isContainer ? keys.length - removableContainers.length : 0;
+    if (isContainer && removableContainers.length === 0) {
+      pushToast("info", "选中的容器还没有停止，请先停止后再删除");
+      return;
+    }
     const imageTargets = isContainer ? [] : iRows.filter((i) => picked.has(imageKey(i)));
     const untaggedCount = imageTargets.filter(isUntaggedImage).length;
     let consequence: string;
@@ -481,17 +492,18 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     } else {
       consequence = "无标签镜像的本体将被删除；其余镜像只删除对应标签，但如果删除的是最后一个标签，镜像本体也会被删除";
     }
-    if (!(await ask(`删除选中的 ${keys.length} 个${label}？\n\n${consequence}`, { kind: "warning" })))
+    const count = isContainer ? removableContainers.length : keys.length;
+    const skippedNote = skippedContainers > 0 ? `\n\n另有 ${skippedContainers} 个容器还没有停止，不会被删除；请先停止它们。` : "";
+    if (!(await ask(`删除选中的 ${count} 个${label}？\n\n${consequence}${skippedNote}`, { kind: "warning" })))
       return;
 
     setBulkBusy(true);
-    const targets = isContainer
-      ? cRows.filter((c) => picked.has(c.id))
-      : imageTargets;
+    const targets = isContainer ? removableContainers : imageTargets;
 
     if (isContainer) {
+      const removing = new Set(removableContainers.map((c) => c.id));
       qc.setQueryData<ContainerSummary[]>(["docker-ps", sessionId], (old) =>
-        (old ?? []).filter((c) => !picked.has(c.id)),
+        (old ?? []).filter((c) => !removing.has(c.id)),
       );
     } else {
       qc.setQueryData<ImageSummary[]>(["docker-images", sessionId], (old) =>
@@ -872,14 +884,16 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                           <IconPlay size={12} />
                         </button>
                       )}
-                      <button
-                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7 is-danger"
-                        title="删除"
-                        disabled={pending.has(c.id)}
-                        onClick={() => void act(c, "remove")}
-                      >
-                        <IconTrash size={13} />
-                      </button>
+                      {canRemoveContainer(c) && (
+                        <button
+                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7 is-danger"
+                          title="删除"
+                          disabled={pending.has(c.id)}
+                          onClick={() => void act(c, "remove")}
+                        >
+                          <IconTrash size={13} />
+                        </button>
+                      )}
                     </span>
                   </td>
                 </tr>

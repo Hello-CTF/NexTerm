@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { flush, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({ transcriptRead: vi.fn() }));
 
@@ -120,7 +120,7 @@ describe("TranscriptReplayView", () => {
     expect(terminal.resets).toBe(1);
     expect(terminal.resizes).toEqual([{ cols: 80, rows: 24 }]);
     expect(writtenText(terminal)).toBe("hello ");
-    expect(mocks.transcriptRead).toHaveBeenCalledWith("t-1", 0, 4 * 1024 * 1024);
+    expect(mocks.transcriptRead).toHaveBeenCalledWith("t-1", 0, 1024 * 1024);
     const clock = mounted.container.querySelector("[data-testid='replay-clock']");
     expect(clock?.textContent).toBe("00:00 / 00:01");
   });
@@ -151,11 +151,12 @@ describe("TranscriptReplayView", () => {
     });
 
     mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
-    await flush();
+    // The pages are separated by a macrotask yield, so wait for the data instead of counting flushes.
+    await flushUntil(() => (terminalMocks.instances[0]?.writes.reduce((total, data) => total + data.length, 0) ?? 0) >= 7);
 
     expect(mocks.transcriptRead).toHaveBeenCalledTimes(2);
-    expect(mocks.transcriptRead).toHaveBeenNthCalledWith(1, "t-1", 0, 4 * 1024 * 1024);
-    expect(mocks.transcriptRead).toHaveBeenNthCalledWith(2, "t-1", 2, 4 * 1024 * 1024);
+    expect(mocks.transcriptRead).toHaveBeenNthCalledWith(1, "t-1", 0, 1024 * 1024);
+    expect(mocks.transcriptRead).toHaveBeenNthCalledWith(2, "t-1", 2, 1024 * 1024);
     const terminal = terminalMocks.instances[0];
     expect(terminal.writes.flatMap((data) => Array.from(data))).toEqual([0, 1, 2, 65, 66, 67, 255]);
   });

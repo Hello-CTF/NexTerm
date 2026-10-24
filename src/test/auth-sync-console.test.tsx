@@ -528,13 +528,21 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     openDetails();
     await flushUntil(() => text().includes("用本机副本修复"));
     clickButton(mounted.container, "用本机副本修复");
-    await flushUntil(() => mocks.syncPush.mock.calls.length === 1);
+    // Real WebCrypto settles on its own schedule; waiting on a mock inside one act scope keeps every state
+    // update it triggers inside act, however long it takes under load.
+    await act(async () => {
+      await vi.waitFor(() => expect(mocks.syncPush).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+    });
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush.mock.calls[0][0]).toBe("head-1");
     expect(await openPushed(mocks.syncPush.mock.calls[0][1][0], "asset")).toMatchObject({ id: "a-1", name: "web-01" });
-    await flushUntil(() => text().includes("已一致"));
+    await flushUntil(() => text().includes("已一致"), 400);
     expect(text()).not.toContain("无法解密");
+    // Drain the trailing round so no update lands after the test has ended.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
   });
 
   it.each(["content", "deletion", "kind"] as const)("does not repair from a local copy whose %s changed after confirmation", async (change) => {

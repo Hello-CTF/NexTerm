@@ -14,7 +14,8 @@ import {
 } from "./transcriptReplay";
 
 const TICK_MS = 50;
-const READ_PAGE_BYTES = 4 * 1024 * 1024;
+// Small pages keep each JSON parse short; a 4 MiB page is a 5+ MB payload that blocks the UI thread for a noticeable time.
+const READ_PAGE_BYTES = 1024 * 1024;
 const SPEEDS = [1, 2, 5, 10];
 
 const REPLAY_THEME = {
@@ -42,6 +43,8 @@ async function loadAllChunks(transcriptId: string): Promise<ReplayChunk[]> {
     }
     if (result.done || result.chunks.length === 0) break;
     afterSeq = result.nextSeq;
+    // Let input and rendering run between pages.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   return chunks;
 }

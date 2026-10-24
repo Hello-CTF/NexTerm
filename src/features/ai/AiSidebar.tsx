@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent as ReactDragEvent } from "react";
 import { ask, askChoice, promptText } from "../../ui/dialogs";
+import { useStableValue } from "../../ui/useStableValue";
 import { aiApi, assetApi, modelApi, terminalApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { productionSkillsApi } from "../settings/skillsApi";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
@@ -682,7 +683,7 @@ function AiChatTab({
   const workspaces = useUi((s) => s.workspaces);
   const sessions = useUi((s) => s.sessions);
   const activeWorkspace = useActiveWorkspace();
-  const aiScope = useMemo(() => {
+  const aiScopeCandidate = useMemo(() => {
     let workspace = activeWorkspace;
     if (workspace?.kind === "session" && !workspace.assetId) {
       const currentSessionId = sessionId ?? workspace.sessionId;
@@ -691,6 +692,9 @@ function AiChatTab({
     }
     return aiScopeForWorkspace(workspace, sessionId, tabId);
   }, [activeWorkspace, sessionId, tabId, sessions]);
+  // The candidate is rebuilt whenever the sessions array changes identity; keep the previous object while its
+  // content is equal so the permission lookup below does not re-run (two IPC calls and a re-render) each time.
+  const aiScope = useStableValue(aiScopeCandidate);
   const hasAiScope = Boolean(sessionId || (activeWorkspace?.kind === "db" && activeWorkspace.connId));
   const permScope = hasAiScope ? aiScope : undefined;
   const aiScopeAssetId = typeof aiScope.assetId === "string" ? aiScope.assetId : undefined;

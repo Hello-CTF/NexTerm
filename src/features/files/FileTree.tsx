@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
@@ -80,17 +81,225 @@ function sortEntries(list: FileEntryDto[]): FileEntryDto[] {
   });
 }
 
-function treeRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-  const tree = event.currentTarget.closest("[role='tree']");
-  if (!tree) return;
-  const rows = [...tree.querySelectorAll<HTMLElement>("[role='treeitem']")];
-  const index = rows.indexOf(event.currentTarget);
-  const next = event.key === "ArrowDown" ? index + 1 : index - 1;
-  if (index < 0 || next < 0 || next >= rows.length) return;
-  event.preventDefault();
-  rows[next]?.focus();
-}
+const TREE_ROW_HEIGHT = 28;
+const TREE_VIRTUALIZE_THRESHOLD = 60;
+
+type TreeRowActions = {
+  toggle: (path: string) => void;
+  select: (path: string) => void;
+  enterDir: (path: string) => void;
+  openFile: (entry: FileEntryDto) => void;
+  openRowMenuAt: (entry: FileEntryDto, listKey: string, x: number, y: number, rootEntry?: boolean) => void;
+  openRowMenu: (e: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto, listKey: string, rootEntry?: boolean) => void;
+  download: (path: string) => Promise<void>;
+  remove: (path: string) => Promise<void>;
+  retryDir: (dir: string) => void;
+  reconnect: () => void;
+  navigate: (event: ReactKeyboardEvent<HTMLElement>, path: string) => void;
+  noteFocus: (path: string) => void;
+};
+
+type TreeRowProps = {
+  entry?: FileEntryDto;
+  depth: number;
+  error?: { message: string; gone: boolean };
+  dir: string;
+  rootEntry?: boolean;
+  open: boolean;
+  isSel: boolean;
+  coarse: boolean;
+  reconnecting: boolean;
+  setSize: number;
+  posInSet: number;
+  actions: TreeRowActions;
+};
+
+// Memoized so a selection or expand change only re-renders the rows whose own props changed.
+const TreeRow = memo(function TreeRow({
+  entry,
+  depth,
+  error,
+  dir,
+  rootEntry,
+  open,
+  isSel,
+  coarse,
+  reconnecting,
+  setSize,
+  posInSet,
+  actions,
+}: TreeRowProps) {
+  if (error) {
+    return (
+      <div
+        className="mx-1 my-0.5 flex items-start gap-1.5 rounded border border-red-500/30 bg-red-950/30 px-2 py-1.5"
+        style={{ marginLeft: 2 + depth * 12 }}
+      >
+        <IconXCircle size={12} className="mt-0.5 shrink-0 text-red-300" />
+        <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
+          <div className="break-words">
+            {error.gone
+              ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在此继续浏览"
+              : error.message}
+          </div>
+          <div className="flex gap-2">
+            {!error.gone && (
+              <button className="nx-link mt-0.5 text-[11px]" onClick={() => actions.retryDir(dir)}>
+                重试
+              </button>
+            )}
+            {error.gone && (
+              <button
+                className="nx-link mt-0.5 text-[11px]"
+                disabled={reconnecting}
+                onClick={() => actions.reconnect()}
+              >
+                {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (!entry) return null;
+  const isDir = entry.kind === "dir";
+  const { Icon, tone } = fileVisual(entry.name, entry.kind);
+  return (
+    <div
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-expanded={isDir ? open : undefined}
+      aria-selected={isSel}
+      aria-setsize={setSize}
+      aria-posinset={posInSet}
+      data-row-path={entry.path}
+      tabIndex={0}
+      data-drop-path={isDir ? entry.path : undefined}
+      className={`nx-row nx-row-oneline nx-row-reserve-actions ${isSel ? "is-selected" : ""}`}
+      style={{ paddingLeft: 2 + depth * 12 }}
+      onClick={() => {
+        actions.select(entry.path);
+        if (isDir) actions.toggle(entry.path);
+      }}
+      onDoubleClick={() => (isDir ? actions.enterDir(entry.path) : actions.openFile(entry))}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (isDir) actions.enterDir(entry.path);
+          else actions.openFile(entry);
+          return;
+        }
+        if (e.key === " ") {
+          e.preventDefault();
+          actions.select(entry.path);
+          if (isDir) actions.toggle(entry.path);
+          return;
+        }
+        if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
+          e.preventDefault();
+          const r = e.currentTarget.getBoundingClientRect();
+          actions.openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
+          return;
+        }
+        if (e.key === "ArrowRight" && isDir && !open) {
+          e.preventDefault();
+          actions.toggle(entry.path);
+          return;
+        }
+        if (e.key === "ArrowLeft" && isDir && open) {
+          e.preventDefault();
+          actions.toggle(entry.path);
+          return;
+        }
+        actions.navigate(e, entry.path);
+      }}
+      onFocus={() => actions.noteFocus(entry.path)}
+      onContextMenu={(e) => actions.openRowMenu(e, entry, dir, rootEntry)}
+      title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
+    >
+      {isDir ? (
+        <button
+          className="nx-tree-caret"
+          onClick={(e) => {
+            e.stopPropagation();
+            actions.toggle(entry.path);
+          }}
+          title={open ? "收起" : "展开"}
+          aria-label={`${open ? "收起" : "展开"} ${entry.name}`}
+          aria-expanded={open}
+        >
+          {open ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />}
+        </button>
+      ) : (
+        <span className="w-[14px] shrink-0" />
+      )}
+      {rootEntry ? (
+        <IconDrive size={13} className={`shrink-0 ${tone}`} />
+      ) : (
+        <Icon size={13} className={`shrink-0 ${tone}`} />
+      )}
+      <span className="nx-row-name min-w-0 flex-auto truncate text-[12.5px]">{entry.name}</span>
+      {coarse ? (
+        <button
+          className="nx-icon-btn nx-icon-btn-sm nx-row-more"
+          title={`更多操作 ${entry.name}`}
+          aria-label={`更多操作 ${entry.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            const r = e.currentTarget.getBoundingClientRect();
+            actions.openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          ⋯
+        </button>
+      ) : (
+        <span className="nx-row-actions">
+          {!isDir && (
+            <button
+              className="nx-icon-btn nx-icon-btn-sm"
+              title="下载"
+              aria-label={`下载 ${entry.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void actions.download(entry.path);
+              }}
+            >
+              <IconDownload size={11} />
+            </button>
+          )}
+          {!rootEntry && (
+            <button
+              className="nx-icon-btn nx-icon-btn-sm is-danger"
+              title="删除"
+              aria-label={`删除 ${entry.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void actions.remove(entry.path);
+              }}
+            >
+              <IconTrash size={11} />
+            </button>
+          )}
+          <button
+            className="nx-icon-btn nx-icon-btn-sm"
+            title={`更多操作 ${entry.name}`}
+            aria-label={`更多操作 ${entry.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              const r = e.currentTarget.getBoundingClientRect();
+              actions.openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
+            }}
+          >
+            ⋯
+          </button>
+        </span>
+      )}
+    </div>
+  );
+});
 
 export function FileTree({ sessionId }: { sessionId: string }) {
   return <FileTreeInner sessionId={sessionId} />;
@@ -265,19 +474,23 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
       error?: { message: string; gone: boolean };
       dir: string;
       rootEntry?: boolean;
+      setSize: number;
+      posInSet: number;
     }[] = [];
     const walk = (dir: string, depth: number) => {
-      for (const entry of dirMap.get(dir) ?? []) {
-        out.push({ entry, depth, dir });
+      const list = dirMap.get(dir) ?? [];
+      list.forEach((entry, i) => {
+        out.push({ entry, depth, dir, setSize: list.length, posInSet: i + 1 });
         if (entry.kind === "dir" && expanded.includes(entry.path)) {
           walk(entry.path, depth + 1);
         }
-      }
+      });
       const err = dirErrors.get(dir);
-      if (err) out.push({ depth, error: err, dir });
+      if (err) out.push({ depth, error: err, dir, setSize: 1, posInSet: 1 });
     };
     if (computer) {
-      for (const realRoot of rootsData?.roots ?? []) {
+      const realRoots = rootsData?.roots ?? [];
+      realRoots.forEach((realRoot, i) => {
         const entry: FileEntryDto = {
           name: realRoot.label || realRoot.path,
           path: realRoot.path,
@@ -289,9 +502,9 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
           mtime: 0,
           symlinkTarget: null,
         };
-        out.push({ entry, depth: 0, dir: realRoot.path, rootEntry: true });
+        out.push({ entry, depth: 0, dir: realRoot.path, rootEntry: true, setSize: realRoots.length, posInSet: i + 1 });
         if (expanded.includes(realRoot.path)) walk(realRoot.path, 1);
-      }
+      });
     } else if (root) {
       walk(root, 0);
     }
@@ -850,6 +1063,151 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     setMenu({ x: e.clientX, y: e.clientY, title: root, items });
   };
 
+  const expandedSet = useMemo(() => new Set(expanded), [expanded]);
+  const entryCount = useMemo(() => rows.reduce((n, r) => n + (r.entry ? 1 : 0), 0), [rows]);
+
+  // Small trees render every row; only large directories (a home folder can hold thousands) pay for windowing.
+  const virtualized = rows.length > TREE_VIRTUALIZE_THRESHOLD;
+  const listRef = useRef<HTMLDivElement>(null);
+  const [listOffset, setListOffset] = useState(0);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const focusedPathRef = useRef<string | null>(null);
+  const pendingFocusRef = useRef<{ path: string; at: number } | null>(null);
+
+  // Keep the focused row mounted while it is scrolled out so keyboard focus is not dropped.
+  const rangeExtractor = useCallback((range: Range) => {
+    const indexes = defaultRangeExtractor(range);
+    const path = focusedPathRef.current;
+    if (!path) return indexes;
+    const at = rowsRef.current.findIndex((r) => r.entry?.path === path);
+    if (at < 0 || indexes.includes(at)) return indexes;
+    return [...indexes, at].sort((a, b) => a - b);
+  }, []);
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => treeDropRef.current,
+    estimateSize: () => TREE_ROW_HEIGHT,
+    overscan: 12,
+    enabled: virtualized,
+    scrollMargin: listOffset,
+    initialRect: { width: 260, height: 600 },
+    getItemKey: (index) => {
+      const r = rowsRef.current[index];
+      return r ? (r.entry ? r.entry.path : `err:${r.dir}`) : index;
+    },
+    rangeExtractor,
+  });
+
+  // The root-listing error banner sits above the rows inside the same scroller.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el || !virtualized) return;
+    const next = el.offsetTop;
+    setListOffset((cur) => (cur === next ? cur : next));
+  }, [virtualized, rows.length]);
+
+  const focusPendingRow = () => {
+    const pending = pendingFocusRef.current;
+    if (!pending) return;
+    if (Date.now() - pending.at > 1500) {
+      pendingFocusRef.current = null;
+      return;
+    }
+    const target = [...(treeDropRef.current?.querySelectorAll<HTMLElement>("[data-row-path]") ?? [])].find(
+      (el) => el.dataset.rowPath === pending.path,
+    );
+    if (!target) return;
+    pendingFocusRef.current = null;
+    target.focus({ preventScroll: true });
+  };
+  useLayoutEffect(focusPendingRow);
+
+  const navigateRows = (event: ReactKeyboardEvent<HTMLElement>, path: string) => {
+    const key = event.key;
+    if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Home" && key !== "End") return;
+    const list = rowsRef.current;
+    const from = list.findIndex((r) => r.entry?.path === path);
+    if (from < 0) return;
+    let to = -1;
+    if (key === "ArrowDown") {
+      for (let i = from + 1; i < list.length; i++) if (list[i].entry) { to = i; break; }
+    } else if (key === "ArrowUp") {
+      for (let i = from - 1; i >= 0; i--) if (list[i].entry) { to = i; break; }
+    } else if (key === "Home") {
+      to = list.findIndex((r) => r.entry);
+    } else {
+      for (let i = list.length - 1; i >= 0; i--) if (list[i].entry) { to = i; break; }
+    }
+    if (to < 0) return;
+    event.preventDefault();
+    if (to === from) return;
+    const targetPath = list[to].entry!.path;
+    pendingFocusRef.current = { path: targetPath, at: Date.now() };
+    if (virtualized) virtualizer.scrollToIndex(to);
+    focusPendingRow();
+  };
+
+  const actionsRef = useRef<TreeRowActions | null>(null);
+  actionsRef.current = {
+    toggle,
+    select: setSelected,
+    enterDir,
+    openFile,
+    openRowMenuAt,
+    openRowMenu,
+    download,
+    remove,
+    retryDir,
+    reconnect: () => void reconnectHost(),
+    navigate: navigateRows,
+    noteFocus: (path) => {
+      focusedPathRef.current = path;
+    },
+  };
+  // Stable proxies keep memoized rows from re-rendering when only parent closures change.
+  const rowActions = useMemo<TreeRowActions>(() => {
+    const call = <K extends keyof TreeRowActions>(name: K) =>
+      ((...args: unknown[]) =>
+        (actionsRef.current![name] as (...a: unknown[]) => unknown)(...args)) as TreeRowActions[K];
+    return {
+      toggle: call("toggle"),
+      select: call("select"),
+      enterDir: call("enterDir"),
+      openFile: call("openFile"),
+      openRowMenuAt: call("openRowMenuAt"),
+      openRowMenu: call("openRowMenu"),
+      download: call("download"),
+      remove: call("remove"),
+      retryDir: call("retryDir"),
+      reconnect: call("reconnect"),
+      navigate: call("navigate"),
+      noteFocus: call("noteFocus"),
+    };
+  }, []);
+
+  const renderRow = (index: number) => {
+    const r = rows[index];
+    if (!r) return null;
+    return (
+      <TreeRow
+        entry={r.entry}
+        depth={r.depth}
+        error={r.error}
+        dir={r.dir}
+        rootEntry={r.rootEntry}
+        open={r.entry ? expandedSet.has(r.entry.path) : false}
+        isSel={r.entry ? selected === r.entry.path : false}
+        coarse={coarse}
+        reconnecting={reconnecting}
+        setSize={r.setSize}
+        posInSet={r.posInSet}
+        actions={rowActions}
+      />
+    );
+  };
+
   if (!leftOpen) return null;
 
   const crumbs = root ? crumbsOf(root) : [];
@@ -1058,7 +1416,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
         role="tree"
         aria-label="文件"
         ref={treeDropRef}
-        className="min-h-0 flex-1 overflow-y-auto px-1 py-1"
+        className="relative min-h-0 flex-1 overflow-y-auto px-1 py-1"
         data-file-drop-target={computer ? undefined : ""}
         onContextMenu={openBlankMenu}
         onDragOver={(e) => {
@@ -1099,178 +1457,30 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
             </div>
           </div>
         )}
-        {rows.map(({ entry, depth, error, dir, rootEntry }) => {
-          if (error) {
-            return (
+        {virtualized ? (
+          <div ref={listRef} className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+            {virtualizer.getVirtualItems().map((item) => (
               <div
-                key={`err:${dir}`}
-                className="mx-1 my-0.5 flex items-start gap-1.5 rounded border border-red-500/30 bg-red-950/30 px-2 py-1.5"
-                style={{ marginLeft: 2 + depth * 12 }}
+                key={item.key}
+                role="none"
+                data-index={item.index}
+                ref={virtualizer.measureElement}
+                className="absolute left-0 top-0 w-full"
+                style={{ transform: `translateY(${item.start - listOffset}px)` }}
               >
-                <IconXCircle size={12} className="mt-0.5 shrink-0 text-red-300" />
-                <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
-                  <div className="break-words">
-                    {error.gone
-                      ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在此继续浏览"
-                      : error.message}
-                  </div>
-                  <div className="flex gap-2">
-                    {!error.gone && (
-                      <button className="nx-link mt-0.5 text-[11px]" onClick={() => retryDir(dir)}>
-                        重试
-                      </button>
-                    )}
-                    {error.gone && (
-                      <button
-                        className="nx-link mt-0.5 text-[11px]"
-                        disabled={reconnecting}
-                        onClick={() => void reconnectHost()}
-                      >
-                        {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
-                      </button>
-                    )}
-                  </div>
-                </div>
+                {renderRow(item.index)}
               </div>
-            );
-          }
-          if (!entry) return null;
-          const isDir = entry.kind === "dir";
-          const open = expanded.includes(entry.path);
-          const isSel = selected === entry.path;
-          const { Icon, tone } = fileVisual(entry.name, entry.kind);
-          return (
-            <div
-              key={entry.path}
-              role="treeitem"
-              aria-level={depth + 1}
-              aria-expanded={isDir ? open : undefined}
-              aria-selected={isSel}
-              tabIndex={0}
-              data-drop-path={isDir ? entry.path : undefined}
-              className={`nx-row nx-row-oneline nx-row-reserve-actions ${isSel ? "is-selected" : ""}`}
-              style={{ paddingLeft: 2 + depth * 12 }}
-              onClick={() => {
-                setSelected(entry.path);
-                if (isDir) toggle(entry.path);
-              }}
-              onDoubleClick={() => (isDir ? enterDir(entry.path) : openFile(entry))}
-              onKeyDown={(e) => {
-                if (e.target !== e.currentTarget) return;
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  if (isDir) enterDir(entry.path);
-                  else openFile(entry);
-                  return;
-                }
-                if (e.key === " ") {
-                  e.preventDefault();
-                  setSelected(entry.path);
-                  if (isDir) toggle(entry.path);
-                  return;
-                }
-                if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
-                  e.preventDefault();
-                  const r = e.currentTarget.getBoundingClientRect();
-                  openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
-                  return;
-                }
-                if (e.key === "ArrowRight" && isDir && !open) {
-                  e.preventDefault();
-                  toggle(entry.path);
-                  return;
-                }
-                if (e.key === "ArrowLeft" && isDir && open) {
-                  e.preventDefault();
-                  toggle(entry.path);
-                  return;
-                }
-                treeRowKeyDown(e);
-              }}
-              onContextMenu={(e) => openRowMenu(e, entry, dir, rootEntry)}
-              title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
-            >
-              {isDir ? (
-                <button
-                  className="nx-tree-caret"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggle(entry.path);
-                  }}
-                  title={open ? "收起" : "展开"}
-                  aria-label={`${open ? "收起" : "展开"} ${entry.name}`}
-                  aria-expanded={open}
-                >
-                  {open ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />}
-                </button>
-              ) : (
-                <span className="w-[14px] shrink-0" />
-              )}
-              {rootEntry ? (
-                <IconDrive size={13} className={`shrink-0 ${tone}`} />
-              ) : (
-                <Icon size={13} className={`shrink-0 ${tone}`} />
-              )}
-              <span className="nx-row-name min-w-0 flex-auto truncate text-[12.5px]">{entry.name}</span>
-              {coarse ? (
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm nx-row-more"
-                  title={`更多操作 ${entry.name}`}
-                  aria-label={`更多操作 ${entry.name}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const r = e.currentTarget.getBoundingClientRect();
-                    openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
-                  }}
-                  onDoubleClick={(e) => e.stopPropagation()}
-                >
-                  ⋯
-                </button>
-              ) : (
-                <span className="nx-row-actions">
-                  {!isDir && (
-                    <button
-                      className="nx-icon-btn nx-icon-btn-sm"
-                      title="下载"
-                      aria-label={`下载 ${entry.name}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void download(entry.path);
-                      }}
-                    >
-                      <IconDownload size={11} />
-                    </button>
-                  )}
-                  {!rootEntry && (
-                    <button
-                      className="nx-icon-btn nx-icon-btn-sm is-danger"
-                      title="删除"
-                      aria-label={`删除 ${entry.name}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void remove(entry.path);
-                      }}
-                    >
-                      <IconTrash size={11} />
-                    </button>
-                  )}
-                  <button
-                    className="nx-icon-btn nx-icon-btn-sm"
-                    title={`更多操作 ${entry.name}`}
-                    aria-label={`更多操作 ${entry.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const r = e.currentTarget.getBoundingClientRect();
-                      openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
-                    }}
-                  >
-                    ⋯
-                  </button>
-                </span>
-              )}
-            </div>
-          );
-        })}
+            ))}
+          </div>
+        ) : (
+          <div ref={listRef}>
+            {rows.map((r, index) => (
+              <div key={r.entry ? r.entry.path : `err:${r.dir}`} role="none">
+                {renderRow(index)}
+              </div>
+            ))}
+          </div>
+        )}
 
         {loading && rows.length === 0 && (
           <div role="status" aria-label="加载中">
@@ -1289,7 +1499,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
       </div>
 
       <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[10.5px] text-neutral-500">
-        <span>{rows.filter((r) => r.entry).length} 项</span>
+        <span>{entryCount} 项</span>
         {selectedEntry && (
           <>
             <span className="text-neutral-700">|</span>

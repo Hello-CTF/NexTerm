@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/klauspost/compress/zstd"
@@ -56,12 +57,25 @@ func encodeTranscriptChunks(chunks []TranscriptChunkRow) ([]TranscriptChunkRow, 
 	return blocks, nil
 }
 
+// transcriptEncoders reuses zstd encoders: building one allocates well over a megabyte of window and
+// history buffers, which made every transcript flush a large garbage-collection burden.
+var transcriptEncoders sync.Pool
+
+func acquireTranscriptEncoder(out io.Writer) (*zstd.Encoder, error) {
+	if pooled, ok := transcriptEncoders.Get().(*zstd.Encoder); ok {
+		pooled.Reset(out)
+		return pooled, nil
+	}
+	return zstd.NewWriter(out, zstd.WithWindowSize(1<<20), zstd.WithEncoderConcurrency(1))
+}
+
 func encodeTranscriptBlock(chunks []TranscriptChunkRow) ([]byte, error) {
 	var compressed bytes.Buffer
-	writer, err := zstd.NewWriter(&compressed, zstd.WithWindowSize(1<<20), zstd.WithEncoderConcurrency(1))
+	writer, err := acquireTranscriptEncoder(&compressed)
 	if err != nil {
 		return nil, err
 	}
+	// Only a cleanly closed encoder goes back to the pool; one that failed mid-block is discarded.
 	closeWithError := func(err error) ([]byte, error) {
 		_ = writer.Close()
 		return nil, err
@@ -98,6 +112,8 @@ func encodeTranscriptBlock(chunks []TranscriptChunkRow) ([]byte, error) {
 	if err := writer.Close(); err != nil {
 		return nil, err
 	}
+	writer.Reset(nil) // drop the reference to this block's output buffer before pooling
+	transcriptEncoders.Put(writer)
 	return compressed.Bytes(), nil
 }
 

@@ -125,14 +125,15 @@ export function BackgroundSessions({
       }
       void Promise.all([syncApi.status(), syncApi.linkGet()]).then(([status, link]) => {
         if (current && generation === request) {
-          setDesktopScope({ epoch: runtimeEpoch,
-            value: status.loggedIn && status.userId && status.username && link.url && link.username === status.username
-              ? JSON.stringify([link.url, status.userId, status.username]) : null });
+          const value = status.loggedIn && status.userId && status.username && link.url && link.username === status.username
+            ? JSON.stringify([link.url, status.userId, status.username]) : null;
+          // The poll usually finds the same scope; keep the state object so nothing re-renders.
+          setDesktopScope((previous) => (previous?.epoch === runtimeEpoch && previous.value === value ? previous : { epoch: runtimeEpoch, value }));
           setDesktopChecking(false);
         }
       }).catch(() => {
         if (current && generation === request) {
-          setDesktopScope({ epoch: runtimeEpoch, value: null });
+          setDesktopScope((previous) => (previous?.epoch === runtimeEpoch && previous.value === null ? previous : { epoch: runtimeEpoch, value: null }));
           setDesktopChecking(false);
         }
       });

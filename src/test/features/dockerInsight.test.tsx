@@ -826,7 +826,9 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     click(m.container.querySelector('button[title="删除"]')!);
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
-    expect(modal.textContent).toContain("删除容器 web");
+    // Only the stopped container (worker) offers deletion; the running one (web) must be stopped first.
+    expect(m.container.querySelectorAll('button[title="删除"]').length).toBe(1);
+    expect(modal.textContent).toContain("删除容器 worker");
     expect(modal.textContent).toContain("挂载卷和主机目录不会被删除");
     await closeModal(modal, "取消");
     expect(mocks.action).not.toHaveBeenCalled();
@@ -835,7 +837,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     const modal2 = await openModal();
     expect(modal2.getAttribute("role")).toBe("alertdialog");
     await closeModal(modal2, "确定");
-    await waitFor(() => expect(mocks.action).toHaveBeenCalledWith("s1", containerA.id, "remove"));
+    await waitFor(() => expect(mocks.action).toHaveBeenCalledWith("s1", containerB.id, "remove"));
   });
 
   it("image remove renders an alertdialog, cancel aborts", async () => {
@@ -970,9 +972,9 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     await waitFor(() => expect(mocks.action).toHaveBeenCalledWith("s1", containerA.id, "restart"));
   });
 
-  it("bulk remove renders an alertdialog with the count, cancel aborts", async () => {
+  it("bulk remove skips running containers, says so, and only removes the stopped ones", async () => {
     const m = (mounted = mountPanelWithDialogHost());
-    await waitFor(() => expect(m.container.querySelectorAll('button[title="删除"]').length).toBe(2));
+    await waitFor(() => expect(m.container.querySelectorAll('button[title="删除"]').length).toBe(1));
 
     const pickA = m.container.querySelector<HTMLInputElement>('input[aria-label="选择 web"]');
     const pickB = m.container.querySelector<HTMLInputElement>('input[aria-label="选择 worker"]');
@@ -984,7 +986,8 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     clickButton(m.container, "删除选中（2）");
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
-    expect(modal.textContent).toContain("删除选中的 2 个容器");
+    expect(modal.textContent).toContain("删除选中的 1 个容器");
+    expect(modal.textContent).toContain("另有 1 个容器还没有停止，不会被删除");
     expect(modal.textContent).toContain("挂载卷和主机目录不会被删除");
     await closeModal(modal, "取消");
     expect(mocks.action).not.toHaveBeenCalled();
@@ -992,9 +995,21 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     clickButton(m.container, "删除选中（2）");
     const modal2 = await openModal();
     await closeModal(modal2, "确定");
-    await waitFor(() => expect(mocks.action).toHaveBeenCalledTimes(2));
-    expect(mocks.action).toHaveBeenCalledWith("s1", containerA.id, "remove");
+    await waitFor(() => expect(mocks.action).toHaveBeenCalledTimes(1));
     expect(mocks.action).toHaveBeenCalledWith("s1", containerB.id, "remove");
+    expect(mocks.action).not.toHaveBeenCalledWith("s1", containerA.id, "remove");
+  });
+
+  it("bulk remove refuses when every selected container is still running", async () => {
+    mocks.ps.mockResolvedValue([containerA]);
+    const m = (mounted = mountPanelWithDialogHost());
+    await waitFor(() => expect(m.container.querySelector('input[aria-label="选择 web"]')).not.toBeNull());
+    click(m.container.querySelector<HTMLInputElement>('input[aria-label="选择 web"]')!);
+    await waitFor(() => expect(m.container.textContent).toContain("已选 1"));
+    clickButton(m.container, "删除选中（1）");
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("先停止")));
+    expect(mocks.action).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
   it("bulk image remove with mixed tagged and untagged covers both consequences", async () => {
