@@ -232,7 +232,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
 
   return (
     <div className="nx-pane">
-      <div className="nx-toolbar">
+      <div className="nx-toolbar nx-wrap-toolbar">
         <IconDrive size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">磁盘挂载</span>
         <span className="nx-hint">当前会话管理的挂载，每 15 秒自动刷新</span>

@@ -139,7 +139,7 @@ export function ProductionSettingsPanel() {
 
   return (
     <section id="settings-production" className="nx-card scroll-mt-12" aria-label="生产安全">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">生产安全</span>
         <span className="nx-badge">仅当前账号</span>
@@ -236,7 +236,7 @@ export function ProductionSettingsPanel() {
                 <td className="py-1.5 text-center">
                   <input
                     type="checkbox"
-                    className="h-4 w-4"
+                    className="h-4 w-4 max-sm:h-5 max-sm:w-5"
                     aria-label={`${row.label}：自动连接未连接的主机`}
                     checked={connect}
                     disabled={busy}
@@ -250,7 +250,7 @@ export function ProductionSettingsPanel() {
                 <td className="py-1.5 text-center">
                   <input
                     type="checkbox"
-                    className="h-4 w-4"
+                    className="h-4 w-4 max-sm:h-5 max-sm:w-5"
                     aria-label={`${row.label}：也自动连接生产环境主机`}
                     title={connect ? undefined : "先开启自动连接"}
                     checked={connect && production}

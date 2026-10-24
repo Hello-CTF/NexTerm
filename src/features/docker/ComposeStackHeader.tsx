@@ -6,6 +6,7 @@ import { terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { IconDownload, IconEdit, IconList, IconPlay, IconRefresh, IconRestart, IconStop } from "../../ui/icons";
+import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
 import { dockerConfirmation, getDockerConfirmationChallenge, type DockerConfirmationChallenge } from "./productionGuard";
 import { DockerStreamView, type DockerOutputStream } from "./DockerStreamView";
@@ -24,11 +25,13 @@ export function ComposeStackHeader({
   project,
   stack,
   onChanged,
+  compact = false,
 }: {
   sessionId: string;
   project: string;
   stack: ComposeStack | null;
   onChanged: () => void;
+  compact?: boolean;
 }) {
   const pushToast = useUi((state) => state.pushToast);
   const [busy, setBusy] = useState<ComposeAction | "logs" | null>(null);
@@ -36,6 +39,7 @@ export function ComposeStackHeader({
   const [stream, setStream] = useState<DockerOutputStream | null>(null);
   const [production, setProduction] = useState<PendingProduction | null>(null);
   const [editing, setEditing] = useState(false);
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const attachGeneration = useRef(0);
   const actionInFlight = useRef(false);
   const effective: ComposeStack = stack ?? {
@@ -115,10 +119,46 @@ export function ComposeStackHeader({
   return (
     <div className="bg-neutral-950/35 px-2 py-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="nx-badge nx-badge-purple">{project}</span>
-        <span className="text-[11px] text-neutral-500">Compose stack · {effective.services.length} services</span>
+        <ContextMenu state={menu} onClose={() => setMenu(null)} />
+        <span className="nx-badge nx-badge-purple max-w-[60%] truncate" title={project}>{project}</span>
+        <span className="text-[11px] text-neutral-500">{compact ? `${effective.services.length} services` : `Compose stack · ${effective.services.length} services`}</span>
         {effective.readOnly && <span className="nx-badge nx-badge-amber" title={effective.reason}>只读</span>}
-        {effective.reason && <span className="max-w-[460px] truncate text-[11px] text-amber-300" title={effective.reason}>{effective.reason}</span>}
+        {effective.reason && <span className={`${compact ? "max-w-full" : "max-w-[460px]"} truncate text-[11px] text-amber-300`} title={effective.reason}>{effective.reason}</span>}
+        {compact ? (
+          <>
+        <div className="nx-spacer" />
+        <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-8" disabled={unavailable} onClick={() => void startAction("up")}>
+          <IconPlay size={11} />up -d
+        </button>
+        <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-8" disabled={unavailable} onClick={() => void openLogs()}>
+          <IconList size={11} />logs
+        </button>
+        <button
+          type="button"
+          className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-8"
+          aria-label="更多 Compose 操作"
+          aria-haspopup="menu"
+          disabled={unavailable}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMenu({
+              x: rect.right,
+              y: rect.bottom,
+              title: project,
+              items: [
+                { kind: "item", label: "down", icon: <IconStop size={13} />, onSelect: () => void startAction("down") },
+                { kind: "item", label: "restart", icon: <IconRestart size={13} />, onSelect: () => void startAction("restart") },
+                { kind: "item", label: "pull", icon: <IconDownload size={13} />, onSelect: () => void startAction("pull") },
+                { kind: "item", label: "Edit and redeploy", icon: <IconEdit size={13} />, onSelect: () => setEditing(true) },
+              ],
+            });
+          }}
+        >
+          <span aria-hidden="true">⋯</span>
+        </button>
+          </>
+        ) : (
+          <>
         <div className="nx-spacer" />
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={unavailable} onClick={() => void startAction("up")}>
           <IconPlay size={11} />up -d
@@ -138,6 +178,8 @@ export function ComposeStackHeader({
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={unavailable} onClick={() => setEditing(true)}>
           <IconEdit size={11} />Edit and redeploy
         </button>
+          </>
+        )}
       </div>
       {output && (
         <div className="relative mt-1.5">

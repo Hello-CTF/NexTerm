@@ -562,7 +562,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
 
   return (
     <section className="nx-pane" aria-label="批量主机维护" data-testid="bulk-maintenance-panel">
-      <div className="nx-toolbar flex-wrap">
+      <div className="nx-toolbar nx-wrap-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
         <h2 className="nx-toolbar-title">批量主机维护</h2>
         <span className="nx-hint">按 SSH 资产选择 · 逐目标返回结果</span>

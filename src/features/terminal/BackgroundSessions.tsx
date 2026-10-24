@@ -444,7 +444,7 @@ export function BackgroundSessions({
   if (!hostSessionId && !showAll && !needsReconnect) {
     return (
       <div className="nx-pane" data-background-view="local">
-        <div className="nx-toolbar">
+        <div className="nx-toolbar nx-wrap-toolbar">
           <IconActivity size={14} className="text-neutral-500" />
           <span className="nx-toolbar-title">后台会话</span>
         </div>
@@ -466,7 +466,7 @@ export function BackgroundSessions({
 
   return (
     <div className="nx-pane" data-background-view="local">
-      <div className="nx-toolbar">
+      <div className="nx-toolbar nx-wrap-toolbar">
         <IconActivity size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">后台会话</span>
         <span className="nx-hint" data-testid="background-host">
@@ -488,7 +488,7 @@ export function BackgroundSessions({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="nx-table">
+        <table className="nx-table nx-table-cards">
           <thead>
             <tr>
               <th style={{ width: 190 }}>主机</th>
@@ -532,7 +532,7 @@ export function BackgroundSessions({
                   </td>
                   <td className="text-neutral-400">{t.remote ? "在主机上运行" : lastOutputLabel(t)}</td>
                   <td className="nx-right">
-                    <div className="flex items-center justify-end gap-1.5">
+                    <div className="flex items-center justify-end gap-1.5 max-[640px]:justify-stretch">
                       <button
                         className="nx-btn nx-btn-primary nx-btn-xs"
                         disabled={rowBusy}

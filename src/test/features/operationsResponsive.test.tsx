@@ -297,8 +297,8 @@ describe("small-screen responsive structure contract", () => {
     const actionButtons = table?.querySelectorAll("tbody .nx-icon-btn-sm");
     expect(actionButtons?.length).toBeGreaterThan(0);
     for (const button of actionButtons ?? []) {
-      expect(button.className).toContain("pointer-coarse:h-7");
-      expect(button.className).toContain("pointer-coarse:w-7");
+      expect(button.className).toContain("pointer-coarse:h-8");
+      expect(button.className).toContain("pointer-coarse:w-8");
     }
     const checkboxes = table?.querySelectorAll(".nx-check");
     expect(checkboxes?.length).toBeGreaterThan(0);

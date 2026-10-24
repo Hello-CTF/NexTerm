@@ -131,16 +131,16 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
         // Fleet enumeration is additive: when the fleet link is unavailable
         // (e.g. desktop logged out) the panel degrades to asset-only targets.
         fleetClient().devices().then(
-          (r) => r.devices,
+          (r) => r.devices ?? [],
           () => [] as FleetDevice[],
         ),
       ]);
       const map: Record<string, AiDeviceGrant> = {};
-      for (const grant of grantRows) map[grant.deviceId] = grant;
-      setAssets(assetRows);
+      for (const grant of grantRows ?? []) map[grant.deviceId] = grant;
+      setAssets(assetRows ?? []);
       setDevices(deviceRows);
       setGrants(map);
-      setRules(ruleRows);
+      setRules(ruleRows ?? []);
       setLoadError(null);
     } catch (e) {
       setLoadError(describeError(e));

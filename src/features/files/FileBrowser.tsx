@@ -1182,13 +1182,13 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       <TransferPanel key={sessionId} sessionId={sessionId} />
 
       <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
-        <span>{list.length} 项</span>
+        <span className="shrink-0 whitespace-nowrap">{list.length} 项</span>
         {selectedEntry && (
           <>
             <span className="text-neutral-700">|</span>
-            <span className="truncate font-mono">{selectedEntry.path}</span>
-            <span className="text-neutral-700">|</span>
-            <span>
+            <span className="min-w-0 truncate font-mono">{selectedEntry.path}</span>
+            <span className="text-neutral-700 max-[560px]:hidden">|</span>
+            <span className="shrink-0 whitespace-nowrap max-[560px]:hidden">
               {selectedEntry.mode} · {selectedEntry.owner}
             </span>
           </>

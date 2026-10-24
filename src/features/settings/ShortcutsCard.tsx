@@ -94,11 +94,11 @@ export function ShortcutsCard() {
     return (
       <div
         key={action.id}
-        className="flex items-center gap-2 text-xs text-neutral-400"
+        className="flex items-center gap-2 text-xs text-neutral-400 @max-[479px]:flex-wrap @max-[479px]:gap-y-0.5 @max-[479px]:border-b @max-[479px]:border-neutral-800/50 @max-[479px]:pb-1.5"
         data-shortcut-row={action.id}
       >
         <span className="nx-kbd shrink-0">{formatBinding(bindings[action.id])}</span>
-        <span className="min-w-0 flex-1 truncate">{action.label}</span>
+        <span className="min-w-0 flex-1 truncate @max-[479px]:order-first @max-[479px]:basis-full @max-[479px]:whitespace-normal @max-[479px]:break-words" title={action.label}>{action.label}</span>
         {peers && (
           <span className="nx-badge nx-badge-amber shrink-0" title={`与${peers}的快捷键冲突`}>
             冲突
@@ -106,7 +106,7 @@ export function ShortcutsCard() {
         )}
         <button
           type="button"
-          className="nx-icon-btn nx-icon-btn-sm shrink-0"
+          className="nx-icon-btn nx-icon-btn-sm shrink-0 @max-[479px]:ml-auto"
           aria-label={`修改快捷键：${action.label}`}
           title="修改快捷键"
           onClick={() => startCapture(action.id)}
@@ -140,8 +140,8 @@ export function ShortcutsCard() {
   };
 
   return (
-    <section className="nx-card">
-      <div className="mb-1 flex items-center gap-2">
+    <section className="nx-card @container">
+      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconCommand size={15} className="text-neutral-400" />
         <span className="nx-card-title">快捷键</span>
         <div className="nx-spacer" />
@@ -153,7 +153,7 @@ export function ShortcutsCard() {
       <p className="nx-hint mb-3.5">
         点击编辑图标后按下新组合键，按 Esc 取消，按 Backspace 或 Delete 清空；也可点击 × 清除。浏览器保留的组合键（如 Ctrl+T）在网页版中无法拦截。
       </p>
-      <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 min-[480px]:grid-cols-2">
+      <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 @min-[640px]:grid-cols-2">
         {KEYBINDING_ACTIONS.map(renderRow)}
       </div>
       {captureError && <p className="mt-2 text-[11px] text-red-300">{captureError}</p>}

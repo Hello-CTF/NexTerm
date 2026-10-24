@@ -70,18 +70,18 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
         {st &&
           (protectionOn ? (
             locked ? (
-              <span className="nx-badge nx-badge-amber hidden sm:inline-flex">
+              <span className="nx-badge nx-badge-amber">
                 <IconLock size={11} /> 已锁定
               </span>
             ) : (
-              <span className="nx-badge nx-badge-green hidden sm:inline-flex">已解锁</span>
+              <span className="nx-badge nx-badge-green">已解锁</span>
             )
           ) : st.mode === "not_init" ? (
-            <span className="nx-badge nx-badge-amber hidden sm:inline-flex">未初始化</span>
+            <span className="nx-badge nx-badge-amber">未初始化</span>
           ) : st.mode === "master" ? (
-            <span className="nx-badge nx-badge-amber hidden sm:inline-flex">已启用 · 未设密码</span>
+            <span className="nx-badge nx-badge-amber">已启用 · 未设密码</span>
           ) : (
-            <span className="nx-badge hidden sm:inline-flex">未启用密码保护</span>
+            <span className="nx-badge">未启用密码保护</span>
           ))}
         <div className="nx-spacer" />
         <button
@@ -314,7 +314,7 @@ function CredentialDetail({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-[640px] px-6 py-6">
+      <div className="mx-auto max-w-[640px] px-3 py-4 sm:px-6 sm:py-6">
         <div className="mb-6 flex items-start gap-3.5">
           <span
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${meta.bg} ${meta.tone}`}
@@ -360,17 +360,17 @@ function CredentialDetail({
             </div>
           ) : (
             <>
-              <div className="flex items-start gap-2">
+              <div className="flex flex-wrap items-start gap-2 sm:flex-nowrap">
                 {isRef ? (
-                  <code className="min-w-0 flex-1 break-all rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[12px] text-neutral-300">
+                  <code className="min-w-0 flex-1 max-sm:basis-full break-all rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[12px] text-neutral-300">
                     {cred.refPath || "（路径为空）"}
                   </code>
                 ) : revealed === null ? (
-                  <code className="min-w-0 flex-1 truncate rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[12.5px] tracking-[0.2em] text-neutral-500">
+                  <code className="min-w-0 flex-1 max-sm:basis-full truncate rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[12.5px] tracking-[0.2em] text-neutral-500">
                     ••••••••••
                   </code>
                 ) : (
-                  <pre className="nx-mono max-h-[180px] min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-md border border-purple-500/25 bg-neutral-900/60 px-2.5 py-1.5 text-[11.5px] leading-[1.5] text-neutral-300">
+                  <pre className="nx-mono max-h-[180px] min-w-0 flex-1 max-sm:basis-full overflow-auto whitespace-pre-wrap break-all rounded-md border border-purple-500/25 bg-neutral-900/60 px-2.5 py-1.5 text-[11.5px] leading-[1.5] text-neutral-300">
                     {revealed.value}
                   </pre>
                 )}
@@ -515,7 +515,7 @@ function CredentialDetail({
           <span>最后修改 {formatTime(cred.updatedAt)}</span>
         </div>
 
-        <div className="flex items-center gap-2 border-t border-neutral-800/60 pt-4">
+        <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800/60 pt-4">
           <button
             className="nx-btn nx-btn-primary"
             disabled={!dirty || saving || locked}

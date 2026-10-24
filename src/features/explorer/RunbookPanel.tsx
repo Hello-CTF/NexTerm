@@ -464,7 +464,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
     <div className="nx-overlay" onClick={(event) => { event.stopPropagation(); if (onBack) backToSnippets(); else closePanel(); }}>
       <div
         ref={modalRef}
-        className="nx-modal flex nx-modal-lg max-h-[88vh] flex-col"
+        className="nx-modal flex nx-modal-lg max-h-[88dvh] flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -472,14 +472,14 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
         onClick={(event) => event.stopPropagation()}
         onKeyDown={onModalKeyDown}
       >
-        <div className="nx-modal-header shrink-0">
+        <div className="nx-modal-header shrink-0 flex-wrap">
           {onBack && (
             <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={backToSnippets}>
               ← 命令片段
             </button>
           )}
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">执行流程</span>
-          <span className="nx-hint">按顺序在多台主机上执行多个步骤，默认每一步都先确认</span>
+          <span className="nx-hint hidden sm:inline">按顺序在多台主机上执行多个步骤，默认每一步都先确认</span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           {error && <div role="alert" className="mb-3 flex items-start gap-1.5 text-[12px] text-red-400"><IconXCircle size={13} className="mt-0.5 shrink-0" />{error}</div>}

@@ -75,7 +75,7 @@ function FleetUnsupported() {
         <span className="nx-toolbar-title">设备管理</span>
       </div>
       <div className="flex min-h-0 flex-1 items-center justify-center px-6">
-        <div className="flex w-[340px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
+        <div className="flex w-full max-w-[340px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
           <div className="nx-empty-icon">
             <IconMonitor size={18} />
           </div>
@@ -749,7 +749,7 @@ export function DevicesView() {
           <span className="nx-toolbar-title">设备管理</span>
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center px-6">
-          <div className="flex w-[320px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
+          <div className="flex w-full max-w-[320px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
             <div className="nx-empty-icon">
               <IconMonitor size={18} />
             </div>

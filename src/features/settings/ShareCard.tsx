@@ -97,7 +97,7 @@ function ShareLoginHint() {
   // Logged out, no second login button here (the only login entry is the "account" card); this section only states what it needs.
   return (
     <section className="nx-card">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">分享</span>
       </div>
@@ -139,7 +139,7 @@ export function ShareCard() {
   if (needsDesktopIdentity && (initialIdentityFailure || identityMismatch)) {
     return (
       <section className="nx-card">
-        <div className="mb-1 flex items-center gap-2">
+        <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <IconGlobe size={15} className="text-neutral-400" />
           <span className="nx-card-title">分享</span>
           <span className="nx-hint">账号身份信息不可用，请重新登录。</span>
@@ -150,7 +150,7 @@ export function ShareCard() {
   if (account.loading || (needsDesktopIdentity && identityLink.isPending)) {
     return (
       <section className="nx-card">
-        <div className="mb-1 flex items-center gap-2">
+        <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <IconGlobe size={15} className="text-neutral-400" />
           <span className="nx-card-title">分享</span>
           <span className="nx-hint">账号状态读取中…</span>
@@ -354,7 +354,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
         <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
           <div className="flex flex-wrap items-center gap-2">
             <select
-              className="nx-select min-w-0 flex-1"
+              className="nx-select min-w-0 flex-1 basis-40"
               value={deviceId}
               aria-label="分享主机"
               onChange={(e) => setDeviceId(e.target.value)}
@@ -367,7 +367,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
               ))}
             </select>
             <input
-              className="nx-input min-w-0 flex-1"
+              className="nx-input min-w-0 flex-1 basis-40"
               placeholder="接收者的用户名"
               value={recipientUsername}
               autoComplete="off"

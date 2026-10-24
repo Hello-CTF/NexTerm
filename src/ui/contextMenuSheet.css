@@ -20,6 +20,18 @@
   animation: nx-menu-sheet-in 0.2s ease-out;
 }
 
+/* Wide touch screens (iPad): a compact centered card instead of a full-width sheet. */
+@media (min-width: 600px) {
+  .nx-menu-sheet {
+    max-width: 460px;
+    max-height: min(60dvh, 520px);
+    margin-bottom: calc(12px + var(--nx-safe-bottom));
+    padding-bottom: 0;
+    border-bottom: 1px solid var(--nx-border-strong);
+    border-radius: var(--radius-xl);
+  }
+}
+
 @keyframes nx-menu-sheet-in {
   from {
     transform: translateY(100%);

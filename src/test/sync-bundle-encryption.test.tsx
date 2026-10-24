@@ -230,12 +230,13 @@ describe("SyncBundleCard encrypted import", () => {
 });
 
 describe("SyncBundleCard passphrase row responsive layout", () => {
-  it("allows the passphrase row to wrap and its input to shrink", async () => {
+  it("stacks the passphrase label above its input on narrow widths and lets the input shrink", async () => {
     await mountCard();
     const row = mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!.closest("div")!;
-    expect(row.className).toContain("flex-wrap");
+    expect(row.className).toContain("flex-col");
+    expect(row.className).toContain("sm:flex-row");
     expect(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!.className).toContain("min-w-0");
     const label = mounted!.container.querySelector('label[for="bundle-password"]')!;
-    expect(label.className).toContain("shrink-0");
+    expect(label.className).toContain("sm:shrink-0");
   });
 });

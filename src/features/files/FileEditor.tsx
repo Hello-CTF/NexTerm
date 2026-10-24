@@ -508,7 +508,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
 
   return (
     <div className="nx-pane bg-term">
-      <div className="nx-toolbar">
+      <div className="nx-toolbar nx-wrap-toolbar nx-files-editor-bar">
         <FileIcon size={14} className={`shrink-0 ${tone}`} />
         <span className="nx-toolbar-title truncate font-mono">{path}</span>
         {dirty && (
@@ -522,6 +522,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title={`撤销 (${modHint()}+Z)`}
+          aria-label="撤销"
           onClick={() => withView(undo)}
         >
           <IconUndo size={13} />
@@ -529,6 +530,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title={`重做 (${modHint()}+Shift+Z)`}
+          aria-label="重做"
           onClick={() => withView(redo)}
         >
           <IconRedo size={13} />
@@ -536,6 +538,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title={`查找 / 替换 (${modHint()}+F)`}
+          aria-label="查找 / 替换"
           onClick={() => withView(openSearchPanel)}
         >
           <IconSearch size={13} />
@@ -546,6 +549,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="缩小字号"
+          aria-label="缩小字号"
           disabled={zoom <= 0}
           onClick={() => setZoom((z) => Math.max(0, z - 1))}
         >
@@ -560,6 +564,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="放大字号"
+          aria-label="放大字号"
           disabled={zoom >= steps}
           onClick={() => setZoom((z) => Math.min(steps, z + 1))}
         >
@@ -621,6 +626,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="重新读取（丢弃未保存改动）"
+          aria-label="重新读取"
           disabled={saving}
           onClick={() => {
             if (!dirtyRef.current) {
@@ -648,7 +654,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           <span className={`nx-kbd max-[560px]:hidden ${dirty ? "border-white/25 text-white" : ""}`}>{modHint()} S</span>
         </button>
         {onClose && (
-          <button className="nx-icon-btn" onClick={onClose} title="关闭编辑器">
+          <button className="nx-icon-btn" onClick={onClose} title="关闭编辑器"
+          aria-label="关闭编辑器">
             <IconClose size={14} />
           </button>
         )}

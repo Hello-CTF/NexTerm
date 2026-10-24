@@ -916,8 +916,8 @@ export function AssetTree() {
       className="flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
       style={{ width: leftWidth }}
     >
-      <div className="flex h-[34px] shrink-0 items-center gap-1 px-2.5">
-        <span className="text-xs font-semibold tracking-wide text-neutral-200">资产</span>
+      <div className="nx-panel-head flex min-h-[34px] shrink-0 flex-wrap items-center gap-1 px-2.5">
+        <span className="shrink-0 whitespace-nowrap text-xs font-semibold tracking-wide text-neutral-200">资产</span>
         <div className="nx-spacer" />
         {hiddenIds.length > 0 && (
           <button

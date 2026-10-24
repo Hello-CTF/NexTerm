@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useCompactWidth } from "./useCompactWidth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   dockerApi,
@@ -38,6 +39,7 @@ type PendingProduction = {
 
 export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; visible: boolean }) {
   const qc = useQueryClient();
+  const [rootRef, compact] = useCompactWidth(560);
   const query = useQuery({
     queryKey: ["docker-disk", sessionId],
     queryFn: () => dockerApi.diskUsage(sessionId),
@@ -103,7 +105,7 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
 
   const data = query.data;
   return (
-    <div className="min-h-0 flex-1 overflow-auto p-3">
+    <div ref={rootRef} className="min-h-0 flex-1 overflow-auto p-3">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-neutral-200">Docker 磁盘与清理</span>
         <span className="nx-hint">df -v · 手动刷新</span>
@@ -140,16 +142,21 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
             <section className="min-w-0">
               <h3 className="mb-1.5 text-xs font-medium text-neutral-300">卷与容器使用关系</h3>
               <table className="nx-table nx-table-fixed">
-                <thead><tr><th>卷</th><th style={{ width: 100 }}>大小</th><th style={{ width: 180 }}>容器</th></tr></thead>
+                <thead><tr><th>卷</th><th style={{ width: 100 }}>大小</th>{!compact && <th style={{ width: 180 }}>容器</th>}</tr></thead>
                 <tbody>
                   {data.volumes.length === 0 && <tr><td colSpan={3} className="nx-table-empty">没有卷</td></tr>}
                   {data.volumes.map((volume) => (
                     <tr key={volume.name}>
-                      <td className="truncate font-mono" title={volume.name}>{volume.name}<span className="ml-1 text-neutral-500">{volume.driver}</span></td>
-                      <td>{formatDockerBytes(volume.sizeBytes)}</td>
-                      <td className="truncate text-[11px]" title={volume.containers.map((item) => item.name).join(", ")}>
-                        {volume.containers.length > 0 ? volume.containers.map((item) => item.name).join(", ") : "未使用"}
+                      <td className="truncate font-mono" title={volume.name}>
+                        {volume.name}<span className="ml-1 text-neutral-500">{volume.driver}</span>
+                        {compact && <div className="truncate font-sans text-[10.5px] text-neutral-500">{volume.containers.length > 0 ? volume.containers.map((item) => item.name).join(", ") : "未使用"}</div>}
                       </td>
+                      <td>{formatDockerBytes(volume.sizeBytes)}</td>
+                      {!compact && (
+                        <td className="truncate text-[11px]" title={volume.containers.map((item) => item.name).join(", ")}>
+                          {volume.containers.length > 0 ? volume.containers.map((item) => item.name).join(", ") : "未使用"}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -158,16 +165,21 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
             <section className="min-w-0">
               <h3 className="mb-1.5 text-xs font-medium text-neutral-300">网络与容器使用关系</h3>
               <table className="nx-table nx-table-fixed">
-                <thead><tr><th>网络</th><th style={{ width: 100 }}>范围</th><th style={{ width: 180 }}>容器</th></tr></thead>
+                <thead><tr><th>网络</th><th style={{ width: 100 }}>范围</th>{!compact && <th style={{ width: 180 }}>容器</th>}</tr></thead>
                 <tbody>
                   {data.networks.length === 0 && <tr><td colSpan={3} className="nx-table-empty">没有网络</td></tr>}
                   {data.networks.map((network) => (
                     <tr key={network.id || network.name}>
-                      <td className="truncate font-mono" title={network.name}>{network.name}{network.builtin && <span className="nx-badge ml-1">内置</span>}</td>
-                      <td className="text-neutral-500">{network.scope}</td>
-                      <td className="truncate text-[11px]" title={network.containers.map((item) => item.name).join(", ")}>
-                        {network.containers.length > 0 ? network.containers.map((item) => item.name).join(", ") : "无容器"}
+                      <td className="truncate font-mono" title={network.name}>
+                        {network.name}{network.builtin && <span className="nx-badge ml-1">内置</span>}
+                        {compact && <div className="truncate font-sans text-[10.5px] text-neutral-500">{network.containers.length > 0 ? network.containers.map((item) => item.name).join(", ") : "无容器"}</div>}
                       </td>
+                      <td className="text-neutral-500">{network.scope}</td>
+                      {!compact && (
+                        <td className="truncate text-[11px]" title={network.containers.map((item) => item.name).join(", ")}>
+                          {network.containers.length > 0 ? network.containers.map((item) => item.name).join(", ") : "无容器"}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

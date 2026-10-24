@@ -88,14 +88,14 @@ export function KnownHostsCard() {
 
   return (
     <section className="nx-card">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">已知主机</span>
         {hosts && <span className="nx-badge">{filtered.length} 台</span>}
         <div className="nx-spacer" />
         {hosts && hosts.length > 0 && (
           <input
-            className="nx-input nx-input-sm w-40"
+            className="nx-input nx-input-sm w-full sm:w-40"
             aria-label="搜索已知主机"
             placeholder="搜索主机 / 指纹"
             value={query}

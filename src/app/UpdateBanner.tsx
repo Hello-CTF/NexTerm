@@ -19,7 +19,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
         : 0;
     return (
       <div
-        className="flex h-[30px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-900 px-3 text-xs text-neutral-300"
+        className="nx-banner flex min-h-[30px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-900 px-3 text-xs text-neutral-300"
         role="region"
         aria-label="软件更新"
       >
@@ -52,7 +52,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
   if (installedVersion) {
     return (
       <div
-        className="flex h-[30px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-900 px-3 text-xs text-neutral-300"
+        className="nx-banner flex min-h-[30px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-900 px-3 text-xs text-neutral-300"
         role="region"
         aria-label="软件更新"
       >
@@ -76,7 +76,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
   if (!version || skippedVersion === version) return null;
   return (
     <div
-      className="flex h-[30px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-900 px-3 text-xs text-neutral-300"
+      className="nx-banner flex min-h-[30px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-900 px-3 text-xs text-neutral-300"
       role="region"
       aria-label="软件更新"
     >

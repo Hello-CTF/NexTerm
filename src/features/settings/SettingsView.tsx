@@ -474,7 +474,7 @@ export function SettingsView() {
           }`}
         >
           <div
-            className="flex gap-1.5 overflow-x-auto px-5 py-1.5 md:hidden"
+            className="flex gap-1.5 overflow-x-auto px-3 py-2 sm:px-5 md:hidden"
             data-testid="settings-nav-chips"
           >
             {SETTINGS_GROUPS.map((g) => (
@@ -552,14 +552,14 @@ export function SettingsView() {
         </nav>
 
         <div className="min-w-0 flex-1 overflow-y-auto" ref={contentRef}>
-          <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 p-5">
+          <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3 p-3 sm:gap-4 sm:p-5">
         <div className="flex flex-col gap-4" hidden={group !== "general"} data-settings-group="general">
         <div id="settings-appearance" className="scroll-mt-12">
           <AppearanceCard />
         </div>
 
         <section id="settings-terminal" className="nx-card scroll-mt-12">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconTerminal size={15} className="text-neutral-400" />
             <span className="nx-card-title">终端</span>
             <span className={`nx-badge ${terminalOsc52 ? "nx-badge-amber" : ""}`}>
@@ -734,7 +734,7 @@ export function SettingsView() {
         </section>
 
         <section id="settings-ai-rules" className="nx-card scroll-mt-12">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconShield size={15} className="text-neutral-400" />
             <span className="nx-card-title">AI 拦截规则</span>
             {aiPerm && (
@@ -852,7 +852,7 @@ export function SettingsView() {
         </div>
         <div className="flex flex-col gap-4" hidden={group !== "security"} data-settings-group="security">
         <section id="settings-vault" className="nx-card scroll-mt-12">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconLock size={15} className="text-neutral-400" />
             <span className="nx-card-title">凭据保护</span>
             {vault &&

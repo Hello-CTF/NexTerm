@@ -66,10 +66,9 @@ describe("app safe-area shell", () => {
     const app = requireStyleRule(rules, ".nx-app", "padding-bottom");
     expect(app.style.getPropertyValue("padding-bottom")).not.toContain("--nx-kb-inset");
 
-    for (const selector of [".nx-statusbar", ".nx-terminal-keys"]) {
-      const rule = requireStyleRule(rules, selector, "transform");
-      expect(rule.style.getPropertyValue("transform")).toContain("--nx-kb-inset");
-    }
+    const root = requireStyleRule(rules, 'html[data-nx-keyboard="open"] #root', "height");
+    expect(root.style.getPropertyValue("height")).toContain("--nx-vv-height");
+    expect(root.style.getPropertyValue("top")).toContain("--nx-vv-top");
   });
 });
 

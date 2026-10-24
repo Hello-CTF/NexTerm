@@ -381,6 +381,28 @@ export function visualViewportInset(
   return Math.max(0, innerHeight - vvHeight - offset);
 }
 
+// keyboardViewportBox is the area of the layout viewport that stays visible above an overlaying
+// keyboard. The app root is sized to it, so nothing depends on the keyboard accessory bar height.
+export function keyboardViewportBox(
+  innerHeight: number,
+  inset: number,
+  vvOffsetTop: number,
+  fromVirtualKeyboard: boolean,
+): { top: number; height: number } | null {
+  if (!Number.isFinite(innerHeight) || !Number.isFinite(inset) || inset <= 0) return null;
+  const rawTop = fromVirtualKeyboard || !Number.isFinite(vvOffsetTop) ? 0 : vvOffsetTop;
+  const top = Math.min(Math.max(0, rawTop), innerHeight);
+  const height = Math.max(0, innerHeight - inset - top);
+  return height > 0 ? { top: Math.round(top), height: Math.round(height) } : null;
+}
+
+// Below this visible height (landscape phone with keyboard) secondary chrome is hidden so the terminal keeps room.
+export const TIGHT_KEYBOARD_VIEWPORT_HEIGHT = 340;
+
+export function isTightKeyboardViewport(height: number): boolean {
+  return Number.isFinite(height) && height < TIGHT_KEYBOARD_VIEWPORT_HEIGHT;
+}
+
 export function virtualKeyboardInset(
   innerHeight: number,
   keyboardTop: number,
@@ -414,9 +436,12 @@ function useKeyboardInset(): void {
     let frame: number | null = null;
     let vk: VirtualKeyboardLike | undefined;
 
+    let fromVk = false;
     const readInset = (): number => {
+      fromVk = false;
       if (vk) {
         try {
+          fromVk = true;
           return virtualKeyboardInset(
             window.innerHeight,
             vk.boundingRect.top,
@@ -452,6 +477,22 @@ function useKeyboardInset(): void {
       frame = null;
       const inset = readInset();
       root.style.setProperty("--nx-kb-inset", `${Math.round(inset)}px`);
+      const box = keyboardViewportBox(window.innerHeight, inset, vv?.offsetTop ?? 0, fromVk);
+      if (box) {
+        root.style.setProperty("--nx-vv-top", `${box.top}px`);
+        root.style.setProperty("--nx-vv-height", `${box.height}px`);
+        root.dataset.nxKeyboard = "open";
+        if (isTightKeyboardViewport(box.height)) root.dataset.nxKeyboardTight = "true";
+        else delete root.dataset.nxKeyboardTight;
+        // iOS scrolls the layout viewport to reveal the focused input; the fixed root follows
+        // visualViewport.offsetTop, and the page itself is kept at the top.
+        if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
+      } else {
+        delete root.dataset.nxKeyboardTight;
+        root.style.removeProperty("--nx-vv-top");
+        root.style.removeProperty("--nx-vv-height");
+        delete root.dataset.nxKeyboard;
+      }
       keepFocusedControlVisible(inset);
     };
     const schedule = () => {
@@ -484,6 +525,7 @@ function useKeyboardInset(): void {
     vv?.addEventListener("resize", schedule);
     vv?.addEventListener("scroll", schedule);
     window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, { passive: true });
     document.addEventListener("focusin", schedule, true);
     schedule();
     return () => {
@@ -492,14 +534,43 @@ function useKeyboardInset(): void {
       vv?.removeEventListener("resize", schedule);
       vv?.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule);
       document.removeEventListener("focusin", schedule, true);
       root.style.removeProperty("--nx-kb-inset");
+      root.style.removeProperty("--nx-vv-top");
+      root.style.removeProperty("--nx-vv-height");
+      delete root.dataset.nxKeyboard;
+      delete root.dataset.nxKeyboardTight;
     };
   }, []);
 }
 
 export function dialogLevelForKind(kind?: string): "info" | "warning" {
   return kind === "info" ? "info" : "warning";
+}
+
+// The key toolbar can wrap into several rows on phones; toasts and overlays need its real height.
+function useKeysToolbarHeight(active: boolean, remountKey: string | undefined): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!active || typeof ResizeObserver === "undefined") {
+      root.style.removeProperty("--nx-keys-h");
+      return;
+    }
+    const keys = document.querySelector<HTMLElement>(".nx-terminal-keys");
+    if (!keys) return;
+    const measure = () => {
+      const height = Math.round(keys.getBoundingClientRect().height);
+      if (height > 0) root.style.setProperty("--nx-keys-h", `${height}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(keys);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--nx-keys-h");
+    };
+  }, [active, remountKey]);
 }
 
 function useAiToastInset(active: boolean): void {
@@ -897,6 +968,7 @@ function AppShell() {
       const current = p.tabs.find((t) => t.id === p.activeTabId) ?? p.tabs[p.tabs.length - 1];
       return current?.kind === "terminal";
     }) ?? false);
+  useKeysToolbarHeight(terminalKeysVisible, `${ws?.id ?? ""}:${ws?.panes.map((p) => p.activeTabId).join(",") ?? ""}`);
   const activeSessionId = ws?.kind === "session" ? ws.sessionId : undefined;
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const backgroundAvailable = useBackgroundSessionsAccess(ws);
@@ -1602,7 +1674,11 @@ function AppShell() {
               aria-label={
                 it.unavailableReason ? `${it.label}暂不可用：${it.unavailableReason}` : it.label
               }
-              onClick={it.onClick}
+              onClick={() => {
+                // Overlay drawers would otherwise stay on top of the page the rail item opens.
+                if (overlaySidebars) setOverlayDock(null);
+                it.onClick();
+              }}
             >
               <it.icon size={17} />
               {it.unavailableReason ? <span className="nx-rail-off" aria-hidden /> : null}
@@ -1617,7 +1693,10 @@ function AppShell() {
               className={`nx-rail-btn ${railActive === it.key ? "is-active" : ""}`}
               data-tip={it.hint}
               aria-label={it.label}
-              onClick={it.onClick}
+              onClick={() => {
+                if (overlaySidebars) setOverlayDock(null);
+                it.onClick();
+              }}
             >
               <it.icon size={17} />
             </button>
@@ -1655,7 +1734,7 @@ function AppShell() {
                 </button>
                 <WorkspaceReconnectStatus session={activeSession} />
                 <span
-                  className="flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"
+                  className="nx-header-crumb flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"
                   data-wails-drag-region style={wailsDragRegionStyle}
                 >
                   <span className="text-neutral-600" data-wails-drag-region style={wailsDragRegionStyle}>
@@ -2176,6 +2255,16 @@ function PaneGroup({
     setMenu({ x, y, title: t.title, items });
   };
 
+  const tabScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Keep the active tab inside the horizontally scrollable strip (mobile widths overflow it).
+    if (!activeTabId) return;
+    const target = tabScrollRef.current?.querySelector<HTMLElement>(
+      `[data-tab-id="${CSS.escape(activeTabId)}"]`,
+    );
+    target?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeTabId, pane.tabs.length]);
+
   return (
     <div
       className="flex h-full min-h-0 flex-col"
@@ -2188,7 +2277,7 @@ function PaneGroup({
           active ? "is-active-pane" : ""
         }`}
       >
-        <div className="nx-tabstrip-scroll">
+        <div className="nx-tabstrip-scroll" ref={tabScrollRef}>
         {pane.tabs.length === 0 && (
           <span className="px-1 text-xs text-neutral-500">这个面板还没有标签</span>
         )}

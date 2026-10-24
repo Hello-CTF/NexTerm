@@ -106,7 +106,7 @@ describe("SettingsView responsive structure", () => {
     expect(scroller!.querySelector("#settings-shortcuts")).not.toBeNull();
   });
 
-  it("uses one shortcuts column on narrow screens and two at 480px and above", async () => {
+  it("uses one shortcuts column on narrow screens and two when the card is 640px wide or more", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const grid = [...mounted.container.querySelectorAll("div")].find(
@@ -114,7 +114,7 @@ describe("SettingsView responsive structure", () => {
     );
     expect(grid).toBeTruthy();
     expect(grid!.className).toContain("grid-cols-1");
-    expect(grid!.className).toContain("min-[480px]:grid-cols-2");
+    expect(grid!.className).toContain("@min-[640px]:grid-cols-2");
     expect(grid!.querySelectorAll(".nx-kbd").length).toBe(KEYBINDING_ACTIONS.length);
   });
 

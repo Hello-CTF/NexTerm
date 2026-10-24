@@ -52,8 +52,10 @@ describe("coarse pointer hit areas", () => {
     expect(actions).toMatch(/flex-wrap:\s*wrap/);
     expect(coarse).toMatch(/\.nx-row-actions \.nx-icon-btn-sm,\s*\.nx-icon-btn-sm\.nx-row-more\s*\{/);
     const btn = rule(coarse, ".nx-icon-btn-sm.nx-row-more");
-    expect(btn).toMatch(/width:\s*44px/);
-    expect(btn).toMatch(/height:\s*44px/);
+    // Compact one-line rows: a 36px visible button whose ::after extends the hit area to 44px.
+    expect(btn).toMatch(/width:\s*40px/);
+    expect(btn).toMatch(/height:\s*36px/);
+    expect(coarse).toMatch(/\.nx-icon-btn-sm\.nx-row-more::after\s*\{[^}]*inset:\s*-4px -2px/);
     expect(btn).not.toMatch(/margin:/);
   });
 
@@ -92,7 +94,7 @@ describe("coarse pointer form controls", () => {
   });
 
   it("path, tree and check controls meet 44px and the pathbar grows to fit", () => {
-    expect(coarse).toMatch(/\.nx-tree-caret\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
+    expect(coarse).toMatch(/\.nx-tree-caret\s*\{[^}]*width:\s*40px;[^}]*height:\s*36px/);
     expect(coarse).toMatch(/\.nx-pathbar\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*44px/);
     expect(coarse).toMatch(/\.nx-path-crumb\s*\{[^}]*min-height:\s*44px/);
   });

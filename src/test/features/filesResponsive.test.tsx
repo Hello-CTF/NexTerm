@@ -490,7 +490,7 @@ describe("credential overlay dock collapses after selection", () => {
 });
 
 describe("narrow-screen layout for the credentials header and new-credential modal", () => {
-  it("CredentialsPanel header badges hide on narrow screens and the primary button is not clipped", async () => {
+  it("CredentialsPanel header keeps the lock status visible on narrow screens and the primary button is not clipped", async () => {
     mounted = mountWithClient(createElement(CredentialsPanel, { credId: "c1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("已解锁"));
 
@@ -498,9 +498,9 @@ describe("narrow-screen layout for the credentials header and new-credential mod
       ["已解锁", "已锁定", "未启用密码保护"].includes(b.textContent?.trim() ?? ""),
     );
     expect(badges.length).toBeGreaterThan(0);
+    // The lock state matters on a phone too: the header wraps instead of hiding the badge.
     for (const badge of badges) {
-      expect(badge.className).toContain("hidden");
-      expect(badge.className).toContain("sm:inline-flex");
+      expect(badge.className).not.toContain("hidden");
     }
     const title = [...mounted!.container.querySelectorAll("span")].find(
       (s) => s.textContent?.trim() === "凭据",

@@ -28,14 +28,14 @@ function TransferRow({ task }: { task: ScopedTransferTask }) {
   const active = task.status === "queued" || task.status === "running";
   return (
     <div className="px-3 py-1" data-task-key={task.id}>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
         <span
           className={task.direction === "upload" ? "shrink-0 text-blue-300" : "shrink-0 text-green-300"}
           title={task.direction === "upload" ? "上传" : "下载"}
         >
           {task.direction === "upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-300" title={pathText}>
+        <span className="min-w-0 flex-[1_1_8rem] truncate font-mono text-[11px] text-neutral-300" title={pathText}>
           {pathText}
         </span>
         {active && (
@@ -133,7 +133,7 @@ export function TransferPanel({ sessionId }: { sessionId: string }) {
   const active = tasks.filter((t) => t.status === "queued" || t.status === "running").length;
   return (
     <div
-      className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/60"
+      className="nx-xfer-panel shrink-0 border-t border-neutral-800/60 bg-neutral-950/60"
       data-testid="transfer-panel"
     >
       <div className="flex items-center gap-2 px-3 pt-1.5 text-[11px] text-neutral-500">

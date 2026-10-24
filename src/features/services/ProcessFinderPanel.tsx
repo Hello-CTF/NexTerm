@@ -293,8 +293,8 @@ export function ProcessFinderPanel({
                       <div className="px-3 py-2 text-[11px] text-neutral-500">该主机没有匹配行。</div>
                     )
                   ) : (
-                    <div className="overflow-x-auto px-3 pb-2">
-                      <table className="nx-table min-w-[1080px]">
+                    <div className="nx-cards-wrap overflow-x-auto px-3 pb-2">
+                      <table className="nx-table nx-table-cards min-w-[1080px]">
                         <thead><tr><th>类型</th><th>监听</th><th>PID</th><th>用户</th><th>%CPU</th><th>%MEM</th><th>运行时间</th><th>进程</th><th>行操作</th></tr></thead>
                         <tbody>
                           {host.matches.map((match, index) => {
@@ -303,13 +303,13 @@ export function ProcessFinderPanel({
                             const process = match.process;
                             return (
                               <tr key={`${match.kind}-${pid}-${listener?.port ?? 0}-${index}`} data-pid={pid || undefined}>
-                                <td>{match.kind === "listener" ? "监听" : "进程"}</td>
-                                <td className="nx-mono">{listener ? formatListenAddress(listener.address, listener.port) : "—"}</td>
-                                <td className="nx-mono">{pid || "—"}</td>
-                                <td>{process?.user ?? "—"}</td><td>{process?.cpu ?? "—"}</td><td>{process?.memory ?? "—"}</td><td>{process?.elapsed ?? "—"}</td>
-                                <td className="max-w-96 truncate font-mono text-neutral-400" title={matchCommand(match)}>{matchCommand(match)}</td>
-                                <td>
-                                  <div className="flex flex-nowrap gap-1">
+                                <td data-label="类型">{match.kind === "listener" ? "监听" : "进程"}</td>
+                                <td data-label="监听" className="nx-mono">{listener ? formatListenAddress(listener.address, listener.port) : "—"}</td>
+                                <td data-label="PID" className="nx-mono">{pid || "—"}</td>
+                                <td data-label="用户">{process?.user ?? "—"}</td><td data-label="%CPU">{process?.cpu ?? "—"}</td><td data-label="%MEM">{process?.memory ?? "—"}</td><td data-label="运行时间">{process?.elapsed ?? "—"}</td>
+                                <td data-label="进程" className="max-w-96 truncate font-mono text-neutral-400" title={matchCommand(match)}>{matchCommand(match)}</td>
+                                <td data-label="">
+                                  <div className="flex flex-nowrap gap-1 @max-[640px]:flex-wrap">
                                     <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void openTerminal(host.result.sessionId)}><IconTerminal size={11} />终端</button>
                                     {listener && <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy} onClick={() => beginForward(host.result.sessionId, hostName, match)}><IconNetwork size={11} />转发</button>}
                                     <button type="button" className="nx-btn nx-btn-danger nx-btn-xs" disabled={busy || pid <= 0} title={pid <= 0 ? "无可用 PID" : "确认后发送 SIGTERM"} onClick={() => void kill(host.result.sessionId, hostName, match)}><IconTrash size={11} />kill</button>

@@ -7,6 +7,7 @@ import { WEB } from "../../ipc/env";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { ForwardRules } from "./ForwardRules";
+import { useCompactWidth } from "../docker/useCompactWidth";
 import { ForwardSettingsSection } from "./ForwardSettingsSection";
 import {
   IconDownload,
@@ -86,6 +87,8 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const [busy, setBusy] = useState(false);
   const [busyForwardId, setBusyForwardId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [paneRef, compact] = useCompactWidth(760);
+  const [formOpen, setFormOpen] = useState(false);
   const listenPortId = useId();
   const bindHostId = useId();
 
@@ -367,8 +370,79 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const envFailed = env.isError && !env.data;
   const envRefreshFailed = env.isError && env.data !== undefined;
 
+  const showForm = !compact || formOpen;
+
+  const typeBadge = (f: ForwardSpec) => {
+    const isSocks = f.kind === "socks";
+    const isRemote = f.kind === "remote";
+    return (
+      <span className={`nx-badge shrink-0 ${isSocks ? "nx-badge-purple" : isRemote ? "nx-badge-blue" : "nx-badge-green"}`}>
+        {isSocks ? (
+          <>
+            <IconGlobe size={11} />
+            SOCKS5 代理
+          </>
+        ) : isRemote ? (
+          <>
+            <IconDownload size={11} />
+            远程转发
+          </>
+        ) : (
+          <>
+            <IconPlug size={11} />
+            静态转发
+          </>
+        )}
+      </span>
+    );
+  };
+
+  const statusText = (f: ForwardSpec) => (
+    <span className={`shrink-0 ${f.status === "failed" ? "text-red-300" : f.status === "reconnecting" ? "text-amber-300" : "text-green-300"}`}>
+      {f.status === "failed" ? "失败" : f.status === "reconnecting" ? "重连中" : "运行中"}
+    </span>
+  );
+
+  const compactCard = (f: ForwardSpec) => {
+    const isSocks = f.kind === "socks";
+    const isRemote = f.kind === "remote";
+    const host = f.listenHost ?? listenHost;
+    const label = `${host || "未知"}:${f.listenPort}`;
+    const target = isSocks ? "由客户端指定" : `${isRemote ? `${remoteTarget} ` : ""}${f.targetHost}:${f.targetPort}`;
+    return (
+      <div key={f.id} className="flex items-center gap-2 border-b border-neutral-800/45 px-2.5 py-1.5">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            {typeBadge(f)}
+            <span className="nx-mono truncate text-[12px] font-semibold text-neutral-100" title={label}>{label}</span>
+            <span className="text-[11px]">{statusText(f)}</span>
+          </div>
+          <div className="nx-mono mt-0.5 truncate text-[11px] text-neutral-400" title={`→ ${target}`}>→ {target}</div>
+          <div className="truncate text-[10.5px] text-neutral-500" title={f.sessionId}>{sessionName(f.sessionId)}</div>
+          {f.error && <div className="break-words text-[11px] text-red-300" role="alert">{f.error}</div>}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {f.status && f.status !== "active" && (
+            <button className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-9" disabled={busyForwardId === f.id} onClick={() => void retry(f)}>
+              <IconRefresh size={11} />
+              重试
+            </button>
+          )}
+          <button
+            className="nx-btn nx-btn-danger nx-btn-xs pointer-coarse:h-9"
+            disabled={busyForwardId === f.id}
+            onClick={() => void remove(f, label)}
+          >
+            <IconTrash size={11} />
+            {f.status === "active" || !f.status ? "停止" : "移除"}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="nx-pane">
+    <div ref={paneRef} className="nx-pane">
       <div className="nx-toolbar">
         <IconNetwork size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">端口转发</span>
@@ -406,6 +480,25 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             </button>
           </div>
         )}
+        {compact ? (
+          <div>
+            {forwards.isPending ? (
+              <div className="nx-table-empty">转发列表加载中…</div>
+            ) : forwardsFailed ? (
+              <div className="nx-table-empty">
+                <span className="text-red-300">转发列表加载失败 · {describeError(forwards.error)}</span>
+                <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={() => void forwards.refetch()}>
+                  <IconRefresh size={12} />
+                  重试
+                </button>
+              </div>
+            ) : list.length === 0 ? (
+              <div className="nx-table-empty">{scoped && all.length > 0 ? "当前会话还没有转发" : "还没有任何转发"}</div>
+            ) : (
+              list.map(compactCard)
+            )}
+          </div>
+        ) : (
         <table className="nx-table">
           <thead>
             <tr>
@@ -414,7 +507,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               <th>目标</th>
               <th style={{ width: 150 }}>所属会话</th>
               <th style={{ width: 110 }}>状态</th>
-              <th style={{ width: 150 }} className="right-0 shadow-[inset_1px_0_0_var(--nx-border)]" />
+              <th className="right-0 w-[150px] shadow-[inset_1px_0_0_var(--nx-border)]" />
             </tr>
           </thead>
           <tbody>
@@ -504,7 +597,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                         </button>
                       )}
                       <button
-                        className="nx-btn nx-btn-danger nx-btn-xs pointer-coarse:h-6"
+                        className="nx-btn nx-btn-danger nx-btn-xs pointer-coarse:h-8"
                         disabled={busyForwardId === f.id}
                         onClick={() => void remove(f, label)}
                       >
@@ -519,10 +612,18 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             )}
           </tbody>
         </table>
+        )}
       </div>
 
 
-      <div className="max-h-[45%] shrink-0 overflow-auto border-t border-neutral-800/60 bg-neutral-950/40 p-3">
+      {compact && !unavailable && (
+        <div className="flex shrink-0 items-center border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-1">
+          <button className="nx-btn nx-btn-ghost nx-btn-sm" aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
+            {formOpen ? "收起" : "+ 新建转发"}
+          </button>
+        </div>
+      )}
+      <div className={`max-h-[45%] shrink-0 overflow-auto border-t border-neutral-800/60 bg-neutral-950/40 p-3 ${showForm || unavailable ? "" : "hidden"}`}>
         {unavailable ? (
           <div className="nx-alert nx-alert-info flex items-start gap-2">
             <IconInfo size={14} className="mt-0.5 shrink-0" />
@@ -642,8 +743,8 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               </div>
               {kind !== "socks" && (
                 <>
-                  <span className="text-neutral-600">→</span>
-                  <div className="min-w-[200px] flex-1">
+                  <span className={compact ? "hidden" : "text-neutral-600"}>→</span>
+                  <div className={compact ? "min-w-0 basis-full" : "min-w-[200px] flex-1"}>
                     <input
                       ref={targetHostRef}
                       className="nx-input nx-input-sm font-mono"
@@ -668,7 +769,8 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       </p>
                     )}
                   </div>
-                  <span className="text-neutral-600">:</span>
+                  <span className={compact ? "hidden" : "text-neutral-600"}>:</span>
+                  {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">目标端口</span>}
                   <div className="w-[92px] shrink-0">
                     <input
                       ref={targetPortRef}

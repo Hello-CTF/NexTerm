@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUi } from "../../app/store";
 import { forwardRuleApi, type ForwardRule, type ForwardRuleInput } from "../../ipc/forwardRuleApi";
 import { ask } from "../../ui/dialogs";
+import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
+import { useCompactWidth } from "../docker/useCompactWidth";
 import { describeError } from "../../ui/errorText";
 import {
   IconChevronDown,
@@ -43,6 +45,8 @@ export function ForwardRules({
   const [targetPort, setTargetPort] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const panelId = useId();
+  const [rootRef, compact] = useCompactWidth(760);
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
   const rules = useQuery({
     queryKey: ["forwardRules"],
@@ -195,7 +199,8 @@ export function ForwardRules({
   };
 
   return (
-    <section className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/20">
+    <section ref={rootRef} className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/20">
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
       <button
         className="nx-btn nx-btn-ghost nx-btn-sm m-2"
         aria-expanded={expanded}
@@ -237,10 +242,10 @@ export function ForwardRules({
                 <div className="py-2 text-[11px] text-neutral-500">还没有保存的转发规则</div>
               ) : (
                 (rules.data ?? []).map((rule) => (
-                  <div key={rule.id} className="flex flex-wrap items-center gap-2 rounded border border-neutral-800/70 px-2 py-1.5 text-[11px]">
+                  <div key={rule.id} className="flex items-center gap-2 rounded border border-neutral-800/70 px-2 py-1.5 text-[11px]">
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-medium text-neutral-200" title={rule.name}>{rule.name}</div>
-                      <div className="nx-mono text-neutral-500">
+                      <div className="nx-mono truncate text-neutral-500" title={`${rule.listenHost}:${rule.listenPort} → ${rule.targetHost}:${rule.targetPort}`}>
                         {rule.listenHost}:{rule.listenPort} → {rule.targetHost}:{rule.targetPort}
                       </div>
                       <div className={rule.status === "failed" ? "text-red-300" : rule.status === "active" ? "text-green-300" : "text-neutral-500"}>
@@ -248,37 +253,76 @@ export function ForwardRules({
                         {rule.error && <span className="ml-1 break-words text-red-300">{rule.error}</span>}
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      {rule.status === "stopped" || rule.status === "failed" ? (
-                        <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void start(rule)}>
-                          <IconPlay size={11} />
-                          启动
+                    {compact ? (
+                      <div className="flex shrink-0 items-center gap-1">
+                        {rule.status === "stopped" || rule.status === "failed" ? (
+                          <button className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-9" disabled={busy !== null} onClick={() => void start(rule)}>
+                            <IconPlay size={11} />
+                            启动
+                          </button>
+                        ) : (
+                          <button className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-9" disabled={busy !== null} onClick={() => void stop(rule)}>
+                            <IconStop size={11} />
+                            停止
+                          </button>
+                        )}
+                        <button
+                          className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-9 pointer-coarse:w-9"
+                          aria-label={`${rule.name} 更多操作`}
+                          aria-haspopup="menu"
+                          disabled={busy !== null}
+                          onClick={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setMenu({
+                              x: rect.right,
+                              y: rect.bottom,
+                              title: rule.name,
+                              items: [
+                                ...(rule.status === "failed"
+                                  ? [{ kind: "item" as const, label: "清除状态", onSelect: () => void stop(rule) }]
+                                  : []),
+                                { kind: "item", label: "编辑", icon: <IconEdit size={13} />, disabled: rule.status !== "stopped", hint: rule.status !== "stopped" ? "请先停止并清除运行状态再编辑" : undefined, onSelect: () => beginEdit(rule) },
+                                { kind: "item", label: "删除", icon: <IconTrash size={13} />, danger: true, onSelect: () => void remove(rule) },
+                              ],
+                            });
+                          }}
+                        >
+                          <span aria-hidden="true">⋯</span>
                         </button>
-                      ) : (
-                        <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void stop(rule)}>
-                          <IconStop size={11} />
-                          停止
+                      </div>
+                    ) : (
+                      <div className="flex shrink-0 items-center gap-1">
+                        {rule.status === "stopped" || rule.status === "failed" ? (
+                          <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void start(rule)}>
+                            <IconPlay size={11} />
+                            启动
+                          </button>
+                        ) : (
+                          <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void stop(rule)}>
+                            <IconStop size={11} />
+                            停止
+                          </button>
+                        )}
+                        {rule.status === "failed" && (
+                          <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void stop(rule)}>
+                            清除状态
+                          </button>
+                        )}
+                        <button
+                          className="nx-btn nx-btn-ghost nx-btn-xs"
+                          disabled={busy !== null || rule.status !== "stopped"}
+                          title={rule.status !== "stopped" ? "请先停止并清除运行状态再编辑" : "编辑规则"}
+                          onClick={() => beginEdit(rule)}
+                        >
+                          <IconEdit size={11} />
+                          编辑
                         </button>
-                      )}
-                      {rule.status === "failed" && (
-                        <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void stop(rule)}>
-                          清除状态
+                        <button className="nx-btn nx-btn-danger nx-btn-xs" disabled={busy !== null} onClick={() => void remove(rule)}>
+                          <IconTrash size={11} />
+                          删除
                         </button>
-                      )}
-                      <button
-                        className="nx-btn nx-btn-ghost nx-btn-xs"
-                        disabled={busy !== null || rule.status !== "stopped"}
-                        title={rule.status !== "stopped" ? "请先停止并清除运行状态再编辑" : "编辑规则"}
-                        onClick={() => beginEdit(rule)}
-                      >
-                        <IconEdit size={11} />
-                        编辑
-                      </button>
-                      <button className="nx-btn nx-btn-danger nx-btn-xs" disabled={busy !== null} onClick={() => void remove(rule)}>
-                        <IconTrash size={11} />
-                        删除
-                      </button>
-                    </div>
+                      </div>
+                    )}
                   </div>
                 ))
               )}

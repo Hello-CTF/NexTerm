@@ -8,19 +8,19 @@ export function ServiceOperationResults({ batch, title }: { batch: ServiceOperat
         <h3 className="font-medium text-neutral-200">{title}</h3>
         <span className="nx-hint">批次 {batch.batchId}</span>
       </div>
-      <div className="overflow-x-auto">
-        <table className="nx-table min-w-[680px]">
+      <div className="nx-cards-wrap overflow-x-auto">
+        <table className="nx-table nx-table-cards min-w-[680px]">
           <thead><tr><th>主机</th><th>状态</th><th>退出码</th><th>输出 / 错误</th></tr></thead>
           <tbody>
             {batch.hosts.map((host) => (
               <tr key={host.result.sessionId} data-session-id={host.result.sessionId}>
-                <td className="text-neutral-200">{host.result.sessionName || host.result.sessionId}</td>
-                <td className={host.result.status === "success" ? "text-green-300" : "text-red-300"}>
+                <td data-label="" className="text-neutral-200">{host.result.sessionName || host.result.sessionId}</td>
+                <td data-label="状态" className={host.result.status === "success" ? "text-green-300" : "text-red-300"}>
                   {EXEC_STATUS_LABELS[host.result.status] ?? host.result.status}
                   {host.result.truncated && <span className="ml-1 text-amber-300">已截断</span>}
                 </td>
-                <td className="nx-mono">{host.result.exitCode ?? "—"}</td>
-                <td className="whitespace-pre-wrap break-all text-neutral-400">
+                <td data-label="退出码" className="nx-mono">{host.result.exitCode ?? "—"}</td>
+                <td data-label="输出" className="whitespace-pre-wrap break-all text-neutral-400">
                   {host.result.status === "success" && !host.result.stdout && !host.result.stderr ? "无输出" : serviceResultMessage(host)}
                   {(host.result.stdout || host.result.stderr) && (
                     <details className="mt-1">

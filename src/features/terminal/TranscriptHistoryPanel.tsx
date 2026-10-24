@@ -406,11 +406,11 @@ export function TranscriptHistoryPanel({
 
   return (
     <div className="nx-pane" data-testid="transcript-history">
-      <div className="nx-toolbar">
+      <div className="nx-toolbar nx-wrap-toolbar">
         <IconHistory size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">终端历史</span>
         <select
-          className="nx-select max-w-[280px]"
+          className="nx-select max-w-[280px] max-[640px]:order-9 max-[640px]:max-w-none max-[640px]:basis-full"
           aria-label="选择主机"
           value={assetId ?? ""}
           disabled={hostOptions.length === 0}
@@ -472,7 +472,7 @@ export function TranscriptHistoryPanel({
           style={{ "--nx-transcript-list-w": `${listWidth}px` } as CSSProperties}
         >
           <div className="min-h-0 flex-1 overflow-auto">
-            <table className="nx-table">
+            <table className="nx-table nx-table-cards">
               <thead>
                 <tr>
                   <th>终端记录</th>
@@ -499,7 +499,7 @@ export function TranscriptHistoryPanel({
                       </div>
                     </td>
                     <td className="nx-right">
-                      <div className="flex items-center justify-end gap-1.5">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5 max-[640px]:justify-start">
                         {summary.endedAt !== null ? (
                           <button
                             className={`nx-btn nx-btn-ghost nx-btn-xs ${summary.syncOptIn ? "text-green-400" : ""}`}
@@ -602,10 +602,10 @@ export function TranscriptHistoryPanel({
         </div>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
             {viewMode === "text" ? (
               <>
-                <div className="relative flex-1">
+                <div className="relative min-w-[160px] flex-1">
                   <IconSearch size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" />
                   <input
                     className="nx-input nx-input-sm w-full pl-7"
@@ -642,7 +642,7 @@ export function TranscriptHistoryPanel({
                   key={mode}
                   role="tab"
                   aria-selected={viewMode === mode}
-                  className={`px-2 py-1 text-[11px] ${
+                  className={`px-2 py-1 text-[11px] pointer-coarse:min-h-9 pointer-coarse:px-3 ${
                     viewMode === mode
                       ? "bg-neutral-700/70 text-neutral-100"
                       : "text-neutral-400 hover:bg-neutral-800/60"

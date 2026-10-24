@@ -215,7 +215,7 @@ export function AuthCard() {
       // (typically direct access to the server port, bypassing the platform entry); give the reason instead of a dead button.
       return (
         <section className="nx-card">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconKey size={15} className="text-neutral-400" />
             <span className="nx-card-title">账号</span>
           </div>
@@ -230,7 +230,7 @@ export function AuthCard() {
       // With auth=off, all /auth/* calls 403 (store.refresh synthesizes the auth=off state); any login/init entry would be a dead end.
       return (
         <section className="nx-card">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconKey size={15} className="text-neutral-400" />
             <span className="nx-card-title">账号</span>
           </div>
@@ -244,7 +244,7 @@ export function AuthCard() {
       // Uninitialized (anonymous users of a loopback passwordless instance can reach here directly): explicit init entry for users who want an account.
       return (
         <section className="nx-card">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconKey size={15} className="text-neutral-400" />
             <span className="nx-card-title">账号</span>
           </div>
@@ -265,7 +265,7 @@ export function AuthCard() {
     }
     return (
       <section className="nx-card">
-        <div className="mb-1 flex items-center gap-2">
+        <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <IconKey size={15} className="text-neutral-400" />
           <span className="nx-card-title">账号</span>
         </div>
@@ -287,7 +287,7 @@ export function AuthCard() {
   return (
     <>
       <section className="nx-card">
-        <div className="mb-1 flex items-center gap-2">
+        <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <IconKey size={15} className="text-neutral-400" />
           <span className="nx-card-title">账号</span>
           <span className={`nx-badge ${user.role === "superadmin" ? "nx-badge-blue" : ""}`}>
@@ -377,7 +377,7 @@ export function AuthCard() {
 
       {!platformManaged && (
         <section className="nx-card">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconLock size={15} className="text-neutral-400" />
             <span className="nx-card-title">修改密码</span>
           </div>
@@ -401,7 +401,7 @@ export function AuthCard() {
 
       {DESKTOP ? (
         <section className="nx-card">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconShield size={15} className="text-neutral-400" />
             <span className="nx-card-title">两步验证（TOTP）</span>
           </div>
@@ -416,7 +416,7 @@ export function AuthCard() {
 
       {visibleRecoveryKey && (
         <section className="nx-card">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconShield size={15} className="text-amber-300" />
             <span className="nx-card-title">新的恢复密钥（仅显示一次）</span>
           </div>

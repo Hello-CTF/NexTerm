@@ -244,7 +244,7 @@ export function MemoryCard() {
 
   return (
     <section className="nx-card">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconBot size={15} className="text-purple-300" />
         <span className="nx-card-title">AI 长期记忆</span>
         {topics && <span className="nx-badge">{entryCount} 条</span>}

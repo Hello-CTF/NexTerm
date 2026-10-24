@@ -2084,6 +2084,16 @@
   height: 100dvh;
 }
 
+/* With an overlaying keyboard the root covers exactly the visible area above it, so the
+   terminal pane, key toolbar and status bar shrink together and no pane remnant shows. */
+html[data-nx-keyboard="open"] #root {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--nx-vv-top, 0px);
+  height: var(--nx-vv-height, 100dvh);
+}
+
 :root {
   --nx-kb-inset: 0px;
   --nx-keys-h: 46px;
@@ -2098,7 +2108,6 @@
 
 .nx-statusbar {
   z-index: 20;
-  transform: translateY(calc(-1 * var(--nx-kb-inset, 0px)));
   white-space: nowrap;
 }
 
@@ -2241,7 +2250,6 @@
   padding: 4px 6px;
   overflow-x: auto;
   z-index: 20;
-  transform: translateY(calc(-1 * var(--nx-kb-inset, 0px)));
   border-top: 1px solid color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
   background: var(--nx-bg-canvas);
   scrollbar-width: none;
@@ -2529,10 +2537,23 @@
     gap: 8px;
   }
 
+  /* Compact one-line rows: the visible button is 36px tall, the pseudo-element keeps a 44px hit area. */
   .nx-row-actions .nx-icon-btn-sm,
   .nx-icon-btn-sm.nx-row-more {
-    width: 44px;
-    height: 44px;
+    position: relative;
+    width: 40px;
+    height: 36px;
+  }
+
+  .nx-row-actions .nx-icon-btn-sm::after,
+  .nx-icon-btn-sm.nx-row-more::after {
+    content: "";
+    position: absolute;
+    inset: -4px -2px;
+  }
+
+  .nx-row-oneline {
+    padding-block: 1px;
   }
 
   .nx-row-reserve-actions .nx-row-actions {
@@ -2594,8 +2615,8 @@
   }
 
   .nx-tree-caret {
-    width: 44px;
-    height: 44px;
+    width: 40px;
+    height: 36px;
   }
 
   .nx-pathbar {
@@ -2815,3 +2836,519 @@
 .nx-app[data-nx-landscape-full="true"] .nx-statusbar {
   padding-left: calc(12px + var(--nx-safe-left));
 }
+
+/* mobile: files */
+@media (pointer: coarse) {
+  .nx-files-pane .nx-files-bar {
+    height: auto;
+    min-height: 34px;
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-block: 2px;
+  }
+  .nx-files-pane .nx-icon-btn-sm,
+  .nx-files-pane .nx-tree-caret {
+    width: 36px;
+    height: 36px;
+  }
+  .nx-files-pane .nx-pathbar {
+    min-height: 40px;
+  }
+  .nx-files-pane .nx-path-crumb {
+    min-height: 36px;
+  }
+  .nx-files-pane .nx-ftree-row {
+    height: 38px;
+    padding-block: 0;
+    flex-wrap: nowrap;
+  }
+  .nx-files-pane .nx-ftree-row .nx-tree-caret {
+    width: 28px;
+    height: 36px;
+  }
+  .nx-files-pane .nx-ftree-row .nx-row-more {
+    width: 40px;
+    height: 36px;
+  }
+}
+@media (pointer: coarse) {
+  .nx-xfer-panel .nx-link {
+    min-height: 32px;
+  }
+  .nx-xfer-panel .nx-icon-btn-sm {
+    width: 32px;
+    height: 32px;
+  }
+}
+@media (max-width: 640px) {
+  .nx-toolbar.nx-files-editor-bar > .nx-toolbar-title {
+    flex: 1 1 40%;
+  }
+}
+@media (pointer: coarse) {
+  .nx-files-editor-bar .nx-icon-btn-sm,
+  .nx-files-editor-bar .nx-icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+}
+/* end mobile: files */
+
+/* mobile: terminal-ai */
+.nx-toolbar-extra {
+  display: contents;
+}
+
+@media (pointer: coarse) {
+  .nx-terminal-keys {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  .nx-terminal-keys > .sticky,
+  .nx-terminal-keys .nx-terminal-keyboard {
+    position: static;
+    box-shadow: none;
+  }
+}
+
+@container term (max-width: 560px) {
+  .nx-toolbar.nx-term-toolbar {
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    row-gap: 3px;
+    position: relative;
+  }
+
+  /* Let the preview-link popover anchor to the toolbar so it stays inside the pane. */
+  .nx-term-toolbar > .nx-toolbar-extra > .relative {
+    position: static;
+  }
+
+  .nx-term-toolbar > .nx-toolbar-title {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .nx-term-toolbar > .nx-spacer {
+    display: none;
+  }
+
+  .nx-term-toolbar > .nx-term-more {
+    order: 2;
+    width: 40px;
+    height: 36px;
+  }
+
+  .nx-term-toolbar > .nx-toolbar-extra {
+    order: 3;
+    display: flex;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .nx-term-toolbar > .nx-toolbar-extra:empty {
+    display: none;
+  }
+
+  .nx-term-toolbar .nx-term-status-text {
+    display: none;
+  }
+
+  .nx-terminal-keys {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+    overflow: visible;
+    gap: 4px;
+  }
+
+  .nx-terminal-keys .nx-terminal-key {
+    min-width: 0;
+    height: 40px;
+    padding: 0 4px;
+  }
+
+  .nx-terminal-keys > .sticky {
+    position: static;
+    display: contents;
+  }
+
+  .nx-terminal-keys .nx-terminal-keyboard {
+    position: static;
+    grid-column: span 2;
+    order: -1;
+    margin-left: 0;
+    box-shadow: none;
+  }
+}
+@media (max-width: 640px) {
+  .nx-toolbar.nx-wrap-toolbar {
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    row-gap: 4px;
+  }
+
+  .nx-wrap-toolbar > .nx-toolbar-title {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .nx-wrap-toolbar > .nx-hint {
+    order: 8;
+    flex: 1 0 100%;
+    white-space: normal;
+  }
+
+  .nx-wrap-toolbar > .nx-spacer {
+    display: none;
+  }
+
+  .nx-wrap-toolbar > .nx-toolbar-views {
+    order: 9;
+    display: grid;
+    flex: 1 0 100%;
+    grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+    gap: 4px;
+  }
+
+  .nx-toolbar-views > .nx-btn {
+    min-height: 40px;
+  }
+
+  .nx-table.nx-table-cards {
+    display: block;
+    min-width: 0 !important;
+    table-layout: auto;
+  }
+
+  .nx-table-cards thead {
+    display: none;
+  }
+
+  .nx-table-cards tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .nx-table-cards tr {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--nx-border-strong);
+    border-radius: var(--radius-sm);
+  }
+
+  .nx-table-cards td {
+    display: block;
+    width: auto !important;
+    max-width: none;
+    padding: 2px 0;
+    border: 0;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .nx-table-cards td[data-label]::before {
+    content: attr(data-label) "：";
+    color: var(--nx-fg-muted, var(--color-neutral-500));
+    font-size: 11px;
+  }
+
+  .nx-table-cards td.nx-right {
+    padding-top: 6px;
+  }
+
+  .nx-table-cards td.nx-right .nx-btn {
+    min-height: 40px;
+    flex: 1 1 0;
+  }
+}
+/* end mobile: terminal-ai */
+
+/* mobile: shell */
+@media (pointer: coarse) {
+  .nx-panel-head .nx-icon-btn-sm {
+    width: 40px;
+    height: 40px;
+  }
+
+  .nx-app-header {
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .nx-app-header .nx-ws-switch {
+    height: 36px;
+    min-height: 36px;
+  }
+}
+
+@media (max-width: 560px) {
+  .nx-overlay {
+    padding: calc(12px + var(--nx-safe-top)) calc(12px + var(--nx-safe-right))
+      calc(12px + var(--nx-kb-inset, 0px) + var(--nx-safe-bottom)) calc(12px + var(--nx-safe-left));
+  }
+
+  .nx-modal {
+    max-height: 100%;
+  }
+
+  .nx-modal-header {
+    padding: 12px 14px;
+  }
+
+  .nx-modal-body {
+    padding: 12px 14px;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .nx-modal-footer {
+    flex-wrap: wrap;
+    padding: 10px 14px;
+  }
+}
+
+@media (pointer: coarse), (max-width: 560px) {
+  /* Banners: one compact row; actions stay reachable, text ellipsizes. */
+  .nx-banner,
+  .nx-takeover-banner {
+    min-height: 40px;
+  }
+
+  .nx-banner .nx-btn,
+  .nx-banner .nx-icon-btn-sm,
+  .nx-takeover-banner .nx-btn,
+  section[aria-label="工作区恢复"] .nx-btn,
+  section[aria-label="工作区恢复"] .nx-icon-btn-sm {
+    min-height: 36px;
+    height: 36px;
+  }
+
+  .nx-banner .nx-icon-btn-sm,
+  section[aria-label="工作区恢复"] .nx-icon-btn-sm {
+    width: 36px;
+  }
+
+  section[aria-label="工作区恢复"] > div:first-child {
+    flex-wrap: nowrap;
+    padding: 2px 8px 2px 12px;
+  }
+
+  section[aria-label="工作区恢复"] > div:first-child > span {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  section[aria-label="工作区恢复"] > div:first-child > button {
+    flex: 0 0 auto;
+  }
+
+  /* Tab strip: scroll shadows show that more tabs exist beyond the edge. */
+  .nx-tabstrip-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    background:
+      linear-gradient(to right, var(--nx-bg-canvas), var(--nx-bg-canvas)) left center / 18px 100% no-repeat local,
+      linear-gradient(to left, var(--nx-bg-canvas), var(--nx-bg-canvas)) right center / 18px 100% no-repeat local,
+      linear-gradient(to right, rgb(0 0 0 / 0.28), transparent) left center / 10px 100% no-repeat scroll,
+      linear-gradient(to left, rgb(0 0 0 / 0.28), transparent) right center / 10px 100% no-repeat scroll;
+  }
+
+  .nx-tab {
+    max-width: min(180px, 52vw);
+  }
+
+  .nx-tab > .truncate,
+  .nx-tab > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Header priority: the breadcrumb yields first, then the workspace switcher shrinks. */
+  .nx-app-header {
+    gap: 4px;
+  }
+
+  .nx-app-header .nx-ws-switch {
+    max-width: min(200px, 44vw);
+  }
+
+  .nx-app-header .nx-header-crumb {
+    flex: 0 1 auto;
+    overflow: hidden;
+  }
+
+  .nx-app-header .nx-icon-btn {
+    flex: 0 0 auto;
+  }
+
+  /* The key toolbar may grow (grid layout) but never takes the terminal's last rows. */
+  .nx-app .nx-terminal-keys {
+    max-height: calc(var(--nx-vv-height, 100dvh) * 0.38);
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 400px) {
+  .nx-app-header .nx-header-crumb {
+    display: none;
+  }
+}
+
+/* Short visible areas (landscape phone, or any phone with the keyboard open) drop secondary chrome. */
+html[data-nx-keyboard="open"] .nx-banner,
+html[data-nx-keyboard="open"] section[aria-label="工作区恢复"],
+html[data-nx-keyboard-tight="true"] .nx-statusbar,
+html[data-nx-keyboard-tight="true"] .nx-app-header,
+html[data-nx-keyboard-tight="true"] .nx-takeover-banner {
+  display: none;
+}
+
+html[data-nx-keyboard="open"] .nx-app .nx-terminal-keys {
+  max-height: calc(var(--nx-vv-height, 100dvh) * 0.3);
+}
+
+/* With the keyboard open the terminal needs every row: the keys collapse to one scrollable line. */
+html[data-nx-keyboard="open"] .nx-app .nx-terminal-keys {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-height: none;
+}
+
+html[data-nx-keyboard="open"] .nx-app .nx-terminal-keys .nx-terminal-key {
+  flex: 0 0 auto;
+  min-width: 44px;
+  height: 36px;
+}
+
+html[data-nx-keyboard="open"] .nx-app .nx-terminal-keys .nx-terminal-keyboard {
+  grid-column: auto;
+}
+
+html[data-nx-keyboard-tight="true"] .nx-app .nx-terminal-keys {
+  max-height: 34%;
+}
+
+@media (pointer: coarse) and (max-height: 480px) {
+  .nx-banner,
+  section[aria-label="工作区恢复"],
+  .nx-statusbar {
+    display: none;
+  }
+
+  .nx-app .nx-terminal-keys {
+    max-height: 34%;
+  }
+}
+
+/* Toasts leave the rail and the status bar uncovered on narrow screens. */
+@media (max-width: 820px) {
+  .nx-app .nx-toasts,
+  .nx-app[data-nx-ai="overlay"] .nx-toasts {
+    left: calc(52px + var(--nx-safe-left));
+    right: 8px;
+    width: auto;
+    max-width: none;
+  }
+}
+/* end mobile: shell */
+
+/* mobile: pages */
+/* A wrapper with .nx-cards-wrap turns an .nx-table-cards table into stacked cards when the wrapper is narrow.
+   Cells expose their column title through data-label. */
+.nx-cards-wrap {
+  container-type: inline-size;
+}
+
+@container (max-width: 640px) {
+  .nx-cards-wrap .nx-table-cards {
+    display: block;
+    min-width: 0 !important;
+    width: 100%;
+  }
+  .nx-cards-wrap .nx-table-cards thead {
+    display: none;
+  }
+  .nx-cards-wrap .nx-table-cards tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .nx-cards-wrap .nx-table-cards tbody tr {
+    display: block;
+    padding: 6px 10px;
+    border: 1px solid var(--nx-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-neutral-950) 35%, transparent);
+  }
+  .nx-cards-wrap .nx-table-cards tbody td {
+    display: block;
+    width: auto !important;
+    max-width: none !important;
+    padding: 4px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-neutral-800) 40%, transparent);
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    text-align: left !important;
+    overflow-wrap: anywhere;
+  }
+  .nx-cards-wrap .nx-table-cards tbody tr td:last-child {
+    border-bottom: none;
+  }
+  .nx-cards-wrap .nx-table-cards tbody td[data-label] {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    column-gap: 8px;
+    align-items: start;
+  }
+  .nx-cards-wrap .nx-table-cards tbody td[data-label]::before {
+    content: attr(data-label);
+    color: var(--nx-fg-tertiary);
+    font-size: 11px;
+  }
+  .nx-cards-wrap .nx-table-cards tbody td[data-label=""]::before {
+    content: none;
+  }
+  .nx-cards-wrap .nx-table-cards tbody td[data-label=""] {
+    display: block;
+  }
+  .nx-cards-wrap .nx-table-cards tbody tr:hover td {
+    background: transparent;
+  }
+}
+
+@media (max-width: 560px) {
+  .nx-settings-view .nx-card {
+    padding: 12px;
+  }
+  .nx-settings-view .nx-card-title {
+    white-space: nowrap;
+  }
+}
+
+@media (pointer: coarse) {
+  .nx-settings-view [data-testid="settings-nav-chips"] .nx-chip {
+    height: 34px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+}
+/* end mobile: pages */

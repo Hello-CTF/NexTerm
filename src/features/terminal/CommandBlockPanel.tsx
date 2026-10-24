@@ -74,7 +74,7 @@ export function CommandBlockPanel({
   };
 
   return (
-    <div className="nx-command-blocks flex h-full w-[252px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950">
+    <div className="nx-command-blocks flex h-full w-[252px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950 @max-[560px]:absolute @max-[560px]:inset-x-0 @max-[560px]:bottom-0 @max-[560px]:z-10 @max-[560px]:h-[55%] @max-[560px]:w-auto @max-[560px]:border-t @max-[560px]:border-l-0 @max-[560px]:shadow-[0_-8px_24px_rgba(0,0,0,0.5)]">
       <div className="flex h-[31px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2.5">
         <IconList size={13} className="text-neutral-500" />
         <span className="text-[11.5px] font-semibold text-neutral-200">命令块</span>

@@ -148,12 +148,12 @@ function WatchPanelContent({
         <h3 className="text-sm font-semibold">Watch</h3>
         <span className="nx-badge">{owner}</span>
         {unread > 0 && <span className="nx-badge nx-badge-blue">未读 {unread}</span>}
-        <button type="button" className="nx-button ml-auto" onClick={() => void load()}>
+        <button type="button" className="nx-button inline-flex items-center gap-1 whitespace-nowrap pointer-coarse:min-h-10 pointer-coarse:px-2 ml-auto" onClick={() => void load()}>
           <IconRefresh className="h-3.5 w-3.5" />
           刷新
         </button>
         {onClose && (
-          <button type="button" className="nx-button" onClick={onClose}>
+          <button type="button" className="nx-button inline-flex items-center gap-1 whitespace-nowrap pointer-coarse:min-h-10 pointer-coarse:px-2" onClick={onClose}>
             <IconClose className="h-3.5 w-3.5" />
           </button>
         )}
@@ -205,7 +205,7 @@ function WatchPanelContent({
               {watch.repeat && <span className="nx-badge">重复</span>}
               {watch.lastError && <span className="text-neutral-500">{watch.lastError}</span>}
               {(watch.status === "armed" || watch.status === "matched") && (
-                <button type="button" className="nx-button" onClick={() => void cancel(watch)}>
+                <button type="button" className="nx-button inline-flex items-center gap-1 whitespace-nowrap pointer-coarse:min-h-10 pointer-coarse:px-2" onClick={() => void cancel(watch)}>
                   取消
                 </button>
               )}

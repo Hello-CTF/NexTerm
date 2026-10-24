@@ -215,7 +215,7 @@ export function PublicPreviewApp({ token }: { token: string }) {
                   {phase.retryable && (
                     <button
                       type="button"
-                      className="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-500"
+                      className="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm min-h-10 text-white hover:bg-indigo-500"
                       onClick={retry}
                     >
                       重新连接
@@ -235,7 +235,7 @@ export function PublicPreviewApp({ token }: { token: string }) {
                   <p className="mt-2 text-sm text-neutral-400">网络波动导致连接中断，可尝试重新连接。</p>
                   <button
                     type="button"
-                    className="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-500"
+                    className="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm min-h-10 text-white hover:bg-indigo-500"
                     onClick={retry}
                   >
                     重新连接

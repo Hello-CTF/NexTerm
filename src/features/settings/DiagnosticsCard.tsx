@@ -192,7 +192,7 @@ export function DiagnosticsCard() {
 
       {captures.length > 0 && (
         <div className="mt-4">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <span className="text-[12px] text-neutral-400">历史记录</span>
             <button
               type="button"

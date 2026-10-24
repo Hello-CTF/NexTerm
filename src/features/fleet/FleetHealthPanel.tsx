@@ -252,7 +252,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
         {lastRefreshed !== null && <span className="nx-hint">上次刷新 {new Date(lastRefreshed).toLocaleTimeString()}</span>}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto p-3">
+      <div className="nx-cards-wrap min-h-0 flex-1 overflow-auto p-3">
         {(assetsQuery.isPending || groupsQuery.isPending) && <div className="nx-hint">正在读取项目主机…</div>}
         {(assetsQuery.isError || groupsQuery.isError) && (
           <div role="alert" className="mb-2 text-[11px] text-red-300">
@@ -272,7 +272,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
           </div>
         )}
         {hosts.length > 0 && (
-          <table className="nx-table min-w-[1240px]">
+          <table className="nx-table nx-table-cards min-w-[1240px]">
             <thead>
               <tr>
                 <th>主机</th>
@@ -292,40 +292,40 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
                 const skipped = overflow.has(host.asset.id);
                 return (
                   <tr key={host.asset.id} data-asset-id={host.asset.id}>
-                    <td>
+                    <td data-label="">
                       <div className="font-medium text-neutral-200">{host.asset.name}</div>
                       <div className="font-mono text-[10px] text-neutral-500">{host.asset.host ?? host.asset.id}</div>
                       {!host.target.sessionId && <div className="mt-1 text-[10px] text-neutral-500">未连接 SSH</div>}
                     </td>
-                    <td>
+                    <td data-label="Reachability">
                       <span className={result?.reachable ? "text-green-300" : result || skipped ? "text-red-300" : "text-neutral-500"}>
                         {skipped ? "未探测" : running && !result ? "探测中…" : !result ? "未探测" : result.reachable ? "可达" : "不可达 / 失败"}
                       </span>
                       {skipped && <div className="mt-1 text-[10px] text-amber-300">超出单批上限</div>}
                       {result?.error && <div className="mt-1 max-w-52 whitespace-normal break-words text-[10px] text-red-300">{result.error}</div>}
                     </td>
-                    <td className="nx-mono">{result ? `${result.latencyMs} ms` : "—"}</td>
-                    <td>
+                    <td data-label="Latency" className="nx-mono">{result ? `${result.latencyMs} ms` : "—"}</td>
+                    <td data-label="Uptime">
                       {result?.uptimeSeconds != null ? formatUptime(result.uptimeSeconds) : "—"}
                       <MetricError result={result} metric="uptime" />
                     </td>
-                    <td className="nx-mono">
+                    <td data-label="Load" className="nx-mono">
                       {loadValues(result)}
                       <MetricError result={result} metric="load" />
                     </td>
-                    <td>
+                    <td data-label="Disk">
                       {percent(result?.diskUsedPercent)}
                       <MetricError result={result} metric="disk" />
                     </td>
-                    <td>
+                    <td data-label="Memory">
                       {percent(result?.memoryUsedPercent)}
                       <MetricError result={result} metric="memory" />
                     </td>
-                    <td>
+                    <td data-label="Docker 可回收">
                       {result?.dockerReclaimableBytes != null ? formatDockerBytes(result.dockerReclaimableBytes) : "—"}
                       <MetricError result={result} metric="docker" />
                     </td>
-                    <td>
+                    <td data-label="最近批量执行">
                       {result?.lastBatch ? (
                         <>
                           <div className={result.lastBatch.status === "success" ? "text-green-300" : "text-red-300"}>

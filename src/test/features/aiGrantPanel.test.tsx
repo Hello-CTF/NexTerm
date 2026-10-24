@@ -151,6 +151,15 @@ beforeEach(() => {
 });
 
 describe("GrantPanel lists only what matters", () => {
+  it("renders when the backend returns null lists", async () => {
+    mocks.fleetDevices.mockResolvedValue({ devices: null });
+    mocks.grantList.mockResolvedValue(null);
+    mocks.ruleList.mockResolvedValue(null);
+    await mountPanel("asset-1");
+    expect(text()).toContain("这台主机");
+    expect(text()).not.toContain("读取授权失败");
+  });
+
   it("shows the current host and authorized hosts, never every asset", async () => {
     mocks.grantList.mockResolvedValue([{ deviceId: "asset-4", kinds: ["session_exec"], updatedAt: 1 }]);
     await mountPanel("asset-1");

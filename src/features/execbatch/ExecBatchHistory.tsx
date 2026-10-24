@@ -56,7 +56,7 @@ function HistoryMatrix({ batch, results }: { batch: ExecBatchRow; results: ExecB
         <span className="nx-hint">命令哈希 {batch.commandHash.slice(0, 12)}…</span>
       </div>
       <div className="overflow-x-auto">
-        <table className="nx-table nx-table-fixed min-w-[720px]">
+        <table className="nx-table nx-table-cards nx-table-fixed min-w-[720px]">
           <thead>
             <tr>
               <th className="w-1/4">目标</th>
@@ -73,17 +73,17 @@ function HistoryMatrix({ batch, results }: { batch: ExecBatchRow; results: ExecB
                   <div className="truncate text-neutral-300" title={result.sessionId}>{result.sessionName}</div>
                   <div className="truncate font-mono text-[10px] text-neutral-500">{result.sessionId}</div>
                 </td>
-                <td className={statusClass(result.status)}>
+                <td data-label="状态" className={statusClass(result.status)}>
                   {TARGET_STATUS_LABELS[result.status as ExecBatchStatus] ?? result.status}
                   {result.truncated && <span className="ml-1 text-[10px] text-amber-300">输出曾截断</span>}
                 </td>
-                <td className="nx-mono">{result.exitCode ?? "—"}{result.signal ? ` (${result.signal})` : ""}</td>
+                <td data-label="退出码" className="nx-mono">{result.exitCode ?? "—"}{result.signal ? ` (${result.signal})` : ""}</td>
                 <td className="text-[10px] text-neutral-400">
                   <div>{formatTime(result.startedAt)}</div>
                   <div>{formatTime(result.finishedAt)}</div>
                   <div className="nx-mono text-neutral-500">{result.durationMs} ms</div>
                 </td>
-                <td className="text-neutral-400">{ERROR_KIND_LABELS[result.errorKind] || result.errorKind || "—"}</td>
+                <td data-label="错误分类" className="text-neutral-400">{ERROR_KIND_LABELS[result.errorKind] || result.errorKind || "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -166,19 +166,19 @@ export function ExecBatchHistory() {
           {page && (
             <>
               <div className="overflow-x-auto">
-                <table className="nx-table min-w-[640px]">
+                <table className="nx-table nx-table-cards min-w-[640px]">
                   <thead>
                     <tr><th>开始时间</th><th>状态</th><th>目标数</th><th>命令哈希</th><th>结果</th></tr>
                   </thead>
                   <tbody>
                     {page.items.map((batch) => (
                       <tr key={`${batch.id}:${batch.ownerScope}`}>
-                        <td className="whitespace-nowrap text-neutral-400">{formatTime(batch.startedAt)}</td>
-                        <td className={statusClass(batch.status)}>
+                        <td data-label="开始时间" className="whitespace-nowrap text-neutral-400">{formatTime(batch.startedAt)}</td>
+                        <td data-label="状态" className={statusClass(batch.status)}>
                           {BATCH_STATUS_LABELS[batch.status] ?? batch.status}
                           {batch.production && <span className="ml-1 text-[10px] text-amber-300">生产</span>}
                         </td>
-                        <td className="nx-mono">{batch.targetCount}</td>
+                        <td data-label="目标数" className="nx-mono">{batch.targetCount}</td>
                         <td className="nx-mono text-neutral-500" title={batch.commandHash}>{batch.commandHash.slice(0, 12)}…</td>
                         <td>
                           <button

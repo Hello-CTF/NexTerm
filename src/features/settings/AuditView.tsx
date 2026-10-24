@@ -7,6 +7,7 @@ import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
 import { IconHistory, IconRefresh } from "../../ui/icons";
 import { CommandLogView } from "./CommandLogView";
+import { useCompactWidth } from "./useCompactWidth";
 
 interface AuditEntry {
   id: number;
@@ -106,6 +107,7 @@ function AuditSkeletonRows() {
 }
 
 export function AuditView() {
+  const [bodyRef, compact] = useCompactWidth(640);
   const user = useAuth((s) => s.user);
   const [view, setView] = useState<"audit" | "command">("audit");
   const [entries, setEntries] = useState<AuditEntry[]>([]);
@@ -272,7 +274,46 @@ export function AuditView() {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto">
+        {compact ? (
+        <ul className="m-0 flex list-none flex-col p-0" aria-label="审计记录" data-testid="audit-cards">
+          {entries.map((e) => (
+            <li key={e.id} className="flex flex-col gap-1 border-b border-neutral-800/60 px-3 py-2.5">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className={`nx-badge ${e.source === "ai" ? "nx-badge-purple" : e.source === "fleet" ? "nx-badge-green" : "nx-badge-blue"}`}>
+                  {sourceLabel(e.source)}
+                </span>
+                <span className="min-w-0 flex-1 break-words text-[12.5px] font-medium text-neutral-200" title={e.kind}>
+                  {KIND_LABELS[e.kind] ?? e.kind}
+                </span>
+                {e.exitCode !== null && (
+                  <span className={`text-[12px] ${e.exitCode === 0 ? "text-green-300" : "text-red-300"}`} title={e.exitCode === 0 ? "成功" : "失败"}>
+                    {e.exitCode === 0 ? "✓ 0" : `✗ ${e.exitCode}`}
+                  </span>
+                )}
+                {e.durationMs !== null && <span className="nx-mono text-[11px] text-neutral-500">{e.durationMs}ms</span>}
+              </div>
+              <div className="nx-mono text-[11px] text-neutral-500">{new Date(e.ts).toLocaleString()}</div>
+              <div className="nx-mono line-clamp-3 break-all text-[11.5px] text-neutral-400" title={JSON.stringify(e.payload)}>
+                {JSON.stringify(e.payload)}
+              </div>
+            </li>
+          ))}
+          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">加载中…</li>}
+          {entries.length === 0 && !loading && error && (
+            <li className="flex flex-wrap items-center justify-center gap-2 px-3 py-4 text-center text-[12px]">
+              <span className="min-w-0 break-words text-red-300">审计记录加载失败 · {error}</span>
+              <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadFirstPage(source, deviceId)} disabled={loading}>
+                <IconRefresh size={12} />
+                重试
+              </button>
+            </li>
+          )}
+          {entries.length === 0 && !loading && !error && (
+            <li className="nx-hint px-3 py-4 text-center">暂无记录：连接主机、执行命令或运行 AI 操作后，记录会显示在这里。</li>
+          )}
+        </ul>
+        ) : (
         <table className="nx-table nx-table-fixed">
           <thead>
             <tr>
@@ -346,6 +387,7 @@ export function AuditView() {
             ) : null}
           </tbody>
         </table>
+        )}
       </div>
 
       {entries.length > 0 && (

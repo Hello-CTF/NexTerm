@@ -179,7 +179,7 @@ const TreeRow = memo(function TreeRow({
       data-row-path={entry.path}
       tabIndex={0}
       data-drop-path={isDir ? entry.path : undefined}
-      className={`nx-row nx-row-oneline nx-row-reserve-actions ${isSel ? "is-selected" : ""}`}
+      className={`nx-row nx-row-oneline nx-row-reserve-actions nx-ftree-row ${isSel ? "is-selected" : ""}`}
       style={{ paddingLeft: 2 + depth * 12 }}
       onClick={() => {
         actions.select(entry.path);
@@ -1244,10 +1244,10 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
 
   return (
     <aside
-      className="flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
+      className="nx-files-pane flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
       style={{ width: leftWidth }}
     >
-      <div className="flex h-[34px] shrink-0 items-center gap-0.5 overflow-x-auto px-2">
+      <div className="nx-files-bar flex h-[34px] shrink-0 items-center gap-0.5 overflow-x-auto px-2">
         <span className="mr-1 shrink-0 text-xs font-semibold tracking-wide text-neutral-200">
           文件
         </span>

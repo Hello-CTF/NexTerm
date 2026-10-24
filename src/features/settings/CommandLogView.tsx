@@ -5,6 +5,7 @@ import { WEB } from "../../ipc/env";
 import { useAuth } from "../auth/store";
 import { describeError } from "../../ui/errorText";
 import { IconRefresh, IconTerminal } from "../../ui/icons";
+import { useCompactWidth } from "./useCompactWidth";
 
 interface CommandEntry {
   id: number;
@@ -89,6 +90,7 @@ function CommandSkeletonRows() {
 // Command audit track: structured records of commands executed in sessions (device/user/session/exit code);
 // data comes from OSC 133 shell integration observation; plain output and other sources are not included.
 export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
+  const [bodyRef, compact] = useCompactWidth(640);
   // In server multi-user mode, non-superadmins can only read their own command records (server-enforced), so the user filter entry is not offered.
   const account = useAuth((s) => s.user);
   const userFilterLocked = WEB && account !== null && account.role !== "superadmin";
@@ -259,7 +261,48 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto">
+        {compact ? (
+        <ul className="m-0 flex list-none flex-col p-0" aria-label="命令记录" data-testid="command-cards">
+          {entries.map((e) => (
+            <li key={e.id} className="flex flex-col gap-1 border-b border-neutral-800/60 px-3 py-2.5">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className={`nx-badge ${e.source === "exec" ? "nx-badge-green" : "nx-badge-blue"}`}>
+                  {SOURCE_LABELS[e.source] ?? e.source}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-neutral-200" title={assetName(e.assetId)}>
+                  {assetName(e.assetId)}
+                </span>
+                {e.exitCode !== null && (
+                  <span className={`text-[12px] ${e.exitCode === 0 ? "text-green-300" : "text-red-300"}`} title={e.exitCode === 0 ? "成功" : "失败"}>
+                    {e.exitCode === 0 ? "✓ 0" : `✗ ${e.exitCode}`}
+                  </span>
+                )}
+              </div>
+              <div className="nx-mono line-clamp-3 break-all text-[11.5px] text-neutral-300" title={e.command}>
+                {e.command}
+              </div>
+              <div className="nx-mono break-all text-[11px] text-neutral-500">
+                {new Date(e.finishedAt).toLocaleString()} · {e.sessionId}
+                {e.userId ? ` · ${e.userId}` : ""}
+              </div>
+            </li>
+          ))}
+          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">加载中…</li>}
+          {entries.length === 0 && !loading && error && (
+            <li className="flex flex-wrap items-center justify-center gap-2 px-3 py-4 text-center text-[12px]">
+              <span className="min-w-0 break-words text-red-300">命令记录加载失败 · {error}</span>
+              <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadFirstPage(assetId, userId, sessionId)} disabled={loading}>
+                <IconRefresh size={12} />
+                重试
+              </button>
+            </li>
+          )}
+          {entries.length === 0 && !loading && !error && (
+            <li className="nx-hint px-3 py-4 text-center">暂无记录：仅记录启用了 OSC 133 集成的 shell 中执行的命令。</li>
+          )}
+        </ul>
+        ) : (
         <table className="nx-table nx-table-fixed">
           <thead>
             <tr>
@@ -335,6 +378,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
             ) : null}
           </tbody>
         </table>
+        )}
       </div>
 
       {entries.length > 0 && (

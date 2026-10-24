@@ -157,7 +157,7 @@ export function ServicesPanel({
       {!journal && listBatch && (
         <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
           <IconServer size={13} className="text-neutral-500" />
-          <input className="nx-input nx-input-sm w-64" value={filter} placeholder="过滤 unit / 描述 / 状态" aria-label="过滤服务" onChange={(event) => setFilter(event.target.value)} />
+          <input className="nx-input nx-input-sm w-full sm:w-64" value={filter} placeholder="过滤 unit / 描述 / 状态" aria-label="过滤服务" onChange={(event) => setFilter(event.target.value)} />
           <select className="nx-select nx-select-sm w-32" value={stateFilter} aria-label="服务状态过滤" onChange={(event) => setStateFilter(event.target.value as ServiceStateFilter)}>
             <option value="all">全部状态</option><option value="running">运行中</option><option value="failed">失败</option><option value="inactive">未运行</option><option value="other">其他</option>
           </select>
@@ -196,17 +196,17 @@ export function ServicesPanel({
                   <div className="py-2 text-[11px] text-neutral-500">没有匹配当前过滤条件的 service unit。</div>
                 )}
                 {units.length > 0 && (
-                  <div className="overflow-x-auto">
-                    <table className="nx-table nx-table-fixed min-w-[1120px]">
+                  <div className="nx-cards-wrap overflow-x-auto">
+                    <table className="nx-table nx-table-cards nx-table-fixed min-w-[1120px]">
                       <thead><tr><th className="w-1/4">Unit</th><th className="w-20">LOAD</th><th className="w-20">ACTIVE</th><th className="w-24">SUB</th><th>描述</th><th className="w-[490px]">操作</th></tr></thead>
                       <tbody>
                         {units.map((unit) => (
                           <tr key={unit.name} data-unit={unit.name}>
-                            <td className="truncate font-mono text-neutral-200" title={unit.name}>{unit.name}</td>
-                            <td>{unit.load}</td><td className={unit.active === "failed" ? "text-red-300" : unit.active === "active" ? "text-green-300" : "text-neutral-400"}>{unit.active}</td><td>{unit.sub}</td>
-                            <td className="truncate text-neutral-400" title={unit.description}>{unit.description}</td>
-                            <td>
-                              <div className="flex flex-nowrap gap-1">
+                            <td data-label="" className="truncate font-mono text-neutral-200" title={unit.name}>{unit.name}</td>
+                            <td data-label="LOAD">{unit.load}</td><td data-label="ACTIVE" className={unit.active === "failed" ? "text-red-300" : unit.active === "active" ? "text-green-300" : "text-neutral-400"}>{unit.active}</td><td data-label="SUB">{unit.sub}</td>
+                            <td data-label="描述" className="truncate text-neutral-400" title={unit.description}>{unit.description}</td>
+                            <td data-label="">
+                              <div className="flex flex-nowrap gap-1 @max-[640px]:flex-wrap">
                                 {ROW_ACTIONS.map((action) => (
                                   <button key={action} type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={operation.running} onClick={() => runAction(action, unit.name, [host.result.sessionId])}>{SERVICE_ACTION_LABELS[action]}</button>
                                 ))}

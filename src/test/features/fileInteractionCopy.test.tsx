@@ -217,6 +217,15 @@ describe("FileEditor shortcut labels", () => {
     ).not.toBeNull();
   });
 
+  it("gives every icon-only toolbar button an accessible name", async () => {
+    mounted = mountWithClient(createElement(FileEditor, { sessionId: SID, path: "/a.txt", onClose: () => {} }));
+    await waitFor(() => expect(mounted!.container.querySelector(".nx-kbd")).not.toBeNull());
+    const unnamed = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button")].filter(
+      (b) => !(b.getAttribute("aria-label") || b.textContent?.trim()),
+    );
+    expect(unnamed).toHaveLength(0);
+  });
+
   it("shows Ctrl S on non-mac platforms", async () => {
     mounted = mountWithClient(createElement(FileEditor, { sessionId: SID, path: "/a.txt" }));
     await waitFor(() =>

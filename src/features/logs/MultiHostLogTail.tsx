@@ -413,7 +413,7 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
         <span className="nx-hint">仅当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不自动连接</span>
       </div>
 
-      <div className="flex max-h-[46%] min-h-[220px] flex-col gap-3 overflow-y-auto border-b border-neutral-800/70 px-3 py-3">
+      <div className="flex max-h-[42%] min-h-[160px] flex-col sm:max-h-[46%] sm:min-h-[220px] gap-3 overflow-y-auto border-b border-neutral-800/70 px-3 py-3">
         <TargetSetPicker
           targets={targets}
           selectedIds={selectedIds}
@@ -428,7 +428,7 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
               const target = targets.find((candidate) => candidate.id === sessionId);
               const draft = drafts[sessionId] ?? { kind: "file" as const, value: "" };
               return (
-                <div key={sessionId} className="flex min-w-0 items-center gap-2 rounded border border-neutral-800/70 p-2">
+                <div key={sessionId} className="flex min-w-0 flex-wrap items-center gap-2 rounded border border-neutral-800/70 p-2 sm:flex-nowrap">
                   <span className={`w-24 shrink-0 truncate text-[11px] ${hostColor(sessionId)}`} title={target?.label}>
                     {target?.label ?? sessionId}
                   </span>
@@ -449,7 +449,7 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
                     ))}
                   </select>
                   <input
-                    className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
+                    className="nx-input nx-input-sm min-w-[8rem] flex-1 basis-full font-mono sm:basis-0"
                     value={draft.value}
                     disabled={running}
                     placeholder={SOURCE_PLACEHOLDERS[draft.kind]}
@@ -508,14 +508,14 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
 
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
         <input
-          className="nx-input nx-input-sm w-48 font-mono"
+          className="nx-input nx-input-sm min-w-0 flex-1 basis-36 font-mono sm:w-48 sm:flex-none"
           value={include}
           placeholder="包含 regex，例如 ERROR|WARN"
           aria-label="包含正则"
           onChange={(event) => setInclude(event.target.value)}
         />
         <input
-          className="nx-input nx-input-sm w-44 font-mono"
+          className="nx-input nx-input-sm min-w-0 flex-1 basis-36 font-mono sm:w-44 sm:flex-none"
           value={exclude}
           placeholder="排除 regex"
           aria-label="排除正则"

@@ -304,7 +304,7 @@ function DesktopLinkCard() {
   return (
     <>
     <section className="nx-card">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{status?.loggedIn ? "服务端连接" : "账号同步"}</span>
         {status?.loggedIn ? (
@@ -348,8 +348,8 @@ function DesktopLinkCard() {
       {step.kind === "form" && loaded && !status?.loggedIn && (
         <>
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-url">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-url">
                 服务端
               </label>
               <input
@@ -361,8 +361,8 @@ function DesktopLinkCard() {
                 onChange={(e) => updateDraft({ url: e.target.value })}
               />
             </div>
-            <div className="flex items-center gap-2">
-              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-user">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-user">
                 账号
               </label>
               <input
@@ -374,8 +374,8 @@ function DesktopLinkCard() {
                 onChange={(e) => updateDraft({ username: e.target.value })}
               />
             </div>
-            <div className="flex items-center gap-2">
-              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-pass">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-pass">
                 密码
               </label>
               <input
@@ -441,8 +441,8 @@ function DesktopLinkCard() {
           <p className="nx-hint">
             此账号已开启 TOTP 两步验证。请输入认证器 App 中的 6 位动态码；手机丢失时，也可输入未使用的恢复码。
           </p>
-          <div className="flex items-center gap-2">
-            <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-mfa-code">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-mfa-code">
               动态码
             </label>
             <input
@@ -478,8 +478,8 @@ function DesktopLinkCard() {
           <p className="nx-hint">
             账号被管理员重置，必须先设置新密码。数据密钥、所有会话和两步验证绑定已清除；设置新密码后会签发新的数据密钥与一次性恢复密钥，服务端密文需从仍持有数据的设备重新同步。
           </p>
-          <div className="flex items-center gap-2">
-            <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass">
               新密码
             </label>
             <input
@@ -492,8 +492,8 @@ function DesktopLinkCard() {
               onChange={(e) => setNewPassword(e.target.value)}
             />
           </div>
-          <div className="flex items-center gap-2">
-            <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass2">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass2">
               确认密码
             </label>
             <input
@@ -1609,7 +1609,7 @@ function UnlockDEKCard() {
 
   return (
     <section className="nx-card">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconLock size={15} className="text-neutral-400" />
         <span className="nx-card-title">解锁数据密钥</span>
       </div>

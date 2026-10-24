@@ -180,20 +180,20 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
       <button
         type="button"
         title="创建预览链接"
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs max-sm:min-h-10 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
         onClick={toggle}
       >
         <IconGlobe className="h-3.5 w-3.5" />
         预览链接
       </button>
       {open && (
-        <div className="absolute right-0 z-30 mt-1 w-80 rounded-md border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
+        <div className="absolute right-0 z-30 mt-1 w-80 max-w-[calc(100vw-1.5rem)] rounded-md border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
           <p className="text-xs text-neutral-300">
             为「{sessionName || "当前终端"}」创建预览链接：获得链接的人无需登录即可查看当前屏幕和后续输出。默认只读，观看者不能输入。
           </p>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <select
-              className="rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200"
+              className="rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs max-sm:min-h-10 text-neutral-200"
               value={ttlMs}
               onChange={(event) => setTtlMs(Number(event.target.value))}
             >
@@ -205,14 +205,14 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
             </select>
             <button
               type="button"
-              className="rounded-md bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-500 disabled:opacity-50"
+              className="rounded-md bg-indigo-600 px-3 py-1 text-xs max-sm:min-h-10 text-white hover:bg-indigo-500 disabled:opacity-50"
               disabled={creating}
               onClick={() => void create()}
             >
               {creating ? "创建中…" : "创建链接"}
             </button>
           </div>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1.5 text-xs text-neutral-300">
               <input
                 type="checkbox"
@@ -230,7 +230,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
               <p className="break-all text-xs text-green-300">{createdUrl}</p>
               <button
                 type="button"
-                className="mt-1 rounded-md bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
+                className="mt-1 rounded-md bg-neutral-800 px-2 py-0.5 text-xs max-sm:min-h-9 text-neutral-200 hover:bg-neutral-700"
                 onClick={() => void copyUrl(createdUrl)}
               >
                 复制链接
@@ -243,7 +243,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
               {links.map((link) => {
                 const permission = previewPermission(link);
                 return (
-                  <div key={link.id} className="mt-1 flex items-center justify-between text-xs">
+                  <div key={link.id} className="mt-1 flex flex-wrap items-center justify-between gap-1 text-xs">
                     <span className="text-neutral-400">有效期至 {new Date(link.expires_at).toLocaleString()}</span>
                     <span className="flex items-center gap-2">
                       <span
@@ -257,7 +257,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
                       </span>
                       <button
                         type="button"
-                        className="rounded-md px-2 py-0.5 text-red-400 hover:bg-neutral-800"
+                        className="rounded-md px-2 py-0.5 max-sm:min-h-9 text-red-400 hover:bg-neutral-800"
                         onClick={() => void revoke(link.id)}
                       >
                         吊销

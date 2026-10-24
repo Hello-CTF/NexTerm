@@ -422,15 +422,17 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
 
   return (
     <section className="nx-pane" aria-label="批量执行" data-testid="exec-batch-panel">
-      <div className="nx-toolbar flex-wrap">
+      <div className="nx-toolbar nx-wrap-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
         <h2 className="nx-toolbar-title">多主机工具</h2>
         <span className="nx-hint">仅当前已连接的 SSH / 受管设备 · 手动触发 · 受管设备没有环境标记，执行前需要你确认</span>
         <span className="nx-spacer" />
+        <div className="nx-toolbar-views contents">
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "execute"} disabled={running || prompting} onClick={() => setView("execute")}>批量执行</button>
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "drift"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("drift"); }}>漂移对比</button>
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "services"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("services"); }}>服务</button>
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "finder"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("finder"); }}>端口 / 进程</button>
+        </div>
       </div>
 
       {view === "services" ? (
@@ -610,7 +612,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
             </span>
           </div>
           <div className="overflow-x-auto px-3 pb-3">
-            <table className="nx-table nx-table-fixed min-w-[720px]">
+            <table className="nx-table nx-table-cards nx-table-fixed min-w-[720px]">
               <thead>
                 <tr>
                   <th className="w-1/5">目标</th>
@@ -629,15 +631,15 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
                       </div>
                       <div className="truncate font-mono text-[10px] text-neutral-500">{result.sessionId}</div>
                     </td>
-                    <td className={statusClass(result.status)}>
+                    <td data-label="状态" className={statusClass(result.status)}>
                       {STATUS_LABELS[result.status]}
                       {result.truncated && <span className="ml-1 text-[10px] text-amber-300">已截断</span>}
                     </td>
-                    <td className="nx-mono">
+                    <td data-label="退出码" className="nx-mono">
                       {result.exitCode ?? "—"}
                       {result.signal ? ` (${result.signal})` : ""}
                     </td>
-                    <td className="nx-mono">{result.durationMs} ms</td>
+                    <td data-label="耗时" className="nx-mono">{result.durationMs} ms</td>
                     <td>
                       {result.error && <div className="mb-1 whitespace-pre-wrap break-all text-red-300">{result.error}</div>}
                       <ResultOutput result={result} />

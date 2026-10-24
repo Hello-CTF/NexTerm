@@ -1697,8 +1697,8 @@ export function TerminalPane({
 
   return (
     <div ref={paneRef} className="nx-pane bg-term @container/term">
-      <div className="nx-toolbar">
-        <span className="nx-toolbar-title">{title}</span>
+      <div className="nx-toolbar nx-term-toolbar">
+        <span className="nx-toolbar-title" title={title}>{title}</span>
         <span
           className={`nx-badge ${
             sessionStatus === "connected"
@@ -1710,14 +1710,18 @@ export function TerminalPane({
           title={
             showConnectProgress && connectProgress
               ? `${connectProgress.host}:${connectProgress.port}`
-              : undefined
+              : statusText
           }
+          aria-label={`连接状态：${statusText}`}
         >
           <span className="nx-dot" />
-          {showConnectProgress && connectProgress
-            ? `${statusText} · ${connectProgressText(connectProgress)}`
-            : statusText}
+          <span className="nx-term-status-text">
+            {showConnectProgress && connectProgress
+              ? `${statusText} · ${connectProgressText(connectProgress)}`
+              : statusText}
+          </span>
         </span>
+        <div className="nx-toolbar-extra">
         {staleConfig && (
           <>
             <span className="nx-badge nx-badge-amber" role="status">
@@ -1787,6 +1791,7 @@ export function TerminalPane({
           <Daemon durable={durable} sessionKind={sessionKind} helper={helperBadge} onOpenHelper={openHelper} />
         )}
         {previewShareEnabled && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
+        </div>
         <div className="nx-spacer" />
 
         <button
@@ -1800,7 +1805,7 @@ export function TerminalPane({
 
         {encoding !== "utf-8" && (
           <span
-            className="nx-badge nx-badge-amber font-mono"
+            className="nx-badge nx-badge-amber font-mono @max-[560px]:order-1"
             title="当前终端字符编码（对之后的输出生效），在「更多终端操作」菜单里切换"
           >
             {encoding}
@@ -1840,7 +1845,7 @@ export function TerminalPane({
         {broadcastCount > 0 && (
           <button
             type="button"
-            className="nx-badge nx-badge-red shrink-0 cursor-pointer"
+            className="nx-badge nx-badge-red shrink-0 cursor-pointer @max-[560px]:order-1"
             title={`命令广播已开启：目标共 ${broadcastCount} 个，不可写目标会跳过；点击关闭广播`}
             aria-label="关闭命令广播"
             onClick={closeBroadcast}
@@ -1850,7 +1855,7 @@ export function TerminalPane({
           </button>
         )}
         <button
-          className="nx-icon-btn nx-icon-btn-sm"
+          className="nx-icon-btn nx-icon-btn-sm nx-term-more"
           title="更多终端操作（搜索 / 编码 / 命令块）"
           aria-label="更多终端操作"
           onClick={openToolbarOverflow}
@@ -1919,7 +1924,7 @@ export function TerminalPane({
 
       {searchOpen && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-800/60 bg-neutral-900/70 px-2.5 py-1.5">
-          <div className="nx-field max-w-[260px]">
+          <div className="nx-field max-w-[260px] @max-[560px]:max-w-none @max-[560px]:flex-1">
             <span className="nx-field-icon">
               <IconSearch size={12} />
             </span>
@@ -1939,6 +1944,7 @@ export function TerminalPane({
           </div>
           <button
             className="nx-icon-btn"
+            aria-label="上一个匹配"
             title="上一个"
             onClick={() => searchApi.current?.findPrevious(query)}
           >
@@ -1946,19 +1952,20 @@ export function TerminalPane({
           </button>
           <button
             className="nx-icon-btn"
+            aria-label="下一个匹配"
             title="下一个"
             onClick={() => searchApi.current?.findNext(query)}
           >
             <IconArrowDown size={13} />
           </button>
-          <div className="nx-spacer" />
-          <button className="nx-icon-btn" title="关闭搜索" onClick={() => setSearchOpen(false)}>
+          <div className="nx-spacer @max-[560px]:hidden" />
+          <button className="nx-icon-btn" aria-label="关闭搜索" title="关闭搜索" onClick={() => setSearchOpen(false)}>
             <IconClose size={12} />
           </button>
         </div>
       )}
 
-      <div className="nx-terminal-body flex min-h-0 flex-1">
+      <div className="nx-terminal-body relative flex min-h-0 flex-1">
         <div className="relative min-h-0 min-w-0 flex-1" onContextMenu={openTerminalMenu}>
           <div className="h-full w-full p-1.5">
             <XtermView

@@ -234,14 +234,14 @@ export function AccountCard() {
         <form onSubmit={(e) => void submitCreate(e)} className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
           <div className="flex flex-wrap items-center gap-2">
             <input
-              className="nx-input min-w-0 flex-1"
+              className="nx-input min-w-0 flex-1 basis-40"
               placeholder="用户名"
               value={username}
               autoComplete="off"
               onChange={(e) => setUsername(e.target.value)}
             />
             <input
-              className="nx-input min-w-0 flex-1"
+              className="nx-input min-w-0 flex-1 basis-40"
               placeholder="显示名（可选）"
               value={displayName}
               autoComplete="off"
@@ -250,7 +250,7 @@ export function AccountCard() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <input
-              className="nx-input min-w-0 flex-1 font-mono"
+              className="nx-input min-w-0 flex-1 basis-40 font-mono"
               type="password"
               placeholder="初始密码（至少 8 位）"
               value={password}

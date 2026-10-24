@@ -860,8 +860,23 @@ interface LocalLayout {
   rightOpen: boolean;
 }
 
+// Touch tablets below this width keep the AI dock closed on first run so the terminal is not squeezed.
+const AI_DOCK_DEFAULT_MIN_TOUCH_WIDTH = 1280;
+
+export function defaultRightOpen(width: number, coarsePointer: boolean): boolean {
+  return !(coarsePointer && width < AI_DOCK_DEFAULT_MIN_TOUCH_WIDTH);
+}
+
+function initialRightOpen(): boolean {
+  try {
+    return defaultRightOpen(window.innerWidth, window.matchMedia("(pointer: coarse)").matches);
+  } catch {
+    return true;
+  }
+}
+
 function loadLayout(): LocalLayout {
-  const fallback = { leftWidth: LEFT_DEFAULT, rightWidth: RIGHT_DEFAULT, rightOpen: true };
+  const fallback = { leftWidth: LEFT_DEFAULT, rightWidth: RIGHT_DEFAULT, rightOpen: initialRightOpen() };
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
     if (!raw) return fallback;
@@ -869,7 +884,7 @@ function loadLayout(): LocalLayout {
     return {
       leftWidth: clampWidth(o.leftWidth ?? LEFT_DEFAULT, LEFT_MIN, LEFT_MAX),
       rightWidth: clampWidth(o.rightWidth ?? RIGHT_DEFAULT, RIGHT_MIN, RIGHT_MAX),
-      rightOpen: typeof o.rightOpen === "boolean" ? o.rightOpen : true,
+      rightOpen: typeof o.rightOpen === "boolean" ? o.rightOpen : initialRightOpen(),
     };
   } catch {
     return fallback;

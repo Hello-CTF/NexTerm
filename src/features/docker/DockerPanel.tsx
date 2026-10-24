@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -21,6 +21,8 @@ import {
   IconTerminal,
   IconTrash,
 } from "../../ui/icons";
+import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
+import { useCompactWidth } from "./useCompactWidth";
 import { ContainerInsight } from "./ContainerInsight";
 import { ComposeStackHeader } from "./ComposeStackHeader";
 import { groupContainersByCompose } from "./composeGrouping";
@@ -156,6 +158,61 @@ function imageRef(i: ImageSummary): string {
   return isUntaggedImage(i) ? i.id : `${i.repository}:${i.tag}`;
 }
 
+// Below this pane width the container/image tables are replaced by two-line rows.
+const COMPACT_MAX_WIDTH = 820;
+
+function menuAt(e: ReactMouseEvent<HTMLElement>, items: MenuItem[], title?: string): ContextMenuState {
+  const rect = e.currentTarget.getBoundingClientRect();
+  return { x: rect.right, y: rect.bottom, items, title };
+}
+
+const COMPACT_BTN = "nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9";
+
+function MoreButton({ onOpen, label }: { onOpen: (e: ReactMouseEvent<HTMLElement>) => void; label: string }) {
+  return (
+    <button className={COMPACT_BTN} title={label} aria-label={label} aria-haspopup="menu" onClick={onOpen}>
+      <span aria-hidden="true" className="text-[15px] leading-none">⋯</span>
+    </button>
+  );
+}
+
+function CompactNotice({
+  pending, error, errorPrefix, onRetry, emptyText, isEmpty, children,
+}: {
+  pending: boolean; error: unknown; errorPrefix: string; onRetry: () => void; emptyText: string; isEmpty: boolean; children: ReactNode;
+}) {
+  if (pending) {
+    return (
+      <div aria-hidden="false">
+        {Array.from({ length: 5 }, (_, i) => (
+          <div key={i} aria-hidden="true" className="flex items-center gap-2 border-b border-neutral-800/45 px-2.5 py-2.5">
+            <span className="nx-skeleton nx-skeleton-icon" />
+            <span className="nx-skeleton w-2/3" />
+          </div>
+        ))}
+        <span className="nx-sr-only">加载中…</span>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="nx-table-empty">
+        {isDockerNotInstalled(error) ? (
+          "这台主机没有安装 Docker，安装后点击重试。"
+        ) : (
+          <span className="text-red-300">{errorPrefix}加载失败 · {describeDockerError(error)}</span>
+        )}
+        <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
+          <IconRefresh size={12} />
+          重试
+        </button>
+      </div>
+    );
+  }
+  if (isEmpty) return <div className="nx-table-empty">{emptyText}</div>;
+  return <>{children}</>;
+}
+
 export function DockerPanel({ sessionId, visible = true }: { sessionId: string; visible?: boolean }) {
   const qc = useQueryClient();
   const { addTab, pushToast } = useUi();
@@ -171,6 +228,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   const [pending, setPending] = useState<Set<string>>(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [refreshMs, setRefreshMs] = useState(loadRefreshIntervalMs);
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [paneRef, compact] = useCompactWidth(COMPACT_MAX_WIDTH);
   const attachInFlight = useRef<number | null>(null);
   const nextAttachId = useRef(0);
   const pendingReconnect = useRef(false);
@@ -633,12 +692,168 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       ? cRows.every((c) => picked.has(c.id))
       : iRows.every((i) => picked.has(imageKey(i))));
 
+  const containerMenu = (c: ContainerSummary): MenuItem[] => [
+    { kind: "item", label: "查看日志", icon: <IconList size={13} />, onSelect: () => void openLogs(c.id, c.name) },
+    { kind: "item", label: "进入容器终端", icon: <IconTerminal size={13} />, disabled: c.state !== "running", onSelect: () => openExec(c) },
+    { kind: "item", label: "重启", icon: <IconRestart size={13} />, onSelect: () => void act(c, "restart") },
+    ...(canRemoveContainer(c)
+      ? [{ kind: "item" as const, label: "删除", icon: <IconTrash size={13} />, danger: true, disabled: pending.has(c.id), onSelect: () => void act(c, "remove") }]
+      : []),
+  ];
+
+  const compactComposeGroups = groupContainersByCompose(cRows, compose.data?.stacks ?? []);
+
+  const compactContainers = (
+    <div key="containers-compact">
+      <CompactNotice
+        pending={containers.isPending}
+        error={containers.isError && !containers.data ? containers.error : null}
+        errorPrefix="容器列表"
+        onRetry={() => void containers.refetch()}
+        emptyText="这台主机上还没有容器"
+        isEmpty={cRows.length === 0}
+      >
+        <label className="flex items-center gap-2 border-b border-neutral-800/45 px-2.5 py-1.5 text-[11px] text-neutral-500">
+          <input
+            className="nx-check pointer-coarse:size-6 pointer-coarse:-m-[5px]"
+            type="checkbox"
+            aria-label="全选容器"
+            checked={allPicked}
+            ref={(el) => {
+              if (el) el.indeterminate = picked.size > 0 && !allPicked;
+            }}
+            onChange={(e) => setPicked(e.target.checked ? new Set(cRows.map((c) => c.id)) : new Set())}
+          />
+          全选
+        </label>
+        {compactComposeGroups.map((group) => (
+          <Fragment key={group.project ?? "ungrouped"}>
+            {group.project ? (
+              <ComposeStackHeader
+                compact
+                sessionId={sessionId}
+                project={group.project}
+                stack={group.stack}
+                onChanged={() => {
+                  void qc.invalidateQueries({ queryKey: ["docker-ps", sessionId] });
+                  void qc.invalidateQueries({ queryKey: ["docker-compose-stacks", sessionId] });
+                }}
+              />
+            ) : (
+              <span className="block bg-neutral-950/35 px-2.5 py-1.5 text-[11px] text-neutral-500">未分组容器</span>
+            )}
+            {group.containers.map((c) => (
+              <div
+                key={c.id}
+                className={`flex items-center gap-2 border-b border-neutral-800/45 px-2.5 py-1.5 ${pending.has(c.id) ? "opacity-50" : ""}`}
+              >
+                <input
+                  className="nx-check shrink-0 pointer-coarse:size-6 pointer-coarse:-m-[5px]"
+                  type="checkbox"
+                  aria-label={`选择 ${c.name}`}
+                  checked={picked.has(c.id)}
+                  onChange={(e) => togglePick(c.id, e.target.checked)}
+                />
+                <div className="min-w-0 flex-1" onClick={() => setInsight(c)}>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-[12.5px] font-medium text-neutral-100" title={c.name}>{c.name}</span>
+                    <span className={`nx-badge shrink-0 ${c.state === "running" ? "nx-badge-green" : "nx-badge-red"}`}>
+                      <span className="nx-dot" />
+                      {c.state === "running" ? "运行中" : c.state === "exited" ? "已停止" : c.state}
+                    </span>
+                  </div>
+                  <div className="nx-mono mt-0.5 truncate text-[10.5px] text-neutral-500" title={`${c.image}${c.ports ? ` · ${c.ports}` : ""}`}>
+                    {c.image}{c.ports ? ` · ${c.ports}` : ""}
+                  </div>
+                  <div className={`truncate text-[10.5px] ${c.state === "running" ? "text-neutral-500" : "text-red-300"}`} title={c.status}>{c.status}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button className={COMPACT_BTN} title="详情 / 统计 / 文件" onClick={() => setInsight(c)}>
+                    <IconMonitor size={13} />
+                  </button>
+                  {c.state === "running" ? (
+                    <button className={COMPACT_BTN} title="停止" onClick={() => void act(c, "stop")}>
+                      <IconStop size={12} />
+                    </button>
+                  ) : (
+                    <button className={COMPACT_BTN} title="启动" onClick={() => void act(c, "start")}>
+                      <IconPlay size={12} />
+                    </button>
+                  )}
+                  <MoreButton label={`${c.name} 更多操作`} onOpen={(e) => setMenu(menuAt(e, containerMenu(c), c.name))} />
+                </div>
+              </div>
+            ))}
+          </Fragment>
+        ))}
+      </CompactNotice>
+    </div>
+  );
+
+  const compactImages = (
+    <div key="images-compact">
+      <CompactNotice
+        pending={images.isPending}
+        error={images.isError && !images.data ? images.error : null}
+        errorPrefix="镜像列表"
+        onRetry={() => void images.refetch()}
+        emptyText="这台主机上还没有镜像"
+        isEmpty={iRows.length === 0}
+      >
+        <label className="flex items-center gap-2 border-b border-neutral-800/45 px-2.5 py-1.5 text-[11px] text-neutral-500">
+          <input
+            className="nx-check pointer-coarse:size-6 pointer-coarse:-m-[5px]"
+            type="checkbox"
+            aria-label="全选镜像"
+            checked={allPicked}
+            ref={(el) => {
+              if (el) el.indeterminate = picked.size > 0 && !allPicked;
+            }}
+            onChange={(e) => setPicked(e.target.checked ? new Set(iRows.map(imageKey)) : new Set())}
+          />
+          全选
+        </label>
+        {iRows.map((i) => {
+          const key = imageKey(i);
+          return (
+            <div key={key} className={`flex items-center gap-2 border-b border-neutral-800/45 px-2.5 py-1.5 ${pending.has(key) ? "opacity-50" : ""}`}>
+              <input
+                className="nx-check shrink-0 pointer-coarse:size-6 pointer-coarse:-m-[5px]"
+                type="checkbox"
+                aria-label={`选择 ${i.repository}:${i.tag}`}
+                checked={picked.has(key)}
+                onChange={(e) => togglePick(key, e.target.checked)}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="nx-mono truncate text-[12px] text-neutral-200" title={`${i.repository}:${i.tag}`}>
+                  {i.repository}
+                  <span className="text-neutral-500">:{i.tag}</span>
+                  {i.repository === "<none>" && <span className="nx-badge ml-1.5">无标签</span>}
+                </div>
+                <div className="mt-0.5 truncate text-[10.5px] text-neutral-500">{i.size} · {i.createdSince}</div>
+              </div>
+              <button
+                className={`${COMPACT_BTN} is-danger shrink-0`}
+                title="删除镜像"
+                disabled={pending.has(key)}
+                onClick={() => void removeImage(i)}
+              >
+                <IconTrash size={13} />
+              </button>
+            </div>
+          );
+        })}
+      </CompactNotice>
+    </div>
+  );
+
   return (
-    <div className="nx-pane">
+    <div ref={paneRef} className="nx-pane">
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
       <div className="nx-toolbar">
         <div className="nx-segment">
           <button
-            className={`nx-segment-item ${tab === "containers" ? "is-active" : ""}`}
+            className={`nx-segment-item whitespace-nowrap ${tab === "containers" ? "is-active" : ""}`}
             onClick={() => changeTab("containers")}
           >
             <IconBox size={12} />
@@ -646,7 +861,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
             <span className="nx-count">{containers.data ? cRows.length : "—"}</span>
           </button>
           <button
-            className={`nx-segment-item ${tab === "images" ? "is-active" : ""}`}
+            className={`nx-segment-item whitespace-nowrap ${tab === "images" ? "is-active" : ""}`}
             onClick={() => changeTab("images")}
           >
             <IconList size={12} />
@@ -654,14 +869,14 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
             <span className="nx-count">{images.data ? iRows.length : "—"}</span>
           </button>
           <button
-            className={`nx-segment-item ${tab === "disk" ? "is-active" : ""}`}
+            className={`nx-segment-item whitespace-nowrap ${tab === "disk" ? "is-active" : ""}`}
             onClick={() => changeTab("disk")}
           >
             <IconTrash size={12} />
             磁盘
           </button>
         </div>
-        <span className="nx-hint hidden min-[560px]:inline">
+        <span className="nx-hint hidden whitespace-nowrap min-[560px]:inline">
           {containers.data
             ? `${running} 运行中 / 共 ${cRows.length}`
             : containers.isError
@@ -698,7 +913,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
               <IconRefresh size={13} />
               刷新
             </button>
-            <label className="nx-hint hidden items-center gap-1.5 min-[560px]:inline-flex">
+            <label className="nx-hint hidden items-center gap-1.5 whitespace-nowrap min-[560px]:inline-flex">
               自动刷新
               <select
                 className="nx-select nx-input-sm"
@@ -720,6 +935,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === "disk" ? (
           <DockerDiskPanel sessionId={sessionId} visible={visible} />
+        ) : tab === "containers" && compact ? (
+          compactContainers
         ) : tab === "containers" ? (
           <table key="containers" className="nx-table nx-table-fixed">
             <thead>
@@ -738,11 +955,11 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                     }
                   />
                 </th>
-                <th style={{ width: 176 }}>名称</th>
-                <th style={{ width: 198 }}>状态</th>
+                <th className="w-[176px] pointer-coarse:w-[150px]">名称</th>
+                <th className="w-[198px] pointer-coarse:w-[150px]">状态</th>
                 <th>镜像</th>
-                <th style={{ width: 148 }}>端口</th>
-                <th style={{ width: 168 }} className="right-0 shadow-[inset_1px_0_0_var(--nx-border)]" />
+                <th className="w-[148px] pointer-coarse:w-[120px]">端口</th>
+                <th className="right-0 w-[168px] pointer-coarse:w-[224px] shadow-[inset_1px_0_0_var(--nx-border)]" />
               </tr>
             </thead>
             <tbody>
@@ -846,14 +1063,14 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                   </td>
                   <td className="nx-right sticky right-0 bg-[var(--nx-bg-pane)] shadow-[inset_1px_0_0_var(--nx-border)]">
                     <span className="inline-flex flex-wrap items-center justify-end gap-0.5">
-                      <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7" title="详情 / 统计 / 文件" onClick={() => setInsight(c)}>
+                      <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8" title="详情 / 统计 / 文件" onClick={() => setInsight(c)}>
                         <IconMonitor size={13} />
                       </button>
-                      <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7" title="查看日志" onClick={() => void openLogs(c.id, c.name)}>
+                      <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8" title="查看日志" onClick={() => void openLogs(c.id, c.name)}>
                         <IconList size={13} />
                       </button>
                       <button
-                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7"
+                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8"
                         title={c.state === "running" ? "进入容器终端" : "容器已停止，启动后可进入终端"}
                         disabled={c.state !== "running"}
                         onClick={() => openExec(c)}
@@ -861,7 +1078,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                         <IconTerminal size={13} />
                       </button>
                       <button
-                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7"
+                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8"
                         title="重启"
                         onClick={() => void act(c, "restart")}
                       >
@@ -869,7 +1086,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                       </button>
                       {c.state === "running" ? (
                         <button
-                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7"
+                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8"
                           title="停止"
                           onClick={() => void act(c, "stop")}
                         >
@@ -877,7 +1094,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                         </button>
                       ) : (
                         <button
-                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7"
+                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8"
                           title="启动"
                           onClick={() => void act(c, "start")}
                         >
@@ -886,7 +1103,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                       )}
                       {canRemoveContainer(c) && (
                         <button
-                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7 is-danger"
+                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8 is-danger"
                           title="删除"
                           disabled={pending.has(c.id)}
                           onClick={() => void act(c, "remove")}
@@ -903,6 +1120,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
               </TableQueryBody>
             </tbody>
           </table>
+        ) : compact ? (
+          compactImages
         ) : (
           <table key="images" className="nx-table nx-table-fixed">
             <thead>
@@ -982,7 +1201,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                     <td className="text-neutral-500">{i.createdSince}</td>
                     <td className="nx-right sticky right-0 bg-[var(--nx-bg-pane)] shadow-[inset_1px_0_0_var(--nx-border)]">
                       <button
-                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7 is-danger"
+                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8 is-danger"
                         title="删除镜像"
                         disabled={pending.has(key)}
                         onClick={() => void removeImage(i)}
@@ -999,16 +1218,17 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         )}
       </div>
 
-      {tab !== "disk" && <PullBar sessionId={sessionId} />}
+      {tab !== "disk" && <PullBar sessionId={sessionId} compact={compact} />}
     </div>
   );
 }
 
-function PullBar({ sessionId }: { sessionId: string }) {
+function PullBar({ sessionId, compact }: { sessionId: string; compact: boolean }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
   const [image, setImage] = useState("");
   const [pulling, setPulling] = useState(false);
+  const [open, setOpen] = useState(false);
 
   const pull = async () => {
     const name = image.trim();
@@ -1026,6 +1246,17 @@ function PullBar({ sessionId }: { sessionId: string }) {
       setPulling(false);
     }
   };
+
+  if (compact && !open && !pulling) {
+    return (
+      <div className="flex shrink-0 items-center border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-1">
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" aria-expanded={false} onClick={() => setOpen(true)}>
+          <IconDownload size={13} />
+          + 拉取镜像
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-2">
@@ -1049,6 +1280,9 @@ function PullBar({ sessionId }: { sessionId: string }) {
         {pulling ? <IconRefresh size={13} className="animate-spin" /> : <IconDownload size={13} />}
         {pulling ? "拉取中…" : "拉取"}
       </button>
+      {compact && !pulling && (
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setOpen(false)}>收起</button>
+      )}
     </div>
   );
 }

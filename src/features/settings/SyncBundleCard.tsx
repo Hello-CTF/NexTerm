@@ -289,7 +289,7 @@ export function SyncBundleCard() {
 
   return (
     <section className="nx-card">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconArchive size={15} className="text-neutral-400" />
         <span className="nx-card-title">资产包（文件导入 / 导出）</span>
       </div>
@@ -412,8 +412,8 @@ export function SyncBundleCard() {
             <p className="nx-hint text-[12px]">
               导出为 <code>.nxbm</code> 容器。口令可选；留空时不加密，任何拿到文件的人都能读取。口令丢失后无法导入，请妥善保管。
             </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="bundle-password">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="bundle-password">
                 导出口令
               </label>
               <input
@@ -425,8 +425,8 @@ export function SyncBundleCard() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="bundle-password2">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="bundle-password2">
                 确认口令
               </label>
               <input
