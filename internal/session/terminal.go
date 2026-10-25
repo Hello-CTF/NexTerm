@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
@@ -46,6 +47,7 @@ type recordingControlEvent struct {
 	closed     bool
 	publish    bool
 	ready      bool
+	coalesce   bool
 }
 
 type recordingControlQueue struct {
@@ -58,9 +60,106 @@ type recordingControlQueue struct {
 	barrier   bool
 	closed    bool
 	orderHeld atomic.Bool
+
+	// Control-event coalescing. held, last, lastEmit and timer are owned by the single drain goroutine (flushDue is guarded by mu):
+	// an OSC-title-only change inside controlCoalesceWindow of the previous emission is held and replaced by newer ones, and is
+	// emitted by the next non-mergeable event, by the closing event, or by the trailing timer, always before anything newer.
+	held     *recordingControlEvent
+	last     *ControlEvent
+	lastEmit time.Time
+	timer    *time.Timer
+	flushDue bool
+}
+
+// controlCoalesceWindow is the trailing merge window for terminal control events that only change the title or working directory.
+var controlCoalesceWindow = 150 * time.Millisecond
+
+// controlMergeable reports whether next differs from prev only in the fields safe to merge (latest wins): version and title.
+// Size, grid revision, controller, subscriber/viewer counts, exit and durability changes always flow through in order.
+func controlMergeable(prev, next ControlEvent) bool {
+	if next.Exited {
+		return false
+	}
+	prev.Version, prev.Title = next.Version, next.Title
+	return prev == next
+}
+
+// emitCoalescedControl is the drain-side entry for publishing a dequeued control event; it must only run on the drain goroutine.
+func (m *Manager) emitCoalescedControl(queue *recordingControlQueue, item recordingControlEvent) {
+	if item.coalesce && !item.closed && queue.last != nil && controlMergeable(*queue.last, item.event) {
+		last := item.event
+		queue.last = &last
+		if queue.held != nil || time.Since(queue.lastEmit) < controlCoalesceWindow {
+			held := item
+			queue.mu.Lock()
+			queue.held = &held
+			queue.mu.Unlock()
+			m.armControlFlush(queue)
+			return
+		}
+	} else {
+		m.flushHeldControl(queue)
+	}
+	last := item.event
+	queue.last = &last
+	queue.lastEmit = time.Now()
+	m.emitRecordingControl(queue, item.ctx, item.event, item.resourceID, item.closed)
+}
+
+func (m *Manager) flushHeldControl(queue *recordingControlQueue) {
+	queue.mu.Lock()
+	held := queue.held
+	queue.held = nil
+	queue.flushDue = false
+	if queue.timer != nil {
+		queue.timer.Stop()
+		queue.timer = nil
+	}
+	queue.mu.Unlock()
+	if held == nil {
+		return
+	}
+	queue.lastEmit = time.Now()
+	m.emitRecordingControl(queue, held.ctx, held.event, held.resourceID, held.closed)
+}
+
+func (m *Manager) armControlFlush(queue *recordingControlQueue) {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if queue.timer != nil {
+		return
+	}
+	remaining := max(controlCoalesceWindow-time.Since(queue.lastEmit), time.Millisecond)
+	queue.timer = time.AfterFunc(remaining, func() { m.fireControlFlush(queue) })
+}
+
+// fireControlFlush hands the held event to the drain goroutine; when a drain is already running it retries shortly so the held
+// event cannot be stranded by a drain that finished its last check just before flushDue was set.
+func (m *Manager) fireControlFlush(queue *recordingControlQueue) {
+	queue.mu.Lock()
+	queue.timer = nil
+	if queue.held == nil {
+		queue.mu.Unlock()
+		return
+	}
+	queue.flushDue = true
+	if queue.scheduled.CompareAndSwap(false, true) {
+		queue.mu.Unlock()
+		m.drainRecordingControlQueue(queue, false)
+		return
+	}
+	queue.timer = time.AfterFunc(2*time.Millisecond, func() { m.fireControlFlush(queue) })
+	queue.mu.Unlock()
 }
 
 type recordingControlMarker struct{}
+
+// coalescibleControlMarker tags a control event from a high-frequency source (the OSC dynamic title) as eligible for merging.
+type coalescibleControlMarker struct{}
+
+func withCoalescibleControl(ctx context.Context) context.Context {
+	return context.WithValue(ctx, coalescibleControlMarker{}, true)
+}
 
 var recordingControlQueues = struct {
 	sync.RWMutex
@@ -169,6 +268,7 @@ func (m *Manager) queueRecordingControl(ctx context.Context, event ControlEvent,
 	item.resourceID = resourceID
 	item.closed = closed
 	item.publish = m.emitter != nil
+	item.coalesce = ctx.Value(coalescibleControlMarker{}) == true
 	item.ready = true
 	queue.pending[event.Version] = item
 	if closed {
@@ -265,6 +365,12 @@ func (m *Manager) drainRecordingControlQueue(queue *recordingControlQueue, locke
 			queue.mu.Lock()
 			locked = true
 		}
+		if queue.flushDue && queue.held != nil {
+			queue.mu.Unlock()
+			m.flushHeldControl(queue)
+			locked = false
+			continue
+		}
 		if queue.orderHeld.Load() {
 			queue.scheduled.Store(false)
 			queue.mu.Unlock()
@@ -301,7 +407,7 @@ func (m *Manager) drainRecordingControlQueue(queue *recordingControlQueue, locke
 			m.waitRecordingControl(queue.tab)
 		}
 		if event.publish {
-			m.emitRecordingControl(queue, event.ctx, event.event, event.resourceID, event.closed)
+			m.emitCoalescedControl(queue, event)
 		}
 		if !queue.mu.TryLock() {
 			go m.drainRecordingControlQueue(queue, false)

@@ -110,3 +110,79 @@ func TestFeedCoalescedFramesKeepOrder(t *testing.T) {
 		t.Fatalf("no coalescing happened: %d frames for %d chunks", frames, chunks)
 	}
 }
+
+func TestCoalesceWindowSelection(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newOutCoalescer(func() {})
+	c.now = func() time.Time { return now }
+	if got := c.windowLocked(true); got != outputCoalesceIdleGrace {
+		t.Fatalf("never flushed: window = %v", got)
+	}
+	c.lastFlush = now
+	now = now.Add(outputCoalesceInterval - time.Microsecond)
+	if got := c.windowLocked(true); got != outputCoalesceInterval {
+		t.Fatalf("recent flush: window = %v", got)
+	}
+	now = now.Add(time.Microsecond)
+	if got := c.windowLocked(true); got != outputCoalesceIdleGrace {
+		t.Fatalf("idle for a window: window = %v", got)
+	}
+	if got := c.windowLocked(false); got != outputCoalesceInterval {
+		t.Fatalf("non-empty buffer: window = %v", got)
+	}
+}
+
+func TestCoalesceIdleGraceDeliversLoneByte(t *testing.T) {
+	fired := make(chan struct{}, 4)
+	c := newOutCoalescer(func() { fired <- struct{}{} })
+	c.add([]byte("x"))
+	select {
+	case <-fired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("idle grace did not fire")
+	}
+	if got := c.take(); string(got) != "x" {
+		t.Fatalf("batch = %q", got)
+	}
+}
+
+func TestCoalesceChunksWithinGraceShareOneFrame(t *testing.T) {
+	fired := make(chan struct{}, 4)
+	c := newOutCoalescer(func() { fired <- struct{}{} })
+	// The timer is armed once by the first chunk; later chunks must neither re-arm nor flush, so one take returns everything.
+	for i := 0; i < 3; i++ {
+		if _, sendNow := c.add(bytes.Repeat([]byte{'a' + byte(i)}, 200)); sendNow {
+			t.Fatal("small chunk must buffer")
+		}
+	}
+	<-fired
+	got := c.take()
+	if len(got) != 600 {
+		t.Fatalf("expected a single 600 byte frame, got %d", len(got))
+	}
+	select {
+	case <-fired:
+		t.Fatal("unexpected second flush")
+	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestCoalesceSustainedStreamKeepsFullWindow(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newOutCoalescer(func() {})
+	c.now = func() time.Time { return now }
+	c.add([]byte("a")) // armed with the grace (idle start)
+	c.take()           // flush at t0
+	now = now.Add(time.Millisecond)
+	c.add([]byte("b"))
+	c.mu.Lock()
+	armed := c.timer != nil
+	c.mu.Unlock()
+	if !armed {
+		t.Fatal("timer must be armed")
+	}
+	if got := c.windowLocked(true); got != outputCoalesceInterval {
+		t.Fatalf("stream within one window of the last flush must keep the full window, got %v", got)
+	}
+	c.teardown()
+}

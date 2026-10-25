@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
@@ -79,7 +80,12 @@ type cell struct {
 	cont bool
 }
 
-type row struct{ cells []cell }
+// row is a line of cells. hi is an exclusive upper bound of the cells that may be non-empty: every cell at index >= hi is the zero
+// cell, which lets reset and String skip the blank tail of wide terminals. Code that stores a non-empty cell must call touch.
+type row struct {
+	cells []cell
+	hi    int
+}
 
 func newRow(cols int) *row {
 	r := &row{cells: make([]cell, cols)}
@@ -88,8 +94,14 @@ func newRow(cols int) *row {
 }
 
 func (r *row) reset() {
-	for i := range r.cells {
-		r.cells[i] = cell{}
+	clear(r.cells[:min(r.hi, len(r.cells))])
+	r.hi = 0
+}
+
+// touch records that the cell at index i may now be non-empty.
+func (r *row) touch(i int) {
+	if i >= r.hi {
+		r.hi = i + 1
 	}
 }
 
@@ -100,6 +112,7 @@ func (r *row) resize(cols int) {
 	cells := make([]cell, cols)
 	copy(cells, r.cells)
 	r.cells = cells
+	r.hi = min(r.hi, cols)
 	r.normalizeWide()
 }
 
@@ -116,7 +129,7 @@ func (r *row) normalizeWide() {
 
 func (r *row) String() string {
 	last := -1
-	for i := len(r.cells) - 1; i >= 0; i-- {
+	for i := min(r.hi, len(r.cells)) - 1; i >= 0; i-- {
 		c := &r.cells[i]
 		if c.cont {
 			continue
@@ -129,7 +142,25 @@ func (r *row) String() string {
 	if last < 0 {
 		return ""
 	}
+	// Fast path: plain single-byte cells map one-to-one onto bytes.
+	buf := make([]byte, 0, last+1)
+	for i := 0; i <= last; i++ {
+		c := &r.cells[i]
+		if c.cont || len(c.comb) > 0 || c.wide || c.r >= utf8.RuneSelf {
+			return r.stringSlow(last)
+		}
+		if c.r == 0 {
+			buf = append(buf, ' ')
+		} else {
+			buf = append(buf, byte(c.r))
+		}
+	}
+	return string(buf)
+}
+
+func (r *row) stringSlow(last int) string {
 	var b strings.Builder
+	b.Grow(last + 1)
 	for i := 0; i <= last; i++ {
 		c := &r.cells[i]
 		if c.cont {
@@ -353,6 +384,7 @@ func (s *screen) putCombining(r rune) {
 	if len(c.comb) >= maxCombiningRunes {
 		return
 	}
+	row.touch(targetC)
 	c.comb = append(c.comb, r)
 }
 
@@ -396,7 +428,9 @@ func (s *screen) put(r rune, width int) {
 	}
 	c := &row.cells[s.cur.c]
 	c.r, c.comb, c.wide, c.cont = r, nil, width == 2, false
+	row.touch(s.cur.c)
 	if width == 2 && s.cur.c+1 < s.cols {
+		row.touch(s.cur.c + 1)
 		next := &row.cells[s.cur.c+1]
 		next.r, next.comb, next.wide, next.cont = 0, nil, false, true
 	}
@@ -653,6 +687,9 @@ func (s *screen) insertChars(n int) {
 	row := s.grid.rows[s.cur.r]
 	cells := row.cells[s.cur.c:]
 	n = min(n, len(cells))
+	if row.hi > s.cur.c {
+		row.hi = min(row.hi+n, len(row.cells))
+	}
 	copy(cells[n:], cells[:len(cells)-n])
 	for i := 0; i < n; i++ {
 		cells[i] = cell{}

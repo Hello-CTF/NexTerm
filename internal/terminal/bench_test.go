@@ -851,3 +851,31 @@ func TestP01ClearRefillBenchmark(t *testing.T) {
 	})
 	t.Logf("P01 refill capacity=%d cycles=%d repeat=%d elapsed=%v", capacity, cycles, repeat, time.Since(started))
 }
+
+// BenchmarkFeedShortLines is the scroll-heavy regression baseline (`yes`): every line scrolls a row into history.
+func BenchmarkFeedShortLines(b *testing.B) {
+	tab := NewTab("b", "s", 120, 40, UTF8)
+	b.Cleanup(tab.Close)
+	chunk := bytes.Repeat([]byte("y\r\n"), 16*1024)
+	b.SetBytes(int64(len(chunk)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tab.Feed(chunk)
+	}
+}
+
+// BenchmarkFeedColoredLog feeds a colored build log, dominated by SGR parsing plus scrolling.
+func BenchmarkFeedColoredLog(b *testing.B) {
+	tab := NewTab("b", "s", 120, 40, UTF8)
+	b.Cleanup(tab.Close)
+	var buf bytes.Buffer
+	for i := 0; buf.Len() < 64*1024; i++ {
+		fmt.Fprintf(&buf, "\x1b[32m[%05d/%05d]\x1b[0m CC internal/pkg%d/file_%d.o \x1b[90m(%d.%03ds)\x1b[0m\r\n", i%9999, 9999, i%37, i, i%7, (i*131)%1000)
+	}
+	chunk := buf.Bytes()
+	b.SetBytes(int64(len(chunk)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tab.Feed(chunk)
+	}
+}

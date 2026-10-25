@@ -76,6 +76,8 @@ func TestRowStringOrphanContStaysAligned(t *testing.T) {
 	r.cells[0].r = 'x'
 	r.cells[1].cont = true
 	r.cells[2].r = 'Y'
+	r.hi = 3
+
 	if got := r.String(); got != "x Y" {
 		t.Fatalf("row = %q, want %q", got, "x Y")
 	}

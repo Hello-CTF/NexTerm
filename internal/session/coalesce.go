@@ -8,6 +8,9 @@ import (
 const (
 	outputCoalesceInterval = 8 * time.Millisecond
 	outputCoalesceMax      = 64 << 10
+	// outputCoalesceIdleGrace replaces the full window for the first chunk after the coalescer has been idle for at least one window:
+	// interactive echo is not held back 8 ms, while data arriving within the grace is still merged into the same frame.
+	outputCoalesceIdleGrace = time.Millisecond
 )
 
 // outCoalescer is the subscriber-side output coalescing buffer: a first chunk at the limit is handed to the subscriber's fanout directly,
@@ -20,10 +23,13 @@ type outCoalescer struct {
 	timer   *time.Timer
 	gone    bool
 	onTimer func()
+	// lastFlush is when the last batch left the coalescer (zero if none); now is injectable for tests.
+	lastFlush time.Time
+	now       func() time.Time
 }
 
 func newOutCoalescer(onTimer func()) *outCoalescer {
-	return &outCoalescer{onTimer: onTimer}
+	return &outCoalescer{onTimer: onTimer, now: time.Now}
 }
 
 // add appends data and returns the batch to enqueue immediately (first chunk over the limit, or the whole buffer at the limit);
@@ -35,12 +41,15 @@ func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 		return nil, false
 	}
 	if len(c.buf) == 0 && len(data) >= outputCoalesceMax {
+		c.lastFlush = c.now()
 		return data, true
 	}
+	wasEmpty := len(c.buf) == 0
 	c.buf = append(c.buf, data...)
 	if len(c.buf) >= outputCoalesceMax {
 		batch := c.buf
 		c.buf = nil
+		c.lastFlush = c.now()
 		if c.timer != nil {
 			c.timer.Stop()
 			c.timer = nil
@@ -48,9 +57,17 @@ func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 		return batch, true
 	}
 	if c.timer == nil {
-		c.timer = time.AfterFunc(outputCoalesceInterval, c.onTimer)
+		c.timer = time.AfterFunc(c.windowLocked(wasEmpty), c.onTimer)
 	}
 	return nil, false
+}
+
+// windowLocked picks the trailing window: the short idle grace for the first chunk after at least one idle window, otherwise the full window.
+func (c *outCoalescer) windowLocked(wasEmpty bool) time.Duration {
+	if wasEmpty && (c.lastFlush.IsZero() || c.now().Sub(c.lastFlush) >= outputCoalesceInterval) {
+		return outputCoalesceIdleGrace
+	}
+	return outputCoalesceInterval
 }
 
 // take removes the buffered batch when the window fires, for the timer flush to enqueue.
@@ -63,6 +80,7 @@ func (c *outCoalescer) take() []byte {
 	}
 	batch := c.buf
 	c.buf = nil
+	c.lastFlush = c.now()
 	return batch
 }
 

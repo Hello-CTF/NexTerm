@@ -1790,7 +1790,7 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 		}
 		tab.mu.Unlock()
 		if titleChanged {
-			m.emit(feedCtx, TopicTerminalControl, titleEvent)
+			m.emit(withCoalescibleControl(feedCtx), TopicTerminalControl, titleEvent)
 		}
 	}
 	m.observeCommand(tab, data)
