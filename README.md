@@ -78,6 +78,7 @@ curl -fsSL https://nexterm.work/install.sh | sudo bash
 脚本下载最新服务端包，按 `SHA256SUMS` 校验后执行包内的 `install.sh`：创建 `nexterm` 用户和目录，生成 master key，创建超管 `admin` 并在安装输出中打印一次初始密码（请立即记下，首次登录需修改；也可用 `NEXTERM_ADMIN_PASSWORD` 预先指定），然后启动 `nexterm-server`。重复运行即升级（服务会短暂重启），配置和数据保留，撤销上次升级追加 `--rollback`。指定版本用 `curl -fsSL https://nexterm.work/install.sh | sudo bash -s -- --version x.y.z`；也可以下载 `nexterm-server_linux_<架构>_x.y.z.tar.gz` 解压后执行 `sudo ./install.sh`。
 
 - 服务默认只监听 `127.0.0.1:8080` 且要求登录，可在本机执行 `ssh -L 8080:127.0.0.1:8080 用户@服务器` 后打开 `http://localhost:8080`；配置在 `/etc/nexterm/nexterm.env`，改完执行 `systemctl restart nexterm-server`。
+- `--auth off` 会关闭账号、管理与设备路由，任何能连到监听地址的人都能操作服务端，不能用于公网。
 - 公网访问请前置带 TLS 的反向代理，代理覆盖设置 `X-Forwarded-Proto`，并把代理来源 IP 段写入 `NEXTERM_TRUSTED_PROXY_CIDRS`。
 - 默认使用 SQLite；用 `NEXTERM_DB=postgres|mysql|mariadb` 和 `NEXTERM_DB_DSN` 切换外部数据库，同一数据库只运行一个实例。
 - 备份 `/var/lib/nexterm`、`/etc/nexterm/master.key` 和外部数据库。完整说明见包内 `README.md` 和 `nexterm-server --help`。

@@ -111,6 +111,7 @@ jobs:
             dist/
             target/dist-manifest.json
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
 
   quality:
@@ -367,6 +368,7 @@ jobs:
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
       - name: Upload server binary and evidence
         if: ${{ !cancelled() && contains(matrix.kinds, 'server') }}
@@ -378,6 +380,7 @@ jobs:
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
       - name: Upload helper binary and evidence
         if: ${{ !cancelled() && contains(matrix.kinds, 'helper') }}
@@ -389,6 +392,7 @@ jobs:
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
       - name: Upload agent binary and evidence
         if: ${{ !cancelled() && contains(matrix.kinds, 'agent') }}
@@ -400,6 +404,7 @@ jobs:
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
 
   mobile-compile:
@@ -624,6 +629,7 @@ jobs:
           name: mobile-${{ matrix.platform }}
           path: bin/${{ matrix.platform == 'android' && 'nexterm.apk' || 'nexterm.app' }}
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
       - name: Remove Android signing material
         if: always() && matrix.platform == 'android'
@@ -742,6 +748,7 @@ jobs:
           name: mobile-ios-dist
           path: bin/nexterm.ipa
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
       - name: Remove iOS signing material
         if: always()

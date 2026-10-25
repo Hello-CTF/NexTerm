@@ -1,0 +1,56 @@
+name: Retention
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retention
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Keep only the latest release and its workflow runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete older releases but keep their tags
+        shell: bash
+        env:
+          RELEASE_ID: ${{ github.event.release.id }}
+        run: |
+          set -euo pipefail
+          # Tags stay: release-notes.mjs derives the previous release range from git tags.
+          # Keep the release that was just published plus the latest stable one, which stable-channel updaters still need.
+          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .id)"
+          current="${RELEASE_ID:-$latest}"
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false) | .id' |
+            while read -r id; do
+              if [ "$id" != "$latest" ] && [ "$id" != "$current" ]; then
+                echo "deleting release $id"
+                gh api -X DELETE "repos/$GH_REPO/releases/$id"
+              fi
+            done
+      - name: Delete workflow runs except the newest per workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GH_REPO/actions/workflows" --jq '.workflows[].id' |
+            while read -r wf; do
+              gh api --paginate "repos/$GH_REPO/actions/workflows/$wf/runs?per_page=100" --jq '.workflow_runs[] | select(.status == "completed") | .id' |
+                tail -n +2 |
+                while read -r run; do
+                  echo "deleting run $run"
+                  gh api -X DELETE "repos/$GH_REPO/actions/runs/$run" || true
+                done
+            done

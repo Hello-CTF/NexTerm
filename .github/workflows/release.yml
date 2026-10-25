@@ -264,6 +264,7 @@ jobs:
             target/release-assets/
             target/go-build/*.artifact.json
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
 
   server:
@@ -342,6 +343,7 @@ jobs:
             target/release-assets/
             target/go-build/*.artifact.json
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
       - name: Upload runtime evidence outside the release candidate
         if: always()
@@ -350,6 +352,7 @@ jobs:
           name: runtime-server-linux-${{ matrix.arch }}
           path: target/e2e-sync/
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
 
   agent:
@@ -401,6 +404,7 @@ jobs:
           name: release-agent
           path: target/release-assets/
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
 
   mobile:
@@ -448,6 +452,7 @@ jobs:
             target/release-assets/
             target/go-build/*.artifact.json
           if-no-files-found: error
+          retention-days: 7
           overwrite: true
 
   publish:
@@ -508,8 +513,6 @@ jobs:
           subject-path: target/release-work/candidate/SHA256SUMS
       - name: Assemble release notes
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           {
@@ -519,16 +522,8 @@ jobs:
             cat target/release-work/candidate/release-signing.md
           } > target/release-work/candidate/release-body.md
           previous="$(node .github/scripts/release-notes.mjs --prev-tag "$GITHUB_REF_NAME")"
-          notes_args=(-X POST -f "tag_name=$GITHUB_REF_NAME")
           if [ -n "$previous" ]; then
-            notes_args+=(-f "previous_tag_name=$previous")
-          fi
-          if appendix="$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${notes_args[@]}" --jq .body)"; then
-            if [ -n "$appendix" ]; then
-              printf '\n<details><summary>完整变更列表（自动生成）</summary>\n\n%s\n\n</details>\n' "$appendix" >> target/release-work/candidate/release-body.md
-            fi
-          else
-            echo "assemble: generate-notes API failed; omitting the auto-generated change list appendix" >&2
+            printf '\n完整对比：[%s...%s](https://github.com/%s/compare/%s...%s)\n' "$previous" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" "$previous" "$GITHUB_REF_NAME" >> target/release-work/candidate/release-body.md
           fi
       - name: Create or update the draft release
         env:
