@@ -22,7 +22,31 @@ interface ChannelEntry {
   disposed: boolean;
   retry: number;
   hasOpened: boolean;
+  // Upstream terminal input, only usable when the server accepted the input subprotocol.
+  input: InputState;
 }
+
+// A batch is never re-addressed: it keeps the tab and HTTP writer it was queued with.
+interface InputBatch {
+  tabId: string;
+  http: (data: Uint8Array) => Promise<unknown>;
+  chunks: Uint8Array[];
+}
+
+interface InputState {
+  batches: InputBatch[];
+  pendingBytes: number;
+  scheduled: boolean;
+  httpInFlight: boolean;
+  drainTimer: ReturnType<typeof setTimeout> | null;
+}
+
+const INPUT_SUBPROTOCOL = "nexterm.input";
+const INPUT_FRAME = 1;
+const INPUT_MAX_PAYLOAD = 16 * 1024;
+const INPUT_MAX_BUFFERED = 256 * 1024;
+const INPUT_MAX_PENDING = 4 * 1024 * 1024;
+const INPUT_DRAIN_MS = 10;
 
 const channels = new Map<string, ChannelEntry>();
 let channelSeq = 0;
@@ -92,7 +116,14 @@ export function newBinaryChannel(): WebChannel<unknown> {
 }
 
 function attach(ch: WebChannel<unknown>) {
-  const entry: ChannelEntry = { ch, ws: null, disposed: false, retry: 0, hasOpened: false };
+  const entry: ChannelEntry = {
+    ch,
+    ws: null,
+    disposed: false,
+    retry: 0,
+    hasOpened: false,
+    input: { batches: [], pendingBytes: 0, scheduled: false, httpInFlight: false, drainTimer: null },
+  };
   channels.set(ch.id, entry);
   connect(entry);
 }
@@ -101,6 +132,9 @@ export function disposeChannel(channelId: string) {
   const entry = channels.get(channelId);
   if (!entry) return;
   entry.disposed = true;
+  if (entry.input.drainTimer !== null) clearTimeout(entry.input.drainTimer);
+  entry.input.batches = [];
+  entry.input.pendingBytes = 0;
   channels.delete(channelId);
   reopenSubs.delete(channelId);
   const ws = entry.ws;
@@ -117,7 +151,11 @@ function connect(entry: ChannelEntry) {
   if (entry.disposed) return;
   let ws: WebSocket;
   try {
-    ws = new WebSocket(wsUrl(`/ws/channel/${encodeURIComponent(entry.ch.id)}`), ["nexterm"]);
+    // Servers that do not know the input subprotocol select "nexterm", and input then stays on the HTTP path.
+    ws = new WebSocket(
+      wsUrl(`/ws/channel/${encodeURIComponent(entry.ch.id)}?client=${encodeURIComponent(clientId())}`),
+      [INPUT_SUBPROTOCOL, "nexterm"],
+    );
   } catch {
     scheduleReconnect(entry);
     return;
@@ -131,6 +169,7 @@ function connect(entry: ChannelEntry) {
     entry.hasOpened = true;
     entry.retry = 0;
     if (isReopen) notifyChannelReopen(entry.ch.id);
+    flushInput(entry);
   };
   ws.onmessage = (ev) => {
     const msg = decodeFrame(ev.data);
@@ -142,6 +181,123 @@ function connect(entry: ChannelEntry) {
   };
   ws.onerror = () => {
   };
+}
+
+/**
+ * Sends terminal input for the tab bound to this channel. Writes made in the same task are merged into one frame and
+ * flushed in a microtask, so a lone keystroke is not delayed. While the socket is open and has negotiated input it
+ * carries every byte, in order; when the socket buffer is full the rest waits in the queue (it never overtakes the
+ * buffered frames over HTTP). Only when the socket is not open or not negotiated does `http` carry the bytes, one
+ * request in flight per channel, and later writes wait for it so the two paths never reorder. Frames already handed to a
+ * socket that then drops are not resent: the server may have applied them and keystrokes must not be double-applied
+ * (accepted trade-off: such in-flight frames can be lost). Queued input beyond 4 MiB is dropped with a warning.
+ */
+export function sendChannelInput(
+  channelId: string,
+  tabId: string,
+  data: Uint8Array,
+  http: (data: Uint8Array) => Promise<unknown>,
+): void {
+  const entry = channels.get(channelId);
+  if (!entry || entry.disposed) {
+    void http(data).catch(() => undefined);
+    return;
+  }
+  const input = entry.input;
+  if (input.pendingBytes + data.length > INPUT_MAX_PENDING) {
+    console.warn(`terminal input dropped: ${data.length} bytes exceed the pending input cap`);
+    return;
+  }
+  const last = input.batches[input.batches.length - 1];
+  if (last && last.tabId === tabId) {
+    last.chunks.push(data);
+  } else {
+    input.batches.push({ tabId, http, chunks: [data] });
+  }
+  input.pendingBytes += data.length;
+  if (input.scheduled) return;
+  input.scheduled = true;
+  queueMicrotask(() => {
+    input.scheduled = false;
+    flushInput(entry);
+  });
+}
+
+function negotiatedSocket(entry: ChannelEntry): WebSocket | null {
+  const ws = entry.ws;
+  return ws && ws.readyState === 1 && ws.protocol === INPUT_SUBPROTOCOL ? ws : null;
+}
+
+function mergeChunks(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) return chunks[0];
+  const merged = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function flushInput(entry: ChannelEntry) {
+  const input = entry.input;
+  if (input.drainTimer !== null) {
+    clearTimeout(input.drainTimer);
+    input.drainTimer = null;
+  }
+  while (!input.httpInFlight && input.batches.length > 0) {
+    const batch = input.batches[0];
+    let data = mergeChunks(batch.chunks);
+    batch.chunks = [data];
+    if (data.length === 0) {
+      input.batches.shift();
+      continue;
+    }
+    const ws = negotiatedSocket(entry);
+    const tab = new TextEncoder().encode(batch.tabId);
+    if (ws && tab.length > 0 && tab.length < 256) {
+      let socketFailed = false;
+      while (data.length > 0 && ws.bufferedAmount <= INPUT_MAX_BUFFERED) {
+        const part = data.subarray(0, INPUT_MAX_PAYLOAD);
+        const frame = new Uint8Array(2 + tab.length + part.length);
+        frame[0] = INPUT_FRAME;
+        frame[1] = tab.length;
+        frame.set(tab, 2);
+        frame.set(part, 2 + tab.length);
+        try {
+          ws.send(frame);
+        } catch {
+          socketFailed = true;
+          break;
+        }
+        data = data.subarray(part.length);
+        input.pendingBytes -= part.length;
+        batch.chunks = [data];
+      }
+      if (data.length === 0) {
+        input.batches.shift();
+        continue;
+      }
+      if (!socketFailed) {
+        // Socket buffer is full: keep order by waiting for it to drain instead of switching to HTTP.
+        input.drainTimer = setTimeout(() => {
+          input.drainTimer = null;
+          flushInput(entry);
+        }, INPUT_DRAIN_MS);
+        return;
+      }
+    }
+    input.batches.shift();
+    input.pendingBytes -= data.length;
+    input.httpInFlight = true;
+    void batch
+      .http(data)
+      .catch(() => undefined)
+      .finally(() => {
+        input.httpInFlight = false;
+        flushInput(entry);
+      });
+  }
 }
 
 function scheduleReconnect(entry: ChannelEntry) {

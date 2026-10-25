@@ -112,11 +112,11 @@ describe("fixed WebSocket subprotocol", () => {
     vi.stubGlobal("WebSocket", RecordingWebSocket);
   });
 
-  it("offers only the nexterm subprotocol for channel and events connections", async () => {
+  it("offers the input-capable subprotocol first on channels and only nexterm on events", async () => {
     const { newBinaryChannel, subscribeEvent } = await import("../ipc/webTransport");
 
     newBinaryChannel();
-    expect(RecordingWebSocket.instances[0].protocols).toEqual(["nexterm"]);
+    expect(RecordingWebSocket.instances[0].protocols).toEqual(["nexterm.input", "nexterm"]);
 
     subscribeEvent("session://status", () => {});
     expect(RecordingWebSocket.instances[1].url).toContain("/ws/events");

@@ -5,6 +5,7 @@ import {
   onChannelReopen as onWsChannelReopen,
   disposeChannel as disposeWsChannel,
   subscribeEvent,
+  sendChannelInput as sendWsChannelInput,
 } from "./webTransport";
 import {
   disposeWailsChannel,
@@ -230,6 +231,21 @@ export function createBinaryChannel(
     decodeBytes(raw, onBytes);
   };
   return channel;
+}
+
+/** Terminal input: over the web channel socket when negotiated, otherwise through `http` (always on desktop). */
+export function sendChannelInput(
+  ch: unknown,
+  tabId: string,
+  data: Uint8Array,
+  http: (data: Uint8Array) => Promise<unknown>,
+): void {
+  const id = channelIdOf(ch);
+  if (!WEB || id === undefined) {
+    void http(data).catch(() => undefined);
+    return;
+  }
+  sendWsChannelInput(id, tabId, data, http);
 }
 
 export function channelIdOf(ch: unknown): string | undefined {

@@ -203,6 +203,12 @@ vi.mock("../../ipc/events", () => ({
     return channel;
   },
   disposeChannel: vi.fn(),
+  sendChannelInput: (
+    _channel: unknown,
+    _tabId: string,
+    data: Uint8Array,
+    http: (data: Uint8Array) => Promise<unknown>,
+  ) => void http(data),
   onChannelReopen: (_channel: unknown, callback: () => void) => {
     harness.reopen = callback;
     return vi.fn();

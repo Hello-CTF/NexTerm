@@ -73,7 +73,7 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	connection, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Events, &websocket.AcceptOptions{
 		OriginPatterns: s.options.AllowedOrigins,
-		Subprotocols:   []string{"nexterm"},
+		Subprotocols:   []string{channelSubprotocol},
 	}))
 	if err != nil {
 		return
@@ -245,10 +245,19 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	connection, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Terminal, &websocket.AcceptOptions{
 		OriginPatterns: s.options.AllowedOrigins,
-		Subprotocols:   []string{"nexterm"},
+		Subprotocols:   []string{channelInputSubprotocol, channelSubprotocol},
 	}))
 	if err != nil {
 		return
+	}
+	clientID := r.URL.Query().Get("client")
+	if len(clientID) > maxChannelClientID {
+		clientID = ""
+	}
+	onRead := s.channelInputReader(r, connection, identity, clientID)
+	if onRead != nil {
+		// Input frames are tiny keystroke bundles; the default 32KiB read limit already bounds them.
+		connection.SetReadLimit(channelInputMaxData + 512)
 	}
 	ctx, release, err := s.sockets.track(r.Context())
 	if err != nil {
@@ -262,7 +271,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer receiver.Close()
-	s.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, func(), error) {
+	s.pumpSocketWithRead(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, func(), error) {
 		frame, err := receiver.Next(ctx)
 		if err != nil {
 			if errors.Is(err, hub.ErrClosed) && finalize != nil {
@@ -279,7 +288,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 		default:
 			return 0, nil, nil, errors.New("unknown channel frame kind")
 		}
-	})
+	}, onRead)
 }
 
 // pumpSocket see pumpSocketWithRead; no upstream handling (the read loop discards all upstream bytes).
