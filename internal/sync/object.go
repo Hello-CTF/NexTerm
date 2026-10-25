@@ -94,6 +94,12 @@ func tryOpenObject(dek, blob []byte, id string) (string, []byte, error) {
 			return kind, plaintext, nil
 		}
 	}
+	if plaintext, matched, err := openCompressedTranscript(dek, blob, id); matched {
+		if err != nil {
+			return "", nil, err
+		}
+		return KindTranscript, plaintext, nil
+	}
 	return "", nil, ipc.NewError(ipc.CodeDecrypt, "凭据解密失败（密钥不匹配或数据损坏）")
 }
 
