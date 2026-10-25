@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 
 import { XTERM_DARK_THEME } from "../terminal/xtermTheme";
+import { scheduleWebglRenderer } from "../terminal/xtermAddons";
 import { createSelectionAutoCopy } from "../terminal/selectionAutoCopy";
 
 export interface PublicShareTerminalHandle {
@@ -47,10 +47,8 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
     term.loadAddon(fit);
     termRef.current = term;
     term.open(host);
-    try {
-      term.loadAddon(new WebglAddon());
-    } catch {
-    }
+    let disposed = false;
+    const cancelWebgl = scheduleWebglRenderer(term, () => disposed);
 
     const fitLocal = () => {
       try {
@@ -89,6 +87,8 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
       dataDisposable.dispose();
       selectionDisposable.dispose();
       autoCopy.dispose();
+      disposed = true;
+      cancelWebgl();
       term.dispose();
       termRef.current = null;
     };

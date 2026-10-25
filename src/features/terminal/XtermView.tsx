@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { SearchAddon } from "@xterm/addon-search";
-import { WebLinksAddon } from "@xterm/addon-web-links";
+import { attachLazyAddons, scheduleWebglRenderer } from "./xtermAddons";
 import "@xterm/xterm/css/xterm.css";
 
-import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
+import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen, sendChannelInput } from "../../ipc/events";
 import { WEB, clientId } from "../../ipc/env";
 import { openExternalURL } from "../../ipc/wails";
 import { assetApi, call, dockerApi, terminalApi } from "../../ipc/commands";
@@ -214,19 +212,6 @@ export function XtermView(props: XtermViewProps) {
       cursorBlink: true,
       theme: { ...xtermThemeFor(getResolvedTerminalTheme(), appearance.terminalContrast), cursor: accentColor() },
     });
-    const search = new SearchAddon();
-    term.loadAddon(search);
-    term.loadAddon(
-      new WebLinksAddon((event, uri) => {
-        event.preventDefault();
-        if (!/^https?:\/\//i.test(uri)) return;
-        if (WEB) {
-          window.open(uri, "_blank", "noopener,noreferrer");
-        } else {
-          void openExternalURL(uri);
-        }
-      }),
-    );
     termRef.current = term;
     term.open(hostRef.current);
     // xterm always preventDefault + stopPropagation on keys it handles, so window-level listeners
@@ -236,13 +221,23 @@ export function XtermView(props: XtermViewProps) {
       if (event.repeat || event.isComposing || event.keyCode === 229) return true;
       return matchAppKeybinding(event) === null;
     });
-    try {
-      term.loadAddon(new WebglAddon());
-    } catch {
-    }
 
     let kernelTabId = "";
     let disposed = false;
+    const search = attachLazyAddons(
+      term,
+      (event, uri) => {
+        event.preventDefault();
+        if (!/^https?:\/\//i.test(uri)) return;
+        if (WEB) {
+          window.open(uri, "_blank", "noopener,noreferrer");
+        } else {
+          void openExternalURL(uri);
+        }
+      },
+      () => disposed,
+    );
+    const cancelWebgl = scheduleWebglRenderer(term, () => disposed);
     const attachedAssetId = useUi.getState().sessions.find((session) => session.id === sessionId)?.assetId;
     const applyGrid = (grid: TerminalGrid) => resizeTerminalToGridPreservingSelection(term, grid);
     const coordinator = new TerminalGridCoordinator(
@@ -254,6 +249,14 @@ export function XtermView(props: XtermViewProps) {
     fitIfSized();
 
     const blocks = new CommandBlockManager(term, (list) => onBlocksRef.current?.(list));
+    // Input goes over the channel socket when the server supports it (small ordered frames, bursts merged). The
+    // channel is created later in this effect; it is only read when input is actually sent.
+    const writeTabInput = (data: string) => {
+      const tabId = kernelTabId;
+      sendChannelInput(channel, tabId, new TextEncoder().encode(data), (bytes) =>
+        terminalApi.write(tabId, bytes),
+      );
+    };
     const sendInput = (data: string, blockText = data) => {
       blocks.feedInput(blockText);
       if (!kernelTabId) return;
@@ -261,9 +264,7 @@ export function XtermView(props: XtermViewProps) {
       if (onData) {
         onData(data);
       } else {
-        void terminalApi
-          .write(kernelTabId, new TextEncoder().encode(data))
-          .catch(() => undefined);
+        writeTabInput(data);
       }
     };
     const updateLinesBelow = () => {
@@ -776,9 +777,7 @@ export function XtermView(props: XtermViewProps) {
         if (onData) {
           onData(data);
         } else {
-          void terminalApi
-            .write(kernelTabId, new TextEncoder().encode(data))
-            .catch(() => undefined);
+          writeTabInput(data);
         }
       },
       onOverflow: (info) => {
@@ -1273,6 +1272,7 @@ export function XtermView(props: XtermViewProps) {
       }
       disposeChannel(channel);
       kernelTabIdRef.current = "";
+      cancelWebgl();
       term.dispose();
       termRef.current = null;
     };
