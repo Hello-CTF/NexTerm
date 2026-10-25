@@ -882,7 +882,7 @@ describe("SyncCard (web account sync)", () => {
 
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
-    await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
+    await flushUntil(() => mounted!.container.textContent?.includes("会话记录 1 — 全部一致"));
     // Already consistent, both the winner set and applySet are empty: no push, no repeated apply
     expect(mounted.container.textContent).toContain("待推送 0 项");
     expect(mounted.container.textContent).toContain("当前待应用 0 项");

@@ -537,7 +537,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush.mock.calls[0][0]).toBe("head-1");
     expect(await openPushed(mocks.syncPush.mock.calls[0][1][0], "asset")).toMatchObject({ id: "a-1", name: "web-01" });
-    await flushUntil(() => text().includes("已一致"), 400);
+    await flushUntil(() => text().includes("全部一致"), 400);
     expect(text()).not.toContain("无法解密");
     // Drain the trailing round so no update lands after the test has ended.
     await act(async () => {
@@ -852,7 +852,7 @@ describe("applySet deduplication and second-sync convergence (P1-2)", () => {
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("已一致"));
+    await flushUntil(() => text().includes("全部一致"));
     expect(text()).toContain("当前待应用 0 项");
     expect(text()).toContain("待推送 0 项");
     expect(mocks.applyObjects).not.toHaveBeenCalled();
@@ -889,7 +889,7 @@ describe("applySet deduplication and second-sync convergence (P1-2)", () => {
     // After applying, the local side keeps an identical-content tombstone, consistent with the cloud: both sets drop to zero, no more writes are fired
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     await flushUntil(() => text().includes("当前待应用 0 项"));
-    expect(text()).toContain("已一致");
+    expect(text()).toContain("全部一致");
     expect(text()).toContain("待推送 0 项");
 
     expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
@@ -928,7 +928,7 @@ describe("applySet deduplication and second-sync convergence (P1-2)", () => {
     // After applying, the local soft-deleted asset is byte-identical to the remote: the second apply/push round is empty
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     await flushUntil(() => text().includes("当前待应用 0 项"));
-    expect(text()).toContain("已一致");
+    expect(text()).toContain("全部一致");
     expect(text()).toContain("待推送 0 项");
     expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush).not.toHaveBeenCalled();
@@ -971,7 +971,7 @@ describe("applySet deduplication and second-sync convergence (P1-2)", () => {
     ]);
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     await flushUntil(() => text().includes("当前待应用 0 项"));
-    expect(text()).toContain("已一致");
+    expect(text()).toContain("全部一致");
     expect(text()).toContain("待推送 0 项");
     expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush).not.toHaveBeenCalled();
@@ -1079,7 +1079,7 @@ describe("transcript endedAt revision and content completion (P1-3)", () => {
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire2], head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true });
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 2, blob_hash: "h2" }], head: "head-2", max_seq: 2 });
     await runAutoSync();
-    await flushUntil(() => text().includes("已一致"));
+    await flushUntil(() => text().includes("全部一致"));
     expect(text()).toContain("待推送 0 项");
     expect(text()).toContain("当前待应用 0 项");
     expect(mocks.syncPush).toHaveBeenCalledTimes(1);
