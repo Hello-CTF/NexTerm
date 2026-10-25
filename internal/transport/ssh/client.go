@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +48,15 @@ type Client struct {
 	closers      []io.Closer
 	forwardAgent bool
 	env          map[string]string
+	identity     string
+}
+
+// HostIdentity names the authenticated server: the login user plus the host key
+// the connection was verified against. It is empty when unknown. Two clients
+// with the same identity reached the same machine key and account, which is
+// what makes it a safe cache key for per-host state.
+func (c *Client) HostIdentity() string {
+	return c.identity
 }
 
 func Connect(ctx context.Context, cfg Config) (*Client, error) {
@@ -94,13 +104,18 @@ func connect(ctx context.Context, cfg Config, depth, hops int, progress func(Con
 		}
 	}()
 
+	var presentedKey string
 	sshConfig := &gossh.ClientConfig{
 		User:          cfg.User,
 		Auth:          []gossh.AuthMethod{auth},
 		ClientVersion: cfg.ClientVersion,
 		Timeout:       cfg.ConnectTimeout,
 		HostKeyCallback: func(_ string, _ net.Addr, key gossh.PublicKey) error {
-			return verifyHostKey(connectCtx, cfg.HostKeys, cfg.Host, cfg.Port, cfg.AutoAcceptUnknown, cfg.HostKeyApproval, key)
+			if err := verifyHostKey(connectCtx, cfg.HostKeys, cfg.Host, cfg.Port, cfg.AutoAcceptUnknown, cfg.HostKeyApproval, key); err != nil {
+				return err
+			}
+			presentedKey = key.Type() + " " + gossh.FingerprintSHA256(key)
+			return nil
 		},
 	}
 	target := endpointString(cfg.Host, cfg.Port)
@@ -149,6 +164,10 @@ func connect(ctx context.Context, cfg Config, depth, hops int, progress func(Con
 		done:         make(chan struct{}),
 		forwardAgent: cfg.ForwardAgent,
 		env:          cfg.Env,
+	}
+	if presentedKey != "" {
+		// The endpoint is part of the identity so machines cloned with the same host key never share state.
+		client.identity = cfg.User + "@" + net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)) + " " + presentedKey
 	}
 	if jumpClient != nil {
 		client.closers = append(client.closers, jumpClient)

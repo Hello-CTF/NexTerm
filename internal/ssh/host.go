@@ -22,13 +22,15 @@ const sha256HexLength = 64
 
 type clientHost struct {
 	client *transportssh.Client
+	// gzipCacheDir holds compressed helper artifacts reused across uploads.
+	gzipCacheDir string
 }
 
 func (r *Resolver) host(ctx context.Context, client *transportssh.Client) (Host, error) {
 	if r.hostFor != nil {
 		return r.hostFor(ctx, client)
 	}
-	return &clientHost{client: client}, nil
+	return &clientHost{client: client, gzipCacheDir: r.gzipCacheDir()}, nil
 }
 
 func (h *clientHost) Run(ctx context.Context, command string, timeout time.Duration) (string, int, error) {
@@ -88,16 +90,29 @@ func (h *clientHost) UploadWithProgress(ctx context.Context, localPath, remotePa
 		return 0, err
 	}
 	_, gzipExitCode, gzipErr := h.Run(ctx, "command -v gzip >/dev/null 2>&1", probeTimeout)
-	compressedPath, compressed, compressErr := compressedHelperSource(localPath)
+	remoteGzip := gzipErr == nil && gzipExitCode == 0
+	var (
+		compressedPath string
+		compressed     bool
+		temporary      bool
+		compressErr    error
+	)
+	if remoteGzip {
+		compressedPath, compressed, temporary, compressErr = cachedHelperSource(localPath, h.gzipCacheDir)
+	}
 	var cleanupErr *TransferError
 	if errors.As(compressErr, &cleanupErr) && cleanupErr.Stage == TransferStageCleanupGzip {
 		return 0, compressErr
 	}
-	if gzipErr == nil && gzipExitCode == 0 && compressErr == nil && compressed {
+	localTemporary := ""
+	if temporary {
+		localTemporary = compressedPath
+	}
+	if remoteGzip && compressErr == nil && compressed {
 		decompressed := remotePath
 		remoteCompressed := remotePath + ".gz"
 		defer func() {
-			retErr = errors.Join(retErr, cleanupGzipUpload(filesystem, compressedPath, remoteCompressed))
+			retErr = errors.Join(retErr, cleanupGzipUpload(filesystem, localTemporary, remoteCompressed))
 		}()
 		transferred, err := filesystem.Upload(ctx, compressedPath, remoteCompressed, options)
 		if err != nil {
@@ -112,7 +127,7 @@ func (h *clientHost) UploadWithProgress(ctx context.Context, localPath, remotePa
 		}
 		return transferred, nil
 	}
-	temporaryCleanupErr := cleanupGzipUpload(nil, compressedPath, "")
+	temporaryCleanupErr := cleanupGzipUpload(nil, localTemporary, "")
 	transferred, retErr = filesystem.Upload(ctx, localPath, remotePath, options)
 	return transferred, errors.Join(retErr, temporaryCleanupErr)
 }
@@ -138,6 +153,13 @@ func cleanupGzipUpload(filesystem gzipDeleter, localPath, remotePath string) (re
 }
 
 func compressedHelperSource(localPath string) (result string, compressed bool, retErr error) {
+	return compressHelperInto(localPath, "")
+}
+
+// compressHelperInto gzips localPath into a new file inside dir (the system
+// temporary directory when empty). It reports compressed=false when gzip would
+// not make the file smaller.
+func compressHelperInto(localPath, dir string) (result string, compressed bool, retErr error) {
 	info, err := os.Stat(localPath)
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 		return "", false, err
@@ -147,7 +169,11 @@ func compressedHelperSource(localPath string) (result string, compressed bool, r
 		return "", false, err
 	}
 	defer source.Close()
-	target, err := os.CreateTemp("", "nexterm-helper-*.gz")
+	pattern := "nexterm-helper-*.gz"
+	if dir != "" {
+		pattern = "nexterm-helper-*.tmp"
+	}
+	target, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return "", false, err
 	}
@@ -158,6 +184,9 @@ func compressedHelperSource(localPath string) (result string, compressed bool, r
 			retErr = errors.Join(retErr, cleanupGzipUpload(nil, targetPath, ""))
 		}
 	}()
+	if onHelperCompress != nil {
+		onHelperCompress()
+	}
 	writer := gzip.NewWriter(target)
 	if _, err := io.Copy(writer, source); err != nil {
 		_ = writer.Close()
@@ -165,6 +194,10 @@ func compressedHelperSource(localPath string) (result string, compressed bool, r
 		return "", false, err
 	}
 	if err := writer.Close(); err != nil {
+		_ = target.Close()
+		return "", false, err
+	}
+	if err := target.Sync(); err != nil {
 		_ = target.Close()
 		return "", false, err
 	}

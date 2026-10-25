@@ -420,6 +420,11 @@ func TestPackDownloadCleansPartialArchiveFailures(t *testing.T) {
 
 func newTestFS(t *testing.T, executor Executor) (*FS, string) {
 	t.Helper()
+	return newTestFSWithOptions(t, executor)
+}
+
+func newTestFSWithOptions(t *testing.T, executor Executor, options ...sftp.ClientOption) (*FS, string) {
+	t.Helper()
 	root := t.TempDir()
 	clientSide, serverSide := net.Pipe()
 	server, err := sftp.NewServer(serverSide, sftp.WithServerWorkingDirectory(root))
@@ -428,7 +433,7 @@ func newTestFS(t *testing.T, executor Executor) (*FS, string) {
 	}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- server.Serve() }()
-	client, err := sftp.NewClientPipe(clientSide, clientSide)
+	client, err := sftp.NewClientPipe(clientSide, clientSide, options...)
 	if err != nil {
 		clientSide.Close()
 		serverSide.Close()

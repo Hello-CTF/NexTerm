@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 type Progress struct {
@@ -64,7 +66,7 @@ func (o TransferOptions) normalized() (TransferOptions, error) {
 		o.ProgressInterval = 200 * time.Millisecond
 	}
 	if o.BufferSize == 0 {
-		o.BufferSize = 256 << 10
+		o.BufferSize = defaultTransferBufferSize
 	}
 	if o.ProgressInterval < 0 || o.BufferSize < 0 {
 		return TransferOptions{}, fmt.Errorf("invalid transfer options")
@@ -72,7 +74,37 @@ func (o TransferOptions) normalized() (TransferOptions, error) {
 	return o, nil
 }
 
+// defaultTransferBufferSize is also the download read size: SFTP reads overlap
+// round trips only within one large Read.
+const defaultTransferBufferSize = 4 << 20
+
+const (
+	// uploadWriteSize is the largest single Write issued by Upload. Concurrent
+	// chunk writes only overlap round trips within one Write, so it must be large;
+	// it is also the bound on how much of the remote tail an interrupted upload can
+	// leave with holes, which Resume verifies before trusting.
+	uploadWriteSize = 4 << 20
+	// pacedUploadWriteSize is the smallest Write of a rate-capped upload.
+	pacedUploadWriteSize = 256 << 10
+)
+
+func uploadBufferSize(options TransferOptions) int {
+	size := options.BufferSize
+	switch {
+	case size == 0 && options.MaxBytesPerSecond > 0:
+		// About 125 ms of data per Write: large enough to keep the pipe full, small
+		// enough that the cap is repaid quickly and cancellation stays prompt.
+		size = int(min(max(options.MaxBytesPerSecond/8, pacedUploadWriteSize), uploadWriteSize))
+	case size == 0:
+		size = uploadWriteSize
+	case size > uploadWriteSize:
+		size = uploadWriteSize
+	}
+	return size
+}
+
 func (f *FS) Upload(ctx context.Context, localPath, remotePath string, options TransferOptions) (int64, error) {
+	bufferSize := uploadBufferSize(options)
 	options, err := options.normalized()
 	if err != nil {
 		return 0, err
@@ -99,7 +131,12 @@ func (f *FS) Upload(ctx context.Context, localPath, remotePath string, options T
 			if size > total {
 				return 0, fmt.Errorf("remote resume target is larger than source (%d > %d)", size, total)
 			}
-			offset = size
+			// Concurrent writes can leave holes in the last window of an interrupted
+			// upload, so the remote size alone is not a contiguity guarantee.
+			offset, err = f.verifiedUploadPrefix(ctx, remotePath, local, size)
+			if err != nil {
+				return 0, err
+			}
 			targetExists = true
 		case errors.Is(err, fs.ErrNotExist):
 		default:
@@ -113,15 +150,27 @@ func (f *FS) Upload(ctx context.Context, localPath, remotePath string, options T
 	if _, err := local.Seek(offset, io.SeekStart); err != nil {
 		return offset, err
 	}
-	remote, err := f.OpenWrite(ctx, remotePath, offset > 0)
-	if err != nil {
-		return offset, err
+	var remote base.RemoteWriter
+	if offset > 0 {
+		realPath, err := f.real(ctx, remotePath)
+		if err != nil {
+			return offset, err
+		}
+		remote, err = f.openWriteAt(ctx, realPath, offset)
+		if err != nil {
+			return offset, err
+		}
+	} else {
+		remote, err = f.OpenWrite(ctx, remotePath, false)
+		if err != nil {
+			return offset, err
+		}
 	}
 	defer remote.Close()
 	stop := context.AfterFunc(ctx, func() { local.Close() })
 	defer stop()
 	reporter := newProgressReporter(options, offset, total)
-	written, err := copyBuffer(ctx, PaceWriter(ctx, remote, options.MaxBytesPerSecond), local, reporter.advance, make([]byte, options.BufferSize), total-offset)
+	written, err := copyBuffer(ctx, PaceWriter(ctx, remote, options.MaxBytesPerSecond), local, reporter.advance, make([]byte, bufferSize), total-offset)
 	transferred := offset + written
 	if err != nil {
 		return transferred, fmt.Errorf("upload %s: %w", remotePath, err)
@@ -134,6 +183,43 @@ func (f *FS) Upload(ctx context.Context, localPath, remotePath string, options T
 	}
 	reporter.finish()
 	return transferred, nil
+}
+
+// verifiedUploadPrefix returns how many leading bytes of the remote file are
+// known to equal the local source. Only the final uploadWriteSize bytes can be
+// damaged by an interrupted concurrent write, so that window is compared with
+// the source and the prefix ends at the first difference.
+func (f *FS) verifiedUploadPrefix(ctx context.Context, remotePath string, local io.ReaderAt, size int64) (int64, error) {
+	if size == 0 {
+		return 0, nil
+	}
+	start := size - min(size, uploadWriteSize)
+	remote, err := f.OpenRead(ctx, remotePath)
+	if err != nil {
+		return 0, err
+	}
+	defer remote.Close()
+	seeker, ok := remote.(io.Seeker)
+	if !ok {
+		return 0, nil
+	}
+	if _, err := seeker.Seek(start, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("seek remote resume window: %w", err)
+	}
+	remoteTail := make([]byte, size-start)
+	read, err := io.ReadFull(remote, remoteTail)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("read remote resume window: %w", err)
+	}
+	localTail := make([]byte, len(remoteTail))
+	if _, err := local.ReadAt(localTail, start); err != nil && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("read local resume window: %w", err)
+	}
+	matched := 0
+	for matched < read && remoteTail[matched] == localTail[matched] {
+		matched++
+	}
+	return start + int64(matched), nil
 }
 
 func (f *FS) Download(ctx context.Context, remotePath, localPath string, options TransferOptions) (int64, error) {

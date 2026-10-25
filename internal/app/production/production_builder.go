@@ -152,7 +152,13 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	var sshResolver *sshdaemon.Resolver
 	executablePath, executableErr := os.Executable()
 	if executableErr == nil {
-		sshResolver = &sshdaemon.Resolver{Executable: executablePath, UploadBytesPerSecond: helperUploadLimitFromEnv(config.Config.Logger)}
+		sshResolver = &sshdaemon.Resolver{
+			Executable:           executablePath,
+			UploadBytesPerSecond: helperUploadLimitFromEnv(config.Config.Logger),
+			CacheDir:             filepath.Join(config.DataDir, "helper-cache"),
+		}
+		// Copies of this resolver are made per session; they all share this one memory of verified deployments.
+		sshResolver.EnableDeploymentMemory()
 	} else {
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}

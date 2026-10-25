@@ -116,7 +116,7 @@ func (c *Client) sftpFilesystem(ctx context.Context) (*sftpFileSystem, error) {
 		return nil, fmt.Errorf("request SFTP subsystem: %w", err)
 	}
 	go io.Copy(io.Discard, stderr)
-	client, err := sftp.NewClientPipe(stdout, stdin)
+	client, err := sftp.NewClientPipe(stdout, stdin, sshfs.ClientOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("initialize SFTP: %w", err)
 	}

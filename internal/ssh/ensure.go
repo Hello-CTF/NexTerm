@@ -122,10 +122,18 @@ func (r *Resolver) ensureOnHostWithClient(ctx context.Context, host Host, client
 		return nil, fmt.Errorf("%w: allocate helper operation identity: %v", durable.ErrUnavailable, err)
 	}
 	var lastErr error
+	key := r.deploymentKey(host, client)
 	for attempt := 1; attempt <= maxEnsureAttempts; attempt++ {
 		attemptCtx := context.WithValue(operationCtx, helperOperationKey{}, helperOperationScope{id: operationID, attempt: attempt, deadline: deadline})
+		if attempt == 1 {
+			if daemon := r.fastEnsure(attemptCtx, host, client, key); daemon != nil {
+				r.reportProgress(attemptCtx, HelperProgress{Step: helperProgressSteps, Stage: "ready", Done: true, Path: daemon.StateDir})
+				return daemon, nil
+			}
+		}
 		daemon, cycleErr := r.ensureCycle(attemptCtx, host, client, options)
 		if cycleErr == nil {
+			r.rememberDeployment(key, daemon)
 			r.reportProgress(attemptCtx, HelperProgress{Step: helperProgressSteps, Stage: "ready", Done: true, Path: daemon.StateDir})
 			return daemon, nil
 		}
@@ -174,6 +182,7 @@ func permanentHelperFailure(err error) bool {
 }
 
 func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transportssh.Client, options EnsureOptions) (*Daemon, error) {
+	ctx = withCycleCache(ctx)
 	r.reportProgress(ctx, HelperProgress{Step: 1, Stage: "discover"})
 	target, err := DiscoverTarget(ctx, host)
 	if err != nil {
@@ -182,22 +191,20 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 		}
 		return nil, helperUnavailable("target discovery", err)
 	}
-	if client != nil && r.hostFor == nil {
-		execHost, err := NewExecHost(client, target)
-		if err != nil {
-			return nil, err
-		}
-		host = NewFallbackHost(host, execHost)
+	host, err = r.withExecFallback(host, client, target)
+	if err != nil {
+		return nil, err
 	}
 	primaryPaths, err := target.Paths()
 	if err != nil {
 		return nil, err
 	}
-	locations := []deploymentLocation{{target: target, paths: primaryPaths}}
-	locations = append(locations, discoverFallbackLocations(ctx, host, target)...)
+	primary := deploymentLocation{target: target, paths: primaryPaths}
 
 	source, sourceErr := r.uploadSourceForTarget(target)
-	ordered, err := orderDeploymentLocations(ctx, host, locations)
+	ordered, err := orderDeploymentLocations(ctx, host, primary, func() []deploymentLocation {
+		return discoverFallbackLocations(ctx, host, target)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -313,6 +320,19 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("%w: no usable helper deployment location", durable.ErrUnavailable)
+}
+
+// withExecFallback lets filesystem operations fall back to exec channels when the
+// target has no SFTP subsystem. Test hosts injected through hostFor are left as is.
+func (r *Resolver) withExecFallback(host Host, client *transportssh.Client, target Target) (Host, error) {
+	if client == nil || r.hostFor != nil {
+		return host, nil
+	}
+	execHost, err := NewExecHost(client, target)
+	if err != nil {
+		return nil, err
+	}
+	return NewFallbackHost(host, execHost), nil
 }
 
 func daemonWithSource(connection *daemonConnection, source *UploadSource) *Daemon {
@@ -437,11 +457,22 @@ func discoverFallbackLocations(ctx context.Context, host Host, target Target) []
 	return roots
 }
 
-func orderDeploymentLocations(ctx context.Context, host Host, locations []deploymentLocation) ([]deploymentLocation, error) {
-	if len(locations) == 0 {
-		return nil, fmt.Errorf("%w: no helper deployment location", durable.ErrUnavailable)
+// orderDeploymentLocations picks the locations to try. A location whose daemon
+// state directory already exists wins outright, so the fallback locations are
+// only discovered (one more remote command) when the primary has no state.
+func orderDeploymentLocations(ctx context.Context, host Host, primary deploymentLocation, fallbacks func() []deploymentLocation) ([]deploymentLocation, error) {
+	exists, err := host.Exists(ctx, primary.paths.StateDir)
+	if err != nil {
+		return nil, helperUnavailable("inspect existing daemon state "+primary.paths.StateDir, err)
 	}
-	for _, location := range locations {
+	if exists {
+		return []deploymentLocation{primary}, nil
+	}
+	locations := []deploymentLocation{primary}
+	if fallbacks != nil {
+		locations = append(locations, fallbacks()...)
+	}
+	for _, location := range locations[1:] {
 		if location.temporary {
 			if err := validateNexTermPaths(ctx, host, location); err != nil {
 				return nil, err
@@ -464,6 +495,16 @@ func orderDeploymentLocations(ctx context.Context, host Host, locations []deploy
 }
 
 func lookupPathBinaries(ctx context.Context, host Host, target Target) []string {
+	cache := cycleCacheFrom(ctx)
+	if binaries, ok := cache.pathBinaries(target.GOOS); ok {
+		return binaries
+	}
+	binaries := runLookupPathBinaries(ctx, host, target)
+	cache.storePathBinaries(target.GOOS, binaries)
+	return binaries
+}
+
+func runLookupPathBinaries(ctx context.Context, host Host, target Target) []string {
 	command := "command -v nexterm-helper 2>/dev/null; true"
 	if target.GOOS == "windows" {
 		command = powerShellCommand("powershell.exe", "$command=Get-Command nexterm-helper.exe -ErrorAction SilentlyContinue; if ($command) { [Console]::Out.Write($command.Source) }")
@@ -721,6 +762,18 @@ func verifyRemoteBinary(ctx context.Context, host Host, binary, expectedDigest s
 }
 
 func probeTargetBinary(ctx context.Context, host Host, target Target, binary string) error {
+	cache := cycleCacheFrom(ctx)
+	if err, ok := cache.probeResult(binary); ok {
+		return err
+	}
+	err := runProbeTargetBinary(ctx, host, target, binary)
+	if ctx.Err() == nil {
+		cache.storeProbe(binary, err)
+	}
+	return err
+}
+
+func runProbeTargetBinary(ctx context.Context, host Host, target Target, binary string) error {
 	command, err := target.probeCommand(binary)
 	if err != nil {
 		return err
@@ -767,6 +820,7 @@ func (r *Resolver) installTargetHelper(ctx context.Context, host Host, location 
 	defer cancel()
 	r.reportProgress(uploadCtx, HelperProgress{Step: 3, Stage: "cache", Path: location.paths.BinDir})
 	binary, err := StageUploadLimited(uploadCtx, host, location.target, source, true, r.Progress, r.UploadBytesPerSecond)
+	cycleCacheFrom(ctx).forgetProbe(binary)
 	if err != nil {
 		return binary, helperUnavailable("install target helper", err)
 	}
@@ -1053,41 +1107,44 @@ func ensureTargetDirectories(ctx context.Context, host Host, target Target, path
 }
 
 func ensureRemoteDirectory(ctx context.Context, host Host, target Target, directory string, private bool) error {
-	missing := make([]string, 0)
-	current := directory
-	for {
+	// One command classifies the directory and all of its ancestors, instead of
+	// one round trip per level while walking up to the first existing one.
+	chain := directoryChain(target, directory)
+	kinds, err := remoteDirectoryKinds(ctx, host, target, chain...)
+	if err != nil {
+		return err
+	}
+	var missing []string
+	existing := -1
+	for index, kind := range kinds {
+		if kind != "missing" {
+			existing = index
+			break
+		}
+		missing = append(missing, chain[index])
+	}
+	if existing < 0 {
+		return fmt.Errorf("%w: no existing ancestor for %s", durable.ErrUnavailable, directory)
+	}
+	current := chain[existing]
+	switch kinds[existing] {
+	case "directory":
+		if len(missing) == 0 && private {
+			if err := host.Chmod(ctx, current, 0o700); err != nil {
+				return helperUnavailable("mark NexTerm directory private "+current, err)
+			}
+		}
+	case "symlink":
+		if len(missing) == 0 {
+			return fmt.Errorf("%w: %s is a symbolic link", durable.ErrUnavailable, current)
+		}
+	default:
+		return fmt.Errorf("%w: %s exists and is not a directory", durable.ErrUnavailable, current)
+	}
+	for index := len(missing) - 1; index >= 0; index-- {
 		if err := ctx.Err(); err != nil {
 			return context.Cause(ctx)
 		}
-		kind, err := remoteDirectoryKind(ctx, host, target, current)
-		if err != nil {
-			return err
-		}
-		switch kind {
-		case "directory":
-			if len(missing) == 0 && private {
-				if err := host.Chmod(ctx, current, 0o700); err != nil {
-					return helperUnavailable("mark NexTerm directory private "+current, err)
-				}
-			}
-		case "missing":
-			missing = append(missing, current)
-			parent := remoteTargetDir(target, current)
-			if parent == current || parent == "" {
-				return fmt.Errorf("%w: no existing ancestor for %s", durable.ErrUnavailable, directory)
-			}
-			current = parent
-			continue
-		case "symlink":
-			if len(missing) == 0 {
-				return fmt.Errorf("%w: %s is a symbolic link", durable.ErrUnavailable, current)
-			}
-		default:
-			return fmt.Errorf("%w: %s exists and is not a directory", durable.ErrUnavailable, current)
-		}
-		break
-	}
-	for index := len(missing) - 1; index >= 0; index-- {
 		dir := missing[index]
 		if err := host.Mkdir(ctx, dir); err != nil && !errors.Is(err, fs.ErrExist) {
 			kind, inspectErr := remoteDirectoryKind(ctx, host, target, dir)
@@ -1098,6 +1155,7 @@ func ensureRemoteDirectory(ctx context.Context, host Host, target Target, direct
 				return helperUnavailable("create remote directory "+dir, err)
 			}
 		}
+		// Each created level is verified before a child is created inside it.
 		kind, err := remoteDirectoryKind(ctx, host, target, dir)
 		if err != nil {
 			return err
@@ -1114,27 +1172,70 @@ func ensureRemoteDirectory(ctx context.Context, host Host, target Target, direct
 	return nil
 }
 
-func remoteDirectoryKind(ctx context.Context, host Host, target Target, directory string) (string, error) {
-	quoted := quoteShell(directory)
-	command := "# nexterm-directory-kind\nif [ -L " + quoted + " ]; then printf 'symlink\\n'; elif [ -d " + quoted + " ]; then printf 'directory\\n'; elif [ -e " + quoted + " ]; then printf 'other\\n'; else printf 'missing\\n'; fi"
-	if target.GOOS == "windows" {
-		script := "$ErrorActionPreference='Stop'; if (-not (Test-Path -LiteralPath " + quotePowerShell(directory) + ")) { [Console]::Out.Write('missing') } else { $item=Get-Item -LiteralPath " + quotePowerShell(directory) + " -Force; if ($item.LinkType -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { [Console]::Out.Write('symlink') } elseif ($item.PSIsContainer) { [Console]::Out.Write('directory') } else { [Console]::Out.Write('other') } }"
-		command = powerShellCommand("powershell.exe", "# nexterm-directory-kind\n"+script)
+// directoryChain lists directory followed by its ancestors up to the root.
+func directoryChain(target Target, directory string) []string {
+	chain := []string{directory}
+	current := directory
+	for len(chain) < 64 {
+		parent := remoteTargetDir(target, current)
+		if parent == current || parent == "" {
+			break
+		}
+		chain = append(chain, parent)
+		current = parent
 	}
+	return chain
+}
+
+func remoteDirectoryKind(ctx context.Context, host Host, target Target, directory string) (string, error) {
+	kinds, err := remoteDirectoryKinds(ctx, host, target, directory)
+	if err != nil {
+		return "", err
+	}
+	return kinds[0], nil
+}
+
+// remoteDirectoryKinds classifies every path as symlink, directory, other or
+// missing with a single remote command, returning one kind per input in order.
+func remoteDirectoryKinds(ctx context.Context, host Host, target Target, directories ...string) ([]string, error) {
+	if len(directories) == 0 {
+		return nil, nil
+	}
+	var command string
+	if target.GOOS == "windows" {
+		quoted := make([]string, len(directories))
+		for index, directory := range directories {
+			quoted[index] = quotePowerShell(directory)
+		}
+		script := "$ErrorActionPreference='Stop'; foreach ($p in @(" + strings.Join(quoted, ",") + ")) { if (-not (Test-Path -LiteralPath $p)) { [Console]::Out.WriteLine('missing') } else { $item=Get-Item -LiteralPath $p -Force; if ($item.LinkType -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { [Console]::Out.WriteLine('symlink') } elseif ($item.PSIsContainer) { [Console]::Out.WriteLine('directory') } else { [Console]::Out.WriteLine('other') } } }"
+		command = powerShellCommand("powershell.exe", "# nexterm-directory-kind\n"+script)
+	} else {
+		quoted := make([]string, len(directories))
+		for index, directory := range directories {
+			quoted[index] = quoteShell(directory)
+		}
+		command = "# nexterm-directory-kind\nfor d in " + strings.Join(quoted, " ") + "; do if [ -L \"$d\" ]; then printf 'symlink\\n'; elif [ -d \"$d\" ]; then printf 'directory\\n'; elif [ -e \"$d\" ]; then printf 'other\\n'; else printf 'missing\\n'; fi; done"
+	}
+	label := strings.Join(directories, ", ")
 	stdout, exitCode, err := host.Run(ctx, command, probeTimeout)
 	if err != nil {
-		return "", helperUnavailable("inspect remote directory "+directory, err)
+		return nil, helperUnavailable("inspect remote directory "+label, err)
 	}
 	if exitCode != 0 {
-		return "", fmt.Errorf("%w: inspect remote directory %s exited with %d", durable.ErrUnavailable, directory, exitCode)
+		return nil, fmt.Errorf("%w: inspect remote directory %s exited with %d", durable.ErrUnavailable, label, exitCode)
 	}
-	kind := strings.TrimSpace(stdout)
-	switch kind {
-	case "directory", "missing", "symlink", "other":
-		return kind, nil
-	default:
-		return "", fmt.Errorf("%w: unexpected directory response %q", ErrProtocol, stdout)
+	lines := nonEmptyLines(stdout)
+	if len(lines) != len(directories) {
+		return nil, fmt.Errorf("%w: unexpected directory response %q", ErrProtocol, stdout)
 	}
+	for _, kind := range lines {
+		switch kind {
+		case "directory", "missing", "symlink", "other":
+		default:
+			return nil, fmt.Errorf("%w: unexpected directory response %q", ErrProtocol, stdout)
+		}
+	}
+	return lines, nil
 }
 
 var errUnsafeTemporaryRoot = errors.New("unsafe temporary helper root")
@@ -1150,13 +1251,14 @@ func validateNexTermPaths(ctx context.Context, host Host, location deploymentLoc
 	if !location.temporary {
 		return nil
 	}
-	for _, directory := range []string{location.paths.Root, location.paths.BinDir, location.paths.StateDir} {
-		kind, err := remoteDirectoryKind(ctx, host, location.target, directory)
-		if err != nil {
-			return unsafeTemporaryError(err)
-		}
+	directories := []string{location.paths.Root, location.paths.BinDir, location.paths.StateDir}
+	kinds, err := remoteDirectoryKinds(ctx, host, location.target, directories...)
+	if err != nil {
+		return unsafeTemporaryError(err)
+	}
+	for index, kind := range kinds {
 		if kind != "missing" && kind != "directory" {
-			return fmt.Errorf("%w: %w: NexTerm private path %s is %s", durable.ErrUnavailable, errUnsafeTemporaryRoot, directory, kind)
+			return fmt.Errorf("%w: %w: NexTerm private path %s is %s", durable.ErrUnavailable, errUnsafeTemporaryRoot, directories[index], kind)
 		}
 	}
 	return nil

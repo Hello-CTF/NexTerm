@@ -133,12 +133,29 @@ type Resolver struct {
 	// UploadBytesPerSecond optionally caps the helper upload so it cannot fill a slow link shared with
 	// the interactive shell. Zero, the default, leaves the upload unlimited.
 	UploadBytesPerSecond int64
+	// CacheDir stores gzip copies of uploaded helpers, keyed by content digest, so
+	// later uploads skip recompression. Empty selects the user cache directory.
+	CacheDir string
 	// Progress receives helper installation and update progress. It is optional.
 	Progress func(context.Context, HelperProgress)
+
+	// deployments remembers the last verified daemon per host identity for the fast reconnect path. It is a
+	// pointer because resolvers are copied per session: every copy must share one memory, and a nil memory
+	// simply disables the fast path (see EnableDeploymentMemory).
+	deployments *deploymentMemory
+	// hostIdentity overrides how a client is keyed in deployments (tests).
+	hostIdentity func(host Host, client *transportssh.Client) string
 
 	hostFor   func(ctx context.Context, client *transportssh.Client) (Host, error)
 	inspect   func(path string) (UploadSource, error)
 	clientFor func(daemon *Daemon) remoteDaemonClient
+}
+
+func (r *Resolver) gzipCacheDir() string {
+	if r.CacheDir != "" {
+		return r.CacheDir
+	}
+	return defaultHelperGzipCacheDir()
 }
 
 type HelperProgress struct {

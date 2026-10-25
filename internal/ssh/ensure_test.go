@@ -410,7 +410,11 @@ func (h *fakeHost) Run(ctx context.Context, command string, _ time.Duration) (st
 	}
 	switch {
 	case strings.Contains(script, "nexterm-directory-kind"):
-		return fakeDirectoryKind(h, directoryPathFromCommand(script)), 0, nil
+		var kinds strings.Builder
+		for _, path := range directoryPathsFromCommand(script) {
+			kinds.WriteString(fakeDirectoryKind(h, path))
+		}
+		return kinds.String(), 0, nil
 	case strings.Contains(script, "nexterm-private-base"):
 		for base := range h.invalidPrivateBases {
 			if strings.Contains(script, quoteShell(base)) {
@@ -481,22 +485,61 @@ func readableFakeCommand(command string) string {
 	return script.String()
 }
 
-func directoryPathFromCommand(command string) string {
+// directoryPathsFromCommand extracts the paths of a batched directory-kind probe.
+func directoryPathsFromCommand(command string) []string {
 	if strings.Contains(command, "-LiteralPath") {
-		_, remainder, _ := strings.Cut(command, "-LiteralPath ")
-		quoted, _, _ := strings.Cut(remainder, ")")
-		quoted = strings.TrimSpace(quoted)
-		quoted = strings.TrimSuffix(strings.TrimPrefix(quoted, "'"), "'")
-		return strings.ReplaceAll(quoted, "''", "'")
+		_, remainder, _ := strings.Cut(command, "@(")
+		list, _, _ := strings.Cut(remainder, ")) {")
+		var paths []string
+		for len(list) > 0 {
+			list = strings.TrimLeft(list, ", ")
+			if !strings.HasPrefix(list, "'") {
+				break
+			}
+			var path strings.Builder
+			list = list[1:]
+			for len(list) > 0 {
+				if strings.HasPrefix(list, "''") {
+					path.WriteByte('\'')
+					list = list[2:]
+					continue
+				}
+				if list[0] == '\'' {
+					list = list[1:]
+					break
+				}
+				path.WriteByte(list[0])
+				list = list[1:]
+			}
+			paths = append(paths, path.String())
+		}
+		return paths
 	}
-	const prefix = "# nexterm-directory-kind\nif [ -L "
-	remainder := strings.TrimPrefix(command, prefix)
-	quoted, _, _ := strings.Cut(remainder, " ]; then")
-	if len(quoted) >= 2 && quoted[0] == '\'' {
-		quoted = strings.TrimSuffix(strings.TrimPrefix(quoted, "'"), "'")
-		return strings.ReplaceAll(quoted, `'"'"'`, "'")
+	_, remainder, _ := strings.Cut(command, "for d in ")
+	list, _, _ := strings.Cut(remainder, "; do ")
+	var paths []string
+	for len(list) > 0 {
+		list = strings.TrimLeft(list, " ")
+		var path strings.Builder
+		for len(list) > 0 && list[0] != ' ' {
+			switch {
+			case strings.HasPrefix(list, `'"'"'`):
+				path.WriteByte('\'')
+				list = list[5:]
+			case list[0] == '\'':
+				end := strings.IndexByte(list[1:], '\'')
+				path.WriteString(list[1 : 1+end])
+				list = list[end+2:]
+			default:
+				path.WriteByte(list[0])
+				list = list[1:]
+			}
+		}
+		if path.Len() > 0 {
+			paths = append(paths, path.String())
+		}
 	}
-	return quoted
+	return paths
 }
 
 func fakeDirectoryKind(h *fakeHost, path string) string {

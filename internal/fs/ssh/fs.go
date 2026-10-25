@@ -34,6 +34,24 @@ type FS struct {
 	conditionalPreCommitHook func()
 }
 
+// ClientOptions returns the SFTP client options NexTerm uses everywhere. Concurrent
+// writes overlap round trips so one large Write is not limited to a single 32 KiB
+// request per RTT; callers must not rely on the written range being contiguous
+// until the Write has returned successfully (see Upload resume verification).
+func ClientOptions() []sftp.ClientOption {
+	return []sftp.ClientOption{
+		sftp.UseConcurrentWrites(true),
+		sftp.MaxConcurrentRequestsPerFile(maxConcurrentRequests),
+	}
+}
+
+const (
+	maxConcurrentRequests = 64
+	// sftpPacketSize is the default pkg/sftp payload size; a Write of at most this
+	// size is always a single request.
+	sftpPacketSize = 32 << 10
+)
+
 func New(client *sftp.Client, executor Executor) *FS {
 	return &FS{
 		client:   client,
@@ -342,7 +360,48 @@ func (f *FS) OpenWrite(ctx context.Context, remotePath string, append bool) (bas
 			return nil, fmt.Errorf("SFTP seek append %s: %w", remotePath, err)
 		}
 	}
-	writer := &remoteWriter{ctx: ctx, file: file}
+	// O_APPEND servers ignore request offsets, so concurrent (reorderable) chunks
+	// would corrupt the file; appenders always write one request at a time.
+	writer := &remoteWriter{ctx: ctx, file: file, sequential: append}
+	writer.stop = context.AfterFunc(ctx, func() { file.Close() })
+	return writer, nil
+}
+
+// openWriteAt opens an existing remote file for writing at offset, discarding
+// everything after it. It deliberately avoids O_APPEND so concurrent chunk
+// writes land at their own offsets.
+func (f *FS) openWriteAt(ctx context.Context, remotePath string, offset int64) (*remoteWriter, error) {
+	// A non-zero offset only makes sense for a file that still exists; never recreate it behind the user's back.
+	flags := os.O_WRONLY
+	if offset == 0 {
+		flags |= os.O_CREATE
+	}
+	file, err := f.client.OpenFile(remotePath, flags)
+	if err != nil {
+		return nil, fmt.Errorf("SFTP open for resume %s: %w", remotePath, err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("SFTP stat for resume %s: %w", remotePath, err)
+	}
+	switch size := info.Size(); {
+	case size < offset:
+		// The file shrank or was recreated after the resume offset was verified: not a safe resume.
+		_ = file.Close()
+		return nil, fmt.Errorf("SFTP resume %s: remote file changed (%d bytes, expected at least %d)", remotePath, size, offset)
+	case size > offset:
+		// Only a longer file needs truncating, so servers without setstat still resume a clean prefix.
+		if err := file.Truncate(offset); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("SFTP truncate for resume %s: %w", remotePath, err)
+		}
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("SFTP seek for resume %s: %w", remotePath, err)
+	}
+	writer := &remoteWriter{ctx: ctx, file: file, off: offset}
 	writer.stop = context.AfterFunc(ctx, func() { file.Close() })
 	return writer, nil
 }
@@ -460,19 +519,75 @@ func (r *remoteReader) Close() error {
 	return r.closeErr
 }
 
+// sftpWriteFile is the subset of *sftp.File remoteWriter needs.
+type sftpWriteFile interface {
+	Write([]byte) (int, error)
+	Seek(int64, int) (int64, error)
+	Sync() error
+	Close() error
+}
+
 type remoteWriter struct {
-	ctx       context.Context
-	file      *sftp.File
-	stop      func() bool
-	closeOnce sync.Once
-	closeErr  error
+	ctx  context.Context
+	file sftpWriteFile
+	// off is the position of the next byte for non-append writers.
+	off int64
+	// sequential forces one request at a time: set for append writers and after
+	// a concurrent Write was rejected by the server.
+	sequential bool
+	stop       func() bool
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 func (w *remoteWriter) Write(p []byte) (int, error) {
 	if err := w.ctx.Err(); err != nil {
 		return 0, err
 	}
-	return w.file.Write(p)
+	if w.sequential || len(p) <= sftpPacketSize {
+		n, err := w.writeSequential(p)
+		w.off += int64(n)
+		return n, err
+	}
+	start := w.off
+	n, err := w.file.Write(p)
+	w.off += int64(n)
+	if err == nil || w.ctx.Err() != nil {
+		return n, err
+	}
+	// A server may refuse many outstanding requests or out-of-order offsets. Rewrite
+	// the same range one request at a time; positional writes are idempotent.
+	var status *sftp.StatusError
+	if !errors.As(err, &status) {
+		return n, err
+	}
+	w.sequential = true
+	if _, seekErr := w.file.Seek(start, io.SeekStart); seekErr != nil {
+		return n, err
+	}
+	w.off = start
+	n, err = w.writeSequential(p)
+	w.off += int64(n)
+	return n, err
+}
+
+func (w *remoteWriter) writeSequential(p []byte) (int, error) {
+	written := 0
+	for written < len(p) {
+		if err := w.ctx.Err(); err != nil {
+			return written, err
+		}
+		end := written + sftpPacketSize
+		if end > len(p) {
+			end = len(p)
+		}
+		n, err := w.file.Write(p[written:end])
+		written += n
+		if err != nil {
+			return written, err
+		}
+	}
+	return written, nil
 }
 
 func (w *remoteWriter) Sync() error {
