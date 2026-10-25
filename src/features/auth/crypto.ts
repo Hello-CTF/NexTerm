@@ -285,6 +285,59 @@ export async function openSyncObject(dek: Uint8Array, blob: Uint8Array, id: stri
   return aesGcmOpen(dek, blob, objectAAD(id, kind));
 }
 
+// Compressed transcripts (internal/sync/object_compress.go): the AAD label is "transcript.gzip" and the sealed
+// plaintext is "NXZ1" | uint64 BE decoded size | gzip stream. The legacy "transcript.zstd" label is deliberately not
+// read here (no zstd decoder is shipped); such an object fails as undecryptable and is quarantined visibly.
+export const COMPRESSED_TRANSCRIPT_LABEL = "transcript.gzip";
+// Must equal maxSyncObjectBytes in internal/sync.
+export const MAX_COMPRESSED_DECODED_BYTES = 96 << 20;
+const COMPRESSED_MAGIC = "NXZ1";
+const COMPRESSED_HEADER_BYTES = 12;
+
+export async function inflateTranscriptPlaintext(packed: Uint8Array, maxDecoded = MAX_COMPRESSED_DECODED_BYTES): Promise<Uint8Array> {
+  const bad = () => new CryptoError("decrypt", "同步对象压缩数据不合法");
+  if (packed.length <= COMPRESSED_HEADER_BYTES) throw bad();
+  for (let i = 0; i < COMPRESSED_MAGIC.length; i++) {
+    if (packed[i] !== COMPRESSED_MAGIC.charCodeAt(i)) throw bad();
+  }
+  const view = new DataView(packed.buffer, packed.byteOffset, packed.byteLength);
+  const declaredBig = view.getBigUint64(COMPRESSED_MAGIC.length, false);
+  if (declaredBig === 0n || declaredBig > BigInt(maxDecoded)) throw bad();
+  const declared = Number(declaredBig);
+  if (typeof DecompressionStream === "undefined") {
+    throw new CryptoError("crypto", "当前浏览器不支持解压同步对象");
+  }
+  const inflater = new DecompressionStream("gzip");
+  const writer = inflater.writable.getWriter();
+  // A malformed stream rejects both sides; the read loop below reports it, so the write side is only drained.
+  void writer.write(packed.subarray(COMPRESSED_HEADER_BYTES) as unknown as BufferSource).catch(() => undefined);
+  void writer.close().catch(() => undefined);
+  const reader = inflater.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  let filled = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      // Memory is bounded by the declared size: a bomb or a lying header is cut off at the first excess byte.
+      if (filled + value.length > declared) throw bad();
+      chunks.push(value);
+      filled += value.length;
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error instanceof CryptoError ? error : bad();
+  }
+  if (filled !== declared) throw bad();
+  const out = new Uint8Array(declared);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
 // tryOpenSyncObject tries decryption across the fixed kind enum; if all fail, the key does not match or the data was tampered with.
 export async function tryOpenSyncObject(
   dek: Uint8Array,
@@ -298,6 +351,15 @@ export async function tryOpenSyncObject(
     } catch (error) {
       if (!(error instanceof CryptoError && error.code === "decrypt")) throw error;
     }
+  }
+  let packed: Uint8Array | null = null;
+  try {
+    packed = await aesGcmOpen(dek, blob, objectAAD(id, COMPRESSED_TRANSCRIPT_LABEL));
+  } catch (error) {
+    if (!(error instanceof CryptoError && error.code === "decrypt")) throw error;
+  }
+  if (packed) {
+    return { kind: "transcript", plaintext: await inflateTranscriptPlaintext(packed) };
   }
   throw new CryptoError("decrypt", "解密失败（密钥不匹配或数据损坏）");
 }

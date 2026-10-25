@@ -4,10 +4,13 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -21,6 +24,51 @@ const (
 	objectAADPrefix = "nexterm/go/sync-object/v1"
 	objectNonceSize = 12
 )
+
+const (
+	// compressedKind mirrors wireKindTranscriptGzip in internal/sync/object_compress.go; the sealed plaintext is
+	// "NXZ1" | uint64 BE decoded size | gzip stream. The older "transcript.zstd" label is not supported here.
+	compressedKind   = "transcript.gzip"
+	compressedMagic  = "NXZ1"
+	compressedHeader = 12
+	maxDecodedBytes  = 96 << 20
+)
+
+func packGzip(plaintext []byte) []byte {
+	var out bytes.Buffer
+	out.WriteString(compressedMagic)
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(plaintext)))
+	out.Write(size[:])
+	writer := gzip.NewWriter(&out)
+	if _, err := writer.Write(plaintext); err != nil {
+		fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		fatal(err)
+	}
+	return out.Bytes()
+}
+
+func unpackGzip(packed []byte) ([]byte, error) {
+	if len(packed) <= compressedHeader || string(packed[:len(compressedMagic)]) != compressedMagic {
+		return nil, fmt.Errorf("invalid compressed object")
+	}
+	declared := binary.BigEndian.Uint64(packed[len(compressedMagic):compressedHeader])
+	if declared == 0 || declared > maxDecodedBytes {
+		return nil, fmt.Errorf("invalid compressed object size")
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(packed[compressedHeader:]))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	out, err := io.ReadAll(io.LimitReader(reader, int64(declared)+1))
+	if err != nil || uint64(len(out)) != declared {
+		return nil, fmt.Errorf("invalid compressed object body")
+	}
+	return out, nil
+}
 
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "syncv2-helper:", err)
@@ -59,6 +107,9 @@ func seal(dekHex, id, kind string) {
 	plaintext, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		fatal(err)
+	}
+	if kind == compressedKind {
+		plaintext = packGzip(plaintext)
 	}
 	block, err := aes.NewCipher(dek)
 	if err != nil {
@@ -103,6 +154,11 @@ func open(dekHex, id, kind string) {
 	plaintext, err := aead.Open(nil, blob[:objectNonceSize], blob[objectNonceSize:], objectAAD(id, kind))
 	if err != nil {
 		fatal(err)
+	}
+	if kind == compressedKind {
+		if plaintext, err = unpackGzip(plaintext); err != nil {
+			fatal(err)
+		}
 	}
 	fmt.Print(string(plaintext))
 }
