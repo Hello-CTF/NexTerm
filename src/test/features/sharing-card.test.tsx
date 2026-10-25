@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 // SHARE158 interaction tests: regular owner and super admin share the same creation path (recipient_username exact username,
-// no /admin/users access), state rendering for host shares and public links, creation (read-only default / explicit read-write /
-// bounded TTL / username trim / inline errors for invalid and disabled recipients), revoke confirmation, no creation entry for public links,
+// no /admin/users access), state rendering for host shares, creation (read-only default / explicit read-write /
+// bounded TTL / username trim / inline errors for invalid and disabled recipients), revoke confirmation, no legacy public-link section or creation entry,
 // and account-switch isolation (late responses never write into the new account).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
@@ -121,20 +121,6 @@ const SHARE_THIRD = {
 const SHARE_REVOKED = { ...SHARE_GRANTED, id: "hs-4", revoked_at: NOW - 600_000 };
 const SHARE_EXPIRED = { ...SHARE_GRANTED, id: "hs-5", expires_at: NOW - 60_000 };
 
-const LINK_ACTIVE = {
-  id: "l-1",
-  owner_id: "u-root",
-  device_id: "d-1",
-  session_id: "01J4Z8Y7K2M8N3P6Q9R1T5V9X2",
-  permission: "read",
-  created_at: NOW - 1800_000,
-  expires_at: NOW + 1800_000,
-  last_accessed_at: NOW - 300_000,
-};
-
-const LINK_REVOKED = { ...LINK_ACTIVE, id: "l-2", revoked_at: NOW - 600_000, last_accessed_at: undefined };
-const LINK_EXPIRED = { ...LINK_ACTIVE, id: "l-3", expires_at: NOW - 60_000, last_accessed_at: undefined };
-
 interface RecordedCall {
   url: string;
   method: string;
@@ -165,7 +151,6 @@ function route(
 function shareHandler(overrides?: {
   devices?: unknown;
   shares?: unknown;
-  links?: unknown;
   create?: { status?: number; payload: unknown };
 }) {
   return (url: string, method: string): { status?: number; payload: unknown } => {
@@ -177,11 +162,6 @@ function shareHandler(overrides?: {
         payload:
           overrides?.shares ??
           ({ shares: [SHARE_GRANTED, SHARE_RECEIVED, SHARE_THIRD, SHARE_REVOKED, SHARE_EXPIRED] } as unknown),
-      };
-    }
-    if (url === "/share/links" && method === "GET") {
-      return {
-        payload: overrides?.links ?? ({ links: [LINK_ACTIVE, LINK_REVOKED, LINK_EXPIRED] } as unknown),
       };
     }
     if (url === "/share/host-shares" && method === "POST") {
@@ -217,7 +197,7 @@ function shareRefreshEnabled(): boolean {
 
 async function waitForShareRefresh(calls: RecordedCall[], expectedRound = 2): Promise<void> {
   await flushUntil(() =>
-    ["/fleet/devices", "/share/host-shares", "/share/links"].every(
+    ["/fleet/devices", "/share/host-shares"].every(
       (url) => calls.filter((call) => call.method === "GET" && call.url === url).length >= expectedRound,
     ) && shareRefreshEnabled(),
   );
@@ -319,7 +299,6 @@ describe("ShareCard auth=off/on/loopback", () => {
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       "GET /fleet/devices",
       "GET /share/host-shares",
-      "GET /share/links",
     ]);
     expect(document.body.textContent).toContain("新建主机分享");
   });
@@ -348,17 +327,16 @@ describe("ShareCard auth=off/on/loopback", () => {
 });
 
 describe("ShareCard lists and states", () => {
-  it("renders device names, direction, permission, state, and expiry for host shares, plus short session ids and recent access for legacy public links", async () => {
+  it("renders device names, direction, permission, state, and expiry for host shares", async () => {
     route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("5 条主机分享");
-    expect(text).toContain("3 条旧版链接");
-    expect(text).toContain("旧版链接（只可吊销）");
-    expect(text).toContain("新的公开访问请使用终端中的「预览链接」");
+    expect(text).not.toContain("旧版链接");
+    expect(text).toContain("公开访问请使用终端中的「预览链接」");
     expect(text).toContain("分享给 alice");
     expect(text).toContain("来自 alice");
     expect(text).toContain("alice 分享给 carol");
@@ -367,22 +345,16 @@ describe("ShareCard lists and states", () => {
     expect(text).toContain("有效");
     expect(text).toContain("已吊销");
     expect(text).toContain("已过期");
-    // Session id is displayed truncated, the full id goes into title
-    const sessionSpan = [...document.querySelectorAll("span[title]")].find((s) =>
-      (s.getAttribute("title") || "").includes("01J4Z8Y7K2M8N3P6Q9R1T5V9X2"),
-    );
-    expect(sessionSpan?.textContent).toContain("01J4Z8Y7…");
-    expect(text).toContain("最近访问");
     expect(text).toContain("通过设备代理在你的接入设备上新建终端");
     expect(text.match(/主机密码或私钥/g)).toHaveLength(1);
   });
 
   it("shows empty states, load errors with retry, and the offline reason when disconnected", async () => {
-    route(shareHandler({ shares: { shares: [] }, links: { links: [] } }));
+    route(shareHandler({ shares: { shares: [] }}));
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("还没有主机分享") ?? false);
-    expect(document.body.textContent).toContain("还没有旧版链接");
+    expect(document.body.textContent).not.toContain("旧版链接");
     expect(document.body.textContent).toContain("「预览链接」");
     mounted.unmount();
 
@@ -553,43 +525,6 @@ describe("ShareCard revocation", () => {
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
   });
 
-  it("revokes a public link with POST /share/links/{id}/revoke", async () => {
-    const calls = route(shareHandler());
-    mocks.ask.mockResolvedValue(true);
-    seedUser(SUPERADMIN);
-    mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
-
-    const card = shareCard();
-    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find(
-      (d) => d.textContent?.includes("会话 01J4Z8Y7") && d.textContent?.includes("最近访问"),
-    );
-    click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
-    await flushUntil(() => calls.some((c) => c.url === "/share/links/l-1/revoke"));
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("公开链接");
-  });
-
-  it("lets a regular user revoke their own public link without holding the corresponding device", async () => {
-    const ownedLink = { ...LINK_ACTIVE, id: "l-alice", owner_id: "u-alice", device_id: "d-1" };
-    const calls = route(shareHandler({
-      devices: { devices: [DAEMON_DEVICE_2] },
-      shares: { shares: [] },
-      links: { links: [ownedLink] },
-    }));
-    mocks.ask.mockResolvedValue(true);
-    seedUser(ALICE);
-    mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
-
-    const card = shareCard();
-    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) =>
-      d.textContent?.includes("会话 01J4Z8Y7"),
-    );
-    const revoke = [...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销");
-    expect(revoke).toBeDefined();
-    click(revoke as HTMLButtonElement);
-    await flushUntil(() => calls.some((c) => c.url === "/share/links/l-alice/revoke"));
-  });
 });
 
 describe("ShareCard account isolation while confirmation is open", () => {
@@ -619,46 +554,18 @@ describe("ShareCard account isolation while confirmation is open", () => {
 
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
   });
-
-  it("does not revoke the old public link after switching accounts while its confirmation is open", async () => {
-    const calls = route(shareHandler());
-    const dialog = deferred<boolean>();
-    mocks.ask.mockReturnValue(dialog.promise);
-    seedUser(SUPERADMIN);
-    mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
-
-    const card = shareCard();
-    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find(
-      (d) => d.textContent?.includes("会话 01J4Z8Y7") && d.textContent?.includes("最近访问"),
-    );
-    click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
-    await flushUntil(() => mocks.ask.mock.calls.length === 1);
-
-    await act(async () => {
-      seedUser(ALICE);
-      await flush();
-    });
-    await waitForShareRefresh(calls);
-    await act(async () => {
-      dialog.resolve(true);
-      await flush();
-    });
-
-    expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
-  });
 });
 
-describe("ShareCard public links support listing and revocation only", () => {
-  it("has no creation entry, session ID input, or token display", async () => {
+describe("ShareCard has no legacy public-link section", () => {
+  it("has no legacy section, creation entry, session ID input, or token display", async () => {
     route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
     expect(card).toBeDefined();
-    // The public links area has no creation-type buttons and shows no tokens (the list contract carries no token)
+    expect(card?.textContent).not.toContain("旧版链接");
     const buttons = [...(card?.querySelectorAll("button") ?? [])].map((b) => b.textContent ?? "");
     expect(buttons.some((t) => t.includes("创建链接") || t.includes("新建链接") || t.includes("生成链接"))).toBe(false);
     expect(card?.textContent?.toLowerCase()).not.toContain("token");
@@ -688,9 +595,6 @@ describe("ShareCard account-switch isolation", () => {
       }
       if (u === "/fleet/devices" && method === "GET") {
         return { ok: true, status: 200, text: async () => JSON.stringify({ devices: DEVICES }) };
-      }
-      if (u === "/share/links" && method === "GET") {
-        return { ok: true, status: 200, text: async () => JSON.stringify({ links: [] }) };
       }
       return { ok: false, status: 404, text: async () => JSON.stringify({ error: { code: "not_found", message: u } }) };
     });
@@ -731,9 +635,6 @@ describe("ShareCard account-switch isolation", () => {
       }
       if (u === "/share/host-shares" && method === "GET") {
         return { ok: true, status: 200, text: async () => JSON.stringify({ shares: [] }) };
-      }
-      if (u === "/share/links" && method === "GET") {
-        return { ok: true, status: 200, text: async () => JSON.stringify({ links: [] }) };
       }
       if (u === "/share/host-shares" && method === "POST") {
         createCalls += 1;

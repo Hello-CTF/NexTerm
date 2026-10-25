@@ -2,9 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, flushUntil, mount } from "./reactTestUtils";
-
-const mountedRoots = vi.hoisted(() => [] as Array<{ unmount: () => void }>);
+import { mount } from "./reactTestUtils";
 
 const terminalSpies = vi.hoisted(() => ({
   instances: [] as Array<{
@@ -14,22 +12,7 @@ const terminalSpies = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock("react-dom/client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-dom/client")>();
-  return {
-    ...actual,
-    default: {
-      createRoot: (container: Parameters<typeof actual.createRoot>[0]) => {
-        const root = actual.createRoot(container);
-        mountedRoots.push(root);
-        return root;
-      },
-    },
-  };
-});
-
-// The route tests assert routing, connection, and rendered text, and the
-// lifecycle tests assert the create-once/live-readOnly/dispose contract, not
+// The lifecycle tests assert the create-once/live-readOnly/dispose contract, not
 // terminal emulation, so the real canvas/WebGL stack is replaced with no-op
 // doubles.
 vi.mock("@xterm/xterm", async () => {
@@ -63,76 +46,7 @@ vi.mock("../../features/terminal/selectionAutoCopy", async () => {
   return { createSelectionAutoCopy: m.fakeSelectionAutoCopy };
 });
 
-// The fall-through route only needs to reach the app branch; the real shell would keep loading lazy panels past teardown.
-vi.mock("../../app/App", () => ({ default: () => null }));
-
 import { PublicShareTerminal, type PublicShareTerminalHandle } from "../../features/sharing/PublicShareTerminal";
-
-class FakeWebSocket {
-  static instances: FakeWebSocket[] = [];
-  static readonly OPEN = 1;
-
-  readonly url: string;
-  binaryType = "blob";
-  readyState = FakeWebSocket.OPEN;
-
-  constructor(url: string) {
-    this.url = url;
-    FakeWebSocket.instances.push(this);
-  }
-
-  addEventListener() {}
-  send() {}
-  close() {
-    this.readyState = 3;
-  }
-}
-
-async function importMainAt(pathname: string): Promise<void> {
-  window.history.replaceState({}, "", pathname);
-  document.body.innerHTML = '<div id="root"></div>';
-  vi.resetModules();
-  await act(async () => {
-    await import("../../main");
-    await flush();
-  });
-}
-
-describe("main.tsx public share route", () => {
-  beforeEach(() => {
-    FakeWebSocket.instances = [];
-    vi.stubGlobal("WebSocket", FakeWebSocket);
-    vi.stubGlobal("ResizeObserver", class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    });
-  });
-
-  afterEach(() => {
-    for (const root of mountedRoots.splice(0)) act(() => root.unmount());
-    vi.unstubAllGlobals();
-    document.body.innerHTML = "";
-  });
-
-  it("mounts the anonymous viewer at /share/public/{token} without dialing any account channel", async () => {
-    await importMainAt("/share/public/route-token-1");
-    await flushUntil(() => document.body.textContent?.includes("NexTerm 公开分享") === true, 400);
-    expect(document.body.textContent).toContain("NexTerm 公开分享");
-    expect(document.body.textContent).toContain("正在连接分享终端");
-    expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
-    for (const socket of FakeWebSocket.instances) {
-      expect(socket.url).toContain("/share/public/route-token-1");
-    }
-    expect(document.body.textContent).not.toContain("route-token-1");
-  }, 15000);
-
-  it("ignores malformed share paths and falls through to the app branch", async () => {
-    FakeWebSocket.instances = [];
-    await importMainAt("/share/public/");
-    expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/public/"))).toBe(false);
-  }, 15000);
-});
 
 describe("PublicShareTerminal lifecycle", () => {
   beforeEach(() => {

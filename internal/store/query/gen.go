@@ -58,7 +58,6 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		RunEventRow:             newRunEventRow(db, opts...),
 		RunRow:                  newRunRow(db, opts...),
 		Setting:                 newSetting(db, opts...),
-		ShareLink:               newShareLink(db, opts...),
 		SharePreviewLink:        newSharePreviewLink(db, opts...),
 		SnippetRow:              newSnippetRow(db, opts...),
 		SyncCredential:          newSyncCredential(db, opts...),
@@ -122,7 +121,6 @@ type Query struct {
 	RunEventRow             runEventRow
 	RunRow                  runRow
 	Setting                 setting
-	ShareLink               shareLink
 	SharePreviewLink        sharePreviewLink
 	SnippetRow              snippetRow
 	SyncCredential          syncCredential
@@ -187,7 +185,6 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		RunEventRow:             q.RunEventRow.clone(db),
 		RunRow:                  q.RunRow.clone(db),
 		Setting:                 q.Setting.clone(db),
-		ShareLink:               q.ShareLink.clone(db),
 		SharePreviewLink:        q.SharePreviewLink.clone(db),
 		SnippetRow:              q.SnippetRow.clone(db),
 		SyncCredential:          q.SyncCredential.clone(db),
@@ -259,7 +256,6 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		RunEventRow:             q.RunEventRow.replaceDB(db),
 		RunRow:                  q.RunRow.replaceDB(db),
 		Setting:                 q.Setting.replaceDB(db),
-		ShareLink:               q.ShareLink.replaceDB(db),
 		SharePreviewLink:        q.SharePreviewLink.replaceDB(db),
 		SnippetRow:              q.SnippetRow.replaceDB(db),
 		SyncCredential:          q.SyncCredential.replaceDB(db),
@@ -321,7 +317,6 @@ type queryCtx struct {
 	RunEventRow             *runEventRowDo
 	RunRow                  *runRowDo
 	Setting                 *settingDo
-	ShareLink               *shareLinkDo
 	SharePreviewLink        *sharePreviewLinkDo
 	SnippetRow              *snippetRowDo
 	SyncCredential          *syncCredentialDo
@@ -383,7 +378,6 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		RunEventRow:             q.RunEventRow.WithContext(ctx),
 		RunRow:                  q.RunRow.WithContext(ctx),
 		Setting:                 q.Setting.WithContext(ctx),
-		ShareLink:               q.ShareLink.WithContext(ctx),
 		SharePreviewLink:        q.SharePreviewLink.WithContext(ctx),
 		SnippetRow:              q.SnippetRow.WithContext(ctx),
 		SyncCredential:          q.SyncCredential.WithContext(ctx),

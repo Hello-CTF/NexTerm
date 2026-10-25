@@ -59,8 +59,7 @@ beforeEach(() => {
     const path = String(url);
     const payload = path === "/fleet/devices" ? { devices: [] }
       : path === "/share/host-shares" ? { shares: [RECEIVED, GRANTED, REVOKED, EXPIRED, THIRD] }
-        : path === "/share/links" ? { links: [] }
-          : { error: { code: "not_found", message: path } };
+      : { error: { code: "not_found", message: path } };
     return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
   });
   vi.stubGlobal("fetch", mocks.fetch);

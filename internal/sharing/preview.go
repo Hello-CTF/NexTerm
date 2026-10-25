@@ -31,7 +31,7 @@ var (
 
 // PreviewLink is a remote preview link: it binds one terminal
 // tab in the server-side session Manager (session_id is the tab ID); whoever holds the link anonymously opens a view and sees the current screen and subsequent
-// live output; read-only by default, input is allowed only when write is explicitly enabled at creation. Expiry/revocation semantics match share_link.
+// live output; read-only by default, input is allowed only when write is explicitly enabled at creation.
 type PreviewLink struct {
 	ID             string
 	OwnerID        string

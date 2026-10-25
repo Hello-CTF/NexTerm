@@ -12,10 +12,9 @@ import (
 	"github.com/coder/websocket"
 )
 
-// Share routes are mounted on a real server via fleet.Mount: management routes require a session; a plain GET of a public
-// token URL reuses the configured static entry to serve the existing SPA (no token check, response no-store;
-// token paths hitting real static files or encoded dot-segments likewise fall back to index), and the WS
-// upgrade still goes through token checks (invalid token 403 instead of 101).
+// Share routes are mounted on a real server via fleet.Mount: management routes require a session, and the removed
+// legacy /share/public/{token} route answers 410 with no-store for plain GETs (including paths shaped like real static
+// files or encoded dot-segments) and WS upgrades alike, never falling back to the SPA index.
 func TestSharingRoutesMounted(t *testing.T) {
 	root := t.TempDir()
 	index := "<html><head><title>NexTerm</title></head><body>app</body></html>"
@@ -35,15 +34,6 @@ func TestSharingRoutesMounted(t *testing.T) {
 	_, httpServer := newTestHTTP(t, config)
 	client := httpServer.Client()
 
-	response, err := client.Get(httpServer.URL + "/share/links")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("/share/links status = %d, want 401", response.StatusCode)
-	}
-
 	indexResponse, err := client.Get(httpServer.URL + "/")
 	if err != nil {
 		t.Fatal(err)
@@ -57,9 +47,6 @@ func TestSharingRoutesMounted(t *testing.T) {
 		t.Fatalf("GET / = %d %q", indexResponse.StatusCode, indexBody)
 	}
 
-	// A plain GET /share/public/{token} serves the existing SPA/index (same response body as "/"),
-	// with no token check and a no-store response; token paths hitting real static files or encoded
-	// dot-segments likewise get the index directly (no redirects followed).
 	noRedirect := *client
 	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	plainGets := []struct {
@@ -80,25 +67,25 @@ func TestSharingRoutesMounted(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if shareResponse.StatusCode != http.StatusOK || string(shareBody) != string(indexBody) {
-			t.Fatalf("GET %s = %d, body differs from / SPA", plainGet.path, shareResponse.StatusCode)
+		if shareResponse.StatusCode != http.StatusGone || string(shareBody) == string(indexBody) {
+			t.Fatalf("GET %s = %d, want 410 without the SPA body", plainGet.path, shareResponse.StatusCode)
 		}
 		if shareResponse.Header.Get("Cache-Control") != "no-store" {
 			t.Fatalf("GET %s Cache-Control = %q, want no-store", plainGet.path, shareResponse.Header.Get("Cache-Control"))
 		}
 	}
 
-	// The WS upgrade still goes through token checks: invalid token 403 instead of 101.
+	// The WS upgrade is refused as well.
 	conn, handshake, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/share/public/invalid-token", nil)
 	if err == nil {
 		_ = conn.Close(websocket.StatusNormalClosure, "")
-		t.Fatal("invalid token WS handshake succeeded, want 403")
+		t.Fatal("legacy public WS handshake succeeded, want 410")
 	}
-	if handshake == nil || handshake.StatusCode != http.StatusForbidden {
-		t.Fatalf("invalid token WS handshake = %v, want 403", handshake)
+	if handshake == nil || handshake.StatusCode != http.StatusGone {
+		t.Fatalf("legacy public WS handshake = %v, want 410", handshake)
 	}
 
-	response, err = client.Get(httpServer.URL + "/share/host-shares")
+	response, err := client.Get(httpServer.URL + "/share/host-shares")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +102,7 @@ func TestSharingRoutesAbsentInSyncOnly(t *testing.T) {
 	client := httpServer.Client()
 
 	// Sync mode does not mount fleet/sharing: the routes do not exist (404, not 401/403).
-	for _, path := range []string{"/share/links", "/share/public/x", "/share/host-shares"} {
+	for _, path := range []string{"/share/public/x", "/share/host-shares"} {
 		response, err := client.Get(httpServer.URL + path)
 		if err != nil {
 			t.Fatal(err)

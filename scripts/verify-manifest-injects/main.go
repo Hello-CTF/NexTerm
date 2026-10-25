@@ -26,7 +26,7 @@ const (
 	masterKeyTransportEnv = masterKeyTransport + `={{ stable_secret "vault_master" }}`
 )
 
-var expectedPublicPath = []string{"/device/enroll", "/agent/sync", "/agent/current-url", "/ws/device", "/share/public", "/share/preview/"}
+var expectedPublicPath = []string{"/device/enroll", "/agent/sync", "/agent/current-url", "/ws/device", "/share/preview/"}
 
 // accountRoutePrefixes are session/account routes that must stay behind the
 // platform login. The gateway matches public_path entries as plain string
@@ -39,7 +39,6 @@ var accountRoutePrefixes = []string{
 	"/account",
 	"/auth",
 	"/share/host-shares",
-	"/share/links",
 	"/share/previews",
 	"/share/remote-sessions",
 	"/sync/v2",

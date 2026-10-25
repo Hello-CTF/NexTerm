@@ -99,16 +99,12 @@ describe("main.tsx public preview route", () => {
     expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/preview/"))).toBe(false);
   }, 15000);
 
-  it("keeps the legacy session-share viewer route", async () => {
-    await importMainAt("/share/public/legacy-session-token");
-    await flushUntil(() => document.body.textContent?.includes("NexTerm 公开分享") === true, 400);
-    expect(document.body.textContent).toContain("NexTerm 公开分享");
-    expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/public/legacy-session-token"))).toBe(true);
-  }, 15000);
-
-  it("does not mount a viewer for retired device public tokens", async () => {
-    await importMainAt("/share/public/device/retired-device-token");
-    expect(document.body.textContent).not.toContain("NexTerm 公开分享");
-    expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/public/device/"))).toBe(false);
+  it("no longer mounts a viewer for the removed /share/public/{token} routes", async () => {
+    for (const path of ["/share/public/legacy-session-token", "/share/public/device/retired-device-token"]) {
+      FakeWebSocket.instances = [];
+      await importMainAt(path);
+      expect(document.body.textContent).not.toContain("NexTerm 公开分享");
+      expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/public/"))).toBe(false);
+    }
   }, 15000);
 });

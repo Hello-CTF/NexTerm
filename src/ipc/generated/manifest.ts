@@ -1727,22 +1727,6 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteIDRequest", ts: "RemoteIDRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
     },
-    "remote_share_link_list": {
-      scope: "remote",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{}", ts: "Record<string, never>" },
-      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteShareLinks", ts: "RemoteShareLinks | null" },
-    },
-    "remote_share_link_revoke": {
-      scope: "remote",
-      nested: true,
-      channel: false,
-      stream: "none",
-      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteIDRequest", ts: "RemoteIDRequest" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
-    },
     "remote_share_preview_list": {
       scope: "remote",
       nested: false,
@@ -3549,14 +3533,6 @@ export interface IPCCommandTypeMap {
     output: contractTypes.RemoteHostShares | null;
   };
   "remote_share_host_revoke": {
-    input: contractTypes.RemoteIDRequest;
-    output: contractTypes.RemoteOK;
-  };
-  "remote_share_link_list": {
-    input: Record<string, never>;
-    output: contractTypes.RemoteShareLinks | null;
-  };
-  "remote_share_link_revoke": {
     input: contractTypes.RemoteIDRequest;
     output: contractTypes.RemoteOK;
   };

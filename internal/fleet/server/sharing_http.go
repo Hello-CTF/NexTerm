@@ -6,18 +6,15 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
-	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
-	"gorm.io/gorm"
 )
 
 // maxShareViewerMessage is the read limit of the viewer WS; input frames go through supervisor protocol
@@ -35,26 +32,6 @@ const shareViewerWriteTimeout = 30 * time.Second
 // shareTerminateCheckTimeout is the timeout for the forced authorization recheck before termination: the recheck only reads the database,
 // and on timeout it is treated as no termination code (as if a pure transport error), never delaying the connection teardown.
 const shareTerminateCheckTimeout = 5 * time.Second
-
-type shareLinkView struct {
-	ID             string `json:"id"`
-	OwnerID        string `json:"owner_id"`
-	DeviceID       string `json:"device_id"`
-	SessionID      string `json:"session_id"`
-	Permission     string `json:"permission"`
-	CreatedAt      int64  `json:"created_at"`
-	ExpiresAt      int64  `json:"expires_at"`
-	RevokedAt      int64  `json:"revoked_at,omitempty"`
-	LastAccessedAt int64  `json:"last_accessed_at,omitempty"`
-}
-
-func newShareLinkView(link *sharing.Link) shareLinkView {
-	return shareLinkView{
-		ID: link.ID, OwnerID: link.OwnerID, DeviceID: link.DeviceID, SessionID: link.SessionID,
-		Permission: string(link.Permission), CreatedAt: link.CreatedAt, ExpiresAt: link.ExpiresAt,
-		RevokedAt: link.RevokedAt, LastAccessedAt: link.LastAccessedAt,
-	}
-}
 
 type hostShareView struct {
 	ID                string `json:"id"`
@@ -82,27 +59,6 @@ type hostShareCreateRequest struct {
 	RecipientUsername string `json:"recipient_username"`
 	Write             bool   `json:"write"`
 	TTLMS             int64  `json:"ttl_ms"`
-}
-
-func (s *Service) serveShareLinkList(w http.ResponseWriter, r *http.Request) {
-	links, err := s.sharing.ListLinks(r.Context(), identityFrom(r))
-	if err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	views := make([]shareLinkView, 0, len(links))
-	for _, link := range links {
-		views = append(views, newShareLinkView(link))
-	}
-	writeFleetJSON(w, http.StatusOK, map[string][]shareLinkView{"links": views})
-}
-
-func (s *Service) serveShareLinkRevoke(w http.ResponseWriter, r *http.Request) {
-	if err := s.sharing.RevokeLink(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Service) serveHostShareCreate(w http.ResponseWriter, r *http.Request) {
@@ -250,128 +206,11 @@ func (v *shareTerminalWS) discardInput() error {
 	}
 }
 
-// shareResolveKey is the rate-limit key for anonymous public link resolves: counted by client IP, and a successful
-// resolve resets the window; random token floods cannot flood audit_log.
-func (s *Service) shareResolveKey(w http.ResponseWriter, r *http.Request) (string, bool) {
-	key := "share-resolve|" + clientIP(r)
-	if !s.shareResolveGate.Allow(key) {
-		writeFleetJSON(w, http.StatusTooManyRequests, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试")))
-		return "", false
-	}
-	return key, true
-}
-
-// recordShareResolveOutcome only counts nonexistent tokens toward rate-limit backoff (random token floods);
-// denials of real tokens such as revoked/expired/device-offline do not punish the holder.
-func (s *Service) recordShareResolveOutcome(key string, err error) {
-	if err == nil {
-		s.shareResolveGate.RecordSuccess(key)
-		return
-	}
-	if errors.Is(err, sharing.ErrTokenNotFound) {
-		s.shareResolveGate.RecordFailure(key)
-	}
-}
-
-// serveSharePublicTerminal handles GET /share/public/{token}: plain browser navigations
-// (non-WS-upgrade) are served the SPA page directly by the configured static entry, with no token verification/auditing/
-// persistence; the WS upgrade is the data plane - an anonymous viewer exchanges the public token for a one-time authorization
-// (ResolveLink already audits), then attaches to the shared session via an outbound bridge, with bytes flowing both ways through the
-// sharing Gate: output is always allowed, input only with read_write, and revocation/expiry/device changes stop both directions immediately per recheck.
-func (s *Service) serveSharePublicTerminal(w http.ResponseWriter, r *http.Request) {
-	if !isShareWSUpgrade(r) {
-		s.serveSharePublicPage(w, r)
-		return
-	}
-	key, allowed := s.shareResolveKey(w, r)
-	if !allowed {
-		return
-	}
-	grant, err := s.sharing.ResolveLink(r.Context(), r.PathValue("token"))
-	s.recordShareResolveOutcome(key, err)
-	if err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	s.serveShareTerminal(w, r, grant, s.sharing.NewLinkGate(grant))
-}
-
-// isShareWSUpgrade reports whether the request is a WebSocket upgrade; the conditions match
-// websocket.Accept's handshake checks (Connection/Upgrade header tokens, case-insensitive).
-func isShareWSUpgrade(r *http.Request) bool {
-	return headerHasToken(r.Header, "Connection", "upgrade") && headerHasToken(r.Header, "Upgrade", "websocket")
-}
-
-func headerHasToken(header http.Header, key, token string) bool {
-	for _, value := range header.Values(key) {
-		for _, part := range strings.Split(value, ",") {
-			if strings.EqualFold(strings.TrimSpace(part), token) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// deviceShareRetired reports whether the public token resolves to a share link on a
-// retired (revoked) device. It is a plain read for the page path: page loads stay
-// audit-free, unlike the upgrade path's audited ResolveLink.
-func (s *Service) deviceShareRetired(ctx context.Context, token string) bool {
-	shareLink := query.Use(s.db).ShareLink
-	row, err := shareLink.WithContext(ctx).Where(shareLink.TokenHash.Eq(hashSecret(token))).First()
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return false
-	}
-	if err != nil {
-		return false
-	}
-	userDevice := query.Use(s.db).UserDevice
-	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(row.DeviceID)).First()
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return false
-	}
-	if err != nil {
-		return false
-	}
-	return device.RevokedAt != nil
-}
-
-// serveSharePublicPage serves the SPA with the configured static entry (the same index.html as "/", with no redirect and no separate shell);
-// token URLs are always no-store. The static entry looks up files by URL.Path, and raw token paths could hit a real static file or be rejected
-// by encoded dot-segment checks, so the request is cloned with the path pinned to "/", keeping only the query and other context.
-// A retired device is rejected with an explicit 404 before the SPA fallback.
-func (s *Service) serveSharePublicPage(w http.ResponseWriter, r *http.Request) {
-	if s.deviceShareRetired(r.Context(), r.PathValue("token")) {
-		w.Header().Set("Cache-Control", "no-store")
-		http.NotFound(w, r)
-		return
-	}
-	if s.sharePublicPage == nil {
-		http.NotFound(w, r)
-		return
-	}
-	page := r.Clone(r.Context())
-	page.URL.Path = "/"
-	page.URL.RawPath = ""
-	page.RequestURI = "/"
-	if page.URL.RawQuery != "" {
-		page.RequestURI += "?" + page.URL.RawQuery
-	}
-	s.sharePublicPage.ServeHTTP(noStoreWriter{w}, page)
-}
-
-// noStoreWriter forces Cache-Control: no-store before writing, overriding the static entry's default
-// no-cache for text/html - token URLs allow no caching at all.
-type noStoreWriter struct{ http.ResponseWriter }
-
-func (w noStoreWriter) WriteHeader(status int) {
+// serveSharePublicGone answers every request to the removed legacy /share/public/{token} route, including WS
+// upgrades, with 410 and no-store; it never consults tokens, storage or the SPA entry.
+func serveSharePublicGone(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	w.ResponseWriter.WriteHeader(status)
-}
-
-func (w noStoreWriter) Write(payload []byte) (int, error) {
-	w.Header().Set("Cache-Control", "no-store")
-	return w.ResponseWriter.Write(payload)
+	writeFleetJSON(w, http.StatusGone, ipc.Failure(ipc.NewError(ipc.CodeNotFound, "公开分享链接已不再支持")))
 }
 
 // serveShareTerminalOpen handles GET /share/devices/{id}/terminal: a registered user
@@ -387,7 +226,7 @@ func (s *Service) serveShareTerminalOpen(w http.ResponseWriter, r *http.Request)
 }
 
 // serveShareTerminal upgrades the viewer WS and establishes the gated data path. When the grant carries a
-// SessionID it attaches to the existing session (public links); otherwise it creates a terminal via the host agent
+// SessionID it attaches to the existing session; otherwise it creates a terminal via the host agent
 // (registered shares); the pumps and Gate semantics of both paths are exactly the same.
 func (s *Service) serveShareTerminal(w http.ResponseWriter, r *http.Request, grant *sharing.Grant, gate *sharing.Gate) {
 	conn, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Public, nil))

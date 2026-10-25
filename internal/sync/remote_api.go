@@ -114,23 +114,6 @@ type RemoteHostShareInput struct {
 	TTLMS             int64  `json:"ttlMs"`
 }
 
-// RemoteShareLink is the legacy list/revoke view; new anonymous access uses preview links.
-type RemoteShareLink struct {
-	ID             string `json:"id"`
-	OwnerID        string `json:"owner_id"`
-	DeviceID       string `json:"device_id"`
-	SessionID      string `json:"session_id"`
-	Permission     string `json:"permission"`
-	CreatedAt      int64  `json:"created_at"`
-	ExpiresAt      int64  `json:"expires_at"`
-	RevokedAt      int64  `json:"revoked_at,omitempty"`
-	LastAccessedAt int64  `json:"last_accessed_at,omitempty"`
-}
-
-type RemoteShareLinks struct {
-	Links []RemoteShareLink `json:"links"`
-}
-
 type RemotePreviewLink struct {
 	ID             string `json:"id"`
 	OwnerID        string `json:"owner_id"`
@@ -287,18 +270,6 @@ func (c *remoteClient) CreateHostShare(ctx context.Context, input RemoteHostShar
 
 func (c *remoteClient) RevokeHostShare(ctx context.Context, id string) error {
 	return c.api(ctx, http.MethodPost, "/share/host-shares/"+url.PathEscape(id)+"/revoke", nil, nil)
-}
-
-func (c *remoteClient) ListShareLinks(ctx context.Context) (*RemoteShareLinks, error) {
-	var view RemoteShareLinks
-	if err := c.api(ctx, http.MethodGet, "/share/links", nil, &view); err != nil {
-		return nil, err
-	}
-	return &view, nil
-}
-
-func (c *remoteClient) RevokeShareLink(ctx context.Context, id string) error {
-	return c.api(ctx, http.MethodPost, "/share/links/"+url.PathEscape(id)+"/revoke", nil, nil)
 }
 
 func (c *remoteClient) ListPreviewLinks(ctx context.Context) (*RemotePreviewLinks, error) {

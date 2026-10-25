@@ -19,7 +19,6 @@ import { forceResolvedTheme } from "./app/theme";
 import { Lazy } from "./ui/LazyBoundary";
 
 // Public share pages carry their own terminal/preview stack; keep it out of the main app's entry chunk.
-const PublicShareApp = lazy(() => import("./features/sharing/PublicShareApp").then((m) => ({ default: m.PublicShareApp })));
 const PublicPreviewApp = lazy(() => import("./features/sharing/PublicPreviewApp").then((m) => ({ default: m.PublicPreviewApp })));
 
 const queryClient = new QueryClient({
@@ -27,17 +26,6 @@ const queryClient = new QueryClient({
 });
 
 const eventVersions = new EventVersionGate();
-
-function publicShareTokenFromPath(pathname: string): string | null {
-  const match = /^\/share\/public\/([^/]+)\/?$/.exec(pathname);
-  if (!match) return null;
-  try {
-    const token = decodeURIComponent(match[1]);
-    return token.length > 0 ? token : null;
-  } catch {
-    return null;
-  }
-}
 
 function publicPreviewTokenFromPath(pathname: string): string | null {
   const match = /^\/share\/preview\/([^/]+)\/?$/.exec(pathname);
@@ -150,16 +138,10 @@ async function wireMobileInsets(): Promise<void> {
   window.addEventListener("orientationchange", () => void apply());
 }
 
-const publicShareToken =
-  typeof window === "undefined" ? null : publicShareTokenFromPath(window.location.pathname);
-
 const publicPreviewToken =
   typeof window === "undefined" ? null : publicPreviewTokenFromPath(window.location.pathname);
 
-if (publicShareToken) {
-  forceResolvedTheme("dark");
-  mount(<Lazy><PublicShareApp token={publicShareToken} /></Lazy>);
-} else if (publicPreviewToken) {
+if (publicPreviewToken) {
   forceResolvedTheme("dark");
   mount(<Lazy><PublicPreviewApp token={publicPreviewToken} /></Lazy>);
 } else {

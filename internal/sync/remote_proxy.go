@@ -146,19 +146,6 @@ func (p *RemoteProxy) RevokeHostShare(ctx context.Context, id string) (RemoteOK,
 	return RemoteOK{OK: err == nil}, err
 }
 
-func (p *RemoteProxy) ListShareLinks(ctx context.Context) (*RemoteShareLinks, error) {
-	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (*RemoteShareLinks, error) {
-		return client.ListShareLinks(ctx)
-	})
-}
-
-func (p *RemoteProxy) RevokeShareLink(ctx context.Context, id string) (RemoteOK, error) {
-	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
-		return client.RevokeShareLink(ctx, id)
-	})
-	return RemoteOK{OK: err == nil}, err
-}
-
 func (p *RemoteProxy) ListPreviewLinks(ctx context.Context) (*RemotePreviewLinks, error) {
 	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (*RemotePreviewLinks, error) {
 		return client.ListPreviewLinks(ctx)

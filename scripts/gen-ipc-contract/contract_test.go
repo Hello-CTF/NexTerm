@@ -265,8 +265,6 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 		{name: "remote_share_host_create", scope: "remote", nested: true},
 		{name: "remote_share_host_list", scope: "remote"},
 		{name: "remote_share_host_revoke", scope: "remote", nested: true},
-		{name: "remote_share_link_list", scope: "remote"},
-		{name: "remote_share_link_revoke", scope: "remote", nested: true},
 		{name: "remote_share_preview_list", scope: "remote"},
 		{name: "remote_share_preview_revoke", scope: "remote", nested: true},
 		{name: "preview_share_active", scope: "preview-share", nested: true},
@@ -295,8 +293,8 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 29 {
-		t.Fatalf("selected remote desktop command count = %d, want 29", len(selected))
+	if len(selected) != 27 {
+		t.Fatalf("selected remote desktop command count = %d, want 27", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "remote" || command.Scope == "preview-share") && !selected[name] {

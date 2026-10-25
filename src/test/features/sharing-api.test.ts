@@ -85,32 +85,13 @@ describe("sharingApi live contract", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 
-  it("lists public links via GET /share/links without a CSRF header", async () => {
-    const calls = capture();
-    vi.stubGlobal("fetch", mocks.fetch);
-
-    await sharingApi.links();
-
-    expect(calls[0]).toMatchObject({ url: "/share/links", method: "GET" });
-    expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBeUndefined();
-  });
-
-  it("revokes public links via POST /share/links/{id}/revoke with an encoded path and CSRF", async () => {
-    const calls = capture();
-    vi.stubGlobal("fetch", mocks.fetch);
-    setCsrfToken("csrf-9");
-
-    await sharingApi.revokeLink("l 1");
-
-    expect(calls[0]).toMatchObject({ url: "/share/links/l%201/revoke", method: "POST" });
-    expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
-  });
-
-  it("does not expose legacy public-link creation on either browser or desktop clients", async () => {
+  it("no longer exposes legacy public-link list, revoke or create on browser or desktop clients", async () => {
     const { remoteSharingApi } = await import("../../ipc/remoteApi");
-    expect((sharingApi as unknown as Record<string, unknown>).createLink).toBeUndefined();
-    expect((sharingApi as unknown as Record<string, unknown>).linksCreate).toBeUndefined();
-    expect((remoteSharingApi as unknown as Record<string, unknown>).createLink).toBeUndefined();
+    for (const api of [sharingApi, remoteSharingApi] as unknown as Record<string, unknown>[]) {
+      expect(api.links).toBeUndefined();
+      expect(api.revokeLink).toBeUndefined();
+      expect(api.createLink).toBeUndefined();
+    }
   });
 
   it("maps snake_case response fields into DTOs and omits tokens from lists", async () => {
@@ -156,7 +137,7 @@ describe("sharingApi live contract", () => {
     const expired = vi.fn();
     window.addEventListener(SESSION_EXPIRED_EVENT, expired);
 
-    await expect(sharingApi.links()).rejects.toMatchObject({
+    await expect(sharingApi.hostShares()).rejects.toMatchObject({
       code: "forbidden",
       message: "session is invalid or missing",
       status: 401,

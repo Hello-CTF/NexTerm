@@ -1,12 +1,6 @@
 // Package sharing implements SHARE126 host sharing.
 //
-// Public share links grant time-boxed access to one live terminal session on
-// a daemon device: read-only unless the owner explicitly opts into write,
-// revocable, expiring, with every access and input audited. Device share
-// links do the same for the whole device: an anonymous visitor holding the
-// link opens a fresh terminal through the host agent at any time while the
-// link is valid, instead of attaching to one existing session. Registered-
-// user host shares let a recipient open new terminals through the host agent
+// Registered-user host shares let a recipient open new terminals through the host agent
 // at any time while the share is valid. Preview links do the same for
 // server-hosted terminal tabs: an anonymous visitor watches the current
 // screen and live output of one tab in the server's session manager;
@@ -14,14 +8,14 @@
 // which additionally lets the visitor send binary input frames that are
 // enforced per input against the current row and arbitrated through the
 // session manager's guest-control lease. They share the same token-hash
-// storage, expiry and revocation semantics as public share links. All
+// storage, expiry and revocation semantics. All
 // kinds bind owner, permission and expiry, and none ever reads or returns
 // stored host passwords, private keys or sync payloads: the package
 // touches no credential, asset or sync table, and only SHA-256 token
 // hashes are stored.
 //
 // Grants are snapshots, not authority: data paths must be built through
-// NewLinkGate / NewHostGate, whose per-chunk rechecks revalidate current
+// NewHostGate, whose per-chunk rechecks revalidate current
 // rows (including device ownership and revocation) and swap the refreshed
 // Grant into every subsequent decision, so permission shrink and
 // revocation stop input immediately and stop output once no valid row
@@ -75,10 +69,6 @@ const (
 )
 
 const (
-	auditKindLinkCreate   = "share_link_create"
-	auditKindLinkRevoke   = "share_link_revoke"
-	auditKindLinkAccess   = "share_link_access"
-	auditKindLinkInput    = "share_link_input"
 	auditKindHostCreate   = "host_share_create"
 	auditKindHostRevoke   = "host_share_revoke"
 	auditKindHostTerminal = "host_share_terminal"

@@ -353,13 +353,10 @@ func (s *Server) routes(config Config) http.Handler {
 	}
 
 	if s.fleet != nil {
-		// The public share page reuses the same static entry: a plain GET /share/public/{token} serves
-		// the existing SPA/index without building a separate shell.
-		s.fleet.SetSharePublicPage(staticHandler)
 		s.fleet.Mount(mux)
 	}
 	if !s.options.SyncOnly && s.previews != nil && s.spectator != nil {
-		// Remote preview's public data plane: a plain GET shares the same static entry as the public share page,
+		// Remote preview's public data plane: a plain GET shares the same static entry as the app shell,
 		// only the WS upgrade goes through token checks; read-only/writable is decided by the link permission.
 		mux.HandleFunc("GET /share/preview/{token}", s.serveSharePreview(staticHandler))
 	}
