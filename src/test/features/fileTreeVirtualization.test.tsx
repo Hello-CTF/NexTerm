@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -239,17 +239,17 @@ describe("FileTree virtualization", () => {
 
   it("End focuses the last entry and scrolls it into the rendered window; Home returns to the first", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(itemByPath("~/sub")).toBeTruthy());
+    await flushUntil(() => itemByPath("~/sub") !== undefined, 200);
 
     const event = keyDown(itemByPath("~/sub")!, "End");
     expect(event.defaultPrevented).toBe(true);
-    await waitFor(() => expect(itemByPath(LAST.path)).toBeTruthy());
-    await waitFor(() => expect(document.activeElement).toBe(itemByPath(LAST.path)));
+    await flushUntil(() => itemByPath(LAST.path) !== undefined, 200);
+    await flushUntil(() => document.activeElement === itemByPath(LAST.path), 200);
     expect(items().length).toBeLessThan(60);
     expect(itemByPath(LAST.path)!.getAttribute("aria-posinset")).toBe(String(HOME.length));
 
     keyDown(itemByPath(LAST.path)!, "Home");
-    await waitFor(() => expect(document.activeElement).toBe(itemByPath("~/sub")));
+    await flushUntil(() => document.activeElement === itemByPath("~/sub"), 200);
   });
 
   it("ArrowDown steps through rows and keeps the focused row mounted after scrolling away", async () => {
