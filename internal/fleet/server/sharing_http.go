@@ -390,7 +390,7 @@ func (s *Service) serveShareTerminalOpen(w http.ResponseWriter, r *http.Request)
 // SessionID it attaches to the existing session (public links); otherwise it creates a terminal via the host agent
 // (registered shares); the pumps and Gate semantics of both paths are exactly the same.
 func (s *Service) serveShareTerminal(w http.ResponseWriter, r *http.Request, grant *sharing.Grant, gate *sharing.Gate) {
-	conn, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Terminal, nil))
+	conn, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Public, nil))
 	if err != nil {
 		return
 	}

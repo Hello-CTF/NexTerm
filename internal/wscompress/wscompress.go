@@ -1,10 +1,12 @@
 // Package wscompress centralises the permessage-deflate policy of every NexTerm WebSocket.
 //
-// Context takeover keeps a ~0.8 MB flate writer alive for the lifetime of any connection that ever sends a frame
-// above the threshold, while saving almost nothing on top of per-message compression because the busy channels
-// already send 32-64 KiB frames. Every purpose therefore uses no-context-takeover (the writer is pooled and only
-// held while a message is being compressed) with a purpose-specific threshold, and opaque tunnelled traffic is not
-// compressed at all.
+// Public bandwidth is the scarce resource, so channels that carry terminal and file text keep the compression
+// context across messages: measured on real terminal output, compressing every message independently costs 10-97%
+// more bytes for the 0.5-8 KiB frames interactive and streaming output produces (it only matches at 64 KiB). The
+// price is a ~0.8 MB flate writer per connection that actually sends a frame above the threshold. Connections that
+// stay idle or only carry tiny messages (events, the agent control channel) never allocate it, because the writer
+// is created lazily, and they use per-message compression with a high threshold. Opaque tunnelled traffic is
+// usually already encrypted or compressed and is not compressed at all.
 package wscompress
 
 import (
@@ -31,6 +33,9 @@ const (
 	Device
 	// Opaque is tunnelled traffic that is usually already encrypted or compressed.
 	Opaque
+	// Public is terminal output for anonymous, token-only viewers (shared links and previews). Their number is not
+	// bounded by accounts, so no per-connection compression context is kept for them.
+	Public
 )
 
 // EnvMode overrides the policy: "takeover", "nocontext" or "off".
@@ -70,11 +75,15 @@ func defaultSetting(p Purpose) Setting {
 	case Events:
 		return Setting{websocket.CompressionNoContextTakeover, 1024}
 	case Terminal, File:
-		return Setting{websocket.CompressionNoContextTakeover, 512}
+		return Setting{websocket.CompressionContextTakeover, 128}
 	case Control:
 		return Setting{websocket.CompressionNoContextTakeover, 4096}
+	case Public:
+		return Setting{websocket.CompressionNoContextTakeover, 512}
 	case Device:
-		return Setting{websocket.CompressionNoContextTakeover, 1024}
+		// The shared device endpoint cannot know yet whether a connection is a control channel or a terminal bridge.
+		// Tiny control messages stay below the threshold, so idle agents allocate no compressor.
+		return Setting{websocket.CompressionContextTakeover, 1024}
 	default:
 		return Setting{Mode: websocket.CompressionDisabled}
 	}

@@ -176,7 +176,7 @@ func (s *Server) serveSharePreview(page http.Handler) http.HandlerFunc {
 			writeAccountFailure(w, err)
 			return
 		}
-		conn, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Terminal, nil))
+		conn, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Public, nil))
 		if err != nil {
 			return
 		}
