@@ -19,7 +19,8 @@ function closeOverlayDockAfterNav() {
 }
 
 export function CredentialsSidebar() {
-  const { leftOpen, leftWidth } = useUi();
+  const leftOpen = useUi((s) => s.leftOpen);
+  const leftWidth = useUi((s) => s.leftWidth);
   const refresh = useRefreshCredentials();
   const unlock = useVaultUnlock();
   const { ensureVaultInit, vaultInitGate } = useVaultInitGate();

@@ -45,7 +45,7 @@ function openDevicesTab(): void {
 
 export function DeviceTreeSection() {
   const qc = useQueryClient();
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const account = useFleetAccount();
   const userId = account.userId;
   const [menu, setMenu] = useState<{ x: number; y: number; device: FleetDevice } | null>(null);

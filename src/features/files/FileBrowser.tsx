@@ -106,7 +106,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
 
 function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
   const [pathChoice, setPath] = useState<string | null>(null);

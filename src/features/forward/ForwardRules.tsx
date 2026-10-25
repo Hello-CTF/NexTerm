@@ -35,7 +35,7 @@ export function ForwardRules({
   visible: boolean;
 }) {
   const qc = useQueryClient();
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const sessions = useUi((s) => s.sessions);
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState<ForwardRule | null>(null);

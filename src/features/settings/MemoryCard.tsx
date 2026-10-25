@@ -49,7 +49,7 @@ const CREATE_DRAFT = (): EntryDraft => ({
 });
 
 export function MemoryCard() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
 
   const [settings, setSettings] = useState<MemorySettings | null>(null);
   const [topics, setTopics] = useState<MemoryTopicIndex[] | null>(null);

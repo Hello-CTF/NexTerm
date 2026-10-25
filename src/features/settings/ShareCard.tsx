@@ -166,7 +166,7 @@ export function ShareCard() {
 }
 
 function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeKey: string; isAdmin: boolean }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
 
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
   const [shares, setShares] = useState<HostShareView[] | null>(null);
