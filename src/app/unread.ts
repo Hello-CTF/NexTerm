@@ -2,7 +2,8 @@ import { terminalApi } from "../ipc/commands";
 import { useUi } from "./store";
 import { resetUnreadTabs, updateUnreadTabs, useUnreadStore } from "./unreadStore";
 
-const POLL_MS = 2000;
+// Unread dots are a hint, not a live feed: 5 s keeps idle chatter low. The loop sleeps while the page is hidden.
+const POLL_MS = 5000;
 
 let started = false;
 let timer: number | undefined;

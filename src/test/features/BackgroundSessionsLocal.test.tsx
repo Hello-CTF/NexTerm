@@ -872,32 +872,28 @@ describe("BackgroundSessions host-scoped view", () => {
     }
   });
 
-  it("ignores stale load responses after a newer refresh", async () => {
+  it("does not stack polls while a load is slow and polls again one interval after it finishes", async () => {
     vi.useFakeTimers();
     const first = deferred<LiveTabInfo[]>();
-    const second = deferred<LiveTabInfo[]>();
-    mocks.listLive.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    mocks.listLive.mockReturnValueOnce(first.promise).mockResolvedValue([]);
     seedScope();
     const view = mountHost();
     try {
       expect(mocks.listLive).toHaveBeenCalledTimes(1);
       await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(mocks.listLive).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        first.resolve([liveTab({ tabId: "one", sessionId: "s1", sessionName: "主机一", title: "结果一" })]);
+        await first.promise;
+      });
+      expect(view.container.textContent).toContain("结果一");
+      await act(async () => {
         await vi.advanceTimersByTimeAsync(5000);
       });
       expect(mocks.listLive).toHaveBeenCalledTimes(2);
-
-      await act(async () => {
-        second.resolve([liveTab({ tabId: "new", sessionId: "s1", sessionName: "主机一", title: "新结果" })]);
-        await second.promise;
-      });
-      expect(view.container.textContent).toContain("新结果");
-
-      await act(async () => {
-        first.resolve([liveTab({ tabId: "old", sessionId: "s1", sessionName: "主机一", title: "旧结果" })]);
-        await first.promise;
-      });
-      expect(view.container.textContent).toContain("新结果");
-      expect(view.container.textContent).not.toContain("旧结果");
     } finally {
       view.unmount();
       vi.useRealTimers();

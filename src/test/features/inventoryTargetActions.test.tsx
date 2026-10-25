@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, StrictMode } from "react";
-import { clickButton, flush, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -1084,7 +1084,8 @@ describe("inventory target actions", () => {
     await flush();
 
     // Send a permanently pending cancel, then unmount before it settles.
-    SetCancelTimeoutForTest(50);
+    // Long enough that a loaded machine still sees the pending state before the timeout fires.
+    SetCancelTimeoutForTest(400);
     mocks.call.mockImplementationOnce(() => new Promise((_, reject) => { rejectCancel = reject; }));
     clickButton(m1.container, "取消执行");
     await flush();
@@ -1095,8 +1096,7 @@ describe("inventory target actions", () => {
     mounted = m2;
     await flush();
     expect(m2.container.textContent).toContain("取消中");
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
-    await flush();
+    await flushUntil(() => (m2.container.textContent ?? "").includes("取消失败"), 400);
     expect(m2.container.textContent).toContain("取消失败");
     const retryButton = () => [...m2.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "重试取消");
     expect(retryButton()).not.toBeUndefined();

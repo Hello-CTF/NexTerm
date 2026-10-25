@@ -93,11 +93,67 @@ function scheduleSyncWake(cmd: string): void {
   }, SYNC_WAKE_DELAY_MS);
 }
 
+// Pure reads whose answer depends only on cmd + args (no per-call identity, no side effects). While one is in flight,
+// an identical call joins it instead of sending another /rpc.
+const SHAREABLE_READS = new Set([
+  "asset_list", "asset_get", "group_list", "snippet_list", "layout_get",
+  "terminal_list", "session_list", "ai_get_permission", "ai_model_profiles",
+  "sync_status", "sync_link_get", "docker_ps", "docker_images", "docker_compose_stacks",
+  "fs_list", "fs_roots", "production_settings_get", "vault_status", "app_platform",
+  "known_host_list", "forward_env", "mount_capability",
+]);
+
+interface SharedRead {
+  promise: Promise<unknown>;
+  waiters: number;
+}
+
+const sharedReads = new Map<string, SharedRead>();
+
+// callWebShared sends each distinct in-flight read once. The key carries the auth session epoch, so a result is never
+// delivered across an account switch; rejections reach every waiter. Only settled-by-then waiters beyond the first
+// receive a structuredClone, so no waiter can mutate another's result. Any other command clears the table (on start and
+// on settle) so a read issued after a write is never served by a request that may predate it.
+// Requests have no AbortSignal or per-call timeout, so there is nothing per-waiter to preserve.
+// Responses are plain JSON, so a JSON round trip is a safe copy where structuredClone does not exist (older iOS and
+// Android WebViews).
+function cloneShared<V>(value: V): V {
+  if (typeof structuredClone === "function") return structuredClone(value);
+  return JSON.parse(JSON.stringify(value)) as V;
+}
+
+function callWebShared<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!SHAREABLE_READS.has(cmd)) {
+    sharedReads.clear();
+    return callWeb<T>(cmd, args).finally(() => sharedReads.clear());
+  }
+  let key: string;
+  try {
+    key = `${currentAuthSessionEpoch()}\u0000${cmd}\u0000${args ? JSON.stringify(args) : ""}`;
+  } catch {
+    return callWeb<T>(cmd, args);
+  }
+  let entry = sharedReads.get(key);
+  if (!entry) {
+    const created: SharedRead = { promise: Promise.resolve(), waiters: 0 };
+    created.promise = callWeb<T>(cmd, args).finally(() => {
+      if (sharedReads.get(key) === created) sharedReads.delete(key);
+    });
+    // Waiters observe rejections themselves; this keeps the shared promise from reporting as unhandled.
+    created.promise.catch(() => undefined);
+    sharedReads.set(key, created);
+    entry = created;
+  }
+  entry.waiters += 1;
+  const shared = entry;
+  return shared.promise.then((value) => (shared.waiters > 1 ? cloneShared(value) : value) as T);
+}
+
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   noteIpcCall(cmd);
   try {
     if (WEB) {
-      return await callWeb<T>(cmd, args);
+      return await callWebShared<T>(cmd, args);
     }
     const result = await callDesktop<T>(cmd, args);
     scheduleSyncWake(cmd);

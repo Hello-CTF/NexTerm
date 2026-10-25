@@ -18,6 +18,7 @@ import { apiBase, TRANSPORT } from "../../ipc/env";
 import { listenEvent } from "../../ipc/events";
 import { useAuth } from "../auth/store";
 import { ask } from "../../ui/dialogs";
+import { startPolling } from "../../app/usePolling";
 import { describeError } from "../../ui/errorText";
 import "../../ui/skeleton.css";
 import {
@@ -143,8 +144,9 @@ export function BackgroundSessions({
       unlisten = off;
       refresh(false);
     }).catch(() => { if (current) refresh(false); });
-    const poll = window.setInterval(() => refresh(false), 5_000);
-    return () => { current = false; request += 1; window.clearInterval(poll); unlisten?.(); };
+    // The first refresh is issued once the status listener is attached; polling only backs up missed events.
+    const stopPoll = startPolling(() => refresh(false), { intervalMs: 10_000, immediate: false });
+    return () => { current = false; request += 1; stopPoll(); unlisten?.(); };
   }, [runtimeEpoch]);
   const ownerWorkspace = useUi((s) => {
     const id = workspaceId ?? (sessionId === undefined ? s.activeWorkspaceId : undefined);
@@ -306,10 +308,9 @@ export function BackgroundSessions({
 
   useEffect(() => {
     if (!visible || (!hostSessionId && !showAll)) return;
-    void load();
-    const timer = window.setInterval(() => void load(), POLL_MS);
+    const stopPoll = startPolling(() => load(), { intervalMs: POLL_MS });
     return () => {
-      window.clearInterval(timer);
+      stopPoll();
       loadGenerationRef.current += 1;
     };
   }, [visible, hostSessionId, showAll, load]);

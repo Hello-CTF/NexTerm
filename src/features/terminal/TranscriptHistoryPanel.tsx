@@ -7,6 +7,7 @@ import {
   type TranscriptSummary,
 } from "../../ipc/commands";
 import { useUi } from "../../app/store";
+import { startPolling } from "../../app/usePolling";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import {
@@ -181,10 +182,10 @@ export function TranscriptHistoryPanel({
     void loadSessions();
   }, [assetId, loadSessions]);
 
+  // The initial load above already ran; the poll only keeps the list fresh while the panel is shown and the page is visible.
   useEffect(() => {
     if (!visible || !assetId) return;
-    const timer = window.setInterval(() => void loadSessions(), POLL_MS);
-    return () => window.clearInterval(timer);
+    return startPolling(() => loadSessions(), { intervalMs: POLL_MS, immediate: false });
   }, [visible, assetId, loadSessions]);
 
   const selected = useMemo(

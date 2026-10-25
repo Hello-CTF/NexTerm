@@ -109,4 +109,80 @@ describe("desktop binary channel wire compatibility", () => {
     expect(decode).not.toHaveBeenCalled();
     expect(received).toEqual([]);
   });
+
+  describe("base64 decoding branches", () => {
+    afterEach(() => {
+      delete (Uint8Array as unknown as { fromBase64?: unknown }).fromBase64;
+    });
+
+    it("uses Uint8Array.fromBase64 when the runtime provides it", async () => {
+      const expected = sourceBytes(1024);
+      const native = vi.fn((_text: string) => expected.slice());
+      (Uint8Array as unknown as { fromBase64?: unknown }).fromBase64 = native;
+      const decode = vi.spyOn(globalThis, "atob");
+      const { createBinaryChannel } = await import("../ipc/events");
+      const received: Uint8Array[] = [];
+      const channel = createBinaryChannel((bytes) => received.push(bytes));
+      await ready(channel);
+      const push = runtime.Events.On.mock.calls[0][1] as EventHandler;
+
+      push({ data: { type: DESKTOP_BINARY_TYPE, data: base64Of(expected) } });
+
+      expect(native).toHaveBeenCalledTimes(1);
+      expect(decode).not.toHaveBeenCalled();
+      expect(received[0]).toEqual(expected);
+    });
+
+    it("falls back to atob when fromBase64 is absent, including padding lengths", async () => {
+      const { createBinaryChannel } = await import("../ipc/events");
+      const received: Uint8Array[] = [];
+      const channel = createBinaryChannel((bytes) => received.push(bytes));
+      await ready(channel);
+      const push = runtime.Events.On.mock.calls[0][1] as EventHandler;
+
+      for (const length of [0, 1, 2, 3, 4, 255]) {
+        push({ data: { type: DESKTOP_BINARY_TYPE, data: base64Of(sourceBytes(length)) } });
+      }
+
+      expect(received.map((bytes) => bytes.length)).toEqual([0, 1, 2, 3, 4, 255]);
+      expect(received[5]).toEqual(sourceBytes(255));
+    });
+  });
+
+  describe("channel ready gate", () => {
+    async function pendingChannel() {
+      const { newWailsChannel } = await import("../ipc/wails");
+      const channel = newWailsChannel();
+      await channel.ready;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      Object.defineProperty(channel, "ready", { value: gate });
+      return { channel, release };
+    }
+
+    it("does not make unrelated calls wait for another channel's subscription", async () => {
+      runtime.Call.ByName.mockResolvedValue({ ok: true, data: "pong" });
+      const { callDesktop } = await import("../ipc/wails");
+      await pendingChannel();
+
+      await expect(callDesktop("ping")).resolves.toBe("pong");
+    });
+
+    it("holds a call that hands over a channel until that channel is subscribed", async () => {
+      runtime.Call.ByName.mockResolvedValue({ ok: true, data: "attached" });
+      const { callDesktop } = await import("../ipc/wails");
+      const { channel, release } = await pendingChannel();
+
+      const attach = callDesktop("terminal_attach", { tabId: "t1", channel });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(runtime.Call.ByName).not.toHaveBeenCalled();
+
+      release();
+      await expect(attach).resolves.toBe("attached");
+      const sent = runtime.Call.ByName.mock.calls[0][1] as { channel?: unknown };
+      expect(JSON.parse(JSON.stringify(sent.channel))).toBe(channel.id);
+    });
+  });
 });

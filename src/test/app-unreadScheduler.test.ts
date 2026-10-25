@@ -119,13 +119,13 @@ describe("unread tracking scheduler", () => {
     expect(mocks.listLive).toHaveBeenCalledTimes(1);
 
     pending.resolve([live("T1", 100)]);
-    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(mocks.listLive).toHaveBeenCalledTimes(2);
   });
 
   it("polls immediately when the page becomes visible again and pauses while hidden", async () => {
     startUnreadTracking();
-    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(mocks.listLive).toHaveBeenCalledTimes(1);
 
     setHidden(true);
@@ -136,14 +136,14 @@ describe("unread tracking scheduler", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(mocks.listLive).toHaveBeenCalledTimes(2);
 
-    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(mocks.listLive).toHaveBeenCalledTimes(3);
   });
 
   it("does not start a second loop when startUnreadTracking is called again", async () => {
     startUnreadTracking();
     startUnreadTracking();
-    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(mocks.listLive).toHaveBeenCalledTimes(1);
   });
 });
