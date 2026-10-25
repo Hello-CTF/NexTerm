@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  finishLayoutRestore,
+  layoutRestoreStatus,
+  subscribeLayoutRestore,
+  undoLayoutRestore,
+} from "../../app/layout";
 import { useUi, type WorkspaceRestoreStatus } from "../../app/store";
 import { IconClose } from "../../ui/icons";
 import {
@@ -35,6 +41,11 @@ export function WorkspaceRestoreBanner() {
   const [expanded, setExpanded] = useState(false);
   const [running, setRunning] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [layoutRestore, setLayoutRestore] = useState(layoutRestoreStatus);
+  useEffect(() => subscribeLayoutRestore(() => setLayoutRestore(layoutRestoreStatus())), []);
+  // A previewed account layout is still undecided: this one bar asks for the decision and offers to
+  // reconnect in the same step, instead of a separate confirmation bar above the reconnect bar.
+  const preview = layoutRestore.preview;
 
   const candidates = useMemo(
     () => collectWorkspaceRestoreCandidates(workspaces, sessions),
@@ -68,13 +79,13 @@ export function WorkspaceRestoreBanner() {
   const selectedIds = [...selected].filter((id) => eligibleIds.includes(id));
   const restored = pendingCount === 0 && successCount > 0;
   // Nothing to reconnect and nothing reconnected: skipped-only workspaces are not worth a banner.
-  const hidden = !ready || dismissed || (pendingCount === 0 && successCount === 0);
+  const hidden = !preview && (!ready || dismissed || (pendingCount === 0 && successCount === 0));
 
   useEffect(() => {
-    if (hidden || !restored || running) return;
+    if (hidden || preview || !restored || running) return;
     const timer = window.setTimeout(dismiss, RESTORED_LINGER_MS);
     return () => window.clearTimeout(timer);
-  }, [hidden, restored, running, dismiss]);
+  }, [hidden, preview, restored, running, dismiss]);
 
   if (hidden) return null;
 
@@ -82,10 +93,12 @@ export function WorkspaceRestoreBanner() {
     if (!expanded) setSelected(new Set(eligibleIds));
     setExpanded(!expanded);
   };
-  const run = async (ids?: string[]) => {
+  const run = async (ids?: string[], acceptLayout = false) => {
     if (running) return;
     setRunning(true);
     try {
+      // Reconnecting a previewed layout accepts it first; a rejected or stale preview connects nothing.
+      if (acceptLayout && !(await finishLayoutRestore())) return;
       await reconnectRestoredWorkspaces(ids);
     } finally {
       setRunning(false);
@@ -95,6 +108,61 @@ export function WorkspaceRestoreBanner() {
       setExpanded(true);
     }
   };
+  const keepLayout = async () => {
+    if (running) return;
+    setRunning(true);
+    try {
+      // Keeping the layout without connecting leaves each workspace's own connect button as the next step.
+      if (await finishLayoutRestore()) dismiss();
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (preview) {
+    const connectable = eligibleIds.length > 0;
+    return (
+      <section
+        aria-label="工作区恢复"
+        className="relative shrink-0 border-b border-neutral-800/60 bg-neutral-900 text-xs text-neutral-300"
+      >
+        <div className="flex flex-wrap items-center gap-2 px-4 py-1.5">
+          <span>
+            {running
+              ? "正在恢复工作区…"
+              : `已载入账号中的 ${layoutRestore.count} 个工作区${connectable ? "，尚未连接" : ""}`}
+          </span>
+          {connectable && (
+            <button
+              type="button"
+              className="nx-btn nx-btn-success nx-btn-sm"
+              disabled={running}
+              onClick={() => void run(undefined, true)}
+            >
+              恢复并全部连接
+            </button>
+          )}
+          <button
+            type="button"
+            className={connectable ? "nx-btn nx-btn-ghost nx-btn-sm" : "nx-btn nx-btn-success nx-btn-sm"}
+            disabled={running}
+            onClick={() => void keepLayout()}
+          >
+            {connectable ? "仅恢复布局" : "保留此布局"}
+          </button>
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-sm"
+            title="回到本设备原来的布局"
+            disabled={running}
+            onClick={undoLayoutRestore}
+          >
+            撤销
+          </button>
+        </div>
+      </section>
+    );
+  }
   const skippedNote = skippedCount > 0 ? `，${skippedCount} 个已跳过` : "";
   const summary = running
     ? "正在重连工作区…"

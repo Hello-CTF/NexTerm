@@ -56,13 +56,11 @@ import {
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
 import {
-  finishLayoutRestore,
   layoutBootstrapped,
   layoutRestoreStatus,
   reviewPendingLayoutRestore,
   startLayoutSync,
   subscribeLayoutRestore,
-  undoLayoutRestore,
 } from "./layout";
 import { wireAccountSwitchCleanup } from "./accountSwitch";
 import { useClosedTabs } from "./closedTabs";
@@ -791,7 +789,6 @@ function AppShell() {
   const [paletteEditingAsset, setPaletteEditingAsset] = useState<Asset | null>(null);
   const [quickConnectMode, setQuickConnectMode] = useState<"all" | "database" | null>(null);
   const [layoutRestore, setLayoutRestore] = useState(layoutRestoreStatus);
-  const [restoringWorkspaceId, setRestoringWorkspaceId] = useState<string | null>(null);
 
   useEffect(() => subscribeLayoutRestore(() => setLayoutRestore(layoutRestoreStatus())), []);
   const queryClient = useQueryClient();
@@ -1883,23 +1880,12 @@ function AppShell() {
           <TakeoverBanner />
           <UpdateBanner onOpenSettings={openSettings} />
           <DekUnlockBanner />
-          {(layoutRestore.pending || layoutRestore.preview) && (
+          {layoutRestore.pending && !layoutRestore.preview && (
             <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-blue-500/30 bg-blue-950/30 px-4 py-2 text-xs text-blue-100">
-              <span>
-                {layoutRestore.preview
-                  ? `已预览账号中的 ${layoutRestore.count} 个工作区。请确认目标与标签，然后完成恢复或撤销。`
-                  : `账号中有 ${layoutRestore.count} 个工作区待确认恢复；本设备暂不覆盖服务端布局。`}
-              </span>
-              {layoutRestore.preview ? (
-                <>
-                  <button type="button" className="nx-btn-ghost" onClick={() => void finishLayoutRestore()}>完成恢复</button>
-                  <button type="button" className="nx-btn-ghost" onClick={undoLayoutRestore}>撤销恢复</button>
-                </>
-              ) : (
-                <button type="button" className="nx-btn-ghost" onClick={() => void reviewPendingLayoutRestore()}>
-                  查看并恢复
-                </button>
-              )}
+              <span>账号中有 {layoutRestore.count} 个工作区待确认恢复；本设备暂不覆盖服务端布局。</span>
+              <button type="button" className="nx-btn-ghost" onClick={() => void reviewPendingLayoutRestore()}>
+                查看并恢复
+              </button>
             </div>
           )}
           <WorkspaceRestoreBanner />
@@ -1911,28 +1897,6 @@ function AppShell() {
               </button>
               <button type="button" className="nx-btn-ghost" onClick={() => void closeWorkspace(ws.id)}>
                 关闭工作区
-              </button>
-            </div>
-          )}
-          {ws?.restorePending && (
-            <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
-              <span>
-                「{ws.title}」的标签已恢复，尚未连接。连接后会新开终端
-                {ws.assetKind === "ssh" || ws.assetKind === "device" ? "；之前的持久终端可在「后台会话」接管" : ""}。
-              </span>
-              <button
-                type="button"
-                className="nx-btn-ghost"
-                disabled={ws.deletedTarget || restoringWorkspaceId === ws.id}
-                onClick={() => {
-                  const workspaceId = ws.id;
-                  setRestoringWorkspaceId(workspaceId);
-                  void reconnectRestoredWorkspace(workspaceId).then((result) => {
-                    if (!result.ok && result.error) pushToast("error", result.error);
-                  }).finally(() => setRestoringWorkspaceId(null));
-                }}
-              >
-                {restoringWorkspaceId === ws.id ? "连接中…" : "重新连接"}
               </button>
             </div>
           )}
@@ -2641,6 +2605,36 @@ function RestoredTabPlaceholder({ tab, workspaceId }: { tab: AppTab; workspaceId
   );
 }
 
+// A restored host workspace is not dialed until the user asks; its tabs share this connect prompt.
+function RestoredWorkspacePlaceholder({ workspaceId }: { workspaceId: string }) {
+  const workspace = useUi((state) => state.workspaces.find((item) => item.id === workspaceId));
+  const [connecting, setConnecting] = useState(false);
+  if (!workspace) return null;
+  const durableHost = workspace.assetKind === "ssh" || workspace.assetKind === "device";
+  const connect = () => {
+    setConnecting(true);
+    void reconnectRestoredWorkspace(workspaceId)
+      .then((result) => {
+        if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
+      })
+      .finally(() => setConnecting(false));
+  };
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
+      <span>
+        {workspace.deletedTarget
+          ? `「${workspace.title}」的资产已删除，无法重新连接。`
+          : `「${workspace.title}」尚未连接。连接后会新开终端${durableHost ? "；之前的持久终端可在「后台会话」接管" : ""}。`}
+      </span>
+      {!workspace.deletedTarget && (
+        <button type="button" className="nx-btn nx-btn-outline" disabled={connecting} onClick={connect}>
+          {connecting ? "连接中…" : "连接"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 const PaneForTab = memo(function PaneForTab({
   tab,
   active,
@@ -2656,13 +2650,7 @@ const PaneForTab = memo(function PaneForTab({
   const restorePending = useUi((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.restorePending);
   const sessions = useUi((state) => state.sessions);
   const close = () => void onClose(tab.id);
-  if (restorePending) {
-    return (
-      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-400">
-        连接主机后继续。
-      </div>
-    );
-  }
+  if (restorePending) return <RestoredWorkspacePlaceholder workspaceId={workspaceId} />;
   if (tab.kind === "terminal" && tab.containerId && tab.restorePending) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">

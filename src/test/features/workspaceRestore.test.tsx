@@ -21,6 +21,16 @@ const mocks = vi.hoisted(() => ({
   dbDisconnect: vi.fn(),
   vaultStatus: vi.fn(),
   prompt: vi.fn(),
+  layoutStatus: { pending: false, preview: false, count: 0 },
+  finishLayoutRestore: vi.fn(),
+  undoLayoutRestore: vi.fn(),
+}));
+
+vi.mock("../../app/layout", () => ({
+  layoutRestoreStatus: () => mocks.layoutStatus,
+  subscribeLayoutRestore: () => () => {},
+  finishLayoutRestore: mocks.finishLayoutRestore,
+  undoLayoutRestore: mocks.undoLayoutRestore,
 }));
 
 vi.mock("../../ipc/commands", () => ({
@@ -150,6 +160,8 @@ beforeEach(() => {
   mocks.dbDisconnect.mockResolvedValue(undefined);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
   mocks.prompt.mockResolvedValue(null);
+  mocks.layoutStatus = { pending: false, preview: false, count: 0 };
+  mocks.finishLayoutRestore.mockResolvedValue(true);
   registerPromptHandler((message, value, options) => mocks.prompt(message, value, options));
 });
 
@@ -233,6 +245,50 @@ describe("workspace restore readiness and banner", () => {
     mounted = undefined;
     mountBanner();
     expect(banner()).toBeNull();
+  });
+});
+
+describe("previewed account layout", () => {
+  it("accepts the layout before reconnecting from the single restore bar", async () => {
+    seed([hostWorkspace("ws")]);
+    mocks.layoutStatus = { pending: false, preview: true, count: 2 };
+    const view = mountBanner();
+    expect(view.container.textContent).toContain("已载入账号中的 2 个工作区，尚未连接");
+    clickButton(view.container, "恢复并全部连接");
+    await flushUntil(() => useUi.getState().workspaceRestoreResults.ws?.status === "success");
+    expect(mocks.finishLayoutRestore).toHaveBeenCalledTimes(1);
+    expect(mocks.finishLayoutRestore.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.sessionConnect.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("connects nothing when the layout could not be accepted", async () => {
+    seed([hostWorkspace("ws")]);
+    mocks.layoutStatus = { pending: false, preview: true, count: 1 };
+    mocks.finishLayoutRestore.mockResolvedValue(false);
+    const view = mountBanner();
+    clickButton(view.container, "恢复并全部连接");
+    await flush();
+    expect(mocks.finishLayoutRestore).toHaveBeenCalledTimes(1);
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+  });
+
+  it("keeps the layout without connecting and closes the bar", async () => {
+    seed([hostWorkspace("ws")]);
+    mocks.layoutStatus = { pending: false, preview: true, count: 1 };
+    const view = mountBanner();
+    clickButton(view.container, "仅恢复布局");
+    await flushUntil(() => useUi.getState().workspaceRestoreDismissed);
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+  });
+
+  it("undoes the preview", () => {
+    seed([hostWorkspace("ws")]);
+    mocks.layoutStatus = { pending: false, preview: true, count: 1 };
+    const view = mountBanner();
+    clickButton(view.container, "撤销");
+    expect(mocks.undoLayoutRestore).toHaveBeenCalledTimes(1);
+    expect(mocks.finishLayoutRestore).not.toHaveBeenCalled();
   });
 });
 
