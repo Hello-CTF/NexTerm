@@ -301,6 +301,7 @@ func TestRemoteProviderCreateCompensatesOnAttachFailure(t *testing.T) {
 	server := testServer(t, supervisor)
 	provider := NewRemoteProvider(testClient(t, server))
 
+	provider.createAttach = nil // these tests replace the separate create or attach step
 	realAttach := provider.attach
 	t.Cleanup(func() { provider.attach = realAttach })
 

@@ -2,12 +2,14 @@ package supervisor
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,6 +17,7 @@ type Server struct {
 	supervisor      *Supervisor
 	stateDigest     string
 	runtimeMetadata *RuntimeMetadata
+	features        []string
 	endpoint        endpointIdentity
 	listener        net.Listener
 	unlock          func()
@@ -31,6 +34,12 @@ type Server struct {
 }
 
 func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
+	return newServer(supervisor, socketPath, HelperFeatures())
+}
+
+// newServer lets compatibility tests start a server that advertises only the
+// capabilities of an older helper.
+func newServer(supervisor *Supervisor, socketPath string, features []string) (*Server, error) {
 	if supervisor == nil {
 		return nil, fmt.Errorf("%w: supervisor is required", ErrInvalidInput)
 	}
@@ -49,6 +58,7 @@ func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
 		supervisor:      supervisor,
 		stateDigest:     stateDigest,
 		runtimeMetadata: provenRuntimeMetadata(),
+		features:        slices.Clone(features),
 		endpoint:        endpoint,
 		listener:        listener,
 		unlock:          unlock,
@@ -118,7 +128,7 @@ func (s *Server) acceptLoop() {
 			_ = conn.Close()
 			return
 		}
-		serverConn := &serverConn{server: s, conn: conn}
+		serverConn := &serverConn{server: s, conn: conn, done: make(chan struct{}), creditWake: make(chan struct{}, 1)}
 		s.conns[serverConn] = struct{}{}
 		s.wg.Add(1)
 		s.mu.Unlock()
@@ -147,6 +157,24 @@ type serverConn struct {
 	attachment *Attachment
 
 	clientFeatures []string
+
+	// done closes with the connection so goroutines parked on input or credit
+	// stop without waiting for the peer.
+	done chan struct{}
+
+	// Windowed input (input_window): frames queue here and one goroutine feeds
+	// the session, so a full session queue delays acknowledgements instead of
+	// stalling the read loop or rejecting the frame.
+	inputOnce   sync.Once
+	inputFrames chan []byte
+	inputBytes  atomic.Int64
+
+	// Output credit (output_credit): creditMu guards credited, the client's
+	// cumulative retired byte count, and sent, what the server has streamed.
+	creditMu   sync.Mutex
+	credited   uint64
+	sent       uint64
+	creditWake chan struct{}
 
 	// exec is the one-shot non-PTY session created on this connection; its
 	// output streams here and it is killed when the connection drops.
@@ -186,7 +214,7 @@ func (c *serverConn) serve() {
 		return
 	}
 	c.clientFeatures = hello.Features
-	ack := helloMsg{Version: ProtocolVersion, Features: HelperFeatures()}
+	ack := helloMsg{Version: ProtocolVersion, Features: slices.Clone(c.server.features)}
 	if slices.Contains(c.clientFeatures, featureRuntimeMetadata) {
 		ack.Runtime = c.server.runtimeMetadata
 	}
@@ -218,7 +246,13 @@ func (c *serverConn) serve() {
 				return
 			}
 		case frameInput:
-			c.handleInput(payload)
+			if !c.handleInput(payload) {
+				return
+			}
+		case frameCredit:
+			if !c.handleCredit(payload) {
+				return
+			}
 		case frameResize:
 			c.handleResize(payload)
 		case frameKill:
@@ -351,18 +385,120 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	return true
 }
 
-func (c *serverConn) handleInput(payload []byte) {
+// negotiated reports whether the client asked for feature and this server
+// advertises it; only then may the connection use the extended behaviour.
+func (c *serverConn) negotiated(feature string) bool {
+	return slices.Contains(c.clientFeatures, feature) && slices.Contains(c.server.features, feature)
+}
+
+func (c *serverConn) handleInput(payload []byte) bool {
 	attachment := c.attached()
 	if attachment == nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "input frame without attach"})
-		return
+		return true
+	}
+	if c.negotiated(featureInputWindow) {
+		return c.queueWindowedInput(attachment, payload)
 	}
 	count, err := attachment.tryWrite(payload)
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
-		return
+		return true
 	}
 	_ = c.reply(frameInputAck, inputAckMsg{Written: count})
+	return true
+}
+
+// queueWindowedInput hands the frame to the input goroutine. The client bounds
+// its own window; a peer that exceeds the server's tolerance is cut off rather
+// than allowed to grow memory.
+func (c *serverConn) queueWindowedInput(attachment *Attachment, payload []byte) bool {
+	c.inputOnce.Do(func() {
+		c.inputFrames = make(chan []byte, serverInputMaxFrames)
+		c.server.wg.Add(1)
+		go func() {
+			defer c.server.wg.Done()
+			c.pumpWindowedInput(attachment)
+		}()
+	})
+	if c.inputBytes.Add(int64(len(payload))) > serverInputMaxBytes {
+		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "input window exceeded"})
+		return false
+	}
+	select {
+	case c.inputFrames <- payload:
+		return true
+	default:
+		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "input window exceeded"})
+		return false
+	}
+}
+
+// pumpWindowedInput feeds queued frames to the session in order and answers
+// each with exactly one acknowledgement, which is how the client's window
+// reopens. A blocked session write therefore throttles the client.
+func (c *serverConn) pumpWindowedInput(attachment *Attachment) {
+	for {
+		select {
+		case payload := <-c.inputFrames:
+			count, err := attachment.writeBlocking(payload)
+			c.inputBytes.Add(-int64(len(payload)))
+			ack := inputAckMsg{Written: count}
+			if err != nil {
+				msg := errorMessage(err)
+				ack.Error = &msg
+			}
+			if c.reply(frameInputAck, ack) != nil {
+				return
+			}
+		case <-c.done:
+			return
+		}
+	}
+}
+
+func (c *serverConn) handleCredit(payload []byte) bool {
+	if !c.negotiated(featureOutputCredit) || len(payload) != 8 {
+		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "unexpected credit frame"})
+		return false
+	}
+	retired := binary.BigEndian.Uint64(payload)
+	c.creditMu.Lock()
+	if retired > c.sent {
+		c.creditMu.Unlock()
+		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "credit exceeds streamed output"})
+		return false
+	}
+	if retired > c.credited {
+		c.credited = retired
+	}
+	c.creditMu.Unlock()
+	select {
+	case c.creditWake <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+// awaitCredit blocks while the client holds outputCreditWindow unretired
+// bytes. Nothing is read from the recording meanwhile, so the data stays on
+// disk and streaming resumes at the same offset.
+func (c *serverConn) awaitCredit(attachment *Attachment) bool {
+	for {
+		c.creditMu.Lock()
+		open := c.sent < c.credited+outputCreditWindow
+		c.creditMu.Unlock()
+		if open {
+			return true
+		}
+		select {
+		case <-c.creditWake:
+		case <-attachment.ctx.Done():
+			return false
+		case <-c.done:
+			return false
+		}
+	}
 }
 
 func (c *serverConn) handleKillSession(payload []byte) {
@@ -525,7 +661,21 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 	}
 	var compressor replayCompressor
 	buffer := make([]byte, replayChunkSize)
+	credit := c.negotiated(featureOutputCredit)
+	base := attachment.NextSeq()
 	for {
+		if credit && !c.awaitCredit(attachment) {
+			// A kill or detach cancels the attachment while parked on credit; deliver
+			// the exit exactly as the non-credit path does when Read reports ErrClosed.
+			select {
+			case <-c.done:
+			default:
+				if info := attachment.Info(); info.Dead {
+					_ = c.reply(frameExit, exitMsg{Code: info.ExitCode, Signal: info.Signal})
+				}
+			}
+			return
+		}
 		seq := attachment.NextSeq()
 		size := outputChunkSize
 		if seq < replayEnd {
@@ -538,6 +688,13 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 				if compressed, compressErr := compressor.encode(seq, buffer[:count]); compressErr == nil && len(compressed) < len(payload) {
 					kind, payload = frameReplayGzip, compressed
 				}
+			}
+			if credit {
+				// Counted before the write: the client may return credit for
+				// this chunk before the write call comes back here.
+				c.creditMu.Lock()
+				c.sent = seq + uint64(count) - base
+				c.creditMu.Unlock()
 			}
 			if writeErr := c.replyRaw(kind, payload); writeErr != nil {
 				return
@@ -591,6 +748,7 @@ func (c *serverConn) replyOperationError(err error) {
 
 func (c *serverConn) close() {
 	c.closeOnce.Do(func() {
+		close(c.done)
 		c.sessionMu.Lock()
 		attachment := c.attachment
 		session := c.exec

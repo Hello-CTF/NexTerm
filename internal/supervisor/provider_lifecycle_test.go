@@ -134,6 +134,7 @@ func TestRemoteProviderCreateCompensatesOnlyOwnedSessions(t *testing.T) {
 	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 
+	provider.createAttach = nil // these tests replace the separate create or attach step
 	realCreate := provider.create
 	t.Cleanup(func() { provider.create = realCreate })
 
@@ -214,6 +215,7 @@ func TestRemoteProviderCreateRejectsReplacedIncarnation(t *testing.T) {
 	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 
+	provider.createAttach = nil // these tests replace the separate create or attach step
 	realAttach := provider.attach
 	t.Cleanup(func() { provider.attach = realAttach })
 	provider.attach = func(attachCtx context.Context, attachClient *Client, id string, expect *Identity) (*Stream, error) {

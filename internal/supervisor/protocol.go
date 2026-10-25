@@ -44,6 +44,9 @@ const (
 	frameRename
 	frameRenamed
 	frameReplayGzip
+	// frameCredit carries the client's cumulative count of retired output
+	// bytes (8-byte big-endian) once output_credit is negotiated. It has no reply.
+	frameCredit
 )
 
 const (
@@ -54,6 +57,34 @@ const (
 	featureReplayGzip      = "replay_gzip"
 	featureRuntimeMetadata = "runtime_metadata"
 	featureActivity        = "activity"
+	// featureCreateAttach lets a connection stay usable after frameCreate so the
+	// creator can attach on it (and pipeline the attach right behind the create).
+	featureCreateAttach = "create_attach"
+	// featureInputWindow lets the client keep several frameInput frames in flight.
+	// The server then acknowledges each one in order with an inputAckMsg that may
+	// carry an error, and delays the acknowledgement while the session's input
+	// queue is full instead of rejecting the frame.
+	featureInputWindow = "input_window"
+	// featureOutputCredit makes the server pause streaming the recording once
+	// outputCreditWindow bytes are unretired; the client returns credit with
+	// frameCredit as its consumer reads.
+	featureOutputCredit = "output_credit"
+)
+
+const (
+	// inputWindowBytes and inputWindowFrames bound the unacknowledged input a
+	// client may have in flight; the server tolerates a small multiple of it.
+	inputWindowBytes  = 1 << 20
+	inputWindowFrames = 256
+	// outputCreditWindow is the most unretired output the server streams ahead.
+	outputCreditWindow = 4 << 20
+	// outputCreditStep is how much the client retires before returning credit.
+	outputCreditStep = outputCreditWindow / 8
+)
+
+const (
+	serverInputMaxFrames = 4 * inputWindowFrames
+	serverInputMaxBytes  = 4 * inputWindowBytes
 )
 
 // Exec output stream discriminators, the first byte of a frameExecOutput
@@ -112,6 +143,9 @@ type versionsMsg struct {
 
 type inputAckMsg struct {
 	Written int `json:"written"`
+	// Error is set only when input_window is negotiated: the frame was
+	// rejected and the stream's later writes surface it.
+	Error *errorMsg `json:"error,omitempty"`
 }
 
 type errorMsg struct {

@@ -27,6 +27,17 @@ func (c *blockedInputConn) Write(data []byte) (int, error) {
 }
 
 func TestStreamWriteContextCancelsBlockedFrameWrite(t *testing.T) {
+	testBlockedFrameWriteCancel(t, `{"version":2}`)
+}
+
+// With input_window the cancelled frame write fails the stream just the same:
+// a partially written frame cannot be completed or retried.
+func TestStreamWriteContextCancelsBlockedFrameWriteWindowed(t *testing.T) {
+	testBlockedFrameWriteCancel(t, `{"version":2,"features":["input_window"]}`)
+}
+
+func testBlockedFrameWriteCancel(t *testing.T, helloAck string) {
+	t.Helper()
 	local, peer := net.Pipe()
 	t.Cleanup(func() { _ = local.Close(); _ = peer.Close() })
 	conn := &blockedInputConn{Conn: local, entered: make(chan struct{})}
@@ -36,7 +47,7 @@ func TestStreamWriteContextCancelsBlockedFrameWrite(t *testing.T) {
 			kind frameType
 			body string
 		}{
-			{frameHelloAck, `{"version":2}`},
+			{frameHelloAck, helloAck},
 			{frameAttached, `{"id":"terminal","incarnation":"episode","cols":80,"rows":24}`},
 		} {
 			if _, _, err := readFrame(peer); err != nil {

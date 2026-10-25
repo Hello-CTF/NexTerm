@@ -20,6 +20,7 @@ func TestRemoteProviderCreateLostResponseNeverKillsReplacement(t *testing.T) {
 	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 
+	provider.createAttach = nil // these tests replace the separate create or attach step
 	realCreate := provider.create
 	t.Cleanup(func() { provider.create = realCreate })
 	provider.create = func(createCtx context.Context, createClient *Client, options CreateOptions) (Info, error) {

@@ -265,17 +265,25 @@ type RemoteProvider struct {
 	client *Client
 	create func(context.Context, *Client, CreateOptions) (Info, error)
 	attach func(context.Context, *Client, string, *Identity) (*Stream, error)
+	// createAttach, when set, creates and attaches on one connection. It
+	// returns a nil stream when the helper cannot chain the two, in which case
+	// Create attaches separately. Tests that replace create or attach clear it.
+	createAttach func(context.Context, *Client, CreateOptions) (Info, *Stream, error)
 }
 
 func NewRemoteProvider(client *Client) *RemoteProvider {
 	if client == nil {
 		return nil
 	}
-	return &RemoteProvider{client: client, create: remoteProviderCreate, attach: remoteProviderAttach}
+	return &RemoteProvider{client: client, create: remoteProviderCreate, attach: remoteProviderAttach, createAttach: remoteProviderCreateAttach}
 }
 
 func remoteProviderCreate(ctx context.Context, client *Client, options CreateOptions) (Info, error) {
 	return client.Create(ctx, options)
+}
+
+func remoteProviderCreateAttach(ctx context.Context, client *Client, options CreateOptions) (Info, *Stream, error) {
+	return client.CreateAttach(ctx, options)
 }
 
 func remoteProviderAttach(ctx context.Context, client *Client, id string, expect *Identity) (*Stream, error) {
@@ -287,7 +295,7 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		options.ID = ids.New()
 	}
 	attempt := ids.New()
-	info, err := p.create(ctx, p.client, CreateOptions{
+	createOptions := CreateOptions{
 		ID:      options.ID,
 		Attempt: attempt,
 		Command: options.Command,
@@ -295,15 +303,30 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		Env:     options.Env,
 		Cols:    options.Cols,
 		Rows:    options.Rows,
-	})
+	}
+	var info Info
+	var stream *Stream
+	var err error
+	if p.createAttach != nil {
+		info, stream, err = p.createAttach(ctx, p.client, createOptions)
+	} else {
+		info, err = p.create(ctx, p.client, createOptions)
+	}
 	if err != nil {
-		if !definiteCreateRejection(err) {
+		switch {
+		case info.ID != "":
+			// Created but not attached: remove the session by its identity.
+			p.compensateCreate(info.ID, &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation})
+		case !definiteCreateRejection(err):
 			p.compensateCreateAttempt(options.ID, attempt)
 		}
 		return nil, translateError(err)
 	}
+	if stream != nil {
+		return &streamAttachment{Stream: stream, provider: p}, nil
+	}
 	expect := &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation}
-	stream, err := p.attach(ctx, p.client, info.ID, expect)
+	stream, err = p.attach(ctx, p.client, info.ID, expect)
 	if err != nil {
 		p.compensateCreate(info.ID, expect)
 		return nil, translateError(err)

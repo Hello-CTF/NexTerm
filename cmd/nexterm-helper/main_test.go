@@ -65,7 +65,7 @@ func TestHelperMetadataProcess(t *testing.T) {
 	if metadata.Protocol != supervisor.ProtocolVersion {
 		t.Fatalf("helper protocol = %d, want %d", metadata.Protocol, supervisor.ProtocolVersion)
 	}
-	if got, want := strings.Join(metadata.Features, ","), "activity,exec,metadata,replay_gzip,runtime_metadata"; got != want {
+	if got, want := strings.Join(metadata.Features, ","), "activity,create_attach,exec,input_window,metadata,output_credit,replay_gzip,runtime_metadata"; got != want {
 		t.Fatalf("helper features = %q, want %q", got, want)
 	}
 	executable, err := os.Executable()

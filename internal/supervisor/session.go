@@ -175,6 +175,12 @@ func (s *Session) tryWrite(p []byte) (int, error) {
 }
 
 func (s *Session) writeInput(p []byte, wait bool) (int, error) {
+	return s.writeInputCtx(context.Background(), p, wait)
+}
+
+// writeInputCtx is writeInput whose blocking enqueue also gives up when ctx
+// ends, so a stalled consumer cannot pin a detached connection's writer.
+func (s *Session) writeInputCtx(ctx context.Context, p []byte, wait bool) (int, error) {
 	if s.exec != nil {
 		return 0, fmt.Errorf("%w: non-PTY exec sessions take no input", ErrUnsupported)
 	}
@@ -190,7 +196,7 @@ func (s *Session) writeInput(p []byte, wait bool) (int, error) {
 		if len(chunk) > maxInputChunkLen {
 			chunk = chunk[:maxInputChunkLen]
 		}
-		if err := s.enqueueInput(bytes.Clone(chunk), wait); err != nil {
+		if err := s.enqueueInput(ctx, bytes.Clone(chunk), wait); err != nil {
 			return written, err
 		}
 		written += len(chunk)
@@ -199,7 +205,7 @@ func (s *Session) writeInput(p []byte, wait bool) (int, error) {
 	return written, nil
 }
 
-func (s *Session) enqueueInput(chunk []byte, wait bool) error {
+func (s *Session) enqueueInput(ctx context.Context, chunk []byte, wait bool) error {
 	select {
 	case <-s.inputDone:
 		return s.inputClosedError()
@@ -220,6 +226,8 @@ func (s *Session) enqueueInput(chunk []byte, wait bool) error {
 		return nil
 	case <-s.inputDone:
 		return s.inputClosedError()
+	case <-ctx.Done():
+		return ErrClosed
 	}
 }
 

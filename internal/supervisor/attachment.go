@@ -91,6 +91,18 @@ func (a *Attachment) Write(p []byte) (int, error) {
 	return a.session.Write(p)
 }
 
+// writeBlocking queues p for the session, waiting while the input queue is full
+// and giving up when the attachment is detached.
+func (a *Attachment) writeBlocking(p []byte) (int, error) {
+	if a.closed() {
+		return 0, ErrClosed
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return a.session.writeInputCtx(a.ctx, p, true)
+}
+
 func (a *Attachment) tryWrite(p []byte) (int, error) {
 	if a.closed() {
 		return 0, ErrClosed
