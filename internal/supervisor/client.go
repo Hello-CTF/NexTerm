@@ -617,8 +617,11 @@ type Stream struct {
 	exitErr    error
 	dead       bool
 	userClosed bool
-	readErr    error
-	pending    bool
+	// killed is set once the supervisor confirmed a Kill: input it rejects
+	// afterwards is a consequence of that kill, not a close failure.
+	killed  bool
+	readErr error
+	pending bool
 
 	resp      chan clientFrame
 	newData   chan struct{}
@@ -1078,6 +1081,9 @@ func (s *Stream) Kill(ctx context.Context) error {
 	if kind != frameOK {
 		return protocolMismatch(kind)
 	}
+	s.mu.Lock()
+	s.killed = true
+	s.mu.Unlock()
 	return s.Close()
 }
 
@@ -1165,6 +1171,7 @@ func (s *Stream) Close() error {
 		}
 		s.mu.Lock()
 		readErr := s.readErr
+		killed := s.killed
 		s.mu.Unlock()
 		s.writeMu.Lock()
 		detachErr := writeFrame(s.conn.conn, frameDetach, []byte("{}"))
@@ -1177,7 +1184,7 @@ func (s *Stream) Close() error {
 			s.closeErr = readErr
 		case droppedErr != nil:
 			s.closeErr = droppedErr
-		case inputErr != nil && !errors.Is(inputErr, base.ErrDisconnected) && !errors.Is(inputErr, ErrExited):
+		case inputErr != nil && !killed && !errors.Is(inputErr, base.ErrDisconnected) && !errors.Is(inputErr, ErrExited):
 			// Input rejected because the session ended is not a close failure:
 			// the exit itself is reported by Wait and by later writes.
 			s.closeErr = inputErr
