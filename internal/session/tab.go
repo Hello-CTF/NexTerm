@@ -1413,7 +1413,15 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 	channel := tab.channel
 	generation := tab.generation
 	exited := tab.exited
+	echoing := make([]*outCoalescer, 0, len(tab.subscribers))
+	for _, subscriber := range tab.subscribers {
+		echoing = append(echoing, subscriber.co)
+	}
 	tab.mu.Unlock()
+	// Keystrokes end bulk coalescing so their echo is not held for the wide window.
+	for _, co := range echoing {
+		co.noteInput()
+	}
 	tab.session.mu.Lock()
 	connected := tab.session.status == StatusConnected && tab.session.generation == generation
 	tab.session.mu.Unlock()
