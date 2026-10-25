@@ -209,6 +209,60 @@ describe("Compose stack grouping and production actions", () => {
   });
 });
 
+describe("Compose stack actions", () => {
+  async function press(root: ParentNode, label: string) {
+    const button = [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === label);
+    if (!button) throw new Error(`button not found: ${label}`);
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushMacrotask();
+    });
+  }
+
+  it("runs up, reports success and lets the output be closed", async () => {
+    mocks.composeAction.mockResolvedValueOnce("started web");
+    const onChanged = vi.fn();
+    const mounted = mountWithClient(createElement(ComposeStackHeader, { sessionId: "s1", project: "shop", stack, onChanged }));
+    await press(mounted.container, "up -d");
+    expect(mocks.composeAction).toHaveBeenCalledWith("s1", "shop", "up", undefined);
+    expect(mounted.container.textContent).toContain("started web");
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().pushToast).toHaveBeenCalledWith("success", "shop · up 已完成");
+    await press(mounted.container, "关闭");
+    expect(mounted.container.textContent).not.toContain("started web");
+    mounted.unmount();
+  });
+
+  it("reports a failed action without a production challenge", async () => {
+    mocks.composeAction.mockRejectedValueOnce(new Error("pull denied"));
+    const mounted = mountWithClient(createElement(ComposeStackHeader, { sessionId: "s1", project: "shop", stack, onChanged: vi.fn() }));
+    await press(mounted.container, "pull");
+    expect(useUi.getState().pushToast).toHaveBeenCalledWith("error", expect.stringContaining("pull denied"));
+    expect(mounted.container.querySelector("pre")).toBeNull();
+    mounted.unmount();
+  });
+
+  it("offers the remaining actions from the compact menu", async () => {
+    mocks.composeAction.mockResolvedValueOnce("restarted");
+    const mounted = mountWithClient(
+      createElement(ComposeStackHeader, { sessionId: "s1", project: "shop", stack, onChanged: vi.fn(), compact: true }),
+    );
+    const more = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="更多 Compose 操作"]')!;
+    await act(async () => {
+      more.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushMacrotask();
+    });
+    const restart = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("restart"));
+    expect(restart).toBeDefined();
+    await act(async () => {
+      restart!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushMacrotask();
+    });
+    expect(mocks.composeAction).toHaveBeenCalledWith("s1", "shop", "restart", undefined);
+    mounted.unmount();
+  });
+});
+
 describe("Compose edit and redeploy", () => {
   it("shows diff and completes production guard before writing and streaming up", async () => {
     mocks.composePrepare.mockRejectedValueOnce(typedChallenge());
