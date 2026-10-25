@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMakensis } from "./lib/makensis.mjs";
 import { readHostHelperProtocolMetadata } from "../.github/scripts/helper-metadata.mjs";
-import { commitLabel, sourceState } from "./lib/mobile.mjs";
+import { commitLabel, dirtyPaths, sourceState } from "./lib/mobile.mjs";
 import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
 import { parseReleaseVersion, parseSemVer } from "./lib/semver.mjs";
 import {
@@ -88,6 +88,7 @@ if (packageVersion !== WAILS_VERSION_PLACEHOLDER) die(`package.json version ${pa
 let SOURCE_DATE_EPOCH = process.env.SOURCE_DATE_EPOCH || "";
 const { commit: SOURCE_COMMIT, dirty: DIRTY } = sourceState({ cwd: ROOT });
 const COMMIT = commitLabel({ commit: SOURCE_COMMIT, dirty: DIRTY });
+const DIRTY_PATHS = DIRTY ? dirtyPaths({ cwd: ROOT }) : [];
 const RELEASE_REF = (process.env.NEXTERM_RELEASE_REF || "").trim();
 SOURCE_DATE_EPOCH ||= output("git", ["show", "-s", "--format=%ct", "HEAD"], { allowFailure: true })?.trim();
 if (!SOURCE_DATE_EPOCH || !/^\d+$/.test(SOURCE_DATE_EPOCH)) {
@@ -247,7 +248,10 @@ function consumeDist() {
     die(`--consume-dist: ${error.message}`);
   }
   const problems = distManifestProblems(source, manifest, { version: VERSION, commit: COMMIT });
-  if (problems.length) die(`verified dist consumption failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
+  if (problems.length) {
+    const dirtyDetail = DIRTY_PATHS.length ? `\n  source tree changes when the build started:\n${DIRTY_PATHS.map((line) => `    ${line}`).join("\n")}` : "";
+    die(`verified dist consumption failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}${dirtyDetail}`);
+  }
   const destination = path.join(ROOT, "dist");
   if (source !== destination) {
     fs.rmSync(destination, { recursive: true, force: true });

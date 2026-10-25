@@ -29,6 +29,11 @@ export function sourceState({ cwd = process.cwd() } = {}) {
   return { commit, dirty };
 }
 
+// Lists what made the tree dirty so a "+dirty" mismatch can be traced to the files that caused it.
+export function dirtyPaths({ cwd = process.cwd() } = {}) {
+  return (gitOutput(["status", "--porcelain"], cwd) || "").split("\n").filter(Boolean);
+}
+
 export function commitLabel({ commit, dirty }) {
   return dirty ? `${commit}+dirty` : commit;
 }
