@@ -14,6 +14,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/version"
+	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
 
@@ -72,8 +73,11 @@ func dialRelay(t *testing.T, f *httpFixture, deviceID string, cookie *http.Cooki
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := response.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(got, "permessage-deflate") {
-		t.Fatalf("compression extensions = %q, want permessage-deflate", got)
+	// Terminal and file relays compress (an older client offering context takeover is still accepted); tunnelled
+	// forward, listen and accept traffic is opaque and stays uncompressed.
+	wantCompression := wscompress.ForBridge(purpose) != wscompress.Opaque
+	if got := response.Header.Get("Sec-WebSocket-Extensions"); strings.Contains(got, "permessage-deflate") != wantCompression {
+		t.Fatalf("purpose %q compression extensions = %q, want compression=%v", purpose, got, wantCompression)
 	}
 	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	return conn

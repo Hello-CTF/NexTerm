@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"os"
 	"path/filepath"
@@ -21,6 +22,10 @@ const (
 	helperEnsureTimeout = 30 * time.Second
 	retrySleep          = 2 * time.Second
 	channelMaxBackoff   = time.Minute
+	// serviceRecheckCycles is how many reconcile cycles reuse a settled service status before the manager is asked again.
+	serviceRecheckCycles = 5
+	// reconnectJitter spreads reconnect delays by +-20% so a fleet that lost its server does not retry in lockstep.
+	reconnectJitter = 0.2
 )
 
 type Options struct {
@@ -52,6 +57,16 @@ type Runtime struct {
 	executable   string
 	logger       *slog.Logger
 	now          func() time.Time
+	// jitter returns a uniform value in [0,1) used to spread reconnect delays; tests inject a fixed source.
+	jitter func() float64
+
+	// The last settled service manager Status is reused so the manager (systemctl, schtasks) is not forked on every sync:
+	// it is re-read when the desired autostart flips or after serviceRecheck reconcile cycles (default serviceRecheckCycles),
+	// which bounds how long external drift stays undetected.
+	serviceRecheck        int
+	serviceSkipped        int
+	serviceCheckedDesired bool
+	serviceChecked        bool
 
 	deviceID    string
 	secret      string
@@ -332,12 +347,14 @@ func (r *Runtime) selectEndpoint(ctx context.Context) (*EndpointClient, error) {
 			return nil, context.Cause(ctx)
 		}
 		delay := retrySleep
+		serverGiven := false
 		var noEndpoint *NoEndpointError
 		if errors.As(err, &noEndpoint) && noEndpoint.RetryAfter > delay {
 			delay = noEndpoint.RetryAfter
+			serverGiven = true
 		}
 		r.logger.Warn("no healthy server endpoint; retrying", "error", err, "delay", delay)
-		if !sleepContext(ctx, delay) {
+		if !sleepContext(ctx, retryWait(delay, serverGiven, r.jittered(delay))) {
 			return nil, context.Cause(ctx)
 		}
 	}
@@ -441,6 +458,25 @@ func (r *Runtime) notifyCurrentURL(ctx context.Context, client *EndpointClient) 
 
 func (r *Runtime) reconcileService(ctx context.Context) {
 	desired := r.desiredSnapshot()
+	now := r.now()
+	r.mu.Lock()
+	cached := r.serviceState
+	recheck := r.serviceRecheck
+	if recheck <= 0 {
+		recheck = serviceRecheckCycles
+	}
+	fresh := r.serviceChecked && r.serviceCheckedDesired == desired.DesiredAutostart && r.serviceSkipped < recheck-1
+	r.mu.Unlock()
+	// A settled status (already matching the desired state, no error) is reused until the TTL passes or the desired state flips.
+	settled := cached.LastError == "" && (desired.DesiredAutostart && cached.Installed && cached.Enabled || !desired.DesiredAutostart && !cached.Installed && !cached.Enabled)
+	if fresh && settled {
+		cached.LastReconcileAt = now.UnixMilli()
+		r.mu.Lock()
+		r.serviceSkipped++
+		r.serviceState = cached
+		r.mu.Unlock()
+		return
+	}
 	status := r.manager.Status(ctx)
 	switch {
 	case desired.DesiredAutostart && (!status.Installed || !status.Enabled):
@@ -460,9 +496,12 @@ func (r *Runtime) reconcileService(ctx context.Context) {
 			status = r.manager.Status(ctx)
 		}
 	}
-	status.LastReconcileAt = r.now().UnixMilli()
+	status.LastReconcileAt = now.UnixMilli()
 	r.mu.Lock()
 	r.serviceState = status
+	r.serviceChecked = true
+	r.serviceSkipped = 0
+	r.serviceCheckedDesired = desired.DesiredAutostart
 	r.mu.Unlock()
 }
 
@@ -497,7 +536,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			}
 			r.logger.Warn("control channel dial failed", "url", client.BaseURL(), "error", err)
 			r.prober.ReportFailure(client)
-			if !sleepContext(ctx, backoff) {
+			if !sleepContext(ctx, r.jittered(backoff)) {
 				return
 			}
 			backoff = nextBackoff(backoff)
@@ -521,7 +560,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		}
 		r.logger.Warn("control channel lost; reconnecting", "error", err)
 		r.prober.ReportFailure(client)
-		if !sleepContext(ctx, backoff) {
+		if !sleepContext(ctx, r.jittered(backoff)) {
 			return
 		}
 		backoff = nextBackoff(backoff)
@@ -662,6 +701,27 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 		_ = BridgePipe(ctx, conn, r.bridge, r.stateDir)
 	}()
+}
+
+// jitterDelay scales delay by a factor in [1-reconnectJitter, 1+reconnectJitter) chosen by unit in [0,1).
+func jitterDelay(delay time.Duration, unit float64) time.Duration {
+	return time.Duration(float64(delay) * (1 - reconnectJitter + 2*reconnectJitter*unit))
+}
+
+// retryWait applies an already jittered wait. A server-provided Retry-After is a minimum, so for it the jitter only
+// ever lengthens the wait (a shortened value is mirrored above the original delay).
+func retryWait(delay time.Duration, serverGiven bool, jittered time.Duration) time.Duration {
+	if serverGiven && jittered < delay {
+		return delay + (delay - jittered)
+	}
+	return jittered
+}
+
+func (r *Runtime) jittered(delay time.Duration) time.Duration {
+	if r.jitter != nil {
+		return jitterDelay(delay, r.jitter())
+	}
+	return jitterDelay(delay, rand.Float64())
 }
 
 func nextBackoff(current time.Duration) time.Duration {

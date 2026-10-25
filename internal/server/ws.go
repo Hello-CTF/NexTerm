@@ -14,6 +14,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
 
@@ -70,11 +71,10 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns:  s.options.AllowedOrigins,
-		CompressionMode: websocket.CompressionContextTakeover,
-		Subprotocols:    []string{"nexterm"},
-	})
+	connection, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Events, &websocket.AcceptOptions{
+		OriginPatterns: s.options.AllowedOrigins,
+		Subprotocols:   []string{"nexterm"},
+	}))
 	if err != nil {
 		return
 	}
@@ -243,11 +243,10 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "无权访问该终端通道"))
 		return
 	}
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns:  s.options.AllowedOrigins,
-		CompressionMode: websocket.CompressionContextTakeover,
-		Subprotocols:    []string{"nexterm"},
-	})
+	connection, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Terminal, &websocket.AcceptOptions{
+		OriginPatterns: s.options.AllowedOrigins,
+		Subprotocols:   []string{"nexterm"},
+	}))
 	if err != nil {
 		return
 	}

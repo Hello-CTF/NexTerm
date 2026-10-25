@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
 
@@ -21,20 +22,19 @@ const (
 // verification stays strict, and only an explicit insecure opt-in skips it.
 // Redirects are refused so a bridge or control dial can never be silently
 // downgraded or forwarded to another origin.
-func wsDialOptions(insecure bool) *websocket.DialOptions {
+func wsDialOptions(insecure bool, compression wscompress.Purpose) *websocket.DialOptions {
 	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
 	if insecure {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
-	return &websocket.DialOptions{
+	return wscompress.Dial(compression, &websocket.DialOptions{
 		HTTPClient: &http.Client{
 			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 		},
-		CompressionMode: websocket.CompressionContextTakeover,
-	}
+	})
 }
 
 type HelloMessage struct {
@@ -101,7 +101,7 @@ type Channel struct {
 // handshake. A server error frame comes back as a *ServerError with Code
 // set to the wire code (for example version_mismatch or forbidden).
 func DialChannel(ctx context.Context, wsURL string, hello HelloMessage, insecure bool, keepAlive, pingTimeout time.Duration) (*Channel, error) {
-	conn, response, err := websocket.Dial(ctx, wsURL, wsDialOptions(insecure))
+	conn, response, err := websocket.Dial(ctx, wsURL, wsDialOptions(insecure, wscompress.Control))
 	if err != nil {
 		status := 0
 		if response != nil {
@@ -240,7 +240,7 @@ func (c *Channel) Close() error {
 // DialBridge opens a dedicated outbound bridge connection carrying one
 // supervisor protocol stream as binary frames.
 func DialBridge(ctx context.Context, wsURL string, hello HelloMessage, insecure bool) (*websocket.Conn, error) {
-	conn, response, err := websocket.Dial(ctx, wsURL, wsDialOptions(insecure))
+	conn, response, err := websocket.Dial(ctx, wsURL, wsDialOptions(insecure, wscompress.ForBridge(hello.Purpose)))
 	if err != nil {
 		status := 0
 		if response != nil {

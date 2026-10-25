@@ -5,6 +5,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
 
@@ -57,7 +58,7 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, purposeUnsupportedMessage(purpose))))
 		return
 	}
-	user, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
+	user, err := websocket.Accept(w, r, wscompress.Accept(wscompress.ForBridge(purpose), nil))
 	if err != nil {
 		return
 	}

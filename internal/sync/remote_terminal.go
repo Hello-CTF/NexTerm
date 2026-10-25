@@ -12,6 +12,7 @@ import (
 	urlpkg "net/url"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
 
@@ -150,7 +151,7 @@ func (c *remoteClient) dialDeviceBridge(ctx context.Context, deviceID, purpose s
 	if purpose != "" {
 		path += "?purpose=" + urlpkg.QueryEscape(purpose)
 	}
-	conn, err := c.dialRemoteWS(ctx, path, "远端设备桥")
+	conn, err := c.dialRemoteWSWith(ctx, path, "远端设备桥", wscompress.ForBridge(purpose))
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +163,12 @@ func (c *remoteClient) dialDeviceBridge(ctx context.Context, deviceID, purpose s
 // dialRemoteWS completes the WS upgrade against path with the in-memory session credentials (cookie+CSRF); handshake failures
 // map to ipc.Error (401 triggers remoteCall re-login, others pass through the rpcErr final text).
 func (c *remoteClient) dialRemoteWS(ctx context.Context, path, endpoint string) (*websocket.Conn, error) {
+	return c.dialRemoteWSWith(ctx, path, endpoint, wscompress.Terminal)
+}
+
+// dialRemoteWSWith is dialRemoteWS with an explicit compression purpose: text-like streams negotiate
+// no-context-takeover permessage-deflate, opaque tunnels stay uncompressed.
+func (c *remoteClient) dialRemoteWSWith(ctx context.Context, path, endpoint string, compression wscompress.Purpose) (*websocket.Conn, error) {
 	header := http.Header{}
 	if c.cookieToken != "" {
 		header.Set("Cookie", sessionCookieName+"="+c.cookieToken)
@@ -173,7 +180,7 @@ func (c *remoteClient) dialRemoteWS(ctx context.Context, path, endpoint string) 
 		Transport:     syncHTTPClient(c.insecure).Transport,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	conn, response, err := websocket.Dial(ctx, c.base+path, &websocket.DialOptions{HTTPClient: wsClient, HTTPHeader: header})
+	conn, response, err := websocket.Dial(ctx, c.base+path, wscompress.Dial(compression, &websocket.DialOptions{HTTPClient: wsClient, HTTPHeader: header}))
 	if err != nil {
 		if response != nil {
 			return nil, wsUpgradeError(response, endpoint)

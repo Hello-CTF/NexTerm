@@ -366,7 +366,7 @@ func (s *Server) routes(config Config) http.Handler {
 
 	rpcHandler := ipc.NewRPCHandler(s.dispatcher, s.environment)
 	rpcHandler.MaxBytes = config.MaxRPCBytes
-	mux.Handle("POST /rpc", s.requireAuth(rpcHandler))
+	mux.Handle("POST /rpc", compressResponses(false, s.requireAuth(rpcHandler)))
 	mux.HandleFunc("GET /ws/events", s.serveEvents)
 	mux.HandleFunc("GET /ws/channel/{id}", s.serveChannel)
 
@@ -379,6 +379,7 @@ func (s *Server) routes(config Config) http.Handler {
 		// and staged blobs allow ownerless entries; owner equality is kept only when every admitted request carries an account session identity.
 		blobs.openAccess = !(s.authRequired && s.accounts != nil && s.gatewayAuthKey == "")
 		mux.Handle("POST /files/blob", s.requireAuth(http.HandlerFunc(blobs.Stage)))
+		// Not compressed: a gzip stream has no Content-Length, which would break download progress and Range.
 		mux.Handle("GET /files/blob", s.requireAuth(http.HandlerFunc(blobs.Download)))
 		mux.Handle("DELETE /files/blob", s.requireAuth(http.HandlerFunc(blobs.Delete)))
 		mux.Handle("POST /files/blob/reserve", s.requireAuth(http.HandlerFunc(blobs.Reserve)))

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 )
 
 type FrameType byte
@@ -45,14 +46,42 @@ const (
 	FrameRootsReply
 )
 
+const (
+	frameHeaderSize = 5
+	// pooledFrameSize is the largest frame (header included) served from the buffer pool; larger frames are allocated
+	// exactly once instead of pinning big buffers in the pool.
+	pooledFrameSize = 64*1024 + frameHeaderSize
+)
+
+var frameBufferPool = sync.Pool{New: func() any {
+	buffer := make([]byte, pooledFrameSize)
+	return &buffer
+}}
+
+var frameHeaderPool = sync.Pool{New: func() any {
+	header := make([]byte, frameHeaderSize)
+	return &header
+}}
+
+// WriteFrame writes one frame with a single Write call (header and payload together), so a message-oriented
+// transport such as a WebSocket carries the frame in one message. The writer must not retain the slice after
+// Write returns, which io.Writer already requires; the buffer is pooled and reused.
 func WriteFrame(writer io.Writer, kind FrameType, payload []byte) error {
 	if len(payload) > MaxFramePayload {
 		return fmt.Errorf("%w: frame payload of %d bytes exceeds limit", ErrProtocol, len(payload))
 	}
-	header := make([]byte, 5)
-	binary.BigEndian.PutUint32(header, uint32(len(payload)))
-	header[4] = byte(kind)
-	frame := append(header, payload...)
+	total := frameHeaderSize + len(payload)
+	var frame []byte
+	if total <= pooledFrameSize {
+		pooled := frameBufferPool.Get().(*[]byte)
+		defer frameBufferPool.Put(pooled)
+		frame = (*pooled)[:total]
+	} else {
+		frame = make([]byte, total)
+	}
+	binary.BigEndian.PutUint32(frame, uint32(len(payload)))
+	frame[4] = byte(kind)
+	copy(frame[frameHeaderSize:], payload)
 	for len(frame) > 0 {
 		count, err := writer.Write(frame)
 		if err != nil {
@@ -63,12 +92,17 @@ func WriteFrame(writer io.Writer, kind FrameType, payload []byte) error {
 	return nil
 }
 
+// ReadFrame reads one frame. The returned payload is freshly allocated and owned by the caller; it never aliases
+// pooled memory, so callers may retain it.
 func ReadFrame(reader io.Reader) (FrameType, []byte, error) {
-	header := make([]byte, 5)
+	pooled := frameHeaderPool.Get().(*[]byte)
+	defer frameHeaderPool.Put(pooled)
+	header := *pooled
 	if _, err := io.ReadFull(reader, header); err != nil {
 		return 0, nil, err
 	}
 	length := binary.BigEndian.Uint32(header)
+	kind := FrameType(header[4])
 	if length > MaxFramePayload {
 		return 0, nil, fmt.Errorf("%w: frame payload of %d bytes exceeds limit", ErrProtocol, length)
 	}
@@ -76,7 +110,7 @@ func ReadFrame(reader io.Reader) (FrameType, []byte, error) {
 	if _, err := io.ReadFull(reader, payload); err != nil {
 		return 0, nil, err
 	}
-	return FrameType(header[4]), payload, nil
+	return kind, payload, nil
 }
 
 func WriteMessage(writer io.Writer, kind FrameType, message any) error {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
 
@@ -130,7 +131,7 @@ func (s *Server) serveRemoteSessionFeed(w http.ResponseWriter, r *http.Request) 
 		writeAccountError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeBadParam, "该端点需要 WebSocket 升级"))
 		return
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
+	conn, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Terminal, nil))
 	if err != nil {
 		return
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/version"
+	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
 
@@ -49,7 +50,7 @@ func writeControlJSON(ctx context.Context, conn *websocket.Conn, message control
 // The first frame must be hello; a protocol mismatch gets version_mismatch, bad credentials get forbidden,
 // and both error frames make the agent stop per the contract (exit on protocol error / treat as revoked).
 func (s *Service) serveDeviceWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
+	conn, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Device, nil))
 	if err != nil {
 		return
 	}
@@ -189,9 +190,18 @@ func (c *wsConn) Read(p []byte) (int, error) {
 		if messageType != websocket.MessageBinary {
 			continue
 		}
-		c.mu.Lock()
-		c.readBuf = append(c.readBuf, payload...)
-		c.mu.Unlock()
+		if len(payload) == 0 {
+			continue
+		}
+		// payload is owned by this call (websocket.Read returns a fresh slice): copy straight into p and keep the
+		// remainder as the next buffer without a second copy.
+		count := copy(p, payload)
+		if count < len(payload) {
+			c.mu.Lock()
+			c.readBuf = payload[count:]
+			c.mu.Unlock()
+		}
+		return count, nil
 	}
 }
 

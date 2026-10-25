@@ -412,3 +412,79 @@ func TestClientUnexpectedReplyIsProtocolError(t *testing.T) {
 		t.Fatalf("Stat = %v; want ErrProtocol for a mismatched reply", err)
 	}
 }
+
+type countingWriter struct {
+	writes int
+	data   []byte
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	w.writes++
+	w.data = append(w.data, p...)
+	return len(p), nil
+}
+
+func TestWriteFrameUsesOneWritePerFrame(t *testing.T) {
+	for _, size := range []int{0, 1, 4096, 64 * 1024, 64*1024 + 1, MaxFramePayload} {
+		payload := bytes.Repeat([]byte{0xAB}, size)
+		writer := &countingWriter{}
+		if err := WriteFrame(writer, FrameData, payload); err != nil {
+			t.Fatal(err)
+		}
+		if writer.writes != 1 {
+			t.Fatalf("size %d: %d writes, want 1", size, writer.writes)
+		}
+		kind, got, err := ReadFrame(bytes.NewReader(writer.data))
+		if err != nil || kind != FrameData || !bytes.Equal(got, payload) {
+			t.Fatalf("size %d: round trip kind=%v err=%v equal=%v", size, kind, err, bytes.Equal(got, payload))
+		}
+	}
+}
+
+func TestReadFramePayloadsDoNotAliasEachOther(t *testing.T) {
+	var stream bytes.Buffer
+	_ = WriteFrame(&stream, FrameData, []byte("first-payload"))
+	_ = WriteFrame(&stream, FrameData, []byte("second-payload"))
+	_, first, err := ReadFrame(&stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadFrame(&stream); err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != "first-payload" {
+		t.Fatalf("retained payload was overwritten: %q", first)
+	}
+}
+
+func TestWriteFrameDoesNotMutateOrRetainPayload(t *testing.T) {
+	payload := []byte("payload")
+	if err := WriteFrame(io.Discard, FrameData, payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "payload" {
+		t.Fatalf("payload mutated: %q", payload)
+	}
+}
+
+func BenchmarkWriteFrame(b *testing.B) {
+	payload := bytes.Repeat([]byte("x"), 32*1024)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	for i := 0; i < b.N; i++ {
+		_ = WriteFrame(io.Discard, FrameData, payload)
+	}
+}
+
+func BenchmarkReadFrame(b *testing.B) {
+	var stream bytes.Buffer
+	_ = WriteFrame(&stream, FrameData, bytes.Repeat([]byte("x"), 32*1024))
+	raw := stream.Bytes()
+	b.ReportAllocs()
+	b.SetBytes(int64(len(raw)))
+	reader := bytes.NewReader(raw)
+	for i := 0; i < b.N; i++ {
+		reader.Reset(raw)
+		_, _, _ = ReadFrame(reader)
+	}
+}

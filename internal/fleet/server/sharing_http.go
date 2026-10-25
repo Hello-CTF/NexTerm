@@ -15,6 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 	"gorm.io/gorm"
 )
@@ -389,7 +390,7 @@ func (s *Service) serveShareTerminalOpen(w http.ResponseWriter, r *http.Request)
 // SessionID it attaches to the existing session (public links); otherwise it creates a terminal via the host agent
 // (registered shares); the pumps and Gate semantics of both paths are exactly the same.
 func (s *Service) serveShareTerminal(w http.ResponseWriter, r *http.Request, grant *sharing.Grant, gate *sharing.Gate) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
+	conn, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Terminal, nil))
 	if err != nil {
 		return
 	}

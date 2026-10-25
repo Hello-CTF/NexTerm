@@ -332,6 +332,7 @@ func TestRuntimeRepairsExternalServiceDrift(t *testing.T) {
 	writeRuntimeConfig(t, dataDir, entries, true)
 	manager := &fakeManager{}
 	agentRuntime := newTestRuntime(t, dataDir, entries, manager)
+	agentRuntime.serviceRecheck = 1 // re-read the manager on every cycle so drift is seen at once
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

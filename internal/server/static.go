@@ -13,11 +13,12 @@ import (
 const TransportMarker = `<script>window.__NEXTERM_TRANSPORT__="web";</script>`
 
 type staticFiles struct {
-	root string
+	root  string
+	cache *staticCache
 }
 
 func NewStaticHandler(root string) http.Handler {
-	return &staticFiles{root: root}
+	return &staticFiles{root: root, cache: newStaticCache()}
 }
 
 func (s *staticFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -50,31 +51,53 @@ func (s *staticFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *staticFiles) serveFile(w http.ResponseWriter, r *http.Request, path, relative string, info os.FileInfo) {
 	contentType := staticContentType(path)
-	if strings.HasPrefix(contentType, "text/html") {
-		data, err := os.ReadFile(path)
-		if err != nil {
+	isHTML := strings.HasPrefix(contentType, "text/html")
+	w.Header().Set("Content-Type", contentType)
+	if isHTML {
+		w.Header().Set("Cache-Control", "no-cache")
+	} else if strings.HasPrefix(filepath.ToSlash(relative), "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+	compressible := compressibleType(contentType) && info.Size() >= compressMinBytes
+
+	var entry *staticEntry
+	if isHTML || info.Size() <= staticCacheMaxFile {
+		entry = s.cache.load(path, info, isHTML)
+	}
+	if entry == nil {
+		if isHTML {
 			http.Error(w, "static file is not readable", http.StatusNotFound)
 			return
 		}
-		injected := InjectTransportMarker(string(data))
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeContent(w, r, filepath.Base(path), info.ModTime(), bytes.NewReader([]byte(injected)))
+		s.serveOpened(w, r, path, info)
 		return
 	}
+	if compressible {
+		addVary(w.Header(), "Accept-Encoding")
+	}
+	if entry.gzip != nil && r.Header.Get("Range") == "" && acceptsGzip(r.Header) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("ETag", entry.gzipETag)
+		http.ServeContent(w, r, filepath.Base(path), info.ModTime(), bytes.NewReader(entry.gzip))
+		return
+	}
+	w.Header().Set("ETag", entry.etag)
+	if isHTML {
+		http.ServeContent(w, r, filepath.Base(path), info.ModTime(), bytes.NewReader(entry.raw))
+		return
+	}
+	s.serveOpened(w, r, path, info)
+}
 
+func (s *staticFiles) serveOpened(w http.ResponseWriter, r *http.Request, path string, info os.FileInfo) {
 	file, err := os.Open(path)
 	if err != nil {
+		w.Header().Del("ETag")
 		http.Error(w, "static file is not readable", http.StatusNotFound)
 		return
 	}
 	defer file.Close()
-	w.Header().Set("Content-Type", contentType)
-	name := filepath.Base(path)
-	if strings.HasPrefix(filepath.ToSlash(relative), "assets/") {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	}
-	http.ServeContent(w, r, name, info.ModTime(), file)
+	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), file)
 }
 
 func safeStaticPath(escapedPath string) (string, error) {

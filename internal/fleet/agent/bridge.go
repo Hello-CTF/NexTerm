@@ -70,18 +70,11 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		buffer := make([]byte, 64*1024)
-		for {
-			count, err := pipe.Read(buffer)
-			if count > 0 {
-				writeCtx, cancel := context.WithTimeout(ctx, defaultWSPingTimeout)
-				err = conn.Write(writeCtx, websocket.MessageBinary, buffer[:count])
-				cancel()
-			}
-			if err != nil {
-				return
-			}
-		}
+		_ = coalescePump(pipe, bridgeReadSize, bridgeMergeLimit, func(chunk []byte) error {
+			writeCtx, cancel := context.WithTimeout(ctx, defaultWSPingTimeout)
+			defer cancel()
+			return conn.Write(writeCtx, websocket.MessageBinary, chunk)
+		})
 	}()
 	for {
 		_, payload, err := conn.Read(ctx)
@@ -97,6 +90,103 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 	select {
 	case <-done:
 	case <-ctx.Done():
+	}
+	return nil
+}
+
+const (
+	bridgeReadSize   = 64 * 1024
+	bridgeMergeLimit = 32 * 1024
+	bridgeReadAhead  = 4
+)
+
+type pumpChunk struct {
+	buffer []byte
+	count  int
+	err    error
+}
+
+// coalescePump copies src to send. A reader goroutine keeps reading while a send is in flight, so when the
+// network is slower than the local pipe the chunks that piled up meanwhile are merged (up to mergeLimit bytes) into
+// one message. Nothing waits for more data: only chunks that are already read are merged, so latency is unchanged.
+// Chunks of mergeLimit bytes or more are sent as read, without copying.
+func coalescePump(src io.Reader, readSize, mergeLimit int, send func([]byte) error) error {
+	free := make(chan []byte, bridgeReadAhead)
+	for i := 0; i < bridgeReadAhead; i++ {
+		free <- make([]byte, readSize)
+	}
+	filled := make(chan pumpChunk, bridgeReadAhead)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		defer close(filled)
+		for {
+			var buffer []byte
+			select {
+			case buffer = <-free:
+			case <-stop:
+				return
+			}
+			count, err := src.Read(buffer)
+			select {
+			case filled <- pumpChunk{buffer: buffer, count: count, err: err}:
+			case <-stop:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	merged := make([]byte, 0, mergeLimit)
+	for chunk := range filled {
+		if chunk.count > 0 && chunk.count >= mergeLimit {
+			err := send(chunk.buffer[:chunk.count])
+			free <- chunk.buffer
+			if err != nil {
+				return err
+			}
+		} else if chunk.count > 0 {
+			merged = append(merged[:0], chunk.buffer[:chunk.count]...)
+			free <- chunk.buffer
+			var carry *pumpChunk
+		drain:
+			for len(merged) < mergeLimit {
+				select {
+				case next, ok := <-filled:
+					if !ok {
+						break drain
+					}
+					if next.count > 0 && len(merged)+next.count > mergeLimit {
+						carry = &next
+						break drain
+					}
+					merged = append(merged, next.buffer[:next.count]...)
+					free <- next.buffer
+					if next.err != nil {
+						carry = &pumpChunk{err: next.err}
+						break drain
+					}
+				default:
+					break drain
+				}
+			}
+			if err := send(merged); err != nil {
+				return err
+			}
+			if carry != nil {
+				if carry.err != nil {
+					return nil
+				}
+				if err := send(carry.buffer[:carry.count]); err != nil {
+					return err
+				}
+				free <- carry.buffer
+			}
+		}
+		if chunk.err != nil {
+			return nil
+		}
 	}
 	return nil
 }
