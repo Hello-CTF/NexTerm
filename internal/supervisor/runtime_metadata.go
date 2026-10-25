@@ -27,7 +27,7 @@ type RuntimeMetadata struct {
 // HelperFeatures returns the capabilities implemented by this helper daemon,
 // sorted for deterministic build metadata and protocol evidence.
 func HelperFeatures() []string {
-	return []string{featureActivity, featureCreateAttach, featureExec, featureInputWindow, featureMetadata, featureOutputCredit, featureReplayGzip, featureRuntimeMetadata}
+	return []string{featureActivity, featureCreateAttach, featureExec, featureInputWindow, featureMetadata, featureOutputCredit, featureOutputZstd, featureReplayGzip, featureRuntimeMetadata}
 }
 
 // CurrentRuntimeMetadata reads the actual executable being run, rather than a

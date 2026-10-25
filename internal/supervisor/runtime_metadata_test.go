@@ -93,7 +93,7 @@ func TestRuntimeMetadataDescribesRunningExecutable(t *testing.T) {
 	if metadata.Protocol != ProtocolVersion {
 		t.Fatalf("running protocol = %d, want %d", metadata.Protocol, ProtocolVersion)
 	}
-	if got, want := strings.Join(metadata.Features, ","), "activity,create_attach,exec,input_window,metadata,output_credit,replay_gzip,runtime_metadata"; got != want {
+	if got, want := strings.Join(metadata.Features, ","), "activity,create_attach,exec,input_window,metadata,output_credit,output_zstd,replay_gzip,runtime_metadata"; got != want {
 		t.Fatalf("running features = %q, want %q", got, want)
 	}
 

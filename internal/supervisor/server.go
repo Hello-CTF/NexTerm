@@ -662,6 +662,7 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 	var compressor replayCompressor
 	buffer := make([]byte, replayChunkSize)
 	credit := c.negotiated(featureOutputCredit)
+	zstdOutput := c.negotiated(featureOutputZstd)
 	base := attachment.NextSeq()
 	for {
 		if credit && !c.awaitCredit(attachment) {
@@ -687,6 +688,13 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 			if seq < replayEnd && count >= 1024 {
 				if compressed, compressErr := compressor.encode(seq, buffer[:count]); compressErr == nil && len(compressed) < len(payload) {
 					kind, payload = frameReplayGzip, compressed
+				}
+			}
+			if zstdOutput && kind == frameOutput {
+				// Credit below counts decoded bytes (seq advances by count), so
+				// compression never widens the flow-control window.
+				if packed, packErr := encodeOutputZstd(seq, buffer[:count]); packErr == nil && packed != nil {
+					kind, payload = frameOutputZstd, packed
 				}
 			}
 			if credit {

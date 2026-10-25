@@ -47,6 +47,9 @@ const (
 	// frameCredit carries the client's cumulative count of retired output
 	// bytes (8-byte big-endian) once output_credit is negotiated. It has no reply.
 	frameCredit
+	// frameOutputZstd is a live output chunk compressed per frame; see
+	// output_zstd.go. Only valid once output_zstd is negotiated.
+	frameOutputZstd
 )
 
 const (
@@ -69,6 +72,9 @@ const (
 	// outputCreditWindow bytes are unretired; the client returns credit with
 	// frameCredit as its consumer reads.
 	featureOutputCredit = "output_credit"
+	// featureOutputZstd lets the server send output chunks as independently
+	// zstd-compressed frameOutputZstd frames when that is smaller on the wire.
+	featureOutputZstd = "output_zstd"
 )
 
 const (

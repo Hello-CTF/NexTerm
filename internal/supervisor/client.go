@@ -473,7 +473,7 @@ func (c *Client) helloFeatures() []string {
 	}
 	features := []string{featureExec, featureMetadata, featureRuntimeMetadata, featureActivity, featureCreateAttach, featureInputWindow, featureOutputCredit}
 	if c.dial != nil {
-		features = append(features, featureReplayGzip)
+		features = append(features, featureReplayGzip, featureOutputZstd)
 	}
 	return features
 }
@@ -1318,10 +1318,16 @@ func (s *Stream) readLoop() {
 			continue
 		}
 		switch kind {
-		case frameOutput, frameReplayGzip:
+		case frameOutput, frameReplayGzip, frameOutputZstd:
 			var seq uint64
 			var data []byte
-			if kind == frameReplayGzip {
+			if kind == frameOutputZstd {
+				if !s.conn.supports(featureOutputZstd) {
+					s.fail(fmt.Errorf("%w: unnegotiated compressed output", ErrProtocol))
+					return
+				}
+				seq, data, err = parseOutputZstd(payload)
+			} else if kind == frameReplayGzip {
 				if !slices.Contains(s.conn.features, featureReplayGzip) {
 					s.fail(fmt.Errorf("%w: unnegotiated compressed replay", ErrProtocol))
 					return
