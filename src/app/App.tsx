@@ -99,39 +99,14 @@ import {
   toggleMaximiseWindow,
 } from "../ipc/wails";
 import { mountUnavailableReason } from "./capabilities";
-import { AssetTree, AssetEditor } from "../features/explorer/AssetTree";
 import { ProjectWorkspaceStrip } from "./ProjectWorkspaceStrip";
 import { ALL_PROJECTS, focusedWorkspaces } from "./projectFocus";
-import { TerminalPane } from "../features/terminal/TerminalPane";
-import { BackgroundSessions } from "../features/terminal/BackgroundSessions";
 import { useBackgroundSessionCount, useBackgroundSessionsAccess } from "../features/terminal/backgroundSessionsAccess";
 import { WorkspaceRestoreBanner } from "../features/terminal/WorkspaceRestoreBanner";
-import { TranscriptHistoryPanel } from "../features/terminal/TranscriptHistoryPanel";
-import { FileBrowser } from "../features/files/FileBrowser";
-import { FileTree } from "../features/files/FileTree";
 import { fileVisual } from "../features/files/fileTypes";
-import { MountPanel } from "../features/files/MountPanel";
-import { ForwardPanel } from "../features/forward/ForwardPanel";
-import { ForwardStartupRecovery } from "../features/forward/ForwardStartupRecovery";
-import { FileEditor } from "../features/files/FileEditor";
-import { LogViewer } from "../features/files/LogViewer";
-import { MultiHostLogTail } from "../features/logs/MultiHostLogTail";
 import { isMultiHostLogTabId } from "../features/logs/logTailTab";
-import { FleetHealthPanel } from "../features/fleet/FleetHealthPanel";
 import { isFleetHealthTabId } from "../features/fleet/fleetHealthTab";
-import { DockerPanel } from "../features/docker/DockerPanel";
-import { DbPanel } from "../features/db/DbPanel";
-import { ExecBatchPanel } from "../features/execbatch/ExecBatchPanel";
 import { useAssetProductionClassification } from "../features/production/productionSettings";
-import { AiSidebar } from "../features/ai/AiSidebar";
-import { SettingsView } from "../features/settings/SettingsView";
-import { useDesktopAutoSync, useWebAutoSync } from "../features/settings/useWebAutoSync";
-import { WEB_SYNC_ERROR_EVENT, WEB_SYNC_RESULT_EVENT, type WebSyncResult } from "../features/settings/SyncCard";
-import { CredentialsPanel } from "../features/credentials/CredentialsPanel";
-import { CredentialsSidebar } from "../features/credentials/CredentialsSidebar";
-import { AuditView } from "../features/settings/AuditView";
-import { CommandPalette } from "./CommandPalette";
-import { QuickConnect } from "./QuickConnect";
 import { TakeoverBanner } from "./TakeoverBanner";
 import { UpdateBanner } from "./UpdateBanner";
 import { DekUnlockBanner } from "./DekUnlockBanner";
@@ -142,6 +117,35 @@ import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
+import { Lazy } from "../ui/LazyBoundary";
+import { trackWebSyncRequests, WEB_SYNC_ERROR_EVENT, WEB_SYNC_RESULT_EVENT } from "./syncEvents";
+import {
+  AssetEditor,
+  AssetTree,
+  AuditView,
+  AutoSync,
+  BackgroundSessions,
+  CommandPalette,
+  CredentialsPanel,
+  CredentialsSidebar,
+  DbPanel,
+  DockerPanel,
+  ExecBatchPanel,
+  FileBrowser,
+  FileEditor,
+  FileTree,
+  FleetHealthPanel,
+  ForwardPanel,
+  ForwardStartupRecovery,
+  LogViewer,
+  MountPanel,
+  MultiHostLogTail,
+  QuickConnect,
+  SettingsView,
+  TerminalPane,
+  TranscriptHistoryPanel,
+  AiSidebar,
+} from "./lazyPanels";
 import { registerPromptHandler, registerDialogHandlers, registerDialogEpochSource, promptText, type ChoiceResult } from "../ui/dialogs";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import {
@@ -815,7 +819,7 @@ function AppShell() {
       }
     };
     const onResult = (event: Event) => {
-      const result = (event as CustomEvent<WebSyncResult>).detail;
+      const result = (event as CustomEvent<import("../features/settings/SyncCard").WebSyncResult>).detail;
       if (!result || typeof result !== "object") return;
       const completedAt = syncTime(result.lastSuccessAt) ?? Date.now();
       webErrorSignatureRef.current.clear();
@@ -829,9 +833,11 @@ function AppShell() {
     };
     window.addEventListener(WEB_SYNC_ERROR_EVENT, onError);
     window.addEventListener(WEB_SYNC_RESULT_EVENT, onResult);
+    const stopTracking = trackWebSyncRequests();
     return () => {
       window.removeEventListener(WEB_SYNC_ERROR_EVENT, onError);
       window.removeEventListener(WEB_SYNC_RESULT_EVENT, onResult);
+      stopTracking();
     };
   }, [pushToast]);
 
@@ -852,8 +858,6 @@ function AppShell() {
       pushToast("error", describeError(e));
     }
   }, [queryClient, pushToast, vaultStatus.uninitialized, vaultStatus.passwordless]);
-  useWebAutoSync();
-  useDesktopAutoSync();
   useEffect(() => {
     if (WEB) {
       void import("../features/auth/store").then((m) => m.useAuth.getState().refresh());
@@ -1640,7 +1644,12 @@ function AppShell() {
         跳到主内容
       </a>
       <DeviceSessionBoundary />
-      <ForwardStartupRecovery />
+      <Lazy fallback="none" silent>
+        <ForwardStartupRecovery />
+      </Lazy>
+      <Lazy fallback="none" silent>
+        <AutoSync />
+      </Lazy>
 
       <div className="flex min-h-0 flex-1">
         <nav
@@ -1890,13 +1899,13 @@ function AppShell() {
           {leftDockOpen && (
             <div className="nx-left-dock" role="navigation" aria-label="左栏">
               {leftMode === "credentials" ? (
-                <CredentialsSidebar />
+                <Lazy><CredentialsSidebar /></Lazy>
               ) : leftMode === "files" && ws?.sessionId ? (
-                <FileTree key={ws.sessionId} sessionId={ws.sessionId} />
+                <Lazy><FileTree key={ws.sessionId} sessionId={ws.sessionId} /></Lazy>
               ) : (
                 // Keyed by account epoch: on account switch the tree remounts so template, runbook,
                 // inventory discovery/watch, and bulk panels never show the previous account's state.
-                <AssetTree key={accountEpoch} />
+                <Lazy><AssetTree key={accountEpoch} /></Lazy>
               )}
               <ResizeHandle
                 side="left"
@@ -1977,7 +1986,7 @@ function AppShell() {
                 onChange={setRightWidth}
               />
             )}
-            <AiSidebar key={aiAccountEpoch} sessionId={activeSessionId} tabId={active?.kind === "terminal" ? active.tabId : undefined} />
+            <Lazy><AiSidebar key={aiAccountEpoch} sessionId={activeSessionId} tabId={active?.kind === "terminal" ? active.tabId : undefined} /></Lazy>
           </div>
         </div>
 
@@ -2089,31 +2098,37 @@ function AppShell() {
       </div>
 
       {paletteOpen && (
-        <CommandPalette
-          onClose={() => setPaletteOpen(false)}
-          onOpenFiles={openFiles}
-          onEditAsset={(asset) => setPaletteEditingAsset(asset)}
-          onQuickConnect={() => setQuickConnectMode("all")}
-        />
+        <Lazy fallback="none" overlay>
+          <CommandPalette
+            onClose={() => setPaletteOpen(false)}
+            onOpenFiles={openFiles}
+            onEditAsset={(asset) => setPaletteEditingAsset(asset)}
+            onQuickConnect={() => setQuickConnectMode("all")}
+          />
+        </Lazy>
       )}
       {quickConnectMode && (
-        <QuickConnect
-          kindFilter={quickConnectMode === "database" ? "database" : undefined}
-          onClose={() => setQuickConnectMode(null)}
-        />
+        <Lazy fallback="none" overlay>
+          <QuickConnect
+            kindFilter={quickConnectMode === "database" ? "database" : undefined}
+            onClose={() => setQuickConnectMode(null)}
+          />
+        </Lazy>
       )}
       {paletteEditingAsset && (
-        <AssetEditor
-          kind="asset"
-          initial={paletteEditingAsset}
-          onClose={() => setPaletteEditingAsset(null)}
-          onSaved={() => {
-            setPaletteEditingAsset(null);
-            void queryClient.invalidateQueries({ queryKey: ["assets"] });
-            void queryClient.invalidateQueries({ queryKey: ["asset-search"] });
-            void queryClient.invalidateQueries({ queryKey: ["credentials"] });
-          }}
-        />
+        <Lazy fallback="none" overlay>
+          <AssetEditor
+            kind="asset"
+            initial={paletteEditingAsset}
+            onClose={() => setPaletteEditingAsset(null)}
+            onSaved={() => {
+              setPaletteEditingAsset(null);
+              void queryClient.invalidateQueries({ queryKey: ["assets"] });
+              void queryClient.invalidateQueries({ queryKey: ["asset-search"] });
+              void queryClient.invalidateQueries({ queryKey: ["credentials"] });
+            }}
+          />
+        </Lazy>
       )}
       <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
       <LazyAuthGate />
@@ -2658,72 +2673,84 @@ const PaneForTab = memo(function PaneForTab({
   switch (tab.kind) {
     case "terminal":
       return tab.sessionId ? (
-        <TerminalPane
-          sessionId={tab.sessionId}
-          title={tab.title}
-          containerId={tab.containerId}
-          storeTabId={tab.id}
-          resumeTabId={tab.tabId}
-          visible={active}
-        />
+        <Lazy>
+          <TerminalPane
+            sessionId={tab.sessionId}
+            title={tab.title}
+            containerId={tab.containerId}
+            storeTabId={tab.id}
+            resumeTabId={tab.tabId}
+            visible={active}
+          />
+        </Lazy>
       ) : (
         <EmptyState />
       );
     case "mount":
-      return <MountPanel sessionId={tab.sessionId} />;
+      return <Lazy><MountPanel sessionId={tab.sessionId} /></Lazy>;
     case "forward":
-      return <ForwardPanel sessionId={tab.sessionId} />;
+      return <Lazy><ForwardPanel sessionId={tab.sessionId} /></Lazy>;
     case "files":
       if (!tab.sessionId) return <EmptyState />;
-      return tab.path ? (
-        <FileEditor sessionId={tab.sessionId} path={tab.path} onClose={close} />
-      ) : (
-        <FileBrowser sessionId={tab.sessionId} />
+      return (
+        <Lazy>
+          {tab.path ? (
+            <FileEditor sessionId={tab.sessionId} path={tab.path} onClose={close} />
+          ) : (
+            <FileBrowser sessionId={tab.sessionId} />
+          )}
+        </Lazy>
       );
     case "log":
-      if (isMultiHostLogTabId(tab.id)) return <MultiHostLogTail sessions={sessions} />;
-      if (isFleetHealthTabId(tab.id)) return <FleetHealthPanel sessions={sessions} visible={active} />;
+      if (isMultiHostLogTabId(tab.id)) return <Lazy><MultiHostLogTail sessions={sessions} /></Lazy>;
+      if (isFleetHealthTabId(tab.id)) return <Lazy><FleetHealthPanel sessions={sessions} visible={active} /></Lazy>;
       if (!tab.sessionId || !tab.path) return <EmptyState />;
-      return <LogViewer sessionId={tab.sessionId} path={tab.path} onClose={close} />;
+      return <Lazy><LogViewer sessionId={tab.sessionId} path={tab.path} onClose={close} /></Lazy>;
     case "docker":
-      return tab.sessionId ? <DockerPanel sessionId={tab.sessionId} visible={active} /> : <EmptyState />;
+      return tab.sessionId ? <Lazy><DockerPanel sessionId={tab.sessionId} visible={active} /></Lazy> : <EmptyState />;
     case "db":
       return tab.connId ? (
-        <DbPanel
-          key={workspaceRuntimeEpoch}
-          connId={tab.connId}
-          kind={tab.dbKind ?? "mysql"}
-          workspaceId={workspaceId}
-        />
+        <Lazy>
+          <DbPanel
+            key={workspaceRuntimeEpoch}
+            connId={tab.connId}
+            kind={tab.dbKind ?? "mysql"}
+            workspaceId={workspaceId}
+          />
+        </Lazy>
       ) : (
         <EmptyState />
       );
     case "execBatch":
-      return <ExecBatchPanel sessions={sessions} />;
+      return <Lazy><ExecBatchPanel sessions={sessions} /></Lazy>;
     case "settings":
-      return <SettingsView />;
+      return <Lazy><SettingsView /></Lazy>;
     case "audit":
-      return <AuditView />;
+      return <Lazy><AuditView /></Lazy>;
     case "devices":
       return <LazyDevicesView />;
     case "background":
       return (
-        <BackgroundSessions
-          visible={active}
-          workspaceId={workspaceId}
-          sessionId={tab.sessionId}
-        />
+        <Lazy>
+          <BackgroundSessions
+            visible={active}
+            workspaceId={workspaceId}
+            sessionId={tab.sessionId}
+          />
+        </Lazy>
       );
     case "history":
       return (
-        <TranscriptHistoryPanel
-          visible={active}
-          workspaceId={workspaceId}
-          assetId={tab.assetId}
-        />
+        <Lazy>
+          <TranscriptHistoryPanel
+            visible={active}
+            workspaceId={workspaceId}
+            assetId={tab.assetId}
+          />
+        </Lazy>
       );
     case "credentials":
-      return <CredentialsPanel credId={tab.credId} />;
+      return <Lazy><CredentialsPanel credId={tab.credId} /></Lazy>;
     default:
       return <EmptyState />;
   }

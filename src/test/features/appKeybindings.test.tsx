@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flush, mount, type MountedView } from "./reactTestUtils";
+import { flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -213,7 +213,8 @@ describe("rebound app shortcuts", () => {
     await flush();
 
     keyDown(window, "o", { ctrlKey: true, shiftKey: true });
-    expect(mounted.container.querySelector('[data-testid="command-palette"]')).not.toBeNull();
+    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null, 400);
+    expect(mounted?.container.querySelector('[data-testid="command-palette"]')).not.toBeNull();
 
     mounted.unmount();
     mounted = mountApp();
@@ -221,7 +222,8 @@ describe("rebound app shortcuts", () => {
     keyDown(window, "p", { ctrlKey: true, shiftKey: true });
     expect(mounted.container.querySelector('[data-testid="command-palette"]')).toBeNull();
     keyDown(window, "o", { ctrlKey: true, shiftKey: true });
-    expect(mounted.container.querySelector('[data-testid="command-palette"]')).not.toBeNull();
+    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null, 400);
+    expect(mounted?.container.querySelector('[data-testid="command-palette"]')).not.toBeNull();
   });
 
   it("closes the active tab via a rebound closeTab binding", async () => {
@@ -274,7 +276,8 @@ describe("rebound app shortcuts", () => {
     await flush();
 
     keyDown(window, "q", { altKey: true });
-    expect(mounted.container.querySelector('[data-testid="quick-connect"]')).not.toBeNull();
+    await flushUntil(() => (mounted?.container.querySelector('[data-testid="quick-connect"]') ?? null) !== null, 400);
+    expect(mounted?.container.querySelector('[data-testid="quick-connect"]')).not.toBeNull();
 
     mounted.unmount();
     mounted = mountApp();

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount } from "./reactTestUtils";
+import { flush, flushUntil, mount } from "./reactTestUtils";
 
 const mountedRoots = vi.hoisted(() => [] as Array<{ unmount: () => void }>);
 
@@ -63,6 +63,9 @@ vi.mock("../../features/terminal/selectionAutoCopy", async () => {
   return { createSelectionAutoCopy: m.fakeSelectionAutoCopy };
 });
 
+// The fall-through route only needs to reach the app branch; the real shell would keep loading lazy panels past teardown.
+vi.mock("../../app/App", () => ({ default: () => null }));
+
 import { PublicShareTerminal, type PublicShareTerminalHandle } from "../../features/sharing/PublicShareTerminal";
 
 class FakeWebSocket {
@@ -114,6 +117,7 @@ describe("main.tsx public share route", () => {
 
   it("mounts the anonymous viewer at /share/public/{token} without dialing any account channel", async () => {
     await importMainAt("/share/public/route-token-1");
+    await flushUntil(() => document.body.textContent?.includes("NexTerm 公开分享") === true, 400);
     expect(document.body.textContent).toContain("NexTerm 公开分享");
     expect(document.body.textContent).toContain("正在连接分享终端");
     expect(FakeWebSocket.instances.length).toBeGreaterThan(0);

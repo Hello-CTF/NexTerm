@@ -6,7 +6,8 @@ import { WEB } from "../../ipc/env";
 import { useAuth } from "../auth/store";
 import { useUi } from "../../app/store";
 import { createHttpPreferenceStore, registerAccountPreferenceStore } from "../../app/preferences";
-import { runWebSync, WEB_SYNC_ERROR_EVENT, WEB_SYNC_REQUEST_EVENT, WEB_SYNC_RESULT_EVENT } from "./SyncCard";
+import { runWebSync } from "./SyncCard";
+import { WEB_SYNC_ERROR_EVENT, WEB_SYNC_REQUEST_EVENT, WEB_SYNC_RESULT_EVENT } from "../../app/syncEvents";
 
 const SYNC_PERIOD_MS = 60_000;
 

@@ -363,7 +363,7 @@ async function openPaletteEditor(): Promise<void> {
   const palette = document.querySelector<HTMLButtonElement>('button[aria-label^="命令面板"]');
   expect(palette).not.toBeNull();
   click(palette!);
-  await flush();
+  await flushUntil(() => document.querySelector('input[aria-label="命令或资产搜索"]') !== null, 400);
   const search = document.querySelector<HTMLInputElement>('input[aria-label="命令或资产搜索"]');
   expect(search).not.toBeNull();
   setInputValue(search!, "编辑资产 web-01");
@@ -373,7 +373,7 @@ async function openPaletteEditor(): Promise<void> {
   );
   expect(option).not.toBeUndefined();
   click(option!);
-  await flush();
+  await flushUntil(() => document.querySelector('.nx-modal input[type="number"]') !== null, 400);
   const port = document.querySelector<HTMLInputElement>('.nx-modal input[type="number"]');
   expect(port).not.toBeNull();
   setInputValue(port!, "2202");

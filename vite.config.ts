@@ -29,7 +29,25 @@ const config = defineConfig({
   build: {
     target: "chrome105",
     sourcemap: false,
-    chunkSizeWarningLimit: 2000,
+    // Default limit: the entry and every lazy chunk stay under it, so size regressions show up in the build log.
+    chunkSizeWarningLimit: 500,
+    rolldownOptions: {
+      output: {
+        // Vendor groups keep their content hash across app-only releases. Language packs
+        // (@codemirror/legacy-modes) are deliberately left out so each loads on demand.
+        codeSplitting: {
+          groups: [
+            { name: "vendor-react", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 30 },
+            { name: "vendor-xterm", test: /node_modules[\\/]@xterm[\\/]xterm[\\/]/, priority: 20 },
+            {
+              name: "vendor-codemirror",
+              test: /node_modules[\\/](@codemirror[\\/](?!legacy-modes)[^\\/]+|@lezer[\\/][^\\/]+|style-mod|w3c-keyname|crelt)[\\/]/,
+              priority: 10,
+            },
+          ],
+        },
+      },
+    },
   },
   test: {
     maxWorkers: 2,

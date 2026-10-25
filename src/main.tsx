@@ -1,5 +1,5 @@
 import { startFrontendProbeIfCapturing } from "./features/diagnostics/frontendProbe";
-import React from "react";
+import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app/App";
@@ -16,8 +16,11 @@ import { setMacPlatform, setWindowsPlatform } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
 import { setMountUnavailableReason } from "./app/capabilities";
 import { forceResolvedTheme } from "./app/theme";
-import { PublicShareApp } from "./features/sharing/PublicShareApp";
-import { PublicPreviewApp } from "./features/sharing/PublicPreviewApp";
+import { Lazy } from "./ui/LazyBoundary";
+
+// Public share pages carry their own terminal/preview stack; keep it out of the main app's entry chunk.
+const PublicShareApp = lazy(() => import("./features/sharing/PublicShareApp").then((m) => ({ default: m.PublicShareApp })));
+const PublicPreviewApp = lazy(() => import("./features/sharing/PublicPreviewApp").then((m) => ({ default: m.PublicPreviewApp })));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -155,10 +158,10 @@ const publicPreviewToken =
 
 if (publicShareToken) {
   forceResolvedTheme("dark");
-  mount(<PublicShareApp token={publicShareToken} />);
+  mount(<Lazy><PublicShareApp token={publicShareToken} /></Lazy>);
 } else if (publicPreviewToken) {
   forceResolvedTheme("dark");
-  mount(<PublicPreviewApp token={publicPreviewToken} />);
+  mount(<Lazy><PublicPreviewApp token={publicPreviewToken} /></Lazy>);
 } else {
   void bootstrapApp();
 }

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { flush } from "./reactTestUtils";
+import { flush, flushUntil } from "./reactTestUtils";
 
 const mountedRoots = vi.hoisted(() => [] as Array<{ unmount: () => void }>);
 
@@ -83,6 +83,7 @@ describe("main.tsx public preview route", () => {
 
   it("mounts the anonymous preview at /share/preview/{token} without dialing any account channel", async () => {
     await importMainAt("/share/preview/route-token-1");
+    await flushUntil(() => document.body.textContent?.includes("NexTerm 预览") === true, 400);
     expect(document.body.textContent).toContain("NexTerm 预览");
     expect(document.body.textContent).toContain("正在连接预览终端");
     expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
@@ -100,6 +101,7 @@ describe("main.tsx public preview route", () => {
 
   it("keeps the legacy session-share viewer route", async () => {
     await importMainAt("/share/public/legacy-session-token");
+    await flushUntil(() => document.body.textContent?.includes("NexTerm 公开分享") === true, 400);
     expect(document.body.textContent).toContain("NexTerm 公开分享");
     expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/public/legacy-session-token"))).toBe(true);
   }, 15000);

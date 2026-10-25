@@ -32,6 +32,7 @@ import {
   transcriptPayload,
 } from "../auth/syncPayload";
 import { useUi } from "../../app/store";
+import { WEB_SYNC_ERROR_EVENT, WEB_SYNC_REQUEST_EVENT, WEB_SYNC_RESULT_EVENT } from "../../app/syncEvents";
 import { WEB } from "../../ipc/env";
 import { listenEvent } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
@@ -1401,9 +1402,7 @@ function buildRows(local: LocalEntity[], remote: RemoteObject[], undecryptableId
   return rows.sort((a, b) => rank(a.state) - rank(b.state) || a.name.localeCompare(b.name));
 }
 
-export const WEB_SYNC_REQUEST_EVENT = "nexterm:web-sync-request";
-export const WEB_SYNC_RESULT_EVENT = "nexterm:web-sync-result";
-export const WEB_SYNC_ERROR_EVENT = "nexterm:web-sync-error";
+export { WEB_SYNC_ERROR_EVENT, WEB_SYNC_REQUEST_EVENT, WEB_SYNC_RESULT_EVENT };
 
 interface Snapshot {
   local: LocalEntity[];
