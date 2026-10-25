@@ -175,7 +175,7 @@ function CredentialDetail({
   onChanged: () => void;
   onDeleted: (id: string) => void;
 }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const meta = kindMeta(cred.kind);
   const isKey = cred.kind === "private_key";
   const isRef = isKey && cred.source === "file";

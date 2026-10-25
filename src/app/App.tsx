@@ -56,13 +56,11 @@ import {
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
 import {
-  finishLayoutRestore,
   layoutBootstrapped,
   layoutRestoreStatus,
   reviewPendingLayoutRestore,
   startLayoutSync,
   subscribeLayoutRestore,
-  undoLayoutRestore,
 } from "./layout";
 import { wireAccountSwitchCleanup } from "./accountSwitch";
 import { useClosedTabs } from "./closedTabs";
@@ -693,39 +691,89 @@ export default function App() {
   );
 }
 
+function ToastStack() {
+  const toasts = useUi((s) => s.toasts);
+  const dismissToast = useUi((s) => s.dismissToast);
+  return (
+    <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col gap-2">
+      {toasts.map((t) => {
+        const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
+        const tone =
+          t.kind === "error"
+            ? "border-red-500/40 bg-red-950/90 text-red-100"
+            : t.kind === "success"
+              ? "nx-alert-success"
+              : "border-neutral-700 bg-neutral-800/95 text-neutral-100";
+        return (
+          <div
+            key={t.id}
+            className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-[var(--shadow-pop)] backdrop-blur ${tone}`}
+          >
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
+              onClick={() => dismissToast(t.id)}
+            >
+              <Icon
+                size={14}
+                className={
+                  t.kind === "error"
+                    ? "mt-px shrink-0 text-red-300"
+                    : t.kind === "success"
+                      ? "mt-px shrink-0 text-green-300"
+                      : "mt-px shrink-0 text-blue-300"
+                }
+              />
+              <span className="min-w-0 flex-1">{t.text}</span>
+            </button>
+            {t.action ? (
+              <button
+                type="button"
+                className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                onClick={() => {
+                  dismissToast(t.id);
+                  t.action?.onSelect();
+                }}
+              >
+                {t.action.label}
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AppShell() {
-  const {
-    workspaces,
-    activeWorkspaceId,
-    activeProject,
-    projectInventory,
-    setProjectInventory,
-    setActiveWorkspace,
-    closeWorkspace,
-    splitWorkspace,
-    unsplitWorkspace,
-    setActivePane,
-    setSplitRatio,
-    sessions,
-    setSessions,
-    leftOpen,
-    setLeftOpen: setLeftOpenStore,
-    leftMode,
-    setLeftMode,
-    rightOpen,
-    setRightOpen: setRightOpenStore,
-    leftWidth,
-    setLeftWidth,
-    rightWidth,
-    setRightWidth,
-    aiAccountEpoch,
-    accountEpoch,
-    toasts,
-    dismissToast,
-    pushToast,
-    connectFocusRevision,
-    reconcileDeletedTargets,
-  } = useUi();
+  const workspaces = useUi((s) => s.workspaces);
+  const activeWorkspaceId = useUi((s) => s.activeWorkspaceId);
+  const activeProject = useUi((s) => s.activeProject);
+  const projectInventory = useUi((s) => s.projectInventory);
+  const setProjectInventory = useUi((s) => s.setProjectInventory);
+  const setActiveWorkspace = useUi((s) => s.setActiveWorkspace);
+  const closeWorkspace = useUi((s) => s.closeWorkspace);
+  const splitWorkspace = useUi((s) => s.splitWorkspace);
+  const unsplitWorkspace = useUi((s) => s.unsplitWorkspace);
+  const setActivePane = useUi((s) => s.setActivePane);
+  const setSplitRatio = useUi((s) => s.setSplitRatio);
+  const sessions = useUi((s) => s.sessions);
+  const setSessions = useUi((s) => s.setSessions);
+  const leftOpen = useUi((s) => s.leftOpen);
+  const setLeftOpenStore = useUi((s) => s.setLeftOpen);
+  const leftMode = useUi((s) => s.leftMode);
+  const setLeftMode = useUi((s) => s.setLeftMode);
+  const rightOpen = useUi((s) => s.rightOpen);
+  const setRightOpenStore = useUi((s) => s.setRightOpen);
+  const leftWidth = useUi((s) => s.leftWidth);
+  const setLeftWidth = useUi((s) => s.setLeftWidth);
+  const rightWidth = useUi((s) => s.rightWidth);
+  const setRightWidth = useUi((s) => s.setRightWidth);
+  const aiAccountEpoch = useUi((s) => s.aiAccountEpoch);
+  const accountEpoch = useUi((s) => s.accountEpoch);
+  const pushToast = useUi((s) => s.pushToast);
+  const connectFocusRevision = useUi((s) => s.connectFocusRevision);
+  const reconcileDeletedTargets = useUi((s) => s.reconcileDeletedTargets);
   const closedTabEntries = useClosedTabs((s) => s.stack.entries);
 
   const visibleWorkspaces = useMemo(
@@ -741,7 +789,6 @@ function AppShell() {
   const [paletteEditingAsset, setPaletteEditingAsset] = useState<Asset | null>(null);
   const [quickConnectMode, setQuickConnectMode] = useState<"all" | "database" | null>(null);
   const [layoutRestore, setLayoutRestore] = useState(layoutRestoreStatus);
-  const [restoringWorkspaceId, setRestoringWorkspaceId] = useState<string | null>(null);
 
   useEffect(() => subscribeLayoutRestore(() => setLayoutRestore(layoutRestoreStatus())), []);
   const queryClient = useQueryClient();
@@ -1833,23 +1880,12 @@ function AppShell() {
           <TakeoverBanner />
           <UpdateBanner onOpenSettings={openSettings} />
           <DekUnlockBanner />
-          {(layoutRestore.pending || layoutRestore.preview) && (
+          {layoutRestore.pending && !layoutRestore.preview && (
             <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-blue-500/30 bg-blue-950/30 px-4 py-2 text-xs text-blue-100">
-              <span>
-                {layoutRestore.preview
-                  ? `已预览账号中的 ${layoutRestore.count} 个工作区。请确认目标与标签，然后完成恢复或撤销。`
-                  : `账号中有 ${layoutRestore.count} 个工作区待确认恢复；本设备暂不覆盖服务端布局。`}
-              </span>
-              {layoutRestore.preview ? (
-                <>
-                  <button type="button" className="nx-btn-ghost" onClick={() => void finishLayoutRestore()}>完成恢复</button>
-                  <button type="button" className="nx-btn-ghost" onClick={undoLayoutRestore}>撤销恢复</button>
-                </>
-              ) : (
-                <button type="button" className="nx-btn-ghost" onClick={() => void reviewPendingLayoutRestore()}>
-                  查看并恢复
-                </button>
-              )}
+              <span>账号中有 {layoutRestore.count} 个工作区待确认恢复；本设备暂不覆盖服务端布局。</span>
+              <button type="button" className="nx-btn-ghost" onClick={() => void reviewPendingLayoutRestore()}>
+                查看并恢复
+              </button>
             </div>
           )}
           <WorkspaceRestoreBanner />
@@ -1861,28 +1897,6 @@ function AppShell() {
               </button>
               <button type="button" className="nx-btn-ghost" onClick={() => void closeWorkspace(ws.id)}>
                 关闭工作区
-              </button>
-            </div>
-          )}
-          {ws?.restorePending && (
-            <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
-              <span>
-                「{ws.title}」的标签已恢复，尚未连接。连接后会新开终端
-                {ws.assetKind === "ssh" || ws.assetKind === "device" ? "；之前的持久终端可在「后台会话」接管" : ""}。
-              </span>
-              <button
-                type="button"
-                className="nx-btn-ghost"
-                disabled={ws.deletedTarget || restoringWorkspaceId === ws.id}
-                onClick={() => {
-                  const workspaceId = ws.id;
-                  setRestoringWorkspaceId(workspaceId);
-                  void reconnectRestoredWorkspace(workspaceId).then((result) => {
-                    if (!result.ok && result.error) pushToast("error", result.error);
-                  }).finally(() => setRestoringWorkspaceId(null));
-                }}
-              >
-                {restoringWorkspaceId === ws.id ? "连接中…" : "重新连接"}
               </button>
             </div>
           )}
@@ -2049,53 +2063,7 @@ function AppShell() {
 
       </div>
 
-      <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col gap-2">
-        {toasts.map((t) => {
-          const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
-          const tone =
-            t.kind === "error"
-              ? "border-red-500/40 bg-red-950/90 text-red-100"
-              : t.kind === "success"
-                ? "nx-alert-success"
-                : "border-neutral-700 bg-neutral-800/95 text-neutral-100";
-          return (
-            <div
-              key={t.id}
-              className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-[var(--shadow-pop)] backdrop-blur ${tone}`}
-            >
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
-                onClick={() => dismissToast(t.id)}
-              >
-                <Icon
-                  size={14}
-                  className={
-                    t.kind === "error"
-                      ? "mt-px shrink-0 text-red-300"
-                      : t.kind === "success"
-                        ? "mt-px shrink-0 text-green-300"
-                        : "mt-px shrink-0 text-blue-300"
-                  }
-                />
-                <span className="min-w-0 flex-1">{t.text}</span>
-              </button>
-              {t.action ? (
-                <button
-                  type="button"
-                  className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-                  onClick={() => {
-                    dismissToast(t.id);
-                    t.action?.onSelect();
-                  }}
-                >
-                  {t.action.label}
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
+      <ToastStack />
 
       {paletteOpen && (
         <Lazy fallback="none" overlay>
@@ -2637,6 +2605,36 @@ function RestoredTabPlaceholder({ tab, workspaceId }: { tab: AppTab; workspaceId
   );
 }
 
+// A restored host workspace is not dialed until the user asks; its tabs share this connect prompt.
+function RestoredWorkspacePlaceholder({ workspaceId }: { workspaceId: string }) {
+  const workspace = useUi((state) => state.workspaces.find((item) => item.id === workspaceId));
+  const [connecting, setConnecting] = useState(false);
+  if (!workspace) return null;
+  const durableHost = workspace.assetKind === "ssh" || workspace.assetKind === "device";
+  const connect = () => {
+    setConnecting(true);
+    void reconnectRestoredWorkspace(workspaceId)
+      .then((result) => {
+        if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
+      })
+      .finally(() => setConnecting(false));
+  };
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
+      <span>
+        {workspace.deletedTarget
+          ? `「${workspace.title}」的资产已删除，无法重新连接。`
+          : `「${workspace.title}」尚未连接。连接后会新开终端${durableHost ? "；之前的持久终端可在「后台会话」接管" : ""}。`}
+      </span>
+      {!workspace.deletedTarget && (
+        <button type="button" className="nx-btn nx-btn-outline" disabled={connecting} onClick={connect}>
+          {connecting ? "连接中…" : "连接"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 const PaneForTab = memo(function PaneForTab({
   tab,
   active,
@@ -2652,13 +2650,7 @@ const PaneForTab = memo(function PaneForTab({
   const restorePending = useUi((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.restorePending);
   const sessions = useUi((state) => state.sessions);
   const close = () => void onClose(tab.id);
-  if (restorePending) {
-    return (
-      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-400">
-        连接主机后继续。
-      </div>
-    );
-  }
+  if (restorePending) return <RestoredWorkspacePlaceholder workspaceId={workspaceId} />;
   if (tab.kind === "terminal" && tab.containerId && tab.restorePending) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
@@ -2778,7 +2770,8 @@ function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
 }
 
 function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: () => void }) {
-  const { setSessions, sessions } = useUi();
+  const setSessions = useUi((s) => s.setSessions);
+  const sessions = useUi((s) => s.sessions);
   const bindings = useKeybindings();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 bg-neutral-900 px-6">

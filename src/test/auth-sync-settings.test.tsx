@@ -330,7 +330,7 @@ describe("M165 known_host sync", () => {
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true });
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     await runAutoSync();
-    await flushUntil(() => text().includes("已一致"));
+    await flushUntil(() => text().includes("全部一致"));
     expect(text()).toContain("待推送 0 项");
     expect(text()).toContain("当前待应用 0 项");
     expect(mocks.syncPush).toHaveBeenCalledTimes(1);

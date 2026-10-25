@@ -6,7 +6,7 @@ import { useUi } from "../../app/store";
 
 export function useVaultUnlock(): (reason?: string) => Promise<boolean> {
   const qc = useQueryClient();
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
 
   return async (reason?: string) => {
     let passwordless = false;

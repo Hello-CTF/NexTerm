@@ -72,8 +72,6 @@ func newRemoteAPIFixture(t *testing.T) *remoteAPIFixture {
 	mux.Handle("GET /share/host-shares", fixture.session(http.HandlerFunc(fixture.serveHostShares)))
 	mux.Handle("POST /share/host-shares", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveHostShareCreate))))
 	mux.Handle("POST /share/host-shares/{id}/revoke", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveOK))))
-	mux.Handle("GET /share/links", fixture.session(http.HandlerFunc(fixture.serveShareLinks)))
-	mux.Handle("POST /share/links/{id}/revoke", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveOK))))
 	mux.Handle("GET /share/previews", fixture.session(http.HandlerFunc(fixture.servePreviewLinks)))
 	mux.Handle("POST /share/previews/{id}/revoke", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveOK))))
 	mux.Handle("POST /sync/v2/push", fixture.session(fixture.csrf(NewObjectHandler(db.GORM(), nil))))
@@ -487,12 +485,6 @@ func (f *remoteAPIFixture) serveHostShareCreate(w http.ResponseWriter, r *http.R
 	})
 }
 
-func (f *remoteAPIFixture) serveShareLinks(w http.ResponseWriter, _ *http.Request) {
-	writeSyncJSON(w, http.StatusOK, map[string]any{"links": []map[string]any{
-		{"id": "sl-1", "owner_id": "u-1", "device_id": "d-1", "session_id": "s-1", "permission": "read", "created_at": 1, "expires_at": 2},
-	}})
-}
-
 func (f *remoteAPIFixture) servePreviewLinks(w http.ResponseWriter, _ *http.Request) {
 	writeSyncJSON(w, http.StatusOK, map[string]any{"links": []map[string]any{
 		{"id": "pl-1", "owner_id": "u-1", "session_id": "s-1", "created_at": 1, "expires_at": 2},
@@ -660,10 +652,6 @@ func TestRemoteAPITypedMethodsDecode(t *testing.T) {
 	if err != nil || share.Permission != "read_write" || share.RecipientUsername != "bob" {
 		t.Fatalf("host share = %+v, %v", share, err)
 	}
-	links, err := client.ListShareLinks(ctx)
-	if err != nil || len(links.Links) != 1 || links.Links[0].ID != "sl-1" {
-		t.Fatalf("share links = %+v, %v", links, err)
-	}
 	previews, err := client.ListPreviewLinks(ctx)
 	if err != nil || len(previews.Links) != 1 || previews.Links[0].ID != "pl-1" {
 		t.Fatalf("previews = %+v, %v", previews, err)
@@ -684,9 +672,6 @@ func TestRemoteAPITypedMethodsDecode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := client.RevokeHostShare(ctx, "hs-1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.RevokeShareLink(ctx, "sl-1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.RevokePreviewLink(ctx, "pl-1"); err != nil {

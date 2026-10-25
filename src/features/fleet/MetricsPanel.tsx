@@ -7,7 +7,15 @@ import { fleetClient } from "./clients";
 import { describeError } from "../../ui/errorText";
 import { IconRefresh } from "../../ui/icons";
 import { formatBytes, formatTime, formatUptime } from "./format";
-import { MetricsChart, metricsGapThreshold } from "./MetricsChart";
+import {
+  DEFAULT_METRIC_RANGE,
+  formatAge,
+  METRIC_RANGES,
+  metricsGapThreshold,
+  MetricTrendChart,
+  type MetricKind,
+  type MetricRangeId,
+} from "./MetricsTrend";
 
 interface MetricsResult {
   deviceId: string;
@@ -23,6 +31,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   const [result, setResult] = useState<MetricsResult | null>(null);
   const [requestError, setRequestError] = useState<MetricsRequestError | null>(null);
   const [loading, setLoading] = useState(false);
+  const [range, setRange] = useState<MetricRangeId>(DEFAULT_METRIC_RANGE);
   const loadSeq = useRef(0);
   const activeDevice = useRef(deviceId);
   if (activeDevice.current !== deviceId) {
@@ -35,8 +44,11 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
     const requestedDevice = deviceId;
     setLoading(true);
     setRequestError(null);
-    fleetClient()
-      .metrics(requestedDevice)
+    // The default 24 hour range is the server default, so it keeps the argument-less request; the API honours
+    // since_ms up to its 48 hour raw retention.
+    const rangeMs = METRIC_RANGES.find((r) => r.id === range)?.ms ?? 0;
+    const client = fleetClient();
+    (range === DEFAULT_METRIC_RANGE ? client.metrics(requestedDevice) : client.metrics(requestedDevice, Date.now() - rangeMs))
       .then((data) => {
         if (seq === loadSeq.current && activeDevice.current === requestedDevice) {
           setResult({ deviceId: requestedDevice, data });
@@ -50,7 +62,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
       .finally(() => {
         if (seq === loadSeq.current && activeDevice.current === requestedDevice) setLoading(false);
       });
-  }, [deviceId]);
+  }, [deviceId, range]);
 
   useEffect(() => {
     load();
@@ -61,6 +73,8 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   const samples = data?.samples ?? [];
   const latest = data?.latest;
   const gapThreshold = metricsGapThreshold(data?.sampleIntervalMs);
+  const windowStart = data?.windowStart;
+  const windowEnd = data?.windowEnd;
   const [, refreshFreshness] = useState(0);
   useEffect(() => {
     if (!latest) return;
@@ -106,73 +120,63 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
     );
   }
 
-  const memPct = latest.mem_total > 0 ? Math.min(100, (latest.mem_used / latest.mem_total) * 100) : 0;
-  const diskPct = latest.disk_total > 0 ? Math.min(100, (latest.disk_used / latest.disk_total) * 100) : 0;
-  const windowStart = data?.windowStart;
-  const windowEnd = data?.windowEnd;
-  const hasWindow = windowStart !== undefined && windowEnd !== undefined;
-  const sampleCount = data?.sampleCount ??
-    (latest !== undefined && hasWindow && samples.length === 0 && !data?.seriesError ? 0 : undefined);
   const referenceTime = Date.now();
-  const stale = referenceTime - latest.ts > gapThreshold;
-  const staleText = `${online ? "指标过期" : "设备离线，指标过期"} · 过期阈值 ${formatUptime(gapThreshold / 1000)}`;
+  const age = referenceTime - latest.ts;
+  const stale = age > gapThreshold;
+  const staleText = `${online ? "" : "设备离线，"}数据已 ${formatAge(age)}未更新`;
+  const hasTrend = !data?.seriesError && samples.length > 0;
+  const metricBlocks: { kind: MetricKind; label: string; value: string }[] = [
+    { kind: "cpu", label: "CPU", value: `${latest.cpu_pct.toFixed(1)}%` },
+    { kind: "mem", label: "内存", value: `${formatBytes(latest.mem_used)} / ${formatBytes(latest.mem_total)}` },
+    { kind: "disk", label: "磁盘", value: `${formatBytes(latest.disk_used)} / ${formatBytes(latest.disk_total)}` },
+  ];
 
   return (
     <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="时间范围">
+        {METRIC_RANGES.map((r) => (
+          <button
+            key={r.id}
+            type="button"
+            className={`nx-btn nx-btn-xs ${range === r.id ? "nx-btn-primary" : "nx-btn-ghost"}`}
+            aria-pressed={range === r.id}
+            onClick={() => setRange(r.id)}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
       {data?.seriesError ? (
         <div className="text-[11.5px] text-red-300">趋势加载失败 · {data.seriesError}</div>
-      ) : samples.length > 0 ? (
-        <MetricsChart
-          samples={samples}
-          latest={latest}
-          windowStart={windowStart}
-          windowEnd={windowEnd}
-          sampleIntervalMs={data?.sampleIntervalMs}
-        />
-      ) : (
+      ) : !hasTrend ? (
         <div className="nx-hint text-[11.5px]">当前时间窗口没有采样点。</div>
-      )}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px] sm:grid-cols-4">
-        <div>
-          <div className="nx-hint text-[11px]">CPU</div>
-          <div className="font-mono text-neutral-100">{latest.cpu_pct.toFixed(1)}%</div>
-          <div className="mt-1 h-1.5 rounded bg-neutral-800">
-            <div className="h-1.5 rounded bg-sky-400/70" style={{ width: `${Math.min(100, Math.max(0, latest.cpu_pct))}%` }} />
+      ) : null}
+      <div className={`grid grid-cols-1 gap-x-4 gap-y-3 text-[12px] sm:grid-cols-3 ${loading ? "opacity-60" : ""}`} aria-busy={loading}>
+        {metricBlocks.map((m) => (
+          <div key={m.kind}>
+            <div className="nx-hint text-[11px]">{m.label}</div>
+            <div className="font-mono text-neutral-100">{m.value}</div>
+            {hasTrend && (
+              <MetricTrendChart
+                kind={m.kind}
+                samples={samples}
+                latest={latest}
+                windowStart={windowStart}
+                windowEnd={windowEnd}
+                sampleIntervalMs={data?.sampleIntervalMs}
+              />
+            )}
           </div>
-        </div>
-        <div>
-          <div className="nx-hint text-[11px]">内存</div>
-          <div className="font-mono text-neutral-100">
-            {formatBytes(latest.mem_used)} / {formatBytes(latest.mem_total)}
-          </div>
-          <div className="mt-1 h-1.5 rounded bg-neutral-800">
-            <div className="h-1.5 rounded bg-blue-400/70" style={{ width: `${memPct}%` }} />
-          </div>
-        </div>
-        <div>
-          <div className="nx-hint text-[11px]">磁盘</div>
-          <div className="font-mono text-neutral-100">
-            {formatBytes(latest.disk_used)} / {formatBytes(latest.disk_total)}
-          </div>
-          <div className="mt-1 h-1.5 rounded bg-neutral-800">
-            <div className="h-1.5 rounded bg-amber-400/70" style={{ width: `${diskPct}%` }} />
-          </div>
-        </div>
-        <div>
-          <div className="nx-hint text-[11px]">运行时长</div>
-          <div className="font-mono text-neutral-100">{formatUptime(latest.uptime_s)}</div>
-        </div>
+        ))}
+      </div>
+      <div className="text-[12px]">
+        <span className="nx-hint text-[11px]">运行时长 </span>
+        <span className="font-mono text-neutral-100">{formatUptime(latest.uptime_s)}</span>
       </div>
       <div className="flex items-center gap-2">
         <div className="nx-hint text-[11px]">
-          {hasWindow ? (
-            <>
-              趋势窗口 {formatTime(windowStart)} - {formatTime(windowEnd)} · {data?.seriesError || sampleCount === undefined ? "采样数未知" : `共 ${sampleCount} 个采样点${data?.downsampled ? ` · 显示 ${samples.length} 个原始点` : ""}`}
-            </>
-          ) : (
-            <>趋势窗口元数据不可用</>
-          )}
-          {" · 最新 "}{formatTime(latest.ts)}{stale ? ` · ${staleText}` : ""}
+          最新 {formatTime(latest.ts)}
+          {stale ? <span className="text-amber-300"> · {staleText}</span> : null}
         </div>
         <div className="nx-spacer" />
         {refreshButton}

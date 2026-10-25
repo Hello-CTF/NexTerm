@@ -148,19 +148,6 @@ func registerRemoteCommands(dispatcher *ipc.Dispatcher, syncService *syncservice
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "remote_share_link_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) (*syncservice.RemoteShareLinks, error) {
-				return remote.ListShareLinks(ctx)
-			})
-		},
-		func() error {
-			return ipc.RegisterNested(dispatcher, "remote_share_link_revoke", func(ctx context.Context, _ *ipc.Call, input remoteIDRequest) (syncservice.RemoteOK, error) {
-				if input.ID == "" {
-					return syncservice.RemoteOK{}, badEmpty("id")
-				}
-				return remote.RevokeShareLink(ctx, input.ID)
-			})
-		},
-		func() error {
 			return ipc.Register(dispatcher, "remote_share_preview_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) (*syncservice.RemotePreviewLinks, error) {
 				return remote.ListPreviewLinks(ctx)
 			})

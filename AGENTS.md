@@ -17,7 +17,7 @@ Reply in the user's language. Keep this file limited to rules that prevent regre
 - `scripts`, `.github/scripts`, `.github/workflows`, `Taskfile.yml`: builds, tests, CI, and releases.
 - `website`: GitHub Pages site. `lazycat`: Lazycat package. `build`: native build configuration and mobile projects. `deploy/systemd`: server units.
 
-Toolchain: Go 1.26, Node 24+, pnpm. Exact versions and commands live in `go.mod`, `package.json`, and the workflows.
+Toolchain: Go 1.27, Node 24+, pnpm. Exact versions and commands live in `go.mod`, `package.json`, and the workflows.
 
 ## Working Rules
 

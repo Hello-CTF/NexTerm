@@ -241,11 +241,57 @@ export function sendChannelInput(
   http: (data: Uint8Array) => Promise<unknown>,
 ): void {
   const id = channelIdOf(ch);
-  if (!WEB || id === undefined) {
+  if (!WEB) {
+    sendDesktopInput(tabId, data, http);
+    return;
+  }
+  if (id === undefined) {
     void http(data).catch(() => undefined);
     return;
   }
   sendWsChannelInput(id, tabId, data, http);
+}
+
+const DESKTOP_INPUT_MAX_PENDING = 4 * 1024 * 1024;
+const desktopInput = new Map<string, Uint8Array[]>();
+
+/**
+ * Desktop input keeps one write in flight per tab. Each write waits for the host to accept the bytes, so mouse
+ * reports from a full-screen app (wheel, drag selection) would otherwise queue one round trip each; bytes that
+ * arrive meanwhile go out merged in the next write, in order.
+ */
+function sendDesktopInput(tabId: string, data: Uint8Array, http: (data: Uint8Array) => Promise<unknown>): void {
+  const queued = desktopInput.get(tabId);
+  if (queued) {
+    const pending = queued.reduce((n, chunk) => n + chunk.length, 0);
+    if (pending + data.length > DESKTOP_INPUT_MAX_PENDING) {
+      console.warn(`terminal input dropped: ${data.length} bytes exceed the pending input cap`);
+      return;
+    }
+    queued.push(data);
+    return;
+  }
+  const chunks: Uint8Array[] = [];
+  desktopInput.set(tabId, chunks);
+  void (async () => {
+    let next: Uint8Array | null = data;
+    while (next) {
+      await http(next).catch(() => undefined);
+      next = chunks.length > 0 ? mergeInput(chunks.splice(0)) : null;
+    }
+    desktopInput.delete(tabId);
+  })();
+}
+
+function mergeInput(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) return chunks[0];
+  const merged = new Uint8Array(chunks.reduce((n, chunk) => n + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
 }
 
 export function channelIdOf(ch: unknown): string | undefined {

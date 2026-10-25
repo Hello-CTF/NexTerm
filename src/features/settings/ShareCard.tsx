@@ -6,9 +6,6 @@
 //   resolved exactly by the server (case-insensitive); the frontend needs no user directory (/admin/users is superadmin-only),
 //   and plain device owners share the same create path as superadmins; all TTL options fall within the server-side 1 minute-30 day
 //   bounds.
-// - Legacy public links (GET /share/links + /share/links/{id}/revoke): existing session links remain
-//   viewable and revocable for one compatibility cycle, but cannot be created; new public access uses
-//   the terminal's existing preview-link menu. List responses never carry tokens.
 // The server filters the list by owner/superadmin; the desktop proxies the same contracts (remote_share_*) through the
 // "account sync" link server session; logged out, a "log in to a server account to use this" guide card
 // points to the "account sync" section, and no request is issued.
@@ -18,7 +15,6 @@ import { useQuery } from "@tanstack/react-query";
 import { type FleetDevice } from "../../ipc/fleetApi";
 import {
   type HostShareView,
-  type ShareLinkView,
   type SharePermission,
 } from "../../ipc/sharingApi";
 import { useAuth } from "../auth/store";
@@ -78,7 +74,7 @@ function ShareUnsupported() {
         <span className="nx-badge nx-badge-amber">登录服务端账号后可用</span>
       </div>
       <p className="nx-hint">
-        主机分享与公开链接依赖服务端账号体系。在「设置 → 账号同步」登录服务端账号后，即可把接入的设备分享给其他注册用户并管理公开链接。
+        主机分享依赖服务端账号体系。在「设置 → 账号同步」登录服务端账号后，即可把接入的设备分享给其他注册用户。
       </p>
       <div className="mt-3">
         <button
@@ -101,7 +97,7 @@ function ShareLoginHint() {
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">分享</span>
       </div>
-      <p className="nx-hint">登录后可以把你接入的设备分享给其他注册用户，并管理已创建的公开链接。</p>
+      <p className="nx-hint">登录后可以把你接入的设备分享给其他注册用户。</p>
     </section>
   );
 }
@@ -115,7 +111,7 @@ function ShareAuthOff() {
         <span className="nx-badge nx-badge-amber">账号功能已关闭</span>
       </div>
       <p className="nx-hint">
-        这台服务器关闭了账号功能（--auth=off），终端分享不可用；主机分享与公开链接都依赖账号体系。
+        这台服务器关闭了账号功能（--auth=off），终端分享不可用；主机分享依赖账号体系。
       </p>
     </section>
   );
@@ -166,11 +162,10 @@ export function ShareCard() {
 }
 
 function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeKey: string; isAdmin: boolean }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
 
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
   const [shares, setShares] = useState<HostShareView[] | null>(null);
-  const [links, setLinks] = useState<ShareLinkView[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -198,7 +193,6 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
     accountEpoch.current += 1;
     setDevices(null);
     setShares(null);
-    setLinks(null);
     setListError(null);
     setCreateOpen(false);
     setDeviceId("");
@@ -229,14 +223,6 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       sharing.hostShares().then(
         (r) => {
           if (seq === loadSeq.current) setShares(r.shares);
-        },
-        (e: unknown) => {
-          if (seq === loadSeq.current) setListError(describeError(e));
-        },
-      ),
-      sharing.links().then(
-        (r) => {
-          if (seq === loadSeq.current) setLinks(r.links);
         },
         (e: unknown) => {
           if (seq === loadSeq.current) setListError(describeError(e));
@@ -304,33 +290,12 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
     }
   };
 
-  const revokeLink = async (link: ShareLinkView) => {
-    // The epoch must be captured before the confirmation opens (same as revokeHostShare).
-    const epoch = accountEpoch.current;
-    const ok = await ask("吊销这条公开链接？\n\n链接立即失效，持有链接的人将无法再打开对应会话。", {
-      title: "吊销公开链接",
-      kind: "warning",
-    });
-    if (!ok) return;
-    if (epoch !== accountEpoch.current) return;
-    try {
-      await sharingClient().revokeLink(link.id);
-      if (epoch !== accountEpoch.current) return;
-      pushToast("success", "已吊销公开链接");
-      load();
-    } catch (e) {
-      if (epoch !== accountEpoch.current) return;
-      pushToast("error", describeError(e));
-    }
-  };
-
   return (
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">分享</span>
         {shares !== null && <span className="nx-badge">{shares.length} 条主机分享</span>}
-        {links !== null && <span className="nx-badge">{links.length} 条旧版链接</span>}
         <div className="nx-spacer" />
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
@@ -347,7 +312,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       </div>
 
       <p className="nx-hint mb-3">
-        主机分享允许另一个注册用户在有效期内通过设备代理在你的接入设备上新建终端。旧版公开链接只能在这里查看和吊销；新的公开访问请使用终端中的「预览链接」。
+        主机分享允许另一个注册用户在有效期内通过设备代理在你的接入设备上新建终端。公开访问请使用终端中的「预览链接」。
       </p>
 
       {createOpen && (
@@ -478,46 +443,10 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
         <div className="nx-hint py-1.5 text-[11.5px]">还没有主机分享。</div>
       )}
 
-      <div className="mb-1 mt-3 text-[12.5px] text-neutral-200">旧版链接（只可吊销）</div>
-      {links !== null && links.length > 0 && (
-        <div className="max-h-[240px] overflow-y-auto rounded border border-neutral-800/60">
-          {links.map((l) => {
-            const state = shareState(l.expires_at, l.revoked_at, now);
-            const perm = permissionBadge(l.permission);
-            const canRevoke = isAdmin || l.owner_id === userId || (devices?.some((d) => d.id === l.device_id) ?? false);
-            return (
-              <div
-                key={l.id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0"
-              >
-                <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={`${deviceName(l.device_id)} · 会话 ${l.session_id}`}>
-                  {deviceName(l.device_id)} · 会话 {shortId(l.session_id)}
-                </span>
-                <span className={`nx-badge shrink-0 ${perm.tone}`}>{perm.text}</span>
-                <span className={`nx-badge shrink-0 ${state.tone}`}>{state.text}</span>
-                <span className="nx-hint min-w-0 text-[11px]">有效期至 {formatTime(l.expires_at)}</span>
-                {l.last_accessed_at !== undefined && (
-                  <span className="nx-hint min-w-0 text-[11px]">最近访问 {formatTime(l.last_accessed_at)}</span>
-                )}
-                {canRevoke && !l.revoked_at && (
-                  <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void revokeLink(l)}>
-                    吊销
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {links === null && !listError && <div className="nx-hint py-1.5 text-[11.5px]">旧版链接加载中…</div>}
-      {links !== null && links.length === 0 && !listError && (
-        <div className="nx-hint py-1.5 text-[11.5px]">还没有旧版链接。新的公开访问请使用终端中的「预览链接」。</div>
-      )}
-
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          列表由服务端按账号过滤：普通用户只能查看自己授予或接收的分享，以及自己创建的公开链接；超级管理员可查看全部。吊销立即生效；主机分享和公开链接都不会向访问者泄露主机密码或私钥。
+          列表由服务端按账号过滤：普通用户只能查看自己授予或接收的分享；超级管理员可查看全部。吊销立即生效；主机分享不会向访问者泄露主机密码或私钥。
         </div>
       </div>
       {activeShare && (

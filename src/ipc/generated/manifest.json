@@ -1350,18 +1350,6 @@
       "channel": false,
       "stream": "none"
     },
-    "remote_share_link_list": {
-      "scope": "remote",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "remote_share_link_revoke": {
-      "scope": "remote",
-      "nested": true,
-      "channel": false,
-      "stream": "none"
-    },
     "remote_share_preview_list": {
       "scope": "remote",
       "nested": false,

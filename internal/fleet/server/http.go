@@ -113,8 +113,6 @@ var fleetRoutePatterns = []string{
 	"POST /agent/sync",
 	"POST /agent/current-url",
 	"GET /ws/device",
-	"GET /share/links",
-	"POST /share/links/{id}/revoke",
 	"POST /share/host-shares",
 	"GET /share/host-shares",
 	"POST /share/host-shares/{id}/revoke",
@@ -169,18 +167,14 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ws/device", s.serveDeviceWS)
 
 	// Share management routes: account session required, writes additionally require CSRF.
-	// Legacy session links are list/revoke only; new anonymous access uses preview links.
-	session("GET /share/links", s.serveShareLinkList)
-	sessionCSRF("POST /share/links/{id}/revoke", s.serveShareLinkRevoke)
 	sessionCSRF("POST /share/host-shares", s.serveHostShareCreate)
 	session("GET /share/host-shares", s.serveHostShareList)
 	sessionCSRF("POST /share/host-shares/{id}/revoke", s.serveHostShareRevoke)
 
-	// Share data plane: legacy public links use the token as the credential (anonymously reachable, same as /device/enroll),
-	// registered share terminals require an account session; both are GET upgrades and, like the other session routes,
-	// require no CSRF. Plain GETs of public links (browser navigations) are diverted to the static
-	// SPA entry inside the handler; only the WS upgrade enters token auth.
-	mux.HandleFunc("GET /share/public/{token}", s.serveSharePublicTerminal)
+	// Share data plane: registered share terminals require an account session; like the other session routes,
+	// the GET upgrade requires no CSRF. The legacy public-link route was removed; it answers 410 for every
+	// request so an old URL can neither fall through to the SPA shell nor reach any data path.
+	mux.HandleFunc("GET /share/public/{token}", serveSharePublicGone)
 	session("GET /share/devices/{id}/terminal", s.serveShareTerminalOpen)
 }
 

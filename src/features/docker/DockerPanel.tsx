@@ -215,7 +215,8 @@ function CompactNotice({
 
 export function DockerPanel({ sessionId, visible = true }: { sessionId: string; visible?: boolean }) {
   const qc = useQueryClient();
-  const { addTab, pushToast } = useUi();
+  const addTab = useUi((s) => s.addTab);
+  const pushToast = useUi((s) => s.pushToast);
   const session = useUi((state) => state.sessions.find((entry) => entry.id === sessionId));
   const sessionStatus = session?.status;
   const sessionAssetId = session?.assetId ?? null;
@@ -1225,7 +1226,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
 
 function PullBar({ sessionId, compact }: { sessionId: string; compact: boolean }) {
   const qc = useQueryClient();
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const [image, setImage] = useState("");
   const [pulling, setPulling] = useState(false);
   const [open, setOpen] = useState(false);

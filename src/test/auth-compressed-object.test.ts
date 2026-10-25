@@ -4,10 +4,16 @@ import golden from "../../internal/sync/testdata/compressed_transcript_golden.js
 import {
   COMPRESSED_TRANSCRIPT_LABEL,
   MAX_COMPRESSED_DECODED_BYTES,
+  PACKED_TRANSCRIPT_LABEL,
+  aesGcmOpen,
   aesGcmSeal,
   base64ToBytes,
   inflateTranscriptPlaintext,
+  openSyncObject,
+  sealSyncObjectWire,
   tryOpenSyncObject,
+  unpackTranscriptBody,
+  unpackTranscriptPlaintext,
   utf8Bytes,
 } from "../features/auth/crypto";
 
@@ -45,9 +51,107 @@ async function frame(declared: bigint, body: Uint8Array, magic = "NXZ1"): Promis
   return out;
 }
 
+function objectAAD(id: string, label: string): Uint8Array {
+  return utf8Bytes(`nexterm/go/sync-object/v1\x00${id}\x00${label}`);
+}
+
+function uvarint(value: number): number[] {
+  const out: number[] = [];
+  while (value >= 0x80) {
+    out.push((value % 0x80) | 0x80);
+    value = Math.floor(value / 0x80);
+  }
+  out.push(value);
+  return out;
+}
+
+function packBody(skeleton: string, lengths: number[], data: string, slots = lengths.length, magic = "NXP1"): Uint8Array {
+  const skeletonBytes = utf8Bytes(skeleton);
+  return Uint8Array.from([
+    ...utf8Bytes(magic),
+    ...uvarint(skeletonBytes.length),
+    ...skeletonBytes,
+    ...uvarint(slots),
+    ...lengths.flatMap(uvarint),
+    ...utf8Bytes(data),
+  ]);
+}
+
+function withDeclared(packed: Uint8Array, declared: bigint, frame = packed.subarray(12)): Uint8Array {
+  const out = new Uint8Array(12 + frame.length);
+  out.set(packed.subarray(0, 4), 0);
+  new DataView(out.buffer).setBigUint64(4, declared, false);
+  out.set(frame, 12);
+  return out;
+}
+
 async function sealLabel(dek: Uint8Array, plaintext: Uint8Array, id: string, label: string): Promise<Uint8Array> {
   return aesGcmSeal(dek, plaintext, utf8Bytes(`nexterm/go/sync-object/v1\x00${id}\x00${label}`));
 }
+
+describe("packed transcript objects", () => {
+  const dek = hexBytes(golden.dekHex);
+  const plaintext = base64ToBytes(golden.plaintextB64);
+  const packedBlob = base64ToBytes(golden.packedBlobB64);
+
+  it("rebuilds the exact Go JSON from the Go-generated packed vector", async () => {
+    expect(golden.packedLabel).toBe(PACKED_TRANSCRIPT_LABEL);
+    const opened = await tryOpenSyncObject(dek, packedBlob, golden.id);
+    expect(opened.kind).toBe("transcript");
+    expect(Array.from(opened.plaintext)).toEqual(Array.from(plaintext));
+    expect(packedBlob.length).toBeLessThan(base64ToBytes(golden.compressedBlobB64).length);
+  });
+
+  it("rejects a packed blob opened with the wrong id", async () => {
+    await expect(tryOpenSyncObject(dek, packedBlob, "other")).rejects.toMatchObject({ code: "decrypt" });
+  });
+
+  it("refills empty, null-adjacent and padded slots exactly", () => {
+    const body = packBody('{"c":[{"data":""},{"data":null},{"data":""},{"data":""}],"n":"\\"data\\":\\""}', [3, 0, 2], "abcde");
+    expect(new TextDecoder().decode(unpackTranscriptBody(body))).toBe(
+      '{"c":[{"data":"YWJj"},{"data":null},{"data":""},{"data":"ZGU="}],"n":"\\"data\\":\\""}',
+    );
+  });
+
+  it("rejects malformed pack bodies", () => {
+    const skeleton = '{"c":[{"data":""},{"data":""}]}';
+    const cases: Record<string, Uint8Array> = {
+      "bad magic": packBody(skeleton, [3, 2], "abcde", 2, "XXXX"),
+      "no slots": packBody(skeleton, [], ""),
+      "slot count beyond body": packBody(skeleton, [3, 2], "abcde", 1 << 30),
+      "fewer slots declared": packBody(skeleton, [3], "abc"),
+      "more slots declared": packBody(skeleton, [3, 2, 1], "abcdef"),
+      "lengths exceed data": packBody(skeleton, [3, 9], "abcde"),
+      "trailing data": packBody(skeleton, [3, 2], "abcdez"),
+      "filled slot": packBody('{"c":[{"data":"x"},{"data":""}]}', [3, 2], "abcde"),
+      truncated: packBody(skeleton, [3, 2], "abcde").subarray(0, 8),
+    };
+    for (const [name, body] of Object.entries(cases)) {
+      expect(() => unpackTranscriptBody(body), name).toThrow(expect.objectContaining({ code: "decrypt" }));
+    }
+    expect(() => unpackTranscriptBody(packBody(skeleton, [3, 2], "abcde"), 8)).toThrow(expect.objectContaining({ code: "decrypt" }));
+  });
+
+  it("rejects lying sizes and oversized zstd windows before decoding", async () => {
+    const packed = await aesGcmOpen(dek, packedBlob, objectAAD(golden.id, PACKED_TRANSCRIPT_LABEL));
+    const declared = new DataView(packed.buffer, packed.byteOffset).getBigUint64(4, false);
+    await expect(unpackTranscriptPlaintext(packed)).resolves.toHaveLength(plaintext.length);
+    const zstdMagic = [0x28, 0xb5, 0x2f, 0xfd];
+    const cases: Record<string, Uint8Array> = {
+      "declared smaller": withDeclared(packed, declared - 1n),
+      "declared larger": withDeclared(packed, declared + 1n),
+      "declared zero": withDeclared(packed, 0n),
+      "over cap": withDeclared(packed, BigInt(MAX_COMPRESSED_DECODED_BYTES) + 1n),
+      "not zstd": withDeclared(packed, declared, utf8Bytes("not a zstd frame")),
+      "huge window": withDeclared(packed, declared, Uint8Array.from([...zstdMagic, 0x00, 0xf8, 0, 0, 0])),
+      "huge single segment": withDeclared(packed, declared, Uint8Array.from([...zstdMagic, 0xe0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f])),
+      truncated: packed.subarray(0, 30),
+    };
+    for (const [name, value] of Object.entries(cases)) {
+      await expect(unpackTranscriptPlaintext(value), name).rejects.toMatchObject({ code: "decrypt" });
+    }
+  });
+});
 
 describe("compressed transcript objects", () => {
   const dek = hexBytes(golden.dekHex);
@@ -99,5 +203,29 @@ describe("compressed transcript objects", () => {
     const opened = await tryOpenSyncObject(dek, blob, "tr-ok");
     expect(opened.plaintext).toHaveLength(2048);
     await expect(inflateTranscriptPlaintext(await frame(BigInt(body.length), body), 1024)).rejects.toMatchObject({ code: "decrypt" });
+  });
+});
+
+describe("browser transcript writer", () => {
+  const dek = new Uint8Array(32).fill(7);
+
+  it("always writes large transcripts gzip-compressed and reads them back exactly", async () => {
+    const plaintext = base64ToBytes(golden.plaintextB64);
+    const blob = await sealSyncObjectWire(dek, plaintext, "tr-w", "transcript");
+    await expect(openSyncObject(dek, blob, "tr-w", "transcript")).rejects.toMatchObject({ code: "decrypt" });
+    const packed = await aesGcmOpen(dek, blob, utf8Bytes(`nexterm/go/sync-object/v1\x00tr-w\x00${COMPRESSED_TRANSCRIPT_LABEL}`));
+    expect(packed.length).toBeLessThan(plaintext.length);
+    const opened = await tryOpenSyncObject(dek, blob, "tr-w");
+    expect(opened.kind).toBe("transcript");
+    expect(Array.from(opened.plaintext)).toEqual(Array.from(plaintext));
+  });
+
+  it("keeps tiny transcripts and other kinds under their plain label", async () => {
+    const tiny = utf8Bytes('{"id":"tr-t"}');
+    const openedTiny = await openSyncObject(dek, await sealSyncObjectWire(dek, tiny, "tr-t", "transcript"), "tr-t", "transcript");
+    expect(Array.from(openedTiny)).toEqual(Array.from(tiny));
+    const asset = utf8Bytes(JSON.stringify({ id: "a-1", note: "x".repeat(4096) }));
+    const openedAsset = await openSyncObject(dek, await sealSyncObjectWire(dek, asset, "a-1", "asset"), "a-1", "asset");
+    expect(Array.from(openedAsset)).toEqual(Array.from(asset));
   });
 });

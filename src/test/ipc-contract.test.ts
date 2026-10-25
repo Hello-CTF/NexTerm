@@ -162,7 +162,7 @@ describe("session and terminal facade IPC contracts", () => {
 });
 
 describe("remote desktop facade IPC contracts", () => {
-  it("preserves the exact envelopes for all 29 surveyed commands", async () => {
+  it("preserves the exact envelopes for all 27 surveyed commands", async () => {
     const calls = captureRpc();
     const {
       remoteAccountApi,
@@ -193,8 +193,6 @@ describe("remote desktop facade IPC contracts", () => {
       { command: "remote_share_host_create", payload: { deviceId: "device-1", recipientUsername: "alice", write: false, ttlMs: 60_000 }, invoke: () => remoteSharingApi.createHostShare({ deviceId: "device-1", recipientUsername: "alice", write: false, ttlMs: 60_000 }) },
       { command: "remote_share_host_list", payload: null, invoke: () => remoteSharingApi.hostShares() },
       { command: "remote_share_host_revoke", payload: { id: "share-1" }, invoke: () => remoteSharingApi.revokeHostShare("share-1") },
-      { command: "remote_share_link_list", payload: null, invoke: () => remoteSharingApi.links() },
-      { command: "remote_share_link_revoke", payload: { id: "link-1" }, invoke: () => remoteSharingApi.revokeLink("link-1") },
       { command: "remote_share_preview_list", payload: null, invoke: () => remoteSharingApi.previewLinks() },
       { command: "remote_share_preview_revoke", payload: { id: "preview-1" }, invoke: () => remoteSharingApi.revokePreviewLink("preview-1") },
       { command: "preview_share_active", payload: { tabId: "tab-1" }, invoke: () => remotePreviewApi.active("tab-1") },
@@ -209,12 +207,12 @@ describe("remote desktop facade IPC contracts", () => {
       },
     ];
 
-    expect(cases).toHaveLength(29);
+    expect(cases).toHaveLength(27);
     for (const [index, test] of cases.entries()) {
       await test.invoke();
       expectManifestEnvelope(calls[index], test.command, test.payload);
     }
-    expect(calls).toHaveLength(29);
+    expect(calls).toHaveLength(27);
   });
 
   it("preserves explicitly provided optional fields and clear-cloud omissions", async () => {

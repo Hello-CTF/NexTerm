@@ -7,7 +7,7 @@ import { call } from "./commands";
 import type { RemoteHostShareIdentity, RemoteMetricsRequest } from "./generated/types";
 import type { AccountLink } from "./types";
 import type { FleetBaseURLEntry, FleetDeviceList, FleetEnrollCode, FleetMetricsResponse } from "./fleetApi";
-import type { HostShareView, ShareLinkView } from "./sharingApi";
+import type { HostShareView } from "./sharingApi";
 import type { AccountDevice, AccountUser } from "./authApi";
 
 // RemoteLinkResult is the return of sync_link_set / sync_link_mfa / sync_link_reset_password:
@@ -142,11 +142,6 @@ export const remoteSharingApi = {
 
   revokeHostShare: (id: string) =>
     call("remote_share_host_revoke", { args: { id } }) as Promise<{ ok: boolean }>,
-
-  links: () => call("remote_share_link_list") as Promise<{ links: ShareLinkView[] }>,
-
-  revokeLink: (id: string) =>
-    call("remote_share_link_revoke", { args: { id } }) as Promise<{ ok: boolean }>,
 
   previewLinks: () =>
     call("remote_share_preview_list") as Promise<{ links: RemotePreviewLinkView[] }>,

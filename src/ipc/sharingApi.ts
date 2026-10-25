@@ -2,23 +2,10 @@
 // cookie and CSRF header with authApi/fleetApi (request is reused directly, 401 also goes through SESSION_EXPIRED_EVENT).
 // WEB transport only: the desktop has no account system, so the view layer shows an explicit unavailable state.
 // Contract aligned with internal/fleet/server/sharing_http.go: list/revoke responses carry no token;
-// the create entry for public links is not in this slice (provided by the realtime session side); only list and revoke live here.
 
 import { request } from "./authApi";
 
 export type SharePermission = "read" | "read_write";
-
-export interface ShareLinkView {
-  id: string;
-  owner_id: string;
-  device_id: string;
-  session_id: string;
-  permission: SharePermission;
-  created_at: number;
-  expires_at: number;
-  revoked_at?: number;
-  last_accessed_at?: number;
-}
 
 export interface HostShareView {
   id: string;
@@ -46,9 +33,4 @@ export const sharingApi = {
 
   revokeHostShare: (id: string) =>
     request<{ ok: boolean }>("POST", `/share/host-shares/${encodeURIComponent(id)}/revoke`, {}, { csrf: true }),
-
-  links: () => request<{ links: ShareLinkView[] }>("GET", "/share/links"),
-
-  revokeLink: (id: string) =>
-    request<{ ok: boolean }>("POST", `/share/links/${encodeURIComponent(id)}/revoke`, {}, { csrf: true }),
 };

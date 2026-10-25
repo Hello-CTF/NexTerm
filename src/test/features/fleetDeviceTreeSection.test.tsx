@@ -817,7 +817,7 @@ describe("DevicesView MetricsPanel reuse regression", () => {
 
     expect(card?.querySelector("polyline")).not.toBeNull();
     expect(card?.textContent).toContain("12.5%");
-    expect(card?.textContent).toContain("趋势窗口");
-    expect(card?.textContent).toContain("共 2 个采样点");
+    expect(card?.textContent).not.toContain("趋势窗口");
+    expect(card?.textContent).not.toContain("采样点");
   });
 });

@@ -25,7 +25,7 @@ type Draft =
 const BODY_PLACEHOLDER = "用 Markdown 写步骤和注意事项，例如：\n1. 先运行 nginx -t 检查配置\n2. 检查通过后再执行 systemctl reload nginx\n3. 失败时贴出报错，不要强行重启";
 
 export function SkillsCard({ api }: { api: SkillsApi }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
 
   // Entries are tagged with the api they were loaded from. A list loaded
   // for a previous owner never renders under the next owner's api, even

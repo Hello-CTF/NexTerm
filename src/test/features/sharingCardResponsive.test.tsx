@@ -78,23 +78,11 @@ const SHARE_RECEIVED = {
   permission: "read_write",
 };
 
-const LINK_ACTIVE = {
-  id: "l-1",
-  owner_id: "u-root",
-  device_id: "d-1",
-  session_id: "01J4Z8Y7K2M8N3P6Q9R1T5V9X2",
-  permission: "read",
-  created_at: NOW - 1800_000,
-  expires_at: NOW + 604_800_000,
-  last_accessed_at: NOW - 300_000,
-};
-
 function routeShareData() {
   mocks.fetch.mockImplementation(async (url: string) => {
     const u = String(url);
     if (u === "/fleet/devices") return { ok: true, status: 200, text: async () => JSON.stringify({ devices: [DAEMON_DEVICE] }) };
     if (u === "/share/host-shares") return { ok: true, status: 200, text: async () => JSON.stringify({ shares: [SHARE_GRANTED, SHARE_RECEIVED] }) };
-    if (u === "/share/links") return { ok: true, status: 200, text: async () => JSON.stringify({ links: [LINK_ACTIVE] }) };
     return { ok: false, status: 404, text: async () => JSON.stringify({ error: { code: "not_found", message: u } }) };
   });
   vi.stubGlobal("fetch", mocks.fetch);
@@ -140,7 +128,7 @@ describe("ShareCard narrow-screen row layout (M233)", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const rows = shareRows();
-    expect(rows.length).toBe(3);
+    expect(rows.length).toBe(2);
     for (const row of rows) {
       expect(row.className).toContain("flex-wrap");
       const spans = leafSpans(row);
@@ -171,9 +159,9 @@ describe("ShareCard narrow-screen row layout (M233)", () => {
     expect(nameSpan.getAttribute("title")).toBe("web-01");
 
     const rowButtons = rows.flatMap((r) => [...r.querySelectorAll("button")]);
-    expect(rowButtons.length).toBe(4);
+    expect(rowButtons.length).toBe(3);
     expect(rowButtons.filter((button) => button.textContent?.trim() === "打开终端")).toHaveLength(1);
-    expect(rowButtons.filter((button) => button.textContent?.trim() === "吊销")).toHaveLength(3);
+    expect(rowButtons.filter((button) => button.textContent?.trim() === "吊销")).toHaveLength(2);
     for (const button of rowButtons) {
       expect(button.className).toContain("shrink-0");
     }

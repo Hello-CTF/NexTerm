@@ -59,8 +59,16 @@ func newDeviceAgent(db *gorm.DB, opts ...gen.DOOption) deviceAgent {
 		},
 		Device: struct {
 			field.RelationField
+			User struct {
+				field.RelationField
+			}
 		}{
 			RelationField: field.NewRelation("Credential.Device", "model.UserDevice"),
+			User: struct {
+				field.RelationField
+			}{
+				RelationField: field.NewRelation("Credential.Device.User", "model.AppUser"),
+			},
 		},
 	}
 
@@ -263,6 +271,9 @@ type deviceAgentBelongsToCredential struct {
 	}
 	Device struct {
 		field.RelationField
+		User struct {
+			field.RelationField
+		}
 	}
 }
 

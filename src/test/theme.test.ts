@@ -4,9 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMatchMediaStub } from "./setup";
 import { flush } from "./features/reactTestUtils";
 
-vi.mock("../features/sharing/PublicShareApp", () => ({
-  PublicShareApp: () => "public share",
-}));
 vi.mock("../features/sharing/PublicPreviewApp", () => ({
   PublicPreviewApp: () => "public preview",
 }));
@@ -210,7 +207,6 @@ describe("public entries", () => {
   });
 
   for (const [pathname, heading] of [
-    ["/share/public/theme-token", "public share"],
     ["/share/preview/theme-token", "public preview"],
   ] as const) {
     it(`forces dark while mounting ${pathname}`, async () => {

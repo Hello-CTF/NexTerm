@@ -285,25 +285,40 @@ export async function openSyncObject(dek: Uint8Array, blob: Uint8Array, id: stri
   return aesGcmOpen(dek, blob, objectAAD(id, kind));
 }
 
-// Compressed transcripts (internal/sync/object_compress.go): the AAD label is "transcript.gzip" and the sealed
-// plaintext is "NXZ1" | uint64 BE decoded size | gzip stream. The legacy "transcript.zstd" label is deliberately not
-// read here (no zstd decoder is shipped); such an object fails as undecryptable and is quarantined visibly.
+// Compressed transcripts (internal/sync/object_compress.go). Both labels seal "NXZ1" | uint64 BE decoded size | stream.
+// "transcript.gzip" carries a gzip stream of the logical JSON. "transcript.zpack" carries a zstd frame of a pack body:
+// the JSON skeleton with every chunk "data" string emptied, followed by the raw chunk bytes; refilling each string
+// with the base64 of its bytes rebuilds the exact JSON, so payload hashes match the Go side. The legacy
+// "transcript.zstd" label is deliberately not read here; such an object fails as undecryptable and is quarantined
+// visibly.
 export const COMPRESSED_TRANSCRIPT_LABEL = "transcript.gzip";
+export const PACKED_TRANSCRIPT_LABEL = "transcript.zpack";
 // Must equal maxSyncObjectBytes in internal/sync.
 export const MAX_COMPRESSED_DECODED_BYTES = 96 << 20;
 const COMPRESSED_MAGIC = "NXZ1";
 const COMPRESSED_HEADER_BYTES = 12;
+const PACK_MAGIC = "NXP1";
+// Matches the Go decoder's window cap; fzstd allocates the declared window up front, so it is checked first.
+const MAX_ZSTD_WINDOW_BYTES = 64 << 20;
+const PACK_SLOT = utf8Bytes(`"data":"`);
+const QUOTE = 0x22;
 
-export async function inflateTranscriptPlaintext(packed: Uint8Array, maxDecoded = MAX_COMPRESSED_DECODED_BYTES): Promise<Uint8Array> {
-  const bad = () => new CryptoError("decrypt", "同步对象压缩数据不合法");
-  if (packed.length <= COMPRESSED_HEADER_BYTES) throw bad();
+const badCompressed = () => new CryptoError("decrypt", "同步对象压缩数据不合法");
+
+function compressedDeclaredSize(packed: Uint8Array, maxDecoded: number): number {
+  if (packed.length <= COMPRESSED_HEADER_BYTES) throw badCompressed();
   for (let i = 0; i < COMPRESSED_MAGIC.length; i++) {
-    if (packed[i] !== COMPRESSED_MAGIC.charCodeAt(i)) throw bad();
+    if (packed[i] !== COMPRESSED_MAGIC.charCodeAt(i)) throw badCompressed();
   }
   const view = new DataView(packed.buffer, packed.byteOffset, packed.byteLength);
-  const declaredBig = view.getBigUint64(COMPRESSED_MAGIC.length, false);
-  if (declaredBig === 0n || declaredBig > BigInt(maxDecoded)) throw bad();
-  const declared = Number(declaredBig);
+  const declared = view.getBigUint64(COMPRESSED_MAGIC.length, false);
+  if (declared === 0n || declared > BigInt(maxDecoded)) throw badCompressed();
+  return Number(declared);
+}
+
+export async function inflateTranscriptPlaintext(packed: Uint8Array, maxDecoded = MAX_COMPRESSED_DECODED_BYTES): Promise<Uint8Array> {
+  const bad = badCompressed;
+  const declared = compressedDeclaredSize(packed, maxDecoded);
   if (typeof DecompressionStream === "undefined") {
     throw new CryptoError("crypto", "当前浏览器不支持解压同步对象");
   }
@@ -338,6 +353,197 @@ export async function inflateTranscriptPlaintext(packed: Uint8Array, maxDecoded 
   return out;
 }
 
+// zstdWindowBytes reads the window a zstd frame header asks the decoder to allocate (RFC 8878 section 3.1.1.1).
+function zstdWindowBytes(frame: Uint8Array): number {
+  if (frame.length < 6 || frame[0] !== 0x28 || frame[1] !== 0xb5 || frame[2] !== 0x2f || frame[3] !== 0xfd) throw badCompressed();
+  const descriptor = frame[4];
+  const singleSegment = (descriptor & 0x20) !== 0;
+  if (!singleSegment) {
+    const windowDescriptor = frame[5];
+    const base = 2 ** (10 + (windowDescriptor >> 3));
+    return base + (base / 8) * (windowDescriptor & 7);
+  }
+  const dictionaryBytes = [0, 1, 2, 4][descriptor & 3];
+  const sizeBytes = [1, 2, 4, 8][descriptor >> 6];
+  const at = 5 + dictionaryBytes;
+  if (frame.length < at + sizeBytes) throw badCompressed();
+  let size = 0;
+  for (let i = sizeBytes - 1; i >= 0; i--) size = size * 256 + frame[at + i];
+  return sizeBytes === 2 ? size + 256 : size;
+}
+
+async function zstdDecodeExact(frame: Uint8Array, declared: number): Promise<Uint8Array> {
+  // The window is bounded by the declared output as well, so a frame cannot make the decoder allocate more than the
+  // body it claims to produce.
+  if (zstdWindowBytes(frame) > Math.min(MAX_ZSTD_WINDOW_BYTES, Math.max(declared, 1 << 10))) throw badCompressed();
+  const { Decompress } = await import("fzstd");
+  const out = new Uint8Array(declared);
+  let filled = 0;
+  const stream = new Decompress((chunk) => {
+    if (filled + chunk.length > declared) throw badCompressed();
+    out.set(chunk, filled);
+    filled += chunk.length;
+  });
+  try {
+    stream.push(frame, true);
+  } catch (error) {
+    throw error instanceof CryptoError ? error : badCompressed();
+  }
+  if (filled !== declared) throw badCompressed();
+  return out;
+}
+
+function indexOfBytes(haystack: Uint8Array, needle: Uint8Array, from: number): number {
+  const last = haystack.length - needle.length;
+  outer: for (let i = from; i <= last; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+const BASE64_ALPHABET = utf8Bytes("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
+
+function writeBase64(out: Uint8Array, at: number, data: Uint8Array): number {
+  let i = 0;
+  for (; i + 2 < data.length; i += 3) {
+    const n = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+    out[at++] = BASE64_ALPHABET[n >> 18];
+    out[at++] = BASE64_ALPHABET[(n >> 12) & 63];
+    out[at++] = BASE64_ALPHABET[(n >> 6) & 63];
+    out[at++] = BASE64_ALPHABET[n & 63];
+  }
+  const remaining = data.length - i;
+  if (remaining > 0) {
+    const n = (data[i] << 16) | (remaining === 2 ? data[i + 1] << 8 : 0);
+    out[at++] = BASE64_ALPHABET[n >> 18];
+    out[at++] = BASE64_ALPHABET[(n >> 12) & 63];
+    out[at++] = remaining === 2 ? BASE64_ALPHABET[(n >> 6) & 63] : 0x3d;
+    out[at++] = 0x3d;
+  }
+  return at;
+}
+
+// unpackTranscriptBody mirrors unpackTranscriptBody in internal/sync/object_compress.go.
+export function unpackTranscriptBody(body: Uint8Array, maxDecoded = MAX_COMPRESSED_DECODED_BYTES): Uint8Array {
+  const bad = badCompressed;
+  for (let i = 0; i < PACK_MAGIC.length; i++) {
+    if (body[i] !== PACK_MAGIC.charCodeAt(i)) throw bad();
+  }
+  let at = PACK_MAGIC.length;
+  const readLength = (): number => {
+    let value = 0;
+    for (let shift = 0; shift < 35; shift += 7) {
+      if (at >= body.length) throw bad();
+      const byte = body[at++];
+      value += (byte & 0x7f) * 2 ** shift;
+      if (byte < 0x80) {
+        if (value > body.length) throw bad();
+        return value;
+      }
+    }
+    throw bad();
+  };
+  const skeletonLength = readLength();
+  if (skeletonLength > body.length - at) throw bad();
+  const skeleton = body.subarray(at, at + skeletonLength);
+  at += skeletonLength;
+  const slots = readLength();
+  if (slots === 0 || slots > body.length - at) throw bad();
+  const lengths: number[] = [];
+  let total = skeleton.length;
+  let dataBytes = 0;
+  for (let i = 0; i < slots; i++) {
+    const length = readLength();
+    lengths.push(length);
+    dataBytes += length;
+    total += Math.ceil(length / 3) * 4;
+    if (dataBytes > body.length - at || total > maxDecoded) throw bad();
+  }
+  if (dataBytes !== body.length - at) throw bad();
+  const out = new Uint8Array(total);
+  let written = 0;
+  let from = 0;
+  for (const length of lengths) {
+    const slot = indexOfBytes(skeleton, PACK_SLOT, from);
+    const open = slot + PACK_SLOT.length;
+    if (slot < 0 || open >= skeleton.length || skeleton[open] !== QUOTE) throw bad();
+    out.set(skeleton.subarray(from, open), written);
+    written = writeBase64(out, written + open - from, body.subarray(at, at + length));
+    at += length;
+    from = open;
+  }
+  if (indexOfBytes(skeleton, PACK_SLOT, from) >= 0) throw bad();
+  out.set(skeleton.subarray(from), written);
+  return out;
+}
+
+export async function unpackTranscriptPlaintext(packed: Uint8Array, maxDecoded = MAX_COMPRESSED_DECODED_BYTES): Promise<Uint8Array> {
+  const declared = compressedDeclaredSize(packed, maxDecoded);
+  const body = await zstdDecodeExact(packed.subarray(COMPRESSED_HEADER_BYTES), declared);
+  return unpackTranscriptBody(body, maxDecoded);
+}
+
+// Below this size the gzip framing is not worth a format change (compressMinBytes in Go).
+const COMPRESS_MIN_BYTES = 1 << 10;
+
+async function gzipTranscriptPlaintext(plaintext: Uint8Array): Promise<Uint8Array | null> {
+  if (typeof CompressionStream === "undefined") {
+    throw new CryptoError("crypto", "当前浏览器不支持压缩同步对象");
+  }
+  const deflater = new CompressionStream("gzip");
+  const writer = deflater.writable.getWriter();
+  void writer.write(plaintext as unknown as BufferSource).catch(() => undefined);
+  void writer.close().catch(() => undefined);
+  const reader = deflater.readable.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    size += value.length;
+  }
+  const gzipped = new Uint8Array(size);
+  let offset = 0;
+  for (const part of parts) {
+    gzipped.set(part, offset);
+    offset += part.length;
+  }
+  if (COMPRESSED_HEADER_BYTES + gzipped.length >= plaintext.length) return null;
+  const packed = new Uint8Array(COMPRESSED_HEADER_BYTES + gzipped.length);
+  for (let i = 0; i < COMPRESSED_MAGIC.length; i++) packed[i] = COMPRESSED_MAGIC.charCodeAt(i);
+  new DataView(packed.buffer).setBigUint64(COMPRESSED_MAGIC.length, BigInt(plaintext.length), false);
+  packed.set(gzipped, COMPRESSED_HEADER_BYTES);
+  return packed;
+}
+
+// sealSyncObjectWire is the upload writer: transcripts are always gzip-compressed (the browser has no zstd encoder for
+// the zpack layout); only tiny or incompressible transcripts and other kinds keep their plain label.
+export async function sealSyncObjectWire(dek: Uint8Array, plaintext: Uint8Array, id: string, kind: SyncObjectKind): Promise<Uint8Array> {
+  if (kind === "transcript" && plaintext.length >= COMPRESS_MIN_BYTES && plaintext.length <= MAX_COMPRESSED_DECODED_BYTES) {
+    const packed = await gzipTranscriptPlaintext(plaintext);
+    if (packed) {
+      if (dek.length !== DEK_LENGTH) {
+        throw new CryptoError("crypto", "加密失败：数据密钥长度无效");
+      }
+      return aesGcmSeal(dek, packed, objectAAD(id, COMPRESSED_TRANSCRIPT_LABEL));
+    }
+  }
+  return sealSyncObject(dek, plaintext, id, kind);
+}
+
+async function openCompressedLabel(dek: Uint8Array, blob: Uint8Array, id: string, label: string): Promise<Uint8Array | null> {
+  try {
+    return await aesGcmOpen(dek, blob, objectAAD(id, label));
+  } catch (error) {
+    if (!(error instanceof CryptoError && error.code === "decrypt")) throw error;
+    return null;
+  }
+}
+
 // tryOpenSyncObject tries decryption across the fixed kind enum; if all fail, the key does not match or the data was tampered with.
 export async function tryOpenSyncObject(
   dek: Uint8Array,
@@ -352,14 +558,13 @@ export async function tryOpenSyncObject(
       if (!(error instanceof CryptoError && error.code === "decrypt")) throw error;
     }
   }
-  let packed: Uint8Array | null = null;
-  try {
-    packed = await aesGcmOpen(dek, blob, objectAAD(id, COMPRESSED_TRANSCRIPT_LABEL));
-  } catch (error) {
-    if (!(error instanceof CryptoError && error.code === "decrypt")) throw error;
-  }
+  const packed = await openCompressedLabel(dek, blob, id, PACKED_TRANSCRIPT_LABEL);
   if (packed) {
-    return { kind: "transcript", plaintext: await inflateTranscriptPlaintext(packed) };
+    return { kind: "transcript", plaintext: await unpackTranscriptPlaintext(packed) };
+  }
+  const gzipped = await openCompressedLabel(dek, blob, id, COMPRESSED_TRANSCRIPT_LABEL);
+  if (gzipped) {
+    return { kind: "transcript", plaintext: await inflateTranscriptPlaintext(gzipped) };
   }
   throw new CryptoError("decrypt", "解密失败（密钥不匹配或数据损坏）");
 }

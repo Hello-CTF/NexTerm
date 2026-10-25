@@ -12,7 +12,7 @@ export function VaultInitModal({
   onClose: () => void;
   onInitialized: () => void;
 }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 

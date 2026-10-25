@@ -58,7 +58,6 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		RunEventRow:             newRunEventRow(db, opts...),
 		RunRow:                  newRunRow(db, opts...),
 		Setting:                 newSetting(db, opts...),
-		ShareLink:               newShareLink(db, opts...),
 		SharePreviewLink:        newSharePreviewLink(db, opts...),
 		SnippetRow:              newSnippetRow(db, opts...),
 		SyncCredential:          newSyncCredential(db, opts...),
@@ -122,7 +121,6 @@ type Query struct {
 	RunEventRow             runEventRow
 	RunRow                  runRow
 	Setting                 setting
-	ShareLink               shareLink
 	SharePreviewLink        sharePreviewLink
 	SnippetRow              snippetRow
 	SyncCredential          syncCredential
@@ -143,6 +141,8 @@ type Query struct {
 }
 
 func (q *Query) Available() bool { return q.db != nil }
+
+func (q *Query) UnderlyingDB() *gorm.DB { return q.db }
 
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
@@ -187,7 +187,6 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		RunEventRow:             q.RunEventRow.clone(db),
 		RunRow:                  q.RunRow.clone(db),
 		Setting:                 q.Setting.clone(db),
-		ShareLink:               q.ShareLink.clone(db),
 		SharePreviewLink:        q.SharePreviewLink.clone(db),
 		SnippetRow:              q.SnippetRow.clone(db),
 		SyncCredential:          q.SyncCredential.clone(db),
@@ -209,11 +208,11 @@ func (q *Query) clone(db *gorm.DB) *Query {
 }
 
 func (q *Query) ReadDB() *Query {
-	return q.ReplaceDB(q.db.Clauses(dbresolver.Read))
+	return q.clone(q.db.Clauses(dbresolver.Read))
 }
 
 func (q *Query) WriteDB() *Query {
-	return q.ReplaceDB(q.db.Clauses(dbresolver.Write))
+	return q.clone(q.db.Clauses(dbresolver.Write))
 }
 
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
@@ -259,7 +258,6 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		RunEventRow:             q.RunEventRow.replaceDB(db),
 		RunRow:                  q.RunRow.replaceDB(db),
 		Setting:                 q.Setting.replaceDB(db),
-		ShareLink:               q.ShareLink.replaceDB(db),
 		SharePreviewLink:        q.SharePreviewLink.replaceDB(db),
 		SnippetRow:              q.SnippetRow.replaceDB(db),
 		SyncCredential:          q.SyncCredential.replaceDB(db),
@@ -321,7 +319,6 @@ type queryCtx struct {
 	RunEventRow             *runEventRowDo
 	RunRow                  *runRowDo
 	Setting                 *settingDo
-	ShareLink               *shareLinkDo
 	SharePreviewLink        *sharePreviewLinkDo
 	SnippetRow              *snippetRowDo
 	SyncCredential          *syncCredentialDo
@@ -383,7 +380,6 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		RunEventRow:             q.RunEventRow.WithContext(ctx),
 		RunRow:                  q.RunRow.WithContext(ctx),
 		Setting:                 q.Setting.WithContext(ctx),
-		ShareLink:               q.ShareLink.WithContext(ctx),
 		SharePreviewLink:        q.SharePreviewLink.WithContext(ctx),
 		SnippetRow:              q.SnippetRow.WithContext(ctx),
 		SyncCredential:          q.SyncCredential.WithContext(ctx),

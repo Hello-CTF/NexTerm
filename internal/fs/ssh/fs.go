@@ -47,6 +47,8 @@ func ClientOptions() []sftp.ClientOption {
 
 const (
 	maxConcurrentRequests = 64
+	// listLinkConcurrency bounds in-flight ReadLink requests while listing.
+	listLinkConcurrency = 32
 	// sftpPacketSize is the default pkg/sftp payload size; a Write of at most this
 	// size is always a single request.
 	sftpPacketSize = 32 << 10
@@ -67,7 +69,7 @@ func (f *FS) List(ctx context.Context, remotePath string) ([]base.FileEntry, err
 	if err != nil {
 		return nil, err
 	}
-	infos, err := f.client.ReadDir(remotePath)
+	infos, err := f.client.ReadDirContext(ctx, remotePath)
 	if err != nil {
 		return nil, fmt.Errorf("SFTP list %s: %w", remotePath, err)
 	}
@@ -76,14 +78,9 @@ func (f *FS) List(ctx context.Context, remotePath string) ([]base.FileEntry, err
 		if info.Name() == "." || info.Name() == ".." {
 			continue
 		}
-		entry := fileEntry(info, path.Join(remotePath, info.Name()))
-		if entry.Kind == base.FileSymlink {
-			if target, err := f.client.ReadLink(entry.Path); err == nil {
-				entry.SymlinkTarget = target
-			}
-		}
-		entries = append(entries, entry)
+		entries = append(entries, fileEntry(info, path.Join(remotePath, info.Name())))
 	}
+	f.resolveSymlinks(ctx, entries)
 	sort.Slice(entries, func(i, j int) bool {
 		if (entries[i].Kind == base.FileDirectory) != (entries[j].Kind == base.FileDirectory) {
 			return entries[i].Kind == base.FileDirectory
@@ -91,6 +88,34 @@ func (f *FS) List(ctx context.Context, remotePath string) ([]base.FileEntry, err
 		return entries[i].Name < entries[j].Name
 	})
 	return entries, ctx.Err()
+}
+
+// resolveSymlinks fills SymlinkTarget for symlink entries. The SFTP client
+// multiplexes requests, so overlapping the ReadLink calls turns N round trips
+// into roughly N/listLinkConcurrency. Failed lookups leave the target empty.
+func (f *FS) resolveSymlinks(ctx context.Context, entries []base.FileEntry) {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, listLinkConcurrency)
+	for i := range entries {
+		if entries[i].Kind != base.FileSymlink {
+			continue
+		}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		}
+		wg.Add(1)
+		go func(entry *base.FileEntry) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if target, err := f.client.ReadLink(entry.Path); err == nil {
+				entry.SymlinkTarget = target
+			}
+		}(&entries[i])
+	}
+	wg.Wait()
 }
 
 func (f *FS) ReadFile(ctx context.Context, remotePath string, maxBytes int64) ([]byte, error) {

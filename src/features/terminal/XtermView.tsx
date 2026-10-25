@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { attachLazyAddons, scheduleWebglRenderer } from "./xtermAddons";
+import { attachImeTextInput } from "./imeTextInput";
 import "@xterm/xterm/css/xterm.css";
 
 import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen, sendChannelInput } from "../../ipc/events";
@@ -214,6 +215,7 @@ export function XtermView(props: XtermViewProps) {
     });
     termRef.current = term;
     term.open(hostRef.current);
+    const detachImeTextInput = attachImeTextInput(term, hostRef.current);
     // xterm always preventDefault + stopPropagation on keys it handles, so window-level listeners
     // receive no keys while the terminal is focused; keys matching app-level keybindings are let through here,
     // bubbling to window for App to handle.
@@ -1262,6 +1264,7 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("touchstart", trackTouch, true);
       pasteHost.removeEventListener("touchmove", trackTouch, true);
       dataDisposable.dispose();
+      detachImeTextInput();
       scrollDisposable.dispose();
       titleDisposable.dispose();
       selectionDisposable.dispose();

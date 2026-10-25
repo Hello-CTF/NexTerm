@@ -711,8 +711,9 @@ function rejectStaleRestore(latest: PersistedLayout | null): void {
   if (pendingRestore) void reviewPendingLayoutRestore();
 }
 
-export async function finishLayoutRestore(): Promise<void> {
-  if (!previewRestore || restoreCommitInFlight) return;
+// Resolves true only when the previewed layout was accepted and written to the account.
+export async function finishLayoutRestore(): Promise<boolean> {
+  if (!previewRestore || restoreCommitInFlight) return false;
   const preview = previewRestore;
   const epoch = accountEpoch;
   const token = ++restoreCommitToken;
@@ -720,31 +721,31 @@ export async function finishLayoutRestore(): Promise<void> {
   try {
     if (preview.revision !== revision || pendingRestore) {
       rejectStaleRestore(pendingRestore ?? preview.remote);
-      return;
+      return false;
     }
     // Check the server again before accepting; events can arrive after the user clicks Finish.
     const latest = await layoutApi.get();
-    if (epoch !== accountEpoch || previewRestore !== preview) return;
+    if (epoch !== accountEpoch || previewRestore !== preview) return false;
     revision = latest.revision;
     if (latest.revision !== preview.revision || pendingRestore) {
       rejectStaleRestore(pendingRestore ?? sanitizeLayout(latest.data));
-      return;
+      return false;
     }
     const current = serializeLayout(useUi.getState());
-    if (!current) return;
+    if (!current) return false;
     const candidate = projectSharedLayout(current, baseLayout);
     const saved = await layoutApi.put(JSON.stringify(candidate), preview.revision);
-    if (epoch !== accountEpoch || previewRestore !== preview) return;
+    if (epoch !== accountEpoch || previewRestore !== preview) return false;
     if (saved.conflict) {
       const fresh = await layoutApi.get();
-      if (epoch !== accountEpoch || previewRestore !== preview) return;
+      if (epoch !== accountEpoch || previewRestore !== preview) return false;
       revision = fresh.revision;
       rejectStaleRestore(sanitizeLayout(fresh.data));
-      return;
+      return false;
     }
     if (revision > saved.revision) {
       rejectStaleRestore(pendingRestore);
-      return;
+      return false;
     }
     revision = saved.revision;
     setSyncedBase(candidate);
@@ -754,10 +755,12 @@ export async function finishLayoutRestore(): Promise<void> {
     restorePaused = false;
     notifyRestoreChanged();
     await flushLayout();
+    return true;
   } catch (e) {
     if (epoch === accountEpoch && previewRestore === preview) {
       useUi.getState().pushToast("error", `完成布局恢复失败：${describeError(e)}`);
     }
+    return false;
   } finally {
     if (token === restoreCommitToken) restoreCommitInFlight = false;
   }

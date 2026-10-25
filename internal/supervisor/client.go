@@ -617,8 +617,11 @@ type Stream struct {
 	exitErr    error
 	dead       bool
 	userClosed bool
-	readErr    error
-	pending    bool
+	// killed is set once the supervisor confirmed a Kill: input it rejects
+	// afterwards is a consequence of that kill, not a close failure.
+	killed  bool
+	readErr error
+	pending bool
 
 	resp      chan clientFrame
 	newData   chan struct{}
@@ -636,7 +639,11 @@ type Stream struct {
 	inflight      []int
 	inflightBytes int
 	inputErr      error
-	inputWake     chan struct{}
+	// inputErrUnacked is inflightBytes when inputErr was recorded: input sent
+	// before the rejection was answered is not counted as written, however
+	// late the writer observes it.
+	inputErrUnacked int
+	inputWake       chan struct{}
 
 	// Output credit (output_credit). retired counts stream bytes the consumer
 	// has read or skipped; creditSent is what the server has been told.
@@ -813,6 +820,7 @@ func (s *Stream) awaitInputAcks(ctx context.Context, sent int) (int, error) {
 		unacked := min(s.inflightBytes, sent)
 		if s.inputErr != nil {
 			err := s.inputErr
+			unacked = min(s.inputErrUnacked, sent)
 			s.mu.Unlock()
 			return sent - unacked, err
 		}
@@ -964,6 +972,7 @@ func (s *Stream) handleInputAck(payload []byte) error {
 	case ack.Error != nil:
 		if s.inputErr == nil {
 			s.inputErr = decodedError(*ack.Error)
+			s.inputErrUnacked = s.inflightBytes
 		}
 	case ack.Written != size:
 		return fmt.Errorf("%w: input acknowledgement of %d bytes for a %d-byte frame", ErrProtocol, ack.Written, size)
@@ -1078,6 +1087,9 @@ func (s *Stream) Kill(ctx context.Context) error {
 	if kind != frameOK {
 		return protocolMismatch(kind)
 	}
+	s.mu.Lock()
+	s.killed = true
+	s.mu.Unlock()
 	return s.Close()
 }
 
@@ -1165,6 +1177,7 @@ func (s *Stream) Close() error {
 		}
 		s.mu.Lock()
 		readErr := s.readErr
+		killed := s.killed
 		s.mu.Unlock()
 		s.writeMu.Lock()
 		detachErr := writeFrame(s.conn.conn, frameDetach, []byte("{}"))
@@ -1177,7 +1190,7 @@ func (s *Stream) Close() error {
 			s.closeErr = readErr
 		case droppedErr != nil:
 			s.closeErr = droppedErr
-		case inputErr != nil && !errors.Is(inputErr, base.ErrDisconnected) && !errors.Is(inputErr, ErrExited):
+		case inputErr != nil && !killed && !errors.Is(inputErr, base.ErrDisconnected) && !errors.Is(inputErr, ErrExited):
 			// Input rejected because the session ended is not a close failure:
 			// the exit itself is reported by Wait and by later writes.
 			s.closeErr = inputErr

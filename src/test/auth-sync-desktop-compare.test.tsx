@@ -101,21 +101,21 @@ afterEach(() => {
 describe("desktop sync console row-by-row comparison", () => {
   it("loads the comparison on mount and renders the summary, cloud object count, and row badges", async () => {
     mounted = mountSyncCard();
-    await flushUntil(() => mocks.compare.mock.calls.length > 0 && text().includes("共 2 条"));
+    await flushUntil(() => mocks.compare.mock.calls.length > 0 && text().includes("差异 1 条"));
     expect(mocks.compare).toHaveBeenCalledTimes(1);
     expect(text()).toContain("服务端 2 个对象");
-    expect(text()).toContain("共 2 条 · 一致 1 条 · 差异 1 条");
+    expect(text()).toContain("资产 1 · 分组 1 — 差异 1 条");
 
     clickButton(mounted.container, "对比详情");
-    await flushUntil(() => text().includes("web-01"));
-    expect(text()).toContain("已一致");
-    expect(text()).toContain("生产环境");
+    await flushUntil(() => text().includes("生产环境"));
+    expect(text()).not.toContain("web-01");
+    expect(text()).not.toContain("已一致");
     expect(text()).toContain("仅本机");
   });
 
   it("refreshes the comparison and renders the latest rows", async () => {
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("共 2 条"));
+    await flushUntil(() => text().includes("差异 1 条"));
     mocks.compare.mockResolvedValue({
       rows: [{ id: "s1", kind: "snippet", name: "部署片段", state: "remote-newer", updatedAtRemote: 300 }],
       remote: 3,
@@ -137,7 +137,7 @@ describe("desktop sync console row-by-row comparison", () => {
 
     mocks.compare.mockResolvedValue({ rows: FIRST_ROWS, remote: 2, warnings: [] });
     clickButton(mounted.container, "重试");
-    await flushUntil(() => text().includes("共 2 条"));
+    await flushUntil(() => text().includes("差异 1 条"));
     expect(text()).not.toContain("对比读取失败");
     expect(mocks.compare.mock.calls.length).toBe(2);
   });
@@ -159,7 +159,7 @@ describe("desktop sync console row-by-row comparison", () => {
       warnings: [],
     });
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("共 1 条"));
+    await flushUntil(() => text().includes("差异 1 条"));
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => text().includes("无法解密"));
   });

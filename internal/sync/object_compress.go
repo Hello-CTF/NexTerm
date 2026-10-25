@@ -3,6 +3,7 @@ package sync
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -21,15 +22,25 @@ import (
 // version map the label back to KindTranscript and hand the logical JSON to the unchanged apply path, so payload
 // hashes and LWW decisions never depend on how an object was encoded on the wire.
 //
-// Two labels exist. wireKindTranscriptGzip is what the writer emits: the browser client reads it with the platform
-// DecompressionStream("gzip") at no bundle cost (measured about 5 percent larger than zstd on terminal output, at
-// similar speed). wireKindTranscriptZstd stays readable for objects written by builds that emitted it; the browser
-// and syncv2-helper do not read it and fail visibly.
+// wireKindTranscriptPack is what the writer emits. Compressing the logical JSON wastes most of the gain because chunk
+// bytes travel as base64, which hides their redundancy, so the pack layout splits the JSON into a skeleton whose chunk
+// "data" strings are emptied and the decoded chunk bytes stored back to back, and compresses the whole body as one
+// zstd stream. Readers refill each emptied string with the base64 of its bytes and get the original JSON byte for
+// byte. wireKindTranscriptGzip and wireKindTranscriptZstd compress the JSON itself; builds that emitted them remain
+// readable.
 //
-// Sealed plaintext layout: "NXZ1" | uint64 big-endian decoded size | gzip stream (or zstd frame for the zstd label).
+// Sealed plaintext layout: "NXZ1" | uint64 big-endian decoded size | zstd frame (gzip stream for the gzip label).
+// The decoded pack body is "NXP1" | uvarint skeleton length | skeleton | uvarint slot count | one uvarint byte length
+// per slot | the slot bytes concatenated; every other label decodes straight to the logical JSON.
 const (
+	wireKindTranscriptPack = "transcript.zpack"
 	wireKindTranscriptGzip = "transcript.gzip"
 	wireKindTranscriptZstd = "transcript.zstd"
+
+	packMagic = "NXP1"
+	// packWindowSize bounds the zstd history a reader must hold; repeated prompts and command output within a
+	// window this size are what make the single stream smaller than per-block compression.
+	packWindowSize = 8 << 20
 
 	compressedMagic      = "NXZ1"
 	compressedHeaderSize = len(compressedMagic) + 8
@@ -39,15 +50,10 @@ const (
 	compressedMaxDecoded = maxApplyObjectBytes
 )
 
-// DefaultTranscriptCompression is the writer default. Readers always understand the compressed form; enabling the
-// writer is a second rollout phase because devices that predate the reader cannot open these objects.
-//
-// Rollout: (1) ship the readers (Go engine, browser crypto.ts, syncv2-helper) and let them reach every device and
-// browser of the account; (2) only then switch the writer on per account via Engine.SetTranscriptCompression. The
-// device registry (user_device) carries no per-device capability today and browser sessions are not devices, so the
-// engine cannot prove "every peer can read" automatically; the switch is therefore a deliberate manual step. A device
-// that cannot read the label quarantines the object with a visible decrypt failure, never an empty transcript.
-const DefaultTranscriptCompression = false
+// Transcripts are always written compressed: the Go engine packs them as "transcript.zpack" and the browser writes
+// "transcript.gzip". Only payloads too small or not shaped for packing keep the plain transcript label. Devices that
+// predate the compressed readers cannot open these objects; they quarantine them with a visible decrypt failure,
+// never an empty transcript.
 
 var (
 	errCompressedFormat = errors.New("invalid compressed sync object")
@@ -56,7 +62,140 @@ var (
 
 	zstdEncoders stdsync.Pool
 	zstdDecoders stdsync.Pool
+	packEncoders stdsync.Pool
+
+	// packSlotPrefix only matches a "data" key followed by a string value: inside JSON strings quotes are escaped,
+	// so the pattern cannot occur within a value.
+	packSlotPrefix = []byte(`"data":"`)
 )
+
+func acquirePackEncoder() (*zstd.Encoder, error) {
+	if pooled, ok := packEncoders.Get().(*zstd.Encoder); ok {
+		return pooled, nil
+	}
+	return zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1), zstd.WithEncoderLevel(zstd.SpeedBetterCompression), zstd.WithWindowSize(packWindowSize))
+}
+
+// packTranscriptPlaintext returns the pack layout, or nil when the payload cannot be packed exactly or packing is
+// not worthwhile; the caller then seals the logical JSON unchanged.
+func packTranscriptPlaintext(plaintext []byte) ([]byte, error) {
+	if len(plaintext) < compressMinBytes || len(plaintext) > compressedMaxDecoded {
+		return nil, nil
+	}
+	skeleton := make([]byte, 0, len(plaintext)/8)
+	data := make([]byte, 0, len(plaintext)*3/4)
+	var lengths []int
+	rest := plaintext
+	for {
+		at := bytes.Index(rest, packSlotPrefix)
+		if at < 0 {
+			skeleton = append(skeleton, rest...)
+			break
+		}
+		start := at + len(packSlotPrefix)
+		end := bytes.IndexByte(rest[start:], '"')
+		if end < 0 {
+			return nil, nil
+		}
+		decoded, err := base64.StdEncoding.AppendDecode(data, rest[start:start+end])
+		if err != nil {
+			return nil, nil
+		}
+		lengths = append(lengths, len(decoded)-len(data))
+		data = decoded
+		skeleton = append(skeleton, rest[:start]...)
+		rest = rest[start+end:]
+	}
+	if len(lengths) == 0 {
+		return nil, nil
+	}
+	body := make([]byte, 0, len(packMagic)+len(skeleton)+len(data)+(len(lengths)+2)*binary.MaxVarintLen64)
+	body = append(body, packMagic...)
+	body = binary.AppendUvarint(body, uint64(len(skeleton)))
+	body = append(body, skeleton...)
+	body = binary.AppendUvarint(body, uint64(len(lengths)))
+	for _, length := range lengths {
+		body = binary.AppendUvarint(body, uint64(length))
+	}
+	body = append(body, data...)
+	// The receiver's rebuild is the contract; anything that would not reproduce the exact bytes stays unpacked.
+	if rebuilt, err := unpackTranscriptBody(body); err != nil || !bytes.Equal(rebuilt, plaintext) {
+		return nil, nil
+	}
+
+	encoder, err := acquirePackEncoder()
+	if err != nil {
+		return nil, ipc.WrapError(ipc.CodeInternal, "无法压缩同步对象", err)
+	}
+	defer packEncoders.Put(encoder)
+	header := make([]byte, compressedHeaderSize, compressedHeaderSize+len(body)/4)
+	copy(header, compressedMagic)
+	binary.BigEndian.PutUint64(header[len(compressedMagic):], uint64(len(body)))
+	packed := encoder.EncodeAll(body, header)
+	if len(packed) >= len(plaintext) {
+		return nil, nil
+	}
+	return packed, nil
+}
+
+// unpackTranscriptBody rebuilds the logical JSON from a decoded pack body. The rebuilt size is checked against the
+// decode cap before anything is allocated for it.
+func unpackTranscriptBody(body []byte) ([]byte, error) {
+	if !bytes.HasPrefix(body, []byte(packMagic)) {
+		return nil, errCompressedFormat
+	}
+	rest := body[len(packMagic):]
+	readLength := func() (int, bool) {
+		value, n := binary.Uvarint(rest)
+		if n <= 0 || value > uint64(len(body)) {
+			return 0, false
+		}
+		rest = rest[n:]
+		return int(value), true
+	}
+	skeletonLength, ok := readLength()
+	if !ok || skeletonLength > len(rest) {
+		return nil, errCompressedFormat
+	}
+	skeleton := rest[:skeletonLength]
+	rest = rest[skeletonLength:]
+	// Every slot needs at least one length byte, which bounds the allocation below by the body size.
+	slots, ok := readLength()
+	if !ok || slots == 0 || slots > len(rest) {
+		return nil, errCompressedFormat
+	}
+	lengths := make([]int, slots)
+	total := len(skeleton)
+	dataBytes := 0
+	for i := range lengths {
+		if lengths[i], ok = readLength(); !ok {
+			return nil, errCompressedFormat
+		}
+		dataBytes += lengths[i]
+		total += base64.StdEncoding.EncodedLen(lengths[i])
+		if dataBytes > len(rest) || total > compressedMaxDecoded {
+			return nil, errCompressedFormat
+		}
+	}
+	if dataBytes != len(rest) {
+		return nil, errCompressedFormat
+	}
+	out := make([]byte, 0, total)
+	for _, length := range lengths {
+		at := bytes.Index(skeleton, packSlotPrefix)
+		if at < 0 || len(skeleton) <= at+len(packSlotPrefix) || skeleton[at+len(packSlotPrefix)] != '"' {
+			return nil, errCompressedFormat
+		}
+		out = append(out, skeleton[:at+len(packSlotPrefix)]...)
+		out = base64.StdEncoding.AppendEncode(out, rest[:length])
+		rest = rest[length:]
+		skeleton = skeleton[at+len(packSlotPrefix):]
+	}
+	if bytes.Contains(skeleton, packSlotPrefix) {
+		return nil, errCompressedFormat
+	}
+	return append(out, skeleton...), nil
+}
 
 func acquireZstdEncoder() (*zstd.Encoder, error) {
 	if pooled, ok := zstdEncoders.Get().(*zstd.Encoder); ok {
@@ -73,7 +212,8 @@ func acquireZstdDecoder() (*zstd.Decoder, error) {
 	return zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxWindow(64<<20), zstd.WithDecoderMaxMemory(uint64(compressedMaxDecoded)))
 }
 
-// compressObjectPlaintext returns the gzip layout, or nil when compression is not worthwhile.
+// compressObjectPlaintext returns the gzip layout, or nil when compression is not worthwhile. The writer no longer
+// uses it; it exists for interop tests.
 func compressObjectPlaintext(plaintext []byte) ([]byte, error) {
 	if len(plaintext) < compressMinBytes || len(plaintext) > compressedMaxDecoded {
 		return nil, nil
@@ -178,15 +318,15 @@ func decompressObjectPlaintext(data []byte) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// sealObjectWire seals an object, compressing transcript content when allowed and worthwhile.
-func sealObjectWire(dek, plaintext []byte, id, kind string, compress bool) ([]byte, error) {
-	if compress && kind == KindTranscript {
-		packed, err := compressObjectPlaintext(plaintext)
+// sealObjectWire seals an object, compressing transcript content whenever packing applies.
+func sealObjectWire(dek, plaintext []byte, id, kind string) ([]byte, error) {
+	if kind == KindTranscript {
+		packed, err := packTranscriptPlaintext(plaintext)
 		if err != nil {
 			return nil, err
 		}
 		if packed != nil {
-			return sealObject(dek, packed, id, wireKindTranscriptGzip)
+			return sealObject(dek, packed, id, wireKindTranscriptPack)
 		}
 	}
 	return sealObject(dek, plaintext, id, kind)
@@ -194,13 +334,16 @@ func sealObjectWire(dek, plaintext []byte, id, kind string, compress bool) ([]by
 
 // openCompressedTranscript tries the compressed labels and returns the logical transcript JSON.
 func openCompressedTranscript(dek, blob []byte, id string) ([]byte, bool, error) {
-	for _, label := range []string{wireKindTranscriptGzip, wireKindTranscriptZstd} {
+	for _, label := range []string{wireKindTranscriptPack, wireKindTranscriptGzip, wireKindTranscriptZstd} {
 		packed, err := openObject(dek, blob, id, label)
 		if err != nil {
 			continue
 		}
 		decode := decompressGzipPlaintext
-		if label == wireKindTranscriptZstd {
+		switch label {
+		case wireKindTranscriptPack:
+			decode = decompressPackedTranscript
+		case wireKindTranscriptZstd:
 			decode = decompressObjectPlaintext
 		}
 		plaintext, err := decode(packed)
@@ -210,4 +353,12 @@ func openCompressedTranscript(dek, blob []byte, id string) ([]byte, bool, error)
 		return plaintext, true, nil
 	}
 	return nil, false, nil
+}
+
+func decompressPackedTranscript(data []byte) ([]byte, error) {
+	body, err := decompressObjectPlaintext(data)
+	if err != nil {
+		return nil, err
+	}
+	return unpackTranscriptBody(body)
 }

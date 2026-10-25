@@ -72,7 +72,7 @@ export function CronPanel({
   hostName?: string;
   onClose: () => void;
 }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const profilesRevision = useUi((s) => s.modelProfilesRevision);
 
   const [jobs, setJobs] = useState<CronJob[] | null>(null);

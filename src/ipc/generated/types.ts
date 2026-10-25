@@ -2044,22 +2044,6 @@ export type RemotePreviewLinks = {
   links: RemotePreviewLink[];
 };
 
-export type RemoteShareLink = {
-  id: string;
-  owner_id: string;
-  device_id: string;
-  session_id: string;
-  permission: string;
-  created_at: number;
-  expires_at: number;
-  revoked_at?: number;
-  last_accessed_at?: number;
-};
-
-export type RemoteShareLinks = {
-  links: RemoteShareLink[];
-};
-
 export type RemoteTerminalAccessRequest = {
   deviceId: string;
   enabled: boolean;

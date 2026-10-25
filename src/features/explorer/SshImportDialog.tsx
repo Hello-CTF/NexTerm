@@ -67,7 +67,7 @@ function normalizeSshImportPreview(preview: SshImportPreviewDto): SshImportPrevi
 }
 
 export function SshImportDialog({ onClose }: { onClose: () => void }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const qc = useQueryClient();
   const groups = useQuery({
     queryKey: ["groups"],

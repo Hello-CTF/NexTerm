@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +17,6 @@ import (
 )
 
 var (
-	linkViewKeys      = keySet("id", "owner_id", "device_id", "session_id", "permission", "created_at", "expires_at", "revoked_at", "last_accessed_at")
 	hostShareViewKeys = keySet("id", "owner_id", "owner_username", "device_id", "recipient_id", "recipient_username", "permission", "created_at", "expires_at", "revoked_at")
 	readyFrameKeys    = keySet("type", "session_id", "permission", "expires_at")
 )
@@ -190,43 +187,6 @@ func (v *shareViewer) expectClosed(timeout time.Duration) error {
 	return fmt.Errorf("viewer websocket was not closed in time")
 }
 
-func seedHistoricalShareLink(server *instance, ownerID, deviceID, sessionID string, write bool, ttl time.Duration) (linkID, token string, err error) {
-	if server == nil || ownerID == "" || deviceID == "" || sessionID == "" || ttl <= 0 {
-		return "", "", fmt.Errorf("invalid historical share link seed")
-	}
-	token = randomHex(32)
-	if token == "" {
-		return "", "", fmt.Errorf("historical share link seed returned an empty token")
-	}
-	digest := sha256.Sum256([]byte(token))
-	permission := "read"
-	if write {
-		permission = "read_write"
-	}
-	now := time.Now()
-	linkID = syntheticID()
-	db, err := sql.Open("sqlite", filepath.Join(server.dataDir, "data.db"))
-	if err != nil {
-		return "", "", fmt.Errorf("open database for historical share link seed: %w", err)
-	}
-	defer func() {
-		if closeErr := db.Close(); err == nil && closeErr != nil {
-			err = closeErr
-		}
-	}()
-	result, err := db.Exec(`INSERT INTO share_link
-		(id, owner_id, device_id, session_id, token_hash, permission, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		linkID, ownerID, deviceID, sessionID, fmt.Sprintf("%x", digest), permission, now.UnixMilli(), now.Add(ttl).UnixMilli())
-	if err != nil {
-		return "", "", fmt.Errorf("seed historical share link: %w", err)
-	}
-	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
-		return "", "", fmt.Errorf("seed historical share link affected %d rows, err=%v", affected, err)
-	}
-	return linkID, token, nil
-}
-
 func runSharing(h *harness) error {
 	work, err := os.MkdirTemp("", "nexterm-sharing-e2e-")
 	if err != nil {
@@ -389,153 +349,28 @@ func runSharing(h *harness) error {
 	relay.close()
 	h.check("owner creates a session through the bridge", sessionID != "", fmt.Sprintf("info=%v", info))
 
-	fmt.Println("== retired public link creation ==")
+	fmt.Println("== removed legacy public links ==")
 	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
 		"device_id": deviceID, "session_id": sessionID, "write": false, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("public session link creation returns 405", status == http.StatusMethodNotAllowed, fmt.Sprintf("HTTP %d %v", status, body))
-
-	fmt.Println("== public read-only link ==")
-	readLinkID, readToken, err := seedHistoricalShareLink(server, alice.userID, deviceID, sessionID, false, time.Hour)
-	if err != nil {
-		return fmt.Errorf("seed read-only link: %w", err)
-	}
-
-	fmt.Println("== public page plain GET ==")
+	h.check("legacy link creation is not routed", status == http.StatusMethodNotAllowed || status == http.StatusNotFound, fmt.Sprintf("HTTP %d %v", status, body))
 	status, _, indexBody, err := plainGet(server.port, "/")
 	if err != nil {
 		return err
 	}
 	h.check("root path serves the SPA", status == 200 && strings.Contains(indexBody, "<title>NexTerm</title>") &&
 		strings.Contains(indexBody, `window.__NEXTERM_TRANSPORT__="web"`), fmt.Sprintf("HTTP %d %s", status, truncate(indexBody, 120)))
-	status, cacheControl, tokenBody, err := plainGet(server.port, "/share/public/"+readToken)
+	status, cacheControl, tokenBody, err := plainGet(server.port, "/share/public/not-a-real-token")
 	if err != nil {
 		return err
 	}
-	h.check("valid token plain GET serves the same SPA", status == 200 && tokenBody == indexBody, fmt.Sprintf("HTTP %d", status))
-	h.check("token URL responds with no-store", cacheControl == "no-store", fmt.Sprintf("Cache-Control=%q", cacheControl))
-	status, _, invalidBody, err := plainGet(server.port, "/share/public/not-a-real-token")
-	if err != nil {
-		return err
-	}
-	h.check("invalid token plain GET also serves the SPA (token is not validated)", status == 200 && invalidBody == indexBody, fmt.Sprintf("HTTP %d", status))
-	postCode, err := postStatus(server.port, "/share/public/"+readToken)
-	if err != nil {
-		return err
-	}
-	h.check("POST to public token URL does not fall through to SPA (405)", postCode == 405, fmt.Sprintf("HTTP %d", postCode))
-
-	viewer, err := newShareViewer(server.port, "/share/public/"+readToken, nil)
-	if err != nil {
-		return err
-	}
-	ready, err := viewer.expectReady()
-	if err != nil {
-		return err
-	}
-	h.check("read-only ready frame", getStr(ready, "permission") == "read" && getStr(ready, "session_id") == sessionID &&
-		keysSubset(ready, readyFrameKeys), fmt.Sprintf("ready=%v", ready))
-	if err := viewer.expectOutput([]byte("READY-42"), 15*time.Second); err != nil {
-		return err
-	}
-	h.check("read-only viewer receives session output", true, "")
-	if err := viewer.ws.send(websocket.MessageBinary, []byte("echo nope-42\n")); err != nil {
-		return err
-	}
-	if err := viewer.expectSilent(2 * time.Second); err != nil {
-		h.check("read-only input is silently discarded", false, err.Error())
-	} else {
-		h.check("read-only input is silently discarded", true, "")
-	}
-	viewer.ws.close()
-
-	fmt.Println("== public read-write link ==")
-	_, writeToken, err := seedHistoricalShareLink(server, alice.userID, deviceID, sessionID, true, time.Hour)
-	if err != nil {
-		return fmt.Errorf("seed read-write link: %w", err)
-	}
-	rwViewer, err := newShareViewer(server.port, "/share/public/"+writeToken, nil)
-	if err != nil {
-		return err
-	}
-	ready, err = rwViewer.expectReady()
-	if err != nil {
-		return err
-	}
-	h.check("read-write ready frame", getStr(ready, "permission") == "read_write", fmt.Sprintf("ready=%v", ready))
-	if err := rwViewer.expectOutput([]byte("READY-42"), 15*time.Second); err != nil {
-		return err
-	}
-	if err := rwViewer.ws.send(websocket.MessageBinary, []byte("echo hello-42\n")); err != nil {
-		return err
-	}
-	if err := rwViewer.expectOutput([]byte("hello-42"), 15*time.Second); err != nil {
-		h.check("read-write input reaches the session and echoes", false, err.Error())
-	} else {
-		h.check("read-write input reaches the session and echoes", true, "")
-	}
-
-	fmt.Println("== revocation ==")
-	status, body, err = alice.request("POST", fmt.Sprintf("/share/links/%s/revoke", readLinkID), map[string]interface{}{}, true)
-	if err != nil {
-		return err
-	}
-	okFlag, _ := getBool(body, "ok")
-	h.check("revoke read-only link", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
-	status, body, err = alice.request("GET", "/share/links", nil, false)
-	if err != nil {
-		return err
-	}
-	writeLinkID := ""
-	for _, row := range getList(body, "links") {
-		if entry, ok := row.(map[string]interface{}); ok && getStr(entry, "permission") == "read_write" {
-			writeLinkID = getStr(entry, "id")
-		}
-	}
-	status, body, err = alice.request("POST", fmt.Sprintf("/share/links/%s/revoke", writeLinkID), map[string]interface{}{}, true)
-	if err != nil {
-		return err
-	}
-	okFlag, _ = getBool(body, "ok")
-	h.check("revoke read-write link", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
-	errorFrame, err := rwViewer.expectError(30 * time.Second)
-	if err != nil {
-		h.check("revocation stops active viewers (error frame)", false, err.Error())
-	} else {
-		h.check("revocation stops active viewers (error frame)", strings.Contains(getStr(errorFrame, "message"), "吊销"), fmt.Sprintf("frame=%v", errorFrame))
-	}
-	if err := rwViewer.expectClosed(10 * time.Second); err != nil {
-		return err
-	}
-	revokedStatus := wsHandshakeStatus(server.port, "/share/public/"+writeToken)
-	h.check("token cannot be reused after revocation", revokedStatus == 403, fmt.Sprintf("status=%d", revokedStatus))
-
-	fmt.Println("== expiration ==")
-	_, expiringToken, err := seedHistoricalShareLink(server, alice.userID, deviceID, sessionID, false, time.Minute)
-	if err != nil {
-		return fmt.Errorf("seed short-lived link: %w", err)
-	}
-	expiringViewer, err := newShareViewer(server.port, "/share/public/"+expiringToken, nil)
-	if err != nil {
-		return err
-	}
-	if _, err := expiringViewer.expectReady(); err != nil {
-		return err
-	}
-	errorFrame, err = expiringViewer.expectError(100 * time.Second)
-	if err != nil {
-		h.check("expiration stops active viewers", false, err.Error())
-	} else {
-		h.check("expiration stops active viewers", strings.Contains(getStr(errorFrame, "message"), "过期"), fmt.Sprintf("frame=%v", errorFrame))
-	}
-	if err := expiringViewer.expectClosed(10 * time.Second); err != nil {
-		return err
-	}
-	expiredStatus := wsHandshakeStatus(server.port, "/share/public/"+expiringToken)
-	h.check("token cannot be reused after expiration", expiredStatus == 403, fmt.Sprintf("status=%d", expiredStatus))
+	h.check("legacy public URL answers 410 without the SPA", status == http.StatusGone && tokenBody != indexBody, fmt.Sprintf("HTTP %d", status))
+	h.check("legacy public URL responds with no-store", cacheControl == "no-store", fmt.Sprintf("Cache-Control=%q", cacheControl))
+	goneStatus := wsHandshakeStatus(server.port, "/share/public/not-a-real-token")
+	h.check("legacy public WS handshake answers 410", goneStatus == http.StatusGone, fmt.Sprintf("status=%d", goneStatus))
 
 	fmt.Println("== open a terminal through a registered share ==")
 	status, body, err = carol.request("GET", fmt.Sprintf("/share/devices/%s/terminal", deviceID), nil, false)
@@ -563,7 +398,7 @@ func runSharing(h *harness) error {
 	if err != nil {
 		return err
 	}
-	ready, err = bobViewer.expectReady()
+	ready, err := bobViewer.expectReady()
 	if err != nil {
 		return err
 	}
@@ -615,7 +450,7 @@ func runSharing(h *harness) error {
 	if err != nil {
 		return err
 	}
-	okFlag, _ = getBool(body, "ok")
+	okFlag, _ := getBool(body, "ok")
 	h.check("revoke host share", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = bob.request("GET", fmt.Sprintf("/share/devices/%s/terminal", deviceID), nil, false)
 	if err != nil {
@@ -721,36 +556,14 @@ func runSharing(h *harness) error {
 		return err
 	}
 	h.check("re-grant bob", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
-	_, offlineToken, err := seedHistoricalShareLink(server, alice.userID, deviceID, sessionID, true, time.Hour)
-	if err != nil {
-		return fmt.Errorf("seed link before going offline: %w", err)
-	}
-	offlineViewer, err := newShareViewer(server.port, "/share/public/"+offlineToken, nil)
-	if err != nil {
-		return err
-	}
-	if _, err := offlineViewer.expectReady(); err != nil {
-		return err
-	}
 	agent.stop()
-	if err := offlineViewer.expectClosed(15 * time.Second); err != nil {
-		h.check("agent offline stops active share streams", false, err.Error())
-	} else {
-		h.check("agent offline stops active share streams", true, "")
-	}
-	offlineStatus := wsHandshakeStatus(server.port, "/share/public/"+offlineToken)
-	h.check("public link returns 503 after going offline", offlineStatus == 503, fmt.Sprintf("status=%d", offlineStatus))
 	status, body, err = bob.request("GET", fmt.Sprintf("/share/devices/%s/terminal", deviceID), nil, false)
 	if err != nil {
 		return err
 	}
 	h.check("registered open returns 503 after going offline", status == 503, fmt.Sprintf("HTTP %d %v", status, body))
-	fmt.Println("== invalid token WS gate ==")
-	invalidStatus := wsHandshakeStatus(server.port, "/share/public/not-a-real-token")
-	h.check("invalid token WS handshake is still rejected", invalidStatus == 403, fmt.Sprintf("status=%d", invalidStatus))
-
 	fmt.Println("== disclosure defenses ==")
-	status, body, err = newClient(server.port).request("GET", "/share/links", nil, false)
+	status, body, err = newClient(server.port).request("GET", "/share/host-shares", nil, false)
 	if err != nil {
 		return err
 	}
@@ -760,22 +573,5 @@ func runSharing(h *harness) error {
 		return err
 	}
 	h.check("anonymous access to sync protocol is rejected", status == 401 || status == 403, fmt.Sprintf("HTTP %d %v", status, body))
-	status, body, err = alice.request("GET", "/share/links", nil, false)
-	if err != nil {
-		return err
-	}
-	var leaked [][]string
-	for _, row := range getList(body, "links") {
-		if entry, ok := row.(map[string]interface{}); ok {
-			leaked = append(leaked, extraKeys(entry, linkViewKeys))
-		}
-	}
-	leakFree := true
-	for _, extra := range leaked {
-		if len(extra) > 0 {
-			leakFree = false
-		}
-	}
-	h.check("link list has no token field", status == 200 && leakFree, fmt.Sprintf("extra=%v", leaked))
 	return nil
 }

@@ -278,8 +278,7 @@ describe("Device management - desktop logged in", () => {
     await flushUntil(() => card.textContent?.includes("99.0%") ?? false);
     expect(mocks.metrics).toHaveBeenCalledWith("d-1");
     expect(card.textContent).toContain("8.0 GiB / 16.0 GiB");
-    expect(card.textContent).toContain("共 17280 个采样点");
-    expect(card.textContent).toContain("显示 1 个原始点");
+    expect(card.textContent).not.toContain("采样点");
 
     click(card.querySelector<HTMLButtonElement>('button[aria-label="刷新指标"]') as HTMLButtonElement);
     await flushUntil(() => mocks.metrics.mock.calls.length === 2);

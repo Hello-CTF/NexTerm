@@ -72,7 +72,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
 
 function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const sessions = useUi((s) => s.sessions);
   const visible = useForwardPanelVisible(sessionId);
   const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";

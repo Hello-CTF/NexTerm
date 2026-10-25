@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
 import {
@@ -72,15 +72,31 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
+// localeCompare with locale options builds a collator per comparison, which costs hundreds of milliseconds on
+// directories with thousands of entries; one shared collator gives the same order.
+const entryCollator = new Intl.Collator("en", { numeric: true });
+// Listings keep their reference until refetched, so each one is sorted once instead of on every render.
+const sortedListings = new WeakMap<FileEntryDto[], FileEntryDto[]>();
+
 function sortEntries(list: FileEntryDto[]): FileEntryDto[] {
-  return [...list].sort((a, b) => {
+  const cached = sortedListings.get(list);
+  if (cached) return cached;
+  const sorted = [...list].sort((a, b) => {
     const ad = a.kind === "dir" ? 0 : 1;
     const bd = b.kind === "dir" ? 0 : 1;
     if (ad !== bd) return ad - bd;
-    return a.name.localeCompare(b.name, "en", { numeric: true });
+    return entryCollator.compare(a.name, b.name);
   });
+  sortedListings.set(list, sorted);
+  return sorted;
 }
 
+// A stable combined result keeps the directory map and rows memoized across unrelated re-renders.
+function combineListings(list: UseQueryResult<FileEntryDto[]>[]) {
+  return list.map((result) => ({ data: result.data, error: result.error, isLoading: result.isLoading }));
+}
+
+const LISTING_STALE_MS = 30_000;
 const TREE_ROW_HEIGHT = 28;
 // Rows just outside the viewport that stay mounted; the window is the visible rows plus a few on each side.
 const TREE_OVERSCAN = 4;
@@ -310,7 +326,9 @@ export function FileTree({ sessionId }: { sessionId: string }) {
 
 function FileTreeInner({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
-  const { pushToast, leftOpen, leftWidth } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
+  const leftOpen = useUi((s) => s.leftOpen);
+  const leftWidth = useUi((s) => s.leftWidth);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
   const [rootChoice, setRoot] = useState<string | null>(null);
@@ -325,6 +343,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const rootsQuery = useQuery({
     queryKey: ["fsRoots", sessionId],
     queryFn: () => fsApi.roots(sessionId),
+    staleTime: LISTING_STALE_MS,
     enabled: typeof fsApi.roots === "function",
     refetchOnWindowFocus: false,
     retry: false,
@@ -398,9 +417,12 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     queries: dirs.map((dir) => ({
       queryKey: ["fs", sessionId, dir],
       queryFn: () => fsApi.list(sessionId, dir),
+      // Remounting the panel reuses a fresh listing; invalidateQueries ignores staleTime, so refresh and file operations still refetch.
+      staleTime: LISTING_STALE_MS,
       refetchOnWindowFocus: false,
       retry: false,
     })),
+    combine: combineListings,
   });
 
   const dirMap = useMemo(() => {
@@ -480,11 +502,12 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
       setSize: number;
       posInSet: number;
     }[] = [];
+    const open = new Set(expanded);
     const walk = (dir: string, depth: number) => {
       const list = dirMap.get(dir) ?? [];
       list.forEach((entry, i) => {
         out.push({ entry, depth, dir, setSize: list.length, posInSet: i + 1 });
-        if (entry.kind === "dir" && expanded.includes(entry.path)) {
+        if (entry.kind === "dir" && open.has(entry.path)) {
           walk(entry.path, depth + 1);
         }
       });
@@ -506,7 +529,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
           symlinkTarget: null,
         };
         out.push({ entry, depth: 0, dir: realRoot.path, rootEntry: true, setSize: realRoots.length, posInSet: i + 1 });
-        if (expanded.includes(realRoot.path)) walk(realRoot.path, 1);
+        if (open.has(realRoot.path)) walk(realRoot.path, 1);
       });
     } else if (root) {
       walk(root, 0);

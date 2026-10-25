@@ -1,22 +1,5 @@
 package model
 
-type ShareLink struct {
-	ID             string     `gorm:"column:id;primaryKey" json:"id"`
-	OwnerID        string     `gorm:"size:191;column:owner_id;not null;index:idx_share_link_owner" json:"ownerId"`
-	DeviceID       string     `gorm:"size:191;column:device_id;not null;index:idx_share_link_device" json:"deviceId"`
-	SessionID      string     `gorm:"column:session_id;not null" json:"sessionId"`
-	TokenHash      string     `gorm:"column:token_hash;not null;size:191;uniqueIndex:idx_share_link_token_hash" json:"tokenHash"`
-	Permission     string     `gorm:"column:permission;not null;default:'read'" json:"permission"`
-	CreatedAt      int64      `gorm:"column:created_at;not null" json:"createdAt"`
-	ExpiresAt      int64      `gorm:"column:expires_at;not null" json:"expiresAt"`
-	RevokedAt      *int64     `gorm:"column:revoked_at" json:"revokedAt"`
-	LastAccessedAt *int64     `gorm:"column:last_accessed_at" json:"lastAccessedAt"`
-	Owner          AppUser    `gorm:"foreignKey:OwnerID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
-	Device         UserDevice `gorm:"foreignKey:DeviceID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
-}
-
-func (ShareLink) TableName() string { return "share_link" }
-
 type SharePreviewLink struct {
 	ID             string  `gorm:"column:id;primaryKey" json:"id"`
 	OwnerID        string  `gorm:"size:191;column:owner_id;not null;index:idx_share_preview_link_owner" json:"ownerId"`

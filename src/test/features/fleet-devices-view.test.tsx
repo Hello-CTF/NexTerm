@@ -45,8 +45,8 @@ vi.mock("@tanstack/react-virtual", () => ({
 
 import { DevicesView } from "../../features/fleet/DevicesView";
 import { MetricsPanel } from "../../features/fleet/MetricsPanel";
-import { metricsGapThreshold } from "../../features/fleet/MetricsChart";
-import { formatTime } from "../../features/fleet/format";
+import { metricsGapThreshold } from "../../features/fleet/MetricsTrend";
+import { formatBytes, formatTime } from "../../features/fleet/format";
 import { useAuth } from "../../features/auth/store";
 import { useUi } from "../../app/store";
 
@@ -398,8 +398,9 @@ describe("Device management view - device list and metrics", () => {
     const container = mountMetrics();
     await flushUntil(() => container.querySelector("polyline") !== null);
 
-    expect(container.querySelectorAll("polyline")).toHaveLength(2);
-    expect(container.textContent).toContain("指标过期");
+    expect(container.querySelectorAll("polyline")).toHaveLength(6); // one trend line per metric chart, each broken into two segments
+    expect(container.textContent).toContain("数据已");
+    expect(container.textContent).toContain("未更新");
   });
 
   it("ages latest with the local clock and keeps late responses from reverting freshness", async () => {
@@ -418,12 +419,12 @@ describe("Device management view - device list and metrics", () => {
       }));
       const container = mountMetrics();
       await flushUntil(() => container.textContent?.includes("11.0%") ?? false);
-      expect(container.textContent).not.toContain("指标过期");
+      expect(container.textContent).not.toContain("未更新");
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(11_000);
       });
-      expect(container.textContent).toContain("指标过期");
+      expect(container.textContent).toContain("未更新");
 
       const oldRequest = deferred<MockResponse>();
       mocks.fetch.mockImplementation(() => oldRequest.promise);
@@ -442,7 +443,7 @@ describe("Device management view - device list and metrics", () => {
         sampleIntervalMs: 60_000,
       }));
       await flushUntil(() => container.textContent?.includes("22.0%") ?? false);
-      expect(container.textContent).not.toContain("指标过期");
+      expect(container.textContent).not.toContain("未更新");
 
       oldRequest.resolve(jsonResponse({
         samples: [metricAt(NOW - 600_000, 33)],
@@ -455,7 +456,7 @@ describe("Device management view - device list and metrics", () => {
       await flush();
       expect(container.textContent).toContain("22.0%");
       expect(container.textContent).not.toContain("33.0%");
-      expect(container.textContent).not.toContain("指标过期");
+      expect(container.textContent).not.toContain("未更新");
     } finally {
       vi.useRealTimers();
     }
@@ -476,15 +477,95 @@ describe("Device management view - device list and metrics", () => {
       },
     }));
     const container = mountMetrics();
-    await flushUntil(() => container.textContent?.includes("个采样点") ?? false);
+    await flushUntil(() => container.textContent?.includes("99.0%") ?? false);
 
     expect(container.textContent).toContain("99.0%");
-    expect(container.textContent).toContain(`趋势窗口 ${formatTime(start)} - ${formatTime(NOW)}`);
-    expect(container.textContent).toContain("共 17280 个采样点");
-    expect(container.textContent).toContain("显示 2 个原始点");
-    expect(container.textContent).toContain("指标过期");
-    expect(container.textContent).toContain("过期阈值");
+    expect(container.textContent).toContain("数据已 10 分钟未更新");
+    expect(container.textContent).not.toContain("趋势窗口");
+    expect(container.textContent).not.toContain("采样点");
+    expect(container.textContent).not.toContain("过期阈值");
     expect(container.textContent).toContain(formatTime(latest.ts));
+  });
+
+  it("labels the y and x axes of every metric chart", async () => {
+    const start = NOW - 24 * 3600_000;
+    route(() => ({
+      payload: {
+        samples: [metricAt(NOW - 120_000, 1), metricAt(NOW - 60_000, 2)],
+        latest: metricAt(NOW - 60_000, 2),
+        windowStart: start,
+        windowEnd: NOW,
+        sampleIntervalMs: 60_000,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.querySelector("polyline") !== null);
+
+    const charts = container.querySelectorAll('svg[role="img"]');
+    expect(charts).toHaveLength(3);
+    const yLabels = (svg: Element) => [...svg.querySelectorAll('text[data-axis="y"]')].map((t) => t.textContent);
+    expect(yLabels(charts[0])).toEqual(["0%", "50%", "100%"]);
+    // Memory and disk show the GiB scale of the latest capacity.
+    expect(yLabels(charts[1])).toEqual(["0", formatBytes(metricAt(NOW, 0).mem_total / 2), formatBytes(metricAt(NOW, 0).mem_total)]);
+    expect(yLabels(charts[2])[2]).toBe(formatBytes(metricAt(NOW, 0).disk_total));
+    for (const chart of charts) {
+      const xLabels = [...chart.querySelectorAll('text[data-axis="x"]')].map((t) => t.textContent ?? "");
+      expect(xLabels.length).toBeGreaterThanOrEqual(3);
+      for (const label of xLabels) expect(label).toMatch(/^\d{2}:\d{2}$/);
+    }
+  });
+
+  it("switches the time range by requesting since_ms and shows the matching data", async () => {
+    const urls: string[] = [];
+    route((url) => {
+      urls.push(url);
+      const hourly = url.includes("since_ms=");
+      const ts = NOW - 60_000;
+      return {
+        payload: {
+          samples: [metricAt(ts, hourly ? 55 : 11)],
+          latest: metricAt(ts, hourly ? 55 : 11),
+          windowStart: hourly ? NOW - 3600_000 : NOW - 24 * 3600_000,
+          windowEnd: NOW,
+          sampleIntervalMs: 60_000,
+        },
+      };
+    });
+    const container = mountMetrics();
+    await flushUntil(() => container.textContent?.includes("11.0%") ?? false);
+    expect(urls[0]).toBe("/fleet/devices/d-1/metrics");
+    const labels = [...container.querySelectorAll('[aria-label="时间范围"] button')].map((b) => b.textContent);
+    expect(labels).toEqual(["1 小时", "6 小时", "24 小时", "48 小时"]);
+    expect(container.querySelector('[aria-label="时间范围"] button[aria-pressed="true"]')?.textContent).toBe("24 小时");
+
+    click(buttonByText(container, "1 小时") as HTMLButtonElement);
+    await flushUntil(() => container.textContent?.includes("55.0%") ?? false);
+    const since = Number(new URL(urls[urls.length - 1], "http://x").searchParams.get("since_ms"));
+    expect(Math.abs(Date.now() - 3600_000 - since)).toBeLessThan(60_000);
+    expect(container.querySelector('[aria-label="时间范围"] button[aria-pressed="true"]')?.textContent).toBe("1 小时");
+  });
+
+  it("shows a hover readout with time and value", async () => {
+    const t1 = NOW - 120_000;
+    route(() => ({
+      payload: {
+        samples: [metricAt(t1 - 60_000, 10), metricAt(t1, 42.5)],
+        latest: metricAt(t1, 42.5),
+        windowStart: NOW - 3600_000,
+        windowEnd: NOW,
+        sampleIntervalMs: 60_000,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.querySelector("polyline") !== null);
+    const svg = container.querySelector('svg[role="img"]') as SVGSVGElement;
+    svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 240, height: 100, right: 240, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
+    expect(svg.querySelector('[data-testid="metric-tooltip"]')).toBeNull();
+    const hit = svg.querySelector("rect") as SVGRectElement;
+    act(() => {
+      hit.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 225 }));
+    });
+    expect(svg.querySelector('[data-testid="metric-tooltip"]')?.textContent).toContain("CPU 42.5%");
   });
 
   it("reports a valid empty window with an independent latest outside it as zero samples", async () => {
@@ -502,8 +583,7 @@ describe("Device management view - device list and metrics", () => {
 
     expect(container.textContent).toContain("66.0%");
     expect(container.textContent).toContain("当前时间窗口没有采样点");
-    expect(container.textContent).toContain("共 0 个采样点");
-    expect(container.textContent).not.toContain("采样数未知");
+    expect(container.textContent).not.toContain("采样点数");
   });
 
   it("keeps independent latest visible when the trend fails", async () => {
@@ -522,9 +602,7 @@ describe("Device management view - device list and metrics", () => {
     expect(container.textContent).toContain("66.0%");
     expect(container.textContent).toContain("趋势加载失败");
     expect(container.textContent).toContain("context deadline exceeded");
-    expect(container.textContent).toContain("采样数未知");
     expect(container.textContent).not.toContain("设备离线，没有近期指标");
-    expect(container.textContent).not.toContain("共 0 个采样点");
   });
 
   it("does not confuse a trend failure without latest with an empty device", async () => {
@@ -556,7 +634,7 @@ describe("Device management view - device list and metrics", () => {
     const container = mountMetrics();
     await flushUntil(() => container.querySelector("circle") !== null);
 
-    expect(container.querySelector("circle")?.getAttribute("cx")).toBe("160");
+    expect(container.querySelector("circle")?.getAttribute("cx")).toBe("136");
   });
 
   it("breaks the trend line across missing intervals", async () => {
@@ -580,7 +658,7 @@ describe("Device management view - device list and metrics", () => {
     const container = mountMetrics();
     await flushUntil(() => container.querySelector("polyline") !== null);
 
-    expect(container.querySelectorAll("polyline")).toHaveLength(2);
+    expect(container.querySelectorAll("polyline")).toHaveLength(6);
   });
 
   it("does not show a previous device sample while switching or resolving out of order", async () => {

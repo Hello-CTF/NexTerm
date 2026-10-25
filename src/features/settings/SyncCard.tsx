@@ -10,7 +10,7 @@ import {
   bytesToBase64,
   CryptoError,
   objectPayloadHash,
-  sealSyncObject,
+  sealSyncObjectWire,
   tryOpenSyncObject,
   utf8Bytes,
   type SyncObjectKind,
@@ -84,7 +84,7 @@ type LinkStep =
 type DesktopSyncStatus = SyncStatus & { paused?: boolean; vaultLocked?: boolean };
 
 function DesktopLinkCard() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const qc = useQueryClient();
 
   const [link, setLink] = useState<AccountLink | null>(null);
@@ -595,7 +595,7 @@ function DesktopLinkCard() {
 // sync status (last successful sync/latest error), manual trigger (sync_wake wakes the background sync loop),
 // and per-row comparison details (sync_compare: the Go side decrypts cloud objects with the engine session DEK, same judgment as the web).
 function DesktopSyncConsole() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const [status, setStatus] = useState<DesktopSyncStatus | null>(null);
   const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
   const [optInBusy, setOptInBusy] = useState(false);
@@ -1331,7 +1331,7 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
   const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
   const objects: { id: string; blob: string }[] = [];
   for (const e of ordered) {
-    const blob = await sealSyncObject(dek, utf8Bytes(e.payloadText ?? marshalSyncPayload(e.payload)), e.id, e.kind);
+    const blob = await sealSyncObjectWire(dek, utf8Bytes(e.payloadText ?? marshalSyncPayload(e.payload)), e.id, e.kind);
     objects.push({ id: e.id, blob: bytesToBase64(blob) });
   }
   return objects;

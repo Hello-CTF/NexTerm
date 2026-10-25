@@ -22,7 +22,7 @@ export function GenerateKeyModal({
   onClose: () => void;
   onSaved: (id: string) => void;
 }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const { ensureVaultReady, vaultInitGate } = useVaultInitGate();
   const [name, setName] = useState("");
   const [algorithm, setAlgorithm] = useState<Algorithm>("ed25519");

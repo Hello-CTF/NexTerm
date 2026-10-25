@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"net/netip"
 	"net/url"
 	"sort"
@@ -80,11 +79,9 @@ type Service struct {
 	authOff    bool
 	now        func() int64
 	enrollGate *account.LoginThrottle
-	// shareResolveGate rate-limits anonymous public link resolves, so random token floods cannot flood audit_log.
-	shareResolveGate *account.LoginThrottle
-	registry         *Registry
-	sharing          *sharing.Service
-	events           ipc.Emitter
+	registry   *Registry
+	sharing    *sharing.Service
+	events     ipc.Emitter
 
 	// presenceMu guards onlineDevices: device online/offline events and audits are produced only once per real state transition,
 	// and replacement reconnects (the old connection's unregistration is already replaced) and service shutdown (Close swaps in an empty table) never
@@ -92,7 +89,6 @@ type Service struct {
 	presenceMu    sync.Mutex
 	onlineDevices map[string]bool
 
-	sharePublicPage         http.Handler
 	shareRevalidateInterval time.Duration
 }
 
@@ -123,13 +119,6 @@ func WithShareRevalidateInterval(interval time.Duration) Option {
 	}
 }
 
-// SetSharePublicPage injects the SPA static entry for the public share page (the wiring layer passes the configured static
-// handler): plain GET /share/public/{token} is served the page directly by it, with no token
-// verification/auditing. nil means no static entry is configured, and plain GET always 404s.
-func (s *Service) SetSharePublicPage(handler http.Handler) {
-	s.sharePublicPage = handler
-}
-
 func New(config Config, options ...Option) (*Service, error) {
 	if config.DB == nil {
 		return nil, fmt.Errorf("fleet: DB is required")
@@ -138,15 +127,14 @@ func New(config Config, options ...Option) (*Service, error) {
 		return nil, fmt.Errorf("fleet: account service is required")
 	}
 	s := &Service{
-		db:               config.DB,
-		accounts:         config.Accounts,
-		authOff:          config.AuthOff,
-		now:              ids.NowMS,
-		enrollGate:       account.NewLoginThrottle(),
-		shareResolveGate: account.NewLoginThrottle(),
-		registry:         NewRegistry(),
-		events:           config.Events,
-		onlineDevices:    make(map[string]bool),
+		db:            config.DB,
+		accounts:      config.Accounts,
+		authOff:       config.AuthOff,
+		now:           ids.NowMS,
+		enrollGate:    account.NewLoginThrottle(),
+		registry:      NewRegistry(),
+		events:        config.Events,
+		onlineDevices: make(map[string]bool),
 
 		shareRevalidateInterval: defaultShareRevalidateInterval,
 	}

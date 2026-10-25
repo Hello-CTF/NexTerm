@@ -32,7 +32,7 @@ import {
 const desktopPendingRecoveryKeys = new Map<string, { formatted: string; canonical: string }>();
 
 export function AuthCard() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const qc = useQueryClient();
   const sessionUser = useAuth((s) => s.user);
   // The desktop identity comes from the "account sync" link server session (useAuth holds no user on desktop).
@@ -568,7 +568,7 @@ export function AuthCard() {
 // TotpCard manages TOTP two-factor auth for the current account: enable (secret/otpauth URI → confirm code → one-time recovery codes),
 // disable (requires the current dynamic code or a recovery code). The server stores only the encrypted secret and recovery-code hashes; recovery-code plaintext is shown once.
 function TotpCard() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const [status, setStatus] = useState<TotpStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [setup, setSetup] = useState<TotpSetup | null>(null);

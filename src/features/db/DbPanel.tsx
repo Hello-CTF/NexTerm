@@ -84,7 +84,7 @@ function SqlView({
   dialect: "mysql" | "postgres";
   workspaceId?: string;
 }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const executionHistory = useUi((state) =>
     workspaceId ? state.workspaceRuntime[workspaceId]?.sqlExecutionHistory : undefined,
   );
@@ -939,7 +939,7 @@ function ResultTable({
   onCopyError: (error: string) => void;
   onShowProblems: () => void;
 }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   if (result.error) {
     return (
       <SqlErrorView
@@ -1026,7 +1026,7 @@ const DESTRUCTIVE_REDIS_WARNINGS: Record<string, string> = {
 };
 
 function RedisView({ connId }: { connId: string }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const [pattern, setPattern] = useState("*");
   const [committedPattern, setCommittedPattern] = useState("*");
   const [keys, setKeys] = useState<string[]>([]);

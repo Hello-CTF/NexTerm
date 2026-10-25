@@ -39,7 +39,6 @@ type DeviceMetrics = model.DeviceMetrics
 type DeviceMetricsHourly = model.DeviceMetricsHourly
 type UserTOTP = model.UserTOTP
 type UserTOTPRecoveryCode = model.UserTOTPRecoveryCode
-type ShareLink = model.ShareLink
 type SharePreviewLink = model.SharePreviewLink
 type HostShare = model.HostShare
 type CommandLog = model.CommandLog
