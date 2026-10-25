@@ -648,7 +648,7 @@ var modelStaticText = map[string]string{
 	"todos 最多 50 项": "todos can contain at most 50 items",
 	"待办内容不能为空":      "todo content cannot be empty",
 	"plan 不能为空":     "plan cannot be empty",
-	"计划已提交，请等待用户审核；不会自动执行。":                          "plan submitted; wait for user review, and do not execute it automatically.",
+	"计划已提交，请等待用户审核；不会自动执行。": "plan submitted; wait for user review, and do not execute it automatically.",
 	"limit 必须为正整数":                                   "limit must be a positive integer",
 	"（历史为空）":                                         "(history is empty)",
 	"无法确定本机用户目录，未读取 shell 历史":                        "cannot determine the local user home directory; shell history was not read",

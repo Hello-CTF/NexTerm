@@ -114,7 +114,7 @@ func (h *harness) build(binary, pkg string, server bool) error {
 	args = append(args, "-o", binary, pkg)
 	cmd := exec.Command("go", args...)
 	cmd.Dir = h.root
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOTOOLCHAIN=go1.26.8")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOTOOLCHAIN=go1.27.3")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

@@ -437,13 +437,20 @@ func (r *typeRegistry) render() string {
 	return strings.TrimRight(output.String(), "\n") + "\n"
 }
 
+// typeIdentifier names a Go type for the manifest. Spellings that depend on how the toolchain resolves aliases are
+// normalized so the generated contract does not change with the Go version: the empty interface is "any", and
+// json.RawMessage keeps its name although Go 1.27 resolves it to jsontext.Value.
 func typeIdentifier(value types.Type) string {
-	return types.TypeString(types.Unalias(value), func(pkg *types.Package) string {
+	resolved := types.Unalias(value)
+	if named, ok := resolved.(*types.Named); ok && isRawMessage(named) {
+		return "encoding/json.RawMessage"
+	}
+	return strings.ReplaceAll(types.TypeString(resolved, func(pkg *types.Package) string {
 		if pkg == nil {
 			return ""
 		}
 		return pkg.Path()
-	})
+	}), "interface{}", "any")
 }
 
 func basicType(value *types.Basic) string {
@@ -465,8 +472,15 @@ func isTime(named *types.Named) bool {
 	return named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "time" && named.Obj().Name() == "Time"
 }
 
+// isRawMessage matches json.RawMessage; since Go 1.27 it is an alias of jsontext.Value, which is what remains after
+// aliases are resolved.
 func isRawMessage(named *types.Named) bool {
-	return named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "encoding/json" && named.Obj().Name() == "RawMessage"
+	pkg := named.Obj().Pkg()
+	if pkg == nil {
+		return false
+	}
+	name := named.Obj().Name()
+	return (pkg.Path() == "encoding/json" && name == "RawMessage") || (pkg.Path() == "encoding/json/jsontext" && name == "Value")
 }
 
 func isRedisScanResult(named *types.Named) bool {

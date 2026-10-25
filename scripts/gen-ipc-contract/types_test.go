@@ -14,7 +14,13 @@ func TestUnreliableTypesRemainUnknown(t *testing.T) {
 		types.NewSlice(types.Typ[types.Byte]),
 		nil,
 	)
-	for _, value := range []types.Type{rawMessage, types.Universe.Lookup("any").Type()} {
+	// Since Go 1.27 json.RawMessage is an alias of jsontext.Value, which is what resolving aliases yields.
+	jsontextValue := types.NewNamed(
+		types.NewTypeName(token.NoPos, types.NewPackage("encoding/json/jsontext", "jsontext"), "Value", nil),
+		types.NewSlice(types.Typ[types.Byte]),
+		nil,
+	)
+	for _, value := range []types.Type{rawMessage, jsontextValue, types.Universe.Lookup("any").Type()} {
 		reference, err := newTypeRegistry().ref(value)
 		if err != nil {
 			t.Fatal(err)

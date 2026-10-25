@@ -37,7 +37,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GOTOOLCHAIN: go1.26.8
+  GOTOOLCHAIN: go1.27.3
   GOFLAGS: -mod=readonly
 
 jobs:
@@ -133,7 +133,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.8
+          go-version: 1.27.3
           cache: true
       - name: Install Linux Wails cgo prerequisites
         run: |
@@ -144,7 +144,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.27.3
       - name: Install the pinned Wails CLI
         run: |
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
@@ -176,7 +176,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.8
+          go-version: 1.27.3
           cache: true
       - name: Install Linux Wails cgo prerequisites
         run: |
@@ -228,7 +228,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.8
+          go-version: 1.27.3
           cache: true
       - name: Start the database container
         if: matrix.backend != 'sqlite'
@@ -311,7 +311,7 @@ jobs:
           node-version: 24.22.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.8
+          go-version: 1.27.3
           cache: true
       - name: Verify Windows PowerShell runtimes
         if: github.event_name == 'pull_request' && fromJSON(needs.version.outputs.scope).unit && matrix.os == 'windows' && matrix.arch == 'amd64' && contains(matrix.kinds, 'desktop')
@@ -432,7 +432,7 @@ jobs:
           node-version: 24.22.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.8
+          go-version: 1.27.3
           cache: true
       - name: Download the verified frontend dist
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -452,7 +452,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.27.3
       - name: Install the pinned Wails CLI
         run: |
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
@@ -529,7 +529,7 @@ jobs:
         run: bash build/android/scripts/setup-signing.sh
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.8
+          go-version: 1.27.3
           cache: true
       - name: Download the verified frontend dist
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -580,7 +580,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.27.3
       - name: Install the pinned Wails CLI
         run: |
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
@@ -652,7 +652,7 @@ jobs:
           node-version: 24.22.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.8
+          go-version: 1.27.3
           cache: true
       - name: Download the verified frontend dist
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -666,7 +666,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.27.3
       - name: Install the pinned Wails CLI
         run: |
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then

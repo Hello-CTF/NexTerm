@@ -10,7 +10,7 @@ Persistent, re-attachable terminals · an AI assistant that actually does the wo
 
 [![Website](https://img.shields.io/badge/website-nexterm.work-516cd6)](https://nexterm.work/)
 [![Release](https://img.shields.io/github/v/release/Hello-CTF/NexTerm?color=516cd6)](https://github.com/Hello-CTF/NexTerm/releases/latest)
-![Go](https://img.shields.io/badge/Go-1.26-00ADD8)
+![Go](https://img.shields.io/badge/Go-1.27-00ADD8)
 ![Wails](https://img.shields.io/badge/Wails-v3-CC0000)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -89,7 +89,7 @@ The script downloads the latest server archive, verifies it against `SHA256SUMS`
 
 ## Development
 
-Toolchain: Go 1.26, Node 24+, pnpm.
+Toolchain: Go 1.27, Node 24+, pnpm.
 
 ```bash
 pnpm install && pnpm build && go build ./...
