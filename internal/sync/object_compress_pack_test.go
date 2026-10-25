@@ -38,7 +38,7 @@ func TestPackedTranscriptRebuildsExactJSON(t *testing.T) {
 		"edge cases": edgeTranscriptJSON(t, 32<<10),
 		"terminal":   transcriptJSON(t, terminalCorpus(256<<10)),
 	} {
-		blob, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript, true)
+		blob, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript)
 		if err != nil {
 			t.Fatal(name, err)
 		}
@@ -60,7 +60,7 @@ func TestPackFallsBackToJSONWhenNotExact(t *testing.T) {
 		"data is not base64":   []byte(`{"id":"tr-1","content":[{"seq":1,"data":"not base64!"}],"note":"` + padding + `"}`),
 		"non-canonical base64": []byte(`{"id":"tr-1","content":[{"seq":1,"data":"QR=="}],"note":"` + padding + `"}`),
 	} {
-		blob, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript, true)
+		blob, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript)
 		if err != nil {
 			t.Fatal(name, err)
 		}

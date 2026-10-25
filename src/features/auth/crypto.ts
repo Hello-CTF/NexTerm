@@ -486,6 +486,55 @@ export async function unpackTranscriptPlaintext(packed: Uint8Array, maxDecoded =
   return unpackTranscriptBody(body, maxDecoded);
 }
 
+// Below this size the gzip framing is not worth a format change (compressMinBytes in Go).
+const COMPRESS_MIN_BYTES = 1 << 10;
+
+async function gzipTranscriptPlaintext(plaintext: Uint8Array): Promise<Uint8Array | null> {
+  if (typeof CompressionStream === "undefined") {
+    throw new CryptoError("crypto", "当前浏览器不支持压缩同步对象");
+  }
+  const deflater = new CompressionStream("gzip");
+  const writer = deflater.writable.getWriter();
+  void writer.write(plaintext as unknown as BufferSource).catch(() => undefined);
+  void writer.close().catch(() => undefined);
+  const reader = deflater.readable.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    size += value.length;
+  }
+  const gzipped = new Uint8Array(size);
+  let offset = 0;
+  for (const part of parts) {
+    gzipped.set(part, offset);
+    offset += part.length;
+  }
+  if (COMPRESSED_HEADER_BYTES + gzipped.length >= plaintext.length) return null;
+  const packed = new Uint8Array(COMPRESSED_HEADER_BYTES + gzipped.length);
+  for (let i = 0; i < COMPRESSED_MAGIC.length; i++) packed[i] = COMPRESSED_MAGIC.charCodeAt(i);
+  new DataView(packed.buffer).setBigUint64(COMPRESSED_MAGIC.length, BigInt(plaintext.length), false);
+  packed.set(gzipped, COMPRESSED_HEADER_BYTES);
+  return packed;
+}
+
+// sealSyncObjectWire is the upload writer: transcripts are always gzip-compressed (the browser has no zstd encoder for
+// the zpack layout); only tiny or incompressible transcripts and other kinds keep their plain label.
+export async function sealSyncObjectWire(dek: Uint8Array, plaintext: Uint8Array, id: string, kind: SyncObjectKind): Promise<Uint8Array> {
+  if (kind === "transcript" && plaintext.length >= COMPRESS_MIN_BYTES && plaintext.length <= MAX_COMPRESSED_DECODED_BYTES) {
+    const packed = await gzipTranscriptPlaintext(plaintext);
+    if (packed) {
+      if (dek.length !== DEK_LENGTH) {
+        throw new CryptoError("crypto", "加密失败：数据密钥长度无效");
+      }
+      return aesGcmSeal(dek, packed, objectAAD(id, COMPRESSED_TRANSCRIPT_LABEL));
+    }
+  }
+  return sealSyncObject(dek, plaintext, id, kind);
+}
+
 async function openCompressedLabel(dek: Uint8Array, blob: Uint8Array, id: string, label: string): Promise<Uint8Array | null> {
   try {
     return await aesGcmOpen(dek, blob, objectAAD(id, label));

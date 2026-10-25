@@ -9,6 +9,8 @@ import {
   aesGcmSeal,
   base64ToBytes,
   inflateTranscriptPlaintext,
+  openSyncObject,
+  sealSyncObjectWire,
   tryOpenSyncObject,
   unpackTranscriptBody,
   unpackTranscriptPlaintext,
@@ -201,5 +203,29 @@ describe("compressed transcript objects", () => {
     const opened = await tryOpenSyncObject(dek, blob, "tr-ok");
     expect(opened.plaintext).toHaveLength(2048);
     await expect(inflateTranscriptPlaintext(await frame(BigInt(body.length), body), 1024)).rejects.toMatchObject({ code: "decrypt" });
+  });
+});
+
+describe("browser transcript writer", () => {
+  const dek = new Uint8Array(32).fill(7);
+
+  it("always writes large transcripts gzip-compressed and reads them back exactly", async () => {
+    const plaintext = base64ToBytes(golden.plaintextB64);
+    const blob = await sealSyncObjectWire(dek, plaintext, "tr-w", "transcript");
+    await expect(openSyncObject(dek, blob, "tr-w", "transcript")).rejects.toMatchObject({ code: "decrypt" });
+    const packed = await aesGcmOpen(dek, blob, utf8Bytes(`nexterm/go/sync-object/v1\x00tr-w\x00${COMPRESSED_TRANSCRIPT_LABEL}`));
+    expect(packed.length).toBeLessThan(plaintext.length);
+    const opened = await tryOpenSyncObject(dek, blob, "tr-w");
+    expect(opened.kind).toBe("transcript");
+    expect(Array.from(opened.plaintext)).toEqual(Array.from(plaintext));
+  });
+
+  it("keeps tiny transcripts and other kinds under their plain label", async () => {
+    const tiny = utf8Bytes('{"id":"tr-t"}');
+    const openedTiny = await openSyncObject(dek, await sealSyncObjectWire(dek, tiny, "tr-t", "transcript"), "tr-t", "transcript");
+    expect(Array.from(openedTiny)).toEqual(Array.from(tiny));
+    const asset = utf8Bytes(JSON.stringify({ id: "a-1", note: "x".repeat(4096) }));
+    const openedAsset = await openSyncObject(dek, await sealSyncObjectWire(dek, asset, "a-1", "asset"), "a-1", "asset");
+    expect(Array.from(openedAsset)).toEqual(Array.from(asset));
   });
 });

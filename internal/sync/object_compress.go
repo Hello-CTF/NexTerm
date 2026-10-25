@@ -50,15 +50,10 @@ const (
 	compressedMaxDecoded = maxApplyObjectBytes
 )
 
-// DefaultTranscriptCompression is the writer default. Readers always understand the compressed form; enabling the
-// writer is a second rollout phase because devices that predate the reader cannot open these objects.
-//
-// Rollout: (1) ship the readers (Go engine, browser crypto.ts) and let them reach every device and
-// browser of the account; (2) only then switch the writer on per account via Engine.SetTranscriptCompression. The
-// device registry (user_device) carries no per-device capability today and browser sessions are not devices, so the
-// engine cannot prove "every peer can read" automatically; the switch is therefore a deliberate manual step. A device
-// that cannot read the label quarantines the object with a visible decrypt failure, never an empty transcript.
-const DefaultTranscriptCompression = false
+// Transcripts are always written compressed: the Go engine packs them as "transcript.zpack" and the browser writes
+// "transcript.gzip". Only payloads too small or not shaped for packing keep the plain transcript label. Devices that
+// predate the compressed readers cannot open these objects; they quarantine them with a visible decrypt failure,
+// never an empty transcript.
 
 var (
 	errCompressedFormat = errors.New("invalid compressed sync object")
@@ -323,9 +318,9 @@ func decompressObjectPlaintext(data []byte) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// sealObjectWire seals an object, compressing transcript content when allowed and worthwhile.
-func sealObjectWire(dek, plaintext []byte, id, kind string, compress bool) ([]byte, error) {
-	if compress && kind == KindTranscript {
+// sealObjectWire seals an object, compressing transcript content whenever packing applies.
+func sealObjectWire(dek, plaintext []byte, id, kind string) ([]byte, error) {
+	if kind == KindTranscript {
 		packed, err := packTranscriptPlaintext(plaintext)
 		if err != nil {
 			return nil, err

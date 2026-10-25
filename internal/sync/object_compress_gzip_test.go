@@ -87,19 +87,16 @@ func TestCompressionWriterMatrix(t *testing.T) {
 	tiny := []byte(`{"id":"tr-1"}`)
 	cases := []struct {
 		name     string
-		enabled  bool
 		kind     string
 		payload  []byte
 		wantWire string
 	}{
-		{"off transcript", false, KindTranscript, big, KindTranscript},
-		{"on transcript", true, KindTranscript, big, wireKindTranscriptPack},
-		{"on tiny transcript", true, KindTranscript, tiny, KindTranscript},
-		{"on asset", true, KindAsset, big, KindAsset},
-		{"off asset", false, KindAsset, big, KindAsset},
+		{"transcript", KindTranscript, big, wireKindTranscriptPack},
+		{"tiny transcript", KindTranscript, tiny, KindTranscript},
+		{"asset", KindAsset, big, KindAsset},
 	}
 	for _, c := range cases {
-		blob, err := sealObjectWire(dek, c.payload, "x-1", c.kind, c.enabled)
+		blob, err := sealObjectWire(dek, c.payload, "x-1", c.kind)
 		if err != nil {
 			t.Fatal(c.name, err)
 		}
@@ -148,14 +145,14 @@ func TestCompressedTranscriptGoldenVector(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		packed, err := sealObjectWire(dek, plaintext, "tr-golden", KindTranscript, true)
+		packed, err := sealObjectWire(dek, plaintext, "tr-golden", KindTranscript)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := openObject(dek, packed, "tr-golden", wireKindTranscriptPack); err != nil {
 			t.Fatalf("golden writer output is not packed: %v", err)
 		}
-		legacy, err := sealObjectWire(dek, plaintext, "tr-golden", KindTranscript, false)
+		legacy, err := sealObject(dek, plaintext, "tr-golden", KindTranscript)
 		if err != nil {
 			t.Fatal(err)
 		}
