@@ -639,7 +639,11 @@ type Stream struct {
 	inflight      []int
 	inflightBytes int
 	inputErr      error
-	inputWake     chan struct{}
+	// inputErrUnacked is inflightBytes when inputErr was recorded: input sent
+	// before the rejection was answered is not counted as written, however
+	// late the writer observes it.
+	inputErrUnacked int
+	inputWake       chan struct{}
 
 	// Output credit (output_credit). retired counts stream bytes the consumer
 	// has read or skipped; creditSent is what the server has been told.
@@ -816,6 +820,7 @@ func (s *Stream) awaitInputAcks(ctx context.Context, sent int) (int, error) {
 		unacked := min(s.inflightBytes, sent)
 		if s.inputErr != nil {
 			err := s.inputErr
+			unacked = min(s.inputErrUnacked, sent)
 			s.mu.Unlock()
 			return sent - unacked, err
 		}
@@ -967,6 +972,7 @@ func (s *Stream) handleInputAck(payload []byte) error {
 	case ack.Error != nil:
 		if s.inputErr == nil {
 			s.inputErr = decodedError(*ack.Error)
+			s.inputErrUnacked = s.inflightBytes
 		}
 	case ack.Written != size:
 		return fmt.Errorf("%w: input acknowledgement of %d bytes for a %d-byte frame", ErrProtocol, ack.Written, size)
