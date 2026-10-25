@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -149,7 +150,11 @@ type Tab struct {
 	// writeGate serializes tab writes (capacity 1, empty = held by nobody).
 	// Unlike a plain mutex it lets a queued writer give up early when its
 	// context ends or the tab closes.
-	writeGate    chan struct{}
+	writeGate chan struct{}
+	// inputQueue holds Write calls waiting for the gate; whichever caller
+	// holds the gate sends all of them as one channel write.
+	inputMu      sync.Mutex
+	inputQueue   []*queuedInput
 	visibilityMu sync.Mutex
 	lifecycleMu  sync.Mutex
 	closeMu      sync.Mutex
@@ -1386,29 +1391,93 @@ func (m *Manager) StreamAckFor(ctx context.Context, tabID, channelID, client str
 	return nil
 }
 
+// queuedInput is one Write call waiting to be sent; done receives the result
+// of the channel write that carried its bytes.
+type queuedInput struct {
+	client string
+	data   []byte
+	done   chan error
+}
+
+// Write sends terminal input. Each channel write may wait for the host to
+// acknowledge it (supervisor streams answer every frame), so writes that queue
+// up behind one in flight are sent together as one ordered batch instead of
+// one round trip each. A caller whose context ends before its bytes are taken
+// sends nothing; once taken, the batch is sent under the gate holder's context.
 func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) error {
 	m.notifyUserInput(tabID)
 	tab, err := m.Tab(tabID)
 	if err != nil {
 		return err
 	}
-	release, err := tab.acquireWrite(ctx)
-	if err != nil {
+	input := &queuedInput{client: client, data: data, done: make(chan error, 1)}
+	tab.inputMu.Lock()
+	tab.inputQueue = append(tab.inputQueue, input)
+	tab.inputMu.Unlock()
+	select {
+	case err := <-input.done:
 		return err
+	case tab.writeGate <- struct{}{}:
+	case <-ctx.Done():
+		return tab.withdrawInput(input, context.Cause(ctx))
+	case <-tab.ctx.Done():
+		return tab.withdrawInput(input, ErrTabClosed)
 	}
-	defer release()
+	defer func() { <-tab.writeGate }()
+	tab.inputMu.Lock()
+	batch := tab.inputQueue
+	tab.inputQueue = nil
+	tab.inputMu.Unlock()
+	if len(batch) > 0 {
+		m.writeInputBatch(ctx, tab, batch)
+	}
+	return <-input.done
+}
+
+// withdrawInput removes a still-queued input and returns cause; input that a
+// gate holder already took is part of a batch, so its result is returned.
+func (t *Tab) withdrawInput(input *queuedInput, cause error) error {
+	t.inputMu.Lock()
+	index := slices.Index(t.inputQueue, input)
+	if index >= 0 {
+		t.inputQueue = slices.Delete(t.inputQueue, index, index+1)
+	}
+	t.inputMu.Unlock()
+	if index >= 0 {
+		return cause
+	}
+	return <-input.done
+}
+
+// writeInputBatch sends the queued inputs of every current controller as one
+// channel write and reports the result to each of them. The caller holds the
+// tab's write gate.
+func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queuedInput) {
+	finish := func(inputs []*queuedInput, err error) {
+		for _, input := range inputs {
+			input.done <- err
+		}
+	}
 	tab.mu.Lock()
 	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
-		return ErrTabClosed
-	}
-	if tab.controller != clientID(client) {
-		tab.mu.Unlock()
-		return ErrNotController
+		finish(batch, ErrTabClosed)
+		return
 	}
 	if !ptyBacked(tab.session.asset.Kind) {
 		tab.mu.Unlock()
-		return ErrUnsupported
+		finish(batch, ErrUnsupported)
+		return
+	}
+	accepted := make([]*queuedInput, 0, len(batch))
+	size := 0
+	for _, input := range batch {
+		if tab.controller != clientID(input.client) {
+			input.done <- ErrNotController
+			continue
+		}
+		accepted = append(accepted, input)
+		size += len(input.data)
 	}
 	channel := tab.channel
 	generation := tab.generation
@@ -1418,6 +1487,9 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 		echoing = append(echoing, subscriber.co)
 	}
 	tab.mu.Unlock()
+	if len(accepted) == 0 {
+		return
+	}
 	// Keystrokes end bulk coalescing so their echo is not held for the wide window.
 	for _, co := range echoing {
 		co.noteInput()
@@ -1426,19 +1498,30 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 	connected := tab.session.status == StatusConnected && tab.session.generation == generation
 	tab.session.mu.Unlock()
 	if !connected {
-		return ErrDisconnected
+		finish(accepted, ErrDisconnected)
+		return
 	}
 	if exited || channel == nil {
-		return ErrTabClosed
+		finish(accepted, ErrTabClosed)
+		return
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		finish(accepted, err)
+		return
+	}
+	data := accepted[0].data
+	if len(accepted) > 1 {
+		data = make([]byte, 0, size)
+		for _, input := range accepted {
+			data = append(data, input.data...)
+		}
 	}
 	if err := writeChannelContext(ctx, channel, data); err != nil {
-		return err
+		finish(accepted, err)
+		return
 	}
 	m.transcriptInput(ctx, tab, data)
-	return nil
+	finish(accepted, nil)
 }
 
 func writeAll(writer io.Writer, data []byte) error {

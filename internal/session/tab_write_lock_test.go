@@ -310,3 +310,119 @@ func TestDisconnectHealthyCloseReportsNoError(t *testing.T) {
 		t.Fatalf("Disconnect = %v, want nil", err)
 	}
 }
+
+// Writes queued behind one waiting for the transport go out as a single
+// ordered batch, so each one does not pay its own transport round trip.
+func TestManagerWriteBatchesQueuedInput(t *testing.T) {
+	manager, connector, _, session := openTestSession(t, KindSSH)
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	channel := connector.transport(0).channel(0)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var writes []string
+	channel.writeHook = func(data []byte) (int, error) {
+		writes = append(writes, string(data))
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		channel.mu.Lock()
+		channel.input = append(channel.input, data...)
+		channel.mu.Unlock()
+		return len(data), nil
+	}
+	controller := tab.Info().Controller
+	results := make(chan error, 4)
+	go func() { results <- manager.Write(context.Background(), tab.ID, controller, []byte("a")) }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first Write never reached the channel")
+	}
+	queued := func() int {
+		tab.inputMu.Lock()
+		defer tab.inputMu.Unlock()
+		return len(tab.inputQueue)
+	}
+	for index, data := range []string{"b", "c", "d"} {
+		go func() { results <- manager.Write(context.Background(), tab.ID, controller, []byte(data)) }()
+		deadline := time.Now().Add(5 * time.Second)
+		for queued() != index+1 {
+			if time.Now().After(deadline) {
+				t.Fatalf("Write %q never queued", data)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	close(release)
+	for range 4 {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("Write = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("queued Write never completed")
+		}
+	}
+	if got := string(channel.written()); got != "abcd" {
+		t.Fatalf("channel received %q, want %q", got, "abcd")
+	}
+	if len(writes) != 2 || writes[1] != "bcd" {
+		t.Fatalf("channel writes = %q, want the queued input in one batch after the first", writes)
+	}
+}
+
+// A queued Write that is withdrawn before the gate holder takes it sends
+// nothing, while the rest of the batch still goes out.
+func TestManagerWriteWithdrawnQueuedInputIsNotSent(t *testing.T) {
+	manager, connector, _, session := openTestSession(t, KindSSH)
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	channel := connector.transport(0).channel(0)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	channel.writeHook = func(data []byte) (int, error) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		channel.mu.Lock()
+		channel.input = append(channel.input, data...)
+		channel.mu.Unlock()
+		return len(data), nil
+	}
+	controller := tab.Info().Controller
+	first := make(chan error, 1)
+	go func() { first <- manager.Write(context.Background(), tab.ID, controller, []byte("a")) }()
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	withdrawn := make(chan error, 1)
+	go func() { withdrawn <- manager.Write(ctx, tab.ID, controller, []byte("x")) }()
+	for {
+		tab.inputMu.Lock()
+		n := len(tab.inputQueue)
+		tab.inputMu.Unlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-withdrawn; !errors.Is(err, context.Canceled) {
+		t.Fatalf("withdrawn Write = %v, want context canceled", err)
+	}
+	kept := make(chan error, 1)
+	go func() { kept <- manager.Write(context.Background(), tab.ID, controller, []byte("b")) }()
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first Write = %v", err)
+	}
+	if err := <-kept; err != nil {
+		t.Fatalf("kept Write = %v", err)
+	}
+	if got := string(channel.written()); got != "ab" {
+		t.Fatalf("channel received %q, want %q", got, "ab")
+	}
+}
