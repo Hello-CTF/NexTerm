@@ -4,7 +4,7 @@ import { EditorState } from "@codemirror/state";
 import {
   detectFileLanguage,
   FILE_LANGUAGE_OPTIONS,
-  fileLanguageExtension,
+  loadFileLanguageExtension,
   resolveFileLanguage,
   type FileLanguageId,
 } from "../../features/files/fileLanguages";
@@ -88,8 +88,11 @@ describe("file editor language detection", () => {
     expect(detectFileLanguage("/a.unknown")).toBeNull();
     expect(detectFileLanguage("/README")).toBeNull();
     expect(resolveFileLanguage("/a.py", "plain")).toBeNull();
-    expect(fileLanguageExtension("/a.unknown", "auto")).toEqual([]);
-    expect(fileLanguageExtension("/a.py", "plain")).toEqual([]);
+  });
+
+  it("resolves plain text without loading a pack", async () => {
+    await expect(loadFileLanguageExtension("/a.unknown", "auto")).resolves.toEqual([]);
+    await expect(loadFileLanguageExtension("/a.py", "plain")).resolves.toEqual([]);
   });
 
   it("uses an explicit language even when the path is unknown", () => {
@@ -103,10 +106,10 @@ describe("file editor language detection", () => {
     }
   });
 
-  it.each(FILE_LANGUAGE_OPTIONS)("creates a usable $id language extension", ({ id }) => {
+  it.each(FILE_LANGUAGE_OPTIONS)("creates a usable $id language extension", async ({ id }) => {
     const state = EditorState.create({
       doc: "value",
-      extensions: fileLanguageExtension("/a.unknown", id),
+      extensions: await loadFileLanguageExtension("/a.unknown", id),
     });
 
     expect(state.facet(language)).not.toBeNull();

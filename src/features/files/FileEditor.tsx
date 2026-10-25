@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditorView, keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
@@ -42,7 +42,7 @@ import {
 import {
   FILE_LANGUAGE_OPTIONS,
   detectFileLanguage,
-  fileLanguageExtension,
+  loadFileLanguageExtension,
   fileLanguageLabel,
   type FileLanguageChoice,
 } from "./fileLanguages";
@@ -129,6 +129,32 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const caseInsensitiveRef = useRef(caseInsensitive);
   const languageChoiceRef = useRef(languageChoice);
   const language = useRef(new Compartment()).current;
+  const languageRequestRef = useRef(0);
+  const languageAppliedRef = useRef(false);
+  // The editor opens as plain text; highlighting is applied when the language pack arrives. A load
+  // failure leaves plain text in place, and a newer request or a replaced view discards stale results.
+  const applyLanguage = useCallback(
+    (view: EditorView, filePath: string, choice: FileLanguageChoice) => {
+      const request = ++languageRequestRef.current;
+      void loadFileLanguageExtension(filePath, choice).then(
+        (extension) => {
+          if (request !== languageRequestRef.current || viewRef.current !== view) return;
+          const plain = Array.isArray(extension) && extension.length === 0;
+          // A fresh editor already is plain text, so there is nothing to reconfigure.
+          if (plain && !languageAppliedRef.current) return;
+          languageAppliedRef.current = !plain;
+          view.dispatch({ effects: language.reconfigure(extension) });
+        },
+        () => {
+          if (request !== languageRequestRef.current || viewRef.current !== view) return;
+          if (!languageAppliedRef.current) return;
+          languageAppliedRef.current = false;
+          view.dispatch({ effects: language.reconfigure([]) });
+        },
+      );
+    },
+    [language],
+  );
   locatorRef.current = { sessionId, path };
   dirtyRef.current = dirty;
   onCloseRef.current = onClose;
@@ -258,7 +284,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
               extensions: [
                 basicSetup,
                 search({ top: true }),
-                language.of(fileLanguageExtension(locatorRef.current.path, languageChoiceRef.current)),
+                language.of([]),
                 keymap.of([indentWithTab]),
                 nxHighlight,
                 EditorView.updateListener.of((u) => {
@@ -276,6 +302,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
             }),
             parent: hostRef.current,
           });
+          languageAppliedRef.current = false;
+          applyLanguage(viewRef.current, locatorRef.current.path, languageChoiceRef.current);
         }
       } catch (e) {
         if (!cancelled) {
@@ -298,13 +326,13 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [sessionId, reloadEnc, reloadKey, language, pushToast]);
+  }, [sessionId, reloadEnc, reloadKey, language, pushToast, applyLanguage]);
 
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: language.reconfigure(fileLanguageExtension(path, languageChoice)) });
-  }, [path, languageChoice, language]);
+    applyLanguage(view, path, languageChoice);
+  }, [path, languageChoice, applyLanguage]);
 
   const save = async () => {
     const view = viewRef.current;
