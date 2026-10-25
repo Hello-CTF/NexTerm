@@ -13,7 +13,6 @@ import (
 	"math/rand/v2"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -179,25 +178,17 @@ type Engine struct {
 	transcriptCacheMu sync.RWMutex
 	transcriptCache   map[string]transcriptCacheEntry
 	aiShared          bool
-
-	transcriptCompression atomic.Bool
 }
 
 func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog.Logger) *Engine {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	engine := &Engine{
+	return &Engine{
 		store: database, vault: credentialVault, logger: logger, pending: map[string]*pendingLinkLogin{},
 		transcriptCache: map[string]transcriptCacheEntry{}, aiShared: true,
 	}
-	engine.transcriptCompression.Store(DefaultTranscriptCompression)
-	return engine
 }
-
-// SetTranscriptCompression toggles compressed transcript uploads. Devices that predate the compressed format
-// quarantine such objects with a visible warning, so enable it only once every device can read them.
-func (e *Engine) SetTranscriptCompression(enabled bool) { e.transcriptCompression.Store(enabled) }
 
 // kindOptIn is the per-sync-round opt-in snapshot of sync object kinds; the zero value means hard-off.
 type kindOptIn struct {
@@ -626,7 +617,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		if found && statePayloadHash == payloadHash && onServer && stateBlobHash == serverEntry.BlobHash {
 			continue
 		}
-		blob, err := sealObjectWire(session.dek, local.plaintext, id, local.kind, e.transcriptCompression.Load())
+		blob, err := sealObjectWire(session.dek, local.plaintext, id, local.kind)
 		if err != nil {
 			return false, err
 		}

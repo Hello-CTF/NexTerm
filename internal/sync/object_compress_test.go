@@ -48,7 +48,7 @@ func TestCompressedTranscriptRoundTripAndLegacy(t *testing.T) {
 	dek := vault.GenerateUserDEK()
 	plaintext := transcriptJSON(t, terminalCorpus(256<<10))
 
-	compressed, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript, true)
+	compressed, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,8 @@ func TestCompressedTranscriptRoundTripAndLegacy(t *testing.T) {
 		t.Fatal("compressed object must not open under the legacy transcript label")
 	}
 
-	legacy, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript, false)
+	// Objects written before compression became mandatory stay readable.
+	legacy, err := sealObject(dek, plaintext, "tr-1", KindTranscript)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,9 +70,9 @@ func TestCompressedTranscriptRoundTripAndLegacy(t *testing.T) {
 		t.Fatalf("legacy round trip: kind=%q err=%v", kind, err)
 	}
 
-	// Other kinds and tiny or incompressible transcripts keep the legacy encoding even when compression is on.
+	// Other kinds and tiny or incompressible transcripts keep the plain encoding.
 	for name, body := range map[string][]byte{"tiny": []byte(`{"id":"tr-1"}`)} {
-		blob, err := sealObjectWire(dek, body, "tr-1", KindTranscript, true)
+		blob, err := sealObjectWire(dek, body, "tr-1", KindTranscript)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -79,7 +80,7 @@ func TestCompressedTranscriptRoundTripAndLegacy(t *testing.T) {
 			t.Fatalf("%s transcript should stay legacy: %v", name, err)
 		}
 	}
-	asset, err := sealObjectWire(dek, plaintext, "a-1", KindAsset, true)
+	asset, err := sealObjectWire(dek, plaintext, "a-1", KindAsset)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +93,15 @@ func TestCompressedTranscriptHashIndependentOfEncoding(t *testing.T) {
 	dek := vault.GenerateUserDEK()
 	plaintext := transcriptJSON(t, terminalCorpus(64<<10))
 	var hashes []string
-	for _, compress := range []bool{false, true} {
-		blob, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript, compress)
-		if err != nil {
-			t.Fatal(err)
-		}
+	legacy, err := sealObject(dek, plaintext, "tr-1", KindTranscript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, blob := range [][]byte{legacy, compressed} {
 		kind, opened, err := tryOpenObject(dek, blob, "tr-1")
 		if err != nil {
 			t.Fatal(err)
@@ -177,7 +182,7 @@ func legacyTryOpen(dek, blob []byte, id string) (string, []byte, error) {
 func TestLegacyReaderFailsVisiblyOnCompressedTranscript(t *testing.T) {
 	dek := vault.GenerateUserDEK()
 	plaintext := transcriptJSON(t, terminalCorpus(64<<10))
-	blob, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript, true)
+	blob, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,51 +191,43 @@ func TestLegacyReaderFailsVisiblyOnCompressedTranscript(t *testing.T) {
 	}
 }
 
-func TestEngineCompressionGatingAndInterop(t *testing.T) {
+func TestEngineUploadsCompressedTranscripts(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
 	ctx := context.Background()
 	endedAt := int64(300)
 	content := terminalCorpus(512 << 10)
 
-	for _, enabled := range []bool{false, true} {
-		deviceA := newTestDevice(t)
-		deviceB := newTestDevice(t)
-		deviceA.engine.SetTranscriptCompression(enabled)
-		id := ids.New()
-		putDeviceTranscript(t, deviceA, id, 100, &endedAt, content, true)
-		syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+	id := ids.New()
+	putDeviceTranscript(t, deviceA, id, 100, &endedAt, content, true)
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 
-		var blob []byte
-		if err := server.db.DB().QueryRowContext(ctx, "SELECT blob FROM user_sync_object WHERE id = ?", id).Scan(&blob); err != nil {
-			t.Fatal(err)
-		}
-		dek := mustDEK(t, server, "alice", "alice-pw-123")
-		_, _, legacyErr := legacyTryOpen(dek, blob, id)
-		if enabled == (legacyErr == nil) {
-			t.Fatalf("enabled=%v legacyReaderOpened=%v", enabled, legacyErr == nil)
-		}
-		if !enabled && DefaultTranscriptCompression {
-			t.Fatal("default must be off until every device can read the format")
-		}
+	var blob []byte
+	if err := server.db.DB().QueryRowContext(ctx, "SELECT blob FROM user_sync_object WHERE id = ?", id).Scan(&blob); err != nil {
+		t.Fatal(err)
+	}
+	dek := mustDEK(t, server, "alice", "alice-pw-123")
+	if _, err := openObject(dek, blob, id, wireKindTranscriptPack); err != nil {
+		t.Fatalf("engine did not upload a packed transcript: %v", err)
+	}
 
-		// Readers always understand both encodings.
-		syncDevice(t, deviceB, server, "alice", "alice-pw-123")
-		chunks, err := deviceB.db.TranscriptChunks(ctx, id, 0, 4<<20)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var got []byte
-		for _, c := range chunks {
-			got = append(got, c.Data...)
-		}
-		if !bytes.Equal(got, content) {
-			t.Fatalf("enabled=%v: content mismatch after sync (%d vs %d bytes)", enabled, len(got), len(content))
-		}
-		// A second round is idle: the hash stays stable regardless of encoding.
-		if report := syncDevice(t, deviceB, server, "alice", "alice-pw-123"); report.Pushed != 0 || report.Applied != 0 {
-			t.Fatalf("enabled=%v: idle round not idle: %+v", enabled, report)
-		}
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	chunks, err := deviceB.db.TranscriptChunks(ctx, id, 0, 4<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for _, c := range chunks {
+		got = append(got, c.Data...)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("content mismatch after sync (%d vs %d bytes)", len(got), len(content))
+	}
+	// A second round is idle: the payload hash does not depend on the wire encoding.
+	if report := syncDevice(t, deviceB, server, "alice", "alice-pw-123"); report.Pushed != 0 || report.Applied != 0 {
+		t.Fatalf("idle round not idle: %+v", report)
 	}
 }
 
@@ -241,11 +238,11 @@ func TestCompressedTranscriptWireBytesContract(t *testing.T) {
 	dek := vault.GenerateUserDEK()
 	raw := terminalCorpus(4 << 20)
 	plaintext := transcriptJSON(t, raw)
-	before, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript, false)
+	before, err := sealObject(dek, plaintext, "tr-1", KindTranscript)
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript, true)
+	after, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,12 +260,16 @@ func BenchmarkSealTranscript(b *testing.B) {
 	dek := vault.GenerateUserDEK()
 	raw := terminalCorpus(4 << 20)
 	plaintext := transcriptJSON(b, raw)
-	for _, compress := range []bool{false, true} {
-		b.Run(fmt.Sprintf("compress=%v", compress), func(b *testing.B) {
+	seals := map[string]func() ([]byte, error){
+		"plain":      func() ([]byte, error) { return sealObject(dek, plaintext, "tr-1", KindTranscript) },
+		"compressed": func() ([]byte, error) { return sealObjectWire(dek, plaintext, "tr-1", KindTranscript) },
+	}
+	for name, seal := range seals {
+		b.Run(name, func(b *testing.B) {
 			b.SetBytes(int64(len(raw)))
 			var size int
 			for range b.N {
-				blob, err := sealObjectWire(dek, plaintext, "tr-1", KindTranscript, compress)
+				blob, err := seal()
 				if err != nil {
 					b.Fatal(err)
 				}
