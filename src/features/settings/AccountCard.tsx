@@ -29,7 +29,7 @@ function stateBadge(user: AccountUser): { text: string; tone: string } {
 }
 
 export function AccountCard() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const sessionUser = useAuth((s) => s.user);
   // The desktop identity comes from the "account sync" link server session (useAuth holds no user on desktop).
   const desktopAccount = useDesktopAccount();

@@ -110,7 +110,7 @@ function dontAskBiometricAgain(): boolean {
 
 function NativeVaultUnlockBanner() {
   const qc = useQueryClient();
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const platform = useQuery({ queryKey: ["app-platform"], queryFn: () => systemApi.platform() });
   const mobile = platform.data === "ios" || platform.data === "android";
   const supported =

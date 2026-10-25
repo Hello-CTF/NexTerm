@@ -146,7 +146,7 @@ function saveNavOpen(open: boolean): void {
 }
 
 export function SettingsView() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
   const setTerminalOsc52 = useUi((s) => s.setTerminalOsc52);
   const terminalPrefs = useTerminalPrefs();

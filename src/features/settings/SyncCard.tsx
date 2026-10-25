@@ -84,7 +84,7 @@ type LinkStep =
 type DesktopSyncStatus = SyncStatus & { paused?: boolean; vaultLocked?: boolean };
 
 function DesktopLinkCard() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const qc = useQueryClient();
 
   const [link, setLink] = useState<AccountLink | null>(null);
@@ -595,7 +595,7 @@ function DesktopLinkCard() {
 // sync status (last successful sync/latest error), manual trigger (sync_wake wakes the background sync loop),
 // and per-row comparison details (sync_compare: the Go side decrypts cloud objects with the engine session DEK, same judgment as the web).
 function DesktopSyncConsole() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const [status, setStatus] = useState<DesktopSyncStatus | null>(null);
   const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
   const [optInBusy, setOptInBusy] = useState(false);

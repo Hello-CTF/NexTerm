@@ -310,7 +310,9 @@ export function FileTree({ sessionId }: { sessionId: string }) {
 
 function FileTreeInner({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
-  const { pushToast, leftOpen, leftWidth } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
+  const leftOpen = useUi((s) => s.leftOpen);
+  const leftWidth = useUi((s) => s.leftWidth);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
   const [rootChoice, setRoot] = useState<string | null>(null);

@@ -82,7 +82,7 @@ async function pickEncryptedBundlePayload(path: string): Promise<string | null> 
 }
 
 export function SyncBundleCard() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const qc = useQueryClient();
 
   const [digest, setDigest] = useState<SyncDigest | null>(null);

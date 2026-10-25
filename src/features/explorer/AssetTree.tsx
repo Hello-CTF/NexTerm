@@ -307,7 +307,10 @@ type AssetMoveError = {
 
 export function AssetTree() {
   const qc = useQueryClient();
-  const { pushToast, leftOpen, leftWidth, activeProject } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
+  const leftOpen = useUi((s) => s.leftOpen);
+  const leftWidth = useUi((s) => s.leftWidth);
+  const activeProject = useUi((s) => s.activeProject);
   const sessions = useUi((state) => state.sessions);
   const [bulkMaintenanceOpen, setBulkMaintenanceOpen] = useState(false);
   const [query, setQuery] = useState("");

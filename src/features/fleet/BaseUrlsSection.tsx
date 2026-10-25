@@ -20,7 +20,7 @@ interface BaseUrlsSectionProps {
 }
 
 export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", loadError = null, onRetry }: BaseUrlsSectionProps) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const [draft, setDraft] = useState<FleetBaseURLEntry[]>(entries);
   const [dirty, setDirty] = useState(false);
   const [input, setInput] = useState("");

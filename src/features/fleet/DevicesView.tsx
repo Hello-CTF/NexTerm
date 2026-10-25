@@ -149,7 +149,7 @@ interface DeviceCardProps {
 }
 
 function DeviceCard({ device, serverVersion: listServerVersion, now, online, isAdmin, onPatch, onRevoked }: DeviceCardProps) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reasonOpen, setReasonOpen] = useState(false);
@@ -476,7 +476,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
 export function DevicesView() {
   const qc = useQueryClient();
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const account = useFleetAccount();
   const authStatus = useAuth((s) => s.status);
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);

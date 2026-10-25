@@ -71,17 +71,15 @@ export function CommandPalette({
   onQuickConnect?: () => void;
 }) {
   const qc = useQueryClient();
-  const {
-    sessions,
-    setSessions,
-    addTab,
-    pushToast,
-    themeMode,
-    setThemeMode,
-    connectingAssetIds,
-    workspaces,
-    activeWorkspaceId,
-  } = useUi();
+  const sessions = useUi((s) => s.sessions);
+  const setSessions = useUi((s) => s.setSessions);
+  const addTab = useUi((s) => s.addTab);
+  const pushToast = useUi((s) => s.pushToast);
+  const themeMode = useUi((s) => s.themeMode);
+  const setThemeMode = useUi((s) => s.setThemeMode);
+  const connectingAssetIds = useUi((s) => s.connectingAssetIds);
+  const workspaces = useUi((s) => s.workspaces);
+  const activeWorkspaceId = useUi((s) => s.activeWorkspaceId);
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });

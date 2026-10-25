@@ -47,7 +47,7 @@ function WorkspaceProblemSection({
   workspaceId?: string;
   problems: WorkspaceProblem[];
 }) {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
 
   const copy = async (problem: WorkspaceProblem) => {
     try {

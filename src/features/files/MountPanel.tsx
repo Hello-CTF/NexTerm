@@ -67,7 +67,7 @@ export function MountPanel({ sessionId }: { sessionId?: string }) {
 
 function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const sessions = useUi((s) => s.sessions);
   const visible = useMountPanelVisible(sessionId);
   const session = sessions.find((s) => s.id === sessionId);

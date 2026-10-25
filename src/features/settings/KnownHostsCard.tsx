@@ -8,7 +8,7 @@ import { describeError } from "../../ui/errorText";
 import { IconRefresh, IconShield, IconTrash, IconXCircle } from "../../ui/icons";
 
 export function KnownHostsCard() {
-  const { pushToast } = useUi();
+  const pushToast = useUi((s) => s.pushToast);
   const [hosts, setHosts] = useState<KnownHostDto[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

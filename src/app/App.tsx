@@ -693,39 +693,89 @@ export default function App() {
   );
 }
 
+function ToastStack() {
+  const toasts = useUi((s) => s.toasts);
+  const dismissToast = useUi((s) => s.dismissToast);
+  return (
+    <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col gap-2">
+      {toasts.map((t) => {
+        const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
+        const tone =
+          t.kind === "error"
+            ? "border-red-500/40 bg-red-950/90 text-red-100"
+            : t.kind === "success"
+              ? "nx-alert-success"
+              : "border-neutral-700 bg-neutral-800/95 text-neutral-100";
+        return (
+          <div
+            key={t.id}
+            className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-[var(--shadow-pop)] backdrop-blur ${tone}`}
+          >
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
+              onClick={() => dismissToast(t.id)}
+            >
+              <Icon
+                size={14}
+                className={
+                  t.kind === "error"
+                    ? "mt-px shrink-0 text-red-300"
+                    : t.kind === "success"
+                      ? "mt-px shrink-0 text-green-300"
+                      : "mt-px shrink-0 text-blue-300"
+                }
+              />
+              <span className="min-w-0 flex-1">{t.text}</span>
+            </button>
+            {t.action ? (
+              <button
+                type="button"
+                className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                onClick={() => {
+                  dismissToast(t.id);
+                  t.action?.onSelect();
+                }}
+              >
+                {t.action.label}
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AppShell() {
-  const {
-    workspaces,
-    activeWorkspaceId,
-    activeProject,
-    projectInventory,
-    setProjectInventory,
-    setActiveWorkspace,
-    closeWorkspace,
-    splitWorkspace,
-    unsplitWorkspace,
-    setActivePane,
-    setSplitRatio,
-    sessions,
-    setSessions,
-    leftOpen,
-    setLeftOpen: setLeftOpenStore,
-    leftMode,
-    setLeftMode,
-    rightOpen,
-    setRightOpen: setRightOpenStore,
-    leftWidth,
-    setLeftWidth,
-    rightWidth,
-    setRightWidth,
-    aiAccountEpoch,
-    accountEpoch,
-    toasts,
-    dismissToast,
-    pushToast,
-    connectFocusRevision,
-    reconcileDeletedTargets,
-  } = useUi();
+  const workspaces = useUi((s) => s.workspaces);
+  const activeWorkspaceId = useUi((s) => s.activeWorkspaceId);
+  const activeProject = useUi((s) => s.activeProject);
+  const projectInventory = useUi((s) => s.projectInventory);
+  const setProjectInventory = useUi((s) => s.setProjectInventory);
+  const setActiveWorkspace = useUi((s) => s.setActiveWorkspace);
+  const closeWorkspace = useUi((s) => s.closeWorkspace);
+  const splitWorkspace = useUi((s) => s.splitWorkspace);
+  const unsplitWorkspace = useUi((s) => s.unsplitWorkspace);
+  const setActivePane = useUi((s) => s.setActivePane);
+  const setSplitRatio = useUi((s) => s.setSplitRatio);
+  const sessions = useUi((s) => s.sessions);
+  const setSessions = useUi((s) => s.setSessions);
+  const leftOpen = useUi((s) => s.leftOpen);
+  const setLeftOpenStore = useUi((s) => s.setLeftOpen);
+  const leftMode = useUi((s) => s.leftMode);
+  const setLeftMode = useUi((s) => s.setLeftMode);
+  const rightOpen = useUi((s) => s.rightOpen);
+  const setRightOpenStore = useUi((s) => s.setRightOpen);
+  const leftWidth = useUi((s) => s.leftWidth);
+  const setLeftWidth = useUi((s) => s.setLeftWidth);
+  const rightWidth = useUi((s) => s.rightWidth);
+  const setRightWidth = useUi((s) => s.setRightWidth);
+  const aiAccountEpoch = useUi((s) => s.aiAccountEpoch);
+  const accountEpoch = useUi((s) => s.accountEpoch);
+  const pushToast = useUi((s) => s.pushToast);
+  const connectFocusRevision = useUi((s) => s.connectFocusRevision);
+  const reconcileDeletedTargets = useUi((s) => s.reconcileDeletedTargets);
   const closedTabEntries = useClosedTabs((s) => s.stack.entries);
 
   const visibleWorkspaces = useMemo(
@@ -2049,53 +2099,7 @@ function AppShell() {
 
       </div>
 
-      <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col gap-2">
-        {toasts.map((t) => {
-          const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
-          const tone =
-            t.kind === "error"
-              ? "border-red-500/40 bg-red-950/90 text-red-100"
-              : t.kind === "success"
-                ? "nx-alert-success"
-                : "border-neutral-700 bg-neutral-800/95 text-neutral-100";
-          return (
-            <div
-              key={t.id}
-              className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-[var(--shadow-pop)] backdrop-blur ${tone}`}
-            >
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
-                onClick={() => dismissToast(t.id)}
-              >
-                <Icon
-                  size={14}
-                  className={
-                    t.kind === "error"
-                      ? "mt-px shrink-0 text-red-300"
-                      : t.kind === "success"
-                        ? "mt-px shrink-0 text-green-300"
-                        : "mt-px shrink-0 text-blue-300"
-                  }
-                />
-                <span className="min-w-0 flex-1">{t.text}</span>
-              </button>
-              {t.action ? (
-                <button
-                  type="button"
-                  className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-                  onClick={() => {
-                    dismissToast(t.id);
-                    t.action?.onSelect();
-                  }}
-                >
-                  {t.action.label}
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
+      <ToastStack />
 
       {paletteOpen && (
         <Lazy fallback="none" overlay>
@@ -2778,7 +2782,8 @@ function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
 }
 
 function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: () => void }) {
-  const { setSessions, sessions } = useUi();
+  const setSessions = useUi((s) => s.setSessions);
+  const sessions = useUi((s) => s.sessions);
   const bindings = useKeybindings();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 bg-neutral-900 px-6">
