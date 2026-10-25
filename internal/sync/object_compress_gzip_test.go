@@ -24,9 +24,11 @@ type goldenVector struct {
 	DEKHex        string `json:"dekHex"`
 	ID            string `json:"id"`
 	Compressed    string `json:"compressedBlobB64"`
+	Packed        string `json:"packedBlobB64"`
 	Legacy        string `json:"legacyBlobB64"`
 	PlaintextB64  string `json:"plaintextB64"`
 	CompressedLbl string `json:"compressedLabel"`
+	PackedLbl     string `json:"packedLabel"`
 }
 
 func gzipFrame(t *testing.T, declared uint64, body []byte) []byte {
@@ -91,7 +93,7 @@ func TestCompressionWriterMatrix(t *testing.T) {
 		wantWire string
 	}{
 		{"off transcript", false, KindTranscript, big, KindTranscript},
-		{"on transcript", true, KindTranscript, big, wireKindTranscriptGzip},
+		{"on transcript", true, KindTranscript, big, wireKindTranscriptPack},
 		{"on tiny transcript", true, KindTranscript, tiny, KindTranscript},
 		{"on asset", true, KindAsset, big, KindAsset},
 		{"off asset", false, KindAsset, big, KindAsset},
@@ -106,7 +108,7 @@ func TestCompressionWriterMatrix(t *testing.T) {
 		}
 		// Old readers know only the kind enum: they open exactly the uncompressed cases.
 		_, _, legacyErr := legacyTryOpen(dek, blob, "x-1")
-		if (c.wantWire == wireKindTranscriptGzip) == (legacyErr == nil) {
+		if (c.wantWire == wireKindTranscriptPack) == (legacyErr == nil) {
 			t.Errorf("%s: legacy reader outcome wrong (err=%v)", c.name, legacyErr)
 		}
 		kind, plaintext, err := tryOpenObject(dek, blob, "x-1")
@@ -137,18 +139,30 @@ func TestZstdLabelStillReadable(t *testing.T) {
 func TestCompressedTranscriptGoldenVector(t *testing.T) {
 	if *updateGolden {
 		dek := bytes.Repeat([]byte{0x42}, 32)
-		plaintext := transcriptJSON(t, terminalCorpus(8<<10))
-		compressed, err := sealObjectWire(dek, plaintext, "tr-golden", KindTranscript, true)
+		plaintext := edgeTranscriptJSON(t, 8<<10)
+		gzipped, err := compressObjectPlaintext(plaintext)
 		if err != nil {
 			t.Fatal(err)
+		}
+		compressed, err := sealObject(dek, gzipped, "tr-golden", wireKindTranscriptGzip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packed, err := sealObjectWire(dek, plaintext, "tr-golden", KindTranscript, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := openObject(dek, packed, "tr-golden", wireKindTranscriptPack); err != nil {
+			t.Fatalf("golden writer output is not packed: %v", err)
 		}
 		legacy, err := sealObjectWire(dek, plaintext, "tr-golden", KindTranscript, false)
 		if err != nil {
 			t.Fatal(err)
 		}
 		vec := goldenVector{
-			DEKHex: hex.EncodeToString(dek), ID: "tr-golden", CompressedLbl: wireKindTranscriptGzip,
-			Compressed: base64.StdEncoding.EncodeToString(compressed), Legacy: base64.StdEncoding.EncodeToString(legacy),
+			DEKHex: hex.EncodeToString(dek), ID: "tr-golden", CompressedLbl: wireKindTranscriptGzip, PackedLbl: wireKindTranscriptPack,
+			Compressed: base64.StdEncoding.EncodeToString(compressed), Packed: base64.StdEncoding.EncodeToString(packed),
+			Legacy:       base64.StdEncoding.EncodeToString(legacy),
 			PlaintextB64: base64.StdEncoding.EncodeToString(plaintext),
 		}
 		encoded, err := json.MarshalIndent(vec, "", "  ")
@@ -169,7 +183,7 @@ func TestCompressedTranscriptGoldenVector(t *testing.T) {
 	}
 	dek, _ := hex.DecodeString(vec.DEKHex)
 	plaintext, _ := base64.StdEncoding.DecodeString(vec.PlaintextB64)
-	for name, field := range map[string]string{"compressed": vec.Compressed, "legacy": vec.Legacy} {
+	for name, field := range map[string]string{"compressed": vec.Compressed, "packed": vec.Packed, "legacy": vec.Legacy} {
 		blob, _ := base64.StdEncoding.DecodeString(field)
 		kind, opened, err := tryOpenObject(dek, blob, vec.ID)
 		if err != nil || kind != KindTranscript || !bytes.Equal(opened, plaintext) {
