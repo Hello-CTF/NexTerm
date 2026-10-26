@@ -26,17 +26,15 @@ func TestCloseTabStopsActiveRecordingAndClosesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
-	countDescriptors := runtime.GOOS != "windows"
-	before := 0
-	if countDescriptors {
-		before = descriptorCount(t)
-	}
+	// Count only descriptors of this recording: a process-wide count also
+	// sees descriptors other tests' goroutines open and close meanwhile.
+	countDescriptors := runtime.GOOS == "linux"
 	if err := manager.StartRecording(tab.ID, path); err != nil {
 		t.Fatal(err)
 	}
 	if countDescriptors {
-		if during := descriptorCount(t); during != before+1 {
-			t.Fatalf("recording opened %d descriptors, want one", during-before)
+		if during := pathDescriptorCount(t, path); during != 1 {
+			t.Fatalf("recording holds %d descriptors, want one", during)
 		}
 	}
 	if err := connector.transport(0).channel(0).emit([]byte("active-record")); err != nil {
@@ -50,8 +48,8 @@ func TestCloseTabStopsActiveRecordingAndClosesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	if countDescriptors {
-		if after := descriptorCount(t); after != before {
-			t.Fatalf("close left %d recording descriptors open", after-before)
+		if after := pathDescriptorCount(t, path); after != 0 {
+			t.Fatalf("close left %d recording descriptors open", after)
 		}
 	}
 	data, err := os.ReadFile(path)
@@ -557,11 +555,19 @@ func (t *recordingStopTerminal) Resize(int, int) error           { return nil }
 func (t *recordingStopTerminal) SetResponseHandler(func([]byte)) {}
 func (t *recordingStopTerminal) Close()                          {}
 
-func descriptorCount(t *testing.T) int {
+// pathDescriptorCount counts this process's open descriptors of path (Linux).
+func pathDescriptorCount(t *testing.T, path string) int {
 	t.Helper()
-	entries, err := filepath.Glob("/dev/fd/*")
+	const fdDir = "/proc/self/fd"
+	entries, err := os.ReadDir(fdDir)
 	if err != nil {
-		t.Skipf("open descriptor counting unavailable: %v", err)
+		t.Skipf("open descriptor inspection unavailable: %v", err)
 	}
-	return len(entries)
+	count := 0
+	for _, entry := range entries {
+		if target, err := os.Readlink(filepath.Join(fdDir, entry.Name())); err == nil && target == path {
+			count++
+		}
+	}
+	return count
 }
