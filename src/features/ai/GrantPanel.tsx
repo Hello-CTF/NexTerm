@@ -73,6 +73,10 @@ const SEARCH_LIMIT = 6;
 // device/<id> pseudo asset id used by the guard store and device sessions.
 type GrantTarget = { id: string; name: string; kind: string };
 
+function kindText(kinds: string[]): string {
+  return kinds.map((k) => KIND_LABEL[k as AiGrantKind] ?? k).join("、");
+}
+
 function ruleScopeText(rule: AiGrantRule): string {
   const action = RULE_ACTION_LABEL[rule.action as AiGrantRuleAction] ?? rule.action;
   return rule.path ? `${action} ${rule.path}` : action;
@@ -176,8 +180,13 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     const current = grants[target.id]?.kinds ?? [];
     const next = on ? [...new Set([...current, kind])] : current.filter((k) => k !== kind);
     if (on) {
+      // Granting replaces the whole legacy record for this host; its other kinds are not carried over.
+      const legacy = legacyGrants.find((grant) => grant.deviceId === target.id);
+      const replaces = legacy
+        ? `\n\n这会替换该主机 1.3.0 之前的旧格式授权（${kindText(legacy.kinds)}），只保留新开启的授权；其他种类需要单独重新开启。`
+        : "";
       const confirmed = await ask(
-        `让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问？\n\n即使在只读模式下也会放行；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。`,
+        `让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问？\n\n即使在只读模式下也会放行；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。${replaces}`,
         { title: "开启免确认授权", kind: "warning" },
       );
       if (!confirmed) return;
@@ -264,7 +273,13 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     }
   };
 
-  const clearLegacy = async (kind: "grant" | "rule", id: string) => {
+  const clearLegacy = async (kind: "grant" | "rule", id: string, label: string) => {
+    // Clearing records a normal revocation, which syncs to every device of this account.
+    const confirmed = await ask(
+      `清除「${label}」？\n\n清除会撤销这条授权，并同步到所有已同步的设备：其他设备上仍在生效的同一授权也会被撤销。`,
+      { title: "清除旧格式授权", kind: "warning" },
+    );
+    if (!confirmed) return;
     setBusy(`legacy:${kind}:${id}`);
     try {
       if (kind === "grant") {
@@ -420,14 +435,14 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       {(legacyGrants.length > 0 || legacyRules.length > 0) && (
         <div className="rounded-lg border border-amber-500/40 px-2 py-1.5" role="alert" aria-label="旧格式授权">
           <div className="mb-1 text-[10.5px] leading-relaxed text-amber-300">
-            以下授权为 1.3.0 之前的旧格式，已不再生效，也不会同步。需要时请重新开启授权，然后清除旧记录。
+            以下授权为 1.3.0 之前的旧格式，在这台设备上不生效，也不会从这台设备同步出去；其他设备上的同一授权可能仍然有效。请按需重新开启授权，或清除（清除会在所有已同步设备上撤销）。
           </div>
           {legacyGrants.map((grant) => (
             <LegacyRow
               key={`grant:${grant.deviceId}`}
-              label={`${targetOf(grant.deviceId).name}：${grant.kinds.map((k) => KIND_LABEL[k as AiGrantKind] ?? k).join("、")}`}
+              label={`${targetOf(grant.deviceId).name}：${kindText(grant.kinds)}`}
               busy={busy === `legacy:grant:${grant.deviceId}`}
-              onClear={() => void clearLegacy("grant", grant.deviceId)}
+              onClear={() => void clearLegacy("grant", grant.deviceId, `${targetOf(grant.deviceId).name}：${kindText(grant.kinds)}`)}
             />
           ))}
           {legacyRules.map((rule) => (
@@ -435,7 +450,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
               key={`rule:${rule.id}`}
               label={`${targetOf(rule.deviceId).name}：${ruleScopeText(rule)}`}
               busy={busy === `legacy:rule:${rule.id}`}
-              onClear={() => void clearLegacy("rule", rule.id)}
+              onClear={() => void clearLegacy("rule", rule.id, `${targetOf(rule.deviceId).name}：${ruleScopeText(rule)}`)}
             />
           ))}
         </div>

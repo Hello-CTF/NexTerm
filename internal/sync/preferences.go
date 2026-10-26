@@ -136,7 +136,7 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 			return ipc.WrapError(ipc.CodeBadParam, "AI 设备授权数据损坏", err)
 		}
 		if legacy := grants.LegacyIDs(); len(legacy) > 0 && report != nil {
-			report.warnf("%d 条 AI 设备授权为 1.3.0 之前的旧格式，未同步且不会生效，请在 AI 授权设置中按需重新授权并清除旧记录：%s", len(legacy), strings.Join(legacy, ", "))
+			report.warnf("%d 条 AI 设备授权为 1.3.0 之前的旧格式，在这台设备上不生效，也不会从这台设备推送（其他设备上的同一授权可能仍然有效），请在 AI 授权设置中重新授权或清除：%s", len(legacy), strings.Join(legacy, ", "))
 		}
 		for _, grant := range grants.Current {
 			id := aiGrantDevicePrefix + grant.DeviceID
@@ -157,7 +157,7 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 			return ipc.WrapError(ipc.CodeBadParam, "AI 授权规则数据损坏", err)
 		}
 		if legacy := rules.LegacyIDs(); len(legacy) > 0 && report != nil {
-			report.warnf("%d 条 AI 授权规则为 1.3.0 之前的旧格式，未同步且不会生效，请在 AI 授权设置中按需重新添加并清除旧记录：%s", len(legacy), strings.Join(legacy, ", "))
+			report.warnf("%d 条 AI 授权规则为 1.3.0 之前的旧格式，在这台设备上不生效，也不会从这台设备推送（其他设备上的同一规则可能仍然有效），请在 AI 授权设置中重新添加或清除：%s", len(legacy), strings.Join(legacy, ", "))
 		}
 		for _, rule := range rules.Current {
 			id := aiGrantRulePrefix + rule.ID

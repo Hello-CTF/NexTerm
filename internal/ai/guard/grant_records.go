@@ -9,12 +9,12 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
-// ErrLegacyGrantRecord classifies a persisted device grant or grant rule in
-// the format written before 1.3.0: a device grant without the explicit
-// permanence marker, or any record without a generation. Such records are not
-// migrated and never authorize anything; they stay listed with Legacy set so
-// the user can see them and re-grant or revoke them.
-var ErrLegacyGrantRecord = errors.New("AI 授权记录为 1.3.0 之前的旧格式，1.3.0 起不再自动迁移且不会生效，请重新授权或撤销")
+// A legacy record is a persisted device grant or grant rule in the format
+// written before 1.3.0: a device grant without the explicit permanence marker,
+// or any record without a generation. Such records are not migrated and never
+// authorize anything on this device; they stay listed with Legacy set so the
+// user can see them and re-grant or revoke them. The same grant may still be
+// in effect on another device that received it through sync.
 
 // errMissingGeneration guards the write side: every current-format record
 // must carry a generation, so a record without one is never persisted as if it
