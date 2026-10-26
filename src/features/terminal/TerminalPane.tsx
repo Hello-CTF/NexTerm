@@ -41,7 +41,16 @@ import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybin
 import { modHint } from "../../app/platform";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
-import { bytesToBase64, markdownFileLink, pasteFileExtension } from "./imagePaste";
+import {
+  bytesToBase64,
+  MAX_PASTE_FILE_BYTES,
+  markdownFileLink,
+  pasteFileExtension,
+  splitOversizedFiles,
+  uniquePasteFileNames,
+} from "./imagePaste";
+import { fileChunkSource, UPLOAD_CHUNK_SIZE, uploadChunked } from "../files/chunkedUpload";
+import { createTransferTaskId } from "../files/transferTaskId";
 import { confirmMultilinePaste } from "./terminalPaste";
 import {
   THROTTLE_RECOVERED_MS,
@@ -1361,41 +1370,80 @@ export function TerminalPane({
     handleRef.current?.paste(selected);
   };
 
-  const handlePasteImages = useCallback(
+  const handlePasteFiles = useCallback(
     async (files: File[]) => {
+      // /tmp and the file channel only make sense for POSIX hosts: WinRM has no /tmp and a 48 KiB write limit,
+      // and a container terminal would receive files on the host instead of in the container.
+      if (sessionKind === "winrm" || sessionKind === "docker" || containerId) {
+        pushToast("info", "当前会话类型不支持把粘贴的文件上传到 /tmp；请改用文件面板上传");
+        return;
+      }
       if (!kernelTabId) return;
       if (isObserver) {
         pushToast("info", "终端正由其他设备操作，点击「接管控制」可取得控制权");
         return;
       }
+      const { accepted, skipped } = splitOversizedFiles(files);
+      const skippedNote =
+        skipped.length > 0
+          ? `已跳过超过 ${MAX_PASTE_FILE_BYTES / 1024 / 1024} MB 的文件：${skipped.map((f) => f.name || "未命名").join("、")}`
+          : "";
+      if (skippedNote) pushToast("info", skippedNote);
+      if (accepted.length === 0) {
+        setImagePaste({ phase: "error", message: skippedNote });
+        return;
+      }
       setImagePaste({
         phase: "uploading",
-        message: `正在上传 ${files.length} 张图片到这台主机的 /tmp…`,
+        message: `正在上传 ${accepted.length} 个文件到这台主机的 /tmp…`,
       });
       try {
         const stamp = Date.now();
+        const dir = `/tmp/nexterm-paste-${stamp}`;
+        const names = uniquePasteFileNames(accepted.map((f) => f.name));
+        let dirReady = false;
         const links: string[] = [];
-        for (const [index, file] of files.entries()) {
-          const path = `/tmp/nexterm-paste-${stamp}-${index + 1}.${pasteFileExtension(file)}`;
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          await fsApi.write(sessionId, path, bytesToBase64(bytes), false);
-          links.push(markdownFileLink(file.name, path));
+        for (const [index, file] of accepted.entries()) {
+          // Images keep the flat /tmp/nexterm-paste-<stamp>-<n>.<ext> layout; other files keep their own name in a per-paste directory.
+          let path: string;
+          if (file.type.startsWith("image/")) {
+            path = `/tmp/nexterm-paste-${stamp}-${index + 1}.${pasteFileExtension(file)}`;
+          } else {
+            if (!dirReady) {
+              await fsApi.mkdir(sessionId, dir);
+              dirReady = true;
+            }
+            path = `${dir}/${names[index]}`;
+          }
+          if (file.size <= UPLOAD_CHUNK_SIZE) {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            await fsApi.write(sessionId, path, bytesToBase64(bytes), false);
+          } else {
+            await uploadChunked({
+              sessionId,
+              remotePath: path,
+              source: fileChunkSource(file),
+              taskId: createTransferTaskId(),
+              attemptId: createTransferTaskId(),
+            });
+          }
+          links.push(markdownFileLink(file.name || names[index], path));
         }
         handleRef.current?.paste(links.join(" "));
         setImagePaste({
           phase: "success",
-          message: `已上传 ${links.length} 张图片到这台主机的 /tmp 并插入链接`,
+          message: `已上传 ${links.length} 个文件到这台主机的 /tmp 并插入链接${skippedNote ? `；${skippedNote}` : ""}`,
         });
       } catch (e) {
-        setImagePaste({ phase: "error", message: `图片上传到 /tmp 失败：${describeError(e)}` });
+        setImagePaste({ phase: "error", message: `文件上传到 /tmp 失败：${describeError(e)}` });
       }
     },
-    [kernelTabId, isObserver, pushToast, sessionId],
+    [kernelTabId, isObserver, pushToast, sessionId, sessionKind, containerId],
   );
 
   const pasteImagesFromClipboard = async () => {
     if (!kernelTabId) return;
-    const pasteHint = `请在终端内按 ${modHint()}+V 粘贴图片，或将图片拖入终端`;
+    const pasteHint = `请在终端内按 ${modHint()}+V 粘贴文件，或将文件拖入终端`;
     if (typeof navigator.clipboard?.read !== "function") {
       handleRef.current?.focus();
       pushToast("info", `当前环境不支持直接读取剪贴板图片；${pasteHint}`);
@@ -1424,7 +1472,7 @@ export function TerminalPane({
       pushToast("info", "剪贴板里没有图片：先截图或复制图片文件，再在终端里 Ctrl+V 或拖入");
       return;
     }
-    await handlePasteImages(files);
+    await handlePasteFiles(files);
   };
 
   useEffect(() => {
@@ -2073,7 +2121,7 @@ export function TerminalPane({
               onNotification={osc9Notifier}
               onClipboard={osc52Handler}
               onStreamBacklog={setStreamBacklog}
-              onPasteImages={(files) => void handlePasteImages(files)}
+              onPasteFiles={(files) => void handlePasteFiles(files)}
               onHandle={(h) => {
                 handleRef.current = h;
               }}
@@ -2180,7 +2228,7 @@ export function TerminalPane({
               <button
                 type="button"
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                aria-label="关闭图片粘贴提示"
+                aria-label="关闭文件粘贴提示"
                 title="关闭"
                 onClick={() => setImagePaste(null)}
               >

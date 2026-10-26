@@ -1,23 +1,70 @@
 export { bytesToBase64 } from "../../ui/base64";
 
-// pureImageFiles returns the file list only when every item is an image and there is at least one (all-or-nothing).
-// A mixed payload (images + non-image files) returns an empty array and the whole event goes back to default handling: no image subset is extracted and nothing is dropped.
-export function pureImageFiles(data: DataTransfer | null): File[] {
+// MAX_PASTE_FILE_BYTES is the per-file size limit for files pasted or dropped into the terminal.
+export const MAX_PASTE_FILE_BYTES = 20 * 1024 * 1024;
+
+// pasteUploadFiles returns the real File objects of a paste/drop event that should be uploaded to the host, or [] when
+// the event must go back to default text handling.
+// - No File objects: a plain text paste, untouched.
+// - Only images alongside plain text: the text wins. Spreadsheets and web pages put a rendered image next to the text
+//   they copy, and dropping that text would break an ordinary paste.
+// - Any non-image File (for example copied in a file manager, which also exposes its name or path as text): the files
+//   win and the accompanying text is ignored.
+export function pasteUploadFiles(data: DataTransfer | null): File[] {
   if (!data) return [];
-  const entries: { type: string; file: File | null }[] = [];
+  const files: File[] = [];
   if (data.items && data.items.length > 0) {
     for (const item of data.items) {
       if (item.kind !== "file") continue;
-      entries.push({ type: item.type, file: item.getAsFile() });
+      const file = item.getAsFile();
+      if (file) files.push(file);
     }
   } else {
-    for (const file of data.files ?? []) {
-      entries.push({ type: file.type, file });
-    }
+    for (const file of data.files ?? []) files.push(file);
   }
-  if (entries.length === 0) return [];
-  if (entries.some((entry) => !entry.type.startsWith("image/") || entry.file === null)) return [];
-  return entries.map((entry) => entry.file as File);
+  if (files.length === 0) return [];
+  if (files.every((file) => file.type.startsWith("image/")) && clipboardHasPlainText(data)) return [];
+  return files;
+}
+
+// splitOversizedFiles separates files within the size limit from those above it.
+export function splitOversizedFiles(files: File[]): { accepted: File[]; skipped: File[] } {
+  const accepted: File[] = [];
+  const skipped: File[] = [];
+  for (const file of files) (file.size > MAX_PASTE_FILE_BYTES ? skipped : accepted).push(file);
+  return { accepted, skipped };
+}
+
+const MAX_REMOTE_NAME_CHARS = 100;
+
+// sanitizePasteFileName makes a client-supplied file name safe as one remote path segment: no separators or control
+// characters, no leading dots, bounded length with the extension kept, never empty.
+export function sanitizePasteFileName(name: string): string {
+  let clean = name
+    .replace(/[\\/\u0000-\u001f\u007f]/g, "_")
+    .replace(/^[.\s]+/, "")
+    .replace(/\s+$/, "");
+  if (clean.length > MAX_REMOTE_NAME_CHARS) {
+    const ext = /\.[A-Za-z0-9]{1,8}$/.exec(clean)?.[0] ?? "";
+    clean = clean.slice(0, MAX_REMOTE_NAME_CHARS - ext.length) + ext;
+  }
+  return clean || "file";
+}
+
+// uniquePasteFileNames sanitises every name and appends -2, -3, ... before the extension to duplicates, so files from
+// one paste never overwrite each other.
+export function uniquePasteFileNames(names: string[]): string[] {
+  const used = new Set<string>();
+  return names.map((raw) => {
+    const clean = sanitizePasteFileName(raw);
+    const dot = clean.lastIndexOf(".");
+    const stem = dot > 0 ? clean.slice(0, dot) : clean;
+    const ext = dot > 0 ? clean.slice(dot) : "";
+    let candidate = clean;
+    for (let n = 2; used.has(candidate.toLowerCase()); n += 1) candidate = `${stem}-${n}${ext}`;
+    used.add(candidate.toLowerCase());
+    return candidate;
+  });
 }
 
 // clipboardHasPlainText reports whether a mixed clipboard has usable plain text:

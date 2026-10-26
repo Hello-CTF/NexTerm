@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => {
     ask: vi.fn(),
     pickSavePath: vi.fn(),
     fsWrite: vi.fn(),
+    fsMkdir: vi.fn(),
+    uploadChunked: vi.fn(),
     paste: vi.fn(),
   };
 });
@@ -38,7 +40,12 @@ vi.mock("../../ipc/commands", () => ({
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
   },
-  fsApi: { write: mocks.fsWrite },
+  fsApi: { write: mocks.fsWrite, mkdir: mocks.fsMkdir },
+}));
+
+vi.mock("../../features/files/chunkedUpload", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../features/files/chunkedUpload")>()),
+  uploadChunked: mocks.uploadChunked,
 }));
 
 vi.mock("../../ipc/events", () => ({
@@ -107,7 +114,7 @@ import { useUi, type AppTab } from "../../app/store";
 
 let mounted: MountedView | undefined;
 
-function seedTab() {
+function seedTab(kind: "ssh" | "winrm" | "docker" = "ssh") {
   const tab: AppTab = {
     id: "t1",
     kind: "terminal",
@@ -136,7 +143,7 @@ function seedTab() {
         id: "s1",
         assetId: "asset-1",
         name: "web-01",
-        kind: "ssh",
+        kind,
         status: "connected",
         tabs: [],
         createdAt: 0,
@@ -146,13 +153,26 @@ function seedTab() {
   });
 }
 
+function sized(name: string, size: number, type = "application/octet-stream"): File {
+  const file = new File([new Uint8Array(Math.min(size, 8))], name, { type });
+  Object.defineProperty(file, "size", { value: size });
+  return file;
+}
+
+function mountPane(kind: "ssh" | "winrm" | "docker" = "ssh") {
+  seedTab(kind);
+  mounted = mount(
+    createElement(TerminalPane, { sessionId: "s1", title: "web-01", storeTabId: "t1", resumeTabId: "kernel-1" }),
+  );
+}
+
 function png(name: string): File {
   return new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: "image/png" });
 }
 
 async function pasteImages(files: File[]): Promise<void> {
   await act(async () => {
-    (harness.props?.onPasteImages as ((files: File[]) => void) | undefined)?.(files);
+    (harness.props?.onPasteFiles as ((files: File[]) => void) | undefined)?.(files);
     await flushMacrotask();
   });
 }
@@ -174,7 +194,7 @@ async function pasteFromMenu(): Promise<void> {
 }
 
 function statusText(): string {
-  const close = mounted?.container.querySelector('[aria-label="关闭图片粘贴提示"]');
+  const close = mounted?.container.querySelector('[aria-label="关闭文件粘贴提示"]');
   return close?.parentElement?.textContent ?? "";
 }
 
@@ -187,6 +207,8 @@ describe("TerminalPane image paste orchestration", () => {
     mocks.listLive.mockResolvedValue([]);
     mocks.ask.mockResolvedValue(true);
     mocks.fsWrite.mockResolvedValue(undefined);
+    mocks.fsMkdir.mockResolvedValue(undefined);
+    mocks.uploadChunked.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -221,7 +243,7 @@ describe("TerminalPane image paste orchestration", () => {
       "iVBORw==",
       false,
     );
-    expect(statusText()).toContain("已上传 1 张图片");
+    expect(statusText()).toContain("已上传 1 个文件");
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
@@ -254,7 +276,7 @@ describe("TerminalPane image paste orchestration", () => {
       "iVBORw==",
       false,
     );
-    expect(statusText()).toContain("已上传 2 张图片");
+    expect(statusText()).toContain("已上传 2 个文件");
   });
 
   it("shows the failure reason on upload failure and inserts nothing", async () => {
@@ -325,5 +347,131 @@ describe("TerminalPane image paste orchestration", () => {
 
     expect(useUi.getState().toasts.at(-1)?.text).toContain("读取剪贴板图片失败：read failed");
     expect(mocks.fsWrite).not.toHaveBeenCalled();
+  });
+});
+
+describe("TerminalPane file paste orchestration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.replaceChildren();
+    harness.props = null;
+    mocks.flags.web = false;
+    mocks.listLive.mockResolvedValue([]);
+    mocks.fsWrite.mockResolvedValue(undefined);
+    mocks.fsMkdir.mockResolvedValue(undefined);
+    mocks.uploadChunked.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    mounted?.unmount();
+    mounted = undefined;
+  });
+
+  it("uploads a non-image file into a per-paste directory under its own name and links it", async () => {
+    mountPane();
+    await flush();
+
+    await pasteImages([new File(["hello"], "my report (v1).pdf", { type: "application/pdf" })]);
+
+    await waitFor(() =>
+      expect(mocks.paste).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[my report \(v1\)\.pdf\]\(<\/tmp\/nexterm-paste-\d+\/my report \(v1\)\.pdf>\)$/),
+      ),
+    );
+    expect(mocks.fsMkdir).toHaveBeenCalledWith("s1", expect.stringMatching(/^\/tmp\/nexterm-paste-\d+$/));
+    expect(mocks.fsWrite).toHaveBeenCalledWith(
+      "s1",
+      expect.stringMatching(/^\/tmp\/nexterm-paste-\d+\/my report \(v1\)\.pdf$/),
+      "aGVsbG8=",
+      false,
+    );
+    expect(statusText()).toContain("已上传 1 个文件到这台主机的 /tmp 并插入链接");
+  });
+
+  it("handles mixed images and files, sanitising names and avoiding collisions", async () => {
+    mountPane();
+    await flush();
+
+    await pasteImages([
+      png("shot.png"),
+      new File(["1"], "../a.txt"),
+      new File(["2"], "../a.txt"),
+      new File(["3"], ".env"),
+    ]);
+
+    await waitFor(() => expect(mocks.paste).toHaveBeenCalled());
+    const text = mocks.paste.mock.calls[0]?.[0] as string;
+    expect(text).toMatch(/\[shot\.png\]\(\/tmp\/nexterm-paste-\d+-1\.png\)/);
+    const paths = mocks.fsWrite.mock.calls.map((c) => c[1] as string);
+    expect(paths).toHaveLength(4);
+    expect(new Set(paths).size).toBe(4);
+    for (const path of paths.slice(1)) {
+      expect(path).toMatch(/^\/tmp\/nexterm-paste-\d+\/[^/]+$/);
+    }
+    expect(paths.some((p) => p.endsWith("/_a.txt"))).toBe(true);
+    expect(paths.some((p) => p.endsWith("/_a-2.txt"))).toBe(true);
+    expect(paths.some((p) => p.endsWith("/env"))).toBe(true);
+    expect(mocks.fsMkdir).toHaveBeenCalledTimes(1);
+    expect(statusText()).toContain("已上传 4 个文件");
+  });
+
+  it("uses the chunked upload for files larger than one chunk", async () => {
+    mountPane();
+    await flush();
+
+    await pasteImages([sized("big.iso", 5 * 1024 * 1024)]);
+
+    await waitFor(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
+    expect(mocks.uploadChunked.mock.calls[0]?.[0]).toMatchObject({
+      sessionId: "s1",
+      remotePath: expect.stringMatching(/^\/tmp\/nexterm-paste-\d+\/big\.iso$/),
+    });
+    expect(mocks.fsWrite).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.paste).toHaveBeenCalled());
+  });
+
+  it("skips files over 20 MB with a visible message and still uploads the rest", async () => {
+    mountPane();
+    await flush();
+
+    await pasteImages([sized("huge.bin", 20 * 1024 * 1024 + 1), new File(["ok"], "ok.txt")]);
+
+    await waitFor(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
+    expect(mocks.paste.mock.calls[0]?.[0]).toContain("ok.txt");
+    expect(mocks.paste.mock.calls[0]?.[0]).not.toContain("huge.bin");
+    expect(statusText()).toContain("已跳过超过 20 MB 的文件：huge.bin");
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("huge.bin");
+  });
+
+  it("uploads a file of exactly 20 MB", async () => {
+    mountPane();
+    await flush();
+
+    await pasteImages([sized("edge.bin", 20 * 1024 * 1024)]);
+
+    await waitFor(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
+  });
+
+  it("reports an error and uploads nothing when every file is too large", async () => {
+    mountPane();
+    await flush();
+
+    await pasteImages([sized("huge.bin", 21 * 1024 * 1024)]);
+
+    await waitFor(() => expect(statusText()).toContain("huge.bin"));
+    expect(mocks.uploadChunked).not.toHaveBeenCalled();
+    expect(mocks.fsWrite).not.toHaveBeenCalled();
+    expect(mocks.paste).not.toHaveBeenCalled();
+  });
+
+  it.each(["winrm", "docker"] as const)("explains that %s sessions cannot take pasted files", async (kind) => {
+    mountPane(kind);
+
+    await pasteImages([new File(["x"], "a.txt")]);
+
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("不支持");
+    expect(mocks.fsWrite).not.toHaveBeenCalled();
+    expect(mocks.uploadChunked).not.toHaveBeenCalled();
+    expect(mocks.paste).not.toHaveBeenCalled();
   });
 });

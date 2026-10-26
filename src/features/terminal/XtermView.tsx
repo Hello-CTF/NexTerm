@@ -46,7 +46,7 @@ import { createSelectionAutoCopy } from "./selectionAutoCopy";
 import { confirmMultilinePaste, multilinePasteLines, wrapBracketedPaste } from "./terminalPaste";
 import { SelectionActionBar, isCoarsePointerDevice } from "./SelectionActionBar";
 import { copyText } from "../../ui/clipboard";
-import { clipboardHasPlainText, pureImageFiles } from "./imagePaste";
+import { pasteUploadFiles } from "./imagePaste";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
 
@@ -125,7 +125,7 @@ export interface XtermViewProps {
   onClipboard?: (payload: string) => void;
   onStreamBacklog?: (backlog: TerminalStreamBacklog | null) => void;
   onSelectionCopy?: (text: string, error: unknown | null) => void;
-  onPasteImages?: (files: File[]) => void;
+  onPasteFiles?: (files: File[]) => void;
   onRequestPaste?: () => void;
 }
 
@@ -172,7 +172,7 @@ export function XtermView(props: XtermViewProps) {
   const onClipboardRef = useRef(props.onClipboard);
   const onStreamBacklogRef = useRef(props.onStreamBacklog);
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
-  const onPasteImagesRef = useRef(props.onPasteImages);
+  const onPasteFilesRef = useRef(props.onPasteFiles);
   const onRequestPasteRef = useRef(props.onRequestPaste);
   const registerSearchRef = useRef(props.registerSearch);
   // Mount-effect inputs that must not rebuild the terminal when they change:
@@ -193,7 +193,7 @@ export function XtermView(props: XtermViewProps) {
   onClipboardRef.current = props.onClipboard;
   onStreamBacklogRef.current = props.onStreamBacklog;
   onSelectionCopyRef.current = props.onSelectionCopy;
-  onPasteImagesRef.current = props.onPasteImages;
+  onPasteFilesRef.current = props.onPasteFiles;
   onRequestPasteRef.current = props.onRequestPaste;
   registerSearchRef.current = props.registerSearch;
   visibleRef.current = props.visible;
@@ -1221,11 +1221,11 @@ export function XtermView(props: XtermViewProps) {
       updateSelectionBar();
     });
     const onPasteCapture = (event: ClipboardEvent) => {
-      const files = pureImageFiles(event.clipboardData);
-      if (files.length > 0 && !clipboardHasPlainText(event.clipboardData)) {
+      const files = pasteUploadFiles(event.clipboardData);
+      if (files.length > 0) {
         event.preventDefault();
         event.stopPropagation();
-        onPasteImagesRef.current?.(files);
+        onPasteFilesRef.current?.(files);
         return;
       }
       const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -1241,11 +1241,11 @@ export function XtermView(props: XtermViewProps) {
       event.preventDefault();
     };
     const onDropCapture = (event: DragEvent) => {
-      const files = pureImageFiles(event.dataTransfer);
-      if (files.length === 0 || clipboardHasPlainText(event.dataTransfer)) return;
+      const files = pasteUploadFiles(event.dataTransfer);
+      if (files.length === 0) return;
       event.preventDefault();
       event.stopPropagation();
-      onPasteImagesRef.current?.(files);
+      onPasteFilesRef.current?.(files);
     };
     pasteHost.addEventListener("paste", onPasteCapture, true);
     pasteHost.addEventListener("dragover", onDragOver);

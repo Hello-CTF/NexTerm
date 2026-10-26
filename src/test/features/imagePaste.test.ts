@@ -5,7 +5,11 @@ import {
   clipboardHasPlainText,
   markdownFileLink,
   pasteFileExtension,
-  pureImageFiles,
+  MAX_PASTE_FILE_BYTES,
+  pasteUploadFiles,
+  sanitizePasteFileName,
+  splitOversizedFiles,
+  uniquePasteFileNames,
 } from "../../features/terminal/imagePaste";
 
 interface StubItem {
@@ -30,51 +34,77 @@ function png(name: string): File {
   return new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: "image/png" });
 }
 
-describe("pureImageFiles", () => {
-  it("returns files only when every file item is an image", () => {
+describe("pasteUploadFiles", () => {
+  const txt = () => new File(["x"], "notes.txt", { type: "text/plain" });
+
+  it("returns every File object, images and other files alike, in order", () => {
     const dt = dataTransferWith([
       { kind: "file", type: "image/png", file: png("a.png") },
-      { kind: "file", type: "image/webp", file: new File(["w"], "b.webp", { type: "image/webp" }) },
+      { kind: "file", type: "text/plain", file: txt() },
     ]);
-    expect(pureImageFiles(dt).map((f) => f.name)).toEqual(["a.png", "b.webp"]);
+    expect(pasteUploadFiles(dt).map((f) => f.name)).toEqual(["a.png", "notes.txt"]);
   });
 
-  it("returns an empty list for mixed image and non-image payloads instead of extracting an image subset", () => {
-    const dt = dataTransferWith([
-      { kind: "file", type: "image/png", file: png("a.png") },
-      { kind: "file", type: "text/plain", file: new File(["x"], "notes.txt", { type: "text/plain" }) },
-    ]);
-    expect(pureImageFiles(dt)).toEqual([]);
+  it("returns nothing for plain text and empty or null payloads", () => {
+    expect(pasteUploadFiles(dataTransferWith([{ kind: "string", type: "text/plain", file: null }], "echo hi"))).toEqual([]);
+    expect(pasteUploadFiles(null)).toEqual([]);
+    expect(pasteUploadFiles(dataTransferWith([]))).toEqual([]);
+    expect(pasteUploadFiles(dataTransferWith([{ kind: "file", type: "image/png", file: null }]))).toEqual([]);
   });
 
-  it("ignores text items and returns empty arrays for empty and non-image payloads", () => {
-    const dt = dataTransferWith([
-      { kind: "string", type: "text/plain", file: null },
-      { kind: "file", type: "image/png", file: png("a.png") },
-    ]);
-    expect(pureImageFiles(dt).map((f) => f.name)).toEqual(["a.png"]);
-    expect(pureImageFiles(null)).toEqual([]);
-    expect(pureImageFiles(dataTransferWith([]))).toEqual([]);
-    expect(
-      pureImageFiles(
-        dataTransferWith([{ kind: "file", type: "application/pdf", file: new File(["p"], "d.pdf") }]),
-      ),
-    ).toEqual([]);
+  it("prefers files over text when a non-image File is present", () => {
+    const dt = dataTransferWith([{ kind: "file", type: "application/pdf", file: new File(["p"], "d.pdf") }], "/home/me/d.pdf");
+    expect(pasteUploadFiles(dt).map((f) => f.name)).toEqual(["d.pdf"]);
+    const mixed = dataTransferWith(
+      [
+        { kind: "file", type: "image/png", file: png("icon.png") },
+        { kind: "file", type: "text/plain", file: txt() },
+      ],
+      "notes.txt",
+    );
+    expect(pasteUploadFiles(mixed).map((f) => f.name)).toEqual(["icon.png", "notes.txt"]);
   });
 
-  it("falls back to files when items is missing, preserving all-or-nothing behavior", () => {
-    const allImages = {
-      items: [],
-      files: [png("c.png")],
-      getData: () => "",
-    } as unknown as DataTransfer;
-    expect(pureImageFiles(allImages).map((f) => f.name)).toEqual(["c.png"]);
-    const mixed = {
-      items: [],
-      files: [png("c.png"), new File(["x"], "notes.txt", { type: "text/plain" })],
-      getData: () => "",
-    } as unknown as DataTransfer;
-    expect(pureImageFiles(mixed)).toEqual([]);
+  it("keeps the text paste when the only files are images next to plain text (spreadsheet or web copy)", () => {
+    const dt = dataTransferWith([{ kind: "file", type: "image/png", file: png("a.png") }], "cell value");
+    expect(pasteUploadFiles(dt)).toEqual([]);
+  });
+
+  it("falls back to files when items is missing", () => {
+    const dt = { items: [], files: [txt()], getData: () => "" } as unknown as DataTransfer;
+    expect(pasteUploadFiles(dt).map((f) => f.name)).toEqual(["notes.txt"]);
+  });
+});
+
+describe("splitOversizedFiles", () => {
+  it("keeps files at the limit and skips larger ones", () => {
+    const at = new File([new Uint8Array(0)], "at.bin");
+    Object.defineProperty(at, "size", { value: MAX_PASTE_FILE_BYTES });
+    const over = new File([new Uint8Array(0)], "over.bin");
+    Object.defineProperty(over, "size", { value: MAX_PASTE_FILE_BYTES + 1 });
+    const { accepted, skipped } = splitOversizedFiles([at, over]);
+    expect(accepted.map((f) => f.name)).toEqual(["at.bin"]);
+    expect(skipped.map((f) => f.name)).toEqual(["over.bin"]);
+  });
+});
+
+describe("remote file names", () => {
+  it("removes separators, control characters and leading dots", () => {
+    expect(sanitizePasteFileName("../../etc/passwd")).toBe("_.._etc_passwd");
+    expect(sanitizePasteFileName(".bashrc")).toBe("bashrc");
+    expect(sanitizePasteFileName("a\u0000b\nc.txt")).toBe("a_b_c.txt");
+    expect(sanitizePasteFileName("   ")).toBe("file");
+    expect(sanitizePasteFileName("")).toBe("file");
+  });
+
+  it("limits length while keeping the extension", () => {
+    const name = sanitizePasteFileName(`${"a".repeat(300)}.tar`);
+    expect(name.length).toBeLessThanOrEqual(100);
+    expect(name.endsWith(".tar")).toBe(true);
+  });
+
+  it("makes duplicate names unique within one paste", () => {
+    expect(uniquePasteFileNames(["a.txt", "a.txt", "A.txt", "b"])).toEqual(["a.txt", "a-2.txt", "A-3.txt", "b"]);
   });
 });
 
