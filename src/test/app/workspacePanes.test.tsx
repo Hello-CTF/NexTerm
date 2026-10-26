@@ -352,6 +352,8 @@ describe("SplitView", () => {
         singlePane,
         onRatio,
         renderPane: (pane) => createElement("div", { id: `pane-${pane.id}` }, pane.id),
+        renderTab: (_pane, tab) => createElement("div", { id: `tab-${tab.id}` }, tab.id),
+        onActivatePane: vi.fn(),
       }),
     );
     const box = view.container.querySelector<HTMLElement>(".nx-split-view")!;

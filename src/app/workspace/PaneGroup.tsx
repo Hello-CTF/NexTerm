@@ -7,6 +7,7 @@ import {
   closeTabHint,
   closeActionHint,
   sanitizeRemoteTabTitle,
+  type AppTab,
   type Pane,
   type SplitDirection,
 } from "../store";
@@ -83,9 +84,9 @@ export interface PaneMoveTarget {
 interface PaneGroupProps {
   pane: Pane;
   idPrefix: string;
-  workspaceId: string;
   active: boolean;
-  visible: boolean;
+  // Measures the tab strip; tab content is placed below it by SplitView.
+  stripRef: (element: HTMLElement | null) => void;
   // The workspace shows more than one pane.
   split: boolean;
   // Only this pane is on screen (mobile and compact layouts); `paneNumber` of `paneCount` is shown.
@@ -106,9 +107,8 @@ interface PaneGroupProps {
 export function PaneGroup({
   pane,
   idPrefix,
-  workspaceId,
   active,
-  visible,
+  stripRef,
   split,
   singlePane,
   paneNumber,
@@ -254,6 +254,7 @@ export function PaneGroup({
       }}
     >
       <div
+        ref={stripRef}
         className={`nx-tabstrip is-sub ${split ? "is-split" : ""} ${
           active ? "is-active-pane" : ""
         }`}
@@ -466,33 +467,37 @@ export function PaneGroup({
       </div>
 
       <div className="min-h-0 flex-1">
-        {pane.tabs.length === 0 ? (
-          <WorkspaceEmpty onNew={onNewTerminal} />
-        ) : (
-          pane.tabs.map((t) => (
-            <div
-              key={t.id}
-              role="tabpanel"
-              id={`nx-tab-panel-${idPrefix}-${t.id}`}
-              aria-labelledby={`nx-tab-${idPrefix}-${t.id}`}
-              className={t.id === activeTabId ? "h-full min-h-0" : "hidden"}
-            >
-              <ErrorBoundary
-                onClose={t.closable ? () => void requestCloseTab(t.id) : undefined}
-              >
-                <PaneForTab
-                  tab={t}
-                  active={t.id === activeTabId && visible}
-                  workspaceId={workspaceId}
-                  onClose={requestCloseTab}
-                />
-              </ErrorBoundary>
-            </div>
-          ))
-        )}
+        {pane.tabs.length === 0 && <WorkspaceEmpty onNew={onNewTerminal} />}
       </div>
 
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
+    </div>
+  );
+}
+
+// PaneTabPanel is one tab's content. SplitView renders it in a workspace-level layer keyed by tab id,
+// so it stays mounted when the tab moves to another pane or its pane is renamed.
+export function PaneTabPanel({
+  tab,
+  idPrefix,
+  workspaceId,
+  visible,
+}: {
+  tab: AppTab;
+  idPrefix: string;
+  workspaceId: string;
+  visible: boolean;
+}) {
+  return (
+    <div
+      role="tabpanel"
+      id={`nx-tab-panel-${idPrefix}-${tab.id}`}
+      aria-labelledby={`nx-tab-${idPrefix}-${tab.id}`}
+      className="h-full min-h-0"
+    >
+      <ErrorBoundary onClose={tab.closable ? () => void requestCloseTab(tab.id) : undefined}>
+        <PaneForTab tab={tab} active={visible} workspaceId={workspaceId} onClose={requestCloseTab} />
+      </ErrorBoundary>
     </div>
   );
 }

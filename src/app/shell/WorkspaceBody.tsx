@@ -10,7 +10,7 @@ import {
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { Lazy } from "../../ui/LazyBoundary";
 import { AiSidebar, AssetTree, CredentialsSidebar, FileTree } from "../lazyPanels";
-import { PaneGroup, type PaneMoveTarget } from "../workspace/PaneGroup";
+import { PaneGroup, PaneTabPanel, type PaneMoveTarget } from "../workspace/PaneGroup";
 import { SplitView } from "../workspace/SplitView";
 import { workspaceLayoutTree } from "../paneLayout";
 import { focusNeighbor, paneIdsInOrder, type FocusDirection } from "../splitTree";
@@ -128,13 +128,21 @@ export function WorkspaceBody({
                     workspace={w}
                     singlePane={singlePane}
                     onRatio={(splitId, ratio) => setSplitRatio(splitId, ratio, w.id)}
-                    renderPane={(p) => (
+                    onActivatePane={(paneId) => setActivePane(paneId, w.id)}
+                    renderTab={(p, t, visible) => (
+                      <PaneTabPanel
+                        tab={t}
+                        idPrefix={`${w.id}-${p.id}`}
+                        workspaceId={w.id}
+                        visible={wsActive && visible}
+                      />
+                    )}
+                    renderPane={(p, view, stripRef) => (
                       <PaneGroup
                         pane={p}
                         idPrefix={`${w.id}-${p.id}`}
-                        workspaceId={w.id}
-                        active={wsActive && p.id === w.activePaneId}
-                        visible={wsActive && (!singlePane || p.id === w.activePaneId || !split)}
+                        active={wsActive && view.focused}
+                        stripRef={stripRef}
                         split={split}
                         singlePane={singlePane}
                         paneNumber={order.indexOf(p.id) + 1}

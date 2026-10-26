@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { clampSplitRatio, splitRatioAt, splitRatioForKey } from "../../features/terminal/workspaceLayout";
 import { createFrameCoalescer, RESIZE_END_EVENT, type FrameCoalescer } from "../../ui/ResizeHandle";
-import type { Pane, Workspace } from "../store";
+import type { AppTab, Pane, Workspace } from "../store";
+import { isTouchShell } from "../shell/shellMode";
 import { workspaceLayoutTree } from "../paneLayout";
 import { paneRects, resolveActivePane, type Rect, type SplitDir, type SplitNode } from "../splitTree";
 
@@ -77,39 +78,124 @@ function handleStyle(handle: SplitHandleLayout): CSSProperties {
   };
 }
 
+export interface PaneView {
+  /** The pane is on screen (single-pane mode shows only the focused pane). */
+  shown: boolean;
+  /** The pane holds the workspace's focus. */
+  focused: boolean;
+}
+
 interface SplitViewProps {
   workspace: Workspace;
   /** Show only the active pane, full size (mobile and compact layouts). Hidden panes stay mounted. */
   singlePane: boolean;
-  renderPane: (pane: Pane) => ReactNode;
+  /** The pane's chrome: tab strip and toolbar, plus whatever an empty pane shows. */
+  renderPane: (pane: Pane, view: PaneView, stripRef: (element: HTMLElement | null) => void) => ReactNode;
+  /** One tab's content; `visible` is true when it is the shown pane's selected tab. */
+  renderTab: (pane: Pane, tab: AppTab, visible: boolean) => ReactNode;
+  onActivatePane: (paneId: string) => void;
   onRatio: (splitId: string, ratio: number) => void;
 }
 
+// Tab strip height used until the real strip is measured (jsdom, first frame).
+function defaultStripHeight(): number {
+  return isTouchShell() ? 45 : 35;
+}
+
+/** Placement of a pane's tab content: the pane area below its tab strip. */
+export function tabContentStyle(rect: Rect | null, stripHeight: number): CSSProperties {
+  if (!rect) return { left: 0, top: `${stripHeight}px`, width: "100%", height: `calc(100% - ${stripHeight}px)` };
+  const pane = paneStyle(rect);
+  return { ...pane, top: `calc(${pane.top} + ${stripHeight}px)`, height: `calc(${pane.height} - ${stripHeight}px)` };
+}
+
 /**
- * Lays out a workspace's split tree. Panes render as keyed siblings of one container and are placed
- * absolutely from the tree, so splitting, closing, resizing or switching to the single-pane view
- * never re-parents a pane: its terminal keeps its DOM node and connection.
+ * Lays out a workspace's split tree. Pane chrome renders as keyed siblings placed absolutely from
+ * the tree, and every tab's content renders in one workspace-level layer keyed by tab id and placed
+ * over its pane's content area. Splitting, closing, resizing, switching to the single-pane view,
+ * moving a tab to another pane or renaming a pane therefore never re-parents tab content: a
+ * terminal keeps its DOM node and connection.
  */
-export function SplitView({ workspace, singlePane, renderPane, onRatio }: SplitViewProps) {
+export function SplitView({ workspace, singlePane, renderPane, renderTab, onActivatePane, onRatio }: SplitViewProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   const tree = workspaceLayoutTree(workspace);
   const rects = new Map((tree ? paneRects(tree) : []).map((entry) => [entry.paneId, entry.rect]));
   const activePaneId = tree ? resolveActivePane(tree, workspace.activePaneId) : workspace.activePaneId;
   const handles = tree && !singlePane ? splitHandles(tree) : [];
+  const [strips, setStrips] = useState<Record<string, number>>({});
+  const stripRefs = useRef(new Map<string, (element: HTMLElement | null) => void>());
+  const observers = useRef(new Map<string, () => void>());
+
+  useEffect(() => {
+    const active = observers.current;
+    return () => {
+      for (const stop of active.values()) stop();
+      active.clear();
+    };
+  }, []);
+
+  const stripRef = (paneId: string) => {
+    let callback = stripRefs.current.get(paneId);
+    if (!callback) {
+      callback = (element) => {
+        observers.current.get(paneId)?.();
+        observers.current.delete(paneId);
+        if (!element) return;
+        const measure = () => {
+          const height = element.offsetHeight;
+          if (height > 0) setStrips((current) => (current[paneId] === height ? current : { ...current, [paneId]: height }));
+        };
+        measure();
+        if (typeof ResizeObserver === "undefined") return;
+        const observer = new ResizeObserver(measure);
+        observer.observe(element);
+        observers.current.set(paneId, () => observer.disconnect());
+      };
+      stripRefs.current.set(paneId, callback);
+    }
+    return callback;
+  };
+
+  const placement = workspace.panes.map((pane) => {
+    const rect = rects.get(pane.id) ?? null;
+    const shown = singlePane ? pane.id === activePaneId : rect !== null;
+    return { pane, rect: singlePane ? null : rect, shown, focused: pane.id === activePaneId };
+  });
+  // Tab content in a stable order: moving a tab between panes changes only its placement.
+  const tabs = placement
+    .flatMap((entry) => {
+      const selected = entry.pane.activeTabId ?? entry.pane.tabs[entry.pane.tabs.length - 1]?.id ?? null;
+      return entry.pane.tabs.map((tab) => ({ ...entry, tab, selected: tab.id === selected }));
+    })
+    .sort((left, right) => (left.tab.id < right.tab.id ? -1 : left.tab.id > right.tab.id ? 1 : 0));
+  const defaultStrip = defaultStripHeight();
 
   return (
     <div ref={boxRef} className="nx-split-view relative h-full min-h-0">
-      {workspace.panes.map((pane) => {
-        const rect = rects.get(pane.id);
-        const shown = singlePane ? pane.id === activePaneId : rect !== undefined;
+      {placement.map(({ pane, rect, shown, focused }) => (
+        <div
+          key={pane.id}
+          data-pane-id={pane.id}
+          className={shown ? "absolute flex min-h-0 min-w-0 flex-col" : "hidden"}
+          style={shown ? (rect ? paneStyle(rect) : { inset: 0 }) : undefined}
+        >
+          {renderPane(pane, { shown, focused }, stripRef(pane.id))}
+        </div>
+      ))}
+      {tabs.map(({ pane, tab, rect, shown, selected }) => {
+        const visible = shown && selected;
         return (
           <div
-            key={pane.id}
-            data-pane-id={pane.id}
-            className={shown ? "absolute flex min-h-0 min-w-0 flex-col" : "hidden"}
-            style={shown ? (singlePane || !rect ? { inset: 0 } : paneStyle(rect)) : undefined}
+            key={tab.id}
+            data-tab-content={tab.id}
+            data-content-pane={pane.id}
+            className={visible ? "absolute flex min-h-0 min-w-0 flex-col" : "hidden"}
+            style={visible ? tabContentStyle(rect, strips[pane.id] ?? defaultStrip) : undefined}
+            onMouseDown={() => {
+              if (pane.id !== activePaneId) onActivatePane(pane.id);
+            }}
           >
-            {renderPane(pane)}
+            {renderTab(pane, tab, visible)}
           </div>
         );
       })}

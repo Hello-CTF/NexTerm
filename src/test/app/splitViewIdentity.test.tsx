@@ -199,6 +199,66 @@ describe("split view terminal identity", () => {
     expect(mounts.unmounts.get("t1") ?? 0).toBe(0);
   });
 
+  it.each([
+    { name: "a WinRM line tab", tab: { ...terminal("winrm"), sessionId: "s" } },
+    { name: "a container exec tab", tab: { ...terminal("exec"), containerId: "container-1" } },
+  ])("moves $name to another pane without remounting its terminal", async ({ tab }) => {
+    act(() => {
+      useUi.setState((state) => ({
+        workspaces: state.workspaces.map((item) => ({
+          ...item,
+          panes: [{ ...item.panes[0], tabs: [...item.panes[0].tabs, tab], activeTabId: tab.id }],
+        })),
+      }));
+    });
+    render();
+    await flush();
+    const right = split("right", "p1", "t2");
+    await flush();
+    const node = terminalNode(tab.id);
+    expect(node).not.toBeNull();
+
+    act(() => useUi.getState().moveTabToPane(tab.id, right));
+    render();
+    await flush();
+    const moved = useUi.getState().workspaces[0].panes.find((item) => item.id === right)!;
+    expect(moved.tabs.map((item) => item.id)).toContain(tab.id);
+    expect(terminalNode(tab.id)).toBe(node);
+    // The content now sits over the right pane's content area.
+    expect(node!.closest<HTMLElement>("[data-tab-content]")!.dataset.contentPane).toBe(right);
+    expect(mounts.count.get(tab.id)).toBe(1);
+    expect(mounts.unmounts.get(tab.id) ?? 0).toBe(0);
+
+    // Moving it back and closing the pane it left behind keeps it mounted too.
+    act(() => useUi.getState().moveTabToPane(tab.id, "p1"));
+    render();
+    await flush();
+    expect(terminalNode(tab.id)).toBe(node);
+    expect(mounts.unmounts.get(tab.id) ?? 0).toBe(0);
+  });
+
+  it("keeps terminals mounted when a sync renames their pane", async () => {
+    render();
+    await flush();
+    const node = terminalNode("t1");
+    // First sync pairs this pane with another device's copy and adopts that copy's id.
+    act(() => {
+      useUi.setState((state) => ({
+        workspaces: state.workspaces.map((item) => ({
+          ...item,
+          activePaneId: "pane-from-other-device",
+          panes: item.panes.map((target) => ({ ...target, id: "pane-from-other-device" })),
+        })),
+      }));
+    });
+    render();
+    await flush();
+    expect(paneNode("pane-from-other-device")).not.toBeNull();
+    expect(terminalNode("t1")).toBe(node);
+    expect(mounts.count.get("t1")).toBe(1);
+    expect(mounts.unmounts.get("t1") ?? 0).toBe(0);
+  });
+
   it("switches panes from the compact pane switcher", async () => {
     render();
     const right = split("right", "p1", "t2");
