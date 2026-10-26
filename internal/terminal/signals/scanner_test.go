@@ -182,7 +182,7 @@ func TestNotifyRateLimitWindow(t *testing.T) {
 
 func TestCommandDuration(t *testing.T) {
 	s := NewScanner(Config{})
-	s.Feed([]byte("\x1b]133;B\x07"), t0)
+	s.Feed([]byte("\x1b]133;C\x07"), t0)
 	events := s.Feed([]byte("\x1b]133;D;3\x07"), t0.Add(90*time.Second))
 	if len(events) != 1 || events[0].Kind != KindCommandEnd {
 		t.Fatalf("events = %+v", events)
@@ -220,6 +220,56 @@ func TestAssemblyEviction(t *testing.T) {
 	got := s.Feed([]byte("\x1b]99;i=a;y\x1b\\"), t0)
 	if len(got) != 1 || got[0].Title != "y" {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestCommandDurationStartsAtC(t *testing.T) {
+	s := NewScanner(Config{})
+	if got := s.Feed([]byte("\x1b]133;A\x07\x1b]133;B\x07"), t0); len(got) != 0 {
+		t.Fatalf("prompt produced %+v", got)
+	}
+	started := s.Feed([]byte("\x1b]133;C\x07"), t0.Add(10*time.Minute))
+	if len(started) != 1 || started[0].Kind != KindCommandStart || !started[0].At.Equal(t0.Add(10*time.Minute)) {
+		t.Fatalf("start = %+v", started)
+	}
+	ended := s.Feed([]byte("\x1b]133;D;0\x07"), t0.Add(10*time.Minute+time.Second))
+	if len(ended) != 1 || ended[0].Duration != time.Second {
+		t.Fatalf("end = %+v", ended)
+	}
+}
+
+func TestCommandWithoutCFallsBackToB(t *testing.T) {
+	s := NewScanner(Config{})
+	s.Feed([]byte("\x1b]133;B\x07"), t0)
+	got := s.Feed([]byte("\x1b]133;D;1\x07"), t0.Add(5*time.Second))
+	if len(got) != 2 || got[0].Kind != KindCommandStart || !got[0].At.Equal(t0) ||
+		got[1].Kind != KindCommandEnd || got[1].Duration != 5*time.Second {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestRawC1BytesAreIgnored(t *testing.T) {
+	// Bare 0x80-0x9F bytes are not UTF-8 C1 controls and must not open or
+	// close strings.
+	events := NewScanner(Config{}).Feed([]byte("\x9d0;t\x07\x90q\x9c\x07"), t0)
+	if len(events) != 1 || events[0].Kind != KindBell {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestConEmuFilterIsCounted(t *testing.T) {
+	s := NewScanner(Config{})
+	s.Feed([]byte("\x1b]9;4;1;50\x07\x1b]9;42\x07"), t0)
+	if s.Stats().ConEmuFiltered != 2 {
+		t.Fatalf("stats = %+v", s.Stats())
+	}
+}
+
+func TestSuppressedNotifyDoesNotCountMalformed(t *testing.T) {
+	s := NewScanner(Config{NotifyBurst: 1})
+	s.Feed([]byte("\x1b]9;a\x07\x1b]9;b\x07"), t0)
+	if st := s.Stats(); st.RateLimited != 1 || st.Malformed != 0 {
+		t.Fatalf("stats = %+v", st)
 	}
 }
 

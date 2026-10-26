@@ -289,6 +289,136 @@
   "events": []
  },
  {
+  "name": "osc99_buttons_final_emits",
+  "input": "\u001b]99;i=2:d=0;Title\u001b\\\u001b]99;i=2:d=0:p=body;Body\u001b\\\u001b]99;i=2:p=buttons;Yes\u001b\\",
+  "events": [
+   {
+    "kind": "notify",
+    "source": "osc99",
+    "title": "Title",
+    "body": "Body"
+   }
+  ]
+ },
+ {
+  "name": "osc99_close_drops_assembly",
+  "input": "\u001b]99;i=3:d=0;Title\u001b\\\u001b]99;i=3:p=close;\u001b\\\u001b]99;i=3:p=body;Late\u001b\\",
+  "events": [
+   {
+    "kind": "notify",
+    "source": "osc99",
+    "title": "",
+    "body": "Late"
+   }
+  ]
+ },
+ {
+  "name": "osc99_unpadded_base64",
+  "input": "\u001b]99;e=1;w6k\u001b\\",
+  "events": [
+   {
+    "kind": "notify",
+    "source": "osc99",
+    "title": "é",
+    "body": ""
+   }
+  ]
+ },
+ {
+  "name": "c1_osc_not_bell",
+  "input": "0;title\u0007x",
+  "events": []
+ },
+ {
+  "name": "c1_osc9_c1_st",
+  "input": "9;hi",
+  "events": [
+   {
+    "kind": "notify",
+    "source": "osc9",
+    "title": "",
+    "body": "hi"
+   }
+  ]
+ },
+ {
+  "name": "c1_osc9_esc_st_and_bel",
+  "input": "9;a\u001b\\9;b\u0007",
+  "events": [
+   {
+    "kind": "notify",
+    "source": "osc9",
+    "title": "",
+    "body": "a"
+   },
+   {
+    "kind": "notify",
+    "source": "osc9",
+    "title": "",
+    "body": "b"
+   }
+  ]
+ },
+ {
+  "name": "c1_dcs_bel_ignored",
+  "input": "q\u0007\u0007",
+  "events": [
+   {
+    "kind": "bell"
+   }
+  ]
+ },
+ {
+  "name": "c1_apc_sos_pm_bel_ignored",
+  "input": "\u0007\u0007\u0007",
+  "events": []
+ },
+ {
+  "name": "c1_lead_byte_in_text_is_harmless",
+  "input": "café ©\u0007",
+  "events": [
+   {
+    "kind": "bell"
+   }
+  ]
+ },
+ {
+  "name": "osc9_utf8_c2_in_payload",
+  "input": "\u001b]9;© 2026\u0007",
+  "events": [
+   {
+    "kind": "notify",
+    "source": "osc9",
+    "title": "",
+    "body": "© 2026"
+   }
+  ]
+ },
+ {
+  "name": "format_chars_stripped",
+  "input": "\u001b]9;‮evil​﻿ ok\u0007",
+  "events": [
+   {
+    "kind": "notify",
+    "source": "osc9",
+    "title": "",
+    "body": "evil ok"
+   }
+  ]
+ },
+ {
+  "name": "zwj_kept",
+  "input": "\u001b]9;👨‍💻\u0007",
+  "events": [
+   {
+    "kind": "notify",
+    "source": "osc9",
+    "title": "",
+    "body": "👨‍💻"
+   }
+  ]
+ },
+ {
   "name": "osc99_close_ignored",
   "input": "\u001b]99;i=1:p=close;\u001b\\",
   "events": []
@@ -351,9 +481,33 @@
  {
   "name": "cmd_prompt_resets",
   "input": "\u001b]133;B\u0007\u001b]133;A\u0007\u001b]133;D;1\u0007",
+  "events": []
+ },
+ {
+  "name": "cmd_c_after_b_separate",
+  "input": "\u001b]133;A\u0007\u001b]133;B\u0007\u001b]133;C\u0007\u001b]133;D;0\u0007",
   "events": [
    {
     "kind": "command_start"
+   },
+   {
+    "kind": "command_end",
+    "exit": 0,
+    "has_exit": true
+   }
+  ]
+ },
+ {
+  "name": "cmd_d_extra_params",
+  "input": "\u001b]133;C\u0007\u001b]133;D;7;aid=1\u0007",
+  "events": [
+   {
+    "kind": "command_start"
+   },
+   {
+    "kind": "command_end",
+    "exit": 7,
+    "has_exit": true
    }
   ]
  },
@@ -447,7 +601,7 @@
  },
  {
   "name": "mixed_stream",
-  "input": "$ make\u001b]133;B\u0007...\u001b]9;done\u0007\u0007\u001b]133;D;0\u0007\u001b]777;notify;x;y\u001b\\",
+  "input": "$ make\u001b]133;B\u0007\u001b]133;C\u0007...\u001b]9;done\u0007\u0007\u001b]133;D;0\u0007\u001b]777;notify;x;y\u001b\\",
   "events": [
    {
     "kind": "command_start"

@@ -22,7 +22,7 @@ const (
 	KindBell Kind = iota + 1
 	// KindNotify is a desktop-style notification request.
 	KindNotify
-	// KindCommandStart is the start of a command (OSC 133 B or C).
+	// KindCommandStart is the start of a command (OSC 133 C, or B when D arrives with no C).
 	KindCommandStart
 	// KindCommandEnd is the end of a command (OSC 133 D).
 	KindCommandEnd
@@ -103,6 +103,11 @@ type Stats struct {
 	Oversize uint64
 	// Malformed counts recognised notification payloads that were invalid.
 	Malformed uint64
+	// ConEmuFiltered counts OSC 9 payloads dropped as ConEmu subcommands.
+	// The filter also matches notification bodies that are only a number
+	// (for example "42" or "2024;done"); that trade-off is deliberate, and
+	// this counter keeps those drops visible.
+	ConEmuFiltered uint64
 	// RateLimited counts bells and notifications suppressed by rate limits.
 	RateLimited uint64
 }
@@ -116,6 +121,11 @@ const (
 	stOSCEsc
 	stStr // DCS, SOS, PM or APC string, ignored until ST
 	stStrEsc
+	// C1 controls arrive UTF-8 encoded as C2 80..9F. The C2 states hold the
+	// lead byte until the next byte decides which control it was.
+	stC2
+	stOSCC2
+	stStrC2
 )
 
 // Scanner is not safe for concurrent use; feed it from the single goroutine
@@ -134,6 +144,9 @@ type Scanner struct {
 	cmd        *shellintegr.CommandTracker
 	cmdActive  bool
 	cmdStarted time.Time
+	// promptEnded is set by 133;B until a C starts the command.
+	promptEnded   bool
+	promptEndedAt time.Time
 
 	assemblies []*assembly
 }
@@ -169,6 +182,19 @@ func (s *Scanner) Feed(p []byte, now time.Time) []Event {
 				out = s.bell(out, now)
 			case 0x1b:
 				s.st = stEsc
+			case 0xc2:
+				s.st = stC2
+			}
+		case stC2:
+			s.st = stGround
+			switch b {
+			case 0x90, 0x98, 0x9e, 0x9f: // DCS, SOS, PM, APC
+				s.st = stStr
+			case 0x9d: // OSC
+				s.beginOSC()
+			case 0x9c: // ST
+			default:
+				continue
 			}
 		case stEsc:
 			switch b {
@@ -189,17 +215,30 @@ func (s *Scanner) Feed(p []byte, now time.Time) []Event {
 				out = s.finishOSC(out, now)
 			case 0x1b:
 				s.st = stOSCEsc
+			case 0xc2:
+				s.st = stOSCC2
 			case 0x18, 0x1a:
 				s.resetOSC()
 			default:
 				s.collect(b)
 			}
+		case stOSCC2:
+			if b == 0x9c { // C1 ST
+				out = s.finishOSC(out, now)
+				break
+			}
+			s.collect(0xc2)
+			s.st = stOSC
+			continue
 		case stOSCEsc:
 			if b == '\\' {
 				out = s.finishOSC(out, now)
 				break
 			}
 			// ESC inside an OSC aborts it; this byte starts a new escape.
+			// xterm.js instead ends the OSC at any ESC. Aborting is the
+			// deliberate conservative choice: a half-written or interleaved
+			// sequence never produces a notification from truncated text.
 			s.resetOSC()
 			s.st = stEsc
 			continue
@@ -207,9 +246,18 @@ func (s *Scanner) Feed(p []byte, now time.Time) []Event {
 			switch b {
 			case 0x1b:
 				s.st = stStrEsc
+			case 0xc2:
+				s.st = stStrC2
 			case 0x18, 0x1a:
 				s.st = stGround
 			}
+		case stStrC2:
+			if b == 0x9c {
+				s.st = stGround
+				break
+			}
+			s.st = stStr
+			continue
 		case stStrEsc:
 			if b == '\\' {
 				s.st = stGround
@@ -287,17 +335,28 @@ func (s *Scanner) allowNotify(now time.Time) bool {
 	return true
 }
 
-func (s *Scanner) notify(out []Event, source, title, body string, now time.Time) []Event {
-	if title == "" && body == "" {
+// notify emits a notification. Emptiness and the rate limit are checked on
+// the raw text first so a suppressed flood does not pay for sanitising.
+func (s *Scanner) notify(out []Event, source string, rawTitle, rawBody []byte, now time.Time) []Event {
+	if len(rawTitle) == 0 && len(rawBody) == 0 {
 		s.stats.Malformed++
 		return out
 	}
 	if !s.allowNotify(now) {
 		return out
 	}
+	title, body := clean(string(rawTitle)), clean(string(rawBody))
+	if title == "" && body == "" {
+		s.stats.Malformed++
+		return out
+	}
 	return append(out, Event{Kind: KindNotify, Source: source, Title: title, Body: body, At: now})
 }
 
+// command tracks the OSC 133 lifecycle. A command starts at C (preexec: the
+// command is actually running); B only marks the end of the prompt, which can
+// be long before the user presses Enter. If a D arrives without any C, the
+// command is reported from B's timestamp instead.
 func (s *Scanner) command(out []Event, payload []byte, now time.Time) []Event {
 	r, ok := s.cmd.ObservePayload(payload)
 	if !ok {
@@ -306,13 +365,22 @@ func (s *Scanner) command(out []Event, payload []byte, now time.Time) []Event {
 	switch r.Letter {
 	case 'A':
 		// A new prompt without a D: the previous command is gone.
-		s.cmdActive = false
-	case 'B', 'C':
+		s.cmdActive, s.promptEnded = false, false
+	case 'B':
 		if !s.cmdActive {
-			s.cmdActive, s.cmdStarted = true, now
+			s.promptEnded, s.promptEndedAt = true, now
+		}
+	case 'C':
+		if !s.cmdActive {
+			s.cmdActive, s.cmdStarted, s.promptEnded = true, now, false
 			out = append(out, Event{Kind: KindCommandStart, At: now})
 		}
 	case 'D':
+		if !s.cmdActive && s.promptEnded {
+			s.cmdActive, s.cmdStarted = true, s.promptEndedAt
+			out = append(out, Event{Kind: KindCommandStart, At: s.promptEndedAt})
+		}
+		s.promptEnded = false
 		if s.cmdActive {
 			s.cmdActive = false
 			d := max(now.Sub(s.cmdStarted), 0)

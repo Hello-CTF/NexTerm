@@ -133,6 +133,8 @@ func parseOSC133(payload []byte) (letter byte, exitCode int, hasExit bool, ok bo
 	if len(letterBytes) != 1 {
 		return 0, 0, false, false
 	}
+	// Extra parameters such as "D;0;aid=1" follow the exit code.
+	params, _, _ = bytes.Cut(params, []byte(";"))
 	if len(params) > 0 {
 		if value, err := strconv.Atoi(string(params)); err == nil && value >= 0 {
 			return letterBytes[0], value, true, true

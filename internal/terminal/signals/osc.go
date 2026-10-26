@@ -26,16 +26,19 @@ func (s *Scanner) dispatch(out []Event, payload []byte, now time.Time) []Event {
 
 // osc9 handles `9;<text>`. ConEmu reuses OSC 9 for numbered subcommands
 // (`9;4;...` progress, `9;1;...` sleep, `9;9;...` cwd and so on), which are
-// not notifications and are filtered out.
+// not notifications and are filtered out. The filter also drops bodies that
+// are only a number ("42", "2024;done"); that is a deliberate trade-off,
+// counted in Stats.ConEmuFiltered.
 func (s *Scanner) osc9(out []Event, text []byte, now time.Time) []Event {
 	if len(text) > MaxNotifyPayload {
 		s.stats.Oversize++
 		return out
 	}
 	if isConEmuSubcommand(text) {
+		s.stats.ConEmuFiltered++
 		return out
 	}
-	return s.notify(out, SourceOSC9, "", clean(string(text)), now)
+	return s.notify(out, SourceOSC9, nil, text, now)
 }
 
 func isConEmuSubcommand(text []byte) bool {
@@ -61,12 +64,11 @@ func (s *Scanner) osc777(out []Event, rest []byte, now time.Time) []Event {
 		s.stats.Malformed++
 		return out
 	}
-	title := clean(string(parts[1]))
-	body := ""
+	var body []byte
 	if len(parts) == 3 {
-		body = clean(string(parts[2]))
+		body = parts[2]
 	}
-	return s.notify(out, SourceOSC777, title, body, now)
+	return s.notify(out, SourceOSC777, parts[1], body, now)
 }
 
 // assembly accumulates the chunks of one OSC 99 notification.
@@ -104,11 +106,33 @@ func (s *Scanner) osc99(out []Event, rest []byte, now time.Time) []Event {
 	if ptype == "" {
 		ptype = "title"
 	}
-	if ptype != "title" && ptype != "body" {
+	switch ptype {
+	case "title", "body":
+	case "close":
+		s.dropAssembly(id)
+		return out
+	default:
+		// Buttons, icons and queries carry no text, but a final chunk of
+		// one of them still completes the notification built so far.
+		if !done {
+			return out
+		}
+		for _, a := range s.assemblies {
+			if a.id == id {
+				s.dropAssembly(id)
+				if a.dead {
+					return out
+				}
+				return s.notify(out, SourceOSC99, a.title, a.body, now)
+			}
+		}
 		return out
 	}
 	if b64 {
 		dec, err := base64.StdEncoding.DecodeString(string(payload))
+		if err != nil {
+			dec, err = base64.RawStdEncoding.DecodeString(string(payload))
+		}
 		if err != nil {
 			s.stats.Malformed++
 			s.dropAssembly(id)
@@ -136,7 +160,7 @@ func (s *Scanner) osc99(out []Event, rest []byte, now time.Time) []Event {
 	if a.dead {
 		return out
 	}
-	return s.notify(out, SourceOSC99, clean(string(a.title)), clean(string(a.body)), now)
+	return s.notify(out, SourceOSC99, a.title, a.body, now)
 }
 
 func (s *Scanner) assemblyFor(id string) *assembly {
@@ -163,14 +187,17 @@ func (s *Scanner) dropAssembly(id string) {
 }
 
 // clean makes notification text safe to display: invalid UTF-8 is replaced
-// and control characters other than newline and tab are removed.
+// and control and format characters other than newline, tab, ZWJ and ZWNJ
+// are removed.
 func clean(v string) string {
 	v = strings.ToValidUTF8(v, "�")
 	return strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\t' {
 			return r
 		}
-		if unicode.IsControl(r) {
+		// Drop controls and format characters (bidi overrides, zero-width
+		// spaces), but keep ZWJ/ZWNJ which emoji and several scripts need.
+		if unicode.IsControl(r) || (unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d') {
 			return -1
 		}
 		return r
