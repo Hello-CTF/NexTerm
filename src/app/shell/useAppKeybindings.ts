@@ -1,0 +1,140 @@
+import { useEffect } from "react";
+import {
+  useUi,
+  cycleActiveWorkspace,
+  cycleActiveTab,
+  cycleActivePane,
+  requestCloseTab,
+  restoreClosedTab,
+} from "../store";
+import { matchAppKeybinding } from "../keybindings";
+
+export interface AppKeybindingHandlers {
+  leftDockOpen: boolean;
+  rightDockOpen: boolean;
+  activeTabId: string | null;
+  splitAllowed: boolean;
+  setLeftOpen: (open: boolean) => void;
+  setRightOpen: (open: boolean) => void;
+  openLocalTerminal: () => Promise<void>;
+  openNewTerminal: () => Promise<void>;
+  lockVault: () => Promise<void>;
+  openCommandPalette: () => void;
+  openQuickConnect: () => void;
+}
+
+// useAppKeybindings handles the app-level rebindable shortcuts on window keydown.
+export function useAppKeybindings({
+  leftDockOpen,
+  rightDockOpen,
+  activeTabId,
+  splitAllowed,
+  setLeftOpen,
+  setRightOpen,
+  openLocalTerminal,
+  openNewTerminal,
+  lockVault,
+  openCommandPalette,
+  openQuickConnect,
+}: AppKeybindingHandlers): void {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const hit = matchAppKeybinding(e);
+      if (!hit) {
+        // Restore-closed-tab is a fixed Mod+Shift+T (same as the switcher menu accel); it is
+        // intentionally outside the rebindable keybinding set.
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "t") {
+          e.preventDefault();
+          void restoreClosedTab();
+        }
+        return;
+      }
+      switch (hit.action) {
+        case "commandPalette":
+          e.preventDefault();
+          openCommandPalette();
+          return;
+        case "quickConnect":
+          e.preventDefault();
+          openQuickConnect();
+          return;
+        case "toggleSidebar":
+          e.preventDefault();
+          setLeftOpen(!leftDockOpen);
+          return;
+        case "toggleAiSidebar":
+          e.preventDefault();
+          setRightOpen(!rightDockOpen);
+          return;
+        case "newTerminal":
+          e.preventDefault();
+          void openNewTerminal();
+          return;
+        case "nextWorkspace":
+          if (cycleActiveWorkspace(1)) e.preventDefault();
+          return;
+        case "previousWorkspace":
+          if (cycleActiveWorkspace(-1)) e.preventDefault();
+          return;
+        case "nextTab":
+          if (cycleActiveTab(1)) e.preventDefault();
+          return;
+        case "previousTab":
+          if (cycleActiveTab(-1)) e.preventDefault();
+          return;
+        case "focusUpperPane":
+          if (cycleActivePane(-1)) e.preventDefault();
+          return;
+        case "focusLowerPane":
+          if (cycleActivePane(1)) e.preventDefault();
+          return;
+        case "toggleSplit": {
+          e.preventDefault();
+          const cur = useUi.getState();
+          const id = cur.activeWorkspaceId;
+          const target = id ? cur.workspaces.find((w) => w.id === id) : undefined;
+          if (!target) return;
+          if (target.panes.length > 1) void cur.unsplitWorkspace(target.panes[1].id, target.id);
+          else if (splitAllowed) cur.splitWorkspace(target.id);
+          return;
+        }
+        case "closeTab":
+          if (!activeTabId) return;
+          e.preventDefault();
+          void requestCloseTab(activeTabId);
+          return;
+        case "lockVault": {
+          e.preventDefault();
+          void lockVault();
+          return;
+        }
+        case "switchTab": {
+          if (hit.digit === null) return;
+          const st = useUi.getState();
+          const current = st.workspaces.find((w) => w.id === st.activeWorkspaceId);
+          const currentPane =
+            current?.panes.find((p) => p.id === current.activePaneId) ?? current?.panes[0];
+          const target = currentPane?.tabs[hit.digit - 1];
+          if (!target) return;
+          e.preventDefault();
+          st.setActiveTab(target.id);
+          return;
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    leftDockOpen,
+    rightDockOpen,
+    activeTabId,
+    setLeftOpen,
+    setRightOpen,
+    openLocalTerminal,
+    openNewTerminal,
+    lockVault,
+    splitAllowed,
+    openCommandPalette,
+    openQuickConnect,
+  ]);
+}

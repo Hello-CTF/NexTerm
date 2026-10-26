@@ -152,7 +152,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/app/App.tsx"],
+    files: ["src/app/App.tsx", "src/app/shell/**/*.tsx", "src/app/workspace/**/*.tsx"],
     rules: {
       "no-restricted-syntax": [
         "error",
