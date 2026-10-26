@@ -1,5 +1,15 @@
 import { afterAll, afterEach, beforeEach, expect, vi } from "vitest";
 
+// jsdom has no canvas: xterm's DOM renderer measures character widths through a 2D context when a terminal opens, so a
+// measuring-only context stands in for the one jsdom cannot provide.
+if (typeof HTMLCanvasElement !== "undefined") {
+  const getContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, ...args: unknown[]) {
+    if (type !== "2d") return Reflect.apply(getContext, this, [type, ...args]) as RenderingContext | null;
+    return { font: "", measureText: (text: string) => ({ width: text.length * 8 }) } as unknown as CanvasRenderingContext2D;
+  } as typeof getContext;
+}
+
 const reactWarnings: string[] = [];
 const REACT_WARNING = /not wrapped in act|overlapping act|unmounted component|Can't perform a React state update|testing environment is not configured to support act/;
 const originalConsoleError = console.error;

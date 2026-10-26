@@ -249,6 +249,7 @@ describe("resizeTerminalToGridPreservingSelection", () => {
     term.dispose();
   });
 
+  // A selection whose start row is trimmed away continues from the start of the first surviving row.
   it("keeps a partial trim whose surviving first row starts with wide characters", async () => {
     const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
     const data = `${Array.from({ length: 50 }, (_, i) => `界界${String(i).padStart(3, "0")}abcdef`).join("\r\n")}\r\n`;
@@ -257,12 +258,12 @@ describe("resizeTerminalToGridPreservingSelection", () => {
 
     resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 5 });
 
-    expect(term.getSelection()).toBe("界036abcdef\n界界037abcdef\n界界038abcdef\n界界0");
-    expect(term.getSelectionPosition()).toEqual({ start: { x: 2, y: 0 }, end: { x: 5, y: 3 } });
+    expect(term.getSelection()).toBe("界界036abcdef\n界界037abcdef\n界界038abcdef\n界界0");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 0, y: 0 }, end: { x: 5, y: 3 } });
     term.dispose();
   });
 
-  it("normalizes a reversed same-row range produced by clamping instead of clearing it", async () => {
+  it("keeps only the originally selected head of the first surviving row", async () => {
     const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
     await writeLines(term, 50);
     setRangeSelection(term, [8, 2], [5, 4]);
@@ -270,19 +271,20 @@ describe("resizeTerminalToGridPreservingSelection", () => {
 
     resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 4 });
 
-    expect(term.getSelection()).toBe("037");
-    expect(term.getSelectionPosition()).toEqual({ start: { x: 5, y: 0 }, end: { x: 8, y: 0 } });
+    expect(term.getSelection()).toBe("line-");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 0, y: 0 }, end: { x: 5, y: 0 } });
     term.dispose();
   });
 
-  it("leaves a degenerate same-row clamp empty", async () => {
+  it("keeps the surviving row when the selection ended on it", async () => {
     const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
     await writeLines(term, 50);
     setRangeSelection(term, [8, 2], [8, 4]);
 
     resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 4 });
 
-    expect(term.hasSelection()).toBe(false);
+    expect(term.getSelection()).toBe("line-037");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 0, y: 0 }, end: { x: 8, y: 0 } });
     term.dispose();
   });
 });

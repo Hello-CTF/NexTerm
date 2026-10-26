@@ -57,14 +57,16 @@ class DeferredRecordingSink extends RecordingSink {
     return this.callbacks.length;
   }
 
-  completeNext(): void {
+  // The replay continues in a microtask after a write callback, so completion waits for it before returning.
+  async completeNext(): Promise<void> {
     const callback = this.callbacks.shift();
     if (!callback) throw new Error("No pending write");
     callback();
+    await Promise.resolve();
   }
 
-  completeAll(): void {
-    while (this.callbacks.length > 0) this.completeNext();
+  async completeAll(): Promise<void> {
+    while (this.callbacks.length > 0) await this.completeNext();
   }
 }
 
@@ -172,9 +174,9 @@ describe("TranscriptReplay", () => {
     replay.seek(sink, 1500);
     await Promise.resolve();
     expect(sink.events).toEqual(["reset", "resize:80x24", "write:hello "]);
-    sink.completeNext();
+    await sink.completeNext();
     expect(sink.events).toEqual(["reset", "resize:80x24", "write:hello ", "write:world"]);
-    sink.completeNext();
+    await sink.completeNext();
     expect(sink.events).toEqual([
       "reset",
       "resize:80x24",
@@ -186,14 +188,14 @@ describe("TranscriptReplay", () => {
     expect(sink.pendingWrites).toBe(0);
   });
 
-  it("catches up to the latest play position after a pending write", () => {
+  it("catches up to the latest play position after a pending write", async () => {
     const replay = new TranscriptReplay(chunks);
     const sink = new DeferredRecordingSink();
     replay.playStep(sink, 0);
     replay.playStep(sink, 1500);
     expect(sink.content).toBe("hello ");
 
-    sink.completeAll();
+    await sink.completeAll();
 
     expect(sink.content).toBe("hello world");
     expect(sink.resizes).toEqual([
@@ -216,10 +218,10 @@ describe("TranscriptReplay", () => {
     for (let i = 0; i < 20; i += 1) replay.seek(sink, i * 25);
     expect(sink.resets).toBe(0);
 
-    sink.completeNext();
+    await sink.completeNext();
     await Promise.resolve();
     expect(sink.resets).toBe(1);
-    sink.completeAll();
+    await sink.completeAll();
 
     expect(sink.resets).toBe(1);
     expect(sink.events).toEqual(["write:A", "reset", "write:AB", "resize:120x40", "write:C"]);

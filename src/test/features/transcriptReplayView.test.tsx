@@ -242,8 +242,11 @@ describe("TranscriptReplayView", () => {
       await Promise.resolve();
     });
     expect(terminal.resets).toBe(resetsBefore + 1);
-    act(() => {
-      while (terminal.pendingWrites > 0) terminal.completeNextWrite();
+    await act(async () => {
+      while (terminal.pendingWrites > 0) {
+        terminal.completeNextWrite();
+        await Promise.resolve();
+      }
     });
 
     expect(terminal.resets).toBe(resetsBefore + 1);

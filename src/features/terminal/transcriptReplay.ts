@@ -208,7 +208,9 @@ export class TranscriptReplay {
           this.scheduleSeek();
           return;
         }
-        this.pump();
+        // The next step may resize the terminal; xterm's resize flushes its write queue and, inside a write callback,
+        // parses the chunk that just completed a second time (xterm.js#6246). Continue once the write loop has returned.
+        queueMicrotask(() => this.pump());
       });
     } catch (error) {
       if (token === this.writeToken) {

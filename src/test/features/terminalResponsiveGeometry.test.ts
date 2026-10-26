@@ -19,7 +19,7 @@ function terminalFixture(width = 360, height = 400) {
   const resize = vi.fn();
   const term = {
     element,
-    options: { scrollback: 1000, overviewRuler: { width: 12 } },
+    options: { scrollback: 1000, scrollbar: { width: 12 } },
     cols: 80,
     rows: 24,
     resize,

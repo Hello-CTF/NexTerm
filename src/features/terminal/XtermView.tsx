@@ -207,7 +207,7 @@ export function XtermView(props: XtermViewProps) {
     const term = new Terminal({
       scrollback: 100_000,
       allowProposedApi: true,
-      overviewRuler: { width: 10 },
+      scrollbar: { width: 10 },
       fontFamily: TERMINAL_FONT_STACKS[appearance.terminalFontFamily],
       fontSize: appearance.terminalFontSize,
       cursorBlink: true,
