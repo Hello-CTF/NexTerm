@@ -11,12 +11,9 @@ import { reorderWorkspaces } from "../workspaceOrdering";
 import { ALL_PROJECTS, reconcileActiveWorkspaceForFocus } from "../projectFocus";
 import {
   collectWorkspaceClose,
-  confirmDirtyEditors,
   confirmWorkspaceClose,
-  disconnectDbTabs,
   executeWorkspaceClose,
   pushWorkspaceCloseToast,
-  reclaimTerminals,
   reconcileTerminalCloseState,
   type WorkspaceCloseSummary,
 } from "./closeActions";
@@ -411,38 +408,38 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       get().addTab(tab, pane.id);
     },
 
-    closePane: async (paneId, workspaceId) => {
-      const st = get();
-      const id = workspaceId ?? st.activeWorkspaceId ?? st.workspaces[st.workspaces.length - 1]?.id;
-      if (!id) return;
-      const w = st.workspaces.find((x) => x.id === id);
-      if (!w || w.panes.length < 2) return;
-      const target = w.panes.find((p) => p.id === (paneId ?? w.activePaneId));
-      if (!target) return;
-      if (!(await confirmDirtyEditors(target.tabs, "关闭窗格"))) return;
-      if (!(await reclaimTerminals(target.tabs, "这个面板", "关闭窗格", w.assetKind))) return;
-      if (!(await disconnectDbTabs(target.tabs))) return;
-      set((s2) => {
-        const workspaces = s2.workspaces.map((workspace) => {
+    // closePane removes a pane from the layout but keeps every tab: its tabs move, in order, behind the
+    // tabs of the pane that takes over its space, and its selected tab stays selected there. No tab
+    // closes and no session ends; tab content stays mounted because it is keyed by tab id.
+    closePane: (paneId, workspaceId) =>
+      set((st) => {
+        const id = workspaceId ?? st.activeWorkspaceId ?? st.workspaces[st.workspaces.length - 1]?.id;
+        let changed = false;
+        const workspaces = st.workspaces.map((workspace) => {
           if (workspace.id !== id || workspace.panes.length < 2) return workspace;
-          if (!workspace.panes.some((pane) => pane.id === target.id)) return workspace;
-          const tree = treeWithoutPane(workspace, target.id);
-          const panes = workspace.panes.filter((pane) => pane.id !== target.id);
-          const activePaneId =
-            workspace.activePaneId === target.id
-              ? (fallbackPaneAfterClose(workspace, target.id) ?? panes[0].id)
-              : workspace.activePaneId;
-          const next = { ...workspace, panes, activePaneId };
+          const closing = workspace.panes.find((pane) => pane.id === (paneId ?? workspace.activePaneId));
+          if (!closing) return workspace;
+          const heirId = fallbackPaneAfterClose(workspace, closing.id);
+          if (!heirId || heirId === closing.id) return workspace;
+          const tree = treeWithoutPane(workspace, closing.id);
+          const selected = closing.activeTabId ?? closing.tabs[closing.tabs.length - 1]?.id ?? null;
+          const panes = workspace.panes
+            .filter((pane) => pane.id !== closing.id)
+            .map((pane) =>
+              pane.id !== heirId || closing.tabs.length === 0
+                ? pane
+                : { ...pane, tabs: [...pane.tabs, ...closing.tabs], activeTabId: selected ?? pane.activeTabId },
+            );
+          changed = true;
+          const next = {
+            ...workspace,
+            panes,
+            activePaneId: workspace.activePaneId === closing.id ? heirId : workspace.activePaneId,
+          };
           return tree ? withLayoutTree(next, tree) : next;
         });
-        return {
-          workspaces,
-          ...(s2.broadcast
-            ? { broadcast: pruneBroadcastToWorkspaces(s2.broadcast, workspaces) }
-            : {}),
-        };
-      });
-    },
+        return changed ? { workspaces } : {};
+      }),
 
     setActivePane: (paneId, workspaceId) =>
       set((st) => {

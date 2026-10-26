@@ -265,7 +265,7 @@ describe("remote layout preserves exited terminal state", () => {
     expect(useUi.getState().workspaces).toEqual([]);
   });
 
-  it.each([false, true])("unsplit after a remote change handles current exited=%s safely", async (currentExited) => {
+  it.each([false, true])("closing a pane after a remote change keeps the exited=%s terminal without close IPC", async (currentExited) => {
     const exitedTab = { ...terminal("x1"), exited: true };
     seed([
       { id: "p1", tabs: [terminal("keep")] },
@@ -280,12 +280,13 @@ describe("remote layout preserves exited terminal state", () => {
     applyAttachedCapabilities();
     mocks.listLive.mockResolvedValue([liveTab("kernel-x1", currentExited)]);
 
-    await useUi.getState().closePane("p2", "ws");
+    useUi.getState().closePane("p2", "ws");
 
+    // Closing a pane keeps its tabs: the exited terminal moves to the remaining pane untouched.
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", currentExited ? undefined : "detach", "s");
-    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
+    expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
+    expect(useUi.getState().workspaces[0].panes[0].tabs.find((tab) => tab.id === "x1")?.tabId).toBe("kernel-x1");
   });
 
   it("does not stamp exited onto a reconnected tab with a new backend tabId", async () => {
@@ -359,43 +360,6 @@ describe("remote layout preserves exited terminal state", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach", "s");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-new", "kill");
     expect(useUi.getState().workspaces).toEqual([]);
-  });
-
-  it("unsplit after a reconnect detaches the new process instead of cleanup kill", async () => {
-    const exitedTab = { ...terminal("shared"), tabId: "kernel-old", exited: true };
-    seed([
-      { id: "p1", tabs: [terminal("keep")] },
-      { id: "p2", tabs: [exitedTab] },
-    ]);
-    const remoteDto: PersistedLayout = {
-      v: 4,
-      leftOpen: true,
-      leftMode: "assets",
-      rightOpen: true,
-      leftWidth: 248,
-      rightWidth: 352,
-      workspaces: [
-        workspace([
-          { id: "p1", tabs: [terminal("keep")] },
-          { id: "p2", tabs: [{ ...terminal("shared"), tabId: "kernel-new" }] },
-        ]),
-      ],
-      activeWorkspaceId: "ws",
-      aiBoards: {},
-    };
-    await flushLayout();
-    mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
-
-    onRemoteChange(null);
-    await flushAsync();
-    applyAttachedCapabilities();
-
-    await useUi.getState().closePane("p2", "ws");
-
-    expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach", "s");
-    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-new", "kill");
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
   it("keeps a new terminal attaching when its saved layout is echoed before helper installation finishes", async () => {

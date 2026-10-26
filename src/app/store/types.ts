@@ -394,7 +394,7 @@ export interface UiState {
 
   splitPane: (direction: SplitDirection, paneId?: string, workspaceId?: string) => string | null;
   openInLowerPane: (tab: AppTab, workspaceId?: string) => void;
-  closePane: (paneId?: string, workspaceId?: string) => Promise<void>;
+  closePane: (paneId?: string, workspaceId?: string) => void;
   setActivePane: (paneId: string, workspaceId?: string) => void;
   focusPane: (direction: FocusDirection, workspaceId?: string) => string | null;
   setSplitRatio: (splitId: string, ratio: number, workspaceId?: string) => void;

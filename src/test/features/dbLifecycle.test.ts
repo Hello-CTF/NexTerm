@@ -489,7 +489,7 @@ describe("Workspace closing", () => {
 });
 
 describe("Unsplitting", () => {
-  it("disconnects database tabs in the removed pane when unsplitting", async () => {
+  it("keeps database tabs connected when their pane closes", async () => {
     const db = dbTab("db-mysql", "conn-mysql", "mysql");
     const term = terminal();
     useUi.setState({
@@ -503,55 +503,14 @@ describe("Unsplitting", () => {
       sessions: [{ id: "s", assetId: "a", name: "session", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
     });
 
-    await useUi.getState().closePane("p2", "ws");
+    useUi.getState().closePane("p2", "ws");
 
-    expect(mocks.disconnect).toHaveBeenCalledWith("conn-mysql");
-    expect(tabExists(db.id)).toBe(false);
-  });
-
-  it("keeps the pane and shows a toast when disconnecting fails", async () => {
-    const db = dbTab("db-mysql", "conn-mysql", "mysql");
-    const term = terminal();
-    useUi.setState({
-      workspaces: [
-        ws([
-          { id: "p1", tabs: [term], activeTabId: term.id },
-          { id: "p2", tabs: [db], activeTabId: db.id },
-        ]),
-      ],
-      activeWorkspaceId: "ws",
-      sessions: [{ id: "s", assetId: "a", name: "session", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
-    });
-    mocks.disconnect.mockRejectedValueOnce(new Error("Connection reset"));
-
-    await useUi.getState().closePane("p2", "ws");
-
+    expect(mocks.disconnect).not.toHaveBeenCalled();
+    expect(mocks.closeTerminalTab).not.toHaveBeenCalled();
     expect(tabExists(db.id)).toBe(true);
-    expect(toastText()).toContain("1/1 个数据库断开失败：Connection reset");
-    expect(mocks.disconnect).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().workspaces[0].panes.map((pane) => pane.tabs.map((tab) => tab.id))).toEqual([[term.id, db.id]]);
   });
 
-  it("keeps the split when reclaiming a terminal fails", async () => {
-    const keep = terminal("keep");
-    const failed = terminal("failed");
-    useUi.setState({
-      workspaces: [
-        ws([
-          { id: "p1", tabs: [keep], activeTabId: keep.id },
-          { id: "p2", tabs: [failed], activeTabId: failed.id },
-        ]),
-      ],
-      activeWorkspaceId: "ws",
-      sessions: [{ id: "s", assetId: "a", name: "session", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
-    });
-    mocks.closeTerminalTab.mockRejectedValueOnce(new Error("close failed"));
-
-    await useUi.getState().closePane("p2", "ws");
-
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
-    expect(tabExists(failed.id)).toBe(true);
-    expect(toastText()).toContain("终端关闭失败");
-  });
 });
 
 describe("Workspace AI close guards", () => {

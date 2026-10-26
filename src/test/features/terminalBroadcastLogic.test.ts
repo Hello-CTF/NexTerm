@@ -634,15 +634,13 @@ describe("broadcast store cleanup", () => {
     expect(useUi.getState().broadcast?.generation ?? 0).toBeGreaterThan(generation);
   });
 
-  it("prunes targets removed by unsplit even when they need no close IPC", async () => {
+  it("keeps broadcast targets whose pane closes into its neighbour", async () => {
     setTerminalCloseAction("detach");
-    useUi.getState().updateTab("t3", { dead: true, tabId: undefined });
     enableBroadcast(["t1", "t3"]);
-    const generation = useUi.getState().broadcast?.generation ?? 0;
-    await useUi.getState().closePane("p2", "ws1");
+    const before = useUi.getState().broadcast;
+    useUi.getState().closePane("p2", "ws1");
     expect(useUi.getState().workspaces[0]?.panes.map((pane) => pane.id)).toEqual(["p1"]);
-    expectBroadcast(["t1"]);
-    expect(useUi.getState().broadcast?.generation ?? 0).toBeGreaterThan(generation);
+    expect(useUi.getState().broadcast).toBe(before);
   });
 
   it("clears the broadcast set when its origin workspace closes", async () => {

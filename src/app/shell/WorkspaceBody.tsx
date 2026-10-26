@@ -150,7 +150,7 @@ export function WorkspaceBody({
                         splitAllowed={splitAllowed}
                         moveTargets={tree ? paneMoveTargets(tree, p.id) : []}
                         onSplit={(direction) => splitPane(direction, p.id, w.id)}
-                        onClosePane={() => void closePane(p.id, w.id)}
+                        onClosePane={() => closePane(p.id, w.id)}
                         onCyclePane={(step) => cyclePane(p.id, step)}
                         onActivate={() => setActivePane(p.id, w.id)}
                         onNewTerminal={onNewTerminal}

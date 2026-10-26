@@ -134,32 +134,45 @@ describe("split pane actions", () => {
     expect(added.tabs.map((tab) => tab.kind)).toEqual(["terminal"]);
   });
 
-  it("closes a pane, collapses its split and hands focus to its neighbour", async () => {
+  it("closes a pane into the pane taking its space, keeping every tab in order", () => {
     const right = useUi.getState().splitPane("right")!;
-    useUi.getState().addTab(file("r"), right);
+    useUi.getState().addTab(file("r1"), right);
     const down = useUi.getState().splitPane("down", right)!;
-    useUi.getState().addTab(file("d"), down);
-    await useUi.getState().closePane(down, "ws");
+    useUi.getState().addTab(file("d1"), down);
+    useUi.getState().addTab(file("d2"), down);
+    useUi.getState().setActiveTab("d1");
+
+    useUi.getState().closePane(down, "ws");
     expect(current().panes.map((item) => item.id)).toEqual(["p1", right]);
+    const heir = current().panes.find((item) => item.id === right)!;
+    expect(heir.tabs.map((tab) => tab.id)).toEqual(["r1", "d1", "d2"]);
+    expect(heir.activeTabId).toBe("d1");
     expect(current().activePaneId).toBe(right);
     expect(rectOf(right)).toEqual({ x: 0.5, y: 0, width: 0.5, height: 1 });
 
-    await useUi.getState().closePane("p1", "ws");
+    // Closing the left pane hands its tabs to the right one.
+    useUi.getState().closePane("p1", "ws");
     expect(current().panes.map((item) => item.id)).toEqual([right]);
+    expect(current().panes[0].tabs.map((tab) => tab.id)).toEqual(["r1", "d1", "d2", "p1-tab"]);
+    expect(current().panes[0].activeTabId).toBe("p1-tab");
     expect(tree()).toMatchObject({ type: "leaf", paneId: right });
     // The last pane stays.
-    await useUi.getState().closePane(right, "ws");
-    expect(current().panes).toHaveLength(1);
+    const before = useUi.getState().workspaces;
+    useUi.getState().closePane(right, "ws");
+    expect(useUi.getState().workspaces).toBe(before);
   });
 
-  it("keeps focus on the surviving active pane and ignores unknown panes on close", async () => {
+  it("keeps focus on another active pane, merges an empty pane away and ignores unknown panes", () => {
     const right = useUi.getState().splitPane("right")!;
-    useUi.getState().addTab(file("r"), right);
     useUi.getState().setActivePane("p1", "ws");
-    await useUi.getState().closePane("missing", "ws");
-    expect(current().panes).toHaveLength(2);
-    await useUi.getState().closePane(right, "ws");
+    const before = useUi.getState().workspaces;
+    useUi.getState().closePane("missing", "ws");
+    expect(useUi.getState().workspaces).toBe(before);
+    useUi.getState().closePane(right, "ws");
     expect(current().activePaneId).toBe("p1");
+    expect(current().panes.map((item) => item.id)).toEqual(["p1"]);
+    expect(current().panes[0].tabs.map((tab) => tab.id)).toEqual(["p1-tab"]);
+    expect(current().panes[0].activeTabId).toBe("p1-tab");
   });
 
   it("sets one split's ratio, clamped, and leaves the layout alone for unknown splits", () => {
