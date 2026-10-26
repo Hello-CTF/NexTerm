@@ -5,12 +5,13 @@ import { act, createElement, useEffect } from "react";
 import { flush, mount, type MountedView } from "../features/reactTestUtils";
 
 const mounts = vi.hoisted(() => ({ count: new Map<string, number>(), unmounts: new Map<string, number>() }));
+const mocks = vi.hoisted(() => ({ detach: vi.fn(async () => undefined), closeTab: vi.fn(async () => undefined) }));
 
 vi.mock("../../ui/dialogs", () => ({ ask: vi.fn(async () => true), askChoice: vi.fn() }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
-    terminalApi: { closeTab: vi.fn(async () => undefined), listLive: vi.fn(async () => []) },
+    terminalApi: { closeTab: mocks.closeTab, detach: mocks.detach, listLive: vi.fn(async () => []) },
   });
 });
 
@@ -119,6 +120,8 @@ function split(direction: "right" | "down", paneId: string, tabId: string): stri
 }
 
 beforeEach(() => {
+  mocks.detach.mockClear();
+  mocks.closeTab.mockClear();
   mounts.count.clear();
   mounts.unmounts.clear();
   useUi.setState({ workspaces: [workspace()], activeWorkspaceId: "ws", sessions: [], toasts: [] });
@@ -150,17 +153,18 @@ describe("split view terminal identity", () => {
     expect(terminalNode("t1")).toBe(first);
     const deepNode = terminalNode("t4");
 
-    await act(async () => {
-      await useUi.getState().closePane(right, "ws");
-    });
+    const t2 = terminalNode("t2");
+    act(() => useUi.getState().closePane(right, "ws"));
     render();
     await flush();
-    expect(terminalNode("t2")).toBeNull();
+    // The closed pane's terminal moved into the pane that took its space, still mounted.
+    expect(terminalNode("t2")).toBe(t2);
     expect(terminalNode("t1")).toBe(first);
     expect(terminalNode("t4")).toBe(deepNode);
     expect(view!.container.querySelectorAll('[role="separator"]')).toHaveLength(2);
+    expect(mocks.detach).not.toHaveBeenCalled();
 
-    for (const id of ["t1", "t3", "t4"]) {
+    for (const id of ["t1", "t2", "t3", "t4"]) {
       expect(mounts.count.get(id)).toBe(1);
       expect(mounts.unmounts.get(id) ?? 0).toBe(0);
     }
@@ -285,13 +289,12 @@ describe("split view terminal identity", () => {
     act(() => splitDown.click());
     render();
     expect(useUi.getState().workspaces[0].panes).toHaveLength(3);
-    const close = view!.container.querySelector<HTMLButtonElement>(`[data-pane-id="${created}"] button[aria-label="关闭此窗格"]`)!;
-    await act(async () => {
-      close.click();
-      await Promise.resolve();
-    });
+    const close = view!.container.querySelector<HTMLButtonElement>(`[data-pane-id="${created}"] button[aria-label="关闭窗格（保留标签页）"]`)!;
+    act(() => close.click());
+    render();
     await flush();
     expect(useUi.getState().workspaces[0].panes.map((pane) => pane.id)).not.toContain(created);
     expect(terminalNode("t1")).not.toBeNull();
+    expect(mocks.closeTab).not.toHaveBeenCalled();
   });
 });

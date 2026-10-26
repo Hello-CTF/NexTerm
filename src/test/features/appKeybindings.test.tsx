@@ -239,6 +239,33 @@ describe("rebound app shortcuts", () => {
     expect(getKeybinding("closeTab")).toBe("Mod+Shift+w");
   });
 
+  it("closes the active pane with its shortcut and keeps its tabs in the remaining pane", async () => {
+    useUi.setState((state) => ({
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        panes: [
+          workspace.panes[0],
+          { id: "p2", activeTabId: "t4", tabs: [{ id: "t4", kind: "audit", title: "Audit 2", closable: true }] },
+        ],
+        activePaneId: "p2",
+      })),
+    }));
+    mounted = mountApp();
+    await flush();
+
+    // jsdom runs as the web build, whose default is Ctrl+Alt+W (browsers keep Ctrl+Shift+W).
+    expect(getKeybinding("closePane")).toBe("Ctrl+Alt+w");
+    const event = keyDown(window, "w", { code: "KeyW", ctrlKey: true, altKey: true });
+    expect(event.defaultPrevented).toBe(true);
+    const panes = useUi.getState().workspaces[0].panes;
+    expect(panes.map((pane) => pane.id)).toEqual(["p1"]);
+    expect(panes[0].tabs.map((tab) => tab.id)).toEqual(["t1", "t2", "t3", "t4"]);
+    expect(panes[0].activeTabId).toBe("t4");
+
+    // With a single pane the shortcut does nothing and is not consumed.
+    expect(keyDown(window, "w", { code: "KeyW", ctrlKey: true, altKey: true }).defaultPrevented).toBe(false);
+  });
+
   it("persists reboundings across remounts through localStorage", async () => {
     setKeybinding("toggleSidebar", "Mod+Shift+B");
     mounted = mountApp();

@@ -20,6 +20,7 @@ export type KeybindingActionId =
   | "closeTab"
   | "splitRight"
   | "splitDown"
+  | "closePane"
   | "switchTab"
   | "terminalSearch"
   | "reclaimTakeover"
@@ -49,6 +50,8 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "closeTab", label: "关闭当前标签", defaultBinding: "Mod+w" },
   { id: "splitDown", label: "向下分屏", defaultBinding: "Mod+\\" },
   { id: "splitRight", label: "向右分屏", defaultBinding: "Mod+Shift+\\" },
+  // Browsers reserve Ctrl+Shift+W for closing the window, so the web build uses Ctrl+Alt+W.
+  { id: "closePane", label: "关闭当前窗格（保留标签页）", defaultBinding: WEB ? "Ctrl+Alt+w" : "Mod+Shift+w" },
   { id: "switchTab", label: "跳到第 1-9 个标签", defaultBinding: "Mod+1-9" },
   { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Primary+f" },
   { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Escape" },
@@ -72,6 +75,7 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "closeTab",
   "splitRight",
   "splitDown",
+  "closePane",
   "switchTab",
   "lockVault",
 ];

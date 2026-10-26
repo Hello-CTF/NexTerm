@@ -449,8 +449,8 @@ export function PaneGroup({
           <button
             type="button"
             className="nx-icon-btn nx-icon-btn-sm"
-            title="关闭此窗格（窗格内的标签一并关闭）"
-            aria-label="关闭此窗格"
+            title={`关闭窗格，标签页移到相邻窗格 (${kbLabel("closePane")})`}
+            aria-label="关闭窗格（保留标签页）"
             onClick={onClosePane}
           >
             <IconMergeH size={14} />

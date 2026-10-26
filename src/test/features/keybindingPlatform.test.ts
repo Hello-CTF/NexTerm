@@ -90,6 +90,7 @@ describe("platform-specific keybinding behaviour", () => {
       { action: "focusPaneRight", binding: "Mod+Shift+Alt+ArrowRight", key: "ArrowRight", code: "ArrowRight", ctrlKey: true, shiftKey: true, altKey: true },
       { action: "splitDown", binding: "Mod+\\", key: "\\", code: "Backslash", ctrlKey: true },
       { action: "splitRight", binding: "Mod+Shift+\\", key: "|", code: "Backslash", ctrlKey: true, shiftKey: true },
+      { action: "closePane", binding: "Mod+Shift+w", key: "W", code: "KeyW", ctrlKey: true, shiftKey: true },
     ] as const;
     for (const { action, binding, ...init } of cases) {
       expect(getKeybinding(action)).toBe(binding);

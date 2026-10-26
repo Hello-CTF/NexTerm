@@ -58,6 +58,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"keybinding.toggleSplit",
 		"keybinding.splitRight",
 		"keybinding.splitDown",
+		"keybinding.closePane",
 		"keybinding.focusPaneLeft",
 		"keybinding.focusPaneRight",
 		"keybinding.focusPaneUp",

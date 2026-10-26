@@ -1685,12 +1685,13 @@ export function TerminalPane({
       }),
       {
         kind: "item",
-        label: "关闭此窗格",
+        label: "关闭窗格（保留标签页）",
         icon: <IconMergeH size={13} />,
         disabled: !isSplit || !pane,
-        hint: isSplit ? "窗格内的标签一并关闭" : undefined,
+        accel: formatBinding(bindings.closePane),
+        hint: isSplit ? "标签页移到相邻窗格" : undefined,
         onSelect: () => {
-          if (ws && pane) void useUi.getState().closePane(pane.id, ws.id);
+          if (ws && pane) useUi.getState().closePane(pane.id, ws.id);
         },
       },
     ];

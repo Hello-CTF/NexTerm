@@ -101,6 +101,14 @@ export function useAppKeybindings({
           cur.splitPane(hit.action === "splitRight" ? "right" : "down", undefined, id);
           return;
         }
+        case "closePane": {
+          const cur = useUi.getState();
+          const target = cur.workspaces.find((w) => w.id === cur.activeWorkspaceId);
+          if (!target || target.panes.length < 2) return;
+          e.preventDefault();
+          cur.closePane(target.activePaneId, target.id);
+          return;
+        }
         case "closeTab":
           if (!activeTabId) return;
           e.preventDefault();

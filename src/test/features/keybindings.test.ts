@@ -333,6 +333,8 @@ describe("browser navigation keybindings", () => {
     { action: "previousTab", binding: "Ctrl+Alt+[", key: "[", code: "BracketLeft" },
     { action: "focusPaneUp", binding: "Ctrl+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp" },
     { action: "focusPaneDown", binding: "Ctrl+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown" },
+    // Ctrl+Shift+W closes the browser window, so the web build closes panes with Ctrl+Alt+W.
+    { action: "closePane", binding: "Ctrl+Alt+w", key: "w", code: "KeyW" },
   ] as const;
 
   it.each(cases)("maps $action from a real KeyboardEvent", ({ action, binding, key, code }) => {

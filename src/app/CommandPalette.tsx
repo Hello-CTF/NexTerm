@@ -205,8 +205,8 @@ export function CommandPalette({
       })),
       {
         id: "close-pane",
-        label: "关闭当前窗格",
-        hint: "合并回相邻窗格，窗格内的标签一并关闭",
+        label: "关闭当前窗格（保留标签页）",
+        hint: keyHint("closePane", "标签页移到相邻窗格"),
         icon: IconMergeH,
         run: () => {
           const current = useUi.getState();
@@ -215,7 +215,7 @@ export function CommandPalette({
             pushToast("info", "当前工作区没有分屏");
             return;
           }
-          void current.closePane(workspace.activePaneId, workspace.id);
+          current.closePane(workspace.activePaneId, workspace.id);
         },
       },
       {

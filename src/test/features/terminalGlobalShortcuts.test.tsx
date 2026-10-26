@@ -211,6 +211,14 @@ describe("XtermView app-level shortcut passthrough", () => {
     expect(handledByXterm({ key: "K", code: "KeyK", ctrlKey: true, shiftKey: true })).toBe(false);
   });
 
+  it("passes Mod+Shift+W to the app while it closes panes, and to xterm once unbound", async () => {
+    await show({ sessionId: "session", tabId: "pending" });
+
+    expect(handledByXterm({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true })).toBe(false);
+    setKeybinding("closePane", null);
+    expect(handledByXterm({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true })).toBe(true);
+  });
+
   it("leaves ordinary input and non-app shortcuts to xterm", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 

@@ -104,6 +104,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"keybinding.toggleSplit":            {kind: preferenceKindBinding},
 	"keybinding.splitRight":             {kind: preferenceKindBinding},
 	"keybinding.splitDown":              {kind: preferenceKindBinding},
+	"keybinding.closePane":              {kind: preferenceKindBinding},
 	"keybinding.switchTab":              {kind: preferenceKindBinding},
 	"keybinding.terminalSearch":         {kind: preferenceKindBinding},
 	"keybinding.reclaimTakeover":        {kind: preferenceKindBinding},
