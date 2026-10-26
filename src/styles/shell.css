@@ -1,0 +1,196 @@
+:root {
+  --nx-kb-inset: 0px;
+  --nx-keys-h: 46px;
+  --nx-header-stack: 36px;
+  /* Native bridges provide explicit insets on Android and desktop. iOS also
+     exposes env() values, so use the larger value when both are available. */
+  --nx-safe-top: max(var(--nx-inset-top, 0px), env(safe-area-inset-top, 0px));
+  --nx-safe-right: max(var(--nx-inset-right, 0px), env(safe-area-inset-right, 0px));
+  --nx-safe-bottom: max(var(--nx-inset-bottom, 0px), env(safe-area-inset-bottom, 0px));
+  --nx-safe-left: max(var(--nx-inset-left, 0px), env(safe-area-inset-left, 0px));
+}
+
+.nx-statusbar {
+  z-index: 20;
+  white-space: nowrap;
+}
+
+.nx-statusbar-info,
+.nx-statusbar-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.nx-statusbar-info {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.nx-statusbar-info > * {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-statusbar-side {
+  flex: 0 0 auto;
+}
+
+.nx-statusbar-side > * {
+  flex: 0 0 auto;
+}
+
+.nx-statusbar-info > .nx-statusbar-truncate,
+.nx-statusbar-side > .nx-statusbar-truncate {
+  flex: 0 1 auto;
+}
+
+.nx-statusbar-truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-overlay {
+  padding-bottom: calc(24px + var(--nx-kb-inset, 0px) + var(--nx-safe-bottom));
+}
+
+.nx-app,
+.nx-workspace-body,
+.nx-workspace-main {
+  min-width: 0;
+  min-height: 0;
+}
+
+.nx-workspace-body,
+.nx-workspace-main,
+.nx-terminal-body {
+  position: relative;
+}
+
+.nx-terminal-body {
+  overflow: hidden;
+}
+
+.nx-left-dock,
+.nx-right-dock {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.nx-right-dock.is-hidden {
+  display: none;
+}
+
+.nx-dock-backdrop {
+  display: none;
+}
+
+.nx-resize-handle,
+.nx-split-handle {
+  touch-action: none;
+  user-select: none;
+}
+
+.nx-split-handle.is-dragging .nx-split-grip {
+  height: 2px;
+  background: color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+
+.nx-toasts {
+  width: min(380px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  z-index: 60;
+  bottom: calc(36px + var(--nx-kb-inset, 0px) + var(--nx-safe-bottom));
+  max-height: calc(100dvh - 120px - var(--nx-kb-inset, 0px) - var(--nx-safe-bottom));
+  overflow: hidden;
+  justify-content: flex-end;
+}
+
+.nx-toasts > * {
+  max-width: 100%;
+}
+
+.nx-toasts > * > span,
+.nx-modal-body,
+.nx-modal-header {
+  overflow-wrap: anywhere;
+}
+
+.nx-app[data-nx-keys="true"] .nx-toasts {
+  bottom: calc(
+    25px + var(--nx-keys-h, 46px) + 8px + var(--nx-kb-inset, 0px) + var(--nx-safe-bottom)
+  );
+}
+
+.nx-app[data-nx-ai="dock"] .nx-toasts {
+  right: calc(var(--nx-right-w, 352px) + 16px);
+  width: min(380px, calc(100vw - var(--nx-right-w, 352px) - 32px));
+}
+
+.nx-app[data-nx-ai="left"] .nx-toasts {
+  right: auto;
+  left: 8px;
+  top: calc(var(--nx-header-stack) + 8px + var(--nx-safe-top));
+  bottom: auto;
+  width: min(380px, calc(100vw - 16px));
+  max-height: min(
+    calc(100dvh - 160px - var(--nx-kb-inset, 0px) - var(--nx-safe-top) - var(--nx-safe-bottom)),
+    var(--nx-ai-toast-max, calc(100dvh - 160px - var(--nx-kb-inset, 0px) - var(--nx-safe-top) - var(--nx-safe-bottom)))
+  );
+}
+
+.nx-terminal-keys {
+  display: none;
+  min-height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  overflow-x: auto;
+  z-index: 20;
+  border-top: 1px solid color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+  background: var(--nx-bg-canvas);
+  scrollbar-width: none;
+}
+
+.nx-terminal-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.nx-terminal-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 29px;
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border: 1px solid var(--nx-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--nx-bg-raised);
+  color: var(--nx-fg-emphasis);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--nx-ui-text-factor));
+  touch-action: manipulation;
+}
+
+.nx-terminal-key.is-active {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 24%, var(--color-neutral-800));
+  color: var(--color-blue-300);
+}
+
+.nx-terminal-keyboard {
+  position: sticky;
+  right: 0;
+  margin-left: auto;
+  background: var(--nx-bg-canvas);
+  box-shadow: -12px 0 12px var(--nx-bg-canvas);
+  font-family: var(--font-sans);
+}

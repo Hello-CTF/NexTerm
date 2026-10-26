@@ -1,0 +1,45 @@
+/* Rounded screen/notch adaptation: the background extends into the curved areas, interactive content avoids the status bar and gesture bar.
+   --nx-inset-* is injected by the native side (Android env() does not include the gesture bar); falls back to iOS env() values when not injected */
+.nx-fullscreen-safe-bottom,
+#root > .h-dvh {
+  padding-bottom: var(--nx-safe-bottom);
+}
+
+.nx-auth-gate {
+  overflow-y: auto;
+  padding-bottom: calc(1rem + var(--nx-safe-bottom));
+}
+
+.nx-auth-gate > .nx-card {
+  flex: 0 0 auto;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.nx-app {
+  padding-bottom: var(--nx-safe-bottom);
+}
+
+.nx-app-header {
+  height: auto;
+  min-height: 36px;
+  padding-top: var(--nx-safe-top);
+  padding-right: var(--nx-safe-right);
+}
+
+.nx-rail {
+  width: calc(48px + var(--nx-safe-left));
+  padding-top: calc(9px + var(--nx-safe-top));
+  padding-left: var(--nx-safe-left);
+}
+
+.nx-statusbar {
+  height: auto;
+  min-height: 25px;
+  align-items: flex-start;
+  padding-right: calc(12px + var(--nx-safe-right));
+}
+
+.nx-app[data-nx-landscape-full="true"] .nx-statusbar {
+  padding-left: calc(12px + var(--nx-safe-left));
+}

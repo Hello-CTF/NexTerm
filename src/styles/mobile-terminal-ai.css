@@ -1,0 +1,142 @@
+/* mobile: terminal-ai */
+.nx-toolbar-extra {
+  display: contents;
+}
+
+@container term (max-width: 560px) {
+  .nx-toolbar.nx-term-toolbar {
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    row-gap: 3px;
+    position: relative;
+  }
+
+  /* Let the preview-link popover anchor to the toolbar so it stays inside the pane. */
+  .nx-term-toolbar > .nx-toolbar-extra > .relative {
+    position: static;
+  }
+
+  .nx-term-toolbar > .nx-toolbar-title {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .nx-term-toolbar > .nx-spacer {
+    display: none;
+  }
+
+  .nx-term-toolbar > .nx-term-more {
+    order: 2;
+    width: 40px;
+    height: 36px;
+  }
+
+  .nx-term-toolbar > .nx-toolbar-extra {
+    order: 3;
+    display: flex;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .nx-term-toolbar > .nx-toolbar-extra:empty {
+    display: none;
+  }
+
+  .nx-term-toolbar .nx-term-status-text {
+    display: none;
+  }
+
+}
+@media (max-width: 640px) {
+  .nx-toolbar.nx-wrap-toolbar {
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    row-gap: 4px;
+  }
+
+  .nx-wrap-toolbar > .nx-toolbar-title {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .nx-wrap-toolbar > .nx-hint {
+    order: 8;
+    flex: 1 0 100%;
+    white-space: normal;
+  }
+
+  .nx-wrap-toolbar > .nx-spacer {
+    display: none;
+  }
+
+  .nx-wrap-toolbar > .nx-toolbar-views {
+    order: 9;
+    display: grid;
+    flex: 1 0 100%;
+    grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+    gap: 4px;
+  }
+
+  .nx-toolbar-views > .nx-btn {
+    min-height: 40px;
+  }
+
+  .nx-table.nx-table-cards {
+    display: block;
+    min-width: 0 !important;
+    table-layout: auto;
+  }
+
+  .nx-table-cards thead {
+    display: none;
+  }
+
+  .nx-table-cards tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .nx-table-cards tr {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--nx-border-strong);
+    border-radius: var(--radius-sm);
+  }
+
+  .nx-table-cards td {
+    display: block;
+    width: auto !important;
+    max-width: none;
+    padding: 2px 0;
+    border: 0;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .nx-table-cards td[data-label]::before {
+    content: attr(data-label) "：";
+    color: var(--nx-fg-muted, var(--color-neutral-500));
+    font-size: 11px;
+  }
+
+  .nx-table-cards td.nx-right {
+    padding-top: 6px;
+  }
+
+  .nx-table-cards td.nx-right .nx-btn {
+    min-height: 40px;
+    flex: 1 1 0;
+  }
+}
+/* end mobile: terminal-ai */
