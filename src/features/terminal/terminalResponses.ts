@@ -15,13 +15,28 @@
 // in arrival order and drain as tokens refill; a queued reply is replaced by a
 // newer reply with the same coalescing key (CPR/window size/OSC colour per
 // index reflect the latest state, DA/DSR/DCS replies collapse only when
-// identical), and the queue is bounded, so a flood costs at most the refill
-// rate in upstream bytes. Replies queued for an attachment generation are
-// discarded when the generation changes and are never sent into a new one.
+// identical), and the queue is bounded in bytes, so a flood costs at most the
+// refill rate in upstream bytes. Replies queued for an attachment generation
+// are discarded when the generation changes and are never sent into a new one.
 // Suppression is never shown to the user; it is counted in stats() and logged
-// once per generation for diagnostics. User input never enters the bucket.
+// once per generation for diagnostics.
+//
+// User input deliberately bypasses the bucket and the queue: Ctrl+C or a
+// typed command must never wait behind a hostile query flood. Replies keep
+// their order among themselves, but a reply deferred during a flood can reach
+// the remote after input typed later. That only happens while the host is
+// flooding, never for a well-behaved program, and each reply is still written
+// whole, so it cannot split typed bytes.
 
-export type TerminalResponseType = "da" | "dsr" | "cpr" | "window" | "dcs" | "osc-color";
+export type TerminalResponseType =
+  | "da"
+  | "dsr"
+  | "cpr"
+  | "window"
+  | "dcs"
+  | "osc-color"
+  | "mode"
+  | "kitty-keyboard";
 
 const PATTERNS: [TerminalResponseType, RegExp][] = [
   ["da", /^\x1b\[\?[\d;]*c$/],
@@ -30,6 +45,10 @@ const PATTERNS: [TerminalResponseType, RegExp][] = [
   ["dsr", /^\x1b\[\d+n$/],
   ["cpr", /^\x1b\[\??\d+;\d+R$/],
   ["window", /^\x1b\[8;\d+;\d+t$/],
+  // DECRQM reply: CSI ? Ps ; Pm $ y (DEC private) or CSI Ps ; Pm $ y (ANSI).
+  ["mode", /^\x1b\[\??\d+;\d+\$y$/],
+  // Kitty keyboard protocol flags reply: CSI ? flags u.
+  ["kitty-keyboard", /^\x1b\[\?\d+u$/],
   ["dcs", /^\x1bP[ -~]*\x1b\\$/],
   [
     "osc-color",
@@ -52,6 +71,13 @@ export function terminalResponseKey(type: TerminalResponseType, data: string): s
       return data.startsWith("\x1b[?") ? "cpr?" : "cpr";
     case "window":
       return "window";
+    case "mode": {
+      // A mode's state report: latest wins per mode.
+      const match = /^\x1b\[(\??\d+);/.exec(data);
+      return `mode:${match?.[1] ?? ""}`;
+    }
+    case "kitty-keyboard":
+      return "kitty-keyboard";
     case "osc-color": {
       // OSC 4;<index> per palette entry, OSC 10/11/12... per dynamic colour.
       const match = /^\x1b\](\d+);(?:(\d+);)?/.exec(data);
@@ -66,7 +92,9 @@ export function terminalResponseKey(type: TerminalResponseType, data: string): s
 
 export const RESPONSE_BURST_BYTES = 16 * 1024;
 export const RESPONSE_REFILL_BYTES_PER_SECOND = 4 * 1024;
-export const RESPONSE_MAX_QUEUED = 256;
+// Bytes of replies that may wait for tokens; a full 256-entry OSC 4 palette
+// probe (about 7 KiB) plus fences such as DA1 fits several times over.
+export const RESPONSE_MAX_QUEUED_BYTES = 32 * 1024;
 
 export interface TerminalResponseStats {
   generation: number;
@@ -86,7 +114,7 @@ export interface TerminalResponseLimiterOptions {
   send: (data: string) => void;
   burstBytes?: number;
   refillBytesPerSecond?: number;
-  maxQueued?: number;
+  maxQueuedBytes?: number;
   now?: () => number;
   // Diagnostics sink, called at most once per generation when replies were
   // deferred, coalesced or dropped.
@@ -107,7 +135,7 @@ const defaultLog = (message: string, stats: TerminalResponseStats) => console.wa
 export function createTerminalResponseLimiter(options: TerminalResponseLimiterOptions): TerminalResponseLimiter {
   const burst = options.burstBytes ?? RESPONSE_BURST_BYTES;
   const rate = options.refillBytesPerSecond ?? RESPONSE_REFILL_BYTES_PER_SECOND;
-  const maxQueued = options.maxQueued ?? RESPONSE_MAX_QUEUED;
+  const maxQueuedBytes = options.maxQueuedBytes ?? RESPONSE_MAX_QUEUED_BYTES;
   const now = options.now ?? Date.now;
   const log = options.log ?? defaultLog;
 
@@ -115,6 +143,7 @@ export function createTerminalResponseLimiter(options: TerminalResponseLimiterOp
   let refilledAt = now();
   // Insertion-ordered: a replaced reply moves to the tail with its new payload.
   let queue = new Map<string, string>();
+  let queuedBytes = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
   let generation = 0;
@@ -163,6 +192,7 @@ export function createTerminalResponseLimiter(options: TerminalResponseLimiterOp
     for (const [key, data] of queue) {
       if (!affordable(data)) break;
       queue.delete(key);
+      queuedBytes -= data.length;
       write(data);
     }
     if (queue.size === 0) {
@@ -188,17 +218,22 @@ export function createTerminalResponseLimiter(options: TerminalResponseLimiterOp
       return "sent";
     }
     const key = terminalResponseKey(type, data);
-    let outcome: TerminalResponseOutcome = "queued";
-    if (queue.delete(key)) {
-      counters.coalesced += 1;
-      outcome = "coalesced";
-    } else if (queue.size >= maxQueued) {
+    const replaced = queue.get(key);
+    const nextBytes = queuedBytes - (replaced?.length ?? 0) + data.length;
+    if (nextBytes > maxQueuedBytes) {
       counters.dropped += 1;
       return "dropped";
+    }
+    let outcome: TerminalResponseOutcome = "queued";
+    if (replaced !== undefined) {
+      queue.delete(key);
+      counters.coalesced += 1;
+      outcome = "coalesced";
     } else {
       counters.deferred += 1;
     }
     queue.set(key, data);
+    queuedBytes = nextBytes;
     if (timer === null) drain();
     return outcome;
   };
@@ -207,6 +242,7 @@ export function createTerminalResponseLimiter(options: TerminalResponseLimiterOp
     clearTimer();
     counters.dropped += queue.size;
     queue = new Map();
+    queuedBytes = 0;
   };
 
   const setGeneration = (next: number) => {

@@ -28,6 +28,10 @@ describe("terminal automatic response classification", () => {
       ["\x1bP1$r64\x1b\\", "dcs"],
       ["\x1b]10;rgb:ffff/ffff/ffff\x1b\\", "osc-color"],
       ["\x1b]4;1;rgb:0000/0000/0000\x07", "osc-color"],
+      ["\x1b[?2004;1$y", "mode"],
+      ["\x1b[4;2$y", "mode"],
+      ["\x1b[?0u", "kitty-keyboard"],
+      ["\x1b[?31u", "kitty-keyboard"],
     ];
     for (const [payload, type] of cases) {
       expect(classifyTerminalResponse(payload), JSON.stringify(payload)).toBe(type);
@@ -63,6 +67,10 @@ describe("terminal automatic response classification", () => {
     );
     expect(terminalResponseKey("da", "\x1b[?1;2c")).not.toBe(terminalResponseKey("da", "\x1b[>0;276;0c"));
     expect(terminalResponseKey("dcs", "\x1bP1$r0m\x1b\\")).not.toBe(terminalResponseKey("dcs", "\x1bP1$r2 q\x1b\\"));
+    expect(terminalResponseKey("mode", "\x1b[?2004;1$y")).toBe(terminalResponseKey("mode", "\x1b[?2004;2$y"));
+    expect(terminalResponseKey("mode", "\x1b[?2004;1$y")).not.toBe(terminalResponseKey("mode", "\x1b[?1049;1$y"));
+    expect(terminalResponseKey("mode", "\x1b[?4;1$y")).not.toBe(terminalResponseKey("mode", "\x1b[4;1$y"));
+    expect(terminalResponseKey("kitty-keyboard", "\x1b[?0u")).toBe(terminalResponseKey("kitty-keyboard", "\x1b[?1u"));
   });
 });
 
@@ -154,8 +162,31 @@ describe("terminal automatic response limiter", () => {
     expect(limiter.stats()).toMatchObject({ sent: 4, deferred: 3, coalesced: 1, dropped: 0, pending: 0 });
   });
 
-  it("drops replies beyond the queue bound and counts them", () => {
-    const { sent, logs, limiter } = harness({ burstBytes: 4, refillBytesPerSecond: 1000, maxQueued: 2 });
+  it("keeps a full palette probe and the DA1 fence after it when the bucket is empty", () => {
+    const { sent, limiter } = harness({ burstBytes: 4, refillBytesPerSecond: 1024 });
+    expect(limiter.submit("\x1b[0n")).toBe("sent");
+    const palette = Array.from({ length: 256 }, (_, i) => `\x1b]4;${i};rgb:ffff/ffff/ffff\x1b\\`);
+    for (const reply of palette) expect(limiter.submit(reply)).toBe("queued");
+    expect(limiter.submit("\x1b]11;rgb:0000/0000/0000\x1b\\")).toBe("queued");
+    expect(limiter.submit("\x1b[?62;22c")).toBe("queued");
+    vi.advanceTimersByTime(60_000);
+    expect(sent).toEqual(["\x1b[0n", ...palette, "\x1b]11;rgb:0000/0000/0000\x1b\\", "\x1b[?62;22c"]);
+    expect(limiter.stats()).toMatchObject({ dropped: 0, pending: 0 });
+  });
+
+  it("rate-limits mode and kitty keyboard replies like other replies", () => {
+    const { sent, limiter } = harness({ burstBytes: 12, refillBytesPerSecond: 12 });
+    expect(limiter.submit("\x1b[?2004;1$y")).toBe("sent");
+    expect(limiter.submit("\x1b[?2004;2$y")).toBe("queued");
+    expect(limiter.submit("\x1b[?2004;1$y")).toBe("coalesced");
+    expect(limiter.submit("\x1b[?1u")).toBe("queued");
+    expect(limiter.submit("\x1b[?5u")).toBe("coalesced");
+    vi.advanceTimersByTime(10_000);
+    expect(sent).toEqual(["\x1b[?2004;1$y", "\x1b[?2004;1$y", "\x1b[?5u"]);
+  });
+
+  it("drops replies beyond the queued byte bound and counts them", () => {
+    const { sent, logs, limiter } = harness({ burstBytes: 4, refillBytesPerSecond: 1000, maxQueuedBytes: 18 });
     expect(limiter.submit("\x1b[0n")).toBe("sent");
     sent.length = 0;
     expect(limiter.submit("\x1bP1$r0m\x1b\\")).toBe("queued");
