@@ -454,7 +454,9 @@ func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrad
 		return
 	}
 	conflicts := report.Ownership.Conflicts + report.Layout.Conflicts + aiSettings.Conflicts
-	if conflicts > 0 || report.AI.CronJobsDisabled > 0 || report.AI.Unattributed > 0 || aiSettings.Tombstoned > 0 {
+	// Only what this run found is surfaced as a warning; rows already left
+	// ownerless by an earlier run (ai_unattributed) are logged as a count.
+	if conflicts > 0 || report.AI.CronJobsDisabled > 0 || aiSettings.Tombstoned > 0 {
 		c.logger.Warn("data upgrade completed with preserved or unattended entries", values...)
 		c.emit(ctx, "数据升级存在未自动处理的冲突或孤立记录；原始记录已保留，请查看服务器日志")
 		return

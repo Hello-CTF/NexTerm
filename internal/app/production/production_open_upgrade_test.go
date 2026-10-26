@@ -390,3 +390,52 @@ func TestProductionUpgradeConflictIsVisible(t *testing.T) {
 		t.Fatalf("conflicting source was silently overwritten or reassigned: %q", ownerID)
 	}
 }
+
+func TestProductionOpenToAccountUpgradeWarnsOnlyOnce(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	database, err := store.Open(ctx, dataDir+"/data.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []any{
+		&store.AppUser{ID: "admin", Username: "admin", Role: "superadmin", PasswordHash: "synthetic-hash", State: "active", CreatedAt: 1, UpdatedAt: 1},
+		&store.ConversationRow{ID: "conv-open", ScopeJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
+		&store.MessageRow{ID: "msg-open", ConversationID: "conv-open", Role: "user", ContentJSON: "{}", CreatedAt: 1, Seq: 1},
+		&store.CronJob{ID: "job-lost", SessionID: "conv-missing", OwnerKind: string(cron.OwnerKindOpen), Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 1, UpdatedAt: 1, Revision: 1, NextRunAt: 1},
+		&store.Setting{Key: store.AIProfilesSettingKey, Value: productionLegacyProfileSetting(t, productionMigrationProfile("p-open", "open", "enc:v1:synthetic")), UpdatedAt: 1},
+	} {
+		if err := database.GORM().Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	start := func() (*syncedLogBuffer, *productionUpgradeEventCapture) {
+		t.Helper()
+		logs := &syncedLogBuffer{}
+		events := &productionUpgradeEventCapture{}
+		application, err := NewProduction(ctx, ProductionConfig{
+			Config: Config{Logger: slog.New(slog.NewTextHandler(logs, nil)), Events: events}, DataDir: dataDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := application.Services.Store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return logs, events
+	}
+	firstLogs, firstEvents := start()
+	if len(firstEvents.appErrorMessages()) != 1 || !strings.Contains(firstLogs.String(), "cron_disabled=1") {
+		t.Fatalf("first start did not surface the disabled Open job: events=%v logs=%s", firstEvents.appErrorMessages(), firstLogs.String())
+	}
+	secondLogs, secondEvents := start()
+	if messages := secondEvents.appErrorMessages(); len(messages) != 0 {
+		t.Fatalf("second start repeated the data upgrade error: %v", messages)
+	}
+	if strings.Contains(secondLogs.String(), "data upgrade") {
+		t.Fatalf("second start logged a data upgrade again: %s", secondLogs.String())
+	}
+}

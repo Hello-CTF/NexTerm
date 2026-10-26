@@ -33,15 +33,30 @@ var aiHistoryChildModels = []any{
 	&store.CheckpointRow{},
 }
 
+// aiHistoryMigrationPending reports only rows the step would change, so rows
+// it leaves ownerless on purpose (deleted conversations, disabled Open jobs,
+// jobs without an owner kind) do not trigger a pass on every start.
 func aiHistoryMigrationPending(database *gorm.DB) (bool, error) {
-	for _, model := range aiHistoryChildModels {
-		found, err := hasOwnerlessRows(database.Model(model))
+	fresh := func() *gorm.DB { return database.Session(&gorm.Session{NewDB: true}) }
+	tombstoned := fresh().Model(&store.SyncTombstone{}).Select("id")
+	ownedConversations := fresh().Model(&store.ConversationRow{}).Select("id").
+		Where("owner_id <> '' AND id NOT IN (?)", tombstoned)
+	ownedRuns := fresh().Model(&store.RunRow{}).Select("id").
+		Where("owner_id <> '' AND id NOT IN (?) AND conversation_id NOT IN (?)", tombstoned, tombstoned)
+	for _, query := range []*gorm.DB{
+		fresh().Model(&store.RunRow{}).Where("conversation_id IN (?) AND id NOT IN (?)", ownedConversations, tombstoned),
+		fresh().Model(&store.MessageRow{}).Where("conversation_id IN (?) AND id NOT IN (?)", ownedConversations, tombstoned),
+		fresh().Model(&store.RunEventRow{}).Where("run_id IN (?)", ownedRuns),
+		fresh().Model(&store.HitlRunRow{}).Where("id IN (?)", ownedRuns),
+		fresh().Model(&store.CheckpointRow{}).Where("id IN (?)", ownedRuns),
+		fresh().Model(&store.CronJob{}).Where("owner_kind = ? AND enabled = ?", string(cron.OwnerKindOpen), true),
+	} {
+		found, err := hasOwnerlessRows(query)
 		if err != nil || found {
 			return found, err
 		}
 	}
-	return hasOwnerlessRows(database.Model(&store.CronJob{}).
-		Where("owner_kind = ? AND enabled = ?", string(cron.OwnerKindOpen), true))
+	return false, nil
 }
 
 // migrateAIHistory runs after conversations received their owner. Child rows
@@ -60,10 +75,10 @@ func migrateAIHistory(database *gorm.DB, report *AIHistoryReport) error {
 	if err := migrateOpenCronJobs(database, conversationOwners, tombstones, report); err != nil {
 		return err
 	}
-	if err := assignConversationChildren(database, &store.RunRow{}, conversationOwners, tombstones, &report.RunsAssigned); err != nil {
+	if err := assignConversationChildren(database, &store.RunRow{}, conversationOwners, &report.RunsAssigned); err != nil {
 		return err
 	}
-	if err := assignConversationChildren(database, &store.MessageRow{}, conversationOwners, tombstones, &report.MessagesAssigned); err != nil {
+	if err := assignConversationChildren(database, &store.MessageRow{}, conversationOwners, &report.MessagesAssigned); err != nil {
 		return err
 	}
 	runOwners, err := aiRunOwners(database, tombstones)
@@ -155,20 +170,22 @@ func migrateOpenCronJobs(database *gorm.DB, conversationOwners map[string]string
 	return nil
 }
 
-func assignConversationChildren(database *gorm.DB, model any, conversationOwners map[string]string, tombstones map[string]bool, count *int64) error {
-	var rows []struct {
-		ID             string
-		ConversationID string
-	}
-	if err := database.Model(model).Select("id", "conversation_id").Where("owner_id = ''").Scan(&rows).Error; err != nil {
+// assignConversationChildren updates one conversation at a time; children
+// whose own ID carries a sync tombstone stay ownerless.
+func assignConversationChildren(database *gorm.DB, model any, conversationOwners map[string]string, count *int64) error {
+	var conversationIDs []string
+	if err := database.Model(model).Where("owner_id = ''").Distinct("conversation_id").Pluck("conversation_id", &conversationIDs).Error; err != nil {
 		return err
 	}
-	for _, row := range rows {
-		ownerID, ok := conversationOwners[row.ConversationID]
-		if !ok || tombstones[row.ID] {
+	tombstoned := database.Session(&gorm.Session{NewDB: true}).Model(&store.SyncTombstone{}).Select("id")
+	for _, conversationID := range conversationIDs {
+		ownerID, ok := conversationOwners[conversationID]
+		if !ok {
 			continue
 		}
-		result := database.Model(model).Where("id = ? AND owner_id = ''", row.ID).UpdateColumn("owner_id", ownerID)
+		result := database.Model(model).
+			Where("conversation_id = ? AND owner_id = '' AND id NOT IN (?)", conversationID, tombstoned).
+			UpdateColumn("owner_id", ownerID)
 		if result.Error != nil {
 			return result.Error
 		}

@@ -80,12 +80,31 @@ func userSettingKey(globalKey, ownerID string) string {
 	return globalKey + ".user." + ownerID
 }
 
+// aiSettingsMigrationPending is true while Open-mode AI settings exist that
+// the first active superadmin has not received in their current form, or
+// while no active superadmin exists to receive them.
 func aiSettingsMigrationPending(database *gorm.DB) (bool, error) {
 	found, err := hasRows(database.Model(&store.Setting{}).Where(settingKeysIn(openAISettingKeys)))
-	if err != nil || found {
+	if err == nil && !found {
+		found, err = hasOwnerlessRows(database.Model(&store.SyncTombstone{}).Where("kind IN ?", aiOwnedTombstoneKinds))
+	}
+	if err != nil || !found {
 		return found, err
 	}
-	return hasOwnerlessRows(database.Model(&store.SyncTombstone{}).Where("kind IN ?", aiOwnedTombstoneKinds))
+	ownerID, err := firstActiveSuperadmin(database)
+	if err != nil || ownerID == "" {
+		return true, err
+	}
+	m, err := newAISettingsMigration(database, ownerID, &AISettingsReport{})
+	if err != nil {
+		return false, err
+	}
+	fingerprint, err := m.fingerprint()
+	if err != nil {
+		return false, err
+	}
+	marker, copied := m.settings[openAISettingsCopiedKeyPrefix+ownerID]
+	return !copied || marker.Value != fingerprint, nil
 }
 
 func hasRows(query *gorm.DB) (bool, error) {

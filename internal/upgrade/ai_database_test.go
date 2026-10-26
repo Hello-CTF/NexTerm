@@ -117,7 +117,7 @@ func TestMigrateOpenModeAIHistoryToAccountDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repeated.AI.Changed() || repeated.AI.Unattributed != 4 {
+	if repeated.AI != (upgrade.AIHistoryReport{}) {
 		t.Fatalf("idempotent AI history reentry = %+v", repeated.AI)
 	}
 	if after := snapshotUpgradeFault(t, db); !reflect.DeepEqual(before, after) {
