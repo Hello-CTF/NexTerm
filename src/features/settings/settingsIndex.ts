@@ -1,0 +1,166 @@
+// Declarative search index for the settings view. Section metadata is keyed by
+// SettingsSectionId, so adding a section without an entry here is a type error.
+// Individual settings are listed in SETTINGS_ITEMS; an item is scrolled to and
+// highlighted through the element carrying data-setting="<item id>", and falls
+// back to its section when that element is not rendered.
+
+export type SettingsSectionId =
+  | "settings-appearance"
+  | "settings-terminal"
+  | "settings-shortcuts"
+  | "settings-update"
+  | "settings-diagnostics"
+  | "settings-ai-model"
+  | "settings-ai-rules"
+  | "settings-ai-skills"
+  | "settings-memory"
+  | "settings-vault"
+  | "settings-known-hosts"
+  | "settings-production"
+  | "settings-account"
+  | "settings-bundle"
+  | "settings-share";
+
+export interface SettingsSearchMeta {
+  description: string;
+  keywords: readonly string[];
+}
+
+export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
+  "settings-appearance": {
+    description: "界面主题、字号、终端主题与字体",
+    keywords: ["appearance", "theme", "dark", "light", "font", "主题", "深色", "浅色", "字体", "字号", "外观"],
+  },
+  "settings-terminal": {
+    description: "默认终端模式、剪贴板、关闭行为",
+    keywords: ["terminal", "durable", "persistent", "osc52", "clipboard", "tray", "持久", "剪贴板", "托盘", "后台"],
+  },
+  "settings-shortcuts": {
+    description: "自定义快捷键与选中复制",
+    keywords: ["shortcut", "keybinding", "hotkey", "keyboard", "key", "快捷键", "键盘", "按键", "热键"],
+  },
+  "settings-update": {
+    description: "检查并安装应用更新",
+    keywords: ["update", "upgrade", "version", "download", "更新", "升级", "版本"],
+  },
+  "settings-diagnostics": {
+    description: "调试日志与抓取文件",
+    keywords: ["diagnostics", "debug", "log", "capture", "trace", "诊断", "调试", "日志", "抓包"],
+  },
+  "settings-ai-model": {
+    description: "AI 模型档案、密钥与连通性测试",
+    keywords: ["ai", "model", "api key", "openai", "ollama", "llm", "模型", "密钥", "大模型", "连通性"],
+  },
+  "settings-ai-rules": {
+    description: "AI 命中后需要确认或拒绝的危险规则",
+    keywords: ["rule", "danger", "block", "permission", "rm", "拦截", "规则", "危险", "权限", "确认"],
+  },
+  "settings-ai-skills": {
+    description: "管理 AI 技能",
+    keywords: ["skill", "skills", "prompt", "技能"],
+  },
+  "settings-memory": {
+    description: "AI 长期记忆与记忆工具",
+    keywords: ["memory", "remember", "记忆", "长期记忆"],
+  },
+  "settings-vault": {
+    description: "用密码保护凭据，闲置自动锁定",
+    keywords: ["credential", "vault", "password", "lock", "encrypt", "凭据", "密码", "加密", "锁定", "保险库", "安全"],
+  },
+  "settings-known-hosts": {
+    description: "已信任的 SSH 主机指纹",
+    keywords: ["known hosts", "fingerprint", "ssh", "trust", "host key", "指纹", "信任", "主机"],
+  },
+  "settings-production": {
+    description: "生产环境主机的额外保护",
+    keywords: ["production", "prod", "safety", "protect", "生产", "保护", "确认"],
+  },
+  "settings-account": {
+    description: "账号、用户管理与多端同步",
+    keywords: ["account", "sync", "server", "user", "mfa", "login", "proxy", "账号", "同步", "用户", "登录", "两步验证", "代理", "服务器"],
+  },
+  "settings-bundle": {
+    description: "资产包导入与导出",
+    keywords: ["bundle", "import", "export", "backup", "file", "资产", "导入", "导出", "备份"],
+  },
+  "settings-share": {
+    description: "分享主机与会话给他人",
+    keywords: ["share", "link", "invite", "分享", "链接", "邀请"],
+  },
+};
+
+export interface SettingsItem {
+  id: string;
+  section: SettingsSectionId;
+  label: string;
+  description?: string;
+  keywords?: readonly string[];
+}
+
+export const SETTINGS_ITEMS: readonly SettingsItem[] = [
+  { id: "ui-theme", section: "settings-appearance", label: "界面主题", description: "跟随系统、浅色或深色", keywords: ["theme", "dark", "light", "主题", "深色", "浅色"] },
+  { id: "ui-font-size", section: "settings-appearance", label: "界面字号", keywords: ["font size", "字体", "字号"] },
+  { id: "ui-text-scale", section: "settings-appearance", label: "界面文字倍率", keywords: ["scale", "zoom", "缩放", "倍率"] },
+  { id: "terminal-theme", section: "settings-appearance", label: "终端与编辑器主题", keywords: ["theme", "color scheme", "配色", "主题"] },
+  { id: "terminal-contrast", section: "settings-appearance", label: "终端对比度", keywords: ["contrast", "对比度"] },
+  { id: "terminal-font-size", section: "settings-appearance", label: "终端字号", keywords: ["font size", "字体", "字号"] },
+  { id: "terminal-font-family", section: "settings-appearance", label: "终端字体", keywords: ["font", "family", "cascadia", "字体"] },
+  { id: "default-terminal-mode", section: "settings-terminal", label: "默认终端模式", description: "持久终端或普通终端", keywords: ["durable", "persistent", "detach", "持久"] },
+  { id: "osc52", section: "settings-terminal", label: "允许远程主机写入剪贴板（OSC 52）", keywords: ["clipboard", "osc52", "剪贴板"] },
+  { id: "close-action", section: "settings-terminal", label: "关闭运行中的终端标签时", keywords: ["close", "kill", "detach", "关闭", "后台"] },
+  { id: "copy-on-select", section: "settings-shortcuts", label: "选中自动复制", keywords: ["copy", "select", "clipboard", "复制", "剪贴板"] },
+  { id: "vault-password", section: "settings-vault", label: "用密码保护凭据", keywords: ["password", "credential", "vault", "密码", "凭据"] },
+  { id: "vault-auto-lock", section: "settings-vault", label: "闲置自动锁定", keywords: ["lock", "idle", "timeout", "锁定", "凭据"] },
+];
+
+export type SettingsSearchResult =
+  | { kind: "section"; key: string; sectionId: string; label: string; detail: string }
+  | { kind: "item"; key: string; sectionId: string; itemId: string; label: string; detail: string };
+
+const normalize = (text: string) => text.toLowerCase().normalize("NFKC");
+
+function matches(haystack: string, tokens: readonly string[]): boolean {
+  return tokens.every((token) => haystack.includes(token));
+}
+
+// A query is split on whitespace and every token must appear somewhere in the
+// entry's label, description or keywords. Section matches come first.
+export function searchSettings(
+  query: string,
+  sections: readonly { id: string; label: string }[],
+): SettingsSearchResult[] {
+  const tokens = normalize(query).split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return [];
+  const labelOf = new Map(sections.map((section) => [section.id, section.label]));
+  const sectionResults: SettingsSearchResult[] = [];
+  for (const section of sections) {
+    const meta = SECTION_SEARCH[section.id as SettingsSectionId];
+    const text = normalize([section.label, meta?.description ?? "", ...(meta?.keywords ?? [])].join(" "));
+    if (matches(text, tokens)) {
+      sectionResults.push({
+        kind: "section",
+        key: section.id,
+        sectionId: section.id,
+        label: section.label,
+        detail: meta?.description ?? "",
+      });
+    }
+  }
+  const itemResults: SettingsSearchResult[] = [];
+  for (const item of SETTINGS_ITEMS) {
+    const sectionLabel = labelOf.get(item.section);
+    if (!sectionLabel) continue; // The section is not available on this platform.
+    const text = normalize([item.label, item.description ?? "", ...(item.keywords ?? [])].join(" "));
+    if (matches(text, tokens)) {
+      itemResults.push({
+        kind: "item",
+        key: `${item.section}:${item.id}`,
+        sectionId: item.section,
+        itemId: item.id,
+        label: item.label,
+        detail: sectionLabel,
+      });
+    }
+  }
+  return [...sectionResults, ...itemResults];
+}

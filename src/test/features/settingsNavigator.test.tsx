@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -70,7 +70,7 @@ function toc(): HTMLElement {
 
 function tocButtons(): HTMLButtonElement[] {
   return [...toc().querySelectorAll<HTMLButtonElement>("button")].filter(
-    (button) => !button.getAttribute("aria-label")?.endsWith("设置目录"),
+    (button) => !/设置目录$|^搜索设置$/.test(button.getAttribute("aria-label") ?? ""),
   );
 }
 
@@ -251,7 +251,7 @@ describe("AI interception rule drafts", () => {
 
     expect(useUi.getState().aiRulePrefill).toBeNull();
     const section = document.getElementById("settings-ai-rules")!;
-    expect(section.scrollIntoView).toHaveBeenCalled();
+    await waitFor(() => expect(section.scrollIntoView).toHaveBeenCalled());
     const draft = section.querySelector<HTMLInputElement>('input[placeholder*="Enter 保存"]')!;
     expect(draft.value).toBe("kubectl delete");
 

@@ -188,7 +188,7 @@ export function ShortcutsCard() {
           <div id={advancedPanelId} className="mt-2">
             <label className="flex cursor-pointer items-start gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-[12.5px] text-neutral-200">选中自动复制</div>
+                <div className="text-[12.5px] text-neutral-200" data-setting="copy-on-select">选中自动复制</div>
                 <p className="nx-hint mt-0.5">
                   在终端里选中文字后立即复制到剪贴板，成功或失败都会弹出提示；默认关闭。
                   浏览器可能要求剪贴板权限，被拒绝时会如实提示。

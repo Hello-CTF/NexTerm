@@ -12,6 +12,9 @@ import {
 import { ask, promptText } from "../../ui/dialogs";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
 import { onSettingsSection } from "./settingsNavigation";
+import { SettingsSearch } from "./SettingsSearch";
+import { searchSettings, type SettingsSearchResult, type SettingsSectionId } from "./settingsIndex";
+import "./settingsSearch.css";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { isWindows } from "../../app/platform";
 import { isMobileShell } from "../../app/shell";
@@ -48,6 +51,7 @@ import {
   IconMonitor,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconServer,
   IconSettings,
   IconShield,
@@ -89,7 +93,7 @@ const SETTINGS_SECTIONS = [
 ].filter((section) => {
   if (section.id === "settings-update") return DESKTOP;
   return true;
-}) as readonly { id: string; label: string; icon: typeof IconMonitor; group: SettingsGroupId }[];
+}) as readonly { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId }[];
 
 function groupOfSection(id: string): SettingsGroupId {
   return SETTINGS_SECTIONS.find((section) => section.id === id)?.group ?? "general";
@@ -115,7 +119,7 @@ function saveGroup(group: SettingsGroupId): void {
 }
 
 function jumpToSection(id: string): void {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
 }
 
 const NAV_OPEN_KEY = "nexterm.settingsNav.v1";
@@ -255,6 +259,56 @@ export function SettingsView() {
       jumpToSection(id);
     }
     setActiveSection(id);
+  };
+
+  // Search: results span all groups; picking one opens its group, scrolls to
+  // the setting (or its section when the setting is not rendered, e.g. inside a
+  // collapsed panel) and flashes it.
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
+  const searching = searchQuery.trim() !== "";
+  const searchResults = useMemo(() => searchSettings(searchQuery, SETTINGS_SECTIONS), [searchQuery]);
+  const selectSearchResult = (result: SettingsSearchResult) => {
+    setSearchQuery("");
+    const target = groupOfSection(result.sectionId);
+    if (target !== group) {
+      setGroupState(target);
+      saveGroup(target);
+    }
+    setActiveSection(result.sectionId);
+    // The target group only has a layout after the next frame.
+    requestAnimationFrame(() => {
+      const root = contentRef.current;
+      const el =
+        (result.kind === "item"
+          ? root?.querySelector<HTMLElement>(`[data-setting="${result.itemId}"]`)
+          : null) ?? document.getElementById(result.sectionId);
+      if (!el) return;
+      el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
+      el.focus({ preventScroll: true });
+      el.classList.add("nx-setting-flash");
+      window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => el.classList.remove("nx-setting-flash"), 2000);
+    });
+  };
+  const focusSearch = () => {
+    setNavOpen(true);
+    requestAnimationFrame(() => searchInputRef.current?.focus());
+  };
+  // Desktop opens with the search box focused so typing searches right away;
+  // touch layouts skip it to avoid raising the on-screen keyboard.
+  useEffect(() => {
+    if (!window.matchMedia?.("(pointer: coarse)").matches) searchInputRef.current?.focus();
+  }, []);
+  const onViewKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target as HTMLElement;
+    if (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) return;
+    e.preventDefault();
+    focusSearch();
   };
 
   // Links from elsewhere in the app open the section's group, then scroll.
@@ -460,7 +514,7 @@ export function SettingsView() {
     : "";
 
   return (
-    <div className="nx-pane nx-settings-view h-full">
+    <div className="nx-pane nx-settings-view h-full" onKeyDown={onViewKeyDown}>
       <div className="nx-toolbar">
         <IconSettings size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设置</span>
@@ -474,7 +528,17 @@ export function SettingsView() {
             navOpen ? "md:w-52" : "md:w-14"
           }`}
         >
+          <div className={navOpen ? "" : "md:hidden"}>
+            <SettingsSearch
+              query={searchQuery}
+              onQueryChange={setSearchQuery}
+              results={searchResults}
+              onSelect={selectSearchResult}
+              inputRef={searchInputRef}
+            />
+          </div>
           <div
+            hidden={searching}
             className="flex gap-1.5 overflow-x-auto px-3 py-2 sm:px-5 md:hidden"
             data-testid="settings-nav-chips"
           >
@@ -491,7 +555,7 @@ export function SettingsView() {
             ))}
           </div>
           <div
-            className="hidden md:flex md:flex-col md:gap-0.5 md:p-2"
+            className={`hidden md:flex md:flex-col md:gap-0.5 md:p-2 ${searching ? "md:!hidden" : ""}`}
             data-testid="settings-nav-toc"
           >
             <button
@@ -536,7 +600,18 @@ export function SettingsView() {
                       ))}
                   </div>
                 ))
-              : SETTINGS_GROUPS.map((g) => (
+              : [
+                  <button
+                    key="search"
+                    type="button"
+                    className="nx-icon-btn self-center"
+                    title="搜索设置"
+                    aria-label="搜索设置"
+                    onClick={focusSearch}
+                  >
+                    <IconSearch size={14} />
+                  </button>,
+                  ...SETTINGS_GROUPS.map((g) => (
                   <button
                     key={g.id}
                     type="button"
@@ -548,7 +623,8 @@ export function SettingsView() {
                   >
                     <g.icon size={14} />
                   </button>
-                ))}
+                  )),
+                ]}
           </div>
         </nav>
 
@@ -568,7 +644,7 @@ export function SettingsView() {
             </span>
           </div>
           <div className="mb-3.5 mt-3.5">
-            <div className="nx-setting-label mb-1.5">默认终端模式</div>
+            <div className="nx-setting-label mb-1.5" data-setting="default-terminal-mode">默认终端模式</div>
             <div className="nx-segment" role="group" aria-label="默认终端模式" aria-busy={terminalModeSaving}>
               {DEFAULT_MODE_OPTIONS.map((option) => (
                 <button
@@ -592,7 +668,7 @@ export function SettingsView() {
           </div>
           <label className="flex cursor-pointer items-start gap-3">
             <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] text-neutral-200">允许远程主机写入剪贴板（OSC 52）</div>
+              <div className="text-[12.5px] text-neutral-200" data-setting="osc52">允许远程主机写入剪贴板（OSC 52）</div>
               <p className="nx-hint mt-0.5">
                 {terminalOsc52
                   ? "开启后，远程主机可以通过转义序列直接改写你的系统剪贴板，不再逐次询问。只在可信的主机与网络环境下保持开启。"
@@ -607,7 +683,7 @@ export function SettingsView() {
             />
           </label>
           <div className="mt-3.5">
-            <div className="nx-setting-label mb-1.5">关闭运行中的终端标签时</div>
+            <div className="nx-setting-label mb-1.5" data-setting="close-action">关闭运行中的终端标签时</div>
             <div className="nx-segment" role="group" aria-label="关闭运行中的终端标签时">
               {CLOSE_ACTION_OPTIONS.map((option) => (
                 <button
@@ -870,7 +946,7 @@ export function SettingsView() {
 
           <label className="flex cursor-pointer items-start gap-3">
             <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] text-neutral-200">用密码保护凭据</div>
+              <div className="text-[12.5px] text-neutral-200" data-setting="vault-password">用密码保护凭据</div>
               <p className="nx-hint mt-0.5">
                 {vaultPasswordProtected
                   ? "开启：每次启动需输入密码后方可使用凭据。"
@@ -986,7 +1062,7 @@ export function SettingsView() {
           {vaultPasswordProtected && (
             <div className="mt-3 border-t border-neutral-800/60 pt-3">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[12.5px] text-neutral-200">闲置自动锁定</span>
+                <span className="text-[12.5px] text-neutral-200" data-setting="vault-auto-lock">闲置自动锁定</span>
                 <input
                   type="number"
                   className="nx-input nx-input-sm w-[96px]"
