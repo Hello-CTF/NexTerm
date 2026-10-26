@@ -81,7 +81,9 @@ type stateOptions struct {
 // output goes idle, never on a poll.
 //
 // Rules:
-//   - output makes the session running unless a signal state is pending;
+//   - output makes the session running unless a signal state is pending or
+//     a detected prompt holds it in needs_me: a redraw keeps the prompt until
+//     the next inspection finds none or a different one;
 //   - BEL or a notification makes it needs_me (confidence signal) until
 //     input arrives, a command starts or ends, or the process exits; a bell
 //     within bellEchoWindow of input or at the shell prompt is only recorded;
@@ -135,9 +137,11 @@ type stateTracker struct {
 	lastSeq    uint64
 	evictedSeq uint64
 
-	timer      *time.Timer
-	timerArmed bool
-	exited     bool
+	// deadline is when tick next has work, zero when nothing is armed; with
+	// timers a real timer fires then.
+	deadline time.Time
+	timer    *time.Timer
+	exited   bool
 
 	// inspections counts prompt detector runs.
 	inspections uint64
@@ -182,14 +186,18 @@ func (t *stateTracker) output(p []byte, now time.Time) {
 		return
 	}
 	t.emu.Write(p)
-	changed := t.fresh
-	t.fresh = false
+	changed := false
 	for _, event := range t.scanner.Feed(p, now) {
 		if t.signalLocked(event, now) {
 			changed = true
 		}
 	}
-	if !t.signalPending && !t.finishedPending && t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) {
+	// A held prompt stays published through redraws; a tap re-inspects the
+	// screen before it sends anything.
+	if t.fresh && !t.heldLocked() {
+		t.fresh, changed = false, true
+	}
+	if !t.signalPending && !t.finishedPending && !t.heldLocked() && t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) {
 		changed = true
 	}
 	t.activityLocked(now)
@@ -205,7 +213,7 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 		// A bell answering recent input or rung by the shell's line editor
 		// is kept as an event but does not ask for attention.
 		switch {
-		case t.scanner.AtPrompt():
+		case event.AtPrompt:
 			t.addEventLocked(SessionEvent{Kind: base.SessionEventBell, At: event.At, Reason: "shell_prompt"})
 			return true
 		case !t.lastInput.IsZero() && now.Sub(t.lastInput) < bellEchoWindow:
@@ -274,16 +282,27 @@ func (t *stateTracker) input(now time.Time) {
 	}
 }
 
+// heldLocked reports that a detected prompt holds the session in needs_me.
+func (t *stateTracker) heldLocked() bool {
+	return t.state == base.SessionNeedsMe && t.confidence == base.ConfidenceHeuristic
+}
+
+// activityLocked starts a new pause. The armed deadline is kept when it is
+// due no later than the idle inspection, and otherwise, such as while
+// settling, brought forward to it.
 func (t *stateTracker) activityLocked(now time.Time) {
 	t.active, t.settling = true, false
 	t.lastActivity = now
-	if t.opts.timers && !t.timerArmed {
-		t.armLocked(t.opts.idle)
+	if inspect := now.Add(t.opts.idle); t.deadline.IsZero() || t.deadline.After(inspect) {
+		t.armLocked(now, t.opts.idle)
 	}
 }
 
-func (t *stateTracker) armLocked(d time.Duration) {
-	t.timerArmed = true
+func (t *stateTracker) armLocked(now time.Time, d time.Duration) {
+	t.deadline = now.Add(d)
+	if !t.opts.timers {
+		return
+	}
 	if t.timer == nil {
 		t.timer = time.AfterFunc(d, t.fire)
 		return
@@ -311,12 +330,25 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 		wait = t.opts.idle - quiet
 	case t.active:
 		t.active = false
+		before := t.prompt
 		changed = t.inspectLocked()
+		held, atPrompt := t.heldLocked(), t.scanner.AtPrompt()
 		switch {
 		case t.signalPending, t.finishedPending:
-		case t.prompt.Kind != shape.KindNone && !t.scanner.AtPrompt():
+		case t.prompt.Kind != shape.KindNone && !atPrompt:
+			if held && (before.Kind != t.prompt.Kind || before.Fingerprint != t.prompt.Fingerprint) {
+				// A different prompt replaced the held one.
+				t.forceLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now)
+				changed = true
+				break
+			}
 			changed = t.setLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now) || changed
-		case t.scanner.AtPrompt() || quiet >= t.opts.settle || t.state != base.SessionRunning:
+		case held && !atPrompt && quiet < t.opts.settle:
+			// The held prompt is gone while output went on: the program runs.
+			changed = t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) || changed
+			t.settling = true
+			wait = t.opts.settle - quiet
+		case atPrompt || quiet >= t.opts.settle || t.state != base.SessionRunning:
 			changed = t.setLocked(base.SessionIdle, base.ConfidenceSignal, "quiet", now) || changed
 		default:
 			t.settling = true
@@ -328,9 +360,9 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 		t.settling = false
 		changed = t.setLocked(base.SessionIdle, base.ConfidenceSignal, "quiet", now)
 	}
-	t.timerArmed = false
-	if wait > 0 && t.opts.timers {
-		t.armLocked(wait)
+	t.deadline = time.Time{}
+	if wait > 0 {
+		t.armLocked(now, wait)
 	}
 	t.mu.Unlock()
 	if changed {
@@ -339,19 +371,12 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 	return wait
 }
 
-// due returns when tick has work next, or false when it has none.
+// due returns the armed deadline, when tick next has work and a real timer
+// fires, or false when nothing is armed.
 func (t *stateTracker) due() (time.Time, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	switch {
-	case t.exited:
-		return time.Time{}, false
-	case t.active:
-		return t.lastActivity.Add(t.opts.idle), true
-	case t.settling:
-		return t.lastActivity.Add(t.opts.settle), true
-	}
-	return time.Time{}, false
+	return t.deadline, !t.deadline.IsZero()
 }
 
 // inspectLocked runs the prompt detector on the current screen and updates
@@ -410,6 +435,7 @@ func (t *stateTracker) exit(code *int, now time.Time) {
 	t.forceLocked(base.SessionExited, base.ConfidenceSignal, "exit", now)
 	t.exitCode = copyInt(code)
 	t.exited, t.active, t.settling = true, false, false
+	t.deadline = time.Time{}
 	if t.timer != nil {
 		t.timer.Stop()
 	}
@@ -530,8 +556,10 @@ type tapContext struct {
 //   - nothing is tappable while the shell is at its prompt or owns the
 //     terminal foreground, or when the foreground cannot be read;
 //   - yes/no sends the answer key, followed by Enter when the terminal is in
-//     canonical (line) mode; when the mode is unknown the key is sent alone
-//     and Enter is offered separately;
+//     canonical (line) mode. Otherwise the key is sent alone and Enter is
+//     offered separately: a raw-mode foreground may be a relay such as ssh,
+//     docker exec or a tmux client, whose mode says nothing about the remote
+//     program;
 //   - a menu with a selection marker is answered by moving the selection
 //     with the arrow keys (encoded per DECCKM) and pressing Enter, except a
 //     menu whose only marker is "*" or ">" without numbering;
@@ -570,13 +598,10 @@ func describePrompt(p shape.Prompt, ctx tapContext) *SessionPrompt {
 	case shape.KindYesNo:
 		info.Method = base.TapMethodKeys
 		suffix := ""
-		switch {
-		case !ctx.canonicalKnown:
-			info.Submit, info.EnterKey = base.TapSubmitSeparate, enterKey
-		case ctx.canonical:
+		if ctx.canonicalKnown && ctx.canonical {
 			info.Submit, suffix = base.TapSubmitEnter, enterKey
-		default:
-			info.Submit = base.TapSubmitNone
+		} else {
+			info.Submit, info.EnterKey = base.TapSubmitSeparate, enterKey
 		}
 		for i := range info.Options {
 			info.Options[i].Send = info.Options[i].Keys + suffix

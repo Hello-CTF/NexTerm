@@ -65,6 +65,10 @@ type Event struct {
 	Duration time.Duration
 	// At is the timestamp passed to the Feed call that produced the event.
 	At time.Time
+	// AtPrompt is AtPrompt as it stood at this point of the stream, so an
+	// event is judged by the shell state where it occurred rather than at the
+	// end of the chunk.
+	AtPrompt bool
 }
 
 // Limits. Payloads over a limit are dropped whole (never truncated) and the
@@ -324,7 +328,7 @@ func (s *Scanner) bell(out []Event, now time.Time) []Event {
 		return out
 	}
 	s.lastBell, s.hasBell = now, true
-	return append(out, Event{Kind: KindBell, At: now})
+	return append(out, Event{Kind: KindBell, At: now, AtPrompt: s.atPrompt})
 }
 
 // allowNotify applies a rolling-window burst limit.
@@ -359,7 +363,7 @@ func (s *Scanner) notify(out []Event, source string, rawTitle, rawBody []byte, n
 		s.stats.Malformed++
 		return out
 	}
-	return append(out, Event{Kind: KindNotify, Source: source, Title: title, Body: body, At: now})
+	return append(out, Event{Kind: KindNotify, Source: source, Title: title, Body: body, At: now, AtPrompt: s.atPrompt})
 }
 
 // command tracks the OSC 133 lifecycle. A command starts at C (preexec: the
@@ -385,13 +389,13 @@ func (s *Scanner) command(out []Event, payload []byte, now time.Time) []Event {
 		s.atPrompt = false
 		if !s.cmdActive {
 			s.cmdActive, s.cmdStarted, s.promptEnded = true, now, false
-			out = append(out, Event{Kind: KindCommandStart, At: now})
+			out = append(out, Event{Kind: KindCommandStart, At: now, AtPrompt: s.atPrompt})
 		}
 	case 'D':
 		s.atPrompt = true
 		if !s.cmdActive && s.promptEnded {
 			s.cmdActive, s.cmdStarted = true, s.promptEndedAt
-			out = append(out, Event{Kind: KindCommandStart, At: s.promptEndedAt})
+			out = append(out, Event{Kind: KindCommandStart, At: s.promptEndedAt, AtPrompt: s.atPrompt})
 		}
 		s.promptEnded = false
 		if s.cmdActive {
@@ -399,7 +403,7 @@ func (s *Scanner) command(out []Event, payload []byte, now time.Time) []Event {
 			d := max(now.Sub(s.cmdStarted), 0)
 			out = append(out, Event{
 				Kind: KindCommandEnd, ExitCode: r.ExitCode, HasExitCode: r.HasExitCode,
-				Duration: d, At: now,
+				Duration: d, At: now, AtPrompt: s.atPrompt,
 			})
 		}
 	}

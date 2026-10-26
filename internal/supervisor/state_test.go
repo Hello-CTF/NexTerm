@@ -215,19 +215,109 @@ func TestStateHeuristicPrompt(t *testing.T) {
 	if got.Prompt == nil || got.Prompt.Kind != string(shape.KindYesNo) || got.Prompt.Epoch != got.PromptEpoch {
 		t.Fatalf("prompt = %+v", got.Prompt)
 	}
-	epoch := got.PromptEpoch
-	// A redraw of the same prompt makes the session run again and hides
-	// the prompt until the next idle inspection, which keeps the epoch.
+	epoch, lastSeq := got.PromptEpoch, got.LastEventSeq
+	// A redraw of the same prompt holds needs_me and the published prompt,
+	// and the next inspection keeps the epoch without a new event.
 	h.out(time.Second, "\r\x1b[KOverwrite config.yaml? [y/N] ")
-	running := h.expect(base.SessionRunning, base.ConfidenceSignal)
-	if running.Prompt != nil {
-		t.Fatal("stale prompt published while output is active")
+	held := h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+	if held.Prompt == nil || held.Prompt.Epoch != epoch {
+		t.Fatalf("prompt during a redraw = %+v", held.Prompt)
 	}
 	h.idle()
 	got = h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
-	if got.PromptEpoch != epoch {
-		t.Fatalf("redraw of an identical prompt changed the epoch %d -> %d", epoch, got.PromptEpoch)
+	if got.PromptEpoch != epoch || got.LastEventSeq != lastSeq {
+		t.Fatalf("redraw of an identical prompt: epoch %d -> %d, last event %d -> %d", epoch, got.PromptEpoch, lastSeq, got.LastEventSeq)
 	}
+}
+
+func TestStateActivityWhileSettlingArmsTheIdleInspection(t *testing.T) {
+	h := newHarness(t)
+	h.out(time.Second, "compiling\r\n")
+	if wait := h.tracker.tick(h.clock.advance(defaultStateIdle)); wait != defaultStateSettle-defaultStateIdle {
+		t.Fatalf("settle wait %v", wait)
+	}
+	h.out(150*time.Millisecond, "Overwrite file? [y/N] ")
+	due, ok := h.tracker.due()
+	if want := h.clock.now.Add(defaultStateIdle); !ok || !due.Equal(want) {
+		t.Fatalf("armed for %v (armed %v), want the idle inspection at %v", due, ok, want)
+	}
+	h.tracker.tick(due)
+	h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+}
+
+func TestStateRealTimerPromptAfterSettlingPause(t *testing.T) {
+	changes := make(chan struct{}, 64)
+	tracker := newStateTracker(stateOptions{
+		cols: 80, rows: 24, idle: 50 * time.Millisecond, settle: 3 * time.Second, timers: true,
+		onChange: func() {
+			select {
+			case changes <- struct{}{}:
+			default:
+			}
+		},
+	}, time.Now())
+	defer tracker.exit(nil, time.Now())
+	tracker.output([]byte("compiling\r\n"), time.Now())
+	// Let the idle inspection find no prompt so the session settles.
+	time.Sleep(150 * time.Millisecond)
+	start := time.Now()
+	tracker.output([]byte("Overwrite file? [y/N] "), start)
+	timeout := time.After(10 * time.Second)
+	for {
+		if state := tracker.snapshot(false, 0); state.State == base.SessionNeedsMe {
+			// The settle deadline is 3 s away; the idle inspection 50 ms.
+			if elapsed := time.Since(start); elapsed >= 1500*time.Millisecond {
+				t.Fatalf("needs_me after %v, want the idle inspection", elapsed)
+			}
+			return
+		}
+		select {
+		case <-changes:
+		case <-timeout:
+			t.Fatal("prompt never reported")
+		}
+	}
+}
+
+func TestStateHeldPromptSurvivesClockRedraws(t *testing.T) {
+	h := newHarness(t)
+	h.out(time.Second, "\x1b[H\x1b[2J12:00:00\r\nPick one:\r\n❯ 1. Alpha\r\n  2. Beta\r\n")
+	h.idle()
+	first := h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+	if first.Prompt == nil || first.Prompt.Kind != string(shape.KindChoice) {
+		t.Fatalf("prompt = %+v", first.Prompt)
+	}
+	changes := h.changes
+	for i := 1; i <= 60; i++ {
+		h.out(time.Second-defaultStateIdle, "\x1b7\x1b[H12:00:"+twoDigits(i)+"\x1b8")
+		h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+		h.tracker.tick(h.clock.advance(defaultStateIdle))
+	}
+	got := h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+	if got.LastEventSeq != first.LastEventSeq || got.PromptEpoch != first.PromptEpoch || h.changes != changes {
+		t.Fatalf("clock redraws: last event %d -> %d, epoch %d -> %d, %d pushes", first.LastEventSeq, got.LastEventSeq, first.PromptEpoch, got.PromptEpoch, h.changes-changes)
+	}
+
+	// A different prompt replaces the held one with a new event and epoch.
+	h.out(time.Second, "\x1b[H\x1b[2JContinue? [y/N] ")
+	h.idle()
+	next := h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+	if next.LastEventSeq == got.LastEventSeq || next.PromptEpoch == got.PromptEpoch || next.Prompt == nil || next.Prompt.Kind != string(shape.KindYesNo) {
+		t.Fatalf("replaced prompt: %+v", next)
+	}
+
+	// Output that clears the prompt makes the session run, then settle.
+	h.out(time.Second, "\x1b[H\x1b[2Jworking\r\n")
+	h.tracker.tick(h.clock.advance(defaultStateIdle))
+	if gone := h.expect(base.SessionRunning, base.ConfidenceSignal); gone.Prompt != nil {
+		t.Fatalf("prompt after it was cleared = %+v", gone.Prompt)
+	}
+	h.tracker.tick(h.clock.advance(defaultStateSettle))
+	h.expect(base.SessionIdle, base.ConfidenceSignal)
+}
+
+func twoDigits(n int) string {
+	return string([]byte{byte('0' + n/10%10), byte('0' + n%10)})
 }
 
 func TestStatePromptEpochRules(t *testing.T) {
@@ -392,7 +482,7 @@ func TestDescribePromptTapRules(t *testing.T) {
 		{name: "foreground unknown", prompt: yesNo, ctx: tapContext{}, blocked: base.TapBlockedForegroundUnknown},
 		{name: "shell foreground", prompt: marked, ctx: tapContext{foregroundKnown: true, shellForeground: true}, blocked: base.TapBlockedShellForeground},
 		{name: "yesno line mode", prompt: yesNo, ctx: line, submit: base.TapSubmitEnter, sends: []string{"y\r", "n\r"}},
-		{name: "yesno raw mode", prompt: yesNo, ctx: raw, submit: base.TapSubmitNone, sends: []string{"y", "n"}},
+		{name: "yesno raw mode or relay", prompt: yesNo, ctx: raw, submit: base.TapSubmitSeparate, sends: []string{"y", "n"}},
 		{name: "yesno mode unknown", prompt: yesNo, ctx: unknown, submit: base.TapSubmitSeparate, sends: []string{"y", "n"}},
 		{name: "marked arrows", prompt: marked, ctx: raw, submit: base.TapSubmitEnter, sends: []string{"\r", "\x1b[B\r", "\x1b[B\x1b[B\r"}},
 		{name: "marked arrows DECCKM", prompt: marked, ctx: tapContext{foregroundKnown: true, appCursor: true}, submit: base.TapSubmitEnter, sends: []string{"\r", "\x1bOB\r", "\x1bOB\x1bOB\r"}},
@@ -463,5 +553,22 @@ func TestTrimListEventsDropsOldestAcrossSessions(t *testing.T) {
 				t.Fatalf("kept old event %d while dropping newer ones", event.Seq)
 			}
 		}
+	}
+}
+
+func TestStreamStateKeepsReportingDroppedEvents(t *testing.T) {
+	var stream Stream
+	stream.applyStateLocked(SessionState{State: base.SessionRunning, EventsDropped: true, Events: []SessionEvent{{Seq: 1}}})
+	stream.applyStateLocked(SessionState{State: base.SessionIdle, Events: []SessionEvent{{Seq: 2}}})
+	if got := stream.SessionState(); !got.EventsDropped || len(got.Events) != 2 {
+		t.Fatalf("after a reported drop: %+v", got)
+	}
+
+	var local Stream
+	for seq := uint64(1); seq <= maxStateEvents+1; seq++ {
+		local.applyStateLocked(SessionState{State: base.SessionRunning, Events: []SessionEvent{{Seq: seq}}})
+	}
+	if got := local.SessionState(); !got.EventsDropped || len(got.Events) != maxStateEvents || got.Events[0].Seq != 2 {
+		t.Fatalf("after trimming the stream's own ring: dropped %v, %d events", got.EventsDropped, len(got.Events))
 	}
 }

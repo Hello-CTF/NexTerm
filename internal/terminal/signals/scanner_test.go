@@ -299,6 +299,20 @@ func TestAtPromptFollowsShellLifecycle(t *testing.T) {
 	}
 }
 
+func TestEventCarriesAtPromptWhereItOccurred(t *testing.T) {
+	s := NewScanner(Config{})
+	events := s.Feed([]byte("\x1b]133;C\x07done\x07\x1b]133;D;0\x07\x1b]133;A\x07$ "), t0)
+	if len(events) != 3 || events[0].Kind != KindCommandStart || events[1].Kind != KindBell || events[2].Kind != KindCommandEnd {
+		t.Fatalf("events = %+v", events)
+	}
+	if events[0].AtPrompt || events[1].AtPrompt || !events[2].AtPrompt {
+		t.Fatalf("at prompt per event = %v %v %v, want false false true", events[0].AtPrompt, events[1].AtPrompt, events[2].AtPrompt)
+	}
+	if bell := s.Feed([]byte("\x07"), t0.Add(2*time.Second)); len(bell) != 1 || !bell[0].AtPrompt {
+		t.Fatalf("bell at the shell prompt = %+v", bell)
+	}
+}
+
 func BenchmarkFeedPlainOutput(b *testing.B) {
 	data := []byte(strings.Repeat("some ordinary terminal output line\r\n", 100))
 	s := NewScanner(Config{})

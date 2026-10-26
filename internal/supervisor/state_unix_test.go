@@ -76,7 +76,7 @@ func TestStateTapGatingOnRealPTY(t *testing.T) {
 	t.Run("raw mode program", func(t *testing.T) {
 		session := testScriptSession(t, supervisor, `stty -icanon -echo; printf 'Proceed? [y/N] '; dd bs=1 count=1 >/dev/null 2>&1; sleep 30`)
 		prompt := waitSessionState(t, session, "yes/no prompt", promptReady).Prompt
-		if !prompt.Tappable || prompt.Submit != base.TapSubmitNone || prompt.Options[0].Send != "y" {
+		if !prompt.Tappable || prompt.Submit != base.TapSubmitSeparate || prompt.EnterKey != "\r" || prompt.Options[0].Send != "y" {
 			t.Fatalf("prompt = %+v", prompt)
 		}
 	})
@@ -181,7 +181,8 @@ func TestStateVisibleWithoutClientsAndPushedToAttached(t *testing.T) {
 		t.Fatalf("plain list state %+v", plain[0].State)
 	}
 
-	// Durable descriptors carry the state end to end, local and remote.
+	// Durable descriptors carry the state end to end, local and remote,
+	// without the events polling callers do not read.
 	for name, lister := range map[string]base.DurableDescriptorLister{
 		"local":  NewProvider(supervisor),
 		"remote": NewRemoteProvider(client),
@@ -190,7 +191,7 @@ func TestStateVisibleWithoutClientsAndPushedToAttached(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(descriptors) != 1 || descriptors[0].State == nil || descriptors[0].State.State != base.SessionNeedsMe || !hasEvent(descriptors[0].State.Events, base.SessionEventBell) {
+		if len(descriptors) != 1 || descriptors[0].State == nil || descriptors[0].State.State != base.SessionNeedsMe || descriptors[0].State.Events != nil {
 			t.Fatalf("%s descriptors %+v", name, descriptors)
 		}
 	}

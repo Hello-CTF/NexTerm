@@ -779,6 +779,20 @@ func (s *Stream) SessionState() *SessionState {
 	return &state
 }
 
+// applyStateLocked records a pushed state. A drop stays reported: the
+// events held since attach are incomplete once any were lost.
+func (s *Stream) applyStateLocked(state SessionState) {
+	s.stateEvents = append(s.stateEvents, state.Events...)
+	dropped := state.EventsDropped || s.state != nil && s.state.EventsDropped
+	if extra := len(s.stateEvents) - maxStateEvents; extra > 0 {
+		s.stateEvents = append([]SessionEvent(nil), s.stateEvents[extra:]...)
+		dropped = true
+	}
+	state.Events = nil
+	state.EventsDropped = dropped
+	s.state = &state
+}
+
 // StateUpdates is signalled after each pushed state. Signals coalesce.
 func (s *Stream) StateUpdates() <-chan struct{} {
 	return s.stateWake
@@ -1517,12 +1531,7 @@ func (s *Stream) readLoop() {
 				return
 			}
 			s.mu.Lock()
-			s.stateEvents = append(s.stateEvents, msg.State.Events...)
-			if extra := len(s.stateEvents) - maxStateEvents; extra > 0 {
-				s.stateEvents = append([]SessionEvent(nil), s.stateEvents[extra:]...)
-			}
-			msg.State.Events = nil
-			s.state = &msg.State
+			s.applyStateLocked(msg.State)
 			s.mu.Unlock()
 			select {
 			case s.stateWake <- struct{}{}:

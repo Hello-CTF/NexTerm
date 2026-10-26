@@ -43,7 +43,6 @@ const (
 	TapMethodArrows = "arrows"
 
 	TapSubmitEnter    = "enter"
-	TapSubmitNone     = "none"
 	TapSubmitSeparate = "separate"
 )
 
@@ -110,10 +109,9 @@ type SessionPrompt struct {
 	// Method is TapMethodKeys (type the option keys) or TapMethodArrows
 	// (move the selection, then Enter).
 	Method string `json:"method,omitempty"`
-	// Submit is TapSubmitEnter when Send ends with Enter, TapSubmitNone when
-	// the program reads single keys, or TapSubmitSeparate when the line
-	// discipline is unknown: Send carries only the keys and EnterKey offers
-	// Enter as its own action.
+	// Submit is TapSubmitEnter when Send ends with Enter, or
+	// TapSubmitSeparate when the terminal is not known to be in line mode:
+	// Send carries only the keys and EnterKey offers Enter as its own action.
 	Submit string `json:"submit,omitempty"`
 	// EnterKey is the byte sequence of the separate Enter action.
 	EnterKey string `json:"enter_key,omitempty"`

@@ -214,8 +214,10 @@ func (p *Provider) ListDurable(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// ListDurableDescriptors carries each session's state without its events,
+// which polling callers do not read.
 func (p *Provider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
-	infos, err := p.supervisor.listCanonicalWith(ctx, listOptions{Events: true})
+	infos, err := p.supervisor.listCanonicalWith(ctx, listOptions{})
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -474,8 +476,10 @@ func (p *RemoteProvider) ListDurable(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// ListDurableDescriptors carries each session's state without its events,
+// which polling callers do not read.
 func (p *RemoteProvider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
-	infos, err := p.client.ListWithEvents(ctx, 0)
+	infos, err := p.client.List(ctx)
 	if err != nil {
 		return nil, translateError(err)
 	}
