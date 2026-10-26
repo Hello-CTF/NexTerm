@@ -92,9 +92,11 @@ afterEach(() => {
 });
 
 describe("settings shortcut list platform hint", () => {
-  it("advertises Ctrl+F for terminal search on non-mac platforms", async () => {
+  it("advertises Ctrl+Shift+F for terminal search on non-mac platforms, leaving Ctrl+F to the shell", async () => {
     await show();
-    expect(shortcutRows()).toContainEqual(["Ctrl+F", "终端内搜索"]);
+    const rows = shortcutRows();
+    expect(rows).toContainEqual(["Ctrl+Shift+F", "终端内搜索"]);
+    expect(rows).not.toContainEqual(["Ctrl+F", "终端内搜索"]);
   });
 
   it("advertises ⌘F for terminal search on macOS", async () => {

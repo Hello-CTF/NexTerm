@@ -55,17 +55,40 @@ describe("key bar sticky modifiers", () => {
     expect(applyStickyModifiersToTyped("c")).toBe("c");
   });
 
-  it("applies Ctrl+Alt together and leaves multi-character input such as a paste untouched", () => {
+  it("applies Ctrl+Alt together", () => {
     renderBar();
     click(button("Ctrl 修饰键"));
     click(button("Alt 修饰键"));
-    expect(applyStickyModifiersToTyped("ls -la")).toBe("ls -la");
-    expect(getStickyModifiers()).toEqual({ ctrl: true, alt: true });
     let typed = "";
     act(() => {
       typed = applyStickyModifiersToTyped("r");
     });
     expect(typed).toBe("\x1b\x12");
+  });
+
+  it.each([
+    ["a multi-character IME commit", { ctrl: true }, "你好"],
+    ["CJK under Alt", { alt: true }, "中"],
+    ["an emoji", { alt: true }, "😀"],
+    ["dictation", { ctrl: true }, "hello world"],
+    ["a character without a Ctrl form", { ctrl: true }, "1"],
+  ])("sends %s unchanged and releases the latch", (_name, latch, text) => {
+    renderBar();
+    if ("ctrl" in latch) click(button("Ctrl 修饰键"));
+    if ("alt" in latch) click(button("Alt 修饰键"));
+    let typed = "";
+    act(() => {
+      typed = applyStickyModifiersToTyped(text);
+    });
+    expect(typed).toBe(text);
+    expect(getStickyModifiers()).toEqual({ ctrl: false, alt: false });
+  });
+
+  it("keeps the latch across escape sequences such as terminal reports", () => {
+    renderBar();
+    click(button("Ctrl 修饰键"));
+    expect(applyStickyModifiersToTyped("\x1b[I")).toBe("\x1b[I");
+    expect(getStickyModifiers()).toEqual({ ctrl: true, alt: false });
   });
 
   it("encodes bar keys with the same encoder as typed characters", () => {

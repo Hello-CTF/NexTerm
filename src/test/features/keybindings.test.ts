@@ -268,6 +268,7 @@ describe("bindingConflicts", () => {
   });
 
   it("detects Mod and Primary overlapping the same key on both platforms", () => {
+    setKeybinding("terminalSearch", "Primary+f");
     setKeybinding("commandPalette", "Mod+f");
     for (const mac of [false, true]) {
       const conflicts = bindingConflicts(undefined, mac);

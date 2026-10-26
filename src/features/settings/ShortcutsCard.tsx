@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type KeyboardEvent as ReactKeyboardEvent } 
 import {
   KEYBINDING_ACTIONS,
   bindingConflicts,
+  defaultBindingFor,
   captureBindingForAction,
   formatBinding,
   resetAllKeybindings,
@@ -139,7 +140,7 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
             <IconClose size={11} />
           </button>
         )}
-        {bindings[action.id] !== action.defaultBinding && (
+        {bindings[action.id] !== defaultBindingFor(action) && (
           <button
             type="button"
             className="nx-icon-btn nx-icon-btn-sm shrink-0"

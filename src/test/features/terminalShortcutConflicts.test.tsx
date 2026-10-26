@@ -57,7 +57,9 @@ describe("terminal shortcut conflict table", () => {
     expect(byChord(conflicts, "Ctrl+Shift+W")).toMatchObject({ bytes: null, action: { id: "closePane" } });
     expect(byChord(conflicts, "Ctrl+W")).toMatchObject({ bytes: "\x17", meaning: "删除前一个词", action: { id: "closeTab" } });
     expect(byChord(conflicts, "Ctrl+B")).toMatchObject({ bytes: "\x02", action: { id: "toggleSidebar" } });
-    expect(byChord(conflicts, "Ctrl+F")).toMatchObject({ bytes: "\x06", action: { id: "terminalSearch" } });
+    expect(byChord(conflicts, "Ctrl+Shift+F")).toMatchObject({ bytes: null, action: { id: "terminalSearch" } });
+    expect(byChord(conflicts, "Ctrl+F")).toBeUndefined();
+    expect(byChord(conflicts, "Ctrl+Shift+T")).toMatchObject({ bytes: null, action: { id: "restoreClosedTab" } });
     expect(byChord(conflicts, "Ctrl+Tab")).toMatchObject({ bytes: "\t", action: { id: "nextTab" } });
     expect(byChord(conflicts, "Ctrl+1…9")?.meaning).toContain("SIGQUIT");
     expect(byChord(conflicts, "Esc")).toBeUndefined();

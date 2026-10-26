@@ -66,6 +66,7 @@ vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 import App from "../../app/App";
 import { useUi } from "../../app/store";
 import { getKeybinding, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
+import { ALL_PROJECTS } from "../../app/projectFocus";
 
 function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
@@ -311,5 +312,50 @@ describe("rebound app shortcuts", () => {
     await flush();
     keyDown(window, "k", { ctrlKey: true, shiftKey: true });
     expect(mounted.container.querySelector('[data-testid="quick-connect"]')).toBeNull();
+  });
+});
+
+describe("held app shortcuts outside the terminal", () => {
+  it("keeps cycling tabs while the navigation chord auto-repeats", async () => {
+    useUi.setState({ activeProject: ALL_PROJECTS });
+    setKeybinding("nextTab", "Alt+n");
+    mounted = mountApp();
+    await flush();
+    keyDown(window, "n", { code: "KeyN", altKey: true });
+    expect(activePaneTabId()).toBe("t2");
+    const repeat = keyDown(window, "n", { code: "KeyN", altKey: true, repeat: true });
+    expect(repeat.defaultPrevented).toBe(true);
+    expect(activePaneTabId()).toBe("t3");
+  });
+
+  it("runs a one-shot shortcut once per press and swallows its repeats", async () => {
+    mounted = mountApp();
+    await flush();
+    const repeat = keyDown(window, "2", { code: "Digit2", ctrlKey: true, repeat: true });
+    expect(repeat.defaultPrevented).toBe(true);
+    expect(activePaneTabId()).toBe("t1");
+    keyDown(window, "b", { code: "KeyB", ctrlKey: true, repeat: true });
+    expect(useUi.getState().leftOpen).toBe(false);
+  });
+
+  // Ctrl+Shift+T restoring a tab is covered end to end in r09RestoreUx.test.tsx.
+  it("leaves Ctrl+Shift+T alone once restoreClosedTab is unbound", async () => {
+    setKeybinding("restoreClosedTab", null);
+    mounted = mountApp();
+    await flush();
+    const cleared = keyDown(window, "T", { code: "KeyT", ctrlKey: true, shiftKey: true });
+    expect(cleared.defaultPrevented).toBe(false);
+  });
+
+  it("ignores AltGr chords that happen to match a binding", async () => {
+    setKeybinding("toggleSidebar", "Ctrl+Alt+b");
+    mounted = mountApp();
+    await flush();
+    const event = new KeyboardEvent("keydown", { key: "b", code: "KeyB", ctrlKey: true, altKey: true, bubbles: true, cancelable: true });
+    Object.defineProperty(event, "getModifierState", { value: (key: string) => key === "AltGraph" });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+    expect(useUi.getState().leftOpen).toBe(false);
   });
 });

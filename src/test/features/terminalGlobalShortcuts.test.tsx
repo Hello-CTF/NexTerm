@@ -275,9 +275,10 @@ describe("XtermView app-level shortcut passthrough", () => {
 
     expect(handledByXterm({ key: "x", code: "KeyX" })).toBe(true);
     expect(handledByXterm({ key: "Enter", code: "Enter" })).toBe(true);
-    // Primary+f opens terminal search in the pane's capture layer; xterm must not also encode it as ^F.
-    expect(handledByXterm({ key: "f", code: "KeyF", ctrlKey: true })).toBe(false);
+    // Ctrl+F is readline's forward-char; terminal search (Ctrl+Shift+F here) is withheld instead.
+    expect(handledByXterm({ key: "f", code: "KeyF", ctrlKey: true })).toBe(true);
     expect(handledByXterm({ key: "f", code: "KeyF", metaKey: true })).toBe(true);
+    expect(handledByXterm({ key: "F", code: "KeyF", ctrlKey: true, shiftKey: true })).toBe(false);
   });
 
   it("drops auto-repeats of an app shortcut instead of typing them into the terminal or re-running the action", async () => {
@@ -290,6 +291,19 @@ describe("XtermView app-level shortcut passthrough", () => {
     const first = dispatchThroughHandler({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true });
     expect(first.reachedWindow).toBe(true);
     expect(first.event.defaultPrevented).toBe(false);
+  });
+
+  it("lets held navigation shortcuts repeat through to the app", async () => {
+    await show({ sessionId: "session", tabId: "pending" });
+
+    const nextTab = dispatchThroughHandler({ key: "Tab", code: "Tab", ctrlKey: true, repeat: true });
+    expect(nextTab.handled).toBe(false);
+    expect(nextTab.reachedWindow).toBe(true);
+    const focusPane = dispatchThroughHandler({ key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, shiftKey: true, altKey: true, repeat: true });
+    expect(focusPane.reachedWindow).toBe(true);
+    const split = dispatchThroughHandler({ key: "\\", code: "Backslash", ctrlKey: true, repeat: true });
+    expect(split.reachedWindow).toBe(false);
+    expect(harness.input).not.toHaveBeenCalled();
   });
 
   it("leaves IME composition to the input method", async () => {

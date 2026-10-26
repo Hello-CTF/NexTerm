@@ -64,6 +64,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"keybinding.focusPaneUp",
 		"keybinding.focusPaneDown",
 		"keybinding.switchTab",
+		"keybinding.restoreClosedTab",
 		"keybinding.terminalSearch",
 		"keybinding.reclaimTakeover",
 		"keybinding.lockVault",

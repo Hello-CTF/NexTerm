@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { encodeWithModifiers, type KeyModifiers } from "./keyEncoding";
+import { ESC, ctrlByte, encodeWithModifiers, type KeyModifiers } from "./keyEncoding";
 
 // The key bar's latched Ctrl/Alt. There is one system keyboard, so there is one latch: it applies to the next key
 // from the bar or the next character typed into the focused terminal, whichever comes first.
@@ -45,13 +45,22 @@ export function consumeStickyModifiers(data: string): string {
   return encodeWithModifiers(data, modifiers);
 }
 
+function takesModifiers(data: string, modifiers: KeyModifiers): boolean {
+  if (modifiers.ctrl) return ctrlByte(data) !== null;
+  // Alt as Meta: ESC + one printable ASCII character.
+  return data.length === 1 && data >= " " && data <= "~";
+}
+
 /**
- * Applies the latch to input typed on the system keyboard. Only a single typed character takes the modifiers
- * (Ctrl latched + "c" sends ^C); anything longer, such as a paste or a terminal report, passes through unchanged
- * and leaves the latch for the next key.
+ * Applies the latch to input typed on the system keyboard: Ctrl to a character with a control form (Ctrl + "c"
+ * sends ^C), Alt to one printable ASCII character. Other committed text (a multi-character IME commit, emoji,
+ * dictation, CJK) is sent unchanged and releases the latch, so it cannot surprise a later key. Escape sequences
+ * (terminal reports, arrow keys) pass through and leave the latch alone.
  */
 export function applyStickyModifiersToTyped(data: string): string {
   if (!latched.ctrl && !latched.alt) return data;
-  if ([...data].length !== 1) return data;
-  return consumeStickyModifiers(data);
+  if (data.startsWith(ESC)) return data;
+  if (takesModifiers(data, latched)) return consumeStickyModifiers(data);
+  clearStickyModifiers();
+  return data;
 }

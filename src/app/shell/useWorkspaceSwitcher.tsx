@@ -8,7 +8,7 @@ import {
   type Workspace,
 } from "../store";
 import { useClosedTabs } from "../closedTabs";
-import { modHint } from "../platform";
+import { formatBinding, useKeybindings } from "../keybindings";
 import { type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { IconClose, IconHistory } from "../../ui/icons";
 import { workspaceIcon } from "./AppHeader";
@@ -19,6 +19,7 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
   const setActiveWorkspace = useUi((s) => s.setActiveWorkspace);
   const closeWorkspace = useUi((s) => s.closeWorkspace);
   const closedTabEntries = useClosedTabs((s) => s.stack.entries);
+  const restoreBinding = useKeybindings().restoreClosedTab;
   const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
 
   const buildWorkspaceMenuItems = useCallback(
@@ -70,13 +71,13 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
         label: "恢复关闭的标签",
         icon: <IconHistory size={12} />,
         hint: latestClosed?.title,
-        accel: `${modHint()}+Shift+T`,
+        accel: restoreBinding === null ? undefined : formatBinding(restoreBinding),
         disabled: !latestClosed,
         onSelect: () => void restoreClosedTab(),
       });
       return items;
     },
-    [visibleWorkspaces, workspaces, setActiveWorkspace, closeWorkspace, closeAllWorkspaces, closedTabEntries],
+    [visibleWorkspaces, workspaces, setActiveWorkspace, closeWorkspace, closeAllWorkspaces, closedTabEntries, restoreBinding],
   );
   const buildWorkspaceMenuItemsRef = useRef(buildWorkspaceMenuItems);
   buildWorkspaceMenuItemsRef.current = buildWorkspaceMenuItems;

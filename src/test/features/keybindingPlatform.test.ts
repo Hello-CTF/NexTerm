@@ -115,6 +115,7 @@ describe("platform-specific keybinding behaviour", () => {
   });
 
   it("flags Mod+letter against Primary+letter on both platforms", () => {
+    setKeybinding("terminalSearch", "Primary+f");
     setKeybinding("commandPalette", "Mod+f");
     expect(bindingConflicts(undefined, false)).toHaveLength(1);
     expect(bindingConflicts(undefined, true)).toHaveLength(1);

@@ -105,6 +105,21 @@ function insert(textarea: HTMLTextAreaElement, data: string): void {
   textarea.dispatchEvent(new InputEvent("input", { inputType: "insertText", data, bubbles: true, composed: true }));
 }
 
+const SAFARI_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15";
+const ANDROID_CHROME_UA =
+  "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
+
+function useUserAgent(userAgent: string): void {
+  Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true });
+}
+
+function commitComposition(textarea: HTMLTextAreaElement, text: string): void {
+  textarea.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+  textarea.value = text;
+  textarea.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: text }));
+}
+
 const settle = () =>
   act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -141,6 +156,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Reflect.deleteProperty(window.navigator, "userAgent");
   if (root) act(() => root?.unmount());
   root = null;
   container?.remove();
@@ -197,10 +213,9 @@ describe("XtermView input pipeline bytes", () => {
   });
 
   it("swallows the Enter WebKit delivers after compositionend, but not a later Enter", async () => {
+    useUserAgent(SAFARI_UA);
     const textarea = await show();
-    textarea.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
-    textarea.value = "中文";
-    textarea.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "中文" }));
+    commitComposition(textarea, "中文");
     stroke(textarea, { key: "Enter", code: "Enter", keyCode: 13 });
     await settle();
     expect(sent.join("")).toBe("中文");
@@ -209,6 +224,19 @@ describe("XtermView input pipeline bytes", () => {
     });
     stroke(textarea, { key: "Enter", code: "Enter", keyCode: 13 });
     expect(sent.join("")).toBe("中文\r");
+  });
+
+  it("submits an Enter that follows compositionend on Chromium and Android keyboards", async () => {
+    useUserAgent(ANDROID_CHROME_UA);
+    const textarea = await show();
+    textarea.value = "";
+    insert(textarea, "l");
+    insert(textarea, "s");
+    commitComposition(textarea, "ls");
+    stroke(textarea, { key: "Enter", code: "Enter", keyCode: 13 });
+    await settle();
+    expect(sent.join("").endsWith("\r")).toBe(true);
+    expect(sent.filter((data) => data === "\r")).toHaveLength(1);
   });
 
   it("types an auto-repeated Shift letter once per repeat", async () => {
@@ -251,9 +279,15 @@ describe("XtermView input pipeline bytes", () => {
     expect(getStickyModifiers()).toEqual({ ctrl: false, alt: false });
 
     toggleStickyModifier("alt");
+    stroke(textarea, { key: "x", code: "KeyX", keyCode: 88 });
+    expect(sent).toEqual(["\x03", "c", "\x1bx"]);
+
+    // Committed IME text has no Ctrl form: it is sent as typed and releases the latch.
+    toggleStickyModifier("ctrl");
     insert(textarea, "。");
     await settle();
-    expect(sent).toEqual(["\x03", "c", "\x1b。"]);
+    stroke(textarea, { key: "c", code: "KeyC", keyCode: 67 });
+    expect(sent).toEqual(["\x03", "c", "\x1bx", "。", "c"]);
   });
 
   it("clips the IME helper so the candidate window cannot scroll the terminal sideways", async () => {

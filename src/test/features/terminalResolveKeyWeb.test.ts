@@ -31,7 +31,7 @@ function ev(key: string, code: string, mods: Partial<TerminalKeyEvent> = {}): Te
 }
 
 const resolve = (event: TerminalKeyEvent) =>
-  resolveKey(event, { mac: harness.mac, matchAppShortcut: matchTerminalWithheldKeybinding, sinceCompositionEnd: null, kittyKeyboard: false });
+  resolveKey(event, { mac: harness.mac, matchAppShortcut: matchTerminalWithheldKeybinding, commitEnterPending: false, kittyKeyboard: false });
 
 beforeEach(() => {
   harness.mac = false;
@@ -47,15 +47,23 @@ describe("resolveKey with the web keymap", () => {
     expect(resolve(ev("w", "KeyW", { ctrlKey: true, altKey: true }))).toEqual({
       kind: "app-shortcut",
       hit: { action: "closePane", digit: null },
-      repeat: false,
+      dropRepeat: false,
     });
     expect(resolve(ev("]", "BracketRight", { ctrlKey: true, altKey: true }))).toEqual({
       kind: "app-shortcut",
       hit: { action: "nextTab", digit: null },
-      repeat: false,
+      dropRepeat: false,
     });
     // The desktop macOS tab chords are not active on the web.
     expect(resolve(ev("}", "BracketRight", { metaKey: true, shiftKey: true }))).toEqual({ kind: "pass" });
+  });
+
+  it("uses Ctrl+Shift+F for terminal search off macOS and keeps Cmd+F on macOS, leaving Ctrl+F to readline", () => {
+    expect(resolve(ev("F", "KeyF", { ctrlKey: true, shiftKey: true }))).toMatchObject({ hit: { action: "terminalSearch" } });
+    expect(resolve(ev("f", "KeyF", { ctrlKey: true }))).toEqual({ kind: "pass" });
+    harness.mac = true;
+    expect(resolve(ev("f", "KeyF", { metaKey: true }))).toMatchObject({ hit: { action: "terminalSearch" } });
+    expect(resolve(ev("F", "KeyF", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "pass" });
   });
 
   it("lists the web chords in the terminal conflict table", () => {

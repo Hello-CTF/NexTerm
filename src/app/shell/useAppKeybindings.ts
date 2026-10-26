@@ -7,7 +7,7 @@ import {
   requestCloseTab,
   restoreClosedTab,
 } from "../store";
-import { matchAppKeybinding } from "../keybindings";
+import { keybindingRepeats, matchAppKeybinding } from "../keybindings";
 
 export interface AppKeybindingHandlers {
   leftDockOpen: boolean;
@@ -38,16 +38,17 @@ export function useAppKeybindings({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const hit = matchAppKeybinding(e);
-      if (!hit) {
-        // Restore-closed-tab is a fixed Mod+Shift+T (same as the switcher menu accel); it is
-        // intentionally outside the rebindable keybinding set.
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "t") {
-          e.preventDefault();
-          void restoreClosedTab();
-        }
+      if (!hit) return;
+      // Only navigation repeats while held; the same rule applies when a terminal has focus (terminalInput).
+      if (e.repeat && !keybindingRepeats(hit.action)) {
+        e.preventDefault();
         return;
       }
       switch (hit.action) {
+        case "restoreClosedTab":
+          e.preventDefault();
+          void restoreClosedTab();
+          return;
         case "commandPalette":
           e.preventDefault();
           openCommandPalette();

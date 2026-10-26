@@ -10,9 +10,8 @@ vi.mock("../../app/platform", async (importOriginal) => ({
 }));
 vi.mock("../../ipc/env", () => ({ WEB: false }));
 
-import { matchTerminalWithheldKeybinding, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
+import { loadKeybindings, matchTerminalWithheldKeybinding, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
 import {
-  COMPOSITION_COMMIT_WINDOW_MS,
   resolveKey,
   type KeyResolution,
   type ResolveKeyContext,
@@ -42,7 +41,7 @@ function ctx(overrides: Partial<ResolveKeyContext> = {}): ResolveKeyContext {
   return {
     mac: harness.mac,
     matchAppShortcut: matchTerminalWithheldKeybinding,
-    sinceCompositionEnd: null,
+    commitEnterPending: false,
     kittyKeyboard: false,
     ...overrides,
   };
@@ -50,11 +49,17 @@ function ctx(overrides: Partial<ResolveKeyContext> = {}): ResolveKeyContext {
 
 const bytes = (value: string): KeyResolution => ({ kind: "terminal-bytes", bytes: value });
 const PASS: KeyResolution = { kind: "pass" };
-const app = (action: string, repeat = false, digit: number | null = null): KeyResolution =>
-  ({ kind: "app-shortcut", hit: { action, digit }, repeat }) as KeyResolution;
+const app = (action: string, dropRepeat = false, digit: number | null = null): KeyResolution =>
+  ({ kind: "app-shortcut", hit: { action, digit }, dropRepeat }) as KeyResolution;
+
+// Platform defaults (terminal search) are resolved when the keymap snapshot is built.
+function setMac(mac: boolean): void {
+  harness.mac = mac;
+  loadKeybindings();
+}
 
 beforeEach(() => {
-  harness.mac = false;
+  setMac(false);
   localStorage.clear();
   resetAllKeybindings();
 });
@@ -74,7 +79,16 @@ describe("resolveKey precedence (desktop)", () => {
     ["Shift letters pass, also on repeat", ev("H", "KeyH", { shiftKey: true, repeat: true }), PASS],
     ["Ctrl+C passes to xterm", ev("c", "KeyC", { ctrlKey: true }), PASS],
     ["Mod+Shift+P is the command palette", ev("P", "KeyP", { ctrlKey: true, shiftKey: true }), app("commandPalette")],
-    ["app shortcut repeats are flagged", ev("P", "KeyP", { ctrlKey: true, shiftKey: true, repeat: true }), app("commandPalette", true)],
+    ["a held palette shortcut is dropped", ev("P", "KeyP", { ctrlKey: true, shiftKey: true, repeat: true }), app("commandPalette", true)],
+    ["a held split shortcut is dropped", ev("\\", "Backslash", { ctrlKey: true, repeat: true }), app("splitDown", true)],
+    ["a held close-pane shortcut is dropped", ev("W", "KeyW", { ctrlKey: true, shiftKey: true, repeat: true }), app("closePane", true)],
+    ["a held tab switch is dropped", ev("2", "Digit2", { ctrlKey: true, repeat: true }), app("switchTab", true, 2)],
+    ["a held lock shortcut is dropped", ev("L", "KeyL", { ctrlKey: true, shiftKey: true, repeat: true }), app("lockVault", true)],
+    ["a held sidebar toggle is dropped", ev("b", "KeyB", { ctrlKey: true, repeat: true }), app("toggleSidebar", true)],
+    ["workspace navigation repeats", ev("ArrowRight", "ArrowRight", { ctrlKey: true, altKey: true, repeat: true }), app("nextWorkspace")],
+    ["pane focus repeats", ev("ArrowUp", "ArrowUp", { ctrlKey: true, altKey: true, repeat: true }), app("focusPaneUp")],
+    ["Mod+Shift+T restores a closed tab", ev("T", "KeyT", { ctrlKey: true, shiftKey: true }), app("restoreClosedTab")],
+    ["Ctrl+F stays with readline", ev("f", "KeyF", { ctrlKey: true }), PASS],
     ["Mod+Shift+W closes the pane", ev("W", "KeyW", { ctrlKey: true, shiftKey: true }), app("closePane")],
     ["Mod+Shift+\\ splits right", ev("|", "Backslash", { ctrlKey: true, shiftKey: true }), app("splitRight")],
     ["Mod+\\ splits down (withholds SIGQUIT)", ev("\\", "Backslash", { ctrlKey: true }), app("splitDown")],
@@ -87,7 +101,7 @@ describe("resolveKey precedence (desktop)", () => {
   for (const mac of [false, true]) {
     for (const [name, event, expected] of shared) {
       it(`${mac ? "macOS" : "Linux/Windows"}: ${name}`, () => {
-        harness.mac = mac;
+        setMac(mac);
         expect(resolveKey(event, ctx())).toEqual(expected);
       });
     }
@@ -101,13 +115,28 @@ describe("resolveKey precedence (desktop)", () => {
     ["Cmd/Meta+Backspace", ev("Backspace", "Backspace", { metaKey: true }), bytes("\x15"), PASS],
     ["Ctrl+Tab cycles tabs off macOS only", ev("Tab", "Tab", { ctrlKey: true }), app("nextTab"), app("nextTab")],
     ["Cmd+Shift+] cycles tabs on macOS only", ev("}", "BracketRight", { metaKey: true, shiftKey: true }), app("nextTab"), PASS],
-    ["Ctrl+F is terminal search off macOS only", ev("f", "KeyF", { ctrlKey: true }), PASS, app("terminalSearch")],
+    ["Ctrl+Shift+F is terminal search off macOS only", ev("F", "KeyF", { ctrlKey: true, shiftKey: true }), PASS, app("terminalSearch")],
     ["Cmd+F is terminal search on macOS only", ev("f", "KeyF", { metaKey: true }), app("terminalSearch"), PASS],
+    ["held Ctrl+Tab keeps cycling", ev("Tab", "Tab", { ctrlKey: true, repeat: true }), app("nextTab"), app("nextTab")],
   ])("%s differs by platform", (_name, event, onMac, offMac) => {
-    harness.mac = true;
+    setMac(true);
     expect(resolveKey(event, ctx())).toEqual(onMac);
-    harness.mac = false;
+    setMac(false);
     expect(resolveKey(event, ctx())).toEqual(offMac);
+  });
+
+  it("keeps a custom terminal search binding across platforms", () => {
+    setKeybinding("terminalSearch", "Ctrl+f");
+    setMac(true);
+    expect(resolveKey(ev("f", "KeyF", { ctrlKey: true }), ctx())).toEqual(app("terminalSearch"));
+    expect(resolveKey(ev("f", "KeyF", { metaKey: true }), ctx())).toEqual(PASS);
+  });
+
+  it("never treats an AltGr chord as an app shortcut", () => {
+    const altGr = { ...ev("t", "KeyT", { ctrlKey: true, altKey: true }), getModifierState: (key: string) => key === "AltGraph" };
+    setKeybinding("restoreClosedTab", "Ctrl+Alt+t");
+    expect(resolveKey(altGr, ctx())).toEqual(PASS);
+    expect(resolveKey({ ...altGr, getModifierState: () => false }, ctx())).toEqual(app("restoreClosedTab"));
   });
 
   it("follows user rebinding: a freed chord reaches the terminal, a newly bound one is withheld", () => {
@@ -121,15 +150,12 @@ describe("resolveKey precedence (desktop)", () => {
     expect(resolveKey(ev("\\", "Backslash", { ctrlKey: true }), ctx())).toEqual(PASS);
   });
 
-  it("treats only an Enter right behind compositionend as the committing keystroke", () => {
+  it("withholds only an Enter while a WebKit commit Enter is pending", () => {
     const enter = ev("Enter", "Enter", {}, { keyCode: 13 });
-    expect(resolveKey(enter, ctx({ sinceCompositionEnd: 0 }))).toEqual({ kind: "ime", toXterm: false });
-    expect(resolveKey({ ...enter, type: "keypress" }, ctx({ sinceCompositionEnd: COMPOSITION_COMMIT_WINDOW_MS }))).toEqual({
-      kind: "ime",
-      toXterm: false,
-    });
-    expect(resolveKey(enter, ctx({ sinceCompositionEnd: COMPOSITION_COMMIT_WINDOW_MS + 1 }))).toEqual(PASS);
-    expect(resolveKey(ev("a", "KeyA"), ctx({ sinceCompositionEnd: 0 }))).toEqual(PASS);
+    expect(resolveKey(enter, ctx({ commitEnterPending: true }))).toEqual({ kind: "ime", toXterm: false });
+    expect(resolveKey({ ...enter, type: "keypress" }, ctx({ commitEnterPending: true }))).toEqual({ kind: "ime", toXterm: false });
+    expect(resolveKey(enter, ctx())).toEqual(PASS);
+    expect(resolveKey(ev("a", "KeyA"), ctx({ commitEnterPending: true }))).toEqual(PASS);
   });
 
   it("leaves encoding to xterm while the program uses the kitty keyboard protocol, but still withholds app shortcuts", () => {
