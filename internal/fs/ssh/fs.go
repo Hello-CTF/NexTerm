@@ -195,17 +195,36 @@ func (f *FS) MkdirPrivate(ctx context.Context, remotePath string) error {
 	if err := f.client.Mkdir(remotePath); err != nil {
 		return fmt.Errorf("SFTP mkdir %s: %w", remotePath, err)
 	}
+	if err := f.verifyPrivateDir(remotePath); err != nil {
+		// Remove only a real, empty directory: RemoveDirectory never follows a symlink or deletes contents, and a
+		// sticky temp directory refuses unless we own it.
+		if info, lerr := f.client.Lstat(remotePath); lerr == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			_ = f.client.RemoveDirectory(remotePath)
+		}
+		return err
+	}
+	return ctx.Err()
+}
+
+func (f *FS) verifyPrivateDir(remotePath string) error {
+	info, err := f.client.Lstat(remotePath)
+	if err != nil {
+		return fmt.Errorf("SFTP lstat %s: %w", remotePath, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s: %w", remotePath, base.ErrNotPrivateDir)
+	}
 	if err := f.client.Chmod(remotePath, 0o700); err != nil {
 		return fmt.Errorf("SFTP chmod %s: %w", remotePath, err)
 	}
-	info, err := f.client.Lstat(remotePath)
+	info, err = f.client.Lstat(remotePath)
 	if err != nil {
 		return fmt.Errorf("SFTP lstat %s: %w", remotePath, err)
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 {
 		return fmt.Errorf("%s: %w", remotePath, base.ErrNotPrivateDir)
 	}
-	return ctx.Err()
+	return nil
 }
 
 func (f *FS) Rename(ctx context.Context, from, to string) error {

@@ -176,18 +176,41 @@ func (f *FileSystem) MkdirPrivate(ctx context.Context, path string) error {
 	if err := os.Mkdir(target, 0o700); err != nil {
 		return err
 	}
-	// The umask can only clear bits; Chmod pins the exact owner-only mode.
-	if err := os.Chmod(target, 0o700); err != nil {
+	if err := verifyPrivateDir(target, path); err != nil {
+		removeOwnEmptyDir(target)
 		return err
 	}
+	return nil
+}
+
+func verifyPrivateDir(target, display string) error {
 	info, err := os.Lstat(target)
 	if err != nil {
 		return err
 	}
+	if !info.IsDir() || info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s: %w", display, base.ErrNotPrivateDir)
+	}
+	// The umask can only clear bits; Chmod pins the exact owner-only mode.
+	if err := os.Chmod(target, 0o700); err != nil {
+		return err
+	}
+	info, err = os.Lstat(target)
+	if err != nil {
+		return err
+	}
 	if !info.IsDir() || info.Mode()&fs.ModeSymlink != 0 || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o700) {
-		return fmt.Errorf("%s: %w", path, base.ErrNotPrivateDir)
+		return fmt.Errorf("%s: %w", display, base.ErrNotPrivateDir)
 	}
 	return nil
+}
+
+// removeOwnEmptyDir undoes a failed private-directory creation. It removes only a real directory, never a symlink,
+// and only when empty; in a sticky temp directory the kernel also refuses unless the caller owns it.
+func removeOwnEmptyDir(target string) {
+	if info, err := os.Lstat(target); err == nil && info.IsDir() && info.Mode()&fs.ModeSymlink == 0 {
+		_ = os.Remove(target)
+	}
 }
 
 func (f *FileSystem) Rename(ctx context.Context, from, to string) error {

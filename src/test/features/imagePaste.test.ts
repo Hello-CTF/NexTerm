@@ -120,6 +120,26 @@ describe("remote file names", () => {
     expect(sanitizePasteFileName("a\u0000b\nc.txt")).toBe("a_b_c.txt");
     expect(sanitizePasteFileName("a\u0085b\u2028c\u202ed.txt")).toBe("a_b_c_d.txt");
     expect(sanitizePasteFileName("<x>.txt")).toBe("_x_.txt");
+  });
+
+  it.each([
+    ["command substitution", "$(curl x|sh).txt", "_curl x_sh_.txt"],
+    ["backticks", "`id`.txt", "_id_.txt"],
+    ["semicolon", "a;rm -rf ~.txt", "a_rm -rf _.txt"],
+    ["pipe", "a|sh.txt", "a_sh.txt"],
+    ["ampersand", "a&b.txt", "a_b.txt"],
+    ["glob star", "*.txt", "_.txt"],
+    ["glob question", "a?.txt", "a_.txt"],
+    ["single quote", "it's.txt", "it_s.txt"],
+    ["double quote", 'say "hi".txt', "say _hi_.txt"],
+    ["history bang", "wow!!.txt", "wow_.txt"],
+  ])("neutralises shell metacharacters: %s", (_label, raw, expected) => {
+    const name = sanitizePasteFileName(raw);
+    expect(name).toBe(expected);
+    expect(name).toMatch(/^[\p{L}\p{N} ._+-]+$/u);
+    const link = markdownFileLink(raw, `/tmp/nexterm-paste-x/${name}`);
+    expect(link.startsWith(`[${name}](`)).toBe(true);
+    expect(link).not.toMatch(/[$`;|&*?'"!]/);
     expect(sanitizePasteFileName("   ")).toBe("file");
     expect(sanitizePasteFileName("")).toBe("file");
   });
@@ -134,9 +154,11 @@ describe("remote file names", () => {
     expect(cjk).toMatch(/^(报告|报)+\.pdf$/u);
     expect(cjk.length).toBeLessThan(120 + 4);
 
-    const emoji = sanitizePasteFileName(`${"😀".repeat(80)}.png`);
-    expect(utf8Bytes(emoji)).toBeLessThanOrEqual(MAX_REMOTE_NAME_BYTES);
-    expect(emoji).toMatch(/^(😀)+\.png$/u);
+    // Four-byte letters (CJK Extension B) are kept and cut on a code-point boundary; emoji are not letters and collapse.
+    const wide = sanitizePasteFileName(`${"𠀀".repeat(80)}.png`);
+    expect(utf8Bytes(wide)).toBeLessThanOrEqual(MAX_REMOTE_NAME_BYTES);
+    expect(wide).toMatch(/^(𠀀)+\.png$/u);
+    expect(sanitizePasteFileName("😀😀 holiday 😀.jpg")).toBe("_ holiday _.jpg");
     expect(truncateUtf8("a😀", 3)).toBe("a");
   });
 
@@ -163,7 +185,7 @@ describe("markdownFileLink", () => {
     expect(markdownFileLink("shot.png", "/tmp/nexterm-paste-1.png")).toBe(
       "[shot.png](/tmp/nexterm-paste-1.png)",
     );
-    expect(markdownFileLink("a[b]c.png", "/tmp/a.png")).toBe("[a\\[b\\]c.png](/tmp/a.png)");
+    expect(markdownFileLink("a[b]c.png", "/tmp/a.png")).toBe("[a_b_c.png](/tmp/a.png)");
     expect(markdownFileLink("", "/tmp/a.png")).toBe("[file](/tmp/a.png)");
   });
 

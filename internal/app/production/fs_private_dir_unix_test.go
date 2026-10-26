@@ -59,6 +59,16 @@ func privateDirDispatcher(t *testing.T, kind string, filesystem base.FileSystem)
 	}
 }
 
+// usePrivateDirParent points fs_mkdir_private at a scratch temp root for one test.
+func usePrivateDirParent(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	previous := privateDirParent
+	privateDirParent = root
+	t.Cleanup(func() { privateDirParent = previous })
+	return root
+}
+
 func TestFSMkdirPrivateCreatesOwnerOnlyDirectoryAndRefusesReuse(t *testing.T) {
 	for _, testCase := range []struct {
 		name string
@@ -70,7 +80,7 @@ func TestFSMkdirPrivateCreatesOwnerOnlyDirectoryAndRefusesReuse(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			mkdir := privateDirDispatcher(t, testCase.kind, testCase.fs)
-			root := t.TempDir()
+			root := usePrivateDirParent(t)
 			target := filepath.Join(root, "nexterm-paste-x")
 			if response := mkdir(target); !response.OK {
 				t.Fatalf("fs_mkdir_private = %+v", response)
@@ -81,11 +91,11 @@ func TestFSMkdirPrivateCreatesOwnerOnlyDirectoryAndRefusesReuse(t *testing.T) {
 			if response := mkdir(target); response.OK || response.Error == nil {
 				t.Fatalf("second fs_mkdir_private = %+v, want a refusal", response)
 			}
-			planted := filepath.Join(root, "planted")
+			planted := filepath.Join(root, "nexterm-paste-planted")
 			if err := os.Mkdir(planted, 0o777); err != nil {
 				t.Fatal(err)
 			}
-			link := filepath.Join(root, "link")
+			link := filepath.Join(root, "nexterm-paste-link")
 			if err := os.Symlink(planted, link); err != nil {
 				t.Fatal(err)
 			}
@@ -94,20 +104,77 @@ func TestFSMkdirPrivateCreatesOwnerOnlyDirectoryAndRefusesReuse(t *testing.T) {
 					t.Fatalf("fs_mkdir_private(%s) = %+v, want a refusal", occupied, response)
 				}
 			}
-			if response := mkdir(filepath.Join(root, "missing", "child")); response.OK {
-				t.Fatalf("fs_mkdir_private created a parent: %+v", response)
-			}
-			if response := mkdir("relative/dir"); response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
-				t.Fatalf("relative fs_mkdir_private = %+v, want bad_param", response)
+			if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("planted symlink was touched: %v, %v", info, err)
 			}
 		})
 	}
 }
 
-func TestFSMkdirPrivateFallbackRefusesUnverifiedMode(t *testing.T) {
+func TestFSMkdirPrivateRejectsPathsOutsideTheTempRoot(t *testing.T) {
+	mkdir := privateDirDispatcher(t, "local", fslocal.New())
+	root := usePrivateDirParent(t)
+	for _, dir := range []string{
+		"relative/nexterm-paste-x",
+		filepath.Join(root, "other-dir"),
+		filepath.Join(root, "nexterm-paste-"),
+		filepath.Join(root, "nexterm-paste-x", "nexterm-paste-y"),
+		root + "/sub/../nexterm-paste-x",
+		root + "//nexterm-paste-x",
+		filepath.Join(t.TempDir(), "nexterm-paste-x"),
+		"/etc/nexterm-paste-x",
+	} {
+		response := mkdir(dir)
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("fs_mkdir_private(%q) = %+v, want bad_param", dir, response)
+		}
+		if _, err := os.Lstat(dir); err == nil {
+			t.Fatalf("fs_mkdir_private(%q) created the path", dir)
+		}
+	}
+}
+
+func TestFSMkdirPrivateFallbackRefusesUnverifiedModeAndRemovesItsDirectory(t *testing.T) {
 	mkdir := privateDirDispatcher(t, "device", recursiveMkdirFS{FileSystem: fslocal.New(), ignoreChmod: true})
-	response := mkdir(filepath.Join(t.TempDir(), "loose"))
+	target := filepath.Join(usePrivateDirParent(t), "nexterm-paste-loose")
+	response := mkdir(target)
 	if response.OK || response.Error == nil {
 		t.Fatalf("fs_mkdir_private with a 0755 result = %+v, want a refusal", response)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("unverified directory left behind: %v", err)
+	}
+}
+
+// symlinkMkdirFS simulates a racing attacker: the path turns into a symlink right after Mkdir.
+type symlinkMkdirFS struct {
+	base.FileSystem
+	target string
+}
+
+func (f symlinkMkdirFS) Mkdir(_ context.Context, path string) error {
+	return os.Symlink(f.target, path)
+}
+
+func (f symlinkMkdirFS) Chmod(context.Context, string, fs.FileMode) error {
+	panic("Chmod must not run on an unverified path")
+}
+
+func TestFSMkdirPrivateFallbackChecksForARealDirectoryBeforeChmod(t *testing.T) {
+	victim := t.TempDir()
+	if err := os.Chmod(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mkdir := privateDirDispatcher(t, "device", symlinkMkdirFS{FileSystem: fslocal.New(), target: victim})
+	link := filepath.Join(usePrivateDirParent(t), "nexterm-paste-raced")
+	response := mkdir(link)
+	if response.OK || response.Error == nil {
+		t.Fatalf("fs_mkdir_private over a symlink = %+v, want a refusal", response)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink was removed or replaced: %v, %v", info, err)
+	}
+	if info, err := os.Stat(victim); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("symlink target mode changed: %v, %v", info, err)
 	}
 }

