@@ -62,6 +62,12 @@ export interface TerminalControlEvent {
   title?: string;
   titleCustom?: boolean;
   titleChangedAt?: number;
+  // Durable tabs: helper offset of the first rendered byte (earlier output is
+  // readable with terminal.historyRead), the oldest kept offset, and whether
+  // the helper's history limit dropped output.
+  historyFrom?: number;
+  historyBase?: number;
+  historyTruncated?: boolean;
 }
 
 export class EventVersionGate {

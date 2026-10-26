@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -208,6 +209,25 @@ type terminalIDRequest struct {
 	Encoding string `json:"encoding"`
 	Path     string `json:"path"`
 	Line     string `json:"line"`
+}
+
+type terminalHistoryReadRequest struct {
+	TabID string `json:"tabId"`
+	// Before is the exclusive end offset of the requested output.
+	Before   uint64 `json:"before"`
+	MaxBytes int    `json:"maxBytes"`
+}
+
+// terminalHistoryDTO is recorded output of a durable tab in [start, end), in
+// the helper's absolute offsets. truncated means the helper dropped the output
+// before start under its history limit.
+type terminalHistoryDTO struct {
+	Start       uint64 `json:"start"`
+	End         uint64 `json:"end"`
+	HistoryBase uint64 `json:"historyBase"`
+	HistoryNext uint64 `json:"historyNext"`
+	Truncated   bool   `json:"truncated"`
+	DataBase64  string `json:"dataBase64"`
 }
 
 type terminalRecoverRequest struct {
@@ -842,6 +862,19 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "terminal_history_read", func(ctx context.Context, _ *ipc.Call, input terminalHistoryReadRequest) (terminalHistoryDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				chunk, err := s.sessions.ReadDurableHistoryFor(ctx, input.TabID, input.Before, input.MaxBytes)
+				if err != nil {
+					return terminalHistoryDTO{}, terminalIPCError(err)
+				}
+				return terminalHistoryDTO{
+					Start: chunk.Start, End: chunk.End, HistoryBase: chunk.HistoryBase, HistoryNext: chunk.HistoryNext,
+					Truncated: chunk.Truncated, DataBase64: base64.StdEncoding.EncodeToString(chunk.Data),
+				}, nil
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "terminal_set_visible", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				return nil, terminalIPCError(s.sessions.SetVisibleFor(ctx, input.TabID, input.Visible))
@@ -1235,6 +1268,35 @@ func newProductionTerminalModeResolver(database *store.Store) func(context.Conte
 			return preferred, nil
 		}
 		return session.TerminalModeAuto, nil
+	}
+}
+
+// newProductionDurableHistoryLimit resolves the recorded output limit for new
+// durable tabs from the terminal.durableHistoryMiB preference, the owner's
+// override first. An unset or unreadable preference keeps the helper default.
+func newProductionDurableHistoryLimit(database *store.Store) func(context.Context) uint64 {
+	return func(ctx context.Context) uint64 {
+		preferences := account.NewPreferences(database)
+		values, err := preferences.Defaults(ctx)
+		if err != nil {
+			return 0
+		}
+		if userID, ok := ipc.UserIDFromContext(ctx); ok {
+			overrides, err := preferences.UserOverrides(ctx, userID)
+			if err != nil {
+				return 0
+			}
+			values = account.MergePreferences(values, overrides)
+		}
+		raw, ok := values["terminal.durableHistoryMiB"]
+		if !ok {
+			return 0
+		}
+		var mib uint64
+		if err := json.Unmarshal(raw, &mib); err != nil || mib == 0 || mib > 1024 {
+			return 0
+		}
+		return mib << 20
 	}
 }
 

@@ -43,6 +43,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"terminal.closeAction",
 		"terminal.defaultMode",
 		"terminal.gpuAcceleration",
+		"terminal.durableHistoryMiB",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
 		"keybinding.newTerminal",

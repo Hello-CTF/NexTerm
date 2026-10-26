@@ -5,6 +5,7 @@ package production
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -659,6 +660,67 @@ func TestProductionTerminalModePreferenceOwnerOverride(t *testing.T) {
 	}
 	if got, err := resolve(owner, asset.ID); err != nil || got != session.TerminalModeRegular {
 		t.Fatalf("asset regular override = %q, %v", got, err)
+	}
+}
+
+func TestProductionTerminalHistoryReadReturnsBoundedHelperOutput(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connectRemoteSSHAsset(t, production)
+	tabID := createDaemonTab(t, fixture.provider, "history-read-marker")
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":262144}`, "history-read-channel", "client-a"), &attachedTabDTO{})
+
+	infos, err := fixture.client.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var next uint64
+	for _, info := range infos {
+		if info.ID == tabID {
+			next = info.HistoryNext
+		}
+	}
+	if next == 0 {
+		t.Fatalf("helper reports no recorded output for %s: %+v", tabID, infos)
+	}
+	response := dispatchDurableTest(t, production, "terminal_history_read", fmt.Sprintf(`{"tabId":%q,"before":%d,"maxBytes":4096}`, tabID, next), "", "client-a")
+	var chunk terminalHistoryDTO
+	requireStoreTestResponse(t, response, &chunk)
+	data, err := base64.StdEncoding.DecodeString(chunk.DataBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunk.End != next || chunk.Start != 0 || chunk.Truncated || chunk.HistoryNext != next || !bytes.Contains(data, []byte("history-read-marker")) {
+		t.Fatalf("history read = %+v (%q)", chunk, data)
+	}
+	if response := dispatchDurableTest(t, production, "terminal_history_read", fmt.Sprintf(`{"tabId":%q,"before":%d}`, tabID, next+1), "", "client-a"); response.OK {
+		t.Fatal("history read beyond the recorded output succeeded")
+	}
+}
+
+func TestProductionDurableHistoryLimitPreference(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	owner := ipc.WithUserID(t.Context(), "history-owner")
+	resolve := newProductionDurableHistoryLimit(database)
+	if got := resolve(owner); got != 0 {
+		t.Fatalf("unset preference = %d, want the helper default", got)
+	}
+	preferences := account.NewPreferences(database)
+	if _, err := preferences.UpdateDefaults(owner, map[string]json.RawMessage{"terminal.durableHistoryMiB": json.RawMessage(`16`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolve(owner); got != 16<<20 {
+		t.Fatalf("default preference = %d, want 16 MiB", got)
+	}
+	if _, err := preferences.UpdateUserOverrides(owner, "history-owner", map[string]json.RawMessage{"terminal.durableHistoryMiB": json.RawMessage(`2`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolve(owner); got != 2<<20 {
+		t.Fatalf("owner override = %d, want 2 MiB", got)
+	}
+	if _, err := preferences.UpdateDefaults(owner, map[string]json.RawMessage{"terminal.durableHistoryMiB": json.RawMessage(`0`)}, nil); err == nil {
+		t.Fatal("a zero history limit preference was accepted")
 	}
 }
 

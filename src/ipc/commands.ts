@@ -608,6 +608,8 @@ export const terminalApi = {
     call<void>("terminal_set_visible", { tabId, visible }),
   dump: (tabId: string, maxBytes?: number) =>
     call<string>("terminal_dump", { tabId, maxBytes }),
+  historyRead: (tabId: string, before: number, maxBytes?: number) =>
+    call<import("./types").TerminalHistoryChunk>("terminal_history_read", { tabId, before, maxBytes }),
   switchEncoding: (tabId: string, encoding: string) =>
     call<void>("terminal_switch_encoding", { tabId, encoding }),
   recordStart: (tabId: string, path: string) =>

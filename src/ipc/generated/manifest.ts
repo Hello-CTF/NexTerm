@@ -2285,6 +2285,11 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.helperOperationRequest", ts: "HelperOperationRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.helperOperationDTO", ts: "HelperOperationDTO" },
     },
+    "terminal_history_read": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "terminal_list": {
       nested: false,
       channel: false,
@@ -2598,6 +2603,7 @@ export const ipcContractManifest = {
     "terminal_detach",
     "terminal_dump",
     "terminal_export_log",
+    "terminal_history_read",
     "terminal_list",
     "terminal_record_start",
     "terminal_record_status",

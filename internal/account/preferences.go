@@ -85,6 +85,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.closeAction":              {kind: preferenceKindEnumString, strings: []string{"ask", "kill", "detach"}},
 	"terminal.defaultMode":              {kind: preferenceKindEnumString, strings: []string{"durable", "regular"}},
 	"terminal.gpuAcceleration":          {kind: preferenceKindEnumString, strings: []string{"auto", "on", "off"}},
+	"terminal.durableHistoryMiB":        {kind: preferenceKindIntRange, min: 1, max: 1024},
 	"keybinding.commandPalette":         {kind: preferenceKindBinding},
 	"keybinding.quickConnect":           {kind: preferenceKindBinding},
 	"keybinding.newTerminal":            {kind: preferenceKindBinding},

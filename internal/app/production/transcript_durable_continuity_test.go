@@ -117,6 +117,38 @@ func startContinuityManager(t *testing.T, database *delayedTranscriptStore, prov
 	return manager, writer
 }
 
+// A gap reported by the session advances the durable offset by the dropped
+// bytes and records a visible notice instead of them.
+func TestTranscriptWriterDurableGapAdvancesOffset(t *testing.T) {
+	ctx := context.Background()
+	database := newDelayedTranscriptStore()
+	database.unblock()
+	writer := newTranscriptWriter(transcriptWriterConfig{Database: database, Logger: discardTranscriptLogger()})
+	cleanupDelayedTranscriptWriter(t, writer, database)
+	if err := writer.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	writer.SessionStarted(ctx, session.TranscriptInfo{SessionID: "gap-session", AssetID: "gap-asset", AssetName: "gap", AssetKind: session.KindSSH})
+	writer.SessionOutput(ctx, "gap-durable", "gap-session", "gap-tab", []byte("0123456789"))
+	writer.SessionOutputGap(ctx, "gap-durable", "gap-session", "gap-tab", 1000)
+	writer.SessionOutput(ctx, "gap-durable", "gap-session", "gap-tab", []byte("tail"))
+	writer.SessionEnded(ctx, "gap-session")
+	if err := writer.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chunks, _, offsets, _ := database.snapshot()
+	if offsets["gap-durable"] != 1014 {
+		t.Fatalf("durable offset = %d, want 1014", offsets["gap-durable"])
+	}
+	var recorded []byte
+	for _, chunk := range chunks {
+		recorded = append(recorded, chunk.Data...)
+	}
+	if !bytes.Contains(recorded, []byte("1000 byte(s) of output were dropped")) || !bytes.HasSuffix(recorded, []byte("tail")) {
+		t.Fatalf("transcript = %q", recorded)
+	}
+}
+
 func TestTranscriptWriterDurableRecoveryDoesNotSkipOrDuplicate(t *testing.T) {
 	ctx := context.Background()
 	database := newDelayedTranscriptStore()

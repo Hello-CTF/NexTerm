@@ -1782,6 +1782,11 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_history_read": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_list": {
       "nested": false,
       "channel": false,
@@ -2047,6 +2052,7 @@
     "terminal_detach",
     "terminal_dump",
     "terminal_export_log",
+    "terminal_history_read",
     "terminal_list",
     "terminal_record_start",
     "terminal_record_status",

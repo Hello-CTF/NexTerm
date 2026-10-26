@@ -117,6 +117,17 @@ export type QueryResultDto = { columns: Array<string>, rows: Array<Array<unknown
 
 export type RedisKeyViewDto = { key: string, keyType: string, ttl: number, value: unknown, };
 
+// Recorded output of a durable tab in [start, end), in the helper's absolute
+// offsets; truncated means the helper dropped the output before start.
+export interface TerminalHistoryChunk {
+  start: number;
+  end: number;
+  historyBase: number;
+  historyNext: number;
+  truncated: boolean;
+  dataBase64: string;
+}
+
 export type ScreenSnapshotDto = { text: string, lines: Array<string>, cursorRow: number, cursorCol: number, cols: number, rows: number, altScreen: boolean, lastOutputMsAgo: number, };
 
 export type SessionInfoDto = { id: string, assetId: string | null, name: string, kind: string, 
