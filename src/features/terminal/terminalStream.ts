@@ -1,4 +1,5 @@
 import { createOscStreamFilter, type OscStreamEvent, type OscStreamFilter, type OscStreamSegment } from "./oscStream";
+import { STREAM_MAX_PENDING_BYTES } from "./terminalBudget";
 
 // Parsed watermarks for the terminal write pipeline. Bytes handed to xterm
 // whose write callbacks have not fired yet are the parsed backlog: past the
@@ -18,9 +19,13 @@ import { createOscStreamFilter, type OscStreamEvent, type OscStreamFilter, type 
 // accepted prefix contiguous so the replayed suffix joins it in original
 // stream order. Local notices bypass the cap: they are a few dozen bytes of
 // UI chrome that must always render.
-export const STREAM_HIGH_WATER_BYTES = 4 << 20;
-export const STREAM_LOW_WATER_BYTES = 1 << 20;
-export const STREAM_MAX_PENDING_BYTES = 16 << 20;
+//
+// The writer may be given the output scheduler's per-pane target instead of
+// the xterm instance: bytes a hidden pane's scheduler still holds count as in
+// flight until xterm's write callback fires, so the watermarks, the upstream
+// pause, and the hard cap's refusal (and thus the server's offset replay)
+// cover the scheduler backlog too.
+export { STREAM_HIGH_WATER_BYTES, STREAM_LOW_WATER_BYTES, STREAM_MAX_PENDING_BYTES } from "./terminalBudget";
 
 export interface TerminalStreamBacklog {
   paused: boolean;

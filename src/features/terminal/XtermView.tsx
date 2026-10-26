@@ -35,6 +35,7 @@ import {
   STREAM_LOW_WATER_BYTES,
   type TerminalStreamBacklog,
 } from "./terminalStream";
+import { terminalOutputScheduler, type ScheduledTerminalOutput } from "./outputScheduler";
 import { createTerminalResponseCoalescer } from "./terminalResponses";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
@@ -151,6 +152,7 @@ export function XtermView(props: XtermViewProps) {
   const termRef = useRef<Terminal | null>(null);
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
   const webglRef = useRef<WebglRenderer | null>(null);
+  const outputRef = useRef<ScheduledTerminalOutput | null>(null);
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
   const viewKey = props.viewTabId ?? props.tabId;
@@ -233,7 +235,8 @@ export function XtermView(props: XtermViewProps) {
       scrollbar: { width: 10 },
       fontFamily: TERMINAL_FONT_STACKS[appearance.terminalFontFamily],
       fontSize: appearance.terminalFontSize,
-      cursorBlink: true,
+      // Hidden panes do not blink: the blink timer would keep scheduling repaints.
+      cursorBlink: visibleRef.current !== false,
       theme: { ...xtermThemeFor(getResolvedTerminalTheme(), appearance.terminalContrast), cursor: accentColor() },
     });
     termRef.current = term;
@@ -770,8 +773,13 @@ export function XtermView(props: XtermViewProps) {
           );
       }
     };
+    // Output reaches xterm through the app-wide scheduler: a hidden pane's
+    // bytes drain within the background budget, and the writer's completion
+    // (watermarks, OSC events) still waits for xterm's own write callback.
+    const output = terminalOutputScheduler.register(term, { visible: visibleRef.current !== false });
+    outputRef.current = output;
     const streamWriter = createTerminalStreamWriter(
-      term,
+      output,
       (event) => {
         if (event.kind === "notification") onNotificationRef.current?.(event.body);
         else if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
@@ -1317,6 +1325,8 @@ export function XtermView(props: XtermViewProps) {
       unsubscribeGpuPreference();
       webgl.cancel();
       webglRef.current = null;
+      output.dispose();
+      outputRef.current = null;
       term.dispose();
       termRef.current = null;
     };
@@ -1353,6 +1363,9 @@ export function XtermView(props: XtermViewProps) {
     const visible = props.visible !== false;
     gridRef.current?.setVisible(visible);
     webglRef.current?.setVisible(visible);
+    outputRef.current?.setVisible(visible);
+    const term = termRef.current;
+    if (term && term.options.cursorBlink !== visible) term.options.cursorBlink = visible;
     const tabId = kernelTabIdRef.current;
     if (tabId) void terminalApi.setVisible(tabId, visible).catch(() => undefined);
     if (!visible) return;
