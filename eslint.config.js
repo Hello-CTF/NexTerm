@@ -74,6 +74,17 @@ export default tseslint.config(
     },
   },
   {
+    // The store slices import each other in a cycle that is only safe when src/app/store.ts is the entry point.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/app/store.ts", "src/app/store/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [{ group: ["**/app/store/*", "./store/*"], message: "Import the UI store through src/app/store.ts." }] },
+      ],
+    },
+  },
+  {
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       parserOptions: {
