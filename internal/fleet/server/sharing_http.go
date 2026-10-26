@@ -269,7 +269,7 @@ func (s *Service) openShareStream(r *http.Request, client *supervisor.Client) (s
 	if err != nil {
 		return "", nil, nil, err
 	}
-	expect := &supervisor.Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation}
+	expect := &supervisor.Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation, Generation: info.Generation}
 	cleanup := func() {
 		killCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

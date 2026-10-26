@@ -93,6 +93,28 @@ func TestStreamCarriesHelperGeneration(t *testing.T) {
 	}
 }
 
+// The separate create-then-attach path expects the generation that created the
+// session, like the chained one.
+func TestRemoteProviderSeparateAttachExpectsGeneration(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	provider := NewRemoteProvider(testClient(t, server))
+	provider.createAttach = nil
+	var expected Identity
+	provider.attach = func(ctx context.Context, client *Client, id string, expect *Identity) (*Stream, error) {
+		expected = *expect
+		return client.Attach(ctx, id, expect)
+	}
+	attachment, err := provider.Create(context.Background(), base.DurableCreateOptions{Command: []string{"/bin/sh", "-c", "sleep 30"}, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = attachment.Kill(context.Background()) }()
+	if expected.Generation != supervisor.Generation() || expected.Incarnation == "" {
+		t.Fatalf("separate attach expected %+v, want the creating helper generation %q", expected, supervisor.Generation())
+	}
+}
+
 // A stream whose expectations no longer match the helper surfaces the typed
 // rejection on input and resize; the session layer sees the durable error.
 func TestStreamSurfacesGenerationRejection(t *testing.T) {

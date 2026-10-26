@@ -315,7 +315,7 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 	if stream != nil {
 		return &streamAttachment{Stream: stream, provider: p}, nil
 	}
-	expect := &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation}
+	expect := &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation, Generation: info.Generation}
 	stream, err = p.attach(ctx, p.client, info.ID, expect)
 	if err != nil {
 		p.compensateCreate(info.ID, expect)
