@@ -169,8 +169,10 @@ export function PaneGroup({
       }
       try {
         const info = await terminalApi.renameTab(tabId, trimmed, at);
-        if (trimmed) applyAuthoritativeTabTitle(id, info.title || trimmed, at);
-        else clearAuthoritativeTabTitle(id, info.title ?? "", at);
+        // The backend may clamp a skewed clock: keep the time it recorded.
+        const recordedAt = info.titleChangedAt || at;
+        if (trimmed) applyAuthoritativeTabTitle(id, info.title || trimmed, recordedAt);
+        else clearAuthoritativeTabTitle(id, info.title ?? "", recordedAt);
         return;
       } catch (error) {
         draft = trimmed;

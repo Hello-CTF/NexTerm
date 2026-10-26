@@ -346,8 +346,10 @@ export function BackgroundSessions({
         id: nextTabId(`term-${info.sessionId}`),
         kind: "terminal",
         title: info.title || session?.name || info.sessionName,
-        ...(info.title && info.titleCustom
-          ? { renamedByUser: true, customTitleAt: info.titleChangedAt || Date.now() }
+        // Only the backend's own decision time may lock the title; a listing without one
+        // (a durable descriptor) leaves it unlocked until the attach reports the time.
+        ...(info.title && info.titleCustom && info.titleChangedAt
+          ? { renamedByUser: true, customTitleAt: info.titleChangedAt }
           : {}),
         sessionId: info.sessionId,
         tabId: info.tabId,

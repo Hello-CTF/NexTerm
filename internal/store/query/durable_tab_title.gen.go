@@ -31,6 +31,7 @@ func newDurableTabTitle(db *gorm.DB, opts ...gen.DOOption) durableTabTitle {
 	_durableTabTitle.Title = field.NewString(tableName, "title")
 	_durableTabTitle.UpdatedAt = field.NewInt64(tableName, "updated_at")
 	_durableTabTitle.OwnerID = field.NewString(tableName, "owner_id")
+	_durableTabTitle.ChangedAt = field.NewInt64(tableName, "changed_at")
 
 	_durableTabTitle.fillFieldMap()
 
@@ -45,6 +46,7 @@ type durableTabTitle struct {
 	Title     field.String
 	UpdatedAt field.Int64
 	OwnerID   field.String
+	ChangedAt field.Int64
 
 	fieldMap map[string]field.Expr
 }
@@ -65,6 +67,7 @@ func (d *durableTabTitle) updateTableName(table string) *durableTabTitle {
 	d.Title = field.NewString(table, "title")
 	d.UpdatedAt = field.NewInt64(table, "updated_at")
 	d.OwnerID = field.NewString(table, "owner_id")
+	d.ChangedAt = field.NewInt64(table, "changed_at")
 
 	d.fillFieldMap()
 
@@ -93,11 +96,12 @@ func (d *durableTabTitle) GetFieldByName(fieldName string) (field.OrderExpr, boo
 }
 
 func (d *durableTabTitle) fillFieldMap() {
-	d.fieldMap = make(map[string]field.Expr, 4)
+	d.fieldMap = make(map[string]field.Expr, 5)
 	d.fieldMap["durable_id"] = d.DurableID
 	d.fieldMap["title"] = d.Title
 	d.fieldMap["updated_at"] = d.UpdatedAt
 	d.fieldMap["owner_id"] = d.OwnerID
+	d.fieldMap["changed_at"] = d.ChangedAt
 }
 
 func (d durableTabTitle) clone(db *gorm.DB) durableTabTitle {

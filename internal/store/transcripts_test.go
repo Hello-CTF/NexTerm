@@ -515,6 +515,34 @@ func TestDurableTabTitleRoundtrip(t *testing.T) {
 	}
 }
 
+func TestDurableTabTitleDecisionTimeRoundtrip(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	if changedAt, err := db.DurableTabTitleChangedAt(ctx, "tab-missing"); err != nil || changedAt != 0 {
+		t.Fatalf("missing changedAt = %d err=%v", changedAt, err)
+	}
+	if err := db.DurableTabTitleSetAt(ctx, "tab-1", "构建机", 1_000); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DurableTabTitleSetAt(ctx, "tab-1", "部署终端", 2_000); err != nil {
+		t.Fatal(err)
+	}
+	title, err := db.DurableTabTitleGet(ctx, "tab-1")
+	if err != nil || title != "部署终端" {
+		t.Fatalf("title = %q err=%v", title, err)
+	}
+	if changedAt, err := db.DurableTabTitleChangedAt(ctx, "tab-1"); err != nil || changedAt != 2_000 {
+		t.Fatalf("changedAt = %d err=%v", changedAt, err)
+	}
+	// The legacy setter records no decision time.
+	if err := db.DurableTabTitleSet(ctx, "tab-1", "运维"); err != nil {
+		t.Fatal(err)
+	}
+	if changedAt, err := db.DurableTabTitleChangedAt(ctx, "tab-1"); err != nil || changedAt != 0 {
+		t.Fatalf("legacy changedAt = %d err=%v", changedAt, err)
+	}
+}
+
 func TestDurableTranscriptOffsetAppendAccumulates(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)

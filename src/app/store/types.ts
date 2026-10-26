@@ -53,6 +53,8 @@ export interface AppTab {
   // last decided explicitly (a rename or a clear, by hand, by the AI, or as a backend custom
   // title) and orders those decisions across devices. A lock without a timestamp is a legacy
   // layout entry that may hold an OSC title, so it does not count as a custom title.
+  // Times are wall-clock Unix ms from the deciding device (the backend clamps far-future
+  // ones), so ordering across devices is best effort and only as good as their clocks.
   renamedByUser?: boolean;
   customTitleAt?: number;
   closeError?: string;

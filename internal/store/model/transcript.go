@@ -103,6 +103,9 @@ type DurableTabTitle struct {
 	Title     string `gorm:"column:title;not null" json:"title"`
 	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
 	OwnerID   string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_durable_tab_title_owner" json:"owner_id"`
+	// ChangedAt is the title decision time (Unix ms, wall clock) clients order
+	// renames by; zero for rows written before it was recorded.
+	ChangedAt int64 `gorm:"column:changed_at;not null;default:0" json:"changedAt"`
 }
 
 func (DurableTabTitle) TableName() string { return "durable_tab_title" }

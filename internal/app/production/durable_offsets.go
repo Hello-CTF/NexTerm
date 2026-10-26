@@ -46,6 +46,18 @@ func (t durableTabTitles) PersistDurableTabTitleContext(ctx context.Context, tab
 	_ = t.database.DurableTabTitleSet(ctx, tabID, title)
 }
 
+func (t durableTabTitles) DurableTabTitleChangedAtContext(ctx context.Context, tabID string) int64 {
+	changedAt, err := t.database.DurableTabTitleChangedAt(ctx, tabID)
+	if err != nil {
+		return 0
+	}
+	return changedAt
+}
+
+func (t durableTabTitles) PersistDurableTabTitleAtContext(ctx context.Context, tabID, title string, changedAt int64) {
+	_ = t.database.DurableTabTitleSetAt(ctx, tabID, title, changedAt)
+}
+
 func (t durableTabTitles) DeleteDurableTabTitleContext(ctx context.Context, tabID string) {
 	_ = t.database.DurableTabTitleDelete(ctx, tabID)
 }

@@ -536,9 +536,19 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			// dynamic title; the default empty canonical title must not
 			// lock the OSC title out for the tab's lifetime.
 			tab.titleCustom = options.Durable.Title != ""
+			if tab.titleCustom {
+				// Helper metadata carries no decision time: stamp the moment
+				// this backend first observes the title, never zero, so a
+				// stale timestamped client decision cannot overwrite it.
+				tab.titleChangedAt = time.Now().UnixMilli()
+			}
 		} else if title := m.durableTabTitle(ownerCtx(context.Background(), session.userID), tabID); title != "" {
 			tab.title = title
 			tab.titleCustom = true
+			tab.titleChangedAt = m.durableTabTitleChangedAt(ownerCtx(context.Background(), session.userID), tabID)
+			if tab.titleChangedAt <= 0 {
+				tab.titleChangedAt = time.Now().UnixMilli()
+			}
 		}
 	}
 	tab.feedGate <- struct{}{}
@@ -710,10 +720,13 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 
 // RenameTabAt is RenameTab with the client's decision time (Unix ms), which
 // clients use to order title decisions across devices; zero means now.
+//
+// Decision times are wall-clock Unix milliseconds from the deciding client,
+// so ordering across devices is best effort and as good as their clocks. A
+// time more than maxTitleClockSkew ahead of this backend is clamped, so a
+// skewed or hostile client cannot pin a title against every later decision.
 func (m *Manager) RenameTabAt(ctx context.Context, tabID, title string, at int64) (TabInfo, error) {
-	if at <= 0 {
-		at = time.Now().UnixMilli()
-	}
+	at = clampTitleDecisionTime(at, time.Now())
 	clear := blankTabTitle(title)
 	if clear {
 		title = ""
@@ -793,11 +806,23 @@ func (m *Manager) RenameTabAt(ctx context.Context, tabID, title string, at int64
 		if clear {
 			m.deleteDurableTabTitle(owner, tabID)
 		} else {
-			m.persistDurableTabTitle(owner, tabID, title)
+			m.persistDurableTabTitle(owner, tabID, title, at)
 		}
 	}
 	m.emit(ctx, TopicTerminalControl, event)
 	return info, nil
+}
+
+// maxTitleClockSkew bounds how far a client decision time may run ahead of
+// this backend's clock.
+const maxTitleClockSkew = 5 * time.Minute
+
+func clampTitleDecisionTime(at int64, now time.Time) int64 {
+	nowMS := now.UnixMilli()
+	if at <= 0 {
+		return nowMS
+	}
+	return min(at, nowMS+maxTitleClockSkew.Milliseconds())
 }
 
 // dynamicTitle reads the OSC 0/2 title the terminal state last reported. The

@@ -27,4 +27,12 @@ type OwnerScopedDurableTabTitleStore interface {
 	DeleteDurableTabTitleContext(ctx context.Context, tabID string)
 }
 
+// DurableTabTitleTimeStore is the optional extension of a title store that
+// also keeps each title's decision time (Unix ms), so a restart reports the
+// real age of a custom title instead of an unknown one.
+type DurableTabTitleTimeStore interface {
+	DurableTabTitleChangedAtContext(ctx context.Context, tabID string) int64
+	PersistDurableTabTitleAtContext(ctx context.Context, tabID, title string, changedAt int64)
+}
+
 type durableTranscriptOffsetSource = OwnerScopedDurableTranscriptOffsetStore

@@ -805,6 +805,28 @@ func (s *Store) DurableTabTitleGet(ctx context.Context, durableID string) (strin
 }
 
 func (s *Store) DurableTabTitleSet(ctx context.Context, durableID, value string) error {
+	return s.DurableTabTitleSetAt(ctx, durableID, value, 0)
+}
+
+// DurableTabTitleChangedAt reports the recorded title decision time; zero
+// when the row is absent or predates the column.
+func (s *Store) DurableTabTitleChangedAt(ctx context.Context, durableID string) (int64, error) {
+	title := query.Use(s.db).DurableTabTitle
+	row, err := title.WithContext(ctx).
+		Where(title.DurableID.Eq(durableID)).
+		Where(ownerConditions(ctx, title.TableName())...).
+		First()
+	if isNoRows(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, dbError(err)
+	}
+	return row.ChangedAt, nil
+}
+
+// DurableTabTitleSetAt stores a durable tab title with its decision time.
+func (s *Store) DurableTabTitleSetAt(ctx context.Context, durableID, value string, changedAt int64) error {
 	now := ids.NowMS()
 	ownerID := ipc.OwnerID(ctx)
 	// Insert-if-absent never touches an existing row; the guarded UPDATE then
@@ -814,12 +836,12 @@ func (s *Store) DurableTabTitleSet(ctx context.Context, durableID, value string)
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "durable_id"}},
 			DoNothing: true,
-		}).Create(&DurableTabTitle{DurableID: durableID, Title: value, UpdatedAt: now, OwnerID: ownerID}).Error; err != nil {
+		}).Create(&DurableTabTitle{DurableID: durableID, Title: value, UpdatedAt: now, OwnerID: ownerID, ChangedAt: changedAt}).Error; err != nil {
 			return err
 		}
 		return tx.Model(&DurableTabTitle{}).
 			Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
-			Updates(map[string]any{"title": value, "updated_at": now, "owner_id": ownerID}).Error
+			Updates(map[string]any{"title": value, "updated_at": now, "owner_id": ownerID, "changed_at": changedAt}).Error
 	})
 	if err != nil {
 		return dbError(err)

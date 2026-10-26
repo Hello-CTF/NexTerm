@@ -1106,6 +1106,13 @@ async function submitRenameDraft(draft: string): Promise<void> {
 }
 
 describe("App terminal rename", () => {
+  it("keeps the decision time the backend recorded (a clamped clock)", async () => {
+    mocks.renameTab.mockResolvedValue({ title: "deploy", titleCustom: true, titleChangedAt: 42 });
+    await submitRenameDraft("deploy");
+    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+    expect(tabs[0]?.customTitleAt).toBe(42);
+  });
+
   it("uses the remotely confirmed canonical title", async () => {
     mocks.renameTab.mockResolvedValue({ title: "remote-canonical" });
     await submitRenameDraft("draft-title");

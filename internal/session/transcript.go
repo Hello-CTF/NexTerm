@@ -159,10 +159,22 @@ func (m *Manager) durableTabTitle(ctx context.Context, tabID string) string {
 	return m.titles.DurableTabTitleContext(ctx, tabID)
 }
 
-func (m *Manager) persistDurableTabTitle(ctx context.Context, tabID, title string) {
-	if m.titles != nil {
-		m.titles.PersistDurableTabTitleContext(ctx, tabID, title)
+func (m *Manager) durableTabTitleChangedAt(ctx context.Context, tabID string) int64 {
+	if times, ok := m.titles.(DurableTabTitleTimeStore); ok {
+		return times.DurableTabTitleChangedAtContext(ctx, tabID)
 	}
+	return 0
+}
+
+func (m *Manager) persistDurableTabTitle(ctx context.Context, tabID, title string, changedAt int64) {
+	if m.titles == nil {
+		return
+	}
+	if times, ok := m.titles.(DurableTabTitleTimeStore); ok {
+		times.PersistDurableTabTitleAtContext(ctx, tabID, title, changedAt)
+		return
+	}
+	m.titles.PersistDurableTabTitleContext(ctx, tabID, title)
 }
 
 func (m *Manager) deleteDurableTabTitle(ctx context.Context, tabID string) {

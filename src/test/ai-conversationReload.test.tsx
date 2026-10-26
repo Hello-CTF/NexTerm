@@ -342,7 +342,8 @@ describe("AiSidebar automatic terminal_create opening", () => {
     expect(tab.kind).toBe("terminal");
     expect(tab.sessionId).toBe("s1");
     expect(tab.title).toBe("构建机");
-    expect(tab.renamedByUser).toBe(true);
+    // The lock and its decision time come from the attach, which reports the backend custom title.
+    expect(tab.renamedByUser).toBeUndefined();
     expect(tab.closable).toBe(true);
   });
 

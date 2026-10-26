@@ -913,8 +913,7 @@ func beginDurableRename(ctx context.Context, tab *Tab, provider base.DurableProv
 	}
 	if found && descriptor.Incarnation != tab.durableIdentity.Incarnation {
 		tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
-		tab.title = descriptor.Title
-		tab.titleCustom = descriptor.Title != ""
+		tab.adoptHelperTitleLocked(descriptor.Title)
 		tab.metadataRevision = descriptor.MetadataRevision
 	}
 	for id, attempt := range tab.renameAttempts {
@@ -942,6 +941,20 @@ func beginDurableRename(ctx context.Context, tab *Tab, provider base.DurableProv
 	attempt := &durableRenameAttempt{requestID: ids.New(), incarnation: tab.durableIdentity.Incarnation, expectedMetadataRevision: tab.metadataRevision, title: title}
 	tab.renameAttempts[attempt.requestID] = attempt
 	return attempt, false, nil
+}
+
+// adoptHelperTitleLocked takes the canonical title the shared helper reports
+// (another instance may have renamed or cleared it). The helper carries no
+// decision time, so a title that differs from the current one is stamped
+// with this backend's clock: that decision is at least as new as now from
+// this backend's view, and a stale client decision must not win over it.
+func (t *Tab) adoptHelperTitleLocked(title string) {
+	custom := title != ""
+	if title != t.title || custom != t.titleCustom {
+		t.titleChangedAt = time.Now().UnixMilli()
+	}
+	t.title = title
+	t.titleCustom = custom
 }
 
 func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider base.DurableProvider, attempt *durableRenameAttempt, result base.DurableRenameResult, err error) (TabInfo, error) {
@@ -985,8 +998,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 		attempt.resultMetadataRevision = conflict.CurrentMetadataRevision
 		tab.mu.Lock()
 		if !tab.closed && !tab.destroying {
-			tab.title = conflict.CurrentTitle
-			tab.titleCustom = conflict.CurrentTitle != ""
+			tab.adoptHelperTitleLocked(conflict.CurrentTitle)
 			tab.metadataRevision = conflict.CurrentMetadataRevision
 			event := tab.controlEventLocked()
 			tab.mu.Unlock()
@@ -1007,8 +1019,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 			tab.mu.Lock()
 			if !tab.closed && !tab.destroying {
 				tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
-				tab.title = descriptor.Title
-				tab.titleCustom = descriptor.Title != ""
+				tab.adoptHelperTitleLocked(descriptor.Title)
 				tab.metadataRevision = descriptor.MetadataRevision
 				event := tab.controlEventLocked()
 				tab.mu.Unlock()

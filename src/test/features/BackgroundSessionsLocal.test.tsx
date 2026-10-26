@@ -817,7 +817,7 @@ describe("BackgroundSessions host-scoped view", () => {
 
   it("restores a detached tab with its backend title on takeover", async () => {
     mocks.listLive.mockResolvedValue([
-      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "AI 构建", titleCustom: true }),
+      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "AI 构建", titleCustom: true, titleChangedAt: 1_000 }),
     ]);
     seedScope();
     const view = mountHost();
@@ -864,6 +864,32 @@ describe("BackgroundSessions host-scoped view", () => {
         .find((tab) => tab.tabId === "tab-local");
       expect(added?.title).toBe("vim");
       expect(added?.renamedByUser).toBeUndefined();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("does not invent a decision time for a custom title listed without one", async () => {
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "部署", titleCustom: true }),
+    ]);
+    seedScope();
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("部署"));
+      await act(async () => {
+        actionButton(view, "接管").click();
+        await flush();
+      });
+      const added = useUi
+        .getState()
+        .workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .find((tab) => tab.tabId === "tab-local");
+      expect(added?.title).toBe("部署");
+      // The attach reports the backend's decision time; a local Date.now() would win merges.
+      expect(added?.customTitleAt).toBeUndefined();
     } finally {
       view.unmount();
     }

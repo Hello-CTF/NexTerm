@@ -218,7 +218,8 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
         id: nextTabId(`term-${terminal.sessionId}`),
         kind: "terminal",
         title: terminal.title || session?.name || terminal.sessionId,
-        ...(terminal.title ? { renamedByUser: true, customTitleAt: Date.now() } : {}),
+        // The backend holds the AI title as a custom title with its decision time; the
+        // attach reports both, so no local time is invented here.
         sessionId: terminal.sessionId,
         tabId: terminal.tabId,
         closable: true,
