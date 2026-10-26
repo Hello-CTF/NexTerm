@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -345,7 +346,18 @@ func (p *transcriptDurableProvider) Create(_ context.Context, options base.Durab
 	return &transcriptDurableAttachment{fakeChannel: channel}, nil
 }
 
-func (p *transcriptDurableProvider) Attach(_ context.Context, id string) (base.DurableAttachment, error) {
+// transcriptDurableIdentity is the single incarnation this fake reports; the
+// tests here exercise transcript catch-up, not identity checks.
+var transcriptDurableIdentity = base.DurableIdentity{Incarnation: "transcript-incarnation"}
+
+func (p *transcriptDurableProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *transcriptDurableProvider) AttachFromWithIdentity(_ context.Context, id string, identity base.DurableIdentity, _ uint64) (base.DurableAttachment, error) {
+	if identity.Incarnation != transcriptDurableIdentity.Incarnation {
+		return nil, durable.ErrIdentity
+	}
 	p.mu.Lock()
 	record := p.records[id]
 	if record == nil {
@@ -448,7 +460,7 @@ func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
 	}
 	recoveredInfo, err := second.OpenTab(context.Background(), OpenTabOptions{
 		TabID: info.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "channel-b",
-		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true, Identity: &transcriptDurableIdentity},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -521,7 +533,7 @@ func TestTranscriptDurableRecoveryCatchUpLogsPrefixSkip(t *testing.T) {
 	}
 	if _, err := second.OpenTab(context.Background(), OpenTabOptions{
 		TabID: info.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "channel-b",
-		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true, Identity: &transcriptDurableIdentity},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +591,7 @@ func TestTranscriptDurableRecoveryRepeatedNoDuplication(t *testing.T) {
 		}
 		if _, err := manager.OpenTab(context.Background(), OpenTabOptions{
 			TabID: info.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "channel-b",
-			Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+			Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true, Identity: &transcriptDurableIdentity},
 		}); err != nil {
 			t.Fatal(err)
 		}

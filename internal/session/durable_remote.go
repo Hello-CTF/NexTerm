@@ -849,13 +849,9 @@ func durableMetadataSupported(ctx context.Context, provider base.DurableProvider
 
 func attachRecoveredDurable(ctx context.Context, provider base.DurableProvider, tabID string, identity *base.DurableIdentity) (base.DurableAttachment, error) {
 	if identity == nil || identity.Incarnation == "" {
-		return provider.Attach(ctx, tabID)
+		return nil, ErrDurableUnrecoverable
 	}
-	attacher, ok := provider.(base.DurableIdentityAttacher)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	return attacher.AttachWithIdentity(ctx, tabID, *identity)
+	return provider.AttachWithIdentity(ctx, tabID, *identity)
 }
 
 func durableAttachmentIdentity(attachment base.DurableAttachment) (base.DurableIdentity, bool) {
@@ -1053,30 +1049,4 @@ func (t *Tab) addDurableFed(count int64) {
 		t.durableFed += count
 	}
 	t.mu.Unlock()
-}
-
-// prefixSkipChannel drops the leading bytes of the wrapped channel so a
-// reattached durable stream resumes where the previous attachment stopped
-// instead of replaying consumed history into the terminal and transcript.
-type prefixSkipChannel struct {
-	base.Channel
-	remaining int64
-}
-
-func (c *prefixSkipChannel) Read(p []byte) (int, error) {
-	for c.remaining > 0 {
-		discard := p
-		if int64(len(discard)) > c.remaining {
-			discard = discard[:c.remaining]
-		}
-		count, err := c.Channel.Read(discard)
-		c.remaining -= int64(count)
-		if err != nil {
-			return 0, err
-		}
-		if count == 0 {
-			return 0, nil
-		}
-	}
-	return c.Channel.Read(p)
 }

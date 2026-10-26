@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -35,7 +36,18 @@ func (p *continuityDurableProvider) Create(_ context.Context, options base.Durab
 	return continuityDurableAttachment{channel}, nil
 }
 
-func (p *continuityDurableProvider) Attach(_ context.Context, id string) (base.DurableAttachment, error) {
+// continuityDurableIdentity is the single incarnation this fake reports; these
+// tests exercise transcript continuity, not identity checks.
+var continuityDurableIdentity = base.DurableIdentity{Incarnation: "continuity-incarnation"}
+
+func (p *continuityDurableProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *continuityDurableProvider) AttachFromWithIdentity(_ context.Context, id string, identity base.DurableIdentity, _ uint64) (base.DurableAttachment, error) {
+	if identity.Incarnation != continuityDurableIdentity.Incarnation {
+		return nil, durable.ErrIdentity
+	}
 	p.mu.Lock()
 	record := p.records[id]
 	if record == nil {
@@ -169,7 +181,7 @@ func TestTranscriptWriterDurableRecoveryDoesNotSkipOrDuplicate(t *testing.T) {
 	}
 	if _, err := second.OpenTab(ctx, session.OpenTabOptions{
 		TabID: opened.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "continuity-b", Cols: 80, Rows: 24,
-		Durable: &session.DurableTabOptions{Recover: true},
+		Durable: &session.DurableTabOptions{Recover: true, Identity: &continuityDurableIdentity},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +234,7 @@ func TestTranscriptWriterDurableRecoveryMultipleIDsStayIndependent(t *testing.T)
 			TabID: tabID, SessionID: sessionID, ClientID: "client-a", ChannelID: channelID, Cols: 80, Rows: 24,
 		}
 		if recover {
-			options.Durable = &session.DurableTabOptions{Recover: true}
+			options.Durable = &session.DurableTabOptions{Recover: true, Identity: &continuityDurableIdentity}
 		} else {
 			options.Durable = &session.DurableTabOptions{Command: []string{"/bin/sh"}}
 		}

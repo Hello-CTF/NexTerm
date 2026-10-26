@@ -89,6 +89,23 @@ func attachmentInfo(t *testing.T, attachment base.DurableAttachment) supervisor.
 	return withInfo.Info()
 }
 
+// listedIdentity returns the checked-attach identity a client discovers through
+// the provider's descriptor listing.
+func listedIdentity(t *testing.T, ctx context.Context, provider *supervisor.RemoteProvider, id string) base.DurableIdentity {
+	t.Helper()
+	descriptors, err := provider.ListDurableDescriptors(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, descriptor := range descriptors {
+		if descriptor.ID == id {
+			return base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
+		}
+	}
+	t.Fatalf("durable session %s is not listed", id)
+	return base.DurableIdentity{}
+}
+
 func sharedClientHost(t *testing.T, dataRoot string, shared *sharedTarget) *fakeHost {
 	t.Helper()
 	return &fakeHost{
@@ -153,7 +170,7 @@ func TestEnsureDaemonTwoClientsShareSession(t *testing.T) {
 		t.Fatalf("second client listed %v; want exactly the shared session", listed)
 	}
 
-	attB, err := providerB.Attach(ctx, tabID)
+	attB, err := providerB.AttachWithIdentity(ctx, tabID, listedIdentity(t, ctx, providerB, tabID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +209,7 @@ func TestEnsureDaemonTwoClientsShareSession(t *testing.T) {
 	}
 	readStreamUntil(t, attB, "after-detach-x")
 
-	attA2, err := providerA.Attach(ctx, tabID)
+	attA2, err := providerA.AttachWithIdentity(ctx, tabID, listedIdentity(t, ctx, providerA, tabID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +434,7 @@ func TestEnsureDaemonHelperRestartRecoversSession(t *testing.T) {
 	if len(listed) != 1 || listed[0] != tabID {
 		t.Fatalf("sessions after the helper restart = %v; want the original session only", listed)
 	}
-	reattached, err := daemon2.Provider().Attach(ctx, tabID)
+	reattached, err := daemon2.Provider().AttachWithIdentity(ctx, tabID, listedIdentity(t, ctx, daemon2.Provider(), tabID))
 	if err != nil {
 		t.Fatal(err)
 	}

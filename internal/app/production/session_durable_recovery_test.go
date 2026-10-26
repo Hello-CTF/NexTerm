@@ -42,7 +42,11 @@ func (p *unavailableCreateProvider) Create(context.Context, base.DurableCreateOp
 	return nil, durable.ErrUnavailable
 }
 
-func (p *unavailableCreateProvider) Attach(context.Context, string) (base.DurableAttachment, error) {
+func (p *unavailableCreateProvider) AttachWithIdentity(context.Context, string, base.DurableIdentity) (base.DurableAttachment, error) {
+	return nil, durable.ErrNotFound
+}
+
+func (p *unavailableCreateProvider) AttachFromWithIdentity(context.Context, string, base.DurableIdentity, uint64) (base.DurableAttachment, error) {
 	return nil, durable.ErrNotFound
 }
 
@@ -1062,7 +1066,6 @@ type flakyMetadataProvider struct {
 	base.DurableProvider
 	base.DurableMetadataProvider
 	base.DurableDescriptorLister
-	base.DurableIdentityAttacher
 	calls     []base.DurableRenameOptions
 	failFirst error
 }
@@ -1093,7 +1096,7 @@ func TestProductionRenameRetriesPreserveRequestAndRevision(t *testing.T) {
 			fixture := newRemoteDaemonFixture(t)
 			provider := &flakyMetadataProvider{
 				DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider,
-				DurableDescriptorLister: fixture.provider, DurableIdentityAttacher: fixture.provider, failFirst: tc.failFirst,
+				DurableDescriptorLister: fixture.provider, failFirst: tc.failFirst,
 			}
 			resolver := &recordingDurableResolver{provider: provider}
 			production, _ := newRemoteRecoveryHarness(t, resolver)
@@ -1137,7 +1140,7 @@ func TestProductionRenameRetryReconcilesRemoteMetadataChanges(t *testing.T) {
 			fixture := newRemoteDaemonFixture(t)
 			provider := &flakyMetadataProvider{
 				DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider,
-				DurableDescriptorLister: fixture.provider, DurableIdentityAttacher: fixture.provider, failFirst: tc.failFirst,
+				DurableDescriptorLister: fixture.provider, failFirst: tc.failFirst,
 			}
 			resolver := &recordingDurableResolver{provider: provider}
 			production, _ := newRemoteRecoveryHarness(t, resolver)
@@ -1194,7 +1197,7 @@ func TestProductionRenameRetryReconcilesRemoteMetadataChanges(t *testing.T) {
 
 func TestProductionPendingRenameAfterIncarnationChange(t *testing.T) {
 	fixture := newRemoteDaemonFixture(t)
-	provider := &flakyMetadataProvider{DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider, DurableDescriptorLister: fixture.provider, DurableIdentityAttacher: fixture.provider, failFirst: base.ErrDisconnected}
+	provider := &flakyMetadataProvider{DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider, DurableDescriptorLister: fixture.provider, failFirst: base.ErrDisconnected}
 	resolver := &recordingDurableResolver{provider: provider}
 	production, _ := newRemoteRecoveryHarness(t, resolver)
 	connected := connectRemoteSSHAsset(t, production)

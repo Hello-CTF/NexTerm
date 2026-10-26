@@ -111,6 +111,20 @@ func (p *fakeDurableProvider) ListDurable(ctx context.Context) ([]string, error)
 	return ids, nil
 }
 
+// ListDurableDescriptors reports each live record with the incarnation a
+// helper listing carries, so recovery can use checked attach.
+func (p *fakeDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	descriptors := make([]base.DurableDescriptor, 0, len(p.records))
+	for id, record := range p.records {
+		if record.killed == 0 {
+			descriptors = append(descriptors, base.DurableDescriptor{ID: id, Incarnation: fakeIncarnation(record.identity)})
+		}
+	}
+	return descriptors, nil
+}
+
 func TestDurableTitleWriteAndReadAreOwnerScoped(t *testing.T) {
 	provider := newFakeDurableProvider()
 	store := newOwnerScopedStore()

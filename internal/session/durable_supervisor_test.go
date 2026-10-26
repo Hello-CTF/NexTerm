@@ -70,7 +70,7 @@ func TestSupervisorDurableRestartRecovery(t *testing.T) {
 	}
 	if _, err := second.OpenTab(ctx, OpenTabOptions{
 		TabID: tabID, SessionID: reconnected.ID, ClientID: "client-a", ChannelID: "restart-2", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Recover: true},
+		Durable: &DurableTabOptions{Recover: true, Identity: recoveryIdentity(second, tabID)},
 	}); err != nil {
 		t.Fatal(err)
 	}

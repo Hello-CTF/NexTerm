@@ -50,6 +50,9 @@ var (
 	ErrDurableDisabled      = errors.New("SSH durable terminals disabled for this asset")
 	ErrAmbiguousDurable     = errors.New("durable terminal ID exists on multiple sessions")
 	ErrRecoveryOverrun      = errors.New("refused suffix exceeds the retained recovery window")
+	// ErrDurableUnrecoverable reports a durable tab without a recorded
+	// incarnation: checked attach cannot verify it, and unchecked attach no longer exists.
+	ErrDurableUnrecoverable = errors.New("durable terminal cannot be recovered: no recorded incarnation")
 )
 
 type Status string

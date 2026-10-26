@@ -2,8 +2,6 @@ package session
 
 import (
 	"context"
-
-	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 type durableVersionFloor interface {
@@ -13,13 +11,6 @@ type durableVersionFloor interface {
 
 type durableGridSource interface {
 	DurableGrid() (cols, rows uint32, ok bool)
-}
-
-// durableOffsetAttacher is an optional extension for durable providers: providers supporting resume by absolute recording
-// offset implement it, so reconnects skip the full replay from byte 0 and the client-side dropping of the consumed prefix.
-// Providers without it fall back to Attach + prefixSkipChannel.
-type durableOffsetAttacher interface {
-	AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error)
 }
 
 // Owner-scoped durable stores isolate rows by the session owner carried in

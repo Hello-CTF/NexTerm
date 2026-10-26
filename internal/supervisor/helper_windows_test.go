@@ -353,7 +353,7 @@ func TestWindowsHelperSpawnReattachAndKill(t *testing.T) {
 	if len(infos) != 1 || infos[0].ID != id || infos[0].Dead {
 		t.Fatalf("sessions after client close = %+v", infos)
 	}
-	reattached, err := NewRemoteProvider(second.Client()).Attach(ctx, id)
+	reattached, err := NewRemoteProvider(second.Client()).AttachWithIdentity(ctx, id, base.DurableIdentity{CreatedAt: infos[0].CreatedAt, Incarnation: infos[0].Incarnation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -972,7 +972,7 @@ func TestWindowsHelperSessionsSurviveAppProcessExitAndReattach(t *testing.T) {
 	if len(infos) != 1 || infos[0].ID != string(sessionID) || infos[0].Dead {
 		t.Fatalf("sessions after app exit = %+v", infos)
 	}
-	attachment, err := NewRemoteProvider(restarted.Client()).Attach(ctx, string(sessionID))
+	attachment, err := NewRemoteProvider(restarted.Client()).AttachWithIdentity(ctx, string(sessionID), base.DurableIdentity{CreatedAt: infos[0].CreatedAt, Incarnation: infos[0].Incarnation})
 	if err != nil {
 		t.Fatal(err)
 	}

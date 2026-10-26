@@ -25,9 +25,13 @@ func openRosterTestManager(t *testing.T, provider base.DurableProvider, userID s
 
 func openRosterDurableTab(t *testing.T, manager *Manager, session *Session, userID, tabID, channel string, recover bool) TabInfo {
 	t.Helper()
+	options := &DurableTabOptions{Command: []string{"/bin/sh", "-c", "exit 99"}, Recover: recover}
+	if recover {
+		options.Identity = recoveryIdentity(manager, tabID)
+	}
 	info, err := manager.OpenTab(requestTestUser(userID), OpenTabOptions{
 		TabID: tabID, SessionID: session.ID, ClientID: "client-a", ChannelID: channel, Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Command: []string{"/bin/sh", "-c", "exit 99"}, Recover: recover},
+		Durable: options,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -51,33 +55,44 @@ func (p *rosterIdentityDurableProvider) Create(ctx context.Context, options base
 	return &rosterIdentityAttachment{fakeDurableAttachment: attachment.(*fakeDurableAttachment)}, nil
 }
 
-func (p *rosterIdentityDurableProvider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
-	attachment, err := p.fakeDurableProvider.Attach(ctx, id)
+// AttachFromWithIdentity mirrors the daemon contract: only the surviving
+// daemon's own incarnation may reattach, so a reconnect after daemon
+// replacement fails instead of silently aliasing the new runtime.
+func (p *rosterIdentityDurableProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	p.mu.Lock()
+	record := p.records[id]
+	want, inner := "", ""
+	if record != nil {
+		want = rosterIncarnation(record.identity)
+		inner = fakeIncarnation(record.identity)
+	}
+	p.mu.Unlock()
+	if record == nil || identity.Incarnation != want {
+		return nil, durable.ErrNotFound
+	}
+	attachment, err := p.fakeDurableProvider.AttachFromWithIdentity(ctx, id, base.DurableIdentity{Incarnation: inner}, offset)
 	if err != nil {
 		return nil, err
 	}
 	return &rosterIdentityAttachment{fakeDurableAttachment: attachment.(*fakeDurableAttachment)}, nil
 }
 
-// AttachWithIdentity mirrors the daemon contract: only the surviving daemon's
-// own incarnation may reattach, so a reconnect after daemon replacement fails
-// instead of silently aliasing the new runtime.
 func (p *rosterIdentityDurableProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
-	p.mu.Lock()
-	record := p.records[id]
-	want := ""
-	if record != nil {
-		want = fmt.Sprintf("daemon-%d", record.identity)
-	}
-	p.mu.Unlock()
-	if record == nil || identity.Incarnation != want {
-		return nil, durable.ErrNotFound
-	}
-	return p.Attach(ctx, id)
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
 }
 
-func (p *rosterIdentityDurableProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ uint64) (base.DurableAttachment, error) {
-	return p.AttachWithIdentity(ctx, id, identity)
+func (p *rosterIdentityDurableProvider) currentDurableIdentity(id string) (base.DurableIdentity, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record := p.records[id]
+	if record == nil {
+		return base.DurableIdentity{}, false
+	}
+	return base.DurableIdentity{CreatedAt: time.Unix(1, 0), Incarnation: rosterIncarnation(record.identity)}, true
+}
+
+func rosterIncarnation(identity int) string {
+	return fmt.Sprintf("daemon-%d", identity)
 }
 
 type rosterIdentityAttachment struct {
@@ -85,7 +100,7 @@ type rosterIdentityAttachment struct {
 }
 
 func (a *rosterIdentityAttachment) Identity() supervisor.Identity {
-	return supervisor.Identity{CreatedAt: time.Unix(1, 0), Incarnation: fmt.Sprintf("daemon-%d", a.identity)}
+	return supervisor.Identity{CreatedAt: time.Unix(1, 0), Incarnation: rosterIncarnation(a.identity)}
 }
 
 func TestRosterRuntimeIncarnationLocalEpisode(t *testing.T) {
@@ -172,10 +187,10 @@ func TestRosterRuntimeIncarnationDurableEpisode(t *testing.T) {
 }
 
 func TestRosterRuntimeIncarnationDurableWithoutIdentity(t *testing.T) {
-	// The plain fake provider hands out attachments with no supervisor
+	// The opaque provider hands out attachments with no supervisor
 	// identity: the manager must report the episode as unverifiable rather
 	// than mint a stand-in for the daemon.
-	manager, connected := openRosterTestManager(t, newFakeDurableProvider(), "user-a")
+	manager, connected := openRosterTestManager(t, opaqueDurableProvider{newFakeDurableProvider()}, "user-a")
 	info := openRosterDurableTab(t, manager, connected, "user-a", "roster-durable-anon", "d-1", false)
 	if episode, ok := manager.RosterRuntimeIncarnation(requestTestUser("user-a"), info.ID); ok || episode != "" {
 		t.Fatalf("identity-less durable tab episode = %q, %v; want \"\", false", episode, ok)
@@ -253,7 +268,7 @@ func TestRosterRuntimeSnapshotSameSource(t *testing.T) {
 // snapshot field but fails closed on the episode evidence; a daemon-backed
 // tab reports the daemon incarnation.
 func TestRosterRuntimeSnapshotDurableEpisodeEvidence(t *testing.T) {
-	manager, connected := openRosterTestManager(t, newFakeDurableProvider(), "user-a")
+	manager, connected := openRosterTestManager(t, opaqueDurableProvider{newFakeDurableProvider()}, "user-a")
 	alice := requestTestUser("user-a")
 	anon := openRosterDurableTab(t, manager, connected, "user-a", "roster-snap-anon", "d-1", false)
 	snapshot, ok := manager.RosterRuntimeSnapshot(alice, anon.ID)

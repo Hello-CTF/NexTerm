@@ -17,6 +17,21 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
+// unknownDurableIdentity is a well-formed identity that no session carries.
+func unknownDurableIdentity() base.DurableIdentity {
+	return base.DurableIdentity{CreatedAt: time.Now(), Incarnation: ids.New()}
+}
+
+func attachmentIdentity(t *testing.T, attachment base.DurableAttachment) base.DurableIdentity {
+	t.Helper()
+	source, ok := attachment.(interface{ Identity() Identity })
+	if !ok {
+		t.Fatalf("%T does not expose its identity", attachment)
+	}
+	identity := source.Identity()
+	return base.DurableIdentity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation}
+}
+
 func TestIPCKillDuringBlockedInput(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
@@ -266,7 +281,7 @@ func TestProviderErrorTranslation(t *testing.T) {
 	}
 	for name, provider := range providers {
 		t.Run(name, func(t *testing.T) {
-			if _, err := provider.Attach(ctx, ids.New()); !errors.Is(err, durable.ErrNotFound) || errors.Is(err, ErrNotFound) {
+			if _, err := provider.AttachWithIdentity(ctx, ids.New(), unknownDurableIdentity()); !errors.Is(err, durable.ErrNotFound) || errors.Is(err, ErrNotFound) {
 				t.Fatalf("Attach unknown = %v, want durable.ErrNotFound only", err)
 			}
 			if _, err := provider.Create(ctx, base.DurableCreateOptions{Cols: 5000, Rows: 24}); !errors.Is(err, durable.ErrInvalidInput) {
@@ -425,7 +440,7 @@ func TestDurableDescriptorProvidersEmptyAndAttachDoesNotCreate(t *testing.T) {
 			if err != nil || len(descriptors) != 0 {
 				t.Fatalf("ListDurableDescriptors empty = %+v, %v", descriptors, err)
 			}
-			if _, err := provider.Attach(ctx, ids.New()); !errors.Is(err, durable.ErrNotFound) {
+			if _, err := provider.AttachWithIdentity(ctx, ids.New(), unknownDurableIdentity()); !errors.Is(err, durable.ErrNotFound) {
 				t.Fatalf("Attach unknown = %v, want durable.ErrNotFound", err)
 			}
 			descriptors, err = lister.ListDurableDescriptors(ctx)
@@ -1084,11 +1099,6 @@ func TestDurableIdentityProvidersRejectStaleIncarnation(t *testing.T) {
 				t.Fatalf("attach without incarnation = %v, %v, want invalid input", attachment, err)
 			}
 
-			legacy, err := provider.Attach(ctx, id)
-			if err != nil {
-				t.Fatalf("legacy Attach compatibility = %v", err)
-			}
-			_ = legacy.Close()
 			attachment, err := attacher.AttachFromWithIdentity(ctx, id, current, 0)
 			if err != nil {
 				t.Fatalf("current AttachFromWithIdentity = %v", err)

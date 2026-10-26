@@ -108,22 +108,6 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 	return &channelAttachment{Attachment: attachment}, nil
 }
 
-func (p *Provider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
-	attachment, err := p.supervisor.attachFrom(ctx, id, 0, nil)
-	if attachment == nil {
-		return nil, translateError(err)
-	}
-	return &channelAttachment{Attachment: attachment}, nil
-}
-
-func (p *Provider) AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error) {
-	attachment, err := p.supervisor.attachFrom(ctx, id, offset, nil)
-	if attachment == nil {
-		return nil, translateError(err)
-	}
-	return &channelAttachment{Attachment: attachment}, nil
-}
-
 func (p *Provider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
 	return p.AttachFromWithIdentity(ctx, id, identity, 0)
 }
@@ -349,22 +333,6 @@ func (p *RemoteProvider) compensateCreateAttempt(id, attempt string) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_ = p.client.ReconcileCreate(cleanupCtx, id, attempt)
-}
-
-func (p *RemoteProvider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
-	stream, err := p.client.Attach(ctx, id, nil)
-	if err != nil {
-		return nil, translateError(err)
-	}
-	return &streamAttachment{Stream: stream, provider: p}, nil
-}
-
-func (p *RemoteProvider) AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error) {
-	stream, err := p.client.AttachFrom(ctx, id, nil, offset)
-	if err != nil {
-		return nil, translateError(err)
-	}
-	return &streamAttachment{Stream: stream, provider: p}, nil
 }
 
 func (p *RemoteProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {

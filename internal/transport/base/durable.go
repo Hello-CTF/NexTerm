@@ -72,6 +72,8 @@ type DurableMetadataProvider interface {
 	RenameDurable(context.Context, DurableRenameOptions) (DurableRenameResult, error)
 }
 
+// DurableIdentityAttacher attaches only to the durable session whose identity
+// matches; there is no unchecked attach path.
 type DurableIdentityAttacher interface {
 	AttachWithIdentity(context.Context, string, DurableIdentity) (DurableAttachment, error)
 	AttachFromWithIdentity(context.Context, string, DurableIdentity, uint64) (DurableAttachment, error)
@@ -83,7 +85,7 @@ type DurableIdentityKiller interface {
 
 type DurableProvider interface {
 	Create(context.Context, DurableCreateOptions) (DurableAttachment, error)
-	Attach(context.Context, string) (DurableAttachment, error)
+	DurableIdentityAttacher
 }
 
 type DurableAttachment interface {

@@ -77,7 +77,7 @@ func (t *hookedOpenTransport) channel(index int) *fakeChannel {
 	return t.channels[index]
 }
 
-// blockingAttachProvider is a fake durable provider whose Attach is
+// blockingAttachProvider is a fake durable provider whose checked resume is
 // test-controlled; Create and every other operation delegate to the embedded
 // fake so the initial durable tab opens normally.
 type blockingAttachProvider struct {
@@ -85,11 +85,11 @@ type blockingAttachProvider struct {
 	attachHook func(ctx context.Context, id string) (base.DurableAttachment, error)
 }
 
-func (p *blockingAttachProvider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
+func (p *blockingAttachProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
 	if p.attachHook != nil {
 		return p.attachHook(ctx, id)
 	}
-	return p.fakeDurableProvider.Attach(ctx, id)
+	return p.fakeDurableProvider.AttachFromWithIdentity(ctx, id, identity, offset)
 }
 
 func reconnectCancelTestManager(t *testing.T, connector Connector, resolver *countingResolver) *Manager {

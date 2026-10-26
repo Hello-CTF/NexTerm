@@ -29,6 +29,9 @@ func (p *descriptorListingDurableProvider) ListDurableDescriptors(ctx context.Co
 	descriptors := make([]base.DurableDescriptor, len(ids))
 	for index, id := range ids {
 		descriptors[index].ID = id
+		if identity, ok := p.currentDurableIdentity(id); ok {
+			descriptors[index].Incarnation = identity.Incarnation
+		}
 	}
 	return descriptors, nil
 }
@@ -892,6 +895,10 @@ type failingListDurableProvider struct {
 }
 
 func (p *failingListDurableProvider) ListDurable(context.Context) ([]string, error) {
+	return nil, p.err
+}
+
+func (p *failingListDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
 	return nil, p.err
 }
 

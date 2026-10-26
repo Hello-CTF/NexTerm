@@ -10,6 +10,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -73,22 +74,47 @@ func (p *fakeDurableProvider) Create(_ context.Context, options base.DurableCrea
 	return p.newAttachmentLocked(options.ID, record), nil
 }
 
-func (p *fakeDurableProvider) Attach(_ context.Context, id string) (base.DurableAttachment, error) {
+func fakeIncarnation(identity int) string {
+	return fmt.Sprintf("fake-incarnation-%d", identity)
+}
+
+func (p *fakeDurableProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *fakeDurableProvider) AttachFromWithIdentity(_ context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.attachCalls++
 	if p.attachErr != nil {
 		return nil, p.attachErr
 	}
+	if identity.Incarnation == "" {
+		return nil, durable.ErrInvalidInput
+	}
 	record := p.records[id]
 	if record == nil || record.killed > 0 {
 		return nil, durable.ErrNotFound
 	}
+	if identity.Incarnation != fakeIncarnation(record.identity) {
+		return nil, durable.ErrIdentity
+	}
 	attachment := p.newAttachmentLocked(id, record)
-	if len(record.output) > 0 {
-		attachment.reads <- append([]byte(nil), record.output...)
+	if offset < uint64(len(record.output)) {
+		attachment.reads <- append([]byte(nil), record.output[offset:]...)
 	}
 	return attachment, nil
+}
+
+// currentDurableIdentity is the identity a descriptor listing would report.
+func (p *fakeDurableProvider) currentDurableIdentity(id string) (base.DurableIdentity, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record := p.records[id]
+	if record == nil {
+		return base.DurableIdentity{}, false
+	}
+	return base.DurableIdentity{Incarnation: fakeIncarnation(record.identity)}, true
 }
 
 func (p *fakeDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
@@ -141,6 +167,10 @@ func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurable
 	attachment := &fakeDurableAttachment{fakeChannel: channel, provider: p, tabID: id, identity: record.identity}
 	record.attachments = append(record.attachments, attachment)
 	return attachment
+}
+
+func (a *fakeDurableAttachment) Identity() supervisor.Identity {
+	return supervisor.Identity{Incarnation: fakeIncarnation(a.identity)}
 }
 
 func (a *fakeDurableAttachment) Kill(context.Context) error {
@@ -288,14 +318,40 @@ func newDurableTestManager(t *testing.T, provider base.DurableProvider) (*Manage
 
 func openDurableTestTab(t *testing.T, manager *Manager, connected *Session, id, channel string, recover bool) TabInfo {
 	t.Helper()
+	options := &DurableTabOptions{Command: []string{"/bin/sh", "-c", "exit 99"}, Recover: recover}
+	if recover {
+		options.Identity = recoveryIdentity(manager, id)
+	}
 	info, err := manager.OpenTab(context.Background(), OpenTabOptions{
 		TabID: id, SessionID: connected.ID, ClientID: "client-a", ChannelID: channel, Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Command: []string{"/bin/sh", "-c", "exit 99"}, Recover: recover},
+		Durable: options,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return info
+}
+
+// recoveryIdentity returns the identity production recovery reads from the
+// provider's descriptor listing, or nil when the provider cannot report one.
+func recoveryIdentity(manager *Manager, id string) *base.DurableIdentity {
+	if source, ok := manager.durable.(interface {
+		currentDurableIdentity(string) (base.DurableIdentity, bool)
+	}); ok {
+		identity, found := source.currentDurableIdentity(id)
+		if !found {
+			return nil
+		}
+		return &identity
+	}
+	if manager.durable == nil {
+		return nil
+	}
+	descriptor, found, err := findDurableDescriptor(context.Background(), manager.durable, id)
+	if err != nil || !found || descriptor.Incarnation == "" {
+		return nil
+	}
+	return &base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
 }
 
 func TestDurableStableIDAndRPCAttachReplayDedup(t *testing.T) {
@@ -396,7 +452,7 @@ func TestDurableManagerRestartRecoveryDetachSurvivalAndExplicitKill(t *testing.T
 	if create, attach, killed := provider.counts(); create != 1 || attach != 2 || killed != 1 {
 		t.Fatalf("explicit close counts: create=%d attach=%d killed=%d", create, attach, killed)
 	}
-	if _, err := provider.Attach(context.Background(), info.ID); !errors.Is(err, durable.ErrNotFound) {
+	if _, err := provider.AttachWithIdentity(context.Background(), info.ID, base.DurableIdentity{Incarnation: fakeIncarnation(1)}); !errors.Is(err, durable.ErrNotFound) {
 		t.Fatalf("killed durable tab attach error = %v", err)
 	}
 }
@@ -461,9 +517,13 @@ func TestDurableOpenErrorsNeverFallBackToVolatilePTY(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			manager, connector, _, connected := newDurableTestManager(t, test.provider)
+			options := &DurableTabOptions{Recover: test.recover}
+			if test.recover {
+				options.Identity = &base.DurableIdentity{Incarnation: fakeIncarnation(1)}
+			}
 			_, err := manager.OpenTab(context.Background(), OpenTabOptions{
 				TabID: "error-tab", SessionID: connected.ID, ChannelID: "a-1", Cols: 80, Rows: 24,
-				Durable: &DurableTabOptions{Recover: test.recover},
+				Durable: options,
 			})
 			if !errors.Is(err, test.wantError) || connector.transport(0).channelCount() != 0 {
 				t.Fatalf("error=%v volatile channels=%d", err, connector.transport(0).channelCount())
@@ -551,7 +611,7 @@ func TestDurableGeneratedIDAndConcurrentRecoveryAndClose(t *testing.T) {
 			<-start
 			_, err := manager.OpenTab(context.Background(), OpenTabOptions{
 				TabID: info.ID, SessionID: connected.ID, ClientID: "client", ChannelID: fmt.Sprintf("recover-%d", index),
-				Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+				Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true, Identity: recoveryIdentity(manager, info.ID)},
 			})
 			results <- err
 		}(index)

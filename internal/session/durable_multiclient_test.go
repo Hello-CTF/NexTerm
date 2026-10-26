@@ -22,13 +22,11 @@ import (
 type legacyMetadataDurableProvider struct {
 	base.DurableProvider
 	base.DurableDescriptorLister
-	base.DurableIdentityAttacher
 }
 
 type staleDescriptorProvider struct {
 	base.DurableProvider
 	base.DurableDescriptorLister
-	base.DurableIdentityAttacher
 	stale []base.DurableDescriptor
 }
 
@@ -245,7 +243,7 @@ func TestRecoverRemoteDurableRejectsChangedIncarnation(t *testing.T) {
 	})
 	providerA := supervisor.NewRemoteProvider(supervisor.NewClient(server.SocketPath(), stateDir))
 	providerB := &staleDescriptorProvider{
-		DurableProvider: providerA, DurableDescriptorLister: providerA, DurableIdentityAttacher: providerA,
+		DurableProvider: providerA, DurableDescriptorLister: providerA,
 	}
 	resolver := DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) {
 		return providerB, nil
@@ -458,7 +456,7 @@ func TestRecoverRemoteDurableFallsBackToLocalTitleOnlyWithoutMetadata(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	legacy := &legacyMetadataDurableProvider{DurableProvider: provider, DurableDescriptorLister: provider, DurableIdentityAttacher: provider}
+	legacy := &legacyMetadataDurableProvider{DurableProvider: provider, DurableDescriptorLister: provider}
 	localTitles := newFakeDurableProvider()
 	localTitles.PersistDurableTabTitleContext(context.Background(), tabID, "local-fallback")
 	manager := NewManager(Config{

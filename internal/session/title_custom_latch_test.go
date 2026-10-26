@@ -52,7 +52,7 @@ func TestDurableRecoverEmptyCanonicalTitleKeepsOSCTitle(t *testing.T) {
 	}
 	if _, err := manager.OpenTab(ctx, OpenTabOptions{
 		TabID: tabID, SessionID: connected.ID, Cols: 80, Rows: 24, Detached: true,
-		Durable: &DurableTabOptions{Recover: true, CanonicalMetadata: true, Title: ""},
+		Durable: &DurableTabOptions{Recover: true, CanonicalMetadata: true, Title: "", Identity: recoveryIdentity(manager, tabID)},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestDurableRecoverCanonicalTitleLatchesCustom(t *testing.T) {
 	}
 	if _, err := manager.OpenTab(ctx, OpenTabOptions{
 		TabID: tabID, SessionID: connected.ID, Cols: 80, Rows: 24, Detached: true,
-		Durable: &DurableTabOptions{Recover: true, CanonicalMetadata: true, Title: "deploy"},
+		Durable: &DurableTabOptions{Recover: true, CanonicalMetadata: true, Title: "deploy", Identity: recoveryIdentity(manager, tabID)},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +141,37 @@ func (p *unlatchMetadataProvider) Create(ctx context.Context, options base.Durab
 		return nil, err
 	}
 	return &identityAttachment{fakeDurableAttachment: attachment.(*fakeDurableAttachment), provider: p}, nil
+}
+
+func (p *unlatchMetadataProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *unlatchMetadataProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	p.mu.Lock()
+	incarnation := p.incarnation
+	p.mu.Unlock()
+	if identity.Incarnation != incarnation {
+		return nil, durable.ErrIdentity
+	}
+	inner, ok := p.fakeDurableProvider.currentDurableIdentity(id)
+	if !ok {
+		return nil, durable.ErrNotFound
+	}
+	attachment, err := p.fakeDurableProvider.AttachFromWithIdentity(ctx, id, inner, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &identityAttachment{fakeDurableAttachment: attachment.(*fakeDurableAttachment), provider: p}, nil
+}
+
+func (p *unlatchMetadataProvider) currentDurableIdentity(id string) (base.DurableIdentity, bool) {
+	if _, ok := p.fakeDurableProvider.currentDurableIdentity(id); !ok {
+		return base.DurableIdentity{}, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return base.DurableIdentity{CreatedAt: time.Unix(1, 0), Incarnation: p.incarnation}, true
 }
 
 func (p *unlatchMetadataProvider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {

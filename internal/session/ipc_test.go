@@ -75,6 +75,7 @@ func TestIPCErrorUserMessagesAreActionable(t *testing.T) {
 		{err: ErrUnsupported, code: ipc.CodeUnsupported, want: "不支持"},
 		{err: ErrDurableDisabled, code: ipc.CodeUnsupported, want: "已有持久终端可从后台会话恢复"},
 		{err: ErrAmbiguousDurable, code: ipc.CodeBadParam, want: "指定会话"},
+		{err: ErrDurableUnrecoverable, code: ipc.Code("durable_unrecoverable"), want: "无法恢复"},
 		{err: ErrInvalidSize, code: ipc.CodeBadParam, want: "终端尺寸无效"},
 		{err: context.DeadlineExceeded, code: ipc.CodeTimeout, want: "操作超时"},
 		{err: fmt.Errorf("reconnect: %w", ErrAssetSessionConflict), code: ipc.CodeInternal, want: "该资产已有活动会话"},

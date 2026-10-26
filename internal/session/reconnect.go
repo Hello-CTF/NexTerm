@@ -217,7 +217,7 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 		}
 		if err == nil {
 			var opened map[*Tab]*replacementChannel
-			var gone map[*Tab]struct{}
+			var gone map[*Tab]error
 			// Replacement channels must outlive the reconnect attempt: every
 			// transport binds an opened channel's lifetime to the context it
 			// receives, so opening with the attempt-scoped ctx tore the fresh
@@ -324,9 +324,9 @@ func (m *Manager) reconnectRetryEvent(session *Session, generation uint64, cause
 	return session.statusEventLocked(StatusReconnecting, cause), true
 }
 
-func (m *Manager) openReplacementChannels(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (map[*Tab]*replacementChannel, map[*Tab]struct{}, error) {
+func (m *Manager) openReplacementChannels(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (map[*Tab]*replacementChannel, map[*Tab]error, error) {
 	opened := make(map[*Tab]*replacementChannel)
-	gone := make(map[*Tab]struct{})
+	gone := make(map[*Tab]error)
 	if !ptyBacked(session.Asset().Kind) {
 		return opened, gone, nil
 	}
@@ -362,12 +362,15 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 					return opened, gone, err
 				}
 			}
-			attachment, offsetResume, err := attachDurableReplacement(ctx, provider, tab.ID, durableIdentity, uint64(durableFed))
-			if errors.Is(err, durable.ErrNotFound) || errors.Is(err, durable.ErrIdentity) {
+			attachment, err := attachDurableReplacement(ctx, provider, tab.ID, durableIdentity, uint64(durableFed))
+			if errors.Is(err, durable.ErrNotFound) || errors.Is(err, durable.ErrIdentity) || errors.Is(err, ErrDurableUnrecoverable) {
 				if attachment != nil {
 					_ = attachment.Close()
 				}
-				gone[tab] = struct{}{}
+				if errors.Is(err, ErrDurableUnrecoverable) {
+					m.logger.Warn("durable terminal cannot be recovered after reconnect", "session", session.ID, "tab", tab.ID, "error", err)
+				}
+				gone[tab] = err
 				continue
 			}
 			if attachment == nil {
@@ -380,12 +383,8 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 				_ = attachment.Close()
 				return opened, gone, err
 			}
-			channel := newChannelHandle(attachment)
-			if !offsetResume {
-				channel = newChannelHandle(&prefixSkipChannel{Channel: attachment, remaining: durableFed})
-			}
 			opened[tab] = &replacementChannel{
-				channel: channel,
+				channel: newChannelHandle(attachment),
 				durable: attachment,
 			}
 			continue
@@ -411,28 +410,26 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 	return opened, gone, nil
 }
 
-// attachDurableReplacement uses legacy unchecked attach only for tabs that never had an incarnation.
-// A known identity always requires checked attach; identity errors never fall back to the legacy path.
-func attachDurableReplacement(ctx context.Context, provider base.DurableProvider, tabID string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, bool, error) {
-	if identity.Incarnation != "" {
-		attacher, ok := provider.(base.DurableIdentityAttacher)
-		if !ok {
-			return nil, false, ErrUnsupported
-		}
-		attachment, err := attacher.AttachFromWithIdentity(ctx, tabID, identity, offset)
-		return attachment, true, err
+// attachDurableReplacement resumes a durable tab only through checked attach.
+// A tab that never recorded an incarnation cannot be matched to its helper
+// session, so it is reported as unrecoverable instead of attaching unchecked.
+func attachDurableReplacement(ctx context.Context, provider base.DurableProvider, tabID string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	if identity.Incarnation == "" {
+		return nil, ErrDurableUnrecoverable
 	}
-	if attacher, ok := provider.(durableOffsetAttacher); ok {
-		attachment, err := attacher.AttachFrom(ctx, tabID, offset)
-		return attachment, true, err
-	}
-	attachment, err := provider.Attach(ctx, tabID)
-	return attachment, false, err
+	return provider.AttachFromWithIdentity(ctx, tabID, identity, offset)
 }
 
 type replacementChannel struct {
 	channel *channelHandle
 	durable base.DurableAttachment
+}
+
+// reconnectNotice targets a tab that reconnect left exited; generation is the
+// tab's own generation because it was not moved to the replacement transport.
+type reconnectNotice struct {
+	tab        *Tab
+	generation uint64
 }
 
 type reconnectResize struct {
@@ -454,7 +451,7 @@ func reconnectGeometryLocked(tab *Tab) (cols, rows uint32) {
 	return cols, rows
 }
 
-func (m *Manager) commitReconnect(session *Session, transport *transportHandle, opened map[*Tab]*replacementChannel, gone map[*Tab]struct{}, generation uint64) (bool, error) {
+func (m *Manager) commitReconnect(session *Session, transport *transportHandle, opened map[*Tab]*replacementChannel, gone map[*Tab]error, generation uint64) (bool, error) {
 	m.mu.Lock()
 	session.mu.Lock()
 	if m.closed || session.closed || m.sessions[session.ID] != session || session.status != StatusReconnecting || !session.reconnecting || session.generation != generation {
@@ -512,9 +509,13 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		}
 		tab.mu.Unlock()
 	}
-	for tab := range gone {
+	var unrecoverable []reconnectNotice
+	for tab, cause := range gone {
 		tab.mu.Lock()
 		if !tab.closed && m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
+			if errors.Is(cause, ErrDurableUnrecoverable) {
+				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation})
+			}
 			if tab.durable != nil {
 				retired = append(retired, tab.durable)
 				tab.durable = nil
@@ -575,6 +576,9 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	m.transcriptStarted(reconnectCtx, session)
 	for _, resize := range resizes {
 		m.transcriptResize(reconnectCtx, resize.tab, resize.cols, resize.rows)
+	}
+	for _, notice := range unrecoverable {
+		_ = m.feed(reconnectCtx, notice.tab, notice.generation, durableUnrecoverableBanner)
 	}
 	for _, exit := range exits {
 		m.emit(context.Background(), TopicTerminalExit, exit)
