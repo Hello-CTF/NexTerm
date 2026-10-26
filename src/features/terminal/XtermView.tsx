@@ -812,6 +812,9 @@ export function XtermView(props: XtermViewProps) {
         },
         onRefused: () => refuseStream(),
         onWritten: scheduleUiFlush,
+        // A hidden pane's backlog drains on the background budget; its
+        // desktop notifications need no screen state, so they need not wait.
+        dispatchEarly: (event) => event.kind === "notification" && visibleRef.current === false,
       },
     );
     // Automatic query responses (DA/DSR/CPR reports and friends) are answered
@@ -1170,6 +1173,8 @@ export function XtermView(props: XtermViewProps) {
     }, 0);
 
     const dataDisposable = term.onData((data) => {
+      // Input in a visible pane switches hidden panes to the conservative drain tier.
+      if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
       blocks.feedInput(data);
       responses.submit(data);
     });

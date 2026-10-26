@@ -49,6 +49,11 @@ export interface TerminalStreamWriterOptions {
   onPausedChange?: (paused: boolean, stats: TerminalStreamStats) => void;
   onRefused?: (stats: TerminalStreamStats) => void;
   onWritten?: () => void;
+  // Events for which this returns true dispatch on acceptance instead of
+  // after xterm parses the bytes before them. Only for events that do not
+  // depend on the screen state (a hidden pane's desktop notifications): the
+  // bytes themselves keep their order.
+  dispatchEarly?: (event: OscStreamEvent) => boolean;
 }
 
 interface WriteUnit {
@@ -202,6 +207,10 @@ export function createTerminalStreamWriter(
     }
     for (const segment of segments) {
       if (segment.kind === "event") {
+        if (options.dispatchEarly?.(segment.event)) {
+          dispatch(segment.event);
+          continue;
+        }
         const tail = lastUnit;
         if (tail && !tail.done && tail.generation === generation) {
           tail.events.push(segment.event);

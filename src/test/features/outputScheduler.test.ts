@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createOutputScheduler,
   type OutputData,
@@ -7,16 +7,25 @@ import {
 import {
   BACKGROUND_CHUNK_BYTES,
   BACKGROUND_DRAIN_INTERVAL_MS,
+  BACKGROUND_MAX_IN_FLIGHT_SLICES,
   BACKGROUND_MAX_WRITES_PER_DRAIN,
+  BUSY_FOREGROUND_CHUNK_BYTES,
+  BUSY_FOREGROUND_MAX_WRITES_PER_DRAIN,
+  FOREGROUND_ACTIVE_WINDOW_MS,
+  STREAM_HIGH_WATER_BYTES,
+  STREAM_LOW_WATER_BYTES,
 } from "../../features/terminal/terminalBudget";
 import { createTerminalStreamWriter } from "../../features/terminal/terminalStream";
+import type { OscStreamEvent } from "../../features/terminal/oscStream";
+
+const INTERVAL = BACKGROUND_DRAIN_INTERVAL_MS;
 
 // Manual clock: timers fire only when advance() passes their deadline.
 function fakeClock() {
   let time = 0;
   let seq = 0;
   let timers: { at: number; id: number; fn: () => void }[] = [];
-  const clock = {
+  return {
     now: () => time,
     tick: (ms: number) => {
       time += ms;
@@ -42,14 +51,29 @@ function fakeClock() {
       time = Math.max(time, end);
     },
   };
-  return clock;
 }
 
 type Clock = ReturnType<typeof fakeClock>;
 
+// Document visibility the scheduler observes.
+function fakeDocument() {
+  let hidden = false;
+  const listeners: (() => void)[] = [];
+  return {
+    isDocumentHidden: () => hidden,
+    onDocumentVisibilityChange: (listener: () => void) => {
+      listeners.push(listener);
+    },
+    setHidden: (next: boolean) => {
+      hidden = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+}
+
 // Fake xterm: write() only queues; parse() runs the FIFO and fires callbacks
-// in order, like xterm's write buffer. writeCostMs models synchronous work.
-function fakeTerm(clock?: Clock, writeCostMs = 0) {
+// in order, like xterm's write buffer.
+function fakeTerm() {
   const pending: { data: OutputData; callback?: () => void }[] = [];
   const parsed: number[] = [];
   const writes: number[] = [];
@@ -59,15 +83,15 @@ function fakeTerm(clock?: Clock, writeCostMs = 0) {
     writes,
     parsed,
     pendingWrites: () => pending.length,
+    written: () => writes.reduce((total, size) => total + size, 0),
     write(data: OutputData, callback?: () => void) {
-      clock?.tick(writeCostMs);
       writes.push(data.length);
       pending.push({ data, callback });
     },
     parseOne() {
       const next = pending.shift();
       if (!next) return false;
-      parsed.push(...toBytes(next.data));
+      for (const byte of toBytes(next.data)) parsed.push(byte);
       next.callback?.();
       return true;
     },
@@ -85,11 +109,16 @@ function bytes(length: number, seed = 0): Uint8Array {
   return out;
 }
 
-function scheduler(clock: Clock, budget?: OutputSchedulerOptions["budget"]) {
+// Printable filler for stream-writer tests (no escape bytes for the OSC filter).
+const text = (length: number, fill = 0x61) => new Uint8Array(length).fill(fill);
+
+function scheduler(clock: Clock, budget?: OutputSchedulerOptions["budget"], doc = fakeDocument()) {
   return createOutputScheduler({
     now: clock.now,
     setTimer: clock.setTimer,
     clearTimer: clock.clearTimer,
+    isDocumentHidden: doc.isDocumentHidden,
+    onDocumentVisibilityChange: doc.onDocumentVisibilityChange,
     budget,
   });
 }
@@ -107,7 +136,7 @@ function prng(seed: number) {
 }
 
 describe("terminal output scheduler", () => {
-  it("writes foreground output immediately while ten busy background panes drain within the budget", () => {
+  it("writes foreground output immediately while ten busy background panes yield to it", () => {
     const clock = fakeClock();
     const s = scheduler(clock);
     const foregroundTerm = fakeTerm();
@@ -115,8 +144,14 @@ describe("terminal output scheduler", () => {
     const backgroundTerms = Array.from({ length: 10 }, () => fakeTerm());
     const backgrounds = backgroundTerms.map((term) => s.register(term, { visible: false }));
     backgrounds.forEach((pane, index) => pane.write(bytes(1 << 20, index)));
+    // Run the immediate first drain so each advance below covers one drain.
+    foreground.write(bytes(1));
+    clock.advance(0);
+    foregroundTerm.parseAll();
+    foregroundTerm.writes.length = 0;
+    expect(backgroundTerms.reduce((n, term) => n + term.writes.length, 0)).toBe(BUSY_FOREGROUND_MAX_WRITES_PER_DRAIN);
+    backgroundTerms.forEach((term) => term.parseAll());
 
-    const echoed: number[] = [];
     for (let frame = 0; frame < 20; frame += 1) {
       let callbackFired = false;
       foreground.write(bytes(8, frame), () => {
@@ -126,66 +161,194 @@ describe("terminal output scheduler", () => {
       expect(foregroundTerm.pendingWrites()).toBe(1);
       foregroundTerm.parseAll();
       expect(callbackFired).toBe(true);
-      echoed.push(frame);
+      expect(s.stats().foregroundActive).toBe(true);
 
       const before = backgroundTerms.map((term) => term.writes.length);
-      clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
+      clock.advance(INTERVAL);
       const sliceSizes = backgroundTerms.flatMap((term, index) => term.writes.slice(before[index]));
-      expect(sliceSizes.length).toBeLessThanOrEqual(BACKGROUND_MAX_WRITES_PER_DRAIN);
-      for (const size of sliceSizes) expect(size).toBeLessThanOrEqual(BACKGROUND_CHUNK_BYTES);
+      expect(sliceSizes.length).toBeLessThanOrEqual(BUSY_FOREGROUND_MAX_WRITES_PER_DRAIN);
+      for (const size of sliceSizes) expect(size).toBeLessThanOrEqual(BUSY_FOREGROUND_CHUNK_BYTES);
       backgroundTerms.forEach((term) => term.parseAll());
     }
-    expect(echoed).toHaveLength(20);
     expect(foregroundTerm.writes).toHaveLength(20);
   });
 
-  it("queues hidden output and drains it in slices on the drain interval", () => {
+  it("drains hidden panes much faster while the foreground is idle", () => {
+    const drainedIn = (busy: boolean) => {
+      const clock = fakeClock();
+      const s = scheduler(clock);
+      const term = fakeTerm();
+      const pane = s.register(term, { visible: false });
+      pane.write(bytes(8 << 20));
+      for (let cycle = 0; cycle < 10; cycle += 1) {
+        if (busy) s.noteForegroundActivity();
+        clock.advance(INTERVAL);
+        term.parseAll();
+      }
+      return term.written();
+    };
+    const idle = drainedIn(false);
+    const busy = drainedIn(true);
+    // Idle: the pane fills every in-flight slot with a 64 KiB slice per drain.
+    expect(idle).toBeGreaterThanOrEqual(10 * BACKGROUND_MAX_IN_FLIGHT_SLICES * BACKGROUND_CHUNK_BYTES);
+    // Busy: one 16 KiB slice per drain.
+    expect(busy).toBeLessThanOrEqual(11 * BUSY_FOREGROUND_CHUNK_BYTES);
+    expect(idle).toBeGreaterThanOrEqual(busy * 7);
+  });
+
+  it("returns to the fast tier once the foreground has been quiet for the activity window", () => {
+    const clock = fakeClock();
+    const s = scheduler(clock);
+    s.noteForegroundActivity();
+    expect(s.stats().foregroundActive).toBe(true);
+    clock.advance(FOREGROUND_ACTIVE_WINDOW_MS);
+    expect(s.stats().foregroundActive).toBe(false);
+  });
+
+  it("caps idle drains across many hidden panes by the per-drain write count", () => {
+    const clock = fakeClock();
+    const s = scheduler(clock);
+    const terms = Array.from({ length: 6 }, () => fakeTerm());
+    const panes = terms.map((term) => s.register(term, { visible: false }));
+    panes.forEach((pane, index) => pane.write(bytes(1 << 20, index)));
+    // Run the immediate first drain so each advance below covers one drain.
+    clock.advance(0);
+    expect(terms.reduce((n, term) => n + term.writes.length, 0)).toBe(BACKGROUND_MAX_WRITES_PER_DRAIN);
+    terms.forEach((term) => term.parseAll());
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      const before = terms.map((term) => term.writes.length);
+      clock.advance(INTERVAL);
+      const sizes = terms.flatMap((term, index) => term.writes.slice(before[index]));
+      expect(sizes.length).toBe(BACKGROUND_MAX_WRITES_PER_DRAIN);
+      for (const size of sizes) expect(size).toBeLessThanOrEqual(BACKGROUND_CHUNK_BYTES);
+      terms.forEach((term) => term.parseAll());
+    }
+  });
+
+  it("lets a hidden 8 MiB/s producer run without pausing upstream while the foreground is idle", () => {
+    const run = (busyForeground: boolean) => {
+      const clock = fakeClock();
+      const s = scheduler(clock);
+      const term = fakeTerm();
+      const pane = s.register(term, { visible: false });
+      const pauses: boolean[] = [];
+      const writer = createTerminalStreamWriter(pane, () => undefined, {
+        highWaterBytes: STREAM_HIGH_WATER_BYTES,
+        lowWaterBytes: STREAM_LOW_WATER_BYTES,
+        onPausedChange: (paused) => pauses.push(paused),
+      });
+      // 8 MiB/s in 16 ms ticks.
+      const perTick = Math.ceil((8 << 20) / (1000 / INTERVAL));
+      expect(perTick * (1000 / INTERVAL)).toBeGreaterThanOrEqual(8 << 20);
+      let accepted = 0;
+      // Two seconds of output at 8 MiB/s.
+      for (let tick = 0; tick < 2000 / INTERVAL; tick += 1) {
+        if (busyForeground) s.noteForegroundActivity();
+        if (writer.pushBytes(text(perTick))) accepted += perTick;
+        clock.advance(INTERVAL);
+        term.parseAll();
+      }
+      return { pauses, accepted, pending: writer.stats().pendingBytes };
+    };
+    const idle = run(false);
+    expect(idle.pauses).toEqual([]);
+    expect(idle.pending).toBeLessThanOrEqual(2 * BACKGROUND_MAX_IN_FLIGHT_SLICES * BACKGROUND_CHUNK_BYTES);
+    // The same producer behind a busy foreground is throttled by backpressure.
+    expect(run(true).pauses).toContain(true);
+  });
+
+  it("drains on a fixed cadence measured from the previous drain", () => {
     const clock = fakeClock();
     const s = scheduler(clock);
     const term = fakeTerm();
     const pane = s.register(term, { visible: false });
-    pane.write(bytes(40 * 1024));
-    expect(term.writes).toHaveLength(0);
-    expect(pane.queuedBytes()).toBe(40 * 1024);
-
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS - 1);
-    expect(term.writes).toHaveLength(0);
+    pane.write(bytes(BACKGROUND_CHUNK_BYTES * 8));
+    // The first drain after a quiet period runs right away.
+    clock.advance(0);
+    expect(term.writes).toHaveLength(BACKGROUND_MAX_IN_FLIGHT_SLICES);
+    // xterm reports the parse 10 ms later; the next drain still lands at 16 ms.
+    clock.advance(10);
+    term.parseAll();
+    clock.advance(INTERVAL - 10 - 1);
+    expect(term.writes).toHaveLength(BACKGROUND_MAX_IN_FLIGHT_SLICES);
     clock.advance(1);
-    expect(term.writes).toEqual([BACKGROUND_CHUNK_BYTES]);
-    // The next slice waits for xterm to parse the previous one.
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS * 3);
-    expect(term.writes).toHaveLength(1);
-    term.parseAll();
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
-    term.parseAll();
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
-    term.parseAll();
-    expect(term.writes).toEqual([BACKGROUND_CHUNK_BYTES, BACKGROUND_CHUNK_BYTES, 8 * 1024]);
-    expect(term.parsed).toEqual(Array.from(bytes(40 * 1024)));
-    expect(pane.queuedBytes()).toBe(0);
-    expect(s.stats().drainScheduled).toBe(false);
+    expect(term.writes).toHaveLength(2 * BACKGROUND_MAX_IN_FLIGHT_SLICES);
   });
 
-  it("stops a drain once its time budget is spent", () => {
+  it("feeds parse progress back through the in-flight gate", () => {
     const clock = fakeClock();
-    const s = scheduler(clock, { maxWritesPerDrain: 10, drainBudgetMs: 8 });
-    const terms = Array.from({ length: 6 }, () => fakeTerm(clock, 3));
-    const panes = terms.map((term) => s.register(term, { visible: false }));
-    panes.forEach((pane) => pane.write(bytes(1024)));
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
-    // 3 ms per write: the third write crosses the 8 ms budget and ends the drain.
-    expect(terms.filter((term) => term.writes.length > 0)).toHaveLength(3);
+    const s = scheduler(clock);
+    const term = fakeTerm();
+    const pane = s.register(term, { visible: false });
+    pane.write(bytes(BACKGROUND_CHUNK_BYTES * 8));
+    // xterm never reports progress: no further slices pile into its buffer.
+    clock.advance(INTERVAL * 10);
+    expect(term.writes).toHaveLength(BACKGROUND_MAX_IN_FLIGHT_SLICES);
+    expect(s.stats().drainScheduled).toBe(false);
+    term.parseOne();
     expect(s.stats().drainScheduled).toBe(true);
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
-    expect(terms.filter((term) => term.writes.length > 0)).toHaveLength(6);
+    clock.advance(INTERVAL);
+    expect(term.writes).toHaveLength(BACKGROUND_MAX_IN_FLIGHT_SLICES + 1);
+  });
+
+  it("writes straight through every pane while the document is hidden and flushes backlogs when it hides", () => {
+    const clock = fakeClock();
+    const doc = fakeDocument();
+    const s = scheduler(clock, undefined, doc);
+    const a = fakeTerm();
+    const b = fakeTerm();
+    const paneA = s.register(a, { visible: false });
+    const paneB = s.register(b, { visible: false });
+    const first = bytes(BACKGROUND_CHUNK_BYTES * 8, 1);
+    paneA.write(first);
+    paneB.write(bytes(100, 2));
+    clock.advance(0);
+    a.parseAll();
+    b.parseAll();
+    const queuedA = paneA.queuedBytes();
+    expect(queuedA).toBeGreaterThan(0);
+
+    doc.setHidden(true);
+    // visibilitychange to hidden releases every backlog in order.
+    expect(paneA.queuedBytes()).toBe(0);
+    expect(s.stats()).toMatchObject({ backgroundBacklogPanes: 0, drainScheduled: false });
+    const late = bytes(10, 3);
+    paneA.write(late);
+    expect(a.pendingWrites()).toBe(2);
+    a.parseAll();
+    expect(a.parsed).toEqual([...first, ...late]);
+
+    // Becoming visible again does not flush; hidden panes queue once more.
+    doc.setHidden(false);
+    paneB.write(bytes(5));
+    expect(paneB.queuedBytes()).toBe(5);
+  });
+
+  it("flushes a pane's backlog before passing through when the document hid without an event", () => {
+    const clock = fakeClock();
+    let hidden = false;
+    const s = createOutputScheduler({
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      isDocumentHidden: () => hidden,
+      onDocumentVisibilityChange: () => undefined,
+    });
+    const term = fakeTerm();
+    const pane = s.register(term, { visible: false });
+    pane.write(bytes(BACKGROUND_CHUNK_BYTES * 4, 1));
+    hidden = true;
+    pane.write(bytes(3, 2));
+    expect(pane.queuedBytes()).toBe(0);
+    term.parseAll();
+    expect(term.parsed).toEqual([...bytes(BACKGROUND_CHUNK_BYTES * 4, 1), ...bytes(3, 2)]);
   });
 
   it("serves background panes round-robin", () => {
     const clock = fakeClock();
-    const s = scheduler(clock, { maxWritesPerDrain: 1 });
+    const s = scheduler(clock, { idle: { maxWritesPerDrain: 1, chunkBytes: 1024 } });
     const order: string[] = [];
-    const names = ["a", "b", "c"];
-    const terms = names.map((name) => {
+    const terms = ["a", "b", "c"].map((name) => {
       const term = fakeTerm();
       const write = term.write.bind(term);
       term.write = (data, callback) => {
@@ -196,20 +359,20 @@ describe("terminal output scheduler", () => {
     });
     const panes = terms.map((term) => s.register(term, { visible: false }));
     // Pane "a" floods; "b" and "c" join with smaller backlogs.
-    panes[0].write(bytes(BACKGROUND_CHUNK_BYTES * 6));
-    panes[1].write(bytes(BACKGROUND_CHUNK_BYTES * 2));
-    panes[2].write(bytes(BACKGROUND_CHUNK_BYTES * 2));
-    for (let i = 0; i < 8; i += 1) {
-      clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
+    panes[0].write(bytes(1024 * 6));
+    panes[1].write(bytes(1024 * 2));
+    panes[2].write(bytes(1024 * 2));
+    for (let i = 0; i < 12; i += 1) {
+      clock.advance(INTERVAL);
       terms.forEach((term) => term.parseAll());
     }
     expect(order.slice(0, 6)).toEqual(["a", "b", "c", "a", "b", "c"]);
-    expect(order.slice(6)).toEqual(["a", "a"]);
+    expect(order.slice(6)).toEqual(["a", "a", "a", "a"]);
   });
 
   it("drains the backlog in order before new data on reveal", () => {
     const clock = fakeClock();
-    const s = scheduler(clock);
+    const s = scheduler(clock, { idle: { maxInFlightSlices: 1 } });
     const term = fakeTerm();
     const pane = s.register(term, { visible: false });
     const first = bytes(BACKGROUND_CHUNK_BYTES * 2 + 100, 1);
@@ -217,7 +380,7 @@ describe("terminal output scheduler", () => {
     const done: string[] = [];
     pane.write(first, () => done.push("first"));
     pane.write(second, () => done.push("second"));
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
+    clock.advance(0);
     expect(term.writes).toEqual([BACKGROUND_CHUNK_BYTES]);
 
     pane.setVisible(true);
@@ -228,8 +391,7 @@ describe("terminal output scheduler", () => {
     term.parseAll();
     expect(term.parsed).toEqual([...first, ...second, ...fresh]);
     expect(done).toEqual(["first", "second", "fresh"]);
-    expect(s.stats().drainScheduled).toBe(false);
-    expect(s.stats().backgroundBacklogPanes).toBe(0);
+    expect(s.stats()).toMatchObject({ drainScheduled: false, backgroundBacklogPanes: 0 });
 
     // Hiding again queues new output.
     pane.setVisible(false);
@@ -240,17 +402,17 @@ describe("terminal output scheduler", () => {
 
   it("returns a unit's credit only after xterm's callback for its last byte", () => {
     const clock = fakeClock();
-    const s = scheduler(clock);
+    const s = scheduler(clock, { idle: { maxInFlightSlices: 1 } });
     const term = fakeTerm();
     const pane = s.register(term, { visible: false });
     let credited = 0;
     pane.write(bytes(BACKGROUND_CHUNK_BYTES * 2), () => {
       credited += 1;
     });
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
+    clock.advance(0);
     term.parseAll();
     expect(credited).toBe(0);
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
+    clock.advance(INTERVAL);
     expect(term.writes).toHaveLength(2);
     expect(credited).toBe(0);
     term.parseAll();
@@ -265,24 +427,24 @@ describe("terminal output scheduler", () => {
     const pauses: boolean[] = [];
     let written = 0;
     const writer = createTerminalStreamWriter(pane, () => undefined, {
-      highWaterBytes: 64 * 1024,
-      lowWaterBytes: 16 * 1024,
-      maxPendingBytes: 128 * 1024,
+      highWaterBytes: 256 * 1024,
+      lowWaterBytes: 64 * 1024,
+      maxPendingBytes: 512 * 1024,
       onPausedChange: (paused) => pauses.push(paused),
       onWritten: () => {
         written += 1;
       },
     });
-    expect(writer.pushBytes(bytes(80 * 1024))).toBe(true);
+    expect(writer.pushBytes(text(320 * 1024, 0x61))).toBe(true);
     // Nothing reached xterm yet, but the writer already counts the bytes in flight.
     expect(term.writes).toHaveLength(0);
     expect(pauses).toEqual([true]);
-    expect(writer.stats().pendingBytes).toBe(80 * 1024);
-    expect(writer.pushBytes(bytes(40 * 1024))).toBe(true);
+    expect(writer.stats().pendingBytes).toBe(320 * 1024);
+    expect(writer.pushBytes(text(160 * 1024, 0x62))).toBe(true);
     // Past the hard cap the chunk is refused whole for the offset replay.
-    expect(writer.pushBytes(bytes(40 * 1024))).toBe(false);
+    expect(writer.pushBytes(text(160 * 1024, 0x63))).toBe(false);
 
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
+    clock.advance(0);
     term.parseAll();
     expect(written).toBe(0);
     pane.setVisible(true);
@@ -290,21 +452,50 @@ describe("terminal output scheduler", () => {
     expect(written).toBeGreaterThan(0);
     expect(pauses).toEqual([true, false]);
     expect(writer.stats().pendingBytes).toBe(0);
-    expect(term.parsed).toEqual([...bytes(80 * 1024), ...bytes(40 * 1024)]);
+    expect(term.parsed).toEqual([...text(320 * 1024, 0x61), ...text(160 * 1024, 0x62)]);
+  });
+
+  it("dispatches a hidden pane's notifications on acceptance while other events wait for the parse", () => {
+    const clock = fakeClock();
+    const s = scheduler(clock);
+    const term = fakeTerm();
+    const pane = s.register(term, { visible: false });
+    const events: OscStreamEvent["kind"][] = [];
+    const writer = createTerminalStreamWriter(pane, (event) => events.push(event.kind), {
+      highWaterBytes: STREAM_HIGH_WATER_BYTES,
+      lowWaterBytes: STREAM_LOW_WATER_BYTES,
+      dispatchEarly: (event) => event.kind === "notification",
+    });
+    const enc = new TextEncoder();
+    writer.pushBytes(enc.encode("build\x1b]133;D;0\x07done\x1b]9;finished\x07tail"));
+    expect(events).toEqual(["notification"]);
+    expect(term.writes).toHaveLength(0);
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      clock.advance(INTERVAL);
+      term.parseAll();
+    }
+    expect(events).toEqual(["notification", "command"]);
+    // The bytes themselves keep their order.
+    expect(new TextDecoder().decode(Uint8Array.from(term.parsed))).toBe("builddonetail");
   });
 
   it("never loses, duplicates, or reorders bytes across random scheduling", () => {
     for (const seed of [1, 7, 42, 1337, 9001]) {
       const random = prng(seed);
       const clock = fakeClock();
-      const s = scheduler(clock, { chunkBytes: 1 + Math.floor(random() * 64), maxWritesPerDrain: 1 + Math.floor(random() * 3) });
-      const panes = Array.from({ length: 4 }, (_, index) => {
-        const term = fakeTerm();
-        const visible = random() < 0.5;
-        const handle = s.register(term, { visible });
-        return { term, handle, index, expected: [] as number[], callbacks: [] as number[], unitEnds: [] as number[], next: 0 };
+      const doc = fakeDocument();
+      const tier = () => ({
+        chunkBytes: 1 + Math.floor(random() * 64),
+        maxWritesPerDrain: 1 + Math.floor(random() * 4),
+        maxInFlightSlices: 1 + Math.floor(random() * 3),
       });
-      for (let step = 0; step < 400; step += 1) {
+      const s = scheduler(clock, { idle: tier(), busy: tier() }, doc);
+      const panes = Array.from({ length: 4 }, () => {
+        const term = fakeTerm();
+        const handle = s.register(term, { visible: random() < 0.5 });
+        return { term, handle, expected: [] as number[], callbacks: [] as number[], next: 0 };
+      });
+      for (let step = 0; step < 500; step += 1) {
         const pane = panes[Math.floor(random() * panes.length)];
         const roll = random();
         if (roll < 0.45) {
@@ -314,15 +505,18 @@ describe("terminal output scheduler", () => {
           const data: OutputData = random() < 0.5 ? chunk : Uint8Array.from(chunk, (ch) => ch.charCodeAt(0));
           pane.expected.push(...Array.from(chunk, (ch) => ch.charCodeAt(0)));
           const end = pane.expected.length;
-          pane.unitEnds.push(end);
           pane.handle.write(data, () => {
             // Credit only after every byte of the unit has been parsed.
             expect(pane.term.parsed.length).toBeGreaterThanOrEqual(end);
             pane.callbacks.push(unit);
           });
-        } else if (roll < 0.6) {
+        } else if (roll < 0.57) {
           pane.handle.setVisible(random() < 0.5);
-        } else if (roll < 0.8) {
+        } else if (roll < 0.6) {
+          doc.setHidden(random() < 0.3);
+        } else if (roll < 0.65) {
+          s.noteForegroundActivity();
+        } else if (roll < 0.82) {
           pane.term.parseOne();
         } else {
           clock.advance(Math.floor(random() * 40));
@@ -335,8 +529,7 @@ describe("terminal output scheduler", () => {
         expect(pane.callbacks).toEqual(Array.from({ length: pane.next }, (_, i) => i));
         expect(pane.handle.queuedBytes()).toBe(0);
       }
-      expect(s.stats().queuedBytes).toBe(0);
-      expect(s.stats().drainScheduled).toBe(false);
+      expect(s.stats()).toMatchObject({ queuedBytes: 0, drainScheduled: false });
     }
   });
 
@@ -347,40 +540,40 @@ describe("terminal output scheduler", () => {
     const pane = s.register(term, { visible: false });
     const other = s.register(fakeTerm(), { visible: true });
     let credited = 0;
-    pane.write(bytes(BACKGROUND_CHUNK_BYTES * 3), () => {
+    pane.write(bytes(BACKGROUND_CHUNK_BYTES * 8), () => {
       credited += 1;
     });
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
-    expect(term.writes).toHaveLength(1);
+    clock.advance(0);
+    expect(term.writes).toHaveLength(BACKGROUND_MAX_IN_FLIGHT_SLICES);
     expect(s.stats()).toMatchObject({ panes: 2, backgroundBacklogPanes: 1 });
 
     pane.dispose();
     pane.dispose();
-    expect(s.stats()).toEqual({ panes: 1, backgroundBacklogPanes: 0, queuedBytes: 0, drainScheduled: false });
+    expect(s.stats()).toMatchObject({ panes: 1, backgroundBacklogPanes: 0, queuedBytes: 0, drainScheduled: false });
     expect(clock.pending()).toBe(0);
-    // The late callback of the slice already in xterm is inert.
+    // The late callbacks of slices already in xterm are inert.
     term.parseAll();
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS * 4);
-    expect(term.writes).toHaveLength(1);
+    clock.advance(INTERVAL * 4);
+    expect(term.writes).toHaveLength(BACKGROUND_MAX_IN_FLIGHT_SLICES);
     expect(credited).toBe(0);
     // Writes and visibility changes after dispose are ignored.
     pane.write(bytes(10));
     pane.setVisible(true);
-    expect(term.writes).toHaveLength(1);
+    expect(term.writes).toHaveLength(BACKGROUND_MAX_IN_FLIGHT_SLICES);
     other.dispose();
     expect(s.stats().panes).toBe(0);
   });
 
   it("keeps the drain timer running only while a pane can drain", () => {
     const clock = fakeClock();
-    const s = scheduler(clock);
+    const s = scheduler(clock, { idle: { maxInFlightSlices: 1 } });
     const a = fakeTerm();
     const b = fakeTerm();
     const paneA = s.register(a, { visible: false });
     const paneB = s.register(b, { visible: false });
     paneA.write(bytes(BACKGROUND_CHUNK_BYTES * 2));
     paneB.write(bytes(BACKGROUND_CHUNK_BYTES * 2));
-    clock.advance(BACKGROUND_DRAIN_INTERVAL_MS);
+    clock.advance(0);
     // Both panes wait on their in-flight slice: no timer spins meanwhile.
     expect(s.stats().drainScheduled).toBe(false);
     a.parseAll();
@@ -395,11 +588,11 @@ describe("terminal output scheduler", () => {
 
   it("rejects a budget that cannot make progress", () => {
     const clock = fakeClock();
-    expect(() => scheduler(clock, { chunkBytes: 0 })).toThrow(RangeError);
-    expect(() => scheduler(clock, { maxWritesPerDrain: 0 })).toThrow(RangeError);
-    expect(() => scheduler(clock, { maxInFlightSlices: Number.NaN })).toThrow(RangeError);
+    expect(() => scheduler(clock, { idle: { chunkBytes: 0 } })).toThrow(RangeError);
+    expect(() => scheduler(clock, { busy: { maxWritesPerDrain: 0 } })).toThrow(RangeError);
+    expect(() => scheduler(clock, { idle: { maxInFlightSlices: Number.NaN } })).toThrow(RangeError);
     expect(() => scheduler(clock, { drainIntervalMs: -1 })).toThrow(RangeError);
-    expect(() => scheduler(clock, { drainBudgetMs: -1 })).toThrow(RangeError);
+    expect(() => scheduler(clock, { foregroundActiveMs: -1 })).toThrow(RangeError);
   });
 
   it("drives drains with real timers by default", async () => {
@@ -411,5 +604,26 @@ describe("terminal output scheduler", () => {
     term.parseAll();
     expect(String.fromCharCode(...term.parsed)).toBe("hello");
     pane.dispose();
+  });
+
+  it("follows the document's visibility by default", () => {
+    const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    vi.stubGlobal("document", doc);
+    try {
+      const clock = fakeClock();
+      const s = createOutputScheduler({ now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+      const term = fakeTerm();
+      const pane = s.register(term, { visible: false });
+      pane.write("queued");
+      expect(pane.queuedBytes()).toBe(6);
+      doc.visibilityState = "hidden";
+      doc.dispatchEvent(new Event("visibilitychange"));
+      expect(pane.queuedBytes()).toBe(0);
+      pane.write("!");
+      term.parseAll();
+      expect(String.fromCharCode(...term.parsed)).toBe("queued!");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
