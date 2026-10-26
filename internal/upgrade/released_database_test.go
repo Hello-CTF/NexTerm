@@ -2,7 +2,6 @@ package upgrade_test
 
 import (
 	"context"
-	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -156,11 +155,8 @@ func TestMigrateReleasedGORMSchemasDatabase(t *testing.T) {
 			if report.OwnerID != "admin-a" || report.DeferredNoActiveSuperadmin || report.Ownership.Assigned != 6 || report.Ownership.Conflicts != 2 {
 				t.Fatalf("released ownership report = %+v", report)
 			}
-			if report.Layout.Copied != 1 || report.AI.CronJobsAssigned != 1 || report.AI.RunsAssigned != 1 || report.AI.MessagesAssigned != 1 {
-				t.Fatalf("released layout/AI report = %+v", report)
-			}
-			if report.AISettings.Profiles.Migrated != 1 || report.AISettings.Tombstones.Migrated != 1 {
-				t.Fatalf("released AI settings report = %+v", report.AISettings)
+			if report.Layout.Copied != 1 {
+				t.Fatalf("released layout report = %+v", report)
 			}
 			for _, check := range []struct {
 				model    any
@@ -170,9 +166,6 @@ func TestMigrateReleasedGORMSchemasDatabase(t *testing.T) {
 				{&store.AssetRow{}, "id", "asset"},
 				{&store.CredentialRow{}, "id", "credential"},
 				{&store.ConversationRow{}, "id", "conversation"},
-				{&store.MessageRow{}, "id", "message"},
-				{&store.RunRow{}, "id", "run"},
-				{&store.CronJob{}, "id", "cron"},
 				{&store.KnownHostRow{}, "id", "known-move"},
 				{&store.SyncTombstone{}, "id", "sync-move"},
 				{&store.CredentialTombstone{}, "id", "deleted-credential"},
@@ -212,22 +205,6 @@ func TestMigrateReleasedGORMSchemasDatabase(t *testing.T) {
 				}
 			}
 
-			var targetProfiles store.Setting
-			if err := db.Where(upgradeSettingKeyEquals(store.AIProfilesSettingKeyForUser("admin-a"))).First(&targetProfiles).Error; err != nil {
-				t.Fatal(err)
-			}
-			var decoded struct {
-				Profiles []struct {
-					ID     string `json:"id"`
-					APIKey string `json:"apiKey"`
-				} `json:"profiles"`
-			}
-			if err := json.Unmarshal([]byte(targetProfiles.Value), &decoded); err != nil {
-				t.Fatal(err)
-			}
-			if len(decoded.Profiles) != 1 || decoded.Profiles[0].ID != "profile-legacy" || decoded.Profiles[0].APIKey != "enc:v1:released-ai" {
-				t.Fatalf("migrated AI profiles = %+v", decoded.Profiles)
-			}
 			var globalAITombstone store.SyncTombstone
 			if err := db.Where("id = ? AND owner_id = ''", "deleted-profile").First(&globalAITombstone).Error; err != nil {
 				t.Fatal(err)
@@ -235,31 +212,12 @@ func TestMigrateReleasedGORMSchemasDatabase(t *testing.T) {
 			if globalAITombstone.Kind != store.SyncTombstoneKindAIProfile || globalAITombstone.DeletedAt != 13 {
 				t.Fatalf("global AI tombstone = %+v", globalAITombstone)
 			}
-			var aiTombstone store.SyncTombstone
-			if err := db.Where("id = ? AND owner_id = ?", "deleted-profile", "admin-a").First(&aiTombstone).Error; err != nil {
-				t.Fatal(err)
-			}
-			if aiTombstone.Kind != store.SyncTombstoneKindAIProfile || aiTombstone.DeletedAt != 13 {
-				t.Fatalf("AI tombstone changed by generic sync migration: %+v", aiTombstone)
-			}
-			var ledgerAfterFirst []store.AIOwnerMigration
-			if err := db.Order("migration").Order("kind").Order("record_id").Find(&ledgerAfterFirst).Error; err != nil {
-				t.Fatal(err)
-			}
-
 			repeated, err := upgrade.Migrate(context.Background(), db, false)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if repeated.Ownership.Assigned != 0 || repeated.Ownership.Conflicts != 2 || repeated.Layout.Existing != 1 || repeated.AI.Changed() || !repeated.AISettings.Empty() {
+			if repeated.Ownership.Assigned != 0 || repeated.Ownership.Conflicts != 2 || repeated.Layout.Existing != 1 {
 				t.Fatalf("released idempotent reentry report = %+v", repeated)
-			}
-			var ledgerAfterSecond []store.AIOwnerMigration
-			if err := db.Order("migration").Order("kind").Order("record_id").Find(&ledgerAfterSecond).Error; err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(ledgerAfterSecond, ledgerAfterFirst) {
-				t.Fatalf("reentry rewrote AI ledger:\nfirst  %+v\nsecond %+v", ledgerAfterFirst, ledgerAfterSecond)
 			}
 		})
 	}

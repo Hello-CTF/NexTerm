@@ -428,39 +428,25 @@ func (c *productionUpgradeCoordinator) retry(ctx context.Context) {
 }
 
 func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrade.Report) {
-	aiSettings := report.AISettings.Total()
 	values := []any{
 		"ownership_assigned", report.Ownership.Assigned,
 		"ownership_conflicts", report.Ownership.Conflicts,
 		"layout_copied", report.Layout.Copied,
 		"layout_existing", report.Layout.Existing,
 		"layout_conflicts", report.Layout.Conflicts,
-		"cron_assigned", report.AI.CronJobsAssigned,
-		"cron_quarantined", report.AI.CronJobsQuarantined,
-		"runs_assigned", report.AI.RunsAssigned,
-		"messages_assigned", report.AI.MessagesAssigned,
-		"run_events_assigned", report.AI.RunEventsAssigned,
-		"hitl_runs_assigned", report.AI.HitlRunsAssigned,
-		"checkpoints_assigned", report.AI.CheckpointsAssigned,
-		"unattributed", report.AI.Unattributed,
-		"ai_settings_migrated", aiSettings.Migrated,
-		"ai_settings_existing", aiSettings.Existing,
-		"ai_settings_conflicts", aiSettings.Conflicts,
-		"ai_settings_tombstoned", aiSettings.Tombstoned,
-		"ai_settings_ledger_entries", report.AISettings.LedgerEntries,
 	}
 	if report.DeferredNoActiveSuperadmin {
 		c.logger.Warn("data upgrade deferred until an active superadmin is created", values...)
 		c.emit(ctx, "数据升级已暂缓：等待首个 active superadmin；保留与孤立记录计数请查看服务器日志")
 		return
 	}
-	conflicts := report.Ownership.Conflicts + report.Layout.Conflicts + aiSettings.Conflicts
-	if conflicts > 0 || report.AI.CronJobsQuarantined > 0 || report.AI.Unattributed > 0 || aiSettings.Tombstoned > 0 {
+	conflicts := report.Ownership.Conflicts + report.Layout.Conflicts
+	if conflicts > 0 {
 		c.logger.Warn("data upgrade completed with preserved or unattended entries", values...)
 		c.emit(ctx, "数据升级存在未自动处理的冲突或孤立记录；原始记录已保留，请查看服务器日志")
 		return
 	}
-	changed := report.Ownership.Assigned+report.Layout.Copied+aiSettings.Migrated+aiSettings.Tombstoned+report.AISettings.LedgerEntries > 0 || report.AI.Changed()
+	changed := report.Ownership.Assigned+report.Layout.Copied > 0
 	if changed {
 		c.logger.Info("completed data upgrade", values...)
 	}

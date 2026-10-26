@@ -73,15 +73,15 @@ func TestAgentExecutorScopeLookupIsCancelable(t *testing.T) {
 	}
 }
 
-func TestAgentExecutorRejectsOwnerlessLegacyByDefault(t *testing.T) {
+func TestAgentExecutorRejectsOwnerlessTrigger(t *testing.T) {
 	runner := &fakeAgentRunner{}
 	executor := &AgentExecutor{Runner: runner}
 	trigger := testTrigger()
-	trigger.OwnerKind = OwnerKindLegacy
-	if err := executor.Execute(context.Background(), trigger); !errors.Is(err, ErrOwnerlessLegacy) {
-		t.Fatalf("legacy execution error = %v", err)
+	trigger.OwnerKind = ""
+	if err := executor.Execute(context.Background(), trigger); !errors.Is(err, ErrOwnerless) {
+		t.Fatalf("ownerless execution error = %v", err)
 	}
 	if len(runner.args) != 0 {
-		t.Fatal("legacy run borrowed the open agent path")
+		t.Fatal("ownerless run borrowed the open agent path")
 	}
 }

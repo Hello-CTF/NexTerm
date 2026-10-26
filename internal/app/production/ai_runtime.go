@@ -756,6 +756,13 @@ func (c *aiTerminalAssetConnector) ConnectAsset(ctx context.Context, assetID str
 	return c.connector.Connect(validationCtx, cron.Trigger{OwnerID: ipc.OwnerID(validationCtx)}, assetID)
 }
 
+func prepareProductionMemory(_ context.Context, services *ProductionServices) (*memory.Store, error) {
+	if services.dataDir == "" {
+		return nil, nil
+	}
+	return memory.NewStore(services.Store.GORM())
+}
+
 func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	if services.Store == nil || services.Sessions == nil || services.Profiles == nil {
 		return errors.New("AI runtime requires store, sessions and profiles services")

@@ -5,6 +5,6 @@ var AllModels = []any{
 	TranscriptRow{}, TranscriptChunkRow{}, TranscriptChunkTS{}, TranscriptTSIndex{}, DurableTranscriptOffset{}, DurableTabTitle{}, CredentialTombstone{}, SyncTombstone{}, SyncState{}, MemoryEntry{}, MemorySettings{},
 	AgentWatchRow{}, AgentWatchOutboxRow{}, AgentWatchTargetRow{},
 	AppUser{}, UserDEK{}, UserDevice{}, UserSession{}, SyncCredential{}, UserSetting{}, DeviceEnrollCode{}, UserSyncObject{}, UserSyncHead{}, DeviceAgent{}, DeviceMetrics{}, DeviceMetricsHourly{}, UserTOTP{}, UserTOTPRecoveryCode{},
-	SharePreviewLink{}, HostShare{}, CommandLog{}, ForwardRuleRow{}, ExecBatchRow{}, ExecBatchResultRow{}, ExecTargetSetRow{}, ExecTargetSetItemRow{}, AIOwnerMigration{},
+	SharePreviewLink{}, HostShare{}, CommandLog{}, ForwardRuleRow{}, ExecBatchRow{}, ExecBatchResultRow{}, ExecTargetSetRow{}, ExecTargetSetItemRow{},
 	AgentRosterRow{}, AgentOutcomeRow{}, AgentEvidenceKeyRow{}, AgentEvidenceAnchorRow{},
 }

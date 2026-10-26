@@ -22,7 +22,6 @@ type KnownHostRow = model.KnownHostRow
 type RecordingRow = model.RecordingRow
 type OutcomeRecord = model.OutcomeRecord
 type CronJob = model.CronJob
-type AIOwnerMigration = model.AIOwnerMigration
 type SyncTombstone = model.SyncTombstone
 type SyncState = model.SyncState
 type AppUser = model.AppUser

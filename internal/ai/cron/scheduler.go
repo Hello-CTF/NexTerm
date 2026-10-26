@@ -357,7 +357,7 @@ func (s *Scheduler) startDueJobs(ctx context.Context, now time.Time) (int, error
 			if !job.Enabled || !due(job, now) {
 				continue
 			}
-			if err := ownerExecutionError(job.OwnerID, job.OwnerKind, s.options.AllowOwnerlessLegacy); err != nil {
+			if err := ownerExecutionError(job.OwnerID, job.OwnerKind); err != nil {
 				if err := s.disableUnexecutable(ctx, job, now, err); err != nil {
 					return started, err
 				}

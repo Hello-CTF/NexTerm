@@ -20,7 +20,6 @@ type upgradeFaultSnapshot struct {
 	cronJobs      []store.CronJob
 	tombstones    []store.SyncTombstone
 	settings      []store.Setting
-	ledger        []store.AIOwnerMigration
 }
 
 func snapshotUpgradeFault(t *testing.T, database *gorm.DB) upgradeFaultSnapshot {
@@ -36,7 +35,6 @@ func snapshotUpgradeFault(t *testing.T, database *gorm.DB) upgradeFaultSnapshot 
 		{&snapshot.cronJobs, []string{"id"}},
 		{&snapshot.tombstones, []string{"owner_id", "id"}},
 		{&snapshot.settings, []string{"key"}},
-		{&snapshot.ledger, []string{"migration", "kind", "record_id"}},
 	} {
 		statement := database
 		for _, column := range query.order {
@@ -120,8 +118,6 @@ func TestMigrateFaultRollbackAndReentryDatabase(t *testing.T) {
 		{name: "Credential", verb: "update", table: "credential", hits: 1},
 		{name: "Sync", verb: "update", table: "sync_tombstone", hits: 1},
 		{name: "Layout", verb: "create", table: "setting", hits: 1},
-		{name: "AIHistory", verb: "update", table: "cron_job", hits: 1},
-		{name: "AISettings", verb: "create", table: "setting", hits: 2},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			database := dbtest.NewFixture(t).OpenStore(t)
@@ -146,7 +142,7 @@ func TestMigrateFaultRollbackAndReentryDatabase(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if retried.Ownership.Assigned != 4 || retried.Layout.Copied != 1 || retried.AI.CronJobsAssigned != 1 || retried.AISettings.Profiles.Migrated != 1 {
+			if retried.Ownership.Assigned != 4 || retried.Layout.Copied != 1 {
 				t.Fatalf("retry report = %+v", retried)
 			}
 			converged := snapshotUpgradeFault(t, db)
@@ -157,7 +153,6 @@ func TestMigrateFaultRollbackAndReentryDatabase(t *testing.T) {
 				{&store.AssetRow{}, "asset"},
 				{&store.CredentialRow{}, "credential"},
 				{&store.ConversationRow{}, "conversation"},
-				{&store.CronJob{}, "cron"},
 				{&store.SyncTombstone{}, "deleted-group"},
 			} {
 				requireUpgradeOwner(t, db, check.model, "id", check.id, "admin")
@@ -168,7 +163,7 @@ func TestMigrateFaultRollbackAndReentryDatabase(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if repeated.Ownership.Assigned != 0 || repeated.Layout.Existing != 1 || repeated.AI.Changed() || !repeated.AISettings.Empty() {
+			if repeated.Ownership.Assigned != 0 || repeated.Layout.Existing != 1 {
 				t.Fatalf("idempotent reentry report = %+v", repeated)
 			}
 			if after := snapshotUpgradeFault(t, db); !reflect.DeepEqual(after, converged) {

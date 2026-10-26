@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Hello-CTF/NexTerm/internal/ai/cron"
-	"github.com/Hello-CTF/NexTerm/internal/ai/owner/legacy"
 	"gorm.io/gorm"
 )
 
@@ -26,11 +24,9 @@ type Report struct {
 	DeferredNoActiveSuperadmin bool
 	Ownership                  OwnershipReport
 	Layout                     LayoutReport
-	AI                         cron.OwnerlessMigrationReport
-	AISettings                 legacy.Report
 }
 
-// Migrate upgrades GORM-era data before the existing AI migrations run. Shared
+// Migrate upgrades GORM-era data for account-mode databases. Shared
 // desktop/Open mode keeps ownerless data and global settings in their original
 // scope. A deferred report is successful and safe to retry after an active
 // superadmin is created.
@@ -70,19 +66,6 @@ func Migrate(ctx context.Context, database *gorm.DB, shared bool) (Report, error
 			}
 		}
 
-		aiReport, err := cron.MigrateOwnerlessAI(ctx, tx, shared)
-		if err != nil {
-			return err
-		}
-		report.AI = aiReport
-		aiSettingsReport, err := legacy.Migrate(ctx, tx, shared)
-		if err != nil {
-			return err
-		}
-		report.AISettings = aiSettingsReport
-		if aiSettingsReport.SkippedNoActiveSuperadmin {
-			report.DeferredNoActiveSuperadmin = true
-		}
 		return nil
 	})
 	if err != nil {

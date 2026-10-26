@@ -18,7 +18,6 @@ import (
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
 		db:                      db,
-		AIOwnerMigration:        newAIOwnerMigration(db, opts...),
 		AgentEvidenceAnchorRow:  newAgentEvidenceAnchorRow(db, opts...),
 		AgentEvidenceKeyRow:     newAgentEvidenceKeyRow(db, opts...),
 		AgentOutcomeRow:         newAgentOutcomeRow(db, opts...),
@@ -81,7 +80,6 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 type Query struct {
 	db *gorm.DB
 
-	AIOwnerMigration        aIOwnerMigration
 	AgentEvidenceAnchorRow  agentEvidenceAnchorRow
 	AgentEvidenceKeyRow     agentEvidenceKeyRow
 	AgentOutcomeRow         agentOutcomeRow
@@ -147,7 +145,6 @@ func (q *Query) UnderlyingDB() *gorm.DB { return q.db }
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
 		db:                      db,
-		AIOwnerMigration:        q.AIOwnerMigration.clone(db),
 		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.clone(db),
 		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.clone(db),
 		AgentOutcomeRow:         q.AgentOutcomeRow.clone(db),
@@ -218,7 +215,6 @@ func (q *Query) WriteDB() *Query {
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
 		db:                      db,
-		AIOwnerMigration:        q.AIOwnerMigration.replaceDB(db),
 		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.replaceDB(db),
 		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.replaceDB(db),
 		AgentOutcomeRow:         q.AgentOutcomeRow.replaceDB(db),
@@ -279,7 +275,6 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 }
 
 type queryCtx struct {
-	AIOwnerMigration        *aIOwnerMigrationDo
 	AgentEvidenceAnchorRow  *agentEvidenceAnchorRowDo
 	AgentEvidenceKeyRow     *agentEvidenceKeyRowDo
 	AgentOutcomeRow         *agentOutcomeRowDo
@@ -340,7 +335,6 @@ type queryCtx struct {
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
-		AIOwnerMigration:        q.AIOwnerMigration.WithContext(ctx),
 		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.WithContext(ctx),
 		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.WithContext(ctx),
 		AgentOutcomeRow:         q.AgentOutcomeRow.WithContext(ctx),

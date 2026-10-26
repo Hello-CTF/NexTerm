@@ -320,11 +320,9 @@ func composeCronScheduler(ctx context.Context, services *ProductionServices, opt
 	if err != nil {
 		return nil, nil, err
 	}
-	allowLegacy := services.desktop || owner.OpenAccess(ctx)
-	options.AllowOwnerlessLegacy = allowLegacy
 	executor := &cron.AgentExecutor{
-		ScopeFor: scopeForConversation(services.Store, productionScopeValidator(services)), AllowOwnerlessLegacy: allowLegacy,
-		Connect: newCronConnector(services),
+		ScopeFor: scopeForConversation(services.Store, productionScopeValidator(services)),
+		Connect:  newCronConnector(services),
 	}
 	if options.OnError == nil {
 		options.OnError = func(err error) {

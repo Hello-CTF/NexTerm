@@ -17,7 +17,7 @@ var (
 	ErrStorage          = errors.New("定时任务存储失败，请重试")
 	ErrExecutionTimeout = errors.New("定时任务执行超时")
 	ErrLeaseLost        = errors.New("定时任务租约丢失，本次运行已中断")
-	ErrOwnerlessLegacy  = errors.New("账号模式不能执行无所有者的旧定时任务，请重新创建")
+	ErrOwnerless        = errors.New("账号模式不能执行无所有者的旧定时任务，请重新创建")
 	ErrInvalidOwner     = errors.New("定时任务所有者信息无效")
 	ErrForeignScope     = errors.New("定时任务会话不属于任务所有者")
 )
@@ -160,7 +160,6 @@ type Options struct {
 	CircuitCooldown         time.Duration
 	DueScanBatchSize        int
 	RecoveryBatchSize       int
-	AllowOwnerlessLegacy    bool
 	OwnerID                 string
 	Now                     func() time.Time
 	OnError                 func(error)
