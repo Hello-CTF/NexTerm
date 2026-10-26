@@ -2899,19 +2899,6 @@ html[data-nx-keyboard="open"] #root {
   display: contents;
 }
 
-@media (pointer: coarse) {
-  .nx-terminal-keys {
-    flex-wrap: wrap;
-    overflow-x: visible;
-  }
-
-  .nx-terminal-keys > .sticky,
-  .nx-terminal-keys .nx-terminal-keyboard {
-    position: static;
-    box-shadow: none;
-  }
-}
-
 @container term (max-width: 560px) {
   .nx-toolbar.nx-term-toolbar {
     flex-wrap: wrap;
@@ -2959,31 +2946,6 @@ html[data-nx-keyboard="open"] #root {
     display: none;
   }
 
-  .nx-terminal-keys {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
-    overflow: visible;
-    gap: 4px;
-  }
-
-  .nx-terminal-keys .nx-terminal-key {
-    min-width: 0;
-    height: 40px;
-    padding: 0 4px;
-  }
-
-  .nx-terminal-keys > .sticky {
-    position: static;
-    display: contents;
-  }
-
-  .nx-terminal-keys .nx-terminal-keyboard {
-    position: static;
-    grid-column: span 2;
-    order: -1;
-    margin-left: 0;
-    box-shadow: none;
-  }
 }
 @media (max-width: 640px) {
   .nx-toolbar.nx-wrap-toolbar {
@@ -3196,12 +3158,6 @@ html[data-nx-keyboard="open"] #root {
   .nx-app-header .nx-icon-btn {
     flex: 0 0 auto;
   }
-
-  /* The key toolbar may grow (grid layout) but never takes the terminal's last rows. */
-  .nx-app .nx-terminal-keys {
-    max-height: calc(var(--nx-vv-height, 100dvh) * 0.38);
-    overflow-y: auto;
-  }
 }
 
 @media (max-width: 400px) {
@@ -3219,31 +3175,17 @@ html[data-nx-keyboard-tight="true"] .nx-takeover-banner {
   display: none;
 }
 
-html[data-nx-keyboard="open"] .nx-app .nx-terminal-keys {
-  max-height: calc(var(--nx-vv-height, 100dvh) * 0.3);
+/* The terminal keeps its full grid while the soft keyboard is open; anchor it to the bottom so the clipped rows are the top ones. */
+html[data-nx-keyboard="open"] .nx-xterm-host > .xterm {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
 }
 
-/* With the keyboard open the terminal needs every row: the keys collapse to one scrollable line. */
-html[data-nx-keyboard="open"] .nx-app .nx-terminal-keys {
-  display: flex;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
-  max-height: none;
-}
-
+/* The key bar is one horizontally scrollable line; with the keyboard open the keys get slightly shorter. */
 html[data-nx-keyboard="open"] .nx-app .nx-terminal-keys .nx-terminal-key {
-  flex: 0 0 auto;
-  min-width: 44px;
   height: 36px;
-}
-
-html[data-nx-keyboard="open"] .nx-app .nx-terminal-keys .nx-terminal-keyboard {
-  grid-column: auto;
-}
-
-html[data-nx-keyboard-tight="true"] .nx-app .nx-terminal-keys {
-  max-height: 34%;
 }
 
 @media (pointer: coarse) and (max-height: 480px) {
@@ -3251,10 +3193,6 @@ html[data-nx-keyboard-tight="true"] .nx-app .nx-terminal-keys {
   section[aria-label="工作区恢复"],
   .nx-statusbar {
     display: none;
-  }
-
-  .nx-app .nx-terminal-keys {
-    max-height: 34%;
   }
 }
 

@@ -369,6 +369,13 @@ const APPEARANCE_PREF_KEYS: Record<keyof AppearancePrefs, string> = {
   terminalContrast: "appearance.terminalContrast",
 };
 
+// Phones and tablets sync their terminal font size under a separate key, so tuning it for a small screen never changes the desktop value and vice versa.
+function appearanceKey(field: keyof AppearancePrefs): string {
+  return field === "terminalFontSize" && isMobileDevice()
+    ? "appearance.mobileTerminalFontSize"
+    : APPEARANCE_PREF_KEYS[field];
+}
+
 function parsePreset(value: unknown): UiFontPreset {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_APPEARANCE.uiFontPreset;
@@ -425,7 +432,7 @@ function loadAppearance(): AppearancePrefs {
   }
   const merged = {} as Record<keyof AppearancePrefs, unknown>;
   for (const field of Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]) {
-    merged[field] = preferenceValue(APPEARANCE_PREF_KEYS[field], local[field], builtinAppearance(field));
+    merged[field] = preferenceValue(appearanceKey(field), local[field], builtinAppearance(field));
   }
   return {
     uiFontPreset: parsePreset(merged.uiFontPreset),
@@ -490,7 +497,7 @@ function commitAppearance(next: AppearancePrefs): void {
   // Account-level override: after registration, written to the user_setting backend (M140) for cross-device sync
   if (accountStore && changedFields.length > 0) {
     const set: Record<string, unknown> = {};
-    for (const field of changedFields) set[APPEARANCE_PREF_KEYS[field]] = next[field];
+    for (const field of changedFields) set[appearanceKey(field)] = next[field];
     void accountStore.putOverrides(set).catch(() => undefined);
     patchAccountOverrideCache(set, []);
   }
@@ -539,7 +546,7 @@ export function resetAppearancePrefs(): void {
     localStorage.removeItem(APPEARANCE_KEY);
   } catch {
   }
-  const keys = [...Object.values(APPEARANCE_PREF_KEYS), THEME_MODE_PREFERENCE_KEY];
+  const keys = [...(Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).map(appearanceKey), THEME_MODE_PREFERENCE_KEY];
   if (accountStore) {
     void accountStore.deleteOverrides(keys).catch(() => undefined);
   }

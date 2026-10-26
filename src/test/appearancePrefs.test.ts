@@ -294,3 +294,34 @@ describe("terminal theme resolution", () => {
     expect(prefs.getResolvedTerminalTheme()).toBe(theme.getResolvedTheme());
   });
 });
+
+describe("mobile terminal font size", () => {
+  const store = (overrides: Record<string, unknown>) => {
+    const puts: Record<string, unknown>[] = [];
+    return {
+      puts,
+      async getView() {
+        return { defaults: {}, overrides };
+      },
+      async putOverrides(set: Record<string, unknown>) {
+        puts.push(set);
+      },
+      async deleteOverrides() {},
+    };
+  };
+
+  it("syncs under its own key and ignores the desktop value on a phone", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)");
+    try {
+      const { prefs } = await loadPrefs();
+      const account = store({ "appearance.terminalFontSize": 20, "appearance.mobileTerminalFontSize": 14 });
+      prefs.registerAccountPreferenceStore(account);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(prefs.getAppearancePrefs().terminalFontSize).toBe(14);
+      prefs.setTerminalFontSize(15);
+      expect(account.puts).toEqual([{ "appearance.mobileTerminalFontSize": 15 }]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
