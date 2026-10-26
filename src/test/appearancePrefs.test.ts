@@ -104,7 +104,8 @@ describe("terminal font stacks", () => {
       "consolas",
     ]);
     expect(TERMINAL_FONT_STACKS.cascadia).toBe(
-      "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
+      "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace, " +
+        "'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'",
     );
     const primaryNames = {
       system: "ui-monospace",
@@ -117,7 +118,10 @@ describe("terminal font stacks", () => {
     for (const [family, primaryName] of Object.entries(primaryNames)) {
       const stack = TERMINAL_FONT_STACKS[family as keyof typeof primaryNames];
       expect(stack).toContain(primaryName);
-      expect(stack.endsWith(", monospace")).toBe(true);
+      // The primary font and generic monospace keep their order; colour emoji fonts only
+      // follow the generic family as glyph fallbacks.
+      expect(stack.indexOf(primaryName)).toBeLessThan(stack.indexOf(", monospace,"));
+      expect(stack.endsWith(", monospace, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'")).toBe(true);
     }
   });
 });

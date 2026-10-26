@@ -63,7 +63,7 @@ NexTerm 把远程运维放进一个窗口：通过 SSH、WinRM 或设备 agent �
 | iOS / iPadOS（预览） | [加入 TestFlight 测试](https://testflight.apple.com/join/ds62pzPz)，Release 不提供 IPA |
 | 懒猫微服（amd64） | 应用中心 |
 
-移动端为预览版，完成真机签名验收前不作为正式支持平台。桌面版会自动检查更新，安装前按 `SHA256SUMS` 校验。Windows 安装包没有代码签名，提示未知发布者时选择「更多信息 → 仍要运行」。macOS 提示无法验证开发者时，在「系统设置 → 隐私与安全性」点「仍要打开」；提示已损坏则执行 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。
+移动端为预览版，完成真机签名验收前不作为正式支持平台。桌面版会自动检查更新，安装前按 `SHA256SUMS` 校验。Windows 安装包没有代码签名，提示未知发布者时选择「更多信息 → 仍要运行」。macOS 提示无法验证开发者时，在「系统设置 → 隐私与安全性」点「仍要打开」；提示已损坏则执行 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。Linux 桌面版的彩色 emoji 依赖系统字体，`.deb` 推荐安装 `fonts-noto-color-emoji`；若安装时跳过了推荐包，标签标题中的 emoji 可能显示为单色符号或方框，可执行 `sudo apt install fonts-noto-color-emoji` 补装。
 
 **快速开始**：新建 SSH 或 WinRM 资产（也可用内置的「当前设备」）→ 在「设置 → 凭据保护」初始化凭据库后保存密码或私钥 →（可选）在「设置 → AI 模型」接入模型 →（可选）在「设置 → 账号同步」登录服务端，多设备同步。保护密码只用于本机解锁，忘记后已保存的凭据无法恢复。
 

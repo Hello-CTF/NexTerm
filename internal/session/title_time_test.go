@@ -2,8 +2,11 @@ package session
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 )
@@ -49,6 +52,37 @@ func TestDurableTitleDecisionTimeSurvivesRestart(t *testing.T) {
 	recovered := openDurableTestTab(t, second, secondSession, info.ID, "b-1", true)
 	if recovered.Title != "构建机" || !recovered.TitleCustom || recovered.TitleChangedAt != at {
 		t.Fatalf("recovered = %+v, want the persisted decision time %d", recovered, at)
+	}
+}
+
+// A custom title made of emoji sequences is accepted up to the rune limit,
+// persisted unchanged and recovered unchanged after a restart.
+func TestDurableEmojiTitleSurvivesRestart(t *testing.T) {
+	provider := newTimedTitleProvider()
+	first, _, _, firstSession := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, first, firstSession, "emoji-tab", "a-1", false)
+	// 11 seven-rune family emoji plus "构建机" is exactly maxTabTitleRunes.
+	title := strings.Repeat("👨‍👩‍👧‍👦", 11) + "构建机"
+	if n := utf8.RuneCountInString(title); n != maxTabTitleRunes {
+		t.Fatalf("fixture has %d runes", n)
+	}
+	renamed, err := first.RenameTabAt(context.Background(), info.ID, title, time.Now().UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Title != title {
+		t.Fatalf("renamed title = %q, want %q", renamed.Title, title)
+	}
+	if _, err := first.RenameTab(context.Background(), info.ID, title+"🙂"); !errors.Is(err, ErrInvalidTitle) {
+		t.Fatalf("over-limit rename err = %v, want ErrInvalidTitle", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, _, _, secondSession := newDurableTestManager(t, provider)
+	recovered := openDurableTestTab(t, second, secondSession, info.ID, "b-1", true)
+	if recovered.Title != title || !recovered.TitleCustom {
+		t.Fatalf("recovered = %+v, want title %q", recovered, title)
 	}
 }
 

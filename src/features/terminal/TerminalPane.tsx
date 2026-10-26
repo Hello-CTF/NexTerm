@@ -67,6 +67,7 @@ import { ask, askChoice, finishSave, pickSavePath, promptText } from "../../ui/d
 import { describeError } from "../../ui/errorText";
 import { copyText, readText } from "../../ui/clipboard";
 import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
+import { clipText } from "../../ui/textClip";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import {
   IconArrowDown,
@@ -1835,7 +1836,7 @@ export function TerminalPane({
     setMenu({
       x: e.clientX,
       y: e.clientY,
-      title: link ? displayTerminalLink(link) : selected ? selected.split("\n")[0].slice(0, 80) : title,
+      title: link ? displayTerminalLink(link) : selected ? clipText(selected.split("\n")[0], 80) : title,
       items: link ? [...buildLinkMenu(link), { kind: "separator" }, ...buildTerminalMenu()] : buildTerminalMenu(),
     });
   };

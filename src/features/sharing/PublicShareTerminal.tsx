@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
-import { XTERM_DARK_THEME } from "../terminal/xtermTheme";
+import { TERMINAL_FONT_STACKS, XTERM_DARK_THEME } from "../terminal/xtermTheme";
 import { scheduleWebglRenderer } from "../terminal/xtermAddons";
 import { createSelectionAutoCopy } from "../terminal/selectionAutoCopy";
 
@@ -37,7 +37,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
     if (!host || termRef.current) return;
     const term = new Terminal({
       scrollback: 100_000,
-      fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
+      fontFamily: TERMINAL_FONT_STACKS.cascadia,
       fontSize: 14,
       cursorBlink: true,
       disableStdin: readOnlyRef.current ?? false,

@@ -187,8 +187,8 @@ func (s *Scanner) dropAssembly(id string) {
 }
 
 // clean makes notification text safe to display: invalid UTF-8 is replaced
-// and control and format characters other than newline, tab, ZWJ and ZWNJ
-// are removed.
+// and control and format characters other than newline, tab, ZWJ, ZWNJ and
+// emoji tag characters are removed.
 func clean(v string) string {
 	v = strings.ToValidUTF8(v, "�")
 	return strings.Map(func(r rune) rune {
@@ -196,8 +196,9 @@ func clean(v string) string {
 			return r
 		}
 		// Drop controls and format characters (bidi overrides, zero-width
-		// spaces), but keep ZWJ/ZWNJ which emoji and several scripts need.
-		if unicode.IsControl(r) || (unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d') {
+		// spaces), but keep ZWJ/ZWNJ which emoji and several scripts need and
+		// the tag characters that form subdivision flags such as Scotland's.
+		if unicode.IsControl(r) || (unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d' && (r < 0xe0020 || r > 0xe007f)) {
 			return -1
 		}
 		return r

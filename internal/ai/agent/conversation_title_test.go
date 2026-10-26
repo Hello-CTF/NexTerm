@@ -97,6 +97,24 @@ func TestNormalizeTitleLimitsRunesAndStripsQuotes(t *testing.T) {
 	}
 }
 
+// A title cut at the rune limit keeps emoji clusters whole: the family emoji
+// straddling the limit is dropped rather than split at a ZWJ.
+func TestConversationTitlesKeepEmojiIntact(t *testing.T) {
+	family := "👨‍👩‍👧‍👦"
+	generated := strings.Repeat("中", titleMaxRunes-3) + family + "尾"
+	if got := normalizeTitle(generated); got != strings.Repeat("中", titleMaxRunes-3) {
+		t.Fatalf("normalizeTitle(%q) = %q", generated, got)
+	}
+	message := strings.Repeat("字", 22) + "❤️" + "尾"
+	if got, want := AutoTitle(message), strings.Repeat("字", 22)+"❤️…"; got != want {
+		t.Fatalf("AutoTitle(%q) = %q, want %q", message, got, want)
+	}
+	flags := strings.Repeat("字", 23) + "🇯🇵🇺🇸"
+	if got, want := AutoTitle(flags), strings.Repeat("字", 23)+"…"; got != want {
+		t.Fatalf("AutoTitle(%q) = %q, want %q", flags, got, want)
+	}
+}
+
 func TestTitleGenerationDefaultTimeout(t *testing.T) {
 	runner := NewRunner(Config{})
 	t.Cleanup(func() { _ = runner.Close() })

@@ -3,6 +3,7 @@ import { WEB } from "../ipc/env";
 import { listenEvent } from "../ipc/events";
 import { askChoice } from "../ui/dialogs";
 import { describeError } from "../ui/errorText";
+import { clipText } from "../ui/textClip";
 import { fileEditorCaseInsensitive, isDirtyFileEditor } from "../features/files/editorGuards";
 import { useAuth } from "../features/auth/store";
 import {
@@ -252,7 +253,7 @@ function sanitizeAiDockTab(raw: unknown): AiDockTab | null {
   if (!isObj(raw)) return null;
   const id = optStr(raw.id);
   if (!id) return null;
-  const title = typeof raw.title === "string" ? raw.title.trim().slice(0, 80) : "";
+  const title = typeof raw.title === "string" ? clipText(raw.title.trim(), 80) : "";
   return { id, title: title || "新会话", conversationId: optStr(raw.conversationId) };
 }
 

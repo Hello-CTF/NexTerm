@@ -554,6 +554,29 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     expect(workspaceTitleOf()).toBe("top");
   });
 
+  it("emoji OSC titles from the backend and xterm reach the tab strip intact", async () => {
+    await mountWithRename();
+    const backendTitle = "👨‍👩‍👧‍👦 ❤️ 1️⃣ 👍🏽 🇯🇵 build";
+    deliverControl({ ...attachInfo({ title: backendTitle, titleCustom: false }), version: 1 });
+    expect(workspaceTitleOf()).toBe(backendTitle);
+    expect(getTerminalTabTitle("t1")).toBe(backendTitle);
+    const strip = mount(createElement(TabStripTitle, { tab: tabOf()! }));
+    expect(strip.container.textContent).toBe(backendTitle);
+    strip.unmount();
+    // The xterm OSC 0/2 path: a long emoji title is capped without splitting a cluster.
+    const xtermTitle = `${"中".repeat(77)}🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}`;
+    act(() => {
+      (harness.xtermProps?.onTitle as ((title: string) => void) | undefined)?.(xtermTitle);
+    });
+    expect(getTerminalTabTitle("t1")).toBe("中".repeat(77));
+    act(() => {
+      (harness.xtermProps?.onTitle as ((title: string) => void) | undefined)?.("🚀 deploy");
+    });
+    const rendered = mount(createElement(TabStripTitle, { tab: tabOf()! }));
+    expect(rendered.container.textContent).toBe("🚀 deploy");
+    rendered.unmount();
+  });
+
   it("a clear made on another device after this device's rename wins, and a reattach does not resurrect it", async () => {
     await mountWithRename({ title: "deploy", at: 1_000 });
     deliverControl({ ...attachInfo({ title: "vim", titleCustom: false, titleChangedAt: 2_000 }), version: 1 });

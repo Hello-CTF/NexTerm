@@ -419,6 +419,18 @@
   ]
  },
  {
+  "name": "emoji_sequences_kept",
+  "input": "\u001b]777;notify;🏴󠁧󠁢󠁳󠁣󠁴󠁿 done;❤️ 1️⃣ 👍🏽 🇯🇵\u0007",
+  "events": [
+   {
+    "kind": "notify",
+    "source": "osc777",
+    "title": "🏴󠁧󠁢󠁳󠁣󠁴󠁿 done",
+    "body": "❤️ 1️⃣ 👍🏽 🇯🇵"
+   }
+  ]
+ },
+ {
   "name": "osc99_close_ignored",
   "input": "\u001b]99;i=1:p=close;\u001b\\",
   "events": []

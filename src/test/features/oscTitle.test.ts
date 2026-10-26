@@ -117,6 +117,50 @@ describe("remote tab titles (OSC 0/2)", () => {
     expect(sanitizeRemoteTabTitle("\x1b]0;abc")).toBe("]0;abc");
   });
 
+  it("keeps emoji sequences whole in remote titles", () => {
+    const family = "👨‍👩‍👧‍👦";
+    for (const title of [
+      `${family} family`,
+      "❤️ build",
+      "🇯🇵🇺🇸 flags",
+      "👍🏽 ok",
+      "1️⃣ keycap",
+      "🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f} scotland",
+    ]) {
+      expect(applyRemoteTabTitle("t1", title)).toBe(true);
+      expect(titleOf()).toBe(title);
+    }
+    // At the 80 code point cap a straddling cluster is dropped whole, never split.
+    const prefix = "中".repeat(76);
+    applyRemoteTabTitle("t1", `${prefix}${family}tail`);
+    expect(titleOf()).toBe(prefix);
+    applyRemoteTabTitle("t1", "🙂".repeat(100));
+    expect(titleOf()).toBe("🙂".repeat(80));
+    expect(titleOf()).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]|�/);
+  });
+
+  it("drops C1 controls and bidi overrides but keeps joiners", () => {
+    expect(sanitizeRemoteTabTitle("a\u0085b\u009bc")).toBe("a b c");
+    expect(sanitizeRemoteTabTitle("‮evil‬ ⁦x⁩")).toBe("evil x");
+    expect(sanitizeRemoteTabTitle("👩‍💻 dev")).toBe("👩‍💻 dev");
+  });
+
+  it("an emoji rename and an AI dock title survive a layout round trip", () => {
+    const title = "🚀 部署 👨‍👩‍👧‍👦 ❤️";
+    seed([terminal("t1", { title, renamedByUser: true, customTitleAt: 1700000000000 })]);
+    const longAiTitle = `${"中".repeat(78)}🇯🇵tail`;
+    useUi.setState({
+      aiBoards: { ws: { tabs: [{ id: "ai1", title: longAiTitle }], activeTabId: "ai1" } },
+    } as never);
+    const parsed = sanitizeLayout(JSON.parse(JSON.stringify(serializeLayout(useUi.getState()))));
+    expect(parsed?.workspaces[0].panes[0].tabs[0]).toMatchObject({ title, renamedByUser: true });
+    expect(parsed?.aiBoards?.ws?.tabs[0].title).toBe(`${"中".repeat(78)}🇯🇵`);
+    const clipped = `${"中".repeat(79)}🇯🇵`;
+    useUi.setState({ aiBoards: { ws: { tabs: [{ id: "ai1", title: clipped }], activeTabId: "ai1" } } } as never);
+    const reparsed = sanitizeLayout(JSON.parse(JSON.stringify(serializeLayout(useUi.getState()))));
+    expect(reparsed?.aiBoards?.ws?.tabs[0].title).toBe("中".repeat(79));
+  });
+
   it("renamedByUser survives a layout serialize/sanitize round trip", () => {
     seed([terminal("t1", { title: "my terminal", renamedByUser: true, customTitleAt: 1700000000000 })]);
     const dto = serializeLayout(useUi.getState());

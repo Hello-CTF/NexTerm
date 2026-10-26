@@ -1,13 +1,17 @@
 import type { ResolvedTerminalTheme, TerminalContrast, TerminalFontFamily } from "../../app/preferences";
 
+// Colour emoji fallbacks follow the generic family so they never supply ASCII glyphs or
+// change the cell metrics measured from the primary font.
+export const EMOJI_FONT_FALLBACKS = "'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'";
+
 export const TERMINAL_FONT_STACKS: Record<TerminalFontFamily, string> = {
-  cascadia: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
-  system: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-  "jetbrains-mono": "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace",
-  "fira-code": "'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace",
-  "source-code-pro": "'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace",
-  menlo: "Menlo, Monaco, ui-monospace, 'Courier New', monospace",
-  consolas: "Consolas, 'Courier New', monospace",
+  cascadia: `'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
+  system: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
+  "jetbrains-mono": `'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
+  "fira-code": `'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
+  "source-code-pro": `'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
+  menlo: `Menlo, Monaco, ui-monospace, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
+  consolas: `Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
 };
 
 export const XTERM_DARK_THEME = {

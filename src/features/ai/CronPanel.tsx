@@ -5,6 +5,7 @@ import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { profileKeyUnavailable as profileKeyMasked } from "./modelLifecycle";
+import { clipText } from "../../ui/textClip";
 import {
   IconChevronDown,
   IconChevronRight,
@@ -340,7 +341,7 @@ export function CronPanel({
           );
         } catch (rollbackError) {
           applyReplaceConflict({
-            label: draft.name.trim() || draft.prompt.trim().slice(0, 40),
+            label: draft.name.trim() || clipText(draft.prompt.trim(), 40),
             oldKey: `${editingJob.sessionId}/${editingJob.id}`,
             newKey: `${created.sessionId}/${created.id}`,
             gen: loadGenRef.current,
@@ -400,7 +401,7 @@ export function CronPanel({
   };
 
   const unregister = async (job: CronJob) => {
-    const display = job.name?.trim() || job.prompt.slice(0, 40);
+    const display = job.name?.trim() || clipText(job.prompt, 40);
     const ok = await ask(
       `删除定时任务「${display}」？\n表达式：${job.schedule}（${job.timezone}）\n\n删除后不再执行，且无法恢复。`,
       { title: "删除定时任务", kind: "warning" },
@@ -663,7 +664,7 @@ export function CronPanel({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="min-w-0 break-words text-[12.5px] text-neutral-200">
-                        {job.name?.trim() || job.prompt.slice(0, 40)}
+                        {job.name?.trim() || clipText(job.prompt, 40)}
                       </span>
                       <span className={`nx-badge ${status.cls}`}>{status.label}</span>
                       {job.consecutiveFailures ? (

@@ -53,10 +53,14 @@
 
   --font-sans:
     "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
-    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  /* Colour emoji fallbacks follow the generic family so emoji fonts never supply ASCII
+     digits; Linux WebKitGTK resolves them through fontconfig (Noto Color Emoji). */
   --font-mono:
     "Cascadia Mono", "JetBrains Mono", "Cascadia Code", Consolas,
-    "SFMono-Regular", "Courier New", monospace;
+    "SFMono-Regular", "Courier New", monospace,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 
   --shadow-pop:
     0 18px 48px -16px rgb(0 0 0 / 0.75), 0 4px 12px -4px rgb(0 0 0 / 0.5);

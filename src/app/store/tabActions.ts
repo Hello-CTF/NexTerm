@@ -6,6 +6,7 @@ import { focusedActiveWorkspace, focusedWorkspaces } from "../projectFocus";
 import { isWorkspaceToolTab, nextTabId } from "./model";
 import type { AppTab, SessionRuntimeInfo, UiState, Workspace } from "./types";
 import { useUi } from "./useUi";
+import { clipText } from "../../ui/textClip";
 
 export function rejectPendingFileLocator(tab: AppTab): boolean {
   if (
@@ -149,14 +150,19 @@ export function findTab(id: string): { tab: AppTab; ws: Workspace } | null {
   return null;
 }
 
+// Tab titles are capped at the backend's rename limit, counted in code points (maxTabTitleRunes).
+export const MAX_TAB_TITLE_CODE_POINTS = 80;
+
+// Controls become spaces and bidi embedding/override/isolate controls are dropped so a title
+// cannot reorder the tab strip text. Emoji-forming characters (ZWJ, variation selectors, skin
+// tones, tags, keycaps, regional indicators) are kept, and clipping never splits a cluster.
 export function sanitizeRemoteTabTitle(raw: string): string {
   const cleaned = raw
-    .replace(/[\x00-\x1f\x7f]/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/[‪-‮⁦-⁩]/g, "")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80)
     .trim();
-  return cleaned;
+  return clipText(cleaned, MAX_TAB_TITLE_CODE_POINTS).trim();
 }
 
 // A custom title needs both the lock and its decision timestamp (see AppTab.customTitleAt).

@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/textclip"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
@@ -42,9 +44,8 @@ func AutoTitle(message string) string {
 		}
 	}
 	line = strings.Join(strings.Fields(line), " ")
-	runes := []rune(line)
-	if len(runes) > 24 {
-		return string(runes[:24]) + "…"
+	if utf8.RuneCountInString(line) > 24 {
+		return textclip.Runes(line, 24) + "…"
 	}
 	if line == "" {
 		return "新对话"
@@ -76,11 +77,7 @@ func normalizeTitle(content string) string {
 	line = strings.TrimSpace(line)
 	line = strings.Trim(line, "\"'`“”‘’「」『』")
 	line = strings.Join(strings.Fields(line), " ")
-	runes := []rune(line)
-	if len(runes) > titleMaxRunes {
-		return string(runes[:titleMaxRunes])
-	}
-	return line
+	return textclip.Runes(line, titleMaxRunes)
 }
 
 func (r *Runner) maybeGenerateConversationTitle(current *job) {
