@@ -232,7 +232,7 @@ func syncBody(h *harness) (*instance, string, error) {
 		objects = append(objects, map[string]interface{}{"id": item.id, "blob": blob})
 	}
 	status, body, err = alice.request("POST", "/sync/v2/push", map[string]interface{}{
-		"protocol": 2, "known_head": genesisHead(alice.userID), "objects": objects,
+		"protocol": 3, "known_head": genesisHead(alice.userID), "objects": objects,
 	}, true)
 	if err != nil {
 		return server, work, err
@@ -292,7 +292,7 @@ func syncBody(h *harness) (*instance, string, error) {
 
 	fmt.Println("== idempotent re-push ==")
 	status, body, err = alice.request("POST", "/sync/v2/push", map[string]interface{}{
-		"protocol": 2, "known_head": head, "objects": objects,
+		"protocol": 3, "known_head": head, "objects": objects,
 	}, true)
 	if err != nil {
 		return server, work, err
@@ -308,7 +308,7 @@ func syncBody(h *harness) (*instance, string, error) {
 	if err := device2.me(); err != nil {
 		return server, work, err
 	}
-	status, body, err = device2.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 2, "since_seq": 0}, false)
+	status, body, err = device2.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 3, "since_seq": 0}, false)
 	if err != nil {
 		return server, work, err
 	}
@@ -346,19 +346,19 @@ func syncBody(h *harness) (*instance, string, error) {
 
 	fmt.Println("== fork/rollback detection ==")
 	status, body, err = device2.request("POST", "/sync/v2/push", map[string]interface{}{
-		"protocol": 2, "known_head": genesisHead(alice.userID), "objects": objects[:1],
+		"protocol": 3, "known_head": genesisHead(alice.userID), "objects": objects[:1],
 	}, true)
 	if err != nil {
 		return server, work, err
 	}
 	h.check("stale head push is rejected (409)", status == 409, fmt.Sprintf("HTTP %d %v", status, body))
-	status, body, err = device2.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 2, "since_seq": 0}, false)
+	status, body, err = device2.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 3, "since_seq": 0}, false)
 	if err != nil {
 		return server, work, err
 	}
 	freshHead := getStr(body, "head")
 	status, body, err = device2.request("POST", "/sync/v2/push", map[string]interface{}{
-		"protocol": 2, "known_head": freshHead, "objects": objects[:1],
+		"protocol": 3, "known_head": freshHead, "objects": objects[:1],
 	}, true)
 	if err != nil {
 		return server, work, err
@@ -366,7 +366,7 @@ func syncBody(h *harness) (*instance, string, error) {
 	h.check("re-push succeeds after pull and merge", status == 200 && getFloat(body, "skipped") == 1, fmt.Sprintf("HTTP %d %v", status, body))
 
 	fmt.Println("== ids listing ==")
-	status, body, err = device2.request("POST", "/sync/v2/ids", map[string]interface{}{"protocol": 2}, false)
+	status, body, err = device2.request("POST", "/sync/v2/ids", map[string]interface{}{"protocol": 3}, false)
 	if err != nil {
 		return server, work, err
 	}
@@ -414,7 +414,7 @@ func syncBody(h *harness) (*instance, string, error) {
 		return server, work, err
 	}
 	h.check("bob uploads DEK envelope", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
-	status, body, err = bob.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 2, "since_seq": 0}, false)
+	status, body, err = bob.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 3, "since_seq": 0}, false)
 	if err != nil {
 		return server, work, err
 	}
@@ -434,7 +434,7 @@ func syncBody(h *harness) (*instance, string, error) {
 	if err := device3.me(); err != nil {
 		return server, work, err
 	}
-	status, body, err = device3.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 2, "since_seq": 0}, false)
+	status, body, err = device3.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 3, "since_seq": 0}, false)
 	if err != nil {
 		return server, work, err
 	}

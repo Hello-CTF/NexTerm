@@ -119,3 +119,25 @@ func TestLinkSetOverwritesLegacyPlaintext(t *testing.T) {
 		t.Fatalf("link get after re-save = %+v", view)
 	}
 }
+
+// A pre-1.3.0 plaintext link is never read or merged: a patch that does not re-enter the credentials is rejected
+// visibly and leaves the stored value untouched, instead of silently discarding the old fields.
+func TestLinkSetRejectsPartialPatchOverLegacyPlaintext(t *testing.T) {
+	instance := newTestInstance(t, true)
+	legacy := `{"url":"https://sync.example.com","username":"alice","password":"super-secret"}`
+	if err := instance.db.SettingSet(context.Background(), settingLink, legacy); err != nil {
+		t.Fatal(err)
+	}
+	_, err := instance.service.LinkSet(context.Background(), LinkPatch{URL: testPtr("https://sync.example.com"), Username: testPtr("alice")})
+	requireCode(t, err, ipc.CodeDecrypt)
+	if !strings.Contains(err.Error(), "1.3.0") {
+		t.Fatalf("legacy link rejection does not explain the format change: %v", err)
+	}
+	if _, err := instance.service.LinkGet(context.Background()); err == nil || !strings.Contains(err.Error(), "1.3.0") {
+		t.Fatalf("legacy link read error = %v", err)
+	}
+	value, found, err := instance.db.SettingGet(context.Background(), settingLink)
+	if err != nil || !found || value != legacy {
+		t.Fatalf("rejected patch changed the legacy link: %q %v %v", value, found, err)
+	}
+}

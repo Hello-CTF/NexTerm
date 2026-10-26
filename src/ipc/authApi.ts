@@ -137,7 +137,7 @@ export interface SyncDeleteResponse {
   deleted: boolean;
 }
 
-export const SYNC_PROTOCOL_VERSION = 2;
+export const SYNC_PROTOCOL_VERSION = 3;
 export const SESSION_EXPIRED_EVENT = "nexterm:session-expired";
 export const SESSION_IDENTITY_CHANGED_EVENT = "nexterm:auth-session-changed";
 // Broadcast when the server rejects an unenrolled session under the mfa_required policy; the gate switches to the forced enrollment page (covers the policy being enabled mid-session).

@@ -12,9 +12,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// ProtocolVersion 2: full-payload E2E object protocol. A breaking replacement of v1; no old-version compatibility.
-const ProtocolVersion = 2
-
 // Sync object kinds. Tombstones share the object id of their target, overwrite it in storage, and are decided by client-side LWW.
 const (
 	KindGroup        = "group"
@@ -161,8 +158,7 @@ type tombstoneObject struct {
 }
 
 // knownHostObject's revision is addedAt (re-accepting a host key refreshes it); the (host, port, keyType) triple is globally unique.
-// The payload is fingerprint-only by contract: it never carries key material, so old
-// peers sending this shape are fully compatible without version negotiation. A sync
+// The payload is fingerprint-only by contract: it never carries key material. A sync
 // apply that changes the fingerprint clears the locally stored key material (the row
 // degrades to fingerprint-only trust until the next verified accept refills it through
 // KnownHostFillKeyMaterial or PutHostKey); a same-fingerprint update preserves it.

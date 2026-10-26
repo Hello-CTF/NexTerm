@@ -24,7 +24,7 @@ func TestObjectHandlerRequiresUserIdentity(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	handler := NewObjectHandler(db.GORM(), nil)
 	for _, path := range []string{"/sync/v2/push", "/sync/v2/delete", "/sync/v2/pull", "/sync/v2/ids"} {
-		request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(`{"protocol":2}`)))
+		request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(`{"protocol":3}`)))
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusUnauthorized {
@@ -185,7 +185,7 @@ func TestObjectHandlerGzipRequestAndResponse(t *testing.T) {
 	}
 
 	pull := func(acceptEncoding string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodPost, "/sync/v2/pull", bytes.NewReader([]byte(`{"protocol":2}`))).WithContext(ctx)
+		request := httptest.NewRequest(http.MethodPost, "/sync/v2/pull", bytes.NewReader([]byte(`{"protocol":3}`))).WithContext(ctx)
 		request.Header.Set("Accept-Encoding", acceptEncoding)
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)

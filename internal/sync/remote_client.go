@@ -188,7 +188,7 @@ func (c *remoteClient) dekEnvelopes(ctx context.Context) (*vault.UserDEKEnvelope
 
 func (c *remoteClient) push(ctx context.Context, knownHead string, objects []WireObject) (*PushResponse, error) {
 	var response PushResponse
-	status, rpcErr, err := c.post(ctx, "/sync/v2/push", PushRequest{Protocol: ProtocolVersion, KnownHead: knownHead, Objects: objects}, &response, true)
+	status, rpcErr, err := c.syncPost(ctx, "/sync/v2/push", PushRequest{Protocol: ProtocolVersion, KnownHead: knownHead, Objects: objects}, &response, true)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func (c *remoteClient) push(ctx context.Context, knownHead string, objects []Wir
 
 func (c *remoteClient) deleteObject(ctx context.Context, knownHead, id, blobHash string) (*DeleteResponse, error) {
 	var response DeleteResponse
-	status, rpcErr, err := c.post(ctx, "/sync/v2/delete", DeleteRequest{
+	status, rpcErr, err := c.syncPost(ctx, "/sync/v2/delete", DeleteRequest{
 		Protocol: ProtocolVersion, KnownHead: knownHead, ID: id, BlobHash: blobHash,
 	}, &response, true)
 	if err != nil {
@@ -226,7 +226,7 @@ func (c *remoteClient) deleteObject(ctx context.Context, knownHead, id, blobHash
 
 func (c *remoteClient) pull(ctx context.Context, sinceSeq int64, ids []string, maxBytes int64) (*PullResponse, error) {
 	var response PullResponse
-	status, rpcErr, err := c.post(ctx, "/sync/v2/pull", PullRequest{
+	status, rpcErr, err := c.syncPost(ctx, "/sync/v2/pull", PullRequest{
 		Protocol: ProtocolVersion, SinceSeq: sinceSeq, IDs: ids, MaxBytes: maxBytes,
 	}, &response, false)
 	if err != nil {
@@ -248,7 +248,7 @@ func (c *remoteClient) ids(ctx context.Context, knownHead ...string) (*IDsRespon
 	if len(knownHead) > 0 {
 		request.KnownHead = knownHead[0]
 	}
-	status, rpcErr, err := c.post(ctx, "/sync/v2/ids", request, &response, false)
+	status, rpcErr, err := c.syncPost(ctx, "/sync/v2/ids", request, &response, false)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +266,7 @@ func (c *remoteClient) ids(ctx context.Context, knownHead ...string) (*IDsRespon
 // wait timeout passes.
 func (c *remoteClient) wait(ctx context.Context, knownHead string) (*WaitResponse, error) {
 	var response WaitResponse
-	status, rpcErr, err := c.post(ctx, "/sync/v2/wait", WaitRequest{Protocol: ProtocolVersion, KnownHead: knownHead}, &response, false)
+	status, rpcErr, err := c.syncPost(ctx, "/sync/v2/wait", WaitRequest{Protocol: ProtocolVersion, KnownHead: knownHead}, &response, false)
 	if err != nil {
 		return nil, err
 	}
@@ -359,10 +359,45 @@ func remoteAPIError(status int, rpcErr *ipc.Error) error {
 	}
 }
 
+// syncResponse is implemented by every /sync/v2 response; the reported protocol is checked on success.
+type syncResponse interface {
+	syncProtocol() int
+}
+
+func (r *PushResponse) syncProtocol() int   { return r.Protocol }
+func (r *DeleteResponse) syncProtocol() int { return r.Protocol }
+func (r *PullResponse) syncProtocol() int   { return r.Protocol }
+func (r *IDsResponse) syncProtocol() int    { return r.Protocol }
+func (r *WaitResponse) syncProtocol() int   { return r.Protocol }
+
+// syncPost performs the protocol handshake of one /sync/v2 request: a rejection with CodeUnsupported (the only
+// code these endpoints use for a protocol mismatch, on 1.3.0 and older servers alike) and a success reporting
+// another protocol both become a visible incompatibility error instead of a generic remote failure.
+func (c *remoteClient) syncPost(ctx context.Context, path string, payload any, out syncResponse, csrf bool) (int, *ipc.Error, error) {
+	status, header, rpcErr, err := c.postWithHeader(ctx, path, payload, out, csrf)
+	if err != nil {
+		return status, rpcErr, err
+	}
+	if status == http.StatusBadRequest && rpcErr != nil && rpcErr.Code == ipc.CodeUnsupported {
+		return status, rpcErr, remoteProtocolError(header)
+	}
+	if status == http.StatusOK {
+		if err := responseProtocolError(out.syncProtocol()); err != nil {
+			return status, nil, err
+		}
+	}
+	return status, rpcErr, nil
+}
+
 func (c *remoteClient) post(ctx context.Context, path string, payload, out any, csrf bool) (int, *ipc.Error, error) {
+	status, _, rpcErr, err := c.postWithHeader(ctx, path, payload, out, csrf)
+	return status, rpcErr, err
+}
+
+func (c *remoteClient) postWithHeader(ctx context.Context, path string, payload, out any, csrf bool) (int, http.Header, *ipc.Error, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return 0, nil, ipc.WrapError(ipc.CodeInternal, "无法编码同步请求", err)
+		return 0, nil, nil, ipc.WrapError(ipc.CodeInternal, "无法编码同步请求", err)
 	}
 	wireBody := body
 	contentEncoding := ""
@@ -370,10 +405,10 @@ func (c *remoteClient) post(ctx context.Context, path string, payload, out any, 
 		var compressed bytes.Buffer
 		writer := gzip.NewWriter(&compressed)
 		if _, err := writer.Write(body); err != nil {
-			return 0, nil, ipc.WrapError(ipc.CodeInternal, "无法压缩同步请求", err)
+			return 0, nil, nil, ipc.WrapError(ipc.CodeInternal, "无法压缩同步请求", err)
 		}
 		if err := writer.Close(); err != nil {
-			return 0, nil, ipc.WrapError(ipc.CodeInternal, "无法压缩同步请求", err)
+			return 0, nil, nil, ipc.WrapError(ipc.CodeInternal, "无法压缩同步请求", err)
 		}
 		if compressed.Len() < len(body) {
 			wireBody = compressed.Bytes()
@@ -382,19 +417,24 @@ func (c *remoteClient) post(ctx context.Context, path string, payload, out any, 
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(wireBody))
 	if err != nil {
-		return 0, nil, ipc.WrapError(ipc.CodeBadParam, "同步链接不合法", err)
+		return 0, nil, nil, ipc.WrapError(ipc.CodeBadParam, "同步链接不合法", err)
 	}
 	if contentEncoding != "" {
 		request.Header.Set("Content-Encoding", contentEncoding)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	return c.do(request, out, csrf)
+	return c.doWithHeader(request, out, csrf)
 }
 
 // do executes the request and preserves the HTTP status: err covers transport-level failures only; business failures return status code + rpcErr,
 // so semantic statuses like 409 reach the caller's mapping logic (e.g. errHeadMismatch).
 func (c *remoteClient) do(request *http.Request, out any, csrf bool) (int, *ipc.Error, error) {
+	status, _, rpcErr, err := c.doWithHeader(request, out, csrf)
+	return status, rpcErr, err
+}
+
+func (c *remoteClient) doWithHeader(request *http.Request, out any, csrf bool) (int, http.Header, *ipc.Error, error) {
 	if c.cookieToken != "" {
 		request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: c.cookieToken})
 	}
@@ -403,28 +443,28 @@ func (c *remoteClient) do(request *http.Request, out any, csrf bool) (int, *ipc.
 	}
 	response, err := syncHTTPClient(c.insecure).Do(request)
 	if err != nil {
-		return 0, nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
+		return 0, nil, nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxPullWireBytes+(1<<20)+1))
 	if err != nil {
-		return 0, nil, ipc.WrapError(ipc.CodeDisconnected, "读取远端同步响应失败", err)
+		return 0, nil, nil, ipc.WrapError(ipc.CodeDisconnected, "读取远端同步响应失败", err)
 	}
 	if response.StatusCode != http.StatusOK {
 		var failure struct {
 			Error *ipc.Error `json:"error"`
 		}
 		if err := json.Unmarshal(raw, &failure); err == nil && failure.Error != nil {
-			return response.StatusCode, failure.Error, nil
+			return response.StatusCode, response.Header, failure.Error, nil
 		}
-		return response.StatusCode, nil, nil
+		return response.StatusCode, response.Header, nil, nil
 	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
-			return 0, nil, ipc.WrapError(ipc.CodeInternal, "远端同步响应数据结构无效", err)
+			return 0, nil, nil, ipc.WrapError(ipc.CodeInternal, "远端同步响应数据结构无效", err)
 		}
 	}
-	return response.StatusCode, nil, nil
+	return response.StatusCode, response.Header, nil, nil
 }
 
 func remoteStatusError(status int, rpcErr *ipc.Error) error {
