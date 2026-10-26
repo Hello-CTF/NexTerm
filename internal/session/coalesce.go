@@ -8,8 +8,9 @@ import (
 const (
 	outputCoalesceInterval = 8 * time.Millisecond
 	outputCoalesceMax      = 64 << 10
-	// outputCoalesceIdleGrace replaces the full window for the first chunk after the coalescer has been idle for at least one window:
-	// interactive echo is not held back 8 ms, while data arriving within the grace is still merged into the same frame.
+	// The first chunk after the coalescer has been idle for at least one window leaves immediately, so interactive echo is not held
+	// back by a timer (whose wake-up alone adds one to several ms). outputCoalesceIdleGrace is the window for the chunk that follows
+	// it: the rest of a multi-write redraw is still merged into one frame shortly after, not one full window later.
 	outputCoalesceIdleGrace = time.Millisecond
 
 	// Bulk mode trades latency for bandwidth under sustained heavy output (cat of a large file, build logs): fewer, larger frames compress better
@@ -53,6 +54,8 @@ type outCoalescer struct {
 	bulk  bool
 	heavy int
 	fixed bool
+	// followUp is set when the last batch left immediately after idle; the next window is the idle grace.
+	followUp bool
 }
 
 func newOutCoalescer(onTimer func()) *outCoalescer {
@@ -72,6 +75,7 @@ func (c *outCoalescer) maxLocked() int {
 
 // flushedLocked records a departing batch and updates bulk mode: consecutive heavy flushes enter it, a light flush leaves it.
 func (c *outCoalescer) flushedLocked(n int) {
+	c.followUp = false
 	now := c.now()
 	prev := c.lastFlush
 	c.lastFlush = now
@@ -126,6 +130,11 @@ func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 		c.flushedLocked(len(data))
 		return data, true
 	}
+	if len(c.buf) == 0 && !c.bulk && (c.lastFlush.IsZero() || c.now().Sub(c.lastFlush) >= outputCoalesceInterval) {
+		c.flushedLocked(len(data))
+		c.followUp = true
+		return data, true
+	}
 	wasEmpty := len(c.buf) == 0
 	c.buf = append(c.buf, data...)
 	if len(c.buf) >= limit {
@@ -144,12 +153,12 @@ func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 	return nil, false
 }
 
-// windowLocked picks the trailing window: the short idle grace for the first chunk after at least one idle window, otherwise the full window.
+// windowLocked picks the trailing window: the short idle grace for the chunk right after an immediate idle send, otherwise the full window.
 func (c *outCoalescer) windowLocked(wasEmpty bool) time.Duration {
 	if c.bulk {
 		return outputCoalesceBulkInterval
 	}
-	if wasEmpty && (c.lastFlush.IsZero() || c.now().Sub(c.lastFlush) >= outputCoalesceInterval) {
+	if wasEmpty && c.followUp {
 		return outputCoalesceIdleGrace
 	}
 	return outputCoalesceInterval

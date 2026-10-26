@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// busyCoalescer returns a coalescer that flushed just now, so small chunks buffer behind the full window instead of leaving immediately.
+func busyCoalescer(onTimer func()) *outCoalescer {
+	c := newOutCoalescer(onTimer)
+	c.lastFlush = time.Now()
+	return c
+}
+
 func TestCoalesceFirstLargeChunkSentDirectly(t *testing.T) {
 	c := newOutCoalescer(func() { t.Error("timer must not arm for a direct chunk") })
 	big := bytes.Repeat([]byte("a"), outputCoalesceMax)
@@ -22,7 +29,7 @@ func TestCoalesceFirstLargeChunkSentDirectly(t *testing.T) {
 
 func TestCoalesceWindowAppends(t *testing.T) {
 	fired := make(chan struct{}, 1)
-	c := newOutCoalescer(func() { fired <- struct{}{} })
+	c := busyCoalescer(func() { fired <- struct{}{} })
 	if _, sendNow := c.add([]byte("a")); sendNow {
 		t.Fatal("small chunk must buffer")
 	}
@@ -43,7 +50,7 @@ func TestCoalesceWindowAppends(t *testing.T) {
 }
 
 func TestCoalesceCapDoesNotDrop(t *testing.T) {
-	c := newOutCoalescer(func() { t.Error("window must not fire before the cap") })
+	c := busyCoalescer(func() { t.Error("window must not fire before the cap") })
 	first := bytes.Repeat([]byte("a"), outputCoalesceMax-1)
 	if _, sendNow := c.add(first); sendNow {
 		t.Fatal("chunk below cap must buffer")
@@ -58,7 +65,7 @@ func TestCoalesceCapDoesNotDrop(t *testing.T) {
 }
 
 func TestCoalesceTeardownDiscardsResidual(t *testing.T) {
-	c := newOutCoalescer(func() { t.Error("teardown must stop the window") })
+	c := busyCoalescer(func() { t.Error("teardown must stop the window") })
 	if _, sendNow := c.add([]byte("tail")); sendNow {
 		t.Fatal("small chunk must buffer")
 	}
@@ -112,52 +119,52 @@ func TestFeedCoalescedFramesKeepOrder(t *testing.T) {
 }
 
 func TestCoalesceWindowSelection(t *testing.T) {
-	now := time.Unix(1000, 0)
 	c := newOutCoalescer(func() {})
-	c.now = func() time.Time { return now }
+	c.followUp = true
 	if got := c.windowLocked(true); got != outputCoalesceIdleGrace {
-		t.Fatalf("never flushed: window = %v", got)
-	}
-	c.lastFlush = now
-	now = now.Add(outputCoalesceInterval - time.Microsecond)
-	if got := c.windowLocked(true); got != outputCoalesceInterval {
-		t.Fatalf("recent flush: window = %v", got)
-	}
-	now = now.Add(time.Microsecond)
-	if got := c.windowLocked(true); got != outputCoalesceIdleGrace {
-		t.Fatalf("idle for a window: window = %v", got)
+		t.Fatalf("after an immediate idle send: window = %v", got)
 	}
 	if got := c.windowLocked(false); got != outputCoalesceInterval {
 		t.Fatalf("non-empty buffer: window = %v", got)
 	}
+	c.followUp = false
+	if got := c.windowLocked(true); got != outputCoalesceInterval {
+		t.Fatalf("sustained stream: window = %v", got)
+	}
 }
 
-func TestCoalesceIdleGraceDeliversLoneByte(t *testing.T) {
+func TestCoalesceIdleChunkSentImmediately(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newOutCoalescer(func() { t.Error("timer must not arm for an idle chunk") })
+	c.now = func() time.Time { return now }
+	if batch, sendNow := c.add([]byte("x")); !sendNow || string(batch) != "x" {
+		t.Fatalf("first chunk: sendNow = %v batch = %q", sendNow, batch)
+	}
+	c.take()
+	now = now.Add(outputCoalesceInterval)
+	if batch, sendNow := c.add([]byte("y")); !sendNow || string(batch) != "y" {
+		t.Fatalf("chunk after an idle window: sendNow = %v batch = %q", sendNow, batch)
+	}
+}
+
+func TestCoalesceFollowUpChunksShareOneGraceFrame(t *testing.T) {
 	fired := make(chan struct{}, 4)
 	c := newOutCoalescer(func() { fired <- struct{}{} })
-	c.add([]byte("x"))
+	if _, sendNow := c.add([]byte("x")); !sendNow {
+		t.Fatal("idle chunk must leave immediately")
+	}
+	// The chunks that follow arm the grace once; later chunks must neither re-arm nor flush, so one take returns them all.
+	for i := 0; i < 3; i++ {
+		if _, sendNow := c.add(bytes.Repeat([]byte{'a' + byte(i)}, 200)); sendNow {
+			t.Fatal("follow-up chunk must buffer")
+		}
+	}
 	select {
 	case <-fired:
 	case <-time.After(2 * time.Second):
-		t.Fatal("idle grace did not fire")
+		t.Fatal("grace window did not fire")
 	}
-	if got := c.take(); string(got) != "x" {
-		t.Fatalf("batch = %q", got)
-	}
-}
-
-func TestCoalesceChunksWithinGraceShareOneFrame(t *testing.T) {
-	fired := make(chan struct{}, 4)
-	c := newOutCoalescer(func() { fired <- struct{}{} })
-	// The timer is armed once by the first chunk; later chunks must neither re-arm nor flush, so one take returns everything.
-	for i := 0; i < 3; i++ {
-		if _, sendNow := c.add(bytes.Repeat([]byte{'a' + byte(i)}, 200)); sendNow {
-			t.Fatal("small chunk must buffer")
-		}
-	}
-	<-fired
-	got := c.take()
-	if len(got) != 600 {
+	if got := c.take(); len(got) != 600 {
 		t.Fatalf("expected a single 600 byte frame, got %d", len(got))
 	}
 	select {
@@ -171,10 +178,11 @@ func TestCoalesceSustainedStreamKeepsFullWindow(t *testing.T) {
 	now := time.Unix(1000, 0)
 	c := newOutCoalescer(func() {})
 	c.now = func() time.Time { return now }
-	c.add([]byte("a")) // armed with the grace (idle start)
-	c.take()           // flush at t0
+	c.add([]byte("a")) // idle start: sent immediately
+	c.add([]byte("b")) // follow-up: armed with the grace
+	c.take()
 	now = now.Add(time.Millisecond)
-	c.add([]byte("b"))
+	c.add([]byte("c"))
 	c.mu.Lock()
 	armed := c.timer != nil
 	c.mu.Unlock()
