@@ -1,0 +1,591 @@
+package supervisor
+
+import (
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unicode/utf8"
+
+	"github.com/Hello-CTF/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/shape"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/signals"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+)
+
+// Session attention state types; see base.SessionState.
+type (
+	SessionState        = base.SessionState
+	SessionPrompt       = base.SessionPrompt
+	SessionPromptOption = base.SessionPromptOption
+	SessionEvent        = base.SessionEvent
+)
+
+const (
+	// defaultStateIdle is how long output must pause before the session
+	// counts as idle and the screen is inspected for a prompt.
+	defaultStateIdle = 400 * time.Millisecond
+	// defaultNotableCommand is the command run time from which a finished
+	// command is worth a notification.
+	defaultNotableCommand = 10 * time.Second
+	// maxStateEvents bounds the recent events kept per session.
+	maxStateEvents = 32
+	// maxEventText bounds each of a notification's title and body as kept in
+	// the event ring.
+	maxEventText = 256
+	// enterKey is what a terminal sends for Enter.
+	enterKey = "\r"
+	// bellEchoWindow is how long after input a bell counts as the reaction
+	// to that input, such as a line editor's failed completion, rather than
+	// a request for attention.
+	bellEchoWindow = time.Second
+)
+
+// stateOptions configures a stateTracker.
+type stateOptions struct {
+	cols, rows int
+	// idle and notableAfter default to defaultStateIdle and
+	// defaultNotableCommand.
+	idle         time.Duration
+	notableAfter time.Duration
+	// shellLeader reports that the session process is an interactive
+	// shell, so its own process group in the terminal foreground means the
+	// shell, not a program it started, reads the input.
+	shellLeader bool
+	// foreground reads the PTY foreground state; nil where unsupported.
+	foreground func() (pty.Foreground, error)
+	// appCursor reports DECCKM (application cursor keys); nil means off.
+	appCursor func() bool
+	// seq numbers events; it is shared by every session of a supervisor
+	// so sequences are monotonic across sessions.
+	seq *atomic.Uint64
+	// onChange runs, outside the tracker lock, after a change clients
+	// should see: a state change, a new event or a prompt appearing or
+	// going stale.
+	onChange func()
+	// timers arms a real timer for the idle transition; tests leave it off
+	// and call tick with their own clock.
+	timers bool
+}
+
+// stateTracker derives a session's attention state from its output and
+// input. It parses the output with a signal scanner and a scrollback-free
+// screen emulator, and inspects the screen for a prompt shape only when the
+// output goes idle, never on a poll.
+//
+// Rules:
+//   - output makes the session running unless a signal state is pending;
+//   - BEL or a notification makes it needs_me (confidence signal) until
+//     input arrives, a command starts or ends, or the process exits;
+//   - OSC 133 D makes it just_finished until input arrives or a command
+//     starts; the state is notable when the command ran notableAfter or
+//     longer;
+//   - when output pauses for idle, the screen is inspected: a prompt shape
+//     makes it needs_me (confidence heuristic) unless OSC 133 puts the shell
+//     at its own prompt, otherwise it is idle;
+//   - process exit makes it exited.
+type stateTracker struct {
+	opts stateOptions
+
+	mu      sync.Mutex
+	scanner *signals.Scanner
+	emu     *terminal.Emulator
+
+	state      string
+	confidence string
+	reason     string
+	since      time.Time
+	exitCode   *int
+	durationMS int64
+	notable    bool
+
+	// active is set by output or input since the last idle inspection and
+	// lastActivity is when it happened.
+	active       bool
+	lastActivity time.Time
+	lastInput    time.Time
+	// signalPending and finishedPending hold needs_me (signal) and
+	// just_finished against later output.
+	signalPending   bool
+	finishedPending bool
+
+	// prompt is the result of the last inspection, info its published form.
+	// fresh reports that nothing was written or input since.
+	prompt shape.Prompt
+	info   *SessionPrompt
+	fresh  bool
+	epoch  uint64
+
+	events []SessionEvent
+	// lastSeq is the newest event sequence; evictedSeq the newest one
+	// dropped from the ring.
+	lastSeq    uint64
+	evictedSeq uint64
+
+	timer      *time.Timer
+	timerArmed bool
+	exited     bool
+}
+
+func newStateTracker(opts stateOptions, now time.Time) *stateTracker {
+	if opts.idle <= 0 {
+		opts.idle = defaultStateIdle
+	}
+	if opts.notableAfter <= 0 {
+		opts.notableAfter = defaultNotableCommand
+	}
+	if opts.seq == nil {
+		opts.seq = new(atomic.Uint64)
+	}
+	return &stateTracker{
+		opts:       opts,
+		scanner:    signals.NewScanner(signals.Config{}),
+		emu:        terminal.NewEmulator(opts.cols, opts.rows),
+		state:      base.SessionIdle,
+		confidence: base.ConfidenceSignal,
+		reason:     "start",
+		since:      now,
+		prompt:     noPrompt(),
+		epoch:      1,
+	}
+}
+
+func noPrompt() shape.Prompt { return shape.Prompt{Kind: shape.KindNone, CursorIndex: -1} }
+
+// output feeds one chunk of session output.
+func (t *stateTracker) output(p []byte, now time.Time) {
+	if len(p) == 0 {
+		return
+	}
+	t.mu.Lock()
+	if t.exited {
+		t.mu.Unlock()
+		return
+	}
+	t.emu.Write(p)
+	changed := t.fresh
+	t.fresh = false
+	for _, event := range t.scanner.Feed(p, now) {
+		if t.signalLocked(event, now) {
+			changed = true
+		}
+	}
+	if !t.signalPending && !t.finishedPending && t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) {
+		changed = true
+	}
+	t.activityLocked(now)
+	t.mu.Unlock()
+	if changed {
+		t.changed()
+	}
+}
+
+func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
+	switch event.Kind {
+	case signals.KindBell:
+		// A bell answering recent input or rung by the shell's line editor
+		// is kept as an event but does not ask for attention.
+		switch {
+		case t.scanner.AtPrompt():
+			t.addEventLocked(SessionEvent{Kind: base.SessionEventBell, At: event.At, Reason: "shell_prompt"})
+			return true
+		case !t.lastInput.IsZero() && now.Sub(t.lastInput) < bellEchoWindow:
+			t.addEventLocked(SessionEvent{Kind: base.SessionEventBell, At: event.At, Reason: "after_input"})
+			return true
+		}
+		t.addEventLocked(SessionEvent{Kind: base.SessionEventBell, At: event.At})
+		t.signalPending, t.finishedPending = true, false
+		t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "bell", now)
+	case signals.KindNotify:
+		title, cutTitle := clipText(event.Title)
+		body, cutBody := clipText(event.Body)
+		t.addEventLocked(SessionEvent{
+			Kind: base.SessionEventNotify, At: event.At, Source: event.Source,
+			Title: title, Body: body, TextTruncated: cutTitle || cutBody,
+		})
+		t.signalPending, t.finishedPending = true, false
+		t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "notify", now)
+	case signals.KindCommandStart:
+		t.signalPending, t.finishedPending = false, false
+		t.setLocked(base.SessionRunning, base.ConfidenceSignal, "command_start", now)
+	case signals.KindCommandEnd:
+		var code *int
+		if event.HasExitCode {
+			value := event.ExitCode
+			code = &value
+		}
+		duration := event.Duration.Milliseconds()
+		notable := event.Duration >= t.opts.notableAfter
+		t.addEventLocked(SessionEvent{
+			Kind: base.SessionEventCommandEnd, At: event.At,
+			ExitCode: copyInt(code), DurationMS: duration, Notable: notable,
+		})
+		t.signalPending, t.finishedPending = false, true
+		t.forceLocked(base.SessionJustFinished, base.ConfidenceSignal, "command_end", now)
+		t.exitCode, t.durationMS, t.notable = code, duration, notable
+	default:
+		return false
+	}
+	return true
+}
+
+// input records bytes written to the session by any client. Every write
+// advances the prompt epoch, so a prompt answered once can never be
+// answered again with the same epoch, and clears pending signal states.
+func (t *stateTracker) input(now time.Time) {
+	t.mu.Lock()
+	if t.exited {
+		t.mu.Unlock()
+		return
+	}
+	t.epoch++
+	t.lastInput = now
+	changed := t.fresh
+	t.fresh = false
+	t.signalPending, t.finishedPending = false, false
+	if t.state == base.SessionNeedsMe || t.state == base.SessionJustFinished {
+		changed = t.setLocked(base.SessionIdle, base.ConfidenceSignal, "input", now) || changed
+	}
+	// Re-inspect once the program has reacted: a prompt that ignored the
+	// input is reported again with the new epoch.
+	t.activityLocked(now)
+	t.mu.Unlock()
+	if changed {
+		t.changed()
+	}
+}
+
+func (t *stateTracker) activityLocked(now time.Time) {
+	t.active = true
+	t.lastActivity = now
+	if t.opts.timers && !t.timerArmed {
+		t.armLocked(t.opts.idle)
+	}
+}
+
+func (t *stateTracker) armLocked(d time.Duration) {
+	t.timerArmed = true
+	if t.timer == nil {
+		t.timer = time.AfterFunc(d, t.fire)
+		return
+	}
+	t.timer.Reset(d)
+}
+
+func (t *stateTracker) fire() {
+	t.tick(time.Now())
+}
+
+// tick runs the idle transition when activity paused for the idle
+// threshold. It returns how much longer to wait when activity is too
+// recent, and zero otherwise.
+func (t *stateTracker) tick(now time.Time) time.Duration {
+	t.mu.Lock()
+	if !t.active || t.exited {
+		t.timerArmed = false
+		t.mu.Unlock()
+		return 0
+	}
+	if wait := t.opts.idle - now.Sub(t.lastActivity); wait > 0 {
+		if t.opts.timers {
+			t.armLocked(wait)
+		}
+		t.mu.Unlock()
+		return wait
+	}
+	t.active, t.timerArmed = false, false
+	changed := t.inspectLocked()
+	switch {
+	case t.signalPending, t.finishedPending:
+	case t.prompt.Kind != shape.KindNone && !t.scanner.AtPrompt():
+		changed = t.setLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now) || changed
+	default:
+		changed = t.setLocked(base.SessionIdle, base.ConfidenceSignal, "quiet", now) || changed
+	}
+	t.mu.Unlock()
+	if changed {
+		t.changed()
+	}
+	return 0
+}
+
+// inspectLocked runs the prompt detector on the current screen and updates
+// the prompt and its epoch. It reports whether the published prompt
+// changed.
+func (t *stateTracker) inspectLocked() bool {
+	detected := shape.Detect(t.emu.Snapshot())
+	wasFresh := t.fresh
+	before := t.prompt
+	if (before.Kind == shape.KindNone) != (detected.Kind == shape.KindNone) ||
+		(detected.Kind != shape.KindNone && detected.Fingerprint != before.Fingerprint) {
+		t.epoch++
+	}
+	t.prompt = detected
+	t.info = t.promptInfoLocked(detected)
+	t.fresh = true
+	return !wasFresh && detected.Kind != shape.KindNone || before.Kind != detected.Kind || before.Fingerprint != detected.Fingerprint
+}
+
+// currentPrompt inspects the screen now, as a tap validation must, and
+// returns the published prompt (nil for none) with its epoch.
+func (t *stateTracker) currentPrompt() *SessionPrompt {
+	t.mu.Lock()
+	changed := false
+	var prompt *SessionPrompt
+	if !t.exited {
+		changed = t.inspectLocked()
+		prompt = t.publishedPromptLocked()
+	}
+	t.mu.Unlock()
+	if changed {
+		t.changed()
+	}
+	return prompt
+}
+
+func (t *stateTracker) resize(cols, rows int) {
+	t.mu.Lock()
+	t.emu.Resize(cols, rows)
+	t.mu.Unlock()
+}
+
+// exit records the process exit and stops the idle timer.
+func (t *stateTracker) exit(code *int, now time.Time) {
+	t.mu.Lock()
+	if t.exited {
+		t.mu.Unlock()
+		return
+	}
+	if t.prompt.Kind != shape.KindNone {
+		t.epoch++
+	}
+	t.prompt, t.info, t.fresh = noPrompt(), nil, false
+	t.signalPending, t.finishedPending = false, false
+	t.forceLocked(base.SessionExited, base.ConfidenceSignal, "exit", now)
+	t.exitCode = copyInt(code)
+	t.exited = true
+	if t.timer != nil {
+		t.timer.Stop()
+	}
+	t.mu.Unlock()
+	t.changed()
+}
+
+func (t *stateTracker) changed() {
+	if t.opts.onChange != nil {
+		t.opts.onChange()
+	}
+}
+
+// setLocked moves to state unless the session is already there with the
+// same confidence; it records a state event and reports whether it moved.
+func (t *stateTracker) setLocked(state, confidence, reason string, now time.Time) bool {
+	if t.state == state && t.confidence == confidence {
+		return false
+	}
+	t.forceLocked(state, confidence, reason, now)
+	return true
+}
+
+func (t *stateTracker) forceLocked(state, confidence, reason string, now time.Time) {
+	t.state, t.confidence, t.reason, t.since = state, confidence, reason, now
+	t.exitCode, t.durationMS, t.notable = nil, 0, false
+	t.addEventLocked(SessionEvent{Kind: base.SessionEventState, At: now, State: state, Confidence: confidence, Reason: reason})
+}
+
+func (t *stateTracker) addEventLocked(event SessionEvent) {
+	event.Seq = t.opts.seq.Add(1)
+	t.lastSeq = event.Seq
+	if len(t.events) == maxStateEvents {
+		t.evictedSeq = t.events[0].Seq
+		copy(t.events, t.events[1:])
+		t.events = t.events[:len(t.events)-1]
+	}
+	t.events = append(t.events, event)
+}
+
+// snapshot returns the state. With events it includes the retained events
+// after the given sequence.
+func (t *stateTracker) snapshot(withEvents bool, after uint64) *SessionState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	state := &SessionState{
+		State:        t.state,
+		Since:        t.since,
+		Confidence:   t.confidence,
+		Reason:       t.reason,
+		ExitCode:     copyInt(t.exitCode),
+		DurationMS:   t.durationMS,
+		Notable:      t.notable,
+		PromptEpoch:  t.epoch,
+		Prompt:       t.publishedPromptLocked(),
+		LastEventSeq: t.lastSeq,
+	}
+	if withEvents {
+		for _, event := range t.events {
+			if event.Seq > after {
+				event.ExitCode = copyInt(event.ExitCode)
+				state.Events = append(state.Events, event)
+			}
+		}
+		state.EventsDropped = t.evictedSeq > after
+	}
+	return state
+}
+
+func (t *stateTracker) publishedPromptLocked() *SessionPrompt {
+	if !t.fresh || t.info == nil {
+		return nil
+	}
+	prompt := *t.info
+	prompt.Options = append([]SessionPromptOption(nil), t.info.Options...)
+	prompt.Epoch = t.epoch
+	return &prompt
+}
+
+// promptInfoLocked describes a detected prompt with its tap metadata.
+func (t *stateTracker) promptInfoLocked(p shape.Prompt) *SessionPrompt {
+	if p.Kind == shape.KindNone {
+		return nil
+	}
+	ctx := tapContext{atShellPrompt: t.scanner.AtPrompt()}
+	if t.opts.appCursor != nil {
+		ctx.appCursor = t.opts.appCursor()
+	}
+	if t.opts.foreground != nil {
+		if fg, err := t.opts.foreground(); err == nil {
+			ctx.foregroundKnown = true
+			ctx.shellForeground = t.opts.shellLeader && fg.LeaderInForeground()
+			ctx.canonical, ctx.canonicalKnown = fg.Canonical, fg.CanonicalKnown
+		}
+	}
+	return describePrompt(p, ctx)
+}
+
+// tapContext is what tap gating needs to know about the terminal.
+type tapContext struct {
+	// atShellPrompt: OSC 133 says the shell shows its own prompt.
+	atShellPrompt bool
+	// foregroundKnown: the foreground process group could be read; false
+	// on Windows ConPTY, where no prompt is tappable.
+	foregroundKnown bool
+	// shellForeground: the session's interactive shell, not a program it
+	// started, owns the terminal foreground.
+	shellForeground bool
+	// canonical is ICANON on the terminal when canonicalKnown.
+	canonical      bool
+	canonicalKnown bool
+	// appCursor is DECCKM: arrows are sent as SS3 instead of CSI.
+	appCursor bool
+}
+
+// describePrompt applies the tap rules to a detected prompt:
+//   - a question (free text, including passwords) is never tappable;
+//   - nothing is tappable while the shell is at its prompt or owns the
+//     terminal foreground, or when the foreground cannot be read;
+//   - yes/no sends the answer key, followed by Enter when the terminal is in
+//     canonical (line) mode; when the mode is unknown the key is sent alone
+//     and Enter is offered separately;
+//   - a menu with a selection marker is answered by moving the selection
+//     with the arrow keys (encoded per DECCKM) and pressing Enter, except a
+//     menu whose only marker is "*" or ">" without numbering;
+//   - a numbered menu without a marker is answered by its number and Enter,
+//     only in canonical mode.
+func describePrompt(p shape.Prompt, ctx tapContext) *SessionPrompt {
+	info := &SessionPrompt{
+		Kind:        string(p.Kind),
+		Question:    p.Question,
+		CursorIndex: p.CursorIndex,
+		Fingerprint: strconv.FormatUint(p.Fingerprint, 16),
+		Options:     make([]SessionPromptOption, len(p.Options)),
+	}
+	numbered := false
+	for i, option := range p.Options {
+		info.Options[i] = SessionPromptOption{Label: option.Label, Keys: option.Keys, Default: option.Default}
+		if option.Keys != "" {
+			numbered = true
+		}
+	}
+	block := func(reason string) *SessionPrompt {
+		info.Blocked = reason
+		return info
+	}
+	switch {
+	case p.Kind == shape.KindQuestion:
+		return block(base.TapBlockedQuestion)
+	case ctx.atShellPrompt:
+		return block(base.TapBlockedShellPrompt)
+	case !ctx.foregroundKnown:
+		return block(base.TapBlockedForegroundUnknown)
+	case ctx.shellForeground:
+		return block(base.TapBlockedShellForeground)
+	}
+	switch p.Kind {
+	case shape.KindYesNo:
+		info.Method = base.TapMethodKeys
+		suffix := ""
+		switch {
+		case !ctx.canonicalKnown:
+			info.Submit, info.EnterKey = base.TapSubmitSeparate, enterKey
+		case ctx.canonical:
+			info.Submit, suffix = base.TapSubmitEnter, enterKey
+		default:
+			info.Submit = base.TapSubmitNone
+		}
+		for i := range info.Options {
+			info.Options[i].Send = info.Options[i].Keys + suffix
+		}
+	case shape.KindChoice:
+		if p.CursorIndex >= 0 {
+			if p.WeakMarker && !numbered {
+				return block(base.TapBlockedWeakMarker)
+			}
+			up, down := "\x1b[A", "\x1b[B"
+			if ctx.appCursor {
+				up, down = "\x1bOA", "\x1bOB"
+			}
+			info.Method, info.Submit = base.TapMethodArrows, base.TapSubmitEnter
+			for i := range info.Options {
+				steps := i - p.CursorIndex
+				key := down
+				if steps < 0 {
+					steps, key = -steps, up
+				}
+				info.Options[i].Send = strings.Repeat(key, steps) + enterKey
+			}
+			break
+		}
+		if !numbered || !ctx.canonicalKnown || !ctx.canonical {
+			return block(base.TapBlockedNotLineMode)
+		}
+		info.Method, info.Submit = base.TapMethodKeys, base.TapSubmitEnter
+		for i := range info.Options {
+			info.Options[i].Send = info.Options[i].Keys + enterKey
+		}
+	default:
+		return info
+	}
+	info.Tappable = true
+	return info
+}
+
+func clipText(s string) (string, bool) {
+	if len(s) <= maxEventText {
+		return s, false
+	}
+	cut := maxEventText
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut], true
+}
+
+func copyInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}

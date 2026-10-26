@@ -64,6 +64,10 @@ const (
 	// (readHistoryMsg); frameHistory answers with historyPayload.
 	frameReadHistory
 	frameHistory
+	// frameState pushes an attached session's attention state (stateMsg)
+	// after it changes, with the events since the previous push. The
+	// attach reply carries the state at attach time.
+	frameState
 )
 
 // Every connection uses windowed input and credited output. The client may keep
@@ -178,6 +182,12 @@ type resizeMsg struct {
 	Rows              uint32 `json:"rows"`
 	ExpectGeneration  string `json:"expect_generation"`
 	ExpectIncarnation string `json:"expect_incarnation"`
+}
+
+// stateMsg is the payload of frameState.
+type stateMsg struct {
+	ID    string       `json:"id"`
+	State SessionState `json:"state"`
 }
 
 type versionsMsg struct {

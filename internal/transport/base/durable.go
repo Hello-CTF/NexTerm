@@ -45,6 +45,9 @@ type DurableDescriptor struct {
 	HistoryBase      uint64
 	HistoryNext      uint64
 	HistoryTruncated bool
+	// State is the helper's attention state for the session; nil when the
+	// helper runs with state detection disabled.
+	State *SessionState
 }
 
 type DurableIdentity struct {

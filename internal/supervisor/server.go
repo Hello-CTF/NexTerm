@@ -225,7 +225,7 @@ func (c *serverConn) serve() {
 		case frameCreate:
 			c.handleCreate(payload)
 		case frameList:
-			c.handleList()
+			c.handleList(payload)
 		case frameRename:
 			c.handleRename(payload)
 		case frameAttach:
@@ -309,8 +309,15 @@ func (c *serverConn) handleCreate(payload []byte) {
 	}
 }
 
-func (c *serverConn) handleList() {
-	infos, err := c.server.supervisor.listCanonical(context.Background())
+func (c *serverConn) handleList(payload []byte) {
+	var options listOptions
+	if len(payload) > 0 {
+		if err := unmarshalFrame(payload, &options); err != nil {
+			c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+			return
+		}
+	}
+	infos, err := c.server.supervisor.listCanonicalWith(context.Background(), options)
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
@@ -361,12 +368,44 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	c.sessionMu.Lock()
 	c.attachment = attachment
 	c.sessionMu.Unlock()
-	if err := c.reply(frameAttached, attachedMsg{Info: attachment.session.canonicalInfo(), Replay: attachment.Replay()}); err != nil {
+	info := attachment.session.canonicalInfo()
+	if err := c.reply(frameAttached, attachedMsg{Info: info, Replay: attachment.Replay()}); err != nil {
 		_ = attachment.Detach()
 		return false
 	}
 	go c.streamOutput(attachment)
+	if info.State != nil {
+		c.server.wg.Add(1)
+		go func() {
+			defer c.server.wg.Done()
+			c.streamState(attachment, info.State.LastEventSeq)
+		}()
+	}
 	return true
+}
+
+// streamState pushes the attached session's state whenever it changes,
+// with the events after the last pushed sequence. The attachment registers
+// for changes before the attach reply snapshots the state, so no change
+// between the two is missed.
+func (c *serverConn) streamState(attachment *Attachment, after uint64) {
+	for {
+		select {
+		case <-attachment.StateUpdates():
+		case <-attachment.ctx.Done():
+			return
+		case <-c.done:
+			return
+		}
+		state := attachment.SessionState(after)
+		if state == nil {
+			continue
+		}
+		if c.reply(frameState, stateMsg{ID: attachment.ID(), State: *state}) != nil {
+			return
+		}
+		after = state.LastEventSeq
+	}
 }
 
 func (c *serverConn) handleInput(payload []byte) bool {

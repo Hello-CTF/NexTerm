@@ -69,15 +69,27 @@ func (e registryEntry) info() Info {
 }
 
 func (s *Session) canonicalInfo() Info {
+	return s.canonicalInfoWith(listOptions{})
+}
+
+func (s *Session) canonicalInfoWith(options listOptions) Info {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	info := s.entry.info()
 	info.Generation = s.supervisor.generation
 	s.historyInfo(&info)
+	info.State = s.stateInfoLocked(options.Events, options.EventsAfter)
 	return info
 }
 
 func (s *Supervisor) listCanonical(ctx context.Context) ([]Info, error) {
+	return s.listCanonicalWith(ctx, listOptions{})
+}
+
+// listCanonicalWith lists the PTY sessions; with options.Events each state
+// carries the retained events after options.EventsAfter, trimmed so the
+// reply fits one frame.
+func (s *Supervisor) listCanonicalWith(ctx context.Context, options listOptions) ([]Info, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -92,9 +104,12 @@ func (s *Supervisor) listCanonical(ctx context.Context) ([]Info, error) {
 	s.mu.Unlock()
 	infos := make([]Info, 0, len(sessions))
 	for _, session := range sessions {
-		infos = append(infos, session.canonicalInfo())
+		infos = append(infos, session.canonicalInfoWith(options))
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
+	if options.Events {
+		trimListEvents(infos, listEventBudget)
+	}
 	return infos, nil
 }
 

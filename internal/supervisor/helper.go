@@ -25,6 +25,21 @@ type HelperConfig struct {
 	SpawnTimeout   time.Duration
 	Bridge         bool
 	Probe          bool
+	// DisableStateDetection turns off per-session attention state; it is
+	// set by StateDetectionEnv.
+	DisableStateDetection bool
+}
+
+// StateDetectionEnv, set to "off", "0" or "false" in the helper's
+// environment, disables per-session attention state detection.
+const StateDetectionEnv = "NEXTERM_HELPER_STATE_DETECTION"
+
+func stateDetectionDisabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "off", "0", "false", "no":
+		return true
+	}
+	return false
 }
 
 type Helper struct {
@@ -150,7 +165,7 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 		return fmt.Errorf("write supervisor helper pid: %w", err)
 	}
 	defer func() { _ = os.Remove(filepath.Join(stateDir, "helper.pid")) }()
-	supervisor, err := New(Config{StateDir: stateDir, CommandTimeout: config.CommandTimeout})
+	supervisor, err := New(Config{StateDir: stateDir, CommandTimeout: config.CommandTimeout, DisableStateDetection: config.DisableStateDetection})
 	if err != nil {
 		return err
 	}
@@ -205,6 +220,7 @@ func parseHelperArgs(args []string, getenv func(string) string) (HelperConfig, e
 		getenv = func(string) string { return "" }
 	}
 	var config HelperConfig
+	config.DisableStateDetection = stateDetectionDisabled(getenv(StateDetectionEnv))
 	var dataDir string
 	for index := 0; index < len(args); index++ {
 		argument := args[index]

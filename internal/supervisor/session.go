@@ -30,6 +30,10 @@ type Session struct {
 	// exec is set for one-shot non-PTY sessions; pty and recording are nil.
 	exec *execState
 
+	// state tracks the attention state of a PTY session; nil for exec and
+	// recovered sessions and when state detection is disabled.
+	state *stateTracker
+
 	mu          sync.RWMutex
 	dead        bool
 	exitErr     error
@@ -169,7 +173,53 @@ func (s *Session) infoLocked() Info {
 		info.FinishedAt = &finished
 	}
 	s.historyInfo(&info)
+	info.State = s.stateInfoLocked(false, 0)
 	return info
+}
+
+// stateInfoLocked returns the attention state, with the retained events
+// after the given sequence when withEvents is set. A session recovered from
+// an earlier helper is reported exited. It returns nil when state detection
+// is disabled.
+func (s *Session) stateInfoLocked(withEvents bool, after uint64) *SessionState {
+	if s.state != nil {
+		return s.state.snapshot(withEvents, after)
+	}
+	if !s.supervisor.stateDetection || s.exec != nil || !s.dead {
+		return nil
+	}
+	state := &SessionState{
+		State:       base.SessionExited,
+		Confidence:  base.ConfidenceSignal,
+		Reason:      "exit",
+		ExitCode:    copyInt(s.entry.ExitCode),
+		PromptEpoch: 1,
+	}
+	if s.entry.FinishedAt != nil {
+		state.Since = *s.entry.FinishedAt
+	}
+	return state
+}
+
+// notifyState wakes the state pushers of the attachments.
+func (s *Session) notifyState() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for attachment := range s.attachments {
+		select {
+		case attachment.stateNotify <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// CurrentPrompt inspects the screen now and returns the detected prompt
+// with its epoch, or nil when there is none or state detection is off.
+func (s *Session) CurrentPrompt() *SessionPrompt {
+	if s.state == nil {
+		return nil
+	}
+	return s.state.currentPrompt()
 }
 
 // historyInfo fills the recorded output bounds of info.
@@ -208,6 +258,9 @@ func (s *Session) writeInputCtx(ctx context.Context, p []byte, wait bool) (int, 
 	s.mu.RUnlock()
 	if dead {
 		return 0, fmt.Errorf("%w: %s", ErrExited, s.entry.ID)
+	}
+	if s.state != nil && len(p) > 0 {
+		s.state.input(time.Now())
 	}
 	written := 0
 	for len(p) > 0 {
@@ -313,6 +366,9 @@ func (s *Session) Resize(ctx context.Context, cols, rows uint32) error {
 		return err
 	}
 	s.history.noteResize(rows)
+	if s.state != nil {
+		s.state.resize(int(cols), int(rows))
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entry.Cols = cols
@@ -355,14 +411,15 @@ func (s *Session) attach(options AttachOptions) (*Attachment, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	attachment := &Attachment{
-		session:   s,
-		replay:    s.history.newReader(replay.ReplayFrom),
-		nextSeq:   replay.ReplayFrom,
-		replayEnd: replay.HistoryNext,
-		result:    replay,
-		notify:    make(chan struct{}, 1),
-		ctx:       ctx,
-		cancel:    cancel,
+		session:     s,
+		replay:      s.history.newReader(replay.ReplayFrom),
+		nextSeq:     replay.ReplayFrom,
+		replayEnd:   replay.HistoryNext,
+		result:      replay,
+		notify:      make(chan struct{}, 1),
+		stateNotify: make(chan struct{}, 1),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 	s.mu.Lock()
 	s.attachments[attachment] = struct{}{}
@@ -585,6 +642,9 @@ func (s *Session) record(chunk []byte) {
 		s.setRecErr(err)
 	}
 	s.notifyAll()
+	if s.state != nil {
+		s.state.output(chunk, time.Now())
+	}
 }
 
 func (s *Session) setRecErr(err error) {
@@ -622,6 +682,9 @@ func (s *Session) finish(waitErr error) {
 			persistErr = writeEntry(sessionsRoot(s.supervisor.stateDir), s.entry)
 		}
 		s.mu.Unlock()
+		if s.state != nil {
+			s.state.exit(code, now)
+		}
 		var closeErr error
 		if s.history != nil {
 			closeErr = s.history.closeWriter()

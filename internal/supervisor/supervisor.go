@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -25,6 +26,10 @@ type Supervisor struct {
 	commandTimeout time.Duration
 	historyLimit   uint64
 	ptyStart       func(context.Context, pty.Config) (*pty.Session, error)
+	// stateDetection enables the per-session attention state; eventSeq
+	// numbers state events across all sessions.
+	stateDetection bool
+	eventSeq       atomic.Uint64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -79,6 +84,7 @@ func New(config Config) (*Supervisor, error) {
 		commandTimeout: config.CommandTimeout,
 		historyLimit:   config.HistoryLimit,
 		ptyStart:       pty.Start,
+		stateDetection: !config.DisableStateDetection,
 		ctx:            ctx,
 		cancel:         cancel,
 		sessions:       make(map[string]*Session),
@@ -181,6 +187,18 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		session = newSession(s, options, id, ptySession, recording)
 		if wrapped {
 			session.shellCleanup = launch.cleanup
+		}
+		if s.stateDetection {
+			session.state = newStateTracker(stateOptions{
+				cols:        int(options.Cols),
+				rows:        int(options.Rows),
+				shellLeader: interactiveShell(options.Command),
+				foreground:  ptySession.Foreground,
+				appCursor:   recording.appCursor,
+				seq:         &s.eventSeq,
+				onChange:    session.notifyState,
+				timers:      true,
+			}, time.Now())
 		}
 		if err := writeEntry(sessionsRoot(s.stateDir), session.entry); err != nil {
 			session.closeProcess()

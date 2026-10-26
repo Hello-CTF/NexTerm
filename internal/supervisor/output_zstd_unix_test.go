@@ -86,7 +86,7 @@ func readRawFrames(t *testing.T, conn net.Conn, marker string) (decoded []byte, 
 				t.Fatal(err)
 			}
 			decoded = append(decoded, data...)
-		case frameInputAck:
+		case frameInputAck, frameState:
 			continue
 		default:
 			t.Fatalf("unexpected frame kind %d", kind)
@@ -177,6 +177,8 @@ func TestOutputCreditCountsDecodedBytesWithZstd(t *testing.T) {
 		case frameOutput:
 			_, data, _ := parseOutput(payload)
 			decoded += len(data)
+		case frameState:
+			continue
 		default:
 			t.Fatalf("unexpected frame kind %d", kind)
 		}

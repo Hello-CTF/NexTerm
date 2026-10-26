@@ -23,8 +23,11 @@ type Attachment struct {
 	gaps uint64
 
 	notify chan struct{}
-	ctx    context.Context
-	cancel context.CancelFunc
+	// stateNotify is signalled when the session's attention state or
+	// events change.
+	stateNotify chan struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
 
 	closeOnce sync.Once
 	closeErr  error

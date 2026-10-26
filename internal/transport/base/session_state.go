@@ -1,0 +1,154 @@
+package base
+
+import "time"
+
+// Session attention states reported by a durable helper. They are derived
+// inside the helper from terminal-standard signals and generic screen
+// shapes, independent of any attached client.
+const (
+	// SessionRunning: output arrived within the idle threshold.
+	SessionRunning = "running"
+	// SessionNeedsMe: the program rang the bell or sent a notification
+	// (confidence signal), or output went idle with a prompt shape near the
+	// cursor (confidence heuristic).
+	SessionNeedsMe = "needs_me"
+	// SessionJustFinished: the shell reported a command end (OSC 133 D).
+	SessionJustFinished = "just_finished"
+	// SessionIdle: no output and no prompt.
+	SessionIdle = "idle"
+	// SessionExited: the session process exited.
+	SessionExited = "exited"
+)
+
+// Confidence of a session state.
+const (
+	// ConfidenceSignal: the state follows from an explicit terminal signal
+	// or an observed fact (output, exit).
+	ConfidenceSignal = "signal"
+	// ConfidenceHeuristic: the state was inferred from the screen shape.
+	ConfidenceHeuristic = "heuristic"
+)
+
+// Session event kinds.
+const (
+	SessionEventBell       = "bell"
+	SessionEventNotify     = "notify"
+	SessionEventCommandEnd = "command_end"
+	SessionEventState      = "state"
+)
+
+// Prompt tap methods and submit modes; see SessionPrompt.
+const (
+	TapMethodKeys   = "keys"
+	TapMethodArrows = "arrows"
+
+	TapSubmitEnter    = "enter"
+	TapSubmitNone     = "none"
+	TapSubmitSeparate = "separate"
+)
+
+// Reasons a detected prompt is not tappable.
+const (
+	TapBlockedQuestion          = "question"
+	TapBlockedShellPrompt       = "shell_prompt"
+	TapBlockedShellForeground   = "shell_foreground"
+	TapBlockedForegroundUnknown = "foreground_unknown"
+	TapBlockedWeakMarker        = "weak_marker"
+	TapBlockedNotLineMode       = "not_line_mode"
+)
+
+// SessionState is the attention state of one durable session.
+type SessionState struct {
+	State string    `json:"state"`
+	Since time.Time `json:"since"`
+	// Confidence is ConfidenceSignal or ConfidenceHeuristic.
+	Confidence string `json:"confidence"`
+	// Reason names the input that caused the state: bell, notify, prompt,
+	// command_end, command_start, output, input, quiet or exit.
+	Reason string `json:"reason,omitempty"`
+	// ExitCode is the command exit code for just_finished (when the shell
+	// reported one) and the process exit code for exited.
+	ExitCode *int `json:"exit_code,omitempty"`
+	// DurationMS is the command run time for just_finished.
+	DurationMS int64 `json:"duration_ms,omitempty"`
+	// Notable marks a just_finished command that ran at least the helper's
+	// notification threshold; shorter commands are not worth a notification.
+	Notable bool `json:"notable,omitempty"`
+	// PromptEpoch advances whenever the detected prompt changes or appears
+	// or disappears, and on any input written to the session. Together with
+	// the helper generation it identifies one prompt instance.
+	PromptEpoch uint64 `json:"prompt_epoch"`
+	// Prompt is the prompt detected when output last went idle; nil when
+	// none was found or output has arrived since.
+	Prompt *SessionPrompt `json:"prompt,omitempty"`
+	// LastEventSeq is the sequence of the newest event of this session.
+	// Sequences are monotonic across all sessions of one helper generation.
+	LastEventSeq uint64 `json:"last_event_seq,omitempty"`
+	// Events are the retained recent events after the sequence the caller
+	// asked for, oldest first.
+	Events []SessionEvent `json:"events,omitempty"`
+	// EventsDropped reports that events after the requested sequence were
+	// evicted from the helper's ring or left out to bound the reply size.
+	EventsDropped bool `json:"events_dropped,omitempty"`
+}
+
+// SessionPrompt is a detected prompt with what a client may do about it.
+type SessionPrompt struct {
+	// Kind is yesno, choice or question.
+	Kind     string                `json:"kind"`
+	Question string                `json:"question,omitempty"`
+	Options  []SessionPromptOption `json:"options,omitempty"`
+	// CursorIndex is the option carrying the selection marker, or -1.
+	CursorIndex int `json:"cursor_index"`
+	// Fingerprint is the hexadecimal prompt fingerprint.
+	Fingerprint string `json:"fingerprint"`
+	Epoch       uint64 `json:"epoch"`
+	// Tappable reports that the options can be answered by sending each
+	// option's Send bytes; Blocked names the reason when it is false.
+	Tappable bool   `json:"tappable"`
+	Blocked  string `json:"blocked,omitempty"`
+	// Method is TapMethodKeys (type the option keys) or TapMethodArrows
+	// (move the selection, then Enter).
+	Method string `json:"method,omitempty"`
+	// Submit is TapSubmitEnter when Send ends with Enter, TapSubmitNone when
+	// the program reads single keys, or TapSubmitSeparate when the line
+	// discipline is unknown: Send carries only the keys and EnterKey offers
+	// Enter as its own action.
+	Submit string `json:"submit,omitempty"`
+	// EnterKey is the byte sequence of the separate Enter action.
+	EnterKey string `json:"enter_key,omitempty"`
+}
+
+// SessionPromptOption is one answer of a detected prompt.
+type SessionPromptOption struct {
+	Label   string `json:"label"`
+	Keys    string `json:"keys,omitempty"`
+	Default bool   `json:"default,omitempty"`
+	// Send is the exact input that selects the option; empty when the
+	// prompt is not tappable.
+	Send string `json:"send,omitempty"`
+}
+
+// SessionEvent is one entry of a session's recent events.
+type SessionEvent struct {
+	Seq  uint64    `json:"seq"`
+	Kind string    `json:"kind"`
+	At   time.Time `json:"at"`
+	// Source, Title and Body describe a notify event. Text over the helper
+	// limit is cut and TextTruncated set.
+	Source        string `json:"source,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Body          string `json:"body,omitempty"`
+	TextTruncated bool   `json:"text_truncated,omitempty"`
+	// ExitCode, DurationMS and Notable describe a command_end event.
+	ExitCode   *int  `json:"exit_code,omitempty"`
+	DurationMS int64 `json:"duration_ms,omitempty"`
+	Notable    bool  `json:"notable,omitempty"`
+	// State, Confidence and Reason describe a state event. On a bell event
+	// Reason explains why the bell did not ask for attention: after_input
+	// (it answered input within a second) or shell_prompt (the shell's line
+	// editor rang it).
+	State      string `json:"state,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+}

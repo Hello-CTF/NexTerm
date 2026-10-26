@@ -23,6 +23,10 @@ type Config struct {
 	// HistoryLimit is the recorded output kept per session when the creator
 	// does not choose one; zero means DefaultHistoryLimit.
 	HistoryLimit uint64
+	// DisableStateDetection turns off the per-session attention state
+	// (signal scanning, screen model and prompt detection); Info.State is
+	// then nil.
+	DisableStateDetection bool
 }
 
 type CreateOptions struct {
@@ -70,6 +74,9 @@ type Info struct {
 	HistoryNext      uint64 `json:"history_next"`
 	HistoryLimit     uint64 `json:"history_limit,omitempty"`
 	HistoryTruncated bool   `json:"history_truncated,omitempty"`
+	// State is the session's attention state; nil when the helper runs
+	// with state detection disabled.
+	State *SessionState `json:"state,omitempty"`
 }
 
 // AttachOptions selects where an attach starts streaming recorded output.

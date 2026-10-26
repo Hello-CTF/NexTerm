@@ -257,12 +257,23 @@ func (c *Client) ExecStream(ctx context.Context, spec ExecSpec, onOutput func(st
 }
 
 func (c *Client) List(ctx context.Context) ([]Info, error) {
+	return c.list(ctx, listOptions{})
+}
+
+// ListWithEvents is List with each session's retained state events after
+// the given sequence. Sequences are shared by all sessions of one helper
+// generation; pass zero after a generation change.
+func (c *Client) ListWithEvents(ctx context.Context, after uint64) ([]Info, error) {
+	return c.list(ctx, listOptions{Events: true, EventsAfter: after})
+}
+
+func (c *Client) list(ctx context.Context, options listOptions) ([]Info, error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
-	kind, payload, err := conn.request(ctx, frameList, struct{}{})
+	kind, payload, err := conn.request(ctx, frameList, options)
 	if err != nil {
 		return nil, err
 	}
@@ -386,6 +397,12 @@ func (c *Client) newStream(conn *clientConn, reply attachedMsg) *Stream {
 		inputToken:        make(chan struct{}, 1),
 		inputWake:         make(chan struct{}),
 		creditWake:        make(chan struct{}, 1),
+		stateWake:         make(chan struct{}, 1),
+	}
+	if info.State != nil {
+		state := *info.State
+		state.Events = nil
+		stream.state = &state
 	}
 	go stream.readLoop()
 	go stream.creditLoop()
@@ -694,6 +711,13 @@ type Stream struct {
 	// window space. Tests use it to observe the wait deterministically.
 	windowWaitHook func()
 
+	// state is the latest attention state pushed by the helper, nil when
+	// it reports none; stateEvents are the events pushed since attach,
+	// at most maxStateEvents. Both are guarded by mu.
+	state       *SessionState
+	stateEvents []SessionEvent
+	stateWake   chan struct{}
+
 	// tokenWaitHook, when non-nil, runs immediately before requestRaw blocks
 	// acquiring the request token (after its initial ctx check) and before a
 	// write blocks acquiring the input token. Tests use it to observe the
@@ -739,6 +763,25 @@ func (s *Stream) applyGapsLocked() {
 		s.consumed = s.gapMarks[0].to
 		s.gapMarks = s.gapMarks[1:]
 	}
+}
+
+// SessionState returns the latest attention state the helper pushed, with
+// the events received since attach (at most the newest maxStateEvents), or
+// nil when the helper reports no state.
+func (s *Stream) SessionState() *SessionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		return nil
+	}
+	state := *s.state
+	state.Events = append([]SessionEvent(nil), s.stateEvents...)
+	return &state
+}
+
+// StateUpdates is signalled after each pushed state. Signals coalesce.
+func (s *Stream) StateUpdates() <-chan struct{} {
+	return s.stateWake
 }
 
 func (s *Stream) Identity() Identity {
@@ -1465,6 +1508,24 @@ func (s *Stream) readLoop() {
 			s.mu.Unlock()
 			select {
 			case s.newData <- struct{}{}:
+			default:
+			}
+		case frameState:
+			var msg stateMsg
+			if err := unmarshalFrame(payload, &msg); err != nil {
+				s.fail(err)
+				return
+			}
+			s.mu.Lock()
+			s.stateEvents = append(s.stateEvents, msg.State.Events...)
+			if extra := len(s.stateEvents) - maxStateEvents; extra > 0 {
+				s.stateEvents = append([]SessionEvent(nil), s.stateEvents[extra:]...)
+			}
+			msg.State.Events = nil
+			s.state = &msg.State
+			s.mu.Unlock()
+			select {
+			case s.stateWake <- struct{}{}:
 			default:
 			}
 		case frameExit:

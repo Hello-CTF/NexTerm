@@ -215,7 +215,7 @@ func (p *Provider) ListDurable(ctx context.Context) ([]string, error) {
 }
 
 func (p *Provider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
-	infos, err := p.supervisor.listCanonical(ctx)
+	infos, err := p.supervisor.listCanonicalWith(ctx, listOptions{Events: true})
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -239,6 +239,7 @@ func durableDescriptors(infos []Info) []base.DurableDescriptor {
 			HistoryBase:      info.HistoryBase,
 			HistoryNext:      info.HistoryNext,
 			HistoryTruncated: info.HistoryTruncated,
+			State:            info.State,
 		}
 		if info.ExitCode != nil {
 			exitCode := *info.ExitCode
@@ -474,7 +475,7 @@ func (p *RemoteProvider) ListDurable(ctx context.Context) ([]string, error) {
 }
 
 func (p *RemoteProvider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
-	infos, err := p.client.List(ctx)
+	infos, err := p.client.ListWithEvents(ctx, 0)
 	if err != nil {
 		return nil, translateError(err)
 	}
