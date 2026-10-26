@@ -7,14 +7,14 @@ import (
 )
 
 const (
-	family   = "👨‍👩‍👧‍👦"
+	family   = "👨\u200d👩\u200d👧\u200d👦"
 	flagJP   = "🇯🇵"
 	flagUS   = "🇺🇸"
 	thumbs   = "👍🏽"
-	keycap   = "1️⃣"
-	heart    = "❤️"
+	keycap   = "1\ufe0f\u20e3"
+	heart    = "❤\ufe0f"
 	scotland = "🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f"
-	accented = "é"
+	accented = "e\u0301"
 )
 
 func TestRunesKeepsShortText(t *testing.T) {
@@ -25,6 +25,17 @@ func TestRunesKeepsShortText(t *testing.T) {
 	}
 	if got := Runes("abc", 0); got != "" {
 		t.Fatalf("Runes with zero limit = %q, want empty", got)
+	}
+}
+
+// Invalid UTF-8 becomes U+FFFD whether or not the text is cut.
+func TestRunesRepairsInvalidUTF8(t *testing.T) {
+	invalid := "ab\xff\xfecd"
+	for limit, want := range map[int]string{80: "ab\ufffdcd", 3: "ab\ufffd", 2: "ab"} {
+		got := Runes(invalid, limit)
+		if got != want || !utf8.ValidString(got) {
+			t.Fatalf("Runes(%q, %d) = %q, want %q", invalid, limit, got, want)
+		}
 	}
 }
 
@@ -70,7 +81,7 @@ func TestRunesOutputIsValidAndBounded(t *testing.T) {
 		if !strings.HasPrefix(text, got) {
 			t.Fatalf("Runes(_, %d) = %q, not a prefix", limit, got)
 		}
-		if strings.HasSuffix(got, "‍") {
+		if strings.HasSuffix(got, "\u200d") {
 			t.Fatalf("Runes(_, %d) = %q ends in a dangling ZWJ", limit, got)
 		}
 	}

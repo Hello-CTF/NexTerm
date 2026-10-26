@@ -118,13 +118,13 @@ describe("remote tab titles (OSC 0/2)", () => {
   });
 
   it("keeps emoji sequences whole in remote titles", () => {
-    const family = "👨‍👩‍👧‍👦";
+    const family = "👨\u200d👩\u200d👧\u200d👦";
     for (const title of [
       `${family} family`,
-      "❤️ build",
+      "❤\ufe0f build",
       "🇯🇵🇺🇸 flags",
       "👍🏽 ok",
-      "1️⃣ keycap",
+      "1\ufe0f\u20e3 keycap",
       "🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f} scotland",
     ]) {
       expect(applyRemoteTabTitle("t1", title)).toBe(true);
@@ -136,17 +136,34 @@ describe("remote tab titles (OSC 0/2)", () => {
     expect(titleOf()).toBe(prefix);
     applyRemoteTabTitle("t1", "🙂".repeat(100));
     expect(titleOf()).toBe("🙂".repeat(80));
-    expect(titleOf()).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]|�/);
+    expect(titleOf()).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]|\ufffd/);
   });
 
   it("drops C1 controls and bidi overrides but keeps joiners", () => {
     expect(sanitizeRemoteTabTitle("a\u0085b\u009bc")).toBe("a b c");
-    expect(sanitizeRemoteTabTitle("‮evil‬ ⁦x⁩")).toBe("evil x");
-    expect(sanitizeRemoteTabTitle("👩‍💻 dev")).toBe("👩‍💻 dev");
+    expect(sanitizeRemoteTabTitle("\u202eevil\u202c \u2066x\u2069")).toBe("evil x");
+    expect(sanitizeRemoteTabTitle("👩\u200d💻 dev")).toBe("👩\u200d💻 dev");
+  });
+
+  it("drops zero-width spaces and deprecated format controls but keeps direction marks", () => {
+    expect(sanitizeRemoteTabTitle("a\u200bb\u206ac\u206fd")).toBe("abcd");
+    // LRM, RLM, ALM and ZWNJ stay: scripts and mixed-direction titles need them.
+    expect(sanitizeRemoteTabTitle("a\u200eb\u200fc\u061cd\u200ce")).toBe("a\u200eb\u200fc\u061cd\u200ce");
+  });
+
+  it("turns lone surrogates into U+FFFD so the shown and stored title agree", () => {
+    const high = String.fromCharCode(0xd83d);
+    const low = String.fromCharCode(0xde00);
+    expect(sanitizeRemoteTabTitle(`a${high}b${low}c`)).toBe("a\ufffdb\ufffdc");
+    expect(sanitizeRemoteTabTitle(`${high}${low} ok`)).toBe(`${String.fromCodePoint(0x1f600)} ok`);
+    expect(applyRemoteTabTitle("t1", `vim ${high}`)).toBe(true);
+    expect(titleOf()).toBe("vim \ufffd");
+    // The stored title survives a JSON round trip unchanged, as it does through the backend.
+    expect(JSON.parse(JSON.stringify(titleOf()))).toBe(titleOf());
   });
 
   it("an emoji rename and an AI dock title survive a layout round trip", () => {
-    const title = "🚀 部署 👨‍👩‍👧‍👦 ❤️";
+    const title = "🚀 部署 👨\u200d👩\u200d👧\u200d👦 ❤\ufe0f";
     seed([terminal("t1", { title, renamedByUser: true, customTitleAt: 1700000000000 })]);
     const longAiTitle = `${"中".repeat(78)}🇯🇵tail`;
     useUi.setState({

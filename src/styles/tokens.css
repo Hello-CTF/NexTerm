@@ -51,14 +51,16 @@
   --radius-lg: 10px;
   --radius-xl: 14px;
 
+  /* "NexTerm Emoji" (base.css) comes first but only covers emoji code points, so symbols
+     the primary fonts also carry (❤, ⚠, ☀) render in colour while text keeps its font.
+     The trailing emoji families stay as plain glyph fallbacks; Linux WebKitGTK resolves
+     them through fontconfig (Noto Color Emoji). */
   --font-sans:
-    "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
-    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif,
+    "NexTerm Emoji", "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui,
+    -apple-system, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  /* Colour emoji fallbacks follow the generic family so emoji fonts never supply ASCII
-     digits; Linux WebKitGTK resolves them through fontconfig (Noto Color Emoji). */
   --font-mono:
-    "Cascadia Mono", "JetBrains Mono", "Cascadia Code", Consolas,
+    "NexTerm Emoji", "Cascadia Mono", "JetBrains Mono", "Cascadia Code", Consolas,
     "SFMono-Regular", "Courier New", monospace,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 

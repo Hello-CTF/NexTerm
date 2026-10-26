@@ -62,7 +62,7 @@ func TestDurableEmojiTitleSurvivesRestart(t *testing.T) {
 	first, _, _, firstSession := newDurableTestManager(t, provider)
 	info := openDurableTestTab(t, first, firstSession, "emoji-tab", "a-1", false)
 	// 11 seven-rune family emoji plus "构建机" is exactly maxTabTitleRunes.
-	title := strings.Repeat("👨‍👩‍👧‍👦", 11) + "构建机"
+	title := strings.Repeat("👨\u200d👩\u200d👧\u200d👦", 11) + "构建机"
 	if n := utf8.RuneCountInString(title); n != maxTabTitleRunes {
 		t.Fatalf("fixture has %d runes", n)
 	}

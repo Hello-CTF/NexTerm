@@ -556,7 +556,7 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
 
   it("emoji OSC titles from the backend and xterm reach the tab strip intact", async () => {
     await mountWithRename();
-    const backendTitle = "👨‍👩‍👧‍👦 ❤️ 1️⃣ 👍🏽 🇯🇵 build";
+    const backendTitle = "👨\u200d👩\u200d👧\u200d👦 ❤\ufe0f 1\ufe0f\u20e3 👍🏽 🇯🇵 build";
     deliverControl({ ...attachInfo({ title: backendTitle, titleCustom: false }), version: 1 });
     expect(workspaceTitleOf()).toBe(backendTitle);
     expect(getTerminalTabTitle("t1")).toBe(backendTitle);

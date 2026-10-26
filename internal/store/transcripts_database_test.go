@@ -58,7 +58,7 @@ func TestDurableTabTitleRoundtripDatabase(t *testing.T) {
 		t.Fatalf("title after conflict update = %q, %v", title, err)
 	}
 	// Four-byte emoji sequences must round-trip on every backend (utf8mb4 on MySQL).
-	emoji := "👨‍👩‍👧‍👦 ❤️ 1️⃣ 👍🏽 🇯🇵 🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f 构建"
+	emoji := "👨\u200d👩\u200d👧\u200d👦 ❤\ufe0f 1\ufe0f\u20e3 👍🏽 🇯🇵 🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f 构建"
 	if err := db.DurableTabTitleSetAt(ctx, "pg-title-tab", emoji, 1234); err != nil {
 		t.Fatal(err)
 	}

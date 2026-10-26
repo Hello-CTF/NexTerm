@@ -1,17 +1,34 @@
 import type { ResolvedTerminalTheme, TerminalContrast, TerminalFontFamily } from "../../app/preferences";
 
-// Colour emoji fallbacks follow the generic family so they never supply ASCII glyphs or
-// change the cell metrics measured from the primary font.
+// "NexTerm Emoji" is the @font-face alias in styles/base.css: it covers only emoji code
+// points (never ASCII, digits, box drawing or the plain arrows), so it renders text-default
+// symbols such as ❤ and ⚠ in colour without changing the cell metrics, which xterm measures
+// from ASCII glyphs of the primary font. The trailing emoji families are glyph fallbacks.
+export const EMOJI_FONT_ALIAS = "'NexTerm Emoji'";
 export const EMOJI_FONT_FALLBACKS = "'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'";
 
+// Canvas and WebGL glyphs are cached once drawn, so the unicode-range alias is loaded up
+// front instead of on the first emoji (which would otherwise be drawn with a fallback).
+export function preloadEmojiFont(): void {
+  try {
+    void document.fonts?.load(`16px ${EMOJI_FONT_ALIAS}`, "❤\ufe0f\u{1f600}").catch(() => {});
+  } catch {
+    // Font loading is best effort; the stack still falls back to the trailing families.
+  }
+}
+
+function terminalStack(families: string): string {
+  return `${EMOJI_FONT_ALIAS}, ${families}, ${EMOJI_FONT_FALLBACKS}`;
+}
+
 export const TERMINAL_FONT_STACKS: Record<TerminalFontFamily, string> = {
-  cascadia: `'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
-  system: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
-  "jetbrains-mono": `'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
-  "fira-code": `'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
-  "source-code-pro": `'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
-  menlo: `Menlo, Monaco, ui-monospace, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
-  consolas: `Consolas, 'Courier New', monospace, ${EMOJI_FONT_FALLBACKS}`,
+  cascadia: terminalStack("'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace"),
+  system: terminalStack("ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace"),
+  "jetbrains-mono": terminalStack("'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace"),
+  "fira-code": terminalStack("'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace"),
+  "source-code-pro": terminalStack("'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace"),
+  menlo: terminalStack("Menlo, Monaco, ui-monospace, 'Courier New', monospace"),
+  consolas: terminalStack("Consolas, 'Courier New', monospace"),
 };
 
 export const XTERM_DARK_THEME = {

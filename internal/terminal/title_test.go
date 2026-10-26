@@ -185,11 +185,11 @@ func TestOSCTitleKeepsOutputPathContracts(t *testing.T) {
 // sequence fed byte by byte.
 func TestOSCTitleKeepsEmojiSequences(t *testing.T) {
 	titles := []string{
-		"👨‍👩‍👧‍👦 family",
-		"❤️ build",
+		"👨\u200d👩\u200d👧\u200d👦 family",
+		"❤\ufe0f build",
 		"🇯🇵🇺🇸 flags",
 		"👍🏽 ok",
-		"1️⃣ keycap",
+		"1\ufe0f\u20e3 keycap",
 		"🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f scotland",
 		"中文🙂 mixed",
 	}
@@ -206,11 +206,11 @@ func TestOSCTitleKeepsEmojiSequences(t *testing.T) {
 		}
 	}
 	tab := newTestTab(t)
-	seq := []byte("\x1b]2;👨‍💻 dev\x07")
+	seq := []byte("\x1b]2;👨\u200d💻 dev\x07")
 	for i := range seq {
 		tab.Feed(seq[i : i+1])
 	}
-	if got := tab.Title(); got != "👨‍💻 dev" || !utf8.ValidString(got) {
+	if got := tab.Title(); got != "👨\u200d💻 dev" || !utf8.ValidString(got) {
 		t.Fatalf("byte-split title = %q", got)
 	}
 }

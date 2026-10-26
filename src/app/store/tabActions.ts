@@ -153,13 +153,17 @@ export function findTab(id: string): { tab: AppTab; ws: Workspace } | null {
 // Tab titles are capped at the backend's rename limit, counted in code points (maxTabTitleRunes).
 export const MAX_TAB_TITLE_CODE_POINTS = 80;
 
-// Controls become spaces and bidi embedding/override/isolate controls are dropped so a title
-// cannot reorder the tab strip text. Emoji-forming characters (ZWJ, variation selectors, skin
+// Controls become spaces; zero-width space, bidi embedding/override/isolate controls and the
+// deprecated format controls U+206A-206F are dropped so a title cannot hide or reorder tab
+// strip text (LRM/RLM/ALM, ZWJ and ZWNJ stay). Emoji-forming characters (ZWJ, variation selectors, skin
 // tones, tags, keycaps, regional indicators) are kept, and clipping never splits a cluster.
 export function sanitizeRemoteTabTitle(raw: string): string {
   const cleaned = raw
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-    .replace(/[‪-‮⁦-⁩]/g, "")
+    // Lone surrogates become U+FFFD here, as JSON decoding does on the backend, so the
+    // displayed and the stored title agree.
+    .replace(/\p{Cs}/gu, "\ufffd")
+    .replace(/[\u200b\u202a-\u202e\u2066-\u206f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return clipText(cleaned, MAX_TAB_TITLE_CODE_POINTS).trim();

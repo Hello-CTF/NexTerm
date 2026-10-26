@@ -2,11 +2,12 @@
 package textclip
 
 import (
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
-const zwj = '‍'
+const zwj = '\u200d'
 
 // extendsPrevious reports code points that attach to the preceding character
 // instead of starting a new user-perceived character.
@@ -30,11 +31,13 @@ func regionalIndicator(r rune) bool {
 // separates a base character from following combining marks, variation
 // selectors, skin-tone modifiers, emoji tags or ZWJ-joined parts, and never
 // splits a regional-indicator flag pair; a cluster that does not fit is dropped
-// whole. Invalid UTF-8 bytes become U+FFFD, as with a []rune conversion.
+// whole. Each run of invalid UTF-8 bytes becomes one U+FFFD, so the result is
+// always valid UTF-8.
 func Runes(s string, max int) string {
 	if max <= 0 {
 		return ""
 	}
+	s = strings.ToValidUTF8(s, "\ufffd")
 	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
