@@ -439,3 +439,75 @@ func TestProductionOpenToAccountUpgradeWarnsOnlyOnce(t *testing.T) {
 		t.Fatalf("second start logged a data upgrade again: %s", secondLogs.String())
 	}
 }
+
+func TestProductionStartWhileUpgradeDeferredLeavesOpenJobs(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	database, err := store.Open(ctx, dataDir+"/data.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	due := time.Now().Add(-time.Minute).UnixMilli()
+	for _, row := range []any{
+		&store.AppUser{ID: "member", Username: "member", Role: "user", PasswordHash: "synthetic-hash", State: "active", CreatedAt: 1, UpdatedAt: 1},
+		&store.ConversationRow{ID: "conv-open", ScopeJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
+		&store.ConversationRow{ID: "conv-member", ScopeJSON: "{}", CreatedAt: 1, UpdatedAt: 1, OwnerID: "member"},
+		&store.CronJob{ID: "job-open", SessionID: "conv-open", OwnerKind: string(cron.OwnerKindOpen), Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 1, UpdatedAt: 1, Revision: 1, NextRunAt: due},
+		// The account job is the positive control: once the scheduler has
+		// handled it, the same due scan has seen (and skipped) the Open job.
+		&store.CronJob{ID: "job-member", SessionID: "conv-member", OwnerID: "member", OwnerKind: string(cron.OwnerKindAccount), Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 1, UpdatedAt: 1, Revision: 1, NextRunAt: due},
+	} {
+		if err := database.GORM().Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	application, err := NewProduction(ctx, ProductionConfig{
+		Config: Config{Logger: slog.New(slog.NewTextHandler(&syncedLogBuffer{}, nil))}, DataDir: dataDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+	gormDB := application.Services.Store.GORM()
+	var before store.CronJob
+	if err := gormDB.Where("id = ?", "job-open").First(&before).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := application.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var handled int64
+		if err := gormDB.Model(&store.CronJob{}).
+			Where("id = ? AND (run_id <> '' OR last_scheduled_for IS NOT NULL)", "job-member").
+			Count(&handled).Error; err != nil {
+			t.Fatal(err)
+		}
+		if handled == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("scheduler did not handle the account job")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := application.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := store.Open(ctx, dataDir+"/data.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	var after store.CronJob
+	if err := reopened.GORM().Where("id = ?", "job-open").First(&after).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("scheduler touched the Open job while the upgrade was deferred:\nbefore %+v\nafter  %+v", before, after)
+	}
+}

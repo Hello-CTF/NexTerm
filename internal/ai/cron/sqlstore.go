@@ -93,8 +93,14 @@ func (s *SQLStore) ListDueIdle(ctx context.Context, now time.Time, limit int) ([
 	}
 	stamp := now.UnixMilli()
 	rows := []store.CronJob{}
-	err := scopeCronJobs(ctx, s.db).Where(cronDueIdleWhere, true, stamp, stamp, stamp).
-		Order(cronDueIdleOrder).Limit(limit).Find(&rows).Error
+	statement := scopeCronJobs(ctx, s.db).Where(cronDueIdleWhere, true, stamp, stamp, stamp)
+	if !s.shared {
+		// Account mode leaves Open-mode jobs alone until the data upgrade
+		// attributes them to an account (it may be waiting for the first
+		// superadmin); running them now would fail without an identity.
+		statement = statement.Where("owner_kind <> ?", string(OwnerKindOpen))
+	}
+	err := statement.Order(cronDueIdleOrder).Limit(limit).Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}

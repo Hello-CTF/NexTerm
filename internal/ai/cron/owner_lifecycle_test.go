@@ -3,6 +3,7 @@ package cron
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -140,5 +141,53 @@ func TestOwnerlessJobIsDisabledWithVisibleError(t *testing.T) {
 	stored := loadStoredJob(t, cronStore, job.ID)
 	if stored.Enabled || stored.OwnerID != "" || !strings.Contains(stored.LastError, ErrOwnerless.Error()) {
 		t.Fatalf("blocked ownerless job = %+v", stored)
+	}
+}
+
+func TestAccountModeSchedulerLeavesOpenJobsUntouched(t *testing.T) {
+	cronStore := newTestSQLiteStore(t)
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	for _, id := range []string{"open", "account"} {
+		job := fullTestJob(id, "session-"+id, now)
+		job.Run = RunState{}
+		job.Lease = Lease{}
+		job.NextRunAt = now
+		job.RetryAt = time.Time{}
+		job.CircuitOpenUntil = time.Time{}
+		job.LastError = ""
+		if _, err := cronStore.Create(context.Background(), job, 4); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, owner := range map[string]map[string]any{
+		"open":    {"owner_id": "", "owner_kind": string(OwnerKindOpen)},
+		"account": {"owner_id": "owner-a", "owner_kind": string(OwnerKindAccount)},
+	} {
+		if err := cronStore.db.Model(&storepkg.CronJob{}).Where("id = ?", id).Updates(owner).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := loadStoredJob(t, cronStore, "open")
+	cronStore.shared = false
+	clock := newFakeClock(now)
+	triggers := make(chan Trigger, 2)
+	scheduler := testScheduler(t, cronStore, executorFunc(func(_ context.Context, trigger Trigger) error {
+		triggers <- trigger
+		return nil
+	}), clock)
+	claimed, err := scheduler.runOnce(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitSchedulerWithTimeout(t, scheduler)
+	if claimed != 1 || len(triggers) != 1 {
+		t.Fatalf("claimed = %d, triggers = %d; want only the account job", claimed, len(triggers))
+	}
+	if trigger := <-triggers; trigger.JobID != "account" {
+		t.Fatalf("triggered job = %+v, want the account job", trigger)
+	}
+	cronStore.shared = true
+	if after := loadStoredJob(t, cronStore, "open"); !reflect.DeepEqual(after, before) {
+		t.Fatalf("account-mode scheduler changed the Open job:\nbefore %+v\nafter  %+v", before, after)
 	}
 }
