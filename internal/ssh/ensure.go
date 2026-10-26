@@ -1055,21 +1055,21 @@ func inspectHelperProcess(ctx context.Context, host Host, target Target, stateDi
 			"cmdline=$(ps -p \"$pid\" -o command=) || exit 73; case \"$cmdline\" in *" + supervisor.HelperCommand + "*" + quoteShell(stateDir) + "*) ;; *) exit 74;; esac; " +
 			"exe=$(ps -p \"$pid\" -o comm=) || exit 74; printf '%s\\n%s\\n' \"$pid\" \"$exe\""
 	} else {
-		command = "pid=$(cat " + quoteShell(pidPath) + " 2>/dev/null) || exit 73; case \"$pid\" in ''|*[!0-9]*) exit 74;; esac; " +
-			"[ -d /proc/\"$pid\" ] || exit 73; cmdline=$(tr '\\0' ' ' < /proc/\"$pid\"/cmdline) || exit 74; case \"$cmdline\" in *" + supervisor.HelperCommand + "*" + quoteShell(stateDir) + "*) ;; *) exit 74;; esac; " +
+		command = "pid=$(cat " + quoteShell(pidPath) + " 2>/dev/null) || { printf 'missing\\n'; exit 73; }; case \"$pid\" in ''|*[!0-9]*) exit 74;; esac; " +
+			"[ -d /proc/\"$pid\" ] || { printf 'missing\\n'; exit 73; }; cmdline=$(tr '\\0' ' ' < /proc/\"$pid\"/cmdline) || exit 74; case \"$cmdline\" in *" + supervisor.HelperCommand + "*" + quoteShell(stateDir) + "*) ;; *) exit 74;; esac; " +
 			"exe=$(readlink /proc/\"$pid\"/exe) || exit 74; printf '%s\\n%s\\n' \"$pid\" \"$exe\""
 	}
 	stdout, exitCode, err := host.Run(ctx, command, probeTimeout)
 	if err != nil {
 		return helperProcess{}, helperUnavailable("inspect actual helper process", err)
 	}
-	if exitCode == 73 {
+	lines := nonEmptyLines(stdout)
+	if len(lines) == 1 && lines[0] == "missing" || exitCode == 73 {
 		return helperProcess{}, fmt.Errorf("%w: %w", durable.ErrUnavailable, errHelperProcessNotFound)
 	}
 	if exitCode != 0 {
 		return helperProcess{}, fmt.Errorf("%w: actual helper process inspection exited with %d", durable.ErrUnavailable, exitCode)
 	}
-	lines := nonEmptyLines(stdout)
 	if len(lines) != 2 {
 		return helperProcess{}, fmt.Errorf("%w: unexpected helper process evidence %q", durable.ErrUnavailable, stdout)
 	}
@@ -1159,6 +1159,17 @@ func ensureRemoteDirectory(ctx context.Context, host Host, target Target, direct
 		kind, err := remoteDirectoryKind(ctx, host, target, dir)
 		if err != nil {
 			return err
+		}
+		if kind == "missing" {
+			if fallback, ok := host.(interface{ switchToFallback() bool }); ok && fallback.switchToFallback() {
+				if err := host.Mkdir(ctx, dir); err != nil && !errors.Is(err, fs.ErrExist) {
+					return helperUnavailable("create remote directory through exec "+dir, err)
+				}
+				kind, err = remoteDirectoryKind(ctx, host, target, dir)
+				if err != nil {
+					return err
+				}
+			}
 		}
 		if kind != "directory" {
 			return fmt.Errorf("%w: created path %s is %s, not a private directory", durable.ErrUnavailable, dir, kind)

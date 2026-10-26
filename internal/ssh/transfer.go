@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
@@ -94,13 +95,19 @@ func IsSFTPUnavailable(err error) bool {
 
 // FallbackHost delegates ordinary SSH operations to Host and retries only
 // filesystem operations whose primary failure proves SFTP is unavailable.
+// A proven split between the SFTP and exec views makes the exec fallback sticky.
 type FallbackHost struct {
 	Host
-	fallback Host
+	fallback    Host
+	useFallback atomic.Bool
 }
 
 func NewFallbackHost(primary, fallback Host) *FallbackHost {
 	return &FallbackHost{Host: primary, fallback: fallback}
+}
+
+func (h *FallbackHost) switchToFallback() bool {
+	return h.useFallback.CompareAndSwap(false, true)
 }
 
 func (h *FallbackHost) fallbackError(primary error, fallback func() error) error {
@@ -114,6 +121,9 @@ func (h *FallbackHost) fallbackError(primary error, fallback func() error) error
 }
 
 func (h *FallbackHost) Exists(ctx context.Context, path string) (bool, error) {
+	if h.useFallback.Load() {
+		return h.fallback.Exists(ctx, path)
+	}
 	exists, err := h.Host.Exists(ctx, path)
 	if err == nil {
 		return exists, nil
@@ -129,6 +139,9 @@ func (h *FallbackHost) Exists(ctx context.Context, path string) (bool, error) {
 }
 
 func (h *FallbackHost) Mkdir(ctx context.Context, path string) error {
+	if h.useFallback.Load() {
+		return h.fallback.Mkdir(ctx, path)
+	}
 	if err := h.Host.Mkdir(ctx, path); err != nil {
 		return h.fallbackError(err, func() error { return h.fallback.Mkdir(ctx, path) })
 	}
@@ -136,6 +149,9 @@ func (h *FallbackHost) Mkdir(ctx context.Context, path string) error {
 }
 
 func (h *FallbackHost) Chmod(ctx context.Context, path string, mode fs.FileMode) error {
+	if h.useFallback.Load() {
+		return h.fallback.Chmod(ctx, path, mode)
+	}
 	if err := h.Host.Chmod(ctx, path, mode); err != nil {
 		return h.fallbackError(err, func() error { return h.fallback.Chmod(ctx, path, mode) })
 	}
@@ -164,9 +180,23 @@ func (h *FallbackHost) UploadWithProgress(ctx context.Context, localPath, remote
 }
 
 func (h *FallbackHost) uploadWithProgress(ctx context.Context, localPath, remotePath string, options sshfs.TransferOptions) (int64, error) {
+	if h.useFallback.Load() {
+		return uploadHostWithProgress(ctx, h.fallback, localPath, remotePath, options)
+	}
 	transferred, err := uploadHostWithProgress(ctx, h.Host, localPath, remotePath, options)
 	if err == nil {
-		return transferred, nil
+		exists, verifyErr := h.fallback.Exists(ctx, remotePath)
+		if verifyErr != nil {
+			return transferred, fmt.Errorf("verify uploaded file through exec %s: %w", remotePath, verifyErr)
+		}
+		if exists {
+			return transferred, nil
+		}
+		if cleanupErr := h.Host.Delete(ctx, remotePath, false); cleanupErr != nil && !errors.Is(cleanupErr, fs.ErrNotExist) {
+			return transferred, fmt.Errorf("remove SFTP upload invisible through exec %s: %w", remotePath, cleanupErr)
+		}
+		h.switchToFallback()
+		return uploadHostWithProgress(ctx, h.fallback, localPath, remotePath, options)
 	}
 	if !IsSFTPUnavailable(err) {
 		return transferred, transferError(TransferStageSFTP, remotePath, err)
@@ -179,6 +209,9 @@ func (h *FallbackHost) uploadWithProgress(ctx context.Context, localPath, remote
 }
 
 func (h *FallbackHost) Rename(ctx context.Context, from, to string) error {
+	if h.useFallback.Load() {
+		return h.fallback.Rename(ctx, from, to)
+	}
 	if err := h.Host.Rename(ctx, from, to); err != nil {
 		return h.fallbackError(err, func() error { return h.fallback.Rename(ctx, from, to) })
 	}
@@ -186,6 +219,9 @@ func (h *FallbackHost) Rename(ctx context.Context, from, to string) error {
 }
 
 func (h *FallbackHost) Delete(ctx context.Context, path string, directory bool) error {
+	if h.useFallback.Load() {
+		return h.fallback.Delete(ctx, path, directory)
+	}
 	if err := h.Host.Delete(ctx, path, directory); err != nil {
 		return h.fallbackError(err, func() error { return h.fallback.Delete(ctx, path, directory) })
 	}
@@ -193,6 +229,9 @@ func (h *FallbackHost) Delete(ctx context.Context, path string, directory bool) 
 }
 
 func (h *FallbackHost) ChecksumSHA256(ctx context.Context, path string) (string, error) {
+	if h.useFallback.Load() {
+		return h.fallback.ChecksumSHA256(ctx, path)
+	}
 	digest, err := h.Host.ChecksumSHA256(ctx, path)
 	if err == nil {
 		return digest, nil
@@ -312,12 +351,19 @@ func (h *ExecHost) Exists(ctx context.Context, path string) (bool, error) {
 		}
 		return false, err
 	}
+	return parseExecExistence(h.target, path, stdout)
+}
+
+func parseExecExistence(target Target, path, stdout string) (bool, error) {
 	switch strings.TrimSpace(stdout) {
 	case "1", "True":
 		return true, nil
 	case "0", "False":
 		return false, nil
 	default:
+		if target.GOOS != "windows" && remoteStatNotFoundDiagnostic(remoteCommandFailure(1, "", stdout), path) {
+			return false, nil
+		}
 		return false, fmt.Errorf("%w: unexpected existence response %q", ErrProtocol, stdout)
 	}
 }

@@ -371,6 +371,63 @@ func TestEnsureRemoteDirectoryClassifiesWholeAncestorChainInOneCommand(t *testin
 	}
 }
 
+func TestEnsureRemoteDirectorySwitchesToExecOnSplitSFTPView(t *testing.T) {
+	primary := &fakeHost{}
+	execView := &fakeHost{uploadDigest: "helper-digest"}
+	primary.runHook = func(_ context.Context, command string) (string, int, error, bool) {
+		if !strings.Contains(command, "nexterm-directory-kind") {
+			return "", 0, nil, false
+		}
+		var kinds strings.Builder
+		for _, path := range directoryPathsFromCommand(command) {
+			kinds.WriteString(fakeDirectoryKind(execView, path))
+		}
+		return kinds.String(), 0, nil, true
+	}
+	host := NewFallbackHost(primary, execView)
+	target := Target{GOOS: "linux", GOARCH: "amd64", DataRoot: t.TempDir(), Identity: "1"}
+	paths, err := target.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureTargetDirectories(t.Context(), host, target, paths); err != nil {
+		t.Fatal(err)
+	}
+	if len(primary.chmods) != 0 {
+		t.Fatalf("chmod continued on the split SFTP view: %v", primary.chmods)
+	}
+	for _, directory := range []string{paths.Root, paths.BinDir} {
+		if !execView.directories[directory] || execView.chmods[directory].Perm() != 0o700 {
+			t.Fatalf("exec directory %s was not created privately: dirs=%v chmods=%v", directory, execView.directories, execView.chmods)
+		}
+	}
+	staged := paths.BinDir + "/helper.partial"
+	installed := paths.BinDir + "/helper"
+	if _, err := host.Upload(t.Context(), "local", staged); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Rename(t.Context(), staged, installed); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := host.ChecksumSHA256(t.Context(), installed)
+	if err != nil || digest != "helper-digest" {
+		t.Fatalf("exec checksum = %q, %v", digest, err)
+	}
+	exists, err := host.Exists(t.Context(), paths.BinDir)
+	if err != nil || !exists {
+		t.Fatalf("exec bin directory exists = %t, %v", exists, err)
+	}
+	if err := host.Delete(t.Context(), installed, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(primary.uploads) != 0 || len(primary.renames) != 0 || len(primary.deletions) != 0 {
+		t.Fatalf("filesystem operations continued on the split SFTP view: uploads=%v renames=%v deletions=%v", primary.uploads, primary.renames, primary.deletions)
+	}
+	if len(execView.uploads) != 1 || len(execView.renames) != 1 || len(execView.deletions) != 1 {
+		t.Fatalf("exec filesystem operations = uploads %v, renames %v, deletions %v", execView.uploads, execView.renames, execView.deletions)
+	}
+}
+
 func TestBatchedDirectoryChecksStillRefuseUnsafeKinds(t *testing.T) {
 	root := t.TempDir()
 	target := Target{GOOS: "linux", GOARCH: "amd64", DataRoot: root, Identity: "1"}
