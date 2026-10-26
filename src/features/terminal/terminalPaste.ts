@@ -7,6 +7,14 @@ export function wrapBracketedPaste(text: string, enabled: boolean): string {
   return enabled ? `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}` : text;
 }
 
+/**
+ * The bytes a quick command sends: the text as a bracketed paste when the terminal enabled bracketed paste (so a
+ * shell or TUI takes it as one paste and a trailing Enter submits it), then Enter when the command asks for it.
+ */
+export function quickCommandBytes(text: string, appendEnter: boolean, bracketedPaste: boolean): string {
+  return `${wrapBracketedPaste(text, bracketedPaste)}${appendEnter ? "\r" : ""}`;
+}
+
 export function multilinePasteLines(text: string): string[] | null {
   const body = text.replace(/[\r\n]+$/, "");
   if (!/[\r\n]/.test(body)) return null;

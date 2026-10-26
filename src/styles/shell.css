@@ -168,6 +168,23 @@
   display: none;
 }
 
+/* Buffered input: one line edited locally above the key bar, shown wherever the key bar is. */
+.nx-terminal-composer {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 0;
+  background: var(--nx-bg-canvas);
+  border-top: 1px solid color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+}
+
+.nx-terminal-composer .nx-input {
+  height: 36px;
+  /* 16px keeps iOS from zooming the page when the field takes focus. */
+  font-size: 16px;
+}
+
 .nx-terminal-key {
   display: flex;
   align-items: center;

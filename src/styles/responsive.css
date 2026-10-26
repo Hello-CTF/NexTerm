@@ -165,7 +165,8 @@
 }
 
 @media (pointer: coarse), (max-width: 560px) {
-  .nx-terminal-keys {
+  .nx-terminal-keys,
+  .nx-terminal-composer {
     display: flex;
   }
 }

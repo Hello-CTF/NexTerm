@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+import { createSyncedPreference } from "../../app/syncedPreference";
 import { KEY_BYTES, ctrlByte, encodeWithModifiers, type KeyModifiers } from "./terminalInput/keyEncoding";
 
 export { SHIFT_ENTER_SEQUENCE, isShiftEnter, terminalKeyOverride } from "./terminalInput/keyEncoding";
@@ -34,6 +36,13 @@ export const TERMINAL_KEY_CATALOG: TerminalKeySpec[] = [
   { id: "ctrl-r", label: "^R", title: "Ctrl+R（历史搜索）", data: ctrl("r") },
   { id: "ctrl-u", label: "^U", title: "Ctrl+U（删除到行首）", data: ctrl("u") },
   { id: "ctrl-w", label: "^W", title: "Ctrl+W（删除前一个词）", data: ctrl("w") },
+  // Answer keys for prompts and numbered menus of any program; they send plain characters, no per-program rules.
+  { id: "digit-1", label: "1", title: "数字 1（选择第 1 项）", data: "1" },
+  { id: "digit-2", label: "2", title: "数字 2（选择第 2 项）", data: "2" },
+  { id: "digit-3", label: "3", title: "数字 3（选择第 3 项）", data: "3" },
+  { id: "y", label: "y", title: "字母 y（确认）", data: "y" },
+  { id: "n", label: "n", title: "字母 n（拒绝）", data: "n" },
+  { id: "enter", label: "⏎", title: "回车", data: KEY_BYTES.Enter },
 ];
 
 export const DEFAULT_TERMINAL_KEY_IDS: string[] = [
@@ -54,8 +63,32 @@ export const DEFAULT_TERMINAL_KEY_IDS: string[] = [
   "ctrl-r",
 ];
 
+// The key bar layout is the account preference terminal.keyBar; the device key below holds it without an
+// account and is imported into the account once (see createSyncedPreference).
+export const TERMINAL_KEY_BAR_PREFERENCE_KEY = "terminal.keyBar";
 const STORAGE_KEY = "nexterm.terminalKeys.v1";
 
+// parseTerminalKeyIds keeps the known catalog ids of a stored layout in order, without duplicates. Ids saved by a
+// newer client that this one does not know are skipped.
+export function parseTerminalKeyIds(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const known = new Set(TERMINAL_KEY_CATALOG.map((key) => key.id));
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const id of value) {
+    if (typeof id !== "string" || seen.has(id) || !known.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+const terminalKeyBar = createSyncedPreference<string[]>({
+  key: TERMINAL_KEY_BAR_PREFERENCE_KEY,
+  localKey: STORAGE_KEY,
+  parse: parseTerminalKeyIds,
+  fallback: () => [...DEFAULT_TERMINAL_KEY_IDS],
+});
 
 export function resolveTerminalKeys(ids: string[]): TerminalKeySpec[] {
   const byId = new Map(TERMINAL_KEY_CATALOG.map((key) => [key.id, key]));
@@ -68,43 +101,20 @@ export function resolveTerminalKeys(ids: string[]): TerminalKeySpec[] {
 }
 
 export function loadTerminalKeyConfig(): string[] {
-  let raw: string | null = null;
-  try {
-    raw = localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return [...DEFAULT_TERMINAL_KEY_IDS];
-  }
-  if (raw === null) return [...DEFAULT_TERMINAL_KEY_IDS];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [...DEFAULT_TERMINAL_KEY_IDS];
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    for (const id of parsed) {
-      if (typeof id !== "string" || seen.has(id)) continue;
-      if (!TERMINAL_KEY_CATALOG.some((key) => key.id === id)) continue;
-      seen.add(id);
-      ids.push(id);
-    }
-    return ids;
-  } catch {
-    return [...DEFAULT_TERMINAL_KEY_IDS];
-  }
+  return terminalKeyBar.get();
 }
 
-export function saveTerminalKeyConfig(ids: string[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
-  } catch {
-  }
+/** Saves the layout to the account (or the device without one); rejects when the account write fails. */
+export function saveTerminalKeyConfig(ids: string[]): Promise<void> {
+  return terminalKeyBar.set(ids);
 }
 
-export function resetTerminalKeyConfig(): string[] {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-  }
-  return [...DEFAULT_TERMINAL_KEY_IDS];
+export function resetTerminalKeyConfig(): Promise<void> {
+  return terminalKeyBar.reset();
+}
+
+export function useTerminalKeyConfig(): string[] {
+  return useSyncExternalStore(terminalKeyBar.subscribe, terminalKeyBar.get);
 }
 
 export function formatKeySequence(data: string): string {

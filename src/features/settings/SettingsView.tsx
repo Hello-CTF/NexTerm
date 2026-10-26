@@ -33,6 +33,7 @@ import { SyncBundleCard } from "./SyncBundleCard";
 import { ShareCard } from "./ShareCard";
 import { UpdateCard } from "./UpdateCard";
 import { DiagnosticsCard } from "./DiagnosticsCard";
+import { QuickCommandsEditor } from "../terminal/QuickCommandsEditor";
 import { describeError } from "../../ui/errorText";
 import { DESKTOP } from "../../ipc/env";
 import {
@@ -772,6 +773,13 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               />
             </label>
           )}
+          <div className="mt-3.5">
+            <div className="nx-setting-label mb-1.5" data-setting="quick-commands">快捷命令</div>
+            <p className="nx-hint mb-2">
+              常用命令可在终端按键条的「命令」中一键发送；登录账号后在桌面和手机间同步。终端开启括号粘贴时按粘贴发送，多行内容发送前会确认。
+            </p>
+            <QuickCommandsEditor />
+          </div>
         </section>
 
         <div id="settings-shortcuts" className="scroll-mt-12">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Mo
 import { XtermView, type TerminalHandle } from "./XtermView";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
+import { getTerminalInputMode } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
 import { Daemon, type DaemonHelperState } from "./Daemon";
 import { helperStageText } from "./HelperOperationView";
@@ -319,6 +320,7 @@ export function TerminalPane({
     findPrevious: (t: string) => void;
   } | null>(null);
   const handleRef = useRef<TerminalHandle | null>(null);
+  const composerRef = useRef<HTMLInputElement | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const exitedCloseBtnRef = useRef<HTMLButtonElement>(null);
@@ -2189,6 +2191,13 @@ export function TerminalPane({
               }}
               onSelectionCopy={handleSelectionCopy}
               onRequestPaste={() => void pasteIntoTerminal()}
+              onTouchTap={() => {
+                // Buffered input keeps typing in its own field, so a tap on the terminal focuses that field.
+                const composer = composerRef.current;
+                if (getTerminalInputMode() !== "buffered" || !composer?.isConnected) return false;
+                composer.focus({ preventScroll: true });
+                return true;
+              }}
               registerSearch={(api) => {
                 searchApi.current = api;
               }}
@@ -2394,6 +2403,12 @@ export function TerminalPane({
       <TerminalKeysBar
         onSend={(data) => void sendData(data)}
         onFocus={() => handleRef.current?.focus()}
+        onSendText={(text, submit) => {
+          const handle = handleRef.current;
+          if (text && handle) handle.paste(text, submit);
+          else if (text || submit) void sendData(`${text}${submit ? "\r" : ""}`);
+        }}
+        composerRef={composerRef}
         broadcastCount={memberBroadcastCount}
       />
       <ContextMenu state={menu} onClose={() => setMenu(null)} />

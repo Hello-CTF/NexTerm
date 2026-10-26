@@ -33,8 +33,8 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     keywords: ["appearance", "theme", "dark", "light", "font", "主题", "深色", "浅色", "字体", "字号", "外观"],
   },
   "settings-terminal": {
-    description: "默认终端模式、剪贴板、关闭行为、GPU 加速",
-    keywords: ["terminal", "durable", "persistent", "osc52", "clipboard", "tray", "持久", "剪贴板", "托盘", "后台"],
+    description: "默认终端模式、剪贴板、关闭行为、GPU 加速、快捷命令",
+    keywords: ["terminal", "durable", "persistent", "osc52", "clipboard", "tray", "snippet", "持久", "剪贴板", "托盘", "后台", "快捷命令"],
   },
   "settings-shortcuts": {
     description: "自定义快捷键与选中复制",
@@ -114,6 +114,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "osc52", section: "settings-terminal", label: "允许远程主机写入剪贴板（OSC 52）", keywords: ["clipboard", "osc52", "剪贴板"] },
   { id: "close-action", section: "settings-terminal", label: "关闭运行中的终端标签时", keywords: ["close", "kill", "detach", "关闭", "后台"] },
   { id: "terminal-gpu-acceleration", section: "settings-terminal", label: "终端 GPU 加速", description: "自动、开启或关闭 WebGL 渲染", keywords: ["gpu", "webgl", "render", "renderer", "acceleration", "硬件加速", "渲染"] },
+  { id: "quick-commands", section: "settings-terminal", label: "快捷命令", description: "在终端按键条中一键发送的常用命令，随账号同步", keywords: ["quick command", "snippet", "macro", "命令", "常用命令", "片段", "按键条"] },
   { id: "copy-on-select", section: "settings-shortcuts", label: "选中自动复制", keywords: ["copy", "select", "clipboard", "复制", "剪贴板"], panel: "shortcuts-advanced" },
   { id: "vault-password", section: "settings-vault", label: "用密码保护凭据", keywords: ["password", "credential", "vault", "密码", "凭据"] },
   { id: "vault-auto-lock", section: "settings-vault", label: "闲置自动锁定", keywords: ["lock", "idle", "timeout", "锁定", "凭据"] },

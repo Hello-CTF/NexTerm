@@ -42,7 +42,7 @@ import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
 import { createSelectionAutoCopy } from "./selectionAutoCopy";
-import { confirmMultilinePaste, multilinePasteLines, wrapBracketedPaste } from "./terminalPaste";
+import { confirmMultilinePaste, multilinePasteLines, quickCommandBytes, wrapBracketedPaste } from "./terminalPaste";
 import { SelectionActionBar, isCoarsePointerDevice } from "./SelectionActionBar";
 import { copyText } from "../../ui/clipboard";
 import { pasteUploadFiles } from "./imagePaste";
@@ -56,6 +56,10 @@ function accentColor(): string {
 
 // overflow: clip (not hidden) also forbids programmatic scrolling, so focusing the helper textarea cannot shift it.
 const XTERM_HOST_STYLE = { overflow: "clip" } as const;
+
+// A touch counts as a tap (focus the terminal) when it ends within this time and distance of where it started.
+const TAP_MAX_MS = 500;
+const TAP_SLOP_PX = 10;
 
 // Repeated GPU context loss pins a pane to the DOM renderer; say so once per app run, not per pane.
 let webglFallbackNoticeShown = false;
@@ -83,7 +87,8 @@ export interface TerminalHandle {
   getSelection: () => string;
   focus: () => void;
   fit: () => boolean;
-  paste: (text: string) => void;
+  /** Sends text as a paste (bracketed when the terminal enabled it), followed by Enter when submit is set. */
+  paste: (text: string, submit?: boolean) => void;
   dimensions: () => { cols: number; rows: number };
 }
 
@@ -131,6 +136,11 @@ export interface XtermViewProps {
   onSelectionCopy?: (text: string, error: unknown | null) => void;
   onPasteFiles?: (files: File[], skipped: string[]) => void;
   onRequestPaste?: () => void;
+  /**
+   * A tap on the terminal of a touch screen. Returns true when the tap was handled (buffered input focuses its own
+   * field); otherwise the terminal takes focus, which opens the soft keyboard.
+   */
+  onTouchTap?: () => boolean;
 }
 
 // The scrollback badge subscribes to the per-tab view store with the narrow selector:
@@ -178,6 +188,7 @@ export function XtermView(props: XtermViewProps) {
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
   const onPasteFilesRef = useRef(props.onPasteFiles);
   const onRequestPasteRef = useRef(props.onRequestPaste);
+  const onTouchTapRef = useRef(props.onTouchTap);
   const registerSearchRef = useRef(props.registerSearch);
   // Mount-effect inputs that must not rebuild the terminal when they change:
   // visibility and resize updates flow through their dedicated effects, and
@@ -199,6 +210,7 @@ export function XtermView(props: XtermViewProps) {
   onSelectionCopyRef.current = props.onSelectionCopy;
   onPasteFilesRef.current = props.onPasteFiles;
   onRequestPasteRef.current = props.onRequestPaste;
+  onTouchTapRef.current = props.onTouchTap;
   registerSearchRef.current = props.registerSearch;
   visibleRef.current = props.visible;
   canResizeRef.current = props.canResize;
@@ -342,8 +354,8 @@ export function XtermView(props: XtermViewProps) {
       getSelection: () => term.getSelection(),
       focus: () => term.focus(),
       fit: () => fitIfSized(true),
-      paste: (text) =>
-        sendInput(wrapBracketedPaste(text, term.modes.bracketedPasteMode), text),
+      paste: (text, submit = false) =>
+        sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text),
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
 
@@ -1204,6 +1216,37 @@ export function XtermView(props: XtermViewProps) {
     };
     pasteHost.addEventListener("touchstart", trackTouch, true);
     pasteHost.addEventListener("touchmove", trackTouch, true);
+    // xterm cancels the touch events on its screen (for touch scrolling), so a tap never becomes the mousedown that
+    // focuses it and the soft keyboard stays closed. A short, still, single-finger tap focuses the terminal here,
+    // inside the touchend that iOS and Android accept as the gesture opening the keyboard.
+    let tap: { x: number | null; y: number | null; at: number; valid: boolean } | null = null;
+    const touchPoint = (event: TouchEvent) => event.touches[0] ?? event.changedTouches[0];
+    const onTapStart = (event: TouchEvent) => {
+      const touch = touchPoint(event);
+      tap = { x: touch?.clientX ?? null, y: touch?.clientY ?? null, at: performance.now(), valid: event.touches.length <= 1 };
+    };
+    const tapMoved = (start: NonNullable<typeof tap>, touch: Touch | undefined) =>
+      !!touch && start.x !== null && start.y !== null &&
+      Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > TAP_SLOP_PX;
+    const onTapMove = (event: TouchEvent) => {
+      if (tap && (event.touches.length > 1 || tapMoved(tap, touchPoint(event)))) tap.valid = false;
+    };
+    const onTapEnd = (event: TouchEvent) => {
+      const started = tap;
+      tap = null;
+      if (!started?.valid || event.touches.length > 0) return;
+      if (performance.now() - started.at > TAP_MAX_MS || tapMoved(started, event.changedTouches[0])) return;
+      if (term.getSelection()) return;
+      if (onTouchTapRef.current?.()) return;
+      term.focus();
+    };
+    const onTapCancel = () => {
+      tap = null;
+    };
+    pasteHost.addEventListener("touchstart", onTapStart, true);
+    pasteHost.addEventListener("touchmove", onTapMove, true);
+    pasteHost.addEventListener("touchend", onTapEnd, true);
+    pasteHost.addEventListener("touchcancel", onTapCancel, true);
     const updateSelectionBar = () => {
       if (!isCoarsePointerDevice() || !term.getSelection()) {
         touchSeen = false;
@@ -1315,6 +1358,10 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("drop", onDropCapture, true);
       pasteHost.removeEventListener("touchstart", trackTouch, true);
       pasteHost.removeEventListener("touchmove", trackTouch, true);
+      pasteHost.removeEventListener("touchstart", onTapStart, true);
+      pasteHost.removeEventListener("touchmove", onTapMove, true);
+      pasteHost.removeEventListener("touchend", onTapEnd, true);
+      pasteHost.removeEventListener("touchcancel", onTapCancel, true);
       dataDisposable.dispose();
       detachTerminalInput();
       scrollDisposable.dispose();

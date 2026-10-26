@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -59,6 +62,8 @@ const (
 	preferenceKindEnumString
 	preferenceKindBool
 	preferenceKindBinding
+	preferenceKindKeyBar
+	preferenceKindQuickCommands
 )
 
 type preferenceSpec struct {
@@ -86,6 +91,8 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.defaultMode":              {kind: preferenceKindEnumString, strings: []string{"durable", "regular"}},
 	"terminal.gpuAcceleration":          {kind: preferenceKindEnumString, strings: []string{"auto", "on", "off"}},
 	"terminal.durableHistoryMiB":        {kind: preferenceKindIntRange, min: 1, max: 1024},
+	"terminal.keyBar":                   {kind: preferenceKindKeyBar},
+	"terminal.quickCommands":            {kind: preferenceKindQuickCommands},
 	"keybinding.commandPalette":         {kind: preferenceKindBinding},
 	"keybinding.quickConnect":           {kind: preferenceKindBinding},
 	"keybinding.newTerminal":            {kind: preferenceKindBinding},
@@ -255,8 +262,99 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 			return "", invalidPreferenceValue(key)
 		}
 		return strconv.Quote(normalized), nil
+	case preferenceKindKeyBar:
+		if canonical, ok := normalizeKeyBar(raw); ok {
+			return canonical, nil
+		}
+	case preferenceKindQuickCommands:
+		if canonical, ok := normalizeQuickCommands(raw); ok {
+			return canonical, nil
+		}
 	}
 	return "", invalidPreferenceValue(key)
+}
+
+// Limits of the terminal key bar and quick command preferences. The quick command list as a whole stays well
+// below the 64 KiB account request body, so a full list can always be saved in one request.
+const (
+	maxKeyBarKeys            = 64
+	maxQuickCommands         = 50
+	maxQuickCommandLabel     = 32
+	maxQuickCommandTextBytes = 4 << 10
+	maxQuickCommandsBytes    = 48 << 10
+)
+
+var keyBarIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// normalizeKeyBar validates the ordered key ids of the terminal key bar. Ids are not checked against the client
+// catalog, so a layout saved by a newer client survives on an older one, which skips ids it does not know.
+func normalizeKeyBar(raw json.RawMessage) (string, bool) {
+	var ids []string
+	if err := json.Unmarshal(raw, &ids); err != nil || ids == nil || len(ids) > maxKeyBarKeys {
+		return "", false
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if !keyBarIDPattern.MatchString(id) || seen[id] {
+			return "", false
+		}
+		seen[id] = true
+	}
+	out, err := json.Marshal(ids)
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
+type quickCommand struct {
+	Label       string `json:"label"`
+	Text        string `json:"text"`
+	AppendEnter bool   `json:"appendEnter"`
+}
+
+// normalizeQuickCommands validates user-defined terminal quick commands: a label of at most 32 characters without
+// control characters, a non-empty text of at most 4 KiB without NUL (newlines and escape sequences are allowed),
+// and whether Enter follows the text.
+func normalizeQuickCommands(raw json.RawMessage) (string, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var commands []quickCommand
+	if err := decoder.Decode(&commands); err != nil || decoder.More() || commands == nil || len(commands) > maxQuickCommands {
+		return "", false
+	}
+	for _, command := range commands {
+		if !validQuickCommandLabel(command.Label) || !validQuickCommandText(command.Text) {
+			return "", false
+		}
+	}
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(commands); err != nil {
+		return "", false
+	}
+	canonical := strings.TrimSuffix(out.String(), "\n")
+	if len(canonical) > maxQuickCommandsBytes {
+		return "", false
+	}
+	return canonical, true
+}
+
+func validQuickCommandLabel(label string) bool {
+	if strings.TrimSpace(label) == "" || !utf8.ValidString(label) || utf8.RuneCountInString(label) > maxQuickCommandLabel {
+		return false
+	}
+	for _, r := range label {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func validQuickCommandText(text string) bool {
+	return text != "" && len(text) <= maxQuickCommandTextBytes && utf8.ValidString(text) && !strings.ContainsRune(text, 0)
 }
 
 func invalidPreferenceValue(key string) error {

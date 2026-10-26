@@ -57,6 +57,7 @@ let accountStore: AccountPreferenceStore | null = null;
 let accountDefaults: Record<string, unknown> = {};
 let accountOverrides: Record<string, unknown> = {};
 let deviceOnlyPreferences = false;
+let accountViewLoaded = false;
 let accountViewLoading: Promise<void> | null = null;
 let registerGeneration = 0;
 const accountListeners = new Set<() => void>();
@@ -72,6 +73,7 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
   const generation = registerGeneration;
   accountStore = store;
   deviceOnlyPreferences = false;
+  accountViewLoaded = false;
   accountDefaults = {};
   accountOverrides = {};
   syncThemePreferenceLayers();
@@ -88,6 +90,7 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
       accountDefaults = view.defaults;
       accountOverrides = view.overrides;
       deviceOnlyPreferences = view.deviceOnly === true;
+      accountViewLoaded = true;
       syncThemePreferenceLayers();
       rebuildSnapshots();
       for (const listener of accountListeners) listener();
@@ -104,6 +107,12 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
 export function waitAccountPreferences(timeoutMs = 3000): Promise<void> | null {
   if (!accountViewLoading) return null;
   return Promise.race([accountViewLoading, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
+}
+
+// accountPreferencesReady is true once the signed-in account's preferences have loaded: account values can be
+// read and an absent key really is absent. A device-only store (desktop without a sync account) never becomes ready.
+export function accountPreferencesReady(): boolean {
+  return accountStore !== null && accountViewLoaded && !deviceOnlyPreferences;
 }
 
 export function getAccountPreferenceStore(): AccountPreferenceStore | null {
