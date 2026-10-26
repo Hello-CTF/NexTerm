@@ -62,6 +62,8 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.Code("recovery_overrun"), userMessage(err), err)
 	case errors.Is(err, ErrDurableUnrecoverable):
 		return ipc.WrapError(ipc.Code("durable_unrecoverable"), userMessage(err), err)
+	case errors.Is(err, durable.ErrGenerationMismatch):
+		return ipc.WrapError(ipc.Code("durable_helper_restarted"), userMessage(err), err)
 	default:
 		return ipc.NormalizeError(err)
 	}
@@ -111,6 +113,8 @@ func userMessage(err error) string {
 		return "终端输出积压过长，早期输出已无法恢复"
 	case errors.Is(err, ErrDurableUnrecoverable):
 		return "该持久终端没有记录会话标识，无法恢复；请关闭后新建终端"
+	case errors.Is(err, durable.ErrGenerationMismatch):
+		return "主机上的 helper 已重启，该持久终端的进程已结束；请关闭后新建终端"
 	case errors.Is(err, durable.ErrNotFound):
 		return "资源不存在或已删除"
 	case errors.Is(err, context.DeadlineExceeded):

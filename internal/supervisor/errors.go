@@ -17,6 +17,9 @@ var (
 	ErrStateMismatch  = errors.New("supervisor state mismatch")
 	ErrUnsupported    = errors.New("supervisor capability unsupported")
 	ErrActiveSessions = errors.New("supervisor has active sessions")
+	// ErrGenerationMismatch reports a request that expected another helper
+	// generation: the helper restarted since the client last saw it.
+	ErrGenerationMismatch = errors.New("supervisor helper generation changed")
 
 	ErrVersionMismatch = fmt.Errorf("%w: protocol version mismatch", ErrProtocol)
 	// ErrHelperUpgradeRequired reports a helper that speaks an older protocol

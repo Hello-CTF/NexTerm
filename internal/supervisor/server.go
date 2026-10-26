@@ -159,7 +159,7 @@ type serverConn struct {
 	// the session, so a full session queue delays acknowledgements instead of
 	// stalling the read loop or rejecting the frame.
 	inputOnce   sync.Once
-	inputFrames chan []byte
+	inputFrames chan inputFrame
 	inputBytes  atomic.Int64
 
 	// Output credit: creditMu guards credited, the client's
@@ -212,7 +212,7 @@ func (c *serverConn) serve() {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
-	ack := helloMsg{Version: ProtocolVersion, Runtime: c.server.runtimeMetadata, Activity: &activity}
+	ack := helloMsg{Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity}
 	if err := c.reply(frameHelloAck, ack); err != nil {
 		return
 	}
@@ -348,7 +348,7 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	if msg.ExpectIncarnation != "" || msg.ExpectCreatedAt != 0 {
 		expected = &Identity{CreatedAt: time.Unix(0, msg.ExpectCreatedAt), Incarnation: msg.ExpectIncarnation}
 	}
-	attachment, err := c.server.supervisor.attachFrom(context.Background(), msg.ID, msg.Offset, expected)
+	attachment, err := c.server.supervisor.attachFrom(context.Background(), msg.ID, msg.Offset, expected, msg.ExpectGeneration)
 	if err != nil {
 		c.replyOperationError(err)
 		return true
@@ -370,27 +370,56 @@ func (c *serverConn) handleInput(payload []byte) bool {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "input frame without attach"})
 		return true
 	}
-	return c.queueWindowedInput(attachment, payload)
+	generation, incarnation, data, err := parseInput(payload)
+	if err != nil {
+		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return false
+	}
+	return c.queueWindowedInput(attachment, inputFrame{generation: generation, incarnation: incarnation, data: data})
+}
+
+// inputFrame is one parsed frameInput: the data and the helper generation
+// and session incarnation the client meant it for.
+type inputFrame struct {
+	generation  string
+	incarnation string
+	data        []byte
+}
+
+// checkAttached rejects a request whose expectations name another helper
+// process or another incarnation of the attached session. Both expectations
+// are required.
+func checkAttached(supervisor *Supervisor, attachment *Attachment, generation, incarnation string) error {
+	if generation == "" {
+		return fmt.Errorf("%w: request lacks the expected helper generation", ErrProtocol)
+	}
+	if err := supervisor.checkGeneration(generation); err != nil {
+		return err
+	}
+	if current := attachment.session.Identity().Incarnation; incarnation != current {
+		return fmt.Errorf("%w: request for incarnation %q, attached session is %q", ErrIdentity, incarnation, current)
+	}
+	return nil
 }
 
 // queueWindowedInput hands the frame to the input goroutine. The client bounds
 // its own window; a peer that exceeds the server's tolerance is cut off rather
 // than allowed to grow memory.
-func (c *serverConn) queueWindowedInput(attachment *Attachment, payload []byte) bool {
+func (c *serverConn) queueWindowedInput(attachment *Attachment, frame inputFrame) bool {
 	c.inputOnce.Do(func() {
-		c.inputFrames = make(chan []byte, serverInputMaxFrames)
+		c.inputFrames = make(chan inputFrame, serverInputMaxFrames)
 		c.server.wg.Add(1)
 		go func() {
 			defer c.server.wg.Done()
 			c.pumpWindowedInput(attachment)
 		}()
 	})
-	if c.inputBytes.Add(int64(len(payload))) > serverInputMaxBytes {
+	if c.inputBytes.Add(int64(len(frame.data))) > serverInputMaxBytes {
 		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "input window exceeded"})
 		return false
 	}
 	select {
-	case c.inputFrames <- payload:
+	case c.inputFrames <- frame:
 		return true
 	default:
 		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "input window exceeded"})
@@ -404,9 +433,13 @@ func (c *serverConn) queueWindowedInput(attachment *Attachment, payload []byte) 
 func (c *serverConn) pumpWindowedInput(attachment *Attachment) {
 	for {
 		select {
-		case payload := <-c.inputFrames:
-			count, err := attachment.writeBlocking(payload)
-			c.inputBytes.Add(-int64(len(payload)))
+		case frame := <-c.inputFrames:
+			var count int
+			err := checkAttached(c.server.supervisor, attachment, frame.generation, frame.incarnation)
+			if err == nil {
+				count, err = attachment.writeBlocking(frame.data)
+			}
+			c.inputBytes.Add(-int64(len(frame.data)))
 			ack := inputAckMsg{Written: count}
 			if err != nil {
 				msg := errorMessage(err)
@@ -504,6 +537,10 @@ func (c *serverConn) handleResize(payload []byte) {
 	var msg resizeMsg
 	if err := unmarshalFrame(payload, &msg); err != nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if err := checkAttached(c.server.supervisor, attachment, msg.ExpectGeneration, msg.ExpectIncarnation); err != nil {
+		c.replyError(frameError, errorMessage(err))
 		return
 	}
 	if err := attachment.Resize(context.Background(), msg.Cols, msg.Rows); err != nil {

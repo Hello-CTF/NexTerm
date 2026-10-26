@@ -250,3 +250,46 @@ func TestReconnectMixedTabsIsolatesUnrecoverableDurableTab(t *testing.T) {
 		t.Fatal("second reconnect left a recoverable tab exited")
 	}
 }
+
+// generationMismatchProvider models a helper that restarted after the tab
+// attached: every checked attach is rejected for its helper generation.
+type generationMismatchProvider struct {
+	*listingDurableProvider
+}
+
+func (p *generationMismatchProvider) AttachFromWithIdentity(context.Context, string, base.DurableIdentity, uint64) (base.DurableAttachment, error) {
+	return nil, fmt.Errorf("attach: %w", durable.ErrGenerationMismatch)
+}
+
+func TestReconnectDurableAfterHelperRestartExitsWithVisibleReason(t *testing.T) {
+	provider := &faultCreateDurableProvider{DurableProvider: &generationMismatchProvider{listingDurableProvider: &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}}}
+	connector := newFakeConnector()
+	log := &versionedEventLog{}
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: &countingResolver{provider: provider},
+		Emitter: log.emitter(), ReconnectBackoff: []time.Duration{0},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "device/restarted", Kind: KindDevice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "device-restarted", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector.connect = func(_ context.Context, asset Asset, generation uint64, _ int) (base.Transport, error) {
+		return newFakeTransport(asset.Kind, generation+1000), nil
+	}
+	provider.attachment(0).fail(fmt.Errorf("active attach: %w", base.ErrDisconnected))
+	waitFor(t, func() bool {
+		status := connected.Info()
+		return status.Status == StatusConnected && status.Generation == 2
+	})
+	waitFor(t, func() bool { return infoExited(manager, info.ID) })
+	waitForTabMarker(t, manager, info.ID, "helper restarted")
+}

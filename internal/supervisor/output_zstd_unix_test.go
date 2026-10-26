@@ -97,26 +97,13 @@ func readRawFrames(t *testing.T, conn net.Conn, marker string) (decoded []byte, 
 	return decoded, kinds, wire
 }
 
-func rawAttach(t *testing.T, compress bool, script string) (net.Conn, func()) {
+func rawAttach(t *testing.T, compress bool, script string) (net.Conn, Info) {
 	t.Helper()
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	session := testScriptSession(t, supervisor, script)
 	conn := rawHello(t, supervisor, server, compress)
-	payload, _ := marshalFrame(frameAttach, attachMsg{ID: session.ID()})
-	if err := writeFrame(conn, frameAttach, payload); err != nil {
-		t.Fatal(err)
-	}
-	for {
-		kind, _, err := readFrame(conn)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if kind == frameAttached {
-			break
-		}
-	}
-	return conn, func() {}
+	return conn, rawAttachSession(t, conn, attachMsg{ID: session.ID()})
 }
 
 func TestServerSendsZstdOnlyWhenRequested(t *testing.T) {
@@ -138,11 +125,9 @@ func TestServerSendsZstdOnlyWhenRequested(t *testing.T) {
 }
 
 func TestServerKeepsSmallEchoFramesRaw(t *testing.T) {
-	conn, _ := rawAttach(t, true, "stty raw -echo; exec cat")
+	conn, info := rawAttach(t, true, "stty raw -echo; exec cat")
 	for i := 0; i < 5; i++ {
-		if err := writeFrame(conn, frameInput, []byte("echo-line-"+strconv.Itoa(i)+"\n")); err != nil {
-			t.Fatal(err)
-		}
+		rawInput(t, conn, info.Generation, info.Incarnation, []byte("echo-line-"+strconv.Itoa(i)+"\n"))
 		_, kinds, _ := readRawFrames(t, conn, "echo-line-"+strconv.Itoa(i))
 		if kinds[frameOutputZstd]+kinds[frameReplayGzip] != 0 {
 			t.Fatalf("small echo was compressed: %v", kinds)

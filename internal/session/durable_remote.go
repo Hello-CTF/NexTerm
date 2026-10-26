@@ -748,7 +748,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		RecoveredExited: selected.descriptor.Dead,
 	}
 	if selected.descriptor.Incarnation != "" {
-		identity := base.DurableIdentity{CreatedAt: selected.descriptor.CreatedAt, Incarnation: selected.descriptor.Incarnation}
+		identity := base.DurableIdentity{CreatedAt: selected.descriptor.CreatedAt, Incarnation: selected.descriptor.Incarnation, Generation: selected.descriptor.Generation}
 		options.Durable.Identity = &identity
 	}
 	return m.OpenTab(ctx, options)
@@ -865,7 +865,7 @@ func durableAttachmentIdentity(attachment base.DurableAttachment) (base.DurableI
 	if identity.Incarnation == "" {
 		return base.DurableIdentity{}, false
 	}
-	return base.DurableIdentity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation}, true
+	return base.DurableIdentity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation, Generation: identity.Generation}, true
 }
 
 func (m *Manager) renameCanonicalTab(ctx context.Context, tab *Tab, provider base.DurableProvider, title string) (TabInfo, error) {
@@ -909,7 +909,7 @@ func beginDurableRename(ctx context.Context, tab *Tab, provider base.DurableProv
 		return nil, false, err
 	}
 	if found && descriptor.Incarnation != tab.durableIdentity.Incarnation {
-		tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
+		tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
 		tab.title = descriptor.Title
 		tab.titleCustom = descriptor.Title != ""
 		tab.metadataRevision = descriptor.MetadataRevision
@@ -1000,7 +1000,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 			attempt.resultMetadataRevision = descriptor.MetadataRevision
 			tab.mu.Lock()
 			if !tab.closed && !tab.destroying {
-				tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
+				tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
 				tab.title = descriptor.Title
 				tab.titleCustom = descriptor.Title != ""
 				tab.metadataRevision = descriptor.MetadataRevision

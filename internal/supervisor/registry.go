@@ -70,7 +70,9 @@ func (e registryEntry) info() Info {
 func (s *Session) canonicalInfo() Info {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.entry.info()
+	info := s.entry.info()
+	info.Generation = s.supervisor.generation
+	return info
 }
 
 func (s *Supervisor) listCanonical(ctx context.Context) ([]Info, error) {
@@ -94,12 +96,17 @@ func (s *Supervisor) listCanonical(ctx context.Context) ([]Info, error) {
 	return infos, nil
 }
 
-func (s *Supervisor) attachFrom(ctx context.Context, id string, offset uint64, expected *Identity) (*Attachment, error) {
+// attachFrom attaches to id. expected, when set, must match the session's
+// identity; expectGeneration, when set, must be this helper's generation.
+func (s *Supervisor) attachFrom(ctx context.Context, id string, offset uint64, expected *Identity, expectGeneration string) (*Attachment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	s.killMu.Lock()
 	defer s.killMu.Unlock()
+	if err := s.checkGeneration(expectGeneration); err != nil {
+		return nil, fmt.Errorf("%w (session %s)", err, id)
+	}
 	session, err := s.resolveSession(id)
 	if err != nil {
 		return nil, err
@@ -330,4 +337,13 @@ func openRecording(path string) (*os.File, error) {
 		return nil, fmt.Errorf("%w: supervisor recording changed while opening", ErrUnavailable)
 	}
 	return file, nil
+}
+
+// checkGeneration rejects a request meant for another helper process. An
+// empty expectation is accepted only where the protocol allows one.
+func (s *Supervisor) checkGeneration(expected string) error {
+	if expected != "" && expected != s.generation {
+		return fmt.Errorf("%w: expected helper generation %s, this helper is %s", ErrGenerationMismatch, expected, s.generation)
+	}
+	return nil
 }

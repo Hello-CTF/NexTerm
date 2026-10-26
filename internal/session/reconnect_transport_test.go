@@ -46,7 +46,7 @@ type faultDurableAttachment struct {
 
 func (a *faultDurableAttachment) Identity() supervisor.Identity {
 	identity, _ := durableAttachmentIdentity(a.DurableAttachment)
-	return supervisor.Identity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation}
+	return supervisor.Identity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation, Generation: identity.Generation}
 }
 
 func (a *faultDurableAttachment) Read(data []byte) (int, error) {

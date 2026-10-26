@@ -32,8 +32,12 @@ func (a *Attachment) Info() Info {
 	return a.session.Info()
 }
 
+// Identity returns the session identity with the generation of the helper
+// that serves this attachment.
 func (a *Attachment) Identity() Identity {
-	return a.session.Identity()
+	identity := a.session.Identity()
+	identity.Generation = a.session.supervisor.generation
+	return identity
 }
 
 func (a *Attachment) NextSeq() uint64 {

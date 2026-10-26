@@ -95,7 +95,9 @@ type helloMsg struct {
 	// ask for gzip replay batches and per-frame zstd live output, local clients
 	// keep raw frames to save CPU.
 	CompressOutput bool `json:"compress_output,omitempty"`
-	// Runtime and Activity are sent by the helper in its acknowledgement.
+	// Generation, Runtime and Activity are sent by the helper in its
+	// acknowledgement. Generation identifies the helper process.
+	Generation string `json:"generation,omitempty"`
 	// Runtime is absent only when the helper could not hash its executable.
 	Runtime  *RuntimeMetadata  `json:"runtime,omitempty"`
 	Activity *ActivitySnapshot `json:"activity,omitempty"`
@@ -118,6 +120,10 @@ type attachMsg struct {
 	ID                string `json:"id"`
 	ExpectCreatedAt   int64  `json:"expect_created_at_unix_nano,omitempty"`
 	ExpectIncarnation string `json:"expect_incarnation,omitempty"`
+	// ExpectGeneration, when set, rejects the attach with
+	// codeGenerationMismatch unless this helper process is the one the client
+	// observed the session in.
+	ExpectGeneration string `json:"expect_generation,omitempty"`
 	// Offset is the absolute byte offset of the recording the client has
 	// consumed; the server seeks there and resumes.
 	Offset uint64 `json:"offset,omitempty"`
@@ -130,9 +136,14 @@ type killSessionMsg struct {
 	ExpectIncarnation string `json:"expect_incarnation,omitempty"`
 }
 
+// resizeMsg and every frameInput carry the helper generation and session
+// incarnation the client attached to; the helper rejects a mismatch instead of
+// applying the request to another process or session.
 type resizeMsg struct {
-	Cols uint32 `json:"cols"`
-	Rows uint32 `json:"rows"`
+	Cols              uint32 `json:"cols"`
+	Rows              uint32 `json:"rows"`
+	ExpectGeneration  string `json:"expect_generation"`
+	ExpectIncarnation string `json:"expect_incarnation"`
 }
 
 type versionsMsg struct {
@@ -164,18 +175,19 @@ type exitMsg struct {
 }
 
 const (
-	codeInternal         = "internal"
-	codeNotFound         = "not_found"
-	codeAlreadyExists    = "already_exists"
-	codeIdentity         = "identity"
-	codeMetadataConflict = "metadata_conflict"
-	codeExited           = "exited"
-	codeInvalidInput     = "invalid_input"
-	codeUnavailable      = "unavailable"
-	codeClosed           = "closed"
-	codeProtocol         = "protocol"
-	codeVersionMismatch  = "version_mismatch"
-	codeStateMismatch    = "state_mismatch"
+	codeInternal           = "internal"
+	codeNotFound           = "not_found"
+	codeAlreadyExists      = "already_exists"
+	codeIdentity           = "identity"
+	codeMetadataConflict   = "metadata_conflict"
+	codeExited             = "exited"
+	codeInvalidInput       = "invalid_input"
+	codeUnavailable        = "unavailable"
+	codeClosed             = "closed"
+	codeProtocol           = "protocol"
+	codeVersionMismatch    = "version_mismatch"
+	codeStateMismatch      = "state_mismatch"
+	codeGenerationMismatch = "generation_mismatch"
 )
 
 func errorCode(err error) string {
@@ -200,6 +212,8 @@ func errorCode(err error) string {
 		return codeProtocol
 	case errors.Is(err, ErrStateMismatch):
 		return codeStateMismatch
+	case errors.Is(err, ErrGenerationMismatch):
+		return codeGenerationMismatch
 	case errors.Is(err, ErrUnsupported):
 		return codeProtocol
 	default:
@@ -271,6 +285,8 @@ func errorSentinel(code string) error {
 		return ErrVersionMismatch
 	case codeStateMismatch:
 		return ErrStateMismatch
+	case codeGenerationMismatch:
+		return ErrGenerationMismatch
 	default:
 		return fmt.Errorf("%w: remote error %q", ErrUnavailable, code)
 	}
@@ -337,6 +353,40 @@ func parseOutput(payload []byte) (seq uint64, data []byte, err error) {
 		return 0, nil, fmt.Errorf("%w: output frame of %d bytes is too short", ErrProtocol, len(payload))
 	}
 	return binary.BigEndian.Uint64(payload), payload[8:], nil
+}
+
+// maxInputHeader bounds the expectation header of a frameInput payload: two
+// length-prefixed IDs.
+const maxInputHeader = 2 * (1 + 255)
+
+// maxInputData is the most input one frame carries.
+const maxInputData = maxFramePayload - maxInputHeader
+
+// inputPayload prefixes input data with the helper generation and session
+// incarnation it is meant for, each as a one-byte length and the ID bytes.
+func inputPayload(generation, incarnation string, data []byte) ([]byte, error) {
+	if len(generation) > 255 || len(incarnation) > 255 {
+		return nil, fmt.Errorf("%w: input expectation is too long", ErrInvalidInput)
+	}
+	payload := make([]byte, 0, 2+len(generation)+len(incarnation)+len(data))
+	payload = append(payload, byte(len(generation)))
+	payload = append(payload, generation...)
+	payload = append(payload, byte(len(incarnation)))
+	payload = append(payload, incarnation...)
+	return append(payload, data...), nil
+}
+
+func parseInput(payload []byte) (generation, incarnation string, data []byte, err error) {
+	fields := [2]string{}
+	for index := range fields {
+		if len(payload) < 1 || len(payload) < 1+int(payload[0]) {
+			return "", "", nil, fmt.Errorf("%w: truncated input frame header", ErrProtocol)
+		}
+		size := int(payload[0])
+		fields[index] = string(payload[1 : 1+size])
+		payload = payload[1+size:]
+	}
+	return fields[0], fields[1], payload, nil
 }
 
 func execOutputPayload(stream byte, data []byte) []byte {

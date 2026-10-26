@@ -363,11 +363,11 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 				}
 			}
 			attachment, err := attachDurableReplacement(ctx, provider, tab.ID, durableIdentity, uint64(durableFed))
-			if errors.Is(err, durable.ErrNotFound) || errors.Is(err, durable.ErrIdentity) || errors.Is(err, ErrDurableUnrecoverable) {
+			if errors.Is(err, durable.ErrNotFound) || errors.Is(err, durable.ErrIdentity) || errors.Is(err, ErrDurableUnrecoverable) || errors.Is(err, durable.ErrGenerationMismatch) {
 				if attachment != nil {
 					_ = attachment.Close()
 				}
-				if errors.Is(err, ErrDurableUnrecoverable) {
+				if errors.Is(err, ErrDurableUnrecoverable) || errors.Is(err, durable.ErrGenerationMismatch) {
 					m.logger.Warn("durable terminal cannot be recovered after reconnect", "session", session.ID, "tab", tab.ID, "error", err)
 				}
 				gone[tab] = err
@@ -430,6 +430,7 @@ type replacementChannel struct {
 type reconnectNotice struct {
 	tab        *Tab
 	generation uint64
+	banner     []byte
 }
 
 type reconnectResize struct {
@@ -489,6 +490,11 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			}
 			tab.channel = replacement.channel
 			tab.durable = replacement.durable
+			if identity, ok := durableAttachmentIdentity(replacement.durable); ok {
+				// The checked attach proved the incarnation; record the helper
+				// generation it was served by for the next reconnect.
+				tab.durableIdentity = identity
+			}
 			tab.setGenerationLocked(generation)
 			tab.exited = false
 			if tab.runtimeEpisode != "" {
@@ -513,8 +519,11 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	for tab, cause := range gone {
 		tab.mu.Lock()
 		if !tab.closed && m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
-			if errors.Is(cause, ErrDurableUnrecoverable) {
-				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation})
+			switch {
+			case errors.Is(cause, ErrDurableUnrecoverable):
+				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: durableUnrecoverableBanner})
+			case errors.Is(cause, durable.ErrGenerationMismatch):
+				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: durableHelperRestartedBanner})
 			}
 			if tab.durable != nil {
 				retired = append(retired, tab.durable)
@@ -579,7 +588,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		m.transcriptResize(reconnectCtx, resize.tab, resize.cols, resize.rows)
 	}
 	for _, notice := range unrecoverable {
-		_ = m.feed(reconnectCtx, notice.tab, notice.generation, durableUnrecoverableBanner)
+		_ = m.feed(reconnectCtx, notice.tab, notice.generation, notice.banner)
 	}
 	for _, exit := range exits {
 		m.emit(context.Background(), TopicTerminalExit, exit)

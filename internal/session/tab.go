@@ -28,6 +28,7 @@ var reconnectBanner = []byte("\r\n\x1b[33m[NexTerm] reconnected\x1b[0m\r\n")
 // durableUnrecoverableBanner tells the user why a durable tab ended at reconnect
 // instead of silently attaching to an unverified helper session.
 var durableUnrecoverableBanner = []byte("\r\n\x1b[31m[NexTerm] durable terminal cannot be recovered: it has no recorded incarnation\x1b[0m\r\n")
+var durableHelperRestartedBanner = []byte("\r\n\x1b[31m[NexTerm] durable terminal ended: its helper restarted since the last attach\x1b[0m\r\n")
 var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 
 const sshFallbackNotice = "持久终端不可用，已切换为普通 SSH 终端；关闭或断开后无法恢复此终端"

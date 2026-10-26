@@ -108,7 +108,7 @@ func TestRuntimeMetadataDescribesRunningExecutable(t *testing.T) {
 // the client reports that as unknown instead of inventing it.
 func TestRuntimeMetadataUnknownWithoutProof(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
-	client := NewClient(fakeHelloAckServer(t, stateDir, helloMsg{Version: ProtocolVersion, Activity: &ActivitySnapshot{}}), stateDir)
+	client := NewClient(fakeHelloAckServer(t, stateDir, helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Activity: &ActivitySnapshot{}}), stateDir)
 	metadata, known, err := client.RuntimeMetadata(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestRuntimeMetadataAllowsCompatibleReleaseDifference(t *testing.T) {
 		SHA256:   strings.Repeat("0123456789abcdef", 4),
 	}
 	stateDir := filepath.Join(t.TempDir(), "state")
-	ack := helloMsg{Version: ProtocolVersion, Runtime: &want, Activity: &ActivitySnapshot{}}
+	ack := helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Runtime: &want, Activity: &ActivitySnapshot{}}
 	client := NewClient(fakeHelloAckServer(t, stateDir, ack), stateDir)
 	got, known, err := client.RuntimeMetadata(context.Background())
 	if err != nil {

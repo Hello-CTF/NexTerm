@@ -230,7 +230,7 @@ func fakeWindowServer(t *testing.T, gate *ackGate) *Client {
 					return
 				}
 				if kind == frameInput {
-					inbox <- [2]int{int(kind), len(payload)}
+					inbox <- [2]int{int(kind), len(inputData(payload))}
 					continue
 				}
 				inbox <- [2]int{int(kind), 0}
@@ -509,29 +509,53 @@ func TestServerRejectsMalformedAndForgedCredit(t *testing.T) {
 	}
 }
 
+// rawAttachSession sends an attach on a raw connection and returns the
+// attached Info, skipping any output that precedes it.
+func rawAttachSession(t *testing.T, conn net.Conn, msg attachMsg) Info {
+	t.Helper()
+	payload, err := marshalFrame(frameAttach, msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrame(conn, frameAttach, payload); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		kind, payload, err := readFrame(conn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind == frameAttached {
+			var info Info
+			if err := unmarshalFrame(payload, &info); err != nil {
+				t.Fatal(err)
+			}
+			return info
+		}
+	}
+}
+
+// rawInput sends one frameInput carrying the given expectations.
+func rawInput(t *testing.T, conn net.Conn, generation, incarnation string, data []byte) {
+	t.Helper()
+	payload, err := inputPayload(generation, incarnation, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrame(conn, frameInput, payload); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestServerWindowedInputAcksEachFrameOnce(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	session := testScriptSession(t, supervisor, "stty raw -echo; exec cat >/dev/null")
 	conn := rawHello(t, supervisor, server, false)
-	payload, _ := marshalFrame(frameAttach, attachMsg{ID: session.ID()})
-	if err := writeFrame(conn, frameAttach, payload); err != nil {
-		t.Fatal(err)
-	}
-	for {
-		kind, _, err := readFrame(conn)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if kind == frameAttached {
-			break
-		}
-	}
+	info := rawAttachSession(t, conn, attachMsg{ID: session.ID()})
 	const frames = 10
 	for i := 0; i < frames; i++ {
-		if err := writeFrame(conn, frameInput, []byte("abc")); err != nil {
-			t.Fatal(err)
-		}
+		rawInput(t, conn, info.Generation, info.Incarnation, []byte("abc"))
 	}
 	acked := 0
 	for acked < frames {
@@ -562,7 +586,7 @@ func TestWindowedWriteContextWaitsForAcksAndReportsRejection(t *testing.T) {
 		err error
 	}, 1)
 	go func() {
-		n, err := stream.WriteContext(context.Background(), make([]byte, 3*maxFramePayload))
+		n, err := stream.WriteContext(context.Background(), make([]byte, 3*maxInputData))
 		done <- struct {
 			n   int
 			err error
@@ -581,8 +605,8 @@ func TestWindowedWriteContextWaitsForAcksAndReportsRejection(t *testing.T) {
 	gate.ack <- &errorMsg{Code: codeUnavailable, Message: "rejected"}
 	gate.ack <- nil
 	result := <-done
-	if !errors.Is(result.err, ErrUnavailable) || result.n != 2*maxFramePayload {
-		t.Fatalf("WriteContext = %d, %v, want the rejection after %d acknowledged bytes", result.n, result.err, 2*maxFramePayload)
+	if !errors.Is(result.err, ErrUnavailable) || result.n != 2*maxInputData {
+		t.Fatalf("WriteContext = %d, %v, want the rejection after %d acknowledged bytes", result.n, result.err, 2*maxInputData)
 	}
 }
 

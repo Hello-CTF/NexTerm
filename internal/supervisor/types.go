@@ -42,7 +42,10 @@ func (o CreateOptions) usePTY() bool {
 }
 
 type Info struct {
-	ID               string     `json:"id"`
+	ID string `json:"id"`
+	// Generation is the helper generation that reported this info; it
+	// changes when the helper restarts.
+	Generation       string     `json:"generation,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	Incarnation      string     `json:"incarnation"`
 	Title            string     `json:"title,omitempty"`
@@ -82,8 +85,14 @@ func (e *MetadataConflictError) Unwrap() error {
 type Identity struct {
 	CreatedAt   time.Time
 	Incarnation string
+	// Generation is the helper generation the identity was observed in. A
+	// non-empty value makes attach fail with ErrGenerationMismatch once the
+	// helper has restarted; it is not part of the session's own identity.
+	Generation string
 }
 
+// sameIdentity compares session identities; the helper generation is checked
+// separately.
 func sameIdentity(left, right Identity) bool {
 	return left.Incarnation == right.Incarnation && left.CreatedAt.Equal(right.CreatedAt)
 }

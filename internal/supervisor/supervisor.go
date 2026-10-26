@@ -17,7 +17,11 @@ import (
 )
 
 type Supervisor struct {
-	stateDir       string
+	stateDir string
+	// generation identifies this supervisor process. It is minted at start
+	// and changes whenever the helper restarts, so a client can tell a session
+	// it attached before from a crash-recovered record of it.
+	generation     string
 	commandTimeout time.Duration
 	ptyStart       func(context.Context, pty.Config) (*pty.Session, error)
 
@@ -64,6 +68,7 @@ func New(config Config) (*Supervisor, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	supervisor := &Supervisor{
 		stateDir:       stateDir,
+		generation:     ids.New(),
 		commandTimeout: config.CommandTimeout,
 		ptyStart:       pty.Start,
 		ctx:            ctx,
@@ -79,6 +84,11 @@ func New(config Config) (*Supervisor, error) {
 
 func (s *Supervisor) StateDir() string {
 	return s.stateDir
+}
+
+// Generation returns the ID minted when this supervisor started.
+func (s *Supervisor) Generation() string {
+	return s.generation
 }
 
 func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Session, error) {

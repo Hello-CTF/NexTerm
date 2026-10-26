@@ -19,8 +19,10 @@ type DurableCreateOptions struct {
 }
 
 type DurableDescriptor struct {
-	ID               string
-	Incarnation      string
+	ID          string
+	Incarnation string
+	// Generation is the helper generation that listed the session.
+	Generation       string
 	CreatedAt        time.Time
 	Title            string
 	MetadataRevision uint64
@@ -35,6 +37,10 @@ type DurableDescriptor struct {
 type DurableIdentity struct {
 	CreatedAt   time.Time
 	Incarnation string
+	// Generation is the helper generation the session was last seen in.
+	// When set, attach fails with durable.ErrGenerationMismatch after a
+	// helper restart; an empty value skips that check.
+	Generation string
 }
 
 type DurableRenameOptions struct {

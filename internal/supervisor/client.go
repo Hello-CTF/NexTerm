@@ -121,7 +121,7 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 	// waiting for its reply; the identity is verified once both arrive.
 	pipelined := options.ID != ""
 	if pipelined {
-		if err := conn.sendJSON(ctx, frameAttach, attachMsg{ID: options.ID}); err != nil {
+		if err := conn.sendJSON(ctx, frameAttach, attachMsg{ID: options.ID, ExpectGeneration: conn.generation}); err != nil {
 			_ = conn.Close()
 			return Info{}, nil, err
 		}
@@ -132,7 +132,7 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 		return Info{}, nil, err
 	}
 	if !pipelined {
-		msg := attachMsg{ID: info.ID, ExpectCreatedAt: info.CreatedAt.UnixNano(), ExpectIncarnation: info.Incarnation}
+		msg := attachMsg{ID: info.ID, ExpectCreatedAt: info.CreatedAt.UnixNano(), ExpectIncarnation: info.Incarnation, ExpectGeneration: info.Generation}
 		if err := conn.sendJSON(ctx, frameAttach, msg); err != nil {
 			_ = conn.Close()
 			return info, nil, err
@@ -143,7 +143,7 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 		_ = conn.Close()
 		return info, nil, err
 	}
-	if attached.ID != info.ID || attached.Incarnation != info.Incarnation || !attached.CreatedAt.Equal(info.CreatedAt) {
+	if attached.ID != info.ID || attached.Incarnation != info.Incarnation || attached.Generation != info.Generation || !attached.CreatedAt.Equal(info.CreatedAt) {
 		_ = conn.Close()
 		return info, nil, fmt.Errorf("%w: attached session is not the one just created", ErrIdentity)
 	}
@@ -307,6 +307,7 @@ func (c *Client) AttachFrom(ctx context.Context, id string, expect *Identity, of
 	if expect != nil {
 		msg.ExpectCreatedAt = expect.CreatedAt.UnixNano()
 		msg.ExpectIncarnation = expect.Incarnation
+		msg.ExpectGeneration = expect.Generation
 	}
 	kind, payload, err := conn.request(ctx, frameAttach, msg)
 	if err != nil {
@@ -329,7 +330,7 @@ func (c *Client) newStream(conn *clientConn, info Info, offset uint64) *Stream {
 	stream := &Stream{
 		conn:              conn,
 		info:              info,
-		identity:          Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation},
+		identity:          Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation, Generation: info.Generation},
 		closeDrainTimeout: defaultStreamCloseDrainTimeout,
 		want:              offset,
 		reqToken:          make(chan struct{}, 1),
@@ -426,6 +427,11 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		}
 		conn.runtimeMetadata = &metadata
 	}
+	if ack.Generation == "" {
+		_ = conn.Close()
+		return nil, fmt.Errorf("%w: hello acknowledgement lacks the helper generation", ErrProtocol)
+	}
+	conn.generation = ack.Generation
 	if ack.Activity == nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("%w: hello acknowledgement lacks daemon activity", ErrProtocol)
@@ -454,7 +460,9 @@ type clientConn struct {
 	conn net.Conn
 	// compress is the hello preference: only then may the server send
 	// frameReplayGzip and frameOutputZstd.
-	compress        bool
+	compress bool
+	// generation is the helper process this connection reached.
+	generation      string
 	runtimeMetadata *RuntimeMetadata
 	activity        ActivitySnapshot
 	writeMu         sync.Mutex
@@ -721,8 +729,8 @@ func (s *Stream) writeWindowed(ctx context.Context, p []byte, wait bool) (int, e
 	written := 0
 	for len(p) > 0 {
 		chunk := p
-		if len(chunk) > maxFramePayload {
-			chunk = chunk[:maxFramePayload]
+		if len(chunk) > maxInputData {
+			chunk = chunk[:maxInputData]
 		}
 		if err := s.reserveInput(ctx, len(chunk)); err != nil {
 			return written, err
@@ -864,9 +872,12 @@ func (s *Stream) sendInput(ctx context.Context, chunk []byte) error {
 		s.fail(context.Cause(ctx))
 		close(cancelDone)
 	})
-	s.writeMu.Lock()
-	err := writeFrame(s.conn.conn, frameInput, chunk)
-	s.writeMu.Unlock()
+	payload, err := inputPayload(s.identity.Generation, s.identity.Incarnation, chunk)
+	if err == nil {
+		s.writeMu.Lock()
+		err = writeFrame(s.conn.conn, frameInput, payload)
+		s.writeMu.Unlock()
+	}
 	if !stopCancel() {
 		<-cancelDone
 		return context.Cause(ctx)
@@ -994,7 +1005,7 @@ func (s *Stream) Resize(ctx context.Context, cols, rows uint32) error {
 	if err := validateSize(cols, rows); err != nil {
 		return err
 	}
-	kind, _, err := s.request(ctx, frameResize, resizeMsg{Cols: cols, Rows: rows})
+	kind, _, err := s.request(ctx, frameResize, resizeMsg{Cols: cols, Rows: rows, ExpectGeneration: s.identity.Generation, ExpectIncarnation: s.identity.Incarnation})
 	if err != nil {
 		return err
 	}

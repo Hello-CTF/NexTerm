@@ -29,6 +29,8 @@ func translateError(err error) error {
 		return durable.ErrExited
 	case errors.Is(err, ErrClosed):
 		return durable.ErrClosed
+	case errors.Is(err, ErrGenerationMismatch):
+		return durable.ErrGenerationMismatch
 	case errors.Is(err, ErrHelperUpgradeRequired), errors.Is(err, ErrClientUpgradeRequired):
 		// Keep the readable reason: it names the side that must be upgraded.
 		return fmt.Errorf("%w: %w", durable.ErrUnavailable, err)
@@ -57,7 +59,7 @@ func checkedIdentity(identity base.DurableIdentity) (*Identity, error) {
 	if identity.Incarnation == "" {
 		return nil, durable.ErrInvalidInput
 	}
-	return &Identity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation}, nil
+	return &Identity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation, Generation: identity.Generation}, nil
 }
 
 func renameResult(info Info) base.DurableRenameResult {
@@ -81,7 +83,7 @@ type Provider struct {
 
 func embeddedProviderAttach(ctx context.Context, supervisor *Supervisor, session *Session) (*Attachment, error) {
 	identity := session.Identity()
-	return supervisor.attachFrom(ctx, session.ID(), 0, &identity)
+	return supervisor.attachFrom(ctx, session.ID(), 0, &identity, "")
 }
 
 func NewProvider(supervisor *Supervisor) *Provider {
@@ -121,7 +123,7 @@ func (p *Provider) AttachFromWithIdentity(ctx context.Context, id string, identi
 	if err != nil {
 		return nil, err
 	}
-	attachment, err := p.supervisor.attachFrom(ctx, id, offset, expected)
+	attachment, err := p.supervisor.attachFrom(ctx, id, offset, expected, identity.Generation)
 	if attachment == nil {
 		return nil, translateError(err)
 	}
@@ -177,6 +179,7 @@ func durableDescriptors(infos []Info) []base.DurableDescriptor {
 		descriptors[index] = base.DurableDescriptor{
 			ID:               info.ID,
 			Incarnation:      info.Incarnation,
+			Generation:       info.Generation,
 			CreatedAt:        info.CreatedAt,
 			Title:            info.Title,
 			MetadataRevision: info.MetadataRevision,

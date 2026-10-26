@@ -151,6 +151,7 @@ func (s *Session) infoLocked() Info {
 		ID:               s.entry.ID,
 		CreatedAt:        s.entry.CreatedAt,
 		Incarnation:      s.identity.Incarnation,
+		Generation:       s.supervisor.generation,
 		Title:            s.entry.Title,
 		MetadataRevision: s.entry.MetadataRevision,
 		Cols:             s.entry.Cols,
