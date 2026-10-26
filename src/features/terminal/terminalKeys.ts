@@ -1,38 +1,39 @@
+import { KEY_BYTES, ctrlByte, encodeWithModifiers, type KeyModifiers } from "./terminalInput/keyEncoding";
+
+export { SHIFT_ENTER_SEQUENCE, isShiftEnter, terminalKeyOverride } from "./terminalInput/keyEncoding";
+
 export interface TerminalKeySpec {
   id: string;
   label: string;
   title: string;
   data: string;
-  ctrlData?: string;
-  altData?: string;
 }
 
-export interface TerminalKeyModifiers {
-  ctrl: boolean;
-  alt: boolean;
-}
+export type TerminalKeyModifiers = KeyModifiers;
+
+const ctrl = (char: string): string => ctrlByte(char) ?? char;
 
 export const TERMINAL_KEY_CATALOG: TerminalKeySpec[] = [
-  { id: "escape", label: "Esc", title: "Escape", data: "\x1b" },
-  { id: "tab", label: "Tab", title: "制表符", data: "\t" },
-  { id: "up", label: "↑", title: "上方向键", data: "\x1b[A" },
-  { id: "down", label: "↓", title: "下方向键", data: "\x1b[B" },
-  { id: "right", label: "→", title: "右方向键", data: "\x1b[C" },
-  { id: "left", label: "←", title: "左方向键", data: "\x1b[D" },
-  { id: "home", label: "Home", title: "行首", data: "\x1b[H" },
-  { id: "end", label: "End", title: "行尾", data: "\x1b[F" },
-  { id: "pageup", label: "PgUp", title: "向上翻页", data: "\x1b[5~" },
-  { id: "pagedown", label: "PgDn", title: "向下翻页", data: "\x1b[6~" },
-  { id: "c", label: "C", title: "字母 C；Ctrl 激活时为 Ctrl+C", data: "c", ctrlData: "\x03" },
-  { id: "d", label: "D", title: "字母 D；Ctrl 激活时为 Ctrl+D", data: "d", ctrlData: "\x04" },
-  { id: "z", label: "Z", title: "字母 Z；Ctrl 激活时为 Ctrl+Z", data: "z", ctrlData: "\x1a" },
-  { id: "ctrl-a", label: "^A", title: "Ctrl+A（移到行首）", data: "\x01" },
-  { id: "ctrl-e", label: "^E", title: "Ctrl+E（移到行尾）", data: "\x05" },
-  { id: "ctrl-k", label: "^K", title: "Ctrl+K（删除到行尾）", data: "\x0b" },
-  { id: "ctrl-l", label: "^L", title: "Ctrl+L（清屏）", data: "\x0c" },
-  { id: "ctrl-r", label: "^R", title: "Ctrl+R（历史搜索）", data: "\x12" },
-  { id: "ctrl-u", label: "^U", title: "Ctrl+U（删除到行首）", data: "\x15" },
-  { id: "ctrl-w", label: "^W", title: "Ctrl+W（删除前一个词）", data: "\x17" },
+  { id: "escape", label: "Esc", title: "Escape", data: KEY_BYTES.Escape },
+  { id: "tab", label: "Tab", title: "制表符", data: KEY_BYTES.Tab },
+  { id: "up", label: "↑", title: "上方向键", data: KEY_BYTES.ArrowUp },
+  { id: "down", label: "↓", title: "下方向键", data: KEY_BYTES.ArrowDown },
+  { id: "right", label: "→", title: "右方向键", data: KEY_BYTES.ArrowRight },
+  { id: "left", label: "←", title: "左方向键", data: KEY_BYTES.ArrowLeft },
+  { id: "home", label: "Home", title: "行首", data: KEY_BYTES.Home },
+  { id: "end", label: "End", title: "行尾", data: KEY_BYTES.End },
+  { id: "pageup", label: "PgUp", title: "向上翻页", data: KEY_BYTES.PageUp },
+  { id: "pagedown", label: "PgDn", title: "向下翻页", data: KEY_BYTES.PageDown },
+  { id: "c", label: "C", title: "字母 C；Ctrl 激活时为 Ctrl+C", data: "c" },
+  { id: "d", label: "D", title: "字母 D；Ctrl 激活时为 Ctrl+D", data: "d" },
+  { id: "z", label: "Z", title: "字母 Z；Ctrl 激活时为 Ctrl+Z", data: "z" },
+  { id: "ctrl-a", label: "^A", title: "Ctrl+A（移到行首）", data: ctrl("a") },
+  { id: "ctrl-e", label: "^E", title: "Ctrl+E（移到行尾）", data: ctrl("e") },
+  { id: "ctrl-k", label: "^K", title: "Ctrl+K（删除到行尾）", data: ctrl("k") },
+  { id: "ctrl-l", label: "^L", title: "Ctrl+L（清屏）", data: ctrl("l") },
+  { id: "ctrl-r", label: "^R", title: "Ctrl+R（历史搜索）", data: ctrl("r") },
+  { id: "ctrl-u", label: "^U", title: "Ctrl+U（删除到行首）", data: ctrl("u") },
+  { id: "ctrl-w", label: "^W", title: "Ctrl+W（删除前一个词）", data: ctrl("w") },
 ];
 
 export const DEFAULT_TERMINAL_KEY_IDS: string[] = [
@@ -55,11 +56,6 @@ export const DEFAULT_TERMINAL_KEY_IDS: string[] = [
 
 const STORAGE_KEY = "nexterm.terminalKeys.v1";
 
-export function terminalKeySequence(key: TerminalKeySpec, modifiers: TerminalKeyModifiers): string {
-  const base = modifiers.ctrl ? (key.ctrlData ?? key.data) : key.data;
-  if (!modifiers.alt) return base;
-  return key.altData ?? `\x1b${base}`;
-}
 
 export function resolveTerminalKeys(ids: string[]): TerminalKeySpec[] {
   const byId = new Map(TERMINAL_KEY_CATALOG.map((key) => [key.id, key]));
@@ -126,34 +122,7 @@ export function formatKeySequence(data: string): string {
   return out;
 }
 
-type KeyLike = Pick<KeyboardEvent, "key" | "shiftKey" | "ctrlKey" | "altKey" | "metaKey">;
-
-// ESC+CR: TUIs such as Claude Code read it as "insert newline" rather than submit.
-export const SHIFT_ENTER_SEQUENCE = "\x1b\r";
-
-export function isShiftEnter(event: KeyLike): boolean {
-  return event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
-}
-
-// terminalKeyOverride returns the bytes for key chords whose xterm.js default is ambiguous or not what
-// native terminals send, or null to keep the default encoding.
-//  - Shift+Enter: xterm sends a bare CR (same as Enter); ESC+CR lets TUIs insert a newline.
-//  - Ctrl+Backspace: xterm sends BS (same as Backspace); ^W deletes the previous word.
-//  - macOS Option+Left/Right: word jump (ESC b / ESC f) as in Terminal.app and iTerm2.
-//  - macOS Cmd+Left/Right/Backspace: line start / line end / kill line (^A / ^E / ^U).
-export function terminalKeyOverride(event: KeyLike, mac: boolean): string | null {
-  const { key, shiftKey, ctrlKey, altKey, metaKey } = event;
-  if (isShiftEnter(event)) return SHIFT_ENTER_SEQUENCE;
-  if (key === "Backspace" && ctrlKey && !shiftKey && !altKey && !metaKey) return "\x17";
-  if (!mac || shiftKey || ctrlKey) return null;
-  if (altKey && !metaKey) {
-    if (key === "ArrowLeft") return "\x1bb";
-    if (key === "ArrowRight") return "\x1bf";
-  }
-  if (metaKey && !altKey) {
-    if (key === "ArrowLeft") return "\x01";
-    if (key === "ArrowRight") return "\x05";
-    if (key === "Backspace") return "\x15";
-  }
-  return null;
+// terminalKeySequence encodes a key-bar key with the latched Ctrl/Alt modifiers through the shared encoder.
+export function terminalKeySequence(key: TerminalKeySpec, modifiers: TerminalKeyModifiers): string {
+  return encodeWithModifiers(key.data, modifiers);
 }

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { attachLazyAddons, scheduleWebglRenderer, type WebglRenderer } from "./xtermAddons";
-import { attachImeTextInput } from "./imeTextInput";
+import { attachTerminalInput } from "./terminalInput/attachTerminalInput";
+import { kittyKeyboardSwitch } from "./terminalInput/kittyKeyboard";
+import { applyStickyModifiersToTyped } from "./terminalInput/stickyModifiers";
 import "@xterm/xterm/css/xterm.css";
 
 import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen, sendChannelInput } from "../../ipc/events";
@@ -11,7 +13,6 @@ import { assetApi, call, dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
-import { matchAppKeybinding } from "../../app/keybindings";
 import { useUi } from "../../app/store";
 import {
   resetTerminalLinesBelow,
@@ -40,8 +41,6 @@ import { createTerminalResponseCoalescer } from "./terminalResponses";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
-import { terminalKeyOverride } from "./terminalKeys";
-import { isMac } from "../../app/platform";
 import { createSelectionAutoCopy } from "./selectionAutoCopy";
 import { confirmMultilinePaste, multilinePasteLines, wrapBracketedPaste } from "./terminalPaste";
 import { SelectionActionBar, isCoarsePointerDevice } from "./SelectionActionBar";
@@ -54,6 +53,9 @@ function accentColor(): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim();
   return v || "#516cd6";
 }
+
+// overflow: clip (not hidden) also forbids programmatic scrolling, so focusing the helper textarea cannot shift it.
+const XTERM_HOST_STYLE = { overflow: "clip" } as const;
 
 // Repeated GPU context loss pins a pane to the DOM renderer; say so once per app run, not per pane.
 let webglFallbackNoticeShown = false;
@@ -231,6 +233,7 @@ export function XtermView(props: XtermViewProps) {
   useEffect(() => {
     if (!hostRef.current || termRef.current) return;
     const appearance = getAppearancePrefs();
+    const kittyKeyboard = kittyKeyboardSwitch();
     const term = new Terminal({
       scrollback: 100_000,
       allowProposedApi: true,
@@ -240,27 +243,12 @@ export function XtermView(props: XtermViewProps) {
       // Hidden panes do not blink: the blink timer would keep scheduling repaints.
       cursorBlink: visibleRef.current !== false,
       theme: { ...xtermThemeFor(getResolvedTerminalTheme(), appearance.terminalContrast), cursor: accentColor() },
+      vtExtensions: { kittyKeyboard },
     });
     termRef.current = term;
     term.open(hostRef.current);
-    const detachImeTextInput = attachImeTextInput(term, hostRef.current);
-    // xterm always preventDefault + stopPropagation on keys it handles, so window-level listeners
-    // receive no keys while the terminal is focused; keys matching app-level keybindings are let through here,
-    // bubbling to window for App to handle.
-    term.attachCustomKeyEventHandler((event) => {
-      if (event.isComposing || event.keyCode === 229) return true;
-      // Overridden chords also auto-repeat, so they are handled before the repeat bail-out below.
-      const override = matchAppKeybinding(event) === null ? terminalKeyOverride(event, isMac()) : null;
-      if (override !== null) {
-        if (event.type === "keydown") {
-          event.preventDefault();
-          term.input(override, true);
-        }
-        return false;
-      }
-      if (event.repeat) return true;
-      return matchAppKeybinding(event) === null;
-    });
+    // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
+    const detachTerminalInput = attachTerminalInput(term, hostRef.current, { kittyKeyboard });
 
     let kernelTabId = "";
     let disposed = false;
@@ -1182,7 +1170,9 @@ export function XtermView(props: XtermViewProps) {
       void doAttach();
     }, 0);
 
-    const dataDisposable = term.onData((data) => {
+    const dataDisposable = term.onData((raw) => {
+      // A Ctrl/Alt latched on the key bar applies to the next character typed into the focused terminal.
+      const data = term.textarea && document.activeElement === term.textarea ? applyStickyModifiersToTyped(raw) : raw;
       // Input in a visible pane switches hidden panes to the conservative drain tier.
       if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
       blocks.feedInput(data);
@@ -1326,7 +1316,7 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("touchstart", trackTouch, true);
       pasteHost.removeEventListener("touchmove", trackTouch, true);
       dataDisposable.dispose();
-      detachImeTextInput();
+      detachTerminalInput();
       scrollDisposable.dispose();
       titleDisposable.dispose();
       selectionDisposable.dispose();
@@ -1426,7 +1416,7 @@ export function XtermView(props: XtermViewProps) {
     <div className="relative h-full w-full min-h-0">
       {/* The IME composition view and helper textarea follow the cursor and can extend past the right edge; clipping
           keeps them from scrolling an ancestor and shifting the terminal sideways. */}
-      <div ref={hostRef} className="nx-xterm-host relative h-full w-full min-h-0 overflow-clip" />
+      <div ref={hostRef} className="nx-xterm-host relative h-full w-full min-h-0" style={XTERM_HOST_STYLE} />
       {selectionBar && (
         <SelectionActionBar
           x={selectionBar.x}

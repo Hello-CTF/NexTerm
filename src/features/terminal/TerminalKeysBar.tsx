@@ -12,6 +12,12 @@ import {
 } from "./terminalKeys";
 import { IconArrowDown, IconArrowUp, IconClose, IconSettings } from "../../ui/icons";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
+import {
+  clearStickyModifiers,
+  getStickyModifiers,
+  toggleStickyModifier,
+  useStickyModifiers,
+} from "./terminalInput/stickyModifiers";
 
 export interface TerminalKeysBarProps {
   onSend: (data: string) => void;
@@ -22,8 +28,8 @@ export interface TerminalKeysBarProps {
 type ConfigFocusRequest = { id: string; control: "toggle" | "up" | "down" };
 
 export function TerminalKeysBar({ onSend, onFocus, broadcastCount }: TerminalKeysBarProps) {
-  const [ctrlActive, setCtrlActive] = useState(false);
-  const [altActive, setAltActive] = useState(false);
+  // Ctrl/Alt latch for the next key: a key on this bar or a character typed on the system keyboard.
+  const { ctrl: ctrlActive, alt: altActive } = useStickyModifiers();
   const [configOpen, setConfigOpen] = useState(false);
   const [enabledIds, setEnabledIds] = useState<string[]>(loadTerminalKeyConfig);
   const [focusRequest, setFocusRequest] = useState<ConfigFocusRequest | null>(null);
@@ -37,15 +43,16 @@ export function TerminalKeysBar({ onSend, onFocus, broadcastCount }: TerminalKey
   const enabledSet = new Set(enabledIds);
   const disabledKeys = TERMINAL_KEY_CATALOG.filter((key) => !enabledSet.has(key.id));
 
-  const clearModifiers = () => {
-    setCtrlActive(false);
-    setAltActive(false);
-  };
+  const clearModifiers = clearStickyModifiers;
 
   const sendKey = (key: TerminalKeySpec) => {
-    onSend(terminalKeySequence(key, { ctrl: ctrlActive, alt: altActive }));
-    clearModifiers();
+    const modifiers = getStickyModifiers();
+    clearStickyModifiers();
+    onSend(terminalKeySequence(key, modifiers));
   };
+
+  // A latch left behind by an unmounted bar must not alter later typing.
+  useEffect(() => clearStickyModifiers, []);
 
   const toggleKey = (id: string) => {
     setFocusRequest({ id, control: "toggle" });
@@ -238,7 +245,7 @@ export function TerminalKeysBar({ onSend, onFocus, broadcastCount }: TerminalKey
         aria-label="Ctrl 修饰键"
         aria-pressed={ctrlActive}
         onPointerDown={(event) => event.preventDefault()}
-        onClick={() => setCtrlActive((active) => !active)}
+        onClick={() => toggleStickyModifier("ctrl")}
       >
         Ctrl
       </button>
@@ -249,7 +256,7 @@ export function TerminalKeysBar({ onSend, onFocus, broadcastCount }: TerminalKey
         aria-label="Alt 修饰键"
         aria-pressed={altActive}
         onPointerDown={(event) => event.preventDefault()}
-        onClick={() => setAltActive((active) => !active)}
+        onClick={() => toggleStickyModifier("alt")}
       >
         Alt
       </button>

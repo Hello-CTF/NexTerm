@@ -584,6 +584,19 @@ export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null
   return null;
 }
 
+/**
+ * Actions whose chords a focused terminal never receives: the app-level shortcuts, plus terminal search, which the
+ * terminal pane intercepts before xterm. Listed in match precedence order.
+ */
+export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, "terminalSearch"];
+
+/** matchAppKeybinding widened to every chord a focused terminal withholds from the program running in it. */
+export function matchTerminalWithheldKeybinding(event: KeyEventLike): AppKeybindingHit | null {
+  const hit = matchAppKeybinding(event);
+  if (hit) return hit;
+  return matchActionBinding(event, "terminalSearch") ? { action: "terminalSearch", digit: null } : null;
+}
+
 export interface KeybindingConflict {
   actions: [KeybindingAction, KeybindingAction];
   bindings: [string, string];

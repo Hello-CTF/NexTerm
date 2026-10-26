@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useUi } from "../app/store";
 import { IconAlert, IconInfo } from "./icons";
+import { isImeKeyEvent } from "./imeKeyEvent";
 import "./a11y.css";
 
 const DEFAULT_TITLE = {
@@ -55,10 +56,7 @@ const overlays: OverlayEntry[] = [];
 const inertRecords = new Map<HTMLElement, { inert: boolean; ariaHidden: string | null }>();
 let scrollLock: { overflow: string } | null = null;
 
-export function isImeKeyEvent(event: KeyboardEvent | ReactKeyboardEvent): boolean {
-  const native = "nativeEvent" in event ? event.nativeEvent : event;
-  return native.isComposing || event.keyCode === 229;
-}
+export { isImeKeyEvent };
 
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   terminals: [] as Array<{ element: HTMLElement | null }>,
   frames: new Map<number, () => void>(),
   keyHandler: null as ((event: KeyboardEvent) => boolean) | null,
+  input: vi.fn(),
   attach: vi.fn(),
   attachTab: vi.fn(),
   write: vi.fn(),
@@ -38,6 +39,9 @@ vi.mock("@xterm/xterm", () => ({
     loadAddon() {}
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       harness.keyHandler = handler;
+    }
+    input(data: string, wasUserInput: boolean) {
+      harness.input(data, wasUserInput);
     }
     write(_data: unknown, callback?: () => void) {
       callback?.();
@@ -144,15 +148,43 @@ async function show(props: XtermViewProps): Promise<void> {
   });
 }
 
+function keydown(init: KeyboardEventInit & { isComposing?: boolean }): KeyboardEvent {
+  return new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+}
+
 function handledByXterm(init: KeyboardEventInit & { isComposing?: boolean }): boolean {
   if (!harness.keyHandler) throw new Error("xterm custom key handler not registered");
-  return harness.keyHandler(new KeyboardEvent("keydown", init));
+  return harness.keyHandler(keydown(init));
+}
+
+// Dispatches through the handler from a real DOM node so propagation to window listeners is observable.
+function dispatchThroughHandler(init: KeyboardEventInit): { handled: boolean; reachedWindow: boolean; event: KeyboardEvent } {
+  if (!harness.keyHandler) throw new Error("xterm custom key handler not registered");
+  const handler = harness.keyHandler;
+  const target = document.createElement("textarea");
+  document.body.append(target);
+  let handled = true;
+  let reachedWindow = false;
+  const onTarget = (event: Event) => {
+    handled = handler(event as KeyboardEvent);
+  };
+  const onWindow = () => {
+    reachedWindow = true;
+  };
+  target.addEventListener("keydown", onTarget);
+  window.addEventListener("keydown", onWindow);
+  const event = keydown(init);
+  target.dispatchEvent(event);
+  window.removeEventListener("keydown", onWindow);
+  target.remove();
+  return { handled, reachedWindow, event };
 }
 
 beforeEach(() => {
   harness.terminals.length = 0;
   harness.frames.clear();
   harness.keyHandler = null;
+  harness.input.mockReset();
   harness.attach.mockReset().mockResolvedValue({
     tabId: "tab-new",
     sessionId: "session",
@@ -214,9 +246,28 @@ describe("XtermView app-level shortcut passthrough", () => {
   it("passes Mod+Shift+W to the app while it closes panes, and to xterm once unbound", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
-    expect(handledByXterm({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true })).toBe(false);
+    const bound = dispatchThroughHandler({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true });
+    expect(bound.handled).toBe(false);
+    expect(bound.reachedWindow).toBe(true);
+    expect(harness.input).not.toHaveBeenCalled();
     setKeybinding("closePane", null);
     expect(handledByXterm({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true })).toBe(true);
+  });
+
+  it("sends override bytes in place of xterm's encoding, unless an app shortcut owns the chord", async () => {
+    await show({ sessionId: "session", tabId: "pending" });
+
+    expect(handledByXterm({ key: "Enter", code: "Enter", shiftKey: true })).toBe(false);
+    expect(handledByXterm({ key: "Backspace", code: "Backspace", ctrlKey: true })).toBe(false);
+    expect(harness.input.mock.calls).toEqual([
+      ["\x1b\r", true],
+      ["\x17", true],
+    ]);
+
+    harness.input.mockReset();
+    setKeybinding("newTerminal", "Shift+Enter");
+    expect(handledByXterm({ key: "Enter", code: "Enter", shiftKey: true })).toBe(false);
+    expect(harness.input).not.toHaveBeenCalled();
   });
 
   it("leaves ordinary input and non-app shortcuts to xterm", async () => {
@@ -224,18 +275,31 @@ describe("XtermView app-level shortcut passthrough", () => {
 
     expect(handledByXterm({ key: "x", code: "KeyX" })).toBe(true);
     expect(handledByXterm({ key: "Enter", code: "Enter" })).toBe(true);
-    // terminalSearch (Primary+f) is not in the app-level keymap; it is handled separately by the TerminalPane capture layer.
-    expect(handledByXterm({ key: "f", code: "KeyF", ctrlKey: true })).toBe(true);
+    // Primary+f opens terminal search in the pane's capture layer; xterm must not also encode it as ^F.
+    expect(handledByXterm({ key: "f", code: "KeyF", ctrlKey: true })).toBe(false);
     expect(handledByXterm({ key: "f", code: "KeyF", metaKey: true })).toBe(true);
   });
 
-  it("does not pass through repeat events or IME composition", async () => {
+  it("drops auto-repeats of an app shortcut instead of typing them into the terminal or re-running the action", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
-    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, repeat: true })).toBe(true);
-    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, isComposing: true })).toBe(
-      true,
-    );
+    const repeat = dispatchThroughHandler({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, repeat: true });
+    expect(repeat.handled).toBe(false);
+    expect(repeat.reachedWindow).toBe(false);
+    expect(repeat.event.defaultPrevented).toBe(true);
+    const first = dispatchThroughHandler({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true });
+    expect(first.reachedWindow).toBe(true);
+    expect(first.event.defaultPrevented).toBe(false);
+  });
+
+  it("leaves IME composition to the input method", async () => {
+    await show({ sessionId: "session", tabId: "pending" });
+
+    // keyCode 229 stays with xterm's composition helper; a real key mid-composition only commits the composition.
+    expect(handledByXterm({ key: "Process", keyCode: 229, ctrlKey: true, shiftKey: true })).toBe(true);
+    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, isComposing: true })).toBe(false);
+    expect(handledByXterm({ key: "Enter", code: "Enter", isComposing: true })).toBe(false);
+    expect(harness.input).not.toHaveBeenCalled();
   });
 
   it("passes through updated bindings after keybinding overrides sync", async () => {

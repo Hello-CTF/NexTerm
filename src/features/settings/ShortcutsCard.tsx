@@ -14,7 +14,17 @@ import {
 } from "../../app/keybindings";
 import { setSelectionAutoCopy, useInputPrefs } from "../../app/preferences";
 import type { SettingsPanelId } from "./settingsIndex";
+import { isMac } from "../../app/platform";
+import { WEB } from "../../ipc/env";
+import { formatKeySequence } from "../terminal/terminalKeys";
+import { terminalShortcutConflicts, type TerminalShortcutConflict } from "../terminal/terminalInput/shortcutConflicts";
 import { IconChevronDown, IconChevronRight, IconClose, IconCommand, IconEdit, IconRefresh } from "../../ui/icons";
+
+function describeWithheldInput(conflict: TerminalShortcutConflict): string {
+  if (conflict.bytes === null) return conflict.meaning ?? "无（终端默认不发送）";
+  const bytes = formatKeySequence(conflict.bytes);
+  return conflict.meaning ? `${bytes}（${conflict.meaning}）` : bytes;
+}
 
 export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n: number } | null }) {
   const bindings = useKeybindings();
@@ -28,6 +38,7 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
   }, [reveal]);
 
   const conflicts = bindingConflicts(bindings);
+  const terminalConflicts = terminalShortcutConflicts(bindings, isMac(), WEB);
   const conflictPeers = new Map<string, string>();
   for (const conflict of conflicts) {
     const [first, second] = conflict.actions;
@@ -172,6 +183,34 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
             .join("；")}
           。使用相同快捷键时，排在前面的动作生效。
         </p>
+      )}
+      {terminalConflicts.length > 0 && (
+        <div className="mt-4 border-t border-neutral-800/60 pt-3.5" data-testid="terminal-shortcut-conflicts">
+          <div className="text-[12.5px] text-neutral-200">与终端按键的冲突</div>
+          <p className="nx-hint mt-0.5 mb-2">
+            终端获得焦点时，下列组合键交给应用处理，终端里运行的程序收不到它们；需要把按键留给终端程序时，清除或改绑对应快捷键。
+          </p>
+          <div className="overflow-x-auto">
+            <table className="nx-table text-[11.5px]" aria-label="与终端按键的冲突">
+              <thead>
+                <tr>
+                  <th scope="col">按键</th>
+                  <th scope="col">应用动作</th>
+                  <th scope="col">终端程序原本收到</th>
+                </tr>
+              </thead>
+              <tbody>
+                {terminalConflicts.map((conflict) => (
+                  <tr key={conflict.chord} data-terminal-conflict={conflict.action.id}>
+                    <td className="whitespace-nowrap font-mono">{conflict.chord}</td>
+                    <td>{conflict.action.label}</td>
+                    <td>{describeWithheldInput(conflict)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
       <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
         <button
