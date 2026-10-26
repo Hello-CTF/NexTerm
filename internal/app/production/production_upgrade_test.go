@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -102,8 +101,15 @@ func TestProductionUpgradePreservesLegacyAccountAndSecretsDatabase(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	const aiSecret = "synthetic-legacy-ai-key"
+	legacyProfile := productionMigrationProfile("legacy-ai", "legacy-ai", aiSecret)
+	legacyProfile.APIKey, err = oldVault.EncryptSecret(ctx, aiSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, row := range []any{
 		&store.AssetRow{ID: "legacy-asset", Kind: "ssh", Name: "legacy asset", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
+		&store.Setting{Key: store.AIProfilesSettingKey, Value: productionLegacyProfileSetting(t, legacyProfile), UpdatedAt: 100},
 	} {
 		if err := database.GORM().Create(row).Error; err != nil {
 			t.Fatal(err)
@@ -153,6 +159,20 @@ func TestProductionUpgradePreservesLegacyAccountAndSecretsDatabase(t *testing.T)
 	if _, err := application.Services.Vault.DecryptCredentialString(ctx, credential); ipc.NormalizeError(err).Code != ipc.CodeVaultLocked {
 		t.Fatalf("locked credential decrypt error = %v, want vault_locked", err)
 	}
+	targetKey := store.AIProfilesSettingKeyForUser(admin.ID)
+	beforeLocked, found, err := application.Services.Store.SettingGet(ctx, targetKey)
+	if err != nil || !found {
+		t.Fatalf("read migrated AI setting before locked access: found=%v err=%v", found, err)
+	}
+	lockedConfig, ok, err := application.Services.Profiles.ActiveConfig(adminCtx)
+	if err != nil || !ok || lockedConfig.APIKey != "" {
+		t.Fatalf("locked AI config = %+v, ok=%v, err=%v; want present profile without a key", lockedConfig, ok, err)
+	}
+	afterLocked, found, err := application.Services.Store.SettingGet(ctx, targetKey)
+	if err != nil || !found || afterLocked != beforeLocked {
+		t.Fatalf("locked AI access reconciled or rewrote the setting: before=%q after=%q found=%v err=%v", beforeLocked, afterLocked, found, err)
+	}
+
 	if err := application.Services.Vault.UnlockMaster(ctx, vaultPassword); err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +180,11 @@ func TestProductionUpgradePreservesLegacyAccountAndSecretsDatabase(t *testing.T)
 	if err != nil || plaintext != credentialSecret {
 		t.Fatalf("upgraded credential plaintext = %q, err=%v", plaintext, err)
 	}
+	aiConfig, ok, err := application.Services.Profiles.ActiveConfig(adminCtx)
+	if err != nil || !ok || aiConfig.APIKey != aiSecret {
+		t.Fatalf("upgraded AI key = %q, ok=%v, err=%v", aiConfig.APIKey, ok, err)
+	}
+
 	accounts = account.New(
 		application.Services.Store.GORM(),
 		account.WithTOTPKeyFile(totpKeyPath),
@@ -202,11 +227,18 @@ func TestProductionUpgradePreservesLegacyAccountAndSecretsDatabase(t *testing.T)
 		t.Fatalf("old TOTP login = %d %+v cookies=%v", totpLogin.status, totpLogin.body, totpLogin.cookies)
 	}
 
+	beforeRetry, _, err := application.Services.Store.SettingGet(ctx, targetKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	application.RetryDeferredUpgrade(ctx)
+	if afterRetry, _, err := application.Services.Store.SettingGet(ctx, targetKey); err != nil || afterRetry != beforeRetry {
+		t.Fatalf("non-deferred retry rewrote migrated AI settings: err=%v", err)
+	}
 	if count := strings.Count(logs.String(), "completed data upgrade"); count != 1 {
 		t.Fatalf("startup data upgrade log count = %d, logs=%s", count, logs.String())
 	}
-	for _, secret := range []string{adminPassword, vaultPassword, credentialSecret, totpSecret, admin.ID} {
+	for _, secret := range []string{adminPassword, vaultPassword, credentialSecret, aiSecret, totpSecret, admin.ID} {
 		if strings.Contains(logs.String(), secret) {
 			t.Fatalf("upgrade logs contain a secret or owner identifier %q", secret)
 		}
@@ -232,12 +264,14 @@ func TestProductionUpgradeSharedModesKeepOwnerless(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			legacyAI := productionLegacyProfileSetting(t, productionMigrationProfile("shared-ai", "shared-ai", "synthetic-shared-key"))
 			for _, row := range []any{
 				&store.AppUser{ID: "admin", Username: "admin", Role: "superadmin", PasswordHash: "synthetic-hash", State: "active", CreatedAt: 1, UpdatedAt: 1},
 				&store.AssetRow{ID: "shared-asset", Kind: "ssh", Name: "shared", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
 				&store.ConversationRow{ID: "shared-conversation", ScopeJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
 				&store.CronJob{ID: "shared-cron", SessionID: "shared-conversation", Prompt: "synthetic-prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: false, TimeoutMS: 1000, CreatedAt: 1, UpdatedAt: 1, Revision: 1, NextRunAt: 1},
 				&store.Setting{Key: store.LayoutKey, Value: "shared-layout", UpdatedAt: 1},
+				&store.Setting{Key: store.AIProfilesSettingKey, Value: legacyAI, UpdatedAt: 1},
 			} {
 				if err := database.GORM().Create(row).Error; err != nil {
 					t.Fatal(err)
@@ -269,10 +303,13 @@ func TestProductionUpgradeSharedModesKeepOwnerless(t *testing.T) {
 					t.Fatalf("%T owner = %q, want shared ownerless behavior", check.model, ownerID)
 				}
 			}
-			for _, key := range []string{store.LayoutSettingKeyForUser("admin")} {
+			for _, key := range []string{store.LayoutSettingKeyForUser("admin"), store.AIProfilesSettingKeyForUser("admin")} {
 				if _, found, err := application.Services.Store.SettingGet(ctx, key); err != nil || found {
 					t.Fatalf("shared migration created user setting %s: found=%v err=%v", key, found, err)
 				}
+			}
+			if _, found, err := application.Services.Store.SettingGet(ctx, store.AIProfilesSettingKey); err != nil || !found {
+				t.Fatalf("shared global AI setting disappeared: found=%v err=%v", found, err)
 			}
 		})
 	}
@@ -299,26 +336,4 @@ func TestProductionUpgradeStartupFailureIsReturned(t *testing.T) {
 	if err := coordinator.migrate(ctx); err == nil || !strings.Contains(err.Error(), "forced production upgrade read failure") {
 		t.Fatalf("startup migration error = %v, want injected failure", err)
 	}
-}
-
-type syncedLogBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncedLogBuffer) Write(data []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(data)
-}
-
-func (b *syncedLogBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
-type productionUpgradeEventCapture struct {
-	mu     sync.Mutex
-	events []ipc.Event
 }

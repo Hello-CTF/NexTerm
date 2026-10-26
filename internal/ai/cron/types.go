@@ -22,6 +22,10 @@ var (
 	ErrForeignScope     = errors.New("定时任务会话不属于任务所有者")
 )
 
+// ErrOpenJobUnattributed marks Open-mode jobs disabled after switching to
+// account mode because their conversation no longer exists.
+var ErrOpenJobUnattributed = errors.New("开放模式创建的定时任务找不到所属会话，切换到账号模式后已停用，请重新创建")
+
 type StorageError struct {
 	Op    string
 	JobID string

@@ -82,7 +82,7 @@ func TestMigrateOwnershipAndOpaqueDataDatabase(t *testing.T) {
 		&store.ConversationRow{ID: "conversation", ScopeJSON: "{}", CreatedAt: 5, UpdatedAt: 5},
 		&store.MessageRow{ID: "message", ConversationID: "conversation", Role: "user", ContentJSON: "{}", CreatedAt: 6, Seq: 1},
 		&store.RunRow{ID: "run", ConversationID: "conversation", Status: "running", CreatedAt: 7, UpdatedAt: 7},
-		&store.CronJob{ID: "cron", SessionID: "conversation", Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 8, UpdatedAt: 8, Revision: 1, NextRunAt: 1},
+		&store.CronJob{ID: "cron", SessionID: "conversation", OwnerKind: "open", Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 8, UpdatedAt: 8, Revision: 1, NextRunAt: 1},
 		&store.TranscriptRow{ID: "transcript", SessionID: "session", AssetID: "asset", StartedAt: 9},
 		&store.TranscriptChunkRow{TranscriptID: "transcript", Seq: 1, TS: 10, Data: []byte{0, 1, 2}},
 		&store.DurableTranscriptOffset{DurableID: "durable", Offset: 11, UpdatedAt: 11},
@@ -143,7 +143,7 @@ func TestMigrateOwnershipAndOpaqueDataDatabase(t *testing.T) {
 	if report.Ownership.Assigned != 15 || report.Ownership.Conflicts != 0 {
 		t.Fatalf("ownership report = %+v, want 15 assignments and no conflicts", report.Ownership)
 	}
-	if report.Layout.Copied != 1 {
+	if report.Layout.Copied != 1 || report.AI.CronJobsAssigned != 1 || report.AI.RunsAssigned != 1 || report.AI.MessagesAssigned != 1 {
 		t.Fatalf("layout/AI report = %+v", report)
 	}
 	for _, check := range []struct {
@@ -155,6 +155,9 @@ func TestMigrateOwnershipAndOpaqueDataDatabase(t *testing.T) {
 		{&store.AssetRow{}, "id", "asset"},
 		{&store.SnippetRow{}, "id", "snippet"},
 		{&store.ConversationRow{}, "id", "conversation"},
+		{&store.MessageRow{}, "id", "message"},
+		{&store.RunRow{}, "id", "run"},
+		{&store.CronJob{}, "id", "cron"},
 		{&store.TranscriptRow{}, "id", "transcript"},
 		{&store.TranscriptChunkRow{}, "transcript_id", "transcript"},
 		{&store.DurableTranscriptOffset{}, "durable_id", "durable"},
@@ -221,7 +224,7 @@ func TestMigrateOwnershipAndOpaqueDataDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repeated.Ownership.Assigned != 0 || repeated.Layout.Copied != 0 || repeated.Layout.Existing != 1 {
+	if repeated.Ownership.Assigned != 0 || repeated.Layout.Copied != 0 || repeated.Layout.Existing != 1 || repeated.AI.Changed() || !repeated.AISettings.Empty() {
 		t.Fatalf("idempotent reentry report = %+v", repeated)
 	}
 }
@@ -302,7 +305,7 @@ func TestMigrateDefersWithoutActiveSuperadminDatabase(t *testing.T) {
 	for _, row := range []any{
 		&store.AssetRow{ID: "asset", Kind: "ssh", Name: "asset", OptionsJSON: "{}", CreatedAt: 4, UpdatedAt: 4},
 		&store.ConversationRow{ID: "conversation", ScopeJSON: "{}", CreatedAt: 5, UpdatedAt: 5},
-		&store.CronJob{ID: "cron", SessionID: "conversation", Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 6, UpdatedAt: 6, Revision: 1, NextRunAt: 1},
+		&store.CronJob{ID: "cron", SessionID: "conversation", OwnerKind: "open", Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 6, UpdatedAt: 6, Revision: 1, NextRunAt: 1},
 		&store.Setting{Key: store.LayoutKey, Value: "layout", UpdatedAt: 7},
 	} {
 		createUpgradeRow(t, db, row)
@@ -312,7 +315,7 @@ func TestMigrateDefersWithoutActiveSuperadminDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !deferred.DeferredNoActiveSuperadmin || deferred.OwnerID != "" || deferred.Ownership != (upgrade.OwnershipReport{}) {
+	if !deferred.DeferredNoActiveSuperadmin || deferred.OwnerID != "" || deferred.Ownership != (upgrade.OwnershipReport{}) || deferred.AI.Changed() {
 		t.Fatalf("deferred report = %+v", deferred)
 	}
 	requireUpgradeOwner(t, db, &store.AssetRow{}, "id", "asset", "")
@@ -322,8 +325,8 @@ func TestMigrateDefersWithoutActiveSuperadminDatabase(t *testing.T) {
 	if err := db.Where("id = ?", "cron").First(&cron).Error; err != nil {
 		t.Fatal(err)
 	}
-	if !cron.Enabled || cron.OwnerKind != "" || cron.LastError != "" {
-		t.Fatalf("deferred cron was quarantined: %+v", cron)
+	if !cron.Enabled || cron.OwnerKind != "open" || cron.LastError != "" {
+		t.Fatalf("deferred cron changed before an admin existed: %+v", cron)
 	}
 
 	putUpgradeUser(t, db, "admin-z", "superadmin", "active", 20)
@@ -332,10 +335,11 @@ func TestMigrateDefersWithoutActiveSuperadminDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retried.DeferredNoActiveSuperadmin || retried.OwnerID != "admin-a" {
+	if retried.DeferredNoActiveSuperadmin || retried.OwnerID != "admin-a" || retried.AI.CronJobsAssigned != 1 {
 		t.Fatalf("retry report = %+v", retried)
 	}
 	requireUpgradeOwner(t, db, &store.AssetRow{}, "id", "asset", "admin-a")
+	requireUpgradeOwner(t, db, &store.CronJob{}, "id", "cron", "admin-a")
 	requireUpgradeSetting(t, db, store.LayoutSettingKeyForUser("admin-a"), "layout", 7)
 }
 
@@ -346,7 +350,7 @@ func TestMigrateSharedKeepsOwnerlessDatabase(t *testing.T) {
 	for _, row := range []any{
 		&store.AssetRow{ID: "asset", Kind: "ssh", Name: "asset", OptionsJSON: "{}", CreatedAt: 2, UpdatedAt: 2},
 		&store.ConversationRow{ID: "conversation", ScopeJSON: "{}", CreatedAt: 3, UpdatedAt: 3},
-		&store.CronJob{ID: "cron", SessionID: "conversation", Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 4, UpdatedAt: 4, Revision: 1, NextRunAt: 1},
+		&store.CronJob{ID: "cron", SessionID: "conversation", OwnerKind: "open", Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 4, UpdatedAt: 4, Revision: 1, NextRunAt: 1},
 		&store.SyncTombstone{ID: "group", Kind: "group", DeletedAt: 5},
 		&store.Setting{Key: store.LayoutKey, Value: "layout", UpdatedAt: 6},
 		&store.Setting{Key: store.AIProfilesSettingKey, Value: `{"version":1,"profiles":[],"activeId":null}`, UpdatedAt: 7},
@@ -358,7 +362,7 @@ func TestMigrateSharedKeepsOwnerlessDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.OwnerID != "" || report.DeferredNoActiveSuperadmin || report.Ownership != (upgrade.OwnershipReport{}) || report.Layout != (upgrade.LayoutReport{}) {
+	if report.OwnerID != "" || report.DeferredNoActiveSuperadmin || report.Ownership != (upgrade.OwnershipReport{}) || report.Layout != (upgrade.LayoutReport{}) || !report.AISettings.Empty() {
 		t.Fatalf("shared report = %+v", report)
 	}
 	requireUpgradeOwner(t, db, &store.AssetRow{}, "id", "asset", "")
