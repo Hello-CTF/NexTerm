@@ -1,5 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 import type { SearchAddon } from "@xterm/addon-search";
+import { createWebglController, type GpuAccelerationMode, type WebglHost } from "./webglPolicy";
 
 type LinkHandler = (event: MouseEvent, uri: string) => void;
 
@@ -57,30 +58,46 @@ export function attachLazyAddons(
   };
 }
 
+export interface WebglRendererOptions {
+  mode?: GpuAccelerationMode;
+  visible?: boolean;
+  onFallback?: () => void;
+}
+
+export interface WebglRenderer {
+  cancel(): void;
+  setVisible(visible: boolean): void;
+  setMode(mode: GpuAccelerationMode): void;
+}
+
+const loadWebglAddon = () => import("@xterm/addon-webgl").then(({ WebglAddon }) => WebglAddon);
+
 /**
- * Loads the WebGL renderer after first paint, when the browser is idle. Returns a cancel function.
- * Failure to import or to create a GL context keeps the DOM renderer.
+ * Loads the WebGL renderer after first paint, when the browser is idle. Failure to import or to create
+ * a GL context keeps the DOM renderer; context loss, software renderers and hidden-pane limits are
+ * handled by the policy in webglPolicy.ts.
  */
-export function scheduleWebglRenderer(term: Terminal, isDisposed: () => boolean): () => void {
+export function scheduleWebglRenderer(
+  term: Terminal,
+  isDisposed: () => boolean,
+  options: WebglRendererOptions = {},
+): WebglRenderer {
   let cancelled = false;
   let frame: number | null = null;
   let idle: number | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  const controller = createWebglController({
+    host: term as unknown as WebglHost,
+    load: loadWebglAddon,
+    mode: options.mode ?? "auto",
+    visible: options.visible,
+    onFallback: options.onFallback,
+  });
   const load = () => {
     idle = null;
     timer = null;
     if (cancelled || isDisposed()) return;
-    void import("@xterm/addon-webgl").then(
-      ({ WebglAddon }) => {
-        if (cancelled || isDisposed()) return;
-        try {
-          term.loadAddon(new WebglAddon());
-        } catch {
-          // Keep the DOM renderer when WebGL is unavailable.
-        }
-      },
-      () => undefined,
-    );
+    controller.start();
   };
   const afterPaint = () => {
     frame = null;
@@ -96,10 +113,15 @@ export function scheduleWebglRenderer(term: Terminal, isDisposed: () => boolean)
   } else {
     afterPaint();
   }
-  return () => {
-    cancelled = true;
-    if (frame !== null) window.cancelAnimationFrame(frame);
-    if (idle !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idle);
-    if (timer !== null) clearTimeout(timer);
+  return {
+    cancel() {
+      cancelled = true;
+      controller.dispose();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      if (idle !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idle);
+      if (timer !== null) clearTimeout(timer);
+    },
+    setVisible: (visible) => controller.setVisible(visible),
+    setMode: (mode) => controller.setMode(mode),
   };
 }

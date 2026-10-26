@@ -48,7 +48,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
     termRef.current = term;
     term.open(host);
     let disposed = false;
-    const cancelWebgl = scheduleWebglRenderer(term, () => disposed);
+    const webgl = scheduleWebglRenderer(term, () => disposed);
 
     const fitLocal = () => {
       try {
@@ -88,7 +88,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
       selectionDisposable.dispose();
       autoCopy.dispose();
       disposed = true;
-      cancelWebgl();
+      webgl.cancel();
       term.dispose();
       termRef.current = null;
     };

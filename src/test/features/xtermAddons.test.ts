@@ -52,7 +52,7 @@ describe("scheduleWebglRenderer", () => {
   it("attaches the WebGL addon only after first paint and idle", async () => {
     const { scheduleWebglRenderer } = await loadModule({});
     const term = fakeTerm();
-    scheduleWebglRenderer(term as never, () => false);
+    scheduleWebglRenderer(term as never, () => false, { mode: "on" });
     expect(term.loadAddon).not.toHaveBeenCalled();
     await flushUntil(() => term.loadAddon.mock.calls.length === 1);
   });
@@ -64,7 +64,7 @@ describe("scheduleWebglRenderer", () => {
       },
     });
     const term = fakeTerm();
-    scheduleWebglRenderer(term as never, () => false);
+    scheduleWebglRenderer(term as never, () => false, { mode: "on" });
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(term.loadAddon).not.toHaveBeenCalled();
   });
@@ -75,16 +75,37 @@ describe("scheduleWebglRenderer", () => {
     term.loadAddon.mockImplementation(() => {
       throw new Error("no webgl");
     });
-    scheduleWebglRenderer(term as never, () => false);
+    scheduleWebglRenderer(term as never, () => false, { mode: "on" });
     await flushUntil(() => term.loadAddon.mock.calls.length === 1);
+  });
+
+  it("skips WebGL in auto mode without WebGL2 and follows visibility and mode changes", async () => {
+    const dispose = vi.fn();
+    const clearTextureAtlas = vi.fn();
+    const { scheduleWebglRenderer } = await loadModule({
+      webgl: () => ({ WebglAddon: class { dispose = dispose; clearTextureAtlas = clearTextureAtlas; } }),
+    });
+    const term = { ...fakeTerm(), refresh: vi.fn(), rows: 24 };
+    const renderer = scheduleWebglRenderer(term as never, () => false);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // jsdom has no WebGL2, so auto mode stays on the DOM renderer.
+    expect(term.loadAddon).not.toHaveBeenCalled();
+    renderer.setMode("on");
+    await flushUntil(() => term.loadAddon.mock.calls.length === 1);
+    renderer.setVisible(false);
+    renderer.setVisible(true);
+    expect(clearTextureAtlas).toHaveBeenCalledTimes(1);
+    renderer.setMode("off");
+    expect(dispose).toHaveBeenCalledTimes(1);
+    renderer.cancel();
   });
 
   it("does nothing after cancel or disposal", async () => {
     const { scheduleWebglRenderer } = await loadModule({});
     const cancelled = fakeTerm();
-    scheduleWebglRenderer(cancelled as never, () => false)();
+    scheduleWebglRenderer(cancelled as never, () => false, { mode: "on" }).cancel();
     const disposed = fakeTerm();
-    scheduleWebglRenderer(disposed as never, () => true);
+    scheduleWebglRenderer(disposed as never, () => true, { mode: "on" });
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(cancelled.loadAddon).not.toHaveBeenCalled();
     expect(disposed.loadAddon).not.toHaveBeenCalled();

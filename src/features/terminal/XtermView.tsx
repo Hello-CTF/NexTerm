@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
-import { attachLazyAddons, scheduleWebglRenderer } from "./xtermAddons";
+import { attachLazyAddons, scheduleWebglRenderer, type WebglRenderer } from "./xtermAddons";
 import { attachImeTextInput } from "./imeTextInput";
 import "@xterm/xterm/css/xterm.css";
 
@@ -22,6 +22,7 @@ import {
   getAppearancePrefs,
   getInputPrefs,
   getTerminalPrefs,
+  subscribeTerminalPrefs,
   waitAccountPreferences,
   getResolvedTerminalTheme,
   subscribeAppearancePrefs,
@@ -51,6 +52,16 @@ export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme
 function accentColor(): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim();
   return v || "#516cd6";
+}
+
+// Repeated GPU context loss pins a pane to the DOM renderer; say so once per app run, not per pane.
+let webglFallbackNoticeShown = false;
+function showWebglFallbackNotice(): void {
+  if (webglFallbackNoticeShown) return;
+  webglFallbackNoticeShown = true;
+  useUi
+    .getState()
+    .pushToast("info", "GPU 渲染多次失效，部分终端已改用兼容渲染。可在设置 > 终端 > GPU 加速中调整。");
 }
 
 function sameGrid(
@@ -139,6 +150,7 @@ export function XtermView(props: XtermViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
+  const webglRef = useRef<WebglRenderer | null>(null);
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
   const viewKey = props.viewTabId ?? props.tabId;
@@ -260,7 +272,13 @@ export function XtermView(props: XtermViewProps) {
       },
       () => disposed,
     );
-    const cancelWebgl = scheduleWebglRenderer(term, () => disposed);
+    const webgl = scheduleWebglRenderer(term, () => disposed, {
+      mode: getTerminalPrefs().gpuAcceleration,
+      visible: visibleRef.current !== false,
+      onFallback: showWebglFallbackNotice,
+    });
+    webglRef.current = webgl;
+    const unsubscribeGpuPreference = subscribeTerminalPrefs(() => webgl.setMode(getTerminalPrefs().gpuAcceleration));
     const attachedAssetId = useUi.getState().sessions.find((session) => session.id === sessionId)?.assetId;
     const applyGrid = (grid: TerminalGrid) => resizeTerminalToGridPreservingSelection(term, grid);
     const coordinator = new TerminalGridCoordinator(
@@ -1296,7 +1314,9 @@ export function XtermView(props: XtermViewProps) {
       }
       disposeChannel(channel);
       kernelTabIdRef.current = "";
-      cancelWebgl();
+      unsubscribeGpuPreference();
+      webgl.cancel();
+      webglRef.current = null;
       term.dispose();
       termRef.current = null;
     };
@@ -1332,6 +1352,7 @@ export function XtermView(props: XtermViewProps) {
   useEffect(() => {
     const visible = props.visible !== false;
     gridRef.current?.setVisible(visible);
+    webglRef.current?.setVisible(visible);
     const tabId = kernelTabIdRef.current;
     if (tabId) void terminalApi.setVisible(tabId, visible).catch(() => undefined);
     if (!visible) return;
