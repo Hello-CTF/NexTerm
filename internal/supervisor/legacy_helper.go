@@ -32,6 +32,12 @@ func legacyHelperVersion(ctx context.Context, stateDir string) (int, bool) {
 	return 0, false
 }
 
+// legacyHelperError reports an older helper of protocol version that still
+// owns the state directory while this side speaks the current protocol.
+func legacyHelperError(version int, message string) error {
+	return fmt.Errorf("%w: a protocol %d helper is still running and this client requires protocol %d (%s)", ErrLegacyHelperRunning, version, ProtocolVersion, message)
+}
+
 func legacyHelperMessage(stateDir string, version int) string {
 	return fmt.Sprintf("a protocol %d helper still serves %s; its sessions keep running there, and a protocol %d helper can start only after it exits", version, stateDir, ProtocolVersion)
 }
@@ -55,7 +61,7 @@ func (c *Client) legacyHelperError(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	return versionMismatchError(version, legacyHelperMessage(stateDir, version))
+	return legacyHelperError(version, legacyHelperMessage(stateDir, version))
 }
 
 // legacyRejectionConn stands in for the helper connection of a bridge whose
@@ -69,7 +75,7 @@ func legacyRejectionConn(stateDir string, version int) net.Conn {
 		if _, _, err := readFrame(server); err != nil {
 			return
 		}
-		payload, err := marshalFrame(frameError, errorMsg{Code: codeVersionMismatch, Message: legacyHelperMessage(stateDir, version), Version: version})
+		payload, err := marshalFrame(frameError, errorMsg{Code: codeLegacyHelper, Message: legacyHelperMessage(stateDir, version), Version: version})
 		if err != nil {
 			return
 		}

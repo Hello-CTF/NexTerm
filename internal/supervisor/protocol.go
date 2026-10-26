@@ -186,6 +186,7 @@ const (
 	codeClosed             = "closed"
 	codeProtocol           = "protocol"
 	codeVersionMismatch    = "version_mismatch"
+	codeLegacyHelper       = "legacy_helper_running"
 	codeStateMismatch      = "state_mismatch"
 	codeGenerationMismatch = "generation_mismatch"
 )
@@ -251,6 +252,9 @@ func codedError(code, message string) error {
 func decodedError(msg errorMsg) error {
 	if msg.Code == codeVersionMismatch {
 		return &wireError{versionMismatchError(msg.Version, msg.Message)}
+	}
+	if msg.Code == codeLegacyHelper {
+		return &wireError{legacyHelperError(msg.Version, msg.Message)}
 	}
 	if msg.Code == codeMetadataConflict {
 		return &wireError{&MetadataConflictError{

@@ -28,4 +28,8 @@ var (
 	// doing so.
 	ErrHelperUpgradeRequired = fmt.Errorf("%w: supervisor helper needs upgrade", ErrVersionMismatch)
 	ErrClientUpgradeRequired = fmt.Errorf("%w: client needs upgrade", ErrVersionMismatch)
+	// ErrLegacyHelperRunning is the helper upgrade case where this side is
+	// current but an older helper still owns the state directory, as opposed
+	// to an older helper or agent answering the hello itself.
+	ErrLegacyHelperRunning = fmt.Errorf("%w: an older helper still owns the state directory", ErrHelperUpgradeRequired)
 )

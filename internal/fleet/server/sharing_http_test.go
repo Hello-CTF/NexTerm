@@ -43,6 +43,17 @@ type shareTestAgent struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// spawnOverride, when set, replaces the default dial of the in-process
+	// supervisor socket for later bridges.
+	spawnMu       sync.Mutex
+	spawnOverride agent.BridgeSpawner
+}
+
+func (a *shareTestAgent) setSpawn(spawn agent.BridgeSpawner) {
+	a.spawnMu.Lock()
+	a.spawnOverride = spawn
+	a.spawnMu.Unlock()
 }
 
 func startShareTestAgent(t *testing.T, f *httpFixture, owner *account.User, name string) *shareTestAgent {
@@ -111,9 +122,14 @@ func (a *shareTestAgent) handleBridge(bridgeID string) {
 	if err != nil {
 		return
 	}
-	spawn := func(ctx context.Context, _ string) (io.ReadWriteCloser, error) {
+	var spawn agent.BridgeSpawner = func(ctx context.Context, _ string) (io.ReadWriteCloser, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", a.socketPath)
 	}
+	a.spawnMu.Lock()
+	if a.spawnOverride != nil {
+		spawn = a.spawnOverride
+	}
+	a.spawnMu.Unlock()
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
@@ -765,6 +781,82 @@ func TestShareDaemonOfflineStopsOpenAndStream(t *testing.T) {
 	device.stop()
 	if call := f.call(t, "GET", "/share/devices/"+device.deviceID+"/terminal", nil, recipientSession, ""); call.status != http.StatusServiceUnavailable {
 		t.Fatalf("offline host open: HTTP %d %v", call.status, call.body)
+	}
+}
+
+// occupyLegacyHelperEndpoint listens where a protocol 2 helper for stateDir
+// would, standing in for the old helper an upgraded agent left running.
+func occupyLegacyHelperEndpoint(t *testing.T, stateDir string) {
+	t.Helper()
+	current, err := supervisor.HelperEndpoint(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(filepath.Dir(current), "supervisor-v"+strconv.Itoa(supervisor.ProtocolVersion-1)+".sock")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(legacy)) })
+	listener, err := net.Listen("unix", legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+}
+
+// An upgraded agent whose old helper still owns the state directory answers the bridge through the helper
+// bridge's legacy rejection, so the open fails at once with a typed reason instead of timing out as offline.
+func TestShareHostTerminalReportsLegacyHelperQuickly(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "legacy-owner")
+	recipient := f.createUser(t, "legacy-recipient")
+	device := startShareTestAgent(t, f, owner, "legacy-box")
+	legacyDir := t.TempDir()
+	if err := os.Chmod(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	occupyLegacyHelperEndpoint(t, legacyDir)
+	device.setSpawn(func(ctx context.Context, _ string) (io.ReadWriteCloser, error) {
+		return supervisor.DialHelperBridge(ctx, legacyDir)
+	})
+	ownerSession := f.session(t, owner)
+	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
+		"device_id": device.deviceID, "recipient_username": "legacy-recipient", "write": true, "ttl_ms": 3600000,
+	}, ownerSession, ownerSession.csrf); call.status != http.StatusOK {
+		t.Fatalf("create host share: HTTP %d %v", call.status, call.body)
+	}
+	conn := dialShareViewer(t, f, "/share/devices/"+device.deviceID+"/terminal", f.session(t, recipient))
+	collector := watchShareConn(conn)
+	// Well under the server's bridge wait, which is what an unanswered bridge would cost.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		frame := collector.next(time.Until(deadline))
+		if frame.err != nil {
+			t.Fatalf("share open ended without an error frame: %v", frame.err)
+		}
+		if frame.kind != websocket.MessageText {
+			continue
+		}
+		var received shareErrorFrame
+		if err := json.Unmarshal(frame.payload, &received); err != nil {
+			t.Fatal(err)
+		}
+		if received.Type != "error" {
+			t.Fatalf("share open frame = %s, want an error", frame.payload)
+		}
+		if received.Code != "helper_upgrade_required" || !strings.Contains(received.Message, "helper") {
+			t.Fatalf("share open error = %+v, want the old-helper reason", received)
+		}
+		return
 	}
 }
 

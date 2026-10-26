@@ -62,12 +62,23 @@ func assertHelperUpgrade(t *testing.T, err error) {
 	}
 }
 
+func assertLegacyHelper(t *testing.T, err error) {
+	t.Helper()
+	assertHelperUpgrade(t, err)
+	if !errors.Is(err, ErrLegacyHelperRunning) {
+		t.Fatalf("error = %v, want ErrLegacyHelperRunning", err)
+	}
+}
+
 func TestV3ClientReportsHelperUpgradeForV2Helper(t *testing.T) {
 	path := v2HelperServer(t)
 	stateDir := filepath.Join(t.TempDir(), "state")
 	client := NewClient(path, stateDir)
 	_, err := client.List(context.Background())
 	assertHelperUpgrade(t, err)
+	if errors.Is(err, ErrLegacyHelperRunning) {
+		t.Fatalf("v2 helper answering itself = %v, must not read as a leftover legacy helper", err)
+	}
 
 	remote := NewRemoteClient(func(ctx context.Context) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", path)
@@ -146,7 +157,7 @@ func TestLegacyHelperOnStateDirReportsUpgrade(t *testing.T) {
 
 	t.Run("local client", func(t *testing.T) {
 		_, err := NewClient(endpoint, stateDir).List(ctx)
-		assertHelperUpgrade(t, err)
+		assertLegacyHelper(t, err)
 	})
 	t.Run("bridge", func(t *testing.T) {
 		digest, err := stateDigestFor(stateDir)
@@ -157,12 +168,12 @@ func TestLegacyHelperOnStateDirReportsUpgrade(t *testing.T) {
 			return DialHelperBridge(ctx, stateDir)
 		}, digest)
 		_, err = client.List(ctx)
-		assertHelperUpgrade(t, err)
+		assertLegacyHelper(t, err)
 	})
 	t.Run("connect does not spawn", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "no-such-helper")
 		_, err := ConnectHelper(ctx, HelperConfig{StateDir: stateDir, Executable: missing, SpawnTimeout: time.Second})
-		assertHelperUpgrade(t, err)
+		assertLegacyHelper(t, err)
 	})
 }
 

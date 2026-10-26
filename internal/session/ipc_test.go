@@ -78,6 +78,7 @@ func TestIPCErrorUserMessagesAreActionable(t *testing.T) {
 		{err: ErrAmbiguousDurable, code: ipc.CodeBadParam, want: "指定会话"},
 		{err: ErrDurableUnrecoverable, code: ipc.Code("durable_unrecoverable"), want: "无法恢复"},
 		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrHelperUpgradeRequired), code: ipc.Code("helper_upgrade_required"), want: "需要升级"},
+		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrLegacyHelperRunning), code: ipc.Code("helper_upgrade_required"), want: "不会被结束"},
 		{err: durable.ErrGenerationMismatch, code: ipc.Code("durable_helper_restarted"), want: "helper 已重启"},
 		{err: supervisor.ErrClientUpgradeRequired, code: ipc.Code("client_upgrade_required"), want: "升级客户端"},
 		{err: ErrInvalidSize, code: ipc.CodeBadParam, want: "终端尺寸无效"},

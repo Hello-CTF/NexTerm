@@ -680,7 +680,13 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 		ensureCtx, cancel := context.WithTimeout(ctx, helperEnsureTimeout)
 		err := r.ensureHelper(ensureCtx)
 		cancel()
-		if err != nil {
+		switch {
+		case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
+			// An older helper still owns the state directory. The bridge is still
+			// dialed so the helper bridge answers the server's hello with the
+			// upgrade reason instead of leaving the server to time out.
+			r.logger.Warn("supervisor helper needs upgrade; bridging to report it", "bridge_id", bridgeID, "error", err)
+		case err != nil:
 			r.logger.Warn("bridge aborted: supervisor helper unavailable", "bridge_id", bridgeID, "error", err)
 			return
 		}

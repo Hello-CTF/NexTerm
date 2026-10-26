@@ -87,8 +87,11 @@ func userMessage(err error) string {
 		return "终端标签页已关闭，请重新打开"
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected):
 		return "会话已断开，请重新连接"
+	case errors.Is(err, supervisor.ErrLegacyHelperRunning):
+		return "主机上仍在运行旧版 helper，当前无法连接它，也看不到其中的持久终端。这些终端会继续在旧 helper 中运行，不会被结束或迁移；" +
+			"旧 helper 退出后重新连接即会改用新版 helper。升级旧 helper 的确认流程将在后续更新中提供"
 	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
-		return "主机上运行的是旧版 helper，需要升级后才能使用持久终端；旧 helper 中的会话不会被自动迁移或结束"
+		return "主机上的 helper 或 nexterm-agent 版本过旧，需要升级后才能使用持久终端；其中已有的会话不会被结束"
 	case errors.Is(err, supervisor.ErrClientUpgradeRequired):
 		return "主机上的 helper 比当前客户端新，请先升级客户端"
 	case errors.Is(err, ErrDurableDisabled):
