@@ -48,13 +48,13 @@ const credentialAmberRestrictions = stringRestrictions(
 );
 
 const storeImportRestriction = {
-  group: ["**/app/store/*", "./store/*"],
+  group: ["**/app/store/*", "./store/*", "../store/*"],
   message: "Import the UI store through src/app/store.ts.",
 };
 
 const shellPredicateRestrictions = [
   {
-    group: ["**/app/platform", "./platform"],
+    group: ["**/app/platform", "./platform", "../platform"],
     importNames: [
       "isMobile",
       "isCoarsePointer",
