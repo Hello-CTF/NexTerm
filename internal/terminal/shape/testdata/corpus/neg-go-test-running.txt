@@ -1,0 +1,7 @@
+# kind: none
+---
+dev@build:~/app$ go test ./...
+ok      example.org/app/api     0.412s
+ok      example.org/app/db      1.020s
+=== RUN   TestSlowIntegration
+

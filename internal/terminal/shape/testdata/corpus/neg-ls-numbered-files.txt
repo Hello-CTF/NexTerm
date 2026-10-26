@@ -1,0 +1,8 @@
+# kind: none
+---
+dev@build:~/docs$ ls -1
+1. intro.md
+2. install.md
+3. usage.md
+4. faq.md
+dev@build:~/docs$ 

@@ -1,0 +1,9 @@
+# kind: choice
+# options: Small | Medium | Large
+# cursor: 0,14
+# known: the current item is shown only by reverse video, which the screen snapshot does not carry
+---
+Choose a size:
+  Small
+  Medium
+  Large

@@ -1,0 +1,5 @@
+# kind: yesno
+# options: y | N
+---
+Café settings already exist.
+Réinitialiser la configuration? [y/N] 

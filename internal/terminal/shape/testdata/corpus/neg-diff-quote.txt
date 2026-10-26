@@ -1,0 +1,8 @@
+# kind: none
+---
+dev@build:~/app$ diff old.txt new.txt
+2c2
+< retries = 3
+---
+> retries = 5
+dev@build:~/app$ 

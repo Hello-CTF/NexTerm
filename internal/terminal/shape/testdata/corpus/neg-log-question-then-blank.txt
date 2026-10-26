@@ -1,0 +1,5 @@
+# kind: none
+---
+2026-10-26T10:00:01Z WARN upstream refused the request, retry?
+2026-10-26T10:00:02Z INFO retrying in 5s
+

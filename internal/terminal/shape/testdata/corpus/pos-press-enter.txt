@@ -1,0 +1,5 @@
+# kind: question
+# known: a bare "press a key" line has no punctuation shape; recognising it would need wording
+---
+Installation finished.
+Press Enter to continue

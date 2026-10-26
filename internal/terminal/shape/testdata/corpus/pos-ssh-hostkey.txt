@@ -1,0 +1,9 @@
+# kind: yesno
+# options: yes | no
+# keys: yes | no
+---
+dev@laptop:~$ ssh dev@192.0.2.10
+The authenticity of host '192.0.2.10 (192.0.2.10)' can't be established.
+ED25519 key fingerprint is SHA256:AAAAexampleexampleexampleexampleexample0000.
+This key is not known by any other names.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? 

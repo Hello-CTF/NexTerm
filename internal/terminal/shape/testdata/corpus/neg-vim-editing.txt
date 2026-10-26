@@ -1,0 +1,14 @@
+# kind: none
+# alt: true
+# size: 80x10
+# cursor: 2,22
+---
+def main():
+    items = load()
+    for item in items:
+        print(item)
+~
+~
+~
+~
+"app.py" 4L, 72B                                              3,23          All

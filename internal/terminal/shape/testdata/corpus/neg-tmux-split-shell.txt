@@ -1,0 +1,7 @@
+# kind: none
+# cursor: 3,13
+---
+dev@build:~$ ls -1                    │1. intro.md
+notes                                 │2. install.md
+todo                                  │3. usage.md
+dev@build:~$                          │Select an option:

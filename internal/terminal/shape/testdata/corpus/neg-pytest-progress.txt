@@ -1,0 +1,7 @@
+# kind: none
+---
+============================= test session starts ==============================
+collected 120 items
+
+tests/test_api.py ......F.....                                           [ 10%]
+tests/test_db.py ........

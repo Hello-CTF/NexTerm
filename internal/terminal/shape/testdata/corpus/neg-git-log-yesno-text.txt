@@ -1,0 +1,8 @@
+# kind: none
+---
+dev@build:~/app$ git log --oneline -4
+4c1d2e9 fix(cli): accept [y/N] answers in upper case
+9a8b7c6 feat: add (yes/no) confirmation to purge
+1f2e3d4 docs: describe the menu
+0a9b8c7 chore: bump deps
+dev@build:~/app$ 

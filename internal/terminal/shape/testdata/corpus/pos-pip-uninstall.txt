@@ -1,0 +1,9 @@
+# kind: yesno
+# options: Y | n
+---
+Found existing installation: requests 2.31.0
+Uninstalling requests-2.31.0:
+  Would remove:
+    /usr/lib/python3/site-packages/requests-2.31.0.dist-info/*
+    /usr/lib/python3/site-packages/requests/*
+Proceed (Y/n)? 

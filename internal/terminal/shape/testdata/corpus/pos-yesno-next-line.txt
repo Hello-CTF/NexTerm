@@ -1,0 +1,6 @@
+# kind: yesno
+# options: y | n
+---
+Writing report to out/report.html
+Overwrite existing file? (y/n)
+> 
