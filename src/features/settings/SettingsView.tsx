@@ -13,7 +13,8 @@ import { ask, promptText } from "../../ui/dialogs";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
 import { onSettingsSection } from "./settingsNavigation";
 import { isImeKeyEvent } from "../../ui/DialogHost";
-import { isMobile, isWindows } from "../../app/platform";
+import { isWindows } from "../../app/platform";
+import { isMobileShell } from "../../app/shell";
 import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
@@ -328,7 +329,7 @@ export function SettingsView() {
     } else {
       await vaultApi.changePassword(old, next);
       // On iOS/Android with biometric material enrolled, silently re-store it with the new password after a change; otherwise biometric unlock would consistently fail
-      if (next !== "" && isMobile()) {
+      if (next !== "" && isMobileShell()) {
         try {
           const bio = await biometricApi.status();
           if (bio.canEvaluate && bio.hasMaterial) await biometricApi.enable(next);

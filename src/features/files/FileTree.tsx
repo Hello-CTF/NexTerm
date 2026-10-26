@@ -25,7 +25,7 @@ import {
   reconnectDeadHost,
   useUi,
 } from "../../app/store";
-import { useCoarsePointer } from "../../app/platform";
+import { useCoarsePointer } from "../../app/shell";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import {
   HOME,

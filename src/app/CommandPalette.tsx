@@ -5,7 +5,7 @@ import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybin
 import { assetApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
-import { isMobile } from "./platform";
+import { isMobileShell } from "./shell";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import { useBackgroundSessionsAccess } from "../features/terminal/backgroundSessionsAccess";
 import { insertSnippet } from "../features/explorer/snippetInsert";
@@ -165,7 +165,7 @@ export function CommandPalette({
         icon: IconZap,
         run: () => onQuickConnect?.(),
       },
-      ...(isMobile()
+      ...(isMobileShell()
         ? []
         : [
             {

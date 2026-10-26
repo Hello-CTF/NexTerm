@@ -30,7 +30,7 @@ import {
   useUi,
   type Workspace,
 } from "../../app/store";
-import { useCoarsePointer } from "../../app/platform";
+import { useCoarsePointer } from "../../app/shell";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { copyText } from "../../ui/clipboard";
 import { isImeKeyEvent } from "../../ui/DialogHost";

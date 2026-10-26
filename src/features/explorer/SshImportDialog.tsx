@@ -10,7 +10,8 @@ import type {
 import { describeError } from "../../ui/errorText";
 import { notifyAssetDataChanged } from "../../ipc/assetEvents";
 import { WEB } from "../../ipc/env";
-import { isMac, isMobile } from "../../app/platform";
+import { isMac } from "../../app/platform";
+import { useShell } from "../../app/shell";
 import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconAlert, IconKey, IconServer, IconXCircle } from "../../ui/icons";
@@ -97,8 +98,9 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
   });
 
   const termius = source === "termius";
-  const termiusSupported = !WEB && !isMobile() && isMac();
-  const termiusUnsupported = !WEB && !isMobile() && !isMac();
+  const mobile = useShell() === "mobile";
+  const termiusSupported = !WEB && !mobile && isMac();
+  const termiusUnsupported = !WEB && !mobile && !isMac();
   // ssh-home always scans the default ~/.ssh, without the hidden paths filled in on other source pages
   const effectivePath = source === "ssh-home" ? undefined : path.trim() || undefined;
 
@@ -279,7 +281,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                     >
                       ~/.ssh 目录
                     </button>
-                    {!WEB && !isMobile() && (
+                    {!WEB && !mobile && (
                       <button
                         type="button"
                         className={`nx-segment-item ${source === "termius" ? "is-active" : ""}`}

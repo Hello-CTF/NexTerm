@@ -3,17 +3,16 @@ import { useQuery } from "@tanstack/react-query";
 import { vaultApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { openCredentialsTab, useCredentialsTabId } from "../../app/store";
-import { isCoarsePointer } from "../../app/platform";
+import { isWidthOverlayViewport } from "../../app/shell";
 import { NewCredentialModal } from "./NewCredentialModal";
 import { KIND_META, KIND_ORDER, kindMeta } from "./meta";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
 import { useVaultInitGate } from "./useVaultInitGate";
-import { workspaceViewport } from "../terminal/workspaceLayout";
 import { describeError } from "../../ui/errorText";
 import { IconLock, IconPlus, IconRefresh, IconSearch } from "../../ui/icons";
 
 function closeOverlayDockAfterNav() {
-  if (workspaceViewport(window.innerWidth, isCoarsePointer()).overlaySidebars) {
+  if (isWidthOverlayViewport()) {
     useUi.getState().setLeftOpen(false);
   }
 }

@@ -47,8 +47,6 @@ import {
   clampSplitRatio,
   splitRatioAt,
   splitRatioForKey,
-  workspaceViewport,
-  type WorkspaceViewport,
 } from "../features/terminal/workspaceLayout";
 import {
   createFrameCoalescer,
@@ -81,13 +79,9 @@ import { describeError } from "../ui/errorText";
 import { formatTime } from "../ui/format";
 import { TRANSPORT, WEB } from "../ipc/env";
 import {
-  coarsePointerMedia,
-  isCoarsePointer,
   isMac,
-  isMobile,
   isWailsDragRegionTarget,
   modHint,
-  useLandscapeFullScreen,
   wailsDragRegionStyle,
   wailsNoDragRegionStyle,
 } from "./platform";
@@ -97,6 +91,7 @@ import {
   toggleMaximiseWindow,
 } from "../ipc/wails";
 import { mountUnavailableReason } from "./capabilities";
+import { isMobileShell, useShellLayout } from "./shell";
 import { ProjectWorkspaceStrip } from "./ProjectWorkspaceStrip";
 import { ALL_PROJECTS, focusedWorkspaces } from "./projectFocus";
 import { useBackgroundSessionCount, useBackgroundSessionsAccess } from "../features/terminal/backgroundSessionsAccess";
@@ -204,7 +199,7 @@ const TAB_ICON = {
 } as const;
 
 function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
-  if (TRANSPORT !== "desktop" || isMobile()) return;
+  if (TRANSPORT !== "desktop" || isMobileShell()) return;
   if (isWailsDragRegionTarget(event.target)) {
     void toggleMaximiseWindow();
   }
@@ -340,38 +335,6 @@ function focusTab(tablist: Element | null, id: string): void {
 }
 
 let bootLocalTried = false;
-
-function readWorkspaceViewport(): WorkspaceViewport {
-  return workspaceViewport(window.innerWidth, isCoarsePointer(), window.innerHeight);
-}
-
-function sameViewport(a: WorkspaceViewport, b: WorkspaceViewport): boolean {
-  return a.width === b.width && a.height === b.height && a.coarsePointer === b.coarsePointer;
-}
-
-function useWorkspaceViewport(): WorkspaceViewport {
-  const [viewport, setViewport] = useState(readWorkspaceViewport);
-
-  useEffect(() => {
-    const frames = createFrameCoalescer<WorkspaceViewport>((next) =>
-      setViewport((prev) => (sameViewport(prev, next) ? prev : next)),
-    );
-    const update = () => frames.schedule(readWorkspaceViewport());
-    const coarseQuery = coarsePointerMedia();
-    window.addEventListener("resize", update);
-    window.visualViewport?.addEventListener("resize", update);
-    coarseQuery.addEventListener("change", update);
-    update();
-    return () => {
-      frames.cancel();
-      window.removeEventListener("resize", update);
-      window.visualViewport?.removeEventListener("resize", update);
-      coarseQuery.removeEventListener("change", update);
-    };
-  }, []);
-
-  return viewport;
-}
 
 export function visualViewportInset(
   innerHeight: number,
@@ -953,11 +916,8 @@ function AppShell() {
   const showSyncWarnings = syncWarnings.length > 0 && !pauseReason;
   const syncStatusClass = syncFailed ? "text-red-300" : pauseReason && (WEB || syncConfigured) ? "text-amber-300" : "";
   const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
-  const viewport = useWorkspaceViewport();
+  const { viewport, landscapeFull, overlaySidebars } = useShellLayout();
   useKeyboardInset();
-  const landscapeFull = useLandscapeFullScreen();
-  // In landscape fullscreen the width often exceeds the overlay threshold; force sidebars into overlay to avoid squeezing the fullscreen terminal.
-  const overlaySidebars = viewport.overlaySidebars || landscapeFull;
   const [overlayDock, setOverlayDock] = useState<"left" | "right" | null>(null);
   const leftDockOpen = overlaySidebars ? overlayDock === "left" && leftOpen : leftOpen;
   const rightDockOpen = overlaySidebars ? overlayDock === "right" && rightOpen : rightOpen;
@@ -1000,7 +960,7 @@ function AppShell() {
   const activeTabKind = active?.kind ?? null;
   const isTerminalPaneKind = activeTabKind === "terminal";
   useEffect(() => {
-    if (!isMobile() || !overlaySidebars) return;
+    if (!isMobileShell() || !overlaySidebars) return;
     const prev = prevActiveKind.current;
     prevActiveKind.current = activeTabKind;
     if (activeTabKind === prev) return;
@@ -1035,7 +995,7 @@ function AppShell() {
   }, [pushToast]);
 
   const openLocalTerminal = useCallback(async () => {
-    if (isMobile()) {
+    if (isMobileShell()) {
       pushToast("info", "移动端不支持本地终端，请双击资产连接远程主机");
       return;
     }
@@ -1239,7 +1199,7 @@ function AppShell() {
       }
       return;
     }
-    if (isMobile()) {
+    if (isMobileShell()) {
       pushToast("info", "移动端不支持本地终端，请双击左侧资产连接远程主机");
       return;
     }
@@ -1843,7 +1803,7 @@ function AppShell() {
             >
               <IconCommand size={15} />
             </button>
-            {TRANSPORT === "desktop" && !isMac() && !isMobile() && (
+            {TRANSPORT === "desktop" && !isMac() && !isMobileShell() && (
               <div className="flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 pl-1.5">
                 <button
                   className="nx-icon-btn" style={wailsNoDragRegionStyle}
@@ -2796,7 +2756,7 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
         </div>
       </div>
       <div className="flex items-center gap-2">
-        {!isMobile() && (
+        {!isMobileShell() && (
           <button
             className="nx-btn nx-btn-primary"
             onClick={() => {

@@ -14,7 +14,7 @@ import {
   useUi,
 } from "../../app/store";
 import { copyAssetDeepLink } from "../../app/deepLink";
-import { isMobile, useCoarsePointer } from "../../app/platform";
+import { isMobileShell, useCoarsePointer } from "../../app/shell";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import { copyText } from "../../ui/clipboard";
@@ -2595,7 +2595,7 @@ export function AssetEditor({
                 }}
               >
                 {Object.entries(KIND_LABEL)
-                  .filter(([k]) => (k !== "local" || !isMobile() || initial?.builtin === true) && (!isInventoryOnlyKind(k) || initial?.kind === k))
+                  .filter(([k]) => (k !== "local" || !isMobileShell() || initial?.builtin === true) && (!isInventoryOnlyKind(k) || initial?.kind === k))
                   .map(([k, label]) => (
                     <option key={k} value={k}>
                       {label}

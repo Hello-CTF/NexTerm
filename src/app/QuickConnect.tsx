@@ -25,7 +25,7 @@ import { useAssetReachability } from "../features/explorer/assetReachability";
 import { ReachabilityDot } from "../features/explorer/ReachabilityDot";
 import { AssetEditor } from "../features/explorer/AssetTree";
 import { SshImportDialog } from "../features/explorer/SshImportDialog";
-import { isMobile } from "./platform";
+import { useShell } from "./shell";
 import { IconDownload, IconLoader, IconPlus, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
 import {
   formatQuickConnectTarget,
@@ -84,7 +84,7 @@ export function QuickConnect({
   const hiddenDatabaseCount = assets.filter(
     (asset) => dbKindOf(asset.kind) !== null && hiddenIds.includes(asset.id),
   ).length;
-  const mobile = isMobile();
+  const mobile = useShell() === "mobile";
   const visible = useMemo(
     () =>
       orderQuickConnectAssets(

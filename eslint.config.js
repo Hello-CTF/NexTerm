@@ -47,6 +47,35 @@ const credentialAmberRestrictions = stringRestrictions(
   "Use the semantic warning foreground instead of low-contrast amber text.",
 );
 
+const storeImportRestriction = {
+  group: ["**/app/store/*", "./store/*"],
+  message: "Import the UI store through src/app/store.ts.",
+};
+
+const shellPredicateRestrictions = [
+  {
+    group: ["**/app/platform", "./platform"],
+    importNames: [
+      "isMobile",
+      "isCoarsePointer",
+      "useCoarsePointer",
+      "coarsePointerMedia",
+      "isLandscapeFullScreen",
+      "useLandscapeFullScreen",
+    ],
+    message: "Import useShell(), useCoarsePointer() or the other shell helpers from src/app/shell instead of the raw predicates.",
+  },
+  {
+    group: ["**/workspaceLayout", "./workspaceLayout"],
+    importNames: ["workspaceViewport"],
+    message: "Use useShellLayout() or the helpers exported from src/app/shell instead of computing the workspace viewport.",
+  },
+];
+
+// Files that may read the raw shell predicates: the platform module and shell itself, tests that exercise them,
+// and the store, which cannot import the React shell (src/app/store/connection.ts reads the width-only overlay rule).
+const shellPredicateAllowlist = ["src/app/platform.ts", "src/app/shell/**", "src/test/**"];
+
 export default tseslint.config(
   { ignores: ["dist", "cmd/nexterm-desktop/dist", ".buildcheck", ".sitetest", "_site", ".tower/worktrees", ".claude/worktrees", ".tmp", ".task", "lazycat", "reference", "target", "*.cjs", "src/ipc/bindings"] },
   tseslint.configs.recommended,
@@ -78,10 +107,15 @@ export default tseslint.config(
     files: ["src/**/*.{ts,tsx}"],
     ignores: ["src/app/store.ts", "src/app/store/**"],
     rules: {
-      "no-restricted-imports": [
-        "error",
-        { patterns: [{ group: ["**/app/store/*", "./store/*"], message: "Import the UI store through src/app/store.ts." }] },
-      ],
+      "no-restricted-imports": ["error", { patterns: [storeImportRestriction] }],
+    },
+  },
+  {
+    // Shell decisions go through src/app/shell; the raw predicates stay behind it.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/app/store.ts", "src/app/store/**", ...shellPredicateAllowlist],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [storeImportRestriction, ...shellPredicateRestrictions] }],
     },
   },
   {
