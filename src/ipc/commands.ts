@@ -960,6 +960,16 @@ export const fsApi = {
     call("fs_extract", { sessionId, path }),
 };
 
+export type LocalHelperStatus = import("./generated/types").LocalHelperStatusDTO;
+
+// The local helper runs local terminals detached from the app so they survive it. restart replaces an
+// outdated helper and ends its sessions, so it takes the consent token the user confirmed.
+export const localHelperApi = {
+  status: () => call("local_helper_status") as Promise<LocalHelperStatus>,
+  restart: (consentToken: string) => call("local_helper_restart", { consentToken }) as Promise<LocalHelperStatus>,
+  retry: () => call("local_helper_retry") as Promise<LocalHelperStatus>,
+};
+
 export type LocalFolderFileDto = import("./generated/types").LocalFolderFileDTO;
 export type LocalFolderListDto = import("./generated/types").LocalFolderListDTO;
 

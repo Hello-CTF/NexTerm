@@ -20,6 +20,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
@@ -40,6 +41,8 @@ type terminalCommandService struct {
 	desktop      bool
 	helpers      *productionHelperService
 	databases    databaseLoginTester
+	// localHelper is set when local terminals run through the local helper.
+	localHelper *localhelper.Service
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -556,9 +559,16 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					}
 					useDurable = *input.Durable
 				}
+				// A local terminal is durable by default when this app runs a
+				// local helper; an explicit regular request or a regular local
+				// asset keeps it in this process.
+				localDurable := kind == session.KindLocal && s.localHelper != nil && mode != session.TerminalModeRegular && (input.Durable == nil || *input.Durable)
+				if localDurable {
+					useDurable, ephemeral, retainable = true, false, false
+				}
 				if useDurable {
 					durable = &session.DurableTabOptions{}
-					fallback = kind == session.KindSSH && input.Durable == nil
+					fallback = (kind == session.KindSSH || kind == session.KindLocal) && input.Durable == nil
 				}
 				bridged, err := s.bridge.bridge(call.Channel.ID)
 				if err != nil {
@@ -592,7 +602,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						}
 						remoteIDs := make([]string, 0, len(infos))
 						for _, info := range infos {
-							if (info.Kind == session.KindSSH || info.Kind == session.KindDevice) && info.Status == session.StatusConnected {
+							if s.durableHostKind(info.Kind) && info.Status == session.StatusConnected {
 								remoteIDs = append(remoteIDs, info.ID)
 							}
 						}
@@ -1122,8 +1132,8 @@ func (s *terminalCommandService) closeSessionTab(ctx context.Context, call *ipc.
 	if err != nil {
 		return err
 	}
-	// Without an explicit mode only a durable remote terminal goes to the background; a regular PTY just closes.
-	if kind := connected.Asset().Kind; (kind == session.KindSSH || kind == session.KindDevice) && tab.Info().Durable {
+	// Without an explicit mode only a durable terminal goes to the background; a regular PTY just closes.
+	if kind := connected.Asset().Kind; s.durableHostKind(kind) && tab.Info().Durable {
 		return s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
 	}
 	return s.sessions.CloseTabFor(ctx, input.TabID)
@@ -1142,7 +1152,7 @@ func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call 
 		}
 		sessionIDs = make([]string, 0, len(infos))
 		for _, info := range infos {
-			if (info.Kind != session.KindSSH && info.Kind != session.KindDevice) || info.Status != session.StatusConnected {
+			if !s.durableHostKind(info.Kind) || info.Status != session.StatusConnected {
 				continue
 			}
 			sessionIDs = append(sessionIDs, info.ID)
@@ -1168,6 +1178,12 @@ func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call 
 	return attachedSessionTab(info), nil
 }
 
+// durableHostKind reports a session kind whose durable terminals this app can
+// list and recover: remote helpers, and the local helper when it runs one.
+func (s *terminalCommandService) durableHostKind(kind string) bool {
+	return kind == session.KindSSH || kind == session.KindDevice || kind == session.KindLocal && s.localHelper != nil
+}
+
 func (s *terminalCommandService) connectLocal(ctx context.Context) (*session.Session, error) {
 	row, err := s.database.AssetEnsureBuiltinLocal(ctx)
 	if err != nil {
@@ -1176,6 +1192,10 @@ func (s *terminalCommandService) connectLocal(ctx context.Context) (*session.Ses
 	asset, err := productionSessionAsset(row, false)
 	if err != nil {
 		return nil, err
+	}
+	if s.localHelper != nil {
+		// Start is idempotent; a server starts its local helper here, on first use.
+		s.localHelper.Start()
 	}
 	return s.sessions.ConnectFor(ctx, asset)
 }

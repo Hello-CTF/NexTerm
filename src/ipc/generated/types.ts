@@ -1579,6 +1579,20 @@ export type LocalFolderListRequest = {
   path: string;
 };
 
+export type LocalHelperRestartRequest = {
+  consentToken: string;
+};
+
+export type LocalHelperStatusDTO = {
+  state: string;
+  reason?: string;
+  activeSessions?: number;
+  helperProtocol?: number;
+  helperVersion?: string;
+  consentToken?: string;
+  warning?: string;
+};
+
 export type LogTailCancelRequest = {
   runId: string;
 };

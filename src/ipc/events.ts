@@ -41,6 +41,7 @@ export const EVENTS = {
   filesDropped: "files://dropped",
   layoutChanged: "layout://changed",
   inventoryChanged: "inventory://changed",
+  localHelperStatus: "local://helper-status",
   syncStatus: "sync://status",
   syncRoundComplete: "sync://round-complete",
 } as const satisfies typeof ipcEventTopics;

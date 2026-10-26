@@ -155,9 +155,12 @@ func (f EmitterFunc) EmitSessionEvent(ctx context.Context, event Event) error {
 }
 
 type Config struct {
-	Connector            Connector
-	Terminals            TerminalFactory
-	Durable              base.DurableProvider
+	Connector Connector
+	Terminals TerminalFactory
+	Durable   base.DurableProvider
+	// LocalDurable runs local terminals through this machine's helper; it
+	// takes precedence over Durable for local sessions.
+	LocalDurable         LocalDurableSource
 	DurableResolver      DurableResolver
 	TerminalModeResolver func(context.Context, string) (string, error)
 	// DurableHistoryLimit returns the recorded output limit for new durable
@@ -354,6 +357,8 @@ type Session struct {
 	durableCreateFailure error
 	fallbackNotified     bool
 	fallbackNoticeGen    uint64
+	// localFallbackNotice is the last local helper reason shown on this session.
+	localFallbackNotice string
 
 	// Idle-reap state for remote session shells (KindRemote): remoteActivity is the last feed/management
 	// operation time, remoteFeeds is the active feed connection count (reaping suspends while >0); unused by normal sessions.

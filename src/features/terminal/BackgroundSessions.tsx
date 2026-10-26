@@ -28,6 +28,7 @@ import { ask } from "../../ui/dialogs";
 import { startPolling } from "../../app/usePolling";
 import { describeError } from "../../ui/errorText";
 import "../../ui/skeleton.css";
+import { localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 import {
   IconActivity,
   IconGamepad,
@@ -166,6 +167,7 @@ export function BackgroundSessions({
   const sessions = useSessionList(showAll ? undefined : [hostSessionId, ownerWorkspace?.sessionId]);
   const workspaces = useUi((s) => (showAll ? s.workspaces : NO_WORKSPACES));
   const hostSession = sessions.find((session) => session.id === hostSessionId);
+  const localHelper = useLocalHelperStatus(showAll || hostSession?.kind === "local");
   const { remoteOwner, identityMismatch: hostIdentityMismatch, needsReconnect } =
     resolveHostGate(ownerWorkspace, hostSession, verifiedQuickSessions);
   const hostName = hostSessionId
@@ -213,7 +215,9 @@ export function BackgroundSessions({
     try {
       const st = useUi.getState();
       // Fetches read the current session list: deduplication and host keys may involve other sessions.
-      const scope: BackgroundScope = { sessions: st.sessions, workspaces: st.workspaces, verified: verifiedQuickSessions };
+      const scope: BackgroundScope = {
+        sessions: st.sessions, workspaces: st.workspaces, verified: verifiedQuickSessions, localDurable: localDurableEnabled(localHelper),
+      };
       const targets = backgroundTargets(scope, { showAll, hostSessionId, owner: ownerWorkspace, remoteOwner });
       const [live, ...remote] = await Promise.allSettled([
         terminalApi.listLive(),
@@ -258,7 +262,7 @@ export function BackgroundSessions({
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [hostSessionId, showAll, remoteOwner, ownerWorkspace, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions]);
+  }, [hostSessionId, showAll, remoteOwner, ownerWorkspace, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions, localHelper]);
 
   useEffect(() => {
     ownerGenerationRef.current += 1;

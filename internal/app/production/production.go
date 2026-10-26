@@ -16,6 +16,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/mount"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -63,7 +64,10 @@ type ProductionServices struct {
 	// Skills is the single skills manager instance shared by the ai-skills
 	// IPC surface and the agent tools registry (load_skill), so per-owner
 	// caches and overrides never split across two managers.
-	Skills           *skills.Manager
+	Skills *skills.Manager
+	// LocalHelper runs local terminals in a detached helper; nil keeps them
+	// in this process.
+	LocalHelper      *localhelper.Service
 	Events           ipc.Emitter
 	Update           *update.Manager
 	ScreenInsets     func(context.Context) (ScreenInsets, error)
@@ -127,6 +131,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector, services.Events, services.stagedBlobs, services.desktop)
 	}
 	services.terminalCommands.fsUploads = services.fsUploads
+	services.terminalCommands.localHelper = services.LocalHelper
 	if services.Database != nil {
 		services.terminalCommands.databases = services.Database
 	}
@@ -302,6 +307,34 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.fsUploads != nil {
 		modules = append(modules, Module{Name: "fs-chunk-uploads", Component: services.fsUploads})
+	}
+	if services.Sessions != nil {
+		localHelper := services.LocalHelper
+		modules = append(modules, Module{
+			Name: "local-helper",
+			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+				return registerLocalHelperCommands(dispatcher, localHelper)
+			},
+			// Shutdown stops watching the helper; the helper and its local
+			// terminals keep running after the app exits.
+			Component: ComponentFuncs{
+				// The desktop starts the helper at launch so the first local
+				// terminal is durable; a server starts it with its first local
+				// session instead of running a helper nobody uses.
+				StartFunc: func(context.Context) error {
+					if localHelper != nil && services.desktop {
+						localHelper.Start()
+					}
+					return nil
+				},
+				ShutdownFunc: func(context.Context) error {
+					if localHelper != nil {
+						localHelper.Close()
+					}
+					return nil
+				},
+			},
+		})
 	}
 	if services.channelBridge != nil {
 		modules = append(modules, Module{Name: "terminal-channel-bridge", Component: services.channelBridge})

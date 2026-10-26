@@ -235,6 +235,8 @@ func run(args []string) int {
 			MaxOpenConns: invocation.DBMaxOpenConns,
 		},
 		StagedBlobs: blobs,
+		// Applies only without accounts: one helper cannot be shared between accounts.
+		LocalHelper: true,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))

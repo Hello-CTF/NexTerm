@@ -831,6 +831,9 @@ func startServerProcess(t *testing.T, binary, dataDir string, syncOnly bool, ext
 	}
 	process := &testServerProcess{cmd: cmd, wait: make(chan error, 1), output: buffer}
 	go func() { process.wait <- cmd.Wait() }()
+	// A local terminal starts the server's local helper, which outlives the server by design.
+	stateDir := filepath.Join(dataDir, "durable", "supervisor")
+	t.Cleanup(func() { _ = exec.Command("pkill", "-9", "-f", "supervisor-helper --state-dir "+stateDir).Run() })
 	return process, address
 }
 

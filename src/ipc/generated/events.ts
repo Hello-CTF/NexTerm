@@ -14,6 +14,7 @@ export const ipcEventTopics = {
   "helperProgress": "session://helper-progress",
   "inventoryChanged": "inventory://changed",
   "layoutChanged": "layout://changed",
+  "localHelperStatus": "local://helper-status",
   "sessionStatus": "session://status",
   "syncRoundComplete": "sync://round-complete",
   "syncStatus": "sync://status",

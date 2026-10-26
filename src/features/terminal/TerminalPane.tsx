@@ -6,6 +6,7 @@ import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
 import { Daemon, type DaemonHelperState } from "./Daemon";
+import { localHelperBadge, useLocalHelperStatus } from "./localHelperStatus";
 import { helperStageText } from "./HelperOperationView";
 import { HelperOperationDialog } from "./HelperOperationDialog";
 import { resolveWinrmMode } from "./terminalPolicy";
@@ -342,6 +343,7 @@ export function TerminalPane({
   const wasVisibleRef = useRef(visible !== false);
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
+  const localHelper = useLocalHelperStatus(sessionKind === "local");
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
   const productionClassification = useAssetProductionClassification(sessionAssetId);
@@ -1240,11 +1242,13 @@ export function TerminalPane({
     );
   }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
 
-  const helperBadge: DaemonHelperState | null = helperOperation?.status === "running"
-    ? { state: "installing", stage: helperStageText(helperOperation.stage) }
-    : helperOperation?.status === "awaiting_choice"
-      ? { state: "attention", message: helperOperation.reason?.message }
-      : helperReady ? { state: "ready" } : null;
+  const helperBadge: DaemonHelperState | null = sessionKind === "local"
+    ? localHelperBadge(localHelper)
+    : helperOperation?.status === "running"
+      ? { state: "installing", stage: helperStageText(helperOperation.stage) }
+      : helperOperation?.status === "awaiting_choice"
+        ? { state: "attention", message: helperOperation.reason?.message }
+        : helperReady ? { state: "ready" } : null;
   useEffect(() => {
     // The header now reports the ready helper; drop the "not durable" reason so the tab strip marker agrees with it.
     if (helperBadge?.state === "ready" && regularReason) useUi.getState().updateTab(storeTabId, { regularReason: undefined });
@@ -2164,13 +2168,14 @@ export function TerminalPane({
                 });
                 if (info.durable !== undefined) setDurable(info.durable);
                 if (
-                  info.durable === false && sessionKind === "ssh" && !forceRegular && !containerId && !effectiveWinrm &&
+                  info.durable === false && (sessionKind === "ssh" || sessionKind === "local") && !forceRegular && !containerId && !effectiveWinrm &&
                   !findStoreTab(useUi.getState().workspaces, storeTabId)?.regularReason
                 ) {
                   // Name why this SSH shell is regular; the backend reports its own fallback only once per connection.
                   void fallbackTerminalReason(sessionId, {
                     fallbackNotice: Boolean(info.fallbackNotice),
                     durableRequested: info.durableRequested,
+                    kind: sessionKind,
                   }).then((reason) => {
                     const tab = findStoreTab(useUi.getState().workspaces, storeTabId);
                     if (reason && tab && tab.durable !== true && !tab.regularReason) {

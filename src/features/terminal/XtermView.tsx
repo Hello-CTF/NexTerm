@@ -1074,7 +1074,10 @@ export function XtermView(props: XtermViewProps) {
             await preferencesLoading;
             if (disposed) return;
           }
-          if (!regular && !WEB && getTerminalPrefs().defaultMode === "regular") {
+          if (!regular && useUi.getState().sessions.find((session) => session.id === sessionId)?.kind === "local") {
+            // The local helper preference belongs to this device; the account default is about remote hosts.
+            regular = getTerminalPrefs().localMode === "regular";
+          } else if (!regular && !WEB && getTerminalPrefs().defaultMode === "regular") {
             const current = useUi.getState().sessions.find((session) => session.id === sessionId);
             if (current?.kind === "ssh") {
               try {

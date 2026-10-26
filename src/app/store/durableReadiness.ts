@@ -7,7 +7,6 @@ import { getTerminalPrefs, waitAccountPreferences } from "../preferences";
 // Reasons shown on a terminal tab that opened as a regular terminal although durable terminals are preferred.
 export const DURABLE_PREPARING_REASON = "持久组件准备中";
 export const DURABLE_UNAVAILABLE_PREFIX = "持久组件不可用";
-export const LOCAL_DURABLE_UNAVAILABLE_REASON = `${DURABLE_UNAVAILABLE_PREFIX}：本机终端暂不支持持久模式`;
 export const DURABLE_FALLBACK_REASON = `${DURABLE_UNAVAILABLE_PREFIX}：创建持久终端失败，已改用普通终端`;
 export const DURABLE_NOT_READY_AT_OPEN_REASON = "打开时持久组件未就绪";
 
@@ -15,6 +14,10 @@ export const DURABLE_NOT_READY_AT_OPEN_REASON = "打开时持久组件未就绪"
 export const READINESS_QUERY_TIMEOUT_MS = 1000;
 
 type ReadinessSession = Pick<SessionInfo, "id" | "kind">;
+
+function durableKind(kind: string | undefined): boolean {
+  return kind === "ssh" || kind === "local";
+}
 
 // The latest readiness known per session, from prepare replies and helper progress events.
 const knownReadiness = new Map<string, DurableReadiness>();
@@ -49,8 +52,10 @@ function queryReadiness(sessionId: string): Promise<DurableReadiness> {
 }
 
 // The desktop keeps the default terminal mode on the device; the server applies the account preference itself and
-// reports it as "disabled".
-async function regularPreferred(): Promise<boolean> {
+// reports it as "disabled". Local terminals follow the device's local terminal mode instead, which belongs to the
+// local helper of this machine.
+async function regularPreferred(kind?: string): Promise<boolean> {
+  if (kind === "local") return getTerminalPrefs().localMode === "regular";
   if (WEB) return false;
   const loading = waitAccountPreferences();
   if (loading) await loading;
@@ -58,13 +63,14 @@ async function regularPreferred(): Promise<boolean> {
 }
 
 // prepareDurableInBackground starts the durable helper deployment for an SSH session when a host workspace opens,
-// without creating a terminal. Failures are cached and surface on the next explicitly opened terminal.
+// without creating a terminal; for a local session it reads the local helper state the app started at launch.
+// Failures are cached and surface on the next explicitly opened terminal.
 export function prepareDurableInBackground(session: ReadinessSession): void {
-  if (session.kind !== "ssh") return;
+  if (!durableKind(session.kind)) return;
   // A (re)connected session may sit on a new connection, so an older answer no longer applies.
   knownReadiness.delete(session.id);
   void (async () => {
-    if (await regularPreferred()) return;
+    if (await regularPreferred(session.kind)) return;
     await queryReadiness(session.id);
   })().catch(() => undefined);
 }
@@ -98,9 +104,8 @@ async function readinessWithin(sessionId: string, timeoutMs: number): Promise<Du
 // and is shown on the tab as the reason. A settled cached answer is used at once and refreshed in the background;
 // otherwise the backend is asked, and an answer slower than READINESS_QUERY_TIMEOUT_MS counts as "preparing".
 export async function regularTerminalReason(session: ReadinessSession): Promise<string | undefined> {
-  if (session.kind !== "ssh" && session.kind !== "local") return undefined;
-  if (await regularPreferred()) return undefined;
-  if (session.kind === "local") return LOCAL_DURABLE_UNAVAILABLE_REASON;
+  if (!durableKind(session.kind)) return undefined;
+  if (await regularPreferred(session.kind)) return undefined;
   const cached = knownReadiness.get(session.id);
   if (cached && cached.state !== "preparing") {
     void queryReadiness(session.id).catch(() => undefined);
@@ -113,16 +118,16 @@ export async function regularTerminalReason(session: ReadinessSession): Promise<
   }
 }
 
-// fallbackTerminalReason explains an SSH terminal that attached as regular although no regular terminal was chosen
+// fallbackTerminalReason explains an SSH or local terminal that attached as regular although no regular terminal was chosen
 // for it (a backend fallback, a terminal created elsewhere, or one opened before the helper was ready).
 // durableRequested is what this client asked for when it created the shell, unknown for an attachment to an existing
 // one. undefined means regular terminals are the effective choice for this host, so nothing is degraded.
 export async function fallbackTerminalReason(
   sessionId: string,
-  options: { fallbackNotice: boolean; durableRequested?: boolean },
+  options: { fallbackNotice: boolean; durableRequested?: boolean; kind?: string },
 ): Promise<string | undefined> {
   if (options.durableRequested === false) return undefined;
-  if (options.durableRequested === undefined && (await regularPreferred())) return undefined;
+  if (options.durableRequested === undefined && (await regularPreferred(options.kind))) return undefined;
   const fallbackNotice = options.fallbackNotice;
   let readiness: DurableReadiness;
   try {

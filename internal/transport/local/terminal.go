@@ -35,3 +35,14 @@ func (t *Transport) openPTY(ctx context.Context, args []string, options base.PTY
 	}
 	return t.track(ctx, session)
 }
+
+// DurableLaunch is what a local terminal run by the local helper starts with:
+// the same shell and directory as OpenPTY. The helper supplies the rest of
+// the environment from its own, which it inherited from the app.
+func (t *Transport) DurableLaunch() (command []string, dir string, env []string) {
+	env = []string{"TERM=xterm-256color"}
+	for key, value := range t.env {
+		env = append(env, key+"="+value)
+	}
+	return []string{t.shell}, t.cwd, env
+}
