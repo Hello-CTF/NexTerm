@@ -2556,6 +2556,21 @@ export type TerminalBroadcastWriteOptions = {
   productionConfirmation?: BroadcastProductionConfirmation | null;
 };
 
+export type TerminalHistoryDTO = {
+  start: number;
+  end: number;
+  historyBase: number;
+  historyNext: number;
+  truncated: boolean;
+  dataBase64: string;
+};
+
+export type TerminalHistoryReadRequest = {
+  tabId: string;
+  before: number;
+  maxBytes: number;
+};
+
 export type TerminalPauseRequest = {
   tabId: string;
   channelId: string;

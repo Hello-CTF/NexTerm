@@ -2294,9 +2294,12 @@ export const ipcContractManifest = {
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.helperOperationDTO", ts: "HelperOperationDTO" },
     },
     "terminal_history_read": {
+      scope: "terminal",
       nested: false,
       channel: false,
       stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalHistoryReadRequest", ts: "TerminalHistoryReadRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalHistoryDTO", ts: "TerminalHistoryDTO" },
     },
     "terminal_list": {
       nested: false,
@@ -2611,7 +2614,6 @@ export const ipcContractManifest = {
     "terminal_detach",
     "terminal_dump",
     "terminal_export_log",
-    "terminal_history_read",
     "terminal_list",
     "terminal_record_start",
     "terminal_record_status",
@@ -3814,6 +3816,10 @@ export interface IPCCommandTypeMap {
   "terminal_helper_operation": {
     input: contractTypes.HelperOperationRequest;
     output: contractTypes.HelperOperationDTO;
+  };
+  "terminal_history_read": {
+    input: contractTypes.TerminalHistoryReadRequest;
+    output: contractTypes.TerminalHistoryDTO;
   };
   "terminal_pause": {
     input: contractTypes.TerminalPauseRequest;

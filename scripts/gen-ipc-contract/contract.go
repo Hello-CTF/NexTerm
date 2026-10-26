@@ -127,6 +127,7 @@ var contractScopes = []scopeSpec{
 	{name: "terminal", commands: []string{
 		"terminal_attach",
 		"terminal_broadcast_prepare",
+		"terminal_history_read",
 		"terminal_rename_tab",
 		"terminal_write",
 	}},

@@ -1789,6 +1789,7 @@
       "stream": "none"
     },
     "terminal_history_read": {
+      "scope": "terminal",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -2058,7 +2059,6 @@
     "terminal_detach",
     "terminal_dump",
     "terminal_export_log",
-    "terminal_history_read",
     "terminal_list",
     "terminal_record_start",
     "terminal_record_status",
