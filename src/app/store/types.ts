@@ -1,3 +1,4 @@
+import type { StoreApi } from "zustand";
 import type { assetApi, RecordingStatus, SessionInfo } from "../../ipc/commands";
 import type { ConnectProgressEvent, HelperProgressEvent, SessionStatusEvent as BaseSessionStatusEvent } from "../../ipc/events";
 import type { HelperOperationKind, HelperOperationState } from "../../features/terminal/helperOperationState";
@@ -472,3 +473,6 @@ export interface SessionReconnectError extends Error {
   attempt?: number;
   nextRetryAt?: string | number | null;
 }
+
+export type UiSet = StoreApi<UiState>["setState"];
+export type UiGet = StoreApi<UiState>["getState"];

@@ -1,7 +1,10 @@
 import type { SessionInfo } from "../../ipc/commands";
 import type { ConnectProgressEvent } from "../../ipc/events";
+import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
+import { reconnectSessionAndWait, reconnectWorkspaceSession } from "./reconnect";
 import type { SessionRuntimeInfo, SessionStatusEvent, SessionStatusEvidence } from "./types";
+import { useUi } from "./useUi";
 
 export const abnormalDisconnectNotices = new Set<string>();
 
@@ -52,6 +55,79 @@ export function sessionReconnectStatusText(
   return [attempt > 0 ? `重连尝试 ${attempt} 次` : "准备第 1 次重连", next]
     .filter(Boolean)
     .join(" · ");
+}
+
+const retryableSessionErrorCodes = new Set(["ssh", "timeout", "disconnected"]);
+
+export function applySessionStatusEvent(p: SessionStatusEvent): void {
+  trackSessionStatusEvidence(p);
+  const state = useUi.getState();
+  const current = state.sessions.find((session) => session.id === p.sessionId);
+  const attempt = p.attempt ?? current?.attempt ?? 0;
+  const retryableFailed = p.status === "failed" &&
+    (current?.status === "reconnecting" || attempt > 0) &&
+    retryableSessionErrorCodes.has(p.errorCode ?? "");
+  state.setSessions(state.sessions.map((session) => session.id === p.sessionId
+    ? {
+        ...session,
+        status: p.status as SessionInfo["status"],
+        error: p.error ?? null,
+        errorCode: p.errorCode ?? null,
+        attempt: p.attempt ?? 0,
+        nextRetryAt: p.nextRetryAt ?? null,
+      }
+    : session));
+  if (p.status !== "connecting" && p.status !== "reconnecting" && current?.assetId) {
+    state.setConnectProgress(current.assetId, null);
+  }
+  if (p.status === "connecting" || p.status === "reconnecting" || p.status === "connected") {
+    abnormalDisconnectNotices.delete(p.sessionId);
+  }
+  if (p.status === "failed" && !retryableFailed) {
+    // A first connect that stops at an unconfirmed host key is answered by the confirmation dialog and an
+    // automatic second attempt (connectWithHostKeyConfirm), so a toast here would only be noise.
+    const awaitingHostKeyDialog = (p.errorCode === "host_key_pending" || p.errorCode === "host_key_changed") &&
+      current?.status !== "reconnecting" && current?.status !== "connected" && attempt === 0;
+    if (p.error && !awaitingHostKeyDialog) state.pushToast("error", `会话失败：${p.error}`);
+    return;
+  }
+  if (p.status !== "disconnected" && !retryableFailed) return;
+  if (!p.error && !p.errorCode) {
+    abnormalDisconnectNotices.delete(p.sessionId);
+    return;
+  }
+  if (abnormalDisconnectNotices.has(p.sessionId)) return;
+  abnormalDisconnectNotices.add(p.sessionId);
+  const name = current?.name ?? p.sessionId;
+  const message = retryableFailed
+    ? `会话「${name}」自动重连失败：${p.error ?? p.errorCode}`
+    : `会话「${name}」异常断开：${p.error ?? p.errorCode}`;
+  state.pushToast("error", message, {
+    label: "重新连接",
+    onSelect: () => void reconnectSessionAfterDisconnect(p.sessionId),
+  });
+}
+
+async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void> {
+  const state = useUi.getState();
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session) {
+    state.pushToast("error", "重连失败：会话已不存在，请刷新会话列表");
+    return;
+  }
+  // Route through the target-aware workspace reconnect so the connection problem settles against
+  // the workspace target: success clears it, failure records it, a canceled attempt adds nothing.
+  const workspace = state.workspaces.find((item) => item.sessionId === sessionId);
+  try {
+    const fresh = workspace
+      ? await reconnectWorkspaceSession(workspace, session)
+      : await reconnectSessionAndWait(session);
+    if (!fresh) return;
+    const latest = useUi.getState();
+    latest.setSessions([...latest.sessions.filter((item) => item.id !== fresh.id), fresh]);
+  } catch (error) {
+    useUi.getState().pushToast("error", `重连失败：${describeError(error)}`);
+  }
 }
 
 export function sessionStatusText(status: SessionInfo["status"] | undefined): string {
