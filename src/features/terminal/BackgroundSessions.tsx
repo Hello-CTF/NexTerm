@@ -346,7 +346,7 @@ export function BackgroundSessions({
         id: nextTabId(`term-${info.sessionId}`),
         kind: "terminal",
         title: info.title || session?.name || info.sessionName,
-        renamedByUser: info.title ? true : undefined,
+        renamedByUser: info.title && info.titleCustom ? true : undefined,
         sessionId: info.sessionId,
         tabId: info.tabId,
         closable: true,

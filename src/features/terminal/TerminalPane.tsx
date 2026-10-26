@@ -35,7 +35,7 @@ import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type 
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
 import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, type BroadcastState, type Workspace } from "../../app/store";
-import { applyRemoteTabTitleToView, resetTerminalTabTitle, resetTerminalView } from "../../app/terminalViewStore";
+import { applyBackendTabTitle, applyRemoteTabTitleToView, reconcileAttachedTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { modHint } from "../../app/platform";
@@ -150,26 +150,6 @@ function readBroadcastContext(
     return null;
   }
   return { generation: broadcast.generation, targetIds: broadcast.targetIds };
-}
-
-// A backend-owned custom title (rename via IPC or the AI terminal_rename tool)
-// is authoritative: it lands on the tab strip and locks out OSC title updates,
-// mirroring a local manual rename.
-function applyBackendTabTitle(storeTabId: string, title: string): void {
-  const st = useUi.getState();
-  for (const w of st.workspaces) {
-    for (const p of w.panes) {
-      const tab = p.tabs.find((t) => t.id === storeTabId);
-      if (!tab) continue;
-      if (tab.title !== title || tab.renamedByUser !== true) {
-        st.updateTab(storeTabId, { title, renamedByUser: true });
-      }
-      // The custom title rules the tab strip: drop only the OSC-derived view title —
-      // the scrollback badge state under the same key must survive control snapshots.
-      resetTerminalTabTitle(storeTabId);
-      return;
-    }
-  }
 }
 
 function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
@@ -784,7 +764,7 @@ export function TerminalPane({
       setDurable(p.durable);
       useUi.getState().updateTab(storeTabId, { durable: p.durable });
     }
-    if (p.title) applyBackendTabTitle(storeTabId, p.title);
+    applyBackendTabTitle(storeTabId, p.title, p.titleCustom);
   }, [storeTabId]);
   useEffect(() => {
     setCwd(null);
@@ -2137,7 +2117,14 @@ export function TerminalPane({
                 });
                 if (info.durable !== undefined) setDurable(info.durable);
                 if (info.encoding) setEncoding(info.encoding);
-                if (info.title) applyBackendTabTitle(storeTabId, info.title);
+                const titleSync = reconcileAttachedTabTitle(
+                  storeTabId,
+                  info,
+                  containerId ? null : (id, title) => terminalApi.renameTab(id, title),
+                );
+                // The local custom title stays on the tab strip either way; a failed write-back only
+                // leaves other devices and AI tools on the backend's program title until the next attach.
+                void titleSync?.catch((error: unknown) => console.warn("terminal title sync failed", error));
               }}
               onAttach={(id) => {
                 if (containerId) execAttachedSessionRef.current = sessionId;

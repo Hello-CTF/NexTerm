@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { applyRemoteTabTitle, sanitizeRemoteTabTitle, useUi } from "./store";
+import { applyRemoteTabTitle, findTab, sanitizeRemoteTabTitle, useUi } from "./store";
 
 // Per-terminal view state that changes at output frequency (scrollback position, remote title).
 // Components subscribe through the narrow selectors below so a burst on one tab re-renders only
@@ -91,8 +91,56 @@ export function resetTerminalLinesBelow(tabId: string): void {
 // workspace tab with renamedByUser — locking out OSC title updates — and clears only
 // the OSC-derived view title: the scrollback badge under the same key must survive.
 export function applyAuthoritativeTabTitle(tabId: string, title: string): void {
-  useUi.getState().updateTab(tabId, { title, renamedByUser: true });
+  const tab = findTab(tabId)?.tab;
+  if (tab && (tab.title !== title || tab.renamedByUser !== true)) {
+    useUi.getState().updateTab(tabId, { title, renamedByUser: true });
+  }
   resetTerminalTabTitle(tabId);
+}
+
+// Clearing a custom title (an empty rename) hands the tab strip back to OSC titles:
+// the fallback is the backend's current program title when it reported one.
+export function clearAuthoritativeTabTitle(tabId: string, fallback: string): void {
+  const tab = findTab(tabId)?.tab;
+  if (!tab) return;
+  const title = sanitizeRemoteTabTitle(fallback) || "终端";
+  useUi.getState().updateTab(tabId, { title, renamedByUser: undefined });
+  resetTerminalTabTitle(tabId);
+}
+
+// The backend reports a tab title with titleCustom telling a custom title (a manual
+// or AI rename, or a restored durable title) apart from the OSC-derived program
+// title it tracks otherwise. Only a custom title is authoritative; a program title
+// goes through the OSC path and never replaces a title the user chose.
+export function applyBackendTabTitle(tabId: string, title: string | undefined, custom: boolean | undefined): void {
+  if (!title) return;
+  if (custom === true) {
+    applyAuthoritativeTabTitle(tabId, title);
+    return;
+  }
+  applyRemoteTabTitleToView(tabId, title);
+}
+
+// A fresh attachment reconciles both sides: a backend custom title wins; a local
+// custom title the backend does not hold (a kernel tab re-created by a reconnect,
+// or a rename made before the tab had a kernel id) is written back so every device
+// and the AI tools see it. Returns the rename to await, or null when none is needed.
+export function reconcileAttachedTabTitle(
+  tabId: string,
+  info: { tabId: string; title?: string; titleCustom?: boolean },
+  rename: ((kernelTabId: string, title: string) => Promise<unknown>) | null,
+): Promise<unknown> | null {
+  if (info.titleCustom === true) {
+    applyBackendTabTitle(tabId, info.title, true);
+    return null;
+  }
+  const tab = findTab(tabId)?.tab;
+  if (tab?.renamedByUser === true) {
+    resetTerminalTabTitle(tabId);
+    return rename && tab.title.trim() !== "" ? rename(info.tabId, tab.title) : null;
+  }
+  applyBackendTabTitle(tabId, info.title, false);
+  return null;
 }
 
 // The OSC title path writes through the authoritative workspace-store application first:

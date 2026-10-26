@@ -169,6 +169,8 @@ export function collectBackgroundTabs(
         viewers: 0,
         exited: false,
         title: tab.title,
+        // A durable descriptor title is the canonical custom title.
+        titleCustom: tab.title ? true : undefined,
         remote: true,
       });
     }

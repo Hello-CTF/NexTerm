@@ -391,7 +391,7 @@ describe("terminal control resync compensation", () => {
     expect(overlayText("终端进程已结束")).toBeNull();
   });
 
-  it("applies a backend tab title from control events to the tab strip", async () => {
+  it("applies a backend custom tab title from control events to the tab strip", async () => {
     harness.listLive.mockResolvedValue([liveTab()]);
     mounted = mountPane();
     await act(async () => {
@@ -409,6 +409,7 @@ describe("terminal control resync compensation", () => {
       rows: 24,
       gridRevision: 0,
       title: "构建机",
+      titleCustom: true,
     });
 
     const tab = useUi

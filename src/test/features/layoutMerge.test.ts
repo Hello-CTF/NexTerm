@@ -77,6 +77,32 @@ describe("three-way shared layout merge", () => {
     expect(sharedLayoutKey(fromA)).toBe(sharedLayoutKey(fromB));
   });
 
+  it("keeps a rename from one device over a concurrent OSC title from the other", () => {
+    const base = layout([workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "终端 1" }])])]);
+    const renamed = layout([
+      workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "deploy", renamedByUser: true }])]),
+    ]);
+    const osc = layout([workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "bash: ~" }])])]);
+
+    for (const merged of [mergeLayout(base, renamed, osc), mergeLayout(base, osc, renamed)]) {
+      const tab = merged.workspaces[0].panes[0].tabs[0];
+      expect(tab.title).toBe("deploy");
+      expect(tab.renamedByUser).toBe(true);
+    }
+  });
+
+  it("lets a cleared custom title return to the other device's title", () => {
+    const base = layout([
+      workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "deploy", renamedByUser: true }])]),
+    ]);
+    const cleared = layout([workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "vim" }])])]);
+
+    const merged = mergeLayout(base, base, cleared);
+    const tab = merged.workspaces[0].panes[0].tabs[0];
+    expect(tab.title).toBe("vim");
+    expect(tab.renamedByUser).toBeUndefined();
+  });
+
   it("keeps both panes of concurrent splits and converges from both perspectives", () => {
     const base = layout([workspace("ws", "asset", [pane("pane-0", [terminal("base")])])]);
     const local = layout([

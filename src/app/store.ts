@@ -84,6 +84,7 @@ export {
   focusActivePane,
   cycleActiveTab,
   cycleActiveWorkspace,
+  findTab,
   findWritableTerminal,
   openCredentialsSidebar,
   openCredentialsTab,

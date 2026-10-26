@@ -60,6 +60,7 @@ export interface TerminalControlEvent {
   cwd?: string;
   durable?: boolean;
   title?: string;
+  titleCustom?: boolean;
 }
 
 export class EventVersionGate {

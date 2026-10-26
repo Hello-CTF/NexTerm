@@ -68,7 +68,11 @@ export function TabStripItem({
 export function TabStripTitle({ tab }: { tab: AppTab }) {
   const remoteTitle = useTerminalTabTitle(tab.id);
   return (
-    <span className="truncate">{tab.kind === "terminal" && remoteTitle ? remoteTitle : tab.title}</span>
+    // A custom title always rules the strip, even when an OSC view title is still cached
+    // (a rename synced from another device, a restored layout, or a reattach).
+    <span className="truncate">
+      {tab.kind === "terminal" && tab.renamedByUser !== true && remoteTitle ? remoteTitle : tab.title}
+    </span>
   );
 }
 

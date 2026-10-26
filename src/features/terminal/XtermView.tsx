@@ -109,6 +109,7 @@ export interface XtermViewProps {
     durable?: boolean;
     encoding?: string;
     title?: string;
+    titleCustom?: boolean;
     shell?: "powershell" | "cmd" | "posix" | "unknown";
   }) => void;
   canResize?: boolean;
@@ -370,6 +371,7 @@ export function XtermView(props: XtermViewProps) {
       durable?: boolean;
       encoding?: string;
       title?: string;
+      titleCustom?: boolean;
       shell?: "powershell" | "cmd" | "posix" | "unknown";
       attachmentId?: number;
     }) => {
@@ -968,6 +970,7 @@ export function XtermView(props: XtermViewProps) {
             exited: info.exited,
             encoding: info.encoding,
             title: info.title,
+            titleCustom: info.titleCustom,
             shell: info.shell,
             retainable: info.retainable,
             durable: info.durable,
@@ -1046,6 +1049,7 @@ export function XtermView(props: XtermViewProps) {
             exited: info.exited,
             encoding: info.encoding,
             title: info.title,
+            titleCustom: info.titleCustom,
             shell: info.shell,
             retainable: info.retainable,
             durable: info.durable,
@@ -1136,6 +1140,7 @@ export function XtermView(props: XtermViewProps) {
             exited: info.exited,
             encoding: info.encoding,
             title: info.title,
+            titleCustom: info.titleCustom,
             shell: info.shell,
             retainable: info.retainable,
             durable: info.durable,

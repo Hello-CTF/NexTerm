@@ -344,6 +344,14 @@ function mergeTabMeta(group: EntityGroup<AppTab>, id: string): AppTab {
       : mergeAddedValue(local?.[field], remote?.[field]);
     output[field] = value as never;
   }
+  // title and renamedByUser are one fact: a merged custom title must be the title of a
+  // side that holds it, never an OSC-derived title from the other device.
+  if (output.renamedByUser === true) {
+    const localCustom = local?.renamedByUser === true;
+    const remoteCustom = remote?.renamedByUser === true;
+    if (localCustom && !remoteCustom) output.title = local.title;
+    else if (remoteCustom && !localCustom) output.title = remote.title;
+  }
   return output;
 }
 

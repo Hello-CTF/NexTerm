@@ -11,7 +11,7 @@ import {
   type Pane,
   type SplitDirection,
 } from "../store";
-import { applyAuthoritativeTabTitle } from "../terminalViewStore";
+import { applyAuthoritativeTabTitle, clearAuthoritativeTabTitle } from "../terminalViewStore";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "../keybindings";
 import { terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
@@ -152,18 +152,22 @@ export function PaneGroup({
     let draft = title;
     let failure = "";
     for (;;) {
-      const next = await promptText(failure || "重命名标签：", draft);
-      if (next === null || !next.trim()) return;
+      const next = await promptText(failure || "重命名标签（留空恢复自动标题）：", draft);
+      if (next === null) return;
       const trimmed = sanitizeRemoteTabTitle(next);
-      if (!trimmed) return;
-      const tabId = pane.tabs.find((t) => t.id === id)?.tabId;
+      const current = pane.tabs.find((t) => t.id === id);
+      // An empty name clears the custom title and returns the tab to OSC titles.
+      if (!trimmed && current?.renamedByUser !== true) return;
+      const tabId = current?.tabId;
       if (!tabId) {
-        applyAuthoritativeTabTitle(id, trimmed);
+        if (trimmed) applyAuthoritativeTabTitle(id, trimmed);
+        else clearAuthoritativeTabTitle(id, "");
         return;
       }
       try {
         const info = await terminalApi.renameTab(tabId, trimmed);
-        applyAuthoritativeTabTitle(id, info.title || trimmed);
+        if (trimmed) applyAuthoritativeTabTitle(id, info.title || trimmed);
+        else clearAuthoritativeTabTitle(id, info.title ?? "");
         return;
       } catch (error) {
         draft = trimmed;

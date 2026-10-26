@@ -81,7 +81,7 @@ func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 	renameResponse := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"部署终端"}`, "", "client-a")
 	var renamed attachedTabDTO
 	requireStoreTestResponse(t, renameResponse, &renamed)
-	if renamed.TabID != created.TabID || renamed.Title != "部署终端" {
+	if renamed.TabID != created.TabID || renamed.Title != "部署终端" || !renamed.TitleCustom {
 		t.Fatalf("renamed = %+v", renamed)
 	}
 
@@ -92,7 +92,7 @@ func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 	for _, tab := range live {
 		if tab.TabID == created.TabID {
 			found = true
-			if tab.Title != "部署终端" {
+			if tab.Title != "部署终端" || !tab.TitleCustom {
 				t.Fatalf("listed tab = %+v", tab)
 			}
 		}
@@ -101,9 +101,16 @@ func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 		t.Fatalf("created tab missing from terminal_list: %+v", live)
 	}
 
-	badTitle := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"  "}`, "", "client-a")
+	badTitle := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"bad\ttitle"}`, "", "client-a")
 	if badTitle.OK || badTitle.Error == nil || badTitle.Error.Code != ipc.CodeBadParam {
-		t.Fatalf("blank title rename = %+v, want bad_param", badTitle)
+		t.Fatalf("control character title rename = %+v, want bad_param", badTitle)
+	}
+	// A blank title clears the custom title and hands the tab back to OSC titles.
+	clearResponse := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"  "}`, "", "client-a")
+	var cleared attachedTabDTO
+	requireStoreTestResponse(t, clearResponse, &cleared)
+	if cleared.TitleCustom {
+		t.Fatalf("cleared = %+v", cleared)
 	}
 	missing := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"missing","title":"x"}`, "", "client-a")
 	if missing.OK || missing.Error == nil || missing.Error.Code != ipc.CodeNotFound {

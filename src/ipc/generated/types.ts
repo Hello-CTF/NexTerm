@@ -186,6 +186,7 @@ export type AttachedTabDTO = {
   ephemeral: boolean;
   encoding?: string;
   title?: string;
+  titleCustom?: boolean;
   shell: string;
   fallbackNotice?: string;
   attachmentId?: number;

@@ -159,6 +159,7 @@ type attachedTabDTO struct {
 	Ephemeral      bool    `json:"ephemeral"`
 	Encoding       string  `json:"encoding,omitempty"`
 	Title          string  `json:"title,omitempty"`
+	TitleCustom    bool    `json:"titleCustom,omitempty"`
 	Shell          string  `json:"shell"`
 	FallbackNotice string  `json:"fallbackNotice,omitempty"`
 	AttachmentID   uint64  `json:"attachmentId,omitempty"`
@@ -291,6 +292,7 @@ type liveTabDTO struct {
 	LastOutputAt    int64   `json:"lastOutputAt"`
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 	Title           string  `json:"title,omitempty"`
+	TitleCustom     bool    `json:"titleCustom,omitempty"`
 }
 
 func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver, desktop bool) *terminalCommandService {
@@ -807,7 +809,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						TabID: info.ID, SessionID: info.SessionID, SessionName: sessionInfo.Name, SessionKind: sessionInfo.Kind,
 						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title,
+						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom,
 					})
 				}
 				return result, nil
@@ -1266,7 +1268,7 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-		Retainable: info.Retainable, Durable: info.Durable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
+		Retainable: info.Retainable, Durable: info.Durable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, TitleCustom: info.TitleCustom, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
 		AttachmentID: info.AttachmentID,
 	}
 }

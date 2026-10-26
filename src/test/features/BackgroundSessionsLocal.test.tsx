@@ -817,7 +817,7 @@ describe("BackgroundSessions host-scoped view", () => {
 
   it("restores a detached tab with its backend title on takeover", async () => {
     mocks.listLive.mockResolvedValue([
-      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "AI 构建" }),
+      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "AI 构建", titleCustom: true }),
     ]);
     seedScope();
     const view = mountHost();
@@ -839,6 +839,31 @@ describe("BackgroundSessions host-scoped view", () => {
         title: "AI 构建",
         renamedByUser: true,
       });
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("does not lock an OSC program title as a custom title on takeover", async () => {
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "vim" }),
+    ]);
+    seedScope();
+    const view = mountHost();
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("vim"));
+      await act(async () => {
+        actionButton(view, "接管").click();
+        await flush();
+      });
+      const added = useUi
+        .getState()
+        .workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .find((tab) => tab.tabId === "tab-local");
+      expect(added?.title).toBe("vim");
+      expect(added?.renamedByUser).toBeUndefined();
     } finally {
       view.unmount();
     }

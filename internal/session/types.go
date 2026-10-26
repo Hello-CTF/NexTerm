@@ -204,21 +204,24 @@ const (
 )
 
 type TabInfo struct {
-	ID              string `json:"id"`
-	SessionID       string `json:"sessionId"`
-	Cols            uint32 `json:"cols"`
-	Rows            uint32 `json:"rows"`
-	GridRevision    uint64 `json:"gridRevision"`
-	Controller      string `json:"controller,omitempty"`
-	Subscribers     int    `json:"subscribers"`
-	Viewers         int    `json:"viewers"`
-	Exited          bool   `json:"exited"`
-	Retainable      bool   `json:"retainable"`
-	Ephemeral       bool   `json:"ephemeral,omitempty"`
-	Durable         bool   `json:"durable,omitempty"`
-	Cwd             string `json:"cwd,omitempty"`
-	Encoding        string `json:"encoding,omitempty"`
-	Title           string `json:"title,omitempty"`
+	ID           string `json:"id"`
+	SessionID    string `json:"sessionId"`
+	Cols         uint32 `json:"cols"`
+	Rows         uint32 `json:"rows"`
+	GridRevision uint64 `json:"gridRevision"`
+	Controller   string `json:"controller,omitempty"`
+	Subscribers  int    `json:"subscribers"`
+	Viewers      int    `json:"viewers"`
+	Exited       bool   `json:"exited"`
+	Retainable   bool   `json:"retainable"`
+	Ephemeral    bool   `json:"ephemeral,omitempty"`
+	Durable      bool   `json:"durable,omitempty"`
+	Cwd          string `json:"cwd,omitempty"`
+	Encoding     string `json:"encoding,omitempty"`
+	Title        string `json:"title,omitempty"`
+	// TitleCustom reports whether Title is a custom title (a manual or AI
+	// rename, or a restored durable title) rather than the OSC dynamic title.
+	TitleCustom     bool   `json:"titleCustom,omitempty"`
 	Shell           Shell  `json:"shell"`
 	LastOutputAt    int64  `json:"lastOutputAt,omitempty"`
 	LastOutputMSAgo int64  `json:"-"`
@@ -265,6 +268,7 @@ type ControlEvent struct {
 	Cwd          string `json:"cwd,omitempty"`
 	Durable      bool   `json:"durable,omitempty"`
 	Title        string `json:"title,omitempty"`
+	TitleCustom  bool   `json:"titleCustom,omitempty"`
 }
 
 func (e ControlEvent) MarshalJSON() ([]byte, error) {
@@ -530,6 +534,11 @@ func validSize(cols, rows uint32) bool {
 // maxTabTitleRunes bounds custom tab titles; the frontend sanitizer caps at
 // the same length.
 const maxTabTitleRunes = 80
+
+// blankTabTitle reports a rename that clears the custom title.
+func blankTabTitle(title string) bool {
+	return strings.TrimSpace(title) == ""
+}
 
 func normalizeTabTitle(title string) (string, error) {
 	trimmed := strings.TrimSpace(title)

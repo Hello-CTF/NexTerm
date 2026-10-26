@@ -384,6 +384,7 @@ export interface AttachedTabInfo {
   ephemeral?: boolean;
   encoding?: string;
   title?: string;
+  titleCustom?: boolean;
   shell?: TerminalShell;
   fallbackNotice?: string;
   attachmentId?: number;
@@ -403,6 +404,7 @@ export interface LiveTabInfo {
   lastOutputAt?: number;
   lastOutputMsAgo: number;
   title?: string;
+  titleCustom?: boolean;
 }
 
 export type RecordingState = "never-started" | "running" | "stopped" | "failed";

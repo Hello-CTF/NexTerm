@@ -240,6 +240,10 @@ func TestTerminalRenameCrossScopeRejected(t *testing.T) {
 	if result := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r", Name: "terminal_rename", Args: json.RawMessage(`{}`)}, nil); result.OK {
 		t.Fatal("missing title must fail validation")
 	}
+	// A blank title would clear the user's custom title; the assistant may not do that.
+	if result := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r", Name: "terminal_rename", Args: json.RawMessage(`{"title":"  "}`)}, nil); result.OK || len(terminal.renameCalls) != 0 {
+		t.Fatalf("blank title must not rename: result=%+v calls=%v", result, terminal.renameCalls)
+	}
 }
 
 func TestSessionDependenciesEnforceAccountOwnership(t *testing.T) {

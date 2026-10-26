@@ -207,7 +207,7 @@ func (t *Tab) infoLocked() TabInfo {
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
 		Exited: t.exited, Retainable: t.retainable || !t.ephemeral && !t.regularRemote, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
-		Title: t.title, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
+		Title: t.title, TitleCustom: t.titleCustom, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
 	}
 }
 
@@ -236,7 +236,7 @@ func (t *Tab) controlEventLocked() ControlEvent {
 		TabID: t.ID, Cols: info.Cols, Rows: info.Rows, GridRevision: info.GridRevision,
 		Controller: info.Controller, Subscribers: info.Subscribers,
 		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion, Cwd: t.cwd, Durable: info.Durable,
-		Title: t.title,
+		Title: t.title, TitleCustom: t.titleCustom,
 	}
 	queue.pending[event.Version] = recordingControlEvent{event: event, closed: t.closed}
 	queue.orderHeld.Store(false)
@@ -699,10 +699,18 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 // RenameTab sets the custom title of a terminal tab and emits a control event
 // so every attached client refreshes. Durable tabs persist the title and
 // restore it on recovery; other tabs keep it in memory for their lifetime.
+// A blank title clears the custom title and returns the tab to the OSC
+// dynamic title.
 func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, error) {
-	title, err := normalizeTabTitle(title)
-	if err != nil {
-		return TabInfo{}, err
+	clear := blankTabTitle(title)
+	if clear {
+		title = ""
+	} else {
+		normalized, err := normalizeTabTitle(title)
+		if err != nil {
+			return TabInfo{}, err
+		}
+		title = normalized
 	}
 	tab, err := m.Tab(tabID)
 	if err != nil {
@@ -747,20 +755,63 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 		if supported {
 			unlocked = true
 			tab.lifecycleMu.Unlock()
-			return m.renameCanonicalTab(ctx, tab, provider, title)
+			info, err := m.renameCanonicalTab(ctx, tab, provider, title)
+			if err != nil || info.TitleCustom {
+				return info, err
+			}
+			return m.restoreDynamicTitle(ctx, tab, info), nil
 		}
 	}
+	dynamic := ""
+	if clear {
+		dynamic = tab.dynamicTitle()
+	}
 	tab.mu.Lock()
-	tab.title = title
-	tab.titleCustom = true
+	if clear {
+		tab.title = dynamic
+		tab.titleCustom = false
+	} else {
+		tab.title = title
+		tab.titleCustom = true
+	}
 	event := tab.controlEventLocked()
 	info := tab.infoLocked()
 	tab.mu.Unlock()
 	if durable {
-		m.persistDurableTabTitle(ownerCtx(context.Background(), tab.session.userID), tabID, title)
+		owner := ownerCtx(context.Background(), tab.session.userID)
+		if clear {
+			m.deleteDurableTabTitle(owner, tabID)
+		} else {
+			m.persistDurableTabTitle(owner, tabID, title)
+		}
 	}
 	m.emit(ctx, TopicTerminalControl, event)
 	return info, nil
+}
+
+// dynamicTitle reads the OSC 0/2 title the terminal state last reported.
+func (t *Tab) dynamicTitle() string {
+	if source, ok := t.terminal.(interface{ Title() string }); ok {
+		return source.Title()
+	}
+	return ""
+}
+
+// restoreDynamicTitle shows the current OSC dynamic title again after a
+// canonical rename cleared the custom title.
+func (m *Manager) restoreDynamicTitle(ctx context.Context, tab *Tab, info TabInfo) TabInfo {
+	dynamic := tab.dynamicTitle()
+	tab.mu.Lock()
+	if tab.titleCustom || tab.closed || tab.title == dynamic {
+		tab.mu.Unlock()
+		return info
+	}
+	tab.title = dynamic
+	event := tab.controlEventLocked()
+	info = tab.infoLocked()
+	tab.mu.Unlock()
+	m.emit(ctx, TopicTerminalControl, event)
+	return info
 }
 
 func (m *Manager) AttachTab(ctx context.Context, tabID string, options AttachOptions) (TabInfo, error) {

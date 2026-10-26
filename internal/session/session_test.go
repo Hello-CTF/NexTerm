@@ -553,7 +553,7 @@ func TestRenameTabEmitsEventAndValidatesTitle(t *testing.T) {
 	if control.TabID != tab.ID || control.Title != "部署机" {
 		t.Fatalf("control event = %+v", control)
 	}
-	for _, title := range []string{"", "   ", "bad\ttitle", "bad\ntitle", string(make([]byte, 81))} {
+	for _, title := range []string{"bad\ttitle", "bad\ntitle", string(make([]byte, 81))} {
 		if _, err := manager.RenameTab(context.Background(), tab.ID, title); !errors.Is(err, ErrInvalidTitle) {
 			t.Fatalf("title %q: err=%v", title, err)
 		}
