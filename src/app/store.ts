@@ -1,9 +1,7 @@
 import { create } from "zustand";
-import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type RecordingStatus, type SessionInfo, type VaultStatus } from "../ipc/commands";
+import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo, type VaultStatus } from "../ipc/commands";
 import { DESKTOP } from "../ipc/env";
-import type { ConnectProgressEvent, HelperProgressEvent, SessionStatusEvent as BaseSessionStatusEvent } from "../ipc/events";
 import { describeError } from "../ui/errorText";
-import { formatTime } from "../ui/format";
 import type { ChoiceOption } from "../ui/dialogs";
 import { connectWithHostKeyConfirm, confirmHostKeyIfNeeded } from "./hostKeys";
 import { formatQuickConnectTarget, type QuickConnectTarget } from "./quickConnectTarget";
@@ -11,10 +9,7 @@ import {
   clearUnknownFileEditorRename,
   dirtyFileEditors,
   fileEditorCaseInsensitive,
-  fileEditorPathMatches,
   fileEditorRenamePending,
-  migratedFileEditorPath,
-  migrateFileEditorDirty,
   unknownFileEditorRename,
 } from "../features/files/editorGuards";
 import { baseName } from "../features/files/pathUtils";
@@ -24,20 +19,14 @@ import {
   createHelperOperationState,
   HELPER_DEFAULT_BUDGET_MS,
   helperOperationReducer,
-  type HelperOperation,
-  type HelperOperationKind,
-  type HelperOperationState,
 } from "../features/terminal/helperOperationState";
 import { useConnectHistory } from "../features/explorer/connectHistory";
-import { isFleetHealthTabId } from "../features/fleet/fleetHealthTab";
 import {
   getResolvedTheme,
   getThemeMode,
   initTheme,
   setThemeMode as persistThemeMode,
   subscribeTheme,
-  type ResolvedTheme,
-  type ThemeMode,
 } from "./theme";
 import {
   getTerminalPrefs,
@@ -54,1083 +43,108 @@ import {
   focusedActiveWorkspace,
   focusedWorkspaces,
   reconcileActiveWorkspaceForFocus,
-  type ProjectFocus,
-  type ProjectInventory,
 } from "./projectFocus";
 
-export type PaneKind =
-  | "terminal"
-  | "files"
-  | "log"
-  | "mount"
-  | "forward"
-  | "docker"
-  | "db"
-  | "credentials"
-  | "settings"
-  | "audit"
-  | "devices"
-  | "background"
-  | "history"
-  | "execBatch";
-
-const TOOL_TAB_KINDS = new Set<PaneKind>([
-  "credentials",
-  "settings",
-  "audit",
-  "devices",
-  "history",
-  "execBatch",
-]);
-
-export function isToolTabKind(kind: PaneKind): boolean {
-  return TOOL_TAB_KINDS.has(kind);
-}
-
-export function isGlobalToolTab(tab: { kind: PaneKind; sessionId?: string }): boolean {
-  return tab.kind === "forward" && !tab.sessionId;
-}
-
-function isWorkspaceToolTab(tab: { kind: PaneKind; sessionId?: string }): boolean {
-  return isToolTabKind(tab.kind) || isGlobalToolTab(tab);
-}
-
-export type LeftMode = "assets" | "files" | "credentials";
-
-export type DbKind = "mysql" | "postgres" | "redis";
-
-export const DB_KIND_LABEL: Record<DbKind, string> = {
-  mysql: "SQL",
-  postgres: "PostgreSQL",
-  redis: "Redis",
-};
-
-export function dbKindOf(kind: string): DbKind | null {
-  return kind === "mysql" || kind === "postgres" || kind === "redis" ? kind : null;
-}
-
-export interface AppTab {
-  id: string;
-  kind: PaneKind;
-  title: string;
-  sessionId?: string;
-  assetId?: string;
-  tabId?: string;
-  containerId?: string;
-  connId?: string;
-  dbKind?: DbKind;
-  credId?: string;
-  path?: string;
-  shell?: "powershell" | "cmd" | "posix" | "unknown";
-  pendingDirectory?: string;
-  closable: boolean;
-  dead?: boolean;
-  exited?: boolean;
-  retainable?: boolean;
-  // durable is reported by the backend once the terminal attaches; SSH tabs
-  // can only move to the background when they run on the durable helper.
-  durable?: boolean;
-  renamedByUser?: boolean;
-  closeError?: string;
-  restorePending?: boolean;
-}
-
-export type WorkspaceKind = "session" | "db" | "tools";
-
-export interface Pane {
-  id: string;
-  tabs: AppTab[];
-  activeTabId: string | null;
-}
-
-export interface Workspace {
-  id: string;
-  kind: WorkspaceKind;
-  title: string;
-  sessionId?: string;
-  assetId?: string;
-  connId?: string;
-  dbKind?: DbKind;
-  assetKind?: string;
-  quickTarget?: QuickWorkspaceTarget;
-  deletedTarget?: boolean;
-  restorePending?: boolean;
-  panes: Pane[];
-  activePaneId: string;
-  splitRatio: number;
-  closable: boolean;
-}
-
-export interface WorkspaceSpec {
-  kind: WorkspaceKind;
-  title: string;
-  sessionId?: string;
-  assetId?: string;
-  connId?: string;
-  dbKind?: DbKind;
-  assetKind?: string;
-  quickTarget?: QuickWorkspaceTarget;
-}
-
-export interface QuickWorkspaceTarget extends QuickConnectTarget {
-  id: string;
-  authKind: "agent" | "password";
-}
-
-export interface SqlDraft {
-  text: string;
-  selection: { from: number; to: number };
-  schema: string;
-  connId: string;
-  dbKind: DbKind;
-}
-
-export interface SqlExecutionTarget {
-  connId: string;
-  dbKind: DbKind;
-  title: string;
-  assetId?: string;
-}
-
-export type SqlExecutionOutcome = "success" | "error" | "unknown";
-
-export interface SqlExecutionRecord {
-  id: number;
-  generation: number;
-  target: SqlExecutionTarget;
-  sql: string;
-  sqlTruncated: boolean;
-  schema: string;
-  startedAt: number;
-  endedAt: number;
-  durationMs: number;
-  rowsAffected: number | null;
-  error: string | null;
-  errorTruncated: boolean;
-  outcome: SqlExecutionOutcome;
-}
-
-export type SqlExecutionInput = Omit<
+import {
+  explicitWorkspaceMatchesTab,
+  findTabLocation,
+  isWorkspaceToolTab,
+  makeAiBoard,
+  makeAiDockTab,
+  makePane,
+  migrateToolTabs,
+  migrateWorkspaceFileLocators,
+  nextBroadcastGeneration,
+  nextTabId,
+  normalizeWorkspacePanes,
+  omitAiBoard,
+  omitWorkspaceRuntime,
+  pickPaneForTab,
+  pruneBroadcastToWorkspaces,
+  rebindWorkspaceSession,
+  sameTab,
+  workspaceFieldPatch,
+  DB_KIND_LABEL,
+  dbKindOf,
+  GLOBAL_AI_BOARD_KEY,
+} from "./store/model";
+import {
+  advanceWorkspaceProblemResetGeneration,
+  assetConnectionProblemKey,
+  boundedSqlExecutionText,
+  findConnectionWorkspace,
+  getWorkspaceProblemResetGeneration,
+  makeWorkspaceProblem,
+  quickConnectionProblemKey,
+  selectConnectionProblem,
+  latestConnectionProblem,
+  SQL_EXECUTION_HISTORY_LIMIT,
+  WORKSPACE_PROBLEM_LIMIT,
+  withoutConnectionProblem,
+} from "./store/problems";
+import {
+  clampWidth,
+  clearRestoredTakeover,
+  initialLayout,
+  initialTerminalPrefs,
+  LEFT_MAX,
+  LEFT_MIN,
+  peekRestoredTakeover,
+  persistTakeover,
+  RIGHT_MAX,
+  RIGHT_MIN,
+  saveLayout,
+  saveTerminalPrefs,
+} from "./store/persistence";
+import {
+  helperOperationLive,
+  helperOperationMessage,
+  helperProgressContext,
+  helperProgressKey,
+  helperTabContext,
+  nextLocalHelperOperationID,
+} from "./store/helperOperations";
+import {
+  abnormalDisconnectNotices,
+  sessionStatusEvidence,
+  sessionStatusEvidenceMap,
+  sessionStatusText,
+  trackSessionStatusEvidence,
+} from "./store/sessionStatus";
+import type {
+  AppTab,
+  ConnectAssetInput,
+  ConnectAssetOptions,
+  ConnectOutcome,
+  QuickWorkspaceTarget,
+  RestoreWorkspaceOptions,
+  SaveQuickConnectOutcome,
+  SessionReconnectError,
+  SessionRuntimeInfo,
+  SessionStatusEvent,
+  SqlDraft,
   SqlExecutionRecord,
-  "id" | "sqlTruncated" | "errorTruncated"
->;
-
-export type WorkspaceProblemSource = "sql-query" | "sql-schemas" | "sql-tables" | "connect";
-
-export interface WorkspaceProblemTarget {
-  title: string;
-  identity: string;
-  kind?: string;
-  assetId?: string;
-  connId?: string;
-  schema?: string;
-}
-
-export type WorkspaceProblemConnection =
-  | { kind: "asset"; asset: ConnectAssetInput }
-  | { kind: "quick"; mode: "temporary" | "save"; target: QuickConnectTarget; label: string };
-
-export interface WorkspaceProblem {
-  id: number;
-  generation: number;
-  resetGeneration?: number;
-  createdAt: number;
-  source: WorkspaceProblemSource;
-  operation: string;
-  target: WorkspaceProblemTarget;
-  summary: string;
-  detail: string;
-  detailTruncated: boolean;
-  canRetryRead: boolean;
-  sql?: string;
-  sqlTruncated?: boolean;
-  outcome?: SqlExecutionOutcome;
-  connection?: WorkspaceProblemConnection;
-  connectionKey?: string;
-}
-
-export type WorkspaceProblemInput = Omit<
+  UiState,
+  Workspace,
+  WorkspaceKind,
   WorkspaceProblem,
-  "id" | "detailTruncated" | "sqlTruncated"
->;
-
-export type ConnectionProblemInput = Omit<
-  WorkspaceProblemInput,
-  "generation" | "connectionKey"
-> & {
-  connectionKey: string;
-  workspaceId?: string;
-};
-
-export interface WorkspaceRuntime {
-  generation: number;
-  sqlDraft?: SqlDraft;
-  sqlExecutionHistory?: SqlExecutionRecord[];
-  problems?: WorkspaceProblem[];
-}
-
-export type WorkspaceRestoreStatus = "waiting" | "connecting" | "success" | "failed" | "canceled" | "skipped";
-
-export interface WorkspaceRestoreResult {
-  status: WorkspaceRestoreStatus;
-  detail?: string;
-}
-
-export interface SessionReconnectMetadata {
-  error?: string | null;
-  errorCode?: string | null;
-  attempt?: number;
-  nextRetryAt?: string | number | null;
-  staleConfig?: boolean | null;
-}
-
-export type SessionRuntimeInfo = SessionInfo & SessionReconnectMetadata;
-export type SessionStatusEvent = BaseSessionStatusEvent & SessionReconnectMetadata;
-
-export interface ToastAction {
-  label: string;
-  onSelect: () => void;
-}
-
-export interface ToastItem {
-  id: number;
-  kind: "info" | "error" | "success";
-  text: string;
-  action?: ToastAction;
-}
-
-export interface TextPromptState {
-  message: string;
-  value: string;
-  multiLine?: boolean;
-  secret?: boolean;
-  resolve: (v: string | null) => void;
-}
-
-export interface AppDialogState {
-  kind: "ask" | "confirm" | "message";
-  message: string;
-  title?: string;
-  level: "info" | "warning";
-  resolve: (v: boolean) => void;
-}
-
-export interface AppChoiceOption {
-  key: string;
-  label: string;
-  hint?: string;
-  danger?: boolean;
-  primary?: boolean;
-}
-
-export interface AppChoiceState {
-  title: string;
-  message: string;
-  options: AppChoiceOption[];
-  level: "info" | "warning";
-  rememberLabel?: string;
-  resolve: (v: string | null, remember: boolean) => void;
-}
-
-export interface TakeoverState {
-  tabId: string;
-  jobId?: string;
-  token: string;
-  task: string;
-  allowWrite: boolean;
-  startedAt: number;
-}
-
-// AI board groups by workspace: each workspace gets one tab group, each tab bound to an independent conversation.
-export interface AiDockTab {
-  id: string;
-  title: string;
-  conversationId?: string;
-  draft?: string;
-}
-
-export interface AiBoard {
-  tabs: AiDockTab[];
-  activeTabId: string | null;
-}
-
-// Without a remote-host workspace (no workspace or the "tools" workspace), the AI board falls into the global group.
-export const GLOBAL_AI_BOARD_KEY = "global";
-
-export type BroadcastTargetStatus = "pending" | "sent" | "skipped" | "failed";
-
-export interface BroadcastTargetReport {
-  status: BroadcastTargetStatus;
-  reason: string | null;
-}
-
-export interface BroadcastOrigin {
-  workspaceId: string;
-  storeTabId: string;
-}
-
-export interface BroadcastState {
-  origin: BroadcastOrigin;
-  targetIds: string[];
-  generation: number;
-  results: Record<string, BroadcastTargetReport>;
-}
-
-export interface BroadcastConfig {
-  origin: BroadcastOrigin;
-  targetIds: string[];
-}
-
-export interface BroadcastTargetUpdate extends BroadcastTargetReport {
-  targetId: string;
-}
-
-interface UiState {
-  leftOpen: boolean;
-  leftMode: LeftMode;
-  rightOpen: boolean;
-  themeMode: ThemeMode;
-  resolvedTheme: ResolvedTheme;
-  setThemeMode: (m: ThemeMode) => void;
-  workspaces: Workspace[];
-  activeWorkspaceId: string | null;
-  activeProject: ProjectFocus;
-  projectInventory: ProjectInventory | null;
-  setActiveProject: (focus: ProjectFocus) => void;
-  setProjectInventory: (inventory: ProjectInventory) => void;
-  sessions: SessionRuntimeInfo[];
-  aiBusy: boolean;
-  takeover: TakeoverState | null;
-  setTakeover: (t: TakeoverState | null) => void;
-  aiBoards: Record<string, AiBoard>;
-  aiAccountEpoch: number;
-  accountEpoch: number;
-  advanceAccountEpoch: () => void;
-  // knownAssetIds is the last authoritative asset-ID snapshot of the current
-  // account epoch; knownAssetsEpoch tracks which epoch it belongs to.
-  knownAssetIds: string[];
-  knownAssetsEpoch: number;
-  workspaceRuntime: Record<string, WorkspaceRuntime>;
-  workspaceRuntimeEpoch: number;
-  connectionProblems: Record<string, WorkspaceProblem>;
-  getWorkspaceRuntime: (workspaceId: string) => WorkspaceRuntime | undefined;
-  ensureWorkspaceRuntime: (workspaceId: string) => WorkspaceRuntime | undefined;
-  updateSqlDraft: (workspaceId: string, draft: SqlDraft, expectedGeneration?: number) => void;
-  recordSqlExecution: (workspaceId: string, record: SqlExecutionInput) => void;
-  recordWorkspaceProblem: (workspaceId: string, problem: WorkspaceProblemInput) => void;
-  recordConnectionProblem: (problem: ConnectionProblemInput) => void;
-  clearConnectionProblem: (connectionKey: string) => void;
-  dismissWorkspaceProblem: (workspaceId: string, problemId: number, expectedGeneration?: number) => void;
-  clearSqlDraft: (workspaceId: string, expectedGeneration?: number) => void;
-  ensureAiBoard: (key: string) => AiBoard;
-  addAiTab: (key: string) => string;
-  closeAiTab: (key: string, tabId: string, expectedEpoch?: number) => void;
-  setActiveAiTab: (key: string, tabId: string) => void;
-  moveAiTab: (key: string, fromIndex: number, toIndex: number) => void;
-  updateAiTab: (key: string, tabId: string, patch: Partial<AiDockTab>, expectedEpoch?: number) => void;
-  resetAiAccount: () => void;
-  broadcast: BroadcastState | null;
-  setBroadcast: (b: BroadcastConfig | null) => void;
-  reportBroadcastTarget: (generation: number, update: BroadcastTargetUpdate) => void;
-  modelProfilesRevision: number;
-  bumpModelProfilesRevision: () => void;
-  connectFocusRevision: number;
-  bumpConnectFocusRevision: () => void;
-  toasts: ToastItem[];
-  textPrompt: TextPromptState | null;
-  openTextPrompt: (s: TextPromptState) => void;
-  closeTextPrompt: (v: string | null) => void;
-  aiRulePrefill: string | null;
-  setAiRulePrefill: (v: string | null) => void;
-  appDialog: AppDialogState | null;
-  openAppDialog: (d: AppDialogState) => void;
-  closeAppDialog: (v: boolean) => void;
-  appChoice: AppChoiceState | null;
-  openAppChoice: (c: AppChoiceState) => void;
-  closeAppChoice: (v: string | null) => void;
-  cancelAccountDialogs: () => void;
-
-  setLeftOpen: (v: boolean) => void;
-  setLeftMode: (m: LeftMode) => void;
-  setRightOpen: (v: boolean) => void;
-
-  leftWidth: number;
-  rightWidth: number;
-  setLeftWidth: (w: number) => void;
-  setRightWidth: (w: number) => void;
-
-  terminalOsc52: boolean;
-  setTerminalOsc52: (v: boolean) => void;
-
-  ensureWorkspace: (spec: WorkspaceSpec) => string;
-  setActiveWorkspace: (id: string) => void;
-  closeWorkspace: (id: string, mode?: "detach") => Promise<boolean>;
-  markDeletedAssetWorkspaces: (assetId: string) => void;
-  reconcileDeletedTargets: (assets: readonly { id: string }[], epoch: number) => void;
-
-  splitWorkspace: (workspaceId?: string) => void;
-  openInLowerPane: (tab: AppTab, workspaceId?: string) => void;
-  unsplitWorkspace: (paneId?: string, workspaceId?: string) => Promise<void>;
-  setActivePane: (paneId: string, workspaceId?: string) => void;
-  setSplitRatio: (ratio: number, workspaceId?: string) => void;
-
-  setActiveTab: (id: string) => void;
-  addTab: (tab: AppTab, paneId?: string) => void;
-  closeTab: (id: string, mode?: "kill" | "detach", suppressErrorToast?: boolean) => Promise<boolean>;
-  updateTab: (id: string, patch: Partial<AppTab>) => void;
-  migrateFileEditorLocators: (sessionId: string, from: string, to: string, kind: string) => void;
-  resolveUnknownFileEditorRename: (sessionId: string, path: string, renamed: boolean) => void;
-  moveTabInPane: (paneId: string, fromIndex: number, toIndex: number) => void;
-  moveWorkspace: (fromIndex: number, toIndex: number) => void;
-  updateWorkspaceSession: (workspaceId: string, sessionId: string) => void;
-
-  recordings: Record<string, RecordingStatus>;
-  setRecordingStatus: (status: RecordingStatus) => void;
-  resyncRecording: (tabId: string) => Promise<void>;
-  setSessions: (s: SessionRuntimeInfo[]) => void;
-  resyncSessions: (options?: { silent?: boolean }) => Promise<void>;
-  resetSessions: (options?: { clearWorkspaceRuntime?: boolean }) => void;
-  resetAccountWorkspaces: () => void;
-  sessionResyncFailed: boolean;
-  sessionResyncCompleted: boolean;
-  layoutSyncCompleted: boolean;
-  workspaceRestoreDismissed: boolean;
-  workspaceRestoreResults: Record<string, WorkspaceRestoreResult>;
-  dismissWorkspaceRestoreBanner: () => void;
-  setAiBusy: (v: boolean) => void;
-  pushToast: (kind: ToastItem["kind"], text: string, action?: ToastAction) => void;
-  dismissToast: (id: number) => void;
-
-  connectingAssetIds: string[];
-
-  connectProgress: Record<string, ConnectProgressEvent>;
-  setConnectProgress: (assetId: string, progress: ConnectProgressEvent | null) => void;
-  helperProgress: Record<string, HelperProgressEvent>;
-  helperOperations: HelperOperationState;
-  helperOperationTabs: Record<string, string>;
-  helperOperationIntents: Record<string, { kind: HelperOperationKind; originalTabId?: string; sequence: number }>;
-  helperRetries: Record<string, { tabId: string; operationId: string }>;
-  registerHelperOperationIntent: (tabId: string, kind: HelperOperationKind, originalTabId?: string) => void;
-  setHelperProgress: (progress: HelperProgressEvent | null) => void;
-  cancelHelperOperation: (tabId: string) => Promise<void>;
-  retryHelperOperation: (tabId: string) => Promise<void>;
-  continueHelperOrdinary: (tabId: string, remember?: boolean) => Promise<void>;
-  failHelperRestore: (tabId: string, message?: string) => void;
-  dismissHelperOperation: (tabId: string, operationId?: string) => void;
-}
+  WorkspaceProblemConnection,
+  WorkspaceProblemTarget,
+  WorkspaceRuntime,
+} from "./store/types";
 
 let toastSeq = 1;
-let tabSeq = 1;
 let workspaceGenerationSeq = 0;
 let sqlExecutionSeq = 0;
-let workspaceProblemSeq = 0;
-let workspaceProblemResetGeneration = 0;
 let recordingRequestSeq = 0;
 let recordingsEpoch = 0;
-let broadcastGeneration = 0;
 const recordingRequests = new Map<string, number>();
-
-export function pruneBroadcastToWorkspaces(
-  broadcast: BroadcastState,
-  workspaces: readonly Workspace[],
-): BroadcastState | null {
-  const openTabIds = new Set(
-    workspaces.flatMap((workspace) =>
-      workspace.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id)),
-    ),
-  );
-  const originExists = workspaces.some(
-    (workspace) =>
-      workspace.id === broadcast.origin.workspaceId &&
-      workspace.panes.some((pane) => pane.tabs.some((tab) => tab.id === broadcast.origin.storeTabId)),
-  );
-  const remaining = broadcast.targetIds.filter((targetId) => openTabIds.has(targetId));
-  if (!originExists || remaining.length === 0) return null;
-  if (remaining.length === broadcast.targetIds.length) return broadcast;
-  return {
-    ...broadcast,
-    targetIds: remaining,
-    generation: ++broadcastGeneration,
-    results: {},
-  };
-}
-
-const SQL_EXECUTION_HISTORY_LIMIT = 50;
-const SQL_EXECUTION_TEXT_BYTES = 32 * 1024;
-const WORKSPACE_PROBLEM_LIMIT = 50;
-const WORKSPACE_PROBLEM_DETAIL_BYTES = 16 * 1024;
-const PROBLEM_REDACTED = "[REDACTED]";
-const PRIVATE_KEY_BLOCK = /-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g;
-const BEARER_TOKEN = /\b(Bearer\s+)([^\s]+)/gi;
-const SENSITIVE_ASSIGNMENT =
-  /(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization)(\s*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
-const SENSITIVE_CLI_OPTION =
-  /((?:--(?:password|passwd|pwd|secret|token|api-key|access-key)|-p)(?:=|\s+)?)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
-const ENV_ASSIGNMENT = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$/gm;
-const SENSITIVE_ENV_NAME = /password|passwd|pwd|secret|token|credential|authorization|api[_-]?key|access[_-]?key|private[_-]?key/i;
-
-function isWhitespace(char: string): boolean {
-  // Full JavaScript \s semantics, including Unicode spaces such as NBSP.
-  return /\s/.test(char);
-}
-
-// Linear replacement for the old quadratic URL credential pattern: scheme positions are found
-// with indexOf, and the scheme token is the longest suffix of the contiguous scheme-character
-// run that starts at a letter — the old unanchored regex matched valid scheme suffixes after
-// digits and punctuation too (1http://, .http://, -http://, +http:// all redacted).
-function redactUrlCredentials(text: string): string {
-  let result = "";
-  let last = 0;
-  let searchFrom = 0;
-  for (;;) {
-    const schemeEnd = text.indexOf("://", searchFrom);
-    if (schemeEnd < 0) break;
-    let runStart = schemeEnd - 1;
-    while (runStart >= 0 && /[a-z0-9+.-]/i.test(text[runStart] as string)) runStart--;
-    runStart++;
-    let schemeStart = runStart;
-    while (schemeStart < schemeEnd && !/[a-z]/i.test(text[schemeStart] as string)) schemeStart++;
-    if (schemeStart >= schemeEnd) {
-      searchFrom = schemeEnd + 3;
-      continue;
-    }
-    const userStart = schemeEnd + 3;
-    let colon = -1;
-    for (let i = userStart; i < text.length; i++) {
-      const c = text[i] as string;
-      if (c === ":") {
-        colon = i;
-        break;
-      }
-      if (c === "/" || c === "@" || isWhitespace(c)) break;
-    }
-    if (colon < 0) {
-      searchFrom = schemeEnd + 3;
-      continue;
-    }
-    let at = -1;
-    for (let i = colon + 1; i < text.length; i++) {
-      const c = text[i] as string;
-      if (c === "@") {
-        at = i;
-        break;
-      }
-      if (c === "/" || isWhitespace(c)) break;
-    }
-    if (at < 0) {
-      searchFrom = schemeEnd + 3;
-      continue;
-    }
-    result += text.slice(last, colon + 1) + PROBLEM_REDACTED;
-    last = at;
-    searchFrom = at;
-  }
-  return result + text.slice(last);
-}
-
-// Linear replacement for the old quadratic env-assignment pattern: each maximal identifier run is
-// visited once, and a match is only possible at its first character. Values follow the original
-// quoted/unquoted alternatives, including empty quoted strings.
-function redactEnvAssignments(text: string): string {
-  let result = "";
-  let last = 0;
-  let i = 0;
-  while (i < text.length) {
-    const start = text[i] as string;
-    if (!/[A-Za-z_]/.test(start)) {
-      i++;
-      continue;
-    }
-    let j = i + 1;
-    while (j < text.length && /[A-Za-z0-9_]/.test(text[j] as string)) j++;
-    let k = j;
-    while (k < text.length && isWhitespace(text[k] as string)) k++;
-    if (text[k] !== "=") {
-      i = j;
-      continue;
-    }
-    k++;
-    while (k < text.length && isWhitespace(text[k] as string)) k++;
-    const quote = text[k];
-    let end = k;
-    if (quote === "\"" || quote === "'") {
-      const close = text.indexOf(quote, k + 1);
-      if (close >= 0) {
-        end = close + 1;
-      } else {
-        // No closing quote: the original unquoted alternative takes over from the opening
-        // quote and stops at the first whitespace/comma/semicolon, never consuming to EOF.
-        while (end < text.length && !/[\s,;]/.test(text[end] as string)) end++;
-      }
-    } else {
-      while (end < text.length && !/[\s,;]/.test(text[end] as string)) end++;
-    }
-    if (end === k) {
-      i = j;
-      continue;
-    }
-    result += text.slice(last, k) + PROBLEM_REDACTED;
-    last = end;
-    i = end;
-  }
-  return result + text.slice(last);
-}
-
-function boundedUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
-  let bytes = 0;
-  let end = 0;
-  for (const char of text) {
-    const codePoint = char.codePointAt(0) as number;
-    const charBytes = codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
-    if (bytes + charBytes > maxBytes) break;
-    bytes += charBytes;
-    end += char.length;
-  }
-  const truncated = end !== text.length;
-  return { text: truncated ? text.slice(0, end) : text, truncated };
-}
-
-function boundedSqlExecutionText(text: string): { text: string; truncated: boolean } {
-  return boundedUtf8(text, SQL_EXECUTION_TEXT_BYTES);
-}
-
-export function getWorkspaceProblemResetGeneration(): number {
-  return workspaceProblemResetGeneration;
-}
-
-export function sanitizeWorkspaceProblemText(text: string): string {
-  const allEnv = text.toLowerCase().includes(".env");
-  const sanitized = redactUrlCredentials(
-    text
-      .replace(PRIVATE_KEY_BLOCK, PROBLEM_REDACTED)
-      .replace(BEARER_TOKEN, (_match, prefix: string) => `${prefix}${PROBLEM_REDACTED}`)
-      .replace(
-        SENSITIVE_ASSIGNMENT,
-        (_match, name: string, separator: string) => `${name}${separator}${PROBLEM_REDACTED}`,
-      )
-      .replace(
-        SENSITIVE_CLI_OPTION,
-        (_match, option: string) => `${option}${PROBLEM_REDACTED}`,
-      ),
-  );
-  if (allEnv) {
-    return redactEnvAssignments(sanitized);
-  }
-  return sanitized.replace(
-    ENV_ASSIGNMENT,
-    (line, prefix: string, name: string, separator: string) =>
-      SENSITIVE_ENV_NAME.test(name)
-        ? `${prefix}${name}${separator}${PROBLEM_REDACTED}`
-        : line,
-  );
-}
-
-function makeWorkspaceProblem(problem: WorkspaceProblemInput): WorkspaceProblem {
-  const detail = boundedUtf8(sanitizeWorkspaceProblemText(problem.detail), WORKSPACE_PROBLEM_DETAIL_BYTES);
-  const sql = problem.sql === undefined ? undefined : boundedSqlExecutionText(problem.sql);
-  const connection = problem.connection
-    ? problem.connection.kind === "asset"
-      ? { ...problem.connection, asset: { ...problem.connection.asset } }
-      : { ...problem.connection, target: { ...problem.connection.target } }
-    : undefined;
-  return {
-    ...problem,
-    id: ++workspaceProblemSeq,
-    target: {
-      ...problem.target,
-      title: sanitizeWorkspaceProblemText(problem.target.title),
-      identity: sanitizeWorkspaceProblemText(problem.target.identity),
-    },
-    summary: boundedUtf8(sanitizeWorkspaceProblemText(problem.summary), 240).text,
-    detail: detail.text,
-    detailTruncated: detail.truncated,
-    sql: sql?.text,
-    sqlTruncated: sql?.truncated ?? false,
-    connection,
-  };
-}
-
-function withoutConnectionProblem(
-  runtime: Record<string, WorkspaceRuntime>,
-  connectionKey: string,
-): Record<string, WorkspaceRuntime> {
-  let changed = false;
-  const next: Record<string, WorkspaceRuntime> = {};
-  for (const [workspaceId, entry] of Object.entries(runtime)) {
-    if (!entry.problems?.some((problem) => problem.connectionKey === connectionKey)) {
-      next[workspaceId] = entry;
-      continue;
-    }
-    changed = true;
-    next[workspaceId] = {
-      ...entry,
-      problems: entry.problems.filter((problem) => problem.connectionKey !== connectionKey),
-    };
-  }
-  return changed ? next : runtime;
-}
 
 // Auth guard for the session list: when login/logout switches accounts, in-flight old requests may arrive late and must not write back over the new session data.
 let sessionsEpoch = 0;
 let sessionsRequestSeq = 0;
-const abnormalDisconnectNotices = new Set<string>();
-
-// Latest status-event evidence per session: backend status events carry a monotonically increasing
-// version, so a manual reconnect can tell a stale pre-reconnect list frame from a fresh one. Engagement
-// (connecting/reconnecting) is tracked as its own high-water mark so a later terminal event cannot erase
-// the proof that the current attempt engaged. Cleared with the sessions.
-export interface SessionStatusEvidence {
-  version: number;
-  status: SessionInfo["status"];
-  error: string | null;
-  errorCode: string | null;
-  attempt: number | undefined;
-  nextRetryAt: string | number | null | undefined;
-  engagedVersion: number;
-}
-
-const sessionStatusEvidenceMap = new Map<string, SessionStatusEvidence>();
-
-export function sessionStatusEvidence(sessionId: string): SessionStatusEvidence | undefined {
-  return sessionStatusEvidenceMap.get(sessionId);
-}
-
-function trackSessionStatusEvidence(p: SessionStatusEvent): void {
-  if (typeof p.version !== "number" || !Number.isFinite(p.version) || p.version <= 0) return;
-  const previous = sessionStatusEvidenceMap.get(p.sessionId);
-  if (previous && previous.version >= p.version) return;
-  const status = p.status as SessionInfo["status"];
-  const engagedVersion = Math.max(
-    previous?.engagedVersion ?? 0,
-    status === "connecting" || status === "reconnecting" ? p.version : 0,
-  );
-  sessionStatusEvidenceMap.set(p.sessionId, {
-    version: p.version,
-    status,
-    error: p.error ?? null,
-    errorCode: p.errorCode ?? null,
-    attempt: p.attempt,
-    nextRetryAt: p.nextRetryAt,
-    engagedVersion,
-  });
-}
-
-const LEFT_MIN = 180;
-const LEFT_MAX = 560;
-const RIGHT_MIN = 300;
-const RIGHT_MAX = 760;
-const LEFT_DEFAULT = 248;
-const RIGHT_DEFAULT = 352;
-const LAYOUT_KEY = "nexterm.layout.v1";
-const TERMINAL_PREFS_KEY = "nexterm.terminal.v1";
-
-interface TerminalPrefs {
-  osc52: boolean;
-}
-
-function loadTerminalPrefs(): TerminalPrefs {
-  try {
-    const raw = localStorage.getItem(TERMINAL_PREFS_KEY);
-    if (!raw) return { osc52: false };
-    const o = JSON.parse(raw) as { osc52?: unknown };
-    return { osc52: o.osc52 === true };
-  } catch {
-    return { osc52: false };
-  }
-}
-
-function saveTerminalPrefs(p: TerminalPrefs): void {
-  try {
-    localStorage.setItem(TERMINAL_PREFS_KEY, JSON.stringify(p));
-  } catch {
-  }
-}
-
-function clampWidth(w: number, min: number, max: number): number {
-  if (!Number.isFinite(w)) return min;
-  return Math.min(max, Math.max(min, Math.round(w)));
-}
-
-export const LEFT_WIDTH_RANGE = { min: LEFT_MIN, max: LEFT_MAX, default: LEFT_DEFAULT };
-export const RIGHT_WIDTH_RANGE = { min: RIGHT_MIN, max: RIGHT_MAX, default: RIGHT_DEFAULT };
-
-interface LocalLayout {
-  leftWidth: number;
-  rightWidth: number;
-  rightOpen: boolean;
-}
-
-// Touch tablets below this width keep the AI dock closed on first run so the terminal is not squeezed.
-const AI_DOCK_DEFAULT_MIN_TOUCH_WIDTH = 1280;
-
-export function defaultRightOpen(width: number, coarsePointer: boolean): boolean {
-  return !(coarsePointer && width < AI_DOCK_DEFAULT_MIN_TOUCH_WIDTH);
-}
-
-function initialRightOpen(): boolean {
-  try {
-    return defaultRightOpen(window.innerWidth, window.matchMedia("(pointer: coarse)").matches);
-  } catch {
-    return true;
-  }
-}
-
-function loadLayout(): LocalLayout {
-  const fallback = { leftWidth: LEFT_DEFAULT, rightWidth: RIGHT_DEFAULT, rightOpen: initialRightOpen() };
-  try {
-    const raw = localStorage.getItem(LAYOUT_KEY);
-    if (!raw) return fallback;
-    const o = JSON.parse(raw) as Partial<LocalLayout>;
-    return {
-      leftWidth: clampWidth(o.leftWidth ?? LEFT_DEFAULT, LEFT_MIN, LEFT_MAX),
-      rightWidth: clampWidth(o.rightWidth ?? RIGHT_DEFAULT, RIGHT_MIN, RIGHT_MAX),
-      rightOpen: typeof o.rightOpen === "boolean" ? o.rightOpen : initialRightOpen(),
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-function saveLayout(w: LocalLayout): void {
-  try {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(w));
-  } catch {
-  }
-}
-
-const TAKEOVER_KEY = "nexterm.takeover.v1";
-
-function loadPersistedTakeover(): TakeoverState | null {
-  try {
-    const raw = localStorage.getItem(TAKEOVER_KEY);
-    if (!raw) return null;
-    const o = JSON.parse(raw) as Partial<TakeoverState>;
-    if (
-      typeof o.tabId !== "string" ||
-      typeof o.token !== "string" ||
-      typeof o.task !== "string" ||
-      typeof o.allowWrite !== "boolean" ||
-      typeof o.startedAt !== "number"
-    ) {
-      localStorage.removeItem(TAKEOVER_KEY);
-      return null;
-    }
-    return {
-      tabId: o.tabId,
-      jobId: typeof o.jobId === "string" ? o.jobId : undefined,
-      token: o.token,
-      task: o.task,
-      allowWrite: o.allowWrite,
-      startedAt: o.startedAt,
-    };
-  } catch {
-    return null;
-  }
-}
-
-let restoredTakeover: TakeoverState | null = loadPersistedTakeover();
-
-export function consumeRestoredTakeover(): TakeoverState | null {
-  const current = restoredTakeover;
-  restoredTakeover = null;
-  return current;
-}
-
-function persistTakeover(t: TakeoverState | null): void {
-  try {
-    if (t) localStorage.setItem(TAKEOVER_KEY, JSON.stringify(t));
-    else localStorage.removeItem(TAKEOVER_KEY);
-  } catch {
-  }
-}
-
-export function nextTabId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${tabSeq++}`;
-}
-
-function makeAiDockTab(): AiDockTab {
-  return { id: nextTabId("ai"), title: "新会话" };
-}
-
-function makeAiBoard(): AiBoard {
-  const tab = makeAiDockTab();
-  return { tabs: [tab], activeTabId: tab.id };
-}
-
-function omitAiBoard(boards: Record<string, AiBoard>, key: string): Record<string, AiBoard> {
-  const next = { ...boards };
-  delete next[key];
-  return next;
-}
-
-function omitWorkspaceRuntime(
-  runtime: Record<string, WorkspaceRuntime>,
-  key: string,
-): Record<string, WorkspaceRuntime> {
-  const next = { ...runtime };
-  delete next[key];
-  return next;
-}
-
-const PLACEHOLDER_WS_TITLES = new Set(["工作区", "会话", "标签"]);
-
-function workspaceFieldPatch(
-  w: Workspace,
-  spec: WorkspaceSpec,
-): Partial<Pick<Workspace, "title" | "assetId" | "assetKind" | "quickTarget">> | null {
-  const patch: Partial<Pick<Workspace, "title" | "assetId" | "assetKind" | "quickTarget">> = {};
-  let changed = false;
-  if (!w.assetId && spec.assetId) {
-    patch.assetId = spec.assetId;
-    changed = true;
-  }
-  if (!w.assetKind && spec.assetKind) {
-    patch.assetKind = spec.assetKind;
-    changed = true;
-  }
-  if (!w.quickTarget && spec.quickTarget) {
-    patch.quickTarget = spec.quickTarget;
-    changed = true;
-  }
-  if (spec.title && spec.title !== w.title && (!w.title || PLACEHOLDER_WS_TITLES.has(w.title))) {
-    patch.title = spec.title;
-    changed = true;
-  }
-  return changed ? patch : null;
-}
-
-const initialLayout = loadLayout();
-const initialTerminalPrefs = loadTerminalPrefs();
-
-function migrateWorkspaceFileLocators(
-  st: UiState,
-  sessionId: string,
-  from: string,
-  to: string,
-  kind: string,
-): UiState {
-  const caseInsensitive = fileEditorCaseInsensitive(
-    st.sessions.find((session) => session.id === sessionId)?.kind ?? "",
-  );
-  let changed = false;
-  const workspaces = st.workspaces.map((workspace) => {
-    let workspaceChanged = false;
-    const panes = workspace.panes.map((pane) => {
-      let paneChanged = false;
-      const tabs = pane.tabs.map((tab) => {
-        if ((tab.kind !== "files" && tab.kind !== "log") || tab.sessionId !== sessionId || !tab.path) {
-          return tab;
-        }
-        const path = migratedFileEditorPath(tab.path, from, to, kind, caseInsensitive);
-        if (path === null || path === tab.path) return tab;
-        changed = true;
-        workspaceChanged = true;
-        paneChanged = true;
-        return { ...tab, path, title: baseName(path) };
-      });
-      return paneChanged ? { ...pane, tabs } : pane;
-    });
-    return workspaceChanged ? { ...workspace, panes } : workspace;
-  });
-  migrateFileEditorDirty(sessionId, from, to, kind, caseInsensitive);
-  return changed ? { ...st, workspaces } : st;
-}
-
-interface HelperTabContext {
-  tabId: string;
-  sessionId: string;
-  kind: HelperOperationKind;
-  originalTabId?: string;
-  quickConnect: boolean;
-}
-
-function helperTabContext(state: UiState, tabId: string): HelperTabContext | null {
-  for (const workspace of state.workspaces) {
-    for (const pane of workspace.panes) {
-      const tab = pane.tabs.find((candidate) => candidate.id === tabId);
-      if (!tab || tab.kind !== "terminal" || !tab.sessionId) continue;
-      return {
-        tabId: tab.id,
-        sessionId: tab.sessionId,
-        kind: tab.tabId ? "reattach" : "deploy",
-        originalTabId: tab.tabId,
-        quickConnect: Boolean(workspace.quickTarget && !workspace.assetId),
-      };
-    }
-  }
-  return null;
-}
 
 let helperOperationIntentSeq = 0;
-
-function latestHelperOperationIntent(state: UiState, sessionId: string): HelperTabContext | null {
-  let latest: HelperTabContext | null = null;
-  let sequence = 0;
-  for (const [tabId, intent] of Object.entries(state.helperOperationIntents)) {
-    if (intent.sequence < sequence) continue;
-    const context = helperTabContext(state, tabId);
-    if (context?.sessionId !== sessionId) continue;
-    latest = { ...context, kind: intent.kind, originalTabId: intent.originalTabId };
-    sequence = intent.sequence;
-  }
-  return latest;
-}
-
-function helperProgressContext(state: UiState, progress: HelperProgressEvent): HelperTabContext | null {
-  for (const [tabId, operation] of Object.entries(state.helperOperations.operations)) {
-    if (operation.operationId === progress.operationId) {
-      const context = helperTabContext(state, tabId);
-      if (context?.sessionId === progress.sessionId) return context;
-    }
-  }
-  const pending = state.helperRetries[progress.sessionId];
-  if (pending) {
-    const context = helperTabContext(state, pending.tabId);
-    if (context?.sessionId === progress.sessionId) return context;
-  }
-  const intended = latestHelperOperationIntent(state, progress.sessionId);
-  if (intended) return intended;
-  const mapped = state.helperOperationTabs[progress.sessionId];
-  if (mapped) {
-    const context = helperTabContext(state, mapped);
-    if (context?.sessionId === progress.sessionId) return context;
-  }
-  const activeWorkspace = state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
-  const activePane = activeWorkspace?.panes.find((pane) => pane.id === activeWorkspace.activePaneId);
-  const activeTab = activePane?.activeTabId;
-  if (activeTab) {
-    const context = helperTabContext(state, activeTab);
-    if (context?.sessionId === progress.sessionId) return context;
-  }
-  for (const workspace of state.workspaces) {
-    for (const pane of workspace.panes) {
-      for (const tab of pane.tabs) {
-        const context = helperTabContext(state, tab.id);
-        if (context?.sessionId === progress.sessionId) return context;
-      }
-    }
-  }
-  return null;
-}
-
-function helperProgressKey(progress: Pick<HelperProgressEvent, "sessionId" | "assetId">): string {
-  return JSON.stringify([progress.sessionId, progress.assetId]);
-}
-
-function helperOperationMessage(progress: HelperProgressEvent): string | undefined {
-  return progress.cause?.trim() || progress.error?.trim() || undefined;
-}
-
-function helperOperationLive(operation: HelperOperation | undefined): boolean {
-  return operation?.status === "running" || operation?.status === "awaiting_choice";
-}
-
-let localHelperOperationSeq = 0;
-
-function nextLocalHelperOperationID(): string {
-  localHelperOperationSeq += 1;
-  return `local-restore-${localHelperOperationSeq}`;
-}
 
 export const useUi = create<UiState>((set, get) => ({
   leftOpen: true,
@@ -1152,7 +166,7 @@ export const useUi = create<UiState>((set, get) => ({
   sessions: [],
   recordings: {},
   aiBusy: false,
-  takeover: restoredTakeover,
+  takeover: peekRestoredTakeover(),
   aiBoards: {},
   aiAccountEpoch: 0,
   accountEpoch: 0,
@@ -1918,7 +932,7 @@ export const useUi = create<UiState>((set, get) => ({
   resetSessions: (options) => {
     const clearWorkspaceRuntime = options?.clearWorkspaceRuntime === true;
     sessionsEpoch += 1;
-    workspaceProblemResetGeneration += 1;
+    advanceWorkspaceProblemResetGeneration();
     recordingsEpoch += 1;
     abnormalDisconnectNotices.clear();
     sessionStatusEvidenceMap.clear();
@@ -1947,7 +961,7 @@ export const useUi = create<UiState>((set, get) => ({
   },
   resetAccountWorkspaces: () => {
     sessionsEpoch += 1;
-    workspaceProblemResetGeneration += 1;
+    advanceWorkspaceProblemResetGeneration();
     recordingsEpoch += 1;
     abnormalDisconnectNotices.clear();
     sessionStatusEvidenceMap.clear();
@@ -1979,7 +993,7 @@ export const useUi = create<UiState>((set, get) => ({
   },
   setAiBusy: (v) => set({ aiBusy: v }),
   setTakeover: (t) => {
-    restoredTakeover = null;
+    clearRestoredTakeover();
     persistTakeover(t);
     set({ takeover: t });
   },
@@ -1989,7 +1003,7 @@ export const useUi = create<UiState>((set, get) => ({
         ? {
             origin: b.origin,
             targetIds: [...new Set(b.targetIds)],
-            generation: ++broadcastGeneration,
+            generation: nextBroadcastGeneration(),
             results: {},
           }
         : null,
@@ -2089,7 +1103,7 @@ export const useUi = create<UiState>((set, get) => ({
         !existing ||
         existing.generation !== problem.generation ||
         (problem.resetGeneration !== undefined &&
-          problem.resetGeneration !== workspaceProblemResetGeneration)
+          problem.resetGeneration !== getWorkspaceProblemResetGeneration())
       ) {
         return state;
       }
@@ -2108,7 +1122,7 @@ export const useUi = create<UiState>((set, get) => ({
   recordConnectionProblem: (problem) => {
     if (
       problem.resetGeneration !== undefined &&
-      problem.resetGeneration !== workspaceProblemResetGeneration
+      problem.resetGeneration !== getWorkspaceProblemResetGeneration()
     ) {
       return;
     }
@@ -2123,7 +1137,7 @@ export const useUi = create<UiState>((set, get) => ({
     set((state) => {
       if (
         problem.resetGeneration !== undefined &&
-        problem.resetGeneration !== workspaceProblemResetGeneration
+        problem.resetGeneration !== getWorkspaceProblemResetGeneration()
       ) {
         return state;
       }
@@ -2640,14 +1654,6 @@ function rejectPendingFileLocator(tab: AppTab): boolean {
   return true;
 }
 
-function explicitWorkspaceMatchesTab(tab: AppTab, workspace: Workspace): boolean {
-  if (isWorkspaceToolTab(tab)) return workspace.kind === "tools";
-  if (tab.kind === "background" && workspace.kind !== "session") return false;
-  if (tab.sessionId) return workspace.sessionId === tab.sessionId;
-  if (tab.connId) return workspace.connId === tab.connId;
-  return true;
-}
-
 function resolveWorkspaceId(
   tab: AppTab,
   st: { workspaces: Workspace[]; sessions: SessionRuntimeInfo[]; activeWorkspaceId: string | null },
@@ -2687,257 +1693,6 @@ function resolveWorkspaceId(
   }
   if (st.activeWorkspaceId) return st.activeWorkspaceId;
   return ensureWorkspace({ kind: "tools", title: "工具" });
-}
-
-function rebindWorkspaceSession(
-  workspaces: Workspace[],
-  workspaceId: string,
-  fromSessionId: string | undefined,
-  sessionId: string,
-): Workspace[] {
-  if (fromSessionId === sessionId) return workspaces;
-  return workspaces.map((w) => {
-    if (w.id !== workspaceId || w.sessionId !== fromSessionId) return w;
-    return {
-      ...w,
-      sessionId,
-      panes:
-        w.kind === "session" && fromSessionId !== undefined
-          ? w.panes.map((pane) => ({
-              ...pane,
-              tabs: pane.tabs.map((tab) =>
-                tab.sessionId === fromSessionId ? { ...tab, sessionId } : tab,
-              ),
-            }))
-          : w.panes,
-    };
-  });
-}
-
-function makePane(): Pane {
-  return { id: nextTabId("pane"), tabs: [], activeTabId: null };
-}
-
-function normalizeWorkspacePanes(w: Workspace): Workspace {
-  const withActiveTabs = w.panes.map((pane) => ({
-    ...pane,
-    activeTabId:
-      pane.activeTabId && pane.tabs.some((tab) => tab.id === pane.activeTabId)
-        ? pane.activeTabId
-        : (pane.tabs[pane.tabs.length - 1]?.id ?? null),
-  }));
-  const nonEmpty = withActiveTabs.filter((pane) => pane.tabs.length > 0);
-  let panes: Pane[] = nonEmpty.length > 0 ? nonEmpty : withActiveTabs.slice(0, 1);
-  if (panes.length === 0) panes = [makePane()];
-  return {
-    ...w,
-    panes,
-    activePaneId: panes.some((pane) => pane.id === w.activePaneId)
-      ? w.activePaneId
-      : panes[0].id,
-  };
-}
-
-function hasValidAiBoard(aiBoards: Record<string, unknown> | undefined, workspaceId: string): boolean {
-  const board = aiBoards?.[workspaceId];
-  if (typeof board !== "object" || board === null || Array.isArray(board)) return false;
-  const tabs = (board as { tabs?: unknown }).tabs;
-  if (!Array.isArray(tabs)) return false;
-  return tabs.some((tab) => {
-    if (typeof tab !== "object" || tab === null || Array.isArray(tab)) return false;
-    const id = (tab as { id?: unknown }).id;
-    return typeof id === "string" && id.length > 0;
-  });
-}
-
-export function migrateToolTabs(
-  workspaces: Workspace[],
-  aiBoards?: Record<string, unknown>,
-): Workspace[] {
-  const toolsIndex = workspaces.findIndex((w) => w.kind === "tools");
-  const sourceTools = toolsIndex >= 0 ? workspaces[toolsIndex] : undefined;
-  const hasToolTabs = workspaces.some((w) =>
-    w.panes.some((pane) => pane.tabs.some((tab) => isWorkspaceToolTab(tab))),
-  );
-  if (!sourceTools && !hasToolTabs) return workspaces;
-
-  const preservedTools = new Set(
-    workspaces.filter((w) => w.kind === "tools" && hasValidAiBoard(aiBoards, w.id)),
-  );
-  const multipleTools = workspaces.some((w, index) => w.kind === "tools" && index !== toolsIndex);
-  const hasExternalToolTabs = workspaces.some(
-    (w) =>
-      w !== sourceTools &&
-      w.panes.some((pane) => pane.tabs.some((tab) => isWorkspaceToolTab(tab))),
-  );
-  const kinds = new Set<PaneKind>();
-  let hasDuplicateToolTabs = false;
-  for (const pane of sourceTools?.panes ?? []) {
-    for (const tab of pane.tabs) {
-      if (!isWorkspaceToolTab(tab)) continue;
-      if (kinds.has(tab.kind)) hasDuplicateToolTabs = true;
-      kinds.add(tab.kind);
-    }
-  }
-  if (sourceTools && !multipleTools && !hasExternalToolTabs && !hasDuplicateToolTabs) {
-    if (sourceTools.title === "工具") return workspaces;
-    return workspaces.map((w) => (w === sourceTools ? { ...w, title: "工具" } : w));
-  }
-
-  let tools: Workspace;
-  if (sourceTools) {
-    tools = { ...sourceTools, title: "工具" };
-  } else {
-    const pane = makePane();
-    tools = {
-      id: nextTabId("ws-tools"),
-      kind: "tools",
-      title: "工具",
-      panes: [pane],
-      activePaneId: pane.id,
-      splitRatio: 0.5,
-      closable: true,
-    };
-  }
-
-  const selected = new Map<PaneKind, AppTab>();
-  const collect = (w: Workspace) => {
-    for (const pane of w.panes) {
-      for (const tab of pane.tabs) {
-        if (!isWorkspaceToolTab(tab)) continue;
-        const candidate =
-          tab.kind === "history" && w.kind === "session"
-            ? {
-                ...tab,
-                sessionId: tab.sessionId ?? w.sessionId,
-                assetId: tab.assetId ?? w.assetId,
-              }
-            : tab;
-        const existing = selected.get(tab.kind);
-        if (!existing) {
-          selected.set(tab.kind, candidate);
-          continue;
-        }
-        if (tab.kind !== "history") continue;
-        const sessionId = existing.sessionId ?? candidate.sessionId;
-        const assetId = existing.assetId ?? candidate.assetId;
-        if (sessionId !== existing.sessionId || assetId !== existing.assetId) {
-          selected.set(tab.kind, { ...existing, sessionId, assetId });
-        }
-      }
-    }
-  };
-  if (sourceTools) collect(sourceTools);
-  for (const w of workspaces) {
-    if (w !== sourceTools) collect(w);
-  }
-
-  const kept = new Set<AppTab>();
-  const basePanes = (tools.panes.length > 0 ? tools.panes : [makePane()]).map((pane) => ({
-    ...pane,
-    tabs: pane.tabs.filter((tab) => {
-      if (!isWorkspaceToolTab(tab)) return true;
-      if (selected.get(tab.kind) !== tab) return false;
-      kept.add(tab);
-      return true;
-    }),
-  }));
-  const additions = [...selected.values()].filter((tab) => !kept.has(tab));
-  for (const w of workspaces) {
-    if (w.kind !== "tools" || w === sourceTools) continue;
-    for (const pane of w.panes) {
-      additions.push(...pane.tabs.filter((tab) => !isWorkspaceToolTab(tab)));
-    }
-  }
-  const targetPaneId = basePanes.some((pane) => pane.id === tools.activePaneId)
-    ? tools.activePaneId
-    : basePanes[0].id;
-  const normalizedTools = normalizeWorkspacePanes({
-    ...tools,
-    panes: basePanes.map((pane) =>
-      pane.id === targetPaneId ? { ...pane, tabs: [...pane.tabs, ...additions] } : pane,
-    ),
-  });
-
-  const next: Workspace[] = [];
-  let inserted = false;
-  for (let i = 0; i < workspaces.length; i++) {
-    const w = workspaces[i];
-    if (i === toolsIndex) {
-      next.push(normalizedTools);
-      inserted = true;
-      continue;
-    }
-    if (w.kind === "tools") {
-      if (preservedTools.has(w)) {
-        const panes = w.panes.map((pane) => ({ ...pane, tabs: [], activeTabId: null }));
-        next.push({
-          ...w,
-          panes,
-          activePaneId: panes.some((pane) => pane.id === w.activePaneId)
-            ? w.activePaneId
-            : (panes[0]?.id ?? w.activePaneId),
-        });
-      }
-      continue;
-    }
-    const panes = w.panes.map((pane) => ({
-      ...pane,
-      tabs: pane.tabs.filter((tab) => !isWorkspaceToolTab(tab)),
-    }));
-    const changed = w.panes.some((pane, index) => pane.tabs.length !== panes[index].tabs.length);
-    next.push(changed ? normalizeWorkspacePanes({ ...w, panes }) : w);
-  }
-  if (!inserted) next.push(normalizedTools);
-  return next;
-}
-
-function findTabLocation(
-  workspaces: Workspace[],
-  preferredWorkspaceId: string | null,
-  id: string,
-): { workspace: Workspace; pane: Pane; tab: AppTab } | null {
-  let first: { workspace: Workspace; pane: Pane; tab: AppTab } | null = null;
-  for (const workspace of workspaces) {
-    for (const pane of workspace.panes) {
-      const tab = pane.tabs.find((t) => t.id === id);
-      if (!tab) continue;
-      if (workspace.id === preferredWorkspaceId) return { workspace, pane, tab };
-      if (!first) first = { workspace, pane, tab };
-    }
-  }
-  return first;
-}
-
-function sameTab(t: AppTab, tab: AppTab, caseInsensitive = false): boolean {
-  if (t.id === tab.id) return true;
-  if (t.tabId && tab.tabId && t.tabId === tab.tabId) return true;
-  if (tab.kind === "background" && t.kind === "background") return true;
-  if (isWorkspaceToolTab(tab) && t.kind === tab.kind) return true;
-  if ((tab.kind === "files" || tab.kind === "log") && tab.path && t.path) {
-    return (
-      t.kind === tab.kind &&
-      t.sessionId === tab.sessionId &&
-      fileEditorPathMatches(t.path, tab.path, "file", caseInsensitive)
-    );
-  }
-  return (
-    tab.kind !== "terminal" &&
-    t.kind === tab.kind &&
-    t.sessionId === tab.sessionId &&
-    t.connId === tab.connId &&
-    !t.tabId &&
-    !tab.tabId &&
-    t.path === tab.path &&
-    !isFleetHealthTabId(t.id) &&
-    !isFleetHealthTabId(tab.id)
-  );
-}
-
-function pickPaneForTab(panes: Pane[], activePaneId: string, tab: AppTab): Pane {
-  const active = panes.find((p) => p.id === activePaneId) ?? panes[0];
-  if (tab.kind !== "files" || !tab.path) return active;
-  return panes.find((p) => p.tabs.some((t) => t.kind === "files" && t.path)) ?? active;
 }
 
 export function useActiveWorkspace(): Workspace | null {
@@ -3387,24 +2142,6 @@ export function closeActionHint(t: AppTab): string | undefined {
   return "转入后台运行或结束进程";
 }
 
-export function sessionReconnectStatusText(
-  session: Pick<SessionRuntimeInfo, "status" | "attempt" | "nextRetryAt"> | undefined,
-): string {
-  if (session?.status !== "reconnecting") return "";
-  const attempt = Math.max(0, Math.floor(session.attempt ?? 0));
-  const retryAt = typeof session.nextRetryAt === "number"
-    ? session.nextRetryAt
-    : session.nextRetryAt
-      ? Date.parse(session.nextRetryAt)
-      : null;
-  const next = retryAt !== null && Number.isFinite(retryAt) && retryAt > 0
-    ? `下次重连 ${formatTime(retryAt)}`
-    : null;
-  return [attempt > 0 ? `重连尝试 ${attempt} 次` : "准备第 1 次重连", next]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 const retryableSessionErrorCodes = new Set(["ssh", "timeout", "disconnected"]);
 
 export function applySessionStatusEvent(p: SessionStatusEvent): void {
@@ -3476,28 +2213,6 @@ async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void>
   } catch (error) {
     useUi.getState().pushToast("error", `重连失败：${describeError(error)}`);
   }
-}
-
-export function sessionStatusText(status: SessionInfo["status"] | undefined): string {
-  if (status === "connected") return "已连接";
-  if (status === "reconnecting") return "重连中";
-  if (status === "connecting") return "连接中";
-  if (status === "failed") return "连接失败";
-  return "已断开";
-}
-
-export function connectStageText(stage: string): string {
-  if (stage === "auth") return "准备认证";
-  if (stage === "dial") return "TCP 拨号";
-  if (stage === "channel") return "经跳板打开通道";
-  if (stage === "handshake") return "SSH 握手认证";
-  return stage;
-}
-
-export function connectProgressText(progress: ConnectProgressEvent): string {
-  const hop =
-    progress.hop > 0 ? `跳板 ${progress.hop}/${progress.hops}` : "目标主机";
-  return `${hop} · ${connectStageText(progress.stage)}`;
 }
 
 export function closeTabHint(t: AppTab): string {
@@ -4057,22 +2772,6 @@ async function openConnectedAssetSession(
   }));
 }
 
-export interface ConnectAssetInput {
-  id: string;
-  name: string;
-  kind: string;
-  credId?: string | null;
-}
-
-export interface ConnectAssetOptions {
-  silent?: boolean;
-  preserveUserFocus?: boolean;
-}
-
-export type ConnectOutcome =
-  | { ok: true }
-  | { ok: false; error?: string; canceled?: boolean };
-
 const inflightConnects = new Map<string, Promise<ConnectOutcome>>();
 const connectingAssetCounts = new Map<string, number>();
 const restoreWorkspaceIds = new WeakMap<Workspace, number>();
@@ -4134,67 +2833,6 @@ export function isAssetConnecting(assetId: string): boolean {
   return useUi.getState().connectingAssetIds.includes(assetId);
 }
 
-export function assetConnectionProblemKey(assetId: string): string {
-  return `asset:${assetId}`;
-}
-
-export function quickConnectionProblemKey(target: QuickConnectTarget): string {
-  const normalized = {
-    host: target.host.trim().toLowerCase(),
-    port: target.port,
-    username: target.username?.trim() || null,
-  };
-  return `quick:${formatQuickConnectTarget(normalized)}`;
-}
-
-function findConnectionWorkspace(
-  workspaces: Workspace[],
-  problem: ConnectionProblemInput,
-): Workspace | undefined {
-  if (problem.workspaceId) {
-    const explicit = workspaces.find((workspace) => workspace.id === problem.workspaceId);
-    if (explicit) return explicit;
-  }
-  const connection = problem.connection;
-  if (connection?.kind === "asset") {
-    return workspaces.find((workspace) => workspace.assetId === connection.asset.id);
-  }
-  if (connection?.kind === "quick") {
-    const key = quickConnectionProblemKey(connection.target);
-    return workspaces.find(
-      (workspace) => workspace.quickTarget && quickConnectionProblemKey(workspace.quickTarget) === key,
-    );
-  }
-  return undefined;
-}
-
-type ConnectionProblemState = Pick<UiState, "connectionProblems" | "workspaceRuntime">;
-
-export function selectConnectionProblem(
-  state: ConnectionProblemState,
-  connectionKey: string,
-): WorkspaceProblem | undefined {
-  const global = state.connectionProblems[connectionKey];
-  if (global) return global;
-  for (const runtime of Object.values(state.workspaceRuntime)) {
-    const problem = runtime.problems?.find((item) => item.connectionKey === connectionKey);
-    if (problem) return problem;
-  }
-  return undefined;
-}
-
-export function latestConnectionProblem(state: ConnectionProblemState): WorkspaceProblem | undefined {
-  let latest: WorkspaceProblem | undefined;
-  const consider = (problem: WorkspaceProblem) => {
-    if (problem.connectionKey && (!latest || problem.id > latest.id)) latest = problem;
-  };
-  Object.values(state.connectionProblems).forEach(consider);
-  for (const runtime of Object.values(state.workspaceRuntime)) {
-    runtime.problems?.forEach(consider);
-  }
-  return latest;
-}
-
 export function useConnectionProblem(
   connectionKey: string | null,
   fallbackToLatest = false,
@@ -4213,7 +2851,7 @@ interface ConnectionAttemptContext {
 }
 
 function captureConnectionAttempt(): ConnectionAttemptContext {
-  return { resetGeneration: workspaceProblemResetGeneration };
+  return { resetGeneration: getWorkspaceProblemResetGeneration() };
 }
 
 function settleConnectionOutcome(
@@ -4224,7 +2862,7 @@ function settleConnectionOutcome(
   connection: WorkspaceProblemConnection,
   workspaceId?: string,
 ): void {
-  if (context.resetGeneration !== workspaceProblemResetGeneration) return;
+  if (context.resetGeneration !== getWorkspaceProblemResetGeneration()) return;
   const connectionKey = connection.kind === "asset"
     ? assetConnectionProblemKey(connection.asset.id)
     : quickConnectionProblemKey(connection.target);
@@ -4626,10 +3264,6 @@ const inflightRestoreConnects = new Map<string, {
   promise: Promise<ConnectOutcome>;
 }>();
 
-export interface RestoreWorkspaceOptions {
-  preserveUserFocus?: boolean;
-}
-
 export function workspaceSessionIsDead(
   workspace: Pick<Workspace, "kind" | "sessionId">,
   sessions: SessionRuntimeInfo[],
@@ -4937,11 +3571,6 @@ async function runQuickConnectTarget(
   }
 }
 
-export type SaveQuickConnectOutcome = ConnectOutcome & {
-  asset?: Awaited<ReturnType<typeof assetApi.create>>;
-  problemKey: string;
-};
-
 interface SaveQuickConnectAttempt {
   outcome: ConnectOutcome;
   asset?: SaveQuickConnectOutcome["asset"];
@@ -5072,12 +3701,6 @@ export function reconnectSessionAndWait(
   return promise;
 }
 
-export interface SessionReconnectError extends Error {
-  code?: string;
-  attempt?: number;
-  nextRetryAt?: string | number | null;
-}
-
 function reconnectPollingError(
   session: Pick<SessionRuntimeInfo, "status" | "error" | "errorCode" | "attempt" | "nextRetryAt">,
 ): SessionReconnectError {
@@ -5168,3 +3791,80 @@ async function runReconnectAndWait(
     if (!isCurrent()) return null;
   }
 }
+
+export type {
+  AiBoard,
+  AiDockTab,
+  AppChoiceOption,
+  AppChoiceState,
+  AppDialogState,
+  AppTab,
+  BroadcastConfig,
+  BroadcastOrigin,
+  BroadcastState,
+  BroadcastTargetReport,
+  BroadcastTargetStatus,
+  BroadcastTargetUpdate,
+  ConnectAssetInput,
+  ConnectAssetOptions,
+  ConnectOutcome,
+  ConnectionProblemInput,
+  DbKind,
+  LeftMode,
+  Pane,
+  PaneKind,
+  QuickWorkspaceTarget,
+  RestoreWorkspaceOptions,
+  SaveQuickConnectOutcome,
+  SessionReconnectError,
+  SessionReconnectMetadata,
+  SessionRuntimeInfo,
+  SessionStatusEvent,
+  SessionStatusEvidence,
+  SqlDraft,
+  SqlExecutionInput,
+  SqlExecutionOutcome,
+  SqlExecutionRecord,
+  SqlExecutionTarget,
+  TakeoverState,
+  TextPromptState,
+  ToastAction,
+  ToastItem,
+  Workspace,
+  WorkspaceKind,
+  WorkspaceProblem,
+  WorkspaceProblemConnection,
+  WorkspaceProblemInput,
+  WorkspaceProblemSource,
+  WorkspaceProblemTarget,
+  WorkspaceRestoreResult,
+  WorkspaceRestoreStatus,
+  WorkspaceRuntime,
+  WorkspaceSpec,
+} from "./store/types";
+export {
+  DB_KIND_LABEL,
+  dbKindOf,
+  GLOBAL_AI_BOARD_KEY,
+  isGlobalToolTab,
+  isToolTabKind,
+  migrateToolTabs,
+  nextTabId,
+  pruneBroadcastToWorkspaces,
+} from "./store/model";
+export {
+  assetConnectionProblemKey,
+  getWorkspaceProblemResetGeneration,
+  latestConnectionProblem,
+  quickConnectionProblemKey,
+  sanitizeWorkspaceProblemText,
+  selectConnectionProblem,
+} from "./store/problems";
+export { consumeRestoredTakeover, defaultRightOpen, LEFT_WIDTH_RANGE, RIGHT_WIDTH_RANGE } from "./store/persistence";
+export {
+  connectProgressText,
+  connectStageText,
+  sessionReconnectStatusText,
+  sessionStatusEvidence,
+  sessionStatusText,
+} from "./store/sessionStatus";
