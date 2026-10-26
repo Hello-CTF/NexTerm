@@ -300,9 +300,9 @@ func layoutFormatVersion(data any) (float64, bool) {
 	return version, ok
 }
 
-// checkLayoutFormat refuses to replace a stored layout with one in an older format version. A client
-// that predates the stored format cannot read it and would otherwise overwrite it with its own
-// layout; it gets an error it can show instead.
+// checkLayoutFormat refuses to replace a stored layout that has a format version with one in an older
+// or unversioned format. A client that predates the stored format cannot read it and would otherwise
+// overwrite it with its own layout; it gets an error it can show instead.
 func checkLayoutFormat(storedValue string, incoming any) error {
 	_, stored := decodeLayout(storedValue)
 	if stored == nil {
@@ -317,7 +317,10 @@ func checkLayoutFormat(storedValue string, incoming any) error {
 		return nil
 	}
 	incomingVersion, ok := layoutFormatVersion(incoming)
-	if !ok || incomingVersion >= storedVersion {
+	if !ok {
+		return badParam(fmt.Errorf("布局缺少格式版本，账号已保存的是 v%g，请刷新页面或升级 NexTerm 后再保存布局", storedVersion))
+	}
+	if incomingVersion >= storedVersion {
 		return nil
 	}
 	return badParam(fmt.Errorf("布局格式 v%g 旧于账号已保存的 v%g，请刷新页面或升级 NexTerm 后再保存布局", incomingVersion, storedVersion))

@@ -196,6 +196,13 @@ func TestLayoutSaveRejectsOlderFormatVersion(t *testing.T) {
 	if err != nil || string(data) != `{"v":4,"workspaces":[]}` {
 		t.Fatalf("layout after rejected downgrade: %s err=%v", data, err)
 	}
+	for _, unversioned := range []string{`{"workspaces":[]}`, `{"v":"4","workspaces":[]}`, `[]`} {
+		saved, revision, err = db.LayoutSave(ctx, 2, unversioned)
+		requireCode(t, err, ipc.CodeBadParam)
+		if saved || revision != 2 {
+			t.Fatalf("unversioned %s saved=%v revision=%d", unversioned, saved, revision)
+		}
+	}
 	if saved, revision, err := db.LayoutSave(ctx, 2, `{"v":4,"workspaces":[{"id":"new"}]}`); err != nil || !saved || revision != 3 {
 		t.Fatalf("same format save saved=%v revision=%d err=%v", saved, revision, err)
 	}
