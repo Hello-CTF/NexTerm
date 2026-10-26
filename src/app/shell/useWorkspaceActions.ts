@@ -160,7 +160,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     const wsId = useUi.getState().activeWorkspaceId;
     if (!wsId) return;
     for (const panel of document.querySelectorAll<HTMLElement>(
-      `#nx-ws-panel-${CSS.escape(wsId)} [role='tabpanel']:not(.hidden)`,
+      `#nx-ws-panel-${CSS.escape(wsId)} [data-tab-content]:not(.hidden) [role='tabpanel']`,
     )) {
       const card = [...panel.querySelectorAll<HTMLElement>(".nx-card-title")]
         .find((el) => el.textContent?.trim() === "凭据保护")

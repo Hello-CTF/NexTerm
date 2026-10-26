@@ -17,7 +17,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 // The terminal stub counts mounts and unmounts per tab: a remount would mean a reconnect in the app.
 vi.mock("../../app/lazyPanels", () => {
-  const stub = (name: string) => () => createElement("div", { "data-panel": name });
+  const stub = (name: string) => () =>
+    createElement("div", { "data-panel": name }, createElement("button", { type: "button" }, `${name}-action`));
   function TerminalPane({ storeTabId }: { storeTabId: string }) {
     useEffect(() => {
       mounts.count.set(storeTabId, (mounts.count.get(storeTabId) ?? 0) + 1);
@@ -296,5 +297,126 @@ describe("split view terminal identity", () => {
     expect(useUi.getState().workspaces[0].panes.map((pane) => pane.id)).not.toContain(created);
     expect(terminalNode("t1")).not.toBeNull();
     expect(mocks.closeTab).not.toHaveBeenCalled();
+  });
+
+  it("walks Tab and Shift+Tab through each pane's strip and then its panel in on-screen order", async () => {
+    const settings: AppTab = { id: "z-settings", kind: "settings", title: "Settings", closable: true };
+    const files: AppTab = { id: "a-files", kind: "files", title: "Files", sessionId: "s", closable: true };
+    act(() => {
+      useUi.setState({
+        workspaces: [
+          {
+            ...workspace(),
+            panes: [
+              { id: "left", tabs: [settings], activeTabId: settings.id },
+              { id: "right", tabs: [files], activeTabId: files.id },
+            ],
+            activePaneId: "left",
+            layoutTree: {
+              type: "split",
+              id: "root",
+              dir: "row",
+              ratio: 0.5,
+              a: { type: "leaf", id: "leaf-left", paneId: "left" },
+              b: { type: "leaf", id: "leaf-right", paneId: "right" },
+            },
+          },
+        ],
+      });
+    });
+    render();
+    await flush();
+    const button = (text: string) =>
+      [...view!.container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === text)!;
+    const leftStripLast = [...paneNode("left").querySelectorAll<HTMLButtonElement>(".nx-tabstrip button")].at(-1)!;
+    const rightTab = paneNode("right").querySelector<HTMLElement>('[role="tab"]')!;
+    const press = (shiftKey = false) => {
+      const event = new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true });
+      act(() => {
+        (document.activeElement as HTMLElement).dispatchEvent(event);
+      });
+      return event;
+    };
+
+    // In DOM order the panels follow both strips (and the file panel comes first); focus still
+    // goes strip, panel, next strip, panel.
+    leftStripLast.focus();
+    expect(press().defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(button("settings-action"));
+    press();
+    expect(document.activeElement).toBe(rightTab);
+    press(true);
+    expect(document.activeElement).toBe(button("settings-action"));
+    press(true);
+    expect(document.activeElement).toBe(leftStripLast);
+
+    const rightStripLast = [...paneNode("right").querySelectorAll<HTMLButtonElement>(".nx-tabstrip button")].at(-1)!;
+    rightStripLast.focus();
+    press();
+    expect(document.activeElement).toBe(button("browser-action"));
+  });
+
+  it("moves into a panel without focusable content and leaves terminals their own Tab", async () => {
+    const audit: AppTab = { id: "audit", kind: "audit", title: "Audit", closable: true };
+    act(() => {
+      useUi.setState({
+        workspaces: [{ ...workspace(), panes: [{ id: "p1", tabs: [audit], activeTabId: audit.id }] }],
+      });
+    });
+    render();
+    await flush();
+    const panel = view!.container.querySelector<HTMLElement>('[data-tab-content="audit"] [role="tabpanel"]')!;
+    panel.querySelector("button")!.remove();
+    const last = [...paneNode("p1").querySelectorAll<HTMLButtonElement>(".nx-tabstrip button")].at(-1)!;
+    last.focus();
+    act(() => {
+      last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    });
+    expect(document.activeElement).toBe(panel);
+
+    // Keys inside a terminal are the terminal's.
+    const xterm = document.createElement("div");
+    xterm.className = "xterm";
+    const input = document.createElement("textarea");
+    xterm.append(input);
+    panel.append(xterm);
+    input.focus();
+    const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    act(() => {
+      input.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("places tab content below the measured strip, measuring a pane as soon as compact mode shows it", async () => {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains("nx-tabstrip") && !this.closest(".hidden") ? 50 : 0;
+      },
+    });
+    try {
+      render(true);
+      await flush();
+      const content = (id: string) => view!.container.querySelector<HTMLElement>(`[data-tab-content="${id}"]`)!;
+      expect(content("t1").style.top).toBe("50px");
+      // A second pane arrives while compact mode shows only the first, so it mounts hidden and unmeasured.
+      act(() => {
+        useUi.setState((state) => ({
+          workspaces: state.workspaces.map((item) => ({
+            ...item,
+            panes: [...item.panes, { id: "p2", tabs: [terminal("t2")], activeTabId: "t2" }],
+          })),
+        }));
+      });
+      render(true);
+      act(() => useUi.getState().setActivePane("p2", "ws"));
+      render(true);
+      expect(content("t2").style.top).toBe("50px");
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, "offsetHeight", original);
+    }
   });
 });

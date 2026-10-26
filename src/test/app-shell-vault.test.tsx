@@ -283,6 +283,50 @@ describe("status bar credential vault state", () => {
     expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
+  it("finds the settings card when the workspace shows two tab panels side by side", async () => {
+    mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws-b",
+          kind: "tools",
+          title: "工具",
+          panes: [
+            { id: "pane-a", tabs: [{ id: "a-audit", kind: "audit", title: "Audit", closable: true }], activeTabId: "a-audit" },
+            { id: "pane-b", tabs: [{ id: "z-settings", kind: "settings", title: "Settings", closable: true }], activeTabId: "z-settings" },
+          ],
+          activePaneId: "pane-a",
+          layoutTree: {
+            type: "split",
+            id: "root",
+            dir: "row",
+            ratio: 0.5,
+            a: { type: "leaf", id: "leaf-a", paneId: "pane-a" },
+            b: { type: "leaf", id: "leaf-b", paneId: "pane-b" },
+          },
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws-b",
+    });
+    mounted = mountApp();
+    await flushUntil(() => vaultStatusControl() !== null);
+    await flush();
+
+    expect(document.querySelectorAll("#nx-ws-panel-ws-b [data-tab-content]:not(.hidden) [role='tabpanel']")).toHaveLength(2);
+    const card = [...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-b .nx-card")].find(
+      (c) => c.textContent?.includes("凭据保护"),
+    );
+    expect(card).toBeTruthy();
+    const scroll = vi.fn();
+    (card as HTMLElement).scrollIntoView = scroll;
+
+    click(vaultStatusControl() as HTMLElement);
+    await flush();
+
+    expect(scroll).toHaveBeenCalledWith({ block: "start" });
+  });
+
   it("keeps the locked state as plain text without an enable-protection entry", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mounted = mountApp();

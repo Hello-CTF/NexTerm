@@ -1,10 +1,19 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { clampSplitRatio, splitRatioAt, splitRatioForKey } from "../../features/terminal/workspaceLayout";
 import { createFrameCoalescer, RESIZE_END_EVENT, type FrameCoalescer } from "../../ui/ResizeHandle";
 import type { AppTab, Pane, Workspace } from "../store";
 import { isTouchShell } from "../shell/shellMode";
 import { workspaceLayoutTree } from "../paneLayout";
-import { paneRects, resolveActivePane, type Rect, type SplitDir, type SplitNode } from "../splitTree";
+import { paneIdsInOrder, paneRects, resolveActivePane, type Rect, type SplitDir, type SplitNode } from "../splitTree";
 
 // Divider thickness in pixels; each pane gives up half of it on every inner edge.
 export const SPLIT_HANDLE_SIZE = 6;
@@ -97,6 +106,21 @@ interface SplitViewProps {
   onRatio: (splitId: string, ratio: number) => void;
 }
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
+
+function focusables(root: Element): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((element) => !element.closest(".hidden"));
+}
+
+// outsideFocusable is the nearest focusable element before or after the split view in document order.
+function outsideFocusable(box: HTMLElement, side: "before" | "after"): HTMLElement | null {
+  const all = focusables(document.body).filter((element) => !box.contains(element));
+  const position = (element: HTMLElement) => box.compareDocumentPosition(element);
+  if (side === "after") return all.find((element) => position(element) & Node.DOCUMENT_POSITION_FOLLOWING) ?? null;
+  return [...all].reverse().find((element) => position(element) & Node.DOCUMENT_POSITION_PRECEDING) ?? null;
+}
+
 // Tab strip height used until the real strip is measured (jsdom, first frame).
 function defaultStripHeight(): number {
   return isTouchShell() ? 45 : 35;
@@ -124,7 +148,9 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
   const handles = tree && !singlePane ? splitHandles(tree) : [];
   const [strips, setStrips] = useState<Record<string, number>>({});
   const stripRefs = useRef(new Map<string, (element: HTMLElement | null) => void>());
+  const stripElements = useRef(new Map<string, HTMLElement>());
   const observers = useRef(new Map<string, () => void>());
+  const paneKey = workspace.panes.map((pane) => pane.id).join("\n");
 
   useEffect(() => {
     const active = observers.current;
@@ -140,7 +166,11 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
       callback = (element) => {
         observers.current.get(paneId)?.();
         observers.current.delete(paneId);
-        if (!element) return;
+        if (!element) {
+          stripElements.current.delete(paneId);
+          return;
+        }
+        stripElements.current.set(paneId, element);
         const measure = () => {
           const height = element.offsetHeight;
           if (height > 0) setStrips((current) => (current[paneId] === height ? current : { ...current, [paneId]: height }));
@@ -156,6 +186,27 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
     return callback;
   };
 
+  // Forget measurements and ref callbacks of panes that are gone.
+  useEffect(() => {
+    const ids = new Set(paneKey.split("\n"));
+    for (const id of [...stripRefs.current.keys()]) if (!ids.has(id)) stripRefs.current.delete(id);
+    setStrips((current) => {
+      const stale = Object.keys(current).filter((id) => !ids.has(id));
+      if (stale.length === 0) return current;
+      const next = { ...current };
+      for (const id of stale) delete next[id];
+      return next;
+    });
+  }, [paneKey]);
+
+  // A pane that just became visible (single-pane switch) had no height while hidden; measure it
+  // before paint so its tab content does not sit one frame at the default offset.
+  useLayoutEffect(() => {
+    const element = stripElements.current.get(activePaneId);
+    const height = element?.offsetHeight ?? 0;
+    if (height > 0) setStrips((current) => (current[activePaneId] === height ? current : { ...current, [activePaneId]: height }));
+  }, [activePaneId, singlePane]);
+
   const placement = workspace.panes.map((pane) => {
     const rect = rects.get(pane.id) ?? null;
     const shown = singlePane ? pane.id === activePaneId : rect !== null;
@@ -169,9 +220,36 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
     })
     .sort((left, right) => (left.tab.id < right.tab.id ? -1 : left.tab.id > right.tab.id ? 1 : 0));
   const defaultStrip = defaultStripHeight();
+  const shownOrder = singlePane ? [activePaneId] : tree ? paneIdsInOrder(tree) : [];
+
+  // Panes render chrome first and all tab content after it, keyed by tab id, so DOM order is not
+  // reading order. Tab and Shift+Tab therefore walk the panes in on-screen order: each pane's strip,
+  // then its selected tab panel, then the next pane. Keys a panel already handled (a terminal or an
+  // editor indenting) are left alone.
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab" || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    const box = boxRef.current;
+    const target = event.target as HTMLElement;
+    if (!box || target.closest(".xterm")) return;
+    const order = shownOrder.flatMap((paneId) => {
+      const chrome = box.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(paneId)}"]`);
+      const content = box.querySelector<HTMLElement>(
+        `[data-tab-content][data-content-pane="${CSS.escape(paneId)}"]:not(.hidden)`,
+      );
+      const panel = content?.querySelector<HTMLElement>("[role='tabpanel']") ?? null;
+      const inPanel = panel ? focusables(panel) : [];
+      return [...(chrome ? focusables(chrome) : []), ...(inPanel.length > 0 ? inPanel : panel ? [panel] : [])];
+    });
+    const index = order.indexOf(target);
+    if (index < 0) return;
+    const next = order[index + (event.shiftKey ? -1 : 1)] ?? outsideFocusable(box, event.shiftKey ? "before" : "after");
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+  };
 
   return (
-    <div ref={boxRef} className="nx-split-view relative h-full min-h-0">
+    <div ref={boxRef} className="nx-split-view relative h-full min-h-0" onKeyDown={onKeyDown}>
       {placement.map(({ pane, rect, shown, focused }) => (
         <div
           key={pane.id}

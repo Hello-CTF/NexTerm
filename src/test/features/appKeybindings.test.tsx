@@ -262,7 +262,8 @@ describe("rebound app shortcuts", () => {
     expect(panes[0].tabs.map((tab) => tab.id)).toEqual(["t1", "t2", "t3", "t4"]);
     expect(panes[0].activeTabId).toBe("t4");
 
-    // With a single pane the shortcut does nothing and is not consumed.
+    // With a single pane there is nothing to close, so the window-level handler does not consume the
+    // key; a focused terminal still never receives it while the binding is set (as with every app binding).
     expect(keyDown(window, "w", { code: "KeyW", ctrlKey: true, altKey: true }).defaultPrevented).toBe(false);
   });
 

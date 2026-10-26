@@ -259,6 +259,14 @@ describe("bindingConflicts", () => {
     expect(conflicts[0].actions.map((a) => a.id)).toEqual(["commandPalette", "quickConnect"]);
   });
 
+  it("flags a close-tab binding that collides with the close-pane default", () => {
+    setKeybinding("closeTab", getKeybinding("closePane"));
+    const conflicts = bindingConflicts();
+    expect(conflicts.map((conflict) => conflict.actions.map((action) => action.id))).toEqual([["closeTab", "closePane"]]);
+    // The desktop default Mod+Shift+W is flagged the same way.
+    expect(bindingsConflict("Mod+Shift+w", "Mod+Shift+W", false)).toBe(true);
+  });
+
   it("detects Mod and Primary overlapping the same key on both platforms", () => {
     setKeybinding("commandPalette", "Mod+f");
     for (const mac of [false, true]) {

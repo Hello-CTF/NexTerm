@@ -493,7 +493,9 @@ export function PaneTabPanel({
       role="tabpanel"
       id={`nx-tab-panel-${idPrefix}-${tab.id}`}
       aria-labelledby={`nx-tab-${idPrefix}-${tab.id}`}
-      className="h-full min-h-0"
+      // Focusable from script so keyboard users can enter a panel without focusable content.
+      tabIndex={-1}
+      className="h-full min-h-0 outline-none"
     >
       <ErrorBoundary onClose={tab.closable ? () => void requestCloseTab(tab.id) : undefined}>
         <PaneForTab tab={tab} active={visible} workspaceId={workspaceId} onClose={requestCloseTab} />
