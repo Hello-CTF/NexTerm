@@ -51,6 +51,8 @@ var ErrHistoryQuarantined = errors.New("supervisor history quarantined")
 type historySegment struct {
 	start uint64
 	path  string
+	// modes is the terminal mode state at start; nil when unknown.
+	modes *terminalModes
 }
 
 type history struct {
@@ -71,6 +73,10 @@ type history struct {
 	// removals are evicted segments whose unlink failed (an open reader on
 	// Windows); they are retried on later evictions and reader closes.
 	removals []string
+
+	// modes tracks the terminal modes at next for the snapshot of the next
+	// segment; only a history being written keeps it current.
+	modes terminalModes
 
 	// writeHook replaces the active segment write in tests.
 	writeHook func([]byte) (int, error)
@@ -118,22 +124,33 @@ func createHistory(dir string, limit uint64) (*history, error) {
 	}
 	return &history{
 		dir: dir, limit: limit, segSize: historySegmentSize(limit),
-		segments: []historySegment{{start: 0, path: path}},
+		segments: []historySegment{{start: 0, path: path, modes: &terminalModes{}}},
 		active:   file,
 	}, nil
 }
 
-// loadHistory reads the segments of a recovered session. Segments that do not
-// form one contiguous chain are moved to a quarantine directory and the
-// history reports ErrHistoryQuarantined instead of guessing offsets. A
-// recording from before segmented history (output.raw) is read as one segment
-// at offset zero.
+// loadHistory reads the segments of a recovered session. It keeps the
+// longest contiguous chain of private segments that ends at the last one;
+// segments before a break are moved to a quarantine directory and the
+// history base becomes the start of the kept chain. A history with no usable
+// chain reports ErrHistoryQuarantined instead of guessing offsets. A
+// recording from before segmented history (output.raw) is read as one
+// segment at offset zero and is never moved: it stays read-only, and with
+// segments beside it the history is reported unavailable.
 func loadHistory(dir string, limit uint64) *history {
 	h := &history{dir: dir, limit: limit, segSize: historySegmentSize(limit)}
 	if err := h.load(); err != nil {
-		h.quarantine(err)
+		h.segments = nil
+		h.next = 0
+		h.quarantined = fmt.Errorf("%w: %v", ErrHistoryQuarantined, err)
 	}
 	return h
+}
+
+type loadedSegment struct {
+	historySegment
+	size  uint64
+	valid bool
 }
 
 func (h *history) load() error {
@@ -141,7 +158,8 @@ func (h *history) load() error {
 	if err != nil {
 		return fmt.Errorf("read session directory: %w", err)
 	}
-	var segments []historySegment
+	var segments []loadedSegment
+	var malformed []string
 	legacy := false
 	for _, dirent := range dirents {
 		name := dirent.Name()
@@ -154,67 +172,87 @@ func (h *history) load() error {
 		}
 		start, ok := parseHistorySegmentName(name)
 		if !ok {
-			return fmt.Errorf("malformed segment name %q", name)
+			malformed = append(malformed, name)
+			continue
 		}
-		segments = append(segments, historySegment{start: start, path: filepath.Join(h.dir, name)})
+		segment := loadedSegment{historySegment: historySegment{start: start, path: filepath.Join(h.dir, name)}}
+		if info, err := os.Lstat(segment.path); err == nil && privateRegularFile(info) == nil {
+			segment.size, segment.valid = uint64(info.Size()), true
+		}
+		segments = append(segments, segment)
 	}
 	if legacy {
-		if len(segments) > 0 {
-			return errors.New("both a legacy recording and segments are present")
+		if len(segments) > 0 || len(malformed) > 0 {
+			return errors.New("a legacy recording and segments are both present; the legacy recording is left untouched")
 		}
-		segments = []historySegment{{start: 0, path: filepath.Join(h.dir, recordingName)}}
-	}
-	if len(segments) == 0 {
-		return errors.New("no recorded output segments")
+		path := filepath.Join(h.dir, recordingName)
+		info, err := os.Lstat(path)
+		if err != nil || privateRegularFile(info) != nil {
+			return errors.New("the legacy recording is not a private regular file")
+		}
+		h.segments = []historySegment{{start: 0, path: path, modes: &terminalModes{}}}
+		h.next = uint64(info.Size())
+		return nil
 	}
 	sort.Slice(segments, func(i, j int) bool { return segments[i].start < segments[j].start })
-	next := segments[0].start
-	for _, segment := range segments {
-		info, err := os.Lstat(segment.path)
-		if err != nil {
-			return fmt.Errorf("inspect segment: %w", err)
+	first := len(segments)
+	for index := len(segments) - 1; index >= 0; index-- {
+		segment := segments[index]
+		if !segment.valid || segment.start+segment.size < segment.start {
+			break
 		}
-		if err := privateRegularFile(info); err != nil {
-			return fmt.Errorf("segment %s is not a private regular file", filepath.Base(segment.path))
+		if index+1 < len(segments) && segment.start+segment.size != segments[index+1].start {
+			break
 		}
-		if segment.start != next {
-			return fmt.Errorf("segment at %d does not continue the chain ending at %d", segment.start, next)
-		}
-		size := uint64(info.Size())
-		if next+size < next {
-			return errors.New("segment offsets overflow")
-		}
-		next += size
+		first = index
 	}
-	h.segments = segments
-	h.next = next
+	var reasons []string
+	if len(malformed) > 0 {
+		reasons = append(reasons, fmt.Sprintf("malformed segment names %v", malformed))
+	}
+	if first > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d segment(s) before offset %d do not continue the chain", first, segments[first-1].start))
+	}
+	var moveErr error
+	if len(reasons) > 0 {
+		moveErr = h.quarantineFiles(segments[:first], malformed)
+	}
+	if first == len(segments) {
+		if len(segments) == 0 && len(malformed) == 0 {
+			return errors.New("no recorded output segments")
+		}
+		return fmt.Errorf("no contiguous recorded output (%s)", strings.Join(reasons, "; "))
+	}
+	for _, segment := range segments[first:] {
+		segment.modes = readModesSnapshot(h.dir, segment.start)
+		h.segments = append(h.segments, segment.historySegment)
+	}
+	last := segments[len(segments)-1]
+	h.next = last.start + last.size
+	if moveErr != nil {
+		return fmt.Errorf("quarantine the broken part of the recorded output: %w", moveErr)
+	}
 	return nil
 }
 
-func (h *history) quarantine(cause error) {
-	h.segments = nil
-	h.next = 0
+// quarantineFiles moves segments that cannot be served, with their mode
+// snapshots, to a quarantine directory for inspection.
+func (h *history) quarantineFiles(segments []loadedSegment, malformed []string) error {
 	target := filepath.Join(h.dir, historyQuarantineDir, strconv.FormatInt(time.Now().UnixNano(), 10))
-	moveErr := os.MkdirAll(target, 0o700)
-	if moveErr == nil {
-		dirents, err := os.ReadDir(h.dir)
-		if err != nil {
-			moveErr = err
-		}
-		for _, dirent := range dirents {
-			name := dirent.Name()
-			if name != recordingName && !strings.HasPrefix(name, historySegmentPrefix) {
-				continue
-			}
-			if err := os.Rename(filepath.Join(h.dir, name), filepath.Join(target, name)); err != nil {
-				moveErr = errors.Join(moveErr, err)
-			}
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		return err
+	}
+	names := append([]string(nil), malformed...)
+	for _, segment := range segments {
+		names = append(names, filepath.Base(segment.path), filepath.Base(historyModesPath(h.dir, segment.start)))
+	}
+	var moveErr error
+	for _, name := range names {
+		if err := os.Rename(filepath.Join(h.dir, name), filepath.Join(target, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			moveErr = errors.Join(moveErr, err)
 		}
 	}
-	h.quarantined = fmt.Errorf("%w: %v", ErrHistoryQuarantined, cause)
-	if moveErr != nil {
-		h.quarantined = fmt.Errorf("%w (moving it aside failed: %v)", h.quarantined, moveErr)
-	}
+	return moveErr
 }
 
 // bounds returns the oldest retained offset and the next offset to record.
@@ -258,6 +296,7 @@ func (h *history) append(chunk []byte) error {
 	}
 	written, err := h.writeLocked(chunk)
 	h.next += uint64(written)
+	h.modes.feed(chunk[:written])
 	if err == nil && written < len(chunk) {
 		err = io.ErrShortWrite
 	}
@@ -276,6 +315,10 @@ func (h *history) writeLocked(chunk []byte) (int, error) {
 }
 
 func (h *history) rollLocked() error {
+	modes := h.modes
+	// A snapshot that cannot be written only costs a recovered session the
+	// modes before this segment; recording continues.
+	_ = writeModesSnapshot(h.dir, h.next, modes)
 	path := historySegmentPath(h.dir, h.next)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -287,7 +330,7 @@ func (h *history) rollLocked() error {
 		return err
 	}
 	h.active = file
-	h.segments = append(h.segments, historySegment{start: h.next, path: path})
+	h.segments = append(h.segments, historySegment{start: h.next, path: path, modes: &modes})
 	return nil
 }
 
@@ -296,7 +339,7 @@ func (h *history) rollLocked() error {
 func (h *history) evictLocked() {
 	evicted := false
 	for len(h.segments) > 1 && h.next-h.segments[0].start > h.limit {
-		h.removals = append(h.removals, h.segments[0].path)
+		h.removals = append(h.removals, h.segments[0].path, historyModesPath(h.dir, h.segments[0].start))
 		h.segments = h.segments[1:]
 		evicted = true
 	}
@@ -388,39 +431,52 @@ func (h *history) newReader(offset uint64) *historyReader {
 
 // read returns retained bytes at the reader position. A position below the
 // history base returns errHistoryEvicted; a position at the end returns 0 and
-// nil.
+// nil. The file read runs outside the history lock, so recording never waits
+// for a replay's disk read; an evicted segment stays readable through the
+// open descriptor.
 func (r *historyReader) read(p []byte) (int, error) {
 	h := r.h
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if r.closed {
+		h.mu.Unlock()
 		return 0, ErrClosed
 	}
 	if h.quarantined != nil {
+		h.mu.Unlock()
 		return 0, h.quarantined
 	}
 	if r.pos < h.baseLocked() {
 		r.closeFileLocked()
+		h.mu.Unlock()
 		return 0, errHistoryEvicted
 	}
 	if r.pos >= h.next {
+		h.mu.Unlock()
 		return 0, nil
 	}
 	segment, end, ok := h.segmentLocked(r.pos)
 	if !ok {
+		h.mu.Unlock()
 		return 0, fmt.Errorf("%w: offset %d is outside the recorded segments", ErrUnavailable, r.pos)
 	}
 	if r.file == nil || r.segStart != segment.start {
 		r.closeFileLocked()
 		file, err := openRecording(segment.path)
 		if err != nil {
+			h.mu.Unlock()
 			return 0, err
 		}
 		r.file, r.segStart = file, segment.start
 	}
+	file := r.file
 	want := min(uint64(len(p)), end-r.pos)
-	count, err := r.file.ReadAt(p[:want], int64(r.pos-segment.start))
+	h.mu.Unlock()
+
+	count, err := file.ReadAt(p[:want], int64(r.pos-segment.start))
 	r.pos += uint64(count)
+	if errors.Is(err, os.ErrClosed) && count == 0 {
+		return 0, ErrClosed
+	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return count, fmt.Errorf("%w: read supervisor recording: %v", ErrUnavailable, err)
 	}

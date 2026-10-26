@@ -153,76 +153,164 @@ func TestHistoryReloadAcceptsPartialLastSegment(t *testing.T) {
 	}
 }
 
-func TestHistoryReloadQuarantinesInconsistentSegments(t *testing.T) {
-	build := func(t *testing.T) *history {
-		recorded := newTestHistory(t, MinHistoryLimit)
-		var offset uint64
-		for offset < 3*recorded.segSize {
-			chunk := patterned(offset, 4096)
-			if err := recorded.append(chunk); err != nil {
-				t.Fatal(err)
-			}
-			offset += uint64(len(chunk))
-		}
-		if err := recorded.closeWriter(); err != nil {
+func buildSegmentedHistory(t *testing.T) *history {
+	t.Helper()
+	recorded := newTestHistory(t, MinHistoryLimit)
+	var offset uint64
+	for offset < 3*recorded.segSize {
+		chunk := patterned(offset, 4096)
+		if err := recorded.append(chunk); err != nil {
 			t.Fatal(err)
 		}
-		if len(recorded.segments) < 3 {
-			t.Fatalf("want at least three segments, got %d", len(recorded.segments))
-		}
-		return recorded
+		offset += uint64(len(chunk))
 	}
-	cases := map[string]func(t *testing.T, recorded *history){
-		"missing middle segment": func(t *testing.T, recorded *history) {
+	if err := recorded.closeWriter(); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorded.segments) < 3 {
+		t.Fatalf("want at least three segments, got %d", len(recorded.segments))
+	}
+	return recorded
+}
+
+func quarantinedNames(t *testing.T, dir string) []string {
+	t.Helper()
+	var names []string
+	_ = filepath.WalkDir(filepath.Join(dir, historyQuarantineDir), func(path string, entry os.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+		return nil
+	})
+	return names
+}
+
+// A break in the chain keeps the longest contiguous tail of segments and
+// quarantines only what precedes the break.
+func TestHistoryReloadKeepsContiguousTailAndQuarantinesTheRest(t *testing.T) {
+	cases := map[string]struct {
+		corrupt func(t *testing.T, recorded *history)
+		kept    int // index of the first kept segment
+	}{
+		"missing middle segment": {func(t *testing.T, recorded *history) {
 			if err := os.Remove(recorded.segments[1].path); err != nil {
 				t.Fatal(err)
 			}
-		},
-		"short middle segment": func(t *testing.T, recorded *history) {
+		}, 2},
+		"short middle segment": {func(t *testing.T, recorded *history) {
 			if err := os.Truncate(recorded.segments[1].path, 10); err != nil {
 				t.Fatal(err)
 			}
-		},
-		"legacy recording beside segments": func(t *testing.T, recorded *history) {
-			if err := os.WriteFile(filepath.Join(recorded.dir, recordingName), []byte("old"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		},
-		"malformed segment name": func(t *testing.T, recorded *history) {
+		}, 2},
+		"malformed segment name": {func(t *testing.T, recorded *history) {
 			if err := os.WriteFile(filepath.Join(recorded.dir, historySegmentPrefix+"12.raw"), nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
-		},
-		"no segments": func(t *testing.T, recorded *history) {
-			for _, segment := range recorded.segments {
-				if err := os.Remove(segment.path); err != nil {
-					t.Fatal(err)
-				}
-			}
-		},
+		}, 0},
 	}
-	for name, corrupt := range cases {
+	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
-			recorded := build(t)
-			corrupt(t, recorded)
+			recorded := buildSegmentedHistory(t)
+			_, next := recorded.bounds()
+			keptStart := recorded.segments[test.kept].start
+			test.corrupt(t, recorded)
 			reloaded := loadHistory(recorded.dir, MinHistoryLimit)
-			if err := reloaded.usable(); !errors.Is(err, ErrHistoryQuarantined) {
-				t.Fatalf("usable = %v, want ErrHistoryQuarantined", err)
+			if err := reloaded.usable(); err != nil {
+				t.Fatalf("usable = %v, want the contiguous tail served", err)
 			}
-			if _, err := reloaded.newReader(0).read(make([]byte, 16)); !errors.Is(err, ErrHistoryQuarantined) {
-				t.Fatalf("read of a quarantined history = %v", err)
+			if base, gotNext := reloaded.bounds(); base != keptStart || gotNext != next {
+				t.Fatalf("reloaded bounds %d..%d, want %d..%d", base, gotNext, keptStart, next)
 			}
-			dirents, err := os.ReadDir(recorded.dir)
-			if err != nil {
-				t.Fatal(err)
+			if got := readAll(t, reloaded, keptStart); !bytes.Equal(got, patterned(keptStart, int(next-keptStart))) {
+				t.Fatal("kept tail differs")
 			}
-			for _, dirent := range dirents {
-				if strings.HasPrefix(dirent.Name(), historySegmentPrefix) || dirent.Name() == recordingName {
-					t.Fatalf("%s was left in place instead of quarantined", dirent.Name())
+			if len(quarantinedNames(t, recorded.dir)) == 0 {
+				t.Fatal("nothing was quarantined")
+			}
+			for _, segment := range reloaded.segments {
+				if _, err := os.Lstat(segment.path); err != nil {
+					t.Fatalf("kept segment missing: %v", err)
 				}
 			}
 		})
 	}
+}
+
+func TestHistoryReloadWithoutChainIsUnavailable(t *testing.T) {
+	t.Run("no segments", func(t *testing.T) {
+		recorded := buildSegmentedHistory(t)
+		for _, segment := range recorded.segments {
+			if err := os.Remove(segment.path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		reloaded := loadHistory(recorded.dir, MinHistoryLimit)
+		if err := reloaded.usable(); !errors.Is(err, ErrHistoryQuarantined) {
+			t.Fatalf("usable = %v, want ErrHistoryQuarantined", err)
+		}
+		if _, err := reloaded.newReader(0).read(make([]byte, 16)); !errors.Is(err, ErrHistoryQuarantined) {
+			t.Fatalf("read of an unavailable history = %v", err)
+		}
+	})
+	// A legacy recording stays read-only: with segments beside it nothing is
+	// moved, and the history is reported unavailable.
+	t.Run("legacy recording beside segments", func(t *testing.T) {
+		recorded := buildSegmentedHistory(t)
+		legacy := filepath.Join(recorded.dir, recordingName)
+		if err := os.WriteFile(legacy, []byte("old"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		reloaded := loadHistory(recorded.dir, MinHistoryLimit)
+		if err := reloaded.usable(); !errors.Is(err, ErrHistoryQuarantined) {
+			t.Fatalf("usable = %v, want unavailable", err)
+		}
+		if data, err := os.ReadFile(legacy); err != nil || string(data) != "old" {
+			t.Fatalf("legacy recording was touched: %q, %v", data, err)
+		}
+		if names := quarantinedNames(t, recorded.dir); len(names) != 0 {
+			t.Fatalf("files moved beside a legacy recording: %v", names)
+		}
+	})
+}
+
+// Modes set long before the history base survive eviction and a reload, and
+// finding them parses at most one segment.
+func TestHistoryModesSurviveEvictionWithBoundedScan(t *testing.T) {
+	recorded := newTestHistory(t, MinHistoryLimit)
+	if err := recorded.append([]byte("\x1b[?1049h\x1b[?1h\x1b[?1000;1006h\x1b(0\x1b[3;20r\x1b[?6h")); err != nil {
+		t.Fatal(err)
+	}
+	frame := bytes.Repeat([]byte("\x1b[Hlqqqqk frame row\r\n"), 200)
+	for {
+		if err := recorded.append(frame); err != nil {
+			t.Fatal(err)
+		}
+		if base, _ := recorded.bounds(); base > 2*recorded.segSize {
+			break
+		}
+	}
+	check := func(t *testing.T, recorded *history) {
+		t.Helper()
+		_, next := recorded.bounds()
+		modes, scanned, err := recorded.modesAt(next - 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scanned > recorded.segSize {
+			t.Fatalf("finding the modes parsed %d bytes, segment size %d", scanned, recorded.segSize)
+		}
+		prelude := string(modes.prelude())
+		for _, want := range []string{"\x1b[?1049h", "\x1b[?1h", "\x1b[?1000h", "\x1b[?1006h", "\x1b(0", "\x1b[3;20r", "\x1b[?6h"} {
+			if !strings.Contains(prelude, want) {
+				t.Fatalf("prelude %q lacks %q set before the history base", prelude, want)
+			}
+		}
+	}
+	check(t, recorded)
+	if err := recorded.closeWriter(); err != nil {
+		t.Fatal(err)
+	}
+	check(t, loadHistory(recorded.dir, MinHistoryLimit))
 }
 
 func TestHistoryReloadReadsLegacyRecording(t *testing.T) {
@@ -344,6 +432,17 @@ func TestModesPreludeRestoresInputModes(t *testing.T) {
 	modes.feed([]byte("\x1b[?2004h\x1bc"))
 	if prelude := modes.prelude(); len(prelude) != 0 {
 		t.Fatalf("prelude after RIS = %q", prelude)
+	}
+	modes.feed([]byte("\x1b(0\x1b)0\x0e\x1b[2;10r\x1b[?6h"))
+	prelude = string(modes.prelude())
+	for _, want := range []string{"\x1b(0", "\x1b)0", "\x0e", "\x1b[2;10r", "\x1b[?6h"} {
+		if !strings.Contains(prelude, want) {
+			t.Fatalf("prelude %q lacks %q", prelude, want)
+		}
+	}
+	modes.feed([]byte("\x1b(B\x1b)B\x0f\x1b[r\x1b[?6l"))
+	if prelude := modes.prelude(); len(prelude) != 0 {
+		t.Fatalf("prelude after resetting charsets and the scroll region = %q", prelude)
 	}
 }
 

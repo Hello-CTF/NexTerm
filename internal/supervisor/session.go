@@ -377,15 +377,25 @@ func (s *Session) attach(options AttachOptions) (*Attachment, error) {
 // caller can record the bytes it does not display.
 //
 // A tail starts at a line boundary, so a shell's scrollback renders as it
-// would after a full replay. The prelude restores the screen buffer and input
-// modes set before the tail; screen content drawn before it by a full-screen
-// program with cursor addressing is not restored until the program repaints,
-// which most do on their next update or on SIGWINCH. Modes set before the
-// history base are unknown and left at their defaults.
+// would after a full replay. The prelude restores the screen buffer, input
+// modes, scroll region, origin mode and character sets in effect at the tail,
+// including modes set before the history base (see terminalModes); SGR is not
+// restored. Screen content drawn before the tail by a full-screen program
+// with cursor addressing is not restored until the program repaints, which
+// most do on their next update or on SIGWINCH. A recovered session whose
+// segment lacks a persisted mode snapshot starts that segment from defaults.
 func (s *Session) planReplay(options AttachOptions) (ReplayInfo, error) {
 	base, next := s.history.bounds()
-	if (options.Tail == 0 || options.Retain) && options.Offset > next {
+	if options.Tail == 0 && options.Offset > next {
 		return ReplayInfo{}, fmt.Errorf("%w: attach offset %d beyond supervisor recording size %d", ErrInvalidInput, options.Offset, next)
+	}
+	if options.Retain && options.Offset > next {
+		// A retained offset is the caller's bookkeeping (a transcript
+		// offset), which can run ahead of the recording, for example after
+		// a host crash lost unsynced output. Nothing beyond next can be
+		// streamed; the caller sees ReplayFrom and HistoryNext and corrects
+		// its offset.
+		options.Offset = next
 	}
 	replay := ReplayInfo{HistoryBase: base, HistoryNext: next}
 	if options.Tail == 0 {

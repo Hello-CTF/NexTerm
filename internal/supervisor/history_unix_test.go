@@ -164,6 +164,17 @@ func TestIPCAttachReportsTruncationAndTail(t *testing.T) {
 	}
 	_ = lost.Close()
 
+	// A retained offset beyond the recording (a transcript that ran ahead of
+	// output lost in a host crash) is clamped instead of failing the attach.
+	ahead, err := client.AttachWithOptions(ctx, session.ID(), &identity, AttachOptions{Tail: 4096, Offset: info.HistoryNext + 5000, Retain: true})
+	if err != nil {
+		t.Fatalf("retain beyond the recording = %v", err)
+	}
+	if replay := ahead.Replay(); replay.Truncated || replay.ReplayFrom != replay.DisplayFrom || replay.HistoryNext != info.HistoryNext {
+		t.Fatalf("retain beyond the recording = %+v, want a plain tail", replay)
+	}
+	_ = ahead.Close()
+
 	if _, err := client.AttachWithOptions(ctx, session.ID(), &identity, AttachOptions{Offset: info.HistoryNext + 1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("attach beyond the recording = %v", err)
 	}
@@ -388,5 +399,33 @@ func TestTailReplayRendersLikeFullReplay(t *testing.T) {
 				t.Fatalf("tail alternate screen = %v, full replay %v", got.AltScreen, want.AltScreen)
 			}
 		})
+	}
+}
+
+// A full-screen program that entered the alternate screen long before the
+// history base still gets its tail drawn on the alternate screen.
+func TestTailReplayKeepsModesSetBeforeTheBase(t *testing.T) {
+	supervisor := testSupervisor(t)
+	script := `printf '\033[?1049h\033[?1h'; i=0; while [ $i -lt 9000 ]; do printf '\033[H\033[2J'; r=1; while [ $r -le 23 ]; do printf '\033[%d;1Hframe %05d row %02d' $r $i $r; r=$((r+1)); done; i=$((i+1)); done`
+	session := historySession(t, supervisor, MinHistoryLimit, script)
+	waitDead(t, session)
+	if info := session.Info(); info.HistoryBase == 0 {
+		t.Fatal("the program's mode changes were not evicted")
+	}
+	attachment, err := supervisor.AttachWithOptions(context.Background(), session.ID(), AttachOptions{Tail: DefaultTailBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = attachment.Detach() }()
+	replay := attachment.Replay()
+	if !bytes.Contains(replay.Prelude, []byte("\x1b[?1049h")) || !bytes.Contains(replay.Prelude, []byte("\x1b[?1h")) {
+		t.Fatalf("prelude %q lost modes set before the base", replay.Prelude)
+	}
+	screen := terminal.NewTab("tail", "s", 80, 24, terminal.UTF8)
+	screen.Feed(replay.Prelude)
+	screen.Feed(readToEOF(t, attachment))
+	snapshot := screen.Snapshot()
+	if !snapshot.AltScreen || !strings.HasPrefix(snapshot.Lines[22], "frame 08999 row 23") {
+		t.Fatalf("tail screen alt=%v last row %q", snapshot.AltScreen, snapshot.Lines[22])
 	}
 }
