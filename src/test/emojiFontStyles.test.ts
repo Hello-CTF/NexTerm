@@ -2,7 +2,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { flattenCSSRules, installCompiledCSS, requireStyleRule, styleRules } from "./lib/cssom";
-import { EMOJI_FONT_ALIAS, TERMINAL_FONT_STACKS } from "../features/terminal/xtermTheme";
+import { TERMINAL_FONT_STACKS } from "../features/terminal/xtermTheme";
 
 let installed: HTMLStyleElement;
 
@@ -43,15 +43,20 @@ function unicodeRanges(): Array<[number, number]> {
 const covers = (cp: number) => unicodeRanges().some(([start, end]) => cp >= start && cp <= end);
 
 describe("colour emoji font alias", () => {
-  it("leads the UI and terminal font stacks", () => {
+  it("leads the UI font stacks", () => {
     const rules = styleRules(installed);
     for (const token of ["--font-sans", "--font-mono"]) {
       const value = requireStyleRule(rules, ":root", token).style.getPropertyValue(token);
       expect(firstFamily(value), token).toBe("NexTerm Emoji");
       expect(value, token).toContain("Noto Color Emoji");
     }
+  });
+
+  it("stays out of the terminal stacks, which keep emoji families only as trailing fallbacks", () => {
+    // Terminal programs lay out text-default symbols as one-cell glyphs of the primary font.
     for (const [family, stack] of Object.entries(TERMINAL_FONT_STACKS)) {
-      expect(firstFamily(stack), family).toBe(firstFamily(EMOJI_FONT_ALIAS));
+      expect(stack, family).not.toContain("NexTerm Emoji");
+      expect(stack.indexOf("monospace"), family).toBeLessThan(stack.indexOf("Noto Color Emoji"));
     }
   });
 

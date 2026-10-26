@@ -28,7 +28,7 @@ import {
   getResolvedTerminalTheme,
   subscribeAppearancePrefs,
 } from "../../app/preferences";
-import { preloadEmojiFont, TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
+import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
 import {
   createTerminalStreamWriter,
@@ -279,7 +279,6 @@ export function XtermView(props: XtermViewProps) {
       mouseTracking: () => (termRef.current?.modes.mouseTrackingMode ?? "none") !== "none",
       open: openLink,
     });
-    preloadEmojiFont();
     const term = new Terminal({
       scrollback: 100_000,
       allowProposedApi: true,

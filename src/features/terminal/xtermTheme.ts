@@ -1,24 +1,13 @@
 import type { ResolvedTerminalTheme, TerminalContrast, TerminalFontFamily } from "../../app/preferences";
 
-// "NexTerm Emoji" is the @font-face alias in styles/base.css: it covers only emoji code
-// points (never ASCII, digits, box drawing or the plain arrows), so it renders text-default
-// symbols such as ❤ and ⚠ in colour without changing the cell metrics, which xterm measures
-// from ASCII glyphs of the primary font. The trailing emoji families are glyph fallbacks.
-export const EMOJI_FONT_ALIAS = "'NexTerm Emoji'";
+// Colour emoji families follow the generic family as glyph fallbacks only. The UI's
+// "NexTerm Emoji" alias (styles/base.css) is deliberately absent: terminal programs lay out
+// text-default symbols such as check marks, warning signs, arrows and boxes as one-cell
+// glyphs, which the primary monospace font must keep drawing.
 export const EMOJI_FONT_FALLBACKS = "'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'";
 
-// Canvas and WebGL glyphs are cached once drawn, so the unicode-range alias is loaded up
-// front instead of on the first emoji (which would otherwise be drawn with a fallback).
-export function preloadEmojiFont(): void {
-  try {
-    void document.fonts?.load(`16px ${EMOJI_FONT_ALIAS}`, "❤\ufe0f\u{1f600}").catch(() => {});
-  } catch {
-    // Font loading is best effort; the stack still falls back to the trailing families.
-  }
-}
-
 function terminalStack(families: string): string {
-  return `${EMOJI_FONT_ALIAS}, ${families}, ${EMOJI_FONT_FALLBACKS}`;
+  return `${families}, ${EMOJI_FONT_FALLBACKS}`;
 }
 
 export const TERMINAL_FONT_STACKS: Record<TerminalFontFamily, string> = {

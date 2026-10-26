@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
-import { preloadEmojiFont, TERMINAL_FONT_STACKS, XTERM_DARK_THEME } from "../terminal/xtermTheme";
+import { TERMINAL_FONT_STACKS, XTERM_DARK_THEME } from "../terminal/xtermTheme";
 import { scheduleWebglRenderer } from "../terminal/xtermAddons";
 import { createSelectionAutoCopy } from "../terminal/selectionAutoCopy";
 
@@ -35,7 +35,6 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host || termRef.current) return;
-    preloadEmojiFont();
     const term = new Terminal({
       scrollback: 100_000,
       fontFamily: TERMINAL_FONT_STACKS.cascadia,

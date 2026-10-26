@@ -1,4 +1,5 @@
-/* Colour emoji alias placed first in the UI and terminal font stacks. The range holds only
+/* Colour emoji alias placed first in the UI font stacks (not the xterm stacks, where TUIs
+   lay out text-default symbols as one-cell glyphs). The range holds only
    emoji code points: ASCII, digits, #, *, the keycap mark U+20E3, the plain arrows
    U+2190-2193, box drawing and block elements stay in the primary font. Fonts without a
    glyph for a code point in the range fall through to the next family. */
