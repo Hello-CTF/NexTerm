@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,4 +139,114 @@ func (p *identityMismatchProvider) AttachFromWithIdentity(context.Context, strin
 
 func (p *identityMismatchProvider) AttachWithIdentity(context.Context, string, base.DurableIdentity) (base.DurableAttachment, error) {
 	return nil, durable.ErrIdentity
+}
+
+// selectiveOpaqueProvider hides the supervisor identity of one tab's
+// attachments, modelling a tab that never recorded an incarnation next to
+// tabs that did.
+type selectiveOpaqueProvider struct {
+	*listingDurableProvider
+	hidden string
+}
+
+func (p *selectiveOpaqueProvider) Create(ctx context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
+	attachment, err := p.listingDurableProvider.Create(ctx, options)
+	if attachment == nil || options.ID != p.hidden {
+		return attachment, err
+	}
+	return opaqueDurableAttachment{attachment}, err
+}
+
+func tabRawCount(t *testing.T, manager *Manager, tabID, marker string) int {
+	t.Helper()
+	raw, err := manager.RawDump(tabID, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(raw), marker)
+}
+
+// TestReconnectMixedTabsIsolatesUnrecoverableDurableTab proves one durable
+// tab without an incarnation does not block its siblings: it exits with the
+// visible reason while a checked durable tab resumes at its consumed offset
+// and a plain tab gets a fresh PTY. A later reconnect never revives the lost
+// durable tab as a plain PTY.
+func TestReconnectMixedTabsIsolatesUnrecoverableDurableTab(t *testing.T) {
+	underlying := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	provider := &selectiveOpaqueProvider{listingDurableProvider: underlying, hidden: "legacy-tab"}
+	connector := newFakeConnector()
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(), DurableResolver: &countingResolver{provider: provider},
+		ReconnectBackoff: []time.Duration{0},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "ssh-mixed", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := func(tabID, channel string, durableTab bool) TabInfo {
+		t.Helper()
+		options := OpenTabOptions{TabID: tabID, SessionID: connected.ID, ClientID: "client-a", ChannelID: channel, Cols: 80, Rows: 24}
+		if durableTab {
+			options.Durable = &DurableTabOptions{}
+		}
+		info, err := manager.OpenTab(ctx, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	legacy := open("legacy-tab", "legacy", true)
+	checked := open("checked-tab", "checked", true)
+	plain := open("plain-tab", "plain", false)
+
+	if err := underlying.attachment(checked.ID, 0).emit([]byte("checked-before")); err != nil {
+		t.Fatal(err)
+	}
+	waitForTabMarker(t, manager, checked.ID, "checked-before")
+	underlying.mu.Lock()
+	record := underlying.records[checked.ID]
+	record.output = append(record.output, []byte("checked-during")...)
+	underlying.mu.Unlock()
+
+	if err := manager.Reconnect(ctx, connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return infoExited(manager, legacy.ID) })
+	waitForTabMarker(t, manager, legacy.ID, "cannot be recovered")
+	waitForTabMarker(t, manager, checked.ID, "checked-during")
+	for _, marker := range []string{"checked-before", "checked-during"} {
+		if got := tabRawCount(t, manager, checked.ID, marker); got != 1 {
+			t.Fatalf("checked tab shows %q %d times; want exactly once after offset resume", marker, got)
+		}
+	}
+	for _, id := range []string{checked.ID, plain.ID} {
+		if infoExited(manager, id) {
+			t.Fatalf("tab %s exited after a sibling was unrecoverable", id)
+		}
+	}
+	if got := connector.transport(1).channelCount(); got != 1 {
+		t.Fatalf("first reconnect opened %d plain PTYs; want 1 for the plain tab", got)
+	}
+
+	if err := manager.Reconnect(ctx, connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := connector.transport(2).channelCount(); got != 1 {
+		t.Fatalf("second reconnect opened %d plain PTYs; want 1, the lost durable tab must not become a plain PTY", got)
+	}
+	tab, err := manager.Tab(legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.Info(); !got.Exited || got.Durable {
+		t.Fatalf("lost durable tab after second reconnect = %+v; want exited, not durable", got)
+	}
+	if got := tabRawCount(t, manager, legacy.ID, string(reconnectBanner)); got != 0 {
+		t.Fatalf("lost durable tab received %d reconnect banners; want none", got)
+	}
+	if infoExited(manager, checked.ID) || infoExited(manager, plain.ID) {
+		t.Fatal("second reconnect left a recoverable tab exited")
+	}
 }

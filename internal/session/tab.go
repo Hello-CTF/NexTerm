@@ -133,6 +133,10 @@ type Tab struct {
 	pendingCmd      *pendingCommand
 	durableFed      int64
 	durableIdentity base.DurableIdentity
+	// durableLost marks a durable tab whose helper session reconnect could
+	// not resume. It stays exited: a later reconnect must not replace it with
+	// a plain PTY, because durable tabs never fall back to volatile shells.
+	durableLost bool
 	// runtimeEpisode uniquely identifies the tab's current runtime episode
 	// for roster evidence: minted once at registration for tabs with no
 	// durable daemon identity and never reused, so remove/recreate and

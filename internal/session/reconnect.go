@@ -340,7 +340,7 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 	var provider base.DurableProvider
 	for _, tab := range tabs {
 		tab.mu.Lock()
-		if tab.closed {
+		if tab.closed || tab.durableLost {
 			tab.mu.Unlock()
 			continue
 		}
@@ -521,6 +521,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 				tab.durable = nil
 				goneOffsets = append(goneOffsets, tab.ID)
 			}
+			tab.durableLost = true
 			tab.exited = true
 			exits = append(exits, tab.exitEventLocked(nil))
 			controls = append(controls, tab.controlEventLocked())
