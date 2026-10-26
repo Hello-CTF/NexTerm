@@ -19,7 +19,7 @@ test("vite watch ignores anchor every artifact directory to the resolved root", 
   // in the expected root instead of breaking the anchored comparisons.
   const root = normalizePath(path.resolve(path.join(path.sep, "work", "nexterm")));
   const patterns = acceptanceWatchIgnored(root);
-  for (const dir of [".tower", "target", "target-alt", ".tmp"]) {
+  for (const dir of [".tower", ".claude/worktrees", "target", "target-alt", ".tmp"]) {
     assert.ok(patterns.includes(`${root}/${dir}`), `missing anchored ignore for ${dir}`);
     assert.ok(patterns.includes(`${root}/${dir}/**`), `missing anchored recursive ignore for ${dir}`);
   }

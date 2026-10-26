@@ -44,3 +44,4 @@ build/ios/*.app
 build/ios/*.ipa
 build/android/build/
 /nexterm-desktop
+/.claude/worktrees/
