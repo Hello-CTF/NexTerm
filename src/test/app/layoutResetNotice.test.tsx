@@ -15,7 +15,7 @@ vi.mock("../../app/layout", () => ({
 }));
 
 import { AppBanners } from "../../app/shell/AppBanners";
-import { dismissLayoutResetNotice, layoutResetNotice, noteLayoutReset } from "../../app/layoutResetNotice";
+import { dismissLayoutResetNotice, layoutResetNotice, noteLayoutReset, noteNewerLayout } from "../../app/layoutResetNotice";
 
 let view: MountedView | null = null;
 
@@ -23,6 +23,7 @@ afterEach(() => {
   view?.unmount();
   view = null;
   dismissLayoutResetNotice();
+  noteNewerLayout(null);
 });
 
 describe("layout reset notice", () => {
@@ -44,5 +45,15 @@ describe("layout reset notice", () => {
     act(() => button.click());
     expect(view.container.textContent).not.toContain("布局已重置");
     expect(layoutResetNotice()).toBeNull();
+  });
+
+  it("keeps a newer-format notice on screen until sync can resume", () => {
+    view = mount(createElement(AppBanners, { ws: null, onOpenSettings: () => undefined, onPickOtherAsset: () => undefined }));
+    act(() => noteNewerLayout(5));
+    const alert = view.container.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toContain("格式 v5");
+    expect(alert.querySelector("button")).toBeNull();
+    act(() => noteNewerLayout(null));
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
   });
 });

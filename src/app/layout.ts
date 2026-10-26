@@ -38,7 +38,7 @@ import {
   type DeviceLayoutState,
 } from "./layoutFocus";
 import { ALL_PROJECTS } from "./projectFocus";
-import { dismissLayoutResetNotice, noteLayoutReset } from "./layoutResetNotice";
+import { dismissLayoutResetNotice, noteLayoutReset, noteNewerLayout } from "./layoutResetNotice";
 import { useClosedTabs } from "./closedTabs";
 import { useGroupCollapse } from "../features/explorer/groupCollapse";
 import {
@@ -643,13 +643,11 @@ const LEGACY_BASE_KEY = "legacy-layout";
 // nor overwrites the account layout.
 let newerRemoteVersion: number | null = null;
 
-function blockNewerRemote(version: number): void {
-  if (newerRemoteVersion === version) return;
+// setNewerRemote pauses (or with null, resumes) layout sync and keeps the reason on screen.
+function setNewerRemote(version: number | null): void {
   newerRemoteVersion = version;
-  clearSaveTimer();
-  useUi
-    .getState()
-    .pushToast("error", `账号布局由更新版本的 NexTerm 保存（格式 v${version}），本设备不会读取或覆盖它，请升级后再同步布局`);
+  if (version !== null) clearSaveTimer();
+  noteNewerLayout(version);
 }
 
 const RESTORE_KEY_PREFIX = "nexterm:layout-restored-v1:";
@@ -1248,8 +1246,7 @@ async function pullLatest(reason: "boot" | "remote" | "conflict"): Promise<Persi
         if (!parsed || !requiresRestoreReview(parsed)) restorePaused = false;
       }
       const newer = parsed ? null : newerLayoutVersion(dto.data);
-      if (newer !== null) blockNewerRemote(newer);
-      else newerRemoteVersion = null;
+      setNewerRemote(newer);
       if (parsed) {
         result = parsed;
         const reset = layoutMigrationNotices.get(parsed)?.legacyLayoutReset;
@@ -1434,7 +1431,7 @@ export function advanceLayoutAccount(): void {
   pendingRestore = null;
   previewRestore = null;
   dismissLayoutResetNotice();
-  newerRemoteVersion = null;
+  setNewerRemote(null);
   accountTransitionHold = true;
   restorePaused = restoreDecisionKey() !== null;
   restoreReviewInFlight = false;
@@ -1469,7 +1466,7 @@ export function resetLayoutSyncForTest(): void {
   pendingRestore = null;
   previewRestore = null;
   dismissLayoutResetNotice();
-  newerRemoteVersion = null;
+  setNewerRemote(null);
   restorePaused = false;
   accountTransitionHold = false;
   restoreReviewInFlight = false;

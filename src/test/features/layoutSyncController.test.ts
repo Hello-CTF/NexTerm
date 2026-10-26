@@ -559,12 +559,19 @@ describe("split trees across two clients", () => {
     server.revision = 4;
     server.data = JSON.stringify({ ...layout([workspace("ws", "asset", [pane("p0", [terminal("future")])])]), v: 5 });
     const a = await openClient();
+    const notice = await import("../../app/layoutResetNotice");
     expect(a.store.getState().workspaces).toEqual([]);
-    expect(a.store.getState().toasts.some((toast) => toast.text.includes("v5"))).toBe(true);
+    expect(notice.newerLayoutNotice()).toBe(5);
 
     a.store.setState({ workspaces: [workspace("local", "asset-local", [pane("lp", [terminal("mine")])])] });
     await a.layout.flushLayout();
     expect(server.putCalls).toBe(0);
     expect(serverLayout().v).toBe(5);
+
+    // Once the account layout is readable again, sync resumes and the notice clears.
+    server.revision = 5;
+    server.data = JSON.stringify(layout([workspace("ws", "asset", [pane("p0", [terminal("now")])])]));
+    a.layout.onRemoteChange({ revision: 5 });
+    await vi.waitFor(() => expect(notice.newerLayoutNotice()).toBeNull());
   });
 });
