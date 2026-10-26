@@ -166,6 +166,25 @@ func (m *Manager) ensureBackgroundHelper(session *Session, transport *transportH
 		delete(backgroundHelperDeployments.entries, session)
 		entry.cancel()
 	}
+	backgroundHelperDeployments.Unlock()
+	// A deployment that just finished for this generation already stored its provider under session.mu; a caller that
+	// read the provider before that must join the finished deployment instead of starting a second one.
+	session.durableMu.Lock()
+	storedProvider := session.durableProvider
+	if session.durableGen != generation || session.durableTransport != transport {
+		storedProvider = nil
+	}
+	session.durableMu.Unlock()
+	completedHelperDeployments.Lock()
+	if completed := completedHelperDeployments.entries[session]; completed != nil && completed.transport == transport &&
+		completed.generation == generation && completed.err == nil && completed.provider != nil && completed.provider == storedProvider {
+		completedHelperDeployments.Unlock()
+		session.mu.Unlock()
+		return completed, false, nil
+	}
+	completedHelperDeployments.Unlock()
+	// Entries are only added under session.mu, which is still held, so the map has no entry for this session now.
+	backgroundHelperDeployments.Lock()
 	baseCtx := session.ctx
 	if baseCtx == nil {
 		baseCtx = m.ctx
@@ -244,6 +263,10 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 	if entry.err == nil && entry.provider == nil {
 		entry.err = errors.New("helper resolver returned a nil provider")
 	}
+	// The outcome is stored and the running entry removed under session.mu, the lock ensureBackgroundHelper holds:
+	// a caller that no longer sees the running deployment therefore already sees its provider or failure, and never
+	// starts a second deployment in between.
+	session.mu.Lock()
 	backgroundHelperDeployments.Lock()
 	canceledByUser := entry.canceledByUser
 	if backgroundHelperDeployments.entries[session] == entry {
@@ -251,7 +274,6 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 	}
 	backgroundHelperDeployments.Unlock()
 	recordCompletedHelperDeployment(entry)
-	session.mu.Lock()
 	if session.transport == entry.transport && session.generation == entry.generation {
 		session.durableMu.Lock()
 		session.durableGen = entry.generation

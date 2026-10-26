@@ -60,21 +60,23 @@ func (m *Manager) PrepareDurable(ctx context.Context, sessionID string) (Durable
 	transport, generation := connected.transport, connected.generation
 	connected.mu.Unlock()
 
+	// The running deployment is checked before the stored outcome: a finished deployment stores its outcome before
+	// it stops being the running one, so a missing entry means the outcome below is already visible.
+	if matchingBackgroundHelper(connected, transport, generation) != nil {
+		return DurableReadiness{State: DurablePreparing}, nil
+	}
 	connected.durableMu.Lock()
 	current := connected.durableGen == generation && connected.durableTransport == transport
-	if current && connected.durableProvider != nil {
-		createFailure := connected.durableCreateFailure
-		connected.durableMu.Unlock()
+	provider := connected.durableProvider
+	createFailure := connected.durableCreateFailure
+	failure := connected.durableFailure
+	failedAt := connected.durableFailureAt
+	connected.durableMu.Unlock()
+	if current && provider != nil {
 		if createFailure != nil {
 			return DurableReadiness{State: DurableUnavailable, Reason: durableReadinessReason(createFailure)}, nil
 		}
 		return DurableReadiness{State: DurableReady}, nil
-	}
-	failure := connected.durableFailure
-	failedAt := connected.durableFailureAt
-	connected.durableMu.Unlock()
-	if matchingBackgroundHelper(connected, transport, generation) != nil {
-		return DurableReadiness{State: DurablePreparing}, nil
 	}
 	// A failure stays reported for the same retry window the tab path uses; afterwards a fresh deployment starts.
 	if current && failure != nil && m.now().Sub(failedAt) < durableFailureRetryWindow {
