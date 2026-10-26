@@ -51,3 +51,14 @@ function subscribe(listener: () => void): () => void {
 export function useTerminalInputMode(): TerminalInputMode {
   return useSyncExternalStore(subscribe, getTerminalInputMode);
 }
+
+/**
+ * Lets a tap on the terminal focus the buffered input field instead. The field only takes the tap when buffered
+ * mode is on and the field is rendered (a wide window hides the key bar and the field); otherwise the tap falls back
+ * to focusing the terminal. Returns true when the field took the tap.
+ */
+export function takeTapForComposer(composer: HTMLInputElement | null): boolean {
+  if (mode !== "buffered" || !composer?.isConnected || composer.getClientRects().length === 0) return false;
+  composer.focus({ preventScroll: true });
+  return document.activeElement === composer;
+}

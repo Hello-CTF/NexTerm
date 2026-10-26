@@ -12,7 +12,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => ({
 }));
 
 import { TerminalKeysBar } from "../../features/terminal/TerminalKeysBar";
-import { reloadTerminalInputMode, setTerminalInputMode } from "../../features/terminal/terminalInputMode";
+import { reloadTerminalInputMode, setTerminalInputMode, takeTapForComposer } from "../../features/terminal/terminalInputMode";
 import { saveQuickCommands, quickCommandBytes } from "../../features/terminal/quickCommands";
 import { TERMINAL_KEY_CATALOG, terminalKeySequence } from "../../features/terminal/terminalKeys";
 import { clearStickyModifiers } from "../../features/terminal/terminalInput/stickyModifiers";
@@ -144,6 +144,44 @@ describe("buffered input", () => {
     click(button("聚焦终端并打开系统键盘"));
     expect(document.activeElement).toBe(composer());
     expect(terminalFocus).toBe(0);
+  });
+});
+
+describe("a tap on the terminal in buffered mode", () => {
+  function rendered(field: HTMLInputElement, visible: boolean) {
+    // jsdom has no layout; a hidden field (display: none on wide windows) has no client rects.
+    Object.defineProperty(field, "getClientRects", {
+      configurable: true,
+      value: () => (visible ? [{ width: 200, height: 36 }] : []),
+    });
+  }
+
+  it("focuses the rendered line field", () => {
+    renderBar();
+    click(button("缓冲输入"));
+    const field = composer()!;
+    rendered(field, true);
+    field.blur();
+    expect(takeTapForComposer(field)).toBe(true);
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("falls back to the terminal when the line field is not rendered", () => {
+    renderBar();
+    click(button("缓冲输入"));
+    const field = composer()!;
+    rendered(field, false);
+    field.blur();
+    expect(takeTapForComposer(field)).toBe(false);
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it("leaves the tap to the terminal in direct mode", () => {
+    const field = document.createElement("input");
+    document.body.append(field);
+    rendered(field, true);
+    expect(takeTapForComposer(field)).toBe(false);
+    field.remove();
   });
 });
 

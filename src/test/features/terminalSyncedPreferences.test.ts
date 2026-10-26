@@ -125,6 +125,87 @@ describe("key bar layout preference", () => {
   });
 });
 
+describe("overlapping account writes", () => {
+  // A store whose writes settle when the test decides.
+  function controlledStore(initial: Record<string, unknown>, defaults: Record<string, unknown> = {}) {
+    const data = { ...initial };
+    const pending: Array<{ set: Record<string, unknown>; resolve: () => void; reject: (error: Error) => void }> = [];
+    return {
+      data,
+      pending,
+      async getView(): Promise<AccountPreferenceView> {
+        return { defaults: { ...defaults }, overrides: { ...data } };
+      },
+      putOverrides(set: Record<string, unknown>) {
+        return new Promise<void>((resolve, reject) => {
+          pending.push({
+            set,
+            resolve: () => {
+              Object.assign(data, set);
+              resolve();
+            },
+            reject,
+          });
+        });
+      },
+      async deleteOverrides() {},
+    };
+  }
+
+  async function signInControlled(store: ReturnType<typeof controlledStore>) {
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+  }
+
+  it("keeps a newer successful write when an older one fails", async () => {
+    const store = controlledStore({ "terminal.keyBar": ["escape"] });
+    await signInControlled(store);
+    const a = saveTerminalKeyConfig(["tab"]);
+    const b = saveTerminalKeyConfig(["up"]);
+    store.pending[0].reject(new Error("offline"));
+    await expect(a).rejects.toThrow("offline");
+    expect(loadTerminalKeyConfig()).toEqual(["up"]);
+    store.pending[1].resolve();
+    await b;
+    expect(loadTerminalKeyConfig()).toEqual(["up"]);
+  });
+
+  it("rolls a failed latest write back to the newest confirmed value", async () => {
+    const store = controlledStore({ "terminal.keyBar": ["escape"] });
+    await signInControlled(store);
+    const a = saveTerminalKeyConfig(["tab"]);
+    const b = saveTerminalKeyConfig(["up"]);
+    store.pending[0].resolve();
+    await a;
+    store.pending[1].reject(new Error("offline"));
+    await expect(b).rejects.toThrow("offline");
+    expect(loadTerminalKeyConfig()).toEqual(["tab"]);
+  });
+
+  it("shows an older write that succeeds after the latest one failed", async () => {
+    const store = controlledStore({ "terminal.keyBar": ["escape"] });
+    await signInControlled(store);
+    const a = saveTerminalKeyConfig(["tab"]);
+    const b = saveTerminalKeyConfig(["up"]);
+    store.pending[1].reject(new Error("offline"));
+    await expect(b).rejects.toThrow("offline");
+    expect(loadTerminalKeyConfig()).toEqual(["escape"]);
+    store.pending[0].resolve();
+    await a;
+    expect(loadTerminalKeyConfig()).toEqual(["tab"]);
+  });
+
+  it("resets to the server default when one is set", async () => {
+    const store = controlledStore({ "terminal.keyBar": ["escape"] }, { "terminal.keyBar": ["tab", "digit-1"] });
+    await signInControlled(store);
+    const reset = resetTerminalKeyConfig();
+    store.pending[0].resolve();
+    await reset;
+    expect(store.data["terminal.keyBar"]).toEqual(["tab", "digit-1"]);
+    expect(loadTerminalKeyConfig()).toEqual(["tab", "digit-1"]);
+  });
+});
+
 describe("quick commands preference", () => {
   const commands: QuickCommand[] = [
     { label: "状态", text: "git status", appendEnter: true },

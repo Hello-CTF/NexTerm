@@ -197,6 +197,37 @@ describe("direct input on a touch screen", () => {
     expect(document.activeElement).not.toBe(textarea);
   });
 
+  it("does not focus the terminal for a long press", async () => {
+    let clock = 1000;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => clock);
+    try {
+      const textarea = await show();
+      (document.activeElement as HTMLElement | null)?.blur();
+      touch("touchstart", screen(), { x: 40, y: 40 });
+      clock += 600;
+      touch("touchend", screen(), { x: 40, y: 40 });
+      expect(document.activeElement).not.toBe(textarea);
+
+      touch("touchstart", screen(), { x: 40, y: 40 });
+      clock += 100;
+      touch("touchend", screen(), { x: 40, y: 40 });
+      expect(document.activeElement).toBe(textarea);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("does not focus the terminal while text is selected", async () => {
+    const textarea = await show();
+    await act(async () => {
+      await new Promise<void>((resolve) => harness.terminals[0].write("selected output", resolve));
+    });
+    act(() => (harness.terminals[0] as unknown as { selectAll: () => void }).selectAll());
+    (document.activeElement as HTMLElement | null)?.blur();
+    tap(screen());
+    expect(document.activeElement).not.toBe(textarea);
+  });
+
   it("leaves focus alone when buffered input handles the tap", async () => {
     const onTouchTap = vi.fn(() => true);
     const textarea = await show(onTouchTap);

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Mo
 import { XtermView, type TerminalHandle } from "./XtermView";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
-import { getTerminalInputMode } from "./terminalInputMode";
+import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
 import { Daemon, type DaemonHelperState } from "./Daemon";
 import { helperStageText } from "./HelperOperationView";
@@ -2191,13 +2191,7 @@ export function TerminalPane({
               }}
               onSelectionCopy={handleSelectionCopy}
               onRequestPaste={() => void pasteIntoTerminal()}
-              onTouchTap={() => {
-                // Buffered input keeps typing in its own field, so a tap on the terminal focuses that field.
-                const composer = composerRef.current;
-                if (getTerminalInputMode() !== "buffered" || !composer?.isConnected) return false;
-                composer.focus({ preventScroll: true });
-                return true;
-              }}
+              onTouchTap={() => takeTapForComposer(composerRef.current)}
               registerSearch={(api) => {
                 searchApi.current = api;
               }}

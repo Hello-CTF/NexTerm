@@ -22,7 +22,7 @@ export interface SyncedPreference<T> {
   get(): T;
   /** Saves to the account when one is signed in, otherwise on this device. Rejects when the account write fails. */
   set(value: T): Promise<void>;
-  /** Returns to the default: on the device the stored value is removed; an account stores the fallback explicitly. */
+  /** Returns to the default: on the device the stored value is removed; an account stores the server default (or the builtin fallback) explicitly. */
   reset(): Promise<void>;
   subscribe(listener: () => void): () => void;
 }
@@ -42,6 +42,11 @@ export function createSyncedPreference<T>(options: SyncedPreferenceOptions<T>): 
   let snapshot: T | undefined;
   let snapshotSignature = "";
   let importStore: AccountPreferenceStore | null = null;
+  let writeSeq = 0;
+  let pendingWrites = 0;
+  let confirmedSeq = 0;
+  let confirmed: { value: unknown } | null = null;
+  let latestFailed = false;
 
   const readLocal = (): T | null => {
     try {
@@ -125,28 +130,53 @@ export function createSyncedPreference<T>(options: SyncedPreferenceOptions<T>): 
       notify();
       return;
     }
-    const overrides = getAccountOverrides();
-    const hadPrevious = key in overrides;
-    const previous = overrides[key];
+    // Writes may overlap (A then B before A settles). A failure only rolls the cache back when it is the latest
+    // write, and then to the newest value the account confirmed, so an older failure never undoes a newer write.
+    const seq = ++writeSeq;
+    if (pendingWrites === 0) {
+      const overrides = getAccountOverrides();
+      confirmed = key in overrides ? { value: overrides[key] } : null;
+      confirmedSeq = seq - 1;
+    }
+    pendingWrites += 1;
+    latestFailed = false;
     patchAccountOverrideCache({ [key]: value }, []);
     notify();
+    const showConfirmed = () => {
+      if (confirmed) patchAccountOverrideCache({ [key]: confirmed.value }, []);
+      else patchAccountOverrideCache({}, [key]);
+      notify();
+    };
     try {
       await store.putOverrides({ [key]: value });
     } catch (error) {
-      if (getAccountPreferenceStore() === store) {
-        if (hadPrevious) patchAccountOverrideCache({ [key]: previous }, []);
-        else patchAccountOverrideCache({}, [key]);
-        notify();
+      pendingWrites -= 1;
+      if (seq === writeSeq && getAccountPreferenceStore() === store) {
+        latestFailed = true;
+        showConfirmed();
       }
       throw error;
     }
+    pendingWrites -= 1;
+    if (getAccountPreferenceStore() !== store) return;
+    if (seq > confirmedSeq) {
+      confirmedSeq = seq;
+      confirmed = { value };
+    }
+    // The latest write failed earlier and showed an older value; this later-confirmed one is now the newest.
+    if (latestFailed && seq === confirmedSeq) showConfirmed();
     // The account now holds the value, so a device copy left from before the account is no longer needed.
-    if (getAccountPreferenceStore() === store) removeLocal();
+    removeLocal();
   };
 
+  // Resetting an account saves the effective default explicitly (so an unimported device copy elsewhere cannot
+  // replace it): the server default when one is set and usable, otherwise the builtin fallback. Without an account
+  // the device value is removed.
   const reset = async (): Promise<void> => {
     if (getAccountPreferenceStore() && accountPreferencesReady()) {
-      await set(fallback());
+      const defaults = getAccountDefaults();
+      const serverDefault = key in defaults ? parse(defaults[key]) : null;
+      await set(serverDefault ?? fallback());
       return;
     }
     removeLocal();
