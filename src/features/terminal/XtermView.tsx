@@ -38,6 +38,8 @@ import { createTerminalResponseCoalescer } from "./terminalResponses";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
+import { terminalKeyOverride } from "./terminalKeys";
+import { isMac } from "../../app/platform";
 import { createSelectionAutoCopy } from "./selectionAutoCopy";
 import { confirmMultilinePaste, multilinePasteLines, wrapBracketedPaste } from "./terminalPaste";
 import { SelectionActionBar, isCoarsePointerDevice } from "./SelectionActionBar";
@@ -165,6 +167,7 @@ export function XtermView(props: XtermViewProps) {
   const visibleRef = useRef(props.visible);
   const canResizeRef = useRef(props.canResize);
   const winrmRef = useRef(props.winrm);
+  const lastFitViewportRef = useRef<{ widthPx: number; heightPx: number } | null>(null);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
   onAttachRef.current = props.onAttach;
@@ -191,6 +194,14 @@ export function XtermView(props: XtermViewProps) {
     if (afterClaim) coordinator.setCanResize(true);
     const geometry = measureTerminalGeometry(term, host);
     if (!geometry) return false;
+    // A soft keyboard only shrinks the visible height: keep the grid (no local or PTY resize) and let CSS bottom-align the
+    // terminal above it. A width change (rotation) or a taller viewport still refits.
+    const last = lastFitViewportRef.current;
+    const keyboardOpen = document.documentElement.dataset.nxKeyboard === "open";
+    if (keyboardOpen && last && last.widthPx === geometry.viewport.widthPx && geometry.viewport.heightPx < last.heightPx) {
+      return false;
+    }
+    lastFitViewportRef.current = geometry.viewport;
     const snapshot = coordinator.snapshot();
     const localChanged = term.cols !== geometry.grid.cols || term.rows !== geometry.grid.rows;
     const remoteChanged =
@@ -220,7 +231,17 @@ export function XtermView(props: XtermViewProps) {
     // receive no keys while the terminal is focused; keys matching app-level keybindings are let through here,
     // bubbling to window for App to handle.
     term.attachCustomKeyEventHandler((event) => {
-      if (event.repeat || event.isComposing || event.keyCode === 229) return true;
+      if (event.isComposing || event.keyCode === 229) return true;
+      // Overridden chords also auto-repeat, so they are handled before the repeat bail-out below.
+      const override = matchAppKeybinding(event) === null ? terminalKeyOverride(event, isMac()) : null;
+      if (override !== null) {
+        if (event.type === "keydown") {
+          event.preventDefault();
+          term.input(override, true);
+        }
+        return false;
+      }
+      if (event.repeat) return true;
       return matchAppKeybinding(event) === null;
     });
 
@@ -1356,7 +1377,7 @@ export function XtermView(props: XtermViewProps) {
     <div className="relative h-full w-full min-h-0">
       {/* The IME composition view and helper textarea follow the cursor and can extend past the right edge; clipping
           keeps them from scrolling an ancestor and shifting the terminal sideways. */}
-      <div ref={hostRef} className="h-full w-full min-h-0 overflow-clip" />
+      <div ref={hostRef} className="nx-xterm-host relative h-full w-full min-h-0 overflow-clip" />
       {selectionBar && (
         <SelectionActionBar
           x={selectionBar.x}

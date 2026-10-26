@@ -125,3 +125,35 @@ export function formatKeySequence(data: string): string {
   }
   return out;
 }
+
+type KeyLike = Pick<KeyboardEvent, "key" | "shiftKey" | "ctrlKey" | "altKey" | "metaKey">;
+
+// ESC+CR: TUIs such as Claude Code read it as "insert newline" rather than submit.
+export const SHIFT_ENTER_SEQUENCE = "\x1b\r";
+
+export function isShiftEnter(event: KeyLike): boolean {
+  return event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
+}
+
+// terminalKeyOverride returns the bytes for key chords whose xterm.js default is ambiguous or not what
+// native terminals send, or null to keep the default encoding.
+//  - Shift+Enter: xterm sends a bare CR (same as Enter); ESC+CR lets TUIs insert a newline.
+//  - Ctrl+Backspace: xterm sends BS (same as Backspace); ^W deletes the previous word.
+//  - macOS Option+Left/Right: word jump (ESC b / ESC f) as in Terminal.app and iTerm2.
+//  - macOS Cmd+Left/Right/Backspace: line start / line end / kill line (^A / ^E / ^U).
+export function terminalKeyOverride(event: KeyLike, mac: boolean): string | null {
+  const { key, shiftKey, ctrlKey, altKey, metaKey } = event;
+  if (isShiftEnter(event)) return SHIFT_ENTER_SEQUENCE;
+  if (key === "Backspace" && ctrlKey && !shiftKey && !altKey && !metaKey) return "\x17";
+  if (!mac || shiftKey || ctrlKey) return null;
+  if (altKey && !metaKey) {
+    if (key === "ArrowLeft") return "\x1bb";
+    if (key === "ArrowRight") return "\x1bf";
+  }
+  if (metaKey && !altKey) {
+    if (key === "ArrowLeft") return "\x01";
+    if (key === "ArrowRight") return "\x05";
+    if (key === "Backspace") return "\x15";
+  }
+  return null;
+}
