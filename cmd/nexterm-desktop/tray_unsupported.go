@@ -14,6 +14,9 @@ import (
 func setupTray(_ *application.App, _ *application.WebviewWindow, _ []byte, _ *store.Store, _ *slog.Logger) {
 }
 
+func setWindowIconWhenReady(_ *application.WebviewWindow, _ []byte, _ *slog.Logger) {
+}
+
 // showWindow keeps the shared window-restore behavior available on every
 // platform; see tray_windows.go.
 func showWindow(window *application.WebviewWindow) {

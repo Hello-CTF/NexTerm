@@ -56,7 +56,7 @@ li { margin: 4px 0; }
 	return b.String()
 }
 
-func showStartupError(paths platform.Paths, startupErr error, logger *slog.Logger) int {
+func showStartupError(paths platform.Paths, startupErr error, logger *slog.Logger, brandIcon []byte) int {
 	logger.Error("startup failed", "error", startupErr)
 	app := application.New(application.Options{
 		Name:        "NexTerm",
@@ -72,6 +72,7 @@ func showStartupError(paths platform.Paths, startupErr error, logger *slog.Logge
 		Width:  720,
 		Height: 560,
 	})
+	setWindowIconWhenReady(window, brandIcon, logger)
 	window.Show()
 	if err := app.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop: show startup error window:", err)
