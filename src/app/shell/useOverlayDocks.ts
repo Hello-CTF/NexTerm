@@ -107,11 +107,19 @@ export function useMobileTerminalDockCollapse(
   const { overlayDock, setOverlayDock } = docks;
   const rememberedOverlayDock = useRef<OverlayDock>(null);
   const prevActiveKind = useRef<string | null>(null);
+  const connectFocusRevision = useUi((s) => s.connectFocusRevision);
+  const prevConnectFocusRevision = useRef(connectFocusRevision);
   const isTerminalPaneKind = activeTabKind === "terminal";
   useEffect(() => {
     if (!overlaySidebars) return;
     const prev = prevActiveKind.current;
     prevActiveKind.current = activeTabKind;
+    if (prevConnectFocusRevision.current !== connectFocusRevision) {
+      // Opening a host shows its workspace, which may have no terminal yet: never bring a drawer back over it.
+      prevConnectFocusRevision.current = connectFocusRevision;
+      rememberedOverlayDock.current = null;
+      return;
+    }
     if (activeTabKind === prev) return;
     if (isTerminalPaneKind) {
       rememberedOverlayDock.current = overlayDock;
@@ -121,7 +129,7 @@ export function useMobileTerminalDockCollapse(
       rememberedOverlayDock.current = null;
       setOverlayDock(mem);
     }
-  }, [activeTabKind, isTerminalPaneKind, overlaySidebars, overlayDock, setOverlayDock]);
+  }, [activeTabKind, connectFocusRevision, isTerminalPaneKind, overlaySidebars, overlayDock, setOverlayDock]);
 }
 
 // useSessionSheetDismiss closes the session sheet when the active tab changes underneath it (a file opened from the
