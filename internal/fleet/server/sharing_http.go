@@ -275,7 +275,9 @@ func (s *Service) openShareStream(r *http.Request, client *supervisor.Client) (s
 		defer cancel()
 		_ = client.Kill(killCtx, info.ID, expect)
 	}
-	stream, err := client.Attach(r.Context(), info.ID, expect)
+	// Like any fresh view, the viewer gets the recent tail rather than the
+	// whole retained history.
+	stream, err := client.AttachWithOptions(r.Context(), info.ID, expect, supervisor.AttachOptions{Tail: supervisor.DefaultTailBytes})
 	if err != nil {
 		// When attach fails, reclaim the just-created session so no orphan terminal is left on the host.
 		cleanup()
