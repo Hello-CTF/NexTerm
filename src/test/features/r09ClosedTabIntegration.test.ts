@@ -82,7 +82,6 @@ function workspace(id: string, tabs: AppTab[], overrides: Partial<Workspace> = {
     assetId: "asset-1",
     panes: [pane],
     activePaneId: pane.id,
-    splitRatio: 0.5,
     closable: true,
     ...overrides,
   };

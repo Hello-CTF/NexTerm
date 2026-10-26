@@ -161,7 +161,6 @@ describe("connectDevice workspace deduplication", () => {
           assetKind: "device",
           panes: [{ id: "p1", tabs, activeTabId: tabs[0]?.id ?? null }],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -231,7 +230,7 @@ describe("connectDevice workspace deduplication", () => {
     const workspace = useUi.getState().workspaces[0];
     useUi.setState({
       sessions: state === "missing" ? [] : useUi.getState().sessions,
-      workspaces: [{ ...workspace, activePaneId: "p2", splitRatio: 0.4, panes: [
+      workspaces: [{ ...workspace, activePaneId: "p2", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.4, a: { type: "leaf" as const, id: "leaf-a", paneId: "p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "p2" } }, panes: [
         { id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", title: "one", sessionId: "s-dev-1", tabId: "shell-one", closable: true }] },
         { id: "p2", activeTabId: "t2", tabs: [{ id: "t2", kind: "terminal", title: "two", sessionId: "s-dev-1", tabId: "shell-two", closable: true }] },
       ] }],
@@ -242,7 +241,7 @@ describe("connectDevice workspace deduplication", () => {
     expect(await connectDevice(DEVICE)).toEqual({ ok: true });
 
     const restored = useUi.getState().workspaces[0];
-    expect(restored).toMatchObject({ id: "ws-dev", sessionId: "s-new", activePaneId: "p2", splitRatio: 0.4 });
+    expect(restored).toMatchObject({ id: "ws-dev", sessionId: "s-new", activePaneId: "p2", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.4, a: { type: "leaf" as const, id: "leaf-a", paneId: "p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "p2" } } });
     expect(restored.panes.map((pane) => ({ id: pane.id, activeTabId: pane.activeTabId, tabs: pane.tabs.map((tab) => [tab.id, tab.tabId, tab.sessionId]) }))).toEqual([
       { id: "p1", activeTabId: "t1", tabs: [["t1", "shell-one", "s-new"]] },
       { id: "p2", activeTabId: "t2", tabs: [["t2", "shell-two", "s-new"]] },

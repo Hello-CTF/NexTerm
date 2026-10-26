@@ -8,6 +8,7 @@ import {
   closeActionHint,
   sanitizeRemoteTabTitle,
   type Pane,
+  type SplitDirection,
 } from "../store";
 import { applyAuthoritativeTabTitle } from "../terminalViewStore";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "../keybindings";
@@ -24,6 +25,7 @@ import {
   IconEdit,
   IconPlus,
   IconSplitH,
+  IconSplitV,
   IconMergeH,
   IconStop,
 } from "../../ui/icons";
@@ -73,16 +75,28 @@ function focusTab(tablist: Element | null, id: string): void {
   tablist?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`)?.focus();
 }
 
+export interface PaneMoveTarget {
+  paneId: string;
+  label: string;
+}
+
 interface PaneGroupProps {
   pane: Pane;
   idPrefix: string;
   workspaceId: string;
   active: boolean;
   visible: boolean;
+  // The workspace shows more than one pane.
   split: boolean;
-  canSplit: boolean;
+  // Only this pane is on screen (mobile and compact layouts); `paneNumber` of `paneCount` is shown.
+  singlePane: boolean;
+  paneNumber: number;
+  paneCount: number;
   splitAllowed: boolean;
-  onToggleSplit: () => void;
+  moveTargets: PaneMoveTarget[];
+  onSplit: (direction: SplitDirection) => void;
+  onClosePane: () => void;
+  onCyclePane: (step: 1 | -1) => void;
   onActivate: () => void;
   onNewTerminal: () => void;
   leftOpen: boolean;
@@ -96,15 +110,21 @@ export function PaneGroup({
   active,
   visible,
   split,
-  canSplit,
+  singlePane,
+  paneNumber,
+  paneCount,
   splitAllowed,
-  onToggleSplit,
+  moveTargets,
+  onSplit,
+  onClosePane,
+  onCyclePane,
   onActivate,
   onNewTerminal,
   leftOpen,
   onToggleLeft,
 }: PaneGroupProps) {
   const setActiveTab = useUi((s) => s.setActiveTab);
+  const moveTabToPane = useUi((s) => s.moveTabToPane);
   const moveTabInPane = useUi((s) => s.moveTabInPane);
   const moveTab = (fromIndex: number, toIndex: number) =>
     moveTabInPane(pane.id, fromIndex, toIndex);
@@ -191,6 +211,17 @@ export function PaneGroup({
       disabled: closableRight.length === 0,
       onSelect: () => void requestCloseTabs(closableRight.map((candidate) => candidate.id)),
     });
+    if (moveTargets.length > 0) {
+      items.push({ kind: "separator" });
+      for (const target of moveTargets) {
+        items.push({
+          kind: "item",
+          label: `移到${target.label}`,
+          icon: <IconChevronRight size={12} />,
+          onSelect: () => moveTabToPane(t.id, target.paneId),
+        });
+      }
+    }
     if (running) {
       items.push({ kind: "separator" });
       items.push({
@@ -365,21 +396,65 @@ export function PaneGroup({
           <IconPlus size={13} />
         </button>
         <div className="nx-spacer" />
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          disabled={canSplit && !splitAllowed}
-          title={
-            canSplit
-              ? splitAllowed
-                ? `上下分屏 (${kbLabel("toggleSplit")})`
-                : "窗口高度不足，无法上下分屏"
-              : `取消分屏 (${kbLabel("toggleSplit")})`
-          }
-          aria-label={canSplit ? "上下分屏" : "取消分屏"}
-          onClick={onToggleSplit}
-        >
-          {canSplit ? <IconSplitH size={14} /> : <IconMergeH size={14} />}
-        </button>
+        {singlePane && paneCount > 1 && (
+          <span className="flex items-center" role="group" aria-label="切换窗格">
+            <button
+              type="button"
+              className="nx-icon-btn nx-icon-btn-sm"
+              title="上一个窗格"
+              aria-label="上一个窗格"
+              onClick={() => onCyclePane(-1)}
+            >
+              <IconChevronLeft size={13} />
+            </button>
+            <span className="px-0.5 text-[11px] tabular-nums text-neutral-400" aria-live="polite">
+              窗格 {paneNumber}/{paneCount}
+            </span>
+            <button
+              type="button"
+              className="nx-icon-btn nx-icon-btn-sm"
+              title="下一个窗格"
+              aria-label="下一个窗格"
+              onClick={() => onCyclePane(1)}
+            >
+              <IconChevronRight size={13} />
+            </button>
+          </span>
+        )}
+        {!singlePane && (
+          <>
+            <button
+              type="button"
+              className="nx-icon-btn nx-icon-btn-sm"
+              title={`向右分屏 (${kbLabel("splitRight")})`}
+              aria-label="向右分屏"
+              onClick={() => onSplit("right")}
+            >
+              <IconSplitV size={14} />
+            </button>
+            <button
+              type="button"
+              className="nx-icon-btn nx-icon-btn-sm"
+              disabled={!splitAllowed}
+              title={splitAllowed ? `向下分屏 (${kbLabel("splitDown")})` : "窗口高度不足，无法向下分屏"}
+              aria-label="向下分屏"
+              onClick={() => onSplit("down")}
+            >
+              <IconSplitH size={14} />
+            </button>
+          </>
+        )}
+        {split && (
+          <button
+            type="button"
+            className="nx-icon-btn nx-icon-btn-sm"
+            title="关闭此窗格（窗格内的标签一并关闭）"
+            aria-label="关闭此窗格"
+            onClick={onClosePane}
+          >
+            <IconMergeH size={14} />
+          </button>
+        )}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title={leftOpen ? `收起左栏 (${kbLabel("toggleSidebar")})` : `展开左栏 (${kbLabel("toggleSidebar")})`}

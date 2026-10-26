@@ -242,7 +242,6 @@ beforeEach(() => {
         sessionId: "s1",
         panes: [{ id: "p1", activeTabId: null, tabs: [] }],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",

@@ -34,7 +34,6 @@ function ws(panes: Pane[]): Workspace {
     sessionId: "s",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }

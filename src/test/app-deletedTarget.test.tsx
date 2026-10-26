@@ -169,7 +169,6 @@ function hostWorkspace(id: string, assetId: string): Workspace {
       },
     ],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }

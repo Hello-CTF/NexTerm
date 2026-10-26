@@ -122,7 +122,6 @@ beforeEach(() => {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
       {
         id: "ws2",
@@ -138,7 +137,6 @@ beforeEach(() => {
           },
         ],
         activePaneId: "p2",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",

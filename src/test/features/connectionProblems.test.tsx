@@ -152,7 +152,6 @@ function workspaceOf(id: string, assetId: string, restorePending = false): Works
     restorePending: restorePending || undefined,
     panes: [{ id: `${id}-pane`, tabs: [], activeTabId: null }],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
   };
 }

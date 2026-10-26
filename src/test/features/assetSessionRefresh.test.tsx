@@ -290,7 +290,6 @@ function mountApp(withImport = false, leftOpen = false, paneCount = 1): MountedV
       closable: true,
       panes,
       activePaneId: "p1",
-      splitRatio: 0.5,
     }],
     activeWorkspaceId: "ws1",
   });

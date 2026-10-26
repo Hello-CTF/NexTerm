@@ -33,7 +33,6 @@ function workspace(id: string, index: number): Workspace {
     sessionId: `workspace-session-${index}`,
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }

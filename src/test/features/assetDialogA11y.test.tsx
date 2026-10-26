@@ -541,7 +541,6 @@ describe("asset deletion with an open workspace", () => {
         assetId: "a1",
         panes: [{ id: "p1", tabs: [], activeTabId: null }],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       }],
     });

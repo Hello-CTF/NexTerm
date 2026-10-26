@@ -32,7 +32,6 @@ function ws(panes: Pane[]): Workspace {
     title: "workspace",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -70,7 +69,7 @@ describe("dirty editor close safeguards", () => {
     ];
     useUi.setState({ workspaces: [ws(panes)], activeWorkspaceId: "ws" });
     setFileEditorDirty("s", "/a.txt", true);
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(mocks.askChoice).not.toHaveBeenCalled();

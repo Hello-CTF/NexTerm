@@ -123,7 +123,6 @@ beforeEach(() => {
       assetKind: "ssh",
       panes: [{ id: "p1", tabs: [], activeTabId: null }],
       activePaneId: "p1",
-      splitRatio: 0.5,
       closable: true,
     }],
     activeWorkspaceId: "ws-a",

@@ -17,6 +17,7 @@ import {
 } from "./closeActions";
 import {
   explicitWorkspaceMatchesTab,
+  findTabLocation,
   makePane,
   nextTabId,
   normalizeWorkspacePanes,
@@ -27,7 +28,32 @@ import {
   workspaceFieldPatch,
 } from "./model";
 import { openTerminalTab, rejectPendingFileLocator, resolveWorkspaceId } from "./tabActions";
-import type { SqlDraft, UiGet, UiSet, UiState } from "./types";
+import { fallbackPaneAfterClose, treeWithoutPane, withLayoutTree, workspaceLayoutTree } from "../paneLayout";
+import {
+  focusNeighbor,
+  resolveActivePane,
+  setSplitRatio as setTreeSplitRatio,
+  splitPane as splitTreePane,
+  SPLIT_TREE_MAX_DEPTH,
+} from "../splitTree";
+import type { SqlDraft, UiGet, UiSet, UiState, Workspace } from "./types";
+
+function windowHeight(): number {
+  return typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerHeight;
+}
+
+// otherPaneFor picks where "open in the other pane" lands: the pane below the active one, else the
+// nearest pane in any direction, else none (the caller splits).
+function otherPaneFor(workspace: Workspace): string | null {
+  const tree = workspaceLayoutTree(workspace);
+  if (!tree || workspace.panes.length < 2) return null;
+  const active = resolveActivePane(tree, workspace.activePaneId);
+  for (const direction of ["down", "right", "up", "left"] as const) {
+    const neighbor = focusNeighbor(tree, active, direction);
+    if (neighbor) return neighbor;
+  }
+  return workspace.panes.find((pane) => pane.id !== active)?.id ?? null;
+}
 
 export function createWorkspaceSlice(set: UiSet, get: UiGet) {
   return {
@@ -69,7 +95,6 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
             id,
             panes: [pane],
             activePaneId: pane.id,
-            splitRatio: 0.5,
             closable: true,
           },
         ],
@@ -278,20 +303,38 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       return deleteWorkspace;
     },
 
-    splitWorkspace: (workspaceId) => {
+    splitPane: (direction, paneId, workspaceId) => {
       const st = get();
       const id = workspaceId ?? st.activeWorkspaceId ?? st.workspaces[st.workspaces.length - 1]?.id;
-      if (!id) return;
-      const w = st.workspaces.find((x) => x.id === id);
-      if (!w || w.panes.length >= 2) return;
+      const w = id ? st.workspaces.find((x) => x.id === id) : undefined;
+      if (!w) return null;
+      const targetId = paneId ?? w.activePaneId;
+      const tree = workspaceLayoutTree(w);
+      if (!tree || !w.panes.some((pane) => pane.id === targetId)) return null;
+      if (direction === "down" && !splitAllowedForHeight(windowHeight())) {
+        get().pushToast("info", "窗口高度不足，无法向下分屏");
+        return null;
+      }
       const pane = makePane();
+      const next = splitTreePane(tree, targetId, {
+        dir: direction === "right" ? "row" : "col",
+        side: "after",
+        newPaneId: pane.id,
+      });
+      if (next === tree) {
+        get().pushToast("info", `分屏最多嵌套 ${SPLIT_TREE_MAX_DEPTH} 层，已保持当前布局`);
+        return null;
+      }
       set((s2) => ({
         workspaces: s2.workspaces.map((x) =>
-          x.id === id ? { ...x, panes: [...x.panes, pane], activePaneId: pane.id } : x,
+          x.id === w.id
+            ? withLayoutTree({ ...x, panes: [...x.panes, pane], activePaneId: pane.id }, next)
+            : x,
         ),
       }));
       const session = st.sessions.find((x) => x.id === w.sessionId);
       if (session) void openTerminalTab(session, undefined, pane.id);
+      return pane.id;
     },
 
     openInLowerPane: (tab, workspaceId) => {
@@ -313,41 +356,59 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       }
       const w = get().workspaces.find((x) => x.id === id);
       if (!w) return;
-      if (w.panes.length >= 2) {
-        get().addTab(tab, w.panes[1].id);
+      const other = otherPaneFor(w);
+      if (other) {
+        get().addTab(tab, other);
         return;
       }
-      const height = typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerHeight;
-      if (!splitAllowedForHeight(height)) {
+      if (!splitAllowedForHeight(windowHeight())) {
         get().addTab(tab, w.activePaneId ?? w.panes[0]?.id);
         get().pushToast("info", "窗口高度不足，已在当前栏打开");
         return;
       }
+      const tree = workspaceLayoutTree(w);
       const pane = makePane();
+      const next = tree
+        ? splitTreePane(tree, w.activePaneId, { dir: "col", side: "after", newPaneId: pane.id })
+        : null;
+      if (!next || next === tree) {
+        get().addTab(tab, w.activePaneId ?? w.panes[0]?.id);
+        return;
+      }
       set((s2) => ({
         workspaces: s2.workspaces.map((x) =>
-          x.id === id ? { ...x, panes: [x.panes[0], pane], activePaneId: pane.id } : x,
+          x.id === id
+            ? withLayoutTree({ ...x, panes: [...x.panes, pane], activePaneId: pane.id }, next)
+            : x,
         ),
       }));
       get().addTab(tab, pane.id);
     },
 
-    unsplitWorkspace: async (paneId, workspaceId) => {
+    closePane: async (paneId, workspaceId) => {
       const st = get();
       const id = workspaceId ?? st.activeWorkspaceId ?? st.workspaces[st.workspaces.length - 1]?.id;
       if (!id) return;
       const w = st.workspaces.find((x) => x.id === id);
       if (!w || w.panes.length < 2) return;
-      const target = w.panes.find((p) => p.id === (paneId ?? w.activePaneId)) ?? w.panes[1];
-      const keep = w.panes.filter((p) => p.id !== target.id);
-      if (keep.length === 0) return;
-      if (!(await confirmDirtyEditors(target.tabs, "取消分屏"))) return;
-      if (!(await reclaimTerminals(target.tabs, "这个面板", "取消分屏", w.assetKind))) return;
+      const target = w.panes.find((p) => p.id === (paneId ?? w.activePaneId));
+      if (!target) return;
+      if (!(await confirmDirtyEditors(target.tabs, "关闭窗格"))) return;
+      if (!(await reclaimTerminals(target.tabs, "这个面板", "关闭窗格", w.assetKind))) return;
       if (!(await disconnectDbTabs(target.tabs))) return;
       set((s2) => {
-        const workspaces = s2.workspaces.map((workspace) =>
-          workspace.id === id ? { ...workspace, panes: keep, activePaneId: keep[0].id } : workspace,
-        );
+        const workspaces = s2.workspaces.map((workspace) => {
+          if (workspace.id !== id || workspace.panes.length < 2) return workspace;
+          if (!workspace.panes.some((pane) => pane.id === target.id)) return workspace;
+          const tree = treeWithoutPane(workspace, target.id);
+          const panes = workspace.panes.filter((pane) => pane.id !== target.id);
+          const activePaneId =
+            workspace.activePaneId === target.id
+              ? (fallbackPaneAfterClose(workspace, target.id) ?? panes[0].id)
+              : workspace.activePaneId;
+          const next = { ...workspace, panes, activePaneId };
+          return tree ? withLayoutTree(next, tree) : next;
+        });
         return {
           workspaces,
           ...(s2.broadcast
@@ -367,16 +428,65 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         };
       }),
 
-    setSplitRatio: (ratio, workspaceId) =>
+    focusPane: (direction, workspaceId) => {
+      const st = get();
+      const id = workspaceId ?? st.activeWorkspaceId;
+      const w = id ? st.workspaces.find((x) => x.id === id) : undefined;
+      const tree = w ? workspaceLayoutTree(w) : null;
+      if (!w || !tree) return null;
+      const current = resolveActivePane(tree, w.activePaneId);
+      const target = focusNeighbor(tree, current, direction);
+      if (!target) return null;
+      get().setActivePane(target, w.id);
+      return target;
+    },
+
+    setSplitRatio: (splitId, ratio, workspaceId) =>
       set((st) => {
         const id = workspaceId ?? st.activeWorkspaceId;
-        const clamped = Math.min(0.85, Math.max(0.15, ratio));
-        return {
-          workspaces: st.workspaces.map((w) =>
-            w.id === id ? { ...w, splitRatio: clamped } : w,
-          ),
-        };
+        let changed = false;
+        const workspaces = st.workspaces.map((w) => {
+          if (w.id !== id) return w;
+          const tree = workspaceLayoutTree(w);
+          const next = tree ? setTreeSplitRatio(tree, splitId, ratio) : tree;
+          if (!next || next === tree) return w;
+          changed = true;
+          return withLayoutTree(w, next);
+        });
+        return changed ? { workspaces } : {};
       }),
+
+    moveTabToPane: (tabId, paneId) =>
+      set((st) => {
+        const hit = findTabLocation(st.workspaces, st.activeWorkspaceId, tabId);
+        if (!hit || hit.pane.id === paneId || !hit.workspace.panes.some((pane) => pane.id === paneId)) return {};
+        const workspaces = st.workspaces.map((w) => {
+          if (w.id !== hit.workspace.id) return w;
+          const sourceTabs = hit.pane.tabs.filter((tab) => tab.id !== tabId);
+          const moved = {
+            ...w,
+            activePaneId: paneId,
+            panes: w.panes.map((pane) => {
+              if (pane.id === hit.pane.id) {
+                return {
+                  ...pane,
+                  tabs: sourceTabs,
+                  activeTabId: pane.activeTabId === tabId ? (sourceTabs[sourceTabs.length - 1]?.id ?? null) : pane.activeTabId,
+                };
+              }
+              if (pane.id === paneId) return { ...pane, tabs: [...pane.tabs, hit.tab], activeTabId: tabId };
+              return pane;
+            }),
+          };
+          if (sourceTabs.length > 0) return moved;
+          // A pane left empty by the move closes and its neighbour takes the space.
+          const tree = treeWithoutPane(w, hit.pane.id);
+          const closed = { ...moved, panes: moved.panes.filter((pane) => pane.id !== hit.pane.id) };
+          return tree ? withLayoutTree(closed, tree) : closed;
+        });
+        return { workspaces, activeWorkspaceId: hit.workspace.id };
+      }),
+
     moveWorkspace: (fromIndex, toIndex) =>
       set((st) => {
         const workspaces = reorderWorkspaces(st.workspaces, fromIndex, toIndex);

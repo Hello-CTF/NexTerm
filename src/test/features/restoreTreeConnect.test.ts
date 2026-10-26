@@ -47,7 +47,7 @@ function pendingWorkspace(kind: "ssh" | "device" | "mysql"): Workspace {
       ] },
     ],
     activePaneId: "pane-1",
-    splitRatio: 0.37,
+    layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.37, a: { type: "leaf" as const, id: "leaf-a", paneId: "pane-1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "pane-2" } },
     closable: true,
   };
 }
@@ -84,7 +84,7 @@ describe("asset and device tree entry for restored workspace previews", () => {
     const workspace = state.workspaces[0];
     expect(state.workspaces).toHaveLength(1);
     expect(state.activeWorkspaceId).toBe("workspace-ssh");
-    expect(workspace).toMatchObject({ id: "workspace-ssh", sessionId: "ssh-session", restorePending: undefined, activePaneId: "pane-1", splitRatio: 0.37 });
+    expect(workspace).toMatchObject({ id: "workspace-ssh", sessionId: "ssh-session", restorePending: undefined, activePaneId: "pane-1", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.37, a: { type: "leaf" as const, id: "leaf-a", paneId: "pane-1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "pane-2" } } });
     expect(workspace?.panes.map((pane) => pane.tabs.map((tab) => [tab.id, tab.title]))).toEqual([
       [["saved-tab", "saved editor"]], [["saved-files", "saved files"]],
     ]);
@@ -115,7 +115,7 @@ describe("asset and device tree entry for restored workspace previews", () => {
     const state = useUi.getState();
     expect(state.workspaces).toHaveLength(1);
     expect(state.activeWorkspaceId).toBe("workspace-mysql");
-    expect(state.workspaces[0]).toMatchObject({ connId: "db-connection", restorePending: undefined, activePaneId: "pane-1", splitRatio: 0.37 });
+    expect(state.workspaces[0]).toMatchObject({ connId: "db-connection", restorePending: undefined, activePaneId: "pane-1", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.37, a: { type: "leaf" as const, id: "leaf-a", paneId: "pane-1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "pane-2" } } });
     expect(state.workspaces[0]?.panes[0].tabs[0]).toMatchObject({ id: "saved-tab", title: "saved editor", connId: "db-connection", restorePending: undefined });
     expect(state.workspaces[0]?.panes[1].tabs[0]).toMatchObject({ id: "saved-files", title: "saved files" });
   });

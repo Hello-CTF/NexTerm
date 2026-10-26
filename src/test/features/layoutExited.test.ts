@@ -63,7 +63,6 @@ function workspace(panes: { id: string; tabs: AppTab[] }[]): Workspace {
     assetKind: "ssh",
     panes: panes.map((p) => ({ ...p, activeTabId: p.tabs[0]?.id ?? null })),
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -148,7 +147,7 @@ describe("remote layout preserves exited terminal state", () => {
     const exitedTab = { ...terminal(), exited: true };
     const current = [workspace([{ id: "pane", tabs: [exitedTab] }])];
     const staleRemote: PersistedLayout = {
-      v: 2,
+      v: 4,
       leftOpen: true,
       leftMode: "assets",
       rightOpen: true,
@@ -281,7 +280,7 @@ describe("remote layout preserves exited terminal state", () => {
     applyAttachedCapabilities();
     mocks.listLive.mockResolvedValue([liveTab("kernel-x1", currentExited)]);
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", currentExited ? undefined : "detach", "s");
@@ -293,7 +292,7 @@ describe("remote layout preserves exited terminal state", () => {
     const exitedTab = { ...terminal("shared"), tabId: "kernel-old", exited: true };
     seed([{ id: "pane", tabs: [exitedTab] }]);
     const remoteDto: PersistedLayout = {
-      v: 2,
+      v: 4,
       leftOpen: true,
       leftMode: "assets",
       rightOpen: true,
@@ -331,7 +330,7 @@ describe("remote layout preserves exited terminal state", () => {
       { id: "p2", tabs: [exitedTab] },
     ]);
     const remoteDto: PersistedLayout = {
-      v: 2,
+      v: 4,
       leftOpen: true,
       leftMode: "assets",
       rightOpen: true,
@@ -369,7 +368,7 @@ describe("remote layout preserves exited terminal state", () => {
       { id: "p2", tabs: [exitedTab] },
     ]);
     const remoteDto: PersistedLayout = {
-      v: 2,
+      v: 4,
       leftOpen: true,
       leftMode: "assets",
       rightOpen: true,
@@ -391,7 +390,7 @@ describe("remote layout preserves exited terminal state", () => {
     await flushAsync();
     applyAttachedCapabilities();
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach", "s");
@@ -499,7 +498,7 @@ describe("remote layout preserves exited terminal state", () => {
       id: "moved-ws",
     };
     const remoteDto: PersistedLayout = {
-      v: 2,
+      v: 4,
       leftOpen: true,
       leftMode: "assets",
       rightOpen: true,

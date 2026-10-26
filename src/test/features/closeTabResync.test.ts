@@ -57,7 +57,6 @@ function seedWorkspaceWithTerminal() {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ],

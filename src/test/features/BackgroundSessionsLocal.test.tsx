@@ -80,7 +80,6 @@ function ws(panes: Pane[]): Workspace {
     sessionId: "s",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -133,7 +132,6 @@ describe("BackgroundSessions host-scoped view", () => {
       sessionId,
       panes: [{ id: "host-pane", tabs: [], activeTabId: null }],
       activePaneId: "host-pane",
-      splitRatio: 0.5,
       closable: true,
     };
     const active = {
@@ -143,7 +141,6 @@ describe("BackgroundSessions host-scoped view", () => {
       sessionId: activeSessionId,
       panes: [{ id: "active-pane", tabs: [], activeTabId: null }],
       activePaneId: "active-pane",
-      splitRatio: 0.5,
       closable: true,
     };
     useUi.setState({
@@ -610,7 +607,7 @@ describe("BackgroundSessions host-scoped view", () => {
 
     useUi.setState({
       sessions: [],
-      workspaces: [{ id: "tools", kind: "tools", title: "工具", panes: [{ id: "p", tabs: [], activeTabId: null }], activePaneId: "p", splitRatio: 0.5, closable: true }],
+      workspaces: [{ id: "tools", kind: "tools", title: "工具", panes: [{ id: "p", tabs: [], activeTabId: null }], activePaneId: "p", closable: true }],
       activeWorkspaceId: "tools",
     });
     mocks.listDurable.mockClear();
@@ -954,7 +951,6 @@ describe("BackgroundSessions host-scoped view", () => {
           sessionId: host.sessionId,
           panes: [{ id: "p", tabs: [], activeTabId: null }],
           activePaneId: "p",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -1254,7 +1250,6 @@ describe("BackgroundSessions host-scoped view", () => {
           sessionId: "s2",
           panes: [{ id: "p1", tabs: [], activeTabId: null }],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
         {
@@ -1264,7 +1259,6 @@ describe("BackgroundSessions host-scoped view", () => {
           sessionId: "s1",
           panes: [{ id: "p2", tabs: [], activeTabId: null }],
           activePaneId: "p2",
-          splitRatio: 0.5,
           closable: true,
         },
       ],

@@ -104,7 +104,6 @@ beforeEach(() => {
             tabs: [{ id: "tab-1", kind: "terminal", title: "Terminal", tabId: "term-1", closable: true }],
           },
         ],
-        splitRatio: 0.5,
         closable: true,
       },
     ],

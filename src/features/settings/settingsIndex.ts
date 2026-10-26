@@ -38,7 +38,7 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   },
   "settings-shortcuts": {
     description: "自定义快捷键与选中复制",
-    keywords: ["shortcut", "keybinding", "hotkey", "keyboard", "key", "快捷键", "键盘", "按键", "热键"],
+    keywords: ["shortcut", "keybinding", "hotkey", "keyboard", "key", "split", "pane", "快捷键", "键盘", "按键", "热键", "分屏", "窗格"],
   },
   "settings-update": {
     description: "检查并安装应用更新",

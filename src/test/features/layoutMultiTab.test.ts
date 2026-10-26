@@ -74,7 +74,6 @@ function workspace(id: string, title: string): Workspace {
     title,
     panes: [{ id: `${id}-pane`, tabs: [], activeTabId: null }],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
   };
 }

@@ -178,6 +178,13 @@ export const IconSplitH = (p: IconProps) => (
   </Svg>
 );
 
+export const IconSplitV = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <path d="M12 4v16" />
+  </Svg>
+);
+
 export const IconMergeH = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2.5" />

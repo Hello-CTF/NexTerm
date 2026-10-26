@@ -78,7 +78,6 @@ function hostWorkspace(id: string, patch: Partial<Workspace> = {}): Workspace {
     restorePending: true,
     panes: [{ id: `${id}-pane`, tabs: [tab], activeTabId: tab.id }],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
     ...patch,
   };
@@ -105,7 +104,6 @@ function activeWorkspace(): Workspace {
       },
     ],
     activePaneId: "active-pane-2",
-    splitRatio: 0.5,
     closable: true,
   };
 }

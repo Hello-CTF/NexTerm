@@ -61,7 +61,6 @@ function workspace(index: number): Workspace {
       tabs: [{ id: `tab-${index}`, kind: "terminal", title: "bash", sessionId: `s-${index}`, tabId: `kernel-${index}`, closable: true }],
     }],
     activePaneId: `pane-${index}`,
-    splitRatio: 0.5,
     closable: true,
   };
 }

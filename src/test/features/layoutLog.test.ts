@@ -33,7 +33,6 @@ const workspace: Workspace = {
     },
   ],
   activePaneId: "pane",
-  splitRatio: 0.5,
   closable: true,
 };
 

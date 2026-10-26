@@ -58,7 +58,8 @@ vi.mock("../../app/lazyPanels", async () => {
 
 import { useUi } from "../../app/store";
 import { PaneForTab } from "../../app/workspace/PaneForTab";
-import { SplitStack } from "../../app/workspace/SplitStack";
+import { SplitView, paneStyle, splitHandles } from "../../app/workspace/SplitView";
+import type { SplitNode } from "../../app/splitTree";
 import { MULTI_HOST_LOG_TAB_ID } from "../../features/logs/logTailTab";
 import { FLEET_HEALTH_TAB_ID } from "../../features/fleet/fleetHealthTab";
 
@@ -72,7 +73,6 @@ function workspace(patch: Partial<Workspace> = {}): Workspace {
     assetKind: "ssh",
     panes: [{ id: "p1", tabs: [], activeTabId: "" }],
     activePaneId: "p1",
-    splitRatio: 0.5,
     closable: true,
     ...patch,
   };
@@ -317,7 +317,7 @@ describe("PaneForTab", () => {
   });
 });
 
-describe("SplitStack", () => {
+describe("SplitView", () => {
   const onRatio = vi.fn();
   beforeEach(() => {
     onRatio.mockReset();
@@ -329,114 +329,187 @@ describe("SplitStack", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  function renderStack(props: { ratio?: number; bottom?: boolean } = {}) {
+  const leaf = (paneId: string): SplitNode => ({ type: "leaf", id: `leaf-${paneId}`, paneId });
+  // [ left | [ top / bottom ] ]: the root splits left/right, its right half top/bottom.
+  const nested = (rootRatio = 0.5, rightRatio = 0.5): SplitNode => ({
+    type: "split",
+    id: "root",
+    dir: "row",
+    ratio: rootRatio,
+    a: leaf("left"),
+    b: { type: "split", id: "right", dir: "col", ratio: rightRatio, a: leaf("top"), b: leaf("bottom") },
+  });
+
+  function renderView(tree: SplitNode | undefined, singlePane = false, activePaneId = "left") {
+    const ids = tree ? ["left", "top", "bottom"] : ["left"];
     view = mount(
-      createElement(SplitStack, {
-        ratio: props.ratio ?? 0.5,
+      createElement(SplitView, {
+        workspace: workspace({
+          panes: ids.map((id) => ({ id, tabs: [], activeTabId: null })),
+          activePaneId,
+          layoutTree: tree,
+        }),
+        singlePane,
         onRatio,
-        top: createElement("div", { id: "top" }, "top"),
-        bottom: props.bottom === false ? undefined : createElement("div", { id: "bottom" }, "bottom"),
+        renderPane: (pane) => createElement("div", { id: `pane-${pane.id}` }, pane.id),
       }),
     );
-    const sep = view.container.querySelector<HTMLElement>('[role="separator"]');
-    if (sep) {
-      // The container spans y=100..500 so clientY maps linearly onto the ratio.
-      sep.parentElement!.getBoundingClientRect = () =>
-        ({ top: 100, height: 400, left: 0, width: 300, right: 300, bottom: 500, x: 0, y: 100, toJSON: () => ({}) }) as DOMRect;
+    const box = view.container.querySelector<HTMLElement>(".nx-split-view")!;
+    // The workspace spans x=0..400, y=100..500 so pointer positions map linearly onto ratios.
+    box.getBoundingClientRect = () =>
+      ({ top: 100, height: 400, left: 0, width: 400, right: 400, bottom: 500, x: 0, y: 100, toJSON: () => ({}) }) as DOMRect;
+    for (const sep of view.container.querySelectorAll<HTMLElement>('[role="separator"]')) {
       sep.setPointerCapture = vi.fn();
       sep.releasePointerCapture = vi.fn();
       sep.hasPointerCapture = () => false;
     }
-    return sep;
+    return view;
   }
 
-  function pointer(el: Element, type: string, init: { clientY?: number; button?: number } = {}) {
-    const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: init.button ?? 0, clientY: init.clientY ?? 0 });
+  function separator(id: string): HTMLElement {
+    return view!.container.querySelector<HTMLElement>(`[data-split-id="${id}"]`)!;
+  }
+
+  function pointer(el: Element, type: string, init: { clientX?: number; clientY?: number; button?: number } = {}) {
+    const event = new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button: init.button ?? 0,
+      clientX: init.clientX ?? 0,
+      clientY: init.clientY ?? 0,
+    });
     Object.assign(event, { pointerId: 1 });
     act(() => {
       el.dispatchEvent(event);
     });
   }
 
-  it("renders only the top pane and no divider without a bottom pane", () => {
-    const sep = renderStack({ bottom: false });
-    expect(sep).toBeNull();
-    expect(view!.container.querySelector("#top")).not.toBeNull();
-    expect(view!.container.querySelector("#bottom")).toBeNull();
+  it("lists every split with the area it divides", () => {
+    expect(splitHandles(nested(0.3, 0.6))).toEqual([
+      { id: "root", dir: "row", ratio: 0.3, rect: { x: 0, y: 0, width: 1, height: 1 } },
+      { id: "right", dir: "col", ratio: 0.6, rect: { x: 0.3, y: 0, width: 0.7, height: 1 } },
+    ]);
+    expect(splitHandles(leaf("solo"))).toEqual([]);
   });
 
-  it("renders both panes with the ratio exposed on the divider", () => {
-    const sep = renderStack({ ratio: 0.3 })!;
-    expect(view!.container.querySelector("#top")).not.toBeNull();
-    expect(view!.container.querySelector("#bottom")).not.toBeNull();
-    expect(sep.getAttribute("aria-valuenow")).toBe("30");
-    expect(sep.getAttribute("aria-valuetext")).toContain("30%");
+  it("insets panes by half a divider only on inner edges", () => {
+    expect(paneStyle({ x: 0, y: 0, width: 1, height: 1 })).toEqual({
+      left: "calc(0% + 0px)",
+      top: "calc(0% + 0px)",
+      width: "calc(100% - 0px)",
+      height: "calc(100% - 0px)",
+    });
+    expect(paneStyle({ x: 0.5, y: 0, width: 0.5, height: 0.5 })).toEqual({
+      left: "calc(50% + 3px)",
+      top: "calc(0% + 0px)",
+      width: "calc(50% - 3px)",
+      height: "calc(50% - 3px)",
+    });
+  });
+
+  it("renders one pane without dividers when the workspace never split", () => {
+    renderView(undefined);
+    expect(view!.container.querySelector("#pane-left")).not.toBeNull();
+    expect(view!.container.querySelector('[role="separator"]')).toBeNull();
+  });
+
+  it("renders a nested layout with one oriented divider per split", () => {
+    renderView(nested(0.3, 0.6));
+    for (const id of ["left", "top", "bottom"]) expect(view!.container.querySelector(`#pane-${id}`)).not.toBeNull();
+    const root = separator("root");
+    expect(root.getAttribute("aria-orientation")).toBe("vertical");
+    expect(root.getAttribute("aria-valuenow")).toBe("30");
+    expect(root.getAttribute("aria-valuetext")).toBe("左栏 30%");
+    expect(root.className).toContain("is-row");
+    const right = separator("right");
+    expect(right.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(right.getAttribute("aria-valuetext")).toBe("上栏 60%");
+    expect(right.className).toContain("is-col");
   });
 
   it("clamps an out-of-range ratio for display", () => {
-    expect(renderStack({ ratio: 0.99 })!.getAttribute("aria-valuenow")).toBe("85");
-    view!.unmount();
-    expect(renderStack({ ratio: -3 })!.getAttribute("aria-valuenow")).toBe("15");
+    renderView(nested(0.99, -3));
+    expect(separator("root").getAttribute("aria-valuenow")).toBe("85");
+    expect(separator("right").getAttribute("aria-valuenow")).toBe("15");
   });
 
-  it("dragging the divider reports the ratio under the pointer, clamped, and signals resize end", () => {
-    const sep = renderStack()!;
+  it("drags a left/right divider along x and a nested top/bottom divider within its own area", () => {
+    renderView(nested(0.5, 0.5));
     const resizeEnd = vi.fn();
     window.addEventListener("nexterm:resize-end", resizeEnd);
-    pointer(sep, "pointerdown");
-    expect(sep.className).toContain("is-dragging");
-    pointer(sep, "pointermove", { clientY: 200 });
-    expect(onRatio).toHaveBeenLastCalledWith(0.25);
-    pointer(sep, "pointerup", { clientY: 1000 });
-    expect(onRatio).toHaveBeenLastCalledWith(0.85);
-    expect(sep.className).not.toContain("is-dragging");
+    const root = separator("root");
+    pointer(root, "pointerdown");
+    expect(root.className).toContain("is-dragging");
+    pointer(root, "pointermove", { clientX: 100, clientY: 400 });
+    expect(onRatio).toHaveBeenLastCalledWith("root", 0.25);
+    pointer(root, "pointerup", { clientX: 1000 });
+    expect(onRatio).toHaveBeenLastCalledWith("root", 0.85);
+    expect(root.className).not.toContain("is-dragging");
     expect(resizeEnd).toHaveBeenCalledTimes(1);
+
+    // The right half spans y=100..500; y=200 is a quarter of it.
+    const right = separator("right");
+    pointer(right, "pointerdown");
+    pointer(right, "pointermove", { clientX: 10, clientY: 200 });
+    expect(onRatio).toHaveBeenLastCalledWith("right", 0.25);
+    pointer(right, "pointercancel");
+    expect(right.className).not.toContain("is-dragging");
     window.removeEventListener("nexterm:resize-end", resizeEnd);
   });
 
-  it("ignores pointer movement when no drag started or for non-primary buttons", () => {
-    const sep = renderStack()!;
-    pointer(sep, "pointermove", { clientY: 200 });
-    pointer(sep, "pointerdown", { button: 2 });
-    pointer(sep, "pointermove", { clientY: 200 });
-    expect(onRatio).not.toHaveBeenCalled();
-  });
-
-  it("stops dragging when the pointer is cancelled", () => {
-    const sep = renderStack()!;
-    pointer(sep, "pointerdown");
-    pointer(sep, "pointercancel");
-    expect(sep.className).not.toContain("is-dragging");
-    pointer(sep, "pointermove", { clientY: 400 });
+  it("ignores pointer movement without a primary-button drag", () => {
+    renderView(nested());
+    const root = separator("root");
+    pointer(root, "pointermove", { clientX: 100 });
+    pointer(root, "pointerdown", { button: 2 });
+    pointer(root, "pointermove", { clientX: 100 });
     expect(onRatio).not.toHaveBeenCalled();
   });
 
   it("resets to an even split on double click", () => {
-    const sep = renderStack({ ratio: 0.2 })!;
+    renderView(nested(0.2));
     act(() => {
-      sep.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      separator("root").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
-    expect(onRatio).toHaveBeenCalledWith(0.5);
+    expect(onRatio).toHaveBeenCalledWith("root", 0.5);
   });
 
-  it("adjusts the ratio from the keyboard and ignores other keys", () => {
-    const sep = renderStack({ ratio: 0.5 })!;
-    const key = (k: string, shiftKey = false) =>
+  it("adjusts each divider with the arrow keys of its own axis", () => {
+    renderView(nested(0.5, 0.5));
+    const key = (el: HTMLElement, k: string, shiftKey = false) =>
       act(() => {
-        sep.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey, bubbles: true, cancelable: true }));
+        el.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey, bubbles: true, cancelable: true }));
       });
-    key("ArrowDown");
-    expect(onRatio).toHaveBeenLastCalledWith(0.52);
-    key("ArrowUp", true);
-    expect(onRatio).toHaveBeenLastCalledWith(0.4);
-    key("Home");
-    expect(onRatio).toHaveBeenLastCalledWith(0.15);
-    key("End");
-    expect(onRatio).toHaveBeenLastCalledWith(0.85);
-    key("Enter");
-    expect(onRatio).toHaveBeenLastCalledWith(0.5);
+    const root = separator("root");
+    key(root, "ArrowRight");
+    expect(onRatio).toHaveBeenLastCalledWith("root", 0.52);
+    key(root, "ArrowLeft", true);
+    expect(onRatio).toHaveBeenLastCalledWith("root", 0.4);
     onRatio.mockClear();
-    key("a");
+    key(root, "ArrowDown");
     expect(onRatio).not.toHaveBeenCalled();
+    const right = separator("right");
+    key(right, "ArrowDown");
+    expect(onRatio).toHaveBeenLastCalledWith("right", 0.52);
+    key(right, "Home");
+    expect(onRatio).toHaveBeenLastCalledWith("right", 0.15);
+    key(right, "End");
+    expect(onRatio).toHaveBeenLastCalledWith("right", 0.85);
+    key(right, "Enter");
+    expect(onRatio).toHaveBeenLastCalledWith("right", 0.5);
+  });
+
+  it("shows only the active pane, full size and without dividers, in single-pane mode", () => {
+    renderView(nested(), true, "top");
+    expect(view!.container.querySelector('[role="separator"]')).toBeNull();
+    const shown = view!.container.querySelector<HTMLElement>('[data-pane-id="top"]')!;
+    expect(shown.className).not.toContain("hidden");
+    expect(shown.style.inset).toBe("0px");
+    for (const id of ["left", "bottom"]) {
+      const hidden = view!.container.querySelector<HTMLElement>(`[data-pane-id="${id}"]`)!;
+      expect(hidden.className).toBe("hidden");
+      // Hidden panes stay mounted so their terminals keep running.
+      expect(hidden.querySelector(`#pane-${id}`)).not.toBeNull();
+    }
   });
 });

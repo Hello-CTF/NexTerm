@@ -31,7 +31,6 @@ function workspace(id: string, sessionId: string, assetKind: string, assetId?: s
     assetId,
     panes: [{ id: `${id}-pane`, tabs: [], activeTabId: null }],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
   } as Workspace;
 }

@@ -1138,7 +1138,6 @@ describe("QuickConnect workspace problems", () => {
           assetKind: "ssh",
           panes: [{ id: "p", tabs: [], activeTabId: null }],
           activePaneId: "p",
-          splitRatio: 0.5,
           closable: true,
         },
       ],

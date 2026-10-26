@@ -1,3 +1,4 @@
+import type { FocusDirection } from "../splitTree";
 import type { SessionInfo } from "../../ipc/commands";
 import { fileEditorRenamePending } from "../../features/files/editorGuards";
 import { baseName } from "../../features/files/pathUtils";
@@ -89,7 +90,7 @@ export function cycleActiveWorkspace(direction: 1 | -1): string | null {
 export function cycleActiveTab(direction: 1 | -1): string | null {
   const state = useUi.getState();
   const workspace = workspaceForNavigation(state);
-  const panes = workspace?.panes.slice(0, 2) ?? [];
+  const panes = workspace?.panes ?? [];
   const pane = panes.find((candidate) => candidate.id === workspace?.activePaneId) ?? panes[0];
   if (!workspace || !pane || pane.tabs.length === 0) return null;
   const current = pane.tabs.find((tab) => tab.id === pane.activeTabId) ?? pane.tabs[pane.tabs.length - 1];
@@ -99,17 +100,15 @@ export function cycleActiveTab(direction: 1 | -1): string | null {
   return target.id;
 }
 
-export function cycleActivePane(direction: 1 | -1): string | null {
+// focusActivePane moves focus to the pane next to the active one in `direction` within the focused
+// workspace, following the on-screen geometry of the split tree.
+export function focusActivePane(direction: FocusDirection): string | null {
   const state = useUi.getState();
   const workspace = workspaceForNavigation(state);
-  const panes = workspace?.panes.slice(0, 2) ?? [];
-  if (!workspace || panes.length === 0) return null;
-  const current = panes.find((pane) => pane.id === workspace.activePaneId) ?? panes[0];
-  const target = panes[cycleIndex(panes.indexOf(current), panes.length, direction)];
-  if (!target) return null;
-  if (state.activeWorkspaceId !== workspace.id) state.setActiveWorkspace(workspace.id);
-  state.setActivePane(target.id, workspace.id);
-  return target.id;
+  if (!workspace) return null;
+  const target = state.focusPane(direction, workspace.id);
+  if (target && state.activeWorkspaceId !== workspace.id) state.setActiveWorkspace(workspace.id);
+  return target;
 }
 
 export async function openTerminalTab(

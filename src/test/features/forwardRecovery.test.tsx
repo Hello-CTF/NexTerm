@@ -92,7 +92,6 @@ describe("ForwardStartupRecovery", () => {
         }],
       }],
       activePaneId: "pane-restored",
-      splitRatio: 0.5,
     };
     useUi.setState({ workspaces: [restored] });
     const workspaces = useUi.getState().workspaces;

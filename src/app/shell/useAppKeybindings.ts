@@ -3,7 +3,7 @@ import {
   useUi,
   cycleActiveWorkspace,
   cycleActiveTab,
-  cycleActivePane,
+  focusActivePane,
   requestCloseTab,
   restoreClosedTab,
 } from "../store";
@@ -13,7 +13,6 @@ export interface AppKeybindingHandlers {
   leftDockOpen: boolean;
   rightDockOpen: boolean;
   activeTabId: string | null;
-  splitAllowed: boolean;
   setLeftOpen: (open: boolean) => void;
   setRightOpen: (open: boolean) => void;
   openLocalTerminal: () => Promise<void>;
@@ -28,7 +27,6 @@ export function useAppKeybindings({
   leftDockOpen,
   rightDockOpen,
   activeTabId,
-  splitAllowed,
   setLeftOpen,
   setRightOpen,
   openLocalTerminal,
@@ -82,20 +80,25 @@ export function useAppKeybindings({
         case "previousTab":
           if (cycleActiveTab(-1)) e.preventDefault();
           return;
-        case "focusUpperPane":
-          if (cycleActivePane(-1)) e.preventDefault();
+        case "focusPaneLeft":
+          if (focusActivePane("left")) e.preventDefault();
           return;
-        case "focusLowerPane":
-          if (cycleActivePane(1)) e.preventDefault();
+        case "focusPaneRight":
+          if (focusActivePane("right")) e.preventDefault();
           return;
-        case "toggleSplit": {
+        case "focusPaneUp":
+          if (focusActivePane("up")) e.preventDefault();
+          return;
+        case "focusPaneDown":
+          if (focusActivePane("down")) e.preventDefault();
+          return;
+        case "splitRight":
+        case "splitDown": {
           e.preventDefault();
           const cur = useUi.getState();
           const id = cur.activeWorkspaceId;
-          const target = id ? cur.workspaces.find((w) => w.id === id) : undefined;
-          if (!target) return;
-          if (target.panes.length > 1) void cur.unsplitWorkspace(target.panes[1].id, target.id);
-          else if (splitAllowed) cur.splitWorkspace(target.id);
+          if (!id || !cur.workspaces.some((w) => w.id === id)) return;
+          cur.splitPane(hit.action === "splitRight" ? "right" : "down", undefined, id);
           return;
         }
         case "closeTab":
@@ -133,7 +136,6 @@ export function useAppKeybindings({
     openLocalTerminal,
     openNewTerminal,
     lockVault,
-    splitAllowed,
     openCommandPalette,
     openQuickConnect,
   ]);

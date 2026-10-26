@@ -47,7 +47,6 @@ function workspace(tabs: AppTab[]): Workspace {
     title: "workspace",
     panes: [{ id: "pane", tabs, activeTabId: tabs[0]?.id ?? null }],
     activePaneId: "pane",
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -149,7 +148,6 @@ describe("remote layout dirty-editor preservation", () => {
         },
       ],
       activePaneId: "tools-pane",
-      splitRatio: 0.5,
       closable: true,
     };
     const remote = sanitizeLayout(layout([tools, remoteHost]));

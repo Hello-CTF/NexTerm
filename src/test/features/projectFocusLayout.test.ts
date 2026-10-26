@@ -79,14 +79,13 @@ function workspace(id: string, assetId: string): Workspace {
     assetKind: "ssh",
     panes: [pane(`${id}-pane`, [terminal(`${id}-tab`)])],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
   };
 }
 
 function layout(workspaces: Workspace[], aiBoards: Record<string, AiBoard> = {}) {
   return {
-    v: 3,
+    v: 4,
     leftOpen: true,
     leftMode: "assets" as const,
     rightOpen: true,

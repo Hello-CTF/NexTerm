@@ -225,7 +225,6 @@ describe("M134 AI copy", () => {
       sessionId: "s1",
       panes: [],
       activePaneId: "p",
-      splitRatio: 0.5,
       closable: true,
     };
     const wsB = { ...wsA, id: "ws-b", title: "B", sessionId: "s2" };
@@ -258,7 +257,6 @@ describe("M134 AI copy", () => {
       sessionId: "s1",
       panes: [],
       activePaneId: "p",
-      splitRatio: 0.5,
       closable: true,
     };
     const wsB = { ...wsA, id: "ws-b", title: "B", sessionId: "s2" };

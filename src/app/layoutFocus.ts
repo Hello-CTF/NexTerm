@@ -7,6 +7,7 @@ import {
 } from "./layoutMerge";
 import type { AiBoard, AiDockTab, AppTab, LeftMode, Pane, Workspace } from "./store";
 import { ALL_PROJECTS, isProjectFocus, type ProjectFocus } from "./projectFocus";
+import { workspacePaneOrder } from "./paneLayout";
 
 const DEVICE_LAYOUT_PREFIX = "nexterm:layout-device-v1:";
 
@@ -89,12 +90,12 @@ export function captureDeviceLayout(source: DeviceLayoutSource): DeviceLayoutSta
       return {
         workspace: workspaceReference(workspace),
         activePane: activePane
-          ? reference(activePane.id, paneLogicalKey(activePane, workspace.panes.indexOf(activePane)))
+          ? reference(activePane.id, paneLogicalKey(activePane))
           : null,
-        panes: workspace.panes.map((pane, index) => {
+        panes: workspace.panes.map((pane) => {
           const activeTab = pane.tabs.find((tab) => tab.id === pane.activeTabId);
           return {
-            pane: reference(pane.id, paneLogicalKey(pane, index)),
+            pane: reference(pane.id, paneLogicalKey(pane)),
             activeTab: activeTab ? tabReference(activeTab) : null,
           };
         }),
@@ -216,10 +217,13 @@ export function restoreDeviceLayout(
     });
     const storedWorkspace = stored.length === 1 ? stored[0] : stored.find((candidate) => candidate.workspace.id === workspace.id);
     if (!storedWorkspace) return workspace;
-    const panes = workspace.panes.map((pane, index) => {
+    // Panes match by id; a lone pane on both sides is the same pane even when another device
+    // opened the workspace and minted a different id.
+    const lonePane = storedWorkspace.panes.length === 1 && workspace.panes.length === 1;
+    const panes = workspace.panes.map((pane) => {
       const storedPane = storedWorkspace.panes.find(
-        (candidate) => candidate.pane.id === pane.id || candidate.pane.key === paneLogicalKey(pane, index),
-      );
+        (candidate) => candidate.pane.id === pane.id || candidate.pane.key === paneLogicalKey(pane),
+      ) ?? (lonePane ? storedWorkspace.panes[0] : undefined);
       if (!storedPane) return pane;
       const active = storedPane.activeTab ? matchTab(storedPane.activeTab, pane.tabs) : undefined;
       return { ...pane, activeTabId: active?.id ?? lastTabId(pane.tabs) };
@@ -228,7 +232,7 @@ export function restoreDeviceLayout(
     return {
       ...workspace,
       panes,
-      activePaneId: activePane?.id ?? panes[0]?.id ?? workspace.activePaneId,
+      activePaneId: activePane?.id ?? workspacePaneOrder({ ...workspace, panes })[0] ?? workspace.activePaneId,
     };
   });
   const activeWorkspace = device.activeWorkspace

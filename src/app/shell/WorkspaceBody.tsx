@@ -10,8 +10,10 @@ import {
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { Lazy } from "../../ui/LazyBoundary";
 import { AiSidebar, AssetTree, CredentialsSidebar, FileTree } from "../lazyPanels";
-import { PaneGroup } from "../workspace/PaneGroup";
-import { SplitStack } from "../workspace/SplitStack";
+import { PaneGroup, type PaneMoveTarget } from "../workspace/PaneGroup";
+import { SplitView } from "../workspace/SplitView";
+import { workspaceLayoutTree } from "../paneLayout";
+import { focusNeighbor, paneIdsInOrder, type FocusDirection } from "../splitTree";
 import { EmptyState, WorkspaceEmpty } from "../workspace/EmptyStates";
 import { type OverlayDocks } from "./useOverlayDocks";
 
@@ -22,6 +24,8 @@ export interface WorkspaceBodyProps {
   activeSessionId: string | undefined;
   overlaySidebars: boolean;
   splitAllowed: boolean;
+  // Show only the active pane of a split workspace (mobile shell and compact widths).
+  singlePane: boolean;
   docks: OverlayDocks;
   onNewTerminal: () => void;
   onLocalTerminal: () => void;
@@ -37,6 +41,7 @@ export function WorkspaceBody({
   activeSessionId,
   overlaySidebars,
   splitAllowed,
+  singlePane,
   docks,
   onNewTerminal,
   onLocalTerminal,
@@ -51,8 +56,8 @@ export function WorkspaceBody({
   const setRightWidth = useUi((s) => s.setRightWidth);
   const accountEpoch = useUi((s) => s.accountEpoch);
   const aiAccountEpoch = useUi((s) => s.aiAccountEpoch);
-  const splitWorkspace = useUi((s) => s.splitWorkspace);
-  const unsplitWorkspace = useUi((s) => s.unsplitWorkspace);
+  const splitPane = useUi((s) => s.splitPane);
+  const closePane = useUi((s) => s.closePane);
   const setActivePane = useUi((s) => s.setActivePane);
   const setSplitRatio = useUi((s) => s.setSplitRatio);
   const { leftDockOpen, rightDockOpen, setLeftOpen, setOverlayDock } = docks;
@@ -106,38 +111,45 @@ export function WorkspaceBody({
             {workspaces.map((w) => {
               const wsActive = w.id === ws?.id;
               const split = w.panes.length > 1;
-              const groups = w.panes.map((p) => (
-                <PaneGroup
-                  key={p.id}
-                  pane={p}
-                  idPrefix={`${w.id}-${p.id}`}
-                  workspaceId={w.id}
-                  active={wsActive && p.id === w.activePaneId}
-                  visible={wsActive}
-                  split={split}
-                  canSplit={!split}
-                  splitAllowed={splitAllowed}
-                  onToggleSplit={() => {
-                    if (split) void unsplitWorkspace(w.panes[1].id, w.id);
-                    else if (splitAllowed) splitWorkspace(w.id);
-                  }}
-                  onActivate={() => setActivePane(p.id, w.id)}
-                  onNewTerminal={onNewTerminal}
-                  leftOpen={leftDockOpen}
-                  onToggleLeft={() => setLeftOpen(!leftDockOpen)}
-                />
-              ));
+              const tree = workspaceLayoutTree(w);
+              const order = tree ? paneIdsInOrder(tree) : w.panes.map((p) => p.id);
+              const cyclePane = (paneId: string, step: 1 | -1) => {
+                const index = order.indexOf(paneId);
+                const next = order[(index + step + order.length) % order.length];
+                if (next) setActivePane(next, w.id);
+              };
               return (
                 <div
                   key={w.id}
                   id={`nx-ws-panel-${w.id}`}
                   className={wsActive ? "h-full min-h-0" : "hidden"}
                 >
-                  <SplitStack
-                    ratio={w.splitRatio}
-                    onRatio={(r) => setSplitRatio(r, w.id)}
-                    top={groups[0]}
-                    bottom={groups[1]}
+                  <SplitView
+                    workspace={w}
+                    singlePane={singlePane}
+                    onRatio={(splitId, ratio) => setSplitRatio(splitId, ratio, w.id)}
+                    renderPane={(p) => (
+                      <PaneGroup
+                        pane={p}
+                        idPrefix={`${w.id}-${p.id}`}
+                        workspaceId={w.id}
+                        active={wsActive && p.id === w.activePaneId}
+                        visible={wsActive && (!singlePane || p.id === w.activePaneId || !split)}
+                        split={split}
+                        singlePane={singlePane}
+                        paneNumber={order.indexOf(p.id) + 1}
+                        paneCount={order.length}
+                        splitAllowed={splitAllowed}
+                        moveTargets={tree ? paneMoveTargets(tree, p.id) : []}
+                        onSplit={(direction) => splitPane(direction, p.id, w.id)}
+                        onClosePane={() => void closePane(p.id, w.id)}
+                        onCyclePane={(step) => cyclePane(p.id, step)}
+                        onActivate={() => setActivePane(p.id, w.id)}
+                        onNewTerminal={onNewTerminal}
+                        leftOpen={leftDockOpen}
+                        onToggleLeft={() => setLeftOpen(!leftDockOpen)}
+                      />
+                    )}
                   />
                 </div>
               );
@@ -161,4 +173,21 @@ export function WorkspaceBody({
       </div>
     </div>
   );
+}
+
+const MOVE_DIRECTIONS: { direction: FocusDirection; label: string }[] = [
+  { direction: "left", label: "左侧窗格" },
+  { direction: "right", label: "右侧窗格" },
+  { direction: "up", label: "上方窗格" },
+  { direction: "down", label: "下方窗格" },
+];
+
+// paneMoveTargets lists the panes a tab can move to: the geometric neighbours of its pane.
+function paneMoveTargets(tree: Parameters<typeof focusNeighbor>[0], paneId: string): PaneMoveTarget[] {
+  const out: PaneMoveTarget[] = [];
+  for (const { direction, label } of MOVE_DIRECTIONS) {
+    const target = focusNeighbor(tree, paneId, direction);
+    if (target && !out.some((entry) => entry.paneId === target)) out.push({ paneId: target, label });
+  }
+  return out;
 }

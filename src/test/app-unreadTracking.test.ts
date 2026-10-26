@@ -28,7 +28,6 @@ function ws(panes: Pane[]): Workspace {
     sessionId: "s",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -177,7 +176,6 @@ describe("background tab unread markers", () => {
           sessionId: "s2",
           panes: [{ id: "p2", tabs: [terminal("t9", "T9")], activeTabId: "t9" }],
           activePaneId: "p2",
-          splitRatio: 0.5,
           closable: true,
         },
       ],

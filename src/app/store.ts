@@ -30,6 +30,7 @@ export type {
   SessionRuntimeInfo,
   SessionStatusEvent,
   SessionStatusEvidence,
+  SplitDirection,
   SqlDraft,
   SqlExecutionInput,
   SqlExecutionOutcome,
@@ -80,7 +81,7 @@ export {
 } from "./store/sessionStatus";
 export {
   applyRemoteTabTitle,
-  cycleActivePane,
+  focusActivePane,
   cycleActiveTab,
   cycleActiveWorkspace,
   findWritableTerminal,

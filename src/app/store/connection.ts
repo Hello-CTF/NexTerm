@@ -120,7 +120,7 @@ export async function openConnectedAssetSession(
   const workspace: Workspace = {
     id: nextTabId("ws-session"), kind: "session", sessionId: info.id,
     title: info.name, assetId: asset.id, assetKind: asset.kind, quickTarget,
-    panes: [pane], activePaneId: pane.id, splitRatio: 0.5, closable: true,
+    panes: [pane], activePaneId: pane.id, closable: true,
   };
   const overlaySidebars = sidebarsOverlayWorkspace();
   useUi.setState((state) => ({

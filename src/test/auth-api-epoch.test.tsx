@@ -118,7 +118,6 @@ async function expectLateMeIsolated(status: number, throughRefresh = false): Pro
 		assetKind: "device",
 		panes: [{ id: "p-b", activeTabId: "t-b", tabs: [{ id: "t-b", tabId: "backend-b", kind: "terminal", sessionId: "s-b", title: "B terminal", closable: true }] }],
 		activePaneId: "p-b",
-		splitRatio: 0.5,
 	} as never;
 	useUi.setState({ workspaces: [workspaceB], activeWorkspaceId: "ws-b" });
 

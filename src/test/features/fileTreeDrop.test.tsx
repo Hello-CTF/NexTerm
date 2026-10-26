@@ -146,7 +146,6 @@ function seedWorkspace(): void {
         assetKind: "ssh",
         panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ],

@@ -42,7 +42,6 @@ function workspace(quickConnect = false): Workspace {
       activeTabId: "tab-view-1",
     }],
     activePaneId: "pane-1",
-    splitRatio: 0.5,
     closable: true,
   };
 }

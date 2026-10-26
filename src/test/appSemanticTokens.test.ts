@@ -190,7 +190,6 @@ describe("App semantic tokens", () => {
         closable: true,
         panes: [{ id: "pane", tabs: [], activeTabId: null }],
         activePaneId: "pane",
-        splitRatio: 0.5,
       }],
       activeWorkspaceId: "ws",
     });

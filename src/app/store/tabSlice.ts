@@ -22,6 +22,7 @@ import {
   sameTab,
 } from "./model";
 import { rejectPendingFileLocator, resolveWorkspaceId } from "./tabActions";
+import { fallbackPaneAfterClose, syncWorkspaceTree } from "../paneLayout";
 import type { UiGet, UiSet, UiState } from "./types";
 
 export function createTabSlice(set: UiSet, get: UiGet) {
@@ -215,11 +216,13 @@ export function createTabSlice(set: UiSet, get: UiGet) {
                     }
                   : p,
               );
-          return {
-            ...w,
-            panes,
-            activePaneId: dropPane ? (panes[0]?.id ?? w.activePaneId) : w.activePaneId,
-          };
+          if (!dropPane) return { ...w, panes };
+          // The emptied pane closes; its neighbour takes its space and, if it was focused, the focus.
+          const activePaneId =
+            w.activePaneId === paneId
+              ? (fallbackPaneAfterClose(w, paneId) ?? panes[0]?.id ?? w.activePaneId)
+              : w.activePaneId;
+          return syncWorkspaceTree({ ...w, panes, activePaneId });
         });
         return {
           workspaces,

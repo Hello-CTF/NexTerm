@@ -73,7 +73,6 @@ function ws(panes: Pane[]): Workspace {
     title: "workspace",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -236,7 +235,7 @@ describe("close = detach (M111)", () => {
     seed(panes);
     mocks.ask.mockResolvedValueOnce(false);
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     const [message] = mocks.ask.mock.calls[0];
@@ -245,7 +244,7 @@ describe("close = detach (M111)", () => {
     expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
 
     mocks.ask.mockResolvedValueOnce(true);
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "detach", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
@@ -259,7 +258,7 @@ describe("close = detach (M111)", () => {
     ];
     seed(panes);
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledTimes(1);
@@ -289,7 +288,7 @@ describe("close = detach (M111)", () => {
     seed(panes);
     mocks.listLive.mockResolvedValueOnce([liveTab("kernel-x1", true)]);
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", undefined, "s");
@@ -400,7 +399,7 @@ describe("workspace and pane reclaim follow terminal close preferences", () => {
     seed(panes, "local");
     setTerminalCloseAction("kill");
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
     expect(mocks.ask).not.toHaveBeenCalled();
@@ -417,7 +416,7 @@ describe("workspace and pane reclaim follow terminal close preferences", () => {
     setTerminalCloseAction("ask");
     mocks.askChoiceRemember.mockResolvedValueOnce(null);
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(mocks.ask).not.toHaveBeenCalled();
@@ -451,7 +450,7 @@ describe("workspace and pane reclaim follow terminal close preferences", () => {
     setTerminalCloseAction("detach");
     mocks.closeTab.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("boom"));
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
     const remaining = useUi.getState().workspaces[0].panes[1].tabs;
@@ -682,14 +681,14 @@ describe("detach capability without session metadata", () => {
     });
     mocks.ask.mockResolvedValueOnce(false);
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
 
     mocks.ask.mockResolvedValueOnce(true);
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-w1", "kill");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);

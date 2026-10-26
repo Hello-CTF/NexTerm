@@ -49,7 +49,6 @@ function hostWorkspace(id: string, sessionId: string): Workspace {
       },
     ],
     activePaneId: `${id}-p1`,
-    splitRatio: 0.5,
   };
 }
 
@@ -60,7 +59,6 @@ function toolsWorkspace(id: string, tabs: AppTab[] = []): Workspace {
     title: "工具",
     panes: [{ id: `${id}-p1`, tabs, activeTabId: tabs[0]?.id ?? null }],
     activePaneId: `${id}-p1`,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -98,7 +96,7 @@ function rebindWorkspace(): Workspace {
     ],
   });
   workspace.activePaneId = "ws-rebind-p2";
-  workspace.splitRatio = 0.65;
+  workspace.layoutTree = { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.65, a: { type: "leaf" as const, id: "leaf-a", paneId: "ws-rebind-p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "ws-rebind-p2" } };
   return workspace;
 }
 
@@ -116,7 +114,6 @@ function databaseWorkspace(): Workspace {
       },
     ],
     activePaneId: "ws-database-p1",
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -133,7 +130,7 @@ function expectReboundWorkspace(): void {
   expect(tabs[0]).toMatchObject({ tabId: "ws-rebind-k1", containerId: "container-1" });
   expect(workspace?.panes.map((pane) => pane.id)).toEqual(["ws-rebind-p1", "ws-rebind-p2"]);
   expect(workspace?.activePaneId).toBe("ws-rebind-p2");
-  expect(workspace?.splitRatio).toBe(0.65);
+  expect(workspace?.layoutTree).toEqual({ type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.65, a: { type: "leaf" as const, id: "leaf-a", paneId: "ws-rebind-p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "ws-rebind-p2" } });
   const databaseTab = state.workspaces.find((w) => w.id === "ws-database")?.panes[0].tabs[0];
   expect(databaseTab?.connId).toBe("c1");
   expect(databaseTab?.sessionId).toBeUndefined();
@@ -474,7 +471,6 @@ describe("tool tab routing", () => {
         { id: "tools-empty", tabs: [], activeTabId: null },
       ],
       activePaneId: "tools-main",
-      splitRatio: 0.5,
       closable: true,
     };
     const workspaces = [tools];
@@ -509,7 +505,6 @@ describe("tool tab routing", () => {
       title: "Host",
       panes: [{ id: "p1", tabs: [], activeTabId: null }],
       activePaneId: "p1",
-      splitRatio: 0.5,
       closable: true,
     };
     useUi.setState({ workspaces: [host], activeWorkspaceId: host.id });
@@ -551,7 +546,6 @@ describe("tool tab routing", () => {
             activeTabId: "forward-overview",
           }],
           activePaneId: "host-pane",
-          splitRatio: 0.5,
           closable: true,
         },
         {
@@ -560,7 +554,6 @@ describe("tool tab routing", () => {
           title: "工具",
           panes: [{ id: "tools-pane", tabs: [], activeTabId: null }],
           activePaneId: "tools-pane",
-          splitRatio: 0.5,
           closable: true,
         },
       ],

@@ -331,8 +331,8 @@ describe("browser navigation keybindings", () => {
     { action: "previousWorkspace", binding: "Ctrl+Alt+ArrowLeft", key: "ArrowLeft", code: "ArrowLeft" },
     { action: "nextTab", binding: "Ctrl+Alt+]", key: "]", code: "BracketRight" },
     { action: "previousTab", binding: "Ctrl+Alt+[", key: "[", code: "BracketLeft" },
-    { action: "focusUpperPane", binding: "Ctrl+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp" },
-    { action: "focusLowerPane", binding: "Ctrl+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown" },
+    { action: "focusPaneUp", binding: "Ctrl+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp" },
+    { action: "focusPaneDown", binding: "Ctrl+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown" },
   ] as const;
 
   it.each(cases)("maps $action from a real KeyboardEvent", ({ action, binding, key, code }) => {

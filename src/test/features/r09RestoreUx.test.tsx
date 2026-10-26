@@ -247,7 +247,6 @@ function hostWorkspace(id: string, sessionId: string, tabs: AppTab[]): Workspace
     assetId: "asset-1",
     panes: [{ id: paneId, tabs, activeTabId: tabs[0]?.id ?? null }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }

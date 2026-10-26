@@ -124,7 +124,6 @@ function seed(): void {
 				assetKind: "device",
 				panes: [{ id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", sessionId: "s-dev", title: "Terminal", closable: true }] }],
 				activePaneId: "p1",
-				splitRatio: 0.5,
 			},
 		] as never,
 		activeWorkspaceId: "ws-dev",

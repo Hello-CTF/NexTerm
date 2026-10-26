@@ -11,12 +11,15 @@ export type KeybindingActionId =
   | "previousWorkspace"
   | "nextTab"
   | "previousTab"
-  | "focusUpperPane"
-  | "focusLowerPane"
+  | "focusPaneLeft"
+  | "focusPaneRight"
+  | "focusPaneUp"
+  | "focusPaneDown"
   | "toggleSidebar"
   | "toggleAiSidebar"
   | "closeTab"
-  | "toggleSplit"
+  | "splitRight"
+  | "splitDown"
   | "switchTab"
   | "terminalSearch"
   | "reclaimTakeover"
@@ -37,12 +40,15 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "previousWorkspace", label: "上一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowLeft" : "Mod+Alt+ArrowLeft" },
   { id: "nextTab", label: "下一个标签", defaultBinding: WEB ? "Ctrl+Alt+]" : "Ctrl+Tab", macDefaultBinding: "Mod+Shift+]" },
   { id: "previousTab", label: "上一个标签", defaultBinding: WEB ? "Ctrl+Alt+[" : "Ctrl+Shift+Tab", macDefaultBinding: "Mod+Shift+[" },
-  { id: "focusUpperPane", label: "聚焦上方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowUp" : "Mod+Alt+ArrowUp" },
-  { id: "focusLowerPane", label: "聚焦下方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
+  { id: "focusPaneLeft", label: "聚焦左侧窗格", defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowLeft" : "Mod+Shift+Alt+ArrowLeft" },
+  { id: "focusPaneRight", label: "聚焦右侧窗格", defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowRight" : "Mod+Shift+Alt+ArrowRight" },
+  { id: "focusPaneUp", label: "聚焦上方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowUp" : "Mod+Alt+ArrowUp" },
+  { id: "focusPaneDown", label: "聚焦下方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
   { id: "toggleSidebar", label: "收起 / 展开左栏", defaultBinding: "Mod+b" },
   { id: "toggleAiSidebar", label: "收起 / 展开 AI 侧栏", defaultBinding: "Mod+j" },
   { id: "closeTab", label: "关闭当前标签", defaultBinding: "Mod+w" },
-  { id: "toggleSplit", label: "上下分屏 / 取消分屏", defaultBinding: "Mod+\\" },
+  { id: "splitDown", label: "向下分屏", defaultBinding: "Mod+\\" },
+  { id: "splitRight", label: "向右分屏", defaultBinding: "Mod+Shift+\\" },
   { id: "switchTab", label: "跳到第 1-9 个标签", defaultBinding: "Mod+1-9" },
   { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Primary+f" },
   { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Escape" },
@@ -57,12 +63,15 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "previousWorkspace",
   "nextTab",
   "previousTab",
-  "focusUpperPane",
-  "focusLowerPane",
+  "focusPaneLeft",
+  "focusPaneRight",
+  "focusPaneUp",
+  "focusPaneDown",
   "toggleSidebar",
   "toggleAiSidebar",
   "closeTab",
-  "toggleSplit",
+  "splitRight",
+  "splitDown",
   "switchTab",
   "lockVault",
 ];
@@ -136,6 +145,8 @@ function logicalEventKey(event: KeyEventLike): string | null {
   if (codeDigit) return codeDigit[1];
   if (code === "BracketLeft") return "[";
   if (code === "BracketRight") return "]";
+  // Shift turns the key into "|" on most layouts; the physical key keeps Mod+Shift+\ bindable.
+  if (code === "Backslash") return "\\";
   if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
   if (event.key === " ") return "Space";
   if (NAMED_KEYS.has(event.key)) return event.key;
@@ -291,6 +302,53 @@ export function captureBindingForAction(
 
 const STORAGE_KEY = "nexterm.keybindings.v1";
 
+// Actions replaced by the split tree. A custom binding saved under the old id moves to its
+// replacement (unless that already has one): the old toggle split top/bottom, so it becomes
+// "split down"; the old upper/lower focus become focus up/down.
+const LEGACY_ACTIONS: readonly { legacy: string; id: KeybindingActionId }[] = [
+  { legacy: "toggleSplit", id: "splitDown" },
+  { legacy: "focusUpperPane", id: "focusPaneUp" },
+  { legacy: "focusLowerPane", id: "focusPaneDown" },
+];
+
+interface LiftedLegacy {
+  record: Record<string, unknown>;
+  moved: KeybindingActionId[];
+  legacyKeys: string[];
+}
+
+function liftLegacyBindings(record: Record<string, unknown>, keyOf: (id: string) => string): LiftedLegacy {
+  const out = { ...record };
+  const moved: KeybindingActionId[] = [];
+  const legacyKeys: string[] = [];
+  for (const { legacy, id } of LEGACY_ACTIONS) {
+    const legacyKey = keyOf(legacy);
+    if (!(legacyKey in record)) continue;
+    legacyKeys.push(legacyKey);
+    delete out[legacyKey];
+    const key = keyOf(id);
+    if (key in record) continue;
+    out[key] = record[legacyKey];
+    moved.push(id);
+  }
+  return { record: out, moved, legacyKeys };
+}
+
+// Labels of actions whose custom binding was carried over from a replaced action, reported once.
+let migratedActions: KeybindingActionId[] = [];
+
+function noteMigrated(ids: KeybindingActionId[]): void {
+  for (const id of ids) if (!migratedActions.includes(id)) migratedActions.push(id);
+}
+
+/** A one-time notice describing custom bindings carried over from replaced actions, or null. */
+export function takeKeybindingMigrationNotice(): string | null {
+  if (migratedActions.length === 0) return null;
+  const labels = migratedActions.map((id) => KEYBINDING_ACTIONS.find((action) => action.id === id)?.label ?? id);
+  migratedActions = [];
+  return `分屏改为可嵌套的左右 / 上下分屏，原自定义快捷键已迁移到：${labels.join("、")}`;
+}
+
 type Overrides = Partial<Record<KeybindingActionId, string | null>>;
 export type KeybindingSnapshot = Readonly<Record<KeybindingActionId, string | null>>;
 
@@ -298,7 +356,7 @@ const ACTION_IDS = new Set<string>(KEYBINDING_ACTIONS.map((a) => a.id));
 const DEFAULTS = new Map(KEYBINDING_ACTIONS.map((a) => [a.id, a.defaultBinding]));
 
 // keybindingPrefKey is the wire flat key for account-level keybinding overrides (whitelist in internal/account/preferences.go).
-function keybindingPrefKey(id: KeybindingActionId): string {
+function keybindingPrefKey(id: string): string {
   return `keybinding.${id}`;
 }
 
@@ -322,7 +380,17 @@ function parseOverrides(raw: unknown): Overrides {
 function loadLocalOverrides(): Overrides {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return parseOverrides(raw ? JSON.parse(raw) : null);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return parseOverrides(parsed);
+    const lifted = liftLegacyBindings(parsed as Record<string, unknown>, (id) => id);
+    const overrides = parseOverrides(lifted.record);
+    if (lifted.legacyKeys.length > 0) {
+      // Rewrite once so the old ids never shadow a later reset of their replacements.
+      if (Object.keys(overrides).length === 0) localStorage.removeItem(STORAGE_KEY);
+      else localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
+      noteMigrated(lifted.moved.filter((id) => id in overrides));
+    }
+    return overrides;
   } catch {
     return {};
   }
@@ -348,9 +416,28 @@ function parseAccountLayer(flat: Record<string, unknown>): Overrides {
 
 // After server defaults / account overrides load or clear, preferences notifies back here: only the snapshot is rebuilt; the device-local layer and written-back account keys are untouched.
 export function applyAccountKeybindingLayers(defaults: Record<string, unknown>, overrides: Record<string, unknown>): void {
-  defaultsLayer = parseAccountLayer(defaults);
-  accountLayer = parseAccountLayer(overrides);
+  defaultsLayer = parseAccountLayer(liftLegacyBindings(defaults, keybindingPrefKey).record);
+  const lifted = liftLegacyBindings(overrides, keybindingPrefKey);
+  accountLayer = parseAccountLayer(lifted.record);
+  if (lifted.legacyKeys.length > 0) migrateAccountLegacy(lifted);
   emit();
+}
+
+// migrateAccountLegacy writes carried-over bindings under their new keys and clears the old keys,
+// so the account holds each binding once.
+function migrateAccountLegacy(lifted: LiftedLegacy): void {
+  const set: Record<string, unknown> = {};
+  for (const id of lifted.moved) {
+    if (id in accountLayer) set[keybindingPrefKey(id)] = accountLayer[id];
+  }
+  patchAccountOverrideCache(set, lifted.legacyKeys);
+  noteMigrated(lifted.moved.filter((id) => id in accountLayer));
+  const store = getAccountPreferenceStore();
+  if (!store) return;
+  void (async () => {
+    if (Object.keys(set).length > 0) await store.putOverrides(set);
+    await store.deleteOverrides(lifted.legacyKeys);
+  })().catch(() => undefined);
 }
 
 function buildSnapshot(overrides: Overrides): KeybindingSnapshot {

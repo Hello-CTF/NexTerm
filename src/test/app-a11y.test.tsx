@@ -152,7 +152,6 @@ describe("main navigation tooltips", () => {
         closable: true,
         panes: [{ id: "pane", tabs: [], activeTabId: null }],
         activePaneId: "pane",
-        splitRatio: 0.5,
       }],
       activeWorkspaceId: "ws",
     });
@@ -290,7 +289,6 @@ describe("workspace reconnect status", () => {
         closable: true,
         panes: [{ id: "pane", tabs: [], activeTabId: null }],
         activePaneId: "pane",
-        splitRatio: 0.5,
       }],
       activeWorkspaceId: "ws",
     });

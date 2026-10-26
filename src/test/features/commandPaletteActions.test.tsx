@@ -121,7 +121,6 @@ function setTerminalWorkspace(tabId: string | null) {
               },
             ],
             activePaneId: "p1",
-            splitRatio: 0.5,
           },
         ]
       : [],
@@ -147,7 +146,6 @@ function workspaceOf(id: string, kind: Workspace["kind"], sessionId?: string): W
     connId: kind === "db" ? "db-conn" : undefined,
     panes: [{ id: paneId, tabs: [], activeTabId: null }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }

@@ -312,7 +312,6 @@ describe("app shell modes", () => {
           activeTabId: "settings",
         }],
         activePaneId: "pane",
-        splitRatio: 0.5,
       }],
       activeWorkspaceId: "ws",
     });
@@ -344,7 +343,6 @@ describe("app shell modes", () => {
           activeTabId: "settings",
         }],
         activePaneId: "pane",
-        splitRatio: 0.5,
       }],
       activeWorkspaceId: "ws",
     });

@@ -233,7 +233,6 @@ function seedWorkspace() {
         closable: true,
         panes: [{ id: "p1", activeTabId: null, tabs: [] }],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
   });

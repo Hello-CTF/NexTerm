@@ -71,6 +71,7 @@ import {
   IconSave,
   IconSearch,
   IconSplitH,
+  IconSplitV,
   IconZap,
 } from "../../ui/icons";
 
@@ -1568,6 +1569,7 @@ export function TerminalPane({
     const ws = st.workspaces.find((w) =>
       w.panes.some((p) => p.tabs.some((t) => t.id === storeTabId)),
     );
+    const pane = ws?.panes.find((p) => p.tabs.some((t) => t.id === storeTabId));
     const isSplit = (ws?.panes.length ?? 1) > 1;
     const staleSession = sessionStatus === undefined || isStoreTabDead(storeTabId);
 
@@ -1664,21 +1666,31 @@ export function TerminalPane({
       },
       { kind: "separator" },
       { kind: "group", label: "分屏" },
+      ...([
+        { direction: "right", label: "向右分屏", icon: <IconSplitV size={13} />, binding: bindings.splitRight },
+        { direction: "down", label: "向下分屏", icon: <IconSplitH size={13} />, binding: bindings.splitDown },
+      ] as const).map(({ direction, label, icon, binding }): MenuItem => {
+        const tooShort = direction === "down" && !splitAllowedForHeight(window.innerHeight);
+        return {
+          kind: "item",
+          label,
+          icon,
+          accel: formatBinding(binding),
+          disabled: !ws || !pane || tooShort,
+          hint: tooShort ? "窗口高度不足" : undefined,
+          onSelect: () => {
+            if (ws && pane) useUi.getState().splitPane(direction, pane.id, ws.id);
+          },
+        };
+      }),
       {
         kind: "item",
-        label: isSplit ? "取消分屏" : "上下分屏",
-        icon: isSplit ? <IconMergeH size={13} /> : <IconSplitH size={13} />,
-        accel: formatBinding(bindings.toggleSplit),
-        disabled: !isSplit && !splitAllowedForHeight(window.innerHeight),
-        hint:
-          !isSplit && !splitAllowedForHeight(window.innerHeight)
-            ? "窗口高度不足"
-            : undefined,
+        label: "关闭此窗格",
+        icon: <IconMergeH size={13} />,
+        disabled: !isSplit || !pane,
+        hint: isSplit ? "窗格内的标签一并关闭" : undefined,
         onSelect: () => {
-          if (!ws) return;
-          const cur = useUi.getState();
-          if (isSplit) void cur.unsplitWorkspace(ws.panes[1].id, ws.id);
-          else if (splitAllowedForHeight(window.innerHeight)) cur.splitWorkspace(ws.id);
+          if (ws && pane) void useUi.getState().closePane(pane.id, ws.id);
         },
       },
     ];

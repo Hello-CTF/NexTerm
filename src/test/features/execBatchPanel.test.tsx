@@ -115,7 +115,6 @@ function workspace(id: string, title: string, sessionId: string): Workspace {
     assetId: `asset-${sessionId}`,
     panes: [{ id: paneId, tabs: [], activeTabId: null }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }

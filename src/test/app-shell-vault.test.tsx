@@ -160,7 +160,6 @@ describe("status bar credential vault state", () => {
             },
           ],
           activePaneId: "remote-pane",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -243,7 +242,6 @@ describe("status bar credential vault state", () => {
             },
           ],
           activePaneId: "pane-a",
-          splitRatio: 0.5,
           closable: true,
         },
         {
@@ -252,7 +250,6 @@ describe("status bar credential vault state", () => {
           title: "Tools",
           panes: [{ id: "pane-b", tabs: [], activeTabId: null }],
           activePaneId: "pane-b",
-          splitRatio: 0.5,
           closable: true,
         },
       ],

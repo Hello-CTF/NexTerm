@@ -203,7 +203,6 @@ function workspaceOf(sessionId?: string, tabs: AppTab[] = []): Workspace {
     sessionId,
     panes: [{ id: "pane", tabs, activeTabId: tabs[0]?.id ?? null }],
     activePaneId: "pane",
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -307,7 +306,6 @@ function hostWorkspace(id: string, sessionId: string, assetId?: string): Workspa
     assetId,
     panes: [{ id: paneId, tabs: [], activeTabId: null }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -322,7 +320,6 @@ function nonHostWorkspace(kind: "tools" | "db"): Workspace {
     connId: kind === "db" ? "db-conn" : undefined,
     panes: [{ id: paneId, tabs: [], activeTabId: null }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -704,7 +701,6 @@ describe("App workspace scope", () => {
           connId: "c1",
           panes: [{ id: "pane", tabs: [], activeTabId: null }],
           activePaneId: "pane",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -861,7 +857,6 @@ describe("App Ctrl+T new terminal", () => {
           connId: "c1",
           panes: [{ id: "pane", tabs: [], activeTabId: null }],
           activePaneId: "pane",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -961,7 +956,7 @@ describe("App workspace navigation in browser mode", () => {
     expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t2");
   });
 
-  it("cycles focus between the two rendered panes only", async () => {
+  it("moves pane focus by geometry across every rendered pane and stops at the edge", async () => {
     const current = workspaceOf("s1", [
       { id: "t1", kind: "terminal", title: "Terminal 1", sessionId: "s1", closable: true },
     ]);
@@ -971,7 +966,7 @@ describe("App workspace navigation in browser mode", () => {
         tabs: [{ id: "t2", kind: "terminal", title: "Terminal 2", sessionId: "s1", closable: true }],
         activeTabId: "t2",
       },
-      { id: "hidden-third", tabs: [], activeTabId: null },
+      { id: "third", tabs: [], activeTabId: null },
     );
     useUi.setState({ workspaces: [current], activeWorkspaceId: "ws" });
     mounted = mountApp();
@@ -980,7 +975,9 @@ describe("App workspace navigation in browser mode", () => {
     expect((await pressNavigationKey("ArrowDown", "ArrowDown", { ctrlKey: true, altKey: true })).defaultPrevented).toBe(true);
     expect(useUi.getState().workspaces[0].activePaneId).toBe("lower");
     await pressNavigationKey("ArrowDown", "ArrowDown", { ctrlKey: true, altKey: true });
-    expect(useUi.getState().workspaces[0].activePaneId).toBe("pane");
+    expect(useUi.getState().workspaces[0].activePaneId).toBe("third");
+    expect((await pressNavigationKey("ArrowDown", "ArrowDown", { ctrlKey: true, altKey: true })).defaultPrevented).toBe(false);
+    expect(useUi.getState().workspaces[0].activePaneId).toBe("third");
     await pressNavigationKey("ArrowUp", "ArrowUp", { ctrlKey: true, altKey: true });
     expect(useUi.getState().workspaces[0].activePaneId).toBe("lower");
   });

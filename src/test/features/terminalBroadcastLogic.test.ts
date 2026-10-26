@@ -58,7 +58,6 @@ function workspace(
     closable: true,
     panes: panes.map((pane) => ({ id: pane.id, tabs: pane.tabs, activeTabId: pane.tabs[0]?.id ?? null })),
     activePaneId: panes[0]?.id ?? "",
-    splitRatio: 0.5,
   };
 }
 
@@ -640,7 +639,7 @@ describe("broadcast store cleanup", () => {
     useUi.getState().updateTab("t3", { dead: true, tabId: undefined });
     enableBroadcast(["t1", "t3"]);
     const generation = useUi.getState().broadcast?.generation ?? 0;
-    await useUi.getState().unsplitWorkspace("p2", "ws1");
+    await useUi.getState().closePane("p2", "ws1");
     expect(useUi.getState().workspaces[0]?.panes.map((pane) => pane.id)).toEqual(["p1"]);
     expectBroadcast(["t1"]);
     expect(useUi.getState().broadcast?.generation ?? 0).toBeGreaterThan(generation);

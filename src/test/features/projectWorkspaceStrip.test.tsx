@@ -52,7 +52,6 @@ function workspace(id: string, assetId?: string): Workspace {
     assetKind: "ssh",
     panes: [{ id: `${id}-pane`, tabs: [tab], activeTabId: tab.id }],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
   };
 }

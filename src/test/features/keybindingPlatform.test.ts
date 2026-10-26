@@ -84,8 +84,12 @@ describe("platform-specific keybinding behaviour", () => {
       { action: "previousWorkspace", binding: "Mod+Alt+ArrowLeft", key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, altKey: true },
       { action: "nextTab", binding: "Ctrl+Tab", key: "Tab", code: "Tab", ctrlKey: true },
       { action: "previousTab", binding: "Ctrl+Shift+Tab", key: "Tab", code: "Tab", ctrlKey: true, shiftKey: true },
-      { action: "focusUpperPane", binding: "Mod+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp", ctrlKey: true, altKey: true },
-      { action: "focusLowerPane", binding: "Mod+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true },
+      { action: "focusPaneUp", binding: "Mod+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp", ctrlKey: true, altKey: true },
+      { action: "focusPaneDown", binding: "Mod+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true },
+      { action: "focusPaneLeft", binding: "Mod+Shift+Alt+ArrowLeft", key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, shiftKey: true, altKey: true },
+      { action: "focusPaneRight", binding: "Mod+Shift+Alt+ArrowRight", key: "ArrowRight", code: "ArrowRight", ctrlKey: true, shiftKey: true, altKey: true },
+      { action: "splitDown", binding: "Mod+\\", key: "\\", code: "Backslash", ctrlKey: true },
+      { action: "splitRight", binding: "Mod+Shift+\\", key: "|", code: "Backslash", ctrlKey: true, shiftKey: true },
     ] as const;
     for (const { action, binding, ...init } of cases) {
       expect(getKeybinding(action)).toBe(binding);

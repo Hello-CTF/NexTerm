@@ -60,7 +60,7 @@ describe("desktop background durable account scope", () => {
       sessions: [{ id: "session-a", assetId: "asset-a", name: "测试主机", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
       workspaces: [{
         id: "workspace-a", kind: "session", title: "测试主机", sessionId: "session-a", assetId: "asset-a", assetKind: "ssh",
-        panes: [{ id: "pane-a", tabs: [], activeTabId: null }], activePaneId: "pane-a", splitRatio: 0.5, closable: true,
+        panes: [{ id: "pane-a", tabs: [], activeTabId: null }], activePaneId: "pane-a", closable: true,
       }],
       activeWorkspaceId: "workspace-a",
     });
@@ -111,7 +111,7 @@ describe("desktop background durable account scope", () => {
     mocks.linkGet.mockImplementation(async () => ({ url: "https://sync.invalid", username: account, insecure: false }));
     useUi.setState({
       sessions: [],
-      workspaces: [{ id: "tools", kind: "tools", title: "工具", panes: [{ id: "pane", tabs: [], activeTabId: null }], activePaneId: "pane", splitRatio: 0.5, closable: true }],
+      workspaces: [{ id: "tools", kind: "tools", title: "工具", panes: [{ id: "pane", tabs: [], activeTabId: null }], activePaneId: "pane", closable: true }],
       activeWorkspaceId: "tools",
     });
     const view = mount(createElement(BackgroundSessions, { workspaceId: "tools" }));
@@ -142,7 +142,7 @@ describe("desktop background durable account scope", () => {
       sessions: [],
       workspaces: [{
         id: "workspace-a", kind: "session", title: "测试主机", sessionId: "session-a", assetId: "asset-a", assetKind: "ssh",
-        panes: [{ id: "pane-a", tabs: [], activeTabId: null }], activePaneId: "pane-a", splitRatio: 0.5, closable: true,
+        panes: [{ id: "pane-a", tabs: [], activeTabId: null }], activePaneId: "pane-a", closable: true,
       }],
       activeWorkspaceId: "workspace-a",
     });
@@ -191,7 +191,7 @@ describe("desktop background durable account scope", () => {
       sessions: [connected],
       workspaces: [{
         id: "workspace-a", kind: "session", title: "测试主机", sessionId: "session-a", assetId: "asset-a", assetKind: "ssh",
-        panes: [{ id: "pane-a", tabs: [], activeTabId: null }], activePaneId: "pane-a", splitRatio: 0.5, closable: true,
+        panes: [{ id: "pane-a", tabs: [], activeTabId: null }], activePaneId: "pane-a", closable: true,
       }],
       activeWorkspaceId: "workspace-a",
     });

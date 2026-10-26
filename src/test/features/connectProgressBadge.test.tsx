@@ -115,7 +115,6 @@ function seedSession(status: SessionInfo["status"]): void {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",

@@ -153,7 +153,6 @@ function seedWorkspace(): void {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -181,7 +180,6 @@ function addSecondWorkspace(): void {
           },
         ],
         activePaneId: "p4",
-        splitRatio: 0.5,
       },
     ],
   });
@@ -584,7 +582,6 @@ describe("broadcast enable flow", () => {
             },
           ],
           activePaneId: "p1",
-          splitRatio: 0.5,
         },
       ],
     });

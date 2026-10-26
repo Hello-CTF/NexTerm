@@ -6,7 +6,6 @@ import { assetApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { isMobileShell } from "./shell";
-import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import { useBackgroundSessionsAccess } from "../features/terminal/backgroundSessionsAccess";
 import { insertSnippet } from "../features/explorer/snippetInsert";
 import { cloneAsset } from "../features/explorer/assetClone";
@@ -27,12 +26,14 @@ import {
   IconEyeOff,
   IconFolderOpen,
   IconHistory,
+  IconMergeH,
   IconMonitor,
   IconNetwork,
   IconRefresh,
   IconSearch,
   IconSettings,
   IconSplitH,
+  IconSplitV,
   IconTerminal,
   IconZap,
   assetIcon,
@@ -184,11 +185,14 @@ export function CommandPalette({
               },
             } satisfies Action,
           ]),
-      {
-        id: "split-pane",
-        label: "上下分屏 / 取消分屏",
-        hint: keyHint("toggleSplit"),
-        icon: IconSplitH,
+      ...([
+        { id: "split-right", label: "向右分屏", direction: "right", icon: IconSplitV },
+        { id: "split-down", label: "向下分屏", direction: "down", icon: IconSplitH },
+      ] as const).map(({ id, label, direction, icon }): Action => ({
+        id,
+        label,
+        hint: keyHint(direction === "right" ? "splitRight" : "splitDown", "拆分当前窗格"),
+        icon,
         run: () => {
           const current = useUi.getState();
           const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
@@ -196,9 +200,22 @@ export function CommandPalette({
             pushToast("info", "先连接一台主机（双击左侧资产）");
             return;
           }
-          if (workspace.panes.length > 1) void current.unsplitWorkspace(workspace.panes[1].id, workspace.id);
-          else if (splitAllowedForHeight(window.innerHeight)) current.splitWorkspace(workspace.id);
-          else pushToast("info", "窗口高度不足，无法上下分屏");
+          current.splitPane(direction, undefined, workspace.id);
+        },
+      })),
+      {
+        id: "close-pane",
+        label: "关闭当前窗格",
+        hint: "合并回相邻窗格，窗格内的标签一并关闭",
+        icon: IconMergeH,
+        run: () => {
+          const current = useUi.getState();
+          const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
+          if (!workspace || workspace.panes.length < 2) {
+            pushToast("info", "当前工作区没有分屏");
+            return;
+          }
+          void current.closePane(workspace.activePaneId, workspace.id);
         },
       },
       {

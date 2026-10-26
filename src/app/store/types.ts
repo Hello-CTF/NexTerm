@@ -5,6 +5,7 @@ import type { HelperOperationKind, HelperOperationState } from "../../features/t
 import type { QuickConnectTarget } from "../quickConnectTarget";
 import type { ResolvedTheme, ThemeMode } from "../theme";
 import type { ProjectFocus, ProjectInventory } from "../projectFocus";
+import type { FocusDirection, SplitNode } from "../splitTree";
 
 export type PaneKind =
   | "terminal"
@@ -54,6 +55,9 @@ export interface AppTab {
 
 export type WorkspaceKind = "session" | "db" | "tools";
 
+// Where a split puts the new pane relative to the pane being split.
+export type SplitDirection = "right" | "down";
+
 export interface Pane {
   id: string;
   tabs: AppTab[];
@@ -72,9 +76,15 @@ export interface Workspace {
   quickTarget?: QuickWorkspaceTarget;
   deletedTarget?: boolean;
   restorePending?: boolean;
+  // Pane contents; their placement on screen comes from layoutTree.
   panes: Pane[];
   activePaneId: string;
-  splitRatio: number;
+  // Nested split layout over the panes. Absent until the workspace first changes its layout, which
+  // reads as the panes stacked top to bottom; workspaceLayoutTree() resolves either form.
+  layoutTree?: SplitNode;
+  // Wall-clock milliseconds of the last layout change on the device that made it; merges use it to
+  // pick a side when two devices reshape the same workspace.
+  layoutUpdatedAt?: number;
   closable: boolean;
 }
 
@@ -382,11 +392,13 @@ export interface UiState {
   markDeletedAssetWorkspaces: (assetId: string) => void;
   reconcileDeletedTargets: (assets: readonly { id: string }[], epoch: number) => void;
 
-  splitWorkspace: (workspaceId?: string) => void;
+  splitPane: (direction: SplitDirection, paneId?: string, workspaceId?: string) => string | null;
   openInLowerPane: (tab: AppTab, workspaceId?: string) => void;
-  unsplitWorkspace: (paneId?: string, workspaceId?: string) => Promise<void>;
+  closePane: (paneId?: string, workspaceId?: string) => Promise<void>;
   setActivePane: (paneId: string, workspaceId?: string) => void;
-  setSplitRatio: (ratio: number, workspaceId?: string) => void;
+  focusPane: (direction: FocusDirection, workspaceId?: string) => string | null;
+  setSplitRatio: (splitId: string, ratio: number, workspaceId?: string) => void;
+  moveTabToPane: (tabId: string, paneId: string) => void;
 
   setActiveTab: (id: string) => void;
   addTab: (tab: AppTab, paneId?: string) => void;

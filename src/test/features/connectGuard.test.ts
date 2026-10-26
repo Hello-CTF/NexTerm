@@ -113,7 +113,7 @@ describe("connectAsset in-flight guard", () => {
     mocks.ask.mockReturnValueOnce(confirmation.promise);
     const workspace = {
       id: "shared-id", kind: "db" as const, title: "Database", closable: true,
-      panes: [{ id: "pane", tabs: [], activeTabId: null }], activePaneId: "pane", splitRatio: 0.5,
+      panes: [{ id: "pane", tabs: [], activeTabId: null }], activePaneId: "pane",
     };
     useUi.setState({
       workspaces: [workspace],
@@ -335,7 +335,6 @@ describe("connectAsset asset workspace deduplication", () => {
           assetKind: "ssh",
           panes: [{ id: "p1", tabs, activeTabId: tabs[0]?.id ?? null }],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -427,7 +426,7 @@ describe("connectAsset asset workspace deduplication", () => {
     const workspace = useUi.getState().workspaces[0];
     useUi.setState({
       sessions: state === "missing" ? [] : useUi.getState().sessions,
-      workspaces: [{ ...workspace, activePaneId: "p2", splitRatio: 0.37, panes: [
+      workspaces: [{ ...workspace, activePaneId: "p2", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.37, a: { type: "leaf" as const, id: "leaf-a", paneId: "p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "p2" } }, panes: [
         { id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", title: "one", sessionId: "s1", tabId: "shell-one", closable: true }] },
         { id: "p2", activeTabId: "t2", tabs: [{ id: "t2", kind: "terminal", title: "two", sessionId: "s1", tabId: "shell-two", closable: true }] },
       ] }],
@@ -438,7 +437,7 @@ describe("connectAsset asset workspace deduplication", () => {
     expect(await connectAsset(SSH_ASSET)).toEqual({ ok: true });
 
     const restored = useUi.getState().workspaces[0];
-    expect(restored).toMatchObject({ id: "ws-1", sessionId: "s-new", activePaneId: "p2", splitRatio: 0.37 });
+    expect(restored).toMatchObject({ id: "ws-1", sessionId: "s-new", activePaneId: "p2", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.37, a: { type: "leaf" as const, id: "leaf-a", paneId: "p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "p2" } } });
     expect(restored.panes.map((pane) => ({ id: pane.id, activeTabId: pane.activeTabId, tabs: pane.tabs.map((tab) => [tab.id, tab.tabId, tab.sessionId]) }))).toEqual([
       { id: "p1", activeTabId: "t1", tabs: [["t1", "shell-one", "s-new"]] },
       { id: "p2", activeTabId: "t2", tabs: [["t2", "shell-two", "s-new"]] },
@@ -474,7 +473,6 @@ describe("connectAsset asset workspace deduplication", () => {
             },
           ],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
       ],

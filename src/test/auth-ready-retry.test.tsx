@@ -345,7 +345,6 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
             title: "account workspace",
             panes: [{ id: "pane-account", tabs: [], activeTabId: null }],
             activePaneId: "pane-account",
-            splitRatio: 0.5,
             closable: true,
           },
         ],

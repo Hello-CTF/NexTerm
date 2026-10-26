@@ -44,7 +44,6 @@ function ws(panes: Pane[], id = "ws"): Workspace {
     title: "workspace",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -504,7 +503,7 @@ describe("Unsplitting", () => {
       sessions: [{ id: "s", assetId: "a", name: "session", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
     });
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(mocks.disconnect).toHaveBeenCalledWith("conn-mysql");
     expect(tabExists(db.id)).toBe(false);
@@ -525,7 +524,7 @@ describe("Unsplitting", () => {
     });
     mocks.disconnect.mockRejectedValueOnce(new Error("Connection reset"));
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(tabExists(db.id)).toBe(true);
     expect(toastText()).toContain("1/1 个数据库断开失败：Connection reset");
@@ -547,7 +546,7 @@ describe("Unsplitting", () => {
     });
     mocks.closeTerminalTab.mockRejectedValueOnce(new Error("close failed"));
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closePane("p2", "ws");
 
     expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
     expect(tabExists(failed.id)).toBe(true);

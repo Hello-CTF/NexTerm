@@ -6,6 +6,7 @@ import {
 } from "../../features/files/editorGuards";
 import { baseName } from "../../features/files/pathUtils";
 import { isFleetHealthTabId } from "../../features/fleet/fleetHealthTab";
+import { syncWorkspaceTree } from "../paneLayout";
 import type {
   AiBoard,
   AiDockTab,
@@ -205,8 +206,20 @@ export function rebindWorkspaceSession(
   });
 }
 
+function randomSuffix(): string {
+  const bytes = new Uint8Array(6);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  }
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+// Pane ids are placed in the synced split tree and merged by id across devices, so they carry a
+// random part: two devices splitting in the same millisecond must not mint the same id.
 export function makePane(): Pane {
-  return { id: nextTabId("pane"), tabs: [], activeTabId: null };
+  return { id: `${nextTabId("pane")}-${randomSuffix()}`, tabs: [], activeTabId: null };
 }
 
 export function normalizeWorkspacePanes(w: Workspace): Workspace {
@@ -220,13 +233,13 @@ export function normalizeWorkspacePanes(w: Workspace): Workspace {
   const nonEmpty = withActiveTabs.filter((pane) => pane.tabs.length > 0);
   let panes: Pane[] = nonEmpty.length > 0 ? nonEmpty : withActiveTabs.slice(0, 1);
   if (panes.length === 0) panes = [makePane()];
-  return {
+  return syncWorkspaceTree({
     ...w,
     panes,
     activePaneId: panes.some((pane) => pane.id === w.activePaneId)
       ? w.activePaneId
       : panes[0].id,
-  };
+  });
 }
 
 function hasValidAiBoard(aiBoards: Record<string, unknown> | undefined, workspaceId: string): boolean {
@@ -286,7 +299,6 @@ export function migrateToolTabs(
       title: "工具",
       panes: [pane],
       activePaneId: pane.id,
-      splitRatio: 0.5,
       closable: true,
     };
   }

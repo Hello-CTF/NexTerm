@@ -354,4 +354,22 @@
     height: 2px;
     background: color-mix(in srgb, var(--color-accent) 60%, transparent);
   }
+  .nx-split-handle.is-row {
+    cursor: col-resize;
+  }
+  .nx-split-handle.is-row .nx-split-grip {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    right: auto;
+    width: 1px;
+    height: auto;
+    transform: translateX(-50%);
+  }
+  .nx-split-handle.is-row:hover .nx-split-grip,
+  .nx-split-handle.is-row:active .nx-split-grip,
+  .nx-split-handle.is-row.is-dragging .nx-split-grip {
+    width: 2px;
+    height: auto;
+  }
 }

@@ -52,17 +52,22 @@ export function splitRatioAt(
   return clampSplitRatio((clientY - rect.top) / rect.height, fallback);
 }
 
+// splitRatioForKey maps a key on a split divider to the next ratio. A "col" split (top/bottom) moves
+// with ArrowUp/ArrowDown, a "row" split (left/right) with ArrowLeft/ArrowRight.
 export function splitRatioForKey(
   current: number,
   key: string,
   shiftKey = false,
+  dir: "row" | "col" = "col",
 ): number | null {
   const ratio = clampSplitRatio(current);
   const step = shiftKey ? 0.1 : 0.02;
+  const decrease = dir === "row" ? "ArrowLeft" : "ArrowUp";
+  const increase = dir === "row" ? "ArrowRight" : "ArrowDown";
   switch (key) {
-    case "ArrowUp":
+    case decrease:
       return clampSplitRatio(ratio - step);
-    case "ArrowDown":
+    case increase:
       return clampSplitRatio(ratio + step);
     case "Home":
       return SPLIT_RATIO_RANGE.min;

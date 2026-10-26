@@ -89,7 +89,6 @@ function seedTerminalTab(tabOverrides: Partial<AppTab> = {}) {
         title: "Workspace",
         panes: [{ id: "pane-1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "pane-1",
-        splitRatio: 0.5,
         closable: true,
       },
     ],

@@ -191,7 +191,6 @@ function seedWorkspace(options: { assetId?: string; assetKind?: string; title?: 
         assetKind: kind,
         panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ],
@@ -367,7 +366,6 @@ describe("FileBrowser deleted sessions", () => {
         },
       ],
       activePaneId: `pane-${id}`,
-      splitRatio: 0.5,
       closable: true,
     });
     useUi.setState({
@@ -472,7 +470,6 @@ describe("FileBrowser deleted sessions", () => {
           sessionId: "other",
           panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
