@@ -59,6 +59,7 @@ vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../../app/App";
+import { endTabDrag } from "../../app/workspace/tabDrag";
 import { useUi } from "../../app/store";
 
 const TAB_MIME = "application/x-nexterm-tab";
@@ -201,6 +202,8 @@ beforeEach(() => {
 
 afterEach(() => {
   mounted?.unmount();
+  // A drag the test left open must not leak into the next one.
+  endTabDrag();
   mounted = undefined;
 });
 
@@ -390,7 +393,7 @@ describe("cross-pane drag guard", () => {
     });
   }
 
-  it("does not show a drop indicator or consume drop across panes and preserves order on both sides", async () => {
+  it("moves a tab dropped on another pane's tab next to it, showing the insertion indicator", async () => {
     useSplitPanes();
     mounted = mountApp();
     await flush();
@@ -408,10 +411,72 @@ describe("cross-pane drag guard", () => {
     act(() => {
       cred.dispatchEvent(over);
     });
-    expect(over.defaultPrevented).toBe(false);
-    expect(cred.className).not.toContain("nx-drop-before");
-    expect(cred.className).not.toContain("nx-drop-after");
+    expect(over.defaultPrevented).toBe(true);
+    expect(cred.className).toContain("nx-drop-before");
 
+    const drop = dragEvent("drop", dt, { clientX: 110 });
+    act(() => {
+      cred.dispatchEvent(drop);
+    });
+    expect(drop.defaultPrevented).toBe(true);
+    expect(paneTabIds(0)).toEqual(["t2"]);
+    expect(paneTabIds(1)).toEqual(["t1", "t3"]);
+    expect(useUi.getState().workspaces[0].panes[1].activeTabId).toBe("t1");
+    expect(useUi.getState().workspaces[0].activePaneId).toBe("p2");
+  });
+
+  it("appends a tab dropped on another pane's strip outside any tab, and lands after a right-half drop", async () => {
+    useSplitPanes();
+    mounted = mountApp();
+    await flush();
+
+    const audit = tabByTextIn(mounted.container, "审计");
+    const strip = tabByTextIn(mounted.container, "凭据").closest<HTMLElement>(".nx-tabstrip-scroll")!;
+    const dt = makeDataTransfer();
+    act(() => {
+      audit.dispatchEvent(dragEvent("dragstart", dt));
+    });
+    const over = dragEvent("dragover", dt);
+    act(() => {
+      strip.dispatchEvent(over);
+    });
+    expect(over.defaultPrevented).toBe(true);
+    act(() => {
+      strip.dispatchEvent(dragEvent("drop", dt));
+    });
+    expect(paneTabIds(0)).toEqual(["t1"]);
+    expect(paneTabIds(1)).toEqual(["t3", "t2"]);
+
+    // Dropping on the right half of a tab in another pane inserts after it.
+    const settings = tabByTextIn(mounted.container, "设置");
+    const cred = tabByTextIn(mounted.container, "凭据");
+    stubRect(cred, 100, 80);
+    const second = makeDataTransfer();
+    act(() => {
+      settings.dispatchEvent(dragEvent("dragstart", second));
+    });
+    act(() => {
+      cred.dispatchEvent(dragEvent("drop", second, { clientX: 170 }));
+    });
+    // The source pane gave up its last tab, so it closed.
+    expect(useUi.getState().workspaces[0].panes.map((pane) => pane.id)).toEqual(["p2"]);
+    expect(paneTabIds(0)).toEqual(["t3", "t1", "t2"]);
+  });
+
+  it("ignores tab drags that did not start in this window", async () => {
+    useSplitPanes();
+    mounted = mountApp();
+    await flush();
+
+    const cred = tabByTextIn(mounted.container, "凭据");
+    stubRect(cred, 100, 80);
+    const dt = makeDataTransfer();
+    dt.setData(TAB_MIME, "t1");
+    const over = dragEvent("dragover", dt, { clientX: 110 });
+    act(() => {
+      cred.dispatchEvent(over);
+    });
+    expect(over.defaultPrevented).toBe(false);
     const drop = dragEvent("drop", dt, { clientX: 110 });
     act(() => {
       cred.dispatchEvent(drop);
@@ -419,10 +484,6 @@ describe("cross-pane drag guard", () => {
     expect(drop.defaultPrevented).toBe(false);
     expect(paneTabIds(0)).toEqual(["t1", "t2"]);
     expect(paneTabIds(1)).toEqual(["t3"]);
-
-    act(() => {
-      settings.dispatchEvent(dragEvent("dragend", dt));
-    });
   });
 
   it("allows same-pane drag reorder in split view", async () => {

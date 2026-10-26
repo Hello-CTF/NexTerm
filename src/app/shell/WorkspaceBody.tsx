@@ -58,6 +58,8 @@ export function WorkspaceBody({
   const aiAccountEpoch = useUi((s) => s.aiAccountEpoch);
   const splitPane = useUi((s) => s.splitPane);
   const closePane = useUi((s) => s.closePane);
+  const moveTabToPane = useUi((s) => s.moveTabToPane);
+  const splitPaneWithTab = useUi((s) => s.splitPaneWithTab);
   const setActivePane = useUi((s) => s.setActivePane);
   const setSplitRatio = useUi((s) => s.setSplitRatio);
   const { leftDockOpen, rightDockOpen, setLeftOpen, setOverlayDock } = docks;
@@ -129,6 +131,10 @@ export function WorkspaceBody({
                     singlePane={singlePane}
                     onRatio={(splitId, ratio) => setSplitRatio(splitId, ratio, w.id)}
                     onActivatePane={(paneId) => setActivePane(paneId, w.id)}
+                    onTabDrop={(tabId, paneId, region) => {
+                      if (region === "center") moveTabToPane(tabId, paneId);
+                      else splitPaneWithTab(tabId, paneId, region, w.id);
+                    }}
                     renderTab={(p, t, visible) => (
                       <PaneTabPanel
                         tab={t}

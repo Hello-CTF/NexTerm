@@ -218,6 +218,27 @@ export function CommandPalette({
           current.closePane(workspace.activePaneId, workspace.id);
         },
       },
+      // Keyboard equivalents of dropping the current tab on the current pane's right or bottom edge.
+      ...([
+        { id: "tab-to-new-pane-right", label: "移到右侧新窗格", edge: "right", icon: IconSplitV },
+        { id: "tab-to-new-pane-down", label: "移到下方新窗格", edge: "bottom", icon: IconSplitH },
+      ] as const).map(({ id, label, edge, icon }): Action => ({
+        id,
+        label,
+        hint: "把当前标签移到新拆分的窗格",
+        icon,
+        run: () => {
+          const current = useUi.getState();
+          const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
+          const pane = workspace?.panes.find((item) => item.id === workspace.activePaneId);
+          const tabId = pane?.activeTabId ?? pane?.tabs[pane.tabs.length - 1]?.id;
+          if (!workspace || !pane || !tabId) {
+            pushToast("info", "当前窗格没有标签");
+            return;
+          }
+          current.splitPaneWithTab(tabId, pane.id, edge, workspace.id);
+        },
+      })),
       {
         id: "wide-files",
         label: "打开文件浏览器",

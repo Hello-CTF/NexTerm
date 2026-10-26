@@ -100,6 +100,25 @@
     box-shadow: inset -2px 0 0 0 var(--color-accent);
   }
 
+  /* Pane drop targets exist only during a tab drag; the preview never takes pointer events. */
+  .nx-tab-drop-target {
+    position: absolute;
+    z-index: 5;
+  }
+  .nx-tab-drop-preview {
+    position: absolute;
+    pointer-events: none;
+    border: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    transition: left 80ms ease-out, top 80ms ease-out, width 80ms ease-out, height 80ms ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nx-tab-drop-preview {
+      transition: none;
+    }
+  }
+
   .nx-badge {
     display: inline-flex;
     flex: 0 0 auto;

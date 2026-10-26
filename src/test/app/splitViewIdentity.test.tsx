@@ -1,10 +1,10 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement, useEffect } from "react";
+import { act, createElement } from "react";
 import { flush, mount, type MountedView } from "../features/reactTestUtils";
+import { resetTerminalMounts, terminalMounts as mounts, workspaceBodyProps } from "../helpers/splitViewHarness";
 
-const mounts = vi.hoisted(() => ({ count: new Map<string, number>(), unmounts: new Map<string, number>() }));
 const mocks = vi.hoisted(() => ({ detach: vi.fn(async () => undefined), closeTab: vi.fn(async () => undefined) }));
 
 vi.mock("../../ui/dialogs", () => ({ ask: vi.fn(async () => true), askChoice: vi.fn() }));
@@ -16,41 +16,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 // The terminal stub counts mounts and unmounts per tab: a remount would mean a reconnect in the app.
-vi.mock("../../app/lazyPanels", () => {
-  const stub = (name: string) => () =>
-    createElement("div", { "data-panel": name }, createElement("button", { type: "button" }, `${name}-action`));
-  function TerminalPane({ storeTabId }: { storeTabId: string }) {
-    useEffect(() => {
-      mounts.count.set(storeTabId, (mounts.count.get(storeTabId) ?? 0) + 1);
-      return () => {
-        mounts.unmounts.set(storeTabId, (mounts.unmounts.get(storeTabId) ?? 0) + 1);
-      };
-    }, [storeTabId]);
-    return createElement("div", { "data-terminal": storeTabId });
-  }
-  return {
-    TerminalPane,
-    AiSidebar: stub("ai"),
-    AssetTree: stub("assets"),
-    CredentialsSidebar: stub("credentials"),
-    FileTree: stub("file-tree"),
-    BackgroundSessions: stub("background"),
-    TranscriptHistoryPanel: stub("history"),
-    FileBrowser: stub("browser"),
-    MountPanel: stub("mount"),
-    FileEditor: stub("editor"),
-    LogViewer: stub("log"),
-    ForwardPanel: stub("forward"),
-    MultiHostLogTail: stub("multi-log"),
-    FleetHealthPanel: stub("fleet"),
-    DockerPanel: stub("docker"),
-    DbPanel: stub("db"),
-    ExecBatchPanel: stub("exec"),
-    SettingsView: stub("settings"),
-    AuditView: stub("audit"),
-    CredentialsPanel: stub("credentials-panel"),
-  };
-});
+vi.mock("../../app/lazyPanels", async () => (await import("../helpers/splitViewHarness")).lazyPanelsMock());
 
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import { WorkspaceBody, type WorkspaceBodyProps } from "../../app/shell/WorkspaceBody";
@@ -74,26 +40,7 @@ function workspace(): Workspace {
 }
 
 function props(singlePane: boolean): WorkspaceBodyProps {
-  return {
-    ws: useUi.getState().workspaces[0],
-    visibleWorkspaces: useUi.getState().workspaces,
-    activeTab: null,
-    activeSessionId: "s",
-    overlaySidebars: false,
-    splitAllowed: true,
-    singlePane,
-    docks: {
-      overlayDock: null,
-      setOverlayDock: () => undefined,
-      leftDockOpen: false,
-      rightDockOpen: false,
-      setLeftOpen: () => undefined,
-      setRightOpen: () => undefined,
-    },
-    onNewTerminal: () => undefined,
-    onLocalTerminal: () => undefined,
-    onOpenPalette: () => undefined,
-  };
+  return workspaceBodyProps(useUi.getState().workspaces, singlePane);
 }
 
 function render(singlePane = false): void {
@@ -123,8 +70,7 @@ function split(direction: "right" | "down", paneId: string, tabId: string): stri
 beforeEach(() => {
   mocks.detach.mockClear();
   mocks.closeTab.mockClear();
-  mounts.count.clear();
-  mounts.unmounts.clear();
+  resetTerminalMounts();
   useUi.setState({ workspaces: [workspace()], activeWorkspaceId: "ws", sessions: [], toasts: [] });
 });
 

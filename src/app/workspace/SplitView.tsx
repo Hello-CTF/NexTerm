@@ -14,6 +14,8 @@ import type { AppTab, Pane, Workspace } from "../store";
 import { isTouchShell } from "../shell/shellMode";
 import { workspaceLayoutTree } from "../paneLayout";
 import { paneIdsInOrder, paneRects, resolveActivePane, type Rect, type SplitDir, type SplitNode } from "../splitTree";
+import type { DropRegion } from "../tabDropZone";
+import { TabDropLayer } from "./TabDropLayer";
 
 // Divider thickness in pixels; each pane gives up half of it on every inner edge.
 export const SPLIT_HANDLE_SIZE = 6;
@@ -104,6 +106,8 @@ interface SplitViewProps {
   renderTab: (pane: Pane, tab: AppTab, visible: boolean) => ReactNode;
   onActivatePane: (paneId: string) => void;
   onRatio: (splitId: string, ratio: number) => void;
+  /** A dragged tab was dropped on a pane's content: an edge splits that pane, the centre moves the tab there. */
+  onTabDrop?: (tabId: string, paneId: string, region: DropRegion) => void;
 }
 
 const FOCUSABLE =
@@ -140,7 +144,7 @@ export function tabContentStyle(rect: Rect | null, stripHeight: number): CSSProp
  * moving a tab to another pane or renaming a pane therefore never re-parents tab content: a
  * terminal keeps its DOM node and connection.
  */
-export function SplitView({ workspace, singlePane, renderPane, renderTab, onActivatePane, onRatio }: SplitViewProps) {
+export function SplitView({ workspace, singlePane, renderPane, renderTab, onActivatePane, onRatio, onTabDrop }: SplitViewProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   const tree = workspaceLayoutTree(workspace);
   const rects = new Map((tree ? paneRects(tree) : []).map((entry) => [entry.paneId, entry.rect]));
@@ -280,6 +284,15 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
       {handles.map((handle) => (
         <SplitHandle key={handle.id} handle={handle} boxRef={boxRef} onRatio={onRatio} />
       ))}
+      {onTabDrop && (
+        <TabDropLayer
+          panes={placement
+            .filter((entry) => entry.shown)
+            .map((entry) => ({ paneId: entry.pane.id, style: tabContentStyle(entry.rect, strips[entry.pane.id] ?? defaultStrip) }))}
+          edges={!singlePane}
+          onTabDrop={onTabDrop}
+        />
+      )}
     </div>
   );
 }

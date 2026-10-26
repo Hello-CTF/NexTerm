@@ -31,7 +31,9 @@ import {
 } from "./model";
 import { openTerminalTab, rejectPendingFileLocator, resolveWorkspaceId } from "./tabActions";
 import { fallbackPaneAfterClose, treeWithoutPane, withLayoutTree, workspaceLayoutTree } from "../paneLayout";
+import { edgeSplit, EDGE_LABEL } from "../tabDropZone";
 import {
+  closePane as closeTreePane,
   focusNeighbor,
   paneRects,
   resolveActivePane,
@@ -57,6 +59,18 @@ function paneSize(paneId: string, tree: SplitNode): { width: number; height: num
   if (typeof window === "undefined" || !rect) return { width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY };
   return { width: window.innerWidth * rect.width, height: window.innerHeight * rect.height };
 }
+
+// splitRefusal explains why `paneId` cannot be split now (window too short, pane too small), or null.
+// `label` names the direction in the message ("向右", "向上", ...).
+function splitRefusal(direction: "right" | "down", label: string, paneId: string, tree: SplitNode): string | null {
+  if (direction === "down" && !splitAllowedForHeight(windowHeight())) return `窗口高度不足，无法${label}分屏`;
+  if (!splitFitsPane(direction, paneSize(paneId, tree))) {
+    return `窗格太小，无法${label}分屏（每侧至少需要 ${SPLIT_MIN_COLS} 列 × ${SPLIT_MIN_ROWS} 行）`;
+  }
+  return null;
+}
+
+const SPLIT_DEPTH_REFUSAL = `分屏最多嵌套 ${SPLIT_TREE_MAX_DEPTH} 层，已保持当前布局`;
 
 // otherPaneFor picks where "open in the other pane" lands: the pane below the active one, else the
 // nearest pane in any direction, else none (the caller splits).
@@ -327,15 +341,9 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       const targetId = paneId ?? w.activePaneId;
       const tree = workspaceLayoutTree(w);
       if (!tree || !w.panes.some((pane) => pane.id === targetId)) return null;
-      if (direction === "down" && !splitAllowedForHeight(windowHeight())) {
-        get().pushToast("info", "窗口高度不足，无法向下分屏");
-        return null;
-      }
-      if (!splitFitsPane(direction, paneSize(targetId, tree))) {
-        get().pushToast(
-          "info",
-          `窗格太小，无法${direction === "right" ? "向右" : "向下"}分屏（每侧至少需要 ${SPLIT_MIN_COLS} 列 × ${SPLIT_MIN_ROWS} 行）`,
-        );
+      const refusal = splitRefusal(direction, direction === "right" ? "向右" : "向下", targetId, tree);
+      if (refusal) {
+        get().pushToast("info", refusal);
         return null;
       }
       const pane = makePane();
@@ -345,7 +353,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         newPaneId: pane.id,
       });
       if (next === tree) {
-        get().pushToast("info", `分屏最多嵌套 ${SPLIT_TREE_MAX_DEPTH} 层，已保持当前布局`);
+        get().pushToast("info", SPLIT_DEPTH_REFUSAL);
         return null;
       }
       set((s2) => ({
@@ -479,7 +487,51 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         return changed ? { workspaces } : {};
       }),
 
-    moveTabToPane: (tabId, paneId) =>
+    // splitPaneWithTab is a drop on a pane edge: one state change splits the pane and moves the tab into
+    // the new pane, so the tab's content stays mounted (it is keyed by tab id) and no terminal reconnects.
+    // A pane left empty by the move closes. A pane never splits off its only tab.
+    splitPaneWithTab: (tabId, paneId, edge, workspaceId) => {
+      const st = get();
+      const hit = findTabLocation(st.workspaces, workspaceId ?? st.activeWorkspaceId, tabId);
+      if (!hit || (workspaceId !== undefined && hit.workspace.id !== workspaceId)) return null;
+      const w = hit.workspace;
+      const tree = workspaceLayoutTree(w);
+      if (!tree || !w.panes.some((pane) => pane.id === paneId)) return null;
+      if (hit.pane.id === paneId && hit.pane.tabs.length < 2) {
+        get().pushToast("info", "窗格只有这一个标签，无需移到新窗格");
+        return null;
+      }
+      const split = edgeSplit(edge);
+      const refusal = splitRefusal(split.direction, EDGE_LABEL[edge], paneId, tree);
+      if (refusal) {
+        get().pushToast("info", refusal);
+        return null;
+      }
+      const created = makePane();
+      let next = splitTreePane(tree, paneId, { dir: split.dir, side: split.side, newPaneId: created.id });
+      if (next === tree) {
+        get().pushToast("info", SPLIT_DEPTH_REFUSAL);
+        return null;
+      }
+      const sourceTabs = hit.pane.tabs.filter((tab) => tab.id !== tabId);
+      const panes = w.panes.flatMap((pane) => {
+        if (pane.id !== hit.pane.id) return [pane];
+        if (sourceTabs.length === 0) return [];
+        const activeTabId = pane.activeTabId === tabId ? (sourceTabs[sourceTabs.length - 1]?.id ?? null) : pane.activeTabId;
+        return [{ ...pane, tabs: sourceTabs, activeTabId }];
+      });
+      panes.push({ ...created, tabs: [hit.tab], activeTabId: tabId });
+      if (sourceTabs.length === 0) next = closeTreePane(next, hit.pane.id) ?? next;
+      set((s2) => ({
+        workspaces: s2.workspaces.map((x) =>
+          x.id === w.id ? withLayoutTree({ ...x, panes, activePaneId: created.id }, next) : x,
+        ),
+        activeWorkspaceId: w.id,
+      }));
+      return created.id;
+    },
+
+    moveTabToPane: (tabId, paneId, index) =>
       set((st) => {
         const hit = findTabLocation(st.workspaces, st.activeWorkspaceId, tabId);
         if (!hit || hit.pane.id === paneId || !hit.workspace.panes.some((pane) => pane.id === paneId)) return {};
@@ -497,7 +549,10 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
                   activeTabId: pane.activeTabId === tabId ? (sourceTabs[sourceTabs.length - 1]?.id ?? null) : pane.activeTabId,
                 };
               }
-              if (pane.id === paneId) return { ...pane, tabs: [...pane.tabs, hit.tab], activeTabId: tabId };
+              if (pane.id === paneId) {
+                const at = index === undefined ? pane.tabs.length : Math.min(Math.max(0, Math.trunc(index)), pane.tabs.length);
+                return { ...pane, tabs: [...pane.tabs.slice(0, at), hit.tab, ...pane.tabs.slice(at)], activeTabId: tabId };
+              }
               return pane;
             }),
           };

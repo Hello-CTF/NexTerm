@@ -33,6 +33,7 @@ import {
 import { TabProductionBadge, TabStripItem, TabStripTitle, tabIcon, tabTooltip } from "./tabStrip";
 import { PaneForTab } from "./PaneForTab";
 import { WorkspaceEmpty } from "./EmptyStates";
+import { beginTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
 
 function handleTablistKeyDown(
   event: ReactKeyboardEvent<HTMLElement>,
@@ -67,10 +68,6 @@ function handleTablistKeyDown(
   activate(nextId);
   focusTab(event.currentTarget.closest("[role='tablist']"), nextId);
 }
-
-const TAB_DRAG_MIME = "application/x-nexterm-tab";
-
-let tabDragSource: { tabId: string; paneId: string } | null = null;
 
 function focusTab(tablist: Element | null, id: string): void {
   tablist?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`)?.focus();
@@ -126,11 +123,13 @@ export function PaneGroup({
   const setActiveTab = useUi((s) => s.setActiveTab);
   const moveTabToPane = useUi((s) => s.moveTabToPane);
   const moveTabInPane = useUi((s) => s.moveTabInPane);
+  const splitPaneWithTab = useUi((s) => s.splitPaneWithTab);
   const moveTab = (fromIndex: number, toIndex: number) =>
     moveTabInPane(pane.id, fromIndex, toIndex);
   const activeTabId = pane.activeTabId ?? pane.tabs[pane.tabs.length - 1]?.id ?? null;
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const drag = useTabDrag();
+  const draggingId = drag?.paneId === pane.id ? drag.tabId : null;
   const [dropHint, setDropHint] = useState<{ id: string; edge: "before" | "after" } | null>(null);
   const bindings = useKeybindings();
   const kbLabel = (id: KeybindingActionId) => formatBinding(bindings[id]);
@@ -211,14 +210,29 @@ export function PaneGroup({
       disabled: closableRight.length === 0,
       onSelect: () => void requestCloseTabs(closableRight.map((candidate) => candidate.id)),
     });
-    if (moveTargets.length > 0) {
-      items.push({ kind: "separator" });
-      for (const target of moveTargets) {
+    if (moveTargets.length > 0 || !singlePane) items.push({ kind: "separator" });
+    for (const target of moveTargets) {
+      items.push({
+        kind: "item",
+        label: `移到${target.label}`,
+        icon: <IconChevronRight size={12} />,
+        onSelect: () => moveTabToPane(t.id, target.paneId),
+      });
+    }
+    if (!singlePane) {
+      // Keyboard equivalent of dropping the tab on this pane's right or bottom edge.
+      const alone = pane.tabs.length < 2;
+      for (const { edge, label, Icon } of [
+        { edge: "right", label: "移到右侧新窗格", Icon: IconSplitV },
+        { edge: "bottom", label: "移到下方新窗格", Icon: IconSplitH },
+      ] as const) {
         items.push({
           kind: "item",
-          label: `移到${target.label}`,
-          icon: <IconChevronRight size={12} />,
-          onSelect: () => moveTabToPane(t.id, target.paneId),
+          label,
+          icon: <Icon size={12} />,
+          hint: alone ? "窗格只有这一个标签" : undefined,
+          disabled: alone,
+          onSelect: () => void splitPaneWithTab(t.id, pane.id, edge),
         });
       }
     }
@@ -259,7 +273,24 @@ export function PaneGroup({
           active ? "is-active-pane" : ""
         }`}
       >
-        <div className="nx-tabstrip-scroll" ref={tabScrollRef}>
+        <div
+          className="nx-tabstrip-scroll"
+          ref={tabScrollRef}
+          // A tab from another pane dropped on the strip but not on a tab joins the end of this pane.
+          onDragOver={(e) => {
+            const source = tabDragFrom(e.dataTransfer);
+            if (!source || source.paneId === pane.id || e.isDefaultPrevented()) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }}
+          onDrop={(e) => {
+            const source = tabDragFrom(e.dataTransfer);
+            if (!source || source.paneId === pane.id || e.isDefaultPrevented()) return;
+            e.preventDefault();
+            endTabDrag();
+            moveTabToPane(source.tabId, pane.id);
+          }}
+        >
         {pane.tabs.length === 0 && (
           <span className="px-1 text-xs text-neutral-500">这个面板还没有标签</span>
         )}
@@ -286,19 +317,17 @@ export function PaneGroup({
                   setActiveTab(t.id);
                 }}
                 onDragStart={(e) => {
-                  tabDragSource = { tabId: t.id, paneId: pane.id };
-                  setDraggingId(t.id);
+                  beginTabDrag({ tabId: t.id, paneId: pane.id, paneTabCount: pane.tabs.length });
                   e.dataTransfer.setData(TAB_DRAG_MIME, t.id);
                   e.dataTransfer.effectAllowed = "move";
                 }}
                 onDragEnd={() => {
-                  tabDragSource = null;
-                  setDraggingId(null);
+                  endTabDrag();
                   setDropHint(null);
                 }}
                 onDragOver={(e) => {
-                  if (!e.dataTransfer.types.includes(TAB_DRAG_MIME)) return;
-                  if (tabDragSource?.paneId !== pane.id || draggingId === t.id) return;
+                  const source = tabDragFrom(e.dataTransfer);
+                  if (!source || source.tabId === t.id) return;
                   e.preventDefault();
                   e.dataTransfer.dropEffect = "move";
                   const rect = e.currentTarget.getBoundingClientRect();
@@ -309,17 +338,22 @@ export function PaneGroup({
                   setDropHint((hint) => (hint?.id === t.id ? null : hint));
                 }}
                 onDrop={(e) => {
-                  if (!e.dataTransfer.types.includes(TAB_DRAG_MIME)) return;
-                  if (tabDragSource?.paneId !== pane.id) return;
+                  const source = tabDragFrom(e.dataTransfer);
+                  if (!source) return;
                   e.preventDefault();
                   setDropHint(null);
-                  const dragId = e.dataTransfer.getData(TAB_DRAG_MIME);
-                  if (!dragId || dragId === t.id) return;
-                  const from = pane.tabs.findIndex((x) => x.id === dragId);
+                  if (source.tabId === t.id) return;
                   const over = pane.tabs.findIndex((x) => x.id === t.id);
-                  if (from < 0 || over < 0) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const before = e.clientX < rect.left + rect.width / 2;
+                  endTabDrag();
+                  if (source.paneId !== pane.id) {
+                    // A tab from another pane lands beside the tab it was dropped on.
+                    moveTabToPane(source.tabId, pane.id, before ? over : over + 1);
+                    return;
+                  }
+                  const from = pane.tabs.findIndex((x) => x.id === source.tabId);
+                  if (from < 0 || over < 0) return;
                   moveTab(from, before ? (from < over ? over - 1 : over) : from < over ? over : over + 1);
                 }}
                 onKeyDown={(e) => {

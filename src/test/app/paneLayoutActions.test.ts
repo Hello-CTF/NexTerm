@@ -269,3 +269,90 @@ describe("pane layout helpers", () => {
     expect(syncWorkspaceTree(plain)).toBe(plain);
   });
 });
+
+describe("split a pane with a dragged tab", () => {
+  it("splits the target on each edge and moves the tab into the new pane in one step", () => {
+    useUi.setState({ workspaces: [ws([pane("p1", [file("a"), file("b"), file("c")])])] });
+    const states: Workspace[] = [];
+    const stop = useUi.subscribe((state) => states.push(state.workspaces[0]));
+    const left = useUi.getState().splitPaneWithTab("a", "p1", "left", "ws")!;
+    stop();
+    // One store update: no intermediate state with an empty new pane.
+    expect(states).toHaveLength(1);
+    expect(rectOf(left)).toEqual({ x: 0, y: 0, width: 0.5, height: 1 });
+    expect(rectOf("p1")).toEqual({ x: 0.5, y: 0, width: 0.5, height: 1 });
+    const created = current().panes.find((item) => item.id === left)!;
+    expect(created.tabs.map((tab) => tab.id)).toEqual(["a"]);
+    expect(created.activeTabId).toBe("a");
+    expect(current().activePaneId).toBe(left);
+
+    const top = useUi.getState().splitPaneWithTab("b", "p1", "top")!;
+    expect(rectOf(top)).toEqual({ x: 0.5, y: 0, width: 0.5, height: 0.5 });
+    expect(rectOf("p1")).toEqual({ x: 0.5, y: 0.5, width: 0.5, height: 0.5 });
+    expect(current().panes.find((item) => item.id === "p1")!.tabs.map((tab) => tab.id)).toEqual(["c"]);
+    expect(current().panes.find((item) => item.id === "p1")!.activeTabId).toBe("c");
+  });
+
+  it("closes the source pane when its only tab moves to another pane's edge", () => {
+    const right = useUi.getState().splitPane("right")!;
+    useUi.getState().addTab(file("r"), right);
+    const below = useUi.getState().splitPaneWithTab("p1-tab", right, "bottom", "ws")!;
+    expect(current().panes.map((item) => item.id).sort()).toEqual([right, below].sort());
+    expect(findPanePath(tree(), "p1")).toBeNull();
+    expect(rectOf(right)).toEqual({ x: 0, y: 0, width: 1, height: 0.5 });
+    expect(rectOf(below)).toEqual({ x: 0, y: 0.5, width: 1, height: 0.5 });
+  });
+
+  it("refuses to split a pane off its only tab, a too-small pane, a short window and past the depth limit", () => {
+    const before = useUi.getState().workspaces;
+    expect(useUi.getState().splitPaneWithTab("p1-tab", "p1", "right")).toBeNull();
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("只有这一个标签");
+    expect(useUi.getState().workspaces).toBe(before);
+
+    useUi.setState({ workspaces: [ws([pane("p1", [file("a"), file("b")])])] });
+    const element = document.createElement("div");
+    element.dataset.paneId = "p1";
+    element.getBoundingClientRect = () => ({ width: 300, height: 300 }) as DOMRect;
+    document.body.append(element);
+    const small = useUi.getState().workspaces;
+    expect(useUi.getState().splitPaneWithTab("a", "p1", "left")).toBeNull();
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("窗格太小，无法向左分屏");
+    expect(useUi.getState().splitPaneWithTab("a", "p1", "top")).toBeNull();
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("窗格太小，无法向上分屏");
+    expect(useUi.getState().workspaces).toBe(small);
+    element.remove();
+
+    setHeight(320);
+    expect(useUi.getState().splitPaneWithTab("a", "p1", "bottom")).toBeNull();
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("窗口高度不足，无法向下分屏");
+    setHeight(900);
+
+    setWidth(1_000_000);
+    let target = "p1";
+    for (let level = 0; level < SPLIT_TREE_MAX_DEPTH; level += 1) target = useUi.getState().splitPane("right", target)!;
+    useUi.getState().addTab(file("deep-a"), target);
+    useUi.getState().addTab(file("deep-b"), target);
+    const deep = useUi.getState().workspaces;
+    expect(useUi.getState().splitPaneWithTab("deep-a", target, "right")).toBeNull();
+    expect(useUi.getState().toasts.at(-1)?.text).toContain(`${SPLIT_TREE_MAX_DEPTH} 层`);
+    expect(useUi.getState().workspaces).toBe(deep);
+  });
+
+  it("ignores unknown tabs, panes and workspaces", () => {
+    useUi.setState({ workspaces: [ws([pane("p1", [file("a"), file("b")])])] });
+    const before = useUi.getState().workspaces;
+    expect(useUi.getState().splitPaneWithTab("missing", "p1", "right")).toBeNull();
+    expect(useUi.getState().splitPaneWithTab("a", "missing", "right")).toBeNull();
+    expect(useUi.getState().splitPaneWithTab("a", "p1", "right", "other")).toBeNull();
+    expect(useUi.getState().workspaces).toBe(before);
+  });
+
+  it("inserts a moved tab at the requested index, clamped to the pane", () => {
+    useUi.setState({ workspaces: [ws([pane("p1", [file("a"), file("b"), file("c")])])] });
+    const right = useUi.getState().splitPaneWithTab("a", "p1", "right")!;
+    useUi.getState().moveTabToPane("b", right, 0);
+    expect(current().panes.find((item) => item.id === right)!.tabs.map((tab) => tab.id)).toEqual(["b", "a"]);
+    useUi.getState().moveTabToPane("c", right, 99);
+    expect(current().panes.find((item) => item.id === right)!.tabs.map((tab) => tab.id)).toEqual(["b", "a", "c"]);
+  });
+});

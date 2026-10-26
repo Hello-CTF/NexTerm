@@ -6,6 +6,7 @@ import type { QuickConnectTarget } from "../quickConnectTarget";
 import type { ResolvedTheme, ThemeMode } from "../theme";
 import type { ProjectFocus, ProjectInventory } from "../projectFocus";
 import type { FocusDirection, SplitNode } from "../splitTree";
+import type { PaneEdge } from "../tabDropZone";
 
 export type PaneKind =
   | "terminal"
@@ -398,7 +399,13 @@ export interface UiState {
   setActivePane: (paneId: string, workspaceId?: string) => void;
   focusPane: (direction: FocusDirection, workspaceId?: string) => string | null;
   setSplitRatio: (splitId: string, ratio: number, workspaceId?: string) => void;
-  moveTabToPane: (tabId: string, paneId: string) => void;
+  /** Moves a tab into another pane of its workspace, at `index` of its tabs (default: the end). */
+  moveTabToPane: (tabId: string, paneId: string, index?: number) => void;
+  /**
+   * Splits `paneId` on `edge` and moves the tab into the new pane in one step; returns the new pane id,
+   * or null (with a toast) when the split is refused.
+   */
+  splitPaneWithTab: (tabId: string, paneId: string, edge: PaneEdge, workspaceId?: string) => string | null;
 
   setActiveTab: (id: string) => void;
   addTab: (tab: AppTab, paneId?: string) => void;

@@ -531,3 +531,50 @@ describe("command palette workspace actions", () => {
     expect(useUi.getState().workspaces.find((workspace) => workspace.id === second.id)?.panes[0].tabs.map((tab) => tab.id)).toEqual([secondID]);
   });
 });
+
+describe("command palette tab-to-new-pane actions", () => {
+  function fileTab(id: string): AppTab {
+    return { id, kind: "files", title: id, sessionId: "s1", path: `/${id}`, closable: true };
+  }
+
+  function setPaneTabs(tabs: AppTab[], activeTabId: string | null): void {
+    const workspace = { ...workspaceOf("ws-a", "session", "s1"), panes: [{ id: "p1", tabs, activeTabId }], activePaneId: "p1" };
+    useUi.setState({ workspaces: [workspace], activeWorkspaceId: workspace.id });
+  }
+
+  function panes() {
+    return useUi.getState().workspaces[0].panes;
+  }
+
+  it("moves the current tab to a new pane on the right or below", async () => {
+    setPaneTabs([fileTab("a"), fileTab("b"), fileTab("c")], "b");
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "移到右侧新窗格"));
+    expect(panes()).toHaveLength(2);
+    const right = useUi.getState().workspaces[0].activePaneId;
+    expect(panes().find((pane) => pane.id === right)?.tabs.map((tab) => tab.id)).toEqual(["b"]);
+    expect(useUi.getState().workspaces[0].layoutTree).toMatchObject({ type: "split", dir: "row" });
+    mounted?.unmount();
+
+    useUi.getState().setActivePane("p1", "ws-a");
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "移到下方新窗格"));
+    expect(panes()).toHaveLength(3);
+    expect(panes().find((pane) => pane.id === "p1")?.tabs).toHaveLength(1);
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("explains why nothing moved when the pane has one tab or none", async () => {
+    setPaneTabs([fileTab("a")], "a");
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "移到右侧新窗格"));
+    expect(panes()).toHaveLength(1);
+    expect(mocks.toast).toHaveBeenLastCalledWith("info", expect.stringContaining("只有这一个标签"));
+    mounted?.unmount();
+
+    setPaneTabs([], null);
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "移到下方新窗格"));
+    expect(mocks.toast).toHaveBeenLastCalledWith("info", "当前窗格没有标签");
+  });
+});
