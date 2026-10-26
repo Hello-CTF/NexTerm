@@ -847,11 +847,25 @@ func durableMetadataSupported(ctx context.Context, provider base.DurableProvider
 	return supported, err
 }
 
-func attachRecoveredDurable(ctx context.Context, provider base.DurableProvider, tabID string, identity *base.DurableIdentity) (base.DurableAttachment, error) {
+// attachRecoveredDurable opens a durable tab this process has no resume
+// offset for. A helper that supports it replays only the recent tail; retain,
+// when set, also streams the output after that offset for the transcript.
+func attachRecoveredDurable(ctx context.Context, provider base.DurableProvider, tabID string, identity *base.DurableIdentity, retain *uint64) (base.DurableAttachment, error) {
 	if identity == nil || identity.Incarnation == "" {
 		return nil, ErrDurableUnrecoverable
 	}
+	if tail, ok := provider.(base.DurableTailAttacher); ok {
+		return tail.AttachTailWithIdentity(ctx, tabID, *identity, base.DurableTailOptions{Tail: base.DurableFreshTailBytes, Retain: retain})
+	}
 	return provider.AttachWithIdentity(ctx, tabID, *identity)
+}
+
+func durableReplayOf(attachment base.DurableAttachment) (base.DurableReplay, bool) {
+	reporter, ok := attachment.(base.DurableReplayReporter)
+	if !ok {
+		return base.DurableReplay{}, false
+	}
+	return reporter.DurableReplay(), true
 }
 
 func durableAttachmentIdentity(attachment base.DurableAttachment) (base.DurableIdentity, bool) {

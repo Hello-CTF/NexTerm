@@ -155,6 +155,21 @@ type Tab struct {
 
 	catchUpRemaining int64
 
+	// History of a durable tab, in the helper's absolute offsets.
+	// displayFrom is the first offset rendered: earlier streamed bytes reach
+	// only the transcript. historyPrelude restores the modes in effect at
+	// displayFrom and is rendered when the pump starts; pendingGap is output
+	// the helper dropped before this process recorded it, reported to the
+	// transcript when the pump starts. historyFrom, historyBase and
+	// historyTruncated are reported in control events.
+	displayFrom      int64
+	historyPrelude   []byte
+	pendingGap       int64
+	pendingBanner    bool
+	historyFrom      uint64
+	historyBase      uint64
+	historyTruncated bool
+
 	ctx       context.Context
 	cancel    context.CancelFunc
 	responses *responseQueue
@@ -240,6 +255,7 @@ func (t *Tab) controlEventLocked() ControlEvent {
 		Controller: info.Controller, Subscribers: info.Subscribers,
 		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion, Cwd: t.cwd, Durable: info.Durable,
 		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt,
+		HistoryFrom: t.historyFrom, HistoryBase: t.historyBase, HistoryTruncated: t.historyTruncated,
 	}
 	queue.pending[event.Version] = recordingControlEvent{event: event, closed: t.closed}
 	queue.orderHeld.Store(false)
@@ -382,10 +398,18 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		return killErr
 	}
 	var err error
+	var transcriptRecorded *uint64
+	if options.Durable != nil && options.Durable.Recover && m.offsets != nil && m.transcripts != nil {
+		recorded := m.durableTranscriptCatchUpBytes(ownerCtx(context.Background(), session.userID), tabID)
+		if recorded >= 0 {
+			value := uint64(recorded)
+			transcriptRecorded = &value
+		}
+	}
 	if options.Durable != nil {
 		var opened base.DurableAttachment
 		if options.Durable.Recover {
-			opened, err = attachRecoveredDurable(ctx, provider, tabID, options.Durable.Identity)
+			opened, err = attachRecoveredDurable(ctx, provider, tabID, options.Durable.Identity, transcriptRecorded)
 		} else {
 			env := make([]string, 0, len(environment)+len(options.Durable.Env))
 			for key, value := range environment {
@@ -395,7 +419,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			env = append(env, options.Durable.Env...)
 			opened, err = provider.Create(ctx, base.DurableCreateOptions{
 				ID: tabID, Command: options.Durable.Command, Dir: options.Durable.Dir, Env: env,
-				Cols: options.Cols, Rows: options.Rows,
+				Cols: options.Cols, Rows: options.Rows, HistoryLimit: m.durableHistoryLimit(ctx),
 			})
 		}
 		if opened != nil {
@@ -514,7 +538,21 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Durable != nil {
 		if m.offsets != nil {
 			if options.Durable.Recover {
-				tab.catchUpRemaining = m.durableTranscriptCatchUpBytes(ownerCtx(context.Background(), session.userID), tabID)
+				if transcriptRecorded != nil {
+					tab.catchUpRemaining = int64(*transcriptRecorded)
+				} else {
+					tab.catchUpRemaining = m.durableTranscriptCatchUpBytes(ownerCtx(context.Background(), session.userID), tabID)
+				}
+				if replay, ok := durableReplayOf(durableAttachment); ok {
+					// The stream starts at ReplayFrom, not at offset zero.
+					start := int64(replay.ReplayFrom)
+					if tab.catchUpRemaining < start {
+						tab.pendingGap = start - tab.catchUpRemaining
+						tab.catchUpRemaining = 0
+					} else {
+						tab.catchUpRemaining -= start
+					}
+				}
 				if tab.catchUpRemaining > 0 {
 					m.logger.Info("durable transcript catch-up armed; skipping already-recorded replay bytes", "tab", tabID, "bytes", tab.catchUpRemaining)
 				}
@@ -524,6 +562,14 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 	}
 	if options.Durable != nil && options.Durable.Recover {
+		if replay, ok := durableReplayOf(durableAttachment); ok {
+			tab.durableFed = int64(replay.ReplayFrom)
+			tab.displayFrom = int64(replay.DisplayFrom)
+			tab.historyPrelude = replay.Prelude
+			tab.historyFrom = replay.DisplayFrom
+			tab.historyBase = replay.HistoryBase
+			tab.historyTruncated = replay.HistoryBase > 0
+		}
 		if store, ok := durableAttachment.(durableVersionFloor); ok {
 			if eventVersion, gridRevision, err := store.DurableVersions(); err == nil {
 				tab.eventVersion = eventVersion
@@ -1935,6 +1981,16 @@ func (m *Manager) disconnectSubscriberOutput(tab *Tab, channelID string, incarna
 }
 
 func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []byte) error {
+	return m.feedWith(ctx, tab, generation, data, true)
+}
+
+// feedDisplay renders data without recording it in the transcript: replay
+// preludes and notices that are not session output.
+func (m *Manager) feedDisplay(ctx context.Context, tab *Tab, generation uint64, data []byte) error {
+	return m.feedWith(ctx, tab, generation, data, false)
+}
+
+func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, data []byte, transcript bool) error {
 	if len(data) == 0 {
 		return nil
 	}
@@ -1955,7 +2011,9 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 	}
 	tab.mu.Unlock()
 	tab.terminal.Feed(data)
-	m.transcriptOutput(feedCtx, tab, data)
+	if transcript {
+		m.transcriptOutput(feedCtx, tab, data)
+	}
 	if _, changed := tab.observeCWD(data, generation); changed {
 		tab.mu.Lock()
 		event := tab.controlEventLocked()
@@ -2106,6 +2164,8 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 		}
 		go logPumpThroughput(ctx, m.logger, tab.SessionID, tab.ID, &pumpBytes, &pumpChunks)
 	}
+	replay, _ := channel.Channel.(base.DurableReplayReporter)
+	m.startDurableReplay(ctx, tab, generation)
 	for {
 		// A paused subscriber with a full coalescer stalls the PTY read:
 		// output backpressure reaches the shell instead of growing memory.
@@ -2131,13 +2191,18 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 					"bytes", count, "elapsed_ms", time.Since(pumpStart).Milliseconds())
 			}
 			chunk := append([]byte(nil), buffer[:count]...)
-			feedErr := m.feed(ctx, tab, generation, chunk)
+			var feedErr error
+			if replay != nil {
+				feedErr = m.feedDurable(ctx, tab, generation, chunk, int64(replay.DurableOffset()))
+			} else {
+				feedErr = m.feed(ctx, tab, generation, chunk)
+				if feedErr == nil {
+					tab.addDurableFed(int64(count))
+				}
+			}
 			if feedErr != nil && ctx.Err() != nil {
 				readErr = feedErr
 				break
-			}
-			if feedErr == nil {
-				tab.addDurableFed(int64(count))
 			}
 		}
 		if err != nil {

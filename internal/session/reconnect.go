@@ -490,6 +490,9 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			}
 			tab.channel = replacement.channel
 			tab.durable = replacement.durable
+			if replacement.durable != nil {
+				tab.noteDurableReplacementLocked(replacement.durable)
+			}
 			if identity, ok := durableAttachmentIdentity(replacement.durable); ok {
 				// The checked attach proved the incarnation; record the helper
 				// generation it was served by for the next reconnect.

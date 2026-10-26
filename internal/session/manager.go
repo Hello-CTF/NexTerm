@@ -57,6 +57,7 @@ type Manager struct {
 	durable              base.DurableProvider
 	resolver             DurableResolver
 	terminalModeResolver func(context.Context, string) (string, error)
+	historyLimit         func(context.Context) uint64
 	offsets              OwnerScopedDurableTranscriptOffsetStore
 	titles               OwnerScopedDurableTabTitleStore
 	bus                  *hub.Hub
@@ -108,6 +109,7 @@ func NewManager(config Config) *Manager {
 		durable:              config.Durable,
 		resolver:             config.DurableResolver,
 		terminalModeResolver: config.TerminalModeResolver,
+		historyLimit:         config.DurableHistoryLimit,
 		emitter:              config.Emitter,
 		transcripts:          config.Transcripts,
 		commands:             config.Commands,

@@ -160,21 +160,24 @@ type Config struct {
 	Durable              base.DurableProvider
 	DurableResolver      DurableResolver
 	TerminalModeResolver func(context.Context, string) (string, error)
-	TranscriptOffsets    OwnerScopedDurableTranscriptOffsetStore
-	TabTitles            OwnerScopedDurableTabTitleStore
-	Hub                  *hub.Hub
-	Emitter              Emitter
-	Transcripts          TranscriptSink
-	Commands             CommandSink
-	Logger               *slog.Logger
-	Now                  func() time.Time
-	IdleTimeout          time.Duration
-	SweepInterval        time.Duration
-	ReconnectMax         int
-	ReconnectBackoff     []time.Duration
-	DefaultReplay        int
-	SlowConsumerGrace    time.Duration
-	OpenAccess           bool
+	// DurableHistoryLimit returns the recorded output limit for new durable
+	// tabs of the context's owner; nil or zero uses the helper default.
+	DurableHistoryLimit func(context.Context) uint64
+	TranscriptOffsets   OwnerScopedDurableTranscriptOffsetStore
+	TabTitles           OwnerScopedDurableTabTitleStore
+	Hub                 *hub.Hub
+	Emitter             Emitter
+	Transcripts         TranscriptSink
+	Commands            CommandSink
+	Logger              *slog.Logger
+	Now                 func() time.Time
+	IdleTimeout         time.Duration
+	SweepInterval       time.Duration
+	ReconnectMax        int
+	ReconnectBackoff    []time.Duration
+	DefaultReplay       int
+	SlowConsumerGrace   time.Duration
+	OpenAccess          bool
 }
 
 type SessionInfo struct {
@@ -273,6 +276,14 @@ type ControlEvent struct {
 	Title          string `json:"title,omitempty"`
 	TitleCustom    bool   `json:"titleCustom,omitempty"`
 	TitleChangedAt int64  `json:"titleChangedAt,omitempty"`
+	// HistoryFrom is the helper offset of a durable tab's first rendered
+	// byte: output before it can be read with ReadDurableHistoryFor.
+	// HistoryBase is the oldest offset the helper kept at the last attach,
+	// and HistoryTruncated reports that output was dropped by the helper's
+	// history limit, before HistoryBase or within the stream.
+	HistoryFrom      uint64 `json:"historyFrom,omitempty"`
+	HistoryBase      uint64 `json:"historyBase,omitempty"`
+	HistoryTruncated bool   `json:"historyTruncated,omitempty"`
 }
 
 func (e ControlEvent) MarshalJSON() ([]byte, error) {
