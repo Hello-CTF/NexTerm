@@ -17,6 +17,10 @@ function setup() {
     Object.defineProperty(event, "keyCode", { get: () => keyCode });
     textarea.dispatchEvent(event);
   };
+  const press = (char: string, shiftKey = false) => {
+    const event = new KeyboardEvent("keypress", { key: char, charCode: char.charCodeAt(0), shiftKey, bubbles: true, cancelable: true });
+    textarea.dispatchEvent(event);
+  };
   const insert = (data: string) => {
     textarea.value += data;
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
@@ -27,7 +31,7 @@ function setup() {
     term.dispose();
     host.remove();
   };
-  return { sent, textarea, key, insert, cleanup };
+  return { sent, textarea, key, press, insert, cleanup };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
@@ -67,6 +71,20 @@ describe("IME committed text", () => {
     await settle();
     expect(view.sent).toEqual(["？"]);
     expect(view.textarea.value).toBe("你好");
+  });
+
+  it("sends an uppercase letter once when the insertion follows the keypress xterm already sent", async () => {
+    const view = setup();
+    cleanup = view.cleanup;
+    view.key("keydown", "Shift", 16, true);
+    view.key("keydown", "H", 72, true);
+    view.press("H", true);
+    view.insert("H");
+    await settle();
+    view.key("keyup", "H", 72, true);
+    view.key("keyup", "Shift", 16);
+    await settle();
+    expect(view.sent).toEqual(["H"]);
   });
 
   it("leaves composition input to xterm", async () => {

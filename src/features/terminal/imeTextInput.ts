@@ -9,13 +9,26 @@ import type { Terminal } from "@xterm/xterm";
  * drops the character: the input event is gated by the Shift keydown and the later diff sees no change.
  * The text is sent here instead and the insertion is taken back out of the textarea, so xterm's diff sees the
  * same value whichever order the keydown arrives in and sends nothing twice. Composition input stays with xterm.
+ *
+ * xterm sends Shift+A-Z (and Option/AltGr characters) from keypress, and some browsers and IMEs still insert
+ * that character afterwards; xterm drops such an input event, so it is left to xterm here as well.
  */
 export function attachImeTextInput(term: Pick<Terminal, "input" | "textarea">, host: HTMLElement): () => void {
+  // The character the current keystroke's keypress produced, cleared like xterm's own keypress state.
+  let keypressChar: string | null = null;
+  const onKeypress = (event: Event) => {
+    const { charCode } = event as KeyboardEvent;
+    keypressChar = charCode ? String.fromCharCode(charCode) : null;
+  };
+  const onKeyup = () => {
+    keypressChar = null;
+  };
   const onInput = (event: Event) => {
     const textarea = term.textarea;
     if (!textarea || event.target !== textarea) return;
     const input = event as InputEvent;
     if (input.inputType !== "insertText" || !input.data || input.isComposing) return;
+    if (input.data === keypressChar) return;
     const value = textarea.value;
     const end = textarea.selectionEnd ?? value.length;
     const start = end - input.data.length;
@@ -26,6 +39,12 @@ export function attachImeTextInput(term: Pick<Terminal, "input" | "textarea">, h
     textarea.setSelectionRange(start, start);
     term.input(input.data, true);
   };
+  host.addEventListener("keypress", onKeypress, true);
+  host.addEventListener("keyup", onKeyup, true);
   host.addEventListener("input", onInput, true);
-  return () => host.removeEventListener("input", onInput, true);
+  return () => {
+    host.removeEventListener("keypress", onKeypress, true);
+    host.removeEventListener("keyup", onKeyup, true);
+    host.removeEventListener("input", onInput, true);
+  };
 }

@@ -1354,7 +1354,9 @@ export function XtermView(props: XtermViewProps) {
 
   return (
     <div className="relative h-full w-full min-h-0">
-      <div ref={hostRef} className="h-full w-full min-h-0" />
+      {/* The IME composition view and helper textarea follow the cursor and can extend past the right edge; clipping
+          keeps them from scrolling an ancestor and shifting the terminal sideways. */}
+      <div ref={hostRef} className="h-full w-full min-h-0 overflow-clip" />
       {selectionBar && (
         <SelectionActionBar
           x={selectionBar.x}
