@@ -31,12 +31,31 @@ class FakeWebglAddon {
     this.atlasClears += 1;
   }
 
+  canvas: FakeCanvas | null = null;
+
   dispose() {
     this.disposed = true;
+    if (this.canvas) this.canvas.isConnected = false;
   }
 
   loseContext() {
     this.lossListener?.();
+  }
+}
+
+// A canvas under .xterm-screen: the addon's WebGL canvas, or the always-present 2D link layer.
+class FakeCanvas {
+  isConnected = true;
+  readonly released = vi.fn();
+
+  constructor(private readonly kind: "webgl2" | "2d") {}
+
+  getContext(kind: string) {
+    if (kind !== this.kind) return null;
+    return {
+      getExtension: (name: string) => (name === "WEBGL_lose_context" ? { loseContext: this.released } : null),
+      getParameter: () => null,
+    };
   }
 }
 
@@ -74,7 +93,17 @@ const hardware: RendererProbe = { webgl: true, software: false, renderer: "ANGLE
 const software: RendererProbe = { webgl: true, software: true, renderer: "llvmpipe (LLVM 17.0.6, 256 bits)" };
 
 function fakeHost() {
-  return { loadAddon: vi.fn(), refresh: vi.fn(), rows: 24 };
+  const canvases: FakeCanvas[] = [new FakeCanvas("2d")];
+  return {
+    canvases,
+    loadAddon: vi.fn((addon: FakeWebglAddon) => {
+      addon.canvas = new FakeCanvas("webgl2");
+      canvases.push(addon.canvas);
+    }),
+    refresh: vi.fn(),
+    rows: 24,
+    element: { querySelectorAll: () => canvases },
+  };
 }
 
 async function settle(): Promise<void> {
@@ -155,6 +184,37 @@ describe("renderer probe", () => {
     expect(probeRenderer().webgl).toBe(false);
   });
 
+  it("falls back to the plain RENDERER string when the debug extension is hidden", () => {
+    const gl = {
+      getExtension: () => null,
+      getParameter: (parameter: number) => (parameter === 0x1f01 ? "Mesa softpipe" : "Mesa"),
+    };
+    expect(probeRenderer(() => ({ getContext: () => gl }))).toMatchObject({ software: true, renderer: "Mesa softpipe" });
+  });
+
+  it("counts a major-performance-caveat refusal as software and frees every probe context", () => {
+    const loseContext = vi.fn();
+    const plain = {
+      getExtension: (name: string) => (name === "WEBGL_lose_context" ? { loseContext } : null),
+      getParameter: () => "ANGLE (NVIDIA GeForce RTX 4070)",
+    };
+    const canvas = {
+      getContext: (_kind: "webgl2", attributes?: { failIfMajorPerformanceCaveat?: boolean }) =>
+        attributes?.failIfMajorPerformanceCaveat ? null : plain,
+    };
+    expect(probeRenderer(() => canvas)).toMatchObject({ webgl: true, software: true });
+    expect(loseContext).toHaveBeenCalledTimes(1);
+
+    const throwing = {
+      getExtension: (name: string) => (name === "WEBGL_lose_context" ? { loseContext } : null),
+      getParameter: () => {
+        throw new Error("context lost");
+      },
+    };
+    expect(probeRenderer(() => ({ getContext: () => throwing }))).toEqual({ webgl: false, software: false, renderer: null });
+    expect(loseContext).toHaveBeenCalledTimes(2);
+  });
+
   it("decides by mode", () => {
     expect(shouldLoadWebgl("off", () => hardware)).toBe(false);
     expect(shouldLoadWebgl("on", () => software)).toBe(true);
@@ -195,6 +255,8 @@ describe("WebGL controller", () => {
     expect(live()).toHaveLength(0);
     // The DOM renderer repaints the whole viewport immediately, so the pane is never blank.
     expect(host.refresh).toHaveBeenCalledWith(0, 23);
+    // A lost context has nothing left to release.
+    expect(attached()[0].canvas?.released).not.toHaveBeenCalled();
     clock.advance(999);
     await settle();
     expect(attached()).toHaveLength(1);
@@ -260,12 +322,15 @@ describe("WebGL controller", () => {
     await settle();
     expect(off.attached()).toHaveLength(0);
 
-    const { controller, attached, live } = setup();
+    const { controller, attached, live, host } = setup();
     controller.start();
     await settle();
     controller.setMode("off");
     expect(attached()[0].disposed).toBe(true);
     expect(live()).toHaveLength(0);
+    // The removed WebGL canvas gives its context back; the 2D link layer is left alone.
+    expect(attached()[0].canvas?.released).toHaveBeenCalledTimes(1);
+    expect(host.canvases[0].released).not.toHaveBeenCalled();
   });
 
   it("resets the fallback latch when the GPU setting changes", async () => {
@@ -318,16 +383,31 @@ describe("WebGL controller", () => {
     expect(attached()).toHaveLength(0);
   });
 
-  it("clears the atlas of a retained renderer on reveal", async () => {
-    const { controller, attached, host } = setup();
+  it("keeps a retained renderer and its atlas on reveal", async () => {
+    const { controller, attached, live } = setup();
     controller.start();
     await settle();
     controller.setVisible(false);
-    host.refresh.mockClear();
     controller.setVisible(true);
+    await settle();
     expect(attached()).toHaveLength(1);
-    expect(attached()[0].atlasClears).toBe(1);
-    expect(host.refresh).toHaveBeenCalledWith(0, 23);
+    expect(live()).toHaveLength(1);
+    expect(attached()[0].atlasClears).toBe(0);
+  });
+
+  it("re-attaches after a loss while hidden only once the pane is revealed", async () => {
+    const { controller, attached, live, clock } = setup();
+    controller.start();
+    await settle();
+    controller.setVisible(false);
+    attached()[0].loseContext();
+    clock.advance(5_000);
+    await settle();
+    expect(live()).toHaveLength(0);
+    controller.setVisible(true);
+    await settle();
+    expect(attached()).toHaveLength(2);
+    expect(live()[0].atlasClears).toBe(1);
   });
 });
 
@@ -346,6 +426,7 @@ describe("hidden-pane retention", () => {
     const liveCount = (list: Array<ReturnType<typeof setup>>) => list.filter((pane) => pane.live().length === 1).length;
     // The five longest-hidden panes were evicted back to DOM; the six most recent keep their context.
     expect(liveCount(panes.slice(0, 5))).toBe(0);
+    expect(panes.slice(0, 5).every((pane) => pane.attached()[0].canvas?.released.mock.calls.length === 1)).toBe(true);
     expect(liveCount(panes.slice(5, 11))).toBe(6);
     expect(panes[11].live()).toHaveLength(1);
 
@@ -361,22 +442,20 @@ describe("hidden-pane retention", () => {
     expect(retention.size).toBe(MAX_HIDDEN_WEBGL_CONTEXTS);
   });
 
-  it("does not attach a pane that starts hidden after eviction until it is revealed", async () => {
-    const retention = new HiddenWebglRetention(1);
-    const first = setup({ retention, visible: false });
-    const second = setup({ retention, visible: false });
-    first.controller.start();
+  it("creates no context for terminals that start hidden until they are revealed", async () => {
+    const retention = new HiddenWebglRetention();
+    const panes = Array.from({ length: 12 }, () => setup({ retention, visible: false }));
+    for (const pane of panes) pane.controller.start();
     await settle();
-    second.controller.start();
+    expect(panes.every((pane) => pane.attached().length === 0)).toBe(true);
+    expect(retention.size).toBe(0);
+    panes[0].controller.setMode("on");
     await settle();
-    expect(first.live()).toHaveLength(0);
-    expect(second.live()).toHaveLength(1);
-    first.controller.setMode("on");
+    expect(panes[0].attached()).toHaveLength(0);
+    panes[0].controller.setVisible(true);
     await settle();
-    expect(first.live()).toHaveLength(0);
-    first.controller.setVisible(true);
-    await settle();
-    expect(first.live()).toHaveLength(1);
+    expect(panes[0].live()).toHaveLength(1);
+    expect(panes[0].live()[0].atlasClears).toBe(0);
   });
 
   it("releases a disposed pane's slot", async () => {

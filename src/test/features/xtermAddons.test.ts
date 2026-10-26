@@ -93,10 +93,12 @@ describe("scheduleWebglRenderer", () => {
     renderer.setMode("on");
     await flushUntil(() => term.loadAddon.mock.calls.length === 1);
     renderer.setVisible(false);
-    renderer.setVisible(true);
-    expect(clearTextureAtlas).toHaveBeenCalledTimes(1);
     renderer.setMode("off");
     expect(dispose).toHaveBeenCalledTimes(1);
+    renderer.setVisible(true);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(term.loadAddon).toHaveBeenCalledTimes(1);
+    expect(clearTextureAtlas).not.toHaveBeenCalled();
     renderer.cancel();
   });
 

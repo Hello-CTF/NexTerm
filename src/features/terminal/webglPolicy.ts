@@ -6,7 +6,11 @@ import type { TerminalGpuAcceleration } from "../../app/preferences";
 
 export type GpuAccelerationMode = TerminalGpuAcceleration;
 
-// A pane that loses its context this many times inside the window stays on the DOM renderer.
+// A pane that loses its context this many times inside the window stays on the DOM renderer. The
+// addon itself waits 3 s for the browser to restore a lost context before it reports the loss; a
+// restore inside that grace period reinitialises the renderer without reaching this budget. A
+// reported loss therefore means ~3 s of a stale canvas, then the DOM renderer at once, then a
+// re-attach attempt after the backoff below.
 export const WEBGL_CONTEXT_LOSS_LIMIT = 3;
 export const WEBGL_CONTEXT_LOSS_WINDOW_MS = 60_000;
 // Re-attach delay after the n-th recent loss: base * 2^(n-1).
@@ -34,7 +38,18 @@ interface ProbeContext {
 }
 
 interface ProbeCanvas {
-  getContext(kind: "webgl2"): unknown;
+  getContext(kind: "webgl2", attributes?: { failIfMajorPerformanceCaveat?: boolean }): unknown;
+}
+
+const GL_VENDOR = 0x1f00;
+const GL_RENDERER = 0x1f01;
+
+function releaseContext(gl: ProbeContext | null | undefined): void {
+  try {
+    (gl?.getExtension("WEBGL_lose_context") as { loseContext(): void } | null | undefined)?.loseContext();
+  } catch {
+    // The context is garbage collected either way.
+  }
 }
 
 // A runtime without WebGL2 (the WebGL addon's requirement) gets no canvas probe at all.
@@ -43,22 +58,33 @@ function defaultProbeCanvas(): ProbeCanvas | null {
   return document.createElement("canvas");
 }
 
-// probeRenderer reads the unmasked GPU identity once. A browser that hides it is treated as hardware:
-// WebGL then still loads and the context-loss budget is the remaining safety net.
+// probeRenderer reads the GPU identity once. The unmasked name comes from WEBGL_debug_renderer_info,
+// falling back to the plain RENDERER string when the browser hides the extension; a name that still
+// says nothing is treated as hardware and the context-loss budget is the remaining safety net. A
+// context refused with failIfMajorPerformanceCaveat while a plain one succeeds is the browser's own
+// verdict that the GPU path is slow (software rasterisation), so it also counts as software.
 export function probeRenderer(createCanvas: () => ProbeCanvas | null = defaultProbeCanvas): RendererProbe {
+  let fast: ProbeContext | null | undefined;
+  let gl: ProbeContext | null | undefined;
   try {
-    const gl = createCanvas()?.getContext("webgl2") as ProbeContext | null | undefined;
+    fast = createCanvas()?.getContext("webgl2", { failIfMajorPerformanceCaveat: true }) as ProbeContext | null | undefined;
+    gl = fast ?? (createCanvas()?.getContext("webgl2") as ProbeContext | null | undefined);
     if (!gl) return { webgl: false, software: false, renderer: null };
     const info = gl.getExtension("WEBGL_debug_renderer_info") as
       | { UNMASKED_RENDERER_WEBGL: number; UNMASKED_VENDOR_WEBGL: number }
       | null;
-    const renderer = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL) ?? "") : "";
-    const vendor = info ? String(gl.getParameter(info.UNMASKED_VENDOR_WEBGL) ?? "") : "";
-    const lose = gl.getExtension("WEBGL_lose_context") as { loseContext(): void } | null;
-    lose?.loseContext();
-    return { webgl: true, software: isSoftwareRenderer(`${vendor} ${renderer}`), renderer: renderer || null };
+    const renderer = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : GL_RENDERER) ?? "");
+    const vendor = String(gl.getParameter(info ? info.UNMASKED_VENDOR_WEBGL : GL_VENDOR) ?? "");
+    return {
+      webgl: true,
+      software: !fast || isSoftwareRenderer(`${vendor} ${renderer}`),
+      renderer: renderer || null,
+    };
   } catch {
     return { webgl: false, software: false, renderer: null };
+  } finally {
+    releaseContext(gl);
+    if (fast !== gl) releaseContext(fast);
   }
 }
 
@@ -146,6 +172,12 @@ export interface WebglHost {
   loadAddon(addon: WebglAddonLike): void;
   refresh(start: number, end: number): void;
   readonly rows: number;
+  readonly element?: { querySelectorAll(selectors: string): Iterable<WebglCanvas> } | null;
+}
+
+export interface WebglCanvas {
+  readonly isConnected: boolean;
+  getContext(kind: "webgl2"): unknown;
 }
 
 export interface WebglClock {
@@ -194,7 +226,6 @@ export function createWebglController(options: WebglControllerOptions): WebglCon
   let disposed = false;
   let latched = false;
   let unavailable = false;
-  let evicted = false;
   let notified = false;
   let attachCount = 0;
   let addon: WebglAddonLike | null = null;
@@ -220,27 +251,47 @@ export function createWebglController(options: WebglControllerOptions): WebglCon
     repaint();
   };
 
-  const detach = () => {
+  const screenCanvases = (): WebglCanvas[] => {
+    try {
+      return [...(host.element?.querySelectorAll(".xterm-screen canvas") ?? [])];
+    } catch {
+      return [];
+    }
+  };
+
+  // detach disposes the addon; xterm then renders with the DOM renderer. The addon removes its canvas
+  // but never loses the GL context, which would stay allocated until garbage collection, so a context
+  // that is still alive (eviction, setting change) is released explicitly. After a context loss there
+  // is nothing to release.
+  const detach = (releaseGpu: boolean) => {
     const current = addon;
     if (!current) return;
     addon = null;
     lossListener?.dispose();
     lossListener = null;
     retention.release(owner);
+    const canvases = releaseGpu ? screenCanvases() : [];
     try {
       current.dispose();
     } catch {
       // xterm already restored the DOM renderer or the terminal is gone.
+    }
+    for (const canvas of canvases) {
+      // Only canvases the addon just removed. getContext returns a canvas's existing context (null for
+      // the 2D link layer), so this never creates a new one.
+      if (canvas.isConnected) continue;
+      try {
+        releaseContext(canvas.getContext("webgl2") as ProbeContext | null);
+      } catch {
+        // Already released.
+      }
     }
     repaint();
   };
 
   const retainWhileHidden = () => {
     if (!addon || visible) return;
-    retention.retain(owner, () => {
-      evicted = true;
-      detach();
-    });
+    retention.retain(owner, () => detach(true));
   };
 
   const cancelRetry = () => {
@@ -254,13 +305,15 @@ export function createWebglController(options: WebglControllerOptions): WebglCon
     !disposed &&
     !latched &&
     !unavailable &&
-    !evicted &&
+    // A hidden pane never creates a context: a burst of background tabs at startup would exceed the
+    // browser's live-context cap and get contexts force-lost. It attaches when revealed.
+    visible &&
     retryTimer === null &&
     shouldLoadWebgl(mode, probe);
 
   const onContextLoss = (lost: WebglAddonLike) => {
     if (lost !== addon || disposed) return;
-    detach();
+    detach(false);
     const count = budget.record(clock.now());
     if (budget.exhausted(count)) {
       latched = true;
@@ -305,7 +358,6 @@ export function createWebglController(options: WebglControllerOptions): WebglCon
         // Re-attached renderers share xterm's atlas cache; clear it so earlier glyphs are redrawn.
         if (attachCount > 0) clearAtlas(attached);
         attachCount += 1;
-        retainWhileHidden();
       },
       () => {
         if (generation !== loadGeneration) return;
@@ -332,12 +384,9 @@ export function createWebglController(options: WebglControllerOptions): WebglCon
         retainWhileHidden();
         return;
       }
+      // A retained renderer kept its atlas, and xterm applies font, theme and DPR changes to it while
+      // hidden, so only a re-attached renderer clears the shared atlas.
       retention.release(owner);
-      if (addon) {
-        clearAtlas(addon);
-        return;
-      }
-      evicted = false;
       attach();
     },
     setMode(next) {
@@ -350,7 +399,7 @@ export function createWebglController(options: WebglControllerOptions): WebglCon
       cancelRetry();
       abandonLoad();
       if (!shouldLoadWebgl(mode, probe)) {
-        detach();
+        detach(true);
         return;
       }
       attach();
