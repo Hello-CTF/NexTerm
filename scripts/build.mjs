@@ -77,6 +77,9 @@ for (const arg of argv) {
 
 const wailsConfig = JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8"));
 const WAILS_VERSION_PLACEHOLDER = wailsConfig.info?.version;
+// The desktop entry is named after the GTK application id (Linux.ApplicationID
+// in cmd/nexterm-desktop) so shells match windows to it and its icon.
+const LINUX_DESKTOP_ENTRY = `usr/share/applications/${wailsConfig.info.productIdentifier}.desktop`;
 const VERSION = process.env.NEXTERM_RELEASE_VERSION || WAILS_VERSION_PLACEHOLDER;
 const VERSION_INFO = process.env.NEXTERM_RELEASE_VERSION ? parseReleaseVersion(VERSION) : parseSemVer(VERSION);
 if (!VERSION_INFO) {
@@ -910,7 +913,7 @@ function packageAssertions(kind, file, goos, goarch) {
       ));
       const listing = output("tar", ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
       const members = new Set(listing?.split(/\r?\n/) || []);
-      const required = ["usr/bin/nexterm-desktop", "usr/share/applications/nexterm.desktop", "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
+      const required = ["usr/bin/nexterm-desktop", LINUX_DESKTOP_ENTRY,"usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
       const missingHelpers = missingHelperArchiveMembers(members, "usr/bin/");
       checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && missingHelpers.length === 0 && required.every((member) => members.has(member)), `required members: ${[...required, ...helperArchiveMembers("usr/bin/")].join(", ")}; missing helpers: ${missingHelpers.join(", ") || "none"}`));
       const unpacked = output("tar", ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
@@ -1136,7 +1139,7 @@ function packageLinuxDesktop(binary, goarch) {
   copyHelpers(path.join(dataDir, "usr/bin"));
   fs.copyFileSync(path.join(ROOT, "public/brand/nexterm-mark-256.png"), path.join(dataDir, "usr/share/icons/hicolor/256x256/apps/nexterm.png"));
   fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(dataDir, "usr/share/doc/nexterm/copyright"));
-  fs.writeFileSync(path.join(dataDir, "usr/share/applications/nexterm.desktop"), "[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop %u\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\nMimeType=x-scheme-handler/nexterm;\n");
+  fs.writeFileSync(path.join(dataDir, LINUX_DESKTOP_ENTRY), `[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop %u\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\nMimeType=x-scheme-handler/nexterm;\nStartupWMClass=${wailsConfig.info.productIdentifier}\n`);
   fs.writeFileSync(path.join(work, "control", "control"), `Package: nexterm\nVersion: ${debVersion(VERSION)}\nSection: net\nPriority: optional\nArchitecture: ${goarch}\nMaintainer: Probius <https://github.com/Hello-CTF/NexTerm>\nHomepage: https://github.com/Hello-CTF/NexTerm\nDepends: libgtk-4-1, libwebkitgtk-6.0-4t64 | libwebkitgtk-6.0-4\nDescription: Browser-based SSH / SFTP / Docker / database operations terminal\n Terminal processes, sessions and workspace layout stay on your own server;\n credentials are encrypted with a vault key you control.\n`);
   const normalizeModes = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {

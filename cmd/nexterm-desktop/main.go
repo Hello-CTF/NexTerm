@@ -22,6 +22,11 @@ import (
 	wailsevents "github.com/wailsapp/wails/v3/pkg/events"
 )
 
+// desktopAppID is the product identifier from wails.json. On Linux it is also
+// the GTK application id and program name, so the Wayland app_id and the X11
+// WM_CLASS match the packaged <desktopAppID>.desktop entry and its icon.
+const desktopAppID = "com.nexterm.desktop"
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -135,8 +140,9 @@ func run(args []string) int {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
+		Linux: application.LinuxOptions{ApplicationID: desktopAppID},
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "com.nexterm.desktop",
+			UniqueID: desktopAppID,
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				if window != nil {
 					showWindow(window)

@@ -65,6 +65,7 @@ func showStartupError(paths platform.Paths, startupErr error, logger *slog.Logge
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
+		Linux: application.LinuxOptions{ApplicationID: desktopAppID},
 	}
 	applyAppIcon(&options, brandIcon)
 	app := application.New(options)
