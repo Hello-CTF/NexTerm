@@ -101,6 +101,11 @@
   min-width: 0;
 }
 
+/* A docked session panel only shows when the workspace keeps this width (see sessionPanelFits). */
+.nx-workspace-body.has-session-dock .nx-workspace-main {
+  min-width: 360px;
+}
+
 .nx-session-dock.is-overlay {
   position: absolute;
   inset: 0;

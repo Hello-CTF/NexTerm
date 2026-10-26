@@ -45,6 +45,9 @@ beforeEach(() => {
   localStorage.clear();
   resetSessionPanelForTest();
   useUi.setState({
+    // Room for the session panel beside the docks, so connecting opens it.
+    leftOpen: false,
+    rightOpen: false,
     sessions: [],
     workspaces: [],
     activeWorkspaceId: null,

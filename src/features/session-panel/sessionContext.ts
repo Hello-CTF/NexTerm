@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { useUi, type Workspace } from "../../app/store";
+import { useUi, type SessionRuntimeInfo, type Workspace } from "../../app/store";
 import { useSessionPanel } from "./sessionPanelStore";
 
 // SessionPanelContext is what the side panel shows: a host session and, when known, the terminal tab whose working
@@ -25,28 +25,36 @@ export type SessionPanelSource = "focus" | "workspace" | "last" | "locked" | "no
 interface FocusSource {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
+  sessions: Pick<SessionRuntimeInfo, "id" | "name">[];
+}
+
+// hostLabelOf names the host from the session the listing reads, so the header and the files always agree; the
+// workspace title stands in while the session is unknown.
+function hostLabelOf(sessions: FocusSource["sessions"], sessionId: string | null, ws: Workspace): string {
+  return (sessionId ? sessions.find((s) => s.id === sessionId)?.name : undefined) || ws.title;
 }
 
 // focusedTerminalContext resolves the focused terminal: the active workspace's active pane's active tab, when it is a
 // terminal. Any other focused tab (files, logs, settings, a database) yields null.
-export function focusedTerminalContext({ workspaces, activeWorkspaceId }: FocusSource): SessionPanelContext | null {
+export function focusedTerminalContext({ workspaces, activeWorkspaceId, sessions }: FocusSource): SessionPanelContext | null {
   const ws = workspaces.find((w) => w.id === activeWorkspaceId);
   if (!ws) return null;
   const pane = ws.panes.find((p) => p.id === ws.activePaneId) ?? ws.panes[0];
   const tab = pane?.tabs.find((t) => t.id === pane.activeTabId);
   if (!tab || tab.kind !== "terminal") return null;
+  const sessionId = tab.sessionId ?? ws.sessionId ?? null;
   return {
     key: `${ws.id}:${tab.id}`,
     workspaceId: ws.id,
     tabId: tab.id,
     terminalId: tab.tabId ?? null,
-    sessionId: tab.sessionId ?? ws.sessionId ?? null,
-    hostLabel: ws.title,
+    sessionId,
+    hostLabel: hostLabelOf(sessions, sessionId, ws),
     containerId: tab.containerId ?? null,
   };
 }
 
-function hostWorkspaceContext(ws: Workspace): SessionPanelContext | null {
+function hostWorkspaceContext(ws: Workspace, sessions: FocusSource["sessions"]): SessionPanelContext | null {
   if (ws.kind !== "session" || !ws.sessionId) return null;
   return {
     key: `${ws.id}:`,
@@ -54,32 +62,36 @@ function hostWorkspaceContext(ws: Workspace): SessionPanelContext | null {
     tabId: null,
     terminalId: null,
     sessionId: ws.sessionId,
-    hostLabel: ws.title,
+    hostLabel: hostLabelOf(sessions, ws.sessionId, ws),
     containerId: null,
   };
 }
 
 // activeWorkspaceContext is the active host workspace when no terminal has focus (an editor tab, or a device workspace
 // that has no terminal yet): the panel browses that host without following a directory.
-export function activeWorkspaceContext({ workspaces, activeWorkspaceId }: FocusSource): SessionPanelContext | null {
+export function activeWorkspaceContext({ workspaces, activeWorkspaceId, sessions }: FocusSource): SessionPanelContext | null {
   const ws = workspaces.find((w) => w.id === activeWorkspaceId);
-  return ws ? hostWorkspaceContext(ws) : null;
+  return ws ? hostWorkspaceContext(ws, sessions) : null;
 }
 
 // refreshContext re-reads a remembered context from the current workspaces: the terminal may have attached, reconnected
 // to a new session, or closed (null).
-export function refreshContext(context: SessionPanelContext, workspaces: Workspace[]): SessionPanelContext | null {
+export function refreshContext(
+  context: SessionPanelContext,
+  { workspaces, sessions }: Pick<FocusSource, "workspaces" | "sessions">,
+): SessionPanelContext | null {
   const ws = workspaces.find((w) => w.id === context.workspaceId);
   if (!ws) return null;
-  if (context.tabId === null) return hostWorkspaceContext(ws);
+  if (context.tabId === null) return hostWorkspaceContext(ws, sessions);
   for (const pane of ws.panes) {
     const tab = pane.tabs.find((t) => t.id === context.tabId);
     if (!tab || tab.kind !== "terminal") continue;
+    const sessionId = tab.sessionId ?? ws.sessionId ?? null;
     return {
       ...context,
       terminalId: tab.tabId ?? null,
-      sessionId: tab.sessionId ?? ws.sessionId ?? null,
-      hostLabel: ws.title,
+      sessionId,
+      hostLabel: hostLabelOf(sessions, sessionId, ws),
       containerId: tab.containerId ?? null,
     };
   }
@@ -113,8 +125,8 @@ export function useSessionPanelContext(): ResolvedSessionPanelContext {
   const focusedRaw = useUi((s) => encode(focusedTerminalContext(s)));
   const workspaceRaw = useUi((s) => encode(activeWorkspaceContext(s)));
   const activeWorkspaceId = useUi((s) => s.activeWorkspaceId);
-  const lockedRaw = useUi((s) => (locked ? encode(refreshContext(locked, s.workspaces)) : ""));
-  const lastRaw = useUi((s) => (last ? encode(refreshContext(last, s.workspaces)) : ""));
+  const lockedRaw = useUi((s) => (locked ? encode(refreshContext(locked, s)) : ""));
+  const lastRaw = useUi((s) => (last ? encode(refreshContext(last, s)) : ""));
 
   useEffect(() => {
     const focused = decode(focusedRaw);

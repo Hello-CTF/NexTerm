@@ -67,6 +67,7 @@ export function workspaceBodyProps(workspaces: Workspace[], singlePane: boolean)
       leftDockOpen: false,
       rightDockOpen: false,
       sessionDockOpen: false,
+      sessionSheet: false,
       setLeftOpen: () => undefined,
       setRightOpen: () => undefined,
       setSessionOpen: () => undefined,

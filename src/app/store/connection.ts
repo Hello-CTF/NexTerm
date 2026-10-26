@@ -2,7 +2,8 @@ import { dbApi, sessionApi, vaultApi, type SessionInfo, type VaultStatus } from 
 import { describeError } from "../../ui/errorText";
 import { workspaceViewport } from "../../features/terminal/workspaceLayout";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
-import { showSessionPanel } from "../../features/session-panel/sessionPanelStore";
+import { openSessionPanelOnConnect, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
+import { sessionPanelFits } from "../../features/session-panel/sessionPanelFit";
 import { connectWithHostKeyConfirm } from "../hostKeys";
 import { formatQuickConnectTarget, type QuickConnectTarget } from "../quickConnectTarget";
 import { DB_KIND_LABEL, dbKindOf, makePane, nextTabId, rebindWorkspaceSession } from "./model";
@@ -73,11 +74,19 @@ function sidebarsOverlayWorkspace(): boolean {
   return workspaceViewport(window.innerWidth, false).overlaySidebars;
 }
 
-// Connecting a host used to open the left file tree. The files now live in the session side panel, which opens the same
-// way on docked layouts; overlay layouts keep the terminal in front.
+// Connecting a host used to open the left file tree. The files now live in the session side panel, which opens when it
+// fits beside the open docks and the user has not closed it; overlay layouts keep the terminal in front.
 function showConnectedFiles(): void {
   if (sidebarsOverlayWorkspace()) return;
-  showSessionPanel(true);
+  const ui = useUi.getState();
+  openSessionPanelOnConnect(sessionPanelFits({
+    viewportWidth: window.innerWidth,
+    leftOpen: ui.leftOpen,
+    leftWidth: ui.leftWidth,
+    rightOpen: ui.rightOpen,
+    rightWidth: ui.rightWidth,
+    panelWidth: useSessionPanel.getState().width,
+  }));
 }
 
 export async function openConnectedAssetSession(

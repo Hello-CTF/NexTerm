@@ -66,11 +66,15 @@ export function WorkspaceBody({
   const splitPaneWithTab = useUi((s) => s.splitPaneWithTab);
   const setActivePane = useUi((s) => s.setActivePane);
   const setSplitRatio = useUi((s) => s.setSplitRatio);
-  const { leftDockOpen, rightDockOpen, sessionDockOpen, setLeftOpen, setOverlayDock, setSessionOpen } = docks;
+  const { leftDockOpen, rightDockOpen, sessionDockOpen, sessionSheet, setLeftOpen, setOverlayDock, setSessionOpen } = docks;
 
   return (
-    <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
-      {overlaySidebars && (leftDockOpen || rightDockOpen || sessionDockOpen) && (
+    <div
+      className={`nx-workspace-body flex min-h-0 flex-1 bg-neutral-900 ${
+        sessionDockOpen && !sessionSheet ? "has-session-dock" : ""
+      }`}
+    >
+      {((overlaySidebars && (leftDockOpen || rightDockOpen)) || (sessionSheet && sessionDockOpen)) && (
         <button
           type="button"
           className="nx-dock-backdrop"
@@ -175,8 +179,8 @@ export function WorkspaceBody({
       </main>
 
       {sessionDockOpen && (
-        <div className={`nx-session-dock ${overlaySidebars ? "is-overlay" : ""}`}>
-          {!overlaySidebars && (
+        <div className={`nx-session-dock ${sessionSheet ? "is-overlay" : ""}`}>
+          {!sessionSheet && (
             <ResizeHandle
               side="right"
               label="调整会话侧栏宽度"
@@ -187,9 +191,9 @@ export function WorkspaceBody({
               onChange={setSessionWidth}
             />
           )}
-          <div className="nx-session-dock-body" style={overlaySidebars ? undefined : { width: sessionWidth }}>
+          <div className="nx-session-dock-body" style={sessionSheet ? undefined : { width: sessionWidth }}>
             <Lazy>
-              <SessionPanel overlay={overlaySidebars} onClose={() => setSessionOpen(false)} />
+              <SessionPanel overlay={sessionSheet} onClose={() => setSessionOpen(false)} />
             </Lazy>
           </div>
         </div>

@@ -37,7 +37,8 @@ export function useThrottledValue<T>(value: T, intervalMs: number, resetKey: str
   useEffect(() => {
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
-    lastEmit.current = Date.now();
+    // A new terminal starts unthrottled: its first directory change shows at once.
+    lastEmit.current = 0;
   }, [resetKey]);
 
   useEffect(

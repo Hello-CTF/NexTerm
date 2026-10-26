@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useUi } from "../store";
 import { useEdgeGestures } from "../edgeGestures";
 import { showSessionPanel, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
+import { sessionPanelFits } from "../../features/session-panel/sessionPanelFit";
 
 export type OverlayDock = "left" | "right" | "session" | null;
 
@@ -10,8 +11,10 @@ export interface OverlayDocks {
   setOverlayDock: (dock: OverlayDock) => void;
   leftDockOpen: boolean;
   rightDockOpen: boolean;
-  // sessionDockOpen is the session side panel: docked beside the AI sidebar, or a full-screen sheet in overlay layouts.
+  // sessionDockOpen is the session side panel: docked beside the AI sidebar, or a full-screen sheet (sessionSheet) in
+  // overlay layouts and wherever docking it would squeeze the workspace below its minimum width.
   sessionDockOpen: boolean;
+  sessionSheet: boolean;
   setLeftOpen: (open: boolean) => void;
   setRightOpen: (open: boolean) => void;
   // setSessionOpen is the user's open/close: opening moves focus into the panel.
@@ -20,17 +23,31 @@ export interface OverlayDocks {
 
 // useOverlayDocks resolves which sidebar is shown. Docked layouts follow the persisted leftOpen/rightOpen;
 // overlay layouts show at most one drawer, tracked per session in overlayDock.
-export function useOverlayDocks(overlaySidebars: boolean): OverlayDocks {
+export function useOverlayDocks(overlaySidebars: boolean, viewportWidth: number): OverlayDocks {
   const leftOpen = useUi((s) => s.leftOpen);
   const setLeftOpenStore = useUi((s) => s.setLeftOpen);
   const rightOpen = useUi((s) => s.rightOpen);
   const setRightOpenStore = useUi((s) => s.setRightOpen);
   const sessionOpen = useSessionPanel((s) => s.open);
+  const sessionWidth = useSessionPanel((s) => s.width);
+  const leftWidth = useUi((s) => s.leftWidth);
+  const rightWidth = useUi((s) => s.rightWidth);
   const connectFocusRevision = useUi((s) => s.connectFocusRevision);
   const [overlayDock, setOverlayDock] = useState<OverlayDock>(null);
   const leftDockOpen = overlaySidebars ? overlayDock === "left" && leftOpen : leftOpen;
   const rightDockOpen = overlaySidebars ? overlayDock === "right" && rightOpen : rightOpen;
-  const sessionDockOpen = overlaySidebars ? overlayDock === "session" && sessionOpen : sessionOpen;
+  const sessionSheet =
+    overlaySidebars ||
+    !sessionPanelFits({
+      viewportWidth,
+      leftOpen: leftDockOpen,
+      leftWidth,
+      rightOpen: rightDockOpen,
+      rightWidth,
+      panelWidth: sessionWidth,
+    });
+  // A sheet shows only after an open in this run, so a remembered open never covers the terminal at startup.
+  const sessionDockOpen = sessionSheet ? overlayDock === "session" && sessionOpen : sessionOpen;
 
   const setLeftOpen = useCallback(
     (open: boolean) => {
@@ -48,10 +65,10 @@ export function useOverlayDocks(overlaySidebars: boolean): OverlayDocks {
   );
   const setSessionOpen = useCallback(
     (open: boolean) => {
-      showSessionPanel(open, { focus: open });
-      setOverlayDock(overlaySidebars && open ? "session" : null);
+      showSessionPanel(open);
+      setOverlayDock(sessionSheet && open ? "session" : null);
     },
-    [overlaySidebars],
+    [sessionSheet],
   );
 
   useEffect(() => {
@@ -72,6 +89,7 @@ export function useOverlayDocks(overlaySidebars: boolean): OverlayDocks {
     leftDockOpen,
     rightDockOpen,
     sessionDockOpen,
+    sessionSheet,
     setLeftOpen,
     setRightOpen,
     setSessionOpen,
@@ -104,4 +122,19 @@ export function useMobileTerminalDockCollapse(
       setOverlayDock(mem);
     }
   }, [activeTabKind, isTerminalPaneKind, overlaySidebars, overlayDock, setOverlayDock]);
+}
+
+// useSessionSheetDismiss closes the session sheet when the active tab changes underneath it (a file opened from the
+// sheet, a tab picked elsewhere), so the sheet never covers the tab the user just opened.
+export function useSessionSheetDismiss(
+  docks: Pick<OverlayDocks, "overlayDock" | "setOverlayDock" | "sessionSheet">,
+  activeTabKey: string,
+): void {
+  const { overlayDock, setOverlayDock, sessionSheet } = docks;
+  const previous = useRef(activeTabKey);
+  useEffect(() => {
+    if (previous.current === activeTabKey) return;
+    previous.current = activeTabKey;
+    if (sessionSheet && overlayDock === "session") setOverlayDock(null);
+  }, [activeTabKey, overlayDock, sessionSheet, setOverlayDock]);
 }

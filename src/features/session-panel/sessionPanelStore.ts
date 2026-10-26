@@ -15,6 +15,8 @@ interface PersistedPanel {
   open: boolean;
   width: number;
   tab: SessionPanelTabId;
+  // userClosed remembers that the user closed the panel by hand; connecting a host then leaves it closed.
+  userClosed: boolean;
 }
 
 export interface SessionPanelState extends PersistedPanel {
@@ -41,7 +43,7 @@ function clampWidth(width: unknown): number {
 }
 
 function load(): PersistedPanel {
-  const fallback: PersistedPanel = { open: false, width: SESSION_PANEL_WIDTH.default, tab: "files" };
+  const fallback: PersistedPanel = { open: false, width: SESSION_PANEL_WIDTH.default, tab: "files", userClosed: false };
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
@@ -51,6 +53,7 @@ function load(): PersistedPanel {
       open: parsed.open === true,
       width: clampWidth(parsed.width),
       tab: SESSION_PANEL_TAB_IDS.includes(parsed.tab as SessionPanelTabId) ? (parsed.tab as SessionPanelTabId) : "files",
+      userClosed: parsed.userClosed === true,
     };
   } catch {
     return fallback;
@@ -61,7 +64,7 @@ function save(state: PersistedPanel): void {
   try {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ open: state.open, width: state.width, tab: state.tab }),
+      JSON.stringify({ open: state.open, width: state.width, tab: state.tab, userClosed: state.userClosed }),
     );
   } catch {
     // Storage can be unavailable (private mode); the panel still works for this run.
@@ -104,10 +107,22 @@ export const useSessionPanel = create<SessionPanelState>((set, get) => {
   };
 });
 
-// showSessionPanel opens or closes the panel; focus moves focus into it (an explicit open by the user, not a connect).
-export function showSessionPanel(open: boolean, { focus = false }: { focus?: boolean } = {}): void {
+// showSessionPanel is the user's open or close (toolbar button, shortcut, close button): it always wins, is remembered
+// for later connects, and an open moves focus into the panel.
+export function showSessionPanel(open: boolean): void {
   useSessionPanel.getState().setOpen(open);
-  if (open && focus) useSessionPanel.setState((s) => ({ focusRequest: s.focusRequest + 1 }));
+  if (useSessionPanel.getState().userClosed !== !open) {
+    useSessionPanel.setState({ userClosed: !open });
+    save(useSessionPanel.getState());
+  }
+  if (open) useSessionPanel.setState((s) => ({ focusRequest: s.focusRequest + 1 }));
+}
+
+// openSessionPanelOnConnect shows the new host's files after a connect, unless the panel would not fit beside the open
+// docks or the user closed it by hand. It never moves focus away from the new terminal.
+export function openSessionPanelOnConnect(fits: boolean): void {
+  if (!fits || useSessionPanel.getState().userClosed) return;
+  useSessionPanel.getState().setOpen(true);
 }
 
 export function resetSessionPanelForTest(): void {

@@ -17,7 +17,7 @@ vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn() }));
 import type { SessionInfo } from "../../ipc/commands";
 import { connectAsset, useUi } from "../../app/store";
 import { serializeLayout } from "../../app/layout";
-import { resetSessionPanelForTest, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
+import { resetSessionPanelForTest, showSessionPanel, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
 
 const SESSION: SessionInfo = {
   id: "s1",
@@ -105,6 +105,36 @@ describe("Terminal priority after connecting on narrow screens", () => {
 });
 
 describe("Existing layout behavior on wide screens", () => {
+  it("leaves the session panel closed after connecting when the user closed it by hand", async () => {
+    setViewportWidth(1280);
+    showSessionPanel(false);
+
+    await connectAsset(ASSET);
+
+    expect(useSessionPanel.getState().open).toBe(false);
+  });
+
+  it("does not open the session panel on connect when it would not fit beside the open docks", async () => {
+    setViewportWidth(900);
+    useUi.setState({ leftOpen: true, rightOpen: true, leftWidth: 248, rightWidth: 352 });
+
+    await connectAsset(ASSET);
+
+    expect(useSessionPanel.getState().open).toBe(false);
+  });
+
+  it("an explicit open after a hand close re-enables opening on connect", async () => {
+    setViewportWidth(1280);
+    useUi.setState({ leftOpen: false, rightOpen: false });
+    showSessionPanel(false);
+    showSessionPanel(true);
+    useSessionPanel.getState().setOpen(false);
+
+    await connectAsset(ASSET);
+
+    expect(useSessionPanel.getState().open).toBe(true);
+  });
+
   it("opens the session side panel with the host's files after connecting, leaving the left dock alone", async () => {
     setViewportWidth(1280);
     useUi.setState({ leftOpen: false, leftMode: "assets" });

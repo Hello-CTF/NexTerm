@@ -46,12 +46,14 @@ vi.mock("../../app/QuickConnect", () => ({ QuickConnect: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../../app/App";
+import { WEB } from "../../ipc/env";
 import { useUi } from "../../app/store";
-import { bindingConflicts, getKeybindings, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
+import { bindingConflicts, getKeybindings, KEYBINDING_ACTIONS, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
 import { sanitizeLayout } from "../../app/layout";
 import { loadDeviceLayout } from "../../app/layoutFocus";
 import { terminalShortcutConflicts } from "../../features/terminal/terminalInput/shortcutConflicts";
-import { resetSessionPanelForTest } from "../../features/session-panel/sessionPanelStore";
+import { resetSessionPanelForTest, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
+import { sessionPanelFits, WORKSPACE_MAIN_MIN_WIDTH } from "../../features/session-panel/sessionPanelFit";
 import { useThrottledValue } from "../../features/session-panel/useThrottledValue";
 
 let mounted: MountedView | undefined;
@@ -63,6 +65,11 @@ function keyDown(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
     window.dispatchEvent(event);
   });
   return event;
+}
+
+// The default toggle: Ctrl+Alt+E in the web build (browsers keep Ctrl+Shift+E), Mod+Shift+E on desktop.
+function pressToggle(): KeyboardEvent {
+  return keyDown("e", WEB ? { ctrlKey: true, altKey: true } : { ctrlKey: true, shiftKey: true });
 }
 
 function mountApp(): MountedView {
@@ -126,14 +133,14 @@ describe("session side panel in the shell", () => {
     await flush();
     expect(panel()).toBeNull();
 
-    const open = keyDown("e", { ctrlKey: true, shiftKey: true });
+    const open = pressToggle();
     expect(open.defaultPrevented).toBe(true);
     await settlePanel();
     expect(panel()).not.toBeNull();
     expect(JSON.parse(window.localStorage.getItem("nexterm.sessionPanel.v1") ?? "{}").open).toBe(true);
     expect(document.querySelector('[data-testid="file-tree"]')).not.toBeNull();
 
-    keyDown("e", { ctrlKey: true, shiftKey: true });
+    pressToggle();
     await flush();
     expect(panel()).toBeNull();
     expect(JSON.parse(window.localStorage.getItem("nexterm.sessionPanel.v1") ?? "{}").open).toBe(false);
@@ -150,6 +157,7 @@ describe("session side panel in the shell", () => {
   });
 
   it("toggles from the header button and docks beside the AI sidebar", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1600 });
     useUi.setState({ rightOpen: true });
     mounted = mountApp();
     await flush();
@@ -170,7 +178,7 @@ describe("session side panel in the shell", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
     mounted = mountApp();
     await flush();
-    keyDown("e", { ctrlKey: true, shiftKey: true });
+    pressToggle();
     await settlePanel();
     expect(document.querySelector(".nx-session-dock")?.classList.contains("is-overlay")).toBe(true);
     expect(document.querySelector(".nx-dock-backdrop")).not.toBeNull();
@@ -190,14 +198,106 @@ describe("session side panel in the shell", () => {
   });
 });
 
+describe("session panel width fit", () => {
+  it("docks only while the workspace keeps its minimum width", () => {
+    const docks = { leftOpen: true, leftWidth: 248, rightOpen: true, rightWidth: 352, panelWidth: 300 };
+    expect(sessionPanelFits({ ...docks, viewportWidth: 900 })).toBe(false);
+    expect(sessionPanelFits({ ...docks, viewportWidth: 1600 })).toBe(true);
+    expect(sessionPanelFits({ ...docks, leftOpen: false, rightOpen: false, viewportWidth: 900 })).toBe(true);
+    // rail 48 + three docks with their handles: the remainder is exactly the minimum.
+    const exact = 48 + 253 + 357 + 305 + WORKSPACE_MAIN_MIN_WIDTH;
+    expect(sessionPanelFits({ ...docks, viewportWidth: exact })).toBe(true);
+    expect(sessionPanelFits({ ...docks, viewportWidth: exact - 1 })).toBe(false);
+  });
+
+  it("shows the panel as a sheet when docking it would squeeze the terminal", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+    useUi.setState({ leftOpen: true, rightOpen: true });
+    mounted = mountApp();
+    await flush();
+    pressToggle();
+    await settlePanel();
+    expect(document.querySelector(".nx-session-dock")?.classList.contains("is-overlay")).toBe(true);
+    expect(document.querySelector(".nx-workspace-body")?.classList.contains("has-session-dock")).toBe(false);
+  });
+
+  it("docks the panel and keeps the workspace minimum when it fits", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1600 });
+    useUi.setState({ leftOpen: true, rightOpen: true });
+    mounted = mountApp();
+    await flush();
+    pressToggle();
+    await settlePanel();
+    expect(document.querySelector(".nx-session-dock")?.classList.contains("is-overlay")).toBe(false);
+    expect(document.querySelector(".nx-workspace-body")?.classList.contains("has-session-dock")).toBe(true);
+  });
+
+  it("does not cover the terminal at startup with a remembered open that no longer fits", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+    useUi.setState({ leftOpen: true, rightOpen: true });
+    useSessionPanel.getState().setOpen(true);
+    mounted = mountApp();
+    await flush();
+    expect(panel()).toBeNull();
+  });
+});
+
+describe("session sheet", () => {
+  it("closes when the active tab changes underneath it, e.g. a file opened from the sheet", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    mounted = mountApp();
+    await flush();
+    pressToggle();
+    await settlePanel();
+    expect(panel()).not.toBeNull();
+
+    act(() =>
+      useUi.getState().addTab({ id: "f1", kind: "files", title: "app.conf", sessionId: "s1", path: "/srv/app.conf", closable: true }),
+    );
+    await flush();
+    expect(panel()).toBeNull();
+    expect(useSessionPanel.getState().open).toBe(true);
+  });
+
+  it("keeps focus inside while open and returns it to the toggle when closed", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    mounted = mountApp();
+    await flush();
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="会话侧栏"]')!;
+    toggle.focus();
+    click(toggle);
+    await settlePanel();
+    await flush();
+    const sheet = panel()!;
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(sheet.contains(document.activeElement)).toBe(true);
+
+    // Focus leaving the sheet is pulled back in.
+    act(() => toggle.focus());
+    expect(sheet.contains(document.activeElement)).toBe(true);
+
+    click(sheet.querySelector<HTMLButtonElement>('button[aria-label="收起会话侧栏"]')!);
+    await flush();
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(toggle);
+  });
+});
+
 describe("session panel shortcut", () => {
   it("has no default conflict with other shortcuts or terminal input", () => {
     const bindings = getKeybindings();
-    expect(bindings.toggleSessionPanel).toBe("Mod+Shift+e");
+    const action = KEYBINDING_ACTIONS.find((a) => a.id === "toggleSessionPanel")!;
+    expect(bindings.toggleSessionPanel).toBe(action.defaultBinding);
+    expect(action.defaultBinding).toBe(WEB ? "Ctrl+Alt+e" : "Mod+Shift+e");
     for (const mac of [false, true]) {
       expect(bindingConflicts(bindings, mac).filter((c) => c.actions.some((a) => a.id === "toggleSessionPanel"))).toEqual([]);
-      const withheld = terminalShortcutConflicts(bindings, mac, false).find((c) => c.action.id === "toggleSessionPanel");
-      expect(withheld?.bytes ?? null).toBeNull();
+      // The desktop default sends nothing to the terminal; the web one withholds Ctrl+Alt+E, listed in the conflict table.
+      const desktop = { ...bindings, toggleSessionPanel: "Mod+Shift+e" };
+      const desktopWithheld = terminalShortcutConflicts(desktop, mac, false).find((c) => c.action.id === "toggleSessionPanel");
+      expect(desktopWithheld?.bytes ?? null).toBeNull();
+      const web = { ...bindings, toggleSessionPanel: "Ctrl+Alt+e" };
+      const webWithheld = terminalShortcutConflicts(web, mac, true).find((c) => c.action.id === "toggleSessionPanel");
+      expect(webWithheld?.chord).toBe("Ctrl+Alt+E");
     }
   });
 });
@@ -265,5 +365,8 @@ describe("useThrottledValue", () => {
 
     act(() => setProps({ value: "/other", resetKey: "k2" }));
     expect(seen.at(-1)).toBe("/other");
+    // The first change after a terminal switch is not held back by the previous terminal's interval.
+    act(() => setProps({ value: "/other/sub", resetKey: "k2" }));
+    expect(seen.at(-1)).toBe("/other/sub");
   });
 });

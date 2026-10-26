@@ -15,7 +15,7 @@ import { useKeyboardInset } from "./shell/keyboardInset";
 import { MobileShell } from "./shell/MobileShell";
 import { type ShellParts } from "./shell/ShellFrame";
 import { useAppKeybindings } from "./shell/useAppKeybindings";
-import { useOverlayDocks } from "./shell/useOverlayDocks";
+import { useOverlayDocks, useSessionSheetDismiss } from "./shell/useOverlayDocks";
 import { useSyncStatusSummary, useVaultStatus } from "./shell/useStatusBarState";
 import { useWorkspaceActions } from "./shell/useWorkspaceActions";
 import { useWorkspaceSwitcher } from "./shell/useWorkspaceSwitcher";
@@ -96,7 +96,8 @@ function AppShell() {
   const layout = useShellLayout();
   const { viewport, overlaySidebars } = layout;
   useKeyboardInset();
-  const docks = useOverlayDocks(overlaySidebars);
+  const docks = useOverlayDocks(overlaySidebars, viewport.width);
+  useSessionSheetDismiss(docks, `${ws?.id ?? ""}:${ws?.activePaneId ?? ""}:${ws?.panes.map((p) => p.activeTabId).join(",") ?? ""}`);
   const { leftDockOpen, rightDockOpen, sessionDockOpen, setLeftOpen, setRightOpen, setSessionOpen } = docks;
   const toggleSessionPanel = useCallback(
     () => setSessionOpen(!sessionDockOpen),

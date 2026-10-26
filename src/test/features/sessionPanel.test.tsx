@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -36,6 +36,7 @@ import { resetSessionPanelForTest, useSessionPanel } from "../../features/sessio
 import { resetCwdFollowForTest } from "../../features/files/cwdFollow";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { SessionInfo } from "../../ipc/commands";
+import type { FileEntryDto } from "../../ipc/types";
 
 let mounted: MountedView | undefined;
 
@@ -225,6 +226,106 @@ describe("session side panel context", () => {
     const unlock = Array.from(mounted!.container.querySelectorAll("button")).find((b) => b.textContent === "解除锁定");
     click(unlock!);
     await waitUntil(() => listCalls().some(([sid]) => sid === "s2"));
+  });
+});
+
+describe("session side panel context edge cases", () => {
+  function entry(name: string, dir: string): FileEntryDto {
+    return { name, path: `${dir}/${name}`, kind: "file", size: 1, mode: "", owner: null, group: null, mtime: 0, symlinkTarget: null };
+  }
+
+  function rowNames(): string[] {
+    return Array.from(mounted!.container.querySelectorAll('[role="treeitem"]')).map((row) => row.textContent ?? "");
+  }
+
+  it("names the host from the session the listing reads", async () => {
+    seedTwoHosts();
+    useUi.setState({ sessions: [session("s1", "web-01 (prod)"), session("s2", "db-01")] });
+    mountPanel();
+    await flush();
+    emitCwd("k1", 1, "/srv/app");
+    await waitForList(["s1", "/srv/app"]);
+    expect(mounted!.container.querySelector('[data-testid="session-panel-context"]')?.textContent).toBe(
+      "web-01 (prod) · /srv/app",
+    );
+  });
+
+  it("never shows a slow listing from the previous host after a quick switch", async () => {
+    seedTwoHosts();
+    const slow = deferred<FileEntryDto[]>();
+    mocks.list.mockImplementation((sid: string, dir: string) =>
+      sid === "s1" ? slow.promise : Promise.resolve([entry("db.conf", dir)]),
+    );
+    mountPanel();
+    await flush();
+    emitCwd("k1", 1, "/srv/app");
+    emitCwd("k2", 1, "/var/lib/db");
+    await waitUntil(() => listCalls().some(([sid]) => sid === "s1"));
+
+    act(() => useUi.setState({ activeWorkspaceId: "ws2" }));
+    await waitForList(["s2", "/var/lib/db"]);
+    await waitUntil(() => rowNames().some((name) => name.includes("db.conf")));
+
+    await act(async () => {
+      slow.resolve([entry("app.conf", "/srv/app")]);
+      await slow.promise;
+    });
+    await flush();
+    expect(rowNames().some((name) => name.includes("app.conf"))).toBe(false);
+    expect(rowNames().some((name) => name.includes("db.conf"))).toBe(true);
+  });
+
+  it("follows a durable reconnect that swaps the terminal's session id", async () => {
+    seedTwoHosts();
+    mountPanel();
+    await flush();
+    emitCwd("k1", 1, "/srv/app");
+    await waitForList(["s1", "/srv/app"]);
+
+    act(() =>
+      useUi.setState({
+        sessions: [...useUi.getState().sessions, session("s1b", "web-01")],
+        workspaces: useUi.getState().workspaces.map((w) =>
+          w.id === "ws1"
+            ? { ...w, sessionId: "s1b", panes: w.panes.map((p) => ({ ...p, tabs: p.tabs.map((t) => ({ ...t, sessionId: "s1b" })) })) }
+            : w,
+        ),
+      }),
+    );
+    await waitForList(["s1b", "/srv/app"]);
+  });
+
+  it("follows focus between split panes of one workspace", async () => {
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws1",
+          kind: "session",
+          title: "web-01",
+          sessionId: "s1",
+          panes: [
+            { id: "left", tabs: [terminal("t1", "k1", "s1")], activeTabId: "t1" },
+            { id: "right", tabs: [terminal("t2", "k2", "s1")], activeTabId: "t2" },
+          ],
+          activePaneId: "left",
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws1",
+      sessions: [session("s1", "web-01")],
+    });
+    mountPanel();
+    await flush();
+    emitCwd("k1", 1, "/srv/left");
+    emitCwd("k2", 1, "/srv/right");
+    await waitForList(["s1", "/srv/left"]);
+    expect(listCalls()).not.toContainEqual(["s1", "/srv/right"]);
+
+    act(() => useUi.getState().setActivePane("right", "ws1"));
+    await waitForList(["s1", "/srv/right"]);
+    expect(mounted!.container.querySelector('[data-testid="session-panel-context"]')?.textContent).toBe(
+      "web-01 · /srv/right",
+    );
   });
 });
 

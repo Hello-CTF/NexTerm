@@ -308,6 +308,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   resetSessionPanelForTest();
+  useUi.setState({ rightOpen: false });
   stubFinePointer();
   mocks.assetList.mockResolvedValue([LOCAL_ASSET, WEB_ASSET]);
   mocks.groupList.mockResolvedValue([GROUP]);

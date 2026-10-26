@@ -1,6 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keybindings";
 import { IconClose, IconFolderOpen, IconLock, type IconInfo } from "../../ui/icons";
+import { trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { useTerminalCwd } from "../files/cwdFollow";
 import { FilesTab, PanelEmpty } from "./FilesTab";
 import { useSessionPanelContext, type SessionPanelContext } from "./sessionContext";
@@ -41,6 +42,11 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
 
   const currentId = useRef(current.id);
   currentId.current = current.id;
+  const sectionRef = useRef<HTMLElement>(null);
+
+  // The full-screen sheet is a modal layer like the app's dialogs: focus stays inside it while open and returns to
+  // where it was when the sheet closes.
+  useOverlayFocus(overlay, sectionRef, { initialFocus: () => tabRefs.current.get(currentId.current) ?? null });
 
   // An explicit open (toolbar button or shortcut) moves focus into the panel; opening on connect does not.
   useEffect(() => {
@@ -74,7 +80,12 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
     <section
       className="nx-session-panel flex h-full min-h-0 w-full min-w-0 flex-col border-l border-neutral-800/60 bg-neutral-950"
       aria-label="会话侧栏"
+      ref={sectionRef}
+      role={overlay ? "dialog" : undefined}
+      aria-modal={overlay ? true : undefined}
+      tabIndex={overlay ? -1 : undefined}
       onKeyDown={(event) => {
+        if (overlay) trapOverlayTab(event, sectionRef.current);
         if (overlay && event.key === "Escape" && !event.defaultPrevented) {
           event.preventDefault();
           onClose();
