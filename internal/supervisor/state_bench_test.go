@@ -3,6 +3,7 @@ package supervisor
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -84,17 +85,30 @@ func BenchmarkStateInspect(b *testing.B) {
 	}
 }
 
-// BenchmarkStateTrackerMemory reports the memory one session's tracker
-// holds after a screenful of output (B/op).
+// BenchmarkStateTrackerMemory reports the heap one session's tracker
+// retains after a screenful of output and an OSC title (retained-B/session).
 func BenchmarkStateTrackerMemory(b *testing.B) {
 	for _, size := range [][2]int{{80, 24}, {200, 60}} {
 		b.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(b *testing.B) {
-			chunk := benchBuildLog()
-			b.ReportAllocs()
+			chunk := append(benchBuildLog(), "\x1b]2;"+strings.Repeat("t", 4000)+"\x07"...)
+			const sessions = 32
+			var stats runtime.MemStats
+			var retained uint64
 			for b.Loop() {
-				tracker := newStateTracker(stateOptions{cols: size[0], rows: size[1]}, stateEpoch0)
-				tracker.output(chunk, stateEpoch0)
+				trackers := make([]*stateTracker, sessions)
+				runtime.GC()
+				runtime.ReadMemStats(&stats)
+				before := stats.HeapAlloc
+				for i := range trackers {
+					trackers[i] = newStateTracker(stateOptions{cols: size[0], rows: size[1]}, stateEpoch0)
+					trackers[i].output(chunk, stateEpoch0)
+				}
+				runtime.GC()
+				runtime.ReadMemStats(&stats)
+				retained = (stats.HeapAlloc - before) / sessions
+				runtime.KeepAlive(trackers)
 			}
+			b.ReportMetric(float64(retained), "retained-B/session")
 		})
 	}
 }

@@ -1,6 +1,9 @@
 package terminal
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEmulatorTracksVisibleScreenOnly(t *testing.T) {
 	e := NewEmulator(20, 3)
@@ -46,5 +49,24 @@ func BenchmarkEmulatorWrite(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		e.Write(chunk)
+	}
+}
+
+func TestEmulatorTitlesWithTheSmallDataBuffer(t *testing.T) {
+	e := NewEmulator(80, 24)
+	atCap := strings.Repeat("t", maxOSCTitleBytes)
+	e.Write([]byte("\x1b]2;" + atCap + "\x07"))
+	if got := e.Snapshot().Title; got != atCap {
+		t.Fatalf("title at the cap: %d bytes", len(got))
+	}
+	for _, size := range []int{maxOSCTitleBytes + 1, emulatorDataSize, 4 * emulatorDataSize} {
+		e.Write([]byte("\x1b]2;" + strings.Repeat("x", size) + "\x07after"))
+		if got := e.Snapshot().Title; got != atCap {
+			t.Fatalf("a %d-byte title replaced the previous one (%d bytes)", size, len(got))
+		}
+	}
+	e.Write([]byte("\x1b]0;short\x1b\\"))
+	if snap := e.Snapshot(); snap.Title != "short" || !strings.Contains(snap.Text, "after") {
+		t.Fatalf("after oversized titles: title %q, text %q", snap.Title, snap.Text)
 	}
 }

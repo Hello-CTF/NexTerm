@@ -11,6 +11,12 @@ type Emulator struct {
 	scr *screen
 }
 
+// emulatorDataSize bounds the parser's OSC/DCS data buffer. The emulator
+// only reads window titles from that data, and the buffer still holds a
+// title at maxOSCTitleBytes; a longer payload is cut at the buffer and then
+// rejected whole as before.
+const emulatorDataSize = 8 * 1024
+
 // NewEmulator returns an emulator of the given size; non-positive
 // dimensions select 80x24.
 func NewEmulator(cols, rows int) *Emulator {
@@ -22,6 +28,7 @@ func NewEmulator(cols, rows int) *Emulator {
 	}
 	scr := newScreen(min(cols, MaxTerminalDimension), min(rows, MaxTerminalDimension), 1)
 	scr.history = nil
+	scr.parser.SetDataSize(emulatorDataSize)
 	return &Emulator{scr: scr}
 }
 

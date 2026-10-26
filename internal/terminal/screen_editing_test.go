@@ -137,14 +137,13 @@ func TestCombiningCapBoundedMemory(t *testing.T) {
 		end := min(off+97, len(raw))
 		tab.Feed(raw[off:end])
 	}
-	cell := tab.scr.grid.rows[0].cells[0]
-	if len(cell.comb) != maxCombiningRunes {
-		t.Fatalf("comb len = %d, want cap %d", len(cell.comb), maxCombiningRunes)
+	if comb := tab.scr.grid.rows[0].combAt(0); len(comb) != maxCombiningRunes {
+		t.Fatalf("comb len = %d, want cap %d", len(comb), maxCombiningRunes)
 	}
 	extra := []byte("́́́")
 	tab.Feed(extra)
-	if len(cell.comb) != maxCombiningRunes {
-		t.Fatalf("comb grew past cap: %d", len(cell.comb))
+	if comb := tab.scr.grid.rows[0].combAt(0); len(comb) != maxCombiningRunes {
+		t.Fatalf("comb grew past cap: %d", len(comb))
 	}
 	wantRaw := append(bytes.Clone(raw), extra...)
 	if got := tab.Dump(0); !bytes.Equal(got, wantRaw) {
@@ -157,5 +156,31 @@ func TestCombiningCapBoundedMemory(t *testing.T) {
 	want := "e" + strings.Repeat("́", maxCombiningRunes)
 	if got := screenRow(t, tab, 0); got != want {
 		t.Fatalf("row = %q, want %q", got, want)
+	}
+}
+
+func TestCombiningMarksFollowTheirCells(t *testing.T) {
+	steps := []struct{ feed, want string }{
+		{"ae\u0301xo\u0308", "ae\u0301xo\u0308"},
+		{"\x1b[1G\x1b[2@", "  ae\u0301xo\u0308"},
+		{"\x1b[3P", "e\u0301xo\u0308"},
+		{"\x1b[1X", " xo\u0308"},
+		{"\x1b[3Gu\u0308", " xu\u0308"},
+		{"\x1b[2G\x1b[K", ""},
+	}
+	s := newScreen(10, 2, 0)
+	for _, step := range steps {
+		s.write([]byte(step.feed))
+		if got := strings.TrimRight(s.grid.rows[0].String(), " "); got != step.want {
+			t.Fatalf("after %q: row = %q, want %q", step.feed, got, step.want)
+		}
+	}
+	if comb := s.grid.rows[0].comb; len(comb) != 0 {
+		t.Fatalf("combining marks left for cleared cells: %v", comb)
+	}
+	s.write([]byte("\x1b[1Ge\u0301\x1b[6Go\u0308"))
+	s.resize(4, 2)
+	if got, comb := s.grid.rows[0].String(), s.grid.rows[0].comb; got != "e\u0301" || len(comb) != 1 {
+		t.Fatalf("after shrinking: row %q, marks %v", got, comb)
 	}
 }
