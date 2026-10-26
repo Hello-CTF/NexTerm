@@ -85,6 +85,7 @@ export {
   cycleActiveTab,
   cycleActiveWorkspace,
   findTab,
+  hasCustomTitle,
   findWritableTerminal,
   openCredentialsSidebar,
   openCredentialsTab,

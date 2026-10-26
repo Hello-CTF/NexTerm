@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { applyRemoteTabTitle, findTab, sanitizeRemoteTabTitle, useUi } from "./store";
+import { applyRemoteTabTitle, findTab, hasCustomTitle, sanitizeRemoteTabTitle, useUi } from "./store";
 
 // Per-terminal view state that changes at output frequency (scrollback position, remote title).
 // Components subscribe through the narrow selectors below so a burst on one tab re-renders only
@@ -87,59 +87,80 @@ export function resetTerminalLinesBelow(tabId: string): void {
   });
 }
 
-// An authoritative custom title (a user rename or a backend-owned title) lands on the
-// workspace tab with renamedByUser — locking out OSC title updates — and clears only
-// the OSC-derived view title: the scrollback badge under the same key must survive.
-export function applyAuthoritativeTabTitle(tabId: string, title: string): void {
+// An authoritative custom title (a user rename, an AI rename or a backend custom title)
+// lands on the workspace tab with renamedByUser and its decision time — locking out OSC
+// title updates — and clears only the OSC-derived view title: the scrollback badge under
+// the same key must survive.
+export function applyAuthoritativeTabTitle(tabId: string, title: string, at: number = Date.now()): void {
   const tab = findTab(tabId)?.tab;
-  if (tab && (tab.title !== title || tab.renamedByUser !== true)) {
-    useUi.getState().updateTab(tabId, { title, renamedByUser: true });
+  if (tab && (tab.title !== title || !hasCustomTitle(tab))) {
+    useUi.getState().updateTab(tabId, { title, renamedByUser: true, customTitleAt: at });
   }
   resetTerminalTabTitle(tabId);
 }
 
-// Clearing a custom title (an empty rename) hands the tab strip back to OSC titles:
-// the fallback is the backend's current program title when it reported one.
-export function clearAuthoritativeTabTitle(tabId: string, fallback: string): void {
-  const tab = findTab(tabId)?.tab;
-  if (!tab) return;
-  const title = sanitizeRemoteTabTitle(fallback) || "终端";
-  useUi.getState().updateTab(tabId, { title, renamedByUser: undefined });
+// Clearing a custom title (an empty rename) hands the tab strip back to OSC titles. The
+// clear is a title decision too, so its time is kept to order it against stale renames.
+// The fallback is the backend's current program title, else the tab's default name source
+// (the session/asset name).
+export function clearAuthoritativeTabTitle(tabId: string, fallback: string, at: number = Date.now()): void {
+  const found = findTab(tabId);
+  if (!found) return;
+  const session = useUi.getState().sessions.find((item) => item.id === found.tab.sessionId);
+  const title = sanitizeRemoteTabTitle(fallback) || session?.name || found.ws.title || found.tab.title;
+  useUi.getState().updateTab(tabId, { title, renamedByUser: undefined, customTitleAt: at });
   resetTerminalTabTitle(tabId);
 }
 
-// The backend reports a tab title with titleCustom telling a custom title (a manual
-// or AI rename, or a restored durable title) apart from the OSC-derived program
-// title it tracks otherwise. Only a custom title is authoritative; a program title
-// goes through the OSC path and never replaces a title the user chose.
-export function applyBackendTabTitle(tabId: string, title: string | undefined, custom: boolean | undefined): void {
-  if (!title) return;
-  if (custom === true) {
-    applyAuthoritativeTabTitle(tabId, title);
-    return;
-  }
-  applyRemoteTabTitleToView(tabId, title);
+export interface BackendTabTitle {
+  tabId: string;
+  title?: string;
+  titleCustom?: boolean;
+  titleChangedAt?: number;
 }
 
-// A fresh attachment reconciles both sides: a backend custom title wins; a local
-// custom title the backend does not hold (a kernel tab re-created by a reconnect,
-// or a rename made before the tab had a kernel id) is written back so every device
-// and the AI tools see it. Returns the rename to await, or null when none is needed.
-export function reconcileAttachedTabTitle(
+// The backend reports a tab title with titleCustom telling a custom title (a manual or AI
+// rename, or a restored durable title) apart from the OSC-derived program title it tracks
+// otherwise, and titleChangedAt, the time of its last explicit title decision. The newer
+// decision wins: a backend decision older than the local one never replaces it (a fresh
+// kernel tab after a reconnect reports none), and a newer one — a rename or clear made on
+// another device or by the AI — is adopted. A program title only goes through the OSC
+// path, which never replaces a custom title.
+//
+// On a fresh attachment (rename given) a newer local decision the backend does not hold
+// is written back so every device and the AI tools see it. Returns that write, or null.
+export function reconcileBackendTabTitle(
   tabId: string,
-  info: { tabId: string; title?: string; titleCustom?: boolean },
-  rename: ((kernelTabId: string, title: string) => Promise<unknown>) | null,
+  info: BackendTabTitle,
+  rename: ((kernelTabId: string, title: string, at: number) => Promise<unknown>) | null,
 ): Promise<unknown> | null {
-  if (info.titleCustom === true) {
-    applyBackendTabTitle(tabId, info.title, true);
+  const tab = findTab(tabId)?.tab;
+  if (!tab) return null;
+  const custom = info.titleCustom === true;
+  const title = info.title ?? "";
+  const backendAt = info.titleChangedAt ?? 0;
+  const localAt = tab.customTitleAt;
+  if (localAt !== undefined && localAt > backendAt) {
+    if (hasCustomTitle(tab)) {
+      resetTerminalTabTitle(tabId);
+      if (custom && title === tab.title) return null;
+      return rename && tab.title.trim() !== "" ? rename(info.tabId, tab.title, localAt) : null;
+    }
+    // A newer local clear: the backend's custom title is stale.
+    if (custom) return rename ? rename(info.tabId, "", localAt) : null;
+    if (title) applyRemoteTabTitleToView(tabId, title);
     return null;
   }
-  const tab = findTab(tabId)?.tab;
-  if (tab?.renamedByUser === true) {
-    resetTerminalTabTitle(tabId);
-    return rename && tab.title.trim() !== "" ? rename(info.tabId, tab.title) : null;
+  if (custom) {
+    if (title) applyAuthoritativeTabTitle(tabId, title, backendAt || Date.now());
+    return null;
   }
-  applyBackendTabTitle(tabId, info.title, false);
+  if (hasCustomTitle(tab)) {
+    // Only a backend clear newer than the local rename reaches here.
+    clearAuthoritativeTabTitle(tabId, title, backendAt);
+    return null;
+  }
+  if (title) applyRemoteTabTitleToView(tabId, title);
   return null;
 }
 

@@ -87,6 +87,10 @@ const PANE_KINDS = new Set<PaneKind>([
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
+function customTitleAtOf(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
 function optStr(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
@@ -119,7 +123,10 @@ function sanitizeTab(raw: unknown): AppTab | null {
     path: optStr(raw.path),
     closable: boolOr(raw.closable, true),
     exited: raw.exited === true ? true : undefined,
-    renamedByUser: raw.renamedByUser === true ? true : undefined,
+    // A legacy lock without customTitleAt may hold an OSC title an older build recorded as a
+    // rename: it is dropped, so the tab follows OSC titles again.
+    renamedByUser: raw.renamedByUser === true && customTitleAtOf(raw.customTitleAt) !== undefined ? true : undefined,
+    customTitleAt: customTitleAtOf(raw.customTitleAt),
     restorePending: raw.restorePending === true ? true : undefined,
   };
 }

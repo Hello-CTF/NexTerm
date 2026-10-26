@@ -35,7 +35,7 @@ import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type 
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
 import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, type BroadcastState, type Workspace } from "../../app/store";
-import { applyBackendTabTitle, applyRemoteTabTitleToView, reconcileAttachedTabTitle, resetTerminalView } from "../../app/terminalViewStore";
+import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { modHint } from "../../app/platform";
@@ -764,7 +764,8 @@ export function TerminalPane({
       setDurable(p.durable);
       useUi.getState().updateTab(storeTabId, { durable: p.durable });
     }
-    applyBackendTabTitle(storeTabId, p.title, p.titleCustom);
+    // Control snapshots never write back (rename is null), so there is no promise.
+    void reconcileBackendTabTitle(storeTabId, p, null);
   }, [storeTabId]);
   useEffect(() => {
     setCwd(null);
@@ -2117,10 +2118,10 @@ export function TerminalPane({
                 });
                 if (info.durable !== undefined) setDurable(info.durable);
                 if (info.encoding) setEncoding(info.encoding);
-                const titleSync = reconcileAttachedTabTitle(
+                const titleSync = reconcileBackendTabTitle(
                   storeTabId,
                   info,
-                  containerId ? null : (id, title) => terminalApi.renameTab(id, title),
+                  containerId ? null : (id, title, at) => terminalApi.renameTab(id, title, at),
                 );
                 // The local custom title stays on the tab strip either way; a failed write-back only
                 // leaves other devices and AI tools on the backend's program title until the next attach.

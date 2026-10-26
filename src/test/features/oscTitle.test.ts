@@ -71,14 +71,14 @@ describe("remote tab titles (OSC 0/2)", () => {
   });
 
   it("never overrides a user-renamed tab", () => {
-    seed([terminal("t1", { title: "my terminal", renamedByUser: true })]);
+    seed([terminal("t1", { title: "my terminal", renamedByUser: true, customTitleAt: 1 })]);
     expect(applyRemoteTabTitle("t1", "remote title")).toBe(false);
     expect(titleOf()).toBe("my terminal");
   });
 
   it("keeps a user rename authoritative even after remote title updates", () => {
     applyRemoteTabTitle("t1", "first remote");
-    useUi.getState().updateTab("t1", { title: "locked", renamedByUser: true });
+    useUi.getState().updateTab("t1", { title: "locked", renamedByUser: true, customTitleAt: 1 });
     expect(applyRemoteTabTitle("t1", "second remote")).toBe(false);
     expect(titleOf()).toBe("locked");
   });
@@ -97,6 +97,17 @@ describe("remote tab titles (OSC 0/2)", () => {
     expect(titleOf()).toBe("Terminal 1");
   });
 
+  it("unlocks a legacy rename lock without a decision time on load", () => {
+    // Older builds recorded backend OSC titles as renames; such a lock may hold an OSC title.
+    seed([terminal("t1", { title: "user@host: ~", renamedByUser: true })]);
+    const parsed = sanitizeLayout(JSON.parse(JSON.stringify(serializeLayout(useUi.getState()))));
+    const tab = parsed?.workspaces[0].panes[0].tabs[0];
+    expect(tab?.title).toBe("user@host: ~");
+    expect(tab?.renamedByUser).toBeUndefined();
+    // In memory the same legacy lock does not block OSC titles either.
+    expect(applyRemoteTabTitle("t1", "vim")).toBe(true);
+  });
+
   it("ignores unknown tabs", () => {
     expect(applyRemoteTabTitle("missing", "title")).toBe(false);
   });
@@ -107,11 +118,14 @@ describe("remote tab titles (OSC 0/2)", () => {
   });
 
   it("renamedByUser survives a layout serialize/sanitize round trip", () => {
-    seed([terminal("t1", { title: "my terminal", renamedByUser: true })]);
+    seed([terminal("t1", { title: "my terminal", renamedByUser: true, customTitleAt: 1700000000000 })]);
     const dto = serializeLayout(useUi.getState());
     expect(dto).not.toBeNull();
     const parsed = sanitizeLayout(JSON.parse(JSON.stringify(dto)));
-    expect(parsed?.workspaces[0].panes[0].tabs[0].renamedByUser).toBe(true);
+    expect(parsed?.workspaces[0].panes[0].tabs[0]).toMatchObject({
+      renamedByUser: true,
+      customTitleAt: 1700000000000,
+    });
 
     seed([terminal("t2")]);
     const plain = serializeLayout(useUi.getState());

@@ -78,10 +78,10 @@ func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 		t.Fatalf("created = %+v", created)
 	}
 
-	renameResponse := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"部署终端"}`, "", "client-a")
+	renameResponse := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"部署终端","at":1000}`, "", "client-a")
 	var renamed attachedTabDTO
 	requireStoreTestResponse(t, renameResponse, &renamed)
-	if renamed.TabID != created.TabID || renamed.Title != "部署终端" || !renamed.TitleCustom {
+	if renamed.TabID != created.TabID || renamed.Title != "部署终端" || !renamed.TitleCustom || renamed.TitleChangedAt != 1000 {
 		t.Fatalf("renamed = %+v", renamed)
 	}
 

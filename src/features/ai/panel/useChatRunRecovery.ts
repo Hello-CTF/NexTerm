@@ -218,7 +218,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
         id: nextTabId(`term-${terminal.sessionId}`),
         kind: "terminal",
         title: terminal.title || session?.name || terminal.sessionId,
-        renamedByUser: terminal.title ? true : undefined,
+        ...(terminal.title ? { renamedByUser: true, customTitleAt: Date.now() } : {}),
         sessionId: terminal.sessionId,
         tabId: terminal.tabId,
         closable: true,

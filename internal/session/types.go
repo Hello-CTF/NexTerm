@@ -221,7 +221,10 @@ type TabInfo struct {
 	Title        string `json:"title,omitempty"`
 	// TitleCustom reports whether Title is a custom title (a manual or AI
 	// rename, or a restored durable title) rather than the OSC dynamic title.
-	TitleCustom     bool   `json:"titleCustom,omitempty"`
+	TitleCustom bool `json:"titleCustom,omitempty"`
+	// TitleChangedAt is the client time (Unix ms) of the last explicit title
+	// decision, so clients can order it against their own; zero when unknown.
+	TitleChangedAt  int64  `json:"titleChangedAt,omitempty"`
 	Shell           Shell  `json:"shell"`
 	LastOutputAt    int64  `json:"lastOutputAt,omitempty"`
 	LastOutputMSAgo int64  `json:"-"`
@@ -256,19 +259,20 @@ type ExitEvent struct {
 }
 
 type ControlEvent struct {
-	TabID        string `json:"tabId"`
-	Cols         uint32 `json:"cols"`
-	Rows         uint32 `json:"rows"`
-	GridRevision uint64 `json:"gridRevision"`
-	Controller   string `json:"controller,omitempty"`
-	Subscribers  int    `json:"subscribers"`
-	Viewers      int    `json:"viewers"`
-	Exited       bool   `json:"exited"`
-	Version      uint64 `json:"version"`
-	Cwd          string `json:"cwd,omitempty"`
-	Durable      bool   `json:"durable,omitempty"`
-	Title        string `json:"title,omitempty"`
-	TitleCustom  bool   `json:"titleCustom,omitempty"`
+	TabID          string `json:"tabId"`
+	Cols           uint32 `json:"cols"`
+	Rows           uint32 `json:"rows"`
+	GridRevision   uint64 `json:"gridRevision"`
+	Controller     string `json:"controller,omitempty"`
+	Subscribers    int    `json:"subscribers"`
+	Viewers        int    `json:"viewers"`
+	Exited         bool   `json:"exited"`
+	Version        uint64 `json:"version"`
+	Cwd            string `json:"cwd,omitempty"`
+	Durable        bool   `json:"durable,omitempty"`
+	Title          string `json:"title,omitempty"`
+	TitleCustom    bool   `json:"titleCustom,omitempty"`
+	TitleChangedAt int64  `json:"titleChangedAt,omitempty"`
 }
 
 func (e ControlEvent) MarshalJSON() ([]byte, error) {
@@ -479,6 +483,7 @@ type durableRenameAttempt struct {
 	incarnation              string
 	expectedMetadataRevision uint64
 	title                    string
+	changedAt                int64
 	completed                bool
 	resultTitle              string
 	resultMetadataRevision   uint64

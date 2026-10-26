@@ -159,10 +159,15 @@ export function sanitizeRemoteTabTitle(raw: string): string {
   return cleaned;
 }
 
+// A custom title needs both the lock and its decision timestamp (see AppTab.customTitleAt).
+export function hasCustomTitle(tab: Pick<AppTab, "renamedByUser" | "customTitleAt">): boolean {
+  return tab.renamedByUser === true && typeof tab.customTitleAt === "number";
+}
+
 export function applyRemoteTabTitle(id: string, rawTitle: string): boolean {
   const found = findTab(id);
   if (!found) return false;
-  if (found.tab.renamedByUser) return false;
+  if (hasCustomTitle(found.tab)) return false;
   const title = sanitizeRemoteTabTitle(rawTitle);
   if (!title || title === found.tab.title) return false;
   useUi.getState().updateTab(id, { title });

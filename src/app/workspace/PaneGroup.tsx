@@ -6,6 +6,7 @@ import {
   requestKillTab,
   closeTabHint,
   closeActionHint,
+  hasCustomTitle,
   sanitizeRemoteTabTitle,
   type AppTab,
   type Pane,
@@ -157,17 +158,19 @@ export function PaneGroup({
       const trimmed = sanitizeRemoteTabTitle(next);
       const current = pane.tabs.find((t) => t.id === id);
       // An empty name clears the custom title and returns the tab to OSC titles.
-      if (!trimmed && current?.renamedByUser !== true) return;
+      if (!trimmed && !(current && hasCustomTitle(current))) return;
       const tabId = current?.tabId;
+      // The decision time orders this rename or clear against other devices' decisions.
+      const at = Date.now();
       if (!tabId) {
-        if (trimmed) applyAuthoritativeTabTitle(id, trimmed);
-        else clearAuthoritativeTabTitle(id, "");
+        if (trimmed) applyAuthoritativeTabTitle(id, trimmed, at);
+        else clearAuthoritativeTabTitle(id, "", at);
         return;
       }
       try {
-        const info = await terminalApi.renameTab(tabId, trimmed);
-        if (trimmed) applyAuthoritativeTabTitle(id, info.title || trimmed);
-        else clearAuthoritativeTabTitle(id, info.title ?? "");
+        const info = await terminalApi.renameTab(tabId, trimmed, at);
+        if (trimmed) applyAuthoritativeTabTitle(id, info.title || trimmed, at);
+        else clearAuthoritativeTabTitle(id, info.title ?? "", at);
         return;
       } catch (error) {
         draft = trimmed;

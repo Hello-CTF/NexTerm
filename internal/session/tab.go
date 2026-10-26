@@ -126,6 +126,9 @@ type Tab struct {
 	destroying      bool
 	title           string
 	titleCustom     bool
+	// titleChangedAt is the client-supplied time (Unix ms) of the last explicit
+	// title decision (a rename or a clear); zero when unknown.
+	titleChangedAt  int64
 	cancelPump      context.CancelFunc
 	cwdTracker      *shellintegr.Tracker
 	cwd             string
@@ -207,7 +210,7 @@ func (t *Tab) infoLocked() TabInfo {
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
 		Exited: t.exited, Retainable: t.retainable || !t.ephemeral && !t.regularRemote, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
-		Title: t.title, TitleCustom: t.titleCustom, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
+		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
 	}
 }
 
@@ -236,7 +239,7 @@ func (t *Tab) controlEventLocked() ControlEvent {
 		TabID: t.ID, Cols: info.Cols, Rows: info.Rows, GridRevision: info.GridRevision,
 		Controller: info.Controller, Subscribers: info.Subscribers,
 		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion, Cwd: t.cwd, Durable: info.Durable,
-		Title: t.title, TitleCustom: t.titleCustom,
+		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt,
 	}
 	queue.pending[event.Version] = recordingControlEvent{event: event, closed: t.closed}
 	queue.orderHeld.Store(false)
@@ -702,6 +705,15 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 // A blank title clears the custom title and returns the tab to the OSC
 // dynamic title.
 func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, error) {
+	return m.RenameTabAt(ctx, tabID, title, 0)
+}
+
+// RenameTabAt is RenameTab with the client's decision time (Unix ms), which
+// clients use to order title decisions across devices; zero means now.
+func (m *Manager) RenameTabAt(ctx context.Context, tabID, title string, at int64) (TabInfo, error) {
+	if at <= 0 {
+		at = time.Now().UnixMilli()
+	}
 	clear := blankTabTitle(title)
 	if clear {
 		title = ""
@@ -755,25 +767,24 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 		if supported {
 			unlocked = true
 			tab.lifecycleMu.Unlock()
-			info, err := m.renameCanonicalTab(ctx, tab, provider, title)
+			info, err := m.renameCanonicalTab(ctx, tab, provider, title, at)
 			if err != nil || info.TitleCustom {
 				return info, err
 			}
 			return m.restoreDynamicTitle(ctx, tab, info), nil
 		}
 	}
-	dynamic := ""
-	if clear {
-		dynamic = tab.dynamicTitle()
-	}
 	tab.mu.Lock()
 	if clear {
-		tab.title = dynamic
 		tab.titleCustom = false
+		// Read under the lock after unlatching, so an OSC title the feed
+		// reported meanwhile is not lost.
+		tab.title = tab.dynamicTitle()
 	} else {
 		tab.title = title
 		tab.titleCustom = true
 	}
+	tab.titleChangedAt = at
 	event := tab.controlEventLocked()
 	info := tab.infoLocked()
 	tab.mu.Unlock()
@@ -789,7 +800,8 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 	return info, nil
 }
 
-// dynamicTitle reads the OSC 0/2 title the terminal state last reported.
+// dynamicTitle reads the OSC 0/2 title the terminal state last reported. The
+// terminal state lock is a leaf lock, so it may be read under tab.mu.
 func (t *Tab) dynamicTitle() string {
 	if source, ok := t.terminal.(interface{ Title() string }); ok {
 		return source.Title()
@@ -800,8 +812,8 @@ func (t *Tab) dynamicTitle() string {
 // restoreDynamicTitle shows the current OSC dynamic title again after a
 // canonical rename cleared the custom title.
 func (m *Manager) restoreDynamicTitle(ctx context.Context, tab *Tab, info TabInfo) TabInfo {
-	dynamic := tab.dynamicTitle()
 	tab.mu.Lock()
+	dynamic := tab.dynamicTitle()
 	if tab.titleCustom || tab.closed || tab.title == dynamic {
 		tab.mu.Unlock()
 		return info
@@ -2209,10 +2221,14 @@ func (m *Manager) AttachTabFor(ctx context.Context, tabID string, options Attach
 }
 
 func (m *Manager) RenameTabFor(ctx context.Context, tabID, title string) (TabInfo, error) {
+	return m.RenameTabForAt(ctx, tabID, title, 0)
+}
+
+func (m *Manager) RenameTabForAt(ctx context.Context, tabID, title string, at int64) (TabInfo, error) {
 	if _, err := m.TabFor(ctx, tabID); err != nil {
 		return TabInfo{}, err
 	}
-	return m.RenameTab(ctx, tabID, title)
+	return m.RenameTabAt(ctx, tabID, title, at)
 }
 
 func (m *Manager) DetachChannelFor(ctx context.Context, channelID string) error {

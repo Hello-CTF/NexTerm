@@ -868,10 +868,13 @@ func durableAttachmentIdentity(attachment base.DurableAttachment) (base.DurableI
 	return base.DurableIdentity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation, Generation: identity.Generation}, true
 }
 
-func (m *Manager) renameCanonicalTab(ctx context.Context, tab *Tab, provider base.DurableProvider, title string) (TabInfo, error) {
+func (m *Manager) renameCanonicalTab(ctx context.Context, tab *Tab, provider base.DurableProvider, title string, at int64) (TabInfo, error) {
 	attempt, cached, err := beginDurableRename(ctx, tab, provider, title)
 	if err != nil {
 		return TabInfo{}, err
+	}
+	if !cached {
+		attempt.changedAt = at
 	}
 	if cached {
 		if attempt.err != nil {
@@ -956,6 +959,9 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 			}
 			tab.title = result.Title
 			tab.titleCustom = result.Title != ""
+			if attempt.changedAt > 0 {
+				tab.titleChangedAt = attempt.changedAt
+			}
 			tab.metadataRevision = result.MetadataRevision
 			attempt.resultTitle = result.Title
 			attempt.resultMetadataRevision = result.MetadataRevision

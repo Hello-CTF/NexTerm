@@ -314,6 +314,7 @@ const TAB_FIELDS = [
   "closable",
   "exited",
   "renamedByUser",
+  "customTitleAt",
   "restorePending",
 ] as const;
 
@@ -344,13 +345,16 @@ function mergeTabMeta(group: EntityGroup<AppTab>, id: string): AppTab {
       : mergeAddedValue(local?.[field], remote?.[field]);
     output[field] = value as never;
   }
-  // title and renamedByUser are one fact: a merged custom title must be the title of a
-  // side that holds it, never an OSC-derived title from the other device.
-  if (output.renamedByUser === true) {
-    const localCustom = local?.renamedByUser === true;
-    const remoteCustom = remote?.renamedByUser === true;
-    if (localCustom && !remoteCustom) output.title = local.title;
-    else if (remoteCustom && !localCustom) output.title = remote.title;
+  // title, renamedByUser and customTitleAt are one fact: the newest title decision (a rename
+  // or a clear) wins as a whole, so a stale device can neither resurrect a cleared title nor
+  // keep an older rename, and a custom title never pairs with the other device's OSC title.
+  const localAt = local?.customTitleAt ?? 0;
+  const remoteAt = remote?.customTitleAt ?? 0;
+  const winner = localAt > remoteAt ? local : remoteAt > localAt ? remote : undefined;
+  if (winner) {
+    output.title = winner.title;
+    output.renamedByUser = winner.renamedByUser;
+    output.customTitleAt = winner.customTitleAt;
   }
   return output;
 }

@@ -187,6 +187,7 @@ export type AttachedTabDTO = {
   encoding?: string;
   title?: string;
   titleCustom?: boolean;
+  titleChangedAt?: number;
   shell: string;
   fallbackNotice?: string;
   attachmentId?: number;
@@ -2064,6 +2065,7 @@ export type RemoveRequest = {
 export type RenameTerminalRequest = {
   tabId: string;
   title: string;
+  at?: number;
 };
 
 export type RenderedCommand = {

@@ -280,7 +280,7 @@ describe("applyRemoteTabTitleToView (OSC title chain)", () => {
   });
 
   it("keeps a user-renamed tab authoritative in both stores", () => {
-    seedWorkspaces([terminalTab("t1", { title: "my terminal", renamedByUser: true })]);
+    seedWorkspaces([terminalTab("t1", { title: "my terminal", renamedByUser: true, customTitleAt: 1 })]);
     act(() => {
       expect(applyRemoteTabTitleToView("t1", "remote title")).toBe(false);
     });
@@ -503,19 +503,23 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     ...extra,
   });
 
-  it("a reconnect attach carrying the backend's OSC program title keeps a manual rename", async () => {
-    vi.mocked(terminalApi.renameTab).mockClear();
-    vi.mocked(terminalApi.renameTab).mockResolvedValue(attachInfo({ title: "deploy", titleCustom: true }) as never);
-    act(() => applyAuthoritativeTabTitle("t1", "deploy"));
+  async function mountWithRename(renamed?: { title: string; at: number }) {
+    vi.mocked(terminalApi.renameTab).mockReset();
+    vi.mocked(terminalApi.renameTab).mockResolvedValue(attachInfo({}) as never);
+    if (renamed) act(() => applyAuthoritativeTabTitle("t1", renamed.title, renamed.at));
     mounted = mount(createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }));
     await flush();
-    // The re-created kernel tab only knows the shell's OSC title.
+  }
+
+  it("a reconnect attach carrying the backend's OSC program title keeps a manual rename", async () => {
+    await mountWithRename({ title: "deploy", at: 1_000 });
+    // The re-created kernel tab only knows the shell's OSC title and no title decision.
     fireAttachInfo(attachInfo({ title: "root@web-01: ~" }));
     await flush();
     expect(workspaceTitleOf()).toBe("deploy");
     expect(tabOf()?.renamedByUser).toBe(true);
     // The custom title is written back so the backend, other devices and AI tools agree.
-    expect(terminalApi.renameTab).toHaveBeenCalledWith("kernel-1", "deploy");
+    expect(terminalApi.renameTab).toHaveBeenCalledWith("kernel-1", "deploy", 1_000);
     // Later OSC-derived control snapshots and xterm titles never replace it.
     deliverControl({ ...attachInfo({ title: "vim", titleCustom: false }), version: 1 });
     expect(workspaceTitleOf()).toBe("deploy");
@@ -524,10 +528,19 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     expect(getTerminalTabTitle("t1")).toBeUndefined();
   });
 
-  it("an OSC program title from the backend stays an OSC title on an unrenamed tab", async () => {
-    vi.mocked(terminalApi.renameTab).mockClear();
-    mounted = mount(createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }));
+  it("a legacy rename lock follows OSC titles and is never written back", async () => {
+    await mountWithRename();
+    // Older builds stored backend OSC titles as renames, without a decision time.
+    act(() => useUi.getState().updateTab("t1", { title: "user@host: ~", renamedByUser: true }));
+    fireAttachInfo(attachInfo({ title: "root@web-01: ~" }));
     await flush();
+    expect(terminalApi.renameTab).not.toHaveBeenCalled();
+    expect(workspaceTitleOf()).toBe("root@web-01: ~");
+    expect(getTerminalTabTitle("t1")).toBe("root@web-01: ~");
+  });
+
+  it("an OSC program title from the backend stays an OSC title on an unrenamed tab", async () => {
+    await mountWithRename();
     fireAttachInfo(attachInfo({ title: "root@web-01: ~" }));
     deliverControl({ ...attachInfo({ title: "vim" }), version: 1 });
     expect(workspaceTitleOf()).toBe("vim");
@@ -541,12 +554,53 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     expect(workspaceTitleOf()).toBe("top");
   });
 
+  it("a clear made on another device after this device's rename wins, and a reattach does not resurrect it", async () => {
+    await mountWithRename({ title: "deploy", at: 1_000 });
+    deliverControl({ ...attachInfo({ title: "vim", titleCustom: false, titleChangedAt: 2_000 }), version: 1 });
+    expect(workspaceTitleOf()).toBe("vim");
+    expect(tabOf()).toMatchObject({ renamedByUser: undefined, customTitleAt: 2_000 });
+    fireAttachInfo(attachInfo({ title: "vim", titleChangedAt: 2_000 }));
+    await flush();
+    expect(terminalApi.renameTab).not.toHaveBeenCalled();
+    act(() => {
+      expect(applyRemoteTabTitleToView("t1", "top")).toBe(true);
+    });
+  });
+
+  it("a stale backend custom title never replaces a newer local rename and is overwritten on attach", async () => {
+    await mountWithRename({ title: "newer", at: 3_000 });
+    deliverControl({ ...attachInfo({ title: "older", titleCustom: true, titleChangedAt: 2_000 }), version: 1 });
+    expect(workspaceTitleOf()).toBe("newer");
+    fireAttachInfo(attachInfo({ title: "older", titleCustom: true, titleChangedAt: 2_000 }));
+    await flush();
+    expect(terminalApi.renameTab).toHaveBeenCalledWith("kernel-1", "newer", 3_000);
+  });
+
+  it("a newer rename from another device replaces an older local rename", async () => {
+    await mountWithRename({ title: "older", at: 1_000 });
+    deliverControl({ ...attachInfo({ title: "newer", titleCustom: true, titleChangedAt: 2_000 }), version: 1 });
+    expect(workspaceTitleOf()).toBe("newer");
+    expect(tabOf()).toMatchObject({ renamedByUser: true, customTitleAt: 2_000 });
+    fireAttachInfo(attachInfo({ title: "newer", titleCustom: true, titleChangedAt: 2_000 }));
+    await flush();
+    expect(terminalApi.renameTab).not.toHaveBeenCalled();
+  });
+
+  it("a newer local clear is written back over an older backend custom title", async () => {
+    await mountWithRename();
+    act(() => clearAuthoritativeTabTitle("t1", "", 3_000));
+    fireAttachInfo(attachInfo({ title: "deploy", titleCustom: true, titleChangedAt: 2_000 }));
+    await flush();
+    expect(terminalApi.renameTab).toHaveBeenCalledWith("kernel-1", "", 3_000);
+    expect(tabOf()?.renamedByUser).toBeUndefined();
+  });
+
   it("a custom title from another device wins over a cached OSC title on the tab strip", () => {
     act(() => {
       applyRemoteTabTitleToView("t1", "vim");
     });
     // A layout sync lands the rename without going through this device's title path.
-    act(() => useUi.getState().updateTab("t1", { title: "deploy", renamedByUser: true }));
+    act(() => useUi.getState().updateTab("t1", { title: "deploy", renamedByUser: true, customTitleAt: 1 }));
     mounted = mount(createElement(TabStripTitle, { tab: tabOf()! }));
     expect(document.body.textContent).toBe("deploy");
   });
@@ -561,5 +615,11 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
       expect(applyRemoteTabTitleToView("t1", "vim")).toBe(true);
     });
     expect(workspaceTitleOf()).toBe("vim");
+  });
+
+  it("clearing without a program title falls back to the session name", () => {
+    act(() => applyAuthoritativeTabTitle("t1", "deploy"));
+    act(() => clearAuthoritativeTabTitle("t1", ""));
+    expect(workspaceTitleOf()).toBe("web-01");
   });
 });

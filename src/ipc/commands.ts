@@ -385,6 +385,7 @@ export interface AttachedTabInfo {
   encoding?: string;
   title?: string;
   titleCustom?: boolean;
+  titleChangedAt?: number;
   shell?: TerminalShell;
   fallbackNotice?: string;
   attachmentId?: number;
@@ -405,6 +406,7 @@ export interface LiveTabInfo {
   lastOutputMsAgo: number;
   title?: string;
   titleCustom?: boolean;
+  titleChangedAt?: number;
 }
 
 export type RecordingState = "never-started" | "running" | "stopped" | "failed";
@@ -623,8 +625,8 @@ export const terminalApi = {
     call("terminal_helper_offline", { sessionId, path, sha256, confirmed }).then(normalizeHelperOperationResult),
   closeTab: (tabId: string, mode?: "kill" | "detach", sessionId?: string) =>
     call<void>("terminal_close_tab", { tabId, mode, clientId: clientId(), ...(sessionId === undefined ? {} : { sessionId }) }),
-  renameTab: (tabId: string, title: string) =>
-    call("terminal_rename_tab", { tabId, title }) as Promise<AttachedTabInfo>,
+  renameTab: (tabId: string, title: string, at?: number) =>
+    call("terminal_rename_tab", { tabId, title, at }) as Promise<AttachedTabInfo>,
   createTab: (sessionId: string, options?: { title?: string; command?: string }) =>
     call<AttachedTabInfo>("terminal_create_tab", {
       sessionId,

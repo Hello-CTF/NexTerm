@@ -160,6 +160,7 @@ type attachedTabDTO struct {
 	Encoding       string  `json:"encoding,omitempty"`
 	Title          string  `json:"title,omitempty"`
 	TitleCustom    bool    `json:"titleCustom,omitempty"`
+	TitleChangedAt int64   `json:"titleChangedAt,omitempty"`
 	Shell          string  `json:"shell"`
 	FallbackNotice string  `json:"fallbackNotice,omitempty"`
 	AttachmentID   uint64  `json:"attachmentId,omitempty"`
@@ -168,6 +169,9 @@ type attachedTabDTO struct {
 type renameTerminalRequest struct {
 	TabID string `json:"tabId"`
 	Title string `json:"title"`
+	// At is the client's decision time (Unix ms) that orders title decisions
+	// across devices; omitted means now.
+	At int64 `json:"at,omitempty"`
 }
 
 type createTerminalRequest struct {
@@ -293,6 +297,7 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 	Title           string  `json:"title,omitempty"`
 	TitleCustom     bool    `json:"titleCustom,omitempty"`
+	TitleChangedAt  int64   `json:"titleChangedAt,omitempty"`
 }
 
 func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver, desktop bool) *terminalCommandService {
@@ -809,7 +814,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						TabID: info.ID, SessionID: info.SessionID, SessionName: sessionInfo.Name, SessionKind: sessionInfo.Kind,
 						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom,
+						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt,
 					})
 				}
 				return result, nil
@@ -928,7 +933,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "terminal_rename_tab", func(ctx context.Context, _ *ipc.Call, input renameTerminalRequest) (attachedTabDTO, error) {
 				ctx = productionSessionRequestContext(ctx)
-				info, err := s.sessions.RenameTabFor(ctx, input.TabID, input.Title)
+				info, err := s.sessions.RenameTabForAt(ctx, input.TabID, input.Title, input.At)
 				if err != nil {
 					return attachedTabDTO{}, terminalIPCError(err)
 				}
@@ -1268,7 +1273,7 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-		Retainable: info.Retainable, Durable: info.Durable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, TitleCustom: info.TitleCustom, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
+		Retainable: info.Retainable, Durable: info.Durable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
 		AttachmentID: info.AttachmentID,
 	}
 }

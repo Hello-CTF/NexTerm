@@ -1109,10 +1109,11 @@ describe("App terminal rename", () => {
   it("uses the remotely confirmed canonical title", async () => {
     mocks.renameTab.mockResolvedValue({ title: "remote-canonical" });
     await submitRenameDraft("draft-title");
-    expect(mocks.renameTab).toHaveBeenCalledWith("T1", "draft-title");
+    expect(mocks.renameTab).toHaveBeenCalledWith("T1", "draft-title", expect.any(Number));
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     expect(tabs[0]?.title).toBe("remote-canonical");
     expect(tabs[0]?.renamedByUser).toBe(true);
+    expect(tabs[0]?.customTitleAt).toBe(mocks.renameTab.mock.calls[0]?.[2]);
   });
 
   it("keeps the edit draft and shows the conflict instead of swallowing it", async () => {

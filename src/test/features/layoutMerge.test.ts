@@ -77,30 +77,63 @@ describe("three-way shared layout merge", () => {
     expect(sharedLayoutKey(fromA)).toBe(sharedLayoutKey(fromB));
   });
 
-  it("keeps a rename from one device over a concurrent OSC title from the other", () => {
-    const base = layout([workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "终端 1" }])])]);
-    const renamed = layout([
-      workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "deploy", renamedByUser: true }])]),
-    ]);
-    const osc = layout([workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "bash: ~" }])])]);
+  function titled(title: string, extra: Partial<AppTab> = {}): PersistedLayout {
+    return layout([workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title, ...extra }])])]);
+  }
 
-    for (const merged of [mergeLayout(base, renamed, osc), mergeLayout(base, osc, renamed)]) {
-      const tab = merged.workspaces[0].panes[0].tabs[0];
-      expect(tab.title).toBe("deploy");
-      expect(tab.renamedByUser).toBe(true);
+  function mergedTab(base: PersistedLayout | null, local: PersistedLayout, remote: PersistedLayout): AppTab {
+    return mergeLayout(base, local, remote).workspaces[0].panes[0].tabs[0];
+  }
+
+  it("keeps a rename from one device over a concurrent OSC title from the other", () => {
+    const base = titled("终端 1");
+    const renamed = titled("deploy", { renamedByUser: true, customTitleAt: 1_000 });
+    const osc = titled("bash: ~");
+    for (const tab of [mergedTab(base, renamed, osc), mergedTab(base, osc, renamed)]) {
+      expect(tab).toMatchObject({ title: "deploy", renamedByUser: true, customTitleAt: 1_000 });
     }
   });
 
-  it("lets a cleared custom title return to the other device's title", () => {
-    const base = layout([
-      workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "deploy", renamedByUser: true }])]),
-    ]);
-    const cleared = layout([workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title: "vim" }])])]);
-
-    const merged = mergeLayout(base, base, cleared);
-    const tab = merged.workspaces[0].panes[0].tabs[0];
+  it("lets a cleared custom title return to the clearing device's title", () => {
+    const base = titled("deploy", { renamedByUser: true, customTitleAt: 1_000 });
+    const cleared = titled("vim", { customTitleAt: 2_000 });
+    const tab = mergedTab(base, base, cleared);
     expect(tab.title).toBe("vim");
     expect(tab.renamedByUser).toBeUndefined();
+    expect(tab.customTitleAt).toBe(2_000);
+  });
+
+  it("settles a clear against a concurrent rename on the newer decision, title and flag together", () => {
+    const base = titled("deploy", { renamedByUser: true, customTitleAt: 1_000 });
+    const cleared = titled("vim", { customTitleAt: 2_000 });
+    const renamed = titled("db", { renamedByUser: true, customTitleAt: 3_000 });
+    for (const tab of [mergedTab(base, cleared, renamed), mergedTab(base, renamed, cleared)]) {
+      expect(tab).toMatchObject({ title: "db", renamedByUser: true, customTitleAt: 3_000 });
+    }
+    const laterClear = titled("vim", { customTitleAt: 4_000 });
+    for (const tab of [mergedTab(base, laterClear, renamed), mergedTab(base, renamed, laterClear)]) {
+      expect(tab.title).toBe("vim");
+      expect(tab.renamedByUser).toBeUndefined();
+      expect(tab.customTitleAt).toBe(4_000);
+    }
+  });
+
+  it("does not let a stale rename resurrect a title another device cleared", () => {
+    const stale = titled("deploy", { renamedByUser: true, customTitleAt: 1_000 });
+    const cleared = titled("vim", { customTitleAt: 2_000 });
+    for (const tab of [mergedTab(stale, stale, cleared), mergedTab(null, stale, cleared), mergedTab(null, cleared, stale)]) {
+      expect(tab.title).toBe("vim");
+      expect(tab.renamedByUser).toBeUndefined();
+    }
+  });
+
+  it("settles two concurrent renames on the newest", () => {
+    const base = titled("终端 1");
+    const first = titled("api", { renamedByUser: true, customTitleAt: 1_000 });
+    const second = titled("db", { renamedByUser: true, customTitleAt: 2_000 });
+    for (const tab of [mergedTab(base, first, second), mergedTab(base, second, first)]) {
+      expect(tab).toMatchObject({ title: "db", renamedByUser: true, customTitleAt: 2_000 });
+    }
   });
 
   it("keeps both panes of concurrent splits and converges from both perspectives", () => {

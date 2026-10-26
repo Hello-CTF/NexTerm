@@ -120,11 +120,11 @@ func TestDurableCanonicalBlankRenameResumesOSCTitle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	renamed, err := manager.RenameTab(ctx, tabID, "deploy")
+	renamed, err := manager.RenameTabAt(ctx, tabID, "deploy", 1_000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !renamed.TitleCustom {
+	if !renamed.TitleCustom || renamed.TitleChangedAt != 1_000 {
 		t.Fatalf("rename info = %+v", renamed)
 	}
 	tab, err := manager.Tab(tabID)
@@ -149,4 +149,50 @@ func TestDurableCanonicalBlankRenameResumesOSCTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForTabTitle(t, tab, "osc-title")
+}
+
+// The client's decision time travels with every title decision so clients can
+// order renames and clears across devices; a rename without one uses now.
+func TestRenameTabCarriesDecisionTime(t *testing.T) {
+	emitter, events := controlCollector()
+	connector := newFakeConnector()
+	terminals := newFakeTerminalFactory()
+	manager := NewManager(Config{Connector: connector, Terminals: terminals, Emitter: emitter})
+	t.Cleanup(func() { _ = manager.Close() })
+	session, err := manager.Connect(context.Background(), Asset{ID: "asset-ssh", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	renamed, err := manager.RenameTabAt(context.Background(), tab.ID, "deploy", 1_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.TitleChangedAt != 1_000 {
+		t.Fatalf("rename info = %+v", renamed)
+	}
+	cleared, err := manager.RenameTabAt(context.Background(), tab.ID, "", 2_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.TitleChangedAt != 2_000 || cleared.TitleCustom {
+		t.Fatalf("clear info = %+v", cleared)
+	}
+	sawClear := false
+	for _, event := range drainControl(events) {
+		if !event.TitleCustom && event.TitleChangedAt == 2_000 {
+			sawClear = true
+		}
+	}
+	if !sawClear {
+		t.Fatal("no control event carried the clear decision time")
+	}
+	before := time.Now().UnixMilli()
+	now, err := manager.RenameTab(context.Background(), tab.ID, "ops")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if now.TitleChangedAt < before {
+		t.Fatalf("default decision time = %d, want >= %d", now.TitleChangedAt, before)
+	}
 }

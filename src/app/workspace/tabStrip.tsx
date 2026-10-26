@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { useUi, type AppTab } from "../store";
+import { hasCustomTitle, useUi, type AppTab } from "../store";
 import { useTabUnread } from "../unreadStore";
 import { useTerminalTabTitle } from "../terminalViewStore";
 import { fileVisual } from "../../features/files/fileTypes";
@@ -71,7 +71,7 @@ export function TabStripTitle({ tab }: { tab: AppTab }) {
     // A custom title always rules the strip, even when an OSC view title is still cached
     // (a rename synced from another device, a restored layout, or a reattach).
     <span className="truncate">
-      {tab.kind === "terminal" && tab.renamedByUser !== true && remoteTitle ? remoteTitle : tab.title}
+      {tab.kind === "terminal" && !hasCustomTitle(tab) && remoteTitle ? remoteTitle : tab.title}
     </span>
   );
 }

@@ -61,6 +61,7 @@ export interface TerminalControlEvent {
   durable?: boolean;
   title?: string;
   titleCustom?: boolean;
+  titleChangedAt?: number;
 }
 
 export class EventVersionGate {

@@ -49,7 +49,12 @@ export interface AppTab {
   // durable is reported by the backend once the terminal attaches; SSH tabs
   // can only move to the background when they run on the durable helper.
   durable?: boolean;
+  // renamedByUser locks the title against OSC updates; customTitleAt is when the title was
+  // last decided explicitly (a rename or a clear, by hand, by the AI, or as a backend custom
+  // title) and orders those decisions across devices. A lock without a timestamp is a legacy
+  // layout entry that may hold an OSC title, so it does not count as a custom title.
   renamedByUser?: boolean;
+  customTitleAt?: number;
   closeError?: string;
   restorePending?: boolean;
 }
