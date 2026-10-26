@@ -19,4 +19,10 @@ var (
 	ErrActiveSessions = errors.New("supervisor has active sessions")
 
 	ErrVersionMismatch = fmt.Errorf("%w: protocol version mismatch", ErrProtocol)
+	// ErrHelperUpgradeRequired reports a helper that speaks an older protocol
+	// than this client; ErrClientUpgradeRequired the reverse. Both are version
+	// mismatches, so callers that refuse to replace an incompatible helper keep
+	// doing so.
+	ErrHelperUpgradeRequired = fmt.Errorf("%w: supervisor helper needs upgrade", ErrVersionMismatch)
+	ErrClientUpgradeRequired = fmt.Errorf("%w: client needs upgrade", ErrVersionMismatch)
 )

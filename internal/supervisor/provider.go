@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -28,6 +29,9 @@ func translateError(err error) error {
 		return durable.ErrExited
 	case errors.Is(err, ErrClosed):
 		return durable.ErrClosed
+	case errors.Is(err, ErrHelperUpgradeRequired), errors.Is(err, ErrClientUpgradeRequired):
+		// Keep the readable reason: it names the side that must be upgraded.
+		return fmt.Errorf("%w: %w", durable.ErrUnavailable, err)
 	case errors.Is(err, ErrUnavailable), errors.Is(err, ErrProtocol), errors.Is(err, ErrUnsupported):
 		return durable.ErrUnavailable
 	default:
@@ -249,9 +253,8 @@ type RemoteProvider struct {
 	client *Client
 	create func(context.Context, *Client, CreateOptions) (Info, error)
 	attach func(context.Context, *Client, string, *Identity) (*Stream, error)
-	// createAttach, when set, creates and attaches on one connection. It
-	// returns a nil stream when the helper cannot chain the two, in which case
-	// Create attaches separately. Tests that replace create or attach clear it.
+	// createAttach, when set, creates and attaches on one connection. Tests
+	// that replace create or attach clear it so Create attaches separately.
 	createAttach func(context.Context, *Client, CreateOptions) (Info, *Stream, error)
 }
 
@@ -360,8 +363,10 @@ func (p *RemoteProvider) KillWithIdentity(ctx context.Context, id string, identi
 }
 
 func (p *RemoteProvider) DurableMetadataSupported(ctx context.Context) (bool, error) {
-	supported, err := p.client.MetadataSupported(ctx)
-	return supported, translateError(err)
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (p *RemoteProvider) RenameDurable(ctx context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {

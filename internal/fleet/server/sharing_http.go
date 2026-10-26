@@ -225,9 +225,8 @@ func (s *Service) serveShareTerminalOpen(w http.ResponseWriter, r *http.Request)
 	s.serveShareTerminal(w, r, &grant.Grant, s.sharing.NewHostGate(grant))
 }
 
-// serveShareTerminal upgrades the viewer WS and establishes the gated data path. When the grant carries a
-// SessionID it attaches to the existing session; otherwise it creates a terminal via the host agent
-// (registered shares); the pumps and Gate semantics of both paths are exactly the same.
+// serveShareTerminal upgrades the viewer WS and establishes the gated data path: it creates a terminal via the
+// host agent (registered shares) and pumps it through the Gate.
 func (s *Service) serveShareTerminal(w http.ResponseWriter, r *http.Request, grant *sharing.Grant, gate *sharing.Gate) {
 	conn, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Public, nil))
 	if err != nil {
@@ -244,7 +243,7 @@ func (s *Service) serveShareTerminalWithViewer(r *http.Request, viewer *shareTer
 		s.failShareTerminal(viewer, err)
 		return ""
 	}
-	sessionID, stream, cleanup, err := s.openShareStream(r, client, grant)
+	sessionID, stream, cleanup, err := s.openShareStream(r, client)
 	if err != nil {
 		s.failShareTerminal(viewer, err)
 		return ""
@@ -263,11 +262,9 @@ func (s *Service) serveShareTerminalWithViewer(r *http.Request, viewer *shareTer
 	return sessionID
 }
 
-func (s *Service) openShareStream(r *http.Request, client *supervisor.Client, grant *sharing.Grant) (string, *supervisor.Stream, func(), error) {
-	if grant.SessionID != "" {
-		stream, err := client.Attach(r.Context(), grant.SessionID, nil)
-		return grant.SessionID, stream, nil, err
-	}
+// openShareStream creates the shared terminal on the device and attaches to it by its identity. Host grants never
+// name an existing session, so there is no path that attaches without an identity.
+func (s *Service) openShareStream(r *http.Request, client *supervisor.Client) (string, *supervisor.Stream, func(), error) {
 	info, err := client.Create(r.Context(), supervisor.CreateOptions{})
 	if err != nil {
 		return "", nil, nil, err
@@ -381,6 +378,8 @@ func shareTermination(err error) (string, string, bool) {
 		return "read_only", "分享授权为只读", true
 	case errors.Is(err, supervisor.ErrNotFound):
 		return "not_found", "分享会话不存在", true
+	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
+		return "helper_upgrade_required", "设备上的 nexterm-agent 版本过旧，请升级后重试", true
 	case errors.Is(err, supervisor.ErrUnavailable):
 		return "disconnected", "设备代理离线", true
 	}

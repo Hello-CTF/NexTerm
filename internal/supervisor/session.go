@@ -170,10 +170,6 @@ func (s *Session) Write(p []byte) (int, error) {
 	return s.writeInput(p, true)
 }
 
-func (s *Session) tryWrite(p []byte) (int, error) {
-	return s.writeInput(p, false)
-}
-
 func (s *Session) writeInput(p []byte, wait bool) (int, error) {
 	return s.writeInputCtx(context.Background(), p, wait)
 }

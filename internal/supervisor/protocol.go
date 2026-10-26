@@ -8,7 +8,13 @@ import (
 	"io"
 )
 
-const ProtocolVersion = 2
+// ProtocolVersion is the only protocol a helper and its clients speak. Version
+// 3 folded every capability earlier versions negotiated per feature (exec,
+// metadata, compressed replay and output, runtime metadata, activity,
+// create-then-attach, windowed input and output credit) into the baseline.
+// Helpers of different versions listen on different endpoints, so a version 3
+// helper never sees the sessions of an older one.
+const ProtocolVersion = 3
 
 const (
 	maxFramePayload = 256 * 1024
@@ -45,38 +51,20 @@ const (
 	frameRenamed
 	frameReplayGzip
 	// frameCredit carries the client's cumulative count of retired output
-	// bytes (8-byte big-endian) once output_credit is negotiated. It has no reply.
+	// bytes (8-byte big-endian). It has no reply.
 	frameCredit
 	// frameOutputZstd is a live output chunk compressed per frame; see
-	// output_zstd.go. Only valid once output_zstd is negotiated.
+	// output_zstd.go. Only sent to clients that asked for compressed output.
 	frameOutputZstd
 )
 
-const (
-	// featureExec is advertised in the hello handshake by peers that support
-	// non-PTY exec sessions (createMsg.Pty == false and frameExecOutput).
-	featureExec            = "exec"
-	featureMetadata        = "metadata"
-	featureReplayGzip      = "replay_gzip"
-	featureRuntimeMetadata = "runtime_metadata"
-	featureActivity        = "activity"
-	// featureCreateAttach lets a connection stay usable after frameCreate so the
-	// creator can attach on it (and pipeline the attach right behind the create).
-	featureCreateAttach = "create_attach"
-	// featureInputWindow lets the client keep several frameInput frames in flight.
-	// The server then acknowledges each one in order with an inputAckMsg that may
-	// carry an error, and delays the acknowledgement while the session's input
-	// queue is full instead of rejecting the frame.
-	featureInputWindow = "input_window"
-	// featureOutputCredit makes the server pause streaming the recording once
-	// outputCreditWindow bytes are unretired; the client returns credit with
-	// frameCredit as its consumer reads.
-	featureOutputCredit = "output_credit"
-	// featureOutputZstd lets the server send output chunks as independently
-	// zstd-compressed frameOutputZstd frames when that is smaller on the wire.
-	featureOutputZstd = "output_zstd"
-)
-
+// Every connection uses windowed input and credited output. The client may keep
+// several frameInput frames in flight; the server acknowledges each one in
+// order with an inputAckMsg that may carry an error, and delays the
+// acknowledgement while the session's input queue is full instead of rejecting
+// the frame. The server pauses streaming the recording once
+// outputCreditWindow bytes are unretired; the client returns credit with
+// frameCredit as its consumer reads.
 const (
 	// inputWindowBytes and inputWindowFrames bound the unacknowledged input a
 	// client may have in flight; the server tolerates a small multiple of it.
@@ -101,11 +89,16 @@ const (
 )
 
 type helloMsg struct {
-	Version     int               `json:"version"`
-	StateDigest string            `json:"state_digest,omitempty"`
-	Features    []string          `json:"features,omitempty"`
-	Runtime     *RuntimeMetadata  `json:"runtime,omitempty"`
-	Activity    *ActivitySnapshot `json:"activity,omitempty"`
+	Version     int    `json:"version"`
+	StateDigest string `json:"state_digest,omitempty"`
+	// CompressOutput is a client preference, not a capability: remote clients
+	// ask for gzip replay batches and per-frame zstd live output, local clients
+	// keep raw frames to save CPU.
+	CompressOutput bool `json:"compress_output,omitempty"`
+	// Runtime and Activity are sent by the helper in its acknowledgement.
+	// Runtime is absent only when the helper could not hash its executable.
+	Runtime  *RuntimeMetadata  `json:"runtime,omitempty"`
+	Activity *ActivitySnapshot `json:"activity,omitempty"`
 }
 
 type createMsg struct {
@@ -116,8 +109,8 @@ type createMsg struct {
 	Env     []string `json:"env,omitempty"`
 	Cols    uint32   `json:"cols,omitempty"`
 	Rows    uint32   `json:"rows,omitempty"`
-	// Pty is nil or true for a PTY session (the only mode pre-feature peers
-	// know); false requests a one-shot non-PTY exec session.
+	// Pty is nil or true for a PTY session; false requests a one-shot non-PTY
+	// exec session.
 	Pty *bool `json:"pty,omitempty"`
 }
 
@@ -125,8 +118,8 @@ type attachMsg struct {
 	ID                string `json:"id"`
 	ExpectCreatedAt   int64  `json:"expect_created_at_unix_nano,omitempty"`
 	ExpectIncarnation string `json:"expect_incarnation,omitempty"`
-	// Offset is the absolute byte offset of the recording the client has consumed; the server seeks there
-	// and resumes. Old servers ignore this field and replay from 0; the client degrades by skipping the prefix in-stream.
+	// Offset is the absolute byte offset of the recording the client has
+	// consumed; the server seeks there and resumes.
 	Offset uint64 `json:"offset,omitempty"`
 }
 
@@ -149,8 +142,8 @@ type versionsMsg struct {
 
 type inputAckMsg struct {
 	Written int `json:"written"`
-	// Error is set only when input_window is negotiated: the frame was
-	// rejected and the stream's later writes surface it.
+	// Error is set when the frame was rejected; the stream's later writes
+	// surface it.
 	Error *errorMsg `json:"error,omitempty"`
 }
 
@@ -160,6 +153,9 @@ type errorMsg struct {
 	ID               string `json:"id,omitempty"`
 	Title            string `json:"title,omitempty"`
 	MetadataRevision uint64 `json:"metadata_revision,omitempty"`
+	// Version accompanies codeVersionMismatch: the protocol the rejecting
+	// helper speaks. Helpers before version 3 leave it empty.
+	Version int `json:"version,omitempty"`
 }
 
 type exitMsg struct {
@@ -172,7 +168,6 @@ const (
 	codeNotFound         = "not_found"
 	codeAlreadyExists    = "already_exists"
 	codeIdentity         = "identity"
-	codeIdentityChanged  = "identity_changed"
 	codeMetadataConflict = "metadata_conflict"
 	codeExited           = "exited"
 	codeInvalidInput     = "invalid_input"
@@ -240,6 +235,9 @@ func codedError(code, message string) error {
 }
 
 func decodedError(msg errorMsg) error {
+	if msg.Code == codeVersionMismatch {
+		return &wireError{versionMismatchError(msg.Version, msg.Message)}
+	}
 	if msg.Code == codeMetadataConflict {
 		return &wireError{&MetadataConflictError{
 			Current: Info{ID: msg.ID, Title: msg.Title, MetadataRevision: msg.MetadataRevision},
@@ -255,7 +253,7 @@ func errorSentinel(code string) error {
 		return ErrNotFound
 	case codeAlreadyExists:
 		return ErrAlreadyExists
-	case codeIdentity, codeIdentityChanged:
+	case codeIdentity:
 		return ErrIdentity
 	case codeMetadataConflict:
 		return ErrMetadataConflict
@@ -353,4 +351,18 @@ func parseExecOutput(payload []byte) (stream byte, data []byte, err error) {
 		return 0, nil, fmt.Errorf("%w: exec output frame is empty", ErrProtocol)
 	}
 	return payload[0], payload[1:], nil
+}
+
+// versionMismatchError turns a helper's version rejection into the error that
+// says which side needs upgrading. helperVersion is zero when the helper is
+// older than version 3 and did not report its version.
+func versionMismatchError(helperVersion int, message string) error {
+	if helperVersion > ProtocolVersion {
+		return fmt.Errorf("%w: the supervisor helper speaks protocol %d but this client only speaks protocol %d; update this client (%s)", ErrClientUpgradeRequired, helperVersion, ProtocolVersion, message)
+	}
+	spoken := "an older protocol"
+	if helperVersion > 0 {
+		spoken = fmt.Sprintf("protocol %d", helperVersion)
+	}
+	return fmt.Errorf("%w: the supervisor helper speaks %s but this client requires protocol %d; sessions of the older helper stay with it until it is upgraded (%s)", ErrHelperUpgradeRequired, spoken, ProtocolVersion, message)
 }

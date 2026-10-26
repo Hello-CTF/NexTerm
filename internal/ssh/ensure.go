@@ -960,12 +960,6 @@ func (r *Resolver) updateIdleAllowed(ctx context.Context, daemon *Daemon, interr
 		}
 		return false, "active PTY/exec processes; update deferred until idle", nil
 	}
-	if errors.Is(err, supervisor.ErrUnsupported) {
-		if interrupt {
-			return true, "activity unprovable; explicit interrupt accepted", nil
-		}
-		return false, "daemon-wide activity is unprovable; update deferred", nil
-	}
 	return false, "", helperUnavailable("check daemon-wide activity", err)
 }
 

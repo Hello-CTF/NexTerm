@@ -237,7 +237,7 @@ func TestCloseUnblocksInputPumpWithSlaveHeldOpen(t *testing.T) {
 	payload := make([]byte, maxInputChunkLen)
 	saturated := false
 	for attempt := 0; attempt < inputQueueSlots+2; attempt++ {
-		if _, err := session.tryWrite(payload); err != nil {
+		if _, err := session.writeInput(payload, false); err != nil {
 			if !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("fill input queue: %v", err)
 			}

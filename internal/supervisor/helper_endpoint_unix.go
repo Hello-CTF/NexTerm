@@ -12,8 +12,14 @@ import (
 )
 
 func helperEndpoint(stateDir string) (string, error) {
+	return helperEndpointVersion(stateDir, ProtocolVersion)
+}
+
+// helperEndpointVersion names the socket of a helper speaking protocol
+// version; helpers of different versions never share an endpoint.
+func helperEndpointVersion(stateDir string, version int) (string, error) {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%s", os.Geteuid(), stateDir)))
-	return filepath.Join(platform.TempDir(), fmt.Sprintf("nexterm-sup-%x", sum[:8]), fmt.Sprintf("supervisor-v%d.sock", ProtocolVersion)), nil
+	return filepath.Join(platform.TempDir(), fmt.Sprintf("nexterm-sup-%x", sum[:8]), fmt.Sprintf("supervisor-v%d.sock", version)), nil
 }
 
 func endpointPath(path string) string {

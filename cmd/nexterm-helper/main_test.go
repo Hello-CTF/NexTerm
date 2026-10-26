@@ -40,11 +40,10 @@ func TestHelperMetadataProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	var metadata struct {
-		Version  string   `json:"version"`
-		Commit   string   `json:"commit"`
-		Protocol int      `json:"protocol"`
-		SHA256   string   `json:"sha256"`
-		Features []string `json:"features"`
+		Version  string `json:"version"`
+		Commit   string `json:"commit"`
+		Protocol int    `json:"protocol"`
+		SHA256   string `json:"sha256"`
 	}
 	if err := json.Unmarshal(output, &metadata); err != nil {
 		t.Fatal(err)
@@ -65,8 +64,8 @@ func TestHelperMetadataProcess(t *testing.T) {
 	if metadata.Protocol != supervisor.ProtocolVersion {
 		t.Fatalf("helper protocol = %d, want %d", metadata.Protocol, supervisor.ProtocolVersion)
 	}
-	if got, want := strings.Join(metadata.Features, ","), "activity,create_attach,exec,input_window,metadata,output_credit,output_zstd,replay_gzip,runtime_metadata"; got != want {
-		t.Fatalf("helper features = %q, want %q", got, want)
+	if _, ok := fields["features"]; ok {
+		t.Fatalf("helper metadata still lists negotiated features: %s", output)
 	}
 	executable, err := os.Executable()
 	if err != nil {

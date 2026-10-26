@@ -10,6 +10,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
@@ -76,6 +77,8 @@ func TestIPCErrorUserMessagesAreActionable(t *testing.T) {
 		{err: ErrDurableDisabled, code: ipc.CodeUnsupported, want: "已有持久终端可从后台会话恢复"},
 		{err: ErrAmbiguousDurable, code: ipc.CodeBadParam, want: "指定会话"},
 		{err: ErrDurableUnrecoverable, code: ipc.Code("durable_unrecoverable"), want: "无法恢复"},
+		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrHelperUpgradeRequired), code: ipc.Code("helper_upgrade_required"), want: "需要升级"},
+		{err: supervisor.ErrClientUpgradeRequired, code: ipc.Code("client_upgrade_required"), want: "升级客户端"},
 		{err: ErrInvalidSize, code: ipc.CodeBadParam, want: "终端尺寸无效"},
 		{err: context.DeadlineExceeded, code: ipc.CodeTimeout, want: "操作超时"},
 		{err: fmt.Errorf("reconnect: %w", ErrAssetSessionConflict), code: ipc.CodeInternal, want: "该资产已有活动会话"},

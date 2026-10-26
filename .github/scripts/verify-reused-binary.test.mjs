@@ -38,7 +38,6 @@ function fixture(t, target, { notRun = false } = {}) {
   });
   Object.assign(manifest, {
     protocol: CURRENT_METADATA.protocol,
-    features: [...CURRENT_METADATA.features],
     sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
     binary_metadata_verified: true,
     metadata_host: { os: target.os, arch: target.arch },
@@ -46,7 +45,6 @@ function fixture(t, target, { notRun = false } = {}) {
   if (notRun) {
     Object.assign(manifest, { binary_metadata_verified: false, metadata_status: "not-run", cross_compiled: true, untested: true });
     delete manifest.protocol;
-    delete manifest.features;
     delete manifest.sha256;
     delete manifest.metadata_host;
   }
@@ -99,15 +97,13 @@ test("validator fixture: three verified representatives and six not-run targets 
 
 for (const [name, edit, expected] of [
   ["wrong protocol", (manifest) => { manifest.protocol = 1; }, /protocol/],
-  ["wrong features", (manifest) => { manifest.features = ["exec"]; }, /features/],
-  ["missing features", (manifest) => { delete manifest.features; }, /features/],
+  ["stale features", (manifest) => { manifest.features = ["exec"]; }, /features/],
   ["stale placeholder version", (manifest) => { manifest.version = "0.0.0"; }, /version/],
   ["placeholder runtime sha256", (manifest) => { manifest.sha256 = "0".repeat(64); }, /sha256/],
   ["unexecuted cross metadata", (manifest) => {
     manifest.binary_metadata_verified = false;
     delete manifest.sha256;
     delete manifest.protocol;
-    delete manifest.features;
     delete manifest.metadata_host;
   }, /not-run/],
 ]) {

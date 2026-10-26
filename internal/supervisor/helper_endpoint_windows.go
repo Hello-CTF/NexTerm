@@ -10,7 +10,13 @@ import (
 const pipePrefix = `\\.\pipe\`
 
 func helperEndpoint(stateDir string) (string, error) {
-	return pipeEndpointName(stateDir)
+	return helperEndpointVersion(stateDir, ProtocolVersion)
+}
+
+// helperEndpointVersion names the pipe of a helper speaking protocol version;
+// helpers of different versions never share an endpoint.
+func helperEndpointVersion(stateDir string, version int) (string, error) {
+	return pipeEndpointName(stateDir, version)
 }
 
 func endpointPath(path string) string {

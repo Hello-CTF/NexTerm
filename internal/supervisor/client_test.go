@@ -49,7 +49,7 @@ func fakeStreamServer(t *testing.T, stateDir string, handle func(conn net.Conn, 
 			_ = writeFrame(conn, frameError, []byte(`{"code":"state_mismatch","message":"wrong state"}`))
 			return
 		}
-		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
+		if err := writeFrame(conn, frameHelloAck, fakeHelloAck()); err != nil {
 			return
 		}
 		kind, payload, err = readFrame(conn)
@@ -272,7 +272,7 @@ func fakeOffsetStreamServer(t *testing.T, stateDir string, gotOffset *uint64, fr
 		if hello.Version != ProtocolVersion || hello.StateDigest != digest {
 			return
 		}
-		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
+		if err := writeFrame(conn, frameHelloAck, fakeHelloAck()); err != nil {
 			return
 		}
 		kind, payload, err = readFrame(conn)

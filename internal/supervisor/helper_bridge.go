@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -18,7 +19,9 @@ func runBridge(ctx context.Context, config HelperConfig) error {
 }
 
 // DialHelperBridge opens a byte-transparent connection to the existing helper.
-// The caller ensures helper availability before opening a bridge.
+// The caller ensures helper availability before opening a bridge. When only an
+// older helper serves the state directory, the returned connection answers the
+// client's hello with a helper-upgrade rejection.
 func DialHelperBridge(ctx context.Context, stateDir string) (net.Conn, error) {
 	endpoint, err := HelperEndpoint(stateDir)
 	if err != nil {
@@ -26,6 +29,11 @@ func DialHelperBridge(ctx context.Context, stateDir string) (net.Conn, error) {
 	}
 	conn, err := dialSocket(ctx, endpoint)
 	if err != nil {
+		if absolute, absErr := filepath.Abs(stateDir); absErr == nil {
+			if version, ok := legacyHelperVersion(ctx, absolute); ok {
+				return legacyRejectionConn(absolute, version), nil
+			}
+		}
 		return nil, fmt.Errorf("%w: dial supervisor helper: %v", ErrUnavailable, err)
 	}
 	return conn, nil

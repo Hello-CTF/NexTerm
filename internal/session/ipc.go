@@ -7,6 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
@@ -43,6 +44,10 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.CodeDisconnected, userMessage(err), err)
 	case errors.Is(err, ErrDurableDisabled):
 		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
+	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
+		return ipc.WrapError(ipc.Code("helper_upgrade_required"), userMessage(err), err)
+	case errors.Is(err, supervisor.ErrClientUpgradeRequired):
+		return ipc.WrapError(ipc.Code("client_upgrade_required"), userMessage(err), err)
 	case errors.Is(err, ErrAmbiguousDurable):
 		return ipc.WrapError(ipc.CodeBadParam, userMessage(err), err)
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
@@ -80,6 +85,10 @@ func userMessage(err error) string {
 		return "终端标签页已关闭，请重新打开"
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected):
 		return "会话已断开，请重新连接"
+	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
+		return "主机上运行的是旧版 helper，需要升级后才能使用持久终端；旧 helper 中的会话不会被自动迁移或结束"
+	case errors.Is(err, supervisor.ErrClientUpgradeRequired):
+		return "主机上的 helper 比当前客户端新，请先升级客户端"
 	case errors.Is(err, ErrDurableDisabled):
 		return "该 SSH 资产已设置为普通终端，不能新建持久终端；已有持久终端可从后台会话恢复"
 	case errors.Is(err, ErrAmbiguousDurable):

@@ -54,7 +54,7 @@ func fakeUnaryServer(t *testing.T, stateDir string, handle func(conn net.Conn, k
 			_ = writeFrame(conn, frameError, []byte(`{"code":"state_mismatch","message":"wrong state"}`))
 			return
 		}
-		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
+		if err := writeFrame(conn, frameHelloAck, fakeHelloAck()); err != nil {
 			return
 		}
 		for {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 
@@ -15,19 +14,13 @@ import (
 )
 
 // RuntimeMetadata identifies the helper code and protocol behind a running
-// daemon. Version differences alone do not imply protocol incompatibility.
+// daemon. Version differences alone do not imply protocol incompatibility; the
+// protocol number alone determines what the helper implements.
 type RuntimeMetadata struct {
-	Version  string   `json:"version"`
-	Commit   string   `json:"commit"`
-	Protocol int      `json:"protocol"`
-	SHA256   string   `json:"sha256"`
-	Features []string `json:"features"`
-}
-
-// HelperFeatures returns the capabilities implemented by this helper daemon,
-// sorted for deterministic build metadata and protocol evidence.
-func HelperFeatures() []string {
-	return []string{featureActivity, featureCreateAttach, featureExec, featureInputWindow, featureMetadata, featureOutputCredit, featureOutputZstd, featureReplayGzip, featureRuntimeMetadata}
+	Version  string `json:"version"`
+	Commit   string `json:"commit"`
+	Protocol int    `json:"protocol"`
+	SHA256   string `json:"sha256"`
 }
 
 // CurrentRuntimeMetadata reads the actual executable being run, rather than a
@@ -55,7 +48,6 @@ func runtimeMetadataForExecutable(executable string) (RuntimeMetadata, error) {
 		Commit:   version.Commit,
 		Protocol: ProtocolVersion,
 		SHA256:   hex.EncodeToString(hash.Sum(nil)),
-		Features: HelperFeatures(),
 	}, nil
 }
 
@@ -66,7 +58,6 @@ func provenRuntimeMetadata() *RuntimeMetadata {
 	if err != nil {
 		return nil
 	}
-	metadata.Features = slices.Clone(metadata.Features)
 	return &metadata
 }
 
@@ -87,8 +78,9 @@ func validateRuntimeMetadata(metadata RuntimeMetadata, protocol int) error {
 }
 
 // RuntimeMetadata returns metadata supplied by the running daemon during the
-// negotiated hello. known is false for older daemons or when the daemon cannot
-// prove its identity; callers must not substitute metadata from a candidate.
+// hello. known is false only when the daemon could not hash its own executable
+// and so cannot prove its identity; callers must not substitute metadata from
+// a candidate.
 func (c *Client) RuntimeMetadata(ctx context.Context) (metadata RuntimeMetadata, known bool, err error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
@@ -98,7 +90,5 @@ func (c *Client) RuntimeMetadata(ctx context.Context) (metadata RuntimeMetadata,
 	if conn.runtimeMetadata == nil {
 		return RuntimeMetadata{}, false, nil
 	}
-	metadata = *conn.runtimeMetadata
-	metadata.Features = slices.Clone(metadata.Features)
-	return metadata, true, nil
+	return *conn.runtimeMetadata, true, nil
 }

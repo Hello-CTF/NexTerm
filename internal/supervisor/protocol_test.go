@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -79,7 +80,6 @@ func TestErrorCodeMapping(t *testing.T) {
 		codeNotFound:         ErrNotFound,
 		codeAlreadyExists:    ErrAlreadyExists,
 		codeIdentity:         ErrIdentity,
-		codeIdentityChanged:  ErrIdentity,
 		codeMetadataConflict: ErrMetadataConflict,
 		codeExited:           ErrExited,
 		codeInvalidInput:     ErrInvalidInput,
@@ -88,10 +88,8 @@ func TestErrorCodeMapping(t *testing.T) {
 		codeProtocol:         ErrProtocol,
 	}
 	for code, sentinel := range pairs {
-		if code != codeIdentityChanged {
-			if got := errorCode(sentinel); got != code {
-				t.Fatalf("errorCode(%v) = %q, want %q", sentinel, got, code)
-			}
+		if got := errorCode(sentinel); got != code {
+			t.Fatalf("errorCode(%v) = %q, want %q", sentinel, got, code)
 		}
 		if !errors.Is(codedError(code, "detail"), sentinel) {
 			t.Fatalf("codedError(%q) does not map to %v", code, sentinel)
@@ -99,6 +97,35 @@ func TestErrorCodeMapping(t *testing.T) {
 	}
 	if got := errorCode(codedError(codeVersionMismatch, "v2")); got != codeProtocol {
 		t.Fatalf("version mismatch maps to %q, want %q", got, codeProtocol)
+	}
+}
+
+// A version rejection names the side that must upgrade. Helpers before
+// protocol 3 report no version, which means the helper is the older side.
+func TestVersionMismatchNamesTheSideToUpgrade(t *testing.T) {
+	tests := []struct {
+		name    string
+		msg     errorMsg
+		want    error
+		wantNot error
+	}{
+		{"older helper without version", errorMsg{Code: codeVersionMismatch, Message: "protocol version 3 is not supported"}, ErrHelperUpgradeRequired, ErrClientUpgradeRequired},
+		{"older helper with version", errorMsg{Code: codeVersionMismatch, Message: "older", Version: ProtocolVersion - 1}, ErrHelperUpgradeRequired, ErrClientUpgradeRequired},
+		{"newer helper", errorMsg{Code: codeVersionMismatch, Message: "newer", Version: ProtocolVersion + 1}, ErrClientUpgradeRequired, ErrHelperUpgradeRequired},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := decodedError(test.msg)
+			if !errors.Is(err, test.want) || errors.Is(err, test.wantNot) {
+				t.Fatalf("decodedError = %v, want %v only", err, test.want)
+			}
+			if !errors.Is(err, ErrVersionMismatch) || !errors.Is(err, ErrProtocol) {
+				t.Fatalf("decodedError = %v, want a protocol version mismatch", err)
+			}
+			if !strings.Contains(err.Error(), test.msg.Message) {
+				t.Fatalf("decodedError = %v, lost the helper's message %q", err, test.msg.Message)
+			}
+		})
 	}
 }
 

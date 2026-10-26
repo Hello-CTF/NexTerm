@@ -59,7 +59,6 @@ exec "$REAL_NODE" "$@"
     });
     Object.assign(manifest, {
       protocol: CURRENT_METADATA.protocol,
-      features: [...CURRENT_METADATA.features],
       sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
       binary_metadata_verified: true,
       metadata_host: { os: target.os, arch: target.arch },
@@ -68,7 +67,6 @@ exec "$REAL_NODE" "$@"
     if (nonRepresentativeNotRun && !requiresHelperExecutionEvidence(target.os, target.arch)) {
       Object.assign(manifest, { binary_metadata_verified: false, metadata_status: "not-run", cross_compiled: true, untested: true });
       delete manifest.protocol;
-      delete manifest.features;
       delete manifest.sha256;
       delete manifest.metadata_host;
     }
@@ -114,8 +112,7 @@ test("validator fixture: LazyCat helper gate accepts three verified and six not-
 
 const CASES = [
   ["wrong protocol", (manifest) => { manifest.protocol = 1; }, /protocol .* does not match/],
-  ["wrong features", (manifest) => { manifest.features = ["exec"]; }, /features do not match this build/],
-  ["missing features", (manifest) => { delete manifest.features; }, /features must be non-empty strings/],
+  ["stale features", (manifest) => { manifest.features = ["exec"]; }, /must not list features/],
 ];
 
 for (const [name, edit, expected] of CASES) {

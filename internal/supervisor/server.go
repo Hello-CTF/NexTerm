@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,7 +16,6 @@ type Server struct {
 	supervisor      *Supervisor
 	stateDigest     string
 	runtimeMetadata *RuntimeMetadata
-	features        []string
 	endpoint        endpointIdentity
 	listener        net.Listener
 	unlock          func()
@@ -34,12 +32,6 @@ type Server struct {
 }
 
 func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
-	return newServer(supervisor, socketPath, HelperFeatures())
-}
-
-// newServer lets compatibility tests start a server that advertises only the
-// capabilities of an older helper.
-func newServer(supervisor *Supervisor, socketPath string, features []string) (*Server, error) {
 	if supervisor == nil {
 		return nil, fmt.Errorf("%w: supervisor is required", ErrInvalidInput)
 	}
@@ -58,7 +50,6 @@ func newServer(supervisor *Supervisor, socketPath string, features []string) (*S
 		supervisor:      supervisor,
 		stateDigest:     stateDigest,
 		runtimeMetadata: provenRuntimeMetadata(),
-		features:        slices.Clone(features),
 		endpoint:        endpoint,
 		listener:        listener,
 		unlock:          unlock,
@@ -156,20 +147,22 @@ type serverConn struct {
 	sessionMu  sync.Mutex
 	attachment *Attachment
 
-	clientFeatures []string
+	// compress records the client's hello preference for gzip replay batches
+	// and zstd live output.
+	compress bool
 
 	// done closes with the connection so goroutines parked on input or credit
 	// stop without waiting for the peer.
 	done chan struct{}
 
-	// Windowed input (input_window): frames queue here and one goroutine feeds
+	// Windowed input: frames queue here and one goroutine feeds
 	// the session, so a full session queue delays acknowledgements instead of
 	// stalling the read loop or rejecting the frame.
 	inputOnce   sync.Once
 	inputFrames chan []byte
 	inputBytes  atomic.Int64
 
-	// Output credit (output_credit): creditMu guards credited, the client's
+	// Output credit: creditMu guards credited, the client's
 	// cumulative retired byte count, and sent, what the server has streamed.
 	creditMu   sync.Mutex
 	credited   uint64
@@ -206,26 +199,20 @@ func (c *serverConn) serve() {
 		return
 	}
 	if hello.Version != ProtocolVersion {
-		c.replyError(frameError, errorMsg{Code: codeVersionMismatch, Message: fmt.Sprintf("protocol version %d is not supported", hello.Version)})
+		c.replyError(frameError, versionRejection(hello.Version))
 		return
 	}
 	if hello.StateDigest != c.server.stateDigest {
 		c.replyError(frameError, errorMsg{Code: codeStateMismatch, Message: "supervisor state digest does not match this endpoint"})
 		return
 	}
-	c.clientFeatures = hello.Features
-	ack := helloMsg{Version: ProtocolVersion, Features: slices.Clone(c.server.features)}
-	if slices.Contains(c.clientFeatures, featureRuntimeMetadata) {
-		ack.Runtime = c.server.runtimeMetadata
+	c.compress = hello.CompressOutput
+	activity, err := c.server.supervisor.Activity(context.Background())
+	if err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		return
 	}
-	if slices.Contains(c.clientFeatures, featureActivity) {
-		activity, err := c.server.supervisor.Activity(context.Background())
-		if err != nil {
-			c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
-			return
-		}
-		ack.Activity = &activity
-	}
+	ack := helloMsg{Version: ProtocolVersion, Runtime: c.server.runtimeMetadata, Activity: &activity}
 	if err := c.reply(frameHelloAck, ack); err != nil {
 		return
 	}
@@ -280,10 +267,6 @@ func (c *serverConn) handleCreate(payload []byte) {
 		return
 	}
 	usePTY := msg.Pty == nil || *msg.Pty
-	if !usePTY && !slices.Contains(c.clientFeatures, featureExec) {
-		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "client does not support non-PTY exec"})
-		return
-	}
 	session, err := c.server.supervisor.Create(context.Background(), CreateOptions{
 		ID:      msg.ID,
 		Attempt: msg.Attempt,
@@ -332,10 +315,6 @@ func (c *serverConn) handleList() {
 }
 
 func (c *serverConn) handleRename(payload []byte) {
-	if !slices.Contains(c.clientFeatures, featureMetadata) {
-		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "client does not support session metadata"})
-		return
-	}
 	var msg RenameRequest
 	if err := unmarshalFrame(payload, &msg); err != nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
@@ -385,28 +364,13 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	return true
 }
 
-// negotiated reports whether the client asked for feature and this server
-// advertises it; only then may the connection use the extended behaviour.
-func (c *serverConn) negotiated(feature string) bool {
-	return slices.Contains(c.clientFeatures, feature) && slices.Contains(c.server.features, feature)
-}
-
 func (c *serverConn) handleInput(payload []byte) bool {
 	attachment := c.attached()
 	if attachment == nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "input frame without attach"})
 		return true
 	}
-	if c.negotiated(featureInputWindow) {
-		return c.queueWindowedInput(attachment, payload)
-	}
-	count, err := attachment.tryWrite(payload)
-	if err != nil {
-		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
-		return true
-	}
-	_ = c.reply(frameInputAck, inputAckMsg{Written: count})
-	return true
+	return c.queueWindowedInput(attachment, payload)
 }
 
 // queueWindowedInput hands the frame to the input goroutine. The client bounds
@@ -458,7 +422,7 @@ func (c *serverConn) pumpWindowedInput(attachment *Attachment) {
 }
 
 func (c *serverConn) handleCredit(payload []byte) bool {
-	if !c.negotiated(featureOutputCredit) || len(payload) != 8 {
+	if len(payload) != 8 {
 		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "unexpected credit frame"})
 		return false
 	}
@@ -650,7 +614,7 @@ func (c *serverConn) execKill(ctx context.Context, session *Session) error {
 
 func (c *serverConn) streamOutput(attachment *Attachment) {
 	var replayEnd uint64
-	if slices.Contains(c.clientFeatures, featureReplayGzip) {
+	if c.compress {
 		attachment.replayMu.Lock()
 		if attachment.replay != nil {
 			if info, err := attachment.replay.Stat(); err == nil {
@@ -661,13 +625,11 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 	}
 	var compressor replayCompressor
 	buffer := make([]byte, replayChunkSize)
-	credit := c.negotiated(featureOutputCredit)
-	zstdOutput := c.negotiated(featureOutputZstd)
 	base := attachment.NextSeq()
 	for {
-		if credit && !c.awaitCredit(attachment) {
+		if !c.awaitCredit(attachment) {
 			// A kill or detach cancels the attachment while parked on credit; deliver
-			// the exit exactly as the non-credit path does when Read reports ErrClosed.
+			// the exit exactly as a Read that reports ErrClosed does.
 			select {
 			case <-c.done:
 			default:
@@ -690,20 +652,18 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 					kind, payload = frameReplayGzip, compressed
 				}
 			}
-			if zstdOutput && kind == frameOutput {
+			if c.compress && kind == frameOutput {
 				// Credit below counts decoded bytes (seq advances by count), so
 				// compression never widens the flow-control window.
 				if packed, packErr := encodeOutputZstd(seq, buffer[:count]); packErr == nil && packed != nil {
 					kind, payload = frameOutputZstd, packed
 				}
 			}
-			if credit {
-				// Counted before the write: the client may return credit for
-				// this chunk before the write call comes back here.
-				c.creditMu.Lock()
-				c.sent = seq + uint64(count) - base
-				c.creditMu.Unlock()
-			}
+			// Counted before the write: the client may return credit for this
+			// chunk before the write call comes back here.
+			c.creditMu.Lock()
+			c.sent = seq + uint64(count) - base
+			c.creditMu.Unlock()
 			if writeErr := c.replyRaw(kind, payload); writeErr != nil {
 				return
 			}
@@ -747,11 +707,18 @@ func (c *serverConn) replyError(kind frameType, msg errorMsg) {
 }
 
 func (c *serverConn) replyOperationError(err error) {
-	msg := errorMessage(err)
-	if errors.Is(err, ErrIdentity) && slices.Contains(c.clientFeatures, featureMetadata) {
-		msg.Code = codeIdentityChanged
+	c.replyError(frameError, errorMessage(err))
+}
+
+// versionRejection answers a hello of another protocol version. It names the
+// side that must upgrade and carries this helper's version, so a newer client
+// can tell its own upgrade apart from the helper's.
+func versionRejection(clientVersion int) errorMsg {
+	message := fmt.Sprintf("client protocol %d is older than helper protocol %d; update the client", clientVersion, ProtocolVersion)
+	if clientVersion > ProtocolVersion {
+		message = fmt.Sprintf("helper protocol %d is older than client protocol %d; the helper needs upgrade", ProtocolVersion, clientVersion)
 	}
-	c.replyError(frameError, msg)
+	return errorMsg{Code: codeVersionMismatch, Message: message, Version: ProtocolVersion}
 }
 
 func (c *serverConn) close() {

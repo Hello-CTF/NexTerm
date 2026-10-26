@@ -457,16 +457,13 @@ function helperBinaryMetadata(file, goos, goarch) {
     throw new Error(`final ${goos}/${goarch} helper --metadata is not JSON: ${error.message}`);
   }
   const expected = helperProtocolMetadata();
-  const features = Array.isArray(metadata.features) ? [...metadata.features].sort() : null;
   const artifactSHA256 = sha256(file);
   if (metadata.version !== VERSION || metadata.commit !== COMMIT || metadata.protocol !== expected.protocol ||
-      features === null || features.some((feature) => typeof feature !== "string" || feature === "") ||
-      JSON.stringify(features) !== JSON.stringify(expected.features) || metadata.sha256 !== artifactSHA256) {
+      Object.hasOwn(metadata, "features") || metadata.sha256 !== artifactSHA256) {
     throw new Error(`final ${goos}/${goarch} helper metadata does not match this build and artifact sha256: ${JSON.stringify(metadata)}`);
   }
   const verified = {
     protocol: metadata.protocol,
-    features,
     sha256: metadata.sha256,
     binary_metadata_verified: true,
     metadata_host: { os: HOST_OS, arch: HOST_ARCH },
@@ -551,7 +548,7 @@ function validateBinaryForPackaging(outputPath, kind, goos, goarch, reuseEvidenc
   }
   if (kind === "helper") {
     const expected = helperProtocolMetadata();
-    problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol, features: expected.features }));
+    problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol }));
   }
   if (problems.length) die(`--package-only binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
   if (kind === "helper" && manifest.binary_metadata_verified === false) {
@@ -745,7 +742,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
       try {
         helperMetadata = helperBinaryMetadata(file, goos, goarch);
         result.push(assertion("helper-binary-metadata", true,
-            `executed final ${goos}/${goarch} helper --metadata on matching real host ${HOST_OS}/${HOST_ARCH}: protocol=${helperMetadata.protocol}; features=${helperMetadata.features.join(",")}; sha256=${helperMetadata.sha256}`));
+            `executed final ${goos}/${goarch} helper --metadata on matching real host ${HOST_OS}/${HOST_ARCH}: protocol=${helperMetadata.protocol}; sha256=${helperMetadata.sha256}`));
       } catch (error) {
         result.push(assertion("helper-binary-metadata", false, String(error)));
       }
@@ -801,7 +798,7 @@ function packagedHelperAssertions(directory, relativeDirectory, checkMode) {
       checks.push(assertion(`${label}-sha256`, packagedDigest === inputDigest,
           `package SHA256=${packagedDigest}; input SHA256=${inputDigest}`));
       const manifest = loadManifest(`${input}.manifest.json`);
-      const evidenceProblems = helperMetadataManifestProblems({ manifest, goos: target.os, goarch: target.arch, protocol: expectedMetadata.protocol, features: expectedMetadata.features });
+      const evidenceProblems = helperMetadataManifestProblems({ manifest, goos: target.os, goarch: target.arch, protocol: expectedMetadata.protocol });
       const evidenceDetail = evidenceProblems.length > 0 ? evidenceProblems.join("; ") : manifest.binary_metadata_verified === true
         ? `verified metadata protocol=${manifest.protocol}; sha256=${manifest.sha256}`
         : "untested: cross-compiled; metadata not-run";

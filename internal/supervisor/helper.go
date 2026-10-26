@@ -77,7 +77,7 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 		return &Helper{endpoint: endpoint, client: client}, nil
 	}
 	if errors.Is(err, ErrProtocol) {
-		return nil, fmt.Errorf("%w: the supervisor helper at %s speaks an incompatible protocol; refusing to replace it: %v", ErrProtocol, endpoint, err)
+		return nil, fmt.Errorf("the supervisor helper at %s speaks an incompatible protocol; refusing to replace it: %w", endpoint, err)
 	}
 	if errors.Is(err, ErrStateMismatch) {
 		return nil, fmt.Errorf("%w: the endpoint %s is already served by a helper owning a different state directory; refusing to connect or replace it: %v", ErrStateMismatch, endpoint, err)
@@ -107,7 +107,7 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 			return &Helper{endpoint: endpoint, client: client, spawned: true}, nil
 		}
 		if errors.Is(err, ErrProtocol) {
-			return nil, fmt.Errorf("%w: the spawned supervisor helper at %s speaks an incompatible protocol: %v", ErrProtocol, endpoint, err)
+			return nil, fmt.Errorf("the spawned supervisor helper at %s speaks an incompatible protocol: %w", endpoint, err)
 		}
 		if errors.Is(err, ErrStateMismatch) {
 			return nil, fmt.Errorf("%w: the endpoint %s is owned by a helper for a different state directory: %v", ErrStateMismatch, endpoint, err)

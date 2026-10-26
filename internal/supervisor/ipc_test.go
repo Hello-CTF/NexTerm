@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -370,24 +371,26 @@ func TestIPCMalformedRequests(t *testing.T) {
 		}
 	})
 
-	t.Run("version mismatch", func(t *testing.T) {
-		conn := dial(t)
-		payload, _ := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion + 1})
-		if err := writeFrame(conn, frameHello, payload); err != nil {
-			t.Fatal(err)
-		}
-		kind, response := readErrorFrame(t, conn)
-		if kind != frameError {
-			t.Fatalf("response frame = %d, want error", kind)
-		}
-		var msg errorMsg
-		if err := unmarshalFrame(response, &msg); err != nil {
-			t.Fatal(err)
-		}
-		if msg.Code != codeVersionMismatch {
-			t.Fatalf("error code = %q, want %q", msg.Code, codeVersionMismatch)
-		}
-	})
+	for _, version := range []int{ProtocolVersion - 1, ProtocolVersion + 1} {
+		t.Run("version mismatch "+strconv.Itoa(version), func(t *testing.T) {
+			conn := dial(t)
+			payload, _ := marshalFrame(frameHello, helloMsg{Version: version})
+			if err := writeFrame(conn, frameHello, payload); err != nil {
+				t.Fatal(err)
+			}
+			kind, response := readErrorFrame(t, conn)
+			if kind != frameError {
+				t.Fatalf("response frame = %d, want error", kind)
+			}
+			var msg errorMsg
+			if err := unmarshalFrame(response, &msg); err != nil {
+				t.Fatal(err)
+			}
+			if msg.Code != codeVersionMismatch || msg.Version != ProtocolVersion {
+				t.Fatalf("rejection = %+v, want %q carrying version %d", msg, codeVersionMismatch, ProtocolVersion)
+			}
+		})
+	}
 
 	t.Run("hello not first", func(t *testing.T) {
 		conn := dial(t)
@@ -628,79 +631,13 @@ func TestIPCRenameSharesCanonicalTitleAcrossClients(t *testing.T) {
 	}
 }
 
-func TestIPCMetadataFeatureLeavesLegacyPeerUsable(t *testing.T) {
-	supervisor := testSupervisor(t)
-	server := testServer(t, supervisor)
-	ctx := context.Background()
-	id := ids.New()
-	info, err := testClient(t, server).Create(ctx, CreateOptions{
-		ID:      id,
-		Command: []string{"/bin/sh", "-c", "sleep 30"},
-		Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = supervisor.Kill(context.Background(), id) })
-
-	conn := dialServer(t, server.SocketPath())
-	digest, err := stateDigestFor(supervisor.StateDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	hello, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFrame(conn, frameHello, hello); err != nil {
-		t.Fatal(err)
-	}
-	kind, _, err := readFrame(conn)
-	if err != nil || kind != frameHelloAck {
-		t.Fatalf("legacy handshake = %d, %v", kind, err)
-	}
-	rename, err := marshalFrame(frameRename, RenameRequest{ID: id, Incarnation: info.Incarnation, RequestID: ids.New(), Title: "not-applied"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFrame(conn, frameRename, rename); err != nil {
-		t.Fatal(err)
-	}
-	kind, payload := readErrorFrame(t, conn)
-	if kind != frameError {
-		t.Fatalf("legacy rename response = %d, want protocol error", kind)
-	}
-	var msg errorMsg
-	if err := unmarshalFrame(payload, &msg); err != nil {
-		t.Fatal(err)
-	}
-	if msg.Code != codeProtocol {
-		t.Fatalf("legacy rename code = %q, want %q", msg.Code, codeProtocol)
-	}
-
-	if err := writeFrame(conn, frameList, []byte("{}")); err != nil {
-		t.Fatal(err)
-	}
-	kind, payload = readErrorFrame(t, conn)
-	if kind != frameListed {
-		t.Fatalf("legacy List after rejected rename = %d, %s", kind, payload)
-	}
-	var infos []Info
-	if err := unmarshalFrame(payload, &infos); err != nil {
-		t.Fatal(err)
-	}
-	if len(infos) != 1 || infos[0].ID != id || infos[0].Title != "" || infos[0].MetadataRevision != 0 {
-		t.Fatalf("legacy rename changed session metadata = %+v", infos)
-	}
-}
-
 func handshakeConn(t *testing.T, conn net.Conn, stateDir string) {
 	t.Helper()
 	digest, err := stateDigestFor(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: []string{featureExec, featureMetadata}})
+	payload, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,29 +20,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-// preFlowFeatures is what helpers shipped before create_attach, input_window
-// and output_credit advertised.
-var preFlowFeatures = []string{featureActivity, featureExec, featureMetadata, featureReplayGzip, featureRuntimeMetadata}
-
-type matrixCase struct {
-	name      string
-	oldServer bool
-	oldClient bool
-}
-
-var compatMatrix = []matrixCase{
-	{"new client new helper", false, false},
-	{"new client old helper", true, false},
-	{"old client new helper", false, true},
-	{"old client old helper", true, true},
-}
-
-func (m matrixCase) extended() bool { return !m.oldServer && !m.oldClient }
-
-// matrixEnv starts a server advertising either the current or the pre-feature
-// capability set, and a remote client that offers the matching set. dials counts
-// the connections the client opens, standing in for SSH exec channels.
-func matrixEnv(t *testing.T, m matrixCase) (*Supervisor, *Client, *atomic.Int64) {
+// flowEnv starts a server and a remote client for it. dials counts the
+// connections the client opens, standing in for SSH exec channels.
+func flowEnv(t *testing.T) (*Supervisor, *Client, *atomic.Int64) {
 	t.Helper()
 	supervisor := testSupervisor(t)
 	runDir, err := os.MkdirTemp("/tmp", "nx-flow-")
@@ -50,11 +30,7 @@ func matrixEnv(t *testing.T, m matrixCase) (*Supervisor, *Client, *atomic.Int64)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
-	features := HelperFeatures()
-	if m.oldServer {
-		features = preFlowFeatures
-	}
-	server, err := newServer(supervisor, filepath.Join(runDir, "supervisor.sock"), features)
+	server, err := NewServer(supervisor, filepath.Join(runDir, "supervisor.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,9 +48,6 @@ func matrixEnv(t *testing.T, m matrixCase) (*Supervisor, *Client, *atomic.Int64)
 		dials.Add(1)
 		return (&net.Dialer{}).DialContext(ctx, "unix", server.SocketPath())
 	}, digest)
-	if m.oldClient {
-		client.offeredFeatures = []string{featureExec, featureMetadata, featureRuntimeMetadata, featureActivity, featureReplayGzip}
-	}
 	return supervisor, client, dials
 }
 
@@ -93,37 +66,26 @@ func catSession(t *testing.T, provider *RemoteProvider, id string) *streamAttach
 	return attachment.(*streamAttachment)
 }
 
-func TestCompatMatrixCreateAttach(t *testing.T) {
-	for _, m := range compatMatrix {
-		t.Run(m.name, func(t *testing.T) {
-			supervisor, client, dials := matrixEnv(t, m)
-			provider := NewRemoteProvider(client)
-			attachment := catSession(t, provider, ids.New())
-			defer func() { _ = attachment.Kill(context.Background()) }()
-			want := int64(2)
-			if !m.oldServer && !m.oldClient {
-				want = 1
-			}
-			if got := dials.Load(); got != want {
-				t.Fatalf("Create opened %d connections, want %d", got, want)
-			}
-			if attachment.Stream.windowed != m.extended() || attachment.Stream.credit != m.extended() {
-				t.Fatalf("windowed=%v credit=%v, want both %v", attachment.Stream.windowed, attachment.Stream.credit, m.extended())
-			}
-			if _, err := attachment.Write([]byte("matrix-ping\n")); err != nil {
-				t.Fatal(err)
-			}
-			readUntil(t, attachment, "matrix-ping")
-			infos, err := supervisor.List(context.Background())
-			if err != nil || len(infos) != 1 {
-				t.Fatalf("sessions = %v, %v, want exactly one", infos, err)
-			}
-		})
+func TestCreateAttachUsesOneConnection(t *testing.T) {
+	supervisor, client, dials := flowEnv(t)
+	provider := NewRemoteProvider(client)
+	attachment := catSession(t, provider, ids.New())
+	defer func() { _ = attachment.Kill(context.Background()) }()
+	if got := dials.Load(); got != 1 {
+		t.Fatalf("Create opened %d connections, want 1", got)
+	}
+	if _, err := attachment.Write([]byte("chained-ping\n")); err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, attachment, "chained-ping")
+	infos, err := supervisor.List(context.Background())
+	if err != nil || len(infos) != 1 {
+		t.Fatalf("sessions = %v, %v, want exactly one", infos, err)
 	}
 }
 
 func TestCreateAttachDuplicateIDKeepsExistingSession(t *testing.T) {
-	supervisor, client, dials := matrixEnv(t, matrixCase{})
+	supervisor, client, dials := flowEnv(t)
 	provider := NewRemoteProvider(client)
 	id := ids.New()
 	first := catSession(t, provider, id)
@@ -150,8 +112,8 @@ func TestCreateAttachDuplicateIDKeepsExistingSession(t *testing.T) {
 }
 
 func TestCreateAttachCompensatesWhenAttachFails(t *testing.T) {
-	for _, m := range []matrixCase{{"chained", false, false}} {
-		supervisor, client, _ := matrixEnv(t, m)
+	{
+		supervisor, client, _ := flowEnv(t)
 		provider := NewRemoteProvider(client)
 		// The session exists but the stream is lost: Create must remove it.
 		provider.createAttach = func(ctx context.Context, c *Client, options CreateOptions) (Info, *Stream, error) {
@@ -177,7 +139,7 @@ func TestCreateAttachCompensatesWhenAttachFails(t *testing.T) {
 }
 
 func TestCreateAttachContextCanceledLeavesNoSession(t *testing.T) {
-	supervisor, client, _ := matrixEnv(t, matrixCase{})
+	supervisor, client, _ := flowEnv(t)
 	provider := NewRemoteProvider(client)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -190,11 +152,11 @@ func TestCreateAttachContextCanceledLeavesNoSession(t *testing.T) {
 }
 
 // TestInputWindowBackpressure writes far more than the session queue and the
-// PTY buffer hold while the program is not reading. The old protocol rejected
-// frames with "input backlog is full"; with the window the writes simply wait.
+// PTY buffer hold while the program is not reading: the writes wait inside the
+// input window instead of failing with a full input backlog.
 func TestInputWindowBackpressure(t *testing.T) {
 	const total = 6 << 20
-	_, client, _ := matrixEnv(t, matrixCase{})
+	_, client, _ := flowEnv(t)
 	runDir := t.TempDir()
 	gate := filepath.Join(runDir, "gate")
 	if err := syscall.Mkfifo(gate, 0o600); err != nil {
@@ -209,9 +171,6 @@ func TestInputWindowBackpressure(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream := attachment.(*streamAttachment).Stream
-	if !stream.windowed {
-		t.Fatal("input_window was not negotiated")
-	}
 	done := make(chan error, 1)
 	go func() {
 		payload := bytes.Repeat([]byte("x"), total)
@@ -256,7 +215,7 @@ func fakeWindowServer(t *testing.T, gate *ackGate) *Client {
 		if _, _, err := readFrame(peer); err != nil {
 			return
 		}
-		_ = writeFrame(peer, frameHelloAck, []byte(`{"version":2,"features":["input_window"]}`))
+		_ = writeFrame(peer, frameHelloAck, fakeHelloAck())
 		if _, _, err := readFrame(peer); err != nil {
 			return
 		}
@@ -308,9 +267,6 @@ func TestInputWindowAcceptsWithoutAckAndBlocksAtLimit(t *testing.T) {
 	stream, err := client.Attach(context.Background(), "fake", nil)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !stream.windowed {
-		t.Fatal("input_window was not negotiated")
 	}
 	// Exactly the window fits without a single acknowledgement.
 	n, err := stream.WriteWindowed(context.Background(), make([]byte, inputWindowBytes))
@@ -384,7 +340,7 @@ func TestInputWindowRejectsUnsolicitedAck(t *testing.T) {
 	t.Cleanup(func() { _ = local.Close(); _ = peer.Close() })
 	go func() {
 		_, _, _ = readFrame(peer)
-		_ = writeFrame(peer, frameHelloAck, []byte(`{"version":2,"features":["input_window"]}`))
+		_ = writeFrame(peer, frameHelloAck, fakeHelloAck())
 		_, _, _ = readFrame(peer)
 		_ = writeFrame(peer, frameAttached, []byte(`{"id":"fake","incarnation":"i"}`))
 		_ = writeFrame(peer, frameInputAck, []byte(`{"written":3}`))
@@ -461,11 +417,8 @@ func drainFlood(t *testing.T, stream *Stream, total int) {
 // client backlog must stay within the credit window.
 func TestOutputCreditSlowConsumerSurvivesWithBoundedBuffer(t *testing.T) {
 	const total = 80 << 20
-	_, client, _ := matrixEnv(t, matrixCase{})
+	_, client, _ := flowEnv(t)
 	stream := floodSession(t, client, total)
-	if !stream.credit {
-		t.Fatal("output_credit was not negotiated")
-	}
 	waitBuffered(t, stream, outputCreditWindow)
 	// The consumer has not read anything; the control path must still answer.
 	if _, _, err := stream.Versions(); err != nil {
@@ -483,27 +436,9 @@ func TestOutputCreditSlowConsumerSurvivesWithBoundedBuffer(t *testing.T) {
 	}
 }
 
-// TestOutputWithoutCreditKeepsUnboundedBehaviour pins the previous behaviour
-// for peers that did not negotiate output_credit.
-func TestOutputWithoutCreditKeepsUnboundedBehaviour(t *testing.T) {
-	const total = 24 << 20
-	for _, m := range compatMatrix[1:] {
-		t.Run(m.name, func(t *testing.T) {
-			_, client, _ := matrixEnv(t, m)
-			stream := floodSession(t, client, total)
-			if stream.credit {
-				t.Fatal("output_credit negotiated unexpectedly")
-			}
-			// The server keeps streaming past the window while nothing is read.
-			waitBuffered(t, stream, outputCreditWindow+4<<20)
-			drainFlood(t, stream, total)
-		})
-	}
-}
-
 func TestOutputCreditReplayAfterReattachIsAccounted(t *testing.T) {
 	const total = 12 << 20
-	_, client, _ := matrixEnv(t, matrixCase{})
+	_, client, _ := flowEnv(t)
 	first := floodSession(t, client, total)
 	waitBuffered(t, first, outputCreditWindow)
 	id := first.Info().ID
@@ -511,9 +446,6 @@ func TestOutputCreditReplayAfterReattachIsAccounted(t *testing.T) {
 	stream, err := client.AttachFrom(context.Background(), id, nil, 1<<20)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !stream.credit {
-		t.Fatal("output_credit was not negotiated")
 	}
 	got := 0
 	buf := make([]byte, 64<<10)
@@ -533,7 +465,7 @@ func TestOutputCreditReplayAfterReattachIsAccounted(t *testing.T) {
 	_ = stream.Close()
 }
 
-func rawHello(t *testing.T, supervisor *Supervisor, server *Server, features []string) net.Conn {
+func rawHello(t *testing.T, supervisor *Supervisor, server *Server, compress bool) net.Conn {
 	t.Helper()
 	conn, err := net.Dial("unix", server.SocketPath())
 	if err != nil {
@@ -544,7 +476,7 @@ func rawHello(t *testing.T, supervisor *Supervisor, server *Server, features []s
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, _ := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: features})
+	payload, _ := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, CompressOutput: compress})
 	if err := writeFrame(conn, frameHello, payload); err != nil {
 		t.Fatal(err)
 	}
@@ -554,21 +486,21 @@ func rawHello(t *testing.T, supervisor *Supervisor, server *Server, features []s
 	return conn
 }
 
-func TestServerRejectsUnnegotiatedAndForgedCredit(t *testing.T) {
+func TestServerRejectsMalformedAndForgedCredit(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	credit := make([]byte, 8)
 	binary.BigEndian.PutUint64(credit, 1)
 
-	conn := rawHello(t, supervisor, server, nil)
-	if err := writeFrame(conn, frameCredit, credit); err != nil {
+	conn := rawHello(t, supervisor, server, false)
+	if err := writeFrame(conn, frameCredit, credit[:4]); err != nil {
 		t.Fatal(err)
 	}
 	if kind, _, err := readFrame(conn); err != nil || kind != frameFatal {
-		t.Fatalf("unnegotiated credit answered with %d, %v, want fatal", kind, err)
+		t.Fatalf("malformed credit answered with %d, %v, want fatal", kind, err)
 	}
 
-	conn = rawHello(t, supervisor, server, []string{featureOutputCredit})
+	conn = rawHello(t, supervisor, server, false)
 	if err := writeFrame(conn, frameCredit, credit); err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +513,7 @@ func TestServerWindowedInputAcksEachFrameOnce(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	session := testScriptSession(t, supervisor, "stty raw -echo; exec cat >/dev/null")
-	conn := rawHello(t, supervisor, server, []string{featureInputWindow})
+	conn := rawHello(t, supervisor, server, false)
 	payload, _ := marshalFrame(frameAttach, attachMsg{ID: session.ID()})
 	if err := writeFrame(conn, frameAttach, payload); err != nil {
 		t.Fatal(err)
@@ -678,13 +610,10 @@ func TestWindowedWriteContextCancelDuringAckWaitFailsStream(t *testing.T) {
 }
 
 // A kill while the server is parked on exhausted credit must still deliver the
-// exit, as the non-credit path does.
+// exit.
 func TestOutputCreditKillWhileParkedDeliversExit(t *testing.T) {
-	supervisor, client, _ := matrixEnv(t, matrixCase{})
+	supervisor, client, _ := flowEnv(t)
 	stream := floodSession(t, client, 80<<20)
-	if !stream.credit {
-		t.Fatal("output_credit was not negotiated")
-	}
 	waitBuffered(t, stream, outputCreditWindow)
 	if err := supervisor.Kill(context.Background(), stream.Info().ID); err != nil {
 		t.Fatal(err)
@@ -707,7 +636,7 @@ func TestWindowedWriteReturnsWhenSessionExitsAndConnectionCloses(t *testing.T) {
 	t.Cleanup(func() { _ = local.Close(); _ = peer.Close() })
 	go func() {
 		_, _, _ = readFrame(peer)
-		_ = writeFrame(peer, frameHelloAck, []byte(`{"version":2,"features":["input_window"]}`))
+		_ = writeFrame(peer, frameHelloAck, fakeHelloAck())
 		_, _, _ = readFrame(peer)
 		_ = writeFrame(peer, frameAttached, []byte(`{"id":"fake","incarnation":"i"}`))
 		for {

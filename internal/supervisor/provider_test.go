@@ -1114,40 +1114,6 @@ func TestDurableIdentityProvidersRejectStaleIncarnation(t *testing.T) {
 	}
 }
 
-func TestRemoteProviderMetadataUnsupportedByOldHelper(t *testing.T) {
-	t.Run("capability", func(t *testing.T) {
-		stateDir := filepath.Join(t.TempDir(), "state")
-		received := make(chan frameType, 1)
-		path := fakeExecUnawareServer(t, stateDir, received)
-		provider := NewRemoteProvider(NewClient(path, stateDir))
-		supported, err := provider.DurableMetadataSupported(context.Background())
-		if err != nil || supported {
-			t.Fatalf("old helper metadata capability = %v, %v", supported, err)
-		}
-		if ProtocolVersion != 2 {
-			t.Fatalf("protocol version = %d, want 2", ProtocolVersion)
-		}
-	})
-	t.Run("rename", func(t *testing.T) {
-		stateDir := filepath.Join(t.TempDir(), "state")
-		received := make(chan frameType, 1)
-		path := fakeExecUnawareServer(t, stateDir, received)
-		provider := NewRemoteProvider(NewClient(path, stateDir))
-		_, err := provider.RenameDurable(context.Background(), base.DurableRenameOptions{ID: ids.New(), Incarnation: ids.New(), RequestID: ids.New(), Title: "local-only"})
-		if !errors.Is(err, base.ErrUnsupported) {
-			t.Fatalf("old helper rename = %v, want unsupported", err)
-		}
-		select {
-		case kind := <-received:
-			if kind != 0 {
-				t.Fatalf("client sent frame %d to old helper", kind)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("old helper saw neither a frame nor idle timeout")
-		}
-	})
-}
-
 func dialServer(t *testing.T, socketPath string) net.Conn {
 	t.Helper()
 	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)

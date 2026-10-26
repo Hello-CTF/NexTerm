@@ -2346,15 +2346,3 @@ func TestHelperUpdateRechecksProtocolAndStateBeforeSwitch(t *testing.T) {
 		}
 	})
 }
-
-func TestHelperUpdateDefersWhenActivityIsUnprovable(t *testing.T) {
-	h := newHelperUpdateHarness(t)
-	h.oldClient.idle = func(context.Context) error { return supervisor.ErrUnsupported }
-	daemon, err := h.update(t.Context(), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !daemon.Update.Deferred || !h.oldRunning || h.newRunning || h.host.sawCommand("kill -TERM") {
-		t.Fatalf("unknown activity was not deferred: daemon=%+v old=%v new=%v", daemon, h.oldRunning, h.newRunning)
-	}
-}

@@ -35,8 +35,5 @@ export function readHostHelperProtocolMetadata({ cwd = ROOT, env = process.env }
     throw new Error(`host helper source metadata is not valid JSON: ${error.message}`);
   }
   if (!Number.isInteger(metadata.protocol) || metadata.protocol <= 0) throw new Error(`host helper source metadata has invalid protocol ${metadata.protocol}`);
-  if (!Array.isArray(metadata.features) || metadata.features.length === 0 || metadata.features.some((feature) => typeof feature !== "string" || feature === "")) {
-    throw new Error("host helper source metadata features must be non-empty strings");
-  }
-  return { protocol: metadata.protocol, features: [...metadata.features].sort() };
+  return { protocol: metadata.protocol };
 }

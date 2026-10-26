@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"slices"
 	"sync"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 )
 
 const (
-	maxStreamBuffer                = 64 * 1024 * 1024
 	defaultMaxExecOutput           = 4 * 1024 * 1024
 	defaultStreamCloseDrainTimeout = 10 * time.Second
 )
@@ -29,9 +27,9 @@ type Client struct {
 	stateDigest   string
 	dial          DialFunc
 	maxExecOutput int
-	// offeredFeatures replaces the default hello capabilities; compatibility
-	// tests use it to behave like an older client.
-	offeredFeatures []string
+	// compressOutput asks the helper for compressed replay and live output;
+	// remote clients set it because their bytes cross a network.
+	compressOutput bool
 }
 
 func NewClient(socketPath, stateDir string) *Client {
@@ -43,7 +41,7 @@ func NewClient(socketPath, stateDir string) *Client {
 // remote daemon socket. The state digest of the remote state directory is
 // presented at hello; the caller computes it on the remote host.
 func NewRemoteClient(dial DialFunc, stateDigest string) *Client {
-	return &Client{stateDigest: stateDigest, dial: dial, maxExecOutput: defaultMaxExecOutput}
+	return &Client{stateDigest: stateDigest, dial: dial, maxExecOutput: defaultMaxExecOutput, compressOutput: true}
 }
 
 func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error) {
@@ -82,9 +80,7 @@ func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error
 
 // CreateAttach creates a PTY session and attaches to it on one connection,
 // saving the second connection (a full exec channel and hello for remote
-// helpers). When the helper does not advertise create_attach it only creates
-// the session and returns a nil stream; the caller then attaches separately
-// exactly as it did before the feature existed.
+// helpers).
 //
 // On error, a non-empty Info.ID means the session was created and the caller
 // must remove it; an empty one means the outcome of the create is unknown (or
@@ -100,7 +96,6 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 	if err != nil {
 		return Info{}, nil, err
 	}
-	chain := conn.supports(featureCreateAttach)
 	payload, err := marshalFrame(frameCreate, createMsg{
 		ID:      options.ID,
 		Attempt: options.Attempt,
@@ -124,7 +119,7 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 	// connection after reading the create error; nothing is consumed or retired.
 	// With a caller-chosen ID the attach can follow the create without
 	// waiting for its reply; the identity is verified once both arrive.
-	pipelined := chain && options.ID != ""
+	pipelined := options.ID != ""
 	if pipelined {
 		if err := conn.sendJSON(ctx, frameAttach, attachMsg{ID: options.ID}); err != nil {
 			_ = conn.Close()
@@ -135,10 +130,6 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 	if err != nil {
 		_ = conn.Close()
 		return Info{}, nil, err
-	}
-	if !chain {
-		_ = conn.Close()
-		return info, nil, nil
 	}
 	if !pipelined {
 		msg := attachMsg{ID: info.ID, ExpectCreatedAt: info.CreatedAt.UnixNano(), ExpectIncarnation: info.Incarnation}
@@ -202,9 +193,6 @@ func (c *Client) ExecStream(ctx context.Context, spec ExecSpec, onOutput func(st
 		return -1, "", err
 	}
 	defer func() { _ = conn.Close() }()
-	if !slices.Contains(conn.features, featureExec) {
-		return -1, "", fmt.Errorf("%w: supervisor does not support non-PTY exec", ErrUnsupported)
-	}
 	noPTY := false
 	kind, _, err := conn.request(ctx, frameCreate, createMsg{
 		ID:      ids.New(),
@@ -283,24 +271,12 @@ func (c *Client) List(ctx context.Context) ([]Info, error) {
 	return infos, nil
 }
 
-func (c *Client) MetadataSupported(ctx context.Context) (bool, error) {
-	conn, err := c.dialConn(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = conn.Close() }()
-	return slices.Contains(conn.features, featureMetadata), nil
-}
-
 func (c *Client) Rename(ctx context.Context, request RenameRequest) (Info, error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return Info{}, err
 	}
 	defer func() { _ = conn.Close() }()
-	if !slices.Contains(conn.features, featureMetadata) {
-		return Info{}, fmt.Errorf("%w: supervisor does not support session metadata", ErrUnsupported)
-	}
 	kind, payload, err := conn.request(ctx, frameRename, request)
 	if err != nil {
 		return Info{}, err
@@ -320,9 +296,8 @@ func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stre
 }
 
 // AttachFrom asks the daemon to resume the recorded output from the absolute
-// byte offset. Daemons that predate the offset field ignore it and replay
-// from byte zero; the stream detects either case from the first output frame
-// and skips the already-consumed prefix locally, so both honor the offset.
+// byte offset. The stream checks the first output frame against the offset
+// and skips any already-consumed prefix locally.
 func (c *Client) AttachFrom(ctx context.Context, id string, expect *Identity, offset uint64) (*Stream, error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
@@ -362,16 +337,12 @@ func (c *Client) newStream(conn *clientConn, info Info, offset uint64) *Stream {
 		newData:           make(chan struct{}, 1),
 		exitCh:            make(chan struct{}),
 		closed:            make(chan struct{}),
-		windowed:          conn.supports(featureInputWindow),
-		credit:            conn.supports(featureOutputCredit),
 		inputToken:        make(chan struct{}, 1),
 		inputWake:         make(chan struct{}),
 		creditWake:        make(chan struct{}, 1),
 	}
 	go stream.readLoop()
-	if stream.credit {
-		go stream.creditLoop()
-	}
+	go stream.creditLoop()
 	return stream
 }
 
@@ -415,6 +386,9 @@ func (c *Client) Kill(ctx context.Context, id string, expect *Identity) error {
 func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 	netConn, err := c.dialNet(ctx)
 	if err != nil {
+		if legacyErr := c.legacyHelperError(ctx); legacyErr != nil {
+			return nil, legacyErr
+		}
 		return nil, fmt.Errorf("%w: dial supervisor: %v", ErrUnavailable, err)
 	}
 	digest := c.stateDigest
@@ -425,9 +399,8 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 			return nil, err
 		}
 	}
-	conn := &clientConn{conn: netConn}
-	features := c.helloFeatures()
-	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: features})
+	conn := &clientConn{conn: netConn, compress: c.compressOutput}
+	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, CompressOutput: conn.compress})
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -443,39 +416,26 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 	}
 	if ack.Version != ProtocolVersion {
 		_ = netConn.Close()
-		return nil, fmt.Errorf("%w: server speaks protocol %d", ErrProtocol, ack.Version)
+		return nil, versionMismatchError(ack.Version, "hello acknowledged with another protocol version")
 	}
-	conn.features = slices.Clone(ack.Features)
-	conn.offered = features
-	if slices.Contains(features, featureRuntimeMetadata) && slices.Contains(conn.features, featureRuntimeMetadata) && ack.Runtime != nil {
+	if ack.Runtime != nil {
 		metadata := *ack.Runtime
 		if err := validateRuntimeMetadata(metadata, ack.Version); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
-		metadata.Features = slices.Clone(metadata.Features)
 		conn.runtimeMetadata = &metadata
 	}
-	if slices.Contains(features, featureActivity) && slices.Contains(conn.features, featureActivity) && ack.Activity != nil {
-		if ack.Activity.PTY < 0 || ack.Activity.Exec < 0 {
-			_ = conn.Close()
-			return nil, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
-		}
-		activity := *ack.Activity
-		conn.activity = &activity
+	if ack.Activity == nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("%w: hello acknowledgement lacks daemon activity", ErrProtocol)
 	}
+	if ack.Activity.PTY < 0 || ack.Activity.Exec < 0 {
+		_ = conn.Close()
+		return nil, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
+	}
+	conn.activity = *ack.Activity
 	return conn, nil
-}
-
-func (c *Client) helloFeatures() []string {
-	if c.offeredFeatures != nil {
-		return slices.Clone(c.offeredFeatures)
-	}
-	features := []string{featureExec, featureMetadata, featureRuntimeMetadata, featureActivity, featureCreateAttach, featureInputWindow, featureOutputCredit}
-	if c.dial != nil {
-		features = append(features, featureReplayGzip, featureOutputZstd)
-	}
-	return features
 }
 
 func (c *Client) dialNet(ctx context.Context) (net.Conn, error) {
@@ -491,18 +451,13 @@ type clientFrame struct {
 }
 
 type clientConn struct {
-	conn            net.Conn
-	features        []string
-	offered         []string
+	conn net.Conn
+	// compress is the hello preference: only then may the server send
+	// frameReplayGzip and frameOutputZstd.
+	compress        bool
 	runtimeMetadata *RuntimeMetadata
-	activity        *ActivitySnapshot
+	activity        ActivitySnapshot
 	writeMu         sync.Mutex
-}
-
-// supports reports whether feature was offered in our hello and acknowledged
-// by the server.
-func (c *clientConn) supports(feature string) bool {
-	return slices.Contains(c.offered, feature) && slices.Contains(c.features, feature)
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {
@@ -630,11 +585,10 @@ type Stream struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	// Windowed input (input_window). inflight holds the sizes of frames on the
+	// Windowed input. inflight holds the sizes of frames on the
 	// wire that have no acknowledgement yet, oldest first; inputErr is the
 	// first rejection reported by the server. All three are guarded by mu.
 	// inputToken serializes writers so reservation order equals wire order.
-	windowed      bool
 	inputToken    chan struct{}
 	inflight      []int
 	inflightBytes int
@@ -645,9 +599,8 @@ type Stream struct {
 	inputErrUnacked int
 	inputWake       chan struct{}
 
-	// Output credit (output_credit). retired counts stream bytes the consumer
-	// has read or skipped; creditSent is what the server has been told.
-	credit     bool
+	// Output credit. retired counts stream bytes the consumer has read or
+	// skipped; creditSent is what the server has been told.
 	retired    uint64
 	creditSent uint64
 	creditWake chan struct{}
@@ -659,9 +612,10 @@ type Stream struct {
 	// window space. Tests use it to observe the wait deterministically.
 	windowWaitHook func()
 
-	// tokenWaitHook, when non-nil, runs after the initial ctx check and
-	// immediately before requestRaw blocks acquiring the request token.
-	// Tests use it to observe the token wait deterministically.
+	// tokenWaitHook, when non-nil, runs immediately before requestRaw blocks
+	// acquiring the request token (after its initial ctx check) and before a
+	// write blocks acquiring the input token. Tests use it to observe the
+	// token wait deterministically.
 	tokenWaitHook func()
 }
 
@@ -718,11 +672,10 @@ func (s *Stream) Write(p []byte) (int, error) {
 // WriteContext writes p to the session's input pipeline and returns once the
 // supervisor has acknowledged all of it.
 //
-// Without input_window (older helpers) every chunk is acknowledged before the
-// next is sent. With it, the chunks of one call are pipelined inside a bounded
-// window (inputWindowBytes), so a large write costs about one round trip per
-// window instead of per chunk; the call still returns only after every
-// acknowledgement, so the contract is the same in both modes:
+// The chunks of one call are pipelined inside a bounded window
+// (inputWindowBytes), so a large write costs about one round trip per window
+// instead of per chunk; the call still returns only after every
+// acknowledgement:
 //   - ctx governs the acknowledgement wait. Cancelling it fails the stream: the
 //     unconfirmed chunks may or may not have reached the supervisor and their
 //     late acknowledgements can no longer be told apart from later responses,
@@ -735,52 +688,28 @@ func (s *Stream) WriteContext(ctx context.Context, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	if s.windowed {
-		return s.writeWindowed(ctx, p, true)
-	}
-	written := 0
-	for len(p) > 0 {
-		chunk := p
-		if len(chunk) > maxFramePayload {
-			chunk = chunk[:maxFramePayload]
-		}
-		kind, payload, err := s.requestRaw(ctx, frameInput, chunk)
-		if err != nil {
-			return written, err
-		}
-		if kind != frameInputAck {
-			return written, protocolMismatch(kind)
-		}
-		var ack inputAckMsg
-		if err := unmarshalFrame(payload, &ack); err != nil {
-			return written, err
-		}
-		written += ack.Written
-		p = p[len(chunk):]
-	}
-	return written, nil
+	return s.writeWindowed(ctx, p, true)
 }
 
-// WriteWindowed is the non-waiting form of WriteContext for streams that
-// negotiated input_window: it returns once the data is on the wire inside the
-// window, without waiting for acknowledgements, so a caller can keep many small
-// writes in flight. n counts bytes fully written to the connection. A rejection
-// of earlier data is returned by the next call (n == 0), FlushInput and Close;
-// it does not fail the stream. Cancelling ctx while waiting for window space
-// sends nothing for the unsent part and leaves the stream healthy; cancelling
-// during a frame write fails the stream as in WriteContext. Without
-// input_window it behaves exactly like WriteContext.
+// WriteWindowed is the non-waiting form of WriteContext: it returns once the
+// data is on the wire inside the window, without waiting for
+// acknowledgements, so a caller can keep many small writes in flight. n counts
+// bytes fully written to the connection. A rejection of earlier data is
+// returned by the next call (n == 0), FlushInput and Close; it does not fail
+// the stream. Cancelling ctx while waiting for window space sends nothing for
+// the unsent part and leaves the stream healthy; cancelling during a frame
+// write fails the stream as in WriteContext.
 func (s *Stream) WriteWindowed(ctx context.Context, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
-	}
-	if !s.windowed {
-		return s.WriteContext(ctx, p)
 	}
 	return s.writeWindowed(ctx, p, false)
 }
 
 func (s *Stream) writeWindowed(ctx context.Context, p []byte, wait bool) (int, error) {
+	if s.tokenWaitHook != nil {
+		s.tokenWaitHook()
+	}
 	select {
 	case s.inputToken <- struct{}{}:
 	case <-ctx.Done():
@@ -982,12 +911,8 @@ func (s *Stream) handleInputAck(payload []byte) error {
 }
 
 // FlushInput waits until every accepted input frame has been acknowledged by
-// the supervisor and returns the first rejection, if any. It is a no-op for
-// streams without input_window, whose writes are acknowledged synchronously.
+// the supervisor and returns the first rejection, if any.
 func (s *Stream) FlushInput(ctx context.Context) error {
-	if !s.windowed {
-		return nil
-	}
 	for {
 		s.mu.Lock()
 		if s.inputErr != nil {
@@ -1022,7 +947,7 @@ func (s *Stream) FlushInput(ctx context.Context) error {
 // retireLocked records consumed (or skipped) output and wakes the credit
 // sender once a full step has accumulated. s.mu must be held.
 func (s *Stream) retireLocked(count uint64) {
-	if !s.credit || count == 0 {
+	if count == 0 {
 		return
 	}
 	s.retired += count
@@ -1161,19 +1086,17 @@ func (s *Stream) Close() error {
 		defer func() { <-s.reqToken }()
 		// Input accepted into the window must reach the supervisor before the
 		// detach; a stalled supervisor is cut off after the drain timeout.
-		var inputErr, droppedErr error
-		if s.windowed {
-			flushCtx, cancel := context.WithTimeout(context.Background(), s.closeDrainTimeout)
-			inputErr = s.FlushInput(flushCtx)
-			cancel()
-			if errors.Is(inputErr, context.DeadlineExceeded) {
-				inputErr = nil
-				s.mu.Lock()
-				dropped := len(s.inflight)
-				s.mu.Unlock()
-				droppedErr = fmt.Errorf("%w: %d unacknowledged input frames dropped", base.ErrDisconnected, dropped)
-				_ = s.conn.Close()
-			}
+		var droppedErr error
+		flushCtx, cancel := context.WithTimeout(context.Background(), s.closeDrainTimeout)
+		inputErr := s.FlushInput(flushCtx)
+		cancel()
+		if errors.Is(inputErr, context.DeadlineExceeded) {
+			inputErr = nil
+			s.mu.Lock()
+			dropped := len(s.inflight)
+			s.mu.Unlock()
+			droppedErr = fmt.Errorf("%w: %d unacknowledged input frames dropped", base.ErrDisconnected, dropped)
+			_ = s.conn.Close()
 		}
 		s.mu.Lock()
 		readErr := s.readErr
@@ -1323,7 +1246,7 @@ func (s *Stream) readLoop() {
 			s.fail(fmt.Errorf("%w: supervisor stream ended: %v", base.ErrDisconnected, err))
 			return
 		}
-		if kind == frameInputAck && s.windowed {
+		if kind == frameInputAck {
 			if ackErr := s.handleInputAck(payload); ackErr != nil {
 				s.fail(ackErr)
 				return
@@ -1334,17 +1257,13 @@ func (s *Stream) readLoop() {
 		case frameOutput, frameReplayGzip, frameOutputZstd:
 			var seq uint64
 			var data []byte
+			if kind != frameOutput && !s.conn.compress {
+				s.fail(fmt.Errorf("%w: compressed output the client did not ask for", ErrProtocol))
+				return
+			}
 			if kind == frameOutputZstd {
-				if !s.conn.supports(featureOutputZstd) {
-					s.fail(fmt.Errorf("%w: unnegotiated compressed output", ErrProtocol))
-					return
-				}
 				seq, data, err = parseOutputZstd(payload)
 			} else if kind == frameReplayGzip {
-				if !slices.Contains(s.conn.features, featureReplayGzip) {
-					s.fail(fmt.Errorf("%w: unnegotiated compressed replay", ErrProtocol))
-					return
-				}
 				seq, data, err = parseReplayGzip(payload)
 			} else {
 				seq, data, err = parseOutput(payload)
@@ -1379,12 +1298,8 @@ func (s *Stream) readLoop() {
 				s.skip -= drop
 				s.retireLocked(drop)
 			}
-			limit := maxStreamBuffer
-			if s.credit {
-				// A credited server never runs further ahead than the window.
-				limit = outputCreditWindow + 2*replayChunkSize
-			}
-			if len(s.readBuf)+len(data) > limit {
+			// A credited server never runs further ahead than the window.
+			if len(s.readBuf)+len(data) > outputCreditWindow+2*replayChunkSize {
 				s.mu.Unlock()
 				s.fail(fmt.Errorf("%w: stream buffer overflow", ErrProtocol))
 				return
