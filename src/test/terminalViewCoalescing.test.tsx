@@ -391,13 +391,15 @@ describe("XtermView stream wiring", () => {
     await show();
     await attachOk();
     const t = term();
+    // Freeze the limiter's clock so the bucket cannot refill mid-flood: the
+    // outcome must not depend on how fast this machine runs the loop.
+    vi.useFakeTimers({ toFake: ["Date"] });
     act(() => {
       for (let i = 0; i < 5000; i += 1) t.handlers.data?.("\x1b[?1;2c");
     });
     const upstreamBytes = harness.write.mock.calls.reduce((n, [, bytes]) => n + (bytes as Uint8Array).length, 0);
     expect(upstreamBytes).toBeGreaterThan(0);
-    // The burst plus what the bucket refills while the test runs: far below
-    // the 35 KB the flood asked for.
+    // Only the burst goes out: far below the 35 KB the flood asked for.
     expect(upstreamBytes).toBeLessThanOrEqual(20 * 1024);
     // Keystrokes still go straight through while replies are held back.
     act(() => t.handlers.data?.("q"));
@@ -408,6 +410,7 @@ describe("XtermView stream wiring", () => {
     const reports = warn.mock.calls.filter(([message]) => String(message).includes("automatic query replies"));
     expect(reports).toHaveLength(1);
     expect(reports[0][1]).toMatchObject({ coalesced: expect.any(Number), dropped: 1 });
+    vi.useRealTimers();
     warn.mockRestore();
   });
 
