@@ -1878,6 +1878,14 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.sessionInfoDTO", ts: "SessionInfoDTO[]" },
     },
+    "session_local_hostname": {
+      scope: "session",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "string", ts: "string" },
+    },
     "session_open_line_tab": {
       scope: "session",
       nested: false,
@@ -3620,6 +3628,10 @@ export interface IPCCommandTypeMap {
   "session_list": {
     input: Record<string, never>;
     output: contractTypes.SessionInfoDTO[];
+  };
+  "session_local_hostname": {
+    input: contractTypes.SessionIDRequest;
+    output: string;
   };
   "session_open_line_tab": {
     input: contractTypes.OpenTerminalRequest;

@@ -119,6 +119,7 @@ var contractScopes = []scopeSpec{
 		"session_connect_local",
 		"session_disconnect",
 		"session_list",
+		"session_local_hostname",
 		"session_open_line_tab",
 		"session_quick_connect_user",
 		"session_reconnect",

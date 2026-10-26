@@ -42,6 +42,7 @@ import {
   attachLinkLongPress,
   createTerminalLinkController,
   openTerminalLink,
+  probeTerminalLink,
   type TerminalLinkMenuRequest,
 } from "./terminalLinks";
 import { terminalLinkDeps } from "./terminalLinkActions";
@@ -263,9 +264,10 @@ export function XtermView(props: XtermViewProps) {
     const appearance = getAppearancePrefs();
     const kittyKeyboard = kittyKeyboardSwitch();
     const linkHost = hostRef.current;
-    // The host the session's shell reports through OSC 7 (file://host/cwd).
+    // The host a remote session's shell reports through OSC 7 (file://host/cwd).
     // The first report is the login shell's; a nested ssh reporting another
-    // host later must not redirect file links to the wrong machine.
+    // host later must not redirect file links to the wrong machine. Local
+    // sessions use the machine name from the backend instead.
     let sessionHost: string | null = null;
     const openLink = (uri: string) => {
       void openTerminalLink(uri, terminalLinkDeps(sessionId, containerId, () => sessionHost));
@@ -274,6 +276,7 @@ export function XtermView(props: XtermViewProps) {
       tooltipHost: () => linkHost,
       cursorHost: linkHost,
       activation: () => getTerminalPrefs().linkActivation,
+      mouseTracking: () => (termRef.current?.modes.mouseTrackingMode ?? "none") !== "none",
       open: openLink,
     });
     const term = new Terminal({
@@ -1277,12 +1280,7 @@ export function XtermView(props: XtermViewProps) {
     // terminal menu instead. xterm's link detection runs on mouse movement, so
     // a mousemove at the touch point asks it for the link under the finger.
     const detachLinkLongPress = attachLinkLongPress(pasteHost, {
-      probe: (x, y) => {
-        term.element
-          ?.querySelector(".xterm-screen")
-          ?.dispatchEvent(new MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true }));
-        return links.hovered();
-      },
+      probe: (x, y) => probeTerminalLink(term.element?.querySelector(".xterm-screen"), links, x, y),
       onLinkMenu: (request) => onLinkMenuRef.current?.(request),
     });
     const updateSelectionBar = () => {

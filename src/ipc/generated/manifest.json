@@ -1467,6 +1467,12 @@
       "channel": false,
       "stream": "none"
     },
+    "session_local_hostname": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "session_open_line_tab": {
       "scope": "session",
       "nested": false,

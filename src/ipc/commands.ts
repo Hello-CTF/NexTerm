@@ -341,6 +341,8 @@ export const sessionApi = {
     acceptHostKey?: boolean;
   }) => call<SessionInfo>("session_connect_quick", { args }),
   quickConnectDefaultUser: () => call("session_quick_connect_user"),
+  // The machine name of a local session's host, for matching terminal file:// links.
+  localHostname: (sessionId: string) => call("session_local_hostname", { sessionId }),
   connectLocal: () => call("session_connect_local") as Promise<SessionInfo>,
   connectDevice: (deviceId: string, name: string) =>
     call("session_connect_device", { args: { deviceId, name } }) as Promise<SessionInfo>,

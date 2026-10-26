@@ -122,6 +122,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
     dbKind: dbKindOf(typeof raw.dbKind === "string" ? raw.dbKind : "") ?? undefined,
     credId: optStr(raw.credId),
     path: optStr(raw.path),
+    directory: kind === "files" && !optStr(raw.path) ? optStr(raw.directory) : undefined,
     closable: boolOr(raw.closable, true),
     exited: raw.exited === true ? true : undefined,
     // A legacy lock without customTitleAt may hold an OSC title an older build recorded as a

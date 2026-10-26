@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -393,6 +394,25 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return "", ipc.NewError(ipc.CodeUnsupported, "快速连接只在桌面端可用")
 				}
 				return quickConnectDefaultUsername(), nil
+			})
+		},
+		func() error {
+			// The machine name of a local session's host, so terminal file:// links
+			// can be matched against it rather than a host a nested shell reports.
+			return ipc.Register(dispatcher, "session_local_hostname", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (string, error) {
+				ctx = productionSessionRequestContext(ctx)
+				connected, err := s.sessions.SessionFor(ctx, input.SessionID)
+				if err != nil {
+					return "", terminalIPCError(err)
+				}
+				if connected.Asset().Kind != session.KindLocal {
+					return "", ipc.NewError(ipc.CodeUnsupported, "只有本机会话提供本机主机名")
+				}
+				name, err := os.Hostname()
+				if err != nil {
+					return "", ipc.NewError(ipc.CodeUnsupported, "无法读取本机主机名")
+				}
+				return name, nil
 			})
 		},
 		func() error {

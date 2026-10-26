@@ -225,7 +225,7 @@ export function openDirectoryTab(sessionId: string, path: string) {
     kind: "files",
     title: baseName(path) || path,
     sessionId,
-    pendingDirectory: path,
+    directory: path,
     closable: true,
   });
 }

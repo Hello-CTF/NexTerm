@@ -3,7 +3,9 @@ import type { ILinkHandler } from "@xterm/xterm";
 // One link policy for URLs detected in the text (WebLinksAddon) and OSC 8
 // hyperlinks (xterm's linkHandler). Links open with Ctrl+click (Cmd+click on
 // macOS) unless the user chose plain click; the target, not the link text, is
-// what gets shown and opened.
+// what gets shown and opened. While a program tracks the mouse (tmux, htop,
+// vim with mouse=a) a click is the program's input, so a link additionally
+// needs Shift, which xterm already treats as "bypass mouse tracking".
 
 export type TerminalLinkActivation = "modifier" | "click";
 
@@ -11,6 +13,34 @@ export type TerminalLinkActivation = "modifier" | "click";
 // displayed, and a link containing them is not opened.
 const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 const DANGEROUS_SCHEMES = new Set(["javascript:", "data:", "vbscript:"]);
+// OS protocol handlers that have been used to run code, change system state or
+// leak credentials from a single click: refused rather than confirmed.
+const DENIED_HANDLER_SCHEMES = new Set([
+  "ms-msdt:",
+  "search-ms:",
+  "search:",
+  "ms-search:",
+  "ms-settings:",
+  "ms-officecmd:",
+  "ms-word:",
+  "ms-excel:",
+  "ms-powerpoint:",
+  "ms-access:",
+  "ms-appinstaller:",
+  "ms-cxh:",
+  "ms-cxh-full:",
+  "ms-help:",
+  "ms-its:",
+  "mk:",
+  "its:",
+  "hcp:",
+  "shell:",
+  "smb:",
+  "jar:",
+]);
+// mailto fields kept when opening; attach= and other client-specific fields
+// are dropped.
+const MAILTO_FIELDS = new Set(["subject", "body", "cc"]);
 const DISPLAY_LIMIT = 1000;
 
 export type TerminalLinkPlan =
@@ -28,16 +58,38 @@ export function linkModifierLabel(mac = isMacPlatform()): string {
   return mac ? "⌘" : "Ctrl";
 }
 
-export function linkModifierHeld(event: { ctrlKey: boolean; metaKey: boolean }, mac = isMacPlatform()): boolean {
+export interface LinkModifierState {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey?: boolean;
+}
+
+export function linkModifierHeld(event: LinkModifierState, mac = isMacPlatform()): boolean {
   return mac ? event.metaKey : event.ctrlKey;
 }
 
 export function shouldOpenLink(
-  event: { ctrlKey: boolean; metaKey: boolean },
+  event: LinkModifierState,
   activation: TerminalLinkActivation,
   mac = isMacPlatform(),
+  mouseTracking = false,
 ): boolean {
+  if (mouseTracking && !event.shiftKey) return false;
   return activation === "click" || linkModifierHeld(event, mac);
+}
+
+export function linkOpenHint(activation: TerminalLinkActivation, mac = isMacPlatform(), mouseTracking = false): string {
+  const keys = [...(activation === "modifier" ? [linkModifierLabel(mac)] : []), ...(mouseTracking ? ["Shift"] : [])];
+  return keys.length ? `${keys.join("+")}+单击打开` : "单击打开";
+}
+
+function mailtoForOpening(url: URL): string {
+  // RFC 6068 percent-encoding: "+" would not read as a space in a mail client.
+  const query = [...url.searchParams]
+    .filter(([key]) => MAILTO_FIELDS.has(key.toLowerCase()))
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join("&");
+  return `mailto:${url.pathname}${query ? `?${query}` : ""}`;
 }
 
 function safeDecode(value: string): string | null {
@@ -83,11 +135,13 @@ export function planTerminalLink(uri: string): TerminalLinkPlan {
     return { kind: "blocked", reason: "不是有效的链接" };
   }
   const scheme = url.protocol.toLowerCase();
-  if (DANGEROUS_SCHEMES.has(scheme)) return { kind: "blocked", reason: `不允许打开 ${scheme} 链接` };
+  if (DANGEROUS_SCHEMES.has(scheme) || DENIED_HANDLER_SCHEMES.has(scheme)) {
+    return { kind: "blocked", reason: `不允许打开 ${scheme} 链接` };
+  }
   if (scheme === "http:" || scheme === "https:") {
     return url.hostname ? { kind: "external", url: url.href } : { kind: "blocked", reason: "链接缺少主机名" };
   }
-  if (scheme === "mailto:") return { kind: "external", url: url.href };
+  if (scheme === "mailto:") return { kind: "external", url: mailtoForOpening(url) };
   if (scheme === "file:") {
     const decoded = safeDecode(url.pathname);
     if (decoded === null || new RegExp(UNSAFE_CHARS.source).test(decoded)) {
@@ -129,7 +183,8 @@ export interface TerminalLinkDeps {
   // Terminals inside a container see the container's filesystem, which the
   // session's file service cannot open.
   containerId?: string;
-  sessionHost: () => string | null;
+  // The session host's name, or null when unknown.
+  sessionHost: () => string | null | Promise<string | null>;
   openExternal: (url: string) => void | Promise<void>;
   confirm: (message: string, title: string) => Promise<boolean>;
   notify: (kind: "info" | "error", text: string) => void;
@@ -213,7 +268,7 @@ export async function openTerminalLink(uri: string, deps: TerminalLinkDeps): Pro
         deps.notify("info", `容器终端中的文件链接无法在文件面板打开：${shown}`);
         return;
       }
-      const matches = fileLinkHostMatches(plan.host, deps.sessionHost());
+      const matches = fileLinkHostMatches(plan.host, await deps.sessionHost());
       if (matches === false) {
         deps.notify("info", `链接指向其他主机 ${plan.host}，未打开：${shown}`);
         return;
@@ -242,6 +297,8 @@ export interface TerminalLinkController {
   };
   // The link target under the pointer, if any.
   hovered: () => string | null;
+  // Forgets the hovered link and hides the tooltip.
+  clear: () => void;
   dispose: () => void;
 }
 
@@ -251,6 +308,8 @@ export interface TerminalLinkControllerOptions {
   // Element whose data-nx-link-armed attribute gates the pointer cursor.
   cursorHost: HTMLElement;
   activation: () => TerminalLinkActivation;
+  // True while the running program tracks the mouse.
+  mouseTracking?: () => boolean;
   open: (uri: string) => void;
   mac?: boolean;
 }
@@ -259,11 +318,12 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
   const mac = options.mac ?? isMacPlatform();
   let hoveredUri: string | null = null;
   let pointer = { x: 0, y: 0 };
-  let modifier = false;
+  let keys: LinkModifierState = { ctrlKey: false, metaKey: false, shiftKey: false };
   let tooltip: HTMLDivElement | null = null;
   let listening = false;
 
-  const armed = () => options.activation() === "click" || modifier;
+  const tracking = () => options.mouseTracking?.() ?? false;
+  const armed = () => shouldOpenLink(keys, options.activation(), mac, tracking());
 
   const hideTooltip = () => {
     tooltip?.remove();
@@ -293,16 +353,22 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
     }
     const [target, hint] = tooltip.children as unknown as [HTMLElement, HTMLElement];
     target.textContent = displayTerminalLink(hoveredUri);
-    hint.textContent = options.activation() === "click" ? "单击打开" : `${linkModifierLabel(mac)}+单击打开`;
+    hint.textContent = linkOpenHint(options.activation(), mac, tracking());
     const rect = host.getBoundingClientRect();
     tooltip.style.left = `${Math.max(0, pointer.x - rect.left + 8)}px`;
     tooltip.style.top = `${Math.max(0, pointer.y - rect.top + 16)}px`;
   };
 
+  const keysOf = (event: LinkModifierState): LinkModifierState => ({
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    shiftKey: event.shiftKey === true,
+  });
+
   const onKey = (event: KeyboardEvent) => {
-    const next = linkModifierHeld(event, mac);
-    if (next === modifier) return;
-    modifier = next;
+    const next = keysOf(event);
+    if (next.ctrlKey === keys.ctrlKey && next.metaKey === keys.metaKey && next.shiftKey === keys.shiftKey) return;
+    keys = next;
     render();
   };
 
@@ -321,14 +387,14 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
   };
 
   const onBlur = () => {
-    modifier = false;
+    keys = { ctrlKey: false, metaKey: false, shiftKey: false };
     render();
   };
 
   const hover = (event: MouseEvent, uri: string) => {
     hoveredUri = uri;
     pointer = { x: event.clientX, y: event.clientY };
-    modifier = linkModifierHeld(event, mac);
+    keys = keysOf(event);
     listen(true);
     render();
   };
@@ -340,7 +406,7 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
   };
 
   const activate = (event: MouseEvent, uri: string) => {
-    if (!shouldOpenLink(event, options.activation(), mac)) return;
+    if (!shouldOpenLink(event, options.activation(), mac, tracking())) return;
     event.preventDefault();
     options.open(uri);
   };
@@ -357,6 +423,7 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
     webLinkHandler: activate,
     webLinkOptions: { hover, leave },
     hovered: () => hoveredUri,
+    clear: leave,
     dispose: () => {
       leave();
       delete options.cursorHost.dataset.nxLinkArmed;
@@ -419,4 +486,22 @@ export function attachLinkLongPress(host: HTMLElement, options: LinkLongPressOpt
     host.removeEventListener("touchend", cancel, true);
     host.removeEventListener("touchcancel", cancel, true);
   };
+}
+
+// probeTerminalLink asks xterm for the link at a viewport point by sending its
+// link detection a mousemove there, then forgets the hover so no tooltip stays
+// behind. The event is dispatched on the screen element without bubbling: the
+// link detection listens there, while xterm's mouse reporting listens on the
+// .xterm ancestor, so a program tracking any motion (mode 1003) gets no report.
+export function probeTerminalLink(
+  screen: Element | null | undefined,
+  controller: Pick<TerminalLinkController, "hovered" | "clear">,
+  x: number,
+  y: number,
+): string | null {
+  if (!screen) return null;
+  screen.dispatchEvent(new MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: false }));
+  const uri = controller.hovered();
+  controller.clear();
+  return uri;
 }

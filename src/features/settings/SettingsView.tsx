@@ -780,7 +780,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               {terminalPrefs.linkActivation === "modifier"
                 ? "按住 Ctrl（macOS 为 Cmd）单击终端中的网址或 OSC 8 超链接时打开；直接单击仍可选择文本。触屏设备长按链接可打开或复制。"
                 : "单击终端中的网址或 OSC 8 超链接即打开。"}
-              {" "}http/https 与 mailto 链接用系统程序打开，本会话主机上的 file:// 链接在 NexTerm 中打开，其他协议需要确认。
+              {" "}http/https 与 mailto 链接用系统程序打开，本会话主机上的 file:// 链接在 NexTerm 中打开，其他协议需要确认，可执行系统操作的协议会被拒绝。终端程序捕获鼠标时（如 tmux、htop、vim mouse=a）需同时按住 Shift。
             </p>
           </div>
           {showCloseToTray && (

@@ -6,6 +6,8 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import {
   LINK_LONG_PRESS_MS,
   attachLinkLongPress,
+  linkOpenHint,
+  probeTerminalLink,
   cleanTerminalLink,
   createTerminalLinkController,
   displayTerminalLink,
@@ -23,6 +25,20 @@ describe("terminal link scheme policy", () => {
     expect(planTerminalLink("https://example.com/a?b=1")).toEqual({ kind: "external", url: "https://example.com/a?b=1" });
     expect(planTerminalLink("HTTP://Example.com")).toEqual({ kind: "external", url: "http://example.com/" });
     expect(planTerminalLink("mailto:ops@example.com")).toEqual({ kind: "external", url: "mailto:ops@example.com" });
+  });
+
+  it("keeps only subject, body and cc on mailto links", () => {
+    expect(planTerminalLink("mailto:ops@example.com?subject=Disk%20full&attach=/etc/shadow&body=see+log&CC=a@b.c&bcc=x@y.z")).toEqual({
+      kind: "external",
+      url: "mailto:ops@example.com?subject=Disk%20full&body=see%20log&CC=a%40b.c",
+    });
+    expect(planTerminalLink("mailto:ops@example.com?attach=C:%5Cx")).toEqual({ kind: "external", url: "mailto:ops@example.com" });
+  });
+
+  it("refuses OS handler schemes that act on a single click", () => {
+    for (const uri of ["ms-msdt:/id PCWDiagnostic", "search-ms:query=x&crumb=location:\\\\evil\\share", "ms-settings:privacy", "ms-officecmd:{}", "shell:startup", "smb://evil/share", "MS-MSDT:x"]) {
+      expect(planTerminalLink(uri).kind, uri).toBe("blocked");
+    }
   });
 
   it("maps file links to a host and a decoded path", () => {
@@ -92,6 +108,18 @@ describe("modifier policy", () => {
     expect(shouldOpenLink({ ctrlKey: false, metaKey: true }, "modifier", true)).toBe(true);
     expect(shouldOpenLink({ ctrlKey: true, metaKey: false }, "modifier", true)).toBe(false);
     expect(shouldOpenLink(plain, "click", false)).toBe(true);
+  });
+
+  it("needs Shift as well while the program tracks the mouse", () => {
+    expect(shouldOpenLink({ ctrlKey: true, metaKey: false }, "modifier", false, true)).toBe(false);
+    expect(shouldOpenLink({ ctrlKey: true, metaKey: false, shiftKey: true }, "modifier", false, true)).toBe(true);
+    expect(shouldOpenLink({ ctrlKey: false, metaKey: true, shiftKey: true }, "modifier", true, true)).toBe(true);
+    expect(shouldOpenLink({ ctrlKey: false, metaKey: false }, "click", false, true)).toBe(false);
+    expect(shouldOpenLink({ ctrlKey: false, metaKey: false, shiftKey: true }, "click", false, true)).toBe(true);
+    expect(linkOpenHint("modifier", false, true)).toBe("Ctrl+Shift+单击打开");
+    expect(linkOpenHint("modifier", true, false)).toBe("⌘+单击打开");
+    expect(linkOpenHint("click", false, true)).toBe("Shift+单击打开");
+    expect(linkOpenHint("click", false, false)).toBe("单击打开");
   });
 });
 
@@ -355,6 +383,46 @@ describe("terminal links in a real xterm", () => {
     const tip = host.querySelector(".nx-term-link-tip");
     expect(tip?.textContent).toContain("https://xn--bcher-kva.example/");
     expect(tip?.textContent).toContain("单击打开");
+  });
+
+  it("with mouse tracking on, opens only with Ctrl+Shift and says so in the tooltip", async () => {
+    await write("\x1b[?1003h\x1b]8;;https://example.com/t\x1b\\tracked link\x1b]8;;\x1b\\\r\n");
+    const tracked = createTerminalLinkController({
+      tooltipHost: () => host,
+      cursorHost: host,
+      activation: () => "modifier",
+      mouseTracking: () => term.modes.mouseTrackingMode !== "none",
+      open: (uri) => opened.push(uri),
+      mac: false,
+    });
+    expect(term.modes.mouseTrackingMode).toBe("any");
+    tracked.webLinkHandler(mouse("mouseup", { ctrlKey: true }), "https://example.com/t");
+    expect(opened).toEqual([]);
+    tracked.webLinkHandler(mouse("mouseup", { ctrlKey: true, shiftKey: true }), "https://example.com/t");
+    expect(opened).toEqual(["https://example.com/t"]);
+    tracked.webLinkOptions.hover(mouse("mousemove", { ctrlKey: true, shiftKey: true }), "https://example.com/t");
+    expect(host.querySelector(".nx-term-link-tip")?.textContent).toContain("Ctrl+Shift+单击打开");
+    tracked.dispose();
+  });
+
+  it("a long-press probe finds the link without sending mouse reports or leaving a tooltip", async () => {
+    activation = "click";
+    await write("\x1b[?1003h\x1b[?1006h");
+    const sent: string[] = [];
+    term.onData((data) => sent.push(data));
+    const xtermMoves = vi.fn();
+    term.element?.addEventListener("mousemove", xtermMoves);
+    const screen = term.element?.querySelector(".xterm-screen");
+    expect(screen).not.toBeNull();
+    // jsdom cannot measure cells, so stand in for xterm's hover callback on the
+    // screen element, where its link detection listens.
+    screen!.addEventListener("mousemove", (event) => controller.webLinkOptions.hover(event as MouseEvent, "https://example.com/p"));
+    expect(probeTerminalLink(screen, controller, 30, 12)).toBe("https://example.com/p");
+    expect(xtermMoves).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+    expect(controller.hovered()).toBeNull();
+    expect(host.querySelector(".nx-term-link-tip")).toBeNull();
+    expect(probeTerminalLink(null, controller, 0, 0)).toBeNull();
   });
 
   it("uses Cmd on macOS", () => {

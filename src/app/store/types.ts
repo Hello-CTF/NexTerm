@@ -41,6 +41,8 @@ export interface AppTab {
   dbKind?: DbKind;
   credId?: string;
   path?: string;
+  // A file browser tab opened at a directory (a terminal file link); persisted with the layout.
+  directory?: string;
   shell?: "powershell" | "cmd" | "posix" | "unknown";
   pendingDirectory?: string;
   closable: boolean;
