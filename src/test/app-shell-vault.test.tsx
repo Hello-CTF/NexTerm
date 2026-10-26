@@ -194,7 +194,8 @@ describe("status bar credential vault state", () => {
   it("renders a clickable enable-protection entry when uninitialized", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     const control = vaultStatusControl();
     expect(control?.tagName).toBe("BUTTON");
@@ -206,7 +207,8 @@ describe("status bar credential vault state", () => {
   it("opens the settings tab and locates the credential protection card after clicking the entry", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     click(vaultStatusControl() as HTMLElement);
     await flush();
@@ -257,7 +259,8 @@ describe("status bar credential vault state", () => {
       activeWorkspaceId: "ws-b",
     });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     click(vaultStatusControl() as HTMLElement);
     await flush();
@@ -286,7 +289,8 @@ describe("status bar credential vault state", () => {
   it("keeps the locked state as plain text without an enable-protection entry", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     const control = vaultStatusControl();
     expect(control?.tagName).toBe("SPAN");
@@ -297,7 +301,8 @@ describe("status bar credential vault state", () => {
   it("keeps the unlocked state as plain text", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     const control = vaultStatusControl();
     expect(control?.tagName).toBe("SPAN");
@@ -318,7 +323,8 @@ describe("status bar credential vault state", () => {
   it("refreshes an open settings page through the shared vault-status query after initialization elsewhere", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     click(vaultStatusControl() as HTMLElement);
     await flush();

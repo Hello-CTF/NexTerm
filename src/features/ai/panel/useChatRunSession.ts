@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useCallback, useSyncExternalStore, useEffect } from "react";
-import { useUi, useActiveWorkspace } from "../../../app/store";
+import { useUi, useActiveWorkspace, useWorkspaceList } from "../../../app/store";
 import { useStableValue } from "../../../ui/useStableValue";
 import { useAssetProductionClassification } from "../../production/productionSettings";
 import { setAiTabBusy, type AiRunSlot, createAiRun, registerAiRunGeneration, aiTabRunControls, isCurrentAiRun } from "../runOwnership";
@@ -38,19 +38,22 @@ export function useChatRunSession(p: AiChatBase) {
   const anyAiBusy = useUi((s) => s.aiBusy);
   const takeoverState = useUi((s) => s.takeover);
   const pushToast = useUi((s) => s.pushToast);
-  const workspaces = useUi((s) => s.workspaces);
-  const sessions = useUi((s) => s.sessions);
+  const workspaces = useWorkspaceList();
   const activeWorkspace = useActiveWorkspace();
+  // Only the current session's asset can widen the scope, so the hook follows that one value.
+  const scopeSessionId = activeWorkspace?.kind === "session" && !activeWorkspace.assetId
+    ? (sessionId ?? activeWorkspace.sessionId)
+    : undefined;
+  const scopeSessionAssetId = useUi((s) =>
+    scopeSessionId ? s.sessions.find((item) => item.id === scopeSessionId)?.assetId : undefined);
   const aiScopeCandidate = useMemo(() => {
     let workspace = activeWorkspace;
-    if (workspace?.kind === "session" && !workspace.assetId) {
-      const currentSessionId = sessionId ?? workspace.sessionId;
-      const current = sessions.find((item) => item.id === currentSessionId);
-      if (current?.assetId) workspace = { ...workspace, assetId: current.assetId };
+    if (workspace?.kind === "session" && !workspace.assetId && scopeSessionAssetId) {
+      workspace = { ...workspace, assetId: scopeSessionAssetId };
     }
     return aiScopeForWorkspace(workspace, sessionId, tabId);
-  }, [activeWorkspace, sessionId, tabId, sessions]);
-  // The candidate is rebuilt whenever the sessions array changes identity; keep the previous object while its
+  }, [activeWorkspace, sessionId, tabId, scopeSessionAssetId]);
+  // The candidate is rebuilt whenever the active workspace changes identity; keep the previous object while its
   // content is equal so the permission lookup below does not re-run (two IPC calls and a re-render) each time.
   const aiScope = useStableValue(aiScopeCandidate);
   const hasAiScope = Boolean(sessionId || (activeWorkspace?.kind === "db" && activeWorkspace.connId));

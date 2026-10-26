@@ -13,7 +13,14 @@ import {
   type BackgroundTab,
   type KnownDurableTab,
 } from "./backgroundSessionsAccess";
-import { nextTabId, reconnectDeadHost, reconnectWorkspaceSession, useUi, type Workspace } from "../../app/store";
+import {
+  nextTabId,
+  reconnectDeadHost,
+  reconnectWorkspaceSession,
+  useSessionList,
+  useUi,
+  type Workspace,
+} from "../../app/store";
 import { apiBase, TRANSPORT } from "../../ipc/env";
 import { listenEvent } from "../../ipc/events";
 import { useAuth } from "../auth/store";
@@ -30,6 +37,7 @@ import {
 } from "../../ui/icons";
 
 const POLL_MS = 5000;
+const NO_WORKSPACES: Workspace[] = [];
 
 interface PendingTab {
   key: string;
@@ -84,8 +92,6 @@ export function BackgroundSessions({
   sessionId?: string;
 }) {
   const pushToast = useUi((s) => s.pushToast);
-  const sessions = useUi((s) => s.sessions);
-  const workspaces = useUi((s) => s.workspaces);
   const runtimeEpoch = useUi((s) => s.workspaceRuntimeEpoch);
   const webUserId = useAuth((s) => s.user?.id ?? null);
   const [desktopScope, setDesktopScope] = useState<{ epoch: number; value: string | null } | null>(null);
@@ -156,6 +162,9 @@ export function BackgroundSessions({
     ownerWorkspace?.kind === "session" ? (ownerWorkspace.sessionId ?? null) : null;
   const hostSessionId = workspaceSessionId ?? sessionId ?? null;
   const showAll = hostSessionId === null && ownerWorkspace?.kind === "tools";
+  // A single-host view follows only its own sessions; the all-hosts view follows every session and workspace.
+  const sessions = useSessionList(showAll ? undefined : [hostSessionId, ownerWorkspace?.sessionId]);
+  const workspaces = useUi((s) => (showAll ? s.workspaces : NO_WORKSPACES));
   const hostSession = sessions.find((session) => session.id === hostSessionId);
   const { remoteOwner, identityMismatch: hostIdentityMismatch, needsReconnect } =
     resolveHostGate(ownerWorkspace, hostSession, verifiedQuickSessions);
@@ -203,7 +212,8 @@ export function BackgroundSessions({
     setItemsScope(accountScope);
     try {
       const st = useUi.getState();
-      const scope: BackgroundScope = { sessions, workspaces: st.workspaces, verified: verifiedQuickSessions };
+      // Fetches read the current session list: deduplication and host keys may involve other sessions.
+      const scope: BackgroundScope = { sessions: st.sessions, workspaces: st.workspaces, verified: verifiedQuickSessions };
       const targets = backgroundTargets(scope, { showAll, hostSessionId, owner: ownerWorkspace, remoteOwner });
       const [live, ...remote] = await Promise.allSettled([
         terminalApi.listLive(),
@@ -248,7 +258,7 @@ export function BackgroundSessions({
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [hostSessionId, showAll, sessions, remoteOwner, ownerWorkspace, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions]);
+  }, [hostSessionId, showAll, remoteOwner, ownerWorkspace, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions]);
 
   useEffect(() => {
     ownerGenerationRef.current += 1;
@@ -306,6 +316,7 @@ export function BackgroundSessions({
     return rows;
   }, [showAll, workspaces, ownerWorkspace, sessions, memoryKnown, verifiedQuickSessions]);
 
+  // A change to a followed session restarts polling, so the list reloads at once.
   useEffect(() => {
     if (!visible || (!hostSessionId && !showAll)) return;
     const stopPoll = startPolling(() => load(), { intervalMs: POLL_MS });
@@ -313,7 +324,7 @@ export function BackgroundSessions({
       stopPoll();
       loadGenerationRef.current += 1;
     };
-  }, [visible, hostSessionId, showAll, load]);
+  }, [visible, hostSessionId, showAll, load, sessions]);
 
   const takeOver = async (info: BackgroundTab) => {
     const ownerGeneration = ownerGenerationRef.current;
@@ -361,7 +372,7 @@ export function BackgroundSessions({
     const target = useUi.getState().workspaces.find((workspace) => workspace.id === workspaceIdToReconnect);
     if (!target || !workspaceHostKey(target) || target.deletedTarget || reconnecting || desktopChecking) return;
     const identity = workspaceHostKey(target);
-    const currentSession = sessions.find((session) => session.id === target.sessionId);
+    const currentSession = useUi.getState().sessions.find((session) => session.id === target.sessionId);
     if (currentSession && workspaceSessionMatches(target, currentSession, verifiedQuickSessions) && currentSession.status === "connected") return;
     if (currentSession?.status === "connecting" || currentSession?.status === "reconnecting") return;
     const ownerGeneration = ownerGenerationRef.current;

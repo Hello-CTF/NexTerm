@@ -1,5 +1,7 @@
 import {
   useUi,
+  useHasSessions,
+  useWorkspaceList,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   type AppTab,
@@ -40,8 +42,8 @@ export function WorkspaceBody({
   onLocalTerminal,
   onOpenPalette,
 }: WorkspaceBodyProps) {
-  const workspaces = useUi((s) => s.workspaces);
-  const sessions = useUi((s) => s.sessions);
+  const workspaces = useWorkspaceList();
+  const hasSessions = useHasSessions();
   const leftMode = useUi((s) => s.leftMode);
   const leftWidth = useUi((s) => s.leftWidth);
   const setLeftWidth = useUi((s) => s.setLeftWidth);
@@ -89,7 +91,7 @@ export function WorkspaceBody({
 
       <main id="nx-main" tabIndex={-1} className="nx-workspace-main min-w-0 flex-1">
         {workspaces.length === 0 ? (
-          sessions.length > 0 ? (
+          hasSessions ? (
             <WorkspaceEmpty onNew={onNewTerminal} />
           ) : (
             <EmptyState onLocal={onLocalTerminal} onPalette={onOpenPalette} />

@@ -395,7 +395,7 @@ describe("desktop account sync card", () => {
 
   it("calls linkSet with the account and password on login without automatically running the first sync", async () => {
     mounted = mountAppWithSyncCard();
-    await flush();
+    await flushUntil(() => syncStatusText() !== null && syncStatusText() !== "同步：…");
     expect(syncStatusText()).toBe("同步：本地模式");
 
     await loginSyncAccount();

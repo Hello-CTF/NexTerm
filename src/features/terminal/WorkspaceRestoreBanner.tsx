@@ -5,7 +5,7 @@ import {
   subscribeLayoutRestore,
   undoLayoutRestore,
 } from "../../app/layout";
-import { useUi, type WorkspaceRestoreStatus } from "../../app/store";
+import { useUi, useUiStable, type SessionRuntimeInfo, type Workspace, type WorkspaceRestoreStatus } from "../../app/store";
 import { IconClose } from "../../ui/icons";
 import {
   classifyRestoredWorkspace,
@@ -17,6 +17,30 @@ import {
 interface RestoreItem extends WorkspaceRestoreCandidate {
   status: WorkspaceRestoreStatus;
   detail?: string;
+}
+
+type UiSnapshot = ReturnType<typeof useUi.getState>;
+
+let candidateCache: { workspaces: Workspace[]; sessions: SessionRuntimeInfo[]; value: WorkspaceRestoreCandidate[] } | null = null;
+
+// The banner follows the restore candidates rather than the workspace and session lists, so status changes
+// that leave the candidates equal do not re-render it. The last result is cached per input lists.
+function selectRestoreCandidates(state: UiSnapshot): WorkspaceRestoreCandidate[] {
+  if (candidateCache?.workspaces !== state.workspaces || candidateCache.sessions !== state.sessions) {
+    candidateCache = {
+      workspaces: state.workspaces,
+      sessions: state.sessions,
+      value: collectWorkspaceRestoreCandidates(state.workspaces, state.sessions),
+    };
+  }
+  return candidateCache.value;
+}
+
+// Workspaces that already have a restore result stay listed even once they no longer need a restore.
+function selectResultCandidates(state: UiSnapshot): WorkspaceRestoreCandidate[] {
+  return state.workspaces
+    .filter((workspace) => state.workspaceRestoreResults[workspace.id])
+    .map(classifyRestoredWorkspace);
 }
 
 // A fully restored banner stays just long enough to be read, then goes away on its own.
@@ -34,8 +58,8 @@ function statusText(item: RestoreItem): string {
 export function WorkspaceRestoreBanner() {
   const ready = useUi((state) => state.layoutSyncCompleted && state.sessionResyncCompleted);
   const dismissed = useUi((state) => state.workspaceRestoreDismissed);
-  const workspaces = useUi((state) => state.workspaces);
-  const sessions = useUi((state) => state.sessions);
+  const candidates = useUiStable(selectRestoreCandidates);
+  const resultCandidates = useUiStable(selectResultCandidates);
   const results = useUi((state) => state.workspaceRestoreResults);
   const dismiss = useUi((state) => state.dismissWorkspaceRestoreBanner);
   const [expanded, setExpanded] = useState(false);
@@ -47,18 +71,12 @@ export function WorkspaceRestoreBanner() {
   // reconnect in the same step, instead of a separate confirmation bar above the reconnect bar.
   const preview = layoutRestore.preview;
 
-  const candidates = useMemo(
-    () => collectWorkspaceRestoreCandidates(workspaces, sessions),
-    [workspaces, sessions],
-  );
   const items = useMemo(() => {
     const byId = new Map<string, WorkspaceRestoreCandidate>(
       candidates.map((candidate) => [candidate.workspaceId, candidate]),
     );
-    for (const workspace of workspaces) {
-      if (results[workspace.id] && !byId.has(workspace.id)) {
-        byId.set(workspace.id, classifyRestoredWorkspace(workspace));
-      }
+    for (const candidate of resultCandidates) {
+      if (!byId.has(candidate.workspaceId)) byId.set(candidate.workspaceId, candidate);
     }
     return [...byId.values()].map((candidate): RestoreItem => {
       const result = results[candidate.workspaceId];
@@ -67,7 +85,7 @@ export function WorkspaceRestoreBanner() {
         ? { ...candidate, status: "waiting" }
         : { ...candidate, status: "skipped", detail: candidate.skipReason };
     });
-  }, [candidates, results, workspaces]);
+  }, [candidates, results, resultCandidates]);
 
   const hosts = items.filter((item) => item.kind === "session");
   const isOpen = (item: RestoreItem) => item.eligible && item.status !== "success" && item.status !== "skipped";

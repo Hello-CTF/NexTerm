@@ -1,9 +1,11 @@
 import { memo, useEffect, useState } from "react";
 import {
   useUi,
+  useSessionList,
   reconnectRestoredTab,
   reconnectRestoredWorkspace,
   type AppTab,
+  type DbKind,
 } from "../store";
 import { isMultiHostLogTabId } from "../../features/logs/logTailTab";
 import { isFleetHealthTabId } from "../../features/fleet/fleetHealthTab";
@@ -120,6 +122,32 @@ function RestoredWorkspacePlaceholder({ workspaceId }: { workspaceId: string }) 
   );
 }
 
+// The few panels that list every session subscribe here, so other tabs do not re-render on session changes.
+function MultiHostLogTailTab() {
+  const sessions = useSessionList();
+  return <Lazy><MultiHostLogTail sessions={sessions} /></Lazy>;
+}
+
+function FleetHealthTab({ visible }: { visible: boolean }) {
+  const sessions = useSessionList();
+  return <Lazy><FleetHealthPanel sessions={sessions} visible={visible} /></Lazy>;
+}
+
+function ExecBatchTab() {
+  const sessions = useSessionList();
+  return <Lazy><ExecBatchPanel sessions={sessions} /></Lazy>;
+}
+
+// A database tab remounts its panel when the workspace runtime is reset.
+function DbTab({ connId, kind, workspaceId }: { connId: string; kind: DbKind; workspaceId: string }) {
+  const workspaceRuntimeEpoch = useUi((state) => state.workspaceRuntimeEpoch);
+  return (
+    <Lazy>
+      <DbPanel key={workspaceRuntimeEpoch} connId={connId} kind={kind} workspaceId={workspaceId} />
+    </Lazy>
+  );
+}
+
 export const PaneForTab = memo(function PaneForTab({
   tab,
   active,
@@ -131,9 +159,7 @@ export const PaneForTab = memo(function PaneForTab({
   workspaceId: string;
   onClose: (id: string) => Promise<void>;
 }) {
-  const workspaceRuntimeEpoch = useUi((state) => state.workspaceRuntimeEpoch);
   const restorePending = useUi((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.restorePending);
-  const sessions = useUi((state) => state.sessions);
   const close = () => void onClose(tab.id);
   if (restorePending) return <RestoredWorkspacePlaceholder workspaceId={workspaceId} />;
   if (tab.kind === "terminal" && tab.containerId && tab.restorePending) {
@@ -179,27 +205,16 @@ export const PaneForTab = memo(function PaneForTab({
         </Lazy>
       );
     case "log":
-      if (isMultiHostLogTabId(tab.id)) return <Lazy><MultiHostLogTail sessions={sessions} /></Lazy>;
-      if (isFleetHealthTabId(tab.id)) return <Lazy><FleetHealthPanel sessions={sessions} visible={active} /></Lazy>;
+      if (isMultiHostLogTabId(tab.id)) return <MultiHostLogTailTab />;
+      if (isFleetHealthTabId(tab.id)) return <FleetHealthTab visible={active} />;
       if (!tab.sessionId || !tab.path) return <EmptyState />;
       return <Lazy><LogViewer sessionId={tab.sessionId} path={tab.path} onClose={close} /></Lazy>;
     case "docker":
       return tab.sessionId ? <Lazy><DockerPanel sessionId={tab.sessionId} visible={active} /></Lazy> : <EmptyState />;
     case "db":
-      return tab.connId ? (
-        <Lazy>
-          <DbPanel
-            key={workspaceRuntimeEpoch}
-            connId={tab.connId}
-            kind={tab.dbKind ?? "mysql"}
-            workspaceId={workspaceId}
-          />
-        </Lazy>
-      ) : (
-        <EmptyState />
-      );
+      return tab.connId ? <DbTab connId={tab.connId} kind={tab.dbKind ?? "mysql"} workspaceId={workspaceId} /> : <EmptyState />;
     case "execBatch":
-      return <Lazy><ExecBatchPanel sessions={sessions} /></Lazy>;
+      return <ExecBatchTab />;
     case "settings":
       return <Lazy><SettingsView active={active} /></Lazy>;
     case "audit":

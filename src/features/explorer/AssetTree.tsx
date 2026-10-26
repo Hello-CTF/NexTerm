@@ -11,6 +11,7 @@ import {
   connectAsset,
   connectQuickTarget,
   useConnectionProblem,
+  useSessionList,
   useUi,
 } from "../../app/store";
 import { copyAssetDeepLink } from "../../app/deepLink";
@@ -305,13 +306,18 @@ type AssetMoveError = {
   message: string;
 };
 
+// The bulk maintenance dialog lists sessions; it subscribes on its own so the tree does not follow them.
+function BulkMaintenance({ onClose }: { onClose: () => void }) {
+  const sessions = useSessionList();
+  return <BulkMaintenanceDialog sessions={sessions} onClose={onClose} />;
+}
+
 export function AssetTree() {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
   const leftOpen = useUi((s) => s.leftOpen);
   const leftWidth = useUi((s) => s.leftWidth);
   const activeProject = useUi((s) => s.activeProject);
-  const sessions = useUi((state) => state.sessions);
   const [bulkMaintenanceOpen, setBulkMaintenanceOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [detailedIdentity, setDetailedIdentity] = useState(loadDetailedAssetIdentity);
@@ -1147,7 +1153,7 @@ export function AssetTree() {
       {snippetsOpen && <SnippetsPanel onClose={() => setSnippetsOpen(false)} />}
       {importing && <SshImportDialog onClose={() => setImporting(false)} />}
       {inventoryOpen && <InventoryDialog onClose={() => setInventoryOpen(false)} />}
-      {bulkMaintenanceOpen && <BulkMaintenanceDialog sessions={sessions} onClose={() => setBulkMaintenanceOpen(false)} />}
+      {bulkMaintenanceOpen && <BulkMaintenance onClose={() => setBulkMaintenanceOpen(false)} />}
       <ContextMenu
         state={
           rowMenu

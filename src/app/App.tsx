@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUi, useActiveWorkspace, dbKindOf } from "./store";
+import { useUi, useActiveWorkspace, useWorkspaceList, dbKindOf } from "./store";
 import { formatBinding, useKeybindings } from "./keybindings";
 import { assetApi, type Asset } from "../ipc/commands";
 import { ALL_PROJECTS, focusedWorkspaces } from "./projectFocus";
-import { useBackgroundSessionCount, useBackgroundSessionsAccess } from "../features/terminal/backgroundSessionsAccess";
+import { useBackgroundSessionsAccess } from "../features/terminal/backgroundSessionsAccess";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
 import { useShellLayout } from "./shell";
 import { useAppBootEffects, useAppDialogHandlers, useWebAuthRefresh } from "./shell/AppBootEffects";
@@ -42,13 +42,12 @@ export default function App() {
 // AppShell is the app controller: it gathers store, query and layout state plus the shared commands,
 // then hands them to the shell for the current mode.
 function AppShell() {
-  const workspaces = useUi((s) => s.workspaces);
+  const workspaces = useWorkspaceList();
   const activeWorkspaceId = useUi((s) => s.activeWorkspaceId);
   const activeProject = useUi((s) => s.activeProject);
   const projectInventory = useUi((s) => s.projectInventory);
   const setProjectInventory = useUi((s) => s.setProjectInventory);
   const setActiveWorkspace = useUi((s) => s.setActiveWorkspace);
-  const sessions = useUi((s) => s.sessions);
   const setLeftMode = useUi((s) => s.setLeftMode);
   const rightWidth = useUi((s) => s.rightWidth);
   const accountEpoch = useUi((s) => s.accountEpoch);
@@ -110,9 +109,7 @@ function AppShell() {
     }) ?? false);
   useKeysToolbarHeight(terminalKeysVisible, `${ws?.id ?? ""}:${ws?.panes.map((p) => p.activeTabId).join(",") ?? ""}`);
   const activeSessionId = ws?.kind === "session" ? ws.sessionId : undefined;
-  const activeSession = sessions.find((session) => session.id === activeSessionId);
   const backgroundAvailable = useBackgroundSessionsAccess(ws);
-  const backgroundCount = useBackgroundSessionCount(ws, backgroundAvailable);
 
   const actions = useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicker });
   const { openLocalTerminal, openNewTerminal, openSettings } = actions;
@@ -152,14 +149,13 @@ function AppShell() {
       setOverlayDock: docks.setOverlayDock,
       setLeftOpen,
       backgroundAvailable,
-      backgroundCount,
+      workspace: ws,
       hasDbAssets,
       actions,
     },
     header: {
       ws,
-      sessions,
-      activeSession,
+      activeSessionId,
       activeTab: active,
       rightDockOpen,
       commandPaletteLabel: formatBinding(bindings.commandPalette),
@@ -173,7 +169,6 @@ function AppShell() {
       activeProject,
       projectInventory,
       groups: groupsQuery.data ?? [],
-      sessions,
       onSelect: setActiveWorkspace,
       onReorder: (dragId, overId, before) => {
         const current = useUi.getState();
@@ -205,7 +200,6 @@ function AppShell() {
       onOpenPalette: openCommandPalette,
     },
     statusBar: {
-      sessions,
       vaultStatus,
       sync,
       onOpenVaultProtection: actions.openVaultProtection,

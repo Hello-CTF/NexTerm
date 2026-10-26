@@ -27,7 +27,6 @@ export function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
 
 export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: () => void }) {
   const setSessions = useUi((s) => s.setSessions);
-  const sessions = useUi((s) => s.sessions);
   const bindings = useKeybindings();
   const mobile = useShell() === "mobile";
   return (
@@ -49,7 +48,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
                 return;
               }
               void sessionApi.connectLocal().then((s) => {
-                setSessions([...sessions.filter((x) => x.id !== s.id), s]);
+                setSessions([...useUi.getState().sessions.filter((x) => x.id !== s.id), s]);
                 void openTerminalTab(s);
               });
             }}

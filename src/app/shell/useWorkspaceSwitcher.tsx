@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useUi,
+  useWorkspaceList,
   restoreClosedTab,
   sessionStatusText,
   sessionReconnectStatusText,
@@ -14,8 +15,7 @@ import { workspaceIcon } from "./AppHeader";
 
 // useWorkspaceSwitcher builds the header's workspace switcher menu.
 export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWorkspaces: () => Promise<void>) {
-  const workspaces = useUi((s) => s.workspaces);
-  const sessions = useUi((s) => s.sessions);
+  const workspaces = useWorkspaceList();
   const setActiveWorkspace = useUi((s) => s.setActiveWorkspace);
   const closeWorkspace = useUi((s) => s.closeWorkspace);
   const closedTabEntries = useClosedTabs((s) => s.stack.entries);
@@ -23,6 +23,8 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
 
   const buildWorkspaceMenuItems = useCallback(
     (): MenuItem[] => {
+      // Session status is read when the menu is built, so status changes do not re-render the app shell.
+      const sessions = useUi.getState().sessions;
       const items: MenuItem[] = visibleWorkspaces.map((w) => {
         const Icon = workspaceIcon(w);
         const session = sessions.find((s) => s.id === w.sessionId);
@@ -74,7 +76,7 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
       });
       return items;
     },
-    [visibleWorkspaces, workspaces, sessions, setActiveWorkspace, closeWorkspace, closeAllWorkspaces, closedTabEntries],
+    [visibleWorkspaces, workspaces, setActiveWorkspace, closeWorkspace, closeAllWorkspaces, closedTabEntries],
   );
   const buildWorkspaceMenuItemsRef = useRef(buildWorkspaceMenuItems);
   buildWorkspaceMenuItemsRef.current = buildWorkspaceMenuItems;

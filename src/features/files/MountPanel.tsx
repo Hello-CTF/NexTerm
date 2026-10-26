@@ -4,7 +4,7 @@ import { ask } from "../../ui/dialogs";
 import { assetApi, mountApi, systemApi } from "../../ipc/commands";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
-import { useUi } from "../../app/store";
+import { useSessionById, useUi } from "../../app/store";
 import { mountUnavailableReason } from "../../app/capabilities";
 import { DeviceSessionNotice } from "./DeviceSessionNotice";
 import { IconArrowLeft, IconChevronRight, IconDrive, IconRefresh, IconTrash } from "../../ui/icons";
@@ -68,9 +68,8 @@ export function MountPanel({ sessionId }: { sessionId?: string }) {
 function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
-  const sessions = useUi((s) => s.sessions);
   const visible = useMountPanelVisible(sessionId);
-  const session = sessions.find((s) => s.id === sessionId);
+  const session = useSessionById(sessionId);
   const localSession = session?.kind === "local";
   const assetId = session?.assetId ?? null;
   const platform = useQuery({

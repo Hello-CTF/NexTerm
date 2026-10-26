@@ -27,7 +27,6 @@ export interface WorkspaceActionsInput {
 
 // useWorkspaceActions holds the commands the rail, header, keyboard shortcuts and empty states share.
 export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicker }: WorkspaceActionsInput) {
-  const sessions = useUi((s) => s.sessions);
   const setSessions = useUi((s) => s.setSessions);
   const pushToast = useUi((s) => s.pushToast);
   const [vaultProtectionSeq, setVaultProtectionSeq] = useState(0);
@@ -200,7 +199,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
         (!workspaceId || state.workspaces.some((workspace) => workspace.id === workspaceId && workspace.assetId === workspaceAssetId));
     };
     const sid = ws?.sessionId;
-    const s = sid ? sessions.find((x) => x.id === sid) : undefined;
+    const s = sid ? useUi.getState().sessions.find((x) => x.id === sid) : undefined;
     if (s && ws) {
       if (isSessionReconnectPending(s.id)) {
         pushToast("info", "正在重连，连接成功后自动新建终端");
@@ -247,7 +246,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       return;
     }
     void openLocalTerminal();
-  }, [ws, sessions, setSessions, openLocalTerminal, pushToast]);
+  }, [ws, setSessions, openLocalTerminal, pushToast]);
 
   const closeAllWorkspaces = useCallback(async () => {
     const state = useUi.getState();

@@ -2,8 +2,9 @@ import { type ReactNode } from "react";
 import {
   sessionStatusText,
   sessionReconnectStatusText,
+  useSessionById,
+  useSessionStatus,
   type AppTab,
-  type SessionRuntimeInfo,
   type Workspace,
 } from "../store";
 import { type SessionInfo } from "../../ipc/commands";
@@ -48,7 +49,8 @@ function WorkspaceStatusGlyph({ status }: { status: SessionInfo["status"] | unde
   );
 }
 
-function WorkspaceReconnectStatus({ session }: { session: SessionRuntimeInfo | undefined }) {
+function WorkspaceReconnectStatus({ sessionId }: { sessionId: string | undefined }) {
+  const session = useSessionById(sessionId);
   const text = sessionReconnectStatusText(session);
   if (!text) return null;
   return (
@@ -64,8 +66,8 @@ function WorkspaceReconnectStatus({ session }: { session: SessionRuntimeInfo | u
 
 export interface AppHeaderProps {
   ws: Workspace | null | undefined;
-  sessions: SessionRuntimeInfo[];
-  activeSession: SessionRuntimeInfo | undefined;
+  // activeSessionId is the session of the active host workspace; the header follows only that session.
+  activeSessionId: string | undefined;
   activeTab: AppTab | null;
   rightDockOpen: boolean;
   commandPaletteLabel: string;
@@ -78,8 +80,7 @@ export interface AppHeaderProps {
 
 export function AppHeader({
   ws,
-  sessions,
-  activeSession,
+  activeSessionId,
   activeTab,
   rightDockOpen,
   commandPaletteLabel,
@@ -89,6 +90,7 @@ export function AppHeader({
   windowControls,
 }: AppHeaderProps) {
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
+  const wsStatus = useSessionStatus(ws?.sessionId);
   return (
     <header
       className={`nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 ${
@@ -115,10 +117,10 @@ export function AppHeader({
           >
             {ActiveWsIcon ? <ActiveWsIcon size={13} /> : null}
             <span className="truncate">{ws.title}</span>
-            <WorkspaceStatusGlyph status={sessions.find((s) => s.id === ws.sessionId)?.status} />
+            <WorkspaceStatusGlyph status={wsStatus} />
             <IconChevronDown size={12} />
           </button>
-          <WorkspaceReconnectStatus session={activeSession} />
+          <WorkspaceReconnectStatus sessionId={activeSessionId} />
           <span
             className="nx-header-crumb flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"
             data-wails-drag-region style={wailsDragRegionStyle}

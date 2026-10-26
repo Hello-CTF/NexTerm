@@ -1,27 +1,22 @@
-import { type SessionRuntimeInfo } from "../store";
+import { useSessionSummary } from "../store";
 import { IconLock, IconNetwork, IconServer } from "../../ui/icons";
 import { type SyncStatusSummary, type VaultStatusSummary } from "./useStatusBarState";
 
 export interface StatusBarProps {
-  sessions: SessionRuntimeInfo[];
   vaultStatus: VaultStatusSummary;
   sync: SyncStatusSummary;
   onOpenVaultProtection: () => void;
   onOpenSyncSettings: () => void;
 }
 
-export function StatusBar({ sessions, vaultStatus, sync, onOpenVaultProtection, onOpenSyncSettings }: StatusBarProps) {
-  const connectedList = sessions.filter((s) => s.status === "connected");
-  const connectedSessions = connectedList.length;
-  const idleSessions = connectedList.filter(
-    (s) => s.kind !== "remote" && (s.tabs?.length ?? 0) === 0,
-  ).length;
+export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSyncSettings }: StatusBarProps) {
+  const { total: sessionCount, connected: connectedSessions, idle: idleSessions } = useSessionSummary();
   return (
     <footer className="nx-statusbar flex h-[25px] shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950 px-3 text-[11px] text-neutral-500">
       <div className="nx-statusbar-info">
         <span className="flex items-center gap-1.5">
           <IconServer size={11} />
-          <strong className="font-medium text-neutral-300">{sessions.length}</strong> 个会话
+          <strong className="font-medium text-neutral-300">{sessionCount}</strong> 个会话
           <span className="text-neutral-700">·</span>
           <span
             className={

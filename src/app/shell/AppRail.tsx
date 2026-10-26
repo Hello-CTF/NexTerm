@@ -1,4 +1,5 @@
-import { useUi, openCredentialsSidebar } from "../store";
+import { useUi, openCredentialsSidebar, type Workspace } from "../store";
+import { useBackgroundSessionCount } from "../../features/terminal/backgroundSessionsAccess";
 import { TRANSPORT } from "../../ipc/env";
 import { isMac } from "../platform";
 import { mountUnavailableReason } from "../capabilities";
@@ -26,7 +27,9 @@ export interface AppRailProps {
   setOverlayDock: (dock: OverlayDock) => void;
   setLeftOpen: (open: boolean) => void;
   backgroundAvailable: boolean;
-  backgroundCount: number | null | undefined;
+  // workspace is the active workspace; the rail counts its background terminals itself, so a host status
+  // change re-renders the rail rather than the whole app shell.
+  workspace: Workspace | null | undefined;
   hasDbAssets: boolean;
   actions: WorkspaceActions;
 }
@@ -37,10 +40,11 @@ export function AppRail({
   setOverlayDock,
   setLeftOpen,
   backgroundAvailable,
-  backgroundCount,
+  workspace,
   hasDbAssets,
   actions,
 }: AppRailProps) {
+  const backgroundCount = useBackgroundSessionCount(workspace, backgroundAvailable);
   const leftMode = useUi((s) => s.leftMode);
   const setLeftMode = useUi((s) => s.setLeftMode);
   const { needSession, openBackground, openHistory, openDocker, openDatabase, openMount, openForward } = actions;
