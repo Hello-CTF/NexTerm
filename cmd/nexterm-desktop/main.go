@@ -169,7 +169,7 @@ func run(args []string) int {
 		}
 		service.links.deliver(url)
 	})
-	window = wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	windowOptions := application.WebviewWindowOptions{
 		Title:          "NexTerm",
 		URL:            "/",
 		Width:          1480,
@@ -178,6 +178,14 @@ func run(args []string) int {
 		MinHeight:      600,
 		Frameless:      true,
 		EnableFileDrop: true,
+	}
+	savedWindow, hasSavedWindow := loadWindowState(paths.DataDir)
+	if hasSavedWindow {
+		windowOptions = applyWindowState(windowOptions, savedWindow, screenBounds(wailsApp))
+	}
+	window = wailsApp.Window.NewWithOptions(windowOptions)
+	trackWindowState(window, paths.DataDir, savedWindow, func(err error) {
+		logger.Warn("window state not saved", "error", err)
 	})
 	window.OnWindowEvent(wailsevents.Common.WindowFilesDropped, func(event *application.WindowEvent) {
 		emitFilesDropped(wailsApp, event)
