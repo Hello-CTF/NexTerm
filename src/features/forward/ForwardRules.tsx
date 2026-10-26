@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUi } from "../../app/store";
+import { useUi, useSessionList } from "../../app/store";
 import { forwardRuleApi, type ForwardRule, type ForwardRuleInput } from "../../ipc/forwardRuleApi";
 import { ask } from "../../ui/dialogs";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
@@ -36,7 +36,7 @@ export function ForwardRules({
 }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
-  const sessions = useUi((s) => s.sessions);
+  const sessions = useSessionList();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState<ForwardRule | null>(null);
   const [name, setName] = useState("");

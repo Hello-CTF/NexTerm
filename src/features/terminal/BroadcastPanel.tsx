@@ -1,4 +1,4 @@
-import { useUi, type BroadcastTargetStatus } from "../../app/store";
+import { useUi, type BroadcastTargetStatus, useSessionList, useWorkspaceList } from "../../app/store";
 import { IconClose, IconZap } from "../../ui/icons";
 import { collectBroadcastCandidates } from "./broadcast";
 
@@ -15,8 +15,8 @@ export function BroadcastStrip(props: {
   onManage: () => void;
 }) {
   const broadcast = useUi((state) => state.broadcast);
-  const workspaces = useUi((state) => state.workspaces);
-  const sessions = useUi((state) => state.sessions);
+  const workspaces = useWorkspaceList();
+  const sessions = useSessionList();
   const setBroadcast = useUi((state) => state.setBroadcast);
   const pushToast = useUi((state) => state.pushToast);
   if (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useUi, type Workspace } from "../../app/store";
+import { useWorkspaceList, type Workspace } from "../../app/store";
 import { assetApi, type Asset, type SessionInfo } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { createJsonChannel, disposeChannel, type IpcChannel } from "../../ipc/events";
@@ -144,7 +144,7 @@ function statusTone(status: SourceViewStatus["status"]): string {
 }
 
 export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
-  const workspaces = useUi((state) => state.workspaces);
+  const workspaces = useWorkspaceList();
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
   const targets = useMemo(
     () => collectTargets(sessions, assetsQuery.data ?? [], workspaces),

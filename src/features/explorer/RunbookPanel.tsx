@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useUi } from "../../app/store";
+import { useSessionList } from "../../app/store";
 import { assetApi, type Asset, type SessionInfo } from "../../ipc/commands";
 import type { ExecBatchResult, ExecBatchResultRow, ExecBatchStatus } from "../../ipc/execBatchApi";
 import {
@@ -156,7 +156,7 @@ function RunHistoryView({ history }: { history: RunbookHistory }) {
 }
 
 export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly Snippet[]; onClose: () => void; onBack?: () => void }) {
-  const sessions = useUi((state) => state.sessions);
+  const sessions = useSessionList();
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
   const targets = useMemo(() => collectTargets(sessions, assetsQuery.data ?? []), [sessions, assetsQuery.data]);
   const [runbookId] = useState(createRunbookId);

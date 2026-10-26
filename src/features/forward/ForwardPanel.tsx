@@ -4,7 +4,7 @@ import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { forwardApi, type ForwardSpec } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
-import { useUi } from "../../app/store";
+import { useUi, useSessionList } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { ForwardRules } from "./ForwardRules";
 import { useCompactWidth } from "../docker/useCompactWidth";
@@ -73,7 +73,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
 function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
-  const sessions = useUi((s) => s.sessions);
+  const sessions = useSessionList();
   const visible = useForwardPanelVisible(sessionId);
   const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
   const localMachine = WEB ? "NexTerm 所在机器" : "本机";

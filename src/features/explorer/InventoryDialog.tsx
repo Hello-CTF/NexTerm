@@ -8,7 +8,7 @@ import {
   type InventorySyncDTO,
 } from "../../ipc/inventoryApi";
 import { WEB } from "../../ipc/env";
-import { useUi } from "../../app/store";
+import { useUi, useSessionList } from "../../app/store";
 import { useAuth } from "../auth/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -60,7 +60,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
   // the session select offers the account's own Docker-host sessions.
   const user = useAuth((state) => state.user);
   const ownerKey = user?.id ?? "default";
-  const sessions = useUi((state) => state.sessions);
+  const sessions = useSessionList();
 
   // Async completions must not outlive the account that started them: after every await, shared
   // side effects (query-cache writes, invalidations, refetches) require the dialog to still be

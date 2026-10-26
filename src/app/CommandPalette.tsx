@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab, type Workspace } from "./store";
+import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab, type Workspace, useSessionList, useWorkspaceList } from "./store";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
 import { assetApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
@@ -71,14 +71,14 @@ export function CommandPalette({
   onQuickConnect?: () => void;
 }) {
   const qc = useQueryClient();
-  const sessions = useUi((s) => s.sessions);
+  const sessions = useSessionList();
   const setSessions = useUi((s) => s.setSessions);
   const addTab = useUi((s) => s.addTab);
   const pushToast = useUi((s) => s.pushToast);
   const themeMode = useUi((s) => s.themeMode);
   const setThemeMode = useUi((s) => s.setThemeMode);
   const connectingAssetIds = useUi((s) => s.connectingAssetIds);
-  const workspaces = useUi((s) => s.workspaces);
+  const workspaces = useWorkspaceList();
   const activeWorkspaceId = useUi((s) => s.activeWorkspaceId);
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
