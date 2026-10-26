@@ -379,7 +379,9 @@ func (c *remoteClient) syncPost(ctx context.Context, path string, payload any, o
 		return status, rpcErr, err
 	}
 	if status == http.StatusBadRequest && rpcErr != nil && rpcErr.Code == ipc.CodeUnsupported {
-		return status, rpcErr, remoteProtocolError(header)
+		if err := remoteProtocolError(header); err != nil {
+			return status, rpcErr, err
+		}
 	}
 	if status == http.StatusOK {
 		if err := responseProtocolError(out.syncProtocol()); err != nil {

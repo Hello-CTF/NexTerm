@@ -138,3 +138,25 @@ func TestRemoteClientKeepsOtherErrors(t *testing.T) {
 	}
 	requireCode(t, err, ipc.CodeBadParam)
 }
+
+// An unsupported rejection from a server advertising this device's protocol is not a version mismatch: the
+// server's own message is reported instead of telling the user to upgrade a device that is already current.
+func TestRemoteClientPassesThroughUnsupportedFromSameProtocol(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(protocolHeader, strconv.Itoa(ProtocolVersion))
+		writeSyncJSON(w, http.StatusBadRequest, ipc.Failure(ipc.NewError(ipc.CodeUnsupported, "server-side feature disabled")))
+	}))
+	t.Cleanup(server.Close)
+	client, err := newRemoteClient(RemoteConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ids(context.Background())
+	if errors.Is(err, errProtocolIncompatible) {
+		t.Fatalf("same-protocol rejection was reported as a protocol mismatch: %v", err)
+	}
+	requireCode(t, err, ipc.CodeUnsupported)
+	if !strings.Contains(err.Error(), "server-side feature disabled") || strings.Contains(err.Error(), "升级") {
+		t.Fatalf("error = %q, want the server's own message", err.Error())
+	}
+}
