@@ -104,3 +104,23 @@ describe("default terminal mode settings", () => {
     expect(getTerminalPrefs().defaultMode).toBe("durable");
   });
 });
+
+describe("terminal GPU acceleration settings", () => {
+  it("saves the selected mode to the account and updates the hint", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    registerAccountPreferenceStore({ getView: async () => ({ defaults: {}, overrides: {} }), putOverrides: put, deleteOverrides: async () => {} });
+    mounted = mountWithClient(createElement(SettingsView));
+    await flush();
+    const group = mounted.container.querySelector('[aria-label="终端 GPU 加速"]');
+    const buttons = [...(group?.querySelectorAll("button") ?? [])];
+    expect(buttons.find((button) => button.textContent === "自动")?.getAttribute("aria-pressed")).toBe("true");
+    const off = buttons.find((button) => button.textContent === "关闭");
+    if (!off) throw new Error("GPU off option not found");
+    click(off);
+    await waitFor(() => expect(off.getAttribute("aria-pressed")).toBe("true"));
+
+    expect(put).toHaveBeenCalledWith({ "terminal.gpuAcceleration": "off" });
+    expect(getTerminalPrefs().gpuAcceleration).toBe("off");
+    expect(mounted.container.textContent).toContain("始终使用兼容渲染");
+  });
+});

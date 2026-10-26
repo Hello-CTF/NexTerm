@@ -8,6 +8,8 @@ import {
   getTerminalPrefs,
   setTerminalDefaultMode,
   setTerminalCloseAction,
+  setTerminalGpuAcceleration,
+  subscribeTerminalPrefs,
   type AccountPreferenceStore,
   type AccountPreferenceView,
 } from "../app/preferences";
@@ -291,6 +293,43 @@ describe("default terminal mode preferences", () => {
     await saving;
     expect(getTerminalPrefs().defaultMode).toBe("durable");
     expect(getAccountOverrides()["terminal.defaultMode"]).toBe("durable");
+  });
+});
+
+describe("terminal GPU acceleration preference", () => {
+  afterEach(() => registerAccountPreferenceStore(null));
+
+  it("defaults to auto and round-trips through the account store", async () => {
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().gpuAcceleration).toBe("auto");
+    const store = memoryStore({});
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    const changed = vi.fn();
+    const unsubscribe = subscribeTerminalPrefs(changed);
+    setTerminalGpuAcceleration("off");
+    setTerminalGpuAcceleration("off");
+    unsubscribe();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(store.puts).toEqual([{ "terminal.gpuAcceleration": "off" }]);
+
+    // Another device reads the saved override.
+    registerAccountPreferenceStore(null);
+    window.localStorage.clear();
+    registerAccountPreferenceStore(memoryStore({ ...store.data }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().gpuAcceleration).toBe("off");
+  });
+
+  it("keeps a device value without an account and ignores unknown stored values", async () => {
+    registerAccountPreferenceStore(null);
+    setTerminalGpuAcceleration("on");
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().gpuAcceleration).toBe("on");
+
+    registerAccountPreferenceStore(memoryStore({ "terminal.gpuAcceleration": "webgl" }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().gpuAcceleration).toBe("auto");
   });
 });
 

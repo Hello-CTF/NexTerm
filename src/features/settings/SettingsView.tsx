@@ -5,9 +5,11 @@ import { useUi } from "../../app/store";
 import {
   setTerminalCloseAction,
   setTerminalDefaultMode,
+  setTerminalGpuAcceleration,
   useTerminalPrefs,
   type TerminalCloseAction,
   type TerminalDefaultMode,
+  type TerminalGpuAcceleration,
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
@@ -132,6 +134,12 @@ const CLOSE_ACTION_OPTIONS: { value: TerminalCloseAction; label: string }[] = [
   { value: "ask", label: "每次询问" },
   { value: "kill", label: "直接关闭" },
   { value: "detach", label: "转到后台" },
+];
+
+const GPU_ACCELERATION_OPTIONS: { value: TerminalGpuAcceleration; label: string }[] = [
+  { value: "auto", label: "自动" },
+  { value: "on", label: "开启" },
+  { value: "off", label: "关闭" },
 ];
 
 const DEFAULT_MODE_OPTIONS: { value: TerminalDefaultMode; label: string }[] = [
@@ -721,6 +729,28 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </p>
             <p className="nx-hint mt-1.5">
               以上策略适用于支持后台的交互终端；本机后台终端仅在宿主应用运行期间保留，不是 durable SSH。
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <div className="nx-setting-label mb-1.5" data-setting="terminal-gpu-acceleration">终端 GPU 加速</div>
+            <div className="nx-segment" role="group" aria-label="终端 GPU 加速">
+              {GPU_ACCELERATION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`nx-segment-item ${terminalPrefs.gpuAcceleration === option.value ? "is-active" : ""}`}
+                  aria-pressed={terminalPrefs.gpuAcceleration === option.value}
+                  onClick={() => setTerminalGpuAcceleration(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="nx-hint mt-1.5">
+              {terminalPrefs.gpuAcceleration === "auto" &&
+                "使用 WebGL 渲染终端；检测到软件渲染（如虚拟机或远程桌面）时改用兼容渲染。GPU 多次失效时自动回退。"}
+              {terminalPrefs.gpuAcceleration === "on" && "始终尝试 WebGL 渲染，包括软件渲染环境。GPU 多次失效时仍会回退。"}
+              {terminalPrefs.gpuAcceleration === "off" && "始终使用兼容渲染（DOM），不占用 GPU。"}
             </p>
           </div>
           {showCloseToTray && (

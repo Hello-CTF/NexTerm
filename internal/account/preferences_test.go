@@ -42,6 +42,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"input.selectionAutoCopy",
 		"terminal.closeAction",
 		"terminal.defaultMode",
+		"terminal.gpuAcceleration",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
 		"keybinding.newTerminal",
@@ -123,6 +124,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"input.selectionAutoCopy":       "true",
 		"terminal.closeAction":          `"kill"`,
 		"terminal.defaultMode":          `"regular"`,
+		"terminal.gpuAcceleration":      `"off"`,
 		"keybinding.closeTab":           `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":      "null",
 		"keybinding.reclaimTakeover":    `"Mod+Shift+s"`,
@@ -162,6 +164,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"input.selectionAutoCopy":       {`"true"`, "1", "null"},
 		"terminal.closeAction":          {`"background"`, "1", "null", "true"},
 		"terminal.defaultMode":          {`"auto"`, `"persistent"`, "1", "null", "true"},
+		"terminal.gpuAcceleration":      {`"webgl"`, `"Auto"`, "1", "null", "true"},
 		"keybinding.closeTab":           {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {

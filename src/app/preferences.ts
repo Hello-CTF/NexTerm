@@ -223,16 +223,20 @@ export function useInputPrefs(): InputPrefs {
 
 export type TerminalCloseAction = "ask" | "kill" | "detach";
 export type TerminalDefaultMode = "durable" | "regular";
+// auto loads WebGL unless the GPU is a software renderer; on always tries it; off keeps the DOM renderer.
+export type TerminalGpuAcceleration = "auto" | "on" | "off";
 
 export interface TerminalPrefs {
   closeAction: TerminalCloseAction;
   defaultMode: TerminalDefaultMode;
+  gpuAcceleration: TerminalGpuAcceleration;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
 const TERMINAL_CLOSE_ACTION_KEY = "terminal.closeAction";
 const TERMINAL_DEFAULT_MODE_KEY = "terminal.defaultMode";
-const TERMINAL_DEFAULTS: TerminalPrefs = { closeAction: "ask", defaultMode: "durable" };
+const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
+const TERMINAL_DEFAULTS: TerminalPrefs = { closeAction: "ask", defaultMode: "durable", gpuAcceleration: "auto" };
 
 function loadTerminal(): TerminalPrefs {
   let local: Partial<TerminalPrefs> = {};
@@ -247,9 +251,11 @@ function loadTerminal(): TerminalPrefs {
   const defaultMode = terminalDefaultUsesAccount()
     ? accountOverrides[TERMINAL_DEFAULT_MODE_KEY] ?? accountDefaults[TERMINAL_DEFAULT_MODE_KEY]
     : local.defaultMode;
+  const gpu = preferenceValue<unknown>(TERMINAL_GPU_ACCELERATION_KEY, local.gpuAcceleration, TERMINAL_DEFAULTS.gpuAcceleration);
   return {
     closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction,
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
+    gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
   };
 }
 
@@ -292,6 +298,22 @@ export function setTerminalCloseAction(value: TerminalCloseAction): void {
   if (accountStore) {
     void accountStore.putOverrides({ [TERMINAL_CLOSE_ACTION_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [TERMINAL_CLOSE_ACTION_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalGpuAcceleration(value: TerminalGpuAcceleration): void {
+  if (terminalPrefs.gpuAcceleration === value) return;
+  terminalPrefs = { ...terminalPrefs, gpuAcceleration: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, gpuAcceleration: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_GPU_ACCELERATION_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_GPU_ACCELERATION_KEY]: value }, []);
   }
   for (const listener of terminalListeners) listener();
 }
