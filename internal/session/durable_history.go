@@ -7,9 +7,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-// durableHistoryGapBanner is rendered where a durable tab's stream skipped
+// durableHistoryGapBanner is rendered (never transcribed) where a durable tab's stream skipped
 // output the helper dropped under its history limit before it was streamed.
-var durableHistoryGapBanner = []byte("\r\n\x1b[33m[NexTerm] output beyond the durable history limit was dropped before it could be shown\x1b[0m\r\n")
+var durableHistoryGapBanner = []byte("\r\n\x1b[33m[NexTerm] 早期历史已截断：超出持久终端历史上限的输出已被丢弃\x1b[0m\r\n")
 
 // MaxDurableHistoryRead bounds one ReadDurableHistoryFor reply.
 const MaxDurableHistoryRead = 192 << 10

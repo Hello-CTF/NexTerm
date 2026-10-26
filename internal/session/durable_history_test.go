@@ -142,7 +142,18 @@ func TestSupervisorDurableFreshOpenReplaysTailAndKeepsTranscript(t *testing.T) {
 		t.Fatalf("fresh open rendered %d bytes including the start of the output", len(shown))
 	}
 	waitForLong(t, func() bool { return bytes.Contains(secondRecorder.outputBytes(), []byte("after-marker")) })
-	transcribed := append(firstRecorder.outputBytes(), secondRecorder.outputBytes()...)
+	// The shell may print its prompt after the marker; compare once the
+	// transcript caught up with whatever the helper recorded last.
+	var transcribed []byte
+	waitForLong(t, func() bool {
+		descriptor, found, err := findDurableDescriptor(ctx, provider, tabID)
+		if err != nil || !found {
+			return false
+		}
+		recording, _ = readWholeHistory(t, provider, tabID, identity, descriptor.HistoryNext)
+		transcribed = append(firstRecorder.outputBytes(), secondRecorder.outputBytes()...)
+		return len(transcribed) >= len(recording)
+	})
 	if !bytes.Equal(transcribed, recording) {
 		t.Fatalf("transcript has %d bytes across the restart, the helper recorded %d", len(transcribed), len(recording))
 	}
@@ -213,7 +224,8 @@ func TestSupervisorDurableRecoverReportsDroppedTranscriptOutput(t *testing.T) {
 	}
 	waitForTabOutput(t, second, tabID, "after-marker")
 	waitForLong(t, func() bool {
-		return offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID) == int64(next)
+		current, found, err := findDurableDescriptor(ctx, provider, tabID)
+		return err == nil && found && current.HistoryNext >= next && offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID) == int64(current.HistoryNext)
 	})
 	if secondRecorder.skipped() == 0 {
 		t.Fatal("transcript was not told about the dropped output")
@@ -228,6 +240,53 @@ func TestSupervisorDurableRecoverReportsDroppedTranscriptOutput(t *testing.T) {
 	if !truncated || historyBase != descriptor.HistoryBase {
 		t.Fatalf("tab history base %d truncated=%v, want base %d truncated", historyBase, truncated, descriptor.HistoryBase)
 	}
+}
+
+// A transcript offset beyond the helper's recording (output lost in a host
+// crash) no longer fails the recovery: it is realigned and new output is
+// transcribed instead of being swallowed as catch-up.
+func TestSupervisorDurableRecoverRealignsTranscriptOffsetAheadOfRecording(t *testing.T) {
+	provider := supervisorRemoteProvider(t)
+	offsets := &memoryTranscriptOffsets{}
+	ctx := context.Background()
+	tabID := ids.New()
+
+	first, connected := openRecordingManager(t, provider, offsets, &gapRecorder{transcriptRecorder: &transcriptRecorder{}}, 0)
+	if _, err := first.OpenTab(ctx, OpenTabOptions{
+		TabID: tabID, SessionID: connected.ID, ClientID: "client-a", ChannelID: "ahead-1", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	identity := *recoveryIdentity(first, tabID)
+	if err := first.Write(ctx, tabID, "client-a", []byte("echo before-mark''er\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitForTabOutput(t, first, tabID, "before-marker")
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	next := waitForHelperOutput(t, provider, tabID, identity, "before-marker")
+	offsets.PersistDurableTranscriptOffsetContext(ctx, tabID, int64(next)+5000)
+
+	recorder := &gapRecorder{transcriptRecorder: &transcriptRecorder{}}
+	second, reconnected := openRecordingManager(t, provider, offsets, recorder, 0)
+	t.Cleanup(func() { _ = second.Close() })
+	if _, err := second.OpenTab(ctx, OpenTabOptions{
+		TabID: tabID, SessionID: reconnected.ID, ClientID: "client-a", ChannelID: "ahead-2", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{Recover: true, Identity: &identity},
+	}); err != nil {
+		t.Fatalf("recover with a transcript offset ahead of the recording: %v", err)
+	}
+	if err := second.Write(ctx, tabID, "client-a", []byte("echo after-mark''er\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitForLong(t, func() bool { return bytes.Contains(recorder.outputBytes(), []byte("after-marker")) })
+	waitForHelperOutput(t, provider, tabID, identity, "after-marker")
+	waitForLong(t, func() bool {
+		descriptor, found, err := findDurableDescriptor(ctx, provider, tabID)
+		return err == nil && found && offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID) == int64(descriptor.HistoryNext)
+	})
 }
 
 func waitForLong(t *testing.T, condition func() bool) {

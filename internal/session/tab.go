@@ -544,6 +544,14 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 					tab.catchUpRemaining = m.durableTranscriptCatchUpBytes(ownerCtx(context.Background(), session.userID), tabID)
 				}
 				if replay, ok := durableReplayOf(durableAttachment); ok {
+					if next := int64(replay.HistoryNext); tab.catchUpRemaining > next {
+						// The transcript offset ran ahead of the helper's
+						// recording (output lost in a host crash): realign it
+						// instead of swallowing the next output as catch-up.
+						m.logger.Warn("durable transcript offset beyond the helper recording; realigning", "tab", tabID, "offset", tab.catchUpRemaining, "recorded", next)
+						tab.catchUpRemaining = next
+						m.persistDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID, next)
+					}
 					// The stream starts at ReplayFrom, not at offset zero.
 					start := int64(replay.ReplayFrom)
 					if tab.catchUpRemaining < start {
