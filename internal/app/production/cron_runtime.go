@@ -320,6 +320,13 @@ func composeCronScheduler(ctx context.Context, services *ProductionServices, opt
 	if err != nil {
 		return nil, nil, err
 	}
+	ownerless, err := cronStore.CountOwnerless(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ownerless > 0 {
+		slog.Warn("cron jobs without owner information are disabled and will not run; recreate them", "count", ownerless)
+	}
 	executor := &cron.AgentExecutor{
 		ScopeFor: scopeForConversation(services.Store, productionScopeValidator(services)),
 		Connect:  newCronConnector(services),

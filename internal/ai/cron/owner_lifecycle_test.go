@@ -121,6 +121,9 @@ func TestOwnerlessJobIsDisabledWithVisibleError(t *testing.T) {
 		Updates(map[string]any{"owner_id": "", "owner_kind": ""}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if count, err := cronStore.CountOwnerless(context.Background()); err != nil || count != 1 {
+		t.Fatalf("ownerless job count = %d, err = %v", count, err)
+	}
 	clock := newFakeClock(now)
 	triggers := make(chan Trigger, 1)
 	scheduler := testScheduler(t, cronStore, executorFunc(func(_ context.Context, trigger Trigger) error {
