@@ -17,6 +17,9 @@ import (
 type unixTerminal struct {
 	master  *os.File
 	process *Process
+	// pid is the started process; it leads the terminal's session and its
+	// own process group.
+	pid int
 }
 
 func startTerminal(cmd *exec.Cmd, cols, rows uint32, processFactory func(*exec.Cmd) (*Process, error)) (terminal, error) {
@@ -41,7 +44,7 @@ func startTerminal(cmd *exec.Cmd, cols, rows uint32, processFactory func(*exec.C
 		_ = cmd.Wait()
 		return nil, err
 	}
-	return &unixTerminal{master: master, process: process}, nil
+	return &unixTerminal{master: master, process: process, pid: cmd.Process.Pid}, nil
 }
 
 // pollableMaster replaces the descriptor after creack's Fd-based ioctls.
