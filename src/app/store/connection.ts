@@ -17,6 +17,7 @@ import {
 import { promptQuickConnectPassword } from "./quickConnect";
 import { reconnectSessionAndWait } from "./reconnect";
 import { prepareDurableInBackground } from "./durableReadiness";
+import { openTerminalTab } from "./tabActions";
 import type {
   AppTab,
   ConnectAssetInput,
@@ -108,7 +109,11 @@ export async function openConnectedAssetSession(
     useUi.setState((state) => {
       const rebound = rebindWorkspaceSession(state.workspaces, restored.id, restored.sessionId, info.id);
       if (options?.preserveUserFocus) return { workspaces: rebound };
-      return { activeWorkspaceId: restored.id, workspaces: rebound };
+      return {
+        activeWorkspaceId: restored.id,
+        workspaces: rebound,
+        connectFocusRevision: state.connectFocusRevision + 1,
+      };
     });
     return;
   }
@@ -130,6 +135,17 @@ export async function openConnectedAssetSession(
     connectFocusRevision: state.connectFocusRevision + 1,
   }));
   showConnectedFiles();
+  // A quick connection (typing user@host) still opens a terminal right away, unlike opening a saved host.
+  if ((quickTarget || options?.openTerminal) && asset.kind !== "docker" && asset.kind !== "device") {
+    await openTerminalTab(info, undefined, pane.id);
+  }
+}
+
+// focusConnectedWorkspace shows the workspace a host click resolved to. The focus revision also closes an overlay
+// drawer on narrow layouts, so the workspace (and its "新建终端" empty state) is not left covered.
+function focusConnectedWorkspace(workspaceId: string): void {
+  useUi.getState().setActiveWorkspace(workspaceId);
+  useUi.getState().bumpConnectFocusRevision();
 }
 
 const inflightConnects = new Map<string, Promise<ConnectOutcome>>();
@@ -339,7 +355,11 @@ async function runConnectAsset(
   const { pushToast } = useUi.getState();
 
   const existing = useUi.getState().workspaces.find((w) => w.assetId === asset.id);
-  if (existing?.restorePending) return reconnectRestoredWorkspace(existing.id);
+  if (existing?.restorePending) {
+    const outcome = await reconnectRestoredWorkspace(existing.id);
+    if (outcome.ok && !options?.preserveUserFocus && currentConnectionEpoch(epoch)) useUi.getState().bumpConnectFocusRevision();
+    return outcome;
+  }
   const restoreDatabaseWorkspace =
     existing?.kind === "db" &&
     !existing.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "db"));
@@ -350,7 +370,7 @@ async function runConnectAsset(
       (existing.kind === "db" ||
         (session !== undefined && LIVE_SESSION_STATUSES.has(session.status)));
     if (live) {
-      useUi.getState().setActiveWorkspace(existing.id);
+      focusConnectedWorkspace(existing.id);
       if (session) prepareDurableInBackground(session);
       return { ok: true };
     }
@@ -365,7 +385,7 @@ async function runConnectAsset(
         }
         const { sessions, setSessions } = useUi.getState();
         setSessions([...sessions.filter((s) => s.id !== fresh.id), fresh]);
-        useUi.getState().setActiveWorkspace(existing.id);
+        focusConnectedWorkspace(existing.id);
         prepareDurableInBackground(fresh);
         useConnectHistory.getState().record(asset.id);
         return { ok: true };

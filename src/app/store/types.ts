@@ -485,6 +485,8 @@ export interface ConnectAssetInput {
 export interface ConnectAssetOptions {
   silent?: boolean;
   preserveUserFocus?: boolean;
+  // openTerminal opens a terminal with the new workspace; quick connections use it, host clicks do not.
+  openTerminal?: boolean;
 }
 
 export type ConnectOutcome =

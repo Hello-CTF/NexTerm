@@ -132,6 +132,8 @@ export interface XtermViewProps {
     retainable?: boolean;
     durable?: boolean;
     fallbackNotice?: string;
+    // durableRequested is set when this view created the shell: whether it asked for a durable terminal.
+    durableRequested?: boolean;
     encoding?: string;
     title?: string;
     titleCustom?: boolean;
@@ -417,6 +419,7 @@ export function XtermView(props: XtermViewProps) {
       retainable?: boolean;
       durable?: boolean;
       fallbackNotice?: string;
+      durableRequested?: boolean;
       encoding?: string;
       title?: string;
       titleCustom?: boolean;
@@ -1094,6 +1097,7 @@ export function XtermView(props: XtermViewProps) {
             retainable: info.retainable,
             durable: info.durable,
             fallbackNotice: info.fallbackNotice,
+            durableRequested: !regular,
             ephemeral: info.ephemeral,
             attachmentId: info.attachmentId,
           });

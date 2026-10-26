@@ -156,7 +156,7 @@ async function runSaveQuickConnectAsset(
       throw e;
     }
     useUi.getState().clearConnectionProblem(quickConnectionProblemKey(target));
-    return finish(await connectAsset(created, options));
+    return finish(await connectAsset(created, { ...options, openTerminal: true }));
   } catch (e) {
     if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
     const err = e as { message?: string };

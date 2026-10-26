@@ -113,30 +113,47 @@ export function focusActivePane(direction: FocusDirection): string | null {
   return target;
 }
 
+// Terminal opens per session that are still deciding their mode, so quick repeated opens get distinct titles.
+const pendingTerminalOpens = new Map<string, number>();
+
+function sessionTerminalCount(sessionId: string): number {
+  const ws = useUi.getState().workspaces.find((w) => w.sessionId === sessionId);
+  return ws?.panes.flatMap((p) => p.tabs).filter((t) => t.kind === "terminal").length ?? 0;
+}
+
 // openTerminalTab is the explicit "new terminal" action. It opens a durable terminal when the session's durable
-// helper is ready; while the helper is still preparing or unavailable it opens a regular terminal immediately and
-// records the reason on the tab, so the degradation is visible.
+// helper is ready; while the helper is still preparing or unavailable it opens a regular terminal without waiting for
+// the helper and records the reason on the tab, so the degradation is visible. The mode decision itself is bounded
+// (see regularTerminalReason).
 export async function openTerminalTab(
   session: SessionInfo,
   title?: string,
   paneId?: string,
   options?: { directory?: string },
 ) {
-  const regularReason = await regularTerminalReason(session);
-  const wsId = useUi.getState().ensureWorkspace({
+  const pending = pendingTerminalOpens.get(session.id) ?? 0;
+  const number = sessionTerminalCount(session.id) + pending + 1;
+  pendingTerminalOpens.set(session.id, pending + 1);
+  let regularReason: string | undefined;
+  try {
+    regularReason = await regularTerminalReason(session);
+  } finally {
+    const left = (pendingTerminalOpens.get(session.id) ?? 1) - 1;
+    if (left > 0) pendingTerminalOpens.set(session.id, left);
+    else pendingTerminalOpens.delete(session.id);
+  }
+  useUi.getState().ensureWorkspace({
     kind: "session",
     sessionId: session.id,
     assetId: session.assetId ?? undefined,
     title: session.name,
     assetKind: session.kind,
   });
-  const ws = useUi.getState().workspaces.find((w) => w.id === wsId);
-  const n = ws?.panes.flatMap((p) => p.tabs).filter((t) => t.kind === "terminal").length ?? 0;
   useUi.getState().addTab(
     {
       id: nextTabId(`term-${session.id}`),
       kind: "terminal",
-      title: title ?? `终端 ${n + 1}`,
+      title: title ?? `终端 ${number}`,
       sessionId: session.id,
       pendingDirectory: options?.directory,
       ...(regularReason ? { regularReason } : {}),

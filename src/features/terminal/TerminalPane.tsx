@@ -36,7 +36,7 @@ import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } f
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, DURABLE_FALLBACK_REASON, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
+import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, fallbackTerminalReason, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -1245,6 +1245,10 @@ export function TerminalPane({
     : helperOperation?.status === "awaiting_choice"
       ? { state: "attention", message: helperOperation.reason?.message }
       : helperReady ? { state: "ready" } : null;
+  useEffect(() => {
+    // The header now reports the ready helper; drop the "not durable" reason so the tab strip marker agrees with it.
+    if (helperBadge?.state === "ready" && regularReason) useUi.getState().updateTab(storeTabId, { regularReason: undefined });
+  }, [helperBadge?.state, regularReason, storeTabId]);
   const openHelper = () => {
     if (helperOperation) setHelperPanelOpen(true);
     else void refreshHelperDetails();
@@ -2154,12 +2158,26 @@ export function TerminalPane({
                   shell: info.shell ?? "unknown",
                   retainable: info.retainable === true,
                   ...(info.durable === undefined ? {} : { durable: info.durable }),
-                  ...(info.fallbackNotice && info.durable !== true && !regularReason ? { regularReason: DURABLE_FALLBACK_REASON } : {}),
                   exited: info.exited,
                   dead: false,
                   closeError: undefined,
                 });
                 if (info.durable !== undefined) setDurable(info.durable);
+                if (
+                  info.durable === false && sessionKind === "ssh" && !forceRegular && !containerId && !effectiveWinrm &&
+                  !findStoreTab(useUi.getState().workspaces, storeTabId)?.regularReason
+                ) {
+                  // Name why this SSH shell is regular; the backend reports its own fallback only once per connection.
+                  void fallbackTerminalReason(sessionId, {
+                    fallbackNotice: Boolean(info.fallbackNotice),
+                    durableRequested: info.durableRequested,
+                  }).then((reason) => {
+                    const tab = findStoreTab(useUi.getState().workspaces, storeTabId);
+                    if (reason && tab && tab.durable !== true && !tab.regularReason) {
+                      useUi.getState().updateTab(storeTabId, { regularReason: reason });
+                    }
+                  });
+                }
                 if (info.encoding) setEncoding(info.encoding);
                 const titleSync = reconcileBackendTabTitle(
                   storeTabId,

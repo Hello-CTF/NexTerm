@@ -10,7 +10,7 @@ import { mountApi, systemApi } from "./ipc/commands";
 import { WEB } from "./ipc/env";
 import { consumeDeepLinks } from "./ipc/wails";
 import { openDeepLink } from "./app/deepLink";
-import { applySessionStatusEvent, useUi } from "./app/store";
+import { applySessionStatusEvent, noteHelperProgress, useUi } from "./app/store";
 import { onRemoteChange } from "./app/layout";
 import { setMacPlatform, setWindowsPlatform } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
@@ -56,6 +56,7 @@ function wireDesktopShell(): void {
   });
 
   void listenEvent<HelperProgressEvent>(EVENTS.helperProgress, (p) => {
+    noteHelperProgress(p);
     useUi.getState().setHelperProgress(p);
   });
 
