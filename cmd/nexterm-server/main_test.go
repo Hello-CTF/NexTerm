@@ -122,7 +122,7 @@ func TestServerProcessRetriesDeferredUpgradeAfterFirstAdmin(t *testing.T) {
 	for _, row := range []any{
 		&store.AssetRow{ID: "legacy-asset", Kind: "ssh", Name: "legacy", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
 		&store.ConversationRow{ID: "legacy-conversation", ScopeJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
-		&store.CronJob{ID: "legacy-cron", SessionID: "legacy-conversation", Prompt: "synthetic-prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: false, TimeoutMS: 1000, CreatedAt: 1, UpdatedAt: 1, Revision: 1, NextRunAt: time.Now().Add(time.Hour).UnixMilli()},
+		&store.CronJob{ID: "legacy-cron", SessionID: "legacy-conversation", OwnerKind: "open", Prompt: "synthetic-prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: false, TimeoutMS: 1000, CreatedAt: 1, UpdatedAt: 1, Revision: 1, NextRunAt: time.Now().Add(time.Hour).UnixMilli()},
 	} {
 		if err := database.GORM().Create(row).Error; err != nil {
 			t.Fatal(err)
