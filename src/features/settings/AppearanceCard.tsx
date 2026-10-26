@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import type { SettingsPanelId } from "./settingsIndex";
 import { useUi } from "../../app/store";
 import type { ThemeMode } from "../../app/theme";
 import {
@@ -52,7 +53,7 @@ const TERM_FONT_LABELS: Record<TerminalFontFamily, string> = {
   consolas: "Consolas",
 };
 
-export function AppearanceCard() {
+export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; n: number } | null }) {
   const themeMode = useUi((s) => s.themeMode);
   const resolvedTheme = useUi((s) => s.resolvedTheme);
   const setThemeMode = useUi((s) => s.setThemeMode);
@@ -75,6 +76,9 @@ export function AppearanceCard() {
     prefs.terminalContrast === "standard";
   const advancedPanelId = useId();
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  useEffect(() => {
+    if (reveal?.panel === "appearance-advanced") setAdvancedOpen(true);
+  }, [reveal]);
 
   const [customFontOpen, setCustomFontOpen] = useState(false);
   const [customFontDraft, setCustomFontDraft] = useState("");

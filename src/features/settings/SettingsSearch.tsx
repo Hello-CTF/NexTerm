@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type KeyboardEvent, type RefObject } from "react";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { IconSearch } from "../../ui/icons";
 import type { SettingsSearchResult } from "./settingsIndex";
 
@@ -20,7 +21,7 @@ export function SettingsSearch({ query, onQueryChange, results, onSelect, inputR
   useEffect(() => setActive(0), [query]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (isImeKeyEvent(e)) return;
     if (e.key === "ArrowDown" && results.length > 0) {
       e.preventDefault();
       setActive((i) => (i + 1) % results.length);
@@ -52,7 +53,8 @@ export function SettingsSearch({ query, onQueryChange, results, onSelect, inputR
           className="nx-input nx-input-sm w-full pl-7"
           placeholder="搜索设置（按 / 聚焦）"
           aria-label="搜索设置"
-          aria-expanded={searching}
+          aria-expanded={searching && results.length > 0}
+          aria-autocomplete="list"
           aria-controls={searching ? listId : undefined}
           aria-activedescendant={searching && results[active] ? `${listId}-${active}` : undefined}
           autoComplete="off"
@@ -61,9 +63,12 @@ export function SettingsSearch({ query, onQueryChange, results, onSelect, inputR
           onKeyDown={onKeyDown}
         />
       </div>
+      <span className="nx-sr-only" role="status">
+        {searching ? `${results.length} 个结果` : ""}
+      </span>
       {searching &&
         (results.length === 0 ? (
-          <p className="nx-hint px-1 py-3" role="status">
+          <p className="nx-hint px-1 py-3">
             没有找到与「{query.trim()}」相关的设置
           </p>
         ) : (

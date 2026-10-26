@@ -1,5 +1,6 @@
 // Declarative search index for the settings view. Section metadata is keyed by
-// SettingsSectionId, so adding a section without an entry here is a type error.
+// SettingsSectionId and SETTINGS_SECTIONS is checked against that union, so a
+// section without an entry here, or with an unknown id, is a type error.
 // Individual settings are listed in SETTINGS_ITEMS; an item is scrolled to and
 // highlighted through the element carrying data-setting="<item id>", and falls
 // back to its section when that element is not rendered.
@@ -95,27 +96,31 @@ export interface SettingsItem {
   label: string;
   description?: string;
   keywords?: readonly string[];
+  /** The collapsible panel that must be open for the setting to render. */
+  panel?: SettingsPanelId;
 }
+
+export type SettingsPanelId = "appearance-advanced" | "shortcuts-advanced";
 
 export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "ui-theme", section: "settings-appearance", label: "界面主题", description: "跟随系统、浅色或深色", keywords: ["theme", "dark", "light", "主题", "深色", "浅色"] },
-  { id: "ui-font-size", section: "settings-appearance", label: "界面字号", keywords: ["font size", "字体", "字号"] },
-  { id: "ui-text-scale", section: "settings-appearance", label: "界面文字倍率", keywords: ["scale", "zoom", "缩放", "倍率"] },
-  { id: "terminal-theme", section: "settings-appearance", label: "终端与编辑器主题", keywords: ["theme", "color scheme", "配色", "主题"] },
-  { id: "terminal-contrast", section: "settings-appearance", label: "终端对比度", keywords: ["contrast", "对比度"] },
-  { id: "terminal-font-size", section: "settings-appearance", label: "终端字号", keywords: ["font size", "字体", "字号"] },
-  { id: "terminal-font-family", section: "settings-appearance", label: "终端字体", keywords: ["font", "family", "cascadia", "字体"] },
+  { id: "ui-font-size", section: "settings-appearance", label: "界面字号", keywords: ["font size", "字体", "字号"], panel: "appearance-advanced" },
+  { id: "ui-text-scale", section: "settings-appearance", label: "界面文字倍率", keywords: ["scale", "zoom", "缩放", "倍率"], panel: "appearance-advanced" },
+  { id: "terminal-theme", section: "settings-appearance", label: "终端与编辑器主题", keywords: ["theme", "color scheme", "配色", "主题"], panel: "appearance-advanced" },
+  { id: "terminal-contrast", section: "settings-appearance", label: "终端对比度", keywords: ["contrast", "对比度"], panel: "appearance-advanced" },
+  { id: "terminal-font-size", section: "settings-appearance", label: "终端字号", keywords: ["font size", "字体", "字号"], panel: "appearance-advanced" },
+  { id: "terminal-font-family", section: "settings-appearance", label: "终端字体", keywords: ["font", "family", "cascadia", "字体"], panel: "appearance-advanced" },
   { id: "default-terminal-mode", section: "settings-terminal", label: "默认终端模式", description: "持久终端或普通终端", keywords: ["durable", "persistent", "detach", "持久"] },
   { id: "osc52", section: "settings-terminal", label: "允许远程主机写入剪贴板（OSC 52）", keywords: ["clipboard", "osc52", "剪贴板"] },
   { id: "close-action", section: "settings-terminal", label: "关闭运行中的终端标签时", keywords: ["close", "kill", "detach", "关闭", "后台"] },
-  { id: "copy-on-select", section: "settings-shortcuts", label: "选中自动复制", keywords: ["copy", "select", "clipboard", "复制", "剪贴板"] },
+  { id: "copy-on-select", section: "settings-shortcuts", label: "选中自动复制", keywords: ["copy", "select", "clipboard", "复制", "剪贴板"], panel: "shortcuts-advanced" },
   { id: "vault-password", section: "settings-vault", label: "用密码保护凭据", keywords: ["password", "credential", "vault", "密码", "凭据"] },
   { id: "vault-auto-lock", section: "settings-vault", label: "闲置自动锁定", keywords: ["lock", "idle", "timeout", "锁定", "凭据"] },
 ];
 
 export type SettingsSearchResult =
   | { kind: "section"; key: string; sectionId: string; label: string; detail: string }
-  | { kind: "item"; key: string; sectionId: string; itemId: string; label: string; detail: string };
+  | { kind: "item"; key: string; sectionId: string; itemId: string; label: string; detail: string; panel?: SettingsPanelId };
 
 const normalize = (text: string) => text.toLowerCase().normalize("NFKC");
 
@@ -157,6 +162,7 @@ export function searchSettings(
         key: `${item.section}:${item.id}`,
         sectionId: item.section,
         itemId: item.id,
+        panel: item.panel,
         label: item.label,
         detail: sectionLabel,
       });

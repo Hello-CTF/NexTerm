@@ -13,11 +13,11 @@ import { ask, promptText } from "../../ui/dialogs";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
 import { onSettingsSection } from "./settingsNavigation";
 import { SettingsSearch } from "./SettingsSearch";
-import { searchSettings, type SettingsSearchResult, type SettingsSectionId } from "./settingsIndex";
+import { searchSettings, type SettingsPanelId, type SettingsSearchResult, type SettingsSectionId } from "./settingsIndex";
 import "./settingsSearch.css";
-import { isImeKeyEvent } from "../../ui/DialogHost";
+import { isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { isWindows } from "../../app/platform";
-import { isMobileShell } from "../../app/shell";
+import { isMobileShell, isTouchShell } from "../../app/shell";
 import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
@@ -74,7 +74,9 @@ const SETTINGS_GROUPS: readonly { id: SettingsGroupId; label: string; icon: type
   { id: "account", label: "账号与同步", icon: IconServer },
 ];
 
-const SETTINGS_SECTIONS = [
+type SettingsSectionDef = { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId };
+
+const ALL_SETTINGS_SECTIONS = [
   { id: "settings-appearance", label: "外观", icon: IconMonitor, group: "general" },
   { id: "settings-terminal", label: "终端", icon: IconTerminal, group: "general" },
   { id: "settings-shortcuts", label: "快捷键", icon: IconCommand, group: "general" },
@@ -90,10 +92,12 @@ const SETTINGS_SECTIONS = [
   { id: "settings-account", label: "账号同步", icon: IconServer, group: "account" },
   { id: "settings-bundle", label: "资产包", icon: IconArchive, group: "account" },
   { id: "settings-share", label: "分享", icon: IconGlobe, group: "account" },
-].filter((section) => {
+] as const satisfies readonly SettingsSectionDef[];
+
+const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = ALL_SETTINGS_SECTIONS.filter((section) => {
   if (section.id === "settings-update") return DESKTOP;
   return true;
-}) as readonly { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId }[];
+});
 
 function groupOfSection(id: string): SettingsGroupId {
   return SETTINGS_SECTIONS.find((section) => section.id === id)?.group ?? "general";
@@ -150,7 +154,7 @@ function saveNavOpen(open: boolean): void {
   }
 }
 
-export function SettingsView() {
+export function SettingsView({ active = true }: { active?: boolean }) {
   const pushToast = useUi((s) => s.pushToast);
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
   const setTerminalOsc52 = useUi((s) => s.setTerminalOsc52);
@@ -270,6 +274,8 @@ export function SettingsView() {
   useEffect(() => () => window.clearTimeout(flashTimer.current), []);
   const searching = searchQuery.trim() !== "";
   const searchResults = useMemo(() => searchSettings(searchQuery, SETTINGS_SECTIONS), [searchQuery]);
+  const [reveal, setReveal] = useState<{ panel: SettingsPanelId; n: number } | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ result: SettingsSearchResult; n: number } | null>(null);
   const selectSearchResult = (result: SettingsSearchResult) => {
     setSearchQuery("");
     const target = groupOfSection(result.sectionId);
@@ -278,8 +284,16 @@ export function SettingsView() {
       saveGroup(target);
     }
     setActiveSection(result.sectionId);
-    // The target group only has a layout after the next frame.
-    requestAnimationFrame(() => {
+    const n = Date.now() + Math.random();
+    if (result.kind === "item" && result.panel) setReveal({ panel: result.panel, n });
+    setFocusRequest({ result, n });
+  };
+  // Runs after the group is shown and any collapsed panel holding the setting
+  // has opened, which both need a frame of layout.
+  useEffect(() => {
+    if (!focusRequest) return;
+    const { result } = focusRequest;
+    const frame = requestAnimationFrame(() => {
       const root = contentRef.current;
       const el =
         (result.kind === "item"
@@ -293,20 +307,22 @@ export function SettingsView() {
       window.clearTimeout(flashTimer.current);
       flashTimer.current = window.setTimeout(() => el.classList.remove("nx-setting-flash"), 2000);
     });
-  };
+    return () => cancelAnimationFrame(frame);
+  }, [focusRequest]);
   const focusSearch = () => {
-    setNavOpen(true);
+    // Expand without persisting: focusing search should not change the saved nav preference.
+    setNavOpenState(true);
     requestAnimationFrame(() => searchInputRef.current?.focus());
   };
-  // Desktop opens with the search box focused so typing searches right away;
-  // touch layouts skip it to avoid raising the on-screen keyboard.
+  // The active settings pane opens with the search box focused so typing
+  // searches right away. Inactive (kept-mounted) panes must not steal focus,
+  // and touch layouts skip it to avoid raising the on-screen keyboard.
   useEffect(() => {
-    if (!window.matchMedia?.("(pointer: coarse)").matches) searchInputRef.current?.focus();
-  }, []);
+    if (active && !isTouchShell()) searchInputRef.current?.focus();
+  }, [active]);
   const onViewKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
-    const t = e.target as HTMLElement;
-    if (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) return;
+    if (isEditableTarget(e.target)) return;
     e.preventDefault();
     focusSearch();
   };
@@ -632,7 +648,7 @@ export function SettingsView() {
           <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3 p-3 sm:gap-4 sm:p-5">
         <div className="flex flex-col gap-4" hidden={group !== "general"} data-settings-group="general">
         <div id="settings-appearance" className="scroll-mt-12">
-          <AppearanceCard />
+          <AppearanceCard reveal={reveal} />
         </div>
 
         <section id="settings-terminal" className="nx-card scroll-mt-12">
@@ -729,7 +745,7 @@ export function SettingsView() {
         </section>
 
         <div id="settings-shortcuts" className="scroll-mt-12">
-          <ShortcutsCard />
+          <ShortcutsCard reveal={reveal} />
         </div>
 
         {DESKTOP && (

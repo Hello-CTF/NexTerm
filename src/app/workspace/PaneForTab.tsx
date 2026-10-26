@@ -201,7 +201,7 @@ export const PaneForTab = memo(function PaneForTab({
     case "execBatch":
       return <Lazy><ExecBatchPanel sessions={sessions} /></Lazy>;
     case "settings":
-      return <Lazy><SettingsView /></Lazy>;
+      return <Lazy><SettingsView active={active} /></Lazy>;
     case "audit":
       return <Lazy><AuditView /></Lazy>;
     case "devices":

@@ -146,9 +146,11 @@ describe("Settings search", () => {
     expect(groupShown("security")).toBe(true);
     expect(groupShown("general")).toBe(false);
     expect(searchInput().value).toBe("");
-    const anchor = mounted!.container.querySelector<HTMLElement>('[data-setting="vault-auto-lock"]');
-    // The setting only renders for a password-protected vault; the section is the fallback target.
-    const target = anchor ?? document.getElementById("settings-vault")!;
+    // The fixture vault is not password-protected, so the setting itself is not rendered
+    // and the section is the only possible target.
+    expect(mounted!.container.querySelector('[data-setting="vault-auto-lock"]')).toBeNull();
+    const target = document.getElementById("settings-vault")!;
+    expect(mounted!.container.querySelectorAll(".nx-setting-flash")).toHaveLength(1);
     expect(target.classList.contains("nx-setting-flash")).toBe(true);
     expect(document.activeElement).toBe(target);
   });
@@ -163,10 +165,51 @@ describe("Settings search", () => {
     expect(target.classList.contains("nx-setting-flash")).toBe(true);
   });
 
+  it("opens the collapsed advanced panel that holds a setting before highlighting it", async () => {
+    expect(mounted!.container.querySelector('[data-setting="terminal-font-family"]')).toBeNull();
+    search("终端字体");
+    click(mounted!.container.querySelector<HTMLElement>('[role="option"]')!);
+    await flush();
+    const target = mounted!.container.querySelector<HTMLElement>('[data-setting="terminal-font-family"]');
+    expect(target).not.toBeNull();
+    expect(mounted!.container.querySelectorAll(".nx-setting-flash")).toHaveLength(1);
+    expect(target!.classList.contains("nx-setting-flash")).toBe(true);
+    expect(document.activeElement).toBe(target);
+
+    search("选中自动复制");
+    click(mounted!.container.querySelector<HTMLElement>('[role="option"]')!);
+    await flush();
+    const copy = mounted!.container.querySelector<HTMLElement>('[data-setting="copy-on-select"]');
+    expect(copy).not.toBeNull();
+    expect(copy!.classList.contains("nx-setting-flash")).toBe(true);
+  });
+
+  it("announces the result count", () => {
+    search("终端");
+    const status = mounted!.container.querySelector(".nx-sr-only[role=\"status\"]");
+    expect(status?.textContent).toBe(`${resultLabels().length} 个结果`);
+    expect(searchInput().getAttribute("aria-expanded")).toBe("true");
+    search("zzzz-no-such-setting");
+    expect(status?.textContent).toBe("0 个结果");
+    expect(searchInput().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("ignores navigation keys while an IME composition is being committed", () => {
+    search("字体");
+    const options = () => [...mounted!.container.querySelectorAll('[role="option"]')];
+    act(() => {
+      searchInput().dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", keyCode: 229, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(options()[0].getAttribute("aria-selected")).toBe("true");
+    expect(options()[1].getAttribute("aria-selected")).toBe("false");
+  });
+
   it("shows an empty state when nothing matches", () => {
     search("zzzz-no-such-setting");
     expect(mounted!.container.querySelector('[role="option"]')).toBeNull();
-    expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("没有找到");
+    expect(mounted!.container.textContent).toContain("没有找到与「zzzz-no-such-setting」相关的设置");
   });
 
   it("restores the full navigation when the query is cleared", () => {
@@ -229,5 +272,56 @@ describe("Settings search index", () => {
       expect(SECTION_SEARCH[item.section], item.id).toBeDefined();
     }
     expect(new Set(SETTINGS_ITEMS.map((i) => i.id)).size).toBe(SETTINGS_ITEMS.length);
+  });
+});
+
+describe("Settings search focus and anchors", () => {
+  it("only focuses the search box once the pane is active", async () => {
+    mounted = withClient(createElement(SettingsView, { active: false }));
+    await flush();
+    expect(document.activeElement).not.toBe(searchInput());
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    act(() =>
+      mounted!.root.render(
+        createElement(QueryClientProvider, { client }, createElement(SettingsView, { active: true })),
+      ),
+    );
+    await flush();
+    expect(document.activeElement).toBe(searchInput());
+  });
+
+  it("does not persist the expanded nav when focusing search with /", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    localStorage.clear();
+    act(() => {
+      mounted!.container.querySelector(".nx-settings-view")!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }),
+      );
+    });
+    await flush();
+    expect(localStorage.getItem("nexterm.settingsNav.v1")).toBeNull();
+  });
+
+  it("renders an anchor for every indexed setting when the vault is password-protected and advanced panels are open", async () => {
+    mocks.vaultStatus.mockResolvedValue({
+      initialized: true,
+      mode: "master",
+      passwordless: false,
+      unlocked: true,
+      autoLockMinutes: 5,
+    });
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    for (const toggle of [...mounted.container.querySelectorAll("button")].filter(
+      (b) => b.textContent?.trim() === "高级设置",
+    )) {
+      click(toggle);
+    }
+    await flush();
+    const missing = SETTINGS_ITEMS.filter(
+      (item) => !mounted!.container.querySelector(`[data-setting="${item.id}"]`),
+    ).map((item) => item.id);
+    expect(missing).toEqual([]);
   });
 });

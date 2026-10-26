@@ -1,4 +1,4 @@
-import { useId, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   KEYBINDING_ACTIONS,
   bindingConflicts,
@@ -13,15 +13,19 @@ import {
   type KeybindingActionId,
 } from "../../app/keybindings";
 import { setSelectionAutoCopy, useInputPrefs } from "../../app/preferences";
+import type { SettingsPanelId } from "./settingsIndex";
 import { IconChevronDown, IconChevronRight, IconClose, IconCommand, IconEdit, IconRefresh } from "../../ui/icons";
 
-export function ShortcutsCard() {
+export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n: number } | null }) {
   const bindings = useKeybindings();
   const prefs = useInputPrefs();
   const [captureFor, setCaptureFor] = useState<KeybindingActionId | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const advancedPanelId = useId();
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  useEffect(() => {
+    if (reveal?.panel === "shortcuts-advanced") setAdvancedOpen(true);
+  }, [reveal]);
 
   const conflicts = bindingConflicts(bindings);
   const conflictPeers = new Map<string, string>();

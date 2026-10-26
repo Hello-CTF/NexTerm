@@ -12,6 +12,8 @@ const harness = vi.hoisted(() => {
 
 vi.mock("../../app/platform", () => ({
   isMac: () => harness.mac,
+  isMobile: () => false,
+  isCoarsePointer: () => false,
   modHint: () => (harness.mac ? "⌘" : "Ctrl"),
   setMacPlatform: () => {},
   wailsDragRegionStyle: {},
