@@ -385,6 +385,31 @@ describe("XtermView stream wiring", () => {
     expect(harness.feedInput).toHaveBeenCalledWith("ls\r");
   });
 
+  it("rate-limits an automatic reply flood without any toast and logs it for diagnostics", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await show();
+    await attachOk();
+    const t = term();
+    act(() => {
+      for (let i = 0; i < 5000; i += 1) t.handlers.data?.("\x1b[?1;2c");
+    });
+    const upstreamBytes = harness.write.mock.calls.reduce((n, [, bytes]) => n + (bytes as Uint8Array).length, 0);
+    expect(upstreamBytes).toBeGreaterThan(0);
+    // The burst plus what the bucket refills while the test runs: far below
+    // the 35 KB the flood asked for.
+    expect(upstreamBytes).toBeLessThanOrEqual(20 * 1024);
+    // Keystrokes still go straight through while replies are held back.
+    act(() => t.handlers.data?.("q"));
+    expect(harness.write).toHaveBeenLastCalledWith("kernel-1", enc.encode("q"));
+    mounted?.unmount();
+    mounted = undefined;
+    expect(harness.pushToast).not.toHaveBeenCalled();
+    const reports = warn.mock.calls.filter(([message]) => String(message).includes("automatic query replies"));
+    expect(reports).toHaveLength(1);
+    expect(reports[0][1]).toMatchObject({ coalesced: expect.any(Number), dropped: 1 });
+    warn.mockRestore();
+  });
+
   it("suppresses pre-expiry OSC events whose write callbacks fire after the expired control frame", async () => {
     const onNotification = vi.fn();
     await show({ onNotification });

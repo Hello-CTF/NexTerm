@@ -37,7 +37,7 @@ import {
   type TerminalStreamBacklog,
 } from "./terminalStream";
 import { terminalOutputScheduler, type ScheduledTerminalOutput } from "./outputScheduler";
-import { createTerminalResponseCoalescer } from "./terminalResponses";
+import { createTerminalResponseLimiter } from "./terminalResponses";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
@@ -821,12 +821,12 @@ export function XtermView(props: XtermViewProps) {
         dispatchEarly: (event) => event.kind === "notification" && visibleRef.current === false,
       },
     );
-    // Automatic query responses (DA/DSR/CPR reports and friends) are answered
-    // by xterm itself through onData; floods of them collapse per type with a
-    // budget instead of one upstream write each. Keystrokes and pastes never
-    // enter the coalescer.
-    const overflowNotified = new Set<string>();
-    const responses = createTerminalResponseCoalescer({
+    // Automatic query replies (DA/DSR/CPR reports and friends) are answered
+    // by xterm itself through onData. They pass a byte-rate limiter so a query
+    // flood from the host cannot flood the upstream channel; suppression is
+    // logged for diagnostics, never shown to the user. Keystrokes and pastes
+    // bypass the limiter.
+    const responses = createTerminalResponseLimiter({
       send: (data) => {
         if (!kernelTabId) return;
         const onData = onDataRef.current;
@@ -835,17 +835,6 @@ export function XtermView(props: XtermViewProps) {
         } else {
           writeTabInput(data);
         }
-      },
-      onOverflow: (info) => {
-        const key = `${info.generation}:${info.type}`;
-        if (overflowNotified.has(key)) return;
-        overflowNotified.add(key);
-        useUi
-          .getState()
-          .pushToast(
-            "info",
-            `终端自动响应（${info.type}）超出预算，已抑制 ${info.dropped} 条相同类型响应`,
-          );
       },
     });
     // Output stream sequence anchor: on every attach the server first delivers an anchor frame, after which this stream segment's bytes
@@ -1348,7 +1337,7 @@ export function XtermView(props: XtermViewProps) {
       if (windowResizeTimer !== null) window.clearTimeout(windowResizeTimer);
       if (measureFrame !== null) cancelAnimationFrame(measureFrame);
       if (uiFrame !== null) cancelAnimationFrame(uiFrame);
-      responses.flush();
+      responses.dispose();
       window.removeEventListener(RESIZE_END_EVENT, onFinalResize);
       window.removeEventListener("resize", onWindowResize);
       window.visualViewport?.removeEventListener("resize", onWindowResize);
