@@ -26,7 +26,8 @@ export type MenuItem =
       disabled?: boolean;
       submenu?: MenuItem[];
       onSelect?: () => void;
-      trailingAction?: { label: string; icon: ReactNode; disabled?: boolean; onSelect: () => void };
+      // keepOpen runs the action without dismissing the menu, for repeated actions such as closing several rows.
+      trailingAction?: { label: string; icon: ReactNode; disabled?: boolean; keepOpen?: boolean; onSelect: () => void };
     };
 
 export interface ContextMenuState {
@@ -346,7 +347,9 @@ function MenuList({
                 title={item.trailingAction.label}
                 disabled={item.trailingAction.disabled}
                 onClick={() => {
-                  if (onClose()) item.trailingAction?.onSelect();
+                  const action = item.trailingAction;
+                  if (action?.keepOpen) action.onSelect();
+                  else if (onClose()) action?.onSelect();
                 }}
               >
                 {item.trailingAction.icon}

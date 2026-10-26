@@ -1259,9 +1259,8 @@ function AppShell() {
     }
   }, []);
 
-  const openWorkspaceSwitcher = useCallback(
-    (anchor: HTMLElement) => {
-      const rect = anchor.getBoundingClientRect();
+  const buildWorkspaceMenuItems = useCallback(
+    (): MenuItem[] => {
       const items: MenuItem[] = visibleWorkspaces.map((w) => {
         const Icon = workspaceIcon(w);
         const session = sessions.find((s) => s.id === w.sessionId);
@@ -1283,6 +1282,7 @@ function AppShell() {
             label: `关闭工作区 ${w.title}`,
             icon: <IconClose size={12} />,
             disabled: !w.closable,
+            keepOpen: true,
             onSelect: () => void closeWorkspace(w.id),
           },
         };
@@ -1310,10 +1310,23 @@ function AppShell() {
         disabled: !latestClosed,
         onSelect: () => void restoreClosedTab(),
       });
-      setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items });
+      return items;
     },
     [visibleWorkspaces, workspaces, sessions, setActiveWorkspace, closeWorkspace, closeAllWorkspaces, closedTabEntries],
   );
+  const buildWorkspaceMenuItemsRef = useRef(buildWorkspaceMenuItems);
+  buildWorkspaceMenuItemsRef.current = buildWorkspaceMenuItems;
+  const openWorkspaceSwitcher = useCallback(
+    (anchor: HTMLElement) => {
+      const rect = anchor.getBoundingClientRect();
+      setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items: buildWorkspaceMenuItems() });
+    },
+    [buildWorkspaceMenuItems],
+  );
+  // Closing a workspace from its row keeps the switcher open, so the open menu follows the workspace list.
+  useEffect(() => {
+    setWsMenu((menu) => menu && { ...menu, items: buildWorkspaceMenuItemsRef.current() });
+  }, [visibleWorkspaces, workspaces]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
