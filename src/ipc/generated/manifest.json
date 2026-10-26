@@ -1479,6 +1479,12 @@
       "channel": true,
       "stream": "binary"
     },
+    "session_prepare_durable": {
+      "scope": "helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "session_probe": {
       "nested": true,
       "channel": false,

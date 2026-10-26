@@ -856,6 +856,11 @@ export type DockerPrunePreviewIPCRequest = {
   kinds: string[];
 };
 
+export type DurableReadinessDTO = {
+  state: string;
+  reason?: string;
+};
+
 export type Entry = {
   name: string;
   description: string;

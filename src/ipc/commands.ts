@@ -329,6 +329,19 @@ function ignoreResult(operation: Promise<unknown>): Promise<void> {
   return operation.then(() => undefined);
 }
 
+export type DurableReadinessState = "ready" | "preparing" | "unavailable" | "disabled";
+
+export interface DurableReadiness {
+  state: DurableReadinessState;
+  reason?: string;
+}
+
+function normalizeDurableReadiness(value: { state: string; reason?: string }): DurableReadiness {
+  const state: DurableReadinessState =
+    value.state === "ready" || value.state === "preparing" || value.state === "disabled" ? value.state : "unavailable";
+  return value.reason ? { state, reason: value.reason } : { state };
+}
+
 export const sessionApi = {
   connect: (assetId: string) =>
     call<SessionInfo>("session_connect", { args: { assetId } }),
@@ -349,6 +362,9 @@ export const sessionApi = {
   disconnect: (sessionId: string) =>
     ignoreResult(call("session_disconnect", { sessionId })),
   reconnect: (sessionId: string) => call("session_reconnect", { sessionId }),
+  // Reports whether a new terminal can be durable now and starts the helper deployment in the background when needed.
+  prepareDurable: (sessionId: string) =>
+    call("session_prepare_durable", { sessionId }).then(normalizeDurableReadiness),
   list: () => call("session_list") as Promise<SessionInfo[]>,
   probe: (host: string, port: number, timeoutMs?: number) =>
     call<{ open: boolean; error?: string }>("session_probe", {

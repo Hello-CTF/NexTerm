@@ -113,6 +113,13 @@ type helperOperationRequest struct {
 	InterruptActive bool   `json:"interruptActive,omitempty"`
 }
 
+// durableReadinessDTO reports whether a new terminal can be durable now: ready, preparing, unavailable (with a
+// reason) or disabled when the asset or account chose regular terminals.
+type durableReadinessDTO struct {
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+}
+
 type helperOfflineRequest struct {
 	SessionID string `json:"sessionId"`
 	Path      string `json:"path"`
@@ -1046,6 +1053,16 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				default:
 					return helperOperationDTO{}, ipc.BadParam(errors.New("未知的持久终端操作"))
 				}
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "session_prepare_durable", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (durableReadinessDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				readiness, err := s.sessions.PrepareDurable(ctx, input.SessionID)
+				if err != nil {
+					return durableReadinessDTO{}, terminalIPCError(err)
+				}
+				return durableReadinessDTO{State: readiness.State, Reason: readiness.Reason}, nil
 			})
 		},
 		func() error {

@@ -159,6 +159,18 @@ describe("session and terminal facade IPC contracts", () => {
       sessionId: "session-1", path: "/tmp/helper", sha256: "a".repeat(64), confirmed: true,
     });
   });
+
+  it("prepares durable terminals through the generated non-nested contract", async () => {
+    const calls = captureRpc({ session_prepare_durable: { state: "unavailable", reason: "目标主机不支持持久终端组件" } });
+    const { sessionApi } = await import("../ipc/commands");
+
+    await expect(sessionApi.prepareDurable("session-1")).resolves.toEqual({
+      state: "unavailable",
+      reason: "目标主机不支持持久终端组件",
+    });
+    expect(calls).toHaveLength(1);
+    expectManifestEnvelope(calls[0], "session_prepare_durable", { sessionId: "session-1" });
+  });
 });
 
 describe("remote desktop facade IPC contracts", () => {

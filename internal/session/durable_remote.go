@@ -103,7 +103,7 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 		session.durableMu.Unlock()
 		return provider, nil
 	}
-	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport && m.now().Sub(session.durableFailureAt) < 30*time.Second {
+	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport && m.now().Sub(session.durableFailureAt) < durableFailureRetryWindow {
 		err := session.durableFailure
 		session.durableMu.Unlock()
 		return nil, err
@@ -428,7 +428,7 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 		// Deploying while holding durableMu would stall every first tab of the session behind this call (the tab
 		// open path and fallback notice need the same lock), so no SSH deployment may run under it.
 		if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport &&
-			!retryFailure && m.now().Sub(session.durableFailureAt) < 30*time.Second {
+			!retryFailure && m.now().Sub(session.durableFailureAt) < durableFailureRetryWindow {
 			err := session.durableFailure
 			session.durableMu.Unlock()
 			return nil, err
@@ -446,7 +446,7 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 	}
 	defer session.durableMu.Unlock()
 	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport &&
-		!retryFailure && m.now().Sub(session.durableFailureAt) < 30*time.Second {
+		!retryFailure && m.now().Sub(session.durableFailureAt) < durableFailureRetryWindow {
 		return nil, session.durableFailure
 	}
 	session.durableFailure = nil

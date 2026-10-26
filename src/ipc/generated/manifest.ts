@@ -1895,6 +1895,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.openTerminalRequest", ts: "OpenTerminalRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.attachedTabDTO", ts: "AttachedTabDTO" },
     },
+    "session_prepare_durable": {
+      scope: "helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.durableReadinessDTO", ts: "DurableReadinessDTO" },
+    },
     "session_probe": {
       nested: true,
       channel: false,
@@ -3638,6 +3646,10 @@ export interface IPCCommandTypeMap {
   "session_open_line_tab": {
     input: contractTypes.OpenTerminalRequest;
     output: contractTypes.AttachedTabDTO;
+  };
+  "session_prepare_durable": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.DurableReadinessDTO;
   };
   "session_quick_connect_user": {
     input: Record<string, never>;

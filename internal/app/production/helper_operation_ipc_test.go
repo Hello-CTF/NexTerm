@@ -826,3 +826,34 @@ func TestProductionHelperRollbackReturnsStructuredResult(t *testing.T) {
 		t.Fatalf("rollback status = %q", detail.Update.Status)
 	}
 }
+
+func TestProductionPrepareDurableIPCStartsDeploymentWithoutTab(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	resolver := session.DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil, context.Cause(ctx)
+	})
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connected := connectRemoteSSHAsset(t, production)
+
+	response := dispatchDurableTest(t, production, "session_prepare_durable", `{"sessionId":"`+connected.ID+`"}`, "", "client-a")
+	var result durableReadinessDTO
+	requireStoreTestResponse(t, response, &result)
+	if result.State != "preparing" {
+		t.Fatalf("prepare result = %+v; want preparing", result)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("prepare did not start the helper deployment")
+	}
+	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 0 {
+		t.Fatalf("prepare created terminal tabs: %+v", tabs)
+	}
+}
