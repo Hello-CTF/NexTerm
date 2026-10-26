@@ -106,6 +106,29 @@ describe("three-way shared layout merge", () => {
     expect(paneIdsInOrder(kept.workspaces[0].layoutTree!)).toEqual(["p1", "p2", "p3"]);
   });
 
+  it.each([
+    { kept: "pane-b", added: "pane-a" },
+    { kept: "pane-a", added: "pane-b" },
+  ])("does not resurrect tabs of a pane the other side replaced ($kept -> $added)", ({ kept, added }) => {
+    // Base and local still show `kept`; remote closed it and opened `added` with a new tab.
+    const base = layout([workspace("ws", "asset", [pane(kept, [terminal("t1")])])]);
+    const local = layout([workspace("ws", "asset", [pane(kept, [terminal("t1")])])]);
+    const remote = layout([workspace("ws", "asset", [pane(added, [terminal("t2")])])]);
+    for (const merged of [mergeLayout(base, local, remote), mergeLayout(base, remote, local)]) {
+      expect(merged.workspaces[0].panes.map((item) => item.id)).toEqual([added]);
+      expect(merged.workspaces[0].panes[0].tabs.map((tab) => tab.id)).toEqual(["t2"]);
+    }
+  });
+
+  it("pairs the first panes of two copies opened independently, without a base", () => {
+    const local = layout([workspace("ws-a", "asset", [pane("pane-b", [terminal("t1")])])]);
+    const remote = layout([workspace("ws-b", "asset", [pane("pane-a", [terminal("t2")])])]);
+    for (const merged of [mergeLayout(null, local, remote), mergeLayout(null, remote, local)]) {
+      expect(merged.workspaces[0].panes.map((item) => item.id)).toEqual(["pane-a"]);
+      expect(merged.workspaces[0].panes[0].tabs.map((tab) => tab.id).sort()).toEqual(["t1", "t2"]);
+    }
+  });
+
   it("lets close win over concurrent edits in either direction", () => {
     const base = layout([workspace("ws", "asset", [pane("pane", [terminal("keep"), terminal("gone")])])]);
     const closed = layout([workspace("ws", "asset", [pane("pane", [terminal("keep")])])]);

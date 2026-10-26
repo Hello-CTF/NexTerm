@@ -509,6 +509,8 @@ function renamePane(workspace: Workspace, from: string, to: string): Workspace {
 // alignPrimaryPanes pairs two copies of one logical workspace that were opened independently (no
 // pane id in common, e.g. the same host opened on two devices): their first panes are the same
 // pane, so both take the smaller of the two ids and their tabs merge instead of becoming a split.
+// A first pane the base already knows is not a fresh copy: the other side removed it, so nothing
+// is paired and the usual add/remove merge applies.
 function alignPrimaryPanes(group: EntityGroup<Workspace>): EntityGroup<Workspace> {
   const { local, remote } = group;
   if (!local || !remote) return group;
@@ -517,6 +519,8 @@ function alignPrimaryPanes(group: EntityGroup<Workspace>): EntityGroup<Workspace
   const localPrimary = workspacePaneOrder(local)[0];
   const remotePrimary = workspacePaneOrder(remote)[0];
   if (!localPrimary || !remotePrimary) return group;
+  const baseIds = new Set(group.base?.panes.map((pane) => pane.id) ?? []);
+  if (baseIds.has(localPrimary) || baseIds.has(remotePrimary)) return group;
   const canonical = localPrimary < remotePrimary ? localPrimary : remotePrimary;
   return {
     ...group,
