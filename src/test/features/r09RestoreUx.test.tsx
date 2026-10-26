@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -442,7 +442,7 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     await flush();
 
     expect(findTab("f1")?.restorePending).toBeUndefined();
-    await waitFor(() => expect(mocks.fsRead).toHaveBeenCalled());
+    await flushUntil(() => mocks.fsRead.mock.calls.length > 0);
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
   });
 
@@ -468,7 +468,7 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     await flush();
 
     expect(findTab("log-1")?.restorePending).toBeUndefined();
-    await waitFor(() => expect(mocks.fsReadRange).toHaveBeenCalled());
+    await flushUntil(() => mocks.fsReadRange.mock.calls.length > 0);
   });
 
   it("files browser: placeholder first, roots/list only after the explicit reconnect", async () => {
@@ -493,8 +493,8 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     await flush();
 
     expect(findTab("files-s1")?.restorePending).toBeUndefined();
-    await waitFor(() => expect(mocks.fsRoots).toHaveBeenCalled());
-    await waitFor(() => expect(mocks.fsList).toHaveBeenCalled());
+    await flushUntil(() => mocks.fsRoots.mock.calls.length > 0);
+    await flushUntil(() => mocks.fsList.mock.calls.length > 0);
   });
 
   it("deletedTarget keeps the placeholder, reports the failure, and never mounts the editor", async () => {
