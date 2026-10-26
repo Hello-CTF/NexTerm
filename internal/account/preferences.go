@@ -70,6 +70,8 @@ type preferenceSpec struct {
 }
 
 // preferenceSpecs is the whitelist of all readable/writable preference keys; DEK, password, credential, and arbitrary keys are never included.
+// keybinding.focusUpperPane, focusLowerPane and toggleSplit were replaced by the split tree actions; they stay declared so
+// clients can read values saved before and clear them after moving them to the new keys.
 var preferenceSpecs = map[string]preferenceSpec{
 	"appearance.uiFontPreset":           {kind: preferenceKindHalfRange, min: 8, max: 32},
 	"appearance.uiFontScale":            {kind: preferenceKindEnumFloat, floats: []float64{1, 1.25, 1.5, 1.75, 2}},
@@ -92,10 +94,16 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"keybinding.previousTab":            {kind: preferenceKindBinding},
 	"keybinding.focusUpperPane":         {kind: preferenceKindBinding},
 	"keybinding.focusLowerPane":         {kind: preferenceKindBinding},
+	"keybinding.focusPaneLeft":          {kind: preferenceKindBinding},
+	"keybinding.focusPaneRight":         {kind: preferenceKindBinding},
+	"keybinding.focusPaneUp":            {kind: preferenceKindBinding},
+	"keybinding.focusPaneDown":          {kind: preferenceKindBinding},
 	"keybinding.toggleSidebar":          {kind: preferenceKindBinding},
 	"keybinding.toggleAiSidebar":        {kind: preferenceKindBinding},
 	"keybinding.closeTab":               {kind: preferenceKindBinding},
 	"keybinding.toggleSplit":            {kind: preferenceKindBinding},
+	"keybinding.splitRight":             {kind: preferenceKindBinding},
+	"keybinding.splitDown":              {kind: preferenceKindBinding},
 	"keybinding.switchTab":              {kind: preferenceKindBinding},
 	"keybinding.terminalSearch":         {kind: preferenceKindBinding},
 	"keybinding.reclaimTakeover":        {kind: preferenceKindBinding},
