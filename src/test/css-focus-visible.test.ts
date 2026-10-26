@@ -19,9 +19,7 @@ beforeAll(async () => {
 
 afterAll(() => installed?.forEach((element) => element.remove()));
 
-// Tailwind scans test sources for utility candidates; spelling this shorthand property name as a
-// single word would emit an unused utility into the production bundle.
-const OUTLINE = ["out", "line"].join("");
+const OUTLINE = "outline";
 
 describe("focus-visible contract", () => {
   it("does not draw a focus ring for the auto-focused command palette input", () => {

@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Tests mention utility names as plain words; scanning them would ship unused utilities. */
+@source not "./test";
 
 @import "./styles/tokens.css";
 @import "./styles/base.css";
