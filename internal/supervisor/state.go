@@ -83,7 +83,8 @@ type stateOptions struct {
 // Rules:
 //   - output makes the session running unless a signal state is pending or
 //     a detected prompt holds it in needs_me: a redraw keeps the prompt until
-//     the next inspection finds none or a different one;
+//     the next inspection finds none or a different one, and output that
+//     goes on for settle without a pause is inspected anyway;
 //   - BEL or a notification makes it needs_me (confidence signal) until
 //     input arrives, a command starts or ends, or the process exits; a bell
 //     within bellEchoWindow of input or at the shell prompt is only recorded;
@@ -123,6 +124,9 @@ type stateTracker struct {
 	// just_finished against later output.
 	signalPending   bool
 	finishedPending bool
+	// heldCheck is when output that keeps a held prompt busy without a
+	// pause is inspected anyway; zero when not due.
+	heldCheck time.Time
 
 	// prompt is the result of the last inspection, info its published form.
 	// fresh reports that nothing was written or input since.
@@ -199,6 +203,9 @@ func (t *stateTracker) output(p []byte, now time.Time) {
 	}
 	if !t.signalPending && !t.finishedPending && !t.heldLocked() && t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) {
 		changed = true
+	}
+	if t.heldLocked() && t.heldCheck.IsZero() {
+		t.heldCheck = now.Add(t.opts.settle)
 	}
 	t.activityLocked(now)
 	t.mu.Unlock()
@@ -326,10 +333,28 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 	quiet := now.Sub(t.lastActivity)
 	switch {
 	case t.exited:
+	case t.active && quiet < t.opts.idle && t.heldLocked() && !t.heldCheck.IsZero() && !now.Before(t.heldCheck):
+		// Output has kept a held prompt busy for settle: check that the
+		// prompt is still there.
+		before := t.prompt
+		changed = t.inspectLocked()
+		t.heldCheck = now.Add(t.opts.settle)
+		switch {
+		case t.signalPending, t.finishedPending:
+		case t.prompt.Kind != shape.KindNone && !t.scanner.AtPrompt():
+			if before.Kind != t.prompt.Kind || before.Fingerprint != t.prompt.Fingerprint {
+				t.forceLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now)
+				t.heldCheck = now.Add(t.opts.settle)
+				changed = true
+			}
+		default:
+			changed = t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) || changed
+		}
+		wait = t.activeWaitLocked(now, quiet)
 	case t.active && quiet < t.opts.idle:
-		wait = t.opts.idle - quiet
+		wait = t.activeWaitLocked(now, quiet)
 	case t.active:
-		t.active = false
+		t.active, t.heldCheck = false, time.Time{}
 		before := t.prompt
 		changed = t.inspectLocked()
 		held, atPrompt := t.heldLocked(), t.scanner.AtPrompt()
@@ -367,6 +392,16 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 	t.mu.Unlock()
 	if changed {
 		t.changed()
+	}
+	return wait
+}
+
+// activeWaitLocked is how long tick waits while output is active: until the
+// idle inspection, or the check of a held prompt when that comes first.
+func (t *stateTracker) activeWaitLocked(now time.Time, quiet time.Duration) time.Duration {
+	wait := t.opts.idle - quiet
+	if t.heldLocked() && !t.heldCheck.IsZero() {
+		wait = min(wait, max(t.heldCheck.Sub(now), time.Millisecond))
 	}
 	return wait
 }
@@ -462,6 +497,7 @@ func (t *stateTracker) setLocked(state, confidence, reason string, now time.Time
 func (t *stateTracker) forceLocked(state, confidence, reason string, now time.Time) {
 	t.state, t.confidence, t.reason, t.since = state, confidence, reason, now
 	t.exitCode, t.durationMS, t.notable = nil, 0, false
+	t.heldCheck = time.Time{}
 	t.addEventLocked(SessionEvent{Kind: base.SessionEventState, At: now, State: state, Confidence: confidence, Reason: reason})
 }
 

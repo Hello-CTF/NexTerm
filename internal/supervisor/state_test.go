@@ -279,6 +279,71 @@ func TestStateRealTimerPromptAfterSettlingPause(t *testing.T) {
 	}
 }
 
+// runUntil feeds a tracker its ticks at the armed deadlines up to now.
+func (h *trackerHarness) runUntil(now time.Time) {
+	for {
+		due, ok := h.tracker.due()
+		if !ok || due.After(now) {
+			break
+		}
+		h.clock.now = due
+		h.tracker.tick(due)
+	}
+	h.clock.now = now
+}
+
+func TestStateHeldPromptClearsUnderContinuousOutput(t *testing.T) {
+	h := newHarness(t)
+	h.out(time.Second, "Continue? [y/N] ")
+	h.idle()
+	held := h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+	start := h.clock.now
+	var running time.Time
+	for i := 0; i < 300; i++ {
+		h.runUntil(h.clock.now.Add(100 * time.Millisecond))
+		h.tracker.output([]byte("\x1b[H\x1b[2Jbuilding step "+twoDigits(i%100)+"\r\n"), h.clock.now)
+		if got := h.state(); running.IsZero() && got.State == base.SessionRunning {
+			running = h.clock.now
+			if got.Prompt != nil {
+				t.Fatalf("stale prompt published while running: %+v", got.Prompt)
+			}
+		}
+	}
+	if running.IsZero() {
+		t.Fatal("held needs_me never cleared under 30 s of continuous output")
+	}
+	if late := running.Sub(start); late > defaultStateSettle+defaultStateIdle {
+		t.Fatalf("held prompt cleared after %v", late)
+	}
+	got := h.expect(base.SessionRunning, base.ConfidenceSignal)
+	if events := got.LastEventSeq - held.LastEventSeq; events != 1 {
+		t.Fatalf("%d events while the output went on, want the one move to running", events)
+	}
+	h.runUntil(h.clock.now.Add(defaultStateSettle + time.Second))
+	h.expect(base.SessionIdle, base.ConfidenceSignal)
+}
+
+func TestStateHeldPromptStaysUnderContinuousRedraws(t *testing.T) {
+	h := newHarness(t)
+	h.out(time.Second, "Pick one:\r\n❯ 1. Alpha\r\n  2. Beta\r\n\r\n⠋ 0s")
+	h.idle()
+	held := h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+	changes := h.changes
+	for i := 0; i < 300; i++ {
+		h.runUntil(h.clock.now.Add(100 * time.Millisecond))
+		h.tracker.output([]byte("\r\x1b[K⠙ "+twoDigits(i%100)+"s"), h.clock.now)
+		h.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+	}
+	got := h.state()
+	if got.LastEventSeq != held.LastEventSeq || got.PromptEpoch != held.PromptEpoch || h.changes != changes || got.Prompt == nil {
+		t.Fatalf("continuous redraws of a held prompt: events %d -> %d, epoch %d -> %d, %d pushes, prompt %v",
+			held.LastEventSeq, got.LastEventSeq, held.PromptEpoch, got.PromptEpoch, h.changes-changes, got.Prompt)
+	}
+	if h.tracker.inspections < 5 {
+		t.Fatalf("%d inspections in 30 s of continuous output", h.tracker.inspections)
+	}
+}
+
 func TestStateHeldPromptSurvivesClockRedraws(t *testing.T) {
 	h := newHarness(t)
 	h.out(time.Second, "\x1b[H\x1b[2J12:00:00\r\nPick one:\r\n❯ 1. Alpha\r\n  2. Beta\r\n")
