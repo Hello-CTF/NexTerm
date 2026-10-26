@@ -125,7 +125,7 @@ export interface XtermViewProps {
   onClipboard?: (payload: string) => void;
   onStreamBacklog?: (backlog: TerminalStreamBacklog | null) => void;
   onSelectionCopy?: (text: string, error: unknown | null) => void;
-  onPasteFiles?: (files: File[]) => void;
+  onPasteFiles?: (files: File[], skipped: string[]) => void;
   onRequestPaste?: () => void;
 }
 
@@ -1221,11 +1221,11 @@ export function XtermView(props: XtermViewProps) {
       updateSelectionBar();
     });
     const onPasteCapture = (event: ClipboardEvent) => {
-      const files = pasteUploadFiles(event.clipboardData);
-      if (files.length > 0) {
+      const { files, skipped } = pasteUploadFiles(event.clipboardData);
+      if (files.length > 0 || skipped.length > 0) {
         event.preventDefault();
         event.stopPropagation();
-        onPasteFilesRef.current?.(files);
+        onPasteFilesRef.current?.(files, skipped);
         return;
       }
       const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -1241,11 +1241,11 @@ export function XtermView(props: XtermViewProps) {
       event.preventDefault();
     };
     const onDropCapture = (event: DragEvent) => {
-      const files = pasteUploadFiles(event.dataTransfer);
-      if (files.length === 0) return;
+      const { files, skipped } = pasteUploadFiles(event.dataTransfer);
+      if (files.length === 0 && skipped.length === 0) return;
       event.preventDefault();
       event.stopPropagation();
-      onPasteFilesRef.current?.(files);
+      onPasteFilesRef.current?.(files, skipped);
     };
     pasteHost.addEventListener("paste", onPasteCapture, true);
     pasteHost.addEventListener("dragover", onDragOver);

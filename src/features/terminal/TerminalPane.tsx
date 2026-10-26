@@ -43,10 +43,12 @@ import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import {
   bytesToBase64,
+  displayFileName,
   MAX_PASTE_FILE_BYTES,
   markdownFileLink,
   pasteFileExtension,
   splitOversizedFiles,
+  TERMINAL_CONTROL,
   uniquePasteFileNames,
 } from "./imagePaste";
 import { fileChunkSource, UPLOAD_CHUNK_SIZE, uploadChunked } from "../files/chunkedUpload";
@@ -238,6 +240,19 @@ export function usePreviewShareEnabled(): boolean {
   return WEB || loggedIn;
 }
 
+// PasteUploadRun tracks one paste upload so the banner can cancel it: the flag stops further files and the current
+// transfer attempt is cancelled on the backend.
+interface PasteUploadRun {
+  cancelled: boolean;
+  transfer: { taskId: string; attemptId: string } | null;
+}
+
+class PasteUploadCancelled extends Error {
+  constructor() {
+    super("cancelled");
+  }
+}
+
 export function TerminalPane({
   sessionId,
   title,
@@ -291,7 +306,9 @@ export function TerminalPane({
   const [imagePaste, setImagePaste] = useState<{
     phase: "uploading" | "success" | "error";
     message: string;
+    cancellable?: boolean;
   } | null>(null);
+  const pasteUploadRef = useRef<PasteUploadRun | null>(null);
   const [broadcastPickerOpen, setBroadcastPickerOpen] = useState(false);
   const me = clientId();
   const resumeRef = useRef(resumeTabId);
@@ -1371,10 +1388,10 @@ export function TerminalPane({
   };
 
   const handlePasteFiles = useCallback(
-    async (files: File[]) => {
+    async (files: File[], skippedEntries: string[] = []) => {
       // /tmp and the file channel only make sense for POSIX hosts: WinRM has no /tmp and a 48 KiB write limit,
       // and a container terminal would receive files on the host instead of in the container.
-      if (sessionKind === "winrm" || sessionKind === "docker" || containerId) {
+      if (effectiveWinrm || sessionKind === "docker" || containerId) {
         pushToast("info", "当前会话类型不支持把粘贴的文件上传到 /tmp；请改用文件面板上传");
         return;
       }
@@ -1384,62 +1401,119 @@ export function TerminalPane({
         return;
       }
       const { accepted, skipped } = splitOversizedFiles(files);
-      const skippedNote =
-        skipped.length > 0
-          ? `已跳过超过 ${MAX_PASTE_FILE_BYTES / 1024 / 1024} MB 的文件：${skipped.map((f) => f.name || "未命名").join("、")}`
-          : "";
+      const notes: string[] = [];
+      if (skipped.length > 0) {
+        notes.push(
+          `已跳过超过 ${MAX_PASTE_FILE_BYTES / 1024 / 1024} MB 的文件：${skipped.map((f) => displayFileName(f.name)).join("、")}`,
+        );
+      }
+      if (skippedEntries.length > 0) notes.push(`已跳过无法上传的条目：${skippedEntries.join("、")}`);
+      const skippedNote = notes.join("；");
       if (skippedNote) pushToast("info", skippedNote);
       if (accepted.length === 0) {
-        setImagePaste({ phase: "error", message: skippedNote });
+        setImagePaste({ phase: "error", message: skippedNote || "没有可上传的文件" });
         return;
       }
-      setImagePaste({
-        phase: "uploading",
-        message: `正在上传 ${accepted.length} 个文件到这台主机的 /tmp…`,
-      });
+      // Hosts with Windows paths (a local session on a Windows desktop, OpenSSH on Windows) have no /tmp; the private
+      // directory below is POSIX-only, so refuse instead of guessing a temp directory.
+      let pathStyle: string | undefined;
       try {
-        const stamp = Date.now();
-        const dir = `/tmp/nexterm-paste-${stamp}`;
-        const names = uniquePasteFileNames(accepted.map((f) => f.name));
-        let dirReady = false;
+        pathStyle = (await fsApi.roots(sessionId)).pathStyle;
+      } catch {
+        pathStyle = undefined;
+      }
+      if (pathStyle === "windows") {
+        setImagePaste({ phase: "error", message: "这台主机使用 Windows 路径，没有 /tmp；请改用文件面板上传" });
+        return;
+      }
+      const run: PasteUploadRun = { cancelled: false, transfer: null };
+      pasteUploadRef.current = run;
+      const totalBytes = accepted.reduce((sum, file) => sum + file.size, 0);
+      const uploadingMessage = (done: number) =>
+        `正在上传 ${accepted.length} 个文件到这台主机的 /tmp…${totalBytes > 0 ? ` ${Math.min(100, Math.floor((done / totalBytes) * 100))}%` : ""}`;
+      setImagePaste({ phase: "uploading", message: uploadingMessage(0), cancellable: true });
+      // An unguessable, exclusively created 0700 directory: nobody else on the host can pre-create, link or read it.
+      const dir = `/tmp/nexterm-paste-${crypto.randomUUID()}`;
+      let dirCreated = false;
+      try {
+        await fsApi.mkdirPrivate(sessionId, dir);
+        dirCreated = true;
+        const names = uniquePasteFileNames(
+          accepted.map((file) => {
+            if (file.name) return file.name;
+            return file.type.startsWith("image/") ? `image.${pasteFileExtension(file)}` : "file";
+          }),
+        );
         const links: string[] = [];
+        let doneBytes = 0;
         for (const [index, file] of accepted.entries()) {
-          // Images keep the flat /tmp/nexterm-paste-<stamp>-<n>.<ext> layout; other files keep their own name in a per-paste directory.
-          let path: string;
-          if (file.type.startsWith("image/")) {
-            path = `/tmp/nexterm-paste-${stamp}-${index + 1}.${pasteFileExtension(file)}`;
-          } else {
-            if (!dirReady) {
-              await fsApi.mkdir(sessionId, dir);
-              dirReady = true;
-            }
-            path = `${dir}/${names[index]}`;
-          }
+          if (run.cancelled) throw new PasteUploadCancelled();
+          const name = names[index];
+          const path = `${dir}/${name}`;
+          const transfer = { taskId: createTransferTaskId(), attemptId: createTransferTaskId() };
+          run.transfer = transfer;
           if (file.size <= UPLOAD_CHUNK_SIZE) {
             const bytes = new Uint8Array(await file.arrayBuffer());
-            await fsApi.write(sessionId, path, bytesToBase64(bytes), false);
+            if (run.cancelled) throw new PasteUploadCancelled();
+            await fsApi.write(sessionId, path, bytesToBase64(bytes), false, transfer.taskId, transfer.attemptId);
           } else {
+            const before = doneBytes;
             await uploadChunked({
               sessionId,
               remotePath: path,
               source: fileChunkSource(file),
-              taskId: createTransferTaskId(),
-              attemptId: createTransferTaskId(),
+              ...transfer,
+              onProgress: (transferred) => {
+                if (pasteUploadRef.current === run && !run.cancelled) {
+                  setImagePaste({ phase: "uploading", message: uploadingMessage(before + transferred), cancellable: true });
+                }
+              },
             });
           }
-          links.push(markdownFileLink(file.name || names[index], path));
+          run.transfer = null;
+          doneBytes += file.size;
+          if (pasteUploadRef.current === run && !run.cancelled) {
+            setImagePaste({ phase: "uploading", message: uploadingMessage(doneBytes), cancellable: true });
+          }
+          links.push(markdownFileLink(name, path));
         }
-        handleRef.current?.paste(links.join(" "));
+        if (run.cancelled) throw new PasteUploadCancelled();
+        const text = links.join(" ");
+        // Last line of defence: the link goes straight to the shell, so no control byte may reach it.
+        if (TERMINAL_CONTROL.test(text)) throw new Error("生成的链接包含控制字符，已拒绝插入");
+        handleRef.current?.paste(text);
         setImagePaste({
           phase: "success",
           message: `已上传 ${links.length} 个文件到这台主机的 /tmp 并插入链接${skippedNote ? `；${skippedNote}` : ""}`,
         });
       } catch (e) {
-        setImagePaste({ phase: "error", message: `文件上传到 /tmp 失败：${describeError(e)}` });
+        let cleanupNote = "";
+        if (dirCreated) {
+          try {
+            await fsApi.delete(sessionId, dir, true);
+          } catch {
+            cleanupNote = `；未能清理 ${dir}，请手动删除`;
+          }
+        }
+        const message =
+          e instanceof PasteUploadCancelled || run.cancelled
+            ? `已取消上传${cleanupNote}`
+            : `文件上传到 /tmp 失败：${describeError(e)}${cleanupNote}`;
+        setImagePaste({ phase: "error", message });
+      } finally {
+        if (pasteUploadRef.current === run) pasteUploadRef.current = null;
       }
     },
-    [kernelTabId, isObserver, pushToast, sessionId, sessionKind, containerId],
+    [kernelTabId, isObserver, pushToast, sessionId, sessionKind, containerId, effectiveWinrm],
   );
+
+  const cancelPasteUpload = () => {
+    const run = pasteUploadRef.current;
+    if (!run) return;
+    run.cancelled = true;
+    setImagePaste({ phase: "uploading", message: "正在取消上传…" });
+    if (run.transfer) void fsApi.cancel(run.transfer.taskId, run.transfer.attemptId).catch(() => undefined);
+  };
 
   const pasteImagesFromClipboard = async () => {
     if (!kernelTabId) return;
@@ -2121,7 +2195,7 @@ export function TerminalPane({
               onNotification={osc9Notifier}
               onClipboard={osc52Handler}
               onStreamBacklog={setStreamBacklog}
-              onPasteFiles={(files) => void handlePasteFiles(files)}
+              onPasteFiles={(files, skipped) => void handlePasteFiles(files, skipped)}
               onHandle={(h) => {
                 handleRef.current = h;
               }}
@@ -2225,6 +2299,11 @@ export function TerminalPane({
                 <IconRefresh size={13} className="shrink-0 animate-spin" />
               )}
               <span className="min-w-0 break-all">{imagePaste.message}</span>
+              {imagePaste.phase === "uploading" && imagePaste.cancellable && (
+                <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={cancelPasteUpload}>
+                  取消
+                </button>
+              )}
               <button
                 type="button"
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"

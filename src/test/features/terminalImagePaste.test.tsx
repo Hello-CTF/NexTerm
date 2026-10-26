@@ -167,15 +167,27 @@ function pasteEvent(files: File[], text = ""): Event {
   return event;
 }
 
-function dropEvent(files: File[], text = ""): Event {
+function dropEvent(files: File[], text = "", folders: string[] = []): Event {
   const event = new Event("drop", { bubbles: true, cancelable: true });
-  const items: { kind: string; type: string; getAsFile: () => File | null }[] = files.map(
-    (file) => ({
+  const items: {
+    kind: string;
+    type: string;
+    getAsFile: () => File | null;
+    webkitGetAsEntry?: () => { isDirectory: boolean; name: string };
+  }[] = files.map((file) => ({
+    kind: "file",
+    type: file.type,
+    getAsFile: () => file,
+    webkitGetAsEntry: () => ({ isDirectory: false, name: file.name }),
+  }));
+  for (const name of folders) {
+    items.push({
       kind: "file",
-      type: file.type,
-      getAsFile: () => file,
-    }),
-  );
+      type: "",
+      getAsFile: () => new File([], name),
+      webkitGetAsEntry: () => ({ isDirectory: true, name }),
+    });
+  }
   if (text) items.push({ kind: "string", type: "text/plain", getAsFile: () => null });
   Object.defineProperty(event, "dataTransfer", {
     value: {
@@ -365,5 +377,33 @@ describe("XtermView image paste interception", () => {
       host().dispatchEvent(withText);
     });
     expect(withText.defaultPrevented).toBe(false);
+  });
+
+  it("reports a dropped folder as skipped instead of uploading it", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
+
+    const event = dropEvent([new File(["x"], "notes.txt", { type: "text/plain" })], "", ["src"]);
+    act(() => {
+      host().dispatchEvent(event);
+    });
+
+    expect(onPasteFiles).toHaveBeenCalledTimes(1);
+    expect(onPasteFiles.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["notes.txt"]);
+    expect(onPasteFiles.mock.calls[0]?.[1]).toEqual(["文件夹「src」"]);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("reports a folder-only drop so it is not silently ignored", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
+
+    const event = dropEvent([], "", ["photos"]);
+    act(() => {
+      host().dispatchEvent(event);
+    });
+
+    expect(onPasteFiles).toHaveBeenCalledWith([], ["文件夹「photos」"]);
+    expect(event.defaultPrevented).toBe(true);
   });
 });
