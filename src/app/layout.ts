@@ -1055,6 +1055,7 @@ function mergeTerminalRuntimeTabs(
           dead: existing.dead,
           retainable: existing.retainable,
           durable: existing.durable,
+          regularReason: existing.regularReason,
           closeError: existing.closeError,
         };
       }),

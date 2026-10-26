@@ -68,10 +68,8 @@ describe("Terminal priority after connecting on narrow screens", () => {
     expect(s.connectFocusRevision).toBe(1);
 
     const ws = s.workspaces.find((w) => w.sessionId === SESSION.id);
-    const pane = ws?.panes[0];
-    const terminal = pane?.tabs.find((t) => t.kind === "terminal");
-    expect(terminal).toBeDefined();
-    expect(pane?.activeTabId).toBe(terminal?.id);
+    expect(s.activeWorkspaceId).toBe(ws?.id);
+    expect(ws?.panes[0]?.tabs).toEqual([]);
   });
 
   it("keeps the original mode of an explicitly open sidebar instead of changing it to the file tree", async () => {

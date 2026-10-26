@@ -82,7 +82,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
         ))}
       </div>
       <div className="nx-hint max-w-md text-center">
-        双击左栏「当前设备」可打开本机终端，会话侧栏显示它的文件；SSH / WinRM 资产打开终端标签，容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
+        双击左栏资产打开它的工作区（「当前设备」即本机），会话侧栏显示它的文件；主机工作区不会自动新建终端，点「新建终端」打开。容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
       </div>
     </div>
   );

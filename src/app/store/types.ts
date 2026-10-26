@@ -52,6 +52,9 @@ export interface AppTab {
   // durable is reported by the backend once the terminal attaches; SSH tabs
   // can only move to the background when they run on the durable helper.
   durable?: boolean;
+  // regularReason marks a terminal that was opened as a regular terminal although durable terminals are preferred
+  // (the helper was still preparing or unavailable); the tab shows it so the degradation is never silent.
+  regularReason?: string;
   // renamedByUser locks the title against OSC updates; customTitleAt is when the title was
   // last decided explicitly (a rename or a clear, by hand, by the AI, or as a backend custom
   // title) and orders those decisions across devices. A lock without a timestamp is a legacy

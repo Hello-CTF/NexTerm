@@ -45,6 +45,16 @@ describe("Daemon helper states", () => {
     expect(render({ durable: false, sessionKind: "ssh", helper: { state: "ready" } }).textContent).toContain("持久已就绪");
   });
 
+  it("labels a regular tab with the reason it is not durable", () => {
+    const preparing = render({ durable: false, sessionKind: "ssh", regularReason: "持久组件准备中" });
+    expect(preparing.textContent).toContain("普通终端 · 持久组件准备中");
+    expect(preparing.querySelector("[title]")?.getAttribute("title")).toContain("普通终端：持久组件准备中");
+
+    const unavailable = render({ durable: false, sessionKind: "local", regularReason: "持久组件不可用：本机终端暂不支持持久模式" });
+    expect(unavailable.textContent).toContain("普通终端 · 持久组件不可用");
+    expect(unavailable.querySelector("[title]")?.getAttribute("title")).toContain("持久组件不可用：本机终端暂不支持持久模式");
+  });
+
   it("keeps durable tabs labelled as daemon terminals regardless of helper state", () => {
     expect(render({ durable: true, sessionKind: "ssh", helper: { state: "ready" } }).textContent).toContain("持久终端");
   });

@@ -1,4 +1,4 @@
-import { assetApi, dbApi, sessionApi, type SessionInfo } from "../../ipc/commands";
+import { assetApi, dbApi, sessionApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import {
   captureConnectionAttempt,
@@ -7,10 +7,9 @@ import {
   reconnectDeadHost,
   settleWorkspaceConnectionOutcome,
 } from "./connection";
-import { makePane, nextTabId } from "./model";
 import { reconnectSessionAndWait } from "./reconnect";
-import { openTerminalTab } from "./tabActions";
-import type { AppTab, ConnectOutcome, RestoreWorkspaceOptions, SessionRuntimeInfo, Workspace } from "./types";
+import { prepareDurableInBackground } from "./durableReadiness";
+import type { ConnectOutcome, RestoreWorkspaceOptions, SessionRuntimeInfo, Workspace } from "./types";
 import { useUi } from "./useUi";
 
 const inflightRestoreConnects = new Map<string, {
@@ -139,10 +138,7 @@ async function connectRestoredWorkspace(
         })),
       } : item),
     }));
-    if (workspace.assetKind !== "device" && !workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) {
-      if (options?.preserveUserFocus) addRestoredTerminalWithoutFocus(workspaceId, session);
-      else await openTerminalTab(session);
-    }
+    prepareDurableInBackground(session);
     return { ok: true };
   } catch (error) {
     if (!stillPending()) return { ok: false, canceled: true };
@@ -182,6 +178,7 @@ async function reconnectDeadRestoredWorkspace(
         ...(options?.preserveUserFocus ? {} : { activeWorkspaceId: workspace.id }),
         sessions: [...current.sessions.filter((item) => item.id !== fresh.id), fresh],
       }));
+      prepareDurableInBackground(fresh);
       return { ok: true };
     }
 
@@ -216,41 +213,10 @@ async function reconnectDeadRestoredWorkspace(
         })),
       } : item),
     }));
-    if (workspace.assetKind !== "device" && !workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) {
-      if (options?.preserveUserFocus) addRestoredTerminalWithoutFocus(workspace.id, session);
-      else await openTerminalTab(session);
-    }
+    prepareDurableInBackground(session);
     return { ok: true };
   } catch (error) {
     if (!stillCurrent()) return { ok: false, canceled: true };
     return { ok: false, error: describeError(error) };
   }
-}
-
-function addRestoredTerminalWithoutFocus(workspaceId: string, session: SessionInfo): void {
-  useUi.setState((current) => ({
-    workspaces: current.workspaces.map((workspace) => {
-      if (
-        workspace.id !== workspaceId || workspace.sessionId !== session.id ||
-        workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))
-      ) {
-        return workspace;
-      }
-      const panes = workspace.panes.length > 0 ? workspace.panes : [makePane()];
-      const activePane = panes.find((pane) => pane.id === workspace.activePaneId) ?? panes[0];
-      const tab: AppTab = {
-        id: nextTabId(`term-${session.id}`),
-        kind: "terminal",
-        title: "终端 1",
-        sessionId: session.id,
-        closable: true,
-      };
-      return {
-        ...workspace,
-        panes: panes.map((pane) => pane.id === activePane.id
-          ? { ...pane, tabs: [...pane.tabs, tab] }
-          : pane),
-      };
-    }),
-  }));
 }

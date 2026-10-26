@@ -6,11 +6,12 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   askChoice: vi.fn(),
   closeTab: vi.fn(),
+  prepareDurable: vi.fn(async () => ({ state: "ready" })),
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoice: mocks.askChoice }));
 vi.mock("../../ipc/commands", () => ({
   dbApi: {},
-  sessionApi: {},
+  sessionApi: { prepareDurable: mocks.prepareDurable },
   vaultApi: {},
   terminalApi: { closeTab: mocks.closeTab },
 }));
@@ -124,14 +125,17 @@ describe("split pane actions", () => {
     expect(current().panes).toHaveLength(1);
   });
 
-  it("opens a terminal in the new pane of a connected host workspace", () => {
+  it("opens a terminal in the new pane of a connected host workspace", async () => {
     useUi.setState({
       workspaces: [ws([pane("p1")])],
       sessions: [{ id: "s", name: "host", kind: "ssh", assetId: null } as never],
     });
     const right = useUi.getState().splitPane("right")!;
-    const added = current().panes.find((item) => item.id === right)!;
-    expect(added.tabs.map((tab) => tab.kind)).toEqual(["terminal"]);
+    await vi.waitFor(() => {
+      const added = current().panes.find((item) => item.id === right)!;
+      expect(added.tabs.map((tab) => tab.kind)).toEqual(["terminal"]);
+    });
+    expect(mocks.prepareDurable).toHaveBeenCalledWith("s");
   });
 
   it("closes a pane into the pane taking its space, keeping every tab in order", () => {

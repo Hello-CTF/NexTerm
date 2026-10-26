@@ -3,6 +3,7 @@ import type { SessionInfo } from "../../ipc/commands";
 import { fileEditorRenamePending } from "../../features/files/editorGuards";
 import { baseName } from "../../features/files/pathUtils";
 import { focusedActiveWorkspace, focusedWorkspaces } from "../projectFocus";
+import { regularTerminalReason } from "./durableReadiness";
 import { isWorkspaceToolTab, nextTabId } from "./model";
 import type { AppTab, SessionRuntimeInfo, UiState, Workspace } from "./types";
 import { useUi } from "./useUi";
@@ -112,12 +113,16 @@ export function focusActivePane(direction: FocusDirection): string | null {
   return target;
 }
 
+// openTerminalTab is the explicit "new terminal" action. It opens a durable terminal when the session's durable
+// helper is ready; while the helper is still preparing or unavailable it opens a regular terminal immediately and
+// records the reason on the tab, so the degradation is visible.
 export async function openTerminalTab(
   session: SessionInfo,
   title?: string,
   paneId?: string,
   options?: { directory?: string },
 ) {
+  const regularReason = await regularTerminalReason(session);
   const wsId = useUi.getState().ensureWorkspace({
     kind: "session",
     sessionId: session.id,
@@ -134,6 +139,7 @@ export async function openTerminalTab(
       title: title ?? `终端 ${n + 1}`,
       sessionId: session.id,
       pendingDirectory: options?.directory,
+      ...(regularReason ? { regularReason } : {}),
       closable: true,
     },
     paneId,

@@ -119,6 +119,9 @@ export interface XtermViewProps {
   containerId?: string;
   resumeTabId?: string;
   forceRegular?: boolean;
+  // requestRegular opens a fresh shell as a regular terminal (the durable helper was not ready when the tab opened);
+  // unlike forceRegular it still resumes an existing attachment.
+  requestRegular?: boolean;
   sessionConnected?: boolean;
   onAttachInfo?: (info: {
     tabId: string;
@@ -128,6 +131,7 @@ export interface XtermViewProps {
     exited: boolean;
     retainable?: boolean;
     durable?: boolean;
+    fallbackNotice?: string;
     encoding?: string;
     title?: string;
     titleCustom?: boolean;
@@ -194,6 +198,7 @@ export function XtermView(props: XtermViewProps) {
   const onHandleRef = useRef(props.onHandle);
   const onAttachRef = useRef(props.onAttach);
   const onAttachInfoRef = useRef(props.onAttachInfo);
+  const requestRegularRef = useRef(props.requestRegular === true);
   const onAttachFailedRef = useRef(props.onAttachFailed);
   const onDataRef = useRef(props.onData);
   const onTitleRef = useRef(props.onTitle);
@@ -217,6 +222,7 @@ export function XtermView(props: XtermViewProps) {
   onHandleRef.current = props.onHandle;
   onAttachRef.current = props.onAttach;
   onAttachInfoRef.current = props.onAttachInfo;
+  requestRegularRef.current = props.requestRegular === true;
   onAttachFailedRef.current = props.onAttachFailed;
   onDataRef.current = props.onData;
   onTitleRef.current = props.onTitle;
@@ -410,6 +416,7 @@ export function XtermView(props: XtermViewProps) {
       ephemeral?: boolean;
       retainable?: boolean;
       durable?: boolean;
+      fallbackNotice?: string;
       encoding?: string;
       title?: string;
       titleCustom?: boolean;
@@ -1050,7 +1057,7 @@ export function XtermView(props: XtermViewProps) {
           });
         } else {
           if (!dimensions) return;
-          let regular = props.forceRegular === true;
+          let regular = props.forceRegular === true || requestRegularRef.current;
           const preferencesLoading = !regular && !WEB ? waitAccountPreferences() : null;
           if (preferencesLoading) {
             await preferencesLoading;
@@ -1086,6 +1093,7 @@ export function XtermView(props: XtermViewProps) {
             shell: info.shell,
             retainable: info.retainable,
             durable: info.durable,
+            fallbackNotice: info.fallbackNotice,
             ephemeral: info.ephemeral,
             attachmentId: info.attachmentId,
           });

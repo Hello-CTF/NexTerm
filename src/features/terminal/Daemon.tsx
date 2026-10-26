@@ -9,10 +9,12 @@ export interface DaemonProps {
   durable: boolean;
   sessionKind?: string;
   helper?: DaemonHelperState | null;
+  // regularReason explains why this tab opened as a regular terminal although durable terminals are preferred.
+  regularReason?: string;
   onOpenHelper?: () => void;
 }
 
-export function Daemon({ durable, sessionKind, helper, onOpenHelper }: DaemonProps) {
+export function Daemon({ durable, sessionKind, helper, regularReason, onOpenHelper }: DaemonProps) {
   if (sessionKind === "winrm" || sessionKind === "docker") return null;
   let className = "nx-badge";
   let label = "普通终端";
@@ -35,6 +37,10 @@ export function Daemon({ durable, sessionKind, helper, onOpenHelper }: DaemonPro
     className = "nx-badge nx-badge-blue";
     label = "普通终端 · 持久已就绪";
     title = "持久终端已就绪。当前标签仍是普通终端，新建的标签将是持久终端";
+  } else if (regularReason) {
+    className = "nx-badge nx-badge-amber";
+    label = `普通终端 · ${regularReason.split("：")[0]}`;
+    title = `普通终端：${regularReason}。断开连接后进程即结束，无法转入后台`;
   }
   const content = (
     <>

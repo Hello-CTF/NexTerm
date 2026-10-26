@@ -99,6 +99,7 @@ export {
   useActiveWorkspace,
   useCredentialsTabId,
 } from "./store/tabActions";
+export { DURABLE_FALLBACK_REASON } from "./store/durableReadiness";
 export {
   closeActionHint,
   closeTabHint,

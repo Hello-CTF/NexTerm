@@ -60,6 +60,7 @@ vi.mock("../../ipc/commands", () => ({
     connectLocal: mocks.connectLocal,
     connect: mocks.sessionConnect,
     reconnect: vi.fn(),
+    prepareDurable: vi.fn(async () => ({ state: "preparing" })),
     probe: vi.fn(),
     lineExec: vi.fn(),
   },

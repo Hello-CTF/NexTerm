@@ -111,7 +111,7 @@ function RestoredWorkspacePlaceholder({ workspaceId }: { workspaceId: string }) 
       <span>
         {workspace.deletedTarget
           ? `「${workspace.title}」的资产已删除，无法重新连接。`
-          : `「${workspace.title}」尚未连接。连接后会新开终端${durableHost ? "；之前的持久终端可在「后台会话」接管" : ""}。`}
+          : `「${workspace.title}」尚未连接。连接后可新建终端${durableHost ? "；之前的持久终端可在「后台会话」接管" : ""}。`}
       </span>
       {!workspace.deletedTarget && (
         <button type="button" className="nx-btn nx-btn-outline" disabled={connecting} onClick={connect}>

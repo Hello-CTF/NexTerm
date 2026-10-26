@@ -384,6 +384,30 @@ describe("XtermView production grid lifecycle", () => {
     expect(useUi.getState().toasts.some((toast) => toast.text.includes("无法读取资产终端模式"))).toBe(true);
   });
 
+  it("opens a regular shell when the tab requested one because the durable helper was not ready", async () => {
+    await show(props({ requestRegular: true }));
+
+    expect(harness.attach).toHaveBeenCalledWith("session", 36, 20, expect.anything(), false);
+  });
+
+  it("still resumes an existing attachment of a tab that requested a regular shell", async () => {
+    await show(props({ requestRegular: true, resumeTabId: "tab-existing" }));
+
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, "session");
+    expect(harness.attach).not.toHaveBeenCalled();
+  });
+
+  it("reports the durable fallback notice with the attach info", async () => {
+    harness.attach.mockResolvedValue({
+      tabId: "tab-new", sessionId: "session", cols: 36, rows: 20, controller: "me", subscribers: 1, viewers: 1,
+      exited: false, shell: "posix", retainable: false, durable: false, fallbackNotice: "持久终端不可用",
+    });
+    const notices: Array<string | undefined> = [];
+    await show(props({ onAttachInfo: (info) => notices.push(info.fallbackNotice) }));
+
+    expect(notices).toEqual(["持久终端不可用"]);
+  });
+
   it("reports attached shell and background capability before the attach callback", async () => {
     const events: string[] = [];
     await show(

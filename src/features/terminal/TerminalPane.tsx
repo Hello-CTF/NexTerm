@@ -36,7 +36,7 @@ import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } f
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, type BroadcastState, type Workspace } from "../../app/store";
+import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, DURABLE_FALLBACK_REASON, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -117,6 +117,16 @@ function findWorkspacePane(
     }
   }
   return null;
+}
+
+function findStoreTab(workspaces: Workspace[], storeTabId: string): AppTab | undefined {
+  for (const w of workspaces) {
+    for (const p of w.panes) {
+      const tab = p.tabs.find((t) => t.id === storeTabId);
+      if (tab) return tab;
+    }
+  }
+  return undefined;
 }
 
 interface BroadcastContext {
@@ -357,6 +367,7 @@ export function TerminalPane({
     sessionAssetId ? s.connectProgress[sessionAssetId] : undefined,
   );
   const helperOperation = useUi((s) => s.helperOperations.operations[storeTabId]);
+  const regularReason = useUi((s) => findStoreTab(s.workspaces, storeTabId)?.regularReason);
   const helperRetryPending = useUi((s) => s.helperRetries[sessionId]?.tabId === storeTabId);
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
   const recording = useUi((s) => (kernelTabId ? s.recordings[kernelTabId] : undefined));
@@ -1934,7 +1945,7 @@ export function TerminalPane({
         )}
         <Cwd cwd={cwd} />
         {(kernelTabId || helperBadge) && (
-          <Daemon durable={durable} sessionKind={sessionKind} helper={helperBadge} onOpenHelper={openHelper} />
+          <Daemon durable={durable} sessionKind={sessionKind} helper={helperBadge} regularReason={regularReason} onOpenHelper={openHelper} />
         )}
         {previewShareEnabled && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
         </div>
@@ -2123,6 +2134,7 @@ export function TerminalPane({
               containerId={containerId}
               resumeTabId={resumeRef.current}
               forceRegular={forceRegular}
+              requestRegular={regularReason !== undefined}
               sessionConnected={sessionStatus === "connected"}
               canResize={canResize}
               remoteGrid={remoteGrid ?? undefined}
@@ -2142,6 +2154,7 @@ export function TerminalPane({
                   shell: info.shell ?? "unknown",
                   retainable: info.retainable === true,
                   ...(info.durable === undefined ? {} : { durable: info.durable }),
+                  ...(info.fallbackNotice && info.durable !== true && !regularReason ? { regularReason: DURABLE_FALLBACK_REASON } : {}),
                   exited: info.exited,
                   dead: false,
                   closeError: undefined,

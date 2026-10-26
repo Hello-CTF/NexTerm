@@ -16,7 +16,7 @@ import {
 } from "./problems";
 import { promptQuickConnectPassword } from "./quickConnect";
 import { reconnectSessionAndWait } from "./reconnect";
-import { openTerminalTab } from "./tabActions";
+import { prepareDurableInBackground } from "./durableReadiness";
 import type {
   AppTab,
   ConnectAssetInput,
@@ -100,37 +100,22 @@ export async function openConnectedAssetSession(
   const restored = asset.id && (asset.kind === "ssh" || asset.kind === "device")
     ? workspaces.find((workspace) => workspace.kind === "session" && workspace.assetId === asset.id)
     : undefined;
+  // Opening a host only opens its workspace: terminals are created by an explicit "new terminal", and the durable
+  // helper is prepared in the background so that terminal can be durable. Existing durable terminals stay in the
+  // background sessions list until the user takes them over.
+  prepareDurableInBackground(info);
   if (restored) {
     useUi.setState((state) => {
       const rebound = rebindWorkspaceSession(state.workspaces, restored.id, restored.sessionId, info.id);
       if (options?.preserveUserFocus) return { workspaces: rebound };
-      return {
-        activeWorkspaceId: restored.id,
-        workspaces: rebound.map((workspace) => {
-          if (workspace.id !== restored.id || asset.kind === "device" || workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "terminal"))) return workspace;
-          const panes = workspace.panes.length > 0 ? workspace.panes : [makePane()];
-          const activePane = panes.find((pane) => pane.id === workspace.activePaneId) ?? panes[0];
-          const tab: AppTab = {
-            id: nextTabId(`term-${info.id}`), kind: "terminal", title: "终端 1", sessionId: info.id, closable: true,
-          };
-          return {
-            ...workspace,
-            activePaneId: activePane.id,
-            panes: panes.map((pane) => pane.id === activePane.id
-              ? { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id }
-              : pane),
-          };
-        }),
-      };
+      return { activeWorkspaceId: restored.id, workspaces: rebound };
     });
     return;
   }
   if (options?.preserveUserFocus && workspaces.length > 0) return;
   const pane = makePane();
-  if (asset.kind !== "device") {
-    const tab: AppTab = asset.kind === "docker"
-      ? { id: nextTabId(`docker-${info.id}`), kind: "docker", title: "容器", sessionId: info.id, closable: true }
-      : { id: nextTabId(`term-${info.id}`), kind: "terminal", title: "终端 1", sessionId: info.id, closable: true };
+  if (asset.kind === "docker") {
+    const tab: AppTab = { id: nextTabId(`docker-${info.id}`), kind: "docker", title: "容器", sessionId: info.id, closable: true };
     pane.tabs = [tab];
     pane.activeTabId = tab.id;
   }
@@ -365,12 +350,8 @@ async function runConnectAsset(
       (existing.kind === "db" ||
         (session !== undefined && LIVE_SESSION_STATUSES.has(session.status)));
     if (live) {
-      const hasTerminal = existing.panes.some((p) => p.tabs.some((t) => t.kind === "terminal"));
-      if (session && !hasTerminal) {
-        void openTerminalTab(session);
-      } else {
-        useUi.getState().setActiveWorkspace(existing.id);
-      }
+      useUi.getState().setActiveWorkspace(existing.id);
+      if (session) prepareDurableInBackground(session);
       return { ok: true };
     }
     if (session) {
@@ -385,6 +366,7 @@ async function runConnectAsset(
         const { sessions, setSessions } = useUi.getState();
         setSessions([...sessions.filter((s) => s.id !== fresh.id), fresh]);
         useUi.getState().setActiveWorkspace(existing.id);
+        prepareDurableInBackground(fresh);
         useConnectHistory.getState().record(asset.id);
         return { ok: true };
       } catch (error) {

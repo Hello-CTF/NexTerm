@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   sessionDisconnect: vi.fn(),
   sessionReconnect: vi.fn(),
   sessionList: vi.fn(),
+  prepareDurable: vi.fn(),
   assetCreate: vi.fn(),
   probeHostKey: vi.fn(),
   dbConnect: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       reconnect: mocks.sessionReconnect,
       list: mocks.sessionList,
       probeHostKey: mocks.probeHostKey,
+      prepareDurable: mocks.prepareDurable,
     },
     terminalApi: { ...actual.terminalApi, closeTab: mocks.closeTab },
     dbApi: { connect: mocks.dbConnect, disconnect: mocks.dbDisconnect },
@@ -353,7 +355,7 @@ describe("connectAsset asset workspace deduplication", () => {
     expect(workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
   });
 
-  it("reopens a terminal tab when the workspace remains but its terminal tab was closed", async () => {
+  it("switches to the workspace without reopening a closed terminal tab and keeps preparing durable terminals", async () => {
     seedSessionWorkspace("connected");
     const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
@@ -361,7 +363,9 @@ describe("connectAsset asset workspace deduplication", () => {
     const { workspaces, activeWorkspaceId } = useUi.getState();
     expect(activeWorkspaceId).toBe("ws-1");
     const tabs = workspaces[0]?.panes.flatMap((p) => p.tabs) ?? [];
-    expect(tabs.some((t) => t.kind === "terminal" && t.sessionId === "s1")).toBe(true);
+    expect(tabs.some((t) => t.kind === "terminal")).toBe(false);
+    await flush();
+    expect(mocks.prepareDurable).toHaveBeenCalledWith("s1");
   });
 
   it("reconnects directly when the asset workspace session is disconnected and takes over the existing terminal tab", async () => {
@@ -639,14 +643,12 @@ describe("connectAsset focus guard", () => {
     expect(state.connectFocusRevision).toBe(0);
   });
 
-  it("keeps the default connection and terminal focus when a guarded connection is undisturbed", async () => {
+  it("opens the host workspace without a terminal when a guarded connection is undisturbed", async () => {
     expect(await connectAsset(SSH_ASSET, { preserveUserFocus: true })).toEqual({ ok: true });
 
     const state = useUi.getState();
     const workspace = state.workspaces.find((w) => w.sessionId === SESSION.id);
-    const terminal = workspace?.panes[0].tabs.find((t) => t.kind === "terminal");
-    expect(terminal?.title).toBe("终端 1");
-    expect(workspace?.panes[0].activeTabId).toBe(terminal?.id);
+    expect(workspace?.panes[0].tabs).toEqual([]);
     expect(state.activeWorkspaceId).toBe(workspace?.id);
     expect(state.connectFocusRevision).toBe(1);
   });
@@ -658,7 +660,7 @@ describe("connectAsset focus guard", () => {
 
     const state = useUi.getState();
     const workspace = state.workspaces.find((w) => w.sessionId === SESSION.id);
-    expect(workspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(true);
+    expect(workspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(false);
     expect(state.activeWorkspaceId).toBe(workspace?.id);
     expect(state.connectFocusRevision).toBe(1);
   });
@@ -693,6 +695,6 @@ describe("connectAsset focus guard", () => {
     const manualWorkspace = state.workspaces.find((w) => w.sessionId === manualSession.id);
     expect(state.connectingAssetIds).not.toContain("asset-1");
     expect(state.activeWorkspaceId).toBe(manualWorkspace?.id);
-    expect(manualWorkspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(true);
+    expect(manualWorkspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(false);
   });
 });

@@ -410,6 +410,13 @@ export function PaneGroup({
                       aria-label="持久终端"
                     />
                   )}
+                  {t.kind === "terminal" && t.durable !== true && t.regularReason && (
+                    <span
+                      className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
+                      role="img"
+                      aria-label={`普通终端：${t.regularReason}`}
+                    />
+                  )}
                 </span>
                 <TabStripTitle tab={t} />
                 {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}

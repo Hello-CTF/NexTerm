@@ -46,6 +46,7 @@ export function tabIcon(t: AppTab) {
 export function tabTooltip(t: AppTab, unread: boolean): string {
   const notes: string[] = [];
   if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
+  else if (t.kind === "terminal" && t.regularReason) notes.push(`普通终端：${t.regularReason}`);
   if (unread) notes.push("有新输出");
   if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
