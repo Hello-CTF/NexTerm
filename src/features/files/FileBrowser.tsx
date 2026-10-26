@@ -131,7 +131,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const rootsSessionGone = fsErrorResource(rootsQuery.error) === "session";
   const path = pathChoice ?? (windowsComputer ? null : HOME);
   const computer = path === null && windowsComputer;
-  const follow = useCwdFollow(sessionId, path ?? "\u0000", (next) => {
+  const follow = useCwdFollow(sessionId, path ?? "\u0000", null, (next) => {
     setPath(next);
     setSelected(null);
   });

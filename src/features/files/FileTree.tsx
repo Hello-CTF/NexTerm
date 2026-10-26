@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
-import { useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
 import {
@@ -97,6 +97,33 @@ function combineListings(list: UseQueryResult<FileEntryDto[]>[]) {
 }
 
 const LISTING_STALE_MS = 30_000;
+// Listings outlive the tree's unmount (another workspace in front) long enough to be shown again without a remote read.
+const LISTING_GC_MS = 30 * 60_000;
+
+// The view a tree had when its workspace was left, by session: showing the workspace again restores it instead of starting at home.
+// Views live beside the query cache whose listings they show again.
+interface TreeView {
+  root: string | null;
+  expanded: string[];
+  selected: string | null;
+}
+const treeViewsByClient = new WeakMap<QueryClient, Map<string, TreeView>>();
+
+function treeViews(client: QueryClient): Map<string, TreeView> {
+  let views = treeViewsByClient.get(client);
+  if (!views) {
+    views = new Map();
+    treeViewsByClient.set(client, views);
+  }
+  return views;
+}
+
+function saveTreeView(client: QueryClient, sessionId: string, view: TreeView) {
+  const views = treeViews(client);
+  const live = new Set(useUi.getState().sessions.map((session) => session.id));
+  for (const id of views.keys()) if (!live.has(id)) views.delete(id);
+  views.set(sessionId, view);
+}
 const TREE_ROW_HEIGHT = 28;
 // Rows just outside the viewport that stay mounted; the window is the visible rows plus a few on each side.
 const TREE_OVERSCAN = 4;
@@ -331,9 +358,10 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const leftWidth = useUi((s) => s.leftWidth);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
-  const [rootChoice, setRoot] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [initialView] = useState(() => treeViews(qc).get(sessionId));
+  const [rootChoice, setRoot] = useState<string | null>(initialView?.root ?? null);
+  const [expanded, setExpanded] = useState<string[]>(initialView?.expanded ?? []);
+  const [selected, setSelected] = useState<string | null>(initialView?.selected ?? null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
@@ -344,6 +372,8 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     queryKey: ["fsRoots", sessionId],
     queryFn: () => fsApi.roots(sessionId),
     staleTime: LISTING_STALE_MS,
+    gcTime: LISTING_GC_MS,
+    refetchOnMount: initialView === undefined,
     enabled: typeof fsApi.roots === "function",
     refetchOnWindowFocus: false,
     retry: false,
@@ -358,7 +388,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const computer = root === null && windowsComputer;
   const homeTarget = rootsData?.homePath ?? HOME;
   const homeSupported = sessionKind !== "winrm" || rootsData?.homePath != null;
-  const follow = useCwdFollow(sessionId, root ?? "\u0000", (next) => {
+  const follow = useCwdFollow(sessionId, root ?? "\u0000", `tree:${sessionId}`, (next) => {
     setExpanded([]);
     setSelected(null);
     setRoot(next);
@@ -413,12 +443,30 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     return [root, ...expanded.filter((d) => d !== root)];
   }, [computer, environmentSettled, expanded, root, rootsSessionGone]);
 
+  useEffect(() => {
+    saveTreeView(qc, sessionId, { root: rootChoice, expanded, selected });
+  }, [qc, sessionId, rootChoice, expanded, selected]);
+
+  // Directories the restored view shows keep their cached listing when the tree mounts again; a directory the user navigates
+  // to, or collapses and expands again, reads as usual. Declared before useQueries so the set is current when its observers subscribe.
+  const restoredDirs = useRef<Set<string> | null>(initialView ? null : new Set());
+  useEffect(() => {
+    if (!environmentSettled) return;
+    if (restoredDirs.current === null) {
+      restoredDirs.current = new Set(dirs);
+      return;
+    }
+    for (const dir of restoredDirs.current) if (!dirs.includes(dir)) restoredDirs.current.delete(dir);
+  }, [dirs, environmentSettled]);
+
   const results = useQueries({
     queries: dirs.map((dir) => ({
       queryKey: ["fs", sessionId, dir],
       queryFn: () => fsApi.list(sessionId, dir),
       // Remounting the panel reuses a fresh listing; invalidateQueries ignores staleTime, so refresh and file operations still refetch.
       staleTime: LISTING_STALE_MS,
+      gcTime: LISTING_GC_MS,
+      refetchOnMount: () => restoredDirs.current !== null && !restoredDirs.current.has(dir),
       refetchOnWindowFocus: false,
       retry: false,
     })),

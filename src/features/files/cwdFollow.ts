@@ -136,9 +136,17 @@ export function normalizeFollowTarget(cwd: string): string {
   return /^[A-Za-z]:$/.test(trimmed) ? `${trimmed}/` : trimmed;
 }
 
+// Last applied cwd by memory key, for consumers that remount while their session lives on.
+const followMemory = new Map<string, string>();
+
+/**
+ * A consumer that remounts (the file tree when its workspace is shown again) passes memoryKey, so the cwd it already followed is
+ * not applied again over the user's own navigation and is not listed again on every mount.
+ */
 export function useCwdFollow(
   sessionId: string,
   current: string,
+  memoryKey: string | null,
   apply: (next: string) => void,
 ): {
   supported: boolean;
@@ -152,7 +160,7 @@ export function useCwdFollow(
   const supported = sessionKind === "ssh" || sessionKind === "local";
   const enabled = useFollowCwdEnabled();
   const followed = useFollowedCwd(sessionId);
-  const lastFollowed = useRef<string>(NEVER);
+  const lastFollowed = useRef<string>((memoryKey && followMemory.get(memoryKey)) || NEVER);
   const applyRef = useRef(apply);
   applyRef.current = apply;
   const currentRef = useRef(current);
@@ -160,12 +168,16 @@ export function useCwdFollow(
 
   useEffect(() => {
     if (!supported || !enabled) return;
+    const remember = (value: string) => {
+      lastFollowed.current = value;
+      if (memoryKey) followMemory.set(memoryKey, value);
+    };
     if (!followed) {
-      lastFollowed.current = NEVER;
+      remember(NEVER);
       return;
     }
     if (followed === lastFollowed.current) return;
-    lastFollowed.current = followed;
+    remember(followed);
     const next = normalizeFollowTarget(followed);
     if (next === normalizeFollowTarget(currentRef.current)) return;
     let cancelled = false;
@@ -187,13 +199,16 @@ export function useCwdFollow(
     return () => {
       cancelled = true;
     };
-  }, [supported, enabled, followed, sessionId, qc, pushToast]);
+  }, [supported, enabled, followed, sessionId, memoryKey, qc, pushToast]);
 
   const toggle = useCallback(() => {
     const next = !isFollowCwdEnabled();
-    if (next) lastFollowed.current = NEVER;
+    if (next) {
+      lastFollowed.current = NEVER;
+      if (memoryKey) followMemory.delete(memoryKey);
+    }
     setFollowCwdEnabled(next);
-  }, []);
+  }, [memoryKey]);
 
   return { supported, enabled, followed, toggle };
 }
@@ -203,6 +218,7 @@ export function resetCwdFollowForTest(): void {
   stopWorkspaceWatch = null;
   lastWorkspaces = null;
   cwds.clear();
+  followMemory.clear();
   notifiedFailures.clear();
   gate = new EventVersionGate();
   followEnabled = loadFollowPref();

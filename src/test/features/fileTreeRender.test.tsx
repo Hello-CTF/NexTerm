@@ -157,4 +157,34 @@ describe("FileTree large directory rendering", () => {
     });
     expect(mocks.list).toHaveBeenCalledTimes(2);
   });
+
+  it("restores the view and its cached listings when the tree mounts again", async () => {
+    const inner: FileEntryDto = { ...entry("inner", "file"), path: "~/zdir/inner" };
+    mocks.list.mockImplementation((_sid: string, dir: string) =>
+      Promise.resolve(dir === "~/zdir" ? [inner] : HOME.map((e) => ({ ...e }))),
+    );
+    mounted = mountTree();
+    await waitFor(() => expect(renderedPaths()[0]).toBe("~/zdir"));
+    const dir = mounted.container.querySelector<HTMLElement>('[data-row-path="~/zdir"]')!;
+    act(() => dir.focus());
+    act(() => {
+      dir.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    });
+    await waitFor(() => expect(renderedPaths()).toContain("~/zdir/inner"));
+    const reads = mocks.list.mock.calls.length;
+    const rootReads = mocks.roots.mock.calls.length;
+
+    // Switching to another workspace unmounts the tree; by the time it is shown again its listings are stale.
+    mounted.unmount();
+    await act(async () => {
+      await client.invalidateQueries({ refetchType: "none" });
+    });
+    mounted = mountTree();
+    await waitFor(() => expect(renderedPaths()).toContain("~/zdir/inner"));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(mocks.list).toHaveBeenCalledTimes(reads);
+    expect(mocks.roots).toHaveBeenCalledTimes(rootReads);
+  });
 });
