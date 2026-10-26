@@ -25,21 +25,28 @@ type HelperConfig struct {
 	SpawnTimeout   time.Duration
 	Bridge         bool
 	Probe          bool
-	// DisableStateDetection turns off per-session attention state; it is
-	// set by StateDetectionEnv.
+	// DisableStateDetection turns off per-session attention state. A helper
+	// spawned by ConnectHelper receives it as --state-detection=off; the
+	// helper's StateDetectionEnv overrides it either way.
 	DisableStateDetection bool
 }
 
-// StateDetectionEnv, set to "off", "0" or "false" in the helper's
-// environment, disables per-session attention state detection.
+// StateDetectionEnv in the helper's environment overrides the
+// --state-detection option: "off", "0", "false" or "no" disables
+// per-session attention state detection and "on", "1", "true" or "yes"
+// enables it.
 const StateDetectionEnv = "NEXTERM_HELPER_STATE_DETECTION"
 
-func stateDetectionDisabled(value string) bool {
+// stateDetectionSetting parses an on/off value; ok is false when value is
+// not one.
+func stateDetectionSetting(value string) (disabled, ok bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "off", "0", "false", "no":
-		return true
+		return true, true
+	case "on", "1", "true", "yes":
+		return false, true
 	}
-	return false
+	return false, false
 }
 
 type Helper struct {
@@ -112,7 +119,7 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 		spawnTimeout = defaultHelperSpawnTimeout
 	}
 	logPath := filepath.Join(stateDir, "helper.log")
-	if err := spawnDetached(executable, []string{HelperCommand, "--state-dir", stateDir}, logPath); err != nil {
+	if err := spawnDetached(executable, helperSpawnArgs(stateDir, config), logPath); err != nil {
 		return nil, fmt.Errorf("spawn supervisor helper: %w", err)
 	}
 	deadline := time.Now().Add(spawnTimeout)
@@ -215,12 +222,20 @@ func RunHelperCLI(args []string) int {
 	return 0
 }
 
+// helperSpawnArgs are the arguments ConnectHelper starts a helper with.
+func helperSpawnArgs(stateDir string, config HelperConfig) []string {
+	args := []string{HelperCommand, "--state-dir", stateDir}
+	if config.DisableStateDetection {
+		args = append(args, "--state-detection=off")
+	}
+	return args
+}
+
 func parseHelperArgs(args []string, getenv func(string) string) (HelperConfig, error) {
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
 	var config HelperConfig
-	config.DisableStateDetection = stateDetectionDisabled(getenv(StateDetectionEnv))
 	var dataDir string
 	for index := 0; index < len(args); index++ {
 		argument := args[index]
@@ -239,7 +254,7 @@ func parseHelperArgs(args []string, getenv func(string) string) (HelperConfig, e
 			}
 			continue
 		}
-		if name != "--state-dir" && name != "--data-dir" {
+		if name != "--state-dir" && name != "--data-dir" && name != "--state-detection" {
 			return HelperConfig{}, fmt.Errorf("unknown option %s", name)
 		}
 		if !hasValue {
@@ -249,11 +264,21 @@ func parseHelperArgs(args []string, getenv func(string) string) (HelperConfig, e
 			}
 			value = args[index]
 		}
-		if name == "--state-dir" {
+		switch name {
+		case "--state-dir":
 			config.StateDir = value
-		} else {
+		case "--data-dir":
 			dataDir = value
+		default:
+			disabled, ok := stateDetectionSetting(value)
+			if !ok {
+				return HelperConfig{}, fmt.Errorf("option %s takes on or off, not %q", name, value)
+			}
+			config.DisableStateDetection = disabled
 		}
+	}
+	if disabled, ok := stateDetectionSetting(getenv(StateDetectionEnv)); ok {
+		config.DisableStateDetection = disabled
 	}
 	if config.StateDir == "" && !config.Probe {
 		if dataDir == "" {

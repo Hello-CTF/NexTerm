@@ -572,3 +572,42 @@ func TestStreamStateKeepsReportingDroppedEvents(t *testing.T) {
 		t.Fatalf("after trimming the stream's own ring: dropped %v, %d events", got.EventsDropped, len(got.Events))
 	}
 }
+
+func TestHelperStateDetectionOption(t *testing.T) {
+	env := func(value string) func(string) string {
+		return func(key string) string {
+			if key == StateDetectionEnv {
+				return value
+			}
+			return ""
+		}
+	}
+	cases := []struct {
+		name     string
+		config   HelperConfig
+		env      string
+		disabled bool
+	}{
+		{name: "default on", disabled: false},
+		{name: "option off", config: HelperConfig{DisableStateDetection: true}, disabled: true},
+		{name: "env off overrides the default", env: "off", disabled: true},
+		{name: "env on overrides the option", config: HelperConfig{DisableStateDetection: true}, env: "on", disabled: false},
+		{name: "unrecognised env is ignored", config: HelperConfig{DisableStateDetection: true}, env: "maybe", disabled: true},
+	}
+	for _, tc := range cases {
+		args := helperSpawnArgs("/state", tc.config)
+		if args[0] != HelperCommand {
+			t.Fatalf("%s: spawn args %q", tc.name, args)
+		}
+		config, err := parseHelperArgs(args[1:], env(tc.env))
+		if err != nil || config.StateDir != "/state" || config.DisableStateDetection != tc.disabled {
+			t.Fatalf("%s: helper config %+v, %v", tc.name, config, err)
+		}
+	}
+	if _, err := parseHelperArgs([]string{"--state-dir", "/state", "--state-detection", "sometimes"}, nil); err == nil {
+		t.Fatal("invalid --state-detection value accepted")
+	}
+	if config, err := parseHelperArgs([]string{"--state-dir", "/state", "--state-detection", "on"}, nil); err != nil || config.DisableStateDetection {
+		t.Fatalf("--state-detection on: %+v, %v", config, err)
+	}
+}

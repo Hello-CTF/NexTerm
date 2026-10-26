@@ -278,17 +278,4 @@ func TestStateDetectionCanBeDisabled(t *testing.T) {
 	if prompt := session.CurrentPrompt(); prompt != nil {
 		t.Fatalf("prompt reported with detection disabled: %+v", prompt)
 	}
-	_, err = parseHelperArgs([]string{"--state-dir", "x"}, func(string) string { return "" })
-	if err != nil {
-		t.Fatal(err)
-	}
-	config, err := parseHelperArgs([]string{"--state-dir", "x"}, func(key string) string {
-		if key == StateDetectionEnv {
-			return "off"
-		}
-		return ""
-	})
-	if err != nil || !config.DisableStateDetection {
-		t.Fatalf("helper config %+v, %v", config, err)
-	}
 }
