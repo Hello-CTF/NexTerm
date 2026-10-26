@@ -325,7 +325,7 @@ func TestSpawnDetachedStartsNewSession(t *testing.T) {
 	sidFile := filepath.Join(t.TempDir(), "sid")
 	t.Setenv(spawnChildFileEnv, sidFile)
 	logPath := filepath.Join(t.TempDir(), "spawn.log")
-	if err := spawnDetached(os.Args[0], []string{"-test.run=^TestSpawnDetachedChild$"}, logPath); err != nil {
+	if _, err := spawnDetached(os.Args[0], []string{"-test.run=^TestSpawnDetachedChild$"}, logPath); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(30 * time.Second)

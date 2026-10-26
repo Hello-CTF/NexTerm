@@ -27,6 +27,8 @@ type Config struct {
 	// (signal scanning, screen model and prompt detection); Info.State is
 	// then nil.
 	DisableStateDetection bool
+	// Limits bounds process growth; zero fields take DefaultLimits.
+	Limits Limits
 }
 
 type CreateOptions struct {
