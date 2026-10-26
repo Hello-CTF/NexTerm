@@ -70,7 +70,7 @@ describe("split tree serialization", () => {
   it("repairs content of the known version and reports what changed", () => {
     const doc = { v: SPLIT_TREE_FORMAT_VERSION, root: split("s", "row", leaf("A", "x"), leaf("A", "y"), 0.99) };
     const result = decodeSplitTree(doc);
-    expect(result).toMatchObject({ ok: true, tree: leaf("A", "x"), droppedPaneIds: ["A"] });
+    expect(result).toMatchObject({ ok: true, tree: leaf("A", "x"), droppedPaneIds: [] });
     expect(result.ok && result.issues.length).toBeGreaterThan(0);
   });
 });
@@ -183,7 +183,7 @@ describe("split tree merge", () => {
     const local = at(setSplitRatio(sample, "root", localRatio), localTime);
     const remote = at(setSplitRatio(sample, "root", remoteRatio), remoteTime);
     const result = mergeSplitTrees(base, local, remote);
-    expect(result.structure).toBe("same");
+    expect(result.structure).toMatch(/^same/);
     expect(result.tree).toMatchObject({ id: "root", ratio: expected });
   });
 

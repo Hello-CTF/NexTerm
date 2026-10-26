@@ -1,6 +1,8 @@
 import {
   clampRatio,
+  cleanTree,
   defaultIdFactory,
+  mintUnique,
   nodeAt,
   findNodePath,
   reconcilePanes,
@@ -35,13 +37,14 @@ export type DecodeSplitTreeResult =
   | { ok: false; error: "unsupported-version"; version: unknown };
 
 export function encodeSplitTree(tree: SplitNode): SerializedSplitTree {
-  return { v: SPLIT_TREE_FORMAT_VERSION, root: JSON.parse(JSON.stringify(tree)) as SplitNode };
+  return { v: SPLIT_TREE_FORMAT_VERSION, root: cleanTree(tree) };
 }
 
 /**
  * Decodes a serialized tree (object or JSON text). Any version other than
  * SPLIT_TREE_FORMAT_VERSION is rejected rather than guessed at; content of the
- * known version is repaired and the repairs are reported.
+ * known version is rebuilt clean, repaired, and the repairs are reported.
+ * Never throws: hostile input yields `{ ok: false }` or a repaired tree.
  */
 export function decodeSplitTree(raw: unknown, newId: IdFactory = defaultIdFactory): DecodeSplitTreeResult {
   let doc = raw;
@@ -57,7 +60,12 @@ export function decodeSplitTree(raw: unknown, newId: IdFactory = defaultIdFactor
   if (record.v !== SPLIT_TREE_FORMAT_VERSION) {
     return { ok: false, error: "unsupported-version", version: record.v };
   }
-  const repaired = repairTree(record.root, newId);
+  let repaired: ReturnType<typeof repairTree>;
+  try {
+    repaired = repairTree(record.root, newId);
+  } catch {
+    return { ok: false, error: "malformed" };
+  }
   if (!repaired.tree) return { ok: false, error: "malformed" };
   return { ok: true, tree: repaired.tree, issues: repaired.issues, droppedPaneIds: repaired.droppedPaneIds };
 }
@@ -80,6 +88,8 @@ export interface LegacyConversion {
  * panes become a top/bottom ("col") split using `splitRatio`. Additional
  * panes, which the legacy model never renders, nest under the bottom half at
  * an even ratio until the depth limit; the rest are reported as dropped.
+ * Node ids derive from pane ids, so every device converting the same
+ * workspace produces the same tree.
  */
 export function legacyWorkspaceTree(
   workspace: LegacySplitWorkspace,
@@ -95,12 +105,14 @@ export function legacyWorkspaceTree(
     else ids.push(pane.id);
   }
   if (ids.length === 0) return { tree: null, activePaneId: null, droppedPaneIds: dropped };
-  let tree: SplitNode = { type: "leaf", id: newId(), paneId: ids[ids.length - 1] };
+  const used = new Set<string>();
+  const last = ids[ids.length - 1];
+  let tree: SplitNode = { type: "leaf", id: mintUnique(used, `leaf:${last}`, newId), paneId: last };
   for (let index = ids.length - 2; index >= 0; index -= 1) {
-    const top: SplitLeaf = { type: "leaf", id: newId(), paneId: ids[index] };
+    const top: SplitLeaf = { type: "leaf", id: mintUnique(used, `leaf:${ids[index]}`, newId), paneId: ids[index] };
     tree = {
       type: "split",
-      id: newId(),
+      id: mintUnique(used, `legacy:${ids[index]}`, newId),
       dir: "col",
       ratio: index === 0 ? clampRatio(workspace.splitRatio ?? Number.NaN) : clampRatio(0.5),
       a: top,
@@ -122,12 +134,19 @@ export interface TimedSplitTree {
   updatedAt: number;
 }
 
+/** Canonical serialization including node ids, used for deterministic tie-breaks. */
+function canonicalTree(tree: SplitNode): string {
+  return JSON.stringify(cleanTree(tree));
+}
+
 /**
- * same: both sides share a shape. local/remote: only that side changed the
+ * same / same-remote: both sides share a shape; the newer side's node ids are
+ * kept (ties: the smaller canonical serialization). local/remote: only that side changed the
  * shape since base. conflict-local/conflict-remote: both changed it (or there
  * is no base); the newer tree won.
  */
-export type SplitTreeStructureResolution = "same" | "local" | "remote" | "conflict-local" | "conflict-remote";
+export type SplitTreeStructureResolution =
+  "same" | "same-remote" | "local" | "remote" | "conflict-local" | "conflict-remote";
 
 export interface SplitTreeMergeResult {
   tree: SplitNode | null;
@@ -163,7 +182,8 @@ function counterpart(
  * Three-way merge of one workspace's tree, following layoutMerge semantics: a
  * side that did not change since base yields to the other. Structure is
  * resolved as a whole; when both sides reshaped the tree, the newer one wins
- * (ties go to the smaller structure key so every device converges). Split
+ * (ties go to the smaller structure key); with equal shapes the newer side's
+ * node ids are kept (ties: smaller canonical form), so every device converges. Split
  * ratios then merge per node, matched by node id (or position when shapes
  * match): an unchanged side yields, and a true conflict is last-write-wins
  * by `updatedAt`, ties taking the smaller ratio.
@@ -178,20 +198,25 @@ export function mergeSplitTrees(
   const remoteKey = structureKey(remote.tree);
   const baseKey = base ? structureKey(base.tree) : null;
   let structure: SplitTreeStructureResolution;
-  if (localKey === remoteKey) structure = "same";
-  else if (baseKey === localKey) structure = "remote";
+  const localTime = timeOf(local.updatedAt);
+  const remoteTime = timeOf(remote.updatedAt);
+  if (localKey === remoteKey) {
+    // Same shape: still pick one side's node ids deterministically so both
+    // devices converge on the same tree.
+    const localWins =
+      localTime === remoteTime ? canonicalTree(local.tree) <= canonicalTree(remote.tree) : localTime > remoteTime;
+    structure = localWins ? "same" : "same-remote";
+  } else if (baseKey === localKey) structure = "remote";
   else if (baseKey === remoteKey) structure = "local";
   else {
-    const localTime = timeOf(local.updatedAt);
-    const remoteTime = timeOf(remote.updatedAt);
     const localWins = localTime === remoteTime ? localKey < remoteKey : localTime > remoteTime;
     structure = localWins ? "conflict-local" : "conflict-remote";
   }
-  const winnerIsRemote = structure === "remote" || structure === "conflict-remote";
+  const winnerIsRemote = structure === "same-remote" || structure === "remote" || structure === "conflict-remote";
   const winner = winnerIsRemote ? remote.tree : local.tree;
   const winnerKey = winnerIsRemote ? remoteKey : localKey;
-  const localNewer = timeOf(local.updatedAt) > timeOf(remote.updatedAt);
-  const remoteNewer = timeOf(remote.updatedAt) > timeOf(local.updatedAt);
+  const localNewer = localTime > remoteTime;
+  const remoteNewer = remoteTime > localTime;
 
   const mergeRatios = (node: SplitNode, path: TreePath): SplitNode => {
     if (node.type === "leaf") return node;
@@ -213,8 +238,8 @@ export function mergeSplitTrees(
     return { ...node, ratio, a, b };
   };
 
-  const merged = mergeRatios(winner, []);
-  const latest = Math.max(timeOf(local.updatedAt), timeOf(remote.updatedAt));
+  const merged = cleanTree(mergeRatios(winner, []));
+  const latest = Math.max(localTime, remoteTime);
   const updatedAt = Number.isFinite(latest) ? latest : 0;
   if (!options.paneIds) return { tree: merged, updatedAt, structure, unplacedPaneIds: [] };
   const reconciled = reconcilePanes(merged, options.paneIds, options.newId ?? defaultIdFactory);

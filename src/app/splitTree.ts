@@ -39,7 +39,12 @@ export interface PaneRect {
   rect: Rect;
 }
 
-export type IdFactory = () => string;
+/**
+ * Mints a node id from a seed that describes the node's content and position.
+ * Ids must be deterministic so that every device applying the same merge,
+ * repair or conversion produces identical trees.
+ */
+export type IdFactory = (seed: string) => string;
 
 export const SPLIT_TREE_MAX_DEPTH = 8;
 export const SPLIT_RATIO_MIN = SPLIT_RATIO_RANGE.min;
@@ -49,10 +54,46 @@ export const SPLIT_RATIO_DEFAULT = SPLIT_RATIO_RANGE.default;
 const EPSILON = 1e-9;
 const UNIT_RECT: Rect = { x: 0, y: 0, width: 1, height: 1 };
 
-export const defaultIdFactory: IdFactory = () => `node-${globalThis.crypto.randomUUID()}`;
+// FNV-1a over UTF-16 code units; two offset bases give a 64-bit id.
+function fnv1a(text: string, basis: number): string {
+  let hash = basis >>> 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/** Content-derived ids: the same seed always yields the same id. */
+export const contentIdFactory: IdFactory = (seed) => `n${fnv1a(seed, 0x811c9dc5)}${fnv1a(seed, 0x050c5d1f)}`;
+
+export const defaultIdFactory: IdFactory = contentIdFactory;
+
+function collectNodeIds(tree: SplitNode, out = new Set<string>()): Set<string> {
+  out.add(tree.id);
+  if (tree.type === "split") {
+    collectNodeIds(tree.a, out);
+    collectNodeIds(tree.b, out);
+  }
+  return out;
+}
+
+/** Mints an id for `seed` that is not in `used`, salting the seed on collision, and records it. */
+export function mintUnique(used: Set<string>, seed: string, newId: IdFactory): string {
+  let id = newId(seed);
+  for (let salt = 1; used.has(id); salt += 1) id = newId(`${seed}#${salt}`);
+  used.add(id);
+  return id;
+}
 
 export function createLeaf(paneId: string, newId: IdFactory = defaultIdFactory): SplitLeaf {
-  return { type: "leaf", id: newId(), paneId };
+  return { type: "leaf", id: newId(`leaf:${paneId}`), paneId };
+}
+
+/** A copy holding only the model's own fields, with a fixed key order. */
+export function cleanTree(node: SplitNode): SplitNode {
+  if (node.type === "leaf") return { type: "leaf", id: node.id, paneId: node.paneId };
+  return { type: "split", id: node.id, dir: node.dir, ratio: node.ratio, a: cleanTree(node.a), b: cleanTree(node.b) };
 }
 
 export function clampRatio(ratio: number): number {
@@ -149,12 +190,14 @@ function insertLeaf(
   if (!path || !options.newPaneId || findPanePath(tree, options.newPaneId)) return tree;
   if (path.length + 1 > SPLIT_TREE_MAX_DEPTH) return tree;
   const target = nodeAt(tree, path) as SplitLeaf;
+  const used = collectNodeIds(tree);
   const added: SplitLeaf = existingLeaf
     ? { ...existingLeaf, paneId: options.newPaneId }
-    : { type: "leaf", id: newId(), paneId: options.newPaneId };
+    : { type: "leaf", id: mintUnique(used, `leaf:${options.newPaneId}`, newId), paneId: options.newPaneId };
+  used.add(added.id);
   const branch: SplitBranch = {
     type: "split",
-    id: newId(),
+    id: mintUnique(used, `split:${target.id}:${options.side}:${options.dir}:${options.newPaneId}`, newId),
     dir: options.dir,
     ratio: clampRatio(options.ratio ?? SPLIT_RATIO_DEFAULT),
     a: options.side === "before" ? added : target,
@@ -302,31 +345,49 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
-/** Lists every invariant violation; an empty list means `input` is a valid SplitNode. */
+const LEAF_FIELDS = new Set(["type", "id", "paneId"]);
+const SPLIT_FIELDS = new Set(["type", "id", "dir", "ratio", "a", "b"]);
+
+/**
+ * Lists every invariant violation; an empty list means `input` is a valid
+ * SplitNode. Traversal stops at the depth limit and at repeated objects, so
+ * hostile input (deep chains, cycles) cannot exhaust the stack.
+ */
 export function validateTree(input: unknown): string[] {
   const issues: string[] = [];
   const panes = new Set<string>();
   const ids = new Set<string>();
-  const walk = (raw: unknown, path: string, level: number) => {
-    const at = path;
+  const visited = new WeakSet<object>();
+  const walk = (raw: unknown, at: string, level: number) => {
     if (!isRecord(raw)) {
       issues.push(`${at}: not a node`);
       return;
     }
+    if (visited.has(raw)) {
+      issues.push(`${at}: repeated node object`);
+      return;
+    }
+    visited.add(raw);
     if (!isNonEmptyString(raw.id)) issues.push(`${at}: missing node id`);
     else if (ids.has(raw.id)) issues.push(`${at}: duplicate node id ${raw.id}`);
     else ids.add(raw.id);
+    if (raw.type !== "leaf" && raw.type !== "split") {
+      issues.push(`${at}: unknown node type`);
+      return;
+    }
+    const allowed = raw.type === "leaf" ? LEAF_FIELDS : SPLIT_FIELDS;
+    const extra = Object.keys(raw).filter((key) => !allowed.has(key));
+    if (extra.length > 0) issues.push(`${at}: unexpected fields ${extra.join(", ")}`);
     if (raw.type === "leaf") {
       if (!isNonEmptyString(raw.paneId)) issues.push(`${at}: missing pane id`);
       else if (panes.has(raw.paneId)) issues.push(`${at}: duplicate pane id ${raw.paneId}`);
       else panes.add(raw.paneId);
       return;
     }
-    if (raw.type !== "split") {
-      issues.push(`${at}: unknown node type`);
+    if (level >= SPLIT_TREE_MAX_DEPTH) {
+      issues.push(`${at}: depth exceeds ${SPLIT_TREE_MAX_DEPTH}`);
       return;
     }
-    if (level >= SPLIT_TREE_MAX_DEPTH) issues.push(`${at}: depth exceeds ${SPLIT_TREE_MAX_DEPTH}`);
     if (raw.dir !== "row" && raw.dir !== "col") issues.push(`${at}: invalid direction`);
     if (
       typeof raw.ratio !== "number" ||
@@ -336,8 +397,8 @@ export function validateTree(input: unknown): string[] {
     ) {
       issues.push(`${at}: ratio out of range`);
     }
-    walk(raw.a, `${path}.a`, level + 1);
-    walk(raw.b, `${path}.b`, level + 1);
+    walk(raw.a, `${at}.a`, level + 1);
+    walk(raw.b, `${at}.b`, level + 1);
   };
   walk(input, "root", 0);
   return issues;
@@ -351,62 +412,75 @@ export interface RepairResult {
   tree: SplitNode | null;
   /** Invariant violations found in the input; empty when it was already valid. */
   issues: string[];
-  /** Panes whose leaves had to be removed (duplicates or beyond the depth limit). */
+  /** Input panes the repaired tree no longer shows (cut at the depth limit); surviving duplicates are not listed. */
   droppedPaneIds: string[];
 }
 
-function rawPaneIds(raw: unknown, out: string[] = []): string[] {
-  if (!isRecord(raw)) return out;
-  if (raw.type === "leaf") {
-    if (isNonEmptyString(raw.paneId)) out.push(raw.paneId);
-  } else if (raw.type === "split") {
-    rawPaneIds(raw.a, out);
-    rawPaneIds(raw.b, out);
+// A valid tree has fewer than 2^(depth + 1) nodes; anything past this budget is junk.
+const RAW_NODE_BUDGET = 2 ** (SPLIT_TREE_MAX_DEPTH + 2);
+
+/** Pane ids of leaf-shaped objects in visual order, iteratively and within RAW_NODE_BUDGET nodes. */
+function rawPaneIds(root: unknown): string[] {
+  const out: string[] = [];
+  const visited = new WeakSet<object>();
+  const stack: unknown[] = [root];
+  let budget = RAW_NODE_BUDGET;
+  while (stack.length > 0 && budget > 0) {
+    const raw = stack.pop();
+    if (!isRecord(raw) || visited.has(raw)) continue;
+    visited.add(raw);
+    budget -= 1;
+    if (raw.type === "leaf" && isNonEmptyString(raw.paneId)) out.push(raw.paneId);
+    else if (raw.type === "split") stack.push(raw.b, raw.a);
   }
   return out;
 }
 
 /**
- * Returns a valid tree built from untrusted input. Malformed nodes and empty
- * splits collapse into their surviving child, duplicate panes keep their first
- * occurrence, ratios are clamped, duplicate or missing node ids are replaced,
- * and splits beyond the depth limit keep only their first pane. Removed panes
- * are reported so callers can surface them.
+ * Returns a clean, valid tree built from untrusted input. Every node is
+ * rebuilt with only the model's fields. Malformed nodes, repeated objects and
+ * empty splits collapse into their surviving child, duplicate panes keep their
+ * first occurrence, ratios are clamped, duplicate or missing node ids are
+ * replaced with content-derived ids, and splits beyond the depth limit keep
+ * only their first pane. Removed panes are reported so callers can surface them.
  */
 export function repairTree(input: unknown, newId: IdFactory = defaultIdFactory): RepairResult {
   const issues = validateTree(input);
-  if (issues.length === 0) return { tree: input as SplitNode, issues, droppedPaneIds: [] };
   const panes = new Set<string>();
   const ids = new Set<string>();
-  const dropped: string[] = [];
-  const nodeId = (raw: Record<string, unknown>) => {
-    const id = isNonEmptyString(raw.id) && !ids.has(raw.id) ? raw.id : newId();
-    ids.add(id);
-    return id;
+  const visited = new WeakSet<object>();
+  const dropped = new Set<string>();
+  const nodeId = (raw: Record<string, unknown>, seed: string) => {
+    if (isNonEmptyString(raw.id) && !ids.has(raw.id)) {
+      ids.add(raw.id);
+      return raw.id;
+    }
+    return mintUnique(ids, seed, newId);
   };
   const leaf = (raw: Record<string, unknown>, paneId: string): SplitLeaf | null => {
     if (panes.has(paneId)) {
-      dropped.push(paneId);
+      dropped.add(paneId);
       return null;
     }
     panes.add(paneId);
-    return { type: "leaf", id: nodeId(raw), paneId };
+    return { type: "leaf", id: nodeId(raw, `leaf:${paneId}`), paneId };
   };
-  const walk = (raw: unknown, level: number): SplitNode | null => {
-    if (!isRecord(raw)) return null;
+  const walk = (raw: unknown, at: string, level: number): SplitNode | null => {
+    if (!isRecord(raw) || visited.has(raw)) return null;
+    visited.add(raw);
     if (raw.type === "leaf") return isNonEmptyString(raw.paneId) ? leaf(raw, raw.paneId) : null;
     if (raw.type !== "split") return null;
     if (level >= SPLIT_TREE_MAX_DEPTH) {
       let kept: SplitLeaf | null = null;
       for (const paneId of rawPaneIds(raw)) {
         if (!kept && !panes.has(paneId)) kept = leaf({}, paneId);
-        else dropped.push(paneId);
+        else if (kept?.paneId !== paneId) dropped.add(paneId);
       }
       return kept;
     }
-    const id = nodeId(raw);
-    const a = walk(raw.a, level + 1);
-    const b = walk(raw.b, level + 1);
+    const id = nodeId(raw, `split:${at}`);
+    const a = walk(raw.a, `${at}.a`, level + 1);
+    const b = walk(raw.b, `${at}.b`, level + 1);
     if (!a || !b) return a ?? b;
     return {
       type: "split",
@@ -417,12 +491,13 @@ export function repairTree(input: unknown, newId: IdFactory = defaultIdFactory):
       b,
     };
   };
-  return { tree: walk(input, 0), issues, droppedPaneIds: dropped };
+  const tree = walk(input, "root", 0);
+  return { tree, issues, droppedPaneIds: [...dropped].filter((paneId) => !tree || !findPanePath(tree, paneId)) };
 }
 
 export interface ReconcileResult {
   tree: SplitNode | null;
-  /** Panes that could not be placed because every leaf sits at the depth limit. */
+  /** Empty pane ids, and panes that could not be placed because every leaf sits at the depth limit. */
   unplacedPaneIds: string[];
 }
 
@@ -437,12 +512,16 @@ export function reconcilePanes(
   paneIds: readonly string[],
   newId: IdFactory = defaultIdFactory,
 ): ReconcileResult {
-  const wanted = new Set(paneIds);
+  const unplaced: string[] = [];
+  const wanted = new Set<string>();
+  for (const paneId of paneIds) {
+    if (paneId) wanted.add(paneId);
+    else unplaced.push(paneId);
+  }
   let next = tree;
   for (const paneId of tree ? paneIdsInOrder(tree) : []) {
     if (!wanted.has(paneId) && next) next = closePane(next, paneId);
   }
-  const unplaced: string[] = [];
   for (const paneId of wanted) {
     if (!next) {
       next = createLeaf(paneId, newId);

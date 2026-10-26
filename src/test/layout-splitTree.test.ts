@@ -261,7 +261,7 @@ describe("split tree validation and repair", () => {
   it("drops duplicate panes, regenerates ids and clamps ratios", () => {
     const raw = split("s", "diag" as SplitDir, leaf("a", "x"), split("x", "row", leaf("a", "y"), leaf("b", "")), 2);
     const result = repairTree(raw, ids("new"));
-    expect(result.droppedPaneIds).toEqual(["a"]);
+    expect(result.droppedPaneIds).toEqual([]);
     expect(result.tree).toEqual({
       type: "split",
       id: "s",
@@ -286,12 +286,12 @@ describe("split tree validation and repair", () => {
     expect(isValidTree(result.tree)).toBe(true);
   });
 
-  it("drops already-placed panes inside pruned splits", () => {
+  it("does not report pruned duplicates whose first copy survives", () => {
     let raw: SplitNode = split("deep", "row", leaf("p1", "dup"), leaf("z"));
     for (let index = 1; index <= SPLIT_TREE_MAX_DEPTH; index += 1)
       raw = split(`s${index}`, "col", leaf(`p${index}`), raw);
     const result = repairTree(raw, ids("new"));
-    expect(result.droppedPaneIds).toEqual(["p1"]);
+    expect(result.droppedPaneIds).toEqual([]);
     expect(result.tree && paneIdsInOrder(result.tree)).toContain("z");
     expect(result.tree && treeDepth(result.tree)).toBe(SPLIT_TREE_MAX_DEPTH);
   });
