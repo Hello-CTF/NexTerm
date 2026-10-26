@@ -147,6 +147,9 @@ type Scanner struct {
 	// promptEnded is set by 133;B until a C starts the command.
 	promptEnded   bool
 	promptEndedAt time.Time
+	// atPrompt is set by 133;A, B and D and cleared by C: the shell shows
+	// its prompt or the user edits a command line.
+	atPrompt bool
 
 	assemblies []*assembly
 }
@@ -165,9 +168,11 @@ func NewScanner(cfg Config) *Scanner {
 	return &Scanner{cfg: cfg, cmd: shellintegr.NewCommandTracker()}
 }
 
-// AtPrompt reports that OSC 133 placed the shell at its prompt: a prompt end
-// (B) arrived and no command has started (C) since.
-func (s *Scanner) AtPrompt() bool { return s.promptEnded && !s.cmdActive }
+// AtPrompt reports that OSC 133 placed the shell at its own prompt: a
+// prompt start (A), prompt end (B) or command end (D) arrived and no command
+// has started (C) since. Shells that report B together with C, as the
+// NexTerm integration does, are at their prompt from A to C.
+func (s *Scanner) AtPrompt() bool { return s.atPrompt }
 
 // Stats returns the counters of dropped signals.
 func (s *Scanner) Stats() Stats { return s.stats }
@@ -370,16 +375,20 @@ func (s *Scanner) command(out []Event, payload []byte, now time.Time) []Event {
 	case 'A':
 		// A new prompt without a D: the previous command is gone.
 		s.cmdActive, s.promptEnded = false, false
+		s.atPrompt = true
 	case 'B':
 		if !s.cmdActive {
 			s.promptEnded, s.promptEndedAt = true, now
+			s.atPrompt = true
 		}
 	case 'C':
+		s.atPrompt = false
 		if !s.cmdActive {
 			s.cmdActive, s.cmdStarted, s.promptEnded = true, now, false
 			out = append(out, Event{Kind: KindCommandStart, At: now})
 		}
 	case 'D':
+		s.atPrompt = true
 		if !s.cmdActive && s.promptEnded {
 			s.cmdActive, s.cmdStarted = true, s.promptEndedAt
 			out = append(out, Event{Kind: KindCommandStart, At: s.promptEndedAt})

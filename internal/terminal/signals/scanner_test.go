@@ -273,6 +273,32 @@ func TestSuppressedNotifyDoesNotCountMalformed(t *testing.T) {
 	}
 }
 
+func TestAtPromptFollowsShellLifecycle(t *testing.T) {
+	s := NewScanner(Config{})
+	if s.AtPrompt() {
+		t.Fatal("at prompt before any OSC 133")
+	}
+	steps := []struct {
+		feed string
+		want bool
+	}{
+		{"\x1b]133;A\x07$ ", true},
+		{"make", true},
+		// The NexTerm integration reports B together with C.
+		{"\x1b]133;B\x1b\\\x1b]133;C\x1b\\", false},
+		{"output\r\n", false},
+		{"\x1b]133;D;0\x1b\\", true},
+		{"\x1b]133;A\x07$ \x1b]133;B\x07", true},
+		{"\x1b]133;C\x07", false},
+	}
+	for i, step := range steps {
+		s.Feed([]byte(step.feed), t0)
+		if s.AtPrompt() != step.want {
+			t.Fatalf("step %d (%q): at prompt %v, want %v", i, step.feed, s.AtPrompt(), step.want)
+		}
+	}
+}
+
 func BenchmarkFeedPlainOutput(b *testing.B) {
 	data := []byte(strings.Repeat("some ordinary terminal output line\r\n", 100))
 	s := NewScanner(Config{})
