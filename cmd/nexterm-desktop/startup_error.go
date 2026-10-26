@@ -58,14 +58,16 @@ li { margin: 4px 0; }
 
 func showStartupError(paths platform.Paths, startupErr error, logger *slog.Logger, brandIcon []byte) int {
 	logger.Error("startup failed", "error", startupErr)
-	app := application.New(application.Options{
+	options := application.Options{
 		Name:        "NexTerm",
 		Description: "NexTerm startup error",
 		Logger:      logger,
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
-	})
+	}
+	applyAppIcon(&options, brandIcon)
+	app := application.New(options)
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "NexTerm 启动失败",
 		HTML:   startupErrorHTML(paths, startupErr),

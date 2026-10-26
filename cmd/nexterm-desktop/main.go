@@ -118,7 +118,7 @@ func run(args []string) int {
 		return showStartupError(paths, err, logger.Logger, brandIcon)
 	}
 	service := &Service{app: production.Application, streams: streams}
-	wailsApp = application.New(application.Options{
+	appOptions := application.Options{
 		Name:        "NexTerm",
 		Description: "NexTerm desktop client",
 		Logger:      logger.WailsLogger(),
@@ -146,7 +146,9 @@ func run(args []string) int {
 				}
 			},
 		},
-	})
+	}
+	applyAppIcon(&appOptions, brandIcon)
+	wailsApp = application.New(appOptions)
 	pprofServer, err := pprof.Start(logger.Logger, invocation.PprofAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))

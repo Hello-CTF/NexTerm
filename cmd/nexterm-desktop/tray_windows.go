@@ -4,9 +4,7 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,45 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
-	"github.com/wailsapp/wails/v3/pkg/w32"
 )
-
-type windowIcons struct {
-	large w32.HICON
-	small w32.HICON
-}
-
-func createWindowIcons(icon []byte) (windowIcons, error) {
-	if len(icon) == 0 {
-		return windowIcons{}, errors.New("desktop brand icon is empty")
-	}
-	large, largeErr := w32.CreateLargeHIconFromImage(icon)
-	small, smallErr := w32.CreateSmallHIconFromImage(icon)
-	return windowIcons{large: large, small: small}, errors.Join(largeErr, smallErr)
-}
-
-func setWindowIconWhenReady(window *application.WebviewWindow, icon []byte, logger *slog.Logger) {
-	var once sync.Once
-	window.OnWindowEvent(events.Common.WindowShow, func(_ *application.WindowEvent) {
-		once.Do(func() {
-			icons, err := createWindowIcons(icon)
-			hwnd := w32.HWND(window.NativeWindow())
-			if hwnd == 0 {
-				logger.Warn("set window icon", "error", errors.Join(err, errors.New("desktop window handle is unavailable")))
-				return
-			}
-			if icons.large != 0 {
-				w32.SendMessage(hwnd, w32.WM_SETICON, w32.ICON_BIG, uintptr(icons.large))
-			}
-			if icons.small != 0 {
-				w32.SendMessage(hwnd, w32.WM_SETICON, w32.ICON_SMALL, uintptr(icons.small))
-			}
-			if err != nil {
-				logger.Warn("set window icon", "error", err)
-			}
-		})
-	})
-}
 
 // trayQuitting marks a real quit (tray menu, updater restart, app shutdown) so
 // the close hook lets the window close instead of hiding it.
