@@ -30,7 +30,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   });
 });
 
-import { connectAsset, openTerminalTab, useUi, type AppTab, type Workspace } from "../../app/store";
+import { READINESS_QUERY_TIMEOUT_MS, connectAsset, forgetDurableReadiness, noteHelperProgress, openTerminalTab, useUi, type AppTab, type Workspace } from "../../app/store";
 import { setTerminalDefaultMode } from "../../app/preferences";
 import { tabTooltip } from "../../app/workspace/tabStrip";
 import type { SessionInfo } from "../../ipc/commands";
@@ -55,6 +55,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   localStorage.clear();
   await setTerminalDefaultMode("durable");
+  forgetDurableReadiness();
   useUi.setState({
     sessions: [],
     workspaces: [],
@@ -209,5 +210,55 @@ describe("explicitly opening a terminal", () => {
 
     const [tab] = terminalTabs();
     expect(tab && tabTooltip(tab, false)).toBe("终端 1（普通终端：持久组件准备中）");
+  });
+
+  it("does not wait longer than the readiness timeout and opens a regular terminal meanwhile", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      mocks.prepareDurable.mockReturnValue(new Promise(() => {}));
+      const opening = openTerminalTab(SSH_SESSION);
+      await vi.advanceTimersByTimeAsync(READINESS_QUERY_TIMEOUT_MS);
+      await opening;
+
+      expect(terminalTabs()).toHaveLength(1);
+      expect(terminalTabs()[0]?.regularReason).toBe("持久组件准备中");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives terminals opened in quick succession distinct titles", async () => {
+    let answer: (value: unknown) => void = () => {};
+    mocks.prepareDurable.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    const first = openTerminalTab(SSH_SESSION);
+    const second = openTerminalTab(SSH_SESSION);
+    answer({ state: "ready" });
+    await Promise.all([first, second]);
+
+    expect(terminalTabs().map((tab) => tab.title).sort()).toEqual(["终端 1", "终端 2"]);
+  });
+
+  it("uses a settled answer from opening the workspace without waiting again", async () => {
+    mocks.prepareDurable.mockResolvedValueOnce({ state: "unavailable", reason: "目标主机不支持持久终端组件" });
+    await connectAsset(SSH_ASSET);
+    await flush();
+    mocks.prepareDurable.mockReturnValue(new Promise(() => {}));
+
+    await openTerminalTab(SSH_SESSION);
+
+    expect(terminalTabs()[0]?.regularReason).toBe("持久组件不可用：目标主机不支持持久终端组件");
+  });
+
+  it("opens durable terminals once a helper progress event reports the helper ready", async () => {
+    await connectAsset(SSH_ASSET);
+    await flush();
+    noteHelperProgress({
+      sessionId: "s1", assetId: "asset-1", step: 6, steps: 6, stage: "ready", transferred: 0, total: 0, percent: 100, done: true,
+    });
+    mocks.prepareDurable.mockReturnValue(new Promise(() => {}));
+
+    await openTerminalTab(SSH_SESSION);
+
+    expect(terminalTabs()[0]?.regularReason).toBeUndefined();
   });
 });

@@ -3,6 +3,7 @@ import { describeError } from "../../ui/errorText";
 import { createHelperOperationState } from "../../features/terminal/helperOperationState";
 import { advanceWorkspaceProblemResetGeneration } from "./problems";
 import { nextWorkspaceGeneration } from "./runtimeSlice";
+import { forgetDurableReadiness } from "./durableReadiness";
 import { abnormalDisconnectNotices, sessionStatusEvidenceMap } from "./sessionStatus";
 import type { UiGet, UiSet, UiState, WorkspaceRuntime } from "./types";
 
@@ -100,6 +101,7 @@ export function createSessionSlice(set: UiSet, get: UiGet) {
       advanceWorkspaceProblemResetGeneration();
       recordingsEpoch += 1;
       abnormalDisconnectNotices.clear();
+      forgetDurableReadiness();
       sessionStatusEvidenceMap.clear();
       get().cancelAccountDialogs();
       set((state) => ({

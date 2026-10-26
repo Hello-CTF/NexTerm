@@ -402,10 +402,17 @@ describe("XtermView production grid lifecycle", () => {
       tabId: "tab-new", sessionId: "session", cols: 36, rows: 20, controller: "me", subscribers: 1, viewers: 1,
       exited: false, shell: "posix", retainable: false, durable: false, fallbackNotice: "持久终端不可用",
     });
-    const notices: Array<string | undefined> = [];
-    await show(props({ onAttachInfo: (info) => notices.push(info.fallbackNotice) }));
+    const notices: Array<[string | undefined, boolean | undefined]> = [];
+    await show(props({ onAttachInfo: (info) => notices.push([info.fallbackNotice, info.durableRequested]) }));
 
-    expect(notices).toEqual(["持久终端不可用"]);
+    expect(notices).toEqual([["持久终端不可用", true]]);
+  });
+
+  it("reports that a regular shell was requested", async () => {
+    const requested: Array<boolean | undefined> = [];
+    await show(props({ requestRegular: true, onAttachInfo: (info) => requested.push(info.durableRequested) }));
+
+    expect(requested).toEqual([false]);
   });
 
   it("reports attached shell and background capability before the attach callback", async () => {

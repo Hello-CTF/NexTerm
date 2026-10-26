@@ -207,6 +207,35 @@ describe("connectAsset in-flight guard", () => {
     expect(mocks.sessionDisconnect).toHaveBeenCalledWith("old-quick-session");
   });
 
+  it("still opens a terminal right away for a quick connection", async () => {
+    mocks.promptText.mockResolvedValue("");
+    mocks.sessionConnectQuick.mockResolvedValue({ ...SESSION, id: "quick-session", assetId: null });
+    mocks.prepareDurable.mockResolvedValue({ state: "preparing" });
+
+    expect(await connectQuickTarget({ host: "example.invalid", port: 22, username: "operator" })).toEqual({ ok: true });
+
+    const state = useUi.getState();
+    const workspace = state.workspaces.find((item) => item.sessionId === "quick-session");
+    const terminals = workspace?.panes.flatMap((pane) => pane.tabs).filter((tab) => tab.kind === "terminal") ?? [];
+    expect(state.activeWorkspaceId).toBe(workspace?.id);
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]).toMatchObject({ title: "终端 1", sessionId: "quick-session", regularReason: "持久组件准备中" });
+  });
+
+  it("still opens a terminal right away when a quick connection is saved as an asset", async () => {
+    mocks.promptText.mockResolvedValue("");
+    mocks.assetCreate.mockResolvedValue({ id: "asset-new", name: "operator@example.invalid", kind: "ssh", credId: null });
+    mocks.sessionConnect.mockResolvedValue({ ...SESSION, id: "saved-session", assetId: "asset-new" });
+    mocks.prepareDurable.mockResolvedValue({ state: "ready" });
+
+    expect(await saveQuickConnectAsset({ host: "example.invalid", port: 22, username: "operator" })).toMatchObject({ ok: true });
+
+    const workspace = useUi.getState().workspaces.find((item) => item.sessionId === "saved-session");
+    const terminals = workspace?.panes.flatMap((pane) => pane.tabs).filter((tab) => tab.kind === "terminal") ?? [];
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.regularReason).toBeUndefined();
+  });
+
   it("does not save a quick SSH asset after its password prompt crosses an account switch", async () => {
     const password = deferred<string | null>();
     mocks.promptText.mockReturnValueOnce(password.promise);
