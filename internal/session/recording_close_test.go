@@ -563,6 +563,9 @@ func pathDescriptorCount(t *testing.T, path string) int {
 	if err != nil {
 		t.Skipf("open descriptor inspection unavailable: %v", err)
 	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	count := 0
 	for _, entry := range entries {
 		if target, err := os.Readlink(filepath.Join(fdDir, entry.Name())); err == nil && target == path {
