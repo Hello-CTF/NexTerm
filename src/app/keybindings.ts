@@ -17,6 +17,7 @@ export type KeybindingActionId =
   | "focusPaneDown"
   | "toggleSidebar"
   | "toggleAiSidebar"
+  | "toggleSessionPanel"
   | "closeTab"
   | "splitRight"
   | "splitDown"
@@ -51,6 +52,8 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "focusPaneDown", label: "聚焦下方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
   { id: "toggleSidebar", label: "收起 / 展开左栏", defaultBinding: "Mod+b" },
   { id: "toggleAiSidebar", label: "收起 / 展开 AI 侧栏", defaultBinding: "Mod+j" },
+  // Ctrl+Shift+letter chords send nothing to the terminal, so the panel toggle withholds no shell input.
+  { id: "toggleSessionPanel", label: "收起 / 展开会话侧栏", defaultBinding: "Mod+Shift+e" },
   { id: "closeTab", label: "关闭当前标签", defaultBinding: "Mod+w" },
   { id: "splitDown", label: "向下分屏", defaultBinding: "Mod+\\" },
   { id: "splitRight", label: "向右分屏", defaultBinding: "Mod+Shift+\\" },
@@ -78,6 +81,7 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "focusPaneDown",
   "toggleSidebar",
   "toggleAiSidebar",
+  "toggleSessionPanel",
   "closeTab",
   "splitRight",
   "splitDown",

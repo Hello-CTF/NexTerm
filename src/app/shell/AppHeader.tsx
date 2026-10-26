@@ -18,6 +18,7 @@ import {
   IconInfo,
   IconLayers,
   IconLoader,
+  IconPanelRight,
   IconSettings,
   IconSparkles,
   IconXCircle,
@@ -70,9 +71,12 @@ export interface AppHeaderProps {
   activeSessionId: string | undefined;
   activeTab: AppTab | null;
   rightDockOpen: boolean;
+  sessionPanelOpen: boolean;
+  sessionPanelLabel: string;
   commandPaletteLabel: string;
   onOpenWorkspaceSwitcher: (anchor: HTMLElement) => void;
   onToggleRight: () => void;
+  onToggleSessionPanel: () => void;
   onOpenPalette: () => void;
   // windowControls is the desktop shell's minimise/maximise/close group; the mobile shell has none.
   windowControls?: ReactNode;
@@ -83,9 +87,12 @@ export function AppHeader({
   activeSessionId,
   activeTab,
   rightDockOpen,
+  sessionPanelOpen,
+  sessionPanelLabel,
   commandPaletteLabel,
   onOpenWorkspaceSwitcher,
   onToggleRight,
+  onToggleSessionPanel,
   onOpenPalette,
   windowControls,
 }: AppHeaderProps) {
@@ -145,6 +152,15 @@ export function AppHeader({
         </span>
       )}
       <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
+      <button
+        className={`nx-icon-btn ${sessionPanelOpen ? "is-active" : ""}`} style={wailsNoDragRegionStyle}
+        title={`会话侧栏：当前终端所在主机的文件${sessionPanelLabel ? ` (${sessionPanelLabel})` : ""}`}
+        aria-label="会话侧栏"
+        aria-pressed={sessionPanelOpen}
+        onClick={onToggleSessionPanel}
+      >
+        <IconPanelRight size={15} />
+      </button>
       <button
         className={`nx-icon-btn ${rightDockOpen ? "is-active" : ""}`} style={wailsNoDragRegionStyle}
         title="AI 助手"

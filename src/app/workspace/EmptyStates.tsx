@@ -19,7 +19,7 @@ export function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
           <IconPlus size={14} />
           新建终端
         </button>
-        <div className="nx-hint">在左栏文件树中双击文件，可打开编辑器标签。</div>
+        <div className="nx-hint">在会话侧栏的文件页签中双击文件，可打开编辑器标签。</div>
       </div>
     </div>
   );
@@ -71,6 +71,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
             ["quickConnect", "快速连接"],
             ["commandPalette", "命令面板"],
             ["toggleSidebar", "左栏"],
+            ["toggleSessionPanel", "会话侧栏"],
             ["toggleAiSidebar", "AI 侧栏"],
           ] as const
         ).map(([id, label]) => (
@@ -81,7 +82,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
         ))}
       </div>
       <div className="nx-hint max-w-md text-center">
-        双击左栏「当前设备」可打开本机终端和文件树；SSH / WinRM 资产打开终端标签，容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
+        双击左栏「当前设备」可打开本机终端，会话侧栏显示它的文件；SSH / WinRM 资产打开终端标签，容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
       </div>
     </div>
   );

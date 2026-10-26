@@ -183,9 +183,12 @@ describe("render counts for session-bound views", () => {
       activeSessionId: "s-0",
       activeTab: null,
       rightDockOpen: false,
+      sessionPanelOpen: false,
+      sessionPanelLabel: "",
       commandPaletteLabel: "Ctrl+K",
       onOpenWorkspaceSwitcher: () => {},
       onToggleRight: () => {},
+      onToggleSessionPanel: () => {},
       onOpenPalette: () => {},
     }));
     mounted = probe.view;

@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useUi } from "../store";
 import { useEdgeGestures } from "../edgeGestures";
+import { showSessionPanel, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
 
-export type OverlayDock = "left" | "right" | null;
+export type OverlayDock = "left" | "right" | "session" | null;
 
 export interface OverlayDocks {
   overlayDock: OverlayDock;
   setOverlayDock: (dock: OverlayDock) => void;
   leftDockOpen: boolean;
   rightDockOpen: boolean;
+  // sessionDockOpen is the session side panel: docked beside the AI sidebar, or a full-screen sheet in overlay layouts.
+  sessionDockOpen: boolean;
   setLeftOpen: (open: boolean) => void;
   setRightOpen: (open: boolean) => void;
+  // setSessionOpen is the user's open/close: opening moves focus into the panel.
+  setSessionOpen: (open: boolean) => void;
 }
 
 // useOverlayDocks resolves which sidebar is shown. Docked layouts follow the persisted leftOpen/rightOpen;
@@ -20,10 +25,12 @@ export function useOverlayDocks(overlaySidebars: boolean): OverlayDocks {
   const setLeftOpenStore = useUi((s) => s.setLeftOpen);
   const rightOpen = useUi((s) => s.rightOpen);
   const setRightOpenStore = useUi((s) => s.setRightOpen);
+  const sessionOpen = useSessionPanel((s) => s.open);
   const connectFocusRevision = useUi((s) => s.connectFocusRevision);
   const [overlayDock, setOverlayDock] = useState<OverlayDock>(null);
   const leftDockOpen = overlaySidebars ? overlayDock === "left" && leftOpen : leftOpen;
   const rightDockOpen = overlaySidebars ? overlayDock === "right" && rightOpen : rightOpen;
+  const sessionDockOpen = overlaySidebars ? overlayDock === "session" && sessionOpen : sessionOpen;
 
   const setLeftOpen = useCallback(
     (open: boolean) => {
@@ -39,6 +46,13 @@ export function useOverlayDocks(overlaySidebars: boolean): OverlayDocks {
     },
     [setRightOpenStore, overlaySidebars],
   );
+  const setSessionOpen = useCallback(
+    (open: boolean) => {
+      showSessionPanel(open, { focus: open });
+      setOverlayDock(overlaySidebars && open ? "session" : null);
+    },
+    [overlaySidebars],
+  );
 
   useEffect(() => {
     if (!overlaySidebars) return;
@@ -52,7 +66,16 @@ export function useOverlayDocks(overlaySidebars: boolean): OverlayDocks {
     closeOverlay: () => setOverlayDock(null),
   });
 
-  return { overlayDock, setOverlayDock, leftDockOpen, rightDockOpen, setLeftOpen, setRightOpen };
+  return {
+    overlayDock,
+    setOverlayDock,
+    leftDockOpen,
+    rightDockOpen,
+    sessionDockOpen,
+    setLeftOpen,
+    setRightOpen,
+    setSessionOpen,
+  };
 }
 
 // useMobileTerminalDockCollapse: on phones, entering a terminal tab auto-collapses the overlay sidebar and switching back

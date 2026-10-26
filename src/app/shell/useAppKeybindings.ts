@@ -15,6 +15,7 @@ export interface AppKeybindingHandlers {
   activeTabId: string | null;
   setLeftOpen: (open: boolean) => void;
   setRightOpen: (open: boolean) => void;
+  toggleSessionPanel: () => void;
   openLocalTerminal: () => Promise<void>;
   openNewTerminal: () => Promise<void>;
   lockVault: () => Promise<void>;
@@ -29,6 +30,7 @@ export function useAppKeybindings({
   activeTabId,
   setLeftOpen,
   setRightOpen,
+  toggleSessionPanel,
   openLocalTerminal,
   openNewTerminal,
   lockVault,
@@ -64,6 +66,10 @@ export function useAppKeybindings({
         case "toggleAiSidebar":
           e.preventDefault();
           setRightOpen(!rightDockOpen);
+          return;
+        case "toggleSessionPanel":
+          e.preventDefault();
+          toggleSessionPanel();
           return;
         case "newTerminal":
           e.preventDefault();
@@ -142,6 +148,7 @@ export function useAppKeybindings({
     activeTabId,
     setLeftOpen,
     setRightOpen,
+    toggleSessionPanel,
     openLocalTerminal,
     openNewTerminal,
     lockVault,

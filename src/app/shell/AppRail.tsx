@@ -9,7 +9,6 @@ import {
   IconClock,
   IconDatabase,
   IconDrive,
-  IconFolderOpen,
   IconHistory,
   IconKey,
   IconMonitor,
@@ -22,7 +21,6 @@ import { type OverlayDock } from "./useOverlayDocks";
 import { type WorkspaceActions } from "./useWorkspaceActions";
 
 export interface AppRailProps {
-  sessionId: string | undefined;
   overlaySidebars: boolean;
   setOverlayDock: (dock: OverlayDock) => void;
   setLeftOpen: (open: boolean) => void;
@@ -35,7 +33,6 @@ export interface AppRailProps {
 }
 
 export function AppRail({
-  sessionId,
   overlaySidebars,
   setOverlayDock,
   setLeftOpen,
@@ -47,7 +44,7 @@ export function AppRail({
   const backgroundCount = useBackgroundSessionCount(workspace, backgroundAvailable);
   const leftMode = useUi((s) => s.leftMode);
   const setLeftMode = useUi((s) => s.setLeftMode);
-  const { needSession, openBackground, openHistory, openDocker, openDatabase, openMount, openForward } = actions;
+  const { openBackground, openHistory, openDocker, openDatabase, openMount, openForward } = actions;
 
   const railPanels: {
     key: string;
@@ -73,17 +70,6 @@ export function AppRail({
       icon: IconKey,
       onClick: () => {
         openCredentialsSidebar();
-        setLeftOpen(true);
-      },
-    },
-    {
-      key: "files",
-      label: "文件树",
-      hint: "打开当前连接的文件树：浏览远程目录，双击文件直接编辑；双击本按钮收起侧栏",
-      icon: IconFolderOpen,
-      onClick: () => {
-        if (!sessionId) return needSession();
-        setLeftMode("files");
         setLeftOpen(true);
       },
     },

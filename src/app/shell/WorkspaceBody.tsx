@@ -9,7 +9,8 @@ import {
 } from "../store";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { Lazy } from "../../ui/LazyBoundary";
-import { AiSidebar, AssetTree, CredentialsSidebar, FileTree } from "../lazyPanels";
+import { AiSidebar, AssetTree, CredentialsSidebar, SessionPanel } from "../lazyPanels";
+import { SESSION_PANEL_WIDTH, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
 import { PaneGroup, PaneTabPanel, type PaneMoveTarget } from "../workspace/PaneGroup";
 import { SplitView } from "../workspace/SplitView";
 import { workspaceLayoutTree } from "../paneLayout";
@@ -32,8 +33,9 @@ export interface WorkspaceBodyProps {
   onOpenPalette: () => void;
 }
 
-// WorkspaceBody is the row under the header: the left dock, the workspace panes and the right (AI) dock.
-// In overlay layouts the docks float above the panes behind a tap-to-close backdrop.
+// WorkspaceBody is the row under the header: the left dock, the workspace panes, the session side panel and the right
+// (AI) dock. The session panel sits left of the AI sidebar so both can stay open. In overlay layouts the docks float
+// above the panes behind a tap-to-close backdrop, and the session panel is a full-screen sheet.
 export function WorkspaceBody({
   ws,
   visibleWorkspaces,
@@ -54,6 +56,8 @@ export function WorkspaceBody({
   const setLeftWidth = useUi((s) => s.setLeftWidth);
   const rightWidth = useUi((s) => s.rightWidth);
   const setRightWidth = useUi((s) => s.setRightWidth);
+  const sessionWidth = useSessionPanel((s) => s.width);
+  const setSessionWidth = useSessionPanel((s) => s.setWidth);
   const accountEpoch = useUi((s) => s.accountEpoch);
   const aiAccountEpoch = useUi((s) => s.aiAccountEpoch);
   const splitPane = useUi((s) => s.splitPane);
@@ -62,11 +66,11 @@ export function WorkspaceBody({
   const splitPaneWithTab = useUi((s) => s.splitPaneWithTab);
   const setActivePane = useUi((s) => s.setActivePane);
   const setSplitRatio = useUi((s) => s.setSplitRatio);
-  const { leftDockOpen, rightDockOpen, setLeftOpen, setOverlayDock } = docks;
+  const { leftDockOpen, rightDockOpen, sessionDockOpen, setLeftOpen, setOverlayDock, setSessionOpen } = docks;
 
   return (
     <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
-      {overlaySidebars && (leftDockOpen || rightDockOpen) && (
+      {overlaySidebars && (leftDockOpen || rightDockOpen || sessionDockOpen) && (
         <button
           type="button"
           className="nx-dock-backdrop"
@@ -78,8 +82,6 @@ export function WorkspaceBody({
         <div className="nx-left-dock" role="navigation" aria-label="左栏">
           {leftMode === "credentials" ? (
             <Lazy><CredentialsSidebar /></Lazy>
-          ) : leftMode === "files" && ws?.sessionId ? (
-            <Lazy><FileTree key={ws.sessionId} sessionId={ws.sessionId} /></Lazy>
           ) : (
             // Keyed by account epoch: on account switch the tree remounts so template, runbook,
             // inventory discovery/watch, and bulk panels never show the previous account's state.
@@ -171,6 +173,27 @@ export function WorkspaceBody({
           </>
         )}
       </main>
+
+      {sessionDockOpen && (
+        <div className={`nx-session-dock ${overlaySidebars ? "is-overlay" : ""}`}>
+          {!overlaySidebars && (
+            <ResizeHandle
+              side="right"
+              label="调整会话侧栏宽度"
+              width={sessionWidth}
+              min={SESSION_PANEL_WIDTH.min}
+              max={SESSION_PANEL_WIDTH.max}
+              defaultWidth={SESSION_PANEL_WIDTH.default}
+              onChange={setSessionWidth}
+            />
+          )}
+          <div className="nx-session-dock-body" style={overlaySidebars ? undefined : { width: sessionWidth }}>
+            <Lazy>
+              <SessionPanel overlay={overlaySidebars} onClose={() => setSessionOpen(false)} />
+            </Lazy>
+          </div>
+        </div>
+      )}
 
       <div className={`nx-right-dock ${rightDockOpen ? "" : "is-hidden"}`}>
         {rightDockOpen && (

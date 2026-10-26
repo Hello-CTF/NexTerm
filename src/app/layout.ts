@@ -33,6 +33,7 @@ import {
   deviceLayoutStorageKey,
   hasDeviceLayoutChange,
   loadDeviceLayout,
+  normalizeLeftMode,
   restoreDeviceLayout,
   saveDeviceLayout,
   type DeviceLayoutState,
@@ -535,8 +536,7 @@ export function sanitizeLayout(raw: unknown): PersistedLayout | null {
   const result: PersistedLayout = {
     v: LAYOUT_VERSION,
     leftOpen: boolOr(raw.leftOpen, true),
-    leftMode:
-      raw.leftMode === "files" || raw.leftMode === "credentials" ? raw.leftMode : "assets",
+    leftMode: normalizeLeftMode(raw.leftMode),
     rightOpen: boolOr(raw.rightOpen, true),
     leftWidth: clampNum(raw.leftWidth, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max, LEFT_WIDTH_RANGE.default),
     rightWidth: clampNum(

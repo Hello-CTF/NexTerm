@@ -127,6 +127,11 @@ export function pickFollowedTabId(workspaces: Workspace[], sessionId: string): s
 
 export function useFollowedCwd(sessionId: string): string | null {
   const tabId = useUi((s) => pickFollowedTabId(s.workspaces, sessionId));
+  return useTerminalCwd(tabId);
+}
+
+/** The last directory a terminal reported through OSC 7, by its backend terminal id. */
+export function useTerminalCwd(tabId: string | null | undefined): string | null {
   return useSyncExternalStore(subscribeCwd, () => (tabId ? (cwds.get(tabId) ?? null) : null));
 }
 
@@ -134,6 +139,21 @@ export function normalizeFollowTarget(cwd: string): string {
   const trimmed = norm(cwd).replace(/\/+$/, "");
   if (trimmed === "") return "/";
   return /^[A-Za-z]:$/.test(trimmed) ? `${trimmed}/` : trimmed;
+}
+
+/**
+ * Lets an owner (the session side panel) drive the follow instead of the device-wide preference: the owner supplies the
+ * terminal directory to follow and keeps the attached state, which user navigation inside the view turns off.
+ */
+export interface CwdFollowControl {
+  /** The followed terminal's directory; null while it has not reported one. */
+  cwd: string | null;
+  /** True while the view follows the terminal. */
+  attached: boolean;
+  /** The user navigated inside the view: stop following until attach. */
+  detach: () => void;
+  /** The user asked to follow the terminal directory again. */
+  attach: () => void;
 }
 
 // Last applied cwd by memory key, for consumers that remount while their session lives on.
@@ -148,18 +168,22 @@ export function useCwdFollow(
   current: string,
   memoryKey: string | null,
   apply: (next: string) => void,
+  control?: CwdFollowControl,
 ): {
   supported: boolean;
   enabled: boolean;
   followed: string | null;
   toggle: () => void;
+  noteUserNavigation: () => void;
 } {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const supported = sessionKind === "ssh" || sessionKind === "local";
-  const enabled = useFollowCwdEnabled();
-  const followed = useFollowedCwd(sessionId);
+  const preferenceEnabled = useFollowCwdEnabled();
+  const sessionCwd = useFollowedCwd(sessionId);
+  const enabled = control ? control.attached : preferenceEnabled;
+  const followed = control ? control.cwd : sessionCwd;
   const lastFollowed = useRef<string>((memoryKey && followMemory.get(memoryKey)) || NEVER);
   const applyRef = useRef(apply);
   applyRef.current = apply;
@@ -201,16 +225,26 @@ export function useCwdFollow(
     };
   }, [supported, enabled, followed, sessionId, memoryKey, qc, pushToast]);
 
+  const controlRef = useRef(control);
+  controlRef.current = control;
   const toggle = useCallback(() => {
-    const next = !isFollowCwdEnabled();
+    const owner = controlRef.current;
+    const next = owner ? !owner.attached : !isFollowCwdEnabled();
     if (next) {
       lastFollowed.current = NEVER;
       if (memoryKey) followMemory.delete(memoryKey);
     }
-    setFollowCwdEnabled(next);
+    if (!owner) setFollowCwdEnabled(next);
+    else if (next) owner.attach();
+    else owner.detach();
   }, [memoryKey]);
 
-  return { supported, enabled, followed, toggle };
+  const noteUserNavigation = useCallback(() => {
+    const owner = controlRef.current;
+    if (owner?.attached) owner.detach();
+  }, []);
+
+  return { supported, enabled, followed, toggle, noteUserNavigation };
 }
 
 export function resetCwdFollowForTest(): void {

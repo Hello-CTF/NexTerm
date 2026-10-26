@@ -97,7 +97,11 @@ function AppShell() {
   const { viewport, overlaySidebars } = layout;
   useKeyboardInset();
   const docks = useOverlayDocks(overlaySidebars);
-  const { leftDockOpen, rightDockOpen, setLeftOpen, setRightOpen } = docks;
+  const { leftDockOpen, rightDockOpen, sessionDockOpen, setLeftOpen, setRightOpen, setSessionOpen } = docks;
+  const toggleSessionPanel = useCallback(
+    () => setSessionOpen(!sessionDockOpen),
+    [setSessionOpen, sessionDockOpen],
+  );
   useAiToastInset(rightDockOpen);
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
@@ -124,6 +128,7 @@ function AppShell() {
     activeTabId,
     setLeftOpen,
     setRightOpen,
+    toggleSessionPanel,
     openLocalTerminal,
     openNewTerminal,
     lockVault,
@@ -143,7 +148,6 @@ function AppShell() {
     rightWidth,
     activeTabKind: active?.kind ?? null,
     rail: {
-      sessionId: ws?.sessionId,
       overlaySidebars,
       setOverlayDock: docks.setOverlayDock,
       setLeftOpen,
@@ -157,9 +161,12 @@ function AppShell() {
       activeSessionId,
       activeTab: active,
       rightDockOpen,
+      sessionPanelOpen: sessionDockOpen,
+      sessionPanelLabel: bindings.toggleSessionPanel ? formatBinding(bindings.toggleSessionPanel) : "",
       commandPaletteLabel: formatBinding(bindings.commandPalette),
       onOpenWorkspaceSwitcher: openWorkspaceSwitcher,
       onToggleRight: () => setRightOpen(!rightDockOpen),
+      onToggleSessionPanel: toggleSessionPanel,
       onOpenPalette: openCommandPalette,
     },
     strip: {

@@ -5,7 +5,8 @@ const EDGE_PX = 20;
 const SWIPE_MIN_PX = 32;
 
 interface EdgeGestureHandlers {
-  overlayDock: "left" | "right" | null;
+  // The session sheet ("session") is closed with its own button or Escape, not a swipe.
+  overlayDock: "left" | "right" | "session" | null;
   openLeft: () => void;
   openRight: () => void;
   closeOverlay: () => void;

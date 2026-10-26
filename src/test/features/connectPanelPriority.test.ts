@@ -17,6 +17,7 @@ vi.mock("../../ipc/events", () => ({ listenEvent: vi.fn() }));
 import type { SessionInfo } from "../../ipc/commands";
 import { connectAsset, useUi } from "../../app/store";
 import { serializeLayout } from "../../app/layout";
+import { resetSessionPanelForTest, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
 
 const SESSION: SessionInfo = {
   id: "s1",
@@ -38,6 +39,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   localStorage.clear();
+  resetSessionPanelForTest();
   mocks.sessionConnect.mockResolvedValue(SESSION);
   useUi.setState({
     workspaces: [],
@@ -103,15 +105,16 @@ describe("Terminal priority after connecting on narrow screens", () => {
 });
 
 describe("Existing layout behavior on wide screens", () => {
-  it("still expands the file tree sidebar after connecting", async () => {
+  it("opens the session side panel with the host's files after connecting, leaving the left dock alone", async () => {
     setViewportWidth(1280);
     useUi.setState({ leftOpen: false, leftMode: "assets" });
 
     await connectAsset(ASSET);
 
     const s = useUi.getState();
-    expect(s.leftOpen).toBe(true);
-    expect(s.leftMode).toBe("files");
+    expect(useSessionPanel.getState().open).toBe(true);
+    expect(s.leftOpen).toBe(false);
+    expect(s.leftMode).toBe("assets");
     expect(s.connectFocusRevision).toBe(1);
   });
 });

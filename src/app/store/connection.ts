@@ -2,6 +2,7 @@ import { dbApi, sessionApi, vaultApi, type SessionInfo, type VaultStatus } from 
 import { describeError } from "../../ui/errorText";
 import { workspaceViewport } from "../../features/terminal/workspaceLayout";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
+import { showSessionPanel } from "../../features/session-panel/sessionPanelStore";
 import { connectWithHostKeyConfirm } from "../hostKeys";
 import { formatQuickConnectTarget, type QuickConnectTarget } from "../quickConnectTarget";
 import { DB_KIND_LABEL, dbKindOf, makePane, nextTabId, rebindWorkspaceSession } from "./model";
@@ -72,6 +73,13 @@ function sidebarsOverlayWorkspace(): boolean {
   return workspaceViewport(window.innerWidth, false).overlaySidebars;
 }
 
+// Connecting a host used to open the left file tree. The files now live in the session side panel, which opens the same
+// way on docked layouts; overlay layouts keep the terminal in front.
+function showConnectedFiles(): void {
+  if (sidebarsOverlayWorkspace()) return;
+  showSessionPanel(true);
+}
+
 export async function openConnectedAssetSession(
   info: SessionInfo,
   asset: { id: string; name: string; kind: string },
@@ -122,14 +130,12 @@ export async function openConnectedAssetSession(
     title: info.name, assetId: asset.id, assetKind: asset.kind, quickTarget,
     panes: [pane], activePaneId: pane.id, closable: true,
   };
-  const overlaySidebars = sidebarsOverlayWorkspace();
   useUi.setState((state) => ({
     workspaces: [...state.workspaces, workspace],
     activeWorkspaceId: workspace.id,
-    leftMode: overlaySidebars ? state.leftMode : "files",
-    leftOpen: overlaySidebars ? state.leftOpen : true,
     connectFocusRevision: state.connectFocusRevision + 1,
   }));
+  showConnectedFiles();
 }
 
 const inflightConnects = new Map<string, Promise<ConnectOutcome>>();
@@ -497,13 +503,11 @@ export async function connectDevice(
 
 function activateDeviceWorkspace(workspaceId: string, options?: ConnectAssetOptions): void {
   if (options?.preserveUserFocus) return;
-  const overlaySidebars = sidebarsOverlayWorkspace();
   useUi.setState((state) => ({
     activeWorkspaceId: workspaceId,
-    leftMode: overlaySidebars ? state.leftMode : "files",
-    leftOpen: overlaySidebars ? state.leftOpen : true,
     connectFocusRevision: state.connectFocusRevision + 1,
   }));
+  showConnectedFiles();
 }
 
 async function runConnectDevice(

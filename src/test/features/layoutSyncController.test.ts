@@ -221,7 +221,7 @@ describe("two-client layout controller", () => {
     a.store.getState().setActivePane("pane-a", "ws-a");
     a.store.setState((state) => ({
       leftOpen: false,
-      leftMode: "files",
+      leftMode: "credentials",
       rightOpen: false,
       leftWidth: 400,
       rightWidth: 600,
@@ -245,7 +245,7 @@ describe("two-client layout controller", () => {
     expect(a.store.getState().workspaces[0].panes[0].activeTabId).toBe("a2");
     expect(a.store.getState()).toMatchObject({
       leftOpen: false,
-      leftMode: "files",
+      leftMode: "credentials",
       rightOpen: false,
       leftWidth: 400,
       rightWidth: 600,

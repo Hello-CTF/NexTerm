@@ -108,6 +108,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"keybinding.focusPaneDown":          {kind: preferenceKindBinding},
 	"keybinding.toggleSidebar":          {kind: preferenceKindBinding},
 	"keybinding.toggleAiSidebar":        {kind: preferenceKindBinding},
+	"keybinding.toggleSessionPanel":     {kind: preferenceKindBinding},
 	"keybinding.closeTab":               {kind: preferenceKindBinding},
 	"keybinding.toggleSplit":            {kind: preferenceKindBinding},
 	"keybinding.splitRight":             {kind: preferenceKindBinding},
