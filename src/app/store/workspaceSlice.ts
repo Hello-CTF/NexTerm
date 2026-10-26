@@ -1,6 +1,11 @@
 import { dirtyFileEditors } from "../../features/files/editorGuards";
 import { aiTabRunControls, confirmAiRunCancellation, runningAiTabs as getRunningAiTabs, clearAiTabRuns } from "../../features/ai/runOwnership";
-import { splitAllowedForHeight } from "../../features/terminal/workspaceLayout";
+import {
+  SPLIT_MIN_COLS,
+  SPLIT_MIN_ROWS,
+  splitAllowedForHeight,
+  splitFitsPane,
+} from "../../features/terminal/workspaceLayout";
 import { closedTabEntryFromTab, useClosedTabs } from "../closedTabs";
 import { reorderWorkspaces } from "../workspaceOrdering";
 import { ALL_PROJECTS, reconcileActiveWorkspaceForFocus } from "../projectFocus";
@@ -31,15 +36,29 @@ import { openTerminalTab, rejectPendingFileLocator, resolveWorkspaceId } from ".
 import { fallbackPaneAfterClose, treeWithoutPane, withLayoutTree, workspaceLayoutTree } from "../paneLayout";
 import {
   focusNeighbor,
+  paneRects,
   resolveActivePane,
   setSplitRatio as setTreeSplitRatio,
   splitPane as splitTreePane,
   SPLIT_TREE_MAX_DEPTH,
+  type SplitNode,
 } from "../splitTree";
 import type { SqlDraft, UiGet, UiSet, UiState, Workspace } from "./types";
 
 function windowHeight(): number {
   return typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerHeight;
+}
+
+// paneSize is the pane's on-screen size, or its share of the window when it is not laid out yet.
+function paneSize(paneId: string, tree: SplitNode): { width: number; height: number } {
+  if (typeof document !== "undefined") {
+    const element = document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(paneId)}"]`);
+    const box = element?.getBoundingClientRect();
+    if (box && box.width > 0 && box.height > 0) return { width: box.width, height: box.height };
+  }
+  const rect = paneRects(tree).find((entry) => entry.paneId === paneId)?.rect;
+  if (typeof window === "undefined" || !rect) return { width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY };
+  return { width: window.innerWidth * rect.width, height: window.innerHeight * rect.height };
 }
 
 // otherPaneFor picks where "open in the other pane" lands: the pane below the active one, else the
@@ -313,6 +332,13 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       if (!tree || !w.panes.some((pane) => pane.id === targetId)) return null;
       if (direction === "down" && !splitAllowedForHeight(windowHeight())) {
         get().pushToast("info", "窗口高度不足，无法向下分屏");
+        return null;
+      }
+      if (!splitFitsPane(direction, paneSize(targetId, tree))) {
+        get().pushToast(
+          "info",
+          `窗格太小，无法${direction === "right" ? "向右" : "向下"}分屏（每侧至少需要 ${SPLIT_MIN_COLS} 列 × ${SPLIT_MIN_ROWS} 行）`,
+        );
         return null;
       }
       const pane = makePane();

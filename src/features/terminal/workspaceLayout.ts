@@ -34,6 +34,24 @@ export function workspaceViewport(
   };
 }
 
+// A split must leave both halves a usable terminal: at least SPLIT_MIN_ROWS x SPLIT_MIN_COLS cells at
+// a typical cell size, below a tab strip and beside a divider.
+export const SPLIT_MIN_ROWS = 8;
+export const SPLIT_MIN_COLS = 20;
+const SPLIT_CELL_HEIGHT_PX = 17;
+const SPLIT_CELL_WIDTH_PX = 8;
+const SPLIT_TAB_STRIP_PX = 35;
+const SPLIT_DIVIDER_PX = 6;
+
+/** Whether a pane of `size` pixels can be split in `direction` and keep both halves usable. */
+export function splitFitsPane(direction: "right" | "down", size: { width: number; height: number }): boolean {
+  if (direction === "down") {
+    const half = (size.height - SPLIT_DIVIDER_PX) / 2 - SPLIT_TAB_STRIP_PX;
+    return half >= SPLIT_MIN_ROWS * SPLIT_CELL_HEIGHT_PX;
+  }
+  return (size.width - SPLIT_DIVIDER_PX) / 2 >= SPLIT_MIN_COLS * SPLIT_CELL_WIDTH_PX;
+}
+
 export const SPLIT_RATIO_RANGE = { min: 0.15, max: 0.85, default: 0.5 } as const;
 
 export function clampSplitRatio(value: number, fallback: number = SPLIT_RATIO_RANGE.default): number {

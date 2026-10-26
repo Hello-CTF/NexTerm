@@ -21,9 +21,14 @@ import { syncWorkspaceTree, withLayoutTree, workspaceLayoutTree, workspacePaneOr
 import { findPanePath, paneRects, SPLIT_TREE_MAX_DEPTH, type SplitNode } from "../../app/splitTree";
 
 const innerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
+const innerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
 
 function setHeight(value: number): void {
   Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value });
+}
+
+function setWidth(value: number): void {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value });
 }
 
 function file(id: string): AppTab {
@@ -58,6 +63,8 @@ beforeEach(() => {
 
 afterEach(() => {
   if (innerHeight) Object.defineProperty(window, "innerHeight", innerHeight);
+  if (innerWidth) Object.defineProperty(window, "innerWidth", innerWidth);
+  document.body.replaceChildren();
 });
 
 describe("split pane actions", () => {
@@ -82,6 +89,7 @@ describe("split pane actions", () => {
     expect(current().panes).toHaveLength(1);
     expect(useUi.getState().toasts.at(-1)?.text).toContain("窗口高度不足");
 
+    setWidth(1_000_000);
     for (let level = 0; level < SPLIT_TREE_MAX_DEPTH; level += 1) {
       expect(useUi.getState().splitPane("right")).not.toBeNull();
     }
@@ -89,6 +97,25 @@ describe("split pane actions", () => {
     expect(useUi.getState().splitPane("right")).toBeNull();
     expect(current()).toBe(before);
     expect(useUi.getState().toasts.at(-1)?.text).toContain(`${SPLIT_TREE_MAX_DEPTH} 层`);
+  });
+
+  it("refuses a split that would leave either half too small, measuring the pane on screen", () => {
+    setWidth(600);
+    const right = useUi.getState().splitPane("right")!;
+    expect(right).not.toBeNull();
+    // Each half of the 300px-wide new pane would be narrower than 20 columns.
+    expect(useUi.getState().splitPane("right", right)).toBeNull();
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("窗格太小，无法向右分屏");
+
+    // A laid-out pane is measured directly: 300px tall halves to less than 8 rows below a tab strip.
+    const element = document.createElement("div");
+    element.dataset.paneId = "p1";
+    element.getBoundingClientRect = () => ({ width: 600, height: 300 }) as DOMRect;
+    document.body.append(element);
+    expect(useUi.getState().splitPane("down", "p1")).toBeNull();
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("窗格太小，无法向下分屏");
+    element.getBoundingClientRect = () => ({ width: 600, height: 500 }) as DOMRect;
+    expect(useUi.getState().splitPane("down", "p1")).not.toBeNull();
   });
 
   it("ignores unknown workspaces and panes", () => {
