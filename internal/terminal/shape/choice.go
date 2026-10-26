@@ -332,5 +332,6 @@ func (s screen) choice() (Prompt, bool) {
 		Options:     opts,
 		CursorIndex: best.cursor,
 		Fingerprint: fingerprint(KindChoice, region),
+		WeakMarker:  best.cursor >= 0 && best.weak,
 	}, true
 }

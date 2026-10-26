@@ -91,6 +91,10 @@ type Prompt struct {
 	Options     []Option `json:"options,omitempty"`
 	CursorIndex int      `json:"cursorIndex"`
 	Fingerprint uint64   `json:"fingerprint,omitempty"`
+	// WeakMarker reports a choice whose selection pointer is "*" or ">",
+	// glyphs that also start ordinary output such as branch listings or
+	// quoted text.
+	WeakMarker bool `json:"weakMarker,omitempty"`
 }
 
 func none() Prompt { return Prompt{Kind: KindNone, CursorIndex: -1} }

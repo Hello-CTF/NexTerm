@@ -165,6 +165,10 @@ func NewScanner(cfg Config) *Scanner {
 	return &Scanner{cfg: cfg, cmd: shellintegr.NewCommandTracker()}
 }
 
+// AtPrompt reports that OSC 133 placed the shell at its prompt: a prompt end
+// (B) arrived and no command has started (C) since.
+func (s *Scanner) AtPrompt() bool { return s.promptEnded && !s.cmdActive }
+
 // Stats returns the counters of dropped signals.
 func (s *Scanner) Stats() Stats { return s.stats }
 

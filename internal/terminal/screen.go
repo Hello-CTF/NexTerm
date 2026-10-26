@@ -31,7 +31,11 @@ func newLineHistory(limit int) *lineHistory {
 	}
 }
 
+// A nil lineHistory keeps no scrollback: pushes are dropped.
 func (h *lineHistory) push(line string) {
+	if h == nil {
+		return
+	}
 	if h.size == len(h.lines) && len(h.lines) < h.limit {
 		capacity := min(len(h.lines)*2, h.limit)
 		lines := make([]string, capacity)
@@ -51,15 +55,23 @@ func (h *lineHistory) push(line string) {
 	h.head = (h.head + 1) % capacity
 }
 
-func (h *lineHistory) len() int { return h.size }
+func (h *lineHistory) len() int {
+	if h == nil {
+		return 0
+	}
+	return h.size
+}
 
 func (h *lineHistory) clear() {
+	if h == nil {
+		return
+	}
 	clear(h.lines)
 	h.head, h.size = 0, 0
 }
 
 func (h *lineHistory) last(n int) []string {
-	if n <= 0 || h.size == 0 {
+	if h == nil || n <= 0 || h.size == 0 {
 		return nil
 	}
 	if n > h.size {
@@ -466,7 +478,7 @@ func (s *screen) scrollUp(n int) {
 	fullRegion := s.scrollTop == 0 && s.scrollBot == s.rows-1
 	for i := 0; i < n; i++ {
 		off := s.grid.rows[s.scrollTop]
-		if fullRegion && !s.alt {
+		if fullRegion && !s.alt && s.history != nil {
 			s.history.push(off.String())
 		}
 		copy(s.grid.rows[s.scrollTop:s.scrollBot], s.grid.rows[s.scrollTop+1:s.scrollBot+1])
