@@ -2,7 +2,6 @@ package guard
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -105,24 +104,29 @@ func TestDeviceGrantPermanenceIsExplicit(t *testing.T) {
 		t.Fatalf("persisted grant lacks the explicit permanence marker: %s", raw)
 	}
 
-	// Records written before the marker existed keep their permanent meaning.
-	legacy := &memorySettings{values: map[string]string{
-		DeviceGrantsSettingKey: `{"device-a":{"deviceId":"device-a","kinds":["terminal_write"],"updatedAt":1}}`,
-	}}
-	reloaded, err := NewGrants(context.Background(), legacy, nil)
+	reloaded, err := NewGrants(context.Background(), settings, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	loaded, ok := mustGrant(t, reloaded, "device-a")
-	if !ok || !loaded.Permanent {
-		t.Fatalf("legacy grant permanence = %+v, %v", loaded, ok)
+	if !ok || !loaded.Permanent || loaded.Legacy {
+		t.Fatalf("reloaded grant = %+v, %v", loaded, ok)
 	}
-	encoded, err := json.Marshal(loaded)
+
+	// Records without the marker are pre-1.3.0 data: rejected, not defaulted to permanent.
+	legacy := &memorySettings{values: map[string]string{
+		DeviceGrantsSettingKey: `{"device-a":{"deviceId":"device-a","kinds":["terminal_write"],"updatedAt":1,"generation":"gen-a"}}`,
+	}}
+	rejected, err := NewGrants(context.Background(), legacy, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"permanent":true`) {
-		t.Fatalf("legacy grant did not round-trip the marker: %s", encoded)
+	if _, ok := mustGrant(t, rejected, "device-a"); ok {
+		t.Fatal("grant without the permanence marker was accepted as effective")
+	}
+	listed := mustGrantList(t, rejected)
+	if len(listed) != 1 || !listed[0].Legacy || listed[0].Permanent {
+		t.Fatalf("legacy grant listing = %+v", listed)
 	}
 }
 

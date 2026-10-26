@@ -246,7 +246,7 @@ func TestSyncAIOwnerTwoAccountsOverRPC(t *testing.T) {
 		if err := database.SettingSet(ctx, "user.ai.models."+row.userID, `{"version":1,"profiles":[{"id":"p-`+row.mode+`","name":"profile-`+row.mode+`","apiKey":"","model":"m1"}],"activeId":"p-`+row.mode+`"}`); err != nil {
 			t.Fatal(err)
 		}
-		if err := database.SettingSet(ctx, "ai.device_grants.user."+row.userID, `{"device-`+row.mode+`":{"deviceId":"device-`+row.mode+`","kinds":["terminal_write"],"updatedAt":1}}`); err != nil {
+		if err := database.SettingSet(ctx, "ai.device_grants.user."+row.userID, `{"device-`+row.mode+`":{"deviceId":"device-`+row.mode+`","kinds":["terminal_write"],"permanent":true,"updatedAt":1,"generation":"gen-`+row.mode+`"}}`); err != nil {
 			t.Fatal(err)
 		}
 	}

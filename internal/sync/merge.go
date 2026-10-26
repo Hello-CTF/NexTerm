@@ -208,7 +208,7 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 		}
 	}
 	if len(userIDs) > 0 && userIDs[0] != "" {
-		if err := e.collectPreferenceObjects(ctx, userIDs[0], objects, optIn); err != nil {
+		if err := e.collectPreferenceObjects(ctx, userIDs[0], objects, optIn, report); err != nil {
 			return nil, err
 		}
 	}
