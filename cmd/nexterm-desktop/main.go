@@ -78,6 +78,7 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
 		return 1
 	}
+	brandIcon := desktopBrandIcon(invocation.WebRoot)
 	streams := newDesktopStreamFactory()
 	var window *application.WebviewWindow
 	var wailsApp *application.App
@@ -114,7 +115,7 @@ func run(args []string) int {
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
-		return showStartupError(paths, err, logger.Logger)
+		return showStartupError(paths, err, logger.Logger, brandIcon)
 	}
 	service := &Service{app: production.Application, streams: streams}
 	wailsApp = application.New(application.Options{
@@ -187,11 +188,12 @@ func run(args []string) int {
 	trackWindowState(window, paths.DataDir, savedWindow, func(err error) {
 		logger.Warn("window state not saved", "error", err)
 	})
+	setWindowIconWhenReady(window, brandIcon, logger.Logger)
 	window.OnWindowEvent(wailsevents.Common.WindowFilesDropped, func(event *application.WindowEvent) {
 		emitFilesDropped(wailsApp, event)
 	})
 	streams.SetWindow(window)
-	setupTray(wailsApp, window, desktopBrandIcon(invocation.WebRoot), production.Services.Store, logger.Logger)
+	setupTray(wailsApp, window, brandIcon, production.Services.Store, logger.Logger)
 	if launchLink != "" {
 		service.links.deliver(launchLink)
 	}
