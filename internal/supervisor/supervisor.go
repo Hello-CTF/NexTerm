@@ -153,7 +153,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		if limit == 0 {
 			limit = s.historyLimit
 		}
-		recording, err = createHistory(dir, limit)
+		recording, err = createHistoryRows(dir, limit, options.Rows)
 		if err != nil {
 			return abort(err)
 		}

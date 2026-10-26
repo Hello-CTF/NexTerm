@@ -312,6 +312,7 @@ func (s *Session) Resize(ctx context.Context, cols, rows uint32) error {
 	if err := s.pty.Resize(ctx, cols, rows); err != nil {
 		return err
 	}
+	s.history.noteResize(rows)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entry.Cols = cols
@@ -378,7 +379,8 @@ func (s *Session) attach(options AttachOptions) (*Attachment, error) {
 //
 // A tail starts at a line boundary, so a shell's scrollback renders as it
 // would after a full replay. The prelude restores the screen buffer, input
-// modes, scroll region, origin mode and character sets in effect at the tail,
+// modes, origin mode, character sets and (on the alternate screen, reset by
+// every resize) the scroll region in effect at the tail,
 // including modes set before the history base (see terminalModes); SGR is not
 // restored. Screen content drawn before the tail by a full-screen program
 // with cursor addressing is not restored until the program repaints, which

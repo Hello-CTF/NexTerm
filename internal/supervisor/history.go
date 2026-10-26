@@ -53,6 +53,8 @@ type historySegment struct {
 	path  string
 	// modes is the terminal mode state at start; nil when unknown.
 	modes *terminalModes
+	// resizes are the terminal resizes recorded within the segment.
+	resizes []historyResize
 }
 
 type history struct {
@@ -117,6 +119,17 @@ func parseHistorySegmentName(name string) (uint64, bool) {
 
 // createHistory starts an empty history at offset zero in dir.
 func createHistory(dir string, limit uint64) (*history, error) {
+	return createHistoryRows(dir, limit, 0)
+}
+
+// createHistoryRows starts an empty history for a terminal of rows rows.
+func createHistoryRows(dir string, limit uint64, rows uint32) (*history, error) {
+	initial := terminalModes{Rows: int(rows)}
+	if rows > 0 {
+		if err := writeModesSnapshot(dir, 0, initial); err != nil {
+			return nil, fmt.Errorf("create supervisor recording: %w", err)
+		}
+	}
 	path := historySegmentPath(dir, 0)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -124,8 +137,9 @@ func createHistory(dir string, limit uint64) (*history, error) {
 	}
 	return &history{
 		dir: dir, limit: limit, segSize: historySegmentSize(limit),
-		segments: []historySegment{{start: 0, path: path, modes: &terminalModes{}}},
+		segments: []historySegment{{start: 0, path: path, modes: &initial}},
 		active:   file,
+		modes:    initial,
 	}, nil
 }
 
@@ -225,14 +239,49 @@ func (h *history) load() error {
 	}
 	for _, segment := range segments[first:] {
 		segment.modes = readModesSnapshot(h.dir, segment.start)
+		segment.resizes = readResizes(h.dir, segment.start)
 		h.segments = append(h.segments, segment.historySegment)
 	}
+	h.sweepOrphans()
 	last := segments[len(segments)-1]
 	h.next = last.start + last.size
 	if moveErr != nil {
 		return fmt.Errorf("quarantine the broken part of the recorded output: %w", moveErr)
 	}
 	return nil
+}
+
+// sweepOrphans removes mode snapshots and resize logs whose segment is gone
+// (a crash between writing the snapshot and creating its segment, or an
+// interrupted eviction) and torn snapshot temporaries.
+func (h *history) sweepOrphans() {
+	kept := make(map[uint64]bool, len(h.segments))
+	for _, segment := range h.segments {
+		kept[segment.start] = true
+	}
+	dirents, err := os.ReadDir(h.dir)
+	if err != nil {
+		return
+	}
+	for _, dirent := range dirents {
+		name := dirent.Name()
+		var digits string
+		switch {
+		case strings.HasPrefix(name, historyModesPrefix) && strings.HasSuffix(name, ".json.tmp"):
+			_ = os.Remove(filepath.Join(h.dir, name))
+			continue
+		case strings.HasPrefix(name, historyModesPrefix) && strings.HasSuffix(name, ".json"):
+			digits = strings.TrimSuffix(strings.TrimPrefix(name, historyModesPrefix), ".json")
+		case strings.HasPrefix(name, historyResizesPrefix) && strings.HasSuffix(name, ".log"):
+			digits = strings.TrimSuffix(strings.TrimPrefix(name, historyResizesPrefix), ".log")
+		default:
+			continue
+		}
+		start, err := strconv.ParseUint(digits, 10, 64)
+		if err != nil || len(digits) != historyOffsetDigits || !kept[start] {
+			_ = os.Remove(filepath.Join(h.dir, name))
+		}
+	}
 }
 
 // quarantineFiles moves segments that cannot be served, with their mode
@@ -244,7 +293,7 @@ func (h *history) quarantineFiles(segments []loadedSegment, malformed []string) 
 	}
 	names := append([]string(nil), malformed...)
 	for _, segment := range segments {
-		names = append(names, filepath.Base(segment.path), filepath.Base(historyModesPath(h.dir, segment.start)))
+		names = append(names, filepath.Base(segment.path), filepath.Base(historyModesPath(h.dir, segment.start)), filepath.Base(historyResizesPath(h.dir, segment.start)))
 	}
 	var moveErr error
 	for _, name := range names {
@@ -322,6 +371,7 @@ func (h *history) rollLocked() error {
 	path := historySegmentPath(h.dir, h.next)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
+		_ = os.Remove(historyModesPath(h.dir, h.next))
 		return err
 	}
 	if err := h.active.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
@@ -339,7 +389,7 @@ func (h *history) rollLocked() error {
 func (h *history) evictLocked() {
 	evicted := false
 	for len(h.segments) > 1 && h.next-h.segments[0].start > h.limit {
-		h.removals = append(h.removals, h.segments[0].path, historyModesPath(h.dir, h.segments[0].start))
+		h.removals = append(h.removals, h.segments[0].path, historyModesPath(h.dir, h.segments[0].start), historyResizesPath(h.dir, h.segments[0].start))
 		h.segments = h.segments[1:]
 		evicted = true
 	}

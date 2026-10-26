@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,19 +22,27 @@ import (
 // modes set long before the history base survive eviction. The parser state
 // is part of the snapshot because a segment can start inside a sequence.
 type terminalModes struct {
-	AltScreen    bool   `json:"alt_screen,omitempty"`
-	AppCursor    bool   `json:"app_cursor,omitempty"`
-	AppKeypad    bool   `json:"app_keypad,omitempty"`
-	Bracketed    bool   `json:"bracketed,omitempty"`
-	CursorHidden bool   `json:"cursor_hidden,omitempty"`
-	NoAutowrap   bool   `json:"no_autowrap,omitempty"`
-	Origin       bool   `json:"origin,omitempty"`
-	Mouse        uint16 `json:"mouse,omitempty"`
-	G0Special    bool   `json:"g0_special,omitempty"`
-	G1Special    bool   `json:"g1_special,omitempty"`
-	ShiftOut     bool   `json:"shift_out,omitempty"`
-	ScrollTop    int    `json:"scroll_top,omitempty"`
-	ScrollBottom int    `json:"scroll_bottom,omitempty"`
+	AltScreen    bool `json:"alt_screen,omitempty"`
+	AppCursor    bool `json:"app_cursor,omitempty"`
+	AppKeypad    bool `json:"app_keypad,omitempty"`
+	Bracketed    bool `json:"bracketed,omitempty"`
+	CursorHidden bool `json:"cursor_hidden,omitempty"`
+	NoAutowrap   bool `json:"no_autowrap,omitempty"`
+	Origin       bool `json:"origin,omitempty"`
+	// MouseTracking is the active tracking protocol (9, 1000, 1001, 1002 or
+	// 1003; zero for none) and MouseEncoding the active report encoding
+	// (1005, 1006, 1015 or 1016): each family is mutually exclusive.
+	MouseTracking int  `json:"mouse_tracking,omitempty"`
+	MouseEncoding int  `json:"mouse_encoding,omitempty"`
+	FocusEvents   bool `json:"focus_events,omitempty"`
+	G0Special     bool `json:"g0_special,omitempty"`
+	G1Special     bool `json:"g1_special,omitempty"`
+	ShiftOut      bool `json:"shift_out,omitempty"`
+	ScrollTop     int  `json:"scroll_top,omitempty"`
+	ScrollBottom  int  `json:"scroll_bottom,omitempty"`
+	// Rows is the terminal height from the last resize; a region covering
+	// all rows is the full screen.
+	Rows int `json:"rows,omitempty"`
 
 	State        byte     `json:"state,omitempty"`
 	Private      bool     `json:"private,omitempty"`
@@ -42,7 +51,12 @@ type terminalModes struct {
 	ParamLen     uint8    `json:"param_len,omitempty"`
 }
 
-var mouseModes = []int{9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016}
+// resize applies a terminal resize: like xterm.js, a resize resets the
+// scroll region to the full screen.
+func (m *terminalModes) resize(rows int) {
+	m.ScrollTop, m.ScrollBottom = 0, 0
+	m.Rows = rows
+}
 
 func (m *terminalModes) feed(data []byte) {
 	for _, b := range data {
@@ -182,12 +196,13 @@ func (m *terminalModes) csiFinal(b byte) {
 		if len(values) > 1 {
 			m.ScrollBottom = values[1]
 		}
-		if m.ScrollTop <= 1 && m.ScrollBottom == 0 {
-			m.ScrollTop = 0
+		if m.ScrollTop <= 1 && (m.ScrollBottom == 0 || m.Rows > 0 && m.ScrollBottom >= m.Rows) {
+			m.ScrollTop, m.ScrollBottom = 0, 0
 		}
 	case !m.Private && b == 'p' && m.Intermediate == '!':
-		// DECSTR soft reset.
+		// DECSTR soft reset, as xterm.js applies it.
 		m.AppCursor, m.AppKeypad, m.CursorHidden, m.Origin = false, false, false, false
+		m.Bracketed, m.NoAutowrap = false, false
 		m.ScrollTop, m.ScrollBottom = 0, 0
 		m.G0Special, m.G1Special, m.ShiftOut = false, false, false
 	}
@@ -207,16 +222,20 @@ func (m *terminalModes) setPrivate(mode int, on bool) {
 		m.AltScreen = on
 	case 2004:
 		m.Bracketed = on
-	default:
-		for index, mouse := range mouseModes {
-			if mode == mouse {
-				if on {
-					m.Mouse |= 1 << index
-				} else {
-					m.Mouse &^= 1 << index
-				}
-			}
+	case 9, 1000, 1001, 1002, 1003:
+		if on {
+			m.MouseTracking = mode
+		} else {
+			m.MouseTracking = 0
 		}
+	case 1005, 1006, 1015, 1016:
+		if on {
+			m.MouseEncoding = mode
+		} else if m.MouseEncoding == mode {
+			m.MouseEncoding = 0
+		}
+	case 1004:
+		m.FocusEvents = on
 	}
 }
 
@@ -232,7 +251,10 @@ func (m *terminalModes) prelude() []byte {
 	if m.AltScreen {
 		set(1049)
 	}
-	if m.ScrollTop > 0 || m.ScrollBottom > 0 {
+	// A scroll region outside the alternate screen is not restored: the
+	// main screen's region is almost always a leftover of a program that
+	// exited, and a stale one would confine every later line.
+	if m.AltScreen && (m.ScrollTop > 0 || m.ScrollBottom > 0) {
 		out = append(out, "\x1b["...)
 		if m.ScrollTop > 0 {
 			out = strconv.AppendInt(out, int64(m.ScrollTop), 10)
@@ -255,10 +277,14 @@ func (m *terminalModes) prelude() []byte {
 	if m.Bracketed {
 		set(2004)
 	}
-	for index, mode := range mouseModes {
-		if m.Mouse&(1<<index) != 0 {
-			set(mode)
-		}
+	if m.MouseTracking != 0 {
+		set(m.MouseTracking)
+	}
+	if m.MouseEncoding != 0 {
+		set(m.MouseEncoding)
+	}
+	if m.FocusEvents {
+		set(1004)
 	}
 	if m.NoAutowrap {
 		out = append(out, "\x1b[?7l"...)
@@ -302,11 +328,11 @@ func writeModesSnapshot(dir string, start uint64, modes terminalModes) error {
 // readModesSnapshot returns the persisted modes at a segment start; nil when
 // there is none (a segment at offset zero starts in the default state).
 func readModesSnapshot(dir string, start uint64) *terminalModes {
-	if start == 0 {
-		return &terminalModes{}
-	}
 	data, err := os.ReadFile(historyModesPath(dir, start))
 	if err != nil {
+		if start == 0 {
+			return &terminalModes{}
+		}
 		return nil
 	}
 	var modes terminalModes
@@ -344,14 +370,26 @@ func (h *history) modesAt(offset uint64) (terminalModes, uint64, error) {
 		if segment.modes != nil {
 			modes = *segment.modes
 		}
+		resizes := append([]historyResize(nil), segment.resizes...)
 		h.mu.Unlock()
 
 		reader := h.newReader(segment.start)
 		buffer := make([]byte, 128<<10)
 		var err error
-		for reader.pos < offset {
+		for {
+			for len(resizes) > 0 && resizes[0].Offset <= reader.pos && resizes[0].Offset <= offset {
+				modes.resize(resizes[0].Rows)
+				resizes = resizes[1:]
+			}
+			if reader.pos >= offset {
+				break
+			}
+			end := offset
+			if len(resizes) > 0 && resizes[0].Offset < end {
+				end = resizes[0].Offset
+			}
 			var count int
-			count, err = reader.read(buffer[:min(uint64(len(buffer)), offset-reader.pos)])
+			count, err = reader.read(buffer[:min(uint64(len(buffer)), end-reader.pos)])
 			if err != nil || count == 0 {
 				break
 			}
@@ -370,4 +408,58 @@ func (h *history) modesAt(offset uint64) (terminalModes, uint64, error) {
 		return modes, offset - segment.start, nil
 	}
 	return terminalModes{}, 0, errHistoryEvicted
+}
+
+// historyResize is a terminal resize recorded at an output offset.
+type historyResize struct {
+	Offset uint64 `json:"offset"`
+	Rows   int    `json:"rows"`
+}
+
+const historyResizesPrefix = "resizes-"
+
+func historyResizesPath(dir string, start uint64) string {
+	return filepath.Join(dir, fmt.Sprintf("%s%0*d.log", historyResizesPrefix, historyOffsetDigits, start))
+}
+
+// readResizes returns the resizes recorded in a segment; a torn last line
+// from a crash is ignored.
+func readResizes(dir string, start uint64) []historyResize {
+	data, err := os.ReadFile(historyResizesPath(dir, start))
+	if err != nil {
+		return nil
+	}
+	var resizes []historyResize
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		var resize historyResize
+		if json.Unmarshal(line, &resize) == nil && resize.Offset >= start && (len(resizes) == 0 || resize.Offset >= resizes[len(resizes)-1].Offset) {
+			resizes = append(resizes, resize)
+		}
+	}
+	return resizes
+}
+
+// noteResize records a terminal resize at the current output offset: the
+// live modes reset their scroll region, and the event is kept with the
+// segment so modes computed later for offsets after it see the reset.
+func (h *history) noteResize(rows uint32) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.segments) == 0 || h.active == nil {
+		return
+	}
+	h.modes.resize(int(rows))
+	last := &h.segments[len(h.segments)-1]
+	resize := historyResize{Offset: h.next, Rows: int(rows)}
+	last.resizes = append(last.resizes, resize)
+	line, err := json.Marshal(resize)
+	if err != nil {
+		return
+	}
+	file, err := os.OpenFile(historyResizesPath(h.dir, last.start), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = file.Write(append(line, '\n'))
+	_ = file.Close()
 }

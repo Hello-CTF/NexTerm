@@ -433,14 +433,14 @@ func TestModesPreludeRestoresInputModes(t *testing.T) {
 	if prelude := modes.prelude(); len(prelude) != 0 {
 		t.Fatalf("prelude after RIS = %q", prelude)
 	}
-	modes.feed([]byte("\x1b(0\x1b)0\x0e\x1b[2;10r\x1b[?6h"))
+	modes.feed([]byte("\x1b[?1049h\x1b(0\x1b)0\x0e\x1b[2;10r\x1b[?6h"))
 	prelude = string(modes.prelude())
 	for _, want := range []string{"\x1b(0", "\x1b)0", "\x0e", "\x1b[2;10r", "\x1b[?6h"} {
 		if !strings.Contains(prelude, want) {
 			t.Fatalf("prelude %q lacks %q", prelude, want)
 		}
 	}
-	modes.feed([]byte("\x1b(B\x1b)B\x0f\x1b[r\x1b[?6l"))
+	modes.feed([]byte("\x1b(B\x1b)B\x0f\x1b[r\x1b[?6l\x1b[?1049l"))
 	if prelude := modes.prelude(); len(prelude) != 0 {
 		t.Fatalf("prelude after resetting charsets and the scroll region = %q", prelude)
 	}

@@ -429,3 +429,39 @@ func TestTailReplayKeepsModesSetBeforeTheBase(t *testing.T) {
 		t.Fatalf("tail screen alt=%v last row %q", snapshot.AltScreen, snapshot.Lines[22])
 	}
 }
+
+// A PTY resize resets the recorded scroll region, so a later fresh open from a
+// window of another size is not confined to the old region.
+func TestSessionResizeResetsRecordedScrollRegion(t *testing.T) {
+	supervisor := testSupervisor(t)
+	session := historySession(t, supervisor, DefaultHistoryLimit, `printf '\033[?1049h\033[2;20rregion-set\n'; read line; printf 'after-resize\n'; sleep 30`)
+	attachment, err := supervisor.Attach(context.Background(), session.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = attachment.Detach() }()
+	readUntil(t, attachment, "region-set")
+	if err := session.Resize(context.Background(), 120, 40); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := attachment.Write([]byte("go\n")); err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, attachment, "after-resize")
+	// A tail of just the last line starts after the resize.
+	tail, err := supervisor.AttachWithOptions(context.Background(), session.ID(), AttachOptions{Tail: uint64(len("after-resize\r\n"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tail.Detach() }()
+	if replay := tail.Replay(); replay.DisplayFrom == 0 {
+		t.Fatalf("tail starts at %+v, want after the resize", replay)
+	}
+	prelude := tail.Replay().Prelude
+	if !bytes.Contains(prelude, []byte("\x1b[?1049h")) || bytes.Contains(prelude, []byte("r")) {
+		t.Fatalf("fresh-open prelude after a resize = %q", prelude)
+	}
+	if err := supervisor.Kill(context.Background(), session.ID()); err != nil {
+		t.Fatal(err)
+	}
+}
