@@ -51,11 +51,18 @@ func (h *trackerHarness) in(after time.Duration) {
 	h.tracker.input(h.clock.advance(after))
 }
 
-// idle advances past the idle threshold and runs the idle transition.
+// idle lets the output pause: it runs the idle inspection and, when the
+// session keeps running without a prompt, waits out the settle time.
 func (h *trackerHarness) idle() {
 	h.t.Helper()
-	if wait := h.tracker.tick(h.clock.advance(defaultStateIdle)); wait != 0 {
-		h.t.Fatalf("tick after the idle threshold asked to wait %v", wait)
+	wait := h.tracker.tick(h.clock.advance(defaultStateIdle))
+	if wait != 0 {
+		if h.state().State != base.SessionRunning || wait > defaultStateSettle-defaultStateIdle {
+			h.t.Fatalf("after the idle inspection: state %s, wait %v", h.state().State, wait)
+		}
+		if wait = h.tracker.tick(h.clock.advance(wait)); wait != 0 {
+			h.t.Fatalf("tick after the settle time asked to wait %v", wait)
+		}
 	}
 }
 

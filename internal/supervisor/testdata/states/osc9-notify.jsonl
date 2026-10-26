@@ -1,0 +1,13 @@
+{"version":1,"name":"osc9-notify","origin":"recorded: bash with the NexTerm integration","description":"a program sends an OSC 9 notification and waits for a line","cols":80,"rows":24,"shell_leader":true,"foreground":{"job":false,"canonical":null},"expect":["running","idle","running","needs_me/signal","idle","running","just_finished","idle","running","exited"]}
+[0.001,"o","\u001b]133;D;0\u001b\\\u001b]133;A\u001b\\\u001b]7;file://host/home/user/project\u001b\\"]
+[0.002,"o","\u001b[?2004huser@host:/home/user/project$ "]
+[1.001,"i","sleep 1.5; printf '\\033]9;Build finished\\007'; read reply\r"]
+[1.002,"o","sleep 1.5; printf '\\033]9;Build finished\\007'; read reply\r\n\u001b[?2004l\r\u001b]133;B\u001b\\\u001b]133;C\u001b\\"]
+[2.51,"o","\u001b]9;Build finished\u0007"]
+[4.511,"i","\r"]
+[4.512,"o","\r\n"]
+[4.512,"o","\u001b]133;D;0\u001b\\\u001b]133;A\u001b\\\u001b]7;file://host/home/user/project\u001b\\\u001b[?2004huser@host:/home/user/project$ "]
+[6.014,"i","exit\r"]
+[6.014,"o","exit\r\n\u001b[?2004l\r"]
+[6.015,"o","\u001b]133;B\u001b\\\u001b]133;C\u001b\\exit\r\n"]
+[6.023,"x",0]

@@ -27,6 +27,10 @@ const (
 	// defaultStateIdle is how long output must pause before the session
 	// counts as idle and the screen is inspected for a prompt.
 	defaultStateIdle = 400 * time.Millisecond
+	// defaultStateSettle is how long a session without a prompt stays
+	// running after its output pauses, so a build printing every second does
+	// not flap between running and idle.
+	defaultStateSettle = 3 * time.Second
 	// defaultNotableCommand is the command run time from which a finished
 	// command is worth a notification.
 	defaultNotableCommand = 10 * time.Second
@@ -49,6 +53,7 @@ type stateOptions struct {
 	// idle and notableAfter default to defaultStateIdle and
 	// defaultNotableCommand.
 	idle         time.Duration
+	settle       time.Duration
 	notableAfter time.Duration
 	// shellLeader reports that the session process is an interactive
 	// shell, so its own process group in the terminal foreground means the
@@ -78,13 +83,17 @@ type stateOptions struct {
 // Rules:
 //   - output makes the session running unless a signal state is pending;
 //   - BEL or a notification makes it needs_me (confidence signal) until
-//     input arrives, a command starts or ends, or the process exits;
+//     input arrives, a command starts or ends, or the process exits; a bell
+//     within bellEchoWindow of input or at the shell prompt is only recorded;
 //   - OSC 133 D makes it just_finished until input arrives or a command
 //     starts; the state is notable when the command ran notableAfter or
 //     longer;
-//   - when output pauses for idle, the screen is inspected: a prompt shape
-//     makes it needs_me (confidence heuristic) unless OSC 133 puts the shell
-//     at its own prompt, otherwise it is idle;
+//   - when output pauses for idle, the screen is inspected once: a prompt
+//     shape makes it needs_me (confidence heuristic) unless OSC 133 puts the
+//     shell at its own prompt; otherwise it is idle at once at the shell
+//     prompt, or after settle of quiet elsewhere;
+//   - input clears needs_me and just_finished and inspects again after the
+//     next pause;
 //   - process exit makes it exited.
 type stateTracker struct {
 	opts stateOptions
@@ -102,8 +111,10 @@ type stateTracker struct {
 	notable    bool
 
 	// active is set by output or input since the last idle inspection and
-	// lastActivity is when it happened.
+	// lastActivity is when it happened. settling is set when that inspection
+	// found no prompt and the session waits out settle before it is idle.
 	active       bool
+	settling     bool
 	lastActivity time.Time
 	lastInput    time.Time
 	// signalPending and finishedPending hold needs_me (signal) and
@@ -127,11 +138,17 @@ type stateTracker struct {
 	timer      *time.Timer
 	timerArmed bool
 	exited     bool
+
+	// inspections counts prompt detector runs.
+	inspections uint64
 }
 
 func newStateTracker(opts stateOptions, now time.Time) *stateTracker {
 	if opts.idle <= 0 {
 		opts.idle = defaultStateIdle
+	}
+	if opts.settle < opts.idle {
+		opts.settle = max(defaultStateSettle, opts.idle)
 	}
 	if opts.notableAfter <= 0 {
 		opts.notableAfter = defaultNotableCommand
@@ -258,7 +275,7 @@ func (t *stateTracker) input(now time.Time) {
 }
 
 func (t *stateTracker) activityLocked(now time.Time) {
-	t.active = true
+	t.active, t.settling = true, false
 	t.lastActivity = now
 	if t.opts.timers && !t.timerArmed {
 		t.armLocked(t.opts.idle)
@@ -279,42 +296,69 @@ func (t *stateTracker) fire() {
 }
 
 // tick runs the idle transition when activity paused for the idle
-// threshold. It returns how much longer to wait when activity is too
-// recent, and zero otherwise.
+// threshold: the screen is inspected once, and a prompt makes the session
+// need its user. Without a prompt the session is idle at once when the
+// shell shows its own prompt, and otherwise after the settle time. tick
+// returns how long to wait for the next step, or zero when none is due.
 func (t *stateTracker) tick(now time.Time) time.Duration {
 	t.mu.Lock()
-	if !t.active || t.exited {
-		t.timerArmed = false
-		t.mu.Unlock()
-		return 0
-	}
-	if wait := t.opts.idle - now.Sub(t.lastActivity); wait > 0 {
-		if t.opts.timers {
-			t.armLocked(wait)
-		}
-		t.mu.Unlock()
-		return wait
-	}
-	t.active, t.timerArmed = false, false
-	changed := t.inspectLocked()
+	changed := false
+	wait := time.Duration(0)
+	quiet := now.Sub(t.lastActivity)
 	switch {
-	case t.signalPending, t.finishedPending:
-	case t.prompt.Kind != shape.KindNone && !t.scanner.AtPrompt():
-		changed = t.setLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now) || changed
-	default:
-		changed = t.setLocked(base.SessionIdle, base.ConfidenceSignal, "quiet", now) || changed
+	case t.exited:
+	case t.active && quiet < t.opts.idle:
+		wait = t.opts.idle - quiet
+	case t.active:
+		t.active = false
+		changed = t.inspectLocked()
+		switch {
+		case t.signalPending, t.finishedPending:
+		case t.prompt.Kind != shape.KindNone && !t.scanner.AtPrompt():
+			changed = t.setLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now) || changed
+		case t.scanner.AtPrompt() || quiet >= t.opts.settle || t.state != base.SessionRunning:
+			changed = t.setLocked(base.SessionIdle, base.ConfidenceSignal, "quiet", now) || changed
+		default:
+			t.settling = true
+			wait = t.opts.settle - quiet
+		}
+	case t.settling && quiet < t.opts.settle:
+		wait = t.opts.settle - quiet
+	case t.settling:
+		t.settling = false
+		changed = t.setLocked(base.SessionIdle, base.ConfidenceSignal, "quiet", now)
+	}
+	t.timerArmed = false
+	if wait > 0 && t.opts.timers {
+		t.armLocked(wait)
 	}
 	t.mu.Unlock()
 	if changed {
 		t.changed()
 	}
-	return 0
+	return wait
+}
+
+// due returns when tick has work next, or false when it has none.
+func (t *stateTracker) due() (time.Time, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	switch {
+	case t.exited:
+		return time.Time{}, false
+	case t.active:
+		return t.lastActivity.Add(t.opts.idle), true
+	case t.settling:
+		return t.lastActivity.Add(t.opts.settle), true
+	}
+	return time.Time{}, false
 }
 
 // inspectLocked runs the prompt detector on the current screen and updates
 // the prompt and its epoch. It reports whether the published prompt
 // changed.
 func (t *stateTracker) inspectLocked() bool {
+	t.inspections++
 	detected := shape.Detect(t.emu.Snapshot())
 	wasFresh := t.fresh
 	before := t.prompt
@@ -365,7 +409,7 @@ func (t *stateTracker) exit(code *int, now time.Time) {
 	t.signalPending, t.finishedPending = false, false
 	t.forceLocked(base.SessionExited, base.ConfidenceSignal, "exit", now)
 	t.exitCode = copyInt(code)
-	t.exited = true
+	t.exited, t.active, t.settling = true, false, false
 	if t.timer != nil {
 		t.timer.Stop()
 	}
