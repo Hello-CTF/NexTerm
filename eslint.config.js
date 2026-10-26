@@ -48,7 +48,7 @@ const credentialAmberRestrictions = stringRestrictions(
 );
 
 export default tseslint.config(
-  { ignores: ["dist", "cmd/nexterm-desktop/dist", ".buildcheck", ".sitetest", "_site", ".tower/worktrees", ".tmp", ".task", "lazycat", "reference", "target", "*.cjs", "src/ipc/bindings"] },
+  { ignores: ["dist", "cmd/nexterm-desktop/dist", ".buildcheck", ".sitetest", "_site", ".tower/worktrees", ".claude/worktrees", ".tmp", ".task", "lazycat", "reference", "target", "*.cjs", "src/ipc/bindings"] },
   tseslint.configs.recommended,
   {
     plugins: { "react-hooks": reactHooks },
