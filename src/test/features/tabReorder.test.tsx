@@ -361,7 +361,7 @@ describe("tab drag reorder", () => {
   });
 });
 
-describe("cross-pane drag guard", () => {
+describe("cross-pane strip drops", () => {
   function useSplitPanes(): void {
     useUi.setState({
       workspaces: [

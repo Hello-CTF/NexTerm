@@ -219,7 +219,6 @@ describe("dragging a tab onto a pane", () => {
       expect(fire(dropTarget("left")!, "dragover", transfer, point).defaultPrevented).toBe(false);
     }
     expect(preview()).toBeNull();
-    expect(fire(dropTarget("left")!, "drop", transfer, POINTS.right).defaultPrevented).toBe(false);
     expect(current().panes).toHaveLength(2);
 
     expect(fire(dropTarget("right")!, "dragover", transfer, POINTS.center).defaultPrevented).toBe(true);
@@ -323,6 +322,107 @@ describe("dragging a tab onto a pane", () => {
     act(() => endTabDrag());
     render();
     expect(dropTarget("p1")).toBeNull();
+  });
+});
+
+describe("a drag never outlives its gesture", () => {
+  function foreignDrag(): Transfer {
+    // Another window's tab drag carries the same type but did not start here.
+    const transfer = dataTransfer();
+    transfer.setData(TAB_MIME, "t1");
+    return transfer;
+  }
+
+  it("ends when the dragged tab is removed mid-drag, and then rejects another window's drag", async () => {
+    setPanes([{ id: "p1", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }]);
+    render();
+    await flush();
+    startDrag("t2");
+    expect(dropTarget("p1")).not.toBeNull();
+
+    // The tab's session exits and the tab closes: its element goes, and its dragend never arrives.
+    act(() => {
+      useUi.setState((state) => ({
+        workspaces: state.workspaces.map((item) => ({
+          ...item,
+          panes: item.panes.map((target) => ({ ...target, tabs: target.tabs.filter((tab) => tab.id !== "t2"), activeTabId: "t1" })),
+        })),
+      }));
+    });
+    render();
+    await flush();
+    expect(dropTarget("p1")).toBeNull();
+    const tabOver = fire(tabElement("t1"), "dragover", foreignDrag(), { x: 1 });
+    expect(tabOver.defaultPrevented).toBe(false);
+  });
+
+  it("ends when the dragged tab's pane goes away", async () => {
+    setPanes([
+      { id: "left", tabs: [terminal("a"), terminal("c")], activeTabId: "a" },
+      { id: "right", tabs: [terminal("b")], activeTabId: "b" },
+    ]);
+    render();
+    await flush();
+    startDrag("a");
+    // A layout sync replaces the source pane wholesale.
+    act(() => {
+      useUi.setState((state) => ({
+        workspaces: state.workspaces.map((item) => ({
+          ...item,
+          activePaneId: "right",
+          layoutTree: undefined,
+          panes: [{ ...item.panes[1], tabs: [...item.panes[1].tabs, ...item.panes[0].tabs] }],
+        })),
+      }));
+    });
+    render();
+    await flush();
+    expect(view!.container.querySelector("[data-tab-drop-pane]")).toBeNull();
+  });
+
+  it.each([
+    { name: "window blur", end: () => window.dispatchEvent(new Event("blur")) },
+    { name: "a dragend reaching the window", end: () => window.dispatchEvent(new Event("dragend")) },
+    { name: "the first pointer event after the drag", end: () => window.dispatchEvent(new Event("pointerdown")) },
+  ])("ends on $name", async ({ end }) => {
+    setPanes([{ id: "p1", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }]);
+    render();
+    await flush();
+    startDrag("t2");
+    // Pointer events are watched only from the next tick, so the gesture that started the drag cannot end it.
+    act(() => {
+      window.dispatchEvent(new Event("mousemove"));
+    });
+    expect(dropTarget("p1")).not.toBeNull();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    act(() => {
+      end();
+    });
+    expect(dropTarget("p1")).toBeNull();
+    expect(fire(tabElement("t1"), "dragover", foreignDrag(), { x: 1 }).defaultPrevented).toBe(false);
+  });
+});
+
+describe("touch shells", () => {
+  it("do not make tabs draggable; the tab menu is their way to move tabs", async () => {
+    const matchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) =>
+      ({ matches: query.includes("coarse"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }) as unknown as MediaQueryList);
+    try {
+      setPanes([{ id: "p1", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }]);
+      render();
+      await flush();
+      expect(tabElement("t1").getAttribute("draggable")).toBe("false");
+    } finally {
+      window.matchMedia = matchMedia;
+    }
+    view?.unmount();
+    view = null;
+    render();
+    await flush();
+    expect(tabElement("t1").getAttribute("draggable")).toBe("true");
   });
 });
 

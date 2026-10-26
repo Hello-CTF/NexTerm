@@ -33,7 +33,8 @@ import {
 import { TabProductionBadge, TabStripItem, TabStripTitle, tabIcon, tabTooltip } from "./tabStrip";
 import { PaneForTab } from "./PaneForTab";
 import { WorkspaceEmpty } from "./EmptyStates";
-import { beginTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
+import { beginTabDrag, currentTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
+import { isTouchShell } from "../shell/shellMode";
 
 function handleTablistKeyDown(
   event: ReactKeyboardEvent<HTMLElement>,
@@ -130,6 +131,19 @@ export function PaneGroup({
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const drag = useTabDrag();
   const draggingId = drag?.paneId === pane.id ? drag.tabId : null;
+  // A tab removed mid-drag (its session ended, a sync dropped it) never delivers dragend: end the drag
+  // here so the drop targets do not stay over the terminals.
+  const draggedTabGone = draggingId !== null && !pane.tabs.some((tab) => tab.id === draggingId);
+  useEffect(() => {
+    if (draggedTabGone) endTabDrag();
+  }, [draggedTabGone]);
+  const paneId = pane.id;
+  useEffect(
+    () => () => {
+      if (currentTabDrag()?.paneId === paneId) endTabDrag();
+    },
+    [paneId],
+  );
   const [dropHint, setDropHint] = useState<{ id: string; edge: "before" | "after" } | null>(null);
   const bindings = useKeybindings();
   const kbLabel = (id: KeybindingActionId) => formatBinding(bindings[id]);
@@ -308,7 +322,8 @@ export function PaneGroup({
                 aria-selected={isActive}
                 aria-controls={`nx-tab-panel-${idPrefix}-${t.id}`}
                 tabIndex={isActive ? 0 : -1}
-                draggable
+                // Touch shells move tabs from the tab menu and the palette instead of dragging.
+                draggable={!isTouchShell()}
                 className={`nx-tab ${isActive ? "is-active" : ""}${
                   dropHint?.id === t.id ? ` nx-drop-${dropHint.edge}` : ""
                 }${draggingId === t.id ? " nx-drag-source" : ""}`}

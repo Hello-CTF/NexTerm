@@ -15,6 +15,8 @@ import { useAssetReachability, type ReachabilityEntry } from "../features/explor
 import { ReachabilityDot } from "../features/explorer/ReachabilityDot";
 import { createMultiHostLogTabId, MULTI_HOST_LOG_TAB_ID } from "../features/logs/logTailTab";
 import { createFleetHealthTabId, FLEET_HEALTH_TAB_ID } from "../features/fleet/fleetHealthTab";
+import { workspaceLayoutTree } from "./paneLayout";
+import { resolveActivePane } from "./splitTree";
 import {
   IconActivity,
   IconClock,
@@ -230,7 +232,10 @@ export function CommandPalette({
         run: () => {
           const current = useUi.getState();
           const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
-          const pane = workspace?.panes.find((item) => item.id === workspace.activePaneId);
+          const tree = workspace ? workspaceLayoutTree(workspace) : null;
+          // The pane the user sees as focused, even when the stored id is stale.
+          const paneId = tree ? resolveActivePane(tree, workspace?.activePaneId) : null;
+          const pane = workspace?.panes.find((item) => item.id === paneId);
           const tabId = pane?.activeTabId ?? pane?.tabs[pane.tabs.length - 1]?.id;
           if (!workspace || !pane || !tabId) {
             pushToast("info", "当前窗格没有标签");
