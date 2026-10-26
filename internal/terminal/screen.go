@@ -85,8 +85,11 @@ func (h *lineHistory) last(n int) []string {
 	return out
 }
 
+// cell is one screen cell. comb is zero, or one plus the index in the row's marks of the cell's combining runes, which keeps a cell
+// at 8 bytes while marks move with their cell wherever cells are copied.
 type cell struct {
 	r    rune
+	comb uint16
 	wide bool
 	cont bool
 }
@@ -94,12 +97,11 @@ type cell struct {
 // row is a line of cells. hi is an exclusive upper bound of the cells that may be non-empty: every cell at index >= hi is the zero
 // cell, which lets reset and String skip the blank tail of wide terminals. Code that stores a non-empty cell must call touch.
 //
-// comb holds the combining runes of the few cells that have any, keyed by cell index, so a cell stays small; nil when none. Code
-// that clears or moves cells keeps it in step through clearCell and shiftComb.
+// marks holds the combining runes of the row's cells. An entry whose cell was overwritten stays until reset or compactMarks drops it.
 type row struct {
 	cells []cell
 	hi    int
-	comb  map[int][]rune
+	marks [][]rune
 }
 
 func newRow(cols int) *row {
@@ -111,42 +113,46 @@ func newRow(cols int) *row {
 func (r *row) reset() {
 	clear(r.cells[:min(r.hi, len(r.cells))])
 	r.hi = 0
-	r.comb = nil
-}
-
-// clearCell empties the cell at index i.
-func (r *row) clearCell(i int) {
-	r.cells[i] = cell{}
-	if r.comb != nil {
-		delete(r.comb, i)
-	}
+	r.marks = r.marks[:0]
 }
 
 // combAt returns the combining runes of the cell at index i.
 func (r *row) combAt(i int) []rune {
-	if r.comb == nil {
-		return nil
+	if c := r.cells[i].comb; c != 0 {
+		return r.marks[c-1]
 	}
-	return r.comb[i]
+	return nil
 }
 
-// shiftComb moves the combining runes of cells at index from or later by
-// delta, dropping those of cells moved below from or past the row end, as
-// a copy of the cells by delta does.
-func (r *row) shiftComb(from, delta int) {
-	if len(r.comb) == 0 {
-		return
+// addComb appends a combining rune to the cell at index i, reusing the storage of dropped entries.
+func (r *row) addComb(i int, mark rune) {
+	c := &r.cells[i]
+	if c.comb == 0 {
+		if len(r.marks) >= 2*len(r.cells)+8 {
+			r.compactMarks()
+		}
+		n := len(r.marks)
+		if n < cap(r.marks) {
+			r.marks = r.marks[:n+1]
+			r.marks[n] = r.marks[n][:0]
+		} else {
+			r.marks = append(r.marks, nil)
+		}
+		c.comb = uint16(n + 1)
 	}
-	moved := make(map[int][]rune, len(r.comb))
-	for i, runes := range r.comb {
-		switch {
-		case i < from:
-			moved[i] = runes
-		case i+delta >= from && i+delta < len(r.cells):
-			moved[i+delta] = runes
+	r.marks[c.comb-1] = append(r.marks[c.comb-1], mark)
+}
+
+// compactMarks drops the entries no cell refers to any more.
+func (r *row) compactMarks() {
+	live := make([][]rune, 0, len(r.marks))
+	for i := range r.cells {
+		if c := &r.cells[i]; c.comb != 0 {
+			live = append(live, r.marks[c.comb-1])
+			c.comb = uint16(len(live))
 		}
 	}
-	r.comb = moved
+	r.marks = live
 }
 
 // touch records that the cell at index i may now be non-empty.
@@ -164,21 +170,16 @@ func (r *row) resize(cols int) {
 	copy(cells, r.cells)
 	r.cells = cells
 	r.hi = min(r.hi, cols)
-	for i := range r.comb {
-		if i >= cols {
-			delete(r.comb, i)
-		}
-	}
 	r.normalizeWide()
 }
 
 func (r *row) normalizeWide() {
 	for i := range r.cells {
 		if r.cells[i].wide && (i+1 >= len(r.cells) || !r.cells[i+1].cont) {
-			r.clearCell(i)
+			r.cells[i] = cell{}
 		}
 		if r.cells[i].cont && (i == 0 || !r.cells[i-1].wide) {
-			r.clearCell(i)
+			r.cells[i] = cell{}
 		}
 	}
 }
@@ -190,7 +191,7 @@ func (r *row) String() string {
 		if c.cont {
 			continue
 		}
-		if (c.r != 0 && c.r != ' ') || len(r.combAt(i)) > 0 {
+		if (c.r != 0 && c.r != ' ') || c.comb != 0 {
 			last = i
 			break
 		}
@@ -198,14 +199,11 @@ func (r *row) String() string {
 	if last < 0 {
 		return ""
 	}
-	if len(r.comb) > 0 {
-		return r.stringSlow(last)
-	}
 	// Fast path: plain single-byte cells map one-to-one onto bytes.
 	buf := make([]byte, 0, last+1)
 	for i := 0; i <= last; i++ {
 		c := &r.cells[i]
-		if c.cont || c.wide || c.r >= utf8.RuneSelf {
+		if c.cont || c.comb != 0 || c.wide || c.r >= utf8.RuneSelf {
 			return r.stringSlow(last)
 		}
 		if c.r == 0 {
@@ -443,10 +441,7 @@ func (s *screen) putCombining(r rune) {
 		return
 	}
 	row.touch(targetC)
-	if row.comb == nil {
-		row.comb = make(map[int][]rune)
-	}
-	row.comb[targetC] = append(row.comb[targetC], r)
+	row.addComb(targetC, r)
 }
 
 func (r *row) clearPairAt(c int) {
@@ -456,11 +451,11 @@ func (r *row) clearPairAt(c int) {
 	switch {
 	case r.cells[c].cont:
 		if c > 0 && r.cells[c-1].wide {
-			r.clearCell(c - 1)
+			r.cells[c-1] = cell{}
 		}
 	case r.cells[c].wide:
 		if c+1 < len(r.cells) && r.cells[c+1].cont {
-			r.clearCell(c + 1)
+			r.cells[c+1] = cell{}
 		}
 	}
 }
@@ -473,7 +468,7 @@ func (s *screen) put(r rune, width int) {
 		if s.autoWrap {
 			row := s.grid.rows[s.cur.r]
 			row.clearPairAt(s.cur.c)
-			row.clearCell(s.cur.c)
+			row.cells[s.cur.c] = cell{}
 			s.wrap()
 		} else {
 			width = 1
@@ -487,13 +482,13 @@ func (s *screen) put(r rune, width int) {
 	if width == 2 && s.cur.c+1 < s.cols {
 		row.clearPairAt(s.cur.c + 1)
 	}
-	row.clearCell(s.cur.c)
-	row.cells[s.cur.c] = cell{r: r, wide: width == 2}
+	c := &row.cells[s.cur.c]
+	c.r, c.comb, c.wide, c.cont = r, 0, width == 2, false
 	row.touch(s.cur.c)
 	if width == 2 && s.cur.c+1 < s.cols {
 		row.touch(s.cur.c + 1)
-		row.clearCell(s.cur.c + 1)
-		row.cells[s.cur.c+1] = cell{cont: true}
+		next := &row.cells[s.cur.c+1]
+		next.r, next.comb, next.wide, next.cont = 0, 0, false, true
 	}
 	next := s.cur.c + width
 	switch {
@@ -696,12 +691,12 @@ func (s *screen) eraseLine(mode int) {
 	switch mode {
 	case 0:
 		for c := s.cur.c; c < s.cols; c++ {
-			row.clearCell(c)
+			row.cells[c] = cell{}
 		}
 		row.normalizeWide()
 	case 1:
 		for c := 0; c <= s.cur.c && c < s.cols; c++ {
-			row.clearCell(c)
+			row.cells[c] = cell{}
 		}
 		row.normalizeWide()
 	case 2:
@@ -741,7 +736,6 @@ func (s *screen) deleteChars(n int) {
 	for i := len(cells) - n; i < len(cells); i++ {
 		cells[i] = cell{}
 	}
-	row.shiftComb(s.cur.c, -n)
 	row.normalizeWide()
 }
 
@@ -756,14 +750,13 @@ func (s *screen) insertChars(n int) {
 	for i := 0; i < n; i++ {
 		cells[i] = cell{}
 	}
-	row.shiftComb(s.cur.c, n)
 	row.normalizeWide()
 }
 
 func (s *screen) eraseChars(n int) {
 	row := s.grid.rows[s.cur.r]
 	for i := 0; i < n && s.cur.c+i < s.cols; i++ {
-		row.clearCell(s.cur.c + i)
+		row.cells[s.cur.c+i] = cell{}
 	}
 	row.normalizeWide()
 }

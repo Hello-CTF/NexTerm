@@ -45,6 +45,24 @@ func BenchmarkFeedCJK(b *testing.B) {
 	}
 }
 
+// BenchmarkFeedCombining scrolls lines of decomposed accents and edits them
+// in place with ICH/DCH, the paths that keep combining marks per row.
+func BenchmarkFeedCombining(b *testing.B) {
+	line := strings.Repeat("éàö ñû ", 6)
+	chunk := bytes.Repeat([]byte(line+"\r\x1b[3C\x1b[2@xy\x1b[5C\x1b[3P\r\n"), 512)
+	for _, size := range [][2]int{{80, 24}, {200, 60}} {
+		b.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(b *testing.B) {
+			tab := NewTab("b", "s", size[0], size[1], UTF8)
+			b.Cleanup(tab.Close)
+			b.SetBytes(int64(len(chunk)))
+			b.ReportAllocs()
+			for b.Loop() {
+				tab.Feed(chunk)
+			}
+		})
+	}
+}
+
 func BenchmarkFeedRandomBinary(b *testing.B) {
 	tab := NewTab("b", "s", 80, 24, UTF8)
 	b.Cleanup(tab.Close)

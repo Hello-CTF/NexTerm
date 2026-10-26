@@ -159,6 +159,20 @@ func TestCombiningCapBoundedMemory(t *testing.T) {
 	}
 }
 
+func TestCombiningRedrawsKeepMarksBounded(t *testing.T) {
+	s := newScreen(20, 2, 0)
+	for i := 0; i < 10000; i++ {
+		s.write([]byte("\rnéw öld "))
+	}
+	row := s.grid.rows[0]
+	if got := row.String(); got != "néw öld" {
+		t.Fatalf("row = %q", got)
+	}
+	if limit := 2*len(row.cells) + 8; len(row.marks) > limit {
+		t.Fatalf("%d combining entries kept for a %d-cell row, want at most %d", len(row.marks), len(row.cells), limit)
+	}
+}
+
 func TestCombiningMarksFollowTheirCells(t *testing.T) {
 	steps := []struct{ feed, want string }{
 		{"ae\u0301xo\u0308", "ae\u0301xo\u0308"},
@@ -175,12 +189,14 @@ func TestCombiningMarksFollowTheirCells(t *testing.T) {
 			t.Fatalf("after %q: row = %q, want %q", step.feed, got, step.want)
 		}
 	}
-	if comb := s.grid.rows[0].comb; len(comb) != 0 {
-		t.Fatalf("combining marks left for cleared cells: %v", comb)
+	for i, c := range s.grid.rows[0].cells {
+		if c.comb != 0 {
+			t.Fatalf("cleared cell %d still has combining marks %q", i, s.grid.rows[0].combAt(i))
+		}
 	}
 	s.write([]byte("\x1b[1Ge\u0301\x1b[6Go\u0308"))
 	s.resize(4, 2)
-	if got, comb := s.grid.rows[0].String(), s.grid.rows[0].comb; got != "e\u0301" || len(comb) != 1 {
-		t.Fatalf("after shrinking: row %q, marks %v", got, comb)
+	if got := s.grid.rows[0].String(); got != "e\u0301" {
+		t.Fatalf("after shrinking: row %q", got)
 	}
 }
