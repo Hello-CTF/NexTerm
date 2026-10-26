@@ -184,6 +184,20 @@ describe("Settings search", () => {
     expect(copy!.classList.contains("nx-setting-flash")).toBe(true);
   });
 
+  it("finds the terminal link activation setting and highlights its anchor", async () => {
+    search("hyperlink");
+    expect(resultLabels()).toContain("链接打开方式");
+    search("链接");
+    const option = [...mounted!.container.querySelectorAll<HTMLElement>('[role="option"]')].find((o) =>
+      o.textContent?.includes("链接打开方式"),
+    );
+    click(option!);
+    await flush();
+    const target = mounted!.container.querySelector<HTMLElement>('[data-setting="terminal-link-activation"]');
+    expect(target).not.toBeNull();
+    expect(target!.classList.contains("nx-setting-flash")).toBe(true);
+  });
+
   it("announces the result count", () => {
     search("终端");
     const status = mounted!.container.querySelector(".nx-sr-only[role=\"status\"]");

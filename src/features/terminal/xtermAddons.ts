@@ -1,8 +1,12 @@
 import type { Terminal } from "@xterm/xterm";
 import type { SearchAddon } from "@xterm/addon-search";
+import type { ILinkProviderOptions } from "@xterm/addon-web-links";
 import { createWebglController, type GpuAccelerationMode, type WebglHost } from "./webglPolicy";
 
-type LinkHandler = (event: MouseEvent, uri: string) => void;
+export interface WebLinks {
+  handler: (event: MouseEvent, uri: string) => void;
+  options?: ILinkProviderOptions;
+}
 
 /**
  * Optional xterm addons are fetched with dynamic import() after the terminal is mounted so they stay
@@ -17,7 +21,7 @@ export interface LazySearch {
 
 export function attachLazyAddons(
   term: Terminal,
-  linkHandler: LinkHandler,
+  links: WebLinks,
   isDisposed: () => boolean,
 ): LazySearch {
   let search: SearchAddon | null = null;
@@ -38,7 +42,7 @@ export function attachLazyAddons(
   void import("@xterm/addon-web-links").then(
     ({ WebLinksAddon }) => {
       if (isDisposed()) return;
-      term.loadAddon(new WebLinksAddon(linkHandler));
+      term.loadAddon(new WebLinksAddon(links.handler, links.options));
     },
     () => undefined,
   );

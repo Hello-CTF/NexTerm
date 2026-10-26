@@ -200,7 +200,7 @@ export const PaneForTab = memo(function PaneForTab({
           {tab.path ? (
             <FileEditor sessionId={tab.sessionId} path={tab.path} onClose={close} />
           ) : (
-            <FileBrowser sessionId={tab.sessionId} />
+            <FileBrowser sessionId={tab.sessionId} initialPath={tab.pendingDirectory} />
           )}
         </Lazy>
       );

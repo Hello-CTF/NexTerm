@@ -294,6 +294,32 @@ describe("FileBrowser terminal-directory follow", () => {
     const input = mounted!.container.querySelector("input");
     expect(input?.value).toBe("/srv/www");
   });
+
+  it("an explicit initial path (a terminal file link) wins over the current cwd until it changes", async () => {
+    seedWorkspace();
+    // The tree registers the cwd listener and learns the terminal's cwd first.
+    mountTree();
+    await flush();
+    emitControl({ tabId: "k1", version: 1, cwd: "/srv/www" });
+    mounted?.unmount();
+    mocks.list.mockClear();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mounted = mount(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(FileBrowser, { sessionId: SID, initialPath: "/var/log/nginx" }),
+      ),
+    );
+    await flush();
+    await waitFor(() => expect(listCalls()).toContain("/var/log/nginx"));
+    expect(mounted.container.querySelector("input")?.value).toBe("/var/log/nginx");
+    expect(listCalls()).not.toContain("/srv/www");
+
+    emitControl({ tabId: "k1", version: 2, cwd: "/tmp" });
+    await waitFor(() => expect(listCalls()).toContain("/tmp"));
+    await waitFor(() => expect(mounted!.container.querySelector("input")?.value).toBe("/tmp"));
+  });
 });
 
 describe("cwd record lifecycle", () => {

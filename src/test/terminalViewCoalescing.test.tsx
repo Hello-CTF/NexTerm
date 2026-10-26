@@ -58,6 +58,7 @@ vi.mock("@xterm/xterm", () => ({
     constructor() {
       harness.terminals.push(this);
     }
+    parser = { registerOscHandler: () => ({ dispose: () => undefined }) };
     open() {}
     loadAddon() {}
     attachCustomKeyEventHandler() {}

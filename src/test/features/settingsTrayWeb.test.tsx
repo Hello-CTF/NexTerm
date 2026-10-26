@@ -124,3 +124,23 @@ describe("terminal GPU acceleration settings", () => {
     expect(mounted.container.textContent).toContain("始终使用兼容渲染");
   });
 });
+
+describe("terminal link activation settings", () => {
+  it("defaults to modifier-click and saves plain click to the account", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    registerAccountPreferenceStore({ getView: async () => ({ defaults: {}, overrides: {} }), putOverrides: put, deleteOverrides: async () => {} });
+    mounted = mountWithClient(createElement(SettingsView));
+    await flush();
+    const group = mounted.container.querySelector('[aria-label="链接打开方式"]');
+    const buttons = [...(group?.querySelectorAll("button") ?? [])];
+    expect(buttons.find((button) => button.textContent === "Ctrl/Cmd+单击")?.getAttribute("aria-pressed")).toBe("true");
+    const plain = buttons.find((button) => button.textContent === "单击");
+    if (!plain) throw new Error("plain click option not found");
+    click(plain);
+    await waitFor(() => expect(plain.getAttribute("aria-pressed")).toBe("true"));
+
+    expect(put).toHaveBeenCalledWith({ "terminal.linkActivation": "click" });
+    expect(getTerminalPrefs().linkActivation).toBe("click");
+    expect(mounted.container.textContent).toContain("单击终端中的网址或 OSC 8 超链接即打开");
+  });
+});

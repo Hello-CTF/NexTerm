@@ -37,6 +37,7 @@ vi.mock("@xterm/xterm", () => ({
       this.options = { scrollback: 1000, ...options };
       harness.terminals.push(this);
     }
+    parser = { registerOscHandler: () => ({ dispose: () => undefined }) };
     open(element: HTMLElement) {
       this.element = element;
       const viewport = document.createElement("div");

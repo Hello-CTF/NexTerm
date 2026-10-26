@@ -30,6 +30,7 @@ vi.mock("@xterm/xterm", () => ({
     constructor() {
       harness.terminals.push(this);
     }
+    parser = { registerOscHandler: () => ({ dispose: () => undefined }) };
     open(element: HTMLElement) {
       this.element = element;
       const viewport = document.createElement("div");

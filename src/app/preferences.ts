@@ -234,18 +234,27 @@ export type TerminalCloseAction = "ask" | "kill" | "detach";
 export type TerminalDefaultMode = "durable" | "regular";
 // auto loads WebGL unless the GPU is a software renderer; on always tries it; off keeps the DOM renderer.
 export type TerminalGpuAcceleration = "auto" | "on" | "off";
+// modifier opens terminal links with Ctrl+click (Cmd+click on macOS); click opens them with a plain click.
+export type TerminalLinkActivation = "modifier" | "click";
 
 export interface TerminalPrefs {
   closeAction: TerminalCloseAction;
   defaultMode: TerminalDefaultMode;
   gpuAcceleration: TerminalGpuAcceleration;
+  linkActivation: TerminalLinkActivation;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
 const TERMINAL_CLOSE_ACTION_KEY = "terminal.closeAction";
 const TERMINAL_DEFAULT_MODE_KEY = "terminal.defaultMode";
 const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
-const TERMINAL_DEFAULTS: TerminalPrefs = { closeAction: "ask", defaultMode: "durable", gpuAcceleration: "auto" };
+const TERMINAL_LINK_ACTIVATION_KEY = "terminal.linkActivation";
+const TERMINAL_DEFAULTS: TerminalPrefs = {
+  closeAction: "ask",
+  defaultMode: "durable",
+  gpuAcceleration: "auto",
+  linkActivation: "modifier",
+};
 
 function loadTerminal(): TerminalPrefs {
   let local: Partial<TerminalPrefs> = {};
@@ -261,10 +270,12 @@ function loadTerminal(): TerminalPrefs {
     ? accountOverrides[TERMINAL_DEFAULT_MODE_KEY] ?? accountDefaults[TERMINAL_DEFAULT_MODE_KEY]
     : local.defaultMode;
   const gpu = preferenceValue<unknown>(TERMINAL_GPU_ACCELERATION_KEY, local.gpuAcceleration, TERMINAL_DEFAULTS.gpuAcceleration);
+  const links = preferenceValue<unknown>(TERMINAL_LINK_ACTIVATION_KEY, local.linkActivation, TERMINAL_DEFAULTS.linkActivation);
   return {
     closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction,
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
     gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
+    linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
   };
 }
 
@@ -323,6 +334,22 @@ export function setTerminalGpuAcceleration(value: TerminalGpuAcceleration): void
   if (accountStore) {
     void accountStore.putOverrides({ [TERMINAL_GPU_ACCELERATION_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [TERMINAL_GPU_ACCELERATION_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalLinkActivation(value: TerminalLinkActivation): void {
+  if (terminalPrefs.linkActivation === value) return;
+  terminalPrefs = { ...terminalPrefs, linkActivation: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, linkActivation: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_LINK_ACTIVATION_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_LINK_ACTIVATION_KEY]: value }, []);
   }
   for (const listener of terminalListeners) listener();
 }

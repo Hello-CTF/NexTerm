@@ -1,0 +1,30 @@
+.nx-term-link-tip {
+  position: absolute;
+  z-index: 20;
+  max-width: min(480px, calc(100% - 16px));
+  padding: 4px 8px;
+  border: 1px solid var(--nx-border-strong);
+  border-radius: 6px;
+  background: var(--nx-bg-pane);
+  color: var(--nx-fg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.4);
+  font-size: calc(12px * var(--nx-ui-text-factor));
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.nx-term-link-tip-target {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.nx-term-link-tip-hint {
+  margin-top: 2px;
+  color: var(--nx-fg-tertiary);
+}
+
+/* Links that need a modifier keep the normal text cursor until it is held. */
+.nx-xterm-host[data-nx-link-armed="false"] .xterm.xterm-cursor-pointer,
+.nx-xterm-host[data-nx-link-armed="false"] .xterm .xterm-cursor-pointer {
+  cursor: inherit;
+}

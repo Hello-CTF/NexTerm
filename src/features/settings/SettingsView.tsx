@@ -6,10 +6,12 @@ import {
   setTerminalCloseAction,
   setTerminalDefaultMode,
   setTerminalGpuAcceleration,
+  setTerminalLinkActivation,
   useTerminalPrefs,
   type TerminalCloseAction,
   type TerminalDefaultMode,
   type TerminalGpuAcceleration,
+  type TerminalLinkActivation,
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
@@ -141,6 +143,11 @@ const GPU_ACCELERATION_OPTIONS: { value: TerminalGpuAcceleration; label: string 
   { value: "auto", label: "自动" },
   { value: "on", label: "开启" },
   { value: "off", label: "关闭" },
+];
+
+const LINK_ACTIVATION_OPTIONS: { value: TerminalLinkActivation; label: string }[] = [
+  { value: "modifier", label: "Ctrl/Cmd+单击" },
+  { value: "click", label: "单击" },
 ];
 
 const DEFAULT_MODE_OPTIONS: { value: TerminalDefaultMode; label: string }[] = [
@@ -752,6 +759,28 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                 "使用 WebGL 渲染终端；检测到软件渲染（如虚拟机或远程桌面）时改用兼容渲染。GPU 多次失效时自动回退。"}
               {terminalPrefs.gpuAcceleration === "on" && "始终尝试 WebGL 渲染，包括软件渲染环境。GPU 多次失效时仍会回退。"}
               {terminalPrefs.gpuAcceleration === "off" && "始终使用兼容渲染（DOM），不占用 GPU。"}
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <div className="nx-setting-label mb-1.5" data-setting="terminal-link-activation">链接打开方式</div>
+            <div className="nx-segment" role="group" aria-label="链接打开方式">
+              {LINK_ACTIVATION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`nx-segment-item ${terminalPrefs.linkActivation === option.value ? "is-active" : ""}`}
+                  aria-pressed={terminalPrefs.linkActivation === option.value}
+                  onClick={() => setTerminalLinkActivation(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="nx-hint mt-1.5">
+              {terminalPrefs.linkActivation === "modifier"
+                ? "按住 Ctrl（macOS 为 Cmd）单击终端中的网址或 OSC 8 超链接时打开；直接单击仍可选择文本。触屏设备长按链接可打开或复制。"
+                : "单击终端中的网址或 OSC 8 超链接即打开。"}
+              {" "}http/https 与 mailto 链接用系统程序打开，本会话主机上的 file:// 链接在 NexTerm 中打开，其他协议需要确认。
             </p>
           </div>
           {showCloseToTray && (

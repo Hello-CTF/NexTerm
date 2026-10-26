@@ -90,6 +90,7 @@ export {
   openCredentialsSidebar,
   openCredentialsTab,
   openFileTab,
+  openDirectoryTab,
   openFileTabInSplit,
   openLogTab,
   openTerminalTab,

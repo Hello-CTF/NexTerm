@@ -218,6 +218,18 @@ export function openFileTabInSplit(sessionId: string, path: string) {
   useUi.getState().openInLowerPane(fileTabSpec(sessionId, path, baseName(path)));
 }
 
+// openDirectoryTab opens a file browser tab at a directory of the session.
+export function openDirectoryTab(sessionId: string, path: string) {
+  useUi.getState().addTab({
+    id: nextTabId(`files-${sessionId}`),
+    kind: "files",
+    title: baseName(path) || path,
+    sessionId,
+    pendingDirectory: path,
+    closable: true,
+  });
+}
+
 export function openLogTab(sessionId: string, path: string) {
   useUi.getState().addTab({
     id: `log-${sessionId}-${path}`,

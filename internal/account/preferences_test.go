@@ -43,6 +43,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"terminal.closeAction",
 		"terminal.defaultMode",
 		"terminal.gpuAcceleration",
+		"terminal.linkActivation",
 		"terminal.durableHistoryMiB",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
@@ -135,6 +136,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.closeAction":          `"kill"`,
 		"terminal.defaultMode":          `"regular"`,
 		"terminal.gpuAcceleration":      `"off"`,
+		"terminal.linkActivation":       `"click"`,
 		"keybinding.closeTab":           `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":      "null",
 		"keybinding.reclaimTakeover":    `"Mod+Shift+s"`,
@@ -157,6 +159,12 @@ func TestValidatePreferenceValue(t *testing.T) {
 			t.Errorf("terminal font %q=(%q,%v)", value, got, err)
 		}
 	}
+	for _, value := range []string{"modifier", "click"} {
+		got, err := validatePreferenceValue("terminal.linkActivation", json.RawMessage(strconv.Quote(value)))
+		if err != nil || got != strconv.Quote(value) {
+			t.Errorf("terminal link activation %q=(%q,%v)", value, got, err)
+		}
+	}
 	for _, value := range []string{"standard", "high", "maximum"} {
 		got, err := validatePreferenceValue("appearance.terminalContrast", json.RawMessage(strconv.Quote(value)))
 		if err != nil || got != strconv.Quote(value) {
@@ -175,6 +183,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.closeAction":          {`"background"`, "1", "null", "true"},
 		"terminal.defaultMode":          {`"auto"`, `"persistent"`, "1", "null", "true"},
 		"terminal.gpuAcceleration":      {`"webgl"`, `"Auto"`, "1", "null", "true"},
+		"terminal.linkActivation":       {`"ctrl"`, `"Click"`, `"double"`, "1", "null", "true"},
 		"keybinding.closeTab":           {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {

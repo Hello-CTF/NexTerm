@@ -118,7 +118,7 @@ describe("attachLazyAddons", () => {
   it("loads search and links, and runs a search issued before the addon arrived", async () => {
     const { attachLazyAddons } = await loadModule({});
     const term = fakeTerm();
-    const api = attachLazyAddons(term as never, () => undefined, () => false);
+    const api = attachLazyAddons(term as never, { handler: () => undefined }, () => false);
     api.findNext("needle");
     await flushUntil(() => term.loadAddon.mock.calls.length === 2);
     const search = term.loadAddon.mock.calls
@@ -134,7 +134,7 @@ describe("attachLazyAddons", () => {
     };
     const { attachLazyAddons } = await loadModule({ search: fail, links: fail });
     const term = fakeTerm();
-    const api = attachLazyAddons(term as never, () => undefined, () => false);
+    const api = attachLazyAddons(term as never, { handler: () => undefined }, () => false);
     expect(() => api.findNext("x")).not.toThrow();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(term.loadAddon).not.toHaveBeenCalled();

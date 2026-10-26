@@ -169,6 +169,8 @@ export function useCwdFollow(
   memoryKey: string | null,
   apply: (next: string) => void,
   control?: CwdFollowControl,
+  // A consumer opened at an explicit path treats the cwd at mount as already followed.
+  skipCurrent = false,
 ): {
   supported: boolean;
   enabled: boolean;
@@ -184,7 +186,9 @@ export function useCwdFollow(
   const sessionCwd = useFollowedCwd(sessionId);
   const enabled = control ? control.attached : preferenceEnabled;
   const followed = control ? control.cwd : sessionCwd;
-  const lastFollowed = useRef<string>((memoryKey && followMemory.get(memoryKey)) || NEVER);
+  const lastFollowed = useRef<string>(
+    (skipCurrent && followed) || (memoryKey && followMemory.get(memoryKey)) || NEVER,
+  );
   const applyRef = useRef(apply);
   applyRef.current = apply;
   const currentRef = useRef(current);

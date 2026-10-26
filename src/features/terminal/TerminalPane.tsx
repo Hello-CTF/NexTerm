@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
-import { XtermView, type TerminalHandle } from "./XtermView";
+import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./XtermView";
+import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
@@ -1666,6 +1667,31 @@ export function TerminalPane({
     setMenu({ x: r.left, y: r.bottom, title: "终端操作", items: buildToolbarOverflowMenu() });
   };
 
+  // Link actions for the terminal menu: right-click on a hovered link, or a
+  // touch long-press on one (touch has no modifier for opening).
+  const buildLinkMenu = (uri: string): MenuItem[] => [
+    { kind: "group", label: "链接" },
+    {
+      kind: "item",
+      label: "打开链接",
+      onSelect: () => handleRef.current?.openLink(uri),
+    },
+    {
+      kind: "item",
+      label: "复制链接",
+      icon: <IconCopy size={13} />,
+      onSelect: () =>
+        void copyText(cleanTerminalLink(uri)).then(
+          () => pushToast("success", "已复制链接"),
+          (e: unknown) => pushToast("error", `复制链接失败：${describeError(e)}`),
+        ),
+    },
+  ];
+
+  const openLinkMenu = (request: TerminalLinkMenuRequest) => {
+    setMenu({ x: request.x, y: request.y, title: displayTerminalLink(request.uri), items: buildLinkMenu(request.uri) });
+  };
+
   const buildTerminalMenu = (): MenuItem[] => {
     const selected = (handleRef.current?.getSelection() ?? "").trim();
     const hasSel = selected.length > 0;
@@ -1805,11 +1831,12 @@ export function TerminalPane({
   const openTerminalMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     const selected = (handleRef.current?.getSelection() ?? "").trim();
+    const link = handleRef.current?.hoveredLink?.() ?? null;
     setMenu({
       x: e.clientX,
       y: e.clientY,
-      title: selected ? selected.split("\n")[0].slice(0, 80) : title,
-      items: buildTerminalMenu(),
+      title: link ? displayTerminalLink(link) : selected ? selected.split("\n")[0].slice(0, 80) : title,
+      items: link ? [...buildLinkMenu(link), { kind: "separator" }, ...buildTerminalMenu()] : buildTerminalMenu(),
     });
   };
 
@@ -2192,6 +2219,7 @@ export function TerminalPane({
               onSelectionCopy={handleSelectionCopy}
               onRequestPaste={() => void pasteIntoTerminal()}
               onTouchTap={() => takeTapForComposer(composerRef.current)}
+              onLinkMenu={openLinkMenu}
               registerSearch={(api) => {
                 searchApi.current = api;
               }}

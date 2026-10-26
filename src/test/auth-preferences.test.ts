@@ -9,6 +9,7 @@ import {
   setTerminalDefaultMode,
   setTerminalCloseAction,
   setTerminalGpuAcceleration,
+  setTerminalLinkActivation,
   subscribeTerminalPrefs,
   type AccountPreferenceStore,
   type AccountPreferenceView,
@@ -331,6 +332,39 @@ describe("terminal GPU acceleration preference", () => {
     registerAccountPreferenceStore(memoryStore({ "terminal.gpuAcceleration": "webgl" }));
     await flushMacrotask();
     expect(getTerminalPrefs().gpuAcceleration).toBe("auto");
+  });
+});
+
+describe("terminal link activation preference", () => {
+  afterEach(() => registerAccountPreferenceStore(null));
+
+  it("defaults to modifier-click and round-trips through the account store", async () => {
+    registerAccountPreferenceStore(null);
+    window.localStorage.clear();
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().linkActivation).toBe("modifier");
+    const store = memoryStore({});
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    const changed = vi.fn();
+    const unsubscribe = subscribeTerminalPrefs(changed);
+    setTerminalLinkActivation("click");
+    setTerminalLinkActivation("click");
+    unsubscribe();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(store.puts).toEqual([{ "terminal.linkActivation": "click" }]);
+
+    registerAccountPreferenceStore(null);
+    window.localStorage.clear();
+    registerAccountPreferenceStore(memoryStore({ ...store.data }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().linkActivation).toBe("click");
+  });
+
+  it("ignores unknown stored values", async () => {
+    registerAccountPreferenceStore(memoryStore({ "terminal.linkActivation": "double" }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().linkActivation).toBe("modifier");
   });
 });
 

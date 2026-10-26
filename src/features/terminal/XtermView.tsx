@@ -5,10 +5,10 @@ import { attachTerminalInput } from "./terminalInput/attachTerminalInput";
 import { kittyKeyboardSwitch } from "./terminalInput/kittyKeyboard";
 import { applyStickyModifiersToTyped } from "./terminalInput/stickyModifiers";
 import "@xterm/xterm/css/xterm.css";
+import "./terminalLinks.css";
 
 import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen, sendChannelInput } from "../../ipc/events";
 import { WEB, clientId } from "../../ipc/env";
-import { openExternalURL } from "../../ipc/wails";
 import { assetApi, call, dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
@@ -38,6 +38,13 @@ import {
 } from "./terminalStream";
 import { terminalOutputScheduler, type ScheduledTerminalOutput } from "./outputScheduler";
 import { createTerminalResponseLimiter } from "./terminalResponses";
+import {
+  attachLinkLongPress,
+  createTerminalLinkController,
+  openTerminalLink,
+  type TerminalLinkMenuRequest,
+} from "./terminalLinks";
+import { terminalLinkDeps } from "./terminalLinkActions";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
@@ -90,7 +97,13 @@ export interface TerminalHandle {
   /** Sends text as a paste (bracketed when the terminal enabled it), followed by Enter when submit is set. */
   paste: (text: string, submit?: boolean) => void;
   dimensions: () => { cols: number; rows: number };
+  // The link target (URL or OSC 8 target) under the pointer, if any.
+  hoveredLink: () => string | null;
+  // Opens a link through the terminal link policy, without a modifier check.
+  openLink: (uri: string) => void;
 }
+
+export type { TerminalLinkMenuRequest } from "./terminalLinks";
 
 export interface XtermViewProps {
   sessionId: string;
@@ -141,6 +154,7 @@ export interface XtermViewProps {
    * field); otherwise the terminal takes focus, which opens the soft keyboard.
    */
   onTouchTap?: () => boolean;
+  onLinkMenu?: (request: TerminalLinkMenuRequest) => void;
 }
 
 // The scrollback badge subscribes to the per-tab view store with the narrow selector:
@@ -189,6 +203,7 @@ export function XtermView(props: XtermViewProps) {
   const onPasteFilesRef = useRef(props.onPasteFiles);
   const onRequestPasteRef = useRef(props.onRequestPaste);
   const onTouchTapRef = useRef(props.onTouchTap);
+  const onLinkMenuRef = useRef(props.onLinkMenu);
   const registerSearchRef = useRef(props.registerSearch);
   // Mount-effect inputs that must not rebuild the terminal when they change:
   // visibility and resize updates flow through their dedicated effects, and
@@ -211,6 +226,7 @@ export function XtermView(props: XtermViewProps) {
   onPasteFilesRef.current = props.onPasteFiles;
   onRequestPasteRef.current = props.onRequestPaste;
   onTouchTapRef.current = props.onTouchTap;
+  onLinkMenuRef.current = props.onLinkMenu;
   registerSearchRef.current = props.registerSearch;
   visibleRef.current = props.visible;
   canResizeRef.current = props.canResize;
@@ -246,6 +262,20 @@ export function XtermView(props: XtermViewProps) {
     if (!hostRef.current || termRef.current) return;
     const appearance = getAppearancePrefs();
     const kittyKeyboard = kittyKeyboardSwitch();
+    const linkHost = hostRef.current;
+    // The host the session's shell reports through OSC 7 (file://host/cwd).
+    // The first report is the login shell's; a nested ssh reporting another
+    // host later must not redirect file links to the wrong machine.
+    let sessionHost: string | null = null;
+    const openLink = (uri: string) => {
+      void openTerminalLink(uri, terminalLinkDeps(sessionId, containerId, () => sessionHost));
+    };
+    const links = createTerminalLinkController({
+      tooltipHost: () => linkHost,
+      cursorHost: linkHost,
+      activation: () => getTerminalPrefs().linkActivation,
+      open: openLink,
+    });
     const term = new Terminal({
       scrollback: 100_000,
       allowProposedApi: true,
@@ -256,8 +286,21 @@ export function XtermView(props: XtermViewProps) {
       cursorBlink: visibleRef.current !== false,
       theme: { ...xtermThemeFor(getResolvedTerminalTheme(), appearance.terminalContrast), cursor: accentColor() },
       vtExtensions: { kittyKeyboard },
+      linkHandler: links.linkHandler,
     });
     termRef.current = term;
+    const osc7Disposable = term.parser.registerOscHandler(7, (data) => {
+      if (sessionHost === null) {
+        try {
+          const url = new URL(data);
+          if (url.protocol === "file:" && url.hostname) sessionHost = url.hostname;
+        } catch {
+          // Not a URL: nothing to learn.
+        }
+      }
+      // Leave the sequence to any other handler.
+      return false;
+    });
     term.open(hostRef.current);
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
     const detachTerminalInput = attachTerminalInput(term, hostRef.current, { kittyKeyboard });
@@ -266,15 +309,7 @@ export function XtermView(props: XtermViewProps) {
     let disposed = false;
     const search = attachLazyAddons(
       term,
-      (event, uri) => {
-        event.preventDefault();
-        if (!/^https?:\/\//i.test(uri)) return;
-        if (WEB) {
-          window.open(uri, "_blank", "noopener,noreferrer");
-        } else {
-          void openExternalURL(uri);
-        }
-      },
+      { handler: links.webLinkHandler, options: links.webLinkOptions },
       () => disposed,
     );
     const webgl = scheduleWebglRenderer(term, () => disposed, {
@@ -357,6 +392,8 @@ export function XtermView(props: XtermViewProps) {
       paste: (text, submit = false) =>
         sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text),
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
+      hoveredLink: () => links.hovered(),
+      openLink,
     });
 
     let ephemeral: boolean | undefined;
@@ -1236,6 +1273,18 @@ export function XtermView(props: XtermViewProps) {
     pasteHost.addEventListener("touchmove", onTapMove, true);
     pasteHost.addEventListener("touchend", onTapEnd, true);
     pasteHost.addEventListener("touchcancel", onTapCancel, true);
+    // Touch has no modifier keys: a long press on a link offers it in the
+    // terminal menu instead. xterm's link detection runs on mouse movement, so
+    // a mousemove at the touch point asks it for the link under the finger.
+    const detachLinkLongPress = attachLinkLongPress(pasteHost, {
+      probe: (x, y) => {
+        term.element
+          ?.querySelector(".xterm-screen")
+          ?.dispatchEvent(new MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true }));
+        return links.hovered();
+      },
+      onLinkMenu: (request) => onLinkMenuRef.current?.(request),
+    });
     const updateSelectionBar = () => {
       if (!isCoarsePointerDevice() || !term.getSelection()) {
         touchSeen = false;
@@ -1351,6 +1400,9 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("touchmove", onTapMove, true);
       pasteHost.removeEventListener("touchend", onTapEnd, true);
       pasteHost.removeEventListener("touchcancel", onTapCancel, true);
+      detachLinkLongPress();
+      osc7Disposable.dispose();
+      links.dispose();
       dataDisposable.dispose();
       detachTerminalInput();
       scrollDisposable.dispose();
