@@ -209,6 +209,59 @@ func TestFallbackHostOnlyRetriesUnavailableSFTP(t *testing.T) {
 	}
 }
 
+func TestFallbackHostUploadSwitchesWhenFileNotVisibleToExec(t *testing.T) {
+	primary := newTransferFakeHost()
+	primary.uploadDigest = "digest"
+	execView := newTransferFakeHost()
+	execView.uploadDigest = "digest"
+	host := NewFallbackHost(primary, execView)
+	if _, err := host.Upload(t.Context(), "local", "remote"); err != nil {
+		t.Fatal(err)
+	}
+	if len(primary.uploads) != 1 || len(primary.deletes) != 1 {
+		t.Fatalf("split SFTP upload was not cleaned up: uploads=%v deletions=%v", primary.uploads, primary.deletes)
+	}
+	if _, exists := primary.files["remote"]; exists {
+		t.Fatal("invisible SFTP upload remained after cleanup")
+	}
+	if len(execView.uploads) != 1 || execView.files["remote"] != "digest" {
+		t.Fatalf("exec upload = uploads %v, files %v", execView.uploads, execView.files)
+	}
+	if _, err := host.Upload(t.Context(), "local", "second"); err != nil {
+		t.Fatal(err)
+	}
+	if len(primary.uploads) != 1 || len(execView.uploads) != 2 {
+		t.Fatalf("exec fallback was not sticky: primary=%v exec=%v", primary.uploads, execView.uploads)
+	}
+}
+
+func TestFallbackHostUploadAllowsMissingInvisiblePrimaryCleanup(t *testing.T) {
+	primary := newTransferFakeHost()
+	primary.deleteErr = fs.ErrNotExist
+	execView := newTransferFakeHost()
+	host := NewFallbackHost(primary, execView)
+	if _, err := host.Upload(t.Context(), "local", "remote"); err != nil {
+		t.Fatal(err)
+	}
+	if len(execView.uploads) != 1 {
+		t.Fatalf("exec uploads = %v, want one after an already-missing primary upload", execView.uploads)
+	}
+}
+
+func TestParseExecExistenceHandlesSuppressedExitStatus(t *testing.T) {
+	path := "/root/.local/share/nexterm/bin/helper"
+	stdout := "stat: cannot statx '" + path + "': No such file or directory\n"
+	exists, err := parseExecExistence(Target{GOOS: "linux"}, path, stdout)
+	if err != nil || exists {
+		t.Fatalf("missing helper = exists %t, error %v", exists, err)
+	}
+	for _, unexpected := range []string{"", "stat: cannot statx '/another/path': No such file or directory\n", "stat: permission denied\n"} {
+		if _, err := parseExecExistence(Target{GOOS: "linux"}, path, unexpected); !errors.Is(err, ErrProtocol) {
+			t.Fatalf("unexpected existence output %q produced error %v; want protocol failure", unexpected, err)
+		}
+	}
+}
+
 type fakeExecOpener struct {
 	channel *fakeExecChannel
 	command string

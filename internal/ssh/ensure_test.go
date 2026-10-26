@@ -82,6 +82,21 @@ func (h spawnProcessHost) Run(ctx context.Context, command string, _ time.Durati
 	return string(output), 0, err
 }
 
+type zeroExitStatusHost struct{ Host }
+
+func (h zeroExitStatusHost) Run(ctx context.Context, command string, timeout time.Duration) (string, int, error) {
+	stdout, _, err := h.Host.Run(ctx, command, timeout)
+	return stdout, 0, err
+}
+
+func TestInspectHelperProcessHandlesMissingProcessWithSuppressedExitStatus(t *testing.T) {
+	host := zeroExitStatusHost{Host: spawnProcessHost{fakeHost: &fakeHost{}}}
+	_, err := inspectHelperProcess(t.Context(), host, Target{GOOS: "linux"}, filepath.Join(t.TempDir(), "daemon"))
+	if !errors.Is(err, errHelperProcessNotFound) {
+		t.Fatalf("inspectHelperProcess error = %v; want helper process not found", err)
+	}
+}
+
 const (
 	spawnHelperModeEnv = "NEXTERM_SSH_SPAWN_HELPER_MODE"
 	spawnHelperPIDEnv  = "NEXTERM_SSH_SPAWN_HELPER_PID"
