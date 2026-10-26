@@ -24,8 +24,8 @@ type Session struct {
 	identity   Identity
 	attempt    string
 
-	pty       *pty.Session
-	recording *os.File
+	pty     *pty.Session
+	history *history
 
 	// exec is set for one-shot non-PTY sessions; pty and recording are nil.
 	exec *execState
@@ -65,7 +65,7 @@ const (
 	maxInputChunkLen = 256 * 1024
 )
 
-func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySession *pty.Session, recording *os.File) *Session {
+func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySession *pty.Session, recording *history) *Session {
 	now := time.Now()
 	incarnation := ids.New()
 	entry := registryEntry{
@@ -79,13 +79,16 @@ func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySes
 		Dir:         options.Dir,
 		Running:     true,
 	}
+	if recording != nil {
+		entry.HistoryLimit = recording.limit
+	}
 	return &Session{
 		supervisor:  supervisor,
 		entry:       entry,
 		identity:    Identity{CreatedAt: now, Incarnation: incarnation},
 		attempt:     options.Attempt,
 		pty:         ptySession,
-		recording:   recording,
+		history:     recording,
 		attachments: make(map[*Attachment]struct{}),
 		inputQueue:  make(chan []byte, inputQueueSlots),
 		inputDone:   make(chan struct{}),
@@ -110,6 +113,7 @@ func newRecoveredSession(supervisor *Supervisor, entry registryEntry) *Session {
 		entry:       entry,
 		identity:    Identity{CreatedAt: entry.CreatedAt, Incarnation: entry.Incarnation},
 		attempt:     entry.Attempt,
+		history:     loadHistory(sessionDir(supervisor.stateDir, entry.ID), recoveredHistoryLimit(entry.HistoryLimit)),
 		attachments: make(map[*Attachment]struct{}),
 		inputQueue:  make(chan []byte, inputQueueSlots),
 		inputDone:   make(chan struct{}),
@@ -164,7 +168,25 @@ func (s *Session) infoLocked() Info {
 		finished := *s.entry.FinishedAt
 		info.FinishedAt = &finished
 	}
+	s.historyInfo(&info)
 	return info
+}
+
+// historyInfo fills the recorded output bounds of info.
+func (s *Session) historyInfo(info *Info) {
+	if s.history == nil {
+		return
+	}
+	info.HistoryBase, info.HistoryNext = s.history.bounds()
+	info.HistoryLimit = s.history.limit
+	info.HistoryTruncated = info.HistoryBase > 0
+}
+
+func recoveredHistoryLimit(limit uint64) uint64 {
+	if validHistoryLimit(limit) != nil {
+		return DefaultHistoryLimit
+	}
+	return limit
 }
 
 func (s *Session) Write(p []byte) (int, error) {
@@ -309,42 +331,151 @@ func (s *Session) Wait(ctx context.Context) error {
 	}
 }
 
-func (s *Session) attach(offset uint64) (*Attachment, error) {
+func (s *Session) attach(options AttachOptions) (*Attachment, error) {
 	if s.exec != nil {
 		return nil, fmt.Errorf("%w: non-PTY exec sessions are not attachable", ErrUnsupported)
 	}
-	replay, err := openRecording(recordingPath(s.supervisor.stateDir, s.entry.ID))
+	if err := s.history.usable(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	var replay ReplayInfo
+	var err error
+	for attempt := 0; ; attempt++ {
+		replay, err = s.planReplay(options)
+		if !errors.Is(err, errHistoryEvicted) {
+			break
+		}
+		if attempt == 3 {
+			return nil, fmt.Errorf("%w: recorded output is evicted faster than it can be replayed", ErrUnavailable)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	if offset > 0 {
-		size, err := replay.Seek(0, io.SeekEnd)
-		if err != nil {
-			_ = replay.Close()
-			return nil, fmt.Errorf("%w: size supervisor recording: %v", ErrUnavailable, err)
-		}
-		if offset > uint64(size) {
-			_ = replay.Close()
-			return nil, fmt.Errorf("%w: attach offset %d beyond supervisor recording size %d", ErrInvalidInput, offset, size)
-		}
-		if _, err := replay.Seek(int64(offset), io.SeekStart); err != nil {
-			_ = replay.Close()
-			return nil, fmt.Errorf("%w: seek supervisor recording: %v", ErrUnavailable, err)
-		}
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	attachment := &Attachment{
-		session: s,
-		replay:  replay,
-		nextSeq: offset,
-		notify:  make(chan struct{}, 1),
-		ctx:     ctx,
-		cancel:  cancel,
+		session:   s,
+		replay:    s.history.newReader(replay.ReplayFrom),
+		nextSeq:   replay.ReplayFrom,
+		replayEnd: replay.HistoryNext,
+		result:    replay,
+		notify:    make(chan struct{}, 1),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 	s.mu.Lock()
 	s.attachments[attachment] = struct{}{}
 	s.mu.Unlock()
 	return attachment, nil
+}
+
+// planReplay chooses where an attach starts streaming. A resume (no Tail)
+// starts at the requested offset, or at the first safe boundary at or after
+// the history base when that offset was evicted (Truncated). A tail attach
+// displays from a safe boundary within the last Tail bytes; with Retain it
+// streams from the earlier requested offset (clamped to the base) so the
+// caller can record the bytes it does not display.
+//
+// A tail starts at a line boundary, so a shell's scrollback renders as it
+// would after a full replay. The prelude restores the screen buffer and input
+// modes set before the tail; screen content drawn before it by a full-screen
+// program with cursor addressing is not restored until the program repaints,
+// which most do on their next update or on SIGWINCH. Modes set before the
+// history base are unknown and left at their defaults.
+func (s *Session) planReplay(options AttachOptions) (ReplayInfo, error) {
+	base, next := s.history.bounds()
+	if (options.Tail == 0 || options.Retain) && options.Offset > next {
+		return ReplayInfo{}, fmt.Errorf("%w: attach offset %d beyond supervisor recording size %d", ErrInvalidInput, options.Offset, next)
+	}
+	replay := ReplayInfo{HistoryBase: base, HistoryNext: next}
+	if options.Tail == 0 {
+		replay.ReplayFrom = options.Offset
+		if options.Offset < base {
+			start, err := s.history.safeStartFrom(base)
+			if err != nil {
+				return ReplayInfo{}, err
+			}
+			replay.ReplayFrom = start
+			replay.Truncated = true
+		}
+		replay.DisplayFrom = replay.ReplayFrom
+		return replay, nil
+	}
+	low := base
+	if next-base > options.Tail {
+		low = next - options.Tail
+	}
+	display, err := s.history.safeStartFrom(low)
+	if err != nil {
+		return ReplayInfo{}, err
+	}
+	replay.DisplayFrom = display
+	replay.ReplayFrom = display
+	if options.Retain && options.Offset < display {
+		replay.ReplayFrom = max(options.Offset, base)
+		replay.Truncated = options.Offset < base
+	}
+	if display > 0 {
+		prelude, err := s.history.modesPreludeAt(display)
+		if err != nil {
+			return ReplayInfo{}, err
+		}
+		replay.Prelude = prelude
+	}
+	return replay, nil
+}
+
+// readHistory returns retained bytes ending at before, at most maxBytes, with
+// the start moved forward to a safe boundary unless it is offset zero.
+func (s *Session) readHistory(before uint64, maxBytes int) (HistoryChunk, error) {
+	if s.exec != nil {
+		return HistoryChunk{}, fmt.Errorf("%w: non-PTY exec sessions have no history", ErrUnsupported)
+	}
+	if err := s.history.usable(); err != nil {
+		return HistoryChunk{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	if maxBytes <= 0 || maxBytes > MaxHistoryRead {
+		maxBytes = MaxHistoryRead
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		base, next := s.history.bounds()
+		if before > next {
+			return HistoryChunk{}, fmt.Errorf("%w: history read end %d beyond supervisor recording size %d", ErrInvalidInput, before, next)
+		}
+		chunk := HistoryChunk{HistoryBase: base, HistoryNext: next, Start: before, End: before}
+		if before <= base {
+			chunk.Truncated = base > 0
+			return chunk, nil
+		}
+		start := base
+		if before-base > uint64(maxBytes) {
+			start = before - uint64(maxBytes)
+		}
+		data := make([]byte, before-start)
+		count, ok, err := s.history.readAt(start, data)
+		if err != nil {
+			return HistoryChunk{}, err
+		}
+		if !ok || count < len(data) {
+			continue
+		}
+		skip := 0
+		if start > 0 {
+			skip = safeReplayStart(data)
+			if skip == len(data) && start > base {
+				// No safe boundary at all: return the window unadjusted so
+				// a reader walking backwards keeps making progress.
+				skip = 0
+			}
+		}
+		chunk.Start = start + uint64(skip)
+		chunk.Data = data[skip:]
+		// At the base, the partial sequence before the first safe boundary
+		// is dropped with the output before the base.
+		chunk.Truncated = start == base && base > 0
+		return chunk, nil
+	}
+	return HistoryChunk{}, fmt.Errorf("%w: recorded output is evicted faster than it can be read", ErrUnavailable)
 }
 
 func (s *Session) removeAttachment(attachment *Attachment) {
@@ -438,8 +569,8 @@ func execExitStatus(err error) error {
 }
 
 func (s *Session) record(chunk []byte) {
-	if _, err := s.recording.Write(chunk); err != nil {
-		s.setRecErr(fmt.Errorf("%w: write supervisor recording: %v", ErrUnavailable, err))
+	if err := s.history.append(chunk); err != nil {
+		s.setRecErr(err)
 	}
 	s.notifyAll()
 }
@@ -480,11 +611,8 @@ func (s *Session) finish(waitErr error) {
 		}
 		s.mu.Unlock()
 		var closeErr error
-		if s.recording != nil {
-			closeErr = s.recording.Close()
-			if errors.Is(closeErr, os.ErrClosed) {
-				closeErr = nil
-			}
+		if s.history != nil {
+			closeErr = s.history.closeWriter()
 		}
 		close(s.deadCh)
 		s.stopInput()

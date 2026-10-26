@@ -48,7 +48,7 @@ func TestOutputContinuesAfterClientDisconnect(t *testing.T) {
 	output := string(readUntil(t, reattached, "late-marker"))
 	assertOrderedOnce(t, output, "boot", "detached-marker", "late-marker")
 
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestReattachReplayWithoutDuplicationOrRollback(t *testing.T) {
 	}
 	assertOrderedOnce(t, output, markers...)
 
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestReplayStaysCompleteAcrossChunkBoundaries(t *testing.T) {
 	output := string(readToEOF(t, attachment))
 	assertOrderedOnce(t, output, "head-marker", "tail-marker")
 
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestCanonicalMetadataConsistentAcrossInfoSurfaces(t *testing.T) {
 func TestRenameConcurrentAttachmentIDAndVersions(t *testing.T) {
 	supervisor := testSupervisor(t)
 	session := testScriptSession(t, supervisor, `sleep 30`)
-	attachment, err := session.attach(0)
+	attachment, err := session.attach(AttachOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +523,7 @@ func TestRenameConcurrentAttachmentIDAndVersions(t *testing.T) {
 func TestVersionsMonotonicFloor(t *testing.T) {
 	supervisor := testSupervisor(t)
 	session := testScriptSession(t, supervisor, `sleep 5`)
-	attachment, err := session.attach(0)
+	attachment, err := session.attach(AttachOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -729,7 +729,7 @@ func TestPrivateDirsAndFiles(t *testing.T) {
 	}
 	for _, path := range []string{
 		entryPath(supervisor.StateDir(), session.ID()),
-		recordingPath(supervisor.StateDir(), session.ID()),
+		historySegmentPath(sessionDir(supervisor.StateDir(), session.ID()), 0),
 	} {
 		info, err := os.Lstat(path)
 		if err != nil {

@@ -56,6 +56,14 @@ const (
 	// frameOutputZstd is a live output chunk compressed per frame; see
 	// output_zstd.go. Only sent to clients that asked for compressed output.
 	frameOutputZstd
+	// frameHistoryGap tells an attached client that the output between two
+	// offsets (8-byte big-endian each) was dropped by the history limit
+	// before it was streamed; the stream continues at the second offset.
+	frameHistoryGap
+	// frameReadHistory asks for recorded output without attaching
+	// (readHistoryMsg); frameHistory answers with historyPayload.
+	frameReadHistory
+	frameHistory
 )
 
 // Every connection uses windowed input and credited output. The client may keep
@@ -111,6 +119,9 @@ type createMsg struct {
 	Env     []string `json:"env,omitempty"`
 	Cols    uint32   `json:"cols,omitempty"`
 	Rows    uint32   `json:"rows,omitempty"`
+	// HistoryLimit bounds the session's recorded output; zero uses the
+	// helper default.
+	HistoryLimit uint64 `json:"history_limit,omitempty"`
 	// Pty is nil or true for a PTY session; false requests a one-shot non-PTY
 	// exec session.
 	Pty *bool `json:"pty,omitempty"`
@@ -125,8 +136,31 @@ type attachMsg struct {
 	// observed the session in.
 	ExpectGeneration string `json:"expect_generation,omitempty"`
 	// Offset is the absolute byte offset of the recording the client has
-	// consumed; the server seeks there and resumes.
+	// consumed; the server seeks there and resumes. An offset that was
+	// dropped by the history limit resumes after the history base and the
+	// reply reports truncated.
 	Offset uint64 `json:"offset,omitempty"`
+	// Tail and Retain request a fresh open; see AttachOptions.
+	Tail   uint64 `json:"tail,omitempty"`
+	Retain bool   `json:"retain,omitempty"`
+}
+
+// attachedMsg answers frameAttach: the session info and where the stream
+// starts.
+type attachedMsg struct {
+	Info
+	Replay ReplayInfo `json:"replay"`
+}
+
+type readHistoryMsg struct {
+	ID                string `json:"id"`
+	ExpectCreatedAt   int64  `json:"expect_created_at_unix_nano"`
+	ExpectIncarnation string `json:"expect_incarnation"`
+	ExpectGeneration  string `json:"expect_generation,omitempty"`
+	// Before is the exclusive end offset; at most MaxBytes before it are
+	// returned.
+	Before   uint64 `json:"before"`
+	MaxBytes int    `json:"max_bytes,omitempty"`
 }
 
 type killSessionMsg struct {
@@ -391,6 +425,53 @@ func parseInput(payload []byte) (generation, incarnation string, data []byte, er
 		payload = payload[1+size:]
 	}
 	return fields[0], fields[1], payload, nil
+}
+
+func gapPayload(from, to uint64) []byte {
+	payload := make([]byte, 16)
+	binary.BigEndian.PutUint64(payload, from)
+	binary.BigEndian.PutUint64(payload[8:], to)
+	return payload
+}
+
+func parseGap(payload []byte) (from, to uint64, err error) {
+	if len(payload) != 16 {
+		return 0, 0, fmt.Errorf("%w: history gap frame of %d bytes", ErrProtocol, len(payload))
+	}
+	from, to = binary.BigEndian.Uint64(payload), binary.BigEndian.Uint64(payload[8:])
+	if to < from {
+		return 0, 0, fmt.Errorf("%w: history gap runs backwards", ErrProtocol)
+	}
+	return from, to, nil
+}
+
+// historyPayload is a four-byte header length, the JSON HistoryChunk and the
+// raw bytes.
+func historyPayload(chunk HistoryChunk) ([]byte, error) {
+	header, err := json.Marshal(chunk)
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode history: %v", ErrProtocol, err)
+	}
+	payload := make([]byte, 4, 4+len(header)+len(chunk.Data))
+	binary.BigEndian.PutUint32(payload, uint32(len(header)))
+	payload = append(payload, header...)
+	return append(payload, chunk.Data...), nil
+}
+
+func parseHistory(payload []byte) (HistoryChunk, error) {
+	if len(payload) < 4 || uint64(len(payload)-4) < uint64(binary.BigEndian.Uint32(payload)) {
+		return HistoryChunk{}, fmt.Errorf("%w: truncated history frame", ErrProtocol)
+	}
+	size := binary.BigEndian.Uint32(payload)
+	var chunk HistoryChunk
+	if err := unmarshalFrame(payload[4:4+size], &chunk); err != nil {
+		return HistoryChunk{}, err
+	}
+	chunk.Data = append([]byte(nil), payload[4+size:]...)
+	if chunk.Start > chunk.End || chunk.End-chunk.Start != uint64(len(chunk.Data)) || (chunk.HistoryBase > chunk.Start && len(chunk.Data) > 0) || chunk.End > chunk.HistoryNext {
+		return HistoryChunk{}, fmt.Errorf("%w: inconsistent history frame", ErrProtocol)
+	}
+	return chunk, nil
 }
 
 func execOutputPayload(stream byte, data []byte) []byte {

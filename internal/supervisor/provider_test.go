@@ -111,7 +111,7 @@ func TestIPCRecordingErrorTerminatesStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.recording.Close(); err != nil {
+	if err := closeRecordingWriter(session); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,7 +179,7 @@ func TestIPCRecordingErrorUsesFatalFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.recording.Close(); err != nil {
+	if err := closeRecordingWriter(session); err != nil {
 		t.Fatal(err)
 	}
 

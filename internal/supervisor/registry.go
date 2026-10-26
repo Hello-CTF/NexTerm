@@ -45,6 +45,7 @@ type registryEntry struct {
 	ExitCode         *int                    `json:"exit_code,omitempty"`
 	Signal           string                  `json:"signal,omitempty"`
 	FinishedAt       *time.Time              `json:"finished_at,omitempty"`
+	HistoryLimit     uint64                  `json:"history_limit,omitempty"`
 }
 
 func (e registryEntry) info() Info {
@@ -72,6 +73,7 @@ func (s *Session) canonicalInfo() Info {
 	defer s.mu.RUnlock()
 	info := s.entry.info()
 	info.Generation = s.supervisor.generation
+	s.historyInfo(&info)
 	return info
 }
 
@@ -98,7 +100,7 @@ func (s *Supervisor) listCanonical(ctx context.Context) ([]Info, error) {
 
 // attachFrom attaches to id. expected, when set, must match the session's
 // identity; expectGeneration, when set, must be this helper's generation.
-func (s *Supervisor) attachFrom(ctx context.Context, id string, offset uint64, expected *Identity, expectGeneration string) (*Attachment, error) {
+func (s *Supervisor) attachFrom(ctx context.Context, id string, options AttachOptions, expected *Identity, expectGeneration string) (*Attachment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -114,7 +116,26 @@ func (s *Supervisor) attachFrom(ctx context.Context, id string, offset uint64, e
 	if expected != nil && !sameIdentity(*expected, session.Identity()) {
 		return nil, fmt.Errorf("%w: %s", ErrIdentity, id)
 	}
-	return session.attach(offset)
+	return session.attach(options)
+}
+
+// readHistory reads recorded output of id without attaching; expected is
+// required.
+func (s *Supervisor) readHistory(ctx context.Context, id string, before uint64, maxBytes int, expected Identity, expectGeneration string) (HistoryChunk, error) {
+	if err := ctx.Err(); err != nil {
+		return HistoryChunk{}, err
+	}
+	if err := s.checkGeneration(expectGeneration); err != nil {
+		return HistoryChunk{}, fmt.Errorf("%w (session %s)", err, id)
+	}
+	session, err := s.resolveSession(id)
+	if err != nil {
+		return HistoryChunk{}, err
+	}
+	if !sameIdentity(expected, session.Identity()) {
+		return HistoryChunk{}, fmt.Errorf("%w: %s", ErrIdentity, id)
+	}
+	return session.readHistory(before, maxBytes)
 }
 
 func (s *Supervisor) Rename(ctx context.Context, request RenameRequest) (Info, error) {
@@ -202,10 +223,6 @@ func sessionDir(stateDir, id string) string {
 
 func entryPath(stateDir, id string) string {
 	return filepath.Join(sessionDir(stateDir, id), entryName)
-}
-
-func recordingPath(stateDir, id string) string {
-	return filepath.Join(sessionDir(stateDir, id), recordingName)
 }
 
 func versionsPath(stateDir, id string) string {

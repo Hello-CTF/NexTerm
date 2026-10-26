@@ -177,7 +177,7 @@ func TestInFlightReplacementCreateSurvivesIdentityKill(t *testing.T) {
 	if _, err := os.Lstat(entryPath(supervisor.StateDir(), id)); err != nil {
 		t.Fatalf("replacement registry entry must survive: %v", err)
 	}
-	if _, err := os.Lstat(recordingPath(supervisor.StateDir(), id)); err != nil {
+	if _, err := os.Lstat(historySegmentPath(sessionDir(supervisor.StateDir(), id), 0)); err != nil {
 		t.Fatalf("replacement recording must survive: %v", err)
 	}
 	attachment, err := supervisor.Attach(ctx, id)

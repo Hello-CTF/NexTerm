@@ -23,6 +23,7 @@ type Supervisor struct {
 	// it attached before from a crash-recovered record of it.
 	generation     string
 	commandTimeout time.Duration
+	historyLimit   uint64
 	ptyStart       func(context.Context, pty.Config) (*pty.Session, error)
 
 	ctx    context.Context
@@ -51,6 +52,12 @@ func New(config Config) (*Supervisor, error) {
 	if config.CommandTimeout < 0 {
 		return nil, fmt.Errorf("%w: negative command timeout", ErrInvalidInput)
 	}
+	if config.HistoryLimit == 0 {
+		config.HistoryLimit = DefaultHistoryLimit
+	}
+	if err := validHistoryLimit(config.HistoryLimit); err != nil {
+		return nil, err
+	}
 	stateDir, err := filepath.Abs(config.StateDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: state directory: %v", ErrInvalidInput, err)
@@ -70,6 +77,7 @@ func New(config Config) (*Supervisor, error) {
 		stateDir:       stateDir,
 		generation:     ids.New(),
 		commandTimeout: config.CommandTimeout,
+		historyLimit:   config.HistoryLimit,
 		ptyStart:       pty.Start,
 		ctx:            ctx,
 		cancel:         cancel,
@@ -132,7 +140,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		return nil, cause
 	}
 	var session *Session
-	var recording *os.File
+	var recording *history
 	if usePTY {
 		dir := sessionDir(s.stateDir, id)
 		if err := os.Mkdir(dir, 0o700); err != nil {
@@ -141,9 +149,13 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 			}
 			return nil, fmt.Errorf("create supervisor session directory: %w", err)
 		}
-		recording, err = os.OpenFile(recordingPath(s.stateDir, id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		limit := options.HistoryLimit
+		if limit == 0 {
+			limit = s.historyLimit
+		}
+		recording, err = createHistory(dir, limit)
 		if err != nil {
-			return abort(fmt.Errorf("create supervisor recording: %w", err))
+			return abort(err)
 		}
 		launch, wrapped := wrapShellIntegration(options.Command, options.Env)
 		command, commandEnv := options.Command, options.Env
@@ -163,7 +175,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 			if wrapped {
 				launch.cleanup()
 			}
-			_ = recording.Close()
+			_ = recording.closeWriter()
 			return abort(err)
 		}
 		session = newSession(s, options, id, ptySession, recording)
@@ -173,7 +185,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		if err := writeEntry(sessionsRoot(s.stateDir), session.entry); err != nil {
 			session.closeProcess()
 			session.cleanupShell()
-			_ = recording.Close()
+			_ = recording.closeWriter()
 			return abort(err)
 		}
 	} else {
@@ -191,7 +203,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		session.closeProcess()
 		session.cleanupShell()
 		if recording != nil {
-			_ = recording.Close()
+			_ = recording.closeWriter()
 		}
 		if !usePTY {
 			s.pumps.Add(1)
@@ -265,8 +277,15 @@ func (s *Supervisor) Attach(ctx context.Context, id string) (*Attachment, error)
 
 // AttachFrom resumes the session's recorded output from the absolute byte
 // offset instead of replaying the recording from byte zero. An offset beyond
-// the recording size is rejected with ErrInvalidInput.
+// the recording size is rejected with ErrInvalidInput; an offset that was
+// already dropped resumes at the first safe boundary after the history base
+// and the attachment's Replay reports Truncated.
 func (s *Supervisor) AttachFrom(ctx context.Context, id string, offset uint64) (*Attachment, error) {
+	return s.AttachWithOptions(ctx, id, AttachOptions{Offset: offset})
+}
+
+// AttachWithOptions attaches with an explicit replay plan; see AttachOptions.
+func (s *Supervisor) AttachWithOptions(ctx context.Context, id string, options AttachOptions) (*Attachment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -274,7 +293,7 @@ func (s *Supervisor) AttachFrom(ctx context.Context, id string, offset uint64) (
 	if err != nil {
 		return nil, err
 	}
-	return session.attach(offset)
+	return session.attach(options)
 }
 
 func (s *Supervisor) resolveSession(id string) (*Session, error) {

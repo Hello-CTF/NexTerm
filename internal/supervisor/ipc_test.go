@@ -172,7 +172,7 @@ func TestIPCReattachReplayWithoutDuplication(t *testing.T) {
 	}
 	assertOrderedOnce(t, output, markers...)
 
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), id))
+	recording, err := readRecording(supervisor.StateDir(), id)
 	if err != nil {
 		t.Fatal(err)
 	}

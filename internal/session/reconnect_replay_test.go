@@ -226,7 +226,7 @@ func TestReconnectDurableAttachUsesConsumedOffset(t *testing.T) {
 	}
 	waitForTabMarker(t, manager, tabID, "during-marker")
 
-	stat, err := os.Stat(filepath.Join(stateDir, "sessions", tabID, "output.raw"))
+	stat, err := os.Stat(filepath.Join(stateDir, "sessions", tabID, "seg-00000000000000000000.raw"))
 	if err != nil {
 		t.Fatal(err)
 	}

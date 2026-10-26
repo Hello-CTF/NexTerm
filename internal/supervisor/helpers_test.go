@@ -18,7 +18,10 @@ const testReadTimeout = 30 * time.Second
 
 func testSupervisor(t *testing.T) *Supervisor {
 	t.Helper()
-	supervisor, err := New(Config{StateDir: filepath.Join(t.TempDir(), "state"), CommandTimeout: 5 * time.Second})
+	// Flow-control tests stream floods far beyond the default history limit
+	// to slow consumers; they must not see eviction gaps. History tests pass
+	// their own per-session limit.
+	supervisor, err := New(Config{StateDir: filepath.Join(t.TempDir(), "state"), CommandTimeout: 5 * time.Second, HistoryLimit: 256 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +128,27 @@ func readToEOF(t *testing.T, reader io.Reader) []byte {
 		t.Fatal("timed out reading to EOF")
 		return nil
 	}
+}
+
+// readRecording returns the retained recorded output of a session, the
+// segments concatenated in offset order.
+func readRecording(stateDir, id string) ([]byte, error) {
+	recorded := loadHistory(sessionDir(stateDir, id), DefaultHistoryLimit)
+	if err := recorded.usable(); err != nil {
+		return nil, err
+	}
+	base, next := recorded.bounds()
+	data := make([]byte, next-base)
+	count, _, err := recorded.readAt(base, data)
+	return data[:count], err
+}
+
+// closeRecordingWriter closes the active segment so the next recorded chunk
+// fails like a lost disk.
+func closeRecordingWriter(session *Session) error {
+	session.history.mu.Lock()
+	defer session.history.mu.Unlock()
+	return session.history.active.Close()
 }
 
 func countOccurrences(haystack, needle string) int {

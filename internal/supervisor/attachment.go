@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 )
 
@@ -13,8 +12,15 @@ type Attachment struct {
 	session *Session
 
 	replayMu sync.Mutex
-	replay   *os.File
-	nextSeq  uint64
+	replay   *historyReader
+	// nextSeq is the absolute offset of the next byte Read returns. It jumps
+	// forward when the reader fell behind eviction.
+	nextSeq uint64
+	// replayEnd is the recorded size at attach: bytes before it are replay.
+	replayEnd uint64
+	result    ReplayInfo
+	// gaps counts the forward jumps over evicted output.
+	gaps uint64
 
 	notify chan struct{}
 	ctx    context.Context
@@ -46,43 +52,92 @@ func (a *Attachment) NextSeq() uint64 {
 	return a.nextSeq
 }
 
+// Replay reports where this attachment started.
+func (a *Attachment) Replay() ReplayInfo {
+	return a.result
+}
+
 func (a *Attachment) Read(p []byte) (int, error) {
+	_, count, err := a.readChunk(p)
+	return count, err
+}
+
+// readChunk reads like Read and also returns the absolute offset of the
+// returned bytes. When the output at the reader position was evicted, the
+// reader jumps to the first safe boundary after the new history base; the
+// returned offset then lies beyond the previous end, and Gaps counts it.
+func (a *Attachment) readChunk(p []byte) (uint64, int, error) {
 	if len(p) == 0 {
-		return 0, nil
+		return a.NextSeq(), 0, nil
 	}
 	for {
 		if a.closed() {
-			return 0, ErrClosed
+			return 0, 0, ErrClosed
 		}
 		a.replayMu.Lock()
 		replay := a.replay
 		a.replayMu.Unlock()
-		if replay != nil {
-			count, err := replay.Read(p)
-			if count > 0 {
-				a.replayMu.Lock()
-				a.nextSeq += uint64(count)
-				a.replayMu.Unlock()
-				return count, nil
+		if replay == nil {
+			return 0, 0, ErrClosed
+		}
+		seq := replay.pos
+		count, err := replay.read(p)
+		if count > 0 {
+			a.replayMu.Lock()
+			a.nextSeq = seq + uint64(count)
+			a.replayMu.Unlock()
+			return seq, count, nil
+		}
+		if errors.Is(err, errHistoryEvicted) {
+			if skipErr := a.skipEvicted(replay); skipErr != nil {
+				return 0, 0, skipErr
 			}
-			if err != nil && !errors.Is(err, io.EOF) {
-				return 0, fmt.Errorf("%w: read supervisor recording: %v", ErrUnavailable, err)
-			}
+			continue
+		}
+		if err != nil {
+			return 0, 0, err
 		}
 		dead, recErr := a.session.status()
 		if recErr != nil {
-			return 0, recErr
+			return 0, 0, recErr
 		}
 		if dead {
-			return 0, io.EOF
+			return 0, 0, io.EOF
 		}
 		select {
 		case <-a.notify:
 		case <-a.session.deadCh:
 		case <-a.ctx.Done():
-			return 0, ErrClosed
+			return 0, 0, ErrClosed
 		}
 	}
+}
+
+func (a *Attachment) skipEvicted(replay *historyReader) error {
+	for attempt := 0; attempt < 4; attempt++ {
+		base, _ := a.session.history.bounds()
+		start, err := a.session.history.safeStartFrom(base)
+		if errors.Is(err, errHistoryEvicted) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		replay.pos = start
+		a.replayMu.Lock()
+		a.nextSeq = start
+		a.gaps++
+		a.replayMu.Unlock()
+		return nil
+	}
+	return fmt.Errorf("%w: recorded output is evicted faster than it can be streamed", ErrUnavailable)
+}
+
+// Gaps returns how many times the attachment skipped evicted output.
+func (a *Attachment) Gaps() uint64 {
+	a.replayMu.Lock()
+	defer a.replayMu.Unlock()
+	return a.gaps
 }
 
 func (a *Attachment) Write(p []byte) (int, error) {
@@ -142,13 +197,11 @@ func (a *Attachment) Detach() error {
 		a.cancel()
 		a.session.removeAttachment(a)
 		a.replayMu.Lock()
-		defer a.replayMu.Unlock()
-		if a.replay != nil {
-			a.closeErr = a.replay.Close()
-			if errors.Is(a.closeErr, os.ErrClosed) {
-				a.closeErr = nil
-			}
-			a.replay = nil
+		replay := a.replay
+		a.replay = nil
+		a.replayMu.Unlock()
+		if replay != nil {
+			replay.close()
 		}
 	})
 	return a.closeErr

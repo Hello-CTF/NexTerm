@@ -83,7 +83,7 @@ type Provider struct {
 
 func embeddedProviderAttach(ctx context.Context, supervisor *Supervisor, session *Session) (*Attachment, error) {
 	identity := session.Identity()
-	return supervisor.attachFrom(ctx, session.ID(), 0, &identity, "")
+	return supervisor.attachFrom(ctx, session.ID(), AttachOptions{}, &identity, "")
 }
 
 func NewProvider(supervisor *Supervisor) *Provider {
@@ -101,6 +101,8 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 		Env:     options.Env,
 		Cols:    options.Cols,
 		Rows:    options.Rows,
+
+		HistoryLimit: options.HistoryLimit,
 	})
 	if session == nil {
 		return nil, translateError(err)
@@ -119,15 +121,62 @@ func (p *Provider) AttachWithIdentity(ctx context.Context, id string, identity b
 }
 
 func (p *Provider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	return p.attachWith(ctx, id, identity, AttachOptions{Offset: offset})
+}
+
+func (p *Provider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, options base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.attachWith(ctx, id, identity, tailAttachOptions(options))
+}
+
+func (p *Provider) attachWith(ctx context.Context, id string, identity base.DurableIdentity, options AttachOptions) (base.DurableAttachment, error) {
 	expected, err := checkedIdentity(identity)
 	if err != nil {
 		return nil, err
 	}
-	attachment, err := p.supervisor.attachFrom(ctx, id, offset, expected, identity.Generation)
+	attachment, err := p.supervisor.attachFrom(ctx, id, options, expected, identity.Generation)
 	if attachment == nil {
 		return nil, translateError(err)
 	}
 	return &channelAttachment{Attachment: attachment}, nil
+}
+
+func (p *Provider) ReadDurableHistory(ctx context.Context, id string, identity base.DurableIdentity, request base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return base.DurableHistoryChunk{}, err
+	}
+	chunk, err := p.supervisor.readHistory(ctx, id, request.Before, request.MaxBytes, *expected, identity.Generation)
+	if err != nil {
+		return base.DurableHistoryChunk{}, translateError(err)
+	}
+	return durableHistoryChunk(chunk), nil
+}
+
+func tailAttachOptions(options base.DurableTailOptions) AttachOptions {
+	tail := options.Tail
+	if tail == 0 {
+		tail = DefaultTailBytes
+	}
+	attach := AttachOptions{Tail: tail}
+	if options.Retain != nil {
+		attach.Offset = *options.Retain
+		attach.Retain = true
+	}
+	return attach
+}
+
+func durableHistoryChunk(chunk HistoryChunk) base.DurableHistoryChunk {
+	return base.DurableHistoryChunk{
+		Start: chunk.Start, End: chunk.End, HistoryBase: chunk.HistoryBase, HistoryNext: chunk.HistoryNext,
+		Truncated: chunk.Truncated, Data: chunk.Data,
+	}
+}
+
+func durableReplay(replay ReplayInfo) base.DurableReplay {
+	return base.DurableReplay{
+		HistoryBase: replay.HistoryBase, HistoryNext: replay.HistoryNext, ReplayFrom: replay.ReplayFrom,
+		DisplayFrom: replay.DisplayFrom, Truncated: replay.Truncated, Prelude: replay.Prelude,
+	}
 }
 
 func (p *Provider) KillWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) error {
@@ -187,6 +236,9 @@ func durableDescriptors(infos []Info) []base.DurableDescriptor {
 			Rows:             info.Rows,
 			Dead:             info.Dead,
 			Signal:           info.Signal,
+			HistoryBase:      info.HistoryBase,
+			HistoryNext:      info.HistoryNext,
+			HistoryTruncated: info.HistoryTruncated,
 		}
 		if info.ExitCode != nil {
 			exitCode := *info.ExitCode
@@ -208,6 +260,9 @@ func (a *channelAttachment) Stderr() io.Reader  { return nil }
 func (a *channelAttachment) CloseWrite() error  { return base.ErrUnsupported }
 func (a *channelAttachment) Generation() uint64 { return 0 }
 func (a *channelAttachment) Info() Info         { return a.session.canonicalInfo() }
+
+func (a *channelAttachment) DurableReplay() base.DurableReplay { return durableReplay(a.Replay()) }
+func (a *channelAttachment) DurableOffset() uint64             { return a.NextSeq() }
 
 func (a *channelAttachment) Read(p []byte) (int, error) {
 	count, err := a.Attachment.Read(p)
@@ -293,6 +348,8 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		Env:     options.Env,
 		Cols:    options.Cols,
 		Rows:    options.Rows,
+
+		HistoryLimit: options.HistoryLimit,
 	}
 	var info Info
 	var stream *Stream
@@ -357,6 +414,30 @@ func (p *RemoteProvider) AttachFromWithIdentity(ctx context.Context, id string, 
 	return &streamAttachment{Stream: stream, provider: p}, nil
 }
 
+func (p *RemoteProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, options base.DurableTailOptions) (base.DurableAttachment, error) {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := p.client.AttachWithOptions(ctx, id, expected, tailAttachOptions(options))
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &streamAttachment{Stream: stream, provider: p}, nil
+}
+
+func (p *RemoteProvider) ReadDurableHistory(ctx context.Context, id string, identity base.DurableIdentity, request base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return base.DurableHistoryChunk{}, err
+	}
+	chunk, err := p.client.ReadHistory(ctx, id, *expected, request.Before, request.MaxBytes)
+	if err != nil {
+		return base.DurableHistoryChunk{}, translateError(err)
+	}
+	return durableHistoryChunk(chunk), nil
+}
+
 func (p *RemoteProvider) KillWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) error {
 	expected, err := checkedIdentity(identity)
 	if err != nil {
@@ -409,6 +490,9 @@ func (a *streamAttachment) Stderr() io.Reader  { return nil }
 func (a *streamAttachment) CloseWrite() error  { return base.ErrUnsupported }
 func (a *streamAttachment) Generation() uint64 { return 0 }
 func (a *streamAttachment) ID() string         { return a.Info().ID }
+
+func (a *streamAttachment) DurableReplay() base.DurableReplay { return durableReplay(a.Replay()) }
+func (a *streamAttachment) DurableOffset() uint64             { return a.ConsumedOffset() }
 
 func (a *streamAttachment) Read(p []byte) (int, error) {
 	count, err := a.Stream.Read(p)
@@ -470,11 +554,17 @@ var (
 	_ base.DurableMetadataProvider = (*Provider)(nil)
 	_ base.DurableIdentityAttacher = (*Provider)(nil)
 	_ base.DurableIdentityKiller   = (*Provider)(nil)
+	_ base.DurableTailAttacher     = (*Provider)(nil)
+	_ base.DurableHistoryReader    = (*Provider)(nil)
 	_ base.DurableAttachment       = (*channelAttachment)(nil)
+	_ base.DurableReplayReporter   = (*channelAttachment)(nil)
 	_ base.DurableProvider         = (*RemoteProvider)(nil)
 	_ base.DurableDescriptorLister = (*RemoteProvider)(nil)
 	_ base.DurableMetadataProvider = (*RemoteProvider)(nil)
 	_ base.DurableIdentityAttacher = (*RemoteProvider)(nil)
 	_ base.DurableIdentityKiller   = (*RemoteProvider)(nil)
+	_ base.DurableTailAttacher     = (*RemoteProvider)(nil)
+	_ base.DurableHistoryReader    = (*RemoteProvider)(nil)
 	_ base.DurableAttachment       = (*streamAttachment)(nil)
+	_ base.DurableReplayReporter   = (*streamAttachment)(nil)
 )

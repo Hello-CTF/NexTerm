@@ -250,6 +250,8 @@ func (c *serverConn) serve() {
 			c.handleSetVersions(payload)
 		case frameKillSession:
 			c.handleKillSession(payload)
+		case frameReadHistory:
+			c.handleReadHistory(payload)
 		case frameDetach:
 			_ = c.reply(frameOK, struct{}{})
 			return
@@ -276,6 +278,8 @@ func (c *serverConn) handleCreate(payload []byte) {
 		Cols:    msg.Cols,
 		Rows:    msg.Rows,
 		Pty:     msg.Pty,
+
+		HistoryLimit: msg.HistoryLimit,
 	})
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
@@ -348,7 +352,8 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	if msg.ExpectIncarnation != "" || msg.ExpectCreatedAt != 0 {
 		expected = &Identity{CreatedAt: time.Unix(0, msg.ExpectCreatedAt), Incarnation: msg.ExpectIncarnation}
 	}
-	attachment, err := c.server.supervisor.attachFrom(context.Background(), msg.ID, msg.Offset, expected, msg.ExpectGeneration)
+	options := AttachOptions{Offset: msg.Offset, Tail: msg.Tail, Retain: msg.Retain}
+	attachment, err := c.server.supervisor.attachFrom(context.Background(), msg.ID, options, expected, msg.ExpectGeneration)
 	if err != nil {
 		c.replyOperationError(err)
 		return true
@@ -356,7 +361,7 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	c.sessionMu.Lock()
 	c.attachment = attachment
 	c.sessionMu.Unlock()
-	if err := c.reply(frameAttached, attachment.session.canonicalInfo()); err != nil {
+	if err := c.reply(frameAttached, attachedMsg{Info: attachment.session.canonicalInfo(), Replay: attachment.Replay()}); err != nil {
 		_ = attachment.Detach()
 		return false
 	}
@@ -528,6 +533,34 @@ func (c *serverConn) handleKillSession(payload []byte) {
 	_ = c.reply(frameOK, struct{}{})
 }
 
+func (c *serverConn) handleReadHistory(payload []byte) {
+	if c.attached() != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "history read on attached connection"})
+		return
+	}
+	var msg readHistoryMsg
+	if err := unmarshalFrame(payload, &msg); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if msg.ExpectIncarnation == "" {
+		c.replyError(frameError, errorMsg{Code: codeInvalidInput, Message: "history read requires the session identity"})
+		return
+	}
+	expected := Identity{CreatedAt: time.Unix(0, msg.ExpectCreatedAt), Incarnation: msg.ExpectIncarnation}
+	chunk, err := c.server.supervisor.readHistory(context.Background(), msg.ID, msg.Before, msg.MaxBytes, expected, msg.ExpectGeneration)
+	if err != nil {
+		c.replyOperationError(err)
+		return
+	}
+	reply, err := historyPayload(chunk)
+	if err != nil {
+		c.replyOperationError(err)
+		return
+	}
+	_ = c.replyRaw(frameHistory, reply)
+}
+
 func (c *serverConn) handleResize(payload []byte) {
 	attachment := c.attached()
 	if attachment == nil {
@@ -652,17 +685,12 @@ func (c *serverConn) execKill(ctx context.Context, session *Session) error {
 func (c *serverConn) streamOutput(attachment *Attachment) {
 	var replayEnd uint64
 	if c.compress {
-		attachment.replayMu.Lock()
-		if attachment.replay != nil {
-			if info, err := attachment.replay.Stat(); err == nil {
-				replayEnd = uint64(info.Size())
-			}
-		}
-		attachment.replayMu.Unlock()
+		replayEnd = attachment.replayEnd
 	}
 	var compressor replayCompressor
 	buffer := make([]byte, replayChunkSize)
 	base := attachment.NextSeq()
+	expected := base
 	for {
 		if !c.awaitCredit(attachment) {
 			// A kill or detach cancels the attachment while parked on credit; deliver
@@ -676,13 +704,22 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 			}
 			return
 		}
-		seq := attachment.NextSeq()
 		size := outputChunkSize
-		if seq < replayEnd {
-			size = int(min(uint64(replayChunkSize), replayEnd-seq))
+		if expected < replayEnd {
+			size = int(min(uint64(replayChunkSize), replayEnd-expected))
 		}
-		count, err := attachment.Read(buffer[:size])
+		seq, count, err := attachment.readChunk(buffer[:size])
 		if count > 0 {
+			if seq != expected {
+				// The reader fell behind the history limit. The skipped
+				// output counts as streamed so credit stays aligned.
+				c.creditMu.Lock()
+				c.sent = seq - base
+				c.creditMu.Unlock()
+				if writeErr := c.replyRaw(frameHistoryGap, gapPayload(expected, seq)); writeErr != nil {
+					return
+				}
+			}
 			kind, payload := frameOutput, outputPayload(seq, buffer[:count])
 			if seq < replayEnd && count >= 1024 {
 				if compressed, compressErr := compressor.encode(seq, buffer[:count]); compressErr == nil && len(compressed) < len(payload) {
@@ -696,15 +733,16 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 					kind, payload = frameOutputZstd, packed
 				}
 			}
+			expected = seq + uint64(count)
 			// Counted before the write: the client may return credit for this
 			// chunk before the write call comes back here.
 			c.creditMu.Lock()
-			c.sent = seq + uint64(count) - base
+			c.sent = expected - base
 			c.creditMu.Unlock()
 			if writeErr := c.replyRaw(kind, payload); writeErr != nil {
 				return
 			}
-			if seq+uint64(count) >= replayEnd {
+			if expected >= replayEnd {
 				compressor = replayCompressor{}
 			}
 		}

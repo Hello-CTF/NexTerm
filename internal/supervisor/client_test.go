@@ -284,7 +284,10 @@ func fakeOffsetStreamServer(t *testing.T, stateDir string, gotOffset *uint64, fr
 			return
 		}
 		*gotOffset = msg.Offset
-		attached, err := marshalFrame(frameAttached, Info{ID: msg.ID, CreatedAt: time.Now(), Incarnation: ids.New(), Cols: 80, Rows: 24})
+		attached, err := marshalFrame(frameAttached, attachedMsg{
+			Info:   Info{ID: msg.ID, CreatedAt: time.Now(), Incarnation: ids.New(), Cols: 80, Rows: 24},
+			Replay: ReplayInfo{ReplayFrom: msg.Offset, DisplayFrom: msg.Offset, HistoryNext: 1 << 20},
+		})
 		if err != nil {
 			return
 		}

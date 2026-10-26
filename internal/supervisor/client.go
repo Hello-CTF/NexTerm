@@ -64,6 +64,8 @@ func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error
 		Env:     options.Env,
 		Cols:    options.Cols,
 		Rows:    options.Rows,
+
+		HistoryLimit: options.HistoryLimit,
 	})
 	if err != nil {
 		return Info{}, err
@@ -104,6 +106,8 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 		Env:     options.Env,
 		Cols:    options.Cols,
 		Rows:    options.Rows,
+
+		HistoryLimit: options.HistoryLimit,
 	})
 	if err != nil {
 		_ = conn.Close()
@@ -138,16 +142,17 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 			return info, nil, err
 		}
 	}
-	attached, err := conn.awaitInfo(ctx, frameAttached)
+	reply, err := conn.awaitAttached(ctx)
 	if err != nil {
 		_ = conn.Close()
 		return info, nil, err
 	}
+	attached := reply.Info
 	if attached.ID != info.ID || attached.Incarnation != info.Incarnation || attached.Generation != info.Generation || !attached.CreatedAt.Equal(info.CreatedAt) {
 		_ = conn.Close()
 		return info, nil, fmt.Errorf("%w: attached session is not the one just created", ErrIdentity)
 	}
-	return info, c.newStream(conn, attached, 0), nil
+	return info, c.newStream(conn, reply), nil
 }
 
 // ExecSpec describes a one-shot non-PTY command: an argv with environment and
@@ -297,42 +302,82 @@ func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stre
 
 // AttachFrom asks the daemon to resume the recorded output from the absolute
 // byte offset. The stream checks the first output frame against the offset
-// and skips any already-consumed prefix locally.
+// and skips any already-consumed prefix locally. An offset the helper no
+// longer retains resumes after the history base; Stream.Replay reports it.
 func (c *Client) AttachFrom(ctx context.Context, id string, expect *Identity, offset uint64) (*Stream, error) {
+	return c.AttachWithOptions(ctx, id, expect, AttachOptions{Offset: offset})
+}
+
+// AttachWithOptions attaches with an explicit replay plan; see AttachOptions.
+func (c *Client) AttachWithOptions(ctx context.Context, id string, expect *Identity, options AttachOptions) (*Stream, error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	msg := attachMsg{ID: id, Offset: offset}
+	msg := attachMsg{ID: id, Offset: options.Offset, Tail: options.Tail, Retain: options.Retain}
 	if expect != nil {
 		msg.ExpectCreatedAt = expect.CreatedAt.UnixNano()
 		msg.ExpectIncarnation = expect.Incarnation
 		msg.ExpectGeneration = expect.Generation
 	}
-	kind, payload, err := conn.request(ctx, frameAttach, msg)
+	if err := conn.sendJSON(ctx, frameAttach, msg); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	reply, err := conn.awaitAttached(ctx)
 	if err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
-	if kind != frameAttached {
+	if options.Tail == 0 && !reply.Replay.Truncated && reply.Replay.ReplayFrom != options.Offset {
 		_ = conn.Close()
-		return nil, protocolMismatch(kind)
+		return nil, fmt.Errorf("%w: helper resumed at %d instead of %d", ErrProtocol, reply.Replay.ReplayFrom, options.Offset)
 	}
-	var info Info
-	if err := unmarshalFrame(payload, &info); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	return c.newStream(conn, info, offset), nil
+	return c.newStream(conn, reply), nil
 }
 
-func (c *Client) newStream(conn *clientConn, info Info, offset uint64) *Stream {
+// ReadHistory returns recorded output of the session ending at before, at
+// most maxBytes (bounded by MaxHistoryRead), without attaching. expect is
+// required.
+func (c *Client) ReadHistory(ctx context.Context, id string, expect Identity, before uint64, maxBytes int) (HistoryChunk, error) {
+	if expect.Incarnation == "" {
+		return HistoryChunk{}, fmt.Errorf("%w: history read requires the session identity", ErrInvalidInput)
+	}
+	conn, err := c.dialConn(ctx)
+	if err != nil {
+		return HistoryChunk{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	kind, payload, err := conn.request(ctx, frameReadHistory, readHistoryMsg{
+		ID: id, ExpectCreatedAt: expect.CreatedAt.UnixNano(), ExpectIncarnation: expect.Incarnation,
+		ExpectGeneration: expect.Generation, Before: before, MaxBytes: maxBytes,
+	})
+	if err != nil {
+		return HistoryChunk{}, err
+	}
+	if kind != frameHistory {
+		return HistoryChunk{}, protocolMismatch(kind)
+	}
+	chunk, err := parseHistory(payload)
+	if err != nil {
+		return HistoryChunk{}, err
+	}
+	if chunk.End > before || len(chunk.Data) > MaxHistoryRead {
+		return HistoryChunk{}, fmt.Errorf("%w: history reply exceeds the request", ErrProtocol)
+	}
+	return chunk, nil
+}
+
+func (c *Client) newStream(conn *clientConn, reply attachedMsg) *Stream {
+	info := reply.Info
 	stream := &Stream{
 		conn:              conn,
 		info:              info,
+		replay:            reply.Replay,
 		identity:          Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation, Generation: info.Generation},
 		closeDrainTimeout: defaultStreamCloseDrainTimeout,
-		want:              offset,
+		want:              reply.Replay.ReplayFrom,
+		consumed:          reply.Replay.ReplayFrom,
 		reqToken:          make(chan struct{}, 1),
 		resp:              make(chan clientFrame, 1),
 		newData:           make(chan struct{}, 1),
@@ -491,6 +536,26 @@ func (c *clientConn) sendJSON(ctx context.Context, kind frameType, message any) 
 	return c.send(ctx, kind, payload)
 }
 
+// awaitAttached waits for the attach reply.
+func (c *clientConn) awaitAttached(ctx context.Context) (attachedMsg, error) {
+	kind, payload, err := c.await(ctx)
+	if err != nil {
+		return attachedMsg{}, err
+	}
+	if kind != frameAttached {
+		return attachedMsg{}, protocolMismatch(kind)
+	}
+	var reply attachedMsg
+	if err := unmarshalFrame(payload, &reply); err != nil {
+		return attachedMsg{}, err
+	}
+	replay := reply.Replay
+	if replay.HistoryBase > replay.ReplayFrom || replay.ReplayFrom > replay.DisplayFrom || replay.DisplayFrom > replay.HistoryNext {
+		return attachedMsg{}, fmt.Errorf("%w: inconsistent attach replay offsets", ErrProtocol)
+	}
+	return reply, nil
+}
+
 // awaitInfo waits for the next response, which must be a want frame carrying Info.
 func (c *clientConn) awaitInfo(ctx context.Context, want frameType) (Info, error) {
 	kind, payload, err := c.await(ctx)
@@ -564,6 +629,7 @@ func (c *clientConn) Close() error {
 type Stream struct {
 	conn              *clientConn
 	info              Info
+	replay            ReplayInfo
 	identity          Identity
 	closeDrainTimeout time.Duration
 
@@ -571,11 +637,19 @@ type Stream struct {
 
 	reqToken chan struct{}
 
-	mu         sync.Mutex
-	readBuf    []byte
-	seq        uint64
-	want       uint64
-	skip       uint64
+	mu      sync.Mutex
+	readBuf []byte
+	seq     uint64
+	want    uint64
+	skip    uint64
+	// consumed is the absolute offset of the next byte Read returns.
+	// buffered counts every byte appended to readBuf and taken the bytes
+	// Read returned; gapMarks are history gaps positioned in that count.
+	consumed   uint64
+	buffered   uint64
+	taken      uint64
+	gapMarks   []streamGap
+	gaps       uint64
 	started    bool
 	exitErr    error
 	dead       bool
@@ -631,6 +705,42 @@ func (s *Stream) Info() Info {
 	return s.info
 }
 
+// Replay reports where the stream started.
+func (s *Stream) Replay() ReplayInfo {
+	return s.replay
+}
+
+// ConsumedOffset returns the absolute offset just past the bytes Read has
+// returned. A Read never spans a history gap, so after a Read the offset is
+// the end of the returned bytes; it jumps past dropped output on the Read
+// that crosses the gap.
+func (s *Stream) ConsumedOffset() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.consumed
+}
+
+// Gaps returns how many history gaps the stream crossed.
+func (s *Stream) Gaps() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gaps
+}
+
+// streamGap is a history gap at a position of the buffered byte count.
+type streamGap struct {
+	at uint64
+	to uint64
+}
+
+// applyGapsLocked crosses every gap at the current read position.
+func (s *Stream) applyGapsLocked() {
+	for len(s.gapMarks) > 0 && s.gapMarks[0].at == s.taken {
+		s.consumed = s.gapMarks[0].to
+		s.gapMarks = s.gapMarks[1:]
+	}
+}
+
 func (s *Stream) Identity() Identity {
 	return s.identity
 }
@@ -645,8 +755,16 @@ func (s *Stream) Read(p []byte) (int, error) {
 			s.mu.Unlock()
 			return 0, ErrClosed
 		}
+		s.applyGapsLocked()
 		if len(s.readBuf) > 0 {
-			count := copy(p, s.readBuf)
+			limit := p
+			if len(s.gapMarks) > 0 && s.gapMarks[0].at-s.taken < uint64(len(limit)) {
+				// Read never spans a gap, so ConsumedOffset stays exact.
+				limit = limit[:s.gapMarks[0].at-s.taken]
+			}
+			count := copy(limit, s.readBuf)
+			s.taken += uint64(count)
+			s.consumed += uint64(count)
 			s.readBuf = s.readBuf[count:]
 			if len(s.readBuf) == 0 && cap(s.readBuf) > 1<<20 {
 				// Release the backing array so a drained burst does not stay resident.
@@ -1316,7 +1434,34 @@ func (s *Stream) readLoop() {
 				return
 			}
 			s.readBuf = append(s.readBuf, data...)
+			s.buffered += uint64(len(data))
 			s.peakBuffered = max(s.peakBuffered, len(s.readBuf))
+			s.mu.Unlock()
+			select {
+			case s.newData <- struct{}{}:
+			default:
+			}
+		case frameHistoryGap:
+			from, to, err := parseGap(payload)
+			if err != nil {
+				s.fail(err)
+				return
+			}
+			s.mu.Lock()
+			if !s.started {
+				s.started = true
+				s.seq = from
+			}
+			if from != s.seq || from < s.want {
+				s.mu.Unlock()
+				s.fail(fmt.Errorf("%w: history gap at %d does not match expected %d", ErrProtocol, from, s.seq))
+				return
+			}
+			s.seq = to
+			s.gaps++
+			s.gapMarks = append(s.gapMarks, streamGap{at: s.buffered, to: to})
+			// The server counts the dropped range as streamed.
+			s.retireLocked(to - from)
 			s.mu.Unlock()
 			select {
 			case s.newData <- struct{}{}:
