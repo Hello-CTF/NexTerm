@@ -9,9 +9,11 @@ import {
   BACKGROUND_DRAIN_INTERVAL_MS,
   BACKGROUND_MAX_IN_FLIGHT_SLICES,
   BACKGROUND_MAX_WRITES_PER_DRAIN,
+  BACKGROUND_MIN_SLICES_PER_PANE,
   BUSY_FOREGROUND_CHUNK_BYTES,
-  BUSY_FOREGROUND_MAX_WRITES_PER_DRAIN,
+  BUSY_FOREGROUND_MIN_SLICES_PER_PANE,
   FOREGROUND_ACTIVE_WINDOW_MS,
+  FOREGROUND_HEAVY_OUTPUT_BYTES,
   STREAM_HIGH_WATER_BYTES,
   STREAM_LOW_WATER_BYTES,
 } from "../../features/terminal/terminalBudget";
@@ -67,6 +69,10 @@ function fakeDocument() {
     setHidden: (next: boolean) => {
       hidden = next;
       listeners.forEach((listener) => listener());
+    },
+    // The page hid but visibilitychange was missed or is still pending.
+    setHiddenSilently: (next: boolean) => {
+      hidden = next;
     },
   };
 }
@@ -145,15 +151,15 @@ describe("terminal output scheduler", () => {
     const backgrounds = backgroundTerms.map((term) => s.register(term, { visible: false }));
     backgrounds.forEach((pane, index) => pane.write(bytes(1 << 20, index)));
     // Run the immediate first drain so each advance below covers one drain.
-    foreground.write(bytes(1));
+    s.noteForegroundActivity();
     clock.advance(0);
-    foregroundTerm.parseAll();
-    foregroundTerm.writes.length = 0;
-    expect(backgroundTerms.reduce((n, term) => n + term.writes.length, 0)).toBe(BUSY_FOREGROUND_MAX_WRITES_PER_DRAIN);
     backgroundTerms.forEach((term) => term.parseAll());
 
-    for (let frame = 0; frame < 20; frame += 1) {
+    // 1 MiB per pane outlasts 12 drains of the conservative floor.
+    for (let frame = 0; frame < 12; frame += 1) {
       let callbackFired = false;
+      // The user types; the echo comes back.
+      s.noteForegroundActivity();
       foreground.write(bytes(8, frame), () => {
         callbackFired = true;
       });
@@ -165,12 +171,15 @@ describe("terminal output scheduler", () => {
 
       const before = backgroundTerms.map((term) => term.writes.length);
       clock.advance(INTERVAL);
-      const sliceSizes = backgroundTerms.flatMap((term, index) => term.writes.slice(before[index]));
-      expect(sliceSizes.length).toBeLessThanOrEqual(BUSY_FOREGROUND_MAX_WRITES_PER_DRAIN);
-      for (const size of sliceSizes) expect(size).toBeLessThanOrEqual(BUSY_FOREGROUND_CHUNK_BYTES);
+      // Each hidden pane gets its conservative floor and no more.
+      backgroundTerms.forEach((term, index) => {
+        const sizes = term.writes.slice(before[index]);
+        expect(sizes.length).toBe(BUSY_FOREGROUND_MIN_SLICES_PER_PANE);
+        for (const size of sizes) expect(size).toBeLessThanOrEqual(BUSY_FOREGROUND_CHUNK_BYTES);
+      });
       backgroundTerms.forEach((term) => term.parseAll());
     }
-    expect(foregroundTerm.writes).toHaveLength(20);
+    expect(foregroundTerm.writes).toHaveLength(12);
   });
 
   it("drains hidden panes much faster while the foreground is idle", () => {
@@ -191,9 +200,68 @@ describe("terminal output scheduler", () => {
     const busy = drainedIn(true);
     // Idle: the pane fills every in-flight slot with a 64 KiB slice per drain.
     expect(idle).toBeGreaterThanOrEqual(10 * BACKGROUND_MAX_IN_FLIGHT_SLICES * BACKGROUND_CHUNK_BYTES);
-    // Busy: one 16 KiB slice per drain.
-    expect(busy).toBeLessThanOrEqual(11 * BUSY_FOREGROUND_CHUNK_BYTES);
-    expect(idle).toBeGreaterThanOrEqual(busy * 7);
+    // Busy: the per-pane floor of 32 KiB slices per drain.
+    expect(busy).toBeLessThanOrEqual(11 * BUSY_FOREGROUND_MIN_SLICES_PER_PANE * BUSY_FOREGROUND_CHUNK_BYTES);
+    expect(idle).toBeGreaterThanOrEqual(busy * 3.5);
+  });
+
+  it("does not treat a low-rate visible writer as foreground activity", () => {
+    const clock = fakeClock();
+    const s = scheduler(clock);
+    const spinner = s.register(fakeTerm(), { visible: true });
+    // A spinner or progress bar: a few bytes every 100 ms for 10 s.
+    for (let tick = 0; tick < 100; tick += 1) {
+      spinner.write(bytes(12, tick));
+      expect(s.stats().foregroundActive).toBe(false);
+      clock.advance(100);
+    }
+  });
+
+  it("treats typing echo and heavy visible output as foreground activity", () => {
+    const clock = fakeClock();
+    const s = scheduler(clock);
+    const visible = s.register(fakeTerm(), { visible: true });
+    // Echo arriving shortly after input keeps the foreground active past the
+    // input's own window.
+    s.noteForegroundActivity();
+    clock.advance(FOREGROUND_ACTIVE_WINDOW_MS - 10);
+    visible.write(bytes(1));
+    clock.advance(20);
+    expect(s.stats().foregroundActive).toBe(true);
+    clock.advance(FOREGROUND_ACTIVE_WINDOW_MS);
+    expect(s.stats().foregroundActive).toBe(false);
+    // Output long after the input is not echo.
+    visible.write(bytes(1));
+    expect(s.stats().foregroundActive).toBe(false);
+
+    // A visible flood is real parse load.
+    clock.advance(FOREGROUND_ACTIVE_WINDOW_MS);
+    for (let i = 0; i < FOREGROUND_HEAVY_OUTPUT_BYTES / 4096; i += 1) visible.write(bytes(4096));
+    expect(s.stats().foregroundActive).toBe(true);
+  });
+
+  it("keeps a 2 MiB/s hidden producer below the high watermark while the user types", () => {
+    const clock = fakeClock();
+    const s = scheduler(clock);
+    const term = fakeTerm();
+    const pane = s.register(term, { visible: false });
+    const pauses: boolean[] = [];
+    const writer = createTerminalStreamWriter(pane, () => undefined, {
+      highWaterBytes: STREAM_HIGH_WATER_BYTES,
+      lowWaterBytes: STREAM_LOW_WATER_BYTES,
+      onPausedChange: (paused) => pauses.push(paused),
+    });
+    const perTick = Math.ceil((2 << 20) / (1000 / INTERVAL));
+    // Ten seconds of continuous typing.
+    for (let tick = 0; tick < 10_000 / INTERVAL; tick += 1) {
+      s.noteForegroundActivity();
+      expect(writer.pushBytes(text(perTick))).toBe(true);
+      clock.advance(INTERVAL);
+      term.parseAll();
+    }
+    expect(s.stats().foregroundActive).toBe(true);
+    expect(pauses).toEqual([]);
+    expect(writer.stats().pendingBytes).toBeLessThan(STREAM_LOW_WATER_BYTES);
   });
 
   it("returns to the fast tier once the foreground has been quiet for the activity window", () => {
@@ -205,24 +273,27 @@ describe("terminal output scheduler", () => {
     expect(s.stats().foregroundActive).toBe(false);
   });
 
-  it("caps idle drains across many hidden panes by the per-drain write count", () => {
-    const clock = fakeClock();
-    const s = scheduler(clock);
-    const terms = Array.from({ length: 6 }, () => fakeTerm());
-    const panes = terms.map((term) => s.register(term, { visible: false }));
-    panes.forEach((pane, index) => pane.write(bytes(1 << 20, index)));
-    // Run the immediate first drain so each advance below covers one drain.
-    clock.advance(0);
-    expect(terms.reduce((n, term) => n + term.writes.length, 0)).toBe(BACKGROUND_MAX_WRITES_PER_DRAIN);
-    terms.forEach((term) => term.parseAll());
-    for (let cycle = 0; cycle < 6; cycle += 1) {
-      const before = terms.map((term) => term.writes.length);
-      clock.advance(INTERVAL);
-      const sizes = terms.flatMap((term, index) => term.writes.slice(before[index]));
-      expect(sizes.length).toBe(BACKGROUND_MAX_WRITES_PER_DRAIN);
-      for (const size of sizes) expect(size).toBeLessThanOrEqual(BACKGROUND_CHUNK_BYTES);
-      terms.forEach((term) => term.parseAll());
-    }
+  it("caps idle drains by the per-drain write count, raised to each pane's floor", () => {
+    const run = (paneCount: number) => {
+      const clock = fakeClock();
+      const s = scheduler(clock);
+      const terms = Array.from({ length: paneCount }, () => fakeTerm());
+      const panes = terms.map((term) => s.register(term, { visible: false }));
+      panes.forEach((pane, index) => pane.write(bytes(1 << 20, index)));
+      const perDrain: number[] = [];
+      for (let cycle = 0; cycle < 4; cycle += 1) {
+        const before = terms.map((term) => term.writes.length);
+        clock.advance(cycle === 0 ? 0 : INTERVAL);
+        const sizes = terms.flatMap((term, index) => term.writes.slice(before[index]));
+        for (const size of sizes) expect(size).toBeLessThanOrEqual(BACKGROUND_CHUNK_BYTES);
+        perDrain.push(sizes.length);
+        terms.forEach((term) => term.parseAll());
+      }
+      return perDrain;
+    };
+    expect(run(2)).toEqual([4, 4, 4, 4].map(() => BACKGROUND_MAX_WRITES_PER_DRAIN));
+    // Six panes exceed the write count: each still gets its one-slice floor.
+    expect(run(6)).toEqual([6, 6, 6, 6].map(() => 6 * BACKGROUND_MIN_SLICES_PER_PANE));
   });
 
   it("lets a hidden 8 MiB/s producer run without pausing upstream while the foreground is idle", () => {
@@ -344,9 +415,37 @@ describe("terminal output scheduler", () => {
     expect(term.parsed).toEqual([...bytes(BACKGROUND_CHUNK_BYTES * 4, 1), ...bytes(3, 2)]);
   });
 
+  it("releases every backlog at the next drain when the page hid without a visibilitychange", () => {
+    const clock = fakeClock();
+    const doc = fakeDocument();
+    const s = scheduler(clock, undefined, doc);
+    const a = fakeTerm();
+    const b = fakeTerm();
+    const paneA = s.register(a, { visible: false });
+    const paneB = s.register(b, { visible: false });
+    // Both panes are stuck: a large backlog and no new writes coming.
+    const first = bytes(BACKGROUND_CHUNK_BYTES * 20, 1);
+    const second = bytes(BACKGROUND_CHUNK_BYTES * 20, 2);
+    paneA.write(first);
+    paneB.write(second);
+    clock.advance(0);
+    a.parseAll();
+    b.parseAll();
+    expect(s.stats().drainScheduled).toBe(true);
+
+    doc.setHiddenSilently(true);
+    clock.advance(INTERVAL);
+    expect(s.stats()).toMatchObject({ queuedBytes: 0, backgroundBacklogPanes: 0, drainScheduled: false });
+    a.parseAll();
+    b.parseAll();
+    expect(a.parsed).toEqual(Array.from(first));
+    expect(b.parsed).toEqual(Array.from(second));
+    expect(clock.pending()).toBe(0);
+  });
+
   it("serves background panes round-robin", () => {
     const clock = fakeClock();
-    const s = scheduler(clock, { idle: { maxWritesPerDrain: 1, chunkBytes: 1024 } });
+    const s = scheduler(clock, { idle: { maxWritesPerDrain: 1, chunkBytes: 1024, minSlicesPerPane: 0 } });
     const order: string[] = [];
     const terms = ["a", "b", "c"].map((name) => {
       const term = fakeTerm();
@@ -488,6 +587,7 @@ describe("terminal output scheduler", () => {
         chunkBytes: 1 + Math.floor(random() * 64),
         maxWritesPerDrain: 1 + Math.floor(random() * 4),
         maxInFlightSlices: 1 + Math.floor(random() * 3),
+        minSlicesPerPane: Math.floor(random() * 3),
       });
       const s = scheduler(clock, { idle: tier(), busy: tier() }, doc);
       const panes = Array.from({ length: 4 }, () => {
@@ -593,6 +693,8 @@ describe("terminal output scheduler", () => {
     expect(() => scheduler(clock, { idle: { maxInFlightSlices: Number.NaN } })).toThrow(RangeError);
     expect(() => scheduler(clock, { drainIntervalMs: -1 })).toThrow(RangeError);
     expect(() => scheduler(clock, { foregroundActiveMs: -1 })).toThrow(RangeError);
+    expect(() => scheduler(clock, { foregroundHeavyOutputBytes: 0 })).toThrow(RangeError);
+    expect(() => scheduler(clock, { busy: { minSlicesPerPane: -1 } })).toThrow(RangeError);
   });
 
   it("drives drains with real timers by default", async () => {

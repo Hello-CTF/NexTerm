@@ -52,7 +52,12 @@ export interface TerminalStreamWriterOptions {
   // Events for which this returns true dispatch on acceptance instead of
   // after xterm parses the bytes before them. Only for events that do not
   // depend on the screen state (a hidden pane's desktop notifications): the
-  // bytes themselves keep their order.
+  // bytes themselves keep their order. Two consequences are accepted: an
+  // early event can fire before a same-kind event still attached to a unit
+  // written before the pane was hidden (the two swap), and an early event
+  // skips generation suppression after an expired anchor. The latter never
+  // duplicates: an expired anchor rebuilds the screen without resending the
+  // bytes the event came from.
   dispatchEarly?: (event: OscStreamEvent) => boolean;
 }
 
