@@ -79,3 +79,12 @@ type FileSystem interface {
 	OpenRead(context.Context, string) (RemoteReader, error)
 	OpenWrite(context.Context, string, bool) (RemoteWriter, error)
 }
+
+// ErrNotPrivateDir reports that a freshly created private directory did not verify as a real owner-only directory.
+var ErrNotPrivateDir = errors.New("directory is not a private directory")
+
+// PrivateDirCreator creates one directory exclusively with owner-only (0700) permissions. It fails when the path
+// already exists in any form, including a symlink, never creates parents, and verifies the result is a real directory.
+type PrivateDirCreator interface {
+	MkdirPrivate(context.Context, string) error
+}

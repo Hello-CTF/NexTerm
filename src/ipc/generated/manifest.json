@@ -925,6 +925,12 @@
       "channel": false,
       "stream": "none"
     },
+    "fs_mkdir_private": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "fs_pack_download": {
       "scope": "fs",
       "nested": false,

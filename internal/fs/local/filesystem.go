@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -163,6 +164,30 @@ func (f *FileSystem) Mkdir(ctx context.Context, path string) error {
 		return err
 	}
 	return os.MkdirAll(real(path), 0o755)
+}
+
+// MkdirPrivate creates path exclusively with mode 0700: an existing file, directory or symlink fails with
+// fs.ErrExist, and the parent must already exist.
+func (f *FileSystem) MkdirPrivate(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	target := real(path)
+	if err := os.Mkdir(target, 0o700); err != nil {
+		return err
+	}
+	// The umask can only clear bits; Chmod pins the exact owner-only mode.
+	if err := os.Chmod(target, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&fs.ModeSymlink != 0 || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o700) {
+		return fmt.Errorf("%s: %w", path, base.ErrNotPrivateDir)
+	}
+	return nil
 }
 
 func (f *FileSystem) Rename(ctx context.Context, from, to string) error {

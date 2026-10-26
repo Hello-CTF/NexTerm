@@ -546,6 +546,15 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "fs_mkdir_private", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
+				if err != nil {
+					return nil, fsIPCError(kind, err)
+				}
+				return nil, privateDirIPCError(kind, mkdirPrivate(ctx, filesystem, input.Path))
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "fs_rename", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err == nil {

@@ -1170,6 +1170,14 @@ export const ipcContractManifest = {
       input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n}" },
       output: { go: "any", ts: "unknown" },
     },
+    "fs_mkdir_private": {
+      scope: "fs",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n}" },
+      output: { go: "any", ts: "unknown" },
+    },
     "fs_pack_download": {
       scope: "fs",
       nested: false,
@@ -3209,6 +3217,13 @@ export interface IPCCommandTypeMap {
     output: contractTypes.FSEntryDTO[];
   };
   "fs_mkdir": {
+    input: {
+  sessionId: string;
+  path: string;
+};
+    output: unknown;
+  };
+  "fs_mkdir_private": {
     input: {
   sessionId: string;
   path: string;

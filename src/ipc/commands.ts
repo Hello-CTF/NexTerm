@@ -880,6 +880,9 @@ export const fsApi = {
   ) => call("fs_write", { args: { sessionId, path, contentBase64, backup, taskId, attemptId } }) as Promise<void>,
   mkdir: (sessionId: string, path: string) =>
     call("fs_mkdir", { sessionId, path }) as Promise<void>,
+  // mkdirPrivate creates one directory exclusively with mode 0700 and fails when anything already exists at the path.
+  mkdirPrivate: (sessionId: string, path: string) =>
+    call("fs_mkdir_private", { sessionId, path }) as Promise<void>,
   rename: (sessionId: string, from: string, to: string) =>
     call("fs_rename", { sessionId, from, to }) as Promise<void>,
   delete: (sessionId: string, path: string, isDir: boolean) =>

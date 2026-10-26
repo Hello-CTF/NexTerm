@@ -506,3 +506,32 @@ func (e *fakeExecutor) Exec(ctx context.Context, command string, _ base.ExecOpti
 	code := e.exitCode
 	return base.ExecResult{ExitCode: &code}, nil
 }
+
+func TestSFTPMkdirPrivateIsExclusiveAndOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits and symlinks are not portable to Windows")
+	}
+	filesystem, root := newTestFS(t, nil)
+	ctx := t.Context()
+	target := filepath.Join(root, "private")
+	if err := filesystem.MkdirPrivate(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(target)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("private dir = %v, %v; want a 0700 directory", info, err)
+	}
+	if err := filesystem.MkdirPrivate(ctx, target); err == nil {
+		t.Fatal("MkdirPrivate reused an existing directory")
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(filepath.Join(root, "elsewhere"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.MkdirPrivate(ctx, link); err == nil {
+		t.Fatal("MkdirPrivate accepted a symlink")
+	}
+	if _, err := os.Stat(filepath.Join(root, "elsewhere")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("symlink target was created: %v", err)
+	}
+}
