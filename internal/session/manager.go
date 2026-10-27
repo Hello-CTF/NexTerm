@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/hub"
@@ -75,10 +77,15 @@ type Manager struct {
 	hookMu        sync.RWMutex
 	userInputHook func(string)
 
-	idleTimeout       time.Duration
-	sweepInterval     time.Duration
-	reconnectMax      int
-	reconnectBackoff  []time.Duration
+	idleTimeout      time.Duration
+	sweepInterval    time.Duration
+	reconnectMax     int
+	reconnectBackoff []time.Duration
+	// jitter returns a uniform sample in [0, 1) for reconnect backoff.
+	jitter            func() float64
+	livenessPolicy    LivenessPolicy
+	livenessClock     livenessClock
+	livenessStale     atomic.Uint64
 	defaultReplay     int
 	slowConsumerGrace time.Duration
 
@@ -129,6 +136,9 @@ func NewManager(config Config) *Manager {
 		sweepInterval:    config.SweepInterval,
 		reconnectMax:     config.ReconnectMax,
 		reconnectBackoff: append([]time.Duration(nil), config.ReconnectBackoff...),
+		jitter:           mathrand.Float64,
+		livenessPolicy:   config.Liveness.withDefaults(),
+		livenessClock:    systemLivenessClock{},
 		defaultReplay:    config.DefaultReplay,
 		openAccess:       config.OpenAccess,
 		ctx:              ctx,
@@ -488,9 +498,11 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	session.status = StatusConnected
 	session.idleSince = m.now()
 	session.finishConnectLocked(nil)
+	heartbeater := m.armLivenessLocked(session)
 	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
+	m.startLiveness(session, generation, heartbeater)
 	m.emit(ctx, TopicSessionStatus, connectedEvent)
 	m.transcriptStarted(ctx, session)
 	return session, nil
@@ -510,6 +522,7 @@ func (s *Session) finishReconnectLocked(err error) {
 		return
 	}
 	s.reconnecting = false
+	s.reconnectWake = nil
 	s.reconnectCompletion.err = err
 	close(s.reconnectCompletion.done)
 }

@@ -28,11 +28,21 @@ func (m *Manager) startReconnect(id string, expectedGeneration uint64, assets ..
 	if len(assets) > 0 {
 		refreshed = assets[0]
 	}
+	return m.startReconnectWith(id, expectedGeneration, false, refreshed)
+}
+
+// startReconnectImmediate reconnects a connection already known to be dead:
+// the first attempt runs without the initial backoff.
+func (m *Manager) startReconnectImmediate(id string, expectedGeneration uint64) error {
+	return m.startReconnectWith(id, expectedGeneration, true, nil)
+}
+
+func (m *Manager) startReconnectWith(id string, expectedGeneration uint64, immediate bool, refreshed *Asset) error {
 	if err := m.reconnectPreflight(id, expectedGeneration, refreshed); err != nil {
 		return err
 	}
 	if !m.startGoroutine(func() {
-		_ = m.reconnect(context.Background(), id, expectedGeneration)
+		_ = m.reconnectWith(context.Background(), id, expectedGeneration, immediate)
 	}) {
 		return ErrSessionClosed
 	}
@@ -106,6 +116,10 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 }
 
 func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration uint64) error {
+	return m.reconnectWith(ctx, id, expectedGeneration, false)
+}
+
+func (m *Manager) reconnectWith(ctx context.Context, id string, expectedGeneration uint64, immediate bool) error {
 	m.mu.Lock()
 	session := m.sessions[id]
 	if session == nil {
@@ -160,7 +174,13 @@ func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration u
 	session.reconnecting = true
 	session.reconnectCompletion = &reconnectCompletion{done: make(chan struct{})}
 	session.reconnectAttempt = 0
-	session.reconnectNextRetry = m.now().Add(m.reconnectBackoff[0])
+	firstDelay := time.Duration(0)
+	if !immediate {
+		firstDelay = m.reconnectDelay(0)
+	}
+	session.reconnectNextRetry = m.now().Add(firstDelay)
+	wake := make(chan struct{}, 1)
+	session.reconnectWake = wake
 	channels := session.detachChannelsLocked()
 	m.byAsset[session.assetOwnerKey()] = session.ID
 	reconnectCtx := session.ctx
@@ -182,7 +202,42 @@ func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration u
 		stop()
 		cancel()
 	}()
-	return m.reconnectLoop(runCtx, session, generation)
+	return m.reconnectLoop(runCtx, session, generation, firstDelay, wake)
+}
+
+// reconnectDelay is the jittered backoff before the given attempt: a uniform
+// sample in [d/2, d) of the configured step, so sessions that dropped together
+// (a network change, a restarted bastion) do not redial in lockstep.
+func (m *Manager) reconnectDelay(attempt int) time.Duration {
+	step := m.reconnectBackoff[min(attempt, len(m.reconnectBackoff)-1)]
+	if step <= 0 {
+		return 0
+	}
+	half := step / 2
+	return half + time.Duration(m.jitter()*float64(step-half))
+}
+
+// waitReconnectBackoff sleeps for the backoff unless the context ends or a
+// foreground probe wakes the loop. A wake that arrived while the previous
+// attempt was still dialing is discarded: that attempt already answered it.
+func waitReconnectBackoff(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
+	select {
+	case <-wake:
+	default:
+	}
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-wake:
+		return nil
+	case <-timer.C:
+		return nil
+	}
 }
 
 func waitReconnect(ctx context.Context, completion *reconnectCompletion) error {
@@ -196,11 +251,10 @@ func waitReconnect(ctx context.Context, completion *reconnectCompletion) error {
 	return completion.err
 }
 
-func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generation uint64) error {
+func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generation uint64, delay time.Duration, wake <-chan struct{}) error {
 	var lastErr error
 	for attempt := 0; attempt < m.reconnectMax; attempt++ {
-		backoff := m.reconnectBackoff[min(attempt, len(m.reconnectBackoff)-1)]
-		if err := sleepContext(ctx, backoff); err != nil {
+		if err := waitReconnectBackoff(ctx, delay, wake); err != nil {
 			lastErr = err
 			break
 		}
@@ -271,8 +325,8 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 			break
 		}
 		if attempt+1 < m.reconnectMax {
-			nextBackoff := m.reconnectBackoff[min(attempt+1, len(m.reconnectBackoff)-1)]
-			event, current := m.reconnectRetryEvent(session, generation, lastErr, m.now().Add(nextBackoff))
+			delay = m.reconnectDelay(attempt + 1)
+			event, current := m.reconnectRetryEvent(session, generation, lastErr, m.now().Add(delay))
 			if !current {
 				return lastErr
 			}
@@ -573,6 +627,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		session.idleSince = m.now()
 	}
 	session.finishReconnectLocked(nil)
+	heartbeater := m.armLivenessLocked(session)
 	reconnectCtx := session.ctx
 	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
@@ -624,6 +679,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			_ = m.feed(reconnectCtx, tab, generation, reconnectBanner)
 		}
 	}
+	m.startLiveness(session, generation, heartbeater)
 	m.emit(context.Background(), TopicSessionStatus, connectedEvent)
 	committed = true
 	return true, nil
@@ -660,18 +716,4 @@ func (m *Manager) finishReconnect(session *Session, generation uint64, reconnect
 	}
 	m.emit(context.Background(), TopicSessionStatus, finishedEvent)
 	return reconnectErr
-}
-
-func sleepContext(ctx context.Context, duration time.Duration) error {
-	if duration <= 0 {
-		return ctx.Err()
-	}
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
