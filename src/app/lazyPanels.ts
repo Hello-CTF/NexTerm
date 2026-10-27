@@ -37,6 +37,9 @@ export const DbPanel = lazy(() => import("../features/db/DbPanel").then((m) => (
 export const ExecBatchPanel = lazy(() =>
   import("../features/execbatch/ExecBatchPanel").then((m) => ({ default: m.ExecBatchPanel })),
 );
+export const HostDetailView = lazy(() =>
+  import("../features/hosts/HostDetailView").then((m) => ({ default: m.HostDetailView })),
+);
 export const AiSidebar = lazy(() => import("../features/ai/AiSidebar").then((m) => ({ default: m.AiSidebar })));
 export const SettingsView = lazy(() => import("../features/settings/SettingsView").then((m) => ({ default: m.SettingsView })));
 export const AuditView = lazy(() => import("../features/settings/AuditView").then((m) => ({ default: m.AuditView })));

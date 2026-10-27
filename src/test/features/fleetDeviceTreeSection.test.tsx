@@ -542,8 +542,13 @@ describe("Asset tree device rows - row behavior", () => {
     expect(items.find((item) => item.textContent?.includes("打开工作区"))?.disabled).toBe(true);
     expect(items.some((item) => item.textContent?.includes("详情"))).toBe(true);
     expect(items.some((item) => item.querySelector(".nx-menu-label")?.textContent === "吊销")).toBe(false);
-    clickDeviceMenuItem("详情");
-    expect(useUi.getState().workspaces.some((workspace) => workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "devices")))).toBe(true);
+    const openTabs = () => useUi.getState().workspaces.flatMap((workspace) => workspace.panes.flatMap((pane) => pane.tabs));
+    clickDeviceMenuItem("主机详情");
+    expect(openTabs().find((tab) => tab.kind === "host")?.assetId).toBe("device/d-4");
+    openDeviceMenu("old-laptop");
+    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
+    clickDeviceMenuItem("设备管理");
+    expect(openTabs().some((tab) => tab.kind === "devices")).toBe(true);
     expect(calls.some((call) => call.url.includes("/revoke"))).toBe(false);
   });
 

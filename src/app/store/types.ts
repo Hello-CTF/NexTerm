@@ -22,7 +22,8 @@ export type PaneKind =
   | "devices"
   | "background"
   | "history"
-  | "execBatch";
+  | "execBatch"
+  | "host";
 
 // The file tree moved from the left dock to the session side panel; a stored "files" mode reads as "assets".
 export type LeftMode = "assets" | "credentials";

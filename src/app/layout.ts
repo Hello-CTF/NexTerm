@@ -84,6 +84,7 @@ const PANE_KINDS = new Set<PaneKind>([
   "background",
   "history",
   "execBatch",
+  "host",
 ]);
 
 function isObj(v: unknown): v is Record<string, unknown> {

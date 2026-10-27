@@ -578,6 +578,20 @@ describe("tool tab routing", () => {
     const tools = restored?.workspaces.find((workspace) => workspace.kind === "tools");
     expect(tools?.panes[0].tabs.map((tab) => tab.id)).toEqual(["exec-batch"]);
   });
+
+  it("keeps one host detail tab in Tools that follows the last opened host and survives a layout round trip", () => {
+    useUi.getState().addTab({ id: "host-detail", kind: "host", title: "主机详情", assetId: "a-1", closable: true });
+    useUi.getState().addTab({ id: "host-detail", kind: "host", title: "主机详情", assetId: "device/d-1", closable: true });
+
+    const state = useUi.getState();
+    expect(state.workspaces.find((w) => w.id === "ws-host")?.panes[0].tabs.map((t) => t.kind)).toEqual(["terminal"]);
+    const hostTabs = state.workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).filter((t) => t.kind === "host");
+    expect(hostTabs.map((t) => t.assetId)).toEqual(["device/d-1"]);
+
+    const restored = sanitizeLayout(JSON.parse(JSON.stringify(serializeLayout(useUi.getState()))));
+    const tools = restored?.workspaces.find((workspace) => workspace.kind === "tools");
+    expect(tools?.panes[0].tabs.map((tab) => [tab.kind, tab.assetId])).toEqual([["host", "device/d-1"]]);
+  });
 });
 
 describe("workspace session rebinding and split routing", () => {

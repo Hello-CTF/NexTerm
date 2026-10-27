@@ -21,6 +21,7 @@ import {
   FileEditor,
   FleetHealthPanel,
   ForwardPanel,
+  HostDetailView,
   LogViewer,
   MountPanel,
   MultiHostLogTail,
@@ -221,6 +222,8 @@ export const PaneForTab = memo(function PaneForTab({
       return <Lazy><AuditView /></Lazy>;
     case "devices":
       return <LazyDevicesView />;
+    case "host":
+      return <Lazy><HostDetailView assetId={tab.assetId} visible={active} /></Lazy>;
     case "background":
       return (
         <Lazy>
