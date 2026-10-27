@@ -1,5 +1,5 @@
 import { IconClose } from "../../ui/icons";
-import { persistenceHintFailure, persistenceHintMessage, type PersistenceHint } from "./persistenceHintState";
+import { persistenceHintFailure, persistenceHintMessage, type PersistenceHint } from "./persistenceHint";
 
 export function PersistenceHintBar({
   hint,

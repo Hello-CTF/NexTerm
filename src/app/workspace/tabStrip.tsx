@@ -4,7 +4,7 @@ import { useTabUnread } from "../unreadStore";
 import { useTerminalTabTitle } from "../terminalViewStore";
 import { fileVisual } from "../../features/files/fileTypes";
 import { useAssetProductionClassification } from "../../features/production/productionSettings";
-import { usePersistenceFailureMark } from "../../features/terminal/persistenceHintState";
+import { usePersistenceFailureMark } from "../../features/terminal/persistenceHintStore";
 import {
   IconActivity,
   IconBox,

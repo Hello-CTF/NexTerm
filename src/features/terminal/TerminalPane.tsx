@@ -6,17 +6,14 @@ import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
 import { PersistenceHintBar } from "./PersistenceHintBar";
+import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage } from "./persistenceHint";
 import {
   dismissPersistenceHint,
   dismissedPersistenceHints,
   forgetPersistenceHints,
-  persistenceHint,
-  persistenceHintFailure,
-  persistenceHintKey,
-  persistenceHintMessage,
   prunePersistenceHints,
   setPersistenceFailureMark,
-} from "./persistenceHintState";
+} from "./persistenceHintStore";
 import { localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 import { showSettingsSection } from "../settings/settingsNavigation";
 import { HelperOperationDialog } from "./HelperOperationDialog";
