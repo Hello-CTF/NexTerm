@@ -3503,7 +3503,7 @@ describe("XtermView replayed output", () => {
     expect(onClipboard).not.toHaveBeenCalled();
   });
 
-  it("keeps the user-event mark across microtask checkpoints between listeners", async () => {
+  it("passes a key reply raised by a handler that stops propagation, and nothing after it", async () => {
     harness.emitReplies = true;
     await show();
     await attachOk();
@@ -3514,21 +3514,16 @@ describe("XtermView replayed output", () => {
     act(() => t.drainWrites(1));
     const textarea = document.createElement("textarea");
     t.host?.appendChild(textarea);
-    // xterm stops the key event's propagation, so the mark ends on the next
-    // task instead of the bubble phase.
-    textarea.addEventListener("keydown", (event) => event.stopPropagation());
-    await act(async () => {
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
-      // A trusted event reaches xterm's own listener after a microtask
-      // checkpoint; the mark must survive it.
-      await Promise.resolve();
-      await Promise.resolve();
+    // Like xterm's _keyDown: stop propagation and raise onData on the spot.
+    textarea.addEventListener("keydown", (event) => {
+      event.stopPropagation();
       t.handlers.data?.("\x1b[1;5R");
     });
-    // After a macrotask the mark is gone: a reply-shaped report is a reply.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
     });
+    // The mark ended with the event, before any timer: a reply-shaped report
+    // parsed now is a reply to replay.
     act(() => t.handlers.data?.("\x1b[1;1R"));
     act(() => t.drainWrites());
     expect(upstream()).toEqual(["\x1b[1;5R"]);

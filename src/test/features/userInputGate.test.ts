@@ -20,11 +20,11 @@ function setup() {
     gate.dispose();
     host.remove();
   };
-  return { gate, textarea };
+  return { gate, host, textarea };
 }
 
 describe("user input gate", () => {
-  it("is active while the event's own listeners run and ends in its bubble phase", () => {
+  it("is active while the target's own listeners run and ends right after them", () => {
     const { gate, textarea } = setup();
     const seen: boolean[] = [];
     textarea.addEventListener("keydown", () => seen.push(gate.active()));
@@ -34,17 +34,29 @@ describe("user input gate", () => {
     expect(gate.active()).toBe(false);
   });
 
-  it("survives microtask checkpoints and ends on the next task when propagation stops", async () => {
+  it("ends right after a target-phase handler that stops propagation", () => {
     const { gate, textarea } = setup();
-    textarea.addEventListener("keydown", (event) => event.stopPropagation());
+    const seen: boolean[] = [];
+    textarea.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      seen.push(gate.active());
+    });
+    textarea.addEventListener("keydown", () => seen.push(gate.active()));
     textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", bubbles: true }));
+    expect(seen).toEqual([true, true]);
+    expect(gate.active()).toBe(false);
+  });
+
+  it("falls back to the next task when no listener after the target's can run", async () => {
+    const { gate, host } = setup();
+    host.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", bubbles: true }));
     await Promise.resolve();
     expect(gate.active()).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(gate.active()).toBe(false);
   });
 
-  it("covers focus changes through their bubbling twins", () => {
+  it("covers focus changes", () => {
     const { gate, textarea } = setup();
     const seen: boolean[] = [];
     textarea.addEventListener("focus", () => seen.push(gate.active()));
