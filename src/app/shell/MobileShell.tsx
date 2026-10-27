@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
-import { StatusWall } from "../../features/mobile/StatusWall";
 import { IconHome } from "../../ui/icons";
+import { Lazy } from "../../ui/LazyBoundary";
+import { StatusWall } from "../lazyPanels";
 import { wailsNoDragRegionStyle } from "../platform";
 import { useUi } from "../store";
 import { hideMobileHome, showMobileHome, showMobileHomeOnLaunch, useMobileHome } from "./mobileHome";
@@ -43,6 +44,10 @@ export function MobileShell(parts: ShellParts) {
       <IconHome size={15} />
     </button>
   );
-  const home = homeOpen ? <StatusWall onOpened={hideMobileHome} onOpenAssets={() => setLeftOpen(true)} /> : null;
+  const home = homeOpen ? (
+    <Lazy>
+      <StatusWall onOpened={hideMobileHome} onOpenAssets={() => setLeftOpen(true)} />
+    </Lazy>
+  ) : null;
   return <ShellFrame {...parts} header={{ ...parts.header, leading: homeButton }} body={{ ...parts.body, home }} />;
 }
