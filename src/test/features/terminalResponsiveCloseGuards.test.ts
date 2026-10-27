@@ -366,6 +366,21 @@ describe("workspace and pane reclaim follow terminal close preferences", () => {
     expect(toastText()).not.toContain("转入后台");
   });
 
+  it("reports a failed workspace close under the current workspace title", async () => {
+    const tab = { ...terminal("t1"), retainable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: "t1" }], "local");
+    setTerminalCloseAction("detach");
+    mocks.closeTab.mockImplementationOnce(async () => {
+      useUi.setState({ workspaces: [{ ...useUi.getState().workspaces[0], title: "renamed" }] });
+      throw new Error("boom");
+    });
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(toastText()).toContain("关闭「renamed」");
+    expect(toastText()).not.toContain("关闭「workspace」");
+  });
+
   it("keeps failed workspace tabs with closeError and removes only successful detach operations", async () => {
     const tabs = [{ ...terminal("t1"), retainable: true }, { ...terminal("t2"), retainable: true }];
     seed([{ id: "p", tabs, activeTabId: "t1" }], "local");
