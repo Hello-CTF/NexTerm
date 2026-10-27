@@ -929,8 +929,9 @@ export function XtermView(props: XtermViewProps) {
     const classifyRuns = (out: Uint8Array, index: number): StreamRun[] => {
       if (out.length === 0) return [];
       if (!streamAnchor) {
+        // replayRemaining shrinks as runs are accepted, not here: refused
+        // bytes come back through the resume.
         const replayed = Math.min(out.length, replayRemaining);
-        replayRemaining -= replayed;
         const runs: StreamRun[] = [];
         if (replayed > 0) runs.push({ offset: 0, length: replayed, mode: "replay" });
         if (out.length > replayed) runs.push({ offset: replayed, length: out.length - replayed, mode: "live" });
@@ -977,6 +978,7 @@ export function XtermView(props: XtermViewProps) {
             return;
           }
           accepted += run.length;
+          if (!streamAnchor && run.mode === "replay") replayRemaining -= run.length;
         }
         streamBytes += bytes.length;
         if (streamAnchor) streamClasses = pruneSpans(streamClasses, acceptedOffsetNow());
