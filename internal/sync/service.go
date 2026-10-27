@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"log/slog"
 	"strings"
 	stdsync "sync"
@@ -81,6 +82,7 @@ type Service struct {
 	profilesReload    func(context.Context) error
 	permissionsReload func(context.Context) error
 	grantsReload      func(context.Context) error
+	stateRulesChanged func(context.Context)
 	syncPeriod        time.Duration
 	// linkChanged is called after the saved sync link was written.
 	linkChanged atomic.Pointer[func()]
@@ -126,6 +128,25 @@ func (s *Service) SetLinkChanged(changed func()) {
 func (s *Service) notifyLinkChanged() {
 	if changed := s.linkChanged.Load(); changed != nil && *changed != nil {
 		(*changed)()
+	}
+}
+
+// SetStateRulesChanged sets the hook run after a sync changed the caller's
+// state rules, so the rules reach the owner's helpers on this device.
+func (s *Service) SetStateRulesChanged(changed func(context.Context)) {
+	s.stateRulesChanged = changed
+}
+
+// SetSkills routes synced AI skill overrides through the manager that serves
+// them, keeping its per-owner cache current.
+func (s *Service) SetSkills(manager *skills.Manager) {
+	s.engine.setSkills(manager)
+}
+
+// afterKindsChanged runs the hooks of kinds a sync changed locally.
+func (s *Service) afterKindsChanged(ctx context.Context, changed map[string]bool) {
+	if changed[KindStateRule] && s.stateRulesChanged != nil {
+		s.stateRulesChanged(ctx)
 	}
 }
 
@@ -777,6 +798,7 @@ func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error)
 	report, syncErr := s.engine.Sync(ctx, RemoteConfig{
 		URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure,
 	})
+	s.afterKindsChanged(ctx, report.changedKinds)
 	if syncReportChanged(report) {
 		if s.profilesReload != nil {
 			if err := s.profilesReload(ctx); err != nil {

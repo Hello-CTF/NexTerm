@@ -21,8 +21,11 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 		{"aiPermission", KindOptInPatch{AIPermission: boolPtr(false)}, func(v KindOptIn) bool { return !v.AIPermission }, KindAIPermission},
 		{"aiGrant", KindOptInPatch{AIGrant: boolPtr(false)}, func(v KindOptIn) bool { return !v.AIGrant }, KindAIGrant},
 		{"preferences", KindOptInPatch{Preferences: boolPtr(false)}, func(v KindOptIn) bool { return !v.Preferences }, KindPreference},
+		{"stateRules", KindOptInPatch{StateRules: boolPtr(false)}, func(v KindOptIn) bool { return !v.StateRules }, KindStateRule},
+		{"runbookTemplates", KindOptInPatch{RunbookTemplates: boolPtr(false)}, func(v KindOptIn) bool { return !v.RunbookTemplates }, KindRunbookTemplate},
+		{"skills", KindOptInPatch{Skills: boolPtr(false)}, func(v KindOptIn) bool { return !v.Skills }, KindSkill},
 	}
-	gated := []string{KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference}
+	gated := []string{KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference, KindStateRule, KindRunbookTemplate, KindSkill}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			userID := "u-" + tc.name
@@ -35,7 +38,7 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 				t.Fatalf("switch not disabled: %+v", view)
 			}
 			disabled := 0
-			for _, flag := range []bool{view.KnownHost, view.AIProfile, view.AIPermission, view.AIGrant, view.Preferences} {
+			for _, flag := range []bool{view.KnownHost, view.AIProfile, view.AIPermission, view.AIGrant, view.Preferences, view.StateRules, view.RunbookTemplates, view.Skills} {
 				if !flag {
 					disabled++
 				}
@@ -68,13 +71,13 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 
 // The opt-in key is stored with reconciled cursors; its encoding must not change for existing switches.
 func TestKindOptInKeyEncoding(t *testing.T) {
-	if got := (kindOptIn{}).key(); got != "optin:00000" {
+	if got := (kindOptIn{}).key(); got != "optin:00000000" {
 		t.Fatalf("zero key=%q", got)
 	}
-	if got := (kindOptIn{optInKnownHost: true, optInAIGrant: true}).key(); got != "optin:10010" {
+	if got := (kindOptIn{optInKnownHost: true, optInAIGrant: true}).key(); got != "optin:10010000" {
 		t.Fatalf("key=%q", got)
 	}
-	if got := allKindOptIn().key(); got != "optin:11111" {
+	if got := allKindOptIn().key(); got != "optin:11111111" {
 		t.Fatalf("all key=%q", got)
 	}
 }
@@ -118,9 +121,12 @@ func TestSortObjectsForPushKindOrder(t *testing.T) {
 		"j-credential": {kind: KindCredential},
 		"k-group":      {kind: KindGroup, plaintext: []byte(`{}`)},
 		"l-unknown":    {kind: "unknown_kind"},
+		"m-rule":       {kind: KindStateRule},
+		"n-runbook":    {kind: KindRunbookTemplate},
+		"o-skill":      {kind: KindSkill},
 	}
 	want := []string{"k-group", "j-credential", "i-snippet", "h-asset", "g-knownhost", "f-profile",
-		"e-permission", "d-grant", "c-preference", "b-tombstone", "a-transcript", "l-unknown"}
+		"e-permission", "d-grant", "c-preference", "m-rule", "n-runbook", "o-skill", "b-tombstone", "a-transcript", "l-unknown"}
 	got := sortObjectsForPush(objects)
 	if len(got) != len(want) {
 		t.Fatalf("order=%v", got)

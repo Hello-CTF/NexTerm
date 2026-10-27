@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"log/slog"
 	"math/rand/v2"
 	"strings"
@@ -50,6 +51,16 @@ type SyncReport struct {
 	// (a credential while the vault is locked, or a missing dependency), so the
 	// next round must list every server ID again instead of trusting the head.
 	leftPending bool
+	// changedKinds names the kinds whose local copy this round changed,
+	// including the target kinds of applied tombstones.
+	changedKinds map[string]bool
+}
+
+func (report *SyncReport) markChanged(kind string) {
+	if report.changedKinds == nil {
+		report.changedKinds = map[string]bool{}
+	}
+	report.changedKinds[kind] = true
 }
 
 // markUnresolvedRef marks an object applied in reference-degraded form (a dependency has not arrived): the engine must not record reconciliation,
@@ -178,6 +189,10 @@ type Engine struct {
 	transcriptCacheMu sync.RWMutex
 	transcriptCache   map[string]transcriptCacheEntry
 	aiShared          bool
+
+	// skills is the AI skill manager whose per-owner cache synced overrides go through.
+	skillsMu sync.Mutex
+	skills   *skills.Manager
 }
 
 func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog.Logger) *Engine {

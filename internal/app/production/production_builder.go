@@ -247,6 +247,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		dockerService = newProductionDockerService(sessionManager, database)
 	}
 	syncService := syncservice.New(database, credentialVault, syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithGatewayAuthKey(os.Getenv("NEXTERM_GATEWAY_AUTH")), syncservice.WithEvents(config.Config.Events), syncservice.WithProfilesReload(profileManager.Reload), syncservice.WithLogger(config.Config.Logger))
+	syncService.SetStateRulesChanged(func(ctx context.Context) { stateRules.changed(ipc.OwnerID(ctx)) })
 	if config.Desktop && sshConnector != nil {
 		sshConnector.device.Store(&DeviceConnectorConfig{
 			Dial: syncService.Remote().DialDeviceBridge,
@@ -397,6 +398,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		return nil, err
 	}
 	services.Skills = skillsManager
+	syncService.SetSkills(skillsManager)
 	if err := composeAIRuntime(ctx, &services); err != nil {
 		services.closeAIRuntime()
 		return nil, err

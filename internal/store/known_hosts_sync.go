@@ -133,6 +133,67 @@ func (s *Store) SetAIGrantSyncOptIn(ctx context.Context, userID string, enabled 
 	return s.SettingSet(ctx, "sync.optin.ai_grant."+userID, syncOptInValue(enabled))
 }
 
+// syncOptInGetOr reads an opt-in switch that falls back to fallback while unset.
+func (s *Store) syncOptInGetOr(ctx context.Context, key string, fallback bool) (bool, error) {
+	raw, found, err := s.SettingGet(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return fallback, nil
+	}
+	return raw == "1", nil
+}
+
+func syncOptInUser(userID, what string) error {
+	if userID == "" {
+		return badParam(fmt.Errorf("开启%s同步需要先登录账号", what))
+	}
+	return nil
+}
+
+func (s *Store) StateRuleSyncOptIn(ctx context.Context, userID string) (bool, error) {
+	if err := syncOptInUser(userID, "状态规则"); err != nil {
+		return false, err
+	}
+	return s.syncOptInGetOr(ctx, "sync.optin.state_rule."+userID, true)
+}
+
+func (s *Store) SetStateRuleSyncOptIn(ctx context.Context, userID string, enabled bool) error {
+	if err := syncOptInUser(userID, "状态规则"); err != nil {
+		return err
+	}
+	return s.SettingSet(ctx, "sync.optin.state_rule."+userID, syncOptInValue(enabled))
+}
+
+func (s *Store) RunbookTemplateSyncOptIn(ctx context.Context, userID string) (bool, error) {
+	if err := syncOptInUser(userID, " Runbook 模板"); err != nil {
+		return false, err
+	}
+	return s.syncOptInGetOr(ctx, "sync.optin.runbook_template."+userID, true)
+}
+
+func (s *Store) SetRunbookTemplateSyncOptIn(ctx context.Context, userID string, enabled bool) error {
+	if err := syncOptInUser(userID, " Runbook 模板"); err != nil {
+		return err
+	}
+	return s.SettingSet(ctx, "sync.optin.runbook_template."+userID, syncOptInValue(enabled))
+}
+
+func (s *Store) SkillSyncOptIn(ctx context.Context, userID string) (bool, error) {
+	if err := syncOptInUser(userID, " AI 技能"); err != nil {
+		return false, err
+	}
+	return s.syncOptInGetOr(ctx, "sync.optin.skill."+userID, true)
+}
+
+func (s *Store) SetSkillSyncOptIn(ctx context.Context, userID string, enabled bool) error {
+	if err := syncOptInUser(userID, " AI 技能"); err != nil {
+		return err
+	}
+	return s.SettingSet(ctx, "sync.optin.skill."+userID, syncOptInValue(enabled))
+}
+
 func (s *Store) AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombstoneID string, deletedAt int64) error {
 	userID, hasIdentity := SyncOptInUserID(ctx)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

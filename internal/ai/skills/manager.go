@@ -250,7 +250,7 @@ func (m *Manager) DeleteOverride(ctx context.Context, name string) error {
 		return err
 	}
 	entry.overrides = saved
-	return nil
+	return m.recordDeleteTombstone(ctx, name)
 }
 
 // Dispatch resolves the effective skill material for the load_skill path and

@@ -146,11 +146,18 @@ func (s *Store) RunbookTemplateDelete(ctx context.Context, id string) error {
 	if _, err := s.RunbookTemplateGet(ctx, id); err != nil {
 		return err
 	}
-	t := query.Use(s.db).RunbookTemplateRow
-	if _, err := t.WithContext(ctx).
-		Where(t.ID.Eq(id)).
-		Where(ownerConditions(ctx, t.TableName())...).
-		Delete(); err != nil {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		t := query.Use(tx).RunbookTemplateRow
+		if _, err := t.WithContext(ctx).
+			Where(t.ID.Eq(id)).
+			Where(ownerConditions(ctx, t.TableName())...).
+			Delete(); err != nil {
+			return err
+		}
+		// The tombstone lets the deletion reach the owner's other devices.
+		return s.recordSyncTombstoneNow(ctx, tx, id, SyncTombstoneKindRunbookTemplate)
+	})
+	if err != nil {
 		return dbError(err)
 	}
 	return nil

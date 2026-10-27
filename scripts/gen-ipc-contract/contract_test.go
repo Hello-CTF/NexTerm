@@ -330,6 +330,7 @@ func TestSyncVerticalContracts(t *testing.T) {
 		{name: "sync_collect_ai_profiles", nested: true},
 		{name: "sync_collect_assets", nested: true},
 		{name: "sync_collect_credentials", nested: true},
+		{name: "sync_collect_kind_objects", nested: true},
 		{name: "sync_collect_known_hosts", nested: true},
 		{name: "sync_collect_preferences"},
 		{name: "sync_collect_tombstones", nested: true},

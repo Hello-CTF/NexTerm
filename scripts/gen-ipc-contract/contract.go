@@ -56,6 +56,7 @@ var contractScopes = []scopeSpec{
 		"sync_collect_ai_profiles",
 		"sync_collect_assets",
 		"sync_collect_credentials",
+		"sync_collect_kind_objects",
 		"sync_collect_known_hosts",
 		"sync_collect_preferences",
 		"sync_collect_tombstones",

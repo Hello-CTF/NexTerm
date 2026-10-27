@@ -43,6 +43,8 @@ type ApplyObjectResult struct {
 	Kind    string `json:"kind"`
 	Result  string `json:"result"`
 	Warning string `json:"warning,omitempty"`
+
+	changed map[string]bool
 }
 
 type ApplyObjectsResult struct {
@@ -50,6 +52,9 @@ type ApplyObjectsResult struct {
 	Identical int                 `json:"identical"`
 	Skipped   int                 `json:"skipped"`
 	Objects   []ApplyObjectResult `json:"objects"`
+
+	// changed names the kinds whose local copy the call changed.
+	changed map[string]bool
 }
 
 func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest) (ApplyObjectsResult, error) {
@@ -68,6 +73,7 @@ func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest)
 			s.engine.logger.Info("sync apply", attrs...)
 		}
 	}
+	s.afterKindsChanged(ctx, result.changed)
 	if result.Applied > 0 {
 		if s.profilesReload != nil {
 			if err := s.profilesReload(ctx); err != nil {
@@ -113,6 +119,12 @@ func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequ
 	for _, index := range applyObjectOrder(request.Objects) {
 		object := request.Objects[index]
 		entry := e.applyPlainObject(ctx, object, userIDs...)
+		for kind := range entry.changed {
+			if result.changed == nil {
+				result.changed = map[string]bool{}
+			}
+			result.changed[kind] = true
+		}
 		switch entry.Result {
 		case ApplyResultApplied:
 			result.Applied++
@@ -200,6 +212,7 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 	report := &SyncReport{}
 	applied, identical := e.applyDecryptedObject(ctx, object.ID, object.Kind, canonical, report, userIDs...)
 	entry.Warning = strings.Join(report.Warnings, "; ")
+	entry.changed = report.changedKinds
 	if applied {
 		entry.Result = ApplyResultApplied
 	} else if identical {
@@ -249,7 +262,11 @@ func (e *Engine) applyDecryptedObject(ctx context.Context, objectID, kind string
 	if !ok {
 		return false, false
 	}
-	return spec.apply(e, ctx, objectID, plaintext, report, firstUserID(userIDs))
+	applied, identical := spec.apply(e, ctx, objectID, plaintext, report, firstUserID(userIDs))
+	if applied && kind != KindTombstone {
+		report.markChanged(kind)
+	}
+	return applied, identical
 }
 
 // validateGroupApply rejects a browser-applied group whose parent is itself or has not synced yet.

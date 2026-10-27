@@ -416,6 +416,23 @@ export type CollectCredentialsResult = {
   nextAfterId?: string;
 };
 
+export type CollectKindObject = {
+  id: string;
+  kind: string;
+  name: string;
+  updatedAt: number;
+  payload: string;
+};
+
+export type CollectKindObjectsRequest = {
+  kind: string;
+};
+
+export type CollectKindObjectsResult = {
+  objects: CollectKindObject[];
+  warnings: string[];
+};
+
 export type CollectKnownHost = {
   id: string;
   host: string;
@@ -1498,6 +1515,9 @@ export type KindOptIn = {
   aiPermission: boolean;
   aiGrant: boolean;
   preferences: boolean;
+  stateRules: boolean;
+  runbookTemplates: boolean;
+  skills: boolean;
 };
 
 export type KindOptInPatch = {
@@ -1506,6 +1526,9 @@ export type KindOptInPatch = {
   aiPermission?: boolean | null;
   aiGrant?: boolean | null;
   preferences?: boolean | null;
+  stateRules?: boolean | null;
+  runbookTemplates?: boolean | null;
+  skills?: boolean | null;
 };
 
 export type KnownHostRequest = {

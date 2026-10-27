@@ -18,6 +18,9 @@ const (
 	optInAIPermission
 	optInAIGrant
 	optInPreferences
+	optInStateRule
+	optInRunbookTemplate
+	optInSkill
 	optInCount
 )
 
@@ -53,6 +56,18 @@ var optInSpecs = []optInSpec{
 		id: optInPreferences, get: (*store.Store).PreferencesSyncOptIn, set: (*store.Store).SetPreferencesSyncOptIn,
 		view: func(v *KindOptIn) *bool { return &v.Preferences }, patch: func(p KindOptInPatch) *bool { return p.Preferences },
 	},
+	{
+		id: optInStateRule, get: (*store.Store).StateRuleSyncOptIn, set: (*store.Store).SetStateRuleSyncOptIn,
+		view: func(v *KindOptIn) *bool { return &v.StateRules }, patch: func(p KindOptInPatch) *bool { return p.StateRules },
+	},
+	{
+		id: optInRunbookTemplate, get: (*store.Store).RunbookTemplateSyncOptIn, set: (*store.Store).SetRunbookTemplateSyncOptIn,
+		view: func(v *KindOptIn) *bool { return &v.RunbookTemplates }, patch: func(p KindOptInPatch) *bool { return p.RunbookTemplates },
+	},
+	{
+		id: optInSkill, get: (*store.Store).SkillSyncOptIn, set: (*store.Store).SetSkillSyncOptIn,
+		view: func(v *KindOptIn) *bool { return &v.Skills }, patch: func(p KindOptInPatch) *bool { return p.Skills },
+	},
 }
 
 // revisionSource selects the payload field that carries an object's LWW revision.
@@ -74,8 +89,8 @@ type localCollection struct {
 }
 
 // kindSpec describes everything kind-specific about one sync object kind in the Go engine. Adding a kind means
-// adding one spec here; browser mode collects through the per-kind IPC in collect.go and the frontend push, so a
-// new kind also needs a collect command there and frontend support.
+// adding one spec here; browser mode collects through the per-kind IPC in collect.go (or, with browserCollect,
+// the generic CommandCollectKindObjects) and the frontend push, so a new kind also needs frontend support.
 type kindSpec struct {
 	kind string
 	// rank orders kinds by dependency for push and plaintext apply.
@@ -103,6 +118,9 @@ type kindSpec struct {
 	collect func(e *Engine, ctx context.Context, c *localCollection) error
 	// collectNeedsUser skips collection without a session user.
 	collectNeedsUser bool
+	// browserCollect lets the browser collect the kind's payloads through CommandCollectKindObjects
+	// instead of a kind-specific collect command.
+	browserCollect bool
 }
 
 // syncKinds is the kind registry in collection order. It is assigned in init because spec functions refer back to the registry.
@@ -113,11 +131,14 @@ var (
 	objectKinds []string
 	// aiOwnerKinds lists the kinds whose objects and tombstones require an AI owner identity.
 	aiOwnerKinds []string
+	// unknownKindRank orders kinds this build does not know after every registered kind.
+	unknownKindRank int
 )
 
 // decryptOrder is the fixed decryption attempt order; AAD binds kind, so a wrong kind can never decrypt.
 // It must list every registered kind exactly once.
-var decryptOrder = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference}
+var decryptOrder = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference,
+	KindStateRule, KindRunbookTemplate, KindSkill}
 
 func init() {
 	syncKinds = []kindSpec{
@@ -164,7 +185,7 @@ func init() {
 			collect: (*Engine).collectAssetObjects,
 		},
 		{
-			kind: KindTranscript, rank: 10, strictID: true, idInPayload: true, revision: revisionEnded,
+			kind: KindTranscript, rank: 15, strictID: true, idInPayload: true, revision: revisionEnded,
 			newPayload:  newPayload[transcriptObject],
 			displayName: transcriptDisplayName,
 			apply: func(e *Engine, ctx context.Context, _ string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {
@@ -244,7 +265,43 @@ func init() {
 			collectNeedsUser: true,
 		},
 		{
-			kind: KindTombstone, rank: 9, revision: revisionDeleted,
+			kind: KindStateRule, rank: 9, optIn: optInStateRule, strictID: true, idInPayload: true,
+			newPayload: newPayload[stateRuleObject],
+			apply: func(e *Engine, ctx context.Context, _ string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {
+				return e.applyStateRuleObject(ctx, plaintext, report)
+			},
+			applyTombstone: func(e *Engine, ctx context.Context, objectID string, tombstone tombstoneObject, report *SyncReport, _ string) (bool, bool) {
+				return e.applyStateRuleTombstone(ctx, objectID, tombstone.DeletedAt, report)
+			},
+			collect:        (*Engine).collectStateRuleObjects,
+			browserCollect: true,
+		},
+		{
+			kind: KindRunbookTemplate, rank: 10, optIn: optInRunbookTemplate, strictID: true, idInPayload: true,
+			newPayload: newPayload[runbookTemplateObject],
+			apply: func(e *Engine, ctx context.Context, _ string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {
+				return e.applyRunbookTemplateObject(ctx, plaintext, report)
+			},
+			applyTombstone: func(e *Engine, ctx context.Context, objectID string, tombstone tombstoneObject, report *SyncReport, _ string) (bool, bool) {
+				return e.applyRunbookTemplateTombstone(ctx, objectID, tombstone.DeletedAt, report)
+			},
+			collect:        (*Engine).collectRunbookTemplateObjects,
+			browserCollect: true,
+		},
+		{
+			kind: KindSkill, rank: 11, optIn: optInSkill, aiOwner: true, idInPayload: true,
+			newPayload: newPayload[skillObject],
+			apply: func(e *Engine, ctx context.Context, objectID string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {
+				return e.applySkillObject(ctx, objectID, plaintext, report)
+			},
+			applyTombstone: func(e *Engine, ctx context.Context, objectID string, tombstone tombstoneObject, report *SyncReport, _ string) (bool, bool) {
+				return e.applySkillTombstone(ctx, objectID, tombstone.DeletedAt, report)
+			},
+			collect:        (*Engine).collectSkillObjects,
+			browserCollect: true,
+		},
+		{
+			kind: KindTombstone, rank: 14, revision: revisionDeleted,
 			newPayload:  newPayload[tombstoneObject],
 			displayName: func(objectID string, _ []byte) string { return objectID },
 			apply: func(e *Engine, ctx context.Context, objectID string, plaintext []byte, report *SyncReport, userID string) (bool, bool) {
@@ -266,6 +323,7 @@ func validateKindRegistry() {
 	syncKindMap = make(map[string]*kindSpec, len(syncKinds))
 	ranks := make(map[int]string, len(syncKinds))
 	aiOwnerKinds = nil
+	unknownKindRank = 0
 	for index := range syncKinds {
 		spec := &syncKinds[index]
 		if _, exists := syncKindMap[spec.kind]; exists {
@@ -285,6 +343,7 @@ func validateKindRegistry() {
 		}
 		syncKindMap[spec.kind] = spec
 		ranks[spec.rank] = spec.kind
+		unknownKindRank = max(unknownKindRank, spec.rank+1)
 		if spec.aiOwner {
 			aiOwnerKinds = append(aiOwnerKinds, spec.kind)
 		}
@@ -334,7 +393,7 @@ func objectKindRank(kind string) int {
 	if spec, ok := lookupKind(kind); ok {
 		return spec.rank
 	}
-	return len(syncKinds)
+	return unknownKindRank
 }
 
 // kindOptIn is the per-sync-round opt-in snapshot of sync object kinds, indexed by optInID; the zero value means hard-off.

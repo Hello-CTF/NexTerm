@@ -93,7 +93,7 @@ beforeEach(() => {
   mocks.linkGet.mockResolvedValue({ ...LINK });
   mocks.ask.mockResolvedValue(true);
   mocks.status.mockImplementation(() => Promise.resolve(statusPayload()));
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false });
   mocks.compare.mockResolvedValue({ rows: [], remote: 0, warnings: [], userId: "u-1", compareToken: "compare-1" });
 });
 

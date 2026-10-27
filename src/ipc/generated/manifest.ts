@@ -2217,6 +2217,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectCredentialsRequest", ts: "CollectCredentialsRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectCredentialsResult", ts: "CollectCredentialsResult" },
     },
+    "sync_collect_kind_objects": {
+      scope: "sync",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectKindObjectsRequest", ts: "CollectKindObjectsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectKindObjectsResult", ts: "CollectKindObjectsResult" },
+    },
     "sync_collect_known_hosts": {
       scope: "sync",
       nested: true,
@@ -4028,6 +4036,10 @@ export interface IPCCommandTypeMap {
   "sync_collect_credentials": {
     input: contractTypes.CollectCredentialsRequest;
     output: contractTypes.CollectCredentialsResult;
+  };
+  "sync_collect_kind_objects": {
+    input: contractTypes.CollectKindObjectsRequest;
+    output: contractTypes.CollectKindObjectsResult;
   };
   "sync_collect_known_hosts": {
     input: contractTypes.CollectKnownHostsRequest;

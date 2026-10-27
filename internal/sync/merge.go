@@ -872,7 +872,11 @@ func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plai
 		report.warnf("删除标记对象目标种类 %s 不受支持", payload.TargetKind)
 		return false, false
 	}
-	return target.applyTombstone(e, ctx, objectID, payload, report, userID)
+	applied, identical := target.applyTombstone(e, ctx, objectID, payload, report, userID)
+	if applied {
+		report.markChanged(target.kind)
+	}
+	return applied, identical
 }
 
 func (e *Engine) applyGroupTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport) (bool, bool) {

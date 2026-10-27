@@ -410,16 +410,24 @@ func (s *Store) StateRuleDelete(ctx context.Context, id string) error {
 	if err := EnsureID(strings.TrimSpace(id)); err != nil {
 		return err
 	}
-	rule := query.Use(s.db).StateRuleRow
-	result, err := rule.WithContext(ctx).
-		Where(rule.ID.Eq(strings.TrimSpace(id))).
-		Where(ownerConditions(ctx, rule.TableName())...).
-		Delete()
+	id = strings.TrimSpace(id)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		rule := query.Use(tx).StateRuleRow
+		result, err := rule.WithContext(ctx).
+			Where(rule.ID.Eq(id)).
+			Where(ownerConditions(ctx, rule.TableName())...).
+			Delete()
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected == 0 {
+			return notFound("状态规则")
+		}
+		// The tombstone lets the deletion reach the owner's other devices.
+		return s.recordSyncTombstoneNow(ctx, tx, id, SyncTombstoneKindStateRule)
+	})
 	if err != nil {
 		return dbError(err)
-	}
-	if result.RowsAffected == 0 {
-		return notFound("状态规则")
 	}
 	return nil
 }
