@@ -355,24 +355,70 @@ func TestDeviceSessionsListsOnlyTheRequestersDevices(t *testing.T) {
 			mu.Lock()
 			askedFor = append(askedFor, userID)
 			mu.Unlock()
-			return []AggregateDevice{{ID: userID + "-box", Name: userID, TerminalEnabled: true}}, nil
+			return []AggregateDevice{
+				{ID: userID + "-box", Name: userID, TerminalEnabled: true, Online: true, Digest: "digest"},
+				{ID: userID + "-off", Name: userID, TerminalEnabled: true},
+			}, nil
 		},
 	}
-	service := newAggregateTestService(t, config, nil)
+	events := 0
+	service := newAggregateTestService(t, config, ipc.EmitterFunc(func(context.Context, ipc.Event) error {
+		mu.Lock()
+		events++
+		mu.Unlock()
+		return nil
+	}))
 	production := &Production{Services: ProductionServices{sessionAggregate: service}}
-	list, err := production.DeviceSessions(context.Background(), "alice", 0)
+	// The wait covers the device's failed listing, which a scoped listing must not publish.
+	list, err := production.DeviceSessions(context.Background(), "alice", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Hosts) != 1 || list.Hosts[0].Key != "device:alice-box" || list.Hosts[0].Status != session.AggregateHostOffline {
+	hosts := hostsByKey(list)
+	if len(list.Hosts) != 2 || hosts["device:alice-box"].Status != session.AggregateHostFailed || hosts["device:alice-off"].Status != session.AggregateHostOffline {
 		t.Fatalf("alice's device sessions = %+v", list)
 	}
 	if none, err := production.DeviceSessions(context.Background(), "", 0); err != nil || len(none.Hosts) != 0 {
 		t.Fatalf("anonymous device sessions = %+v, %v", none, err)
+	}
+	if err := service.shutdown(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(askedFor) != 1 || askedFor[0] != "alice" {
 		t.Fatalf("devices listed for %v", askedFor)
 	}
+	if events != 0 {
+		t.Fatalf("published %d events for a server listing a desktop asked for", events)
+	}
+}
+
+func TestSyncLinkChangeReconcilesExposureAndStartsTheDeviceListingOver(t *testing.T) {
+	calls := 0
+	config := &DeviceConnectorConfig{
+		RemoteSessions: func(context.Context, int) (session.AggregateList, error) {
+			calls++
+			return session.AggregateList{
+				Hosts:    []session.AggregateHostStatus{{AggregateHost: session.AggregateHost{Key: "device:old"}, Status: session.AggregateHostOK}},
+				Sessions: []session.AggregateSession{},
+				Complete: true,
+			}, nil
+		},
+	}
+	service := newAggregateTestService(t, config, nil)
+	ctx := session.WithOpenAccess(context.Background())
+	if _, err := service.list(ctx, sessionAggregateRequest{WaitMS: -1}); err != nil {
+		t.Fatal(err)
+	}
+	reconciled := 0
+	onSyncLinkChanged(func() { reconciled++ }, service)()
+	if _, err := service.list(ctx, sessionAggregateRequest{WaitMS: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if reconciled != 1 || calls != 2 {
+		t.Fatalf("reconciled=%d server listings=%d; want one reconcile and a fresh listing after the link change", reconciled, calls)
+	}
+	// Without exposure or listing the callback still runs.
+	onSyncLinkChanged(nil, nil)()
 }

@@ -17,12 +17,12 @@ func TestSessionListAnswersTheCallersDevicesWithACoalescedAudit(t *testing.T) {
 	var mu sync.Mutex
 	var asked []string
 	var waits []time.Duration
-	fixture.service.SetSessionLister(func(_ context.Context, userID string, wait time.Duration) (any, error) {
+	fixture.service.SetSessionLister(func(_ context.Context, userID string, wait time.Duration) (any, int, error) {
 		mu.Lock()
 		asked = append(asked, userID)
 		waits = append(waits, wait)
 		mu.Unlock()
-		return map[string]any{"hosts": []any{}, "sessions": []any{}, "complete": true}, nil
+		return map[string]any{"hosts": []any{}, "sessions": []any{}, "complete": true}, 3, nil
 	})
 	session := fixture.session(t, alice)
 
@@ -44,6 +44,9 @@ func TestSessionListAnswersTheCallersDevicesWithACoalescedAudit(t *testing.T) {
 		for _, row := range auditPayloadRows(t, fixture.service.db, auditSourceFleet, auditKindDeviceTerminal) {
 			switch row["action"] {
 			case "terminal_list":
+				if row["devices"] != float64(3) {
+					t.Fatalf("listing audit = %v; want the device count", row)
+				}
 				lists++
 			case "terminal_open":
 				opens++

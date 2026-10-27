@@ -440,18 +440,11 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	production.Services.terminalCommands.helpers = helperService
 	if config.Desktop {
-		// The device listing belongs to the linked account: a new link starts
-		// over. The sync service keeps one link callback, so it also carries
-		// the exposure controller's.
-		exposureController, aggregate := services.LocalHelperExposure, production.Services.sessionAggregate
-		syncService.SetLinkChanged(func() {
-			if exposureController != nil {
-				exposureController.Reconcile()
-			}
-			if aggregate != nil {
-				aggregate.reset()
-			}
-		})
+		var reconcileExposure func()
+		if services.LocalHelperExposure != nil {
+			reconcileExposure = services.LocalHelperExposure.Reconcile
+		}
+		syncService.SetLinkChanged(onSyncLinkChanged(reconcileExposure, production.Services.sessionAggregate))
 	}
 	return production, nil
 }

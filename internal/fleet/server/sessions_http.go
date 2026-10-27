@@ -13,8 +13,8 @@ import (
 
 // SessionListFunc lists the durable sessions on userID's devices, waiting up
 // to wait for devices that are still answering. The result is written as the
-// response body.
-type SessionListFunc func(ctx context.Context, userID string, wait time.Duration) (any, error)
+// response body; devices is how many devices it covers, for the audit.
+type SessionListFunc func(ctx context.Context, userID string, wait time.Duration) (result any, devices int, err error)
 
 const (
 	// sessionListAuditInterval coalesces the audit of session listings: a
@@ -60,16 +60,16 @@ func (s *Service) serveSessionList(w http.ResponseWriter, r *http.Request) {
 		}
 		wait = min(time.Duration(ms)*time.Millisecond, sessionListMaxWait)
 	}
-	s.auditSessionList(r.Context(), identity)
-	result, err := list(r.Context(), identity.UserID, wait)
+	result, devices, err := list(r.Context(), identity.UserID, wait)
 	if err != nil {
 		writeFleetFailure(w, err)
 		return
 	}
+	s.auditSessionList(r.Context(), identity, devices)
 	writeFleetJSON(w, http.StatusOK, result)
 }
 
-func (s *Service) auditSessionList(ctx context.Context, identity *account.Identity) {
+func (s *Service) auditSessionList(ctx context.Context, identity *account.Identity, devices int) {
 	now := s.now()
 	s.sessionList.mu.Lock()
 	if s.sessionList.auditedAt == nil {
@@ -82,7 +82,7 @@ func (s *Service) auditSessionList(ctx context.Context, identity *account.Identi
 	}
 	s.sessionList.mu.Unlock()
 	if due {
-		_ = s.audit(ctx, auditKindDeviceTerminal, auditPayload{Action: "terminal_list", Requester: identity.UserID, Outcome: "allow"})
+		_ = s.audit(ctx, auditKindDeviceTerminal, auditPayload{Action: "terminal_list", Requester: identity.UserID, Outcome: "allow", Devices: &devices})
 	}
 }
 
