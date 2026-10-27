@@ -199,8 +199,8 @@ export function EarlierHistoryPanel({
   let status: string;
   if (error) status = `加载失败：${error}`;
   else if (loading && state.bytes === 0) status = "正在加载更早历史…";
-  else if (state.truncated) status = "早期历史已截断：更早的输出超出持久终端历史上限，已被丢弃";
   else if (state.capped === "lines") status = `已加载 ${formatHistoryBytes(state.bytes)}，达到回放行数上限，更早的输出不再加载`;
+  else if (state.truncated) status = "早期历史已截断：更早的输出超出持久终端历史上限，已被丢弃";
   else if (state.capped === "bytes") status = `已加载 ${formatHistoryBytes(state.bytes)}，达到单次查看上限`;
   else if (state.exhausted) status = state.bytes === 0 ? "没有更早的输出" : "已到会话开头";
   else status = `已加载 ${formatHistoryBytes(state.bytes)}`;
@@ -215,11 +215,14 @@ export function EarlierHistoryPanel({
       {...{ [EARLIER_HISTORY_PANEL_ATTRIBUTE]: "" }}
       className="absolute inset-0 z-20 flex min-h-0 flex-col bg-neutral-950"
       onKeyDown={(event) => {
-        event.stopPropagation();
+        // Only the panel's own keys are consumed; every other key still
+        // reaches the app-level shortcuts.
         if (event.key === "Escape") {
+          event.stopPropagation();
           event.preventDefault();
           onClose();
         } else if (isCopyShortcut(event) && terminalRef.current?.hasSelection()) {
+          event.stopPropagation();
           event.preventDefault();
           copySelection();
         }
