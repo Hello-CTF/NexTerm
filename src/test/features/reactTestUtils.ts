@@ -55,6 +55,23 @@ export async function waitFor(assertion: () => void, timeout = 1000): Promise<vo
   });
 }
 
+// waitFor polls inside a single act scope, so React cannot commit pending updates (lazy panels, deferred state)
+// between attempts. waitForRendered flushes a macrotask per attempt, outside any shared act scope, so each retry
+// observes a rendered tree. Prefer it for assertions on UI that appears after asynchronous work.
+export async function waitForRendered(assertion: () => void, timeout = 1000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  // Fake timers freeze Date.now, so the tick budget bounds the loop there.
+  for (let tick = 0; ; tick++) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline || tick >= timeout) throw error;
+    }
+    await flush();
+  }
+}
+
 // flushUntil counts macrotask ticks, so it only bounds work driven by mocks and timers. Real asynchronous work,
 // such as the first dynamic import of a React.lazy panel, takes wall-clock time that machine load stretches past
 // any tick budget: warm such modules in beforeAll instead.
