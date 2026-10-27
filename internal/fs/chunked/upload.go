@@ -108,25 +108,11 @@ func (u *Upload) ID() string {
 
 // MatchesStaged reports whether a staged group was left behind by an upload
 // with exactly this upload's owner, parameters, and intact part sizes.
-// Version 2 metadata binds the group to its owner; legacy 16-byte metadata
-// carries no owner and only matches the desktop's empty owner, so a
-// multi-account begin never adopts it. Groups without readable params never
-// match: they predate crash-safe resume or lost a write race, and are left
-// for the reaper rather than risking a mixed adoption.
+// Groups without readable params never match: they were written by an older
+// build, lost a write race, or are corrupt, and are left for the reaper
+// rather than risking a mixed adoption.
 func (u *Upload) MatchesStaged(staged StagedUpload) bool {
-	if !staged.HasParams || staged.Total != u.total || staged.ChunkSize != u.chunkSize {
-		return false
-	}
-	switch staged.ParamsVersion {
-	case stagingParamsVersion2:
-		if staged.Owner != u.owner {
-			return false
-		}
-	case stagingParamsVersion1:
-		if u.owner != "" {
-			return false
-		}
-	default:
+	if !staged.HasParams || staged.Owner != u.owner || staged.Total != u.total || staged.ChunkSize != u.chunkSize {
 		return false
 	}
 	for index, size := range staged.Parts {

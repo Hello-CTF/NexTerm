@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	// channelInputSubprotocol is offered by clients that can send terminal input over the channel socket. It is negotiated
-	// as a WebSocket subprotocol so older servers (which only know "nexterm") and older clients keep working unchanged.
+	// channelInputSubprotocol is the only subprotocol of the channel socket; a peer that does not negotiate it gets an
+	// output-only socket. channelSubprotocol is the event socket's subprotocol.
 	channelInputSubprotocol = "nexterm.input"
 	channelSubprotocol      = "nexterm"
 

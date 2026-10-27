@@ -573,10 +573,9 @@ func TestFSChunkedBeginDoesNotAdoptAcrossOwners(t *testing.T) {
 	}
 }
 
-// P1-2 boundary: a legacy 16-byte sidecar carries no owner. Multi-account
-// begins fail closed and never adopt it; the desktop empty owner keeps the
-// compatibility adoption.
-func TestFSChunkedBeginLegacySidecarOwnerBoundary(t *testing.T) {
+// The ownerless 16-byte sidecar of older builds is no longer readable, so no
+// begin adopts it, whether multi-account or the desktop empty owner.
+func TestFSChunkedBeginNeverAdoptsLegacySidecar(t *testing.T) {
 	remote := filepath.Join(t.TempDir(), "remote.bin")
 	filesystem := fslocal.New()
 	ownerB := ipc.WithUserID(t.Context(), "owner-b")
@@ -604,8 +603,8 @@ func TestFSChunkedBeginLegacySidecarOwnerBoundary(t *testing.T) {
 
 	desktop, desktopTransfers := newUploadRegistryForTest(filesystem)
 	third := beginResumeUploadForTest(t, desktop, desktopTransfers, context.Background(), "session-c", "task-3", "attempt-3", remote, 8, 4)
-	if third.UploadID != first.UploadID {
-		t.Fatalf("desktop empty-owner begin = %q, want legacy compat adoption %q", third.UploadID, first.UploadID)
+	if third.UploadID == first.UploadID {
+		t.Fatal("desktop empty-owner begin adopted a legacy sidecar")
 	}
 	if err := multiAccount.Close(context.Background()); err != nil {
 		t.Fatal(err)

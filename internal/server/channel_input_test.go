@@ -54,7 +54,7 @@ func TestChannelSocketInputFramesApplyInOrder(t *testing.T) {
 	url, writes := newChannelInputFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{Subprotocols: []string{channelInputSubprotocol, channelSubprotocol}})
+	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{Subprotocols: []string{channelInputSubprotocol}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,13 +84,14 @@ func TestChannelSocketWithoutInputSubprotocolIgnoresFrames(t *testing.T) {
 	url, writes := newChannelInputFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// The channel socket no longer selects the bare "nexterm" subprotocol of older clients.
 	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{Subprotocols: []string{channelSubprotocol}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.CloseNow()
-	if conn.Subprotocol() != channelSubprotocol {
-		t.Fatalf("subprotocol = %q", conn.Subprotocol())
+	if conn.Subprotocol() != "" {
+		t.Fatalf("subprotocol = %q, want none", conn.Subprotocol())
 	}
 	_ = conn.Write(ctx, websocket.MessageBinary, channelInputFrameFor("tab-1", []byte("x")))
 	time.Sleep(100 * time.Millisecond)
@@ -138,7 +139,7 @@ func TestChannelSocketClosedWhenInputFloods(t *testing.T) {
 	url, writes := newChannelInputFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{Subprotocols: []string{channelInputSubprotocol, channelSubprotocol}})
+	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{Subprotocols: []string{channelInputSubprotocol}})
 	if err != nil {
 		t.Fatal(err)
 	}
