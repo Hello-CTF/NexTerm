@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shape"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/signals"
 )
 
 func benchBuildLog() []byte {
@@ -42,6 +44,40 @@ func BenchmarkStateOutput(b *testing.B) {
 			for b.Loop() {
 				now = now.Add(time.Millisecond)
 				tracker.output(chunk, now)
+			}
+		})
+	}
+}
+
+// BenchmarkAttentionTrackerOutput is the per-chunk cost of the client-side
+// fallback tracker, which reads the screen from the caller's terminal model:
+// it should stay close to BenchmarkSignalScanner, the scanner alone.
+func BenchmarkAttentionTrackerOutput(b *testing.B) {
+	for name, chunk := range map[string][]byte{"build-log": benchBuildLog(), "tui-redraw": benchTUIRedraw()} {
+		b.Run(name, func(b *testing.B) {
+			tracker := newStateTracker(stateOptions{screen: func() terminal.Snapshot { return terminal.Snapshot{} }}, stateEpoch0)
+			now := stateEpoch0
+			b.SetBytes(int64(len(chunk)))
+			b.ReportAllocs()
+			for b.Loop() {
+				now = now.Add(time.Millisecond)
+				tracker.output(chunk, now)
+			}
+		})
+	}
+}
+
+// BenchmarkSignalScanner is the signal scanner alone on the same chunks.
+func BenchmarkSignalScanner(b *testing.B) {
+	for name, chunk := range map[string][]byte{"build-log": benchBuildLog(), "tui-redraw": benchTUIRedraw()} {
+		b.Run(name, func(b *testing.B) {
+			scanner := signals.NewScanner(signals.Config{})
+			now := stateEpoch0
+			b.SetBytes(int64(len(chunk)))
+			b.ReportAllocs()
+			for b.Loop() {
+				now = now.Add(time.Millisecond)
+				scanner.Feed(chunk, now)
 			}
 		})
 	}

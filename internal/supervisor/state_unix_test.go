@@ -4,10 +4,13 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -256,6 +259,64 @@ func TestStateSeenReachesEveryAttachedClient(t *testing.T) {
 	}
 	if state := attachment.SessionState(0); !state.Seen || !state.Since.Equal(asked.Since) {
 		t.Fatalf("a stale since changed the state: %+v", state)
+	}
+}
+
+// A helper whose hello acknowledgement does not advertise state_seen is never
+// sent the frame: the client reports ErrUnsupported and the session stays as
+// it was.
+func TestStateSeenNotSentToAHelperWithoutIt(t *testing.T) {
+	var ack helloMsg
+	if err := json.Unmarshal([]byte(`{"version":3,"generation":"g","activity":{"pty":0,"exec":0}}`), &ack); err != nil || ack.StateSeen {
+		t.Fatalf("ack without the flag = %+v, %v", ack, err)
+	}
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	session := testScriptSession(t, supervisor, `read go; sleep 1.5; printf 'needs you\007'; sleep 30`)
+	stream, err := testClient(t, server).Attach(context.Background(), session.ID(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	if !stream.conn.stateSeen {
+		t.Fatal("this helper did not advertise state_seen")
+	}
+	if _, err := stream.Write([]byte("go\n")); err != nil {
+		t.Fatal(err)
+	}
+	asked := waitStreamState(t, stream, "bell", func(s *SessionState) bool { return s.State == base.SessionNeedsMe })
+	stream.conn.stateSeen = ack.StateSeen
+	if err := stream.MarkStateSeen(context.Background(), asked.Since); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("seen without helper support = %v, want ErrUnsupported", err)
+	}
+	// Clients see it as an unavailable capability, which the IPC layer reports as unsupported.
+	if err := (&streamAttachment{Stream: stream}).MarkDurableStateSeen(context.Background(), asked.Since); !errors.Is(err, durable.ErrUnavailable) {
+		t.Fatalf("durable seen without helper support = %v, want durable.ErrUnavailable", err)
+	}
+	if state := session.Info().State; state == nil || state.Seen {
+		t.Fatalf("the helper took a seen mark it was never sent: %+v", state)
+	}
+	if _, err := stream.Write([]byte("x\n")); err != nil {
+		t.Fatalf("stream unusable after the refused seen: %v", err)
+	}
+}
+
+// A frame this helper does not know is refused without closing the
+// connection.
+func TestServerRefusesAnUnknownFrameAndKeepsServing(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	conn, err := testClient(t, server).dialConn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, _, err := conn.request(context.Background(), frameType(250), struct{}{}); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("unknown frame reply = %v; want a protocol error", err)
+	}
+	kind, _, err := conn.request(context.Background(), frameList, listOptions{})
+	if err != nil || kind != frameListed {
+		t.Fatalf("list after the unknown frame = %d, %v; want frameListed", kind, err)
 	}
 }
 

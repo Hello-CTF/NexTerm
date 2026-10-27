@@ -69,10 +69,18 @@ const (
 	// after it changes, with the events since the previous push. The
 	// attach reply carries the state at attach time.
 	frameState
+)
+
+// Frames added after frameState carry explicit values so concurrent
+// additions cannot shift each other.
+const (
+	// 33 is reserved for frameSetStateRules (B10).
+
 	// frameStateSeen tells the helper that the attached client showed the
 	// session's needs_me or just_finished state to its user (stateSeenMsg);
 	// the helper answers frameOK and pushes the seen state to every client.
-	frameStateSeen
+	// Only sent to a helper whose hello acknowledgement sets StateSeen.
+	frameStateSeen frameType = 34
 )
 
 // Every connection uses windowed input and credited output. The client may keep
@@ -118,6 +126,8 @@ type helloMsg struct {
 	// Runtime is absent only when the helper could not hash its executable.
 	Runtime  *RuntimeMetadata  `json:"runtime,omitempty"`
 	Activity *ActivitySnapshot `json:"activity,omitempty"`
+	// StateSeen is set by a helper that accepts frameStateSeen.
+	StateSeen bool `json:"state_seen,omitempty"`
 }
 
 type createMsg struct {

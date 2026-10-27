@@ -212,7 +212,7 @@ func (c *serverConn) serve() {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
-	ack := helloMsg{Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity}
+	ack := helloMsg{Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity, StateSeen: true}
 	if err := c.reply(frameHelloAck, ack); err != nil {
 		return
 	}
@@ -258,8 +258,9 @@ func (c *serverConn) serve() {
 			_ = c.reply(frameOK, struct{}{})
 			return
 		default:
+			// A frame from a newer client is refused without ending the
+			// connection, so the client keeps its session.
 			c.replyError(frameError, errorMsg{Code: codeProtocol, Message: fmt.Sprintf("unexpected frame type %d", kind)})
-			return
 		}
 	}
 }
