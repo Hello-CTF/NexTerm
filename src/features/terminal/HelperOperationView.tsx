@@ -223,23 +223,35 @@ function Definition({ term, value }: { term: string; value: string }) {
   );
 }
 
-function CopyValue({ term, value }: { term: string; value: string }) {
+// CopyButton copies one identifier; the outcome is shown on the button and announced through a live region.
+function CopyButton({ name, value }: { name: string; value: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  return (
+    <>
+      <button
+        type="button"
+        className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+        aria-label={`复制${name}`}
+        onClick={() => {
+          copyText(value).then(() => setState("copied"), () => setState("failed"));
+        }}
+      >
+        {state === "copied" ? "已复制" : state === "failed" ? "复制失败" : "复制"}
+      </button>
+      <span role="status" aria-live="polite" className="nx-sr-only">
+        {state === "copied" ? `已复制${name}` : state === "failed" ? `复制${name}失败` : ""}
+      </span>
+    </>
+  );
+}
+
+function CopyValue({ term, value }: { term: string; value: string }) {
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
       <dt className="text-neutral-500">{term}</dt>
       <dd className="flex min-w-0 items-start gap-2 text-neutral-300">
         <span data-value className="min-w-0 break-all font-mono">{value}</span>
-        <button
-          type="button"
-          className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
-          aria-label={`复制${term}`}
-          onClick={() => {
-            copyText(value).then(() => setState("copied"), () => setState("failed"));
-          }}
-        >
-          {state === "copied" ? "已复制" : state === "failed" ? "复制失败" : "复制"}
-        </button>
+        <CopyButton name={term} value={value} />
       </dd>
     </div>
   );
@@ -293,6 +305,8 @@ function VersionSection({
       <dl className="mt-2 flex flex-col gap-1">
         {rows.map(({ key, label: term }) => {
           const differs = compare && versionFieldDiffers(version, other, key);
+          const value = versionValue(version, key);
+          const copyable = value !== null && (key === "commit" || key === "sha256");
           return (
             <div
               key={key}
@@ -300,9 +314,10 @@ function VersionSection({
               data-differs={differs ? "true" : undefined}
             >
               <dt className="text-neutral-500">{term}</dt>
-              <dd className={`min-w-0 break-words ${differs ? "font-medium text-[var(--nx-fg-warning)]" : "text-neutral-300"}`}>
-                <span data-value>{versionValue(version, key) ?? "未提供"}</span>
-                {differs && <span className="nx-badge nx-badge-amber ml-1.5">不同</span>}
+              <dd className={`flex min-w-0 flex-wrap items-start gap-x-1.5 gap-y-1 ${differs ? "font-medium text-[var(--nx-fg-warning)]" : "text-neutral-300"}`}>
+                <span data-value className={copyable ? "min-w-0 break-all font-mono" : "min-w-0 break-words"}>{value ?? "未提供"}</span>
+                {differs && <span className="nx-badge nx-badge-amber">不同</span>}
+                {copyable && <CopyButton name={`${label}${term}`} value={value} />}
               </dd>
             </div>
           );

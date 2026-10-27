@@ -6,7 +6,20 @@ import {
   HelperOperationView,
   type HelperOperationViewProps,
 } from "../../features/terminal/HelperOperationView";
-import { click, mount, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, type MountedView } from "./reactTestUtils";
+
+const clipboard = vi.hoisted(() => ({ copyText: vi.fn() }));
+vi.mock("../../ui/clipboard", () => clipboard);
+
+function buttonByLabel(container: ParentNode, label: string): HTMLButtonElement {
+  const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!button) throw new Error(`Button not found: ${label}`);
+  return button;
+}
+
+function liveText(container: ParentNode): string[] {
+  return [...container.querySelectorAll('[aria-live="polite"]')].map((node) => node.textContent ?? "");
+}
 
 const LOCAL_SHA = "a".repeat(64);
 const RUNNING_SHA = "b".repeat(64);
@@ -151,6 +164,30 @@ describe("HelperOperationView", () => {
     expect(local.querySelectorAll("[data-differs]")).toHaveLength(3);
     expect(view.container.textContent).toContain("协议兼容，可继续使用。");
     expect(view.container.textContent).not.toContain("有可用更新");
+  });
+
+  it("offers copy buttons for differing commits and digests and announces the result", async () => {
+    clipboard.copyText.mockReset().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
+    const view = renderView({
+      localVersion: { known: true, release: "1.3.0", commit: "local-commit", protocol: 2, sha256: LOCAL_SHA },
+      runningVersion: { known: true, release: "1.2.9", commit: "running-commit", protocol: 2, sha256: RUNNING_SHA },
+      compatibility: "compatible",
+    });
+    const local = sectionByLabel(view.container, "本地携带版本");
+    const running = sectionByLabel(view.container, "远端运行版本");
+    expect(local.querySelectorAll("button")).toHaveLength(2);
+    expect(running.querySelectorAll("button")).toHaveLength(2);
+
+    click(buttonByLabel(local, "复制本地携带版本提交"));
+    await flush();
+    expect(clipboard.copyText).toHaveBeenCalledWith("local-commit");
+    expect(liveText(local)).toContain("已复制本地携带版本提交");
+
+    click(buttonByLabel(running, "复制远端运行版本SHA-256"));
+    await flush();
+    expect(clipboard.copyText).toHaveBeenLastCalledWith(RUNNING_SHA);
+    expect(liveText(running)).toContain("复制远端运行版本SHA-256失败");
+    expect(buttonByLabel(running, "复制远端运行版本SHA-256").textContent).toBe("复制失败");
   });
 
   it("renders identical local and running versions once, with full identifiers behind a detail", () => {
