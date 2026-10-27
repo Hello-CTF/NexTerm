@@ -112,8 +112,8 @@ func TestEngineAIPermissionAndPreferencesConverge(t *testing.T) {
 	}
 }
 
-// The multi-line paste confirmation mode converges between devices: a boolean saved before the enum existed reaches
-// the other device as the mode it now means, and later enum values sync like any other preference.
+// The multi-line paste confirmation mode converges between devices: each enum value set on one device reaches the
+// other as the account override the terminal reads.
 func TestEngineMultilinePastePreferenceConverges(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -138,10 +138,10 @@ func TestEngineMultilinePastePreferenceConverges(t *testing.T) {
 		syncDevice(t, to, server, "alice", "alice-pw-123")
 	}
 
-	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, "false", 100)
+	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, `"never"`, 100)
 	round(deviceA, deviceB)
 	if got := overrides(deviceB); got != `"never"` {
-		t.Fatalf("device B mode from a legacy false = %s, want \"never\"", got)
+		t.Fatalf("device B mode = %s, want \"never\"", got)
 	}
 
 	putPreferenceSetting(t, deviceB, "prefs.user."+userID+"."+key, `"unbracketed"`, 200)

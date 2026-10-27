@@ -140,10 +140,11 @@ describe("multi-line paste prompt", () => {
   });
 
   it.each([
-    [true, "always"],
-    [false, "never"],
+    ["always", "always"],
+    ["never", "never"],
+    [true, "unbracketed"],
     [undefined, "unbracketed"],
-  ] as const)("reads a stored legacy value %s as %s", async (stored, mode) => {
+  ] as const)("reads a stored value %s as %s", async (stored, mode) => {
     registerAccountPreferenceStore(memoryStore(stored === undefined ? {} : { [KEY]: stored }));
     await flush();
     expect(getTerminalPrefs().confirmMultilinePaste).toBe(mode);
@@ -349,7 +350,7 @@ describe("multi-line paste prompt", () => {
   });
 
   it("honours the preference synced from another device", async () => {
-    registerAccountPreferenceStore(memoryStore({ [KEY]: false }));
+    registerAccountPreferenceStore(memoryStore({ [KEY]: "never" }));
     await vi.waitFor(() => expect(getTerminalPrefs().confirmMultilinePaste).toBe("never"));
     const { result, prompted } = await paste("a\nb", "t1");
     expect(prompted).toBe(false);

@@ -165,8 +165,6 @@ func TestValidatePreferenceValue(t *testing.T) {
 		`"unbracketed"`: `"unbracketed"`,
 		`"always"`:      `"always"`,
 		`"never"`:       `"never"`,
-		"true":          `"always"`,
-		"false":         `"never"`,
 	} {
 		got, err := validatePreferenceValue("terminal.confirmMultilinePaste", json.RawMessage(raw))
 		if err != nil || got != want {
@@ -198,7 +196,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.defaultMode":           {`"auto"`, `"persistent"`, "1", "null", "true"},
 		"terminal.gpuAcceleration":       {`"webgl"`, `"Auto"`, "1", "null", "true"},
 		"terminal.linkActivation":        {`"ctrl"`, `"Click"`, `"double"`, "1", "null", "true"},
-		"terminal.confirmMultilinePaste": {`"false"`, `"Always"`, `"ask"`, "0", "null"},
+		"terminal.confirmMultilinePaste": {"true", "false", `"false"`, `"Always"`, `"ask"`, "0", "null"},
 		"keybinding.closeTab":            {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {

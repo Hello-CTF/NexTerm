@@ -146,10 +146,10 @@ describe("terminal link activation settings", () => {
 });
 
 describe("multi-line paste confirmation setting", () => {
-  it("reads a legacy false as never and saves the chosen mode to the account", async () => {
+  it("shows the account mode and saves the chosen mode to the account", async () => {
     const put = vi.fn().mockResolvedValue(undefined);
     registerAccountPreferenceStore({
-      getView: async () => ({ defaults: {}, overrides: { "terminal.confirmMultilinePaste": false } }),
+      getView: async () => ({ defaults: {}, overrides: { "terminal.confirmMultilinePaste": "never" } }),
       putOverrides: put,
       deleteOverrides: async () => {},
     });

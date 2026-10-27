@@ -263,12 +263,9 @@ const TERMINAL_DEFAULTS: TerminalPrefs = {
   confirmMultilinePaste: "unbracketed",
 };
 
-// The setting was a boolean before it became a mode: an explicit true kept confirmation on for every paste and an
-// explicit false turned it off. A missing value is the current default.
+// Any value that is not one of the modes, including a missing one, is the default.
 export function normalizeMultilinePasteConfirm(value: unknown): TerminalMultilinePasteConfirm {
   if (value === "unbracketed" || value === "always" || value === "never") return value;
-  if (value === true) return "always";
-  if (value === false) return "never";
   return TERMINAL_DEFAULTS.confirmMultilinePaste;
 }
 
