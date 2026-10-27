@@ -20,8 +20,8 @@ export interface StatusWallProps {
   // Opens the asset drawer, for the empty wall.
   onOpenAssets?: () => void;
   // Extra controls on a card, such as the choice buttons of a session that needs the user. Clicks in them do not
-  // open the session.
-  cardActions?: (card: WallCard) => ReactNode;
+  // open the session; open opens it as a click on the card does.
+  cardActions?: (card: WallCard, controls: { open: () => void; opening: boolean }) => ReactNode;
 }
 
 function ago(at: number, now: number): string {
@@ -128,6 +128,8 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
   const pullRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const orderRef = useRef<{ token: number; keys: Record<WallGroup, string[]> } | null>(null);
+  // While a finger or button is down the cards hold still, so a state change cannot move another card under it.
+  const [held, setHeld] = useState<Record<WallGroup, WallCard[]> | null>(null);
 
   const model = useMemo(
     () => buildStatusWall(byTabId, workspaces, aggregateRows({ hosts, sessionsByHost }), hosts),
@@ -213,7 +215,19 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
     if (pulled >= PULL_REFRESH_PX && !refreshing) void refresh();
   };
 
-  const total = WALL_GROUPS.reduce((sum, group) => sum + groups[group].length, 0);
+  useEffect(() => {
+    if (!held) return;
+    const release = () => setHeld(null);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+  }, [held]);
+  const shown = held ?? groups;
+
+  const total = WALL_GROUPS.reduce((sum, group) => sum + shown[group].length, 0);
   const pending = model.hosts.filter((host) => host.status === "pending");
   const unreachable = model.hosts.filter((host) => host.status !== "pending");
 
@@ -237,26 +251,27 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onTouchCancel={() => { pullStart.current = null; pullRef.current = 0; setPull(0); }}
+        onPointerDownCapture={() => setHeld(groups)}
       >
         {pull > 0 && (
           <div className="flex items-center justify-center text-[12px] text-[var(--nx-fg-soft)]" style={{ height: Math.min(pull, PULL_REFRESH_PX) }} data-testid="wall-pull">
             {pull >= PULL_REFRESH_PX ? "松开刷新" : "下拉刷新"}
           </div>
         )}
-        {WALL_GROUPS.map((group) => groups[group].length > 0 && (
+        {WALL_GROUPS.map((group) => shown[group].length > 0 && (
           <div key={group} className="pt-3" data-wall-group={group}>
             <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">
-              {WALL_GROUP_LABELS[group]} <span className="font-normal">{groups[group].length}</span>
+              {WALL_GROUP_LABELS[group]} <span className="font-normal">{shown[group].length}</span>
             </h3>
             <ul className="flex flex-col gap-2">
-              {groups[group].map((entry) => (
+              {shown[group].map((entry) => (
                 <WallCardView
                   key={entry.tabId}
                   card={entry}
                   now={now}
                   opening={opening === entry.tabId}
                   onOpen={() => open(entry)}
-                  actions={cardActions?.(entry)}
+                  actions={cardActions?.(entry, { open: () => open(entry), opening: opening === entry.tabId })}
                 />
               ))}
             </ul>

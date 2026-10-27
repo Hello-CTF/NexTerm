@@ -58,6 +58,9 @@ import { SelectionActionBar, isCoarsePointerDevice } from "./SelectionActionBar"
 import { copyText } from "../../ui/clipboard";
 import { pasteUploadFiles } from "./imagePaste";
 import { attachTouchScroll } from "./touchScroll";
+import { attachFollowerGestures } from "./followerGestures";
+import { applyFollowerFont, type FollowerView } from "./followerFont";
+import { FOLLOWER_SETTLE_MS, type FollowerScale, type FollowerZoom } from "./followerScale";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
 
@@ -148,6 +151,11 @@ export interface XtermViewProps {
   }) => void;
   canResize?: boolean;
   remoteGrid?: { cols: number; rows: number; revision: number };
+  // While another device owns the PTY size (canResize false): show the whole grid or fit its rows only.
+  followerZoom?: FollowerZoom;
+  // How the PTY grid is scaled while another device owns its size; null while this view sizes the PTY.
+  onFollowerScale?: (scale: FollowerScale | null) => void;
+  onFollowerPinch?: (direction: "in" | "out") => void;
   visible?: boolean;
   onAttach?: (kernelTabId: string) => void;
   onAttachFailed?: (code: string) => void;
@@ -226,6 +234,17 @@ export function XtermView(props: XtermViewProps) {
   // the WinRM mode is fixed for the tab's lifetime.
   const visibleRef = useRef(props.visible);
   const canResizeRef = useRef(props.canResize);
+  const onFollowerScaleRef = useRef(props.onFollowerScale);
+  const onFollowerPinchRef = useRef(props.onFollowerPinch);
+  // The shown font differs from the user's only while another device owns the PTY size (followerFont.ts).
+  const followerTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const followerRef = useRef<FollowerView>({
+    base: 0,
+    following: false,
+    zoom: "fit",
+    scale: null,
+    report: (scale) => onFollowerScaleRef.current?.(scale),
+  });
   const winrmRef = useRef(props.winrm);
   const lastFitViewportRef = useRef<{ widthPx: number; heightPx: number } | null>(null);
   onBlocksRef.current = props.onBlocks;
@@ -247,6 +266,10 @@ export function XtermView(props: XtermViewProps) {
   registerSearchRef.current = props.registerSearch;
   visibleRef.current = props.visible;
   canResizeRef.current = props.canResize;
+  followerRef.current.following = props.canResize === false;
+  followerRef.current.zoom = props.followerZoom ?? "fit";
+  onFollowerScaleRef.current = props.onFollowerScale;
+  onFollowerPinchRef.current = props.onFollowerPinch;
   winrmRef.current = props.winrm;
 
   const fitIfSized = (final = false): boolean => {
@@ -270,6 +293,19 @@ export function XtermView(props: XtermViewProps) {
       !sameGrid(snapshot.desired, geometry.grid) || !sameGrid(snapshot.committed, geometry.grid);
     coordinator.update(geometry.viewport, geometry.metrics);
     if (final) coordinator.flush();
+    if (followerRef.current.following) {
+      // During a drag the font holds still; it changes once, on the final fit or after the drag settles.
+      if (followerTimerRef.current !== undefined) clearTimeout(followerTimerRef.current);
+      followerTimerRef.current = undefined;
+      if (final) {
+        applyFollowerFont(term, host, followerRef.current);
+      } else {
+        followerTimerRef.current = setTimeout(() => {
+          followerTimerRef.current = undefined;
+          applyFollowerFont(termRef.current, hostRef.current, followerRef.current);
+        }, FOLLOWER_SETTLE_MS);
+      }
+    }
     onGeometryRef.current?.();
     return localChanged || remoteChanged;
   };
@@ -277,6 +313,11 @@ export function XtermView(props: XtermViewProps) {
   useEffect(() => {
     if (!hostRef.current || termRef.current) return;
     const appearance = getAppearancePrefs();
+    // A new terminal starts at the user's font; a follower view shrinks it again on its first fit.
+    followerRef.current.base = appearance.terminalFontSize;
+    followerRef.current.scale = null;
+    hostRef.current.style.overflowX = "";
+    hostRef.current.style.overflowY = "";
     const kittyKeyboard = kittyKeyboardSwitch();
     const linkHost = hostRef.current;
     // The host a remote session's shell reports through OSC 7 (file://host/cwd).
@@ -320,6 +361,13 @@ export function XtermView(props: XtermViewProps) {
       return false;
     });
     term.open(hostRef.current);
+    // Attached before the touch scrolling, so panning rows taller than the pane can keep a swipe from it.
+    const detachFollowerGestures = attachFollowerGestures(hostRef.current, {
+      following: () => followerRef.current.following,
+      panX: () => followerRef.current.scale?.panX === true,
+      panY: () => followerRef.current.scale?.panY === true,
+      onPinch: (direction) => onFollowerPinchRef.current?.(direction),
+    });
     // One-finger vertical swipes scroll like the wheel; a touch that stops a fling is not a tap.
     const touchScroll = attachTouchScroll(term, hostRef.current);
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
@@ -347,7 +395,10 @@ export function XtermView(props: XtermViewProps) {
       }
     });
     const attachedAssetId = useUi.getState().sessions.find((session) => session.id === sessionId)?.assetId;
-    const applyGrid = (grid: TerminalGrid) => resizeTerminalToGridPreservingSelection(term, grid);
+    const applyGrid = (grid: TerminalGrid) => {
+      resizeTerminalToGridPreservingSelection(term, grid);
+      if (followerRef.current.following) applyFollowerFont(term, hostRef.current, followerRef.current);
+    };
     const coordinator = new TerminalGridCoordinator(
       productionGridRuntime,
       applyGrid,
@@ -1528,6 +1579,9 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("touchcancel", onTapCancel, true);
       detachLinkLongPress();
       touchScroll.dispose();
+      detachFollowerGestures();
+      if (followerTimerRef.current !== undefined) clearTimeout(followerTimerRef.current);
+      followerTimerRef.current = undefined;
       osc7Disposable.dispose();
       links.dispose();
       dataDisposable.dispose();
@@ -1571,8 +1625,10 @@ export function XtermView(props: XtermViewProps) {
       if (!term) return;
       const prefs = getAppearancePrefs();
       const fontFamily = TERMINAL_FONT_STACKS[prefs.terminalFontFamily];
-      const fontMetricsChanged = term.options.fontSize !== prefs.terminalFontSize || term.options.fontFamily !== fontFamily;
-      term.options.fontSize = prefs.terminalFontSize;
+      const fontMetricsChanged = followerRef.current.base !== prefs.terminalFontSize || term.options.fontFamily !== fontFamily;
+      followerRef.current.base = prefs.terminalFontSize;
+      // While another device owns the PTY size, fitIfSized derives the shown size from the new font.
+      if (canResizeRef.current !== false) term.options.fontSize = prefs.terminalFontSize;
       term.options.fontFamily = fontFamily;
       if (fontMetricsChanged) fitIfSized(true);
       term.options.theme = { ...xtermThemeFor(getResolvedTerminalTheme(), prefs.terminalContrast), cursor: accentColor() };
@@ -1595,8 +1651,29 @@ export function XtermView(props: XtermViewProps) {
   }, [props.visible, props.tabId]);
 
   useEffect(() => {
-    gridRef.current?.setCanResize(props.canResize !== false);
+    const canResize = props.canResize !== false;
+    const coordinator = gridRef.current;
+    if (canResize && coordinator && !coordinator.snapshot().canResize) {
+      // Taking the size back: measure at the user's font before the coordinator sends this view's grid, so it is
+      // not the grid of the shrunken font. With the soft keyboard open the last full height still counts.
+      const host = hostRef.current;
+      const term = termRef.current;
+      applyFollowerFont(term, host, followerRef.current);
+      const geometry = host && term ? measureTerminalGeometry(term, host) : null;
+      if (geometry) {
+        const keyboardOpen = document.documentElement.dataset.nxKeyboard === "open";
+        const last = lastFitViewportRef.current;
+        const viewport = keyboardOpen && last && last.widthPx === geometry.viewport.widthPx ? last : geometry.viewport;
+        coordinator.update(viewport, geometry.metrics);
+      }
+    }
+    coordinator?.setCanResize(canResize);
+    if (!canResize) applyFollowerFont(termRef.current, hostRef.current, followerRef.current);
   }, [props.canResize]);
+
+  useEffect(() => {
+    if (followerRef.current.following) applyFollowerFont(termRef.current, hostRef.current, followerRef.current);
+  }, [props.followerZoom]);
 
   useEffect(() => {
     const remote = props.remoteGrid;

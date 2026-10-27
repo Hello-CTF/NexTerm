@@ -85,6 +85,15 @@ export async function reloadAwareness(): Promise<void> {
   markVisibleAwarenessSeen();
 }
 
+// refreshAwareness merges the backend's current list into the known states without clearing them first, for a view
+// that learned its state is out of date (a refused prompt tap). Newer events win by version, as always.
+export async function refreshAwareness(): Promise<void> {
+  const epoch = reloadEpoch;
+  const listed = await terminalApi.attentionList();
+  if (epoch !== reloadEpoch) return;
+  applyAwareness(listed);
+}
+
 // visibleTerminalTabIds are the backend ids of the terminal tabs on screen: the active tab of each pane in the
 // active workspace. While the mobile home covers the workspaces, no terminal is on screen.
 export function visibleTerminalTabIds(): Set<string> {

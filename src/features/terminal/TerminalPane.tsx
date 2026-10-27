@@ -4,6 +4,9 @@ import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistor
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
 import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
 import { CommandBlockPanel } from "./CommandBlockPanel";
+import { TerminalPromptBar } from "./TerminalPromptBar";
+import { FollowerSizeBadge } from "./FollowerSizeBadge";
+import type { FollowerScale, FollowerZoom } from "./followerScale";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
@@ -304,6 +307,9 @@ export function TerminalPane({
     revision: number;
   } | null>(null);
   const [throttle, setThrottle] = useState<ThrottleState | null>(null);
+  // While another device owns the PTY size: how this view scales the grid, and whether it fits the rows only.
+  const [followerScale, setFollowerScale] = useState<FollowerScale | null>(null);
+  const [followerZoom, setFollowerZoom] = useState<FollowerZoom>("fit");
   const [streamBacklog, setStreamBacklog] = useState<TerminalStreamBacklog | null>(null);
   const [, setThrottleTick] = useState(0);
   const [switching, setSwitching] = useState(false);
@@ -2199,6 +2205,9 @@ export function TerminalPane({
               sessionConnected={sessionStatus === "connected"}
               canResize={canResize}
               remoteGrid={remoteGrid ?? undefined}
+              followerZoom={followerZoom}
+              onFollowerScale={setFollowerScale}
+              onFollowerPinch={(direction) => setFollowerZoom(direction === "out" ? "height" : "fit")}
               visible={visible}
               onData={(d) => void sendData(d)}
               onAttachFailed={handleAttachDead}
@@ -2317,6 +2326,22 @@ export function TerminalPane({
               }}
             />
           </div>
+
+          {/* Overlays at the top of the screen: a detected prompt sits at the bottom, and taking layout height would
+              resize the PTY and redraw the prompt being answered. */}
+          {controlSupported && !control?.exited && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-col items-end gap-1 px-3 pt-1.5">
+              <TerminalPromptBar tabId={kernelTabId} />
+              {!canResize && (
+                <FollowerSizeBadge
+                  scale={followerScale}
+                  ownedElsewhere={control?.sizeOwner != null}
+                  zoom={followerZoom}
+                  onZoom={setFollowerZoom}
+                />
+              )}
+            </div>
+          )}
 
           {durable && (
             <EarlierHistory
