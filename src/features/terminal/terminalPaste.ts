@@ -1,10 +1,20 @@
+import { getTerminalPrefs, setTerminalConfirmMultilinePaste } from "../../app/preferences";
 import { ask } from "../../ui/dialogs";
+import {
+  multilinePasteHostMounted,
+  multilinePasteSkippedForTab,
+  multilinePasteTabSkippable,
+  requestMultilinePastePrompt,
+  skipMultilinePasteForTab,
+} from "./multilinePastePrompt";
 
 export const BRACKETED_PASTE_START = "\x1b[200~";
 export const BRACKETED_PASTE_END = "\x1b[201~";
 
+// Inside a bracketed paste every ESC is shown as U+241B, as xterm's own paste does: pasted text can then neither
+// close the bracket early with its own end sequence nor smuggle other control sequences.
 export function wrapBracketedPaste(text: string, enabled: boolean): string {
-  return enabled ? `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}` : text;
+  return enabled ? `${BRACKETED_PASTE_START}${text.replace(/\x1b/g, "␛")}${BRACKETED_PASTE_END}` : text;
 }
 
 /**
@@ -21,15 +31,43 @@ export function multilinePasteLines(text: string): string[] | null {
   return body.split(/\r\n|\r|\n/);
 }
 
-export async function confirmMultilinePaste(text: string): Promise<boolean> {
+export const MULTILINE_PASTE_PREVIEW_LINES = 5;
+const PREVIEW_LINE_CHARS = 120;
+
+export function multilinePastePreview(lines: string[]): string[] {
+  return lines
+    .slice(0, MULTILINE_PASTE_PREVIEW_LINES)
+    .map((line) => (line.length > PREVIEW_LINE_CHARS ? `${line.slice(0, PREVIEW_LINE_CHARS)}…` : line));
+}
+
+export const MULTILINE_PASTE_WARNING = "多行内容可能包含多条命令，部分程序会立即逐行执行，请确认来源和内容。";
+
+/**
+ * Asks before more than one line is pasted into a terminal. tabId is the workspace tab the paste goes to; the
+ * prompt then also offers to stop asking in that tab. Single lines, a tab the user exempted, and a user who turned
+ * the prompt off in settings paste without asking. This only decides whether to paste: the caller still sends the
+ * text through its usual bracketed-paste path.
+ */
+export async function confirmMultilinePaste(text: string, tabId?: string): Promise<boolean> {
   const lines = multilinePasteLines(text);
   if (!lines) return true;
-  const preview = lines
-    .slice(0, 5)
-    .map((line) => (line.length > 120 ? `${line.slice(0, 120)}…` : line));
-  const suffix = lines.length > preview.length ? `\n…（共 ${lines.length} 行）` : "";
-  return ask(`即将向终端粘贴 ${lines.length} 行文本。多行内容可能包含多条命令，部分程序会立即逐行执行，请确认来源和内容。\n\n${preview.join("\n")}${suffix}`, {
-    title: "粘贴多行文本",
-    kind: "warning",
+  if (!getTerminalPrefs().confirmMultilinePaste) return true;
+  if (tabId && multilinePasteSkippedForTab(tabId)) return true;
+  const preview = multilinePastePreview(lines);
+  if (!multilinePasteHostMounted()) {
+    const suffix = lines.length > preview.length ? `\n…（共 ${lines.length} 行）` : "";
+    return ask(`即将向终端粘贴 ${lines.length} 行文本。${MULTILINE_PASTE_WARNING}\n\n${preview.join("\n")}${suffix}`, {
+      title: "粘贴多行文本",
+      kind: "warning",
+    });
+  }
+  const decision = await requestMultilinePastePrompt({
+    lineCount: lines.length,
+    preview,
+    tabScoped: multilinePasteTabSkippable(tabId),
   });
+  if (!decision.paste) return false;
+  if (decision.skipAlways) setTerminalConfirmMultilinePaste(false);
+  if (decision.skipTab && tabId) skipMultilinePasteForTab(tabId);
+  return true;
 }

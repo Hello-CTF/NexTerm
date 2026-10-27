@@ -7,6 +7,7 @@ import {
   setTerminalDefaultMode,
   setTerminalGpuAcceleration,
   setTerminalLinkActivation,
+  setTerminalConfirmMultilinePaste,
   useTerminalPrefs,
   type TerminalCloseAction,
   type TerminalDefaultMode,
@@ -785,6 +786,24 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               {" "}http/https 与 mailto 链接用系统程序打开，本会话主机上的 file:// 链接在 NexTerm 中打开，其他协议需要确认，可执行系统操作的协议会被拒绝。终端程序捕获鼠标时（如 tmux、htop、vim mouse=a）需同时按住 Shift。
             </p>
           </div>
+          <label className="mt-3.5 flex cursor-pointer items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] text-neutral-200" data-setting="terminal-confirm-multiline-paste">多行粘贴前确认</div>
+              <p className="nx-hint mt-0.5">
+                {terminalPrefs.confirmMultilinePaste
+                  ? "向终端粘贴多行文本前先预览并确认，避免多条命令被逐行立即执行。确认窗口里可选择本终端或以后都不再提示；选了「本终端不再提示」的终端在关闭前不再询问。"
+                  : "多行文本直接粘贴，不再确认。"}
+                {" "}登录账号后随账号同步到你的其他设备。
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              aria-label="多行粘贴前确认"
+              checked={terminalPrefs.confirmMultilinePaste}
+              onChange={(event) => setTerminalConfirmMultilinePaste(event.target.checked)}
+            />
+          </label>
           {showCloseToTray && (
             <label className="mt-3.5 flex cursor-pointer items-start gap-3">
               <div className="min-w-0 flex-1">

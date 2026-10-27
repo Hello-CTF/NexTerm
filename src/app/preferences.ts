@@ -242,6 +242,8 @@ export interface TerminalPrefs {
   defaultMode: TerminalDefaultMode;
   gpuAcceleration: TerminalGpuAcceleration;
   linkActivation: TerminalLinkActivation;
+  // Ask before a paste of more than one line reaches the terminal.
+  confirmMultilinePaste: boolean;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
@@ -249,11 +251,13 @@ const TERMINAL_CLOSE_ACTION_KEY = "terminal.closeAction";
 const TERMINAL_DEFAULT_MODE_KEY = "terminal.defaultMode";
 const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
 const TERMINAL_LINK_ACTIVATION_KEY = "terminal.linkActivation";
+const TERMINAL_CONFIRM_MULTILINE_PASTE_KEY = "terminal.confirmMultilinePaste";
 const TERMINAL_DEFAULTS: TerminalPrefs = {
   closeAction: "ask",
   defaultMode: "durable",
   gpuAcceleration: "auto",
   linkActivation: "modifier",
+  confirmMultilinePaste: true,
 };
 
 function loadTerminal(): TerminalPrefs {
@@ -271,11 +275,17 @@ function loadTerminal(): TerminalPrefs {
     : local.defaultMode;
   const gpu = preferenceValue<unknown>(TERMINAL_GPU_ACCELERATION_KEY, local.gpuAcceleration, TERMINAL_DEFAULTS.gpuAcceleration);
   const links = preferenceValue<unknown>(TERMINAL_LINK_ACTIVATION_KEY, local.linkActivation, TERMINAL_DEFAULTS.linkActivation);
+  const confirmPaste = preferenceValue<unknown>(
+    TERMINAL_CONFIRM_MULTILINE_PASTE_KEY,
+    local.confirmMultilinePaste,
+    TERMINAL_DEFAULTS.confirmMultilinePaste,
+  );
   return {
     closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction,
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
     gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
+    confirmMultilinePaste: confirmPaste !== false,
   };
 }
 
@@ -350,6 +360,24 @@ export function setTerminalLinkActivation(value: TerminalLinkActivation): void {
   if (accountStore) {
     void accountStore.putOverrides({ [TERMINAL_LINK_ACTIVATION_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [TERMINAL_LINK_ACTIVATION_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+// setTerminalConfirmMultilinePaste is an account preference like the other terminal choices: once an account store is
+// registered it is written as an override and reaches the user's other devices through preference sync.
+export function setTerminalConfirmMultilinePaste(value: boolean): void {
+  if (terminalPrefs.confirmMultilinePaste === value) return;
+  terminalPrefs = { ...terminalPrefs, confirmMultilinePaste: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, confirmMultilinePaste: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]: value }, []);
   }
   for (const listener of terminalListeners) listener();
 }

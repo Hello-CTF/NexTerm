@@ -1331,7 +1331,7 @@ export function XtermView(props: XtermViewProps) {
       if (multilinePasteLines(text) === null) return;
       event.preventDefault();
       event.stopPropagation();
-      void confirmMultilinePaste(text).then((ok) => {
+      void confirmMultilinePaste(text, viewKeyRef.current).then((ok) => {
         if (ok) sendInput(wrapBracketedPaste(text, term.modes.bracketedPasteMode), text);
       });
     };

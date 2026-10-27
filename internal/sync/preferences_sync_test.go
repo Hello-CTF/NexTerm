@@ -112,6 +112,42 @@ func TestEngineAIPermissionAndPreferencesConverge(t *testing.T) {
 	}
 }
 
+// The multi-line paste prompt preference is turned off on one device and back on on another; each change reaches the
+// other device as the account override the terminal reads.
+func TestEngineMultilinePastePreferenceConverges(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	for _, device := range []*testDevice{deviceA, deviceB} {
+		enableDeviceKindOptIn(t, device, userID)
+	}
+	const key = "terminal.confirmMultilinePaste"
+	overrides := func(device *testDevice) string {
+		t.Helper()
+		values, err := account.NewPreferences(device.db).UserOverrides(context.Background(), userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(values[key])
+	}
+
+	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, "false", 100)
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if got := overrides(deviceB); got != "false" {
+		t.Fatalf("device B override after disabling = %q, want false", got)
+	}
+
+	putPreferenceSetting(t, deviceB, "prefs.user."+userID+"."+key, "true", 200)
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	if got := overrides(deviceA); got != "true" {
+		t.Fatalf("device A override after re-enabling = %q, want true", got)
+	}
+}
+
 func TestPreferenceViewAndUpdate(t *testing.T) {
 	device := newTestDevice(t)
 	ctx := WithUserID(context.Background(), ids.New())

@@ -144,3 +144,24 @@ describe("terminal link activation settings", () => {
     expect(mounted.container.textContent).toContain("单击终端中的网址或 OSC 8 超链接即打开");
   });
 });
+
+describe("multi-line paste confirmation setting", () => {
+  it("re-enables a prompt the account turned off and saves it to the account", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    registerAccountPreferenceStore({
+      getView: async () => ({ defaults: {}, overrides: { "terminal.confirmMultilinePaste": false } }),
+      putOverrides: put,
+      deleteOverrides: async () => {},
+    });
+    mounted = mountWithClient(createElement(SettingsView));
+    await flush();
+    const toggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="多行粘贴前确认"]');
+    if (!toggle) throw new Error("multi-line paste toggle not found");
+    await waitFor(() => expect(toggle.checked).toBe(false));
+
+    click(toggle);
+    await waitFor(() => expect(toggle.checked).toBe(true));
+    expect(put).toHaveBeenCalledWith({ "terminal.confirmMultilinePaste": true });
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe(true);
+  });
+});

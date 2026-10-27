@@ -116,6 +116,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "terminal-gpu-acceleration", section: "settings-terminal", label: "终端 GPU 加速", description: "自动、开启或关闭 WebGL 渲染", keywords: ["gpu", "webgl", "render", "renderer", "acceleration", "硬件加速", "渲染"] },
   { id: "quick-commands", section: "settings-terminal", label: "快捷命令", description: "在终端按键条中一键发送的常用命令，随账号同步", keywords: ["quick command", "snippet", "macro", "命令", "常用命令", "片段", "按键条"] },
   { id: "terminal-link-activation", section: "settings-terminal", label: "链接打开方式", description: "Ctrl/Cmd+单击或单击打开终端中的链接", keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", "链接", "超链接", "单击"] },
+  { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: "多行粘贴前确认", description: "粘贴多行文本前预览并确认，随账号同步", keywords: ["paste", "multiline", "multi-line", "confirm", "clipboard", "粘贴", "多行", "确认", "提示", "剪贴板"] },
   { id: "copy-on-select", section: "settings-shortcuts", label: "选中自动复制", keywords: ["copy", "select", "clipboard", "复制", "剪贴板"], panel: "shortcuts-advanced" },
   { id: "vault-password", section: "settings-vault", label: "用密码保护凭据", keywords: ["password", "credential", "vault", "密码", "凭据"] },
   { id: "vault-auto-lock", section: "settings-vault", label: "闲置自动锁定", keywords: ["lock", "idle", "timeout", "锁定", "凭据"] },
