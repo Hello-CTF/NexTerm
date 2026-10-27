@@ -70,9 +70,17 @@ function parseBundle(text: string): { bundle?: SyncBundle; error?: string } {
   return { bundle };
 }
 
-function formatExportedAt(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return "未知";
+function formatExportedAt(ms: number): string | null {
+  if (!Number.isFinite(ms) || ms <= 0) return null;
   return new Date(ms).toLocaleString();
+}
+
+// bundleProvenance lists only the provenance a bundle actually records.
+function bundleProvenance(origin: string | undefined, exportedAt: number): string {
+  const exported = formatExportedAt(exportedAt);
+  return [origin?.trim() ? `来源 ${origin.trim()}` : null, exported ? `导出于 ${exported}` : null]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
 }
 
 async function pickEncryptedBundlePayload(path: string): Promise<string | null> {
@@ -525,9 +533,9 @@ export function SyncBundleCard() {
           <div className="mt-2 flex flex-col gap-2">
             <div className="rounded border border-neutral-800/60 px-2.5 py-2 text-[12px] text-neutral-300">
               <div className="mb-1 font-semibold text-neutral-200">{preview.fileName}</div>
-              <div className="nx-hint">
-                来源 {preview.bundle.origin || "未知"} · 导出于 {formatExportedAt(preview.bundle.exportedAt)}
-              </div>
+              {bundleProvenance(preview.bundle.origin, preview.bundle.exportedAt) && (
+                <div className="nx-hint">{bundleProvenance(preview.bundle.origin, preview.bundle.exportedAt)}</div>
+              )}
               <div className="mt-1">
                 资产 {preview.bundle.assets.length}（其中 {preview.existingAssetIds.size > 0 ? preview.bundle.assets.filter((a) => preview.existingAssetIds.has(a.id)).length : 0} 条本机已存在）
                 · 分组 {preview.bundle.groups.length} · 凭据 {preview.bundle.creds.length}

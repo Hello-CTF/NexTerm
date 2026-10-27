@@ -1,4 +1,5 @@
-import { useId, type KeyboardEvent } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
+import { copyText } from "../../ui/clipboard";
 import { IconLoader } from "../../ui/icons";
 
 export type HelperCompatibility = "compatible" | "incompatible" | "unknown";
@@ -76,6 +77,9 @@ export function helperStageText(stage: string): string {
   return STAGE_LABELS.get(value) ?? (value || "未知");
 }
 
+// Stages where the helper is up and nothing is pending: attempt counters and deadlines no longer mean anything.
+const HEALTHY_STAGES = new Set(["ready", "updated"]);
+
 function textOrUnknown(value: string | null | undefined): string {
   return value?.trim() || "未知";
 }
@@ -85,17 +89,21 @@ function metadataText(value: string | number | null | undefined): string {
   return textOrUnknown(value);
 }
 
-function attemptText(attempt: number | null | undefined, maxAttempts: number | null | undefined): string {
-  if (attempt === null || attempt === undefined || !Number.isInteger(attempt) || attempt <= 0) {
-    return "未知";
-  }
+function presentText(value: string | number | null | undefined): string | null {
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
+  return value?.trim() || null;
+}
+
+function attemptText(attempt: number | null | undefined, maxAttempts: number | null | undefined): string | null {
+  if (attempt === null || attempt === undefined || !Number.isInteger(attempt) || attempt <= 0) return null;
   if (maxAttempts !== null && maxAttempts !== undefined && Number.isInteger(maxAttempts) && maxAttempts > 0) {
     return `${attempt}/${maxAttempts}`;
   }
   return String(attempt);
 }
 
-function compatibilityText(compatibility: HelperCompatibility): string {
+// The offline trust check spells out every value, missing ones included: trusting a file needs all of them.
+function offlineCompatibilityText(compatibility: HelperCompatibility): string {
   switch (compatibility) {
     case "compatible":
       return "协议兼容；发布版本不同不妨碍继续。";
@@ -103,6 +111,80 @@ function compatibilityText(compatibility: HelperCompatibility): string {
       return "协议不兼容；正在运行的组件不会被自动替换。";
     case "unknown":
       return "兼容性未知，不能推断可安全继续。";
+  }
+}
+
+type VersionField = "release" | "commit" | "protocol" | "sha256";
+
+const VERSION_FIELDS: readonly { key: VersionField; label: string }[] = [
+  { key: "release", label: "发布版本" },
+  { key: "commit", label: "提交" },
+  { key: "protocol", label: "协议" },
+  { key: "sha256", label: "SHA-256" },
+];
+
+function versionValue(version: HelperVersionPresentation | null | undefined, key: VersionField): string | null {
+  return version?.known === true ? presentText(version[key]) : null;
+}
+
+function comparableValue(key: VersionField, value: string | null): string | null {
+  if (value === null) return null;
+  if (key === "release") return value.replace(/^v/i, "");
+  if (key === "commit" || key === "sha256") return value.toLowerCase();
+  return value;
+}
+
+function versionFieldDiffers(
+  local: HelperVersionPresentation | null | undefined,
+  running: HelperVersionPresentation | null | undefined,
+  key: VersionField,
+): boolean {
+  return comparableValue(key, versionValue(local, key)) !== comparableValue(key, versionValue(running, key));
+}
+
+function versionsIdentical(
+  local: HelperVersionPresentation | null | undefined,
+  running: HelperVersionPresentation | null | undefined,
+): boolean {
+  if (local?.known !== true || running?.known !== true) return false;
+  if (VERSION_FIELDS.every(({ key }) => versionValue(local, key) === null)) return false;
+  return VERSION_FIELDS.every(({ key }) => !versionFieldDiffers(local, running, key));
+}
+
+function shortCommit(commit: string): string {
+  return /^[0-9a-f]{12,}$/i.test(commit) ? commit.slice(0, 7) : commit;
+}
+
+function versionSummary(version: HelperVersionPresentation): string {
+  const parts: string[] = [];
+  const release = versionValue(version, "release");
+  const commit = versionValue(version, "commit");
+  const protocol = versionValue(version, "protocol");
+  if (release) parts.push(`版本 ${release.replace(/^v/i, "")}`);
+  if (commit) parts.push(`提交 ${shortCommit(commit)}`);
+  if (protocol) parts.push(`协议 ${protocol}`);
+  return parts.join(" · ") || "组件版本";
+}
+
+function versionCompatibilityText(
+  compatibility: HelperCompatibility,
+  local: HelperVersionPresentation | null | undefined,
+  running: HelperVersionPresentation | null | undefined,
+  update: HelperUpdatePresentation | null | undefined,
+): string {
+  switch (compatibility) {
+    case "compatible": {
+      const updateAvailable = update?.status === "available" || update?.status === "deferred";
+      return updateAvailable ? "协议兼容，可继续使用；有可用更新。" : "协议兼容，可继续使用。";
+    }
+    case "incompatible": {
+      const localProtocol = versionValue(local, "protocol");
+      const runningProtocol = versionValue(running, "protocol");
+      const protocols = localProtocol && runningProtocol ? `（本地 ${localProtocol}，主机 ${runningProtocol}）` : "";
+      return `协议不兼容${protocols}：NexTerm 无法使用主机上正在运行的组件，持久终端不可用；它不会被自动替换，需要中断其中的进程并更新组件。`;
+    }
+    case "unknown":
+      return "无法确认兼容性，不能推断可安全继续。";
   }
 }
 
@@ -133,26 +215,129 @@ function Definition({ term, value }: { term: string; value: string }) {
   );
 }
 
+function CopyValue({ term, value }: { term: string; value: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+      <dt className="text-neutral-500">{term}</dt>
+      <dd className="flex min-w-0 items-start gap-2 text-neutral-300">
+        <span data-value className="min-w-0 break-all font-mono">{value}</span>
+        <button
+          type="button"
+          className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+          aria-label={`复制${term}`}
+          onClick={() => {
+            copyText(value).then(() => setState("copied"), () => setState("failed"));
+          }}
+        >
+          {state === "copied" ? "已复制" : state === "failed" ? "复制失败" : "复制"}
+        </button>
+      </dd>
+    </div>
+  );
+}
+
+// IdenticalVersion states a local bundle and a running helper that match once; the full commit and digest
+// stay one click away for anyone comparing them by hand.
+function IdenticalVersion({ version }: { version: HelperVersionPresentation }) {
+  const commit = versionValue(version, "commit");
+  const sha256 = versionValue(version, "sha256");
+  return (
+    <section aria-label="组件版本" className="flex flex-col gap-1">
+      <p className="text-neutral-300">{versionSummary(version)}（本地与主机一致）</p>
+      {(commit || sha256) && (
+        <details>
+          <summary tabIndex={0} className="cursor-pointer text-[11px] text-neutral-500">完整提交与 SHA-256</summary>
+          <dl className="mt-1 flex flex-col gap-1">
+            {commit && <CopyValue term="提交" value={commit} />}
+            {sha256 && <CopyValue term="SHA-256" value={sha256} />}
+          </dl>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function VersionSection({
   label,
   version,
+  other,
 }: {
   label: string;
   version: HelperVersionPresentation | null | undefined;
+  other: HelperVersionPresentation | null | undefined;
 }) {
-  const known = version?.known === true;
+  if (version?.known !== true) {
+    return (
+      <section aria-label={label} className="min-w-0 rounded border border-neutral-800/70 p-2">
+        <h3 className="font-medium text-neutral-200">{label}</h3>
+        <p className="mt-1 text-neutral-500">无法确认（未提供或无法验证）。</p>
+      </section>
+    );
+  }
+  const compare = other?.known === true;
+  const rows = VERSION_FIELDS.filter(
+    ({ key }) => versionValue(version, key) !== null || (compare && versionValue(other, key) !== null),
+  );
   return (
     <section aria-label={label} className="min-w-0 rounded border border-neutral-800/70 p-2">
       <h3 className="font-medium text-neutral-200">{label}</h3>
-      {!known && <p className="mt-1 text-neutral-500">元数据未知（未提供或无法验证）。</p>}
       <dl className="mt-2 flex flex-col gap-1">
-        <Definition term="发布版本" value={known ? metadataText(version.release) : "未知"} />
-        <Definition term="提交" value={known ? metadataText(version.commit) : "未知"} />
-        <Definition term="协议" value={known ? metadataText(version.protocol) : "未知"} />
-        <Definition term="SHA-256" value={known ? metadataText(version.sha256) : "未知"} />
+        {rows.map(({ key, label: term }) => {
+          const differs = compare && versionFieldDiffers(version, other, key);
+          return (
+            <div
+              key={key}
+              className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1"
+              data-differs={differs ? "true" : undefined}
+            >
+              <dt className="text-neutral-500">{term}</dt>
+              <dd className={`min-w-0 break-words ${differs ? "font-medium text-[var(--nx-fg-warning)]" : "text-neutral-300"}`}>
+                <span data-value>{versionValue(version, key) ?? "未提供"}</span>
+                {differs && <span className="nx-badge nx-badge-amber ml-1.5">不同</span>}
+              </dd>
+            </div>
+          );
+        })}
       </dl>
     </section>
   );
+}
+
+function VersionComparison({
+  local,
+  running,
+  compatibility,
+  update,
+}: {
+  local: HelperVersionPresentation | null | undefined;
+  running: HelperVersionPresentation | null | undefined;
+  compatibility: HelperCompatibility | undefined;
+  update: HelperUpdatePresentation | null | undefined;
+}) {
+  if (local?.known === true && versionsIdentical(local, running)) return <IdenticalVersion version={local} />;
+  const anyKnown = local?.known === true || running?.known === true;
+  return (
+    <div className="flex flex-col gap-2">
+      {anyKnown ? (
+        <div className="grid gap-2 md:grid-cols-2">
+          <VersionSection label="本地携带版本" version={local} other={running} />
+          <VersionSection label="远端运行版本" version={running} other={local} />
+        </div>
+      ) : (
+        <p className="text-neutral-500">本地与主机上的组件版本均无法确认。</p>
+      )}
+      <p className="text-neutral-400">
+        <span className="font-medium">兼容性：</span>
+        {versionCompatibilityText(compatibility ?? "unknown", local, running, update)}
+      </p>
+    </div>
+  );
+}
+
+// On a healthy stage a plain "already current" result adds nothing beyond the status line, which then says so itself.
+function updateIsPlainCurrent(update: HelperUpdatePresentation): boolean {
+  return update.status === "current" && !update.detail?.trim() && !update.updated && !update.interrupted && !update.rolledBack;
 }
 
 export function HelperOperationView({
@@ -188,6 +373,7 @@ export function HelperOperationView({
   const offlineTrustNoteId = `${id}-offline-trust-note`;
   const updateNoteId = `${id}-update-note`;
   const failed = stage === "failed" || restoreFailure;
+  const healthy = !failed && HEALTHY_STAGES.has(stage.trim());
   const showVersions =
     localVersion !== undefined || runningVersion !== undefined || compatibility !== undefined;
   const showControls =
@@ -199,6 +385,30 @@ export function HelperOperationView({
     /^[0-9a-f]{64}$/i.test(offlineTrust.sha256?.trim() ?? "") &&
     metadataText(offlineTrust.protocol) !== "未知" &&
     offlineCompatibility === "compatible";
+  const plainCurrent = healthy && update ? updateIsPlainCurrent(update) : false;
+  const statusText = failed
+    ? "持久终端暂时不可用"
+    : `${helperStageText(stage)}${plainCurrent ? "，组件已是最新版本" : ""}`;
+
+  // Diagnostics list only what applies to this stage: no placeholders for values that do not exist yet or any more.
+  const diagnostics: { term: string; value: string }[] = [];
+  // The status line already names a non-failed stage; a failure replaces it, so the stage that failed is listed.
+  if (failed || busyLabel) diagnostics.push({ term: "阶段", value: helperStageText(stage) });
+  const reasonText = presentText(reason);
+  if (reasonText) diagnostics.push({ term: "原因", value: reasonText });
+  const attempts = attemptText(attempt, maxAttempts);
+  if (attempts && !healthy && (failed || stage === "backoff" || (attempt ?? 0) > 1)) {
+    diagnostics.push({ term: "尝试次数", value: attempts });
+  }
+  const deadlineText = presentText(deadline);
+  if (deadlineText && !healthy && stage !== "fallback") diagnostics.push({ term: "截止时间", value: deadlineText });
+  const operationText = presentText(operationId);
+  if (operationText) diagnostics.push({ term: "操作 ID", value: operationText });
+  const pathText = presentText(path);
+  if (pathText) diagnostics.push({ term: "路径", value: pathText });
+  const transportText = presentText(transport);
+  if (transportText) diagnostics.push({ term: "传输", value: transportText });
+  const showDiagnostics = diagnostics.length > 0 || showVersions;
 
   return (
     <section
@@ -211,36 +421,29 @@ export function HelperOperationView({
 
       {busyLabel && <p role="status" className="flex items-center gap-2 text-neutral-300"><IconLoader size={13} className="animate-spin" />{busyLabel}</p>}
       {!busyLabel && <p className={failed ? "text-red-300" : "text-neutral-300"} role={failed ? "alert" : "status"}>
-        {failed ? "持久终端暂时不可用" : helperStageText(stage)}
+        {statusText}
       </p>}
-      <details className="text-neutral-400">
-        <summary tabIndex={0} className="cursor-pointer text-[11px]">诊断详情</summary>
-        <div className={failed ? "text-red-300" : "text-neutral-300"}>
-          <dl aria-label="后台操作状态" className="grid gap-1 sm:grid-cols-2">
-            <Definition term="阶段" value={helperStageText(stage)} />
-            <Definition term="原因" value={textOrUnknown(reason)} />
-            <Definition term="尝试次数" value={attemptText(attempt, maxAttempts)} />
-            <Definition term="截止时间" value={textOrUnknown(deadline)} />
-            {operationId !== undefined && <Definition term="操作 ID" value={textOrUnknown(operationId)} />}
-            {path !== undefined && <Definition term="路径" value={textOrUnknown(path)} />}
-            {transport !== undefined && <Definition term="传输" value={textOrUnknown(transport)} />}
-          </dl>
-        </div>
-
-        {showVersions && (
-          <div className="flex flex-col gap-2">
-            <div className="grid gap-2 md:grid-cols-2">
-              <VersionSection label="本地携带版本" version={localVersion} />
-              <VersionSection label="远端运行版本" version={runningVersion} />
-            </div>
-            <p className="text-neutral-400">
-              <span className="font-medium">兼容性：</span>
-              {compatibilityText(compatibility ?? "unknown")}
-            </p>
+      {showDiagnostics && (
+        // Healthy and in-progress stages keep the details folded; a failure opens them so the cause is visible.
+        <details className="text-neutral-400" open={failed}>
+          <summary tabIndex={0} className="cursor-pointer text-[11px]">诊断详情</summary>
+          <div className="mt-1 flex flex-col gap-2">
+            {diagnostics.length > 0 && (
+              <dl aria-label="后台操作状态" className={`grid gap-1 sm:grid-cols-2 ${failed ? "text-red-300" : "text-neutral-300"}`}>
+                {diagnostics.map((item) => <Definition key={item.term} term={item.term} value={item.value} />)}
+              </dl>
+            )}
+            {showVersions && (
+              <VersionComparison
+                local={localVersion}
+                running={runningVersion}
+                compatibility={compatibility}
+                update={update}
+              />
+            )}
           </div>
-        )}
-
-      </details>
+        </details>
+      )}
 
       {showControls && (
         <div className="flex flex-col gap-2 border-t border-neutral-800/60 pt-2">
@@ -316,7 +519,7 @@ export function HelperOperationView({
             <Definition term="SHA-256" value={metadataText(offlineTrust.sha256)} />
             <Definition term="协议" value={metadataText(offlineTrust.protocol)} />
           </dl>
-          <p className="text-neutral-400">{compatibilityText(offlineCompatibility)}</p>
+          <p className="text-neutral-400">{offlineCompatibilityText(offlineCompatibility)}</p>
           {onConfirmOfflineTrust && (
             <div>
               <button
@@ -337,7 +540,7 @@ export function HelperOperationView({
         </section>
       )}
 
-      {update && (
+      {update && !plainCurrent && (
         <section
           aria-label="组件更新"
           className="flex flex-col gap-2 rounded border border-neutral-800/70 p-2"
