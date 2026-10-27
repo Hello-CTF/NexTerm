@@ -114,6 +114,8 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "osc52", section: "settings-terminal", label: "允许远程主机写入剪贴板（OSC 52）", keywords: ["clipboard", "osc52", "剪贴板"] },
   { id: "close-action", section: "settings-terminal", label: "关闭运行中的终端标签时", keywords: ["close", "kill", "detach", "关闭", "后台"] },
   { id: "terminal-gpu-acceleration", section: "settings-terminal", label: "终端 GPU 加速", description: "自动、开启或关闭 WebGL 渲染", keywords: ["gpu", "webgl", "render", "renderer", "acceleration", "硬件加速", "渲染"] },
+  { id: "terminal-scrollback", section: "settings-terminal", label: "终端回滚行数", description: "每个终端在本机保留的滚动历史行数", keywords: ["scrollback", "history", "buffer", "lines", "滚动", "回滚", "历史", "行数"] },
+  { id: "terminal-durable-history", section: "settings-terminal", label: "持久终端历史上限", description: "主机为每个新开的持久终端保留的输出量，随账号同步", keywords: ["history", "durable", "limit", "quota", "scrollback", "历史", "持久", "上限", "配额"] },
   { id: "quick-commands", section: "settings-terminal", label: "快捷命令", description: "在终端按键条中一键发送的常用命令，随账号同步", keywords: ["quick command", "snippet", "macro", "命令", "常用命令", "片段", "按键条"] },
   { id: "terminal-link-activation", section: "settings-terminal", label: "链接打开方式", description: "Ctrl/Cmd+单击或单击打开终端中的链接", keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", "链接", "超链接", "单击"] },
   { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: "多行粘贴确认", description: "程序未开启括号粘贴时、每次或从不在粘贴多行文本前确认，随账号同步", keywords: ["paste", "bracketed paste", "括号粘贴", "multiline", "multi-line", "confirm", "clipboard", "粘贴", "多行", "确认", "提示", "剪贴板"] },

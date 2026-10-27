@@ -240,6 +240,10 @@ export type TerminalLinkActivation = "modifier" | "click";
 // bracketed paste (a bracketed paste reaches the shell as one paste instead of running line by line); always asks for
 // every multi-line paste; never does not ask.
 export type TerminalMultilinePasteConfirm = "unbracketed" | "always" | "never";
+// Lines each terminal keeps in its own scrollback. Older output of a durable terminal stays on the host and is
+// loaded on demand from the top of the scrollback.
+export const TERMINAL_SCROLLBACK_OPTIONS = [5_000, 10_000, 25_000, 50_000, 100_000] as const;
+export type TerminalScrollback = (typeof TERMINAL_SCROLLBACK_OPTIONS)[number];
 
 export interface TerminalPrefs {
   closeAction: TerminalCloseAction;
@@ -247,6 +251,9 @@ export interface TerminalPrefs {
   gpuAcceleration: TerminalGpuAcceleration;
   linkActivation: TerminalLinkActivation;
   confirmMultilinePaste: TerminalMultilinePasteConfirm;
+  scrollback: TerminalScrollback;
+  // MiB of output the host keeps per new durable terminal; null keeps the helper default.
+  durableHistoryMiB: number | null;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
@@ -255,13 +262,30 @@ const TERMINAL_DEFAULT_MODE_KEY = "terminal.defaultMode";
 const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
 const TERMINAL_LINK_ACTIVATION_KEY = "terminal.linkActivation";
 const TERMINAL_CONFIRM_MULTILINE_PASTE_KEY = "terminal.confirmMultilinePaste";
+const TERMINAL_SCROLLBACK_KEY = "terminal.scrollback";
+const TERMINAL_DURABLE_HISTORY_KEY = "terminal.durableHistoryMiB";
+// The helper's own history limit per durable terminal when the account sets none.
+export const DEFAULT_DURABLE_HISTORY_MIB = 8;
 const TERMINAL_DEFAULTS: TerminalPrefs = {
   closeAction: "ask",
   defaultMode: "durable",
   gpuAcceleration: "auto",
   linkActivation: "modifier",
   confirmMultilinePaste: "unbracketed",
+  scrollback: 10_000,
+  durableHistoryMiB: null,
 };
+
+// Any value that is not one of the options, including a missing one, is the default.
+export function normalizeTerminalScrollback(value: unknown): TerminalScrollback {
+  return (TERMINAL_SCROLLBACK_OPTIONS as readonly unknown[]).includes(value)
+    ? (value as TerminalScrollback)
+    : TERMINAL_DEFAULTS.scrollback;
+}
+
+function normalizeDurableHistoryMiB(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 1024 ? value : null;
+}
 
 // Any value that is not one of the modes, including a missing one, is the default.
 export function normalizeMultilinePasteConfirm(value: unknown): TerminalMultilinePasteConfirm {
@@ -292,12 +316,19 @@ function loadTerminal(): TerminalPrefs {
   const confirmPaste: unknown = accountPreferencesReady()
     ? accountOverrides[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY] ?? accountDefaults[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]
     : local.confirmMultilinePaste;
+  const scrollback = preferenceValue<unknown>(TERMINAL_SCROLLBACK_KEY, local.scrollback, TERMINAL_DEFAULTS.scrollback);
+  // The server applies the history limit when it creates a durable terminal, so only the account layers count.
+  const durableHistory: unknown = terminalDefaultUsesAccount()
+    ? accountOverrides[TERMINAL_DURABLE_HISTORY_KEY] ?? accountDefaults[TERMINAL_DURABLE_HISTORY_KEY]
+    : undefined;
   return {
     closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction,
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
     gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
     confirmMultilinePaste: normalizeMultilinePasteConfirm(confirmPaste),
+    scrollback: normalizeTerminalScrollback(scrollback),
+    durableHistoryMiB: normalizeDurableHistoryMiB(durableHistory),
   };
 }
 
@@ -380,6 +411,41 @@ export function setTerminalLinkActivation(value: TerminalLinkActivation): void {
     void accountStore.putOverrides({ [TERMINAL_LINK_ACTIVATION_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [TERMINAL_LINK_ACTIVATION_KEY]: value }, []);
   }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalScrollback(value: TerminalScrollback): void {
+  if (terminalPrefs.scrollback === value) return;
+  terminalPrefs = { ...terminalPrefs, scrollback: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, scrollback: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_SCROLLBACK_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_SCROLLBACK_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+// setTerminalDurableHistoryMiB saves the account's history limit for new durable terminals; null returns to the
+// helper default. The server reads it from the account, so without one there is nowhere to save it.
+export async function setTerminalDurableHistoryMiB(value: number | null): Promise<void> {
+  const store = terminalDefaultUsesAccount() ? accountStore : null;
+  if (!store) throw new Error("持久终端历史上限保存在账号中，当前没有可用的账号");
+  const generation = registerGeneration;
+  if (value === null) {
+    await store.deleteOverrides([TERMINAL_DURABLE_HISTORY_KEY]);
+    if (generation !== registerGeneration || accountStore !== store) return;
+    patchAccountOverrideCache({}, [TERMINAL_DURABLE_HISTORY_KEY]);
+  } else {
+    await store.putOverrides({ [TERMINAL_DURABLE_HISTORY_KEY]: value });
+    if (generation !== registerGeneration || accountStore !== store) return;
+    patchAccountOverrideCache({ [TERMINAL_DURABLE_HISTORY_KEY]: value }, []);
+  }
+  terminalPrefs = loadTerminal();
   for (const listener of terminalListeners) listener();
 }
 

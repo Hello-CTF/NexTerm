@@ -295,7 +295,7 @@ export function XtermView(props: XtermViewProps) {
       open: openLink,
     });
     const term = new Terminal({
-      scrollback: 100_000,
+      scrollback: getTerminalPrefs().scrollback,
       allowProposedApi: true,
       scrollbar: { width: 10 },
       fontFamily: TERMINAL_FONT_STACKS[appearance.terminalFontFamily],
@@ -338,7 +338,11 @@ export function XtermView(props: XtermViewProps) {
       onFallback: showWebglFallbackNotice,
     });
     webglRef.current = webgl;
-    const unsubscribeGpuPreference = subscribeTerminalPrefs(() => webgl.setMode(getTerminalPrefs().gpuAcceleration));
+    const unsubscribeGpuPreference = subscribeTerminalPrefs(() => {
+      const prefs = getTerminalPrefs();
+      webgl.setMode(prefs.gpuAcceleration);
+      if (term.options.scrollback !== prefs.scrollback) term.options.scrollback = prefs.scrollback;
+    });
     const attachedAssetId = useUi.getState().sessions.find((session) => session.id === sessionId)?.assetId;
     const applyGrid = (grid: TerminalGrid) => resizeTerminalToGridPreservingSelection(term, grid);
     const coordinator = new TerminalGridCoordinator(

@@ -151,6 +151,7 @@ import {
   setTerminalContrast,
   setTerminalFontFamily,
   setTerminalFontSize,
+  setTerminalScrollback,
   setTerminalTheme,
 } from "../app/preferences";
 import { setThemeMode } from "../app/theme";
@@ -485,5 +486,18 @@ describe("XtermView appearance hot updates", () => {
 
     expect(term.resize).not.toHaveBeenCalled();
     expect(getAppearancePrefs().terminalFontSize).toBe(13);
+  });
+});
+
+describe("XtermView scrollback preference", () => {
+  afterEach(() => setTerminalScrollback(10_000));
+
+  it("opens terminals with the preferred scrollback and applies a change to open terminals", async () => {
+    setTerminalScrollback(10_000);
+    await show();
+    const term = harness.terminals[0];
+    expect(term.options.scrollback).toBe(10_000);
+    act(() => setTerminalScrollback(50_000));
+    expect(term.options.scrollback).toBe(50_000);
   });
 });

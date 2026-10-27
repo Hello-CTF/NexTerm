@@ -8,7 +8,13 @@ import {
   setTerminalGpuAcceleration,
   setTerminalLinkActivation,
   setTerminalConfirmMultilinePaste,
+  setTerminalDurableHistoryMiB,
+  setTerminalScrollback,
   normalizeMultilinePasteConfirm,
+  normalizeTerminalScrollback,
+  terminalDefaultUsesAccount,
+  DEFAULT_DURABLE_HISTORY_MIB,
+  TERMINAL_SCROLLBACK_OPTIONS,
   useTerminalPrefs,
   type TerminalCloseAction,
   type TerminalDefaultMode,
@@ -149,6 +155,12 @@ const GPU_ACCELERATION_OPTIONS: { value: TerminalGpuAcceleration; label: string 
   { value: "off", label: "关闭" },
 ];
 
+const DURABLE_HISTORY_OPTIONS_MIB = [4, 8, 16, 32, 64, 128, 256];
+
+function formatScrollbackLines(lines: number): string {
+  return lines >= 10_000 ? `${lines / 10_000} 万行` : `${lines.toLocaleString("zh-CN")} 行`;
+}
+
 const LINK_ACTIVATION_OPTIONS: { value: TerminalLinkActivation; label: string }[] = [
   { value: "modifier", label: "Ctrl/Cmd+单击" },
   { value: "click", label: "单击" },
@@ -196,6 +208,21 @@ export function SettingsView({ active = true }: { active?: boolean }) {
       pushToast("error", `保存默认终端模式失败：${describeError(error)}`);
     } finally {
       setTerminalModeSaving(false);
+    }
+  };
+  const scrollbackSelectId = useId();
+  const durableHistorySelectId = useId();
+  const [durableHistorySaving, setDurableHistorySaving] = useState(false);
+  const durableHistoryAccount = terminalDefaultUsesAccount();
+  const saveDurableHistory = async (value: number | null) => {
+    if (durableHistorySaving) return;
+    setDurableHistorySaving(true);
+    try {
+      await setTerminalDurableHistoryMiB(value);
+    } catch (error) {
+      pushToast("error", `保存持久终端历史上限失败：${describeError(error)}`);
+    } finally {
+      setDurableHistorySaving(false);
     }
   };
   const showCloseToTray = DESKTOP && isWindows();
@@ -771,6 +798,54 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                 "使用 WebGL 渲染终端；检测到软件渲染（如虚拟机或远程桌面）时改用兼容渲染。GPU 多次失效时自动回退。"}
               {terminalPrefs.gpuAcceleration === "on" && "始终尝试 WebGL 渲染，包括软件渲染环境。GPU 多次失效时仍会回退。"}
               {terminalPrefs.gpuAcceleration === "off" && "始终使用兼容渲染（DOM），不占用 GPU。"}
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <label className="nx-setting-label mb-1.5 block" htmlFor={scrollbackSelectId} data-setting="terminal-scrollback">
+              终端回滚行数
+            </label>
+            <select
+              id={scrollbackSelectId}
+              className="nx-select w-full sm:w-auto"
+              value={terminalPrefs.scrollback}
+              onChange={(event) => setTerminalScrollback(normalizeTerminalScrollback(Number(event.target.value)))}
+            >
+              {TERMINAL_SCROLLBACK_OPTIONS.map((lines) => (
+                <option key={lines} value={lines}>
+                  {formatScrollbackLines(lines)}
+                  {lines === 10_000 ? "（默认）" : ""}
+                </option>
+              ))}
+            </select>
+            <p className="nx-hint mt-1.5">
+              每个终端在本机保留的滚动历史，行数越多占用内存越多；改小会丢弃已超出的最早几行。持久终端更早的输出保存在主机上，滚到顶部可「加载更早历史」。
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <label className="nx-setting-label mb-1.5 block" htmlFor={durableHistorySelectId} data-setting="terminal-durable-history">
+              持久终端历史上限
+            </label>
+            <select
+              id={durableHistorySelectId}
+              className="nx-select w-full sm:w-auto"
+              value={terminalPrefs.durableHistoryMiB ?? ""}
+              disabled={durableHistorySaving || !durableHistoryAccount}
+              aria-busy={durableHistorySaving}
+              onChange={(event) => void saveDurableHistory(event.target.value === "" ? null : Number(event.target.value))}
+            >
+              <option value="">默认（{DEFAULT_DURABLE_HISTORY_MIB} MB）</option>
+              {terminalPrefs.durableHistoryMiB !== null && !DURABLE_HISTORY_OPTIONS_MIB.includes(terminalPrefs.durableHistoryMiB) && (
+                <option value={terminalPrefs.durableHistoryMiB}>{terminalPrefs.durableHistoryMiB} MB</option>
+              )}
+              {DURABLE_HISTORY_OPTIONS_MIB.map((mib) => (
+                <option key={mib} value={mib}>
+                  {mib} MB
+                </option>
+              ))}
+            </select>
+            <p className="nx-hint mt-1.5">
+              主机为每个持久终端保留的输出量，超出时丢弃最早的部分并标记「早期历史已截断」。只影响新开的持久终端，随账号同步。
+              {!durableHistoryAccount && "这项设置保存在账号中；当前没有账号，持久终端使用默认上限。"}
             </p>
           </div>
           <div className="mt-3.5">

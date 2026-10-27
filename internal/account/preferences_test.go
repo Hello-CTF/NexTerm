@@ -46,6 +46,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"terminal.linkActivation",
 		"terminal.confirmMultilinePaste",
 		"terminal.durableHistoryMiB",
+		"terminal.scrollback",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
 		"keybinding.newTerminal",
@@ -139,6 +140,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.gpuAcceleration":       `"off"`,
 		"terminal.linkActivation":        `"click"`,
 		"terminal.confirmMultilinePaste": `"unbracketed"`,
+		"terminal.scrollback":            "25000",
 		"keybinding.closeTab":            `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":       "null",
 		"keybinding.reclaimTakeover":     `"Mod+Shift+s"`,
@@ -197,6 +199,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.gpuAcceleration":       {`"webgl"`, `"Auto"`, "1", "null", "true"},
 		"terminal.linkActivation":        {`"ctrl"`, `"Click"`, `"double"`, "1", "null", "true"},
 		"terminal.confirmMultilinePaste": {"true", "false", `"false"`, `"Always"`, `"ask"`, "0", "null"},
+		"terminal.scrollback":            {"0", "1000", "10001", `"10000"`, "1e9", "null", "true"},
 		"keybinding.closeTab":            {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {
