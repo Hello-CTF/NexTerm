@@ -175,10 +175,11 @@ func (m *Manager) reconnectWith(ctx context.Context, id string, expectedGenerati
 	session.reconnectCompletion = &reconnectCompletion{done: make(chan struct{})}
 	session.reconnectAttempt = 0
 	firstDelay := time.Duration(0)
+	session.reconnectNextRetry = time.Time{}
 	if !immediate {
 		firstDelay = m.reconnectDelay(0)
+		session.reconnectNextRetry = m.now().Add(firstDelay)
 	}
-	session.reconnectNextRetry = m.now().Add(firstDelay)
 	wake := make(chan struct{}, 1)
 	session.reconnectWake = wake
 	channels := session.detachChannelsLocked()
@@ -217,26 +218,30 @@ func (m *Manager) reconnectDelay(attempt int) time.Duration {
 	return half + time.Duration(m.jitter()*float64(step-half))
 }
 
-// waitReconnectBackoff sleeps for the backoff unless the context ends or a
-// foreground probe wakes the loop. A wake that arrived while the previous
-// attempt was still dialing is discarded: that attempt already answered it.
-func waitReconnectBackoff(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
+// waitReconnectBackoff sleeps for the backoff unless the context ends or, when
+// wakeable, a foreground probe wakes the loop; woken reports the latter. A
+// wake that arrived while the previous attempt was still dialing is
+// discarded: that attempt already answered it.
+func waitReconnectBackoff(ctx context.Context, delay time.Duration, wake <-chan struct{}, wakeable bool) (woken bool, err error) {
 	select {
 	case <-wake:
 	default:
 	}
 	if delay <= 0 {
-		return ctx.Err()
+		return false, ctx.Err()
+	}
+	if !wakeable {
+		wake = nil
 	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return false, ctx.Err()
 	case <-wake:
-		return nil
+		return true, nil
 	case <-timer.C:
-		return nil
+		return false, nil
 	}
 }
 
@@ -253,11 +258,17 @@ func waitReconnect(ctx context.Context, completion *reconnectCompletion) error {
 
 func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generation uint64, delay time.Duration, wake <-chan struct{}) error {
 	var lastErr error
+	// A probe may cut a backoff short once; after a woken attempt fails, the
+	// next step waits its full delay so repeated foreground probes cannot
+	// turn the backoff into a redial loop.
+	wakeable := true
 	for attempt := 0; attempt < m.reconnectMax; attempt++ {
-		if err := waitReconnectBackoff(ctx, delay, wake); err != nil {
+		woken, err := waitReconnectBackoff(ctx, delay, wake, wakeable)
+		if err != nil {
 			lastErr = err
 			break
 		}
+		wakeable = !woken
 		transport, err := m.connector.Connect(ctx, session.Asset(), generation)
 		var handle *transportHandle
 		if transport != nil {

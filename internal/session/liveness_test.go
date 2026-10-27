@@ -12,81 +12,104 @@ import (
 
 var livenessTestPolicy = LivenessPolicy{
 	Interval: 15 * time.Second, SuspectInterval: 5 * time.Second,
-	Timeout: 10 * time.Second, ProbeTimeout: 5 * time.Second, DeadAfter: 3,
+	Timeout: 10 * time.Second, ProbeTimeout: 5 * time.Second,
+	SilenceBudget: 90 * time.Second, SuspendGrace: 30 * time.Second,
 }
+
+var livenessTestBase = time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 
 func livenessAt(mono time.Duration) livenessReading {
-	return livenessReading{mono: mono, wall: time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC).Add(mono)}
+	return livenessReading{mono: mono, wall: livenessTestBase.Add(mono)}
 }
 
-func TestLivenessTrackerNeedsConsecutiveMissesToDeclareDead(t *testing.T) {
-	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0))
-	steps := []struct {
-		at     time.Duration
-		result heartbeatResult
-		want   Liveness
-	}{
-		{25 * time.Second, heartbeatMissed, LivenessSuspect},
-		{40 * time.Second, heartbeatMissed, LivenessSuspect},
-		{55 * time.Second, heartbeatOK, LivenessAlive},
-		{80 * time.Second, heartbeatMissed, LivenessSuspect},
-		{95 * time.Second, heartbeatMissed, LivenessSuspect},
-		{110 * time.Second, heartbeatMissed, LivenessDead},
-		{125 * time.Second, heartbeatOK, LivenessDead},
-	}
-	for index, step := range steps {
-		if got := tracker.observe(livenessAt(step.at), step.result); got != step.want {
-			t.Fatalf("step %d: state = %s, want %s", index, got, step.want)
+func missed(inbound uint64) livenessObservation {
+	return livenessObservation{result: heartbeatMissed, inbound: inbound}
+}
+
+func TestLivenessTrackerKeepsSlowLinkUnderBulkOutputAlive(t *testing.T) {
+	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0), 0)
+	// Every reply is late, but output keeps arriving for five minutes.
+	for step := 1; step <= 20; step++ {
+		got := tracker.observe(livenessAt(time.Duration(step)*15*time.Second), missed(uint64(step)*4096))
+		if got != LivenessAlive {
+			t.Fatalf("step %d: state = %s, want alive while inbound bytes keep arriving", step, got)
 		}
 	}
 }
 
-func TestLivenessTrackerDeclaresDeadOnLostTransport(t *testing.T) {
-	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0))
-	if got := tracker.observe(livenessAt(15*time.Second), heartbeatLost); got != LivenessDead {
-		t.Fatalf("state after lost transport = %s, want dead", got)
+func TestLivenessTrackerNeedsTotalSilenceForTheWholeBudget(t *testing.T) {
+	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0), 0)
+	for at := 15 * time.Second; at < 90*time.Second; at += 5 * time.Second {
+		if got := tracker.observe(livenessAt(at), missed(0)); got != LivenessSuspect {
+			t.Fatalf("at %v: state = %s, want suspect before the silence budget is spent", at, got)
+		}
+	}
+	if got := tracker.observe(livenessAt(90*time.Second), missed(0)); got != LivenessDead {
+		t.Fatalf("after 90s of total silence: state = %s, want dead", got)
+	}
+}
+
+func TestLivenessTrackerReplyOrTrafficRestartsTheSilenceBudget(t *testing.T) {
+	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0), 0)
+	tracker.observe(livenessAt(60*time.Second), missed(0))
+	if got := tracker.observe(livenessAt(75*time.Second), missed(10)); got != LivenessAlive {
+		t.Fatalf("state after inbound traffic = %s, want alive", got)
+	}
+	if got := tracker.observe(livenessAt(160*time.Second), missed(10)); got != LivenessSuspect {
+		t.Fatalf("85s after the last traffic: state = %s, want suspect", got)
+	}
+	if got := tracker.observe(livenessAt(165*time.Second), livenessObservation{result: heartbeatOK, inbound: 10}); got != LivenessAlive {
+		t.Fatalf("state after a reply = %s, want alive", got)
+	}
+}
+
+func TestLivenessTrackerDeclaresDeadOnLostTransportAtOnce(t *testing.T) {
+	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0), 0)
+	got := tracker.observe(livenessAt(time.Second), livenessObservation{result: heartbeatLost, probe: true})
+	if got != LivenessDead {
+		t.Fatalf("state after a lost transport = %s, want dead", got)
+	}
+}
+
+func TestLivenessTrackerProbeMissesNeverDeclareDead(t *testing.T) {
+	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0), 0)
+	for at := 5 * time.Second; at <= 200*time.Second; at += 5 * time.Second {
+		got := tracker.observe(livenessAt(at), livenessObservation{result: heartbeatMissed, probe: true})
+		if got != LivenessSuspect {
+			t.Fatalf("probe miss at %v: state = %s, want suspect", at, got)
+		}
 	}
 }
 
 func TestLivenessTrackerSuspectIntervalIsShorter(t *testing.T) {
-	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0))
+	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0), 0)
 	if got := tracker.nextInterval(); got != livenessTestPolicy.Interval {
 		t.Fatalf("alive interval = %v, want %v", got, livenessTestPolicy.Interval)
 	}
-	tracker.observe(livenessAt(25*time.Second), heartbeatMissed)
+	tracker.observe(livenessAt(25*time.Second), missed(0))
 	if got := tracker.nextInterval(); got != livenessTestPolicy.SuspectInterval {
 		t.Fatalf("suspect interval = %v, want %v", got, livenessTestPolicy.SuspectInterval)
 	}
 }
 
-// A suspend on a platform whose monotonic clock stops while asleep shows up as
-// wall time running ahead of monotonic time.
-func TestLivenessTrackerIgnoresMissesAcrossFrozenMonotonicSleep(t *testing.T) {
-	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0))
-	tracker.observe(livenessAt(25*time.Second), heartbeatMissed)
-	tracker.observe(livenessAt(40*time.Second), heartbeatMissed)
-	// Ten minutes asleep: monotonic advances by one period, wall by 10m.
-	asleep := livenessReading{mono: 55 * time.Second, wall: livenessAt(40 * time.Second).wall.Add(10*time.Minute + 15*time.Second)}
-	if got := tracker.observe(asleep, heartbeatMissed); got != LivenessSuspect {
-		t.Fatalf("state after a miss across sleep = %s, want suspect", got)
-	}
-	next := livenessReading{mono: asleep.mono + 15*time.Second, wall: asleep.wall.Add(15 * time.Second)}
-	if got := tracker.observe(next, heartbeatMissed); got != LivenessSuspect {
-		t.Fatalf("state after the first post-wake miss = %s, want suspect (count restarted)", got)
-	}
-}
-
-// On platforms whose monotonic clock keeps running while asleep, the gap
-// between observations itself exceeds any heartbeat period.
-func TestLivenessTrackerIgnoresMissesAcrossLongMonotonicGap(t *testing.T) {
-	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0))
-	tracker.observe(livenessAt(25*time.Second), heartbeatMissed)
-	tracker.observe(livenessAt(40*time.Second), heartbeatMissed)
-	if got := tracker.observe(livenessAt(40*time.Second+10*time.Minute), heartbeatMissed); got != LivenessSuspect {
+// A suspend on a platform whose monotonic clock keeps running shows up as a
+// monotonic gap far beyond any heartbeat period; without the restart the
+// accumulated silence would exceed the budget at once.
+func TestLivenessTrackerRestartsSilenceAfterLongMonotonicGap(t *testing.T) {
+	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0), 0)
+	tracker.observe(livenessAt(25*time.Second), missed(0))
+	wake := 25*time.Second + 10*time.Minute
+	if got := tracker.observe(livenessAt(wake), missed(0)); got != LivenessSuspect {
 		t.Fatalf("state after a miss across a 10 minute gap = %s, want suspect", got)
 	}
-	if got := tracker.observe(livenessAt(55*time.Second+10*time.Minute), heartbeatOK); got != LivenessAlive {
-		t.Fatalf("state after an answered heartbeat = %s, want alive", got)
+	// Silence after the wake still counts once the grace window is over.
+	for at := wake + 5*time.Second; at < wake+90*time.Second; at += 5 * time.Second {
+		if got := tracker.observe(livenessAt(at), missed(0)); got != LivenessSuspect {
+			t.Fatalf("%v after wake: state = %s, want suspect", at-wake, got)
+		}
+	}
+	if got := tracker.observe(livenessAt(wake+90*time.Second), missed(0)); got != LivenessDead {
+		t.Fatalf("90s of silence after wake: state = %s, want dead", got)
 	}
 }
 
@@ -118,6 +141,21 @@ func TestReconnectDelayIsJitteredWithinHalfStep(t *testing.T) {
 	}
 }
 
+func TestReconnectBackoffWakeIsHonoredOnlyWhenWakeable(t *testing.T) {
+	// A closed channel is always ready, standing in for a probe that keeps
+	// arriving.
+	wake := make(chan struct{})
+	close(wake)
+	woken, err := waitReconnectBackoff(context.Background(), time.Hour, wake, true)
+	if err != nil || !woken {
+		t.Fatalf("wakeable wait = (%v, %v), want woken", woken, err)
+	}
+	woken, err = waitReconnectBackoff(context.Background(), time.Millisecond, wake, false)
+	if err != nil || woken {
+		t.Fatalf("non-wakeable wait = (%v, %v), want the full delay", woken, err)
+	}
+}
+
 type fakeLivenessTimer struct {
 	interval time.Duration
 	fire     chan time.Time
@@ -145,6 +183,13 @@ func (c *fakeLivenessClock) advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
+// suspend models a sleep on a platform whose monotonic clock stops.
+func (c *fakeLivenessClock) suspend(d time.Duration) {
+	c.mu.Lock()
+	c.now.wall = c.now.wall.Add(d)
+	c.mu.Unlock()
+}
+
 func (c *fakeLivenessClock) timer(d time.Duration) (<-chan time.Time, func() bool) {
 	fire := make(chan time.Time, 1)
 	c.timers <- fakeLivenessTimer{interval: d, fire: fire}
@@ -166,6 +211,7 @@ type heartbeatTransport struct {
 	*fakeTransport
 	entered chan struct{}
 	results chan error
+	inbound atomic.Uint64
 }
 
 func (t *heartbeatTransport) Heartbeat(ctx context.Context) error {
@@ -178,16 +224,18 @@ func (t *heartbeatTransport) Heartbeat(ctx context.Context) error {
 	}
 }
 
+func (t *heartbeatTransport) InboundBytes() uint64 { return t.inbound.Load() }
+
 type heartbeatConnector struct {
 	mu         sync.Mutex
 	transports []*heartbeatTransport
 	calls      atomic.Int32
 }
 
-func (c *heartbeatConnector) Connect(context.Context, Asset, uint64) (base.Transport, error) {
+func (c *heartbeatConnector) Connect(_ context.Context, asset Asset, _ uint64) (base.Transport, error) {
 	call := c.calls.Add(1)
 	transport := &heartbeatTransport{
-		fakeTransport: newFakeTransport(KindSSH, uint64(call)+2000),
+		fakeTransport: newFakeTransport(asset.Kind, uint64(call)+2000),
 		entered:       make(chan struct{}, 16),
 		results:       make(chan error, 16),
 	}
@@ -211,8 +259,12 @@ type livenessFixture struct {
 	session   *Session
 }
 
-func newLivenessFixture(t *testing.T, backoff time.Duration) *livenessFixture {
+func newLivenessFixture(t *testing.T, backoff time.Duration, kind ...string) *livenessFixture {
 	t.Helper()
+	assetKind := KindSSH
+	if len(kind) > 0 {
+		assetKind = kind[0]
+	}
 	fixture := &livenessFixture{
 		connector: &heartbeatConnector{},
 		clock:     newFakeLivenessClock(),
@@ -230,7 +282,7 @@ func newLivenessFixture(t *testing.T, backoff time.Duration) *livenessFixture {
 	})
 	fixture.manager.livenessClock = fixture.clock
 	t.Cleanup(func() { _ = fixture.manager.Close() })
-	session, err := fixture.manager.Connect(context.Background(), Asset{ID: "liveness", Kind: KindSSH})
+	session, err := fixture.manager.Connect(context.Background(), Asset{ID: "liveness", Kind: assetKind})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,11 +307,26 @@ func (f *livenessFixture) nextStatus(t *testing.T) StatusEvent {
 	}
 }
 
+func (f *livenessFixture) noStatus(t *testing.T) {
+	t.Helper()
+	select {
+	case event := <-f.statuses:
+		t.Fatalf("unexpected status event %+v", event)
+	default:
+	}
+}
+
 // heartbeat fires the monitor's pending timer after advancing the clock by
-// its interval and answers the heartbeat it sends with result.
-func (f *livenessFixture) heartbeat(t *testing.T, transport *heartbeatTransport, result error) time.Duration {
+// its interval and answers the heartbeat it sends with result. It returns
+// once the outcome was observed (the monitor armed its next timer) unless
+// the outcome ends the monitor.
+func (f *livenessFixture) heartbeat(t *testing.T, transport *heartbeatTransport, result error, before ...func()) time.Duration {
 	t.Helper()
 	timer := f.clock.nextTimer(t)
+	// The armed timer proves the previous outcome was observed.
+	for _, run := range before {
+		run()
+	}
 	f.clock.advance(timer.interval)
 	timer.fire <- time.Time{}
 	<-transport.entered
@@ -267,11 +334,22 @@ func (f *livenessFixture) heartbeat(t *testing.T, transport *heartbeatTransport,
 	return timer.interval
 }
 
-func TestLivenessMonitorSurfacesSuspectAndReconnectsWhenDead(t *testing.T) {
-	fixture := newLivenessFixture(t, time.Hour)
-	first := fixture.connector.transport(0)
+// probe runs one foreground probe whose heartbeat gets result.
+func (f *livenessFixture) probe(t *testing.T, transport *heartbeatTransport, result error) SessionInfo {
+	t.Helper()
+	transport.results <- result
+	info, err := f.manager.ProbeLivenessFor(context.Background(), f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-transport.entered
+	return info
+}
 
-	if interval := fixture.heartbeat(t, first, context.DeadlineExceeded); interval != livenessTestPolicy.Interval {
+func TestLivenessMonitorSurfacesSuspectAndRecovers(t *testing.T) {
+	fixture := newLivenessFixture(t, time.Hour)
+	transport := fixture.connector.transport(0)
+	if interval := fixture.heartbeat(t, transport, context.DeadlineExceeded); interval != livenessTestPolicy.Interval {
 		t.Fatalf("alive heartbeat interval = %v, want %v", interval, livenessTestPolicy.Interval)
 	}
 	suspect := fixture.nextStatus(t)
@@ -281,42 +359,9 @@ func TestLivenessMonitorSurfacesSuspectAndReconnectsWhenDead(t *testing.T) {
 	if info := fixture.session.Info(); info.Liveness != LivenessSuspect {
 		t.Fatalf("session info liveness = %q, want suspect", info.Liveness)
 	}
-	if interval := fixture.heartbeat(t, first, context.DeadlineExceeded); interval != livenessTestPolicy.SuspectInterval {
+	if interval := fixture.heartbeat(t, transport, nil); interval != livenessTestPolicy.SuspectInterval {
 		t.Fatalf("suspect heartbeat interval = %v, want %v", interval, livenessTestPolicy.SuspectInterval)
 	}
-	fixture.heartbeat(t, first, context.DeadlineExceeded)
-
-	// The third consecutive miss declares the connection dead; the reconnect
-	// starts without the (one hour) backoff.
-	reconnecting := fixture.nextStatus(t)
-	if reconnecting.Status != StatusReconnecting || reconnecting.Liveness != "" {
-		t.Fatalf("status after the dead verdict = %+v, want reconnecting", reconnecting)
-	}
-	connected := fixture.nextStatus(t)
-	if connected.Status != StatusConnected || connected.Liveness != "" {
-		t.Fatalf("status after reconnect = %+v, want connected and not suspect", connected)
-	}
-	if got := fixture.connector.calls.Load(); got != 2 {
-		t.Fatalf("connector calls = %d, want 2", got)
-	}
-	if first.IsAlive() {
-		t.Fatal("dead transport was not closed by the reconnect")
-	}
-	// The replacement connection is monitored from a fresh alive state.
-	second := fixture.connector.transport(1)
-	if interval := fixture.heartbeat(t, second, nil); interval != livenessTestPolicy.Interval {
-		t.Fatalf("replacement heartbeat interval = %v, want %v", interval, livenessTestPolicy.Interval)
-	}
-}
-
-func TestLivenessMonitorRecoversFromSuspect(t *testing.T) {
-	fixture := newLivenessFixture(t, time.Hour)
-	transport := fixture.connector.transport(0)
-	fixture.heartbeat(t, transport, context.DeadlineExceeded)
-	if event := fixture.nextStatus(t); event.Liveness != LivenessSuspect {
-		t.Fatalf("status = %+v, want suspect", event)
-	}
-	fixture.heartbeat(t, transport, nil)
 	recovered := fixture.nextStatus(t)
 	if recovered.Status != StatusConnected || recovered.Liveness != "" {
 		t.Fatalf("status after an answered heartbeat = %+v, want connected and not suspect", recovered)
@@ -326,32 +371,109 @@ func TestLivenessMonitorRecoversFromSuspect(t *testing.T) {
 	}
 }
 
-func TestLivenessMonitorDoesNotDeclareDeadAcrossSleep(t *testing.T) {
+func TestLivenessMonitorKeepsSlowLinkUnderBulkOutput(t *testing.T) {
 	fixture := newLivenessFixture(t, time.Hour)
 	transport := fixture.connector.transport(0)
-	fixture.heartbeat(t, transport, context.DeadlineExceeded)
-	fixture.nextStatus(t)
-	fixture.heartbeat(t, transport, context.DeadlineExceeded)
+	// Five minutes of late replies while output keeps streaming in.
+	for step := 0; step < 20; step++ {
+		fixture.heartbeat(t, transport, context.DeadlineExceeded, func() { transport.inbound.Add(64 << 10) })
+	}
+	fixture.clock.nextTimer(t)
+	fixture.noStatus(t)
+	if info := fixture.session.Info(); info.Status != StatusConnected || info.Liveness != "" {
+		t.Fatalf("session = %+v, want connected and not suspect", info)
+	}
+	if got := fixture.connector.calls.Load(); got != 1 {
+		t.Fatalf("connector calls = %d, want 1 (no reconnect)", got)
+	}
+}
 
-	// The lid closes for ten minutes while the next heartbeat is pending.
+func TestLivenessMonitorReconnectsAfterTotalSilence(t *testing.T) {
+	fixture := newLivenessFixture(t, time.Hour)
+	first := fixture.connector.transport(0)
+	fixture.heartbeat(t, first, context.DeadlineExceeded)
+	if event := fixture.nextStatus(t); event.Liveness != LivenessSuspect {
+		t.Fatalf("status = %+v, want suspect", event)
+	}
+	for fixture.clock.read().mono < livenessTestPolicy.SilenceBudget {
+		fixture.heartbeat(t, first, context.DeadlineExceeded)
+	}
+	// Total silence for the budget declares the link dead; the reconnect
+	// starts without the (one hour) backoff and with no scheduled retry.
+	reconnecting := fixture.nextStatus(t)
+	if reconnecting.Status != StatusReconnecting || reconnecting.NextRetryAt != nil {
+		t.Fatalf("status after the dead verdict = %+v, want reconnecting with no scheduled retry", reconnecting)
+	}
+	if connected := fixture.nextStatus(t); connected.Status != StatusConnected || connected.Liveness != "" {
+		t.Fatalf("status after reconnect = %+v, want connected and not suspect", connected)
+	}
+	if first.IsAlive() {
+		t.Fatal("dead transport was not closed by the reconnect")
+	}
+	second := fixture.connector.transport(1)
+	if interval := fixture.heartbeat(t, second, nil); interval != livenessTestPolicy.Interval {
+		t.Fatalf("replacement heartbeat interval = %v, want %v", interval, livenessTestPolicy.Interval)
+	}
+}
+
+func TestLivenessMonitorReconnectsOnHardErrorAtOnce(t *testing.T) {
+	fixture := newLivenessFixture(t, time.Hour)
+	fixture.heartbeat(t, fixture.connector.transport(0), base.ErrDisconnected)
+	if event := fixture.nextStatus(t); event.Status != StatusReconnecting {
+		t.Fatalf("status after a hard heartbeat error = %+v, want reconnecting", event)
+	}
+	if event := fixture.nextStatus(t); event.Status != StatusConnected {
+		t.Fatalf("status = %+v, want connected", event)
+	}
+}
+
+func TestLivenessClosesTransportWhenReconnectCannotStart(t *testing.T) {
+	// Local sessions cannot reconnect, so the dead verdict falls back to the
+	// ordinary disconnect path.
+	fixture := newLivenessFixture(t, time.Hour, KindLocal)
+	transport := fixture.connector.transport(0)
+	fixture.heartbeat(t, transport, base.ErrDisconnected)
+	event := fixture.nextStatus(t)
+	if event.Status != StatusConnected || event.Liveness != LivenessSuspect {
+		t.Fatalf("status = %+v, want connected/suspect rather than a healthy connection", event)
+	}
+	if transport.IsAlive() {
+		t.Fatal("transport of a dead, unreconnectable connection was left open")
+	}
+}
+
+// After a 10 minute suspend the foreground fires visible, online and wake
+// probes a few seconds apart while Wi-Fi needs 15s to come back.
+func TestLivenessWakeWithNetworkStillDownIsNotDead(t *testing.T) {
+	fixture := newLivenessFixture(t, time.Hour)
+	transport := fixture.connector.transport(0)
 	timer := fixture.clock.nextTimer(t)
-	fixture.clock.mu.Lock()
-	fixture.clock.now.wall = fixture.clock.now.wall.Add(10 * time.Minute)
-	fixture.clock.mu.Unlock()
-	fixture.clock.advance(timer.interval)
+	fixture.clock.advance(10 * time.Second)
+	fixture.clock.suspend(10 * time.Minute)
+
+	if info := fixture.probe(t, transport, context.DeadlineExceeded); info.Status != StatusConnected {
+		t.Fatalf("visible probe = %+v, want connected", info)
+	}
+	if event := fixture.nextStatus(t); event.Liveness != LivenessSuspect {
+		t.Fatalf("status = %+v, want suspect", event)
+	}
+	fixture.clock.advance(2 * time.Second)
+	fixture.probe(t, transport, context.DeadlineExceeded)
+	fixture.clock.advance(3 * time.Second)
+	fixture.probe(t, transport, context.DeadlineExceeded)
+	// The background heartbeat keeps missing until the network is back.
+	fixture.clock.advance(5 * time.Second)
 	timer.fire <- time.Time{}
 	<-transport.entered
 	transport.results <- context.DeadlineExceeded
-
-	// The monitor keeps probing instead of reconnecting.
-	if next := fixture.clock.nextTimer(t); next.interval != livenessTestPolicy.SuspectInterval {
-		t.Fatalf("interval after the sleep = %v, want suspect interval", next.interval)
+	fixture.heartbeat(t, transport, context.DeadlineExceeded)
+	fixture.heartbeat(t, transport, nil)
+	if event := fixture.nextStatus(t); event.Status != StatusConnected || event.Liveness != "" {
+		t.Fatalf("status once the network is back = %+v, want connected and not suspect", event)
 	}
+	fixture.noStatus(t)
 	if got := fixture.connector.calls.Load(); got != 1 {
 		t.Fatalf("connector calls = %d, want 1 (no false disconnect)", got)
-	}
-	if info := fixture.session.Info(); info.Status != StatusConnected || info.Liveness != LivenessSuspect {
-		t.Fatalf("session after the sleep = %+v, want connected/suspect", info)
 	}
 }
 
@@ -381,32 +503,28 @@ func TestProbeLivenessReconnectsDeadConnectionImmediately(t *testing.T) {
 		t.Fatal(err)
 	}
 	reconnecting := fixture.nextStatus(t)
-	if reconnecting.Status != StatusReconnecting {
-		t.Fatalf("status after probing a dead connection = %+v, want reconnecting", reconnecting)
+	if reconnecting.Status != StatusReconnecting || reconnecting.NextRetryAt != nil {
+		t.Fatalf("status after probing a dead connection = %+v, want reconnecting with no scheduled retry", reconnecting)
 	}
 	if connected := fixture.nextStatus(t); connected.Status != StatusConnected {
 		t.Fatalf("status after the immediate reconnect = %+v, want connected", connected)
 	}
 }
 
-func TestProbeLivenessReportsMissedHeartbeatAsSuspect(t *testing.T) {
+func TestProbeLivenessMissStaysSuspect(t *testing.T) {
 	fixture := newLivenessFixture(t, time.Hour)
 	transport := fixture.connector.transport(0)
-	transport.results <- context.DeadlineExceeded
-	info, err := fixture.manager.ProbeLivenessFor(context.Background(), fixture.session.ID)
-	if err != nil {
-		t.Fatal(err)
+	for range 5 {
+		fixture.clock.advance(30 * time.Second)
+		if info := fixture.probe(t, transport, context.DeadlineExceeded); info.Status != StatusConnected || info.Liveness != LivenessSuspect {
+			t.Fatalf("probe result = %+v, want connected/suspect", info)
+		}
 	}
-	if info.Status != StatusConnected || info.Liveness != LivenessSuspect {
-		t.Fatalf("probe result = %+v, want connected/suspect", info)
-	}
-	transport.results <- nil
-	info, err = fixture.manager.ProbeLivenessFor(context.Background(), fixture.session.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Status != StatusConnected || info.Liveness != "" {
+	if info := fixture.probe(t, transport, nil); info.Status != StatusConnected || info.Liveness != "" {
 		t.Fatalf("probe result after an answered heartbeat = %+v, want connected and not suspect", info)
+	}
+	if got := fixture.connector.calls.Load(); got != 1 {
+		t.Fatalf("connector calls = %d, want 1", got)
 	}
 }
 

@@ -14,11 +14,11 @@ import (
 type Liveness string
 
 const (
-	// LivenessAlive means the last heartbeat was answered.
+	// LivenessAlive means the peer answered or sent data recently.
 	LivenessAlive Liveness = "alive"
-	// LivenessSuspect means heartbeats are going unanswered but not yet long
-	// enough to declare the connection dead, or the outcome straddled a
-	// system sleep and cannot be trusted.
+	// LivenessSuspect means a heartbeat went unanswered with no other
+	// traffic, but the connection has not been silent long enough to be
+	// declared dead.
 	LivenessSuspect Liveness = "suspect"
 	// LivenessDead means the connection is gone; the session reconnects.
 	LivenessDead Liveness = "dead"
@@ -30,16 +30,19 @@ const (
 type LivenessPolicy struct {
 	// Interval is the heartbeat period while the connection is alive.
 	Interval time.Duration
-	// SuspectInterval is the shorter period used while suspect, so a dead
-	// connection is confirmed quickly once heartbeats start failing.
+	// SuspectInterval is the shorter period used while suspect.
 	SuspectInterval time.Duration
 	// Timeout bounds one background heartbeat.
 	Timeout time.Duration
 	// ProbeTimeout bounds one explicit probe (foreground resume).
 	ProbeTimeout time.Duration
-	// DeadAfter is the number of consecutive unanswered heartbeats that
-	// declares the connection dead.
-	DeadAfter int
+	// SilenceBudget is how long the connection may stay completely silent
+	// (no reply and no inbound bytes) before it is declared dead. It matches
+	// the SSH transport keepalive budget (30s x 3).
+	SilenceBudget time.Duration
+	// SuspendGrace is how long after a detected system suspend or clock jump
+	// silence never declares the connection dead.
+	SuspendGrace time.Duration
 }
 
 func (p LivenessPolicy) withDefaults() LivenessPolicy {
@@ -55,8 +58,11 @@ func (p LivenessPolicy) withDefaults() LivenessPolicy {
 	if p.ProbeTimeout <= 0 {
 		p.ProbeTimeout = 5 * time.Second
 	}
-	if p.DeadAfter <= 0 {
-		p.DeadAfter = 3
+	if p.SilenceBudget <= 0 {
+		p.SilenceBudget = 90 * time.Second
+	}
+	if p.SuspendGrace <= 0 {
+		p.SuspendGrace = 30 * time.Second
 	}
 	return p
 }
@@ -110,25 +116,41 @@ func classifyHeartbeat(err error) heartbeatResult {
 	}
 }
 
-// livenessTracker is the per-connection state machine:
-//
-//	alive --missed--> suspect --missed x DeadAfter--> dead
-//	  ^                  |
-//	  +------- ok -------+          any --lost--> dead
-//
-// A missed heartbeat whose observation gap shows the system was suspended (or
-// the wall clock jumped) does not count towards DeadAfter: the reply may have
-// been lost to the sleep itself, so the tracker only becomes suspect and
-// restarts the count.
-type livenessTracker struct {
-	policy   LivenessPolicy
-	state    Liveness
-	failures int
-	last     livenessReading
+// livenessObservation is one heartbeat outcome. inbound is the transport's
+// inbound byte count when the heartbeat returned; probe marks an explicit
+// (foreground) probe, which never escalates a miss past suspect.
+type livenessObservation struct {
+	result  heartbeatResult
+	inbound uint64
+	probe   bool
 }
 
-func newLivenessTracker(policy LivenessPolicy, now livenessReading) livenessTracker {
-	return livenessTracker{policy: policy, state: LivenessAlive, last: now}
+// livenessTracker is the per-connection state machine:
+//
+//	alive --missed, no traffic--> suspect --silent >= SilenceBudget--> dead
+//	  ^                              |
+//	  +---- reply or any traffic ----+          any --lost--> dead
+//
+// Any inbound bytes since the previous observation prove the peer alive even
+// when the heartbeat reply is queued behind bulk output. Misses are not
+// counted at all, so one unanswered request (which the SSH transport shares
+// between every waiter) can never add up to a verdict: only a definitive
+// transport failure, or total silence for the whole budget measured on the
+// monotonic clock, declares the connection dead. A detected suspend or clock
+// jump restarts the silence budget and opens a grace window in which silence
+// never declares death, because the network usually takes a few seconds to
+// come back after a wake.
+type livenessTracker struct {
+	policy     LivenessPolicy
+	state      Liveness
+	last       livenessReading
+	lastLife   livenessReading
+	graceUntil time.Duration
+	inbound    uint64
+}
+
+func newLivenessTracker(policy LivenessPolicy, now livenessReading, inbound uint64) livenessTracker {
+	return livenessTracker{policy: policy, state: LivenessAlive, last: now, lastLife: now, inbound: inbound}
 }
 
 func (t *livenessTracker) suspended(now livenessReading) bool {
@@ -142,45 +164,46 @@ func (t *livenessTracker) suspended(now livenessReading) bool {
 	return monoGap > 2*expected || drift > expected
 }
 
-func (t *livenessTracker) observe(now livenessReading, result heartbeatResult) Liveness {
-	suspended := t.suspended(now)
+func (t *livenessTracker) observe(now livenessReading, observation livenessObservation) Liveness {
+	if t.suspended(now) {
+		t.graceUntil = now.mono + t.policy.SuspendGrace
+		t.lastLife = now
+	}
 	t.last = now
+	traffic := observation.inbound != t.inbound
+	t.inbound = observation.inbound
 	if t.state == LivenessDead {
 		return t.state
 	}
-	switch result {
-	case heartbeatOK:
-		t.failures = 0
-		t.state = LivenessAlive
-	case heartbeatLost:
+	switch {
+	case observation.result == heartbeatLost:
 		t.state = LivenessDead
-	case heartbeatMissed:
-		if suspended {
-			t.failures = 0
-			t.state = LivenessSuspect
-			break
-		}
-		t.failures++
-		if t.failures >= t.policy.DeadAfter {
+	case observation.result == heartbeatOK || traffic:
+		t.lastLife = now
+		t.state = LivenessAlive
+	default:
+		t.state = LivenessSuspect
+		silent := now.mono - t.lastLife.mono
+		if !observation.probe && now.mono >= t.graceUntil && silent >= t.policy.SilenceBudget {
 			t.state = LivenessDead
-		} else {
-			t.state = LivenessSuspect
 		}
 	}
 	return t.state
 }
 
 func (t *livenessTracker) nextInterval() time.Duration {
-	if t.state == LivenessSuspect {
+	if t.state != LivenessAlive {
 		return t.policy.SuspectInterval
 	}
 	return t.policy.Interval
 }
 
 // livenessLabelLocked is the status-event liveness: only a connected session
-// that is suspect reports it. Callers hold s.mu.
+// that is suspect reports it. A connection judged dead whose reconnect could
+// not start also reads as suspect, so the indicator never claims a healthy
+// link. Callers hold s.mu.
 func (s *Session) livenessLabelLocked(status Status) Liveness {
-	if status == StatusConnected && s.livenessGen == s.generation && s.liveness.state == LivenessSuspect {
+	if status == StatusConnected && s.livenessGen == s.generation && s.liveness.state != "" && s.liveness.state != LivenessAlive {
 		return LivenessSuspect
 	}
 	return ""
@@ -190,12 +213,16 @@ func (s *Session) livenessLabelLocked(status Status) Liveness {
 // captures what the monitor needs while the connection is current. Callers
 // hold s.mu.
 func (m *Manager) armLivenessLocked(session *Session) livenessStart {
-	session.liveness = newLivenessTracker(m.livenessPolicy, m.livenessClock.read())
-	session.livenessGen = session.generation
 	start := livenessStart{ctx: session.ctx, generation: session.generation}
-	if m.livenessPolicy.Interval >= 0 && session.transport != nil {
-		start.heartbeater, _ = session.transport.Transport.(base.Heartbeater)
+	var inbound uint64
+	if heartbeater, ok := transportHeartbeater(session.transport); ok {
+		inbound = heartbeater.InboundBytes()
+		if m.livenessPolicy.Interval >= 0 {
+			start.heartbeater = heartbeater
+		}
 	}
+	session.liveness = newLivenessTracker(m.livenessPolicy, m.livenessClock.read(), inbound)
+	session.livenessGen = session.generation
 	return start
 }
 
@@ -205,9 +232,19 @@ type livenessStart struct {
 	heartbeater base.Heartbeater
 }
 
+func transportHeartbeater(transport *transportHandle) (base.Heartbeater, bool) {
+	if transport == nil {
+		return nil, false
+	}
+	heartbeater, ok := transport.Transport.(base.Heartbeater)
+	return heartbeater, ok
+}
+
 // startLiveness runs the background heartbeat for one connection generation.
 // It stops when the session context ends (reconnect, close, manager close) or
-// once the connection is declared dead.
+// when its connection is no longer the session's current one. The SSH
+// transport keeps its own keepalive for connections no session monitors; both
+// wait on the same in-flight request, so monitoring adds no extra requests.
 func (m *Manager) startLiveness(session *Session, start livenessStart) {
 	heartbeater, ctx, generation := start.heartbeater, start.ctx, start.generation
 	if heartbeater == nil {
@@ -232,18 +269,22 @@ func (m *Manager) startLiveness(session *Session, start livenessStart) {
 				m.livenessStale.Add(1)
 				return
 			}
-			if state, current := m.observeLiveness(session, generation, classifyHeartbeat(err), err); !current || state == LivenessDead {
+			observation := livenessObservation{result: classifyHeartbeat(err), inbound: heartbeater.InboundBytes()}
+			if _, current := m.observeLiveness(session, generation, observation, err); !current {
 				return
 			}
 		}
 	})
 }
 
-// observeLiveness feeds one heartbeat outcome into the session's tracker. A
-// result from a superseded generation is dropped and counted; a transition is
-// published as a status event, and a dead connection starts an immediate
-// reconnect.
-func (m *Manager) observeLiveness(session *Session, generation uint64, result heartbeatResult, cause error) (Liveness, bool) {
+// observeLiveness feeds one heartbeat outcome into the session's tracker and
+// reports whether the connection's monitor should keep running. A result from
+// a superseded generation is dropped and counted. A dead
+// connection starts an immediate reconnect; when that cannot start, the
+// transport is closed so the ordinary disconnect path takes over, and the
+// session reports itself suspect meanwhile. Other transitions are published
+// as status events.
+func (m *Manager) observeLiveness(session *Session, generation uint64, observation livenessObservation, cause error) (Liveness, bool) {
 	now := m.livenessClock.read()
 	session.mu.Lock()
 	if session.closed || session.status != StatusConnected || session.generation != generation || session.livenessGen != generation {
@@ -252,28 +293,46 @@ func (m *Manager) observeLiveness(session *Session, generation uint64, result he
 		return "", false
 	}
 	previous := session.liveness.state
-	state := session.liveness.observe(now, result)
-	var event StatusEvent
-	publish := state != previous && state != LivenessDead
-	if publish {
-		event = session.statusEventLocked(StatusConnected, nil)
-	}
+	state := session.liveness.observe(now, observation)
+	transport := session.transport
 	session.mu.Unlock()
-	switch {
-	case state == LivenessDead:
-		m.logger.Warn("session connection lost; reconnecting", "session", session.ID, "error", cause)
-		_ = m.startReconnectImmediate(session.ID, generation)
-	case publish:
-		m.emit(context.Background(), TopicSessionStatus, event)
+	if state == LivenessDead {
+		err := m.startReconnectImmediate(session.ID, generation)
+		if err == nil || errors.Is(err, ErrStaleGeneration) || errors.Is(err, ErrSessionClosed) {
+			if previous != LivenessDead {
+				m.logger.Warn("session connection lost; reconnecting", "session", session.ID, "error", cause)
+			}
+			// The reconnect owns the session now; this monitor is done.
+			return state, false
+		}
+		if previous != LivenessDead {
+			m.logger.Warn("session connection lost and its reconnect could not start; closing the transport",
+				"session", session.ID, "error", cause, "reconnect_error", err)
+		}
+		if transport != nil {
+			_ = transport.Close()
+		}
+	}
+	if state != previous {
+		session.mu.Lock()
+		current := !session.closed && session.status == StatusConnected && session.generation == generation && session.livenessGen == generation
+		var event StatusEvent
+		if current {
+			event = session.statusEventLocked(StatusConnected, nil)
+		}
+		session.mu.Unlock()
+		if current {
+			m.emit(context.Background(), TopicSessionStatus, event)
+		}
 	}
 	return state, true
 }
 
 // ProbeLivenessFor checks the session's connection now, typically because the
-// client returned to the foreground. A connected session sends one heartbeat
-// (a definitive failure reconnects at once, a missed reply counts towards the
-// dead threshold); a session waiting out a reconnect backoff retries
-// immediately. Other states are reported unchanged.
+// client returned to the foreground. A connected session sends one heartbeat:
+// a definitive failure reconnects at once, while a missed reply only marks it
+// suspect (the background heartbeat decides death). A session waiting out a
+// reconnect backoff retries immediately. Other states are reported unchanged.
 func (m *Manager) ProbeLivenessFor(ctx context.Context, id string) (SessionInfo, error) {
 	session, err := m.SessionFor(ctx, id)
 	if err != nil {
@@ -297,12 +356,16 @@ func (m *Manager) ProbeLivenessFor(ctx context.Context, id string) (SessionInfo,
 	if status != StatusConnected {
 		return session.Info(), nil
 	}
+	heartbeater, _ := transportHeartbeater(transport)
 	if transport == nil || !transport.IsAlive() {
-		m.observeLiveness(session, generation, heartbeatLost, base.ErrDisconnected)
+		observation := livenessObservation{result: heartbeatLost, probe: true}
+		if heartbeater != nil {
+			observation.inbound = heartbeater.InboundBytes()
+		}
+		m.observeLiveness(session, generation, observation, base.ErrDisconnected)
 		return session.Info(), nil
 	}
-	heartbeater, ok := transport.Transport.(base.Heartbeater)
-	if !ok {
+	if heartbeater == nil {
 		return session.Info(), nil
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, m.livenessPolicy.ProbeTimeout)
@@ -311,6 +374,7 @@ func (m *Manager) ProbeLivenessFor(ctx context.Context, id string) (SessionInfo,
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return SessionInfo{}, ctxErr
 	}
-	m.observeLiveness(session, generation, classifyHeartbeat(err), err)
+	observation := livenessObservation{result: classifyHeartbeat(err), inbound: heartbeater.InboundBytes(), probe: true}
+	m.observeLiveness(session, generation, observation, err)
 	return session.Info(), nil
 }
