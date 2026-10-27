@@ -242,7 +242,7 @@ vi.mock("../app/preferences", () => ({
 vi.mock("../ui/clipboard", () => ({ copyText: vi.fn().mockResolvedValue(undefined) }));
 
 import { XtermView, type XtermViewProps } from "../features/terminal/XtermView";
-import { getTerminalLinesBelow, resetTerminalView } from "../app/terminalViewStore";
+import { getTerminalLinesBelow, resetTerminalView, useTerminalViewStore } from "../app/terminalViewStore";
 
 const enc = new TextEncoder();
 
@@ -3084,6 +3084,63 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     expect(commits).toBe(before);
     expect(getTerminalLinesBelow("tab-1")).toBe(90);
     expect(xtermViewRenders.get("tab-1")).toBe(rendersBefore);
+  });
+
+  it("reports the top of the normal screen's scrollback, never of the alternate screen", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    const active = t.buffer.active as { baseY: number; viewportY: number; type?: string; length?: number };
+    const history = () => useTerminalViewStore.getState().history["tab-1"];
+    t.options.scrollback = 1000;
+    active.type = "normal";
+    active.baseY = 100;
+    active.viewportY = 0;
+    active.length = 124;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(history()).toMatchObject({ atTop: true, trimmed: false });
+    active.viewportY = 10;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(history()?.atTop).toBe(false);
+    active.type = "alternate";
+    active.baseY = 0;
+    active.viewportY = 0;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(history()?.atTop).toBe(false);
+  });
+
+  it("reports a full scrollback as trimmed", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    t.options.scrollback = 1000;
+    const active = t.buffer.active as { baseY: number; viewportY: number; type?: string; length?: number };
+    active.type = "normal";
+    active.baseY = 1000;
+    active.viewportY = 1000;
+    active.length = 1000 + t.rows;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(useTerminalViewStore.getState().history["tab-1"]?.trimmed).toBe(true);
+  });
+
+  it("keeps the view's durable history start from full-replay anchors only", async () => {
+    await show();
+    await attachOk();
+    const from = () => useTerminalViewStore.getState().history["tab-1"]?.from ?? null;
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0, historyFrom: 4096 });
+    expect(from()).toBe(4096);
+    // A resumed anchor keeps the view's content and its start.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 10, controlBytes: 0 });
+    expect(from()).toBe(4096);
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, controlBytes: 0, expired: true, historyFrom: 9000 });
+    expect(from()).toBe(9000);
+    // An expired anchor without a start (no durable history) clears it.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e2", streamSeq: 0, controlBytes: 0, expired: true });
+    expect(from()).toBeNull();
   });
 
   it("coalesces title changes to the latest one per frame and skips duplicates", async () => {

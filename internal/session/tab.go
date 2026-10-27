@@ -89,6 +89,10 @@ type streamAnchor struct {
 	Expired      bool        `json:"expired,omitempty"`
 	AttachmentID uint64      `json:"attachmentId,omitempty"`
 	Classes      []classSpan `json:"classes,omitempty"`
+	// HistoryFrom (durable tabs) is the helper offset of the first helper
+	// output byte at or after streamSeq: recorded output before it is read
+	// with ReadDurableHistoryFor to show this view's earlier history.
+	HistoryFrom *uint64 `json:"historyFrom,omitempty"`
 }
 
 type Tab struct {
@@ -146,6 +150,7 @@ type Tab struct {
 	commandState    shellintegr.CommandState
 	pendingCmd      *pendingCommand
 	durableFed      int64
+	durableSeqs     durableSeqMap
 	durableIdentity base.DurableIdentity
 	// durableLost marks a durable tab whose helper session reconnect could
 	// not resume. It stays exited: a later reconnect must not replace it with
@@ -1223,6 +1228,7 @@ func (m *Manager) planAttachReplay(tab *Tab, options AttachOptions, clear bool) 
 		replay = tab.terminal.Dump(options.ReplayBytes)
 	}
 	anchor.StreamSeq = core.LatestSeq() - uint64(len(replay))
+	anchor.HistoryFrom = tab.durableHistoryFrom(anchor.StreamSeq)
 	if clear {
 		anchor.ControlBytes = len(replayClear)
 		return anchor, replayClear, replay
@@ -2114,6 +2120,10 @@ type feedOptions struct {
 	// replay marks history replayed by a recovered durable tab: it renders
 	// and reaches subscribers like any output but raises no events.
 	replay bool
+	// helper marks durable helper output that starts at helperOffset; its
+	// stream positions are mapped to helper offsets for earlier history.
+	helper       bool
+	helperOffset uint64
 }
 
 // feedWith renders data and fans it out. Replayed data raises no events — no
@@ -2159,6 +2169,11 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		kind = classAnswered
 	}
 	var classFrame []byte
+	if sequenced && options.helper {
+		// Recorded before the bytes reach the ring, so an attach that
+		// already sees them can map its stream start to a helper offset.
+		tab.durableSeqs.record(from, options.helperOffset, uint64(len(data)))
+	}
 	if sequenced {
 		to := from + uint64(len(data))
 		tab.classes.add(from, to, kind)
@@ -2368,7 +2383,7 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 			if replay != nil {
 				feedErr = m.feedDurable(ctx, tab, generation, chunk, int64(replay.DurableOffset()))
 			} else {
-				feedErr = m.feed(ctx, tab, generation, chunk)
+				feedErr = m.feedWith(ctx, tab, generation, chunk, tab.helperFeedOptions())
 				if feedErr == nil {
 					tab.addDurableFed(int64(count))
 				}

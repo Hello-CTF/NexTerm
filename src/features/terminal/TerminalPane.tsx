@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./XtermView";
+import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
+import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
 import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
@@ -313,6 +315,7 @@ export function TerminalPane({
   const [epoch, setEpoch] = useState(0);
   const [cwd, setCwd] = useState<string | null>(null);
   const [durable, setDurable] = useState(false);
+  const [historyInfo, setHistoryInfo] = useState<TerminalHistoryInfo>(NO_TERMINAL_HISTORY);
   const [forceRegular, setForceRegular] = useState(false);
   const [ordinaryStarting, setOrdinaryStarting] = useState(false);
   const [helperActionBusy, setHelperActionBusy] = useState(false);
@@ -808,12 +811,19 @@ export function TerminalPane({
       setDurable(p.durable);
       useUi.getState().updateTab(storeTabId, { durable: p.durable });
     }
+    const history = terminalHistoryInfo(p);
+    setHistoryInfo((current) =>
+      current.base === history.base && current.truncated === history.truncated
+        ? current
+        : history,
+    );
     // Control snapshots never write back (rename is null), so there is no promise.
     void reconcileBackendTabTitle(storeTabId, p, null);
   }, [storeTabId]);
   useEffect(() => {
     setCwd(null);
     setDurable(false);
+    setHistoryInfo(NO_TERMINAL_HISTORY);
     if (!kernelTabId) return;
     const pending = pendingControl.current.get(kernelTabId);
     if (pending) {
@@ -915,6 +925,8 @@ export function TerminalPane({
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || isImeKeyEvent(e)) return;
       if (!matchKeybinding(e, "terminalSearch")) return;
+      // The earlier-history replay is not searchable through the live terminal.
+      if (e.target instanceof Element && e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
       e.preventDefault();
       e.stopPropagation();
       const selected = (handleRef.current?.getSelection() ?? "").trim();
@@ -2352,6 +2364,16 @@ export function TerminalPane({
               }}
             />
           </div>
+
+          {durable && (
+            <EarlierHistory
+              viewKey={storeTabId}
+              tabId={kernelTabId}
+              info={historyInfo}
+              dimensions={() => handleRef.current?.dimensions()}
+              onClosed={() => handleRef.current?.focus()}
+            />
+          )}
 
           {controlSupported && handoffSyncing && !control?.exited && (
             <div

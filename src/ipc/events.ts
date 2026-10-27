@@ -187,6 +187,9 @@ export interface StreamAnchorControl {
   // Output-class spans (by stream sequence) of the bytes this stream will
   // deliver; later spans arrive as stream-class frames.
   classes?: StreamClassControl[];
+  // Durable tabs, full replays: helper offset of the first helper byte this
+  // view renders; earlier output is read with terminal.historyRead.
+  historyFrom?: number;
 }
 
 export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";

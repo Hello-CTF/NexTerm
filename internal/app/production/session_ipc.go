@@ -280,6 +280,8 @@ type terminalHistoryReadRequest struct {
 	// Before is the exclusive end offset of the requested output.
 	Before   uint64 `json:"before"`
 	MaxBytes int    `json:"maxBytes"`
+	// Latest reads up to the newest output instead of Before.
+	Latest bool `json:"latest"`
 }
 
 // terminalHistoryDTO is recorded output of a durable tab in [start, end), in
@@ -966,7 +968,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "terminal_history_read", func(ctx context.Context, _ *ipc.Call, input terminalHistoryReadRequest) (terminalHistoryDTO, error) {
 				ctx = productionSessionRequestContext(ctx)
-				chunk, err := s.sessions.ReadDurableHistoryFor(ctx, input.TabID, input.Before, input.MaxBytes)
+				before := input.Before
+				if input.Latest {
+					before = session.DurableHistoryLatest
+				}
+				chunk, err := s.sessions.ReadDurableHistoryFor(ctx, input.TabID, before, input.MaxBytes)
 				if err != nil {
 					return terminalHistoryDTO{}, terminalIPCError(err)
 				}

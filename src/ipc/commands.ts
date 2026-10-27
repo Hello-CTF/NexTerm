@@ -690,8 +690,14 @@ export const terminalApi = {
     call<void>("terminal_set_visible", { tabId, visible }),
   dump: (tabId: string, maxBytes?: number) =>
     call<string>("terminal_dump", { tabId, maxBytes }),
-  historyRead: (tabId: string, before: number, maxBytes?: number) =>
-    call("terminal_history_read", { tabId, before, maxBytes: maxBytes ?? 0 }) as Promise<import("./types").TerminalHistoryChunk>,
+  // before "latest" reads up to the newest output the backend received.
+  historyRead: (tabId: string, before: number | "latest", maxBytes?: number) =>
+    call("terminal_history_read", {
+      tabId,
+      before: before === "latest" ? 0 : before,
+      maxBytes: maxBytes ?? 0,
+      latest: before === "latest",
+    }) as Promise<import("./types").TerminalHistoryChunk>,
   switchEncoding: (tabId: string, encoding: string) =>
     call<void>("terminal_switch_encoding", { tabId, encoding }),
   recordStart: (tabId: string, path: string) =>

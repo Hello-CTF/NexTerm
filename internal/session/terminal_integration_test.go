@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -354,6 +355,15 @@ func TestRequestTerminalOperationsEnforceOwner(t *testing.T) {
 		}},
 		{name: "output-since", invoke: func(ctx context.Context, fixture *requestTerminalFixture) error {
 			_, _, _, _, err := fixture.manager.OutputSinceFor(ctx, fixture.tab.ID, 0, 1024)
+			return err
+		}},
+		{name: "durable-history", invoke: func(ctx context.Context, fixture *requestTerminalFixture) error {
+			_, err := fixture.manager.ReadDurableHistoryFor(ctx, fixture.tab.ID, DurableHistoryLatest, 1024)
+			// The fixture tab is regular: past the owner check the read is
+			// refused as unsupported.
+			if errors.Is(err, ErrUnsupported) {
+				return nil
+			}
 			return err
 		}},
 		{name: "mode-state", invoke: func(ctx context.Context, fixture *requestTerminalFixture) error {

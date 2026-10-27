@@ -10,6 +10,8 @@ import {
   setTerminalCloseAction,
   setTerminalGpuAcceleration,
   setTerminalLinkActivation,
+  setTerminalDurableHistoryMiB,
+  setTerminalScrollback,
   subscribeTerminalPrefs,
   type AccountPreferenceStore,
   type AccountPreferenceView,
@@ -406,6 +408,67 @@ describe("terminal GPU acceleration preference", () => {
     registerAccountPreferenceStore(memoryStore({ "terminal.gpuAcceleration": "webgl" }));
     await flushMacrotask();
     expect(getTerminalPrefs().gpuAcceleration).toBe("auto");
+  });
+});
+
+describe("terminal scrollback preference", () => {
+  afterEach(() => registerAccountPreferenceStore(null));
+
+  it("defaults to ten thousand lines and stays on this device, even with an account", async () => {
+    registerAccountPreferenceStore(null);
+    window.localStorage.clear();
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().scrollback).toBe(10_000);
+    const store = memoryStore({});
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    const changed = vi.fn();
+    const unsubscribe = subscribeTerminalPrefs(changed);
+    setTerminalScrollback(50_000);
+    setTerminalScrollback(50_000);
+    unsubscribe();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(store.puts).toEqual([]);
+    expect(getTerminalPrefs().scrollback).toBe(50_000);
+
+    // Another device with the same account keeps its own value.
+    window.localStorage.clear();
+    registerAccountPreferenceStore(memoryStore({ "terminal.scrollback": 25_000 }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().scrollback).toBe(10_000);
+  });
+
+  it("ignores stored values that are not an option", () => {
+    window.localStorage.setItem("nexterm.terminalClose.v1", JSON.stringify({ scrollback: 12_345 }));
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().scrollback).toBe(10_000);
+  });
+});
+
+describe("durable terminal history limit preference", () => {
+  afterEach(() => registerAccountPreferenceStore(null));
+
+  it("saves the account override and clears it back to the helper default", async () => {
+    const store = memoryStore({});
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    expect(getTerminalPrefs().durableHistoryMiB).toBeNull();
+    await setTerminalDurableHistoryMiB(32);
+    expect(store.data["terminal.durableHistoryMiB"]).toBe(32);
+    expect(getTerminalPrefs().durableHistoryMiB).toBe(32);
+    await setTerminalDurableHistoryMiB(null);
+    expect(store.clears).toEqual([["terminal.durableHistoryMiB"]]);
+    expect(getTerminalPrefs().durableHistoryMiB).toBeNull();
+  });
+
+  it("reads the server default and refuses to save without an account", async () => {
+    registerAccountPreferenceStore(memoryStore({}, { "terminal.durableHistoryMiB": 64 }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().durableHistoryMiB).toBe(64);
+
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().durableHistoryMiB).toBeNull();
+    await expect(setTerminalDurableHistoryMiB(16)).rejects.toThrow();
   });
 });
 
