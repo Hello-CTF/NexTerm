@@ -34,7 +34,9 @@ func stageExecutable(stateDir, executable string) (string, error) {
 	}
 	name := "nexterm-helper-" + digest[:16] + ".exe"
 	target := filepath.Join(dir, name)
-	if _, err := os.Stat(target); err != nil {
+	// An existing copy is used only when its content still has the digest
+	// in its name; anything else is replaced.
+	if fileDigest(target) != digest {
 		if _, err := source.Seek(0, io.SeekStart); err != nil {
 			return "", err
 		}
@@ -50,7 +52,7 @@ func stageExecutable(stateDir, executable string) (string, error) {
 		}
 		if err := os.Rename(staging.Name(), target); err != nil {
 			_ = os.Remove(staging.Name())
-			if _, statErr := os.Stat(target); statErr != nil {
+			if fileDigest(target) != digest {
 				return "", err
 			}
 		}
@@ -63,4 +65,18 @@ func stageExecutable(stateDir, executable string) (string, error) {
 		}
 	}
 	return target, nil
+}
+
+// fileDigest returns the hex SHA-256 of path, or "" when it cannot be read.
+func fileDigest(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }

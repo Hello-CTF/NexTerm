@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,15 +18,18 @@ type fakeHelper struct {
 	client  *supervisor.Client
 	exited  chan struct{}
 	spawned bool
+	pid     int
 }
 
 func (h *fakeHelper) Client() *supervisor.Client { return h.client }
 func (h *fakeHelper) Exited() <-chan struct{}    { return h.exited }
 func (h *fakeHelper) Spawned() bool              { return h.spawned }
+func (h *fakeHelper) PID() int                   { return h.pid }
 func (h *fakeHelper) JobBound() bool             { return false }
 
 // fakeWorld scripts what the service finds on the machine: the helper that
-// InspectHelper reports, and what ConnectHelper does.
+// InspectHelper reports, and what ConnectHelper does. A connect while a
+// helper is reported attaches to it; otherwise it "spawns" one.
 type fakeWorld struct {
 	mu        sync.Mutex
 	running   *supervisor.RunningHelper
@@ -33,18 +37,25 @@ type fakeWorld struct {
 	stops     []supervisor.RunningHelper
 	connect   func(attempt int) (helperHandle, error)
 	connected chan *fakeHelper
+	nextPID   int
 }
 
 func newFakeWorld() *fakeWorld {
-	return &fakeWorld{connected: make(chan *fakeHelper, 16)}
+	return &fakeWorld{connected: make(chan *fakeHelper, 64), nextPID: 100}
+}
+
+func (w *fakeWorld) setRunning(running *supervisor.RunningHelper) {
+	w.mu.Lock()
+	w.running = running
+	w.mu.Unlock()
 }
 
 func (w *fakeWorld) config(t *testing.T) Config {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	return Config{
 		StateDir:     stateDir,
-		Logger:       slog.New(slog.DiscardHandler),
 		Executable:   "/nonexistent/helper",
+		Logger:       slog.New(slog.DiscardHandler),
 		QuickExit:    time.Hour,
 		Backoff:      []time.Duration{time.Millisecond},
 		PollInterval: 10 * time.Millisecond,
@@ -60,7 +71,8 @@ func (w *fakeWorld) config(t *testing.T) Config {
 			w.mu.Lock()
 			defer w.mu.Unlock()
 			w.stops = append(w.stops, expected)
-			if w.running == nil || w.running.PID != expected.PID || w.running.Activity.Total() > expected.Activity.Total() {
+			if w.running == nil || w.running.PID != expected.PID ||
+				expected.ActivityKnown && w.running.Activity.Total() > expected.Activity.Total() {
 				return supervisor.ErrHelperChanged
 			}
 			w.running = nil
@@ -71,11 +83,19 @@ func (w *fakeWorld) config(t *testing.T) Config {
 			w.connects++
 			attempt := w.connects
 			connect := w.connect
+			running := w.running
+			w.nextPID++
+			pid := w.nextPID
 			w.mu.Unlock()
 			if connect != nil {
 				return connect(attempt)
 			}
-			helper := &fakeHelper{client: supervisor.NewClient(filepath.Join(stateDir, "none.sock"), stateDir), exited: make(chan struct{}), spawned: true}
+			helper := &fakeHelper{client: supervisor.NewClient(filepath.Join(stateDir, "none.sock"), stateDir), spawned: true, pid: pid}
+			if running != nil {
+				helper.spawned, helper.pid = false, running.PID
+			} else {
+				helper.exited = make(chan struct{})
+			}
 			w.connected <- helper
 			return helper, nil
 		},
@@ -89,6 +109,12 @@ func (w *fakeWorld) connectCount() int {
 	return w.connects
 }
 
+func (w *fakeWorld) stopCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.stops)
+}
+
 func waitState(t *testing.T, service *Service, want State) Status {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -100,7 +126,7 @@ func waitState(t *testing.T, service *Service, want State) Status {
 		if time.Now().After(deadline) {
 			t.Fatalf("status = %+v, want state %s", status, want)
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 
@@ -112,35 +138,68 @@ func startService(t *testing.T, config Config) *Service {
 	return service
 }
 
+// settled proves the lifecycle goroutine is parked in a wait that answers
+// requests: a restart round trip completes only there, so anything it would
+// have done before has happened.
+func settled(t *testing.T, service *Service) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return service.Restart(ctx, "0:0:0:0")
+}
+
+func ready(t *testing.T, service *Service) {
+	t.Helper()
+	if _, err := service.WaitReady(context.Background(), 10*time.Second); err != nil {
+		t.Fatalf("helper not ready: %v (%+v)", err, service.Status())
+	}
+}
+
+func TestServiceStartsIdleAndSpawnsOnlyForADurableTerminal(t *testing.T) {
+	world := newFakeWorld()
+	service := startService(t, world.config(t))
+	if _, err := service.WaitExisting(context.Background(), 10*time.Second); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("existing terminals without a helper = %v, want ErrNotRunning", err)
+	}
+	if !errors.Is(settled(t, service), ErrNotOutdated) || world.connectCount() != 0 {
+		t.Fatalf("an idle service spawned a helper: %d connects", world.connectCount())
+	}
+	ready(t, service)
+	if world.connectCount() != 1 {
+		t.Fatalf("connects = %d, want one spawn for the durable terminal", world.connectCount())
+	}
+}
+
 func TestServiceStopsRespawningAHelperThatKeepsExitingAtOnce(t *testing.T) {
 	world := newFakeWorld()
 	config := world.config(t)
 	config.BreakerThreshold = 3
-	go func() {
-		for helper := range world.connected {
-			close(helper.exited)
-		}
-	}()
-	t.Cleanup(func() { close(world.connected) })
 	service := startService(t, config)
+	for attempt := 1; attempt <= 3; attempt++ {
+		ready(t, service)
+		helper := <-world.connected
+		close(helper.exited)
+		if attempt < 3 {
+			waitState(t, service, StateIdle)
+		}
+	}
 	status := waitState(t, service, StateFailed)
 	if status.Reason == "" {
 		t.Fatal("an open breaker must explain itself")
 	}
-	if count := world.connectCount(); count != 3 {
-		t.Fatalf("connects = %d, want exactly the breaker threshold 3", count)
+	if _, err := service.WaitReady(context.Background(), time.Second); !errors.Is(err, durable.ErrUnavailable) {
+		t.Fatalf("a terminal with an open breaker = %v, want unavailable", err)
 	}
-	time.Sleep(100 * time.Millisecond)
-	if count := world.connectCount(); count != 3 {
-		t.Fatalf("connects after the breaker opened = %d; respawning must stop", count)
-	}
-	if _, err := service.Provider(); !errors.Is(err, durable.ErrUnavailable) {
-		t.Fatalf("provider of a failed helper = %v, want unavailable", err)
+	if !errors.Is(settled(t, service), ErrNotOutdated) || world.connectCount() != 3 {
+		t.Fatalf("connects with the breaker open = %d; respawning must stop", world.connectCount())
 	}
 	if err := service.Retry(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return world.connectCount() > 3 })
+	ready(t, service)
+	if world.connectCount() != 4 {
+		t.Fatalf("connects after retry = %d, want 4", world.connectCount())
+	}
 }
 
 func TestServiceCountsStartFailuresTowardTheBreaker(t *testing.T) {
@@ -151,83 +210,77 @@ func TestServiceCountsStartFailuresTowardTheBreaker(t *testing.T) {
 	config := world.config(t)
 	config.BreakerThreshold = 2
 	service := startService(t, config)
+	if _, err := service.WaitReady(context.Background(), 10*time.Millisecond); err == nil {
+		t.Fatal("a helper that cannot start reported ready")
+	}
 	waitState(t, service, StateFailed)
-	if count := world.connectCount(); count != 2 {
-		t.Fatalf("connects = %d, want 2", count)
+	if !errors.Is(settled(t, service), ErrNotOutdated) || world.connectCount() != 2 {
+		t.Fatalf("connects = %d, want 2", world.connectCount())
 	}
 }
 
 func TestServiceResetsTheBreakerAfterAHelperThatRanLongEnough(t *testing.T) {
 	world := newFakeWorld()
 	config := world.config(t)
-	config.QuickExit = 0
 	config.BreakerThreshold = 2
-	clock := struct {
+	config.QuickExit = 30 * time.Second
+	var clock struct {
 		sync.Mutex
 		now time.Time
-	}{now: time.Unix(1_700_000_000, 0)}
+	}
+	clock.now = time.Unix(1_700_000_000, 0)
 	config.now = func() time.Time {
 		clock.Lock()
 		defer clock.Unlock()
 		clock.now = clock.now.Add(time.Minute)
 		return clock.now
 	}
-	config.QuickExit = 30 * time.Second
-	go func() {
-		for helper := range world.connected {
-			close(helper.exited)
-		}
-	}()
-	t.Cleanup(func() { close(world.connected) })
 	service := startService(t, config)
-	waitFor(t, func() bool { return world.connectCount() >= 5 })
-	if state := service.Status().State; state == StateFailed {
-		t.Fatalf("helpers that ran past QuickExit opened the breaker: %+v", service.Status())
+	for attempt := 0; attempt < 4; attempt++ {
+		ready(t, service)
+		close((<-world.connected).exited)
+		waitState(t, service, StateIdle)
 	}
 }
 
-func TestServiceAsksBeforeReplacingAnOutdatedHelperWithSessions(t *testing.T) {
+func TestServiceDoesNotCountAHelperAPeerReplaced(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 4242, Activity: supervisor.ActivitySnapshot{PTY: 2},
-		Runtime: &supervisor.RuntimeMetadata{Version: "1.2.9", SHA256: "other"}}
-	service := startService(t, world.config(t))
-	status := waitState(t, service, StateOutdated)
-	if status.ActiveSessions != 2 || status.ConsentToken == "" || status.HelperVersion != "1.2.9" || status.Reason == "" {
-		t.Fatalf("outdated status = %+v", status)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if world.connectCount() != 0 || len(world.stops) != 0 {
-		t.Fatalf("an outdated helper with sessions was replaced without consent: connects %d stops %d", world.connectCount(), len(world.stops))
-	}
-	if _, err := service.Provider(); err == nil {
-		t.Fatal("new terminals must not go to an outdated helper before consent")
-	}
-	if _, err := service.WaitExisting(context.Background(), 0); err != nil {
-		t.Fatalf("existing sessions of a same-protocol helper must stay reachable: %v", err)
-	}
-	if err := service.Restart(context.Background(), "3:4243:2"); !errors.Is(err, ErrStaleConsent) {
-		t.Fatalf("restart with a token for another helper = %v, want ErrStaleConsent", err)
-	}
-	if err := service.Restart(context.Background(), status.ConsentToken); err != nil {
-		t.Fatal(err)
-	}
-	waitState(t, service, StateReady)
-	world.mu.Lock()
-	defer world.mu.Unlock()
-	if len(world.stops) != 1 || world.stops[0].PID != 4242 {
-		t.Fatalf("stops = %+v, want one stop of pid 4242", world.stops)
+	config := world.config(t)
+	config.BreakerThreshold = 2
+	service := startService(t, config)
+	for attempt := 0; attempt < 3; attempt++ {
+		ready(t, service)
+		spawned := <-world.connected
+		world.setRunning(&supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 900 + attempt, ActivityKnown: true,
+			Runtime: &supervisor.RuntimeMetadata{SHA256: "self"}})
+		close(spawned.exited)
+		if peer := <-world.connected; peer.spawned {
+			t.Fatal("a running peer must be attached to, not replaced")
+		}
+		waitState(t, service, StateReady)
+		world.setRunning(nil)
+		waitState(t, service, StateIdle)
 	}
 }
 
-func TestServiceRefusesConsentWhenTheOutdatedHelperGainedSessions(t *testing.T) {
+func TestServiceAsksBeforeRestartingAnOlderProtocolHelperWithSessions(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7, Activity: supervisor.ActivitySnapshot{PTY: 1}}
+	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7, Activity: supervisor.ActivitySnapshot{PTY: 1}, ActivityKnown: true}
 	config := world.config(t)
 	config.PollInterval = time.Hour
 	service := startService(t, config)
 	status := waitState(t, service, StateOutdated)
-	if _, err := service.WaitExisting(context.Background(), 0); err == nil {
-		t.Fatal("a protocol 2 helper cannot serve this client's sessions")
+	if status.ActiveSessions != 1 || status.ConsentToken == "" || status.Reason == "" {
+		t.Fatalf("outdated status = %+v", status)
+	}
+	if _, err := service.WaitReady(context.Background(), time.Second); err == nil {
+		t.Fatal("new terminals must not go to a helper of another protocol")
+	}
+	if _, err := service.WaitExisting(context.Background(), 0); err == nil || errors.Is(err, ErrNotRunning) {
+		t.Fatalf("existing terminals of a protocol 2 helper = %v, want the outdated reason", err)
+	}
+	if err := service.Restart(context.Background(), "2:8:1:1"); !errors.Is(err, ErrStaleConsent) {
+		t.Fatalf("restart for another pid = %v, want ErrStaleConsent", err)
 	}
 	world.mu.Lock()
 	world.running.Activity.PTY = 3
@@ -235,23 +288,47 @@ func TestServiceRefusesConsentWhenTheOutdatedHelperGainedSessions(t *testing.T) 
 	if err := service.Restart(context.Background(), status.ConsentToken); !errors.Is(err, ErrStaleConsent) {
 		t.Fatalf("restart after sessions grew = %v, want ErrStaleConsent", err)
 	}
-	world.mu.Lock()
-	running := world.running
-	world.mu.Unlock()
-	if running == nil {
-		t.Fatal("the helper was stopped although the user approved fewer sessions")
-	}
 	updated := waitState(t, service, StateOutdated)
-	if updated.ActiveSessions != 3 {
-		t.Fatalf("status after refused consent = %+v, want the new count", updated)
+	for updated.ActiveSessions != 3 {
+		time.Sleep(time.Millisecond)
+		updated = service.Status()
+	}
+	if world.connectCount() != 0 {
+		t.Fatal("a helper was started beside the outdated one")
+	}
+	if err := service.Restart(context.Background(), updated.ConsentToken); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, service, StateReady)
+}
+
+func TestServiceNeverStopsAHelperWithAnUnknownSessionCount(t *testing.T) {
+	world := newFakeWorld()
+	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7}
+	service := startService(t, world.config(t))
+	if _, err := service.WaitReady(context.Background(), time.Second); err == nil {
+		t.Fatal("a helper with unknown sessions was replaced for a new terminal")
+	}
+	status := waitState(t, service, StateOutdated)
+	if status.ActivityKnown || !strings.Contains(status.Reason, "数量未知") {
+		t.Fatalf("status = %+v, want an unknown session count", status)
+	}
+	if !errors.Is(settled(t, service), ErrStaleConsent) || world.stopCount() != 0 {
+		t.Fatalf("stops = %d; an unknown session count must never be stopped as idle", world.stopCount())
 	}
 }
 
-func TestServiceReplacesAnIdleOutdatedHelperWithoutAsking(t *testing.T) {
+func TestServiceReplacesAnIdleOlderProtocolHelperOnlyWhenATerminalNeedsOne(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 9}
-	service := startService(t, world.config(t))
-	waitState(t, service, StateReady)
+	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 9, ActivityKnown: true}
+	config := world.config(t)
+	config.PollInterval = time.Hour
+	service := startService(t, config)
+	waitState(t, service, StateOutdated)
+	if world.stopCount() != 0 {
+		t.Fatal("an idle helper was replaced before any terminal needed one")
+	}
+	ready(t, service)
 	world.mu.Lock()
 	defer world.mu.Unlock()
 	if len(world.stops) != 1 || world.stops[0].PID != 9 {
@@ -259,17 +336,44 @@ func TestServiceReplacesAnIdleOutdatedHelperWithoutAsking(t *testing.T) {
 	}
 }
 
-func TestServiceUsesACurrentHelperOfThisBuild(t *testing.T) {
+func TestServiceKeepsUsingASameProtocolHelperFromAnotherBuild(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, Activity: supervisor.ActivitySnapshot{PTY: 4},
+	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, Activity: supervisor.ActivitySnapshot{PTY: 4}, ActivityKnown: true,
+		Runtime: &supervisor.RuntimeMetadata{Version: "1.2.9", SHA256: "other"}}
+	service := startService(t, world.config(t))
+	ready(t, service)
+	status := waitState(t, service, StateReady)
+	if !status.UpdateAvailable || status.ActiveSessions != 4 || status.HelperVersion != "1.2.9" || status.ConsentToken == "" {
+		t.Fatalf("status = %+v, want a ready helper that can be updated", status)
+	}
+	if world.stopCount() != 0 {
+		t.Fatal("a helper of another build was stopped without consent")
+	}
+	if err := service.Restart(context.Background(), status.ConsentToken); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, service, StateReady)
+	for service.Status().UpdateAvailable {
+		time.Sleep(time.Millisecond)
+	}
+	if world.stopCount() != 1 {
+		t.Fatalf("stops = %d, want the consented restart only", world.stopCount())
+	}
+}
+
+func TestServiceUsesACurrentHelperOfThisBuildWithoutAskingToUpdate(t *testing.T) {
+	world := newFakeWorld()
+	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, Activity: supervisor.ActivitySnapshot{PTY: 4}, ActivityKnown: true,
 		Runtime: &supervisor.RuntimeMetadata{Version: "dev", SHA256: "self"}}
 	service := startService(t, world.config(t))
-	waitState(t, service, StateReady)
-	if len(world.stops) != 0 {
-		t.Fatalf("a helper of this build was stopped: %+v", world.stops)
-	}
-	if _, err := service.Provider(); err != nil {
+	if _, err := service.WaitExisting(context.Background(), 10*time.Second); err != nil {
 		t.Fatal(err)
+	}
+	if status := service.Status(); status.UpdateAvailable {
+		t.Fatalf("a helper of this build offered an update: %+v", status)
+	}
+	if !errors.Is(settled(t, service), ErrNotOutdated) || world.stopCount() != 0 {
+		t.Fatalf("a helper of this build was stopped: %d", world.stopCount())
 	}
 }
 
@@ -282,6 +386,9 @@ func TestDisabledServiceNeverStarts(t *testing.T) {
 	defer service.Close()
 	if status := service.Status(); status.State != StateDisabled || status.Reason == "" {
 		t.Fatalf("status = %+v, want disabled with a reason", status)
+	}
+	if _, err := service.WaitReady(context.Background(), time.Second); err == nil {
+		t.Fatal("a disabled service reported ready")
 	}
 	if err := service.Retry(context.Background()); !errors.Is(err, ErrNotSupported) {
 		t.Fatalf("retry = %v", err)
@@ -307,22 +414,6 @@ func TestWaitReadyWaitsOnlyWhileStarting(t *testing.T) {
 			t.Fatalf("starting error = %v, want a starting UnavailableError", err)
 		}
 	}
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		close(release)
-	}()
-	if _, err := service.WaitReady(context.Background(), 10*time.Second); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func waitFor(t *testing.T, condition func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for !condition() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not reached")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	close(release)
+	ready(t, service)
 }

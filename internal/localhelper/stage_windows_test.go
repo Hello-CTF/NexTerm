@@ -39,6 +39,15 @@ func TestStageExecutableCopiesByDigestAndDropsOtherBuilds(t *testing.T) {
 	if err != nil || again != first {
 		t.Fatalf("restaging the same build = %s, %v; want %s", again, err, first)
 	}
+	if err := os.WriteFile(first, []byte("tampered"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageExecutable(stateDir, source); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(first); err != nil || string(data) != "build-one" {
+		t.Fatalf("a staged copy whose content no longer matches its digest was kept: %q, %v", data, err)
+	}
 	if err := os.WriteFile(source, []byte("build-two"), 0o700); err != nil {
 		t.Fatal(err)
 	}

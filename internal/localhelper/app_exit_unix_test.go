@@ -122,6 +122,9 @@ func TestACrashingHelperBinaryOpensTheBreaker(t *testing.T) {
 	})
 	service.Start()
 	defer service.Close()
+	if _, err := service.WaitReady(context.Background(), 10*time.Millisecond); err == nil {
+		t.Fatal("a crashing helper reported ready")
+	}
 	deadline := time.Now().Add(30 * time.Second)
 	for service.Status().State != StateFailed {
 		if time.Now().After(deadline) {

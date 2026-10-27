@@ -1,9 +1,11 @@
-// Package localhelper keeps the supervisor helper of this machine running for
-// local terminals. The helper is this application's own executable started
+// Package localhelper keeps the supervisor helper of this machine available
+// for local terminals. The helper is this application's own executable started
 // with the supervisor-helper command, detached so that quitting the app never
-// ends a local terminal. The package never stops a helper that runs sessions
-// without the user's consent, and it stops respawning a helper that keeps
-// exiting right after it starts.
+// ends a local terminal. A helper is started only when a durable local
+// terminal needs one; one that is already running is used as it is, even when
+// another build started it. The package never stops a helper that runs
+// sessions without the user's consent, and it stops respawning a helper that
+// keeps exiting right after it starts.
 package localhelper
 
 import (
@@ -29,10 +31,16 @@ type State string
 const (
 	// StateDisabled means this build or mode has no local helper.
 	StateDisabled State = "disabled"
+	// StateIdle means no helper runs; one starts with the first durable local
+	// terminal. No local terminal of an earlier run can be alive.
+	StateIdle     State = "idle"
 	StateStarting State = "starting"
-	StateReady    State = "ready"
-	// StateOutdated means a helper from another build serves the state
-	// directory and runs sessions: replacing it needs the user's consent.
+	// StateReady means a helper of this protocol serves local terminals. It
+	// may come from another build (UpdateAvailable).
+	StateReady State = "ready"
+	// StateOutdated means a helper of another protocol runs sessions, or
+	// cannot tell how many: new local terminals stay regular until the user
+	// agrees to restart it.
 	StateOutdated State = "outdated"
 	// StateFailed means the helper cannot start, or kept exiting right after
 	// it started and respawning stopped.
@@ -43,13 +51,18 @@ const (
 type Status struct {
 	State  State  `json:"state"`
 	Reason string `json:"reason,omitempty"`
-	// ActiveSessions counts the PTY and exec sessions of an outdated helper
-	// that a restart would end.
-	ActiveSessions int `json:"activeSessions,omitempty"`
-	// HelperProtocol and HelperVersion describe an outdated helper.
+	// UpdateAvailable marks a ready helper from another build. It keeps
+	// serving; a restart onto this build needs consent.
+	UpdateAvailable bool `json:"updateAvailable,omitempty"`
+	// ActiveSessions counts the PTY and exec sessions a restart would end;
+	// ActivityKnown is false when the helper did not report them.
+	ActiveSessions int  `json:"activeSessions,omitempty"`
+	ActivityKnown  bool `json:"activityKnown,omitempty"`
+	// HelperProtocol and HelperVersion describe a helper of another build.
 	HelperProtocol int    `json:"helperProtocol,omitempty"`
 	HelperVersion  string `json:"helperVersion,omitempty"`
-	// ConsentToken names the exact outdated helper a restart was approved for.
+	// ConsentToken names the exact helper and session count a restart was
+	// approved for.
 	ConsentToken string `json:"consentToken,omitempty"`
 	// Warning is set when the helper runs but may not outlive the app.
 	Warning string `json:"warning,omitempty"`
@@ -61,6 +74,9 @@ var (
 	ErrStaleConsent  = errors.New("the local helper changed since the restart was approved")
 	ErrNotSupported  = errors.New("this build has no local helper")
 	ErrServiceClosed = errors.New("the local helper service is closed")
+	// ErrNotRunning is returned for existing terminals when no helper runs,
+	// so none of them can be alive.
+	ErrNotRunning = fmt.Errorf("%w: no local helper is running", durable.ErrUnavailable)
 )
 
 // UnavailableError explains why local terminals cannot be durable right now.
@@ -97,8 +113,8 @@ type Config struct {
 	BreakerThreshold int
 	// Backoff is the wait before each respawn; the last entry repeats.
 	Backoff []time.Duration
-	// PollInterval is how often a helper this process did not spawn, or an
-	// outdated one, is checked.
+	// PollInterval is how often a helper this process did not spawn, or one
+	// of another build, is checked.
 	PollInterval time.Duration
 
 	connect    func(context.Context, supervisor.HelperConfig) (helperHandle, error)
@@ -113,6 +129,7 @@ type helperHandle interface {
 	Client() *supervisor.Client
 	Exited() <-chan struct{}
 	Spawned() bool
+	PID() int
 	JobBound() bool
 }
 
@@ -131,16 +148,18 @@ type Service struct {
 	mu       sync.Mutex
 	status   Status
 	provider *supervisor.RemoteProvider
-	// existing reaches the sessions of an outdated helper that speaks this
-	// build's protocol, so they can still be listed, attached and ended.
-	existing *supervisor.RemoteProvider
-	readyCh  chan struct{}
 	changed  chan struct{}
+	// wanted is set when a durable local terminal asked for a helper.
+	wanted bool
+	// checked is closed once the first inspection decided the state.
+	checked chan struct{}
 
+	ensure   chan struct{}
 	requests chan request
 	ctx      context.Context
 	cancel   context.CancelFunc
 	done     chan struct{}
+	start    sync.Once
 	started  bool
 }
 
@@ -157,7 +176,8 @@ type request struct {
 	reply chan error
 }
 
-// New returns a stopped service. Start launches the lifecycle.
+// New returns a stopped service. Start, or the first provider request,
+// launches the lifecycle.
 func New(config Config) *Service {
 	if config.Logger == nil {
 		config.Logger = slog.Default()
@@ -190,15 +210,16 @@ func New(config Config) *Service {
 		config.now = time.Now
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	initial := Status{State: StateStarting, Reason: "本机持久组件正在启动"}
+	initial := Status{State: StateIdle}
 	if !Supported || config.StateDir == "" {
 		initial = Status{State: StateDisabled, Reason: "此平台没有本机持久组件"}
 	}
 	return &Service{
 		config:   config,
 		status:   initial,
-		readyCh:  make(chan struct{}),
 		changed:  make(chan struct{}),
+		checked:  make(chan struct{}),
+		ensure:   make(chan struct{}, 1),
 		requests: make(chan request),
 		ctx:      ctx,
 		cancel:   cancel,
@@ -215,16 +236,22 @@ var selfDigest = sync.OnceValues(func() (string, error) {
 	return metadata.SHA256, nil
 })
 
-// Start launches the lifecycle goroutine. It returns at once.
+// Start launches the lifecycle goroutine and returns at once. It attaches to
+// a helper that already runs, so terminals of an earlier run stay listable,
+// but spawns none until a durable local terminal needs one.
 func (s *Service) Start() {
 	s.mu.Lock()
-	if s.started || s.status.State == StateDisabled {
-		s.mu.Unlock()
+	disabled := s.status.State == StateDisabled
+	s.mu.Unlock()
+	if disabled {
 		return
 	}
-	s.started = true
-	s.mu.Unlock()
-	go s.run()
+	s.start.Do(func() {
+		s.mu.Lock()
+		s.started = true
+		s.mu.Unlock()
+		go s.run()
+	})
 }
 
 // Close stops the lifecycle. It never stops the helper or its sessions.
@@ -256,45 +283,73 @@ func (s *Service) Provider() (base.DurableProvider, error) {
 	return nil, &UnavailableError{Status: s.status}
 }
 
-// existingProvider returns a provider for sessions that already exist: the
-// ready helper's, or an outdated helper's when it speaks this protocol.
 func (s *Service) existingProvider() (base.DurableProvider, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.status.State == StateReady && s.provider != nil {
 		return s.provider, nil
 	}
-	if s.status.State == StateOutdated && s.existing != nil {
-		return s.existing, nil
+	if s.status.State == StateIdle {
+		return nil, ErrNotRunning
 	}
 	return nil, &UnavailableError{Status: s.status}
 }
 
-// WaitExisting is WaitReady for listing, attaching to and ending sessions
-// that already exist, which an outdated helper of this protocol still serves.
+// WaitExisting returns the provider for listing, attaching to and ending
+// terminals that already exist. It never starts a helper: with none running
+// it returns ErrNotRunning, as no earlier terminal can be alive.
 func (s *Service) WaitExisting(ctx context.Context, limit time.Duration) (base.DurableProvider, error) {
-	return s.wait(ctx, limit, s.existingProvider)
+	s.Start()
+	return s.wait(ctx, limit, false, s.existingProvider)
 }
 
-// WaitReady waits up to limit while the helper is still starting, then
-// returns the provider like Provider. Other states return at once.
+// WaitReady returns the provider for a new durable local terminal. It starts
+// a helper when none runs and waits up to limit while it is starting; other
+// states return at once with an *UnavailableError.
 func (s *Service) WaitReady(ctx context.Context, limit time.Duration) (base.DurableProvider, error) {
-	return s.wait(ctx, limit, s.Provider)
+	s.Start()
+	s.mu.Lock()
+	if s.status.State == StateDisabled {
+		s.mu.Unlock()
+		return nil, &UnavailableError{Status: s.status}
+	}
+	s.wanted = true
+	s.mu.Unlock()
+	select {
+	case s.ensure <- struct{}{}:
+	default:
+	}
+	return s.wait(ctx, limit, true, s.Provider)
 }
 
-func (s *Service) wait(ctx context.Context, limit time.Duration, provider func() (base.DurableProvider, error)) (base.DurableProvider, error) {
+func (s *Service) wait(ctx context.Context, limit time.Duration, wanted bool, provider func() (base.DurableProvider, error)) (base.DurableProvider, error) {
 	timer := time.NewTimer(limit)
 	defer timer.Stop()
 	for {
 		s.mu.Lock()
-		state, changed := s.status.State, s.changed
+		status, changed := s.status, s.changed
 		s.mu.Unlock()
-		if state != StateStarting {
+		state := status.State
+		// An idle helper of another protocol is replaced for a new terminal.
+		replaceable := state == StateOutdated && status.ActivityKnown && status.ActiveSessions == 0
+		pending := state == StateStarting || wanted && (state == StateIdle || replaceable)
+		select {
+		case <-s.checked:
+		default:
+			if state != StateDisabled {
+				pending = true
+			}
+		}
+		if !pending {
 			return provider()
 		}
 		select {
 		case <-changed:
+		case <-s.checked:
 		case <-timer.C:
+			if wanted && state == StateIdle {
+				return nil, &UnavailableError{Status: Status{State: StateStarting, Reason: "本机持久组件正在启动"}}
+			}
 			return provider()
 		case <-ctx.Done():
 			return nil, context.Cause(ctx)
@@ -302,8 +357,9 @@ func (s *Service) wait(ctx context.Context, limit time.Duration, provider func()
 	}
 }
 
-// Restart replaces an outdated helper, ending its sessions. token must be
-// the ConsentToken the user saw; a helper that changed since is refused.
+// Restart replaces a helper of another build, ending its sessions. token
+// must be the ConsentToken the user saw; a helper that changed since, or runs
+// more sessions now, is refused.
 func (s *Service) Restart(ctx context.Context, token string) error {
 	return s.send(ctx, request{kind: requestRestart, token: token})
 }
@@ -315,6 +371,7 @@ func (s *Service) Retry(ctx context.Context) error {
 }
 
 func (s *Service) send(ctx context.Context, req request) error {
+	s.Start()
 	s.mu.Lock()
 	started := s.started
 	s.mu.Unlock()
@@ -338,24 +395,39 @@ func (s *Service) send(ctx context.Context, req request) error {
 }
 
 func (s *Service) setStatus(status Status, provider *supervisor.RemoteProvider) {
-	s.setStatusWith(status, provider, nil)
-}
-
-func (s *Service) setStatusWith(status Status, provider, existing *supervisor.RemoteProvider) {
 	s.mu.Lock()
-	if status == s.status && provider == s.provider && existing == s.existing {
+	if status == s.status && provider == s.provider {
 		s.mu.Unlock()
 		return
 	}
 	s.status = status
 	s.provider = provider
-	s.existing = existing
 	close(s.changed)
 	s.changed = make(chan struct{})
 	onChange := s.config.OnChange
 	s.mu.Unlock()
 	if onChange != nil {
 		onChange(status)
+	}
+}
+
+func (s *Service) isWanted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.wanted
+}
+
+func (s *Service) setWanted(wanted bool) {
+	s.mu.Lock()
+	s.wanted = wanted
+	s.mu.Unlock()
+}
+
+func (s *Service) markChecked() {
+	select {
+	case <-s.checked:
+	default:
+		close(s.checked)
 	}
 }
 
@@ -368,6 +440,9 @@ func (s *Service) helperExecutable() (string, error) {
 		}
 		executable = resolved
 	}
+	if err := supervisor.PrepareStateDir(s.config.StateDir); err != nil {
+		return "", err
+	}
 	staged, err := stageExecutable(s.config.StateDir, executable)
 	if err != nil {
 		return "", fmt.Errorf("stage the helper executable: %w", err)
@@ -379,39 +454,61 @@ func (s *Service) logPath() string {
 	return filepath.Join(s.config.StateDir, "helper.log")
 }
 
+// watchOutcome is how a watched helper stopped serving.
+type watchOutcome int
+
+const (
+	watchClosed watchOutcome = iota
+	// watchExited: the helper went away on its own.
+	watchExited
+	// watchRestarted: the user approved a restart and this service stopped it.
+	watchRestarted
+)
+
 // run is the single actor that inspects, spawns, watches and replaces the
-// helper. quickExits counts consecutive helpers that exited within
-// QuickExit of starting, or failed to start at all.
+// helper. quickExits counts consecutive helpers this service spawned that
+// exited within QuickExit of becoming ready, or failed to start; exits it
+// caused itself and helpers replaced by a peer do not count.
 func (s *Service) run() {
 	defer close(s.done)
+	defer s.markChecked()
 	quickExits := 0
 	for s.ctx.Err() == nil {
 		running, inspectErr := s.config.inspect(s.ctx, s.config.StateDir)
 		if s.ctx.Err() != nil {
 			return
 		}
-		if inspectErr == nil {
-			if outdated, status := s.outdated(running); outdated {
-				if running.Activity.Total() == 0 {
-					// Nothing runs in it, so replacing it ends no session.
-					s.config.Logger.Info("replacing an idle local helper from another build", "protocol", running.Protocol, "pid", running.PID)
-					if err := s.config.stop(s.ctx, s.config.StateDir, running); err != nil && s.ctx.Err() == nil {
-						s.setStatus(Status{State: StateFailed, Reason: "无法替换旧版本地持久组件：" + err.Error()}, nil)
-						if !s.awaitRetry(nil) {
-							return
-						}
+		if inspectErr == nil && !running.Current() {
+			if running.ActivityKnown && running.Activity.Total() == 0 && s.isWanted() {
+				// Nothing runs in it, so replacing it ends no session.
+				s.config.Logger.Info("replacing an idle local helper of another protocol", "protocol", running.Protocol, "pid", running.PID)
+				if err := s.config.stop(s.ctx, s.config.StateDir, running); err != nil && s.ctx.Err() == nil {
+					s.setStatus(Status{State: StateFailed, Reason: "无法替换旧版本地持久组件：" + err.Error()}, nil)
+					s.markChecked()
+					if !s.awaitRetry(nil) {
+						return
 					}
-					continue
-				}
-				s.setStatusWith(status, nil, s.existingFor(running))
-				if !s.awaitOutdated(running, status.ConsentToken) {
-					return
 				}
 				continue
 			}
+			status := s.legacyStatus(running)
+			s.setStatus(status, nil)
+			s.markChecked()
+			if !s.awaitOutdated(running, status.ConsentToken) {
+				return
+			}
+			continue
+		}
+		if inspectErr != nil && !s.isWanted() {
+			// Nothing runs and nothing asked for a helper yet.
+			s.setStatus(Status{State: StateIdle}, nil)
+			s.markChecked()
+			if !s.awaitEnsure() {
+				return
+			}
+			continue
 		}
 		s.setStatus(Status{State: StateStarting, Reason: "本机持久组件正在启动"}, nil)
-		started := s.config.now()
 		executable, err := s.helperExecutable()
 		var helper helperHandle
 		if err == nil {
@@ -421,17 +518,18 @@ func (s *Service) run() {
 			return
 		}
 		if err != nil {
-			quickExits++
-			s.config.Logger.Warn("local helper did not start", "error", err, "attempt", quickExits)
+			s.config.Logger.Warn("local helper did not start", "error", err)
 			if errors.Is(err, supervisor.ErrLegacyHelperRunning) || errors.Is(err, supervisor.ErrStateMismatch) || errors.Is(err, supervisor.ErrProtocol) {
-				// Another helper answers; inspect it again after a pause.
-				if !s.pause(quickExits) {
+				// Another helper answers: inspect it again after a pause.
+				if !s.pause(1) {
 					return
 				}
 				continue
 			}
+			quickExits++
 			if quickExits >= s.config.BreakerThreshold {
 				s.setStatus(Status{State: StateFailed, Reason: fmt.Sprintf("本机持久组件连续 %d 次未能启动，已停止自动重试（日志：%s）：%v", quickExits, s.logPath(), err)}, nil)
+				s.markChecked()
 				if !s.awaitRetry(nil) {
 					return
 				}
@@ -443,22 +541,23 @@ func (s *Service) run() {
 			}
 			continue
 		}
-		status := Status{State: StateReady}
-		if helper.JobBound() {
-			status.Warning = "本机持久组件无法脱离当前进程所在的 Windows 作业对象，退出 NexTerm 时可能被一并结束"
-		}
-		s.setStatus(status, supervisor.NewRemoteProvider(helper.Client()))
 		readyAt := s.config.now()
-		if !s.watch(helper) {
+		outcome := s.watch(helper)
+		switch outcome {
+		case watchClosed:
 			return
+		case watchRestarted:
+			// The user restarted it onto this build: start the new one now.
+			s.setWanted(true)
+			continue
 		}
 		lived := s.config.now().Sub(readyAt)
-		if helper.Spawned() && lived < s.config.QuickExit {
+		if helper.Spawned() && lived < s.config.QuickExit && !s.replacedBy(helper) {
 			quickExits++
 		} else {
 			quickExits = 0
 		}
-		s.config.Logger.Warn("local helper exited", "spawned", helper.Spawned(), "uptime", lived, "started", started, "quick_exits", quickExits)
+		s.config.Logger.Warn("local helper exited", "spawned", helper.Spawned(), "uptime", lived, "quick_exits", quickExits)
 		if quickExits >= s.config.BreakerThreshold {
 			s.setStatus(Status{State: StateFailed, Reason: fmt.Sprintf("本机持久组件连续 %d 次启动后立即退出，已停止自动重启（日志：%s）", quickExits, s.logPath())}, nil)
 			if !s.awaitRetry(nil) {
@@ -467,80 +566,117 @@ func (s *Service) run() {
 			quickExits = 0
 			continue
 		}
-		s.setStatus(Status{State: StateStarting, Reason: "本机持久组件已退出，正在重新启动"}, nil)
+		// Its terminals ended with it; the next durable terminal starts a
+		// new helper.
+		s.setWanted(false)
 		if quickExits > 0 && !s.pause(quickExits) {
 			return
 		}
 	}
 }
 
-// outdated reports a helper that is not this build: an older protocol, or
-// the current protocol running another executable.
-func (s *Service) outdated(running supervisor.RunningHelper) (bool, Status) {
+// replacedBy reports whether another process now serves the endpoint the
+// exited helper served, which is not a crash of that helper.
+func (s *Service) replacedBy(helper helperHandle) bool {
+	running, err := s.config.inspect(s.ctx, s.config.StateDir)
+	return err == nil && running.PID != helper.PID()
+}
+
+// legacyStatus describes a helper of another protocol that runs sessions or
+// cannot tell how many.
+func (s *Service) legacyStatus(running supervisor.RunningHelper) Status {
 	status := Status{
 		State:          StateOutdated,
 		ActiveSessions: running.Activity.Total(),
+		ActivityKnown:  running.ActivityKnown,
 		HelperProtocol: running.Protocol,
 		ConsentToken:   consentToken(running),
 	}
 	if running.Runtime != nil {
 		status.HelperVersion = running.Runtime.Version
 	}
-	if !running.Current() {
-		status.Reason = fmt.Sprintf("本机持久组件为旧版本（协议 v%d），有 %d 个会话在运行；新开的本机终端暂用普通模式。重启组件会结束这些会话", running.Protocol, status.ActiveSessions)
-		return true, status
+	sessions := "数量未知的会话"
+	if running.ActivityKnown {
+		sessions = fmt.Sprintf(" %d 个会话", status.ActiveSessions)
 	}
-	if running.Runtime == nil {
-		// The helper cannot prove which build it runs; it speaks this
-		// protocol, so it is used rather than replaced.
-		return false, Status{}
+	status.Reason = fmt.Sprintf("本机持久组件为旧版本（协议 v%d），其中有%s在运行；新开的本机终端暂用普通模式。重启组件会结束这些会话", running.Protocol, sessions)
+	return status
+}
+
+// readyStatus describes a ready helper of this protocol and whether it comes
+// from another build, which can be restarted onto this one with consent.
+func (s *Service) readyStatus(helper helperHandle, running supervisor.RunningHelper, inspected bool) Status {
+	status := Status{State: StateReady}
+	if helper.JobBound() {
+		status.Warning = "本机持久组件无法脱离当前进程所在的 Windows 作业对象，退出 NexTerm 时可能被一并结束"
+	}
+	if !inspected || running.Runtime == nil {
+		return status
 	}
 	digest, err := s.config.selfDigest()
 	if err != nil || digest == running.Runtime.SHA256 {
-		return false, Status{}
+		return status
 	}
-	version := running.Runtime.Version
+	status.UpdateAvailable = true
+	status.ActiveSessions = running.Activity.Total()
+	status.ActivityKnown = running.ActivityKnown
+	status.HelperProtocol = running.Protocol
+	status.HelperVersion = running.Runtime.Version
+	status.ConsentToken = consentToken(running)
+	version := status.HelperVersion
 	if version == "" {
 		version = "未知"
 	}
-	status.Reason = fmt.Sprintf("本机持久组件为其他版本（%s），有 %d 个会话在运行；新开的本机终端暂用普通模式。重启组件会结束这些会话", version, status.ActiveSessions)
-	return true, status
-}
-
-func (s *Service) existingFor(running supervisor.RunningHelper) *supervisor.RemoteProvider {
-	if !running.Current() {
-		return nil
-	}
-	endpoint, err := supervisor.HelperEndpoint(s.config.StateDir)
-	if err != nil {
-		return nil
-	}
-	return supervisor.NewRemoteProvider(supervisor.NewClient(endpoint, s.config.StateDir))
+	status.Reason = fmt.Sprintf("本机持久组件来自其他版本（%s），可更新；其中有 %d 个会话在运行，重启组件会结束这些会话", version, status.ActiveSessions)
+	return status
 }
 
 func consentToken(running supervisor.RunningHelper) string {
-	return fmt.Sprintf("%d:%d:%d", running.Protocol, running.PID, running.Activity.Total())
+	known := 0
+	if running.ActivityKnown {
+		known = 1
+	}
+	return fmt.Sprintf("%d:%d:%d:%d", running.Protocol, running.PID, running.Activity.Total(), known)
 }
 
-func parseConsentToken(token string) (protocol, pid, total int, ok bool) {
+func parseConsentToken(token string) (supervisor.RunningHelper, bool) {
 	parts := strings.Split(token, ":")
-	if len(parts) != 3 {
-		return 0, 0, 0, false
+	if len(parts) != 4 {
+		return supervisor.RunningHelper{}, false
 	}
-	values := make([]int, 3)
+	values := make([]int, len(parts))
 	for index, part := range parts {
 		value, err := strconv.Atoi(part)
 		if err != nil || value < 0 {
-			return 0, 0, 0, false
+			return supervisor.RunningHelper{}, false
 		}
 		values[index] = value
 	}
-	return values[0], values[1], values[2], true
+	return supervisor.RunningHelper{
+		Protocol: values[0], PID: values[1],
+		Activity: supervisor.ActivitySnapshot{PTY: values[2]}, ActivityKnown: values[3] == 1,
+	}, true
 }
 
-// awaitOutdated waits for consent while an outdated helper runs. It re-checks
-// the helper on every poll: one whose sessions all ended, or that exited by
-// itself, needs no consent anymore. It returns false when the service closes.
+// restartWith stops the helper a consent token names. It reports whether the
+// helper was stopped.
+func (s *Service) restartWith(token string, current supervisor.RunningHelper) (bool, error) {
+	expected, ok := parseConsentToken(token)
+	if !ok || expected.PID != current.PID || expected.Protocol != current.Protocol {
+		return false, ErrStaleConsent
+	}
+	s.config.Logger.Info("stopping a local helper with consent", "protocol", expected.Protocol, "pid", expected.PID, "sessions", expected.Activity.Total())
+	err := s.config.stop(s.ctx, s.config.StateDir, expected)
+	if errors.Is(err, supervisor.ErrHelperChanged) {
+		return false, fmt.Errorf("%w: %v", ErrStaleConsent, err)
+	}
+	return err == nil, err
+}
+
+// awaitOutdated waits for consent while a helper of another protocol runs.
+// It re-checks the helper on every poll: one whose sessions all ended, or
+// that exited by itself, needs no consent anymore. It returns false when the
+// service closes.
 func (s *Service) awaitOutdated(running supervisor.RunningHelper, token string) bool {
 	ticker := time.NewTicker(s.config.PollInterval)
 	defer ticker.Stop()
@@ -548,6 +684,12 @@ func (s *Service) awaitOutdated(running supervisor.RunningHelper, token string) 
 		select {
 		case <-s.ctx.Done():
 			return false
+		case <-s.ensure:
+			s.setWanted(true)
+			if running.ActivityKnown && running.Activity.Total() == 0 {
+				// An idle helper can now be replaced for the new terminal.
+				return true
+			}
 		case <-ticker.C:
 			current, err := s.config.inspect(s.ctx, s.config.StateDir)
 			if err != nil || consentToken(current) != token {
@@ -559,27 +701,42 @@ func (s *Service) awaitOutdated(running supervisor.RunningHelper, token string) 
 				req.reply <- nil
 				return true
 			case requestRestart:
-				protocol, pid, total, ok := parseConsentToken(req.token)
-				if !ok || req.token != token {
-					req.reply <- ErrStaleConsent
-					continue
+				stopped, err := s.restartWith(req.token, running)
+				req.reply <- err
+				if stopped {
+					s.setWanted(true)
 				}
-				expected := supervisor.RunningHelper{Protocol: protocol, PID: pid, Activity: supervisor.ActivitySnapshot{PTY: total}}
-				s.config.Logger.Info("stopping the outdated local helper with consent", "protocol", protocol, "pid", pid, "sessions", total)
-				err := s.config.stop(s.ctx, s.config.StateDir, expected)
-				if errors.Is(err, supervisor.ErrHelperChanged) {
-					req.reply <- fmt.Errorf("%w: %v", ErrStaleConsent, err)
+				if stopped || errors.Is(err, ErrStaleConsent) {
 					return true
 				}
-				req.reply <- err
-				return true
 			}
 		}
 	}
 }
 
-// awaitRetry blocks a failed helper until Retry. A restart request is
-// answered with ErrNotOutdated.
+// awaitEnsure waits in the idle state until a durable terminal asks for a
+// helper. A retry starts one as well.
+func (s *Service) awaitEnsure() bool {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return false
+		case <-s.ensure:
+			s.setWanted(true)
+			return true
+		case req := <-s.requests:
+			if req.kind == requestRetry {
+				s.setWanted(true)
+				req.reply <- nil
+				return true
+			}
+			req.reply <- ErrNotOutdated
+		}
+	}
+}
+
+// awaitRetry blocks a failed helper until Retry, or until ticks fires. A
+// restart request is answered with ErrNotOutdated.
 func (s *Service) awaitRetry(ticks <-chan time.Time) bool {
 	for {
 		select {
@@ -587,8 +744,11 @@ func (s *Service) awaitRetry(ticks <-chan time.Time) bool {
 			return false
 		case <-ticks:
 			return true
+		case <-s.ensure:
+			// A failed helper is not respawned for a terminal; Retry is needed.
 		case req := <-s.requests:
 			if req.kind == requestRetry {
+				s.setWanted(true)
 				req.reply <- nil
 				return true
 			}
@@ -611,35 +771,61 @@ func (s *Service) pause(attempt int) bool {
 	return s.awaitRetry(timer.C)
 }
 
-// watch blocks while the helper runs. A helper this process spawned is
-// watched through its process; one that was already running is polled. It
-// returns false when the service closes.
-func (s *Service) watch(helper helperHandle) bool {
+// watch serves the ready helper until it goes away, the user restarts it,
+// or the service closes. A helper this process spawned is watched through
+// its process; one that was already running is inspected on every poll,
+// which also keeps the session count of a helper from another build current.
+func (s *Service) watch(helper helperHandle) watchOutcome {
+	provider := supervisor.NewRemoteProvider(helper.Client())
+	running, err := s.config.inspect(s.ctx, s.config.StateDir)
+	inspected := err == nil && running.Current()
+	status := s.readyStatus(helper, running, inspected && !helper.Spawned())
+	s.setStatus(status, provider)
+	s.markChecked()
 	exited := helper.Exited()
 	ticker := time.NewTicker(s.config.PollInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-s.ctx.Done():
-			return false
+			return watchClosed
 		case <-exited:
-			return true
+			return watchExited
+		case <-s.ensure:
 		case <-ticker.C:
 			if exited != nil {
 				continue
 			}
-			probeCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
-			_, err := helper.Client().Activity(probeCtx)
-			cancel()
-			if err != nil && s.ctx.Err() == nil {
-				return true
+			current, err := s.config.inspect(s.ctx, s.config.StateDir)
+			if s.ctx.Err() != nil {
+				return watchClosed
 			}
+			if err != nil || !current.Current() || current.PID != running.PID && inspected {
+				return watchExited
+			}
+			running, inspected = current, true
+			status = s.readyStatus(helper, running, true)
+			s.setStatus(status, provider)
 		case req := <-s.requests:
-			if req.kind == requestRetry {
+			switch req.kind {
+			case requestRetry:
 				req.reply <- nil
-				continue
+			case requestRestart:
+				if !status.UpdateAvailable {
+					req.reply <- ErrNotOutdated
+					continue
+				}
+				stopped, err := s.restartWith(req.token, running)
+				req.reply <- err
+				if stopped {
+					return watchRestarted
+				}
+				if current, err := s.config.inspect(s.ctx, s.config.StateDir); err == nil {
+					running = current
+					status = s.readyStatus(helper, running, true)
+					s.setStatus(status, provider)
+				}
 			}
-			req.reply <- ErrNotOutdated
 		}
 	}
 }

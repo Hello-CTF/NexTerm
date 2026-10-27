@@ -637,6 +637,10 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 		}
 	}
 	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, kind == KindLocal)
+	if localHelperNotRunning(kind, err) {
+		// No local helper runs, so no local terminal of an earlier run is alive.
+		return []base.DurableDescriptor{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -733,6 +737,9 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		generation := session.generation
 		session.mu.Unlock()
 		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, info.Kind == KindLocal)
+		if localHelperNotRunning(info.Kind, err) {
+			continue
+		}
 		if err != nil {
 			searchErrs = append(searchErrs, err)
 			continue
@@ -802,6 +809,9 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 		generation := session.generation
 		session.mu.Unlock()
 		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, info.Kind == KindLocal)
+		if localHelperNotRunning(info.Kind, err) {
+			continue
+		}
 		if err != nil {
 			searchErrs = append(searchErrs, err)
 			continue

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
+	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -28,6 +29,13 @@ const (
 	// listed, recovered or killed, which only a ready helper can do.
 	localRecoverWait = 5 * time.Second
 )
+
+// localHelperNotRunning reports a local session whose helper is not running:
+// none of its earlier terminals can be alive, so there is nothing to list or
+// recover, which is not an error.
+func localHelperNotRunning(kind string, err error) bool {
+	return kind == KindLocal && errors.Is(err, localhelper.ErrNotRunning)
+}
 
 // localLaunchSource is implemented by the local transport: the shell,
 // directory and environment additions a local terminal starts with, so a
