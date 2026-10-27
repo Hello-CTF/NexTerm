@@ -7,9 +7,9 @@ const STORAGE_KEY = "nexterm.sessionPanel.v1";
 
 export const SESSION_PANEL_WIDTH = { min: 240, max: 640, default: 300 };
 
-export type SessionPanelTabId = "files";
+export type SessionPanelTabId = "files" | "containers" | "ports" | "logs";
 
-export const SESSION_PANEL_TAB_IDS: readonly SessionPanelTabId[] = ["files"];
+export const SESSION_PANEL_TAB_IDS: readonly SessionPanelTabId[] = ["files", "containers", "ports", "logs"];
 
 interface PersistedPanel {
   open: boolean;

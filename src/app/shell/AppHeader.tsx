@@ -154,7 +154,7 @@ export function AppHeader({
       <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
       <button
         className={`nx-icon-btn ${sessionPanelOpen ? "is-active" : ""}`} style={wailsNoDragRegionStyle}
-        title={`会话侧栏：当前终端所在主机的文件${sessionPanelLabel ? ` (${sessionPanelLabel})` : ""}`}
+        title={`会话侧栏：当前终端所在主机的文件、容器、端口与日志${sessionPanelLabel ? ` (${sessionPanelLabel})` : ""}`}
         aria-label="会话侧栏"
         aria-pressed={sessionPanelOpen}
         onClick={onToggleSessionPanel}
