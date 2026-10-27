@@ -76,8 +76,13 @@ func TestSkillsIPCProductionCustomRoundTrip(t *testing.T) {
 
 	var entries []skills.Entry
 	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandList, `{}`), &entries)
-	if len(entries) != 0 {
-		t.Fatalf("NexTerm ships no built-in skills, got %+v", entries)
+	if len(entries) == 0 {
+		t.Fatal("a fresh owner must see the built-in skills")
+	}
+	for _, entry := range entries {
+		if entry.Source != skills.SourceEmbedded || entry.Disabled || entry.Overridden {
+			t.Fatalf("fresh built-in entry = %+v", entry)
+		}
 	}
 
 	var created skills.Entry
@@ -187,7 +192,15 @@ func TestSkillsIPCProductionDisabledAndCustomLifecycle(t *testing.T) {
 	}
 	var entries []skills.Entry
 	requireSkillsIPCResponse(t, dispatchSkillsIPC(ctx, dispatcher, skills.CommandList, `{}`), &entries)
-	if len(entries) != 1 || !entries[0].Disabled {
+	disabledListed := false
+	for _, entry := range entries {
+		if entry.Name == "disk-report" {
+			disabledListed = entry.Disabled
+		} else if entry.Disabled {
+			t.Fatalf("unrelated skill disabled: %+v", entry)
+		}
+	}
+	if !disabledListed {
 		t.Fatalf("disabled skill must stay listed: %+v", entries)
 	}
 
