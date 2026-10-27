@@ -48,6 +48,7 @@ type Manager struct {
 	throttleVersions       map[string]uint64
 	throttleChannels       map[string]map[string]bool
 	slowKicks              map[string]*time.Timer
+	legacyEnded            legacyEndedTabs
 	closed                 bool
 	started                bool
 	openAccess             bool

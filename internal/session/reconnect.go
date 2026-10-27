@@ -8,6 +8,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
@@ -338,6 +339,7 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 	kind := session.Asset().Kind
 	session.mu.Unlock()
 	var provider base.DurableProvider
+	var legacyErr error
 	for _, tab := range tabs {
 		tab.mu.Lock()
 		if tab.closed || tab.durableLost {
@@ -355,9 +357,21 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 		}
 		tab.mu.Unlock()
 		if durableTab {
+			if legacyErr != nil {
+				gone[tab] = legacyErr
+				continue
+			}
 			if provider == nil {
 				var err error
 				provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, kind == KindLocal)
+				if errors.Is(err, supervisor.ErrLegacyHelperRunning) {
+					// An older helper runs these sessions and this build
+					// cannot attach to them: the tabs end with a visible
+					// reason instead of the reconnect retrying forever.
+					legacyErr = err
+					gone[tab] = err
+					continue
+				}
 				if err != nil {
 					return opened, gone, err
 				}
@@ -527,6 +541,9 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: durableUnrecoverableBanner})
 			case errors.Is(cause, durable.ErrGenerationMismatch):
 				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: durableHelperRestartedBanner})
+			case errors.Is(cause, supervisor.ErrLegacyHelperRunning):
+				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: legacyHelperBanner})
+				m.legacyEnded.add(session.ID, tab, tab.generation)
 			}
 			if tab.durable != nil {
 				retired = append(retired, tab.durable)
