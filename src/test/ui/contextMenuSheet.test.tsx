@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, mount, waitFor, type MountedView } from "../features/reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "../features/reactTestUtils";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 
 function stubPointer(coarse: boolean): void {
@@ -174,6 +174,6 @@ describe("ContextMenu bottom sheet on coarse pointers", () => {
     expect(sheet?.style.transform).toBe("");
 
     dragGrabber(mounted.container, 200);
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 });

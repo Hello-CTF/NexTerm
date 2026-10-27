@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -193,7 +193,7 @@ describe("asset row actions on fine pointers", () => {
   it("keeps the hover action strip and hides the overflow button", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const row = rowByName(mounted!.container, "web-1");
     const labels = [...row.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")].map(
@@ -210,7 +210,7 @@ describe("asset row actions on fine pointers", () => {
   it("keeps the simple clone/hide menu on the strip's more button", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const more = rowByName(mounted!.container, "web-1").querySelector<HTMLButtonElement>(
       'button[aria-label="更多操作 web-1"]',
@@ -225,7 +225,7 @@ describe("asset row actions on fine pointers", () => {
     stubPointer(false);
     useUi.setState({ leftWidth: 180 });
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const row = rowByName(mounted!.container, "web-1");
     setRowWidths(row, 104, 75);
@@ -246,7 +246,7 @@ describe("asset name priority in narrow sidebars", () => {
   it("keeps as many actions as each row can fit and moves the rest into its menu", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("db-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("db-1"));
     const root = rowByName(mounted!.container, "web-1");
     const grouped = rowByName(mounted!.container, "db-1");
     setRowWidths(root, 170, 75);
@@ -267,7 +267,7 @@ describe("asset name priority in narrow sidebars", () => {
   it("updates root and grouped asset identities as available row width changes", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("db-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("db-1"));
 
     const root = rowByName(mounted!.container, "web-1");
     const grouped = rowByName(mounted!.container, "db-1");
@@ -291,7 +291,7 @@ describe("asset name priority in narrow sidebars", () => {
       { ...GROUPED, name: "shared", host: "10.0.0.18", username: "deploy" },
     ]);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.querySelectorAll('[role="treeitem"][title^="shared"]')).toHaveLength(2));
+    await waitForRendered(() => expect(mounted!.container.querySelectorAll('[role="treeitem"][title^="shared"]')).toHaveLength(2));
 
     const rows = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"][title^="shared"]')];
     expect(rows.map((row) => row.querySelector(".nx-asset-row-name")?.textContent)).toEqual(["shared", "shared"]);
@@ -305,7 +305,7 @@ describe("asset name priority in narrow sidebars", () => {
   it("shows identities after names only when space remains, and allows compact rows", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const row = rowByName(mounted!.container, "web-1");
     expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
@@ -335,7 +335,7 @@ describe("asset name priority in narrow sidebars", () => {
     mocks.assetList.mockResolvedValue([{ ...WEB, name }]);
     useUi.setState({ leftWidth: 180 });
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain(name));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain(name));
 
     const row = rowByName(mounted!.container, name);
     const label = row.querySelector(".nx-asset-row-name");
@@ -355,7 +355,7 @@ describe("asset row actions on coarse pointers", () => {
   it("collapses row actions into one overflow button and keeps the name first", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const row = rowByName(mounted!.container, "web-1");
     expect(row.querySelector(".nx-row-actions")).toBeNull();
@@ -371,18 +371,18 @@ describe("asset row actions on coarse pointers", () => {
   it("opens a full menu with connect, edit, delete, clone and hide", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     openOverflow(rowByName(mounted!.container, "web-1"));
     await flush();
     expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
-    await waitFor(() => expect(document.activeElement?.textContent).toContain("连接"));
+    await waitForRendered(() => expect(document.activeElement?.textContent).toContain("连接"));
   });
 
   it("connects only through the explicit menu item", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const row = rowByName(mounted!.container, "web-1");
     click(row.querySelector(".nx-row-name") as HTMLElement);
@@ -396,14 +396,14 @@ describe("asset row actions on coarse pointers", () => {
     );
     if (!connectItem) throw new Error("connect item not found");
     click(connectItem);
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith("a1"));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledWith("a1"));
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
   it("keeps delete behind the menu plus confirmation", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     openOverflow(rowByName(mounted!.container, "web-1"));
     await flush();
@@ -421,7 +421,7 @@ describe("asset row actions on coarse pointers", () => {
   it("omits delete for builtin assets", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("local terminal"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("local terminal"));
 
     openOverflow(rowByName(mounted!.container, "local terminal"));
     await flush();
@@ -431,7 +431,7 @@ describe("asset row actions on coarse pointers", () => {
   it("closes the menu with Escape", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     openOverflow(rowByName(mounted!.container, "web-1"));
     await flush();
@@ -447,7 +447,7 @@ describe("asset row actions on coarse pointers", () => {
   it("offers the same menu on context menu as on the overflow button", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const row = rowByName(mounted!.container, "web-1");
     act(() => {
@@ -462,7 +462,7 @@ describe("asset row actions on coarse pointers", () => {
   it("collapses group row actions into an overflow menu as well", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("production"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("production"));
 
     const groupRow = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find(
       (r) => r.textContent?.includes("production") && r.querySelector(".nx-count"),
@@ -478,7 +478,7 @@ describe("asset row actions on coarse pointers", () => {
     );
     if (!rename) throw new Error("rename item not found");
     click(rename);
-    await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
+    await waitForRendered(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
   });
 });
 
@@ -501,7 +501,7 @@ describe("one menu for right-click, overflow button and keyboard", () => {
   it("shows identical items, hints and order for every entry point on desktop", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
     const row = rowByName(mounted!.container, "web-1");
 
     act(() => {

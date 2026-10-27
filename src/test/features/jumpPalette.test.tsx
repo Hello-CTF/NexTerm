@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, deferred, flush, flushUntil, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil, mount, setInputValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -319,7 +319,7 @@ describe("jump palette hosts and commands", () => {
 
   it("probes reachability once and not again when a tab title changes while open", async () => {
     const view = await mountPalette();
-    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
     act(() => useUi.setState((state) => ({
       workspaces: state.workspaces.map((item) => ({
         ...item,

@@ -28,7 +28,7 @@ import { collectBackgroundTabs } from "../../features/terminal/backgroundSession
 import { useAuth } from "../../features/auth/store";
 import { setLocalHelperStatusForTest } from "../../features/terminal/localHelperStatus";
 import { useUi, type Workspace } from "../../app/store";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { DurableDescriptor, LiveTabInfo, SessionAttentionState, SessionInfo } from "../../ipc/commands";
 
 const NOW = new Date(2026, 9, 27, 12, 0, 0).getTime();
@@ -129,7 +129,7 @@ function button(target: ParentNode, label: string): HTMLButtonElement {
 async function mountLoaded(props: Record<string, unknown>, ready: (view: MountedView) => void): Promise<MountedView> {
   const view = mount(createElement(BackgroundSessions, props));
   await flush();
-  await waitFor(() => ready(view));
+  await waitForRendered(() => ready(view));
   return view;
 }
 
@@ -546,7 +546,7 @@ describe("BackgroundSessions table", () => {
         release([]);
         await flush();
       });
-      await waitFor(() => expect(loading.container.querySelector(".nx-table-empty")).not.toBeNull());
+      await waitForRendered(() => expect(loading.container.querySelector(".nx-table-empty")).not.toBeNull());
       const empty = loading.container.querySelector<HTMLTableCellElement>(".nx-table-empty");
       expect(empty?.colSpan).toBe(5);
       expect(empty?.classList.contains("text-[var(--nx-fg-soft)]")).toBe(true);

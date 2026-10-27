@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -139,7 +139,7 @@ describe("fs://progress error field", () => {
   });
 
   it("component: failure events remove the progress bar and show an error toast", async () => {
-    await waitFor(() => expect(mocks.list).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalled());
     act(() => {
       progressHandler?.({ taskId: "t1", transferred: 5, total: 100, done: false });
     });
@@ -160,7 +160,7 @@ describe("fs://progress error field", () => {
   });
 
   it("component: successful completion only removes the progress bar without an error toast", async () => {
-    await waitFor(() => expect(mocks.list).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalled());
     act(() => {
       progressHandler?.({ taskId: "t2", transferred: 5, total: 100, done: false });
     });

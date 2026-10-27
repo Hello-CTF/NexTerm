@@ -8,7 +8,7 @@ import {
   flush,
   mount,
   setInputValue,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "./features/reactTestUtils";
 
@@ -89,10 +89,10 @@ describe("Generate key pair dialog", () => {
     setInputValue(nameInput, "deploy-key");
     clickButton(mounted.container, "生成并入库");
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.generateKey).toHaveBeenCalledWith("deploy-key", "ed25519", undefined),
     );
-    await waitFor(() => expect(mounted!.container.textContent).toContain("SHA256:9f8e7d6c5b4a3210"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("SHA256:9f8e7d6c5b4a3210"));
     expect(mounted.container.textContent).toContain(GENERATED.publicKey);
 
     clickButton(mounted.container, "复制");
@@ -112,7 +112,7 @@ describe("Generate key pair dialog", () => {
     setInputValue(mounted.container.querySelector<HTMLInputElement>('input[type=password]')!, "hunter2");
     clickButton(mounted.container, "生成并入库");
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.generateKey).toHaveBeenCalledWith("legacy-key", "rsa", "hunter2"),
     );
   });
@@ -126,7 +126,7 @@ describe("Generate key pair dialog", () => {
     );
     clickButton(mounted.container, "生成并入库");
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("已存在同名凭据")),
     );
     expect(mounted.container.textContent).toContain("生成并入库");
@@ -142,12 +142,12 @@ describe("Generate key pair dialog", () => {
     );
     clickButton(mounted.container, "生成并入库");
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.promptText).toHaveBeenCalledWith("生成密钥前需要解锁凭据库", "", {
         secret: true,
       }),
     );
-    await waitFor(() => expect(mocks.generateKey).toHaveBeenCalledWith("deploy-key", "ed25519", undefined));
+    await waitForRendered(() => expect(mocks.generateKey).toHaveBeenCalledWith("deploy-key", "ed25519", undefined));
   });
 
   it("reports unlock failure inline without generating and preserves the form", async () => {
@@ -161,7 +161,7 @@ describe("Generate key pair dialog", () => {
     setInputValue(nameInput, "deploy-key");
     clickButton(mounted.container, "生成并入库");
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误"),
     );
     expect(mocks.generateKey).not.toHaveBeenCalled();

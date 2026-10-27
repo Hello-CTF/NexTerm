@@ -8,7 +8,7 @@ import {
   flush,
   mount,
   setInputValue,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -209,7 +209,7 @@ describe("command palette snippet entries", () => {
 
     setInputValue(searchInput(mounted!.container), "disk");
     click(optionByText(mounted!.container, "插入片段 disk usage"));
-    await waitFor(() => expect(mocks.write).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.write).toHaveBeenCalled());
     expect(mocks.write).toHaveBeenCalledWith("kernel-1", new TextEncoder().encode("df -h && du -sh /data/*"));
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已插入「disk usage」"));
@@ -222,7 +222,7 @@ describe("command palette snippet entries", () => {
 
     setInputValue(searchInput(mounted!.container), "disk");
     click(optionByText(mounted!.container, "插入片段 disk usage"));
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("终端")));
+    await waitForRendered(() => expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("终端")));
     expect(mocks.write).not.toHaveBeenCalled();
   });
 
@@ -234,7 +234,7 @@ describe("command palette snippet entries", () => {
     setInputValue(searchInput(mounted!.container), "multi-line");
     mocks.ask.mockResolvedValueOnce(false);
     click(optionByText(mounted!.container, "插入片段 multi-line restart"));
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalled());
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("回车或换行"),
       expect.objectContaining({ kind: "warning" }),
@@ -250,7 +250,7 @@ describe("command palette snippet entries", () => {
     setInputValue(searchInput(mounted!.container), "multi-line");
     mocks.ask.mockResolvedValueOnce(true);
     click(optionByText(mounted!.container, "插入片段 multi-line restart"));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.write).toHaveBeenCalledWith(
         "kernel-1",
         new TextEncoder().encode("systemctl restart app\nsystemctl status app"),
@@ -284,7 +284,7 @@ describe("command palette asset secondary actions", () => {
     expect(hostOption(mounted!.container, "ops/api-0")).toBeUndefined();
     expect(options.some((text) => text.includes("编辑资产 docker-prod"))).toBe(true);
     expect(options.some((text) => text.includes("编辑资产 ops/api-0"))).toBe(true);
-    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
     expect(mocks.probeBatch.mock.calls[0]![0]).toEqual(["a1"]);
     expect(mocks.connect).not.toHaveBeenCalled();
   });
@@ -316,7 +316,7 @@ describe("command palette asset secondary actions", () => {
 
     setInputValue(searchInput(mounted!.container), "克隆资产 web-01");
     click(optionByText(mounted!.container, "克隆资产 web-01"));
-    await waitFor(() => expect(mocks.create).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.create).toHaveBeenCalled());
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: "web-01 副本", credId: "cred-1", keyPath: null }),
     );

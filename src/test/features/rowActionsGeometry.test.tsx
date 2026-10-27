@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { mount, waitFor, type MountedView } from "./reactTestUtils";
+import { mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   fsList: vi.fn(),
@@ -205,7 +205,7 @@ describe("persistent row action bar DOM contract", () => {
   it("gives FileTree rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find(
       (r) => r.textContent?.includes("notes.txt"),
@@ -218,7 +218,7 @@ describe("persistent row action bar DOM contract", () => {
   it("gives FileBrowser rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find(
       (r) => r.textContent?.includes("notes.txt"),
@@ -231,7 +231,7 @@ describe("persistent row action bar DOM contract", () => {
   it("gives asset rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"][title]')].find(
       (r) => (r.getAttribute("title") ?? "").startsWith("web-1"),
@@ -249,7 +249,7 @@ describe("persistent row action bar DOM contract", () => {
   it("gives group rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("production"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("production"));
 
     const header = [...mounted!.container.querySelectorAll<HTMLElement>(".nx-row")].find(
       (r) => r.textContent?.includes("production") && r.querySelector(".nx-count"),
@@ -266,7 +266,7 @@ describe("persistent row action bar DOM contract", () => {
   it("keeps snippet action buttons visible on every row", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>("[data-snippet-row]")].find((r) =>
       r.textContent?.includes("check container status"),

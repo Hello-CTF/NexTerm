@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, StrictMode } from "react";
-import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -96,7 +96,7 @@ describe("inventory target actions", () => {
     });
     expect(typeof args.args.operationId).toBe("string");
     expect(args.args.operationId.length).toBeGreaterThan(0);
-    await waitFor(() => expect(m.container.textContent).toContain("Linux"));
+    await waitForRendered(() => expect(m.container.textContent).toContain("Linux"));
     expect(m.container.textContent).toContain("退出码 0");
   });
 
@@ -231,7 +231,7 @@ describe("inventory target actions", () => {
     expect(retry.command).toEqual(["uname", "-a"]);
     expect(retry.container).toBe("web");
     expect(retry.operationId).not.toBe(mocks.call.mock.calls[0][1].args.operationId);
-    await waitFor(() => expect(m.container.textContent).toContain("ok"));
+    await waitForRendered(() => expect(m.container.textContent).toContain("ok"));
   });
 
   it("cancels the production confirmation without retrying", async () => {
@@ -288,7 +288,7 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    await waitFor(() => expect(m.container.textContent).toContain("ok"));
+    await waitForRendered(() => expect(m.container.textContent).toContain("ok"));
 
     clickButton(m.container, "清除");
     await flush();
@@ -362,7 +362,7 @@ describe("inventory target actions", () => {
     clickButton(m.container, "执行");
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(m.container.textContent).toContain("B ok"));
+    await waitForRendered(() => expect(m.container.textContent).toContain("B ok"));
   });
 
   it("keeps the running notice clear-proof and re-entry blocked until the ignored command settles", async () => {
@@ -965,7 +965,7 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    await waitFor(() => expect(m.container.textContent).toContain("SETTLED-A"));
+    await waitForRendered(() => expect(m.container.textContent).toContain("SETTLED-A"));
 
     act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
     await flush();
@@ -1456,7 +1456,7 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    await waitFor(() => expect(m.container.textContent).toContain("CLEARED-SECRET"));
+    await waitForRendered(() => expect(m.container.textContent).toContain("CLEARED-SECRET"));
 
     clickButton(m.container, "清除");
     await flush();
@@ -1679,7 +1679,7 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    await waitFor(() => expect(m.container.textContent).toContain("A-RESULT"));
+    await waitForRendered(() => expect(m.container.textContent).toContain("A-RESULT"));
 
     // Launch B without clearing A's outcome: the new launch acks the old
     // current outcome, so it is not shown while B runs.
@@ -1711,14 +1711,14 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    await waitFor(() => expect(m.container.textContent).toContain("FIRST"));
+    await waitForRendered(() => expect(m.container.textContent).toContain("FIRST"));
     clickButton(m.container, "清除");
     await flush();
     expect(m.container.textContent).not.toContain("FIRST");
 
     clickButton(m.container, "执行");
     await flush();
-    await waitFor(() => expect(m.container.textContent).toContain("SECOND"));
+    await waitForRendered(() => expect(m.container.textContent).toContain("SECOND"));
     expect(m.container.textContent).not.toContain("FIRST");
     clickButton(m.container, "清除");
     await flush();

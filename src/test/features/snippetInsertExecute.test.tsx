@@ -7,7 +7,7 @@ import {
   click,
   flush,
   mount,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -129,7 +129,7 @@ afterEach(() => {
 describe("snippet insert and execute actions", () => {
   it("renders per-snippet insert and execute buttons with matching titles and aria labels", async () => {
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     const expectedTitles: Record<string, string> = {
       插入: "插入到当前终端",
@@ -151,7 +151,7 @@ describe("snippet insert and execute actions", () => {
     seedTerminalTab();
     const onClosed = vi.fn();
     mounted = mountPanel(createElement(SnippetsHost, { onClosed }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByLabel(mounted.container, "插入片段「check container status」"));
     await flush();
@@ -167,7 +167,7 @@ describe("snippet insert and execute actions", () => {
   it("execute appends a carriage return so the command is submitted", async () => {
     seedTerminalTab();
     mounted = mountPanel(createElement(SnippetsHost));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByLabel(mounted.container, "执行片段「check container status」"));
     await flush();
@@ -183,7 +183,7 @@ describe("snippet insert and execute actions", () => {
       { id: "sn3", name: "restart service", body: "systemctl restart app\n", groupId: null, sort: 3 },
     ]);
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("restart service"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("restart service"));
 
     click(buttonByLabel(mounted.container, "执行片段「restart service」"));
     await flush();
@@ -199,7 +199,7 @@ describe("snippet insert and execute actions", () => {
     ]);
     const onClosed = vi.fn();
     mounted = mountPanel(createElement(SnippetsHost, { onClosed }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("two lines"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("two lines"));
 
     mocks.ask.mockResolvedValueOnce(false);
     click(buttonByLabel(mounted.container, "插入片段「two lines」"));
@@ -219,7 +219,7 @@ describe("snippet insert and execute actions", () => {
       { id: "sn5", name: "completion", body: "docker ps\t", groupId: null, sort: 5 },
     ]);
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("completion"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("completion"));
 
     click(buttonByLabel(mounted.container, "执行片段「completion」"));
     await flush();
@@ -234,7 +234,7 @@ describe("snippet insert and execute actions", () => {
   it("hints at opening a terminal first when no writable terminal exists", async () => {
     const onClosed = vi.fn();
     mounted = mountPanel(createElement(SnippetsHost, { onClosed }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByLabel(mounted.container, "插入片段「check container status」"));
     await flush();
@@ -250,7 +250,7 @@ describe("snippet insert and execute actions", () => {
   it("hints that the terminal has ended when the active tab exited", async () => {
     seedTerminalTab({ exited: true });
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByLabel(mounted.container, "执行片段「check container status」"));
     await flush();
@@ -267,7 +267,7 @@ describe("snippet insert and execute actions", () => {
     mocks.write.mockRejectedValue({ code: "disconnected", message: "disconnected" });
     const onClosed = vi.fn();
     mounted = mountPanel(createElement(SnippetsHost, { onClosed }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByLabel(mounted.container, "执行片段「check container status」"));
     await flush();

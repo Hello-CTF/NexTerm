@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, flushMacrotask, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, flushMacrotask, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   return {
@@ -252,7 +252,7 @@ describe("TerminalPane image paste orchestration", () => {
 
     await pasteImages([png("shot.png")]);
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.paste).toHaveBeenCalledWith(expect.stringMatching(new RegExp(String.raw`^\[shot\.png\]\(${DIR}/shot\.png\)$`))),
     );
     expect(mocks.fsMkdirPrivate).toHaveBeenCalledWith("s1", expect.stringMatching(dirPattern));
@@ -283,7 +283,7 @@ describe("TerminalPane image paste orchestration", () => {
 
     await pasteImages([png("a.png"), png("b.png")]);
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.paste).toHaveBeenCalledWith(
         expect.stringMatching(new RegExp(String.raw`^\[a\.png\]\(${DIR}/a\.png\) \[b\.png\]\(${DIR}/b\.png\)$`)),
       ),
@@ -317,7 +317,7 @@ describe("TerminalPane image paste orchestration", () => {
 
     await pasteImages([png("big.png")]);
 
-    await waitFor(() => expect(statusText()).toContain("磁盘只读"));
+    await waitForRendered(() => expect(statusText()).toContain("磁盘只读"));
     expect(statusText()).toContain("/tmp");
     expect(mocks.paste).not.toHaveBeenCalled();
     const dir = mocks.fsMkdirPrivate.mock.calls[0]?.[1] as string;
@@ -397,7 +397,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([new File(["hello"], "my report (v1).pdf", { type: "application/pdf" })]);
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.paste).toHaveBeenCalledWith(
         expect.stringMatching(new RegExp(String.raw`^\[my report _v1_\.pdf\]\(<${DIR}/my report _v1_\.pdf>\)$`)),
       ),
@@ -425,7 +425,7 @@ describe("TerminalPane file paste orchestration", () => {
       new File(["3"], ".env"),
     ]);
 
-    await waitFor(() => expect(mocks.paste).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.paste).toHaveBeenCalled());
     const text = mocks.paste.mock.calls[0]?.[0] as string;
     expect(text).toMatch(new RegExp(String.raw`\[shot\.png\]\(${DIR}/shot\.png\)`));
     const paths = mocks.fsWrite.mock.calls.map((c) => c[1] as string);
@@ -447,13 +447,13 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([sized("big.iso", 5 * 1024 * 1024)]);
 
-    await waitFor(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
     expect(mocks.uploadChunked.mock.calls[0]?.[0]).toMatchObject({
       sessionId: "s1",
       remotePath: expect.stringMatching(inDir(String.raw`big\.iso`)),
     });
     expect(mocks.fsWrite).not.toHaveBeenCalled();
-    await waitFor(() => expect(mocks.paste).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.paste).toHaveBeenCalled());
   });
 
   it("skips files over 20 MB with a visible message and still uploads the rest", async () => {
@@ -462,7 +462,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([sized("huge.bin", 20 * 1024 * 1024 + 1), new File(["ok"], "ok.txt")]);
 
-    await waitFor(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
     expect(mocks.paste.mock.calls[0]?.[0]).toContain("ok.txt");
     expect(mocks.paste.mock.calls[0]?.[0]).not.toContain("huge.bin");
     expect(statusText()).toContain("已跳过超过 20 MB 的文件：huge.bin");
@@ -475,7 +475,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([sized("edge.bin", 20 * 1024 * 1024)]);
 
-    await waitFor(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
   });
 
   it("reports an error and uploads nothing when every file is too large", async () => {
@@ -484,7 +484,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([sized("huge.bin", 21 * 1024 * 1024)]);
 
-    await waitFor(() => expect(statusText()).toContain("huge.bin"));
+    await waitForRendered(() => expect(statusText()).toContain("huge.bin"));
     expect(mocks.uploadChunked).not.toHaveBeenCalled();
     expect(mocks.fsWrite).not.toHaveBeenCalled();
     expect(mocks.paste).not.toHaveBeenCalled();
@@ -514,7 +514,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([new File(["x"], name)]);
 
-    await waitFor(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
     const text = mocks.paste.mock.calls[0]?.[0] as string;
     expect(text).not.toMatch(/[\u0000-\u001f\u007f-\u009f\p{Cf}\u2028\u2029$`;|&*?'"!]/u);
     const path = mocks.fsWrite.mock.calls[0]?.[1] as string;
@@ -531,7 +531,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([new File(["x"], "a.txt")]);
 
-    await waitFor(() => expect(statusText()).toContain("临时目录已存在"));
+    await waitForRendered(() => expect(statusText()).toContain("临时目录已存在"));
     expect(mocks.fsWrite).not.toHaveBeenCalled();
     expect(mocks.fsDelete).not.toHaveBeenCalled();
     expect(mocks.paste).not.toHaveBeenCalled();
@@ -544,7 +544,7 @@ describe("TerminalPane file paste orchestration", () => {
     await pasteImages([new File(["x"], "a.txt")]);
     await pasteImages([new File(["x"], "a.txt")]);
 
-    await waitFor(() => expect(mocks.fsMkdirPrivate).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(mocks.fsMkdirPrivate).toHaveBeenCalledTimes(2));
     expect(mocks.fsMkdirPrivate.mock.calls[0]?.[1]).not.toBe(mocks.fsMkdirPrivate.mock.calls[1]?.[1]);
   });
 
@@ -555,7 +555,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([new File(["x"], "a.txt")]);
 
-    await waitFor(() => expect(statusText()).toContain("Windows"));
+    await waitForRendered(() => expect(statusText()).toContain("Windows"));
     expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
     expect(mocks.fsWrite).not.toHaveBeenCalled();
   });
@@ -575,7 +575,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([new File(["x"], "a.txt")], ["文件夹「src」", "无法读取的项目"]);
 
-    await waitFor(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
     expect(statusText()).toContain("文件夹「src」");
     expect(statusText()).toContain("无法读取的项目");
   });
@@ -586,7 +586,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([], ["文件夹「src」"]);
 
-    await waitFor(() => expect(statusText()).toContain("文件夹「src」"));
+    await waitForRendered(() => expect(statusText()).toContain("文件夹「src」"));
     expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
   });
 
@@ -604,8 +604,8 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([sized("small.bin", 4 * 1024 * 1024), sized("big.bin", 4 * 1024 * 1024)]);
 
-    await waitFor(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(statusText()).toContain("25%"));
+    await waitForRendered(() => expect(mocks.uploadChunked).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(statusText()).toContain("25%"));
     const cancel = Array.from(mounted?.container.querySelectorAll("button") ?? []).find((b) => b.textContent === "取消");
     expect(cancel).toBeDefined();
     const transfer = mocks.uploadChunked.mock.calls[0]?.[0] as { taskId: string; attemptId: string };
@@ -615,7 +615,7 @@ describe("TerminalPane file paste orchestration", () => {
       await flushMacrotask();
     });
 
-    await waitFor(() => expect(statusText()).toContain("已取消上传"));
+    await waitForRendered(() => expect(statusText()).toContain("已取消上传"));
     expect(mocks.fsCancel).toHaveBeenCalledWith(transfer.taskId, transfer.attemptId);
     expect(mocks.fsDelete).toHaveBeenCalledWith("s1", mocks.fsMkdirPrivate.mock.calls[0]?.[1], true);
     expect(mocks.uploadChunked).toHaveBeenCalledTimes(1);

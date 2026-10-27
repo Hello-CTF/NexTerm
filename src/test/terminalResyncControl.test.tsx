@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, mount, deferred, waitFor, type MountedView } from "./features/reactTestUtils";
+import { click, flush, mount, deferred, waitForRendered, type MountedView } from "./features/reactTestUtils";
 import type { LiveTabInfo } from "../ipc/commands";
 
 const harness = vi.hoisted(() => ({
@@ -550,7 +550,7 @@ describe("terminal control resync compensation", () => {
     expect(reconnect?.disabled).toBe(false);
     click(reconnect!);
 
-    await waitFor(() => expect(useUi.getState().sessions[0]?.staleConfig).toBe(false), 3_000);
+    await waitForRendered(() => expect(useUi.getState().sessions[0]?.staleConfig).toBe(false), 3_000);
     expect(harness.sessionReconnect).toHaveBeenCalledWith("s1");
   });
 });

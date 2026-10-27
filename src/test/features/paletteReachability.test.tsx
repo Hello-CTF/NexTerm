@@ -8,7 +8,7 @@ import {
   flush,
   mount,
   setInputValue,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -88,7 +88,7 @@ const mountedViews: MountedView[] = [];
 async function mountPalette(props: { onClose: () => void }): Promise<MountedView> {
   const view = mountWithClient(createElement(JumpPalette, props));
   mountedViews.push(view);
-  await waitFor(() => {
+  await waitForRendered(() => {
     expect(optionByText(view.container, "web-01")).toBeTruthy();
     expect(mocks.probeBatch).toHaveBeenCalledTimes(1);
     expect(Object.values(useAssetReachability.getState().entries).every((entry) => entry.state !== "checking")).toBe(true);
@@ -121,7 +121,7 @@ afterEach(() => {
 describe("Command palette reachability and quick connect", () => {
   it("probes assets with hosts in a bounded batch on open", async () => {
     await mountPalette({ onClose: vi.fn() });
-    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
     const [ids, timeoutMs, maxConcurrent] = mocks.probeBatch.mock.calls[0] as [
       string[],
       number,
@@ -140,7 +140,7 @@ describe("Command palette reachability and quick connect", () => {
       ],
     });
     const view = await mountPalette({ onClose: vi.fn() });
-    await waitFor(() => {
+    await waitForRendered(() => {
       const webRow = optionByText(view.container, "web-01");
       expect(webRow.querySelector('[aria-label="可达"]')).toBeTruthy();
       const dbRow = optionByText(view.container, "db-01");
@@ -150,7 +150,7 @@ describe("Command palette reachability and quick connect", () => {
 
   it("does not duplicate the manual probe action in asset actions", async () => {
     const view = await mountPalette({ onClose: vi.fn() });
-    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
     setInputValue(searchInput(view.container), "probe web-01");
     expect(view.container.textContent).not.toContain("probe web-01");
   });

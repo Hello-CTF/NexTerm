@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, mountWithClient, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, mountWithClient, setSelectValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(),
@@ -125,7 +125,7 @@ function originalDoc(): { path: string; size: number; contentBase64: string } {
 
 async function mountEditor(): Promise<MountedView> {
   const mounted = mountWithClient(createElement(FileEditor, { sessionId: "s", path: "/a.txt" }));
-  await waitFor(() => expect(editors.views).toHaveLength(1));
+  await waitForRendered(() => expect(editors.views).toHaveLength(1));
   return mounted;
 }
 
@@ -143,7 +143,7 @@ async function startSave(container: HTMLElement) {
   const save = container.querySelector<HTMLButtonElement>('button[title^="保存（远端"]');
   if (!save) throw new Error("Save button not found");
   click(save);
-  await waitFor(() => expect(mocks.write).toHaveBeenCalledOnce());
+  await waitForRendered(() => expect(mocks.write).toHaveBeenCalledOnce());
 }
 
 async function resolveInAct<T>(
@@ -220,7 +220,7 @@ describe("FileEditor in-flight save safeguards", () => {
     const select = mounted.container.querySelector<HTMLSelectElement>("select");
     if (!select) throw new Error("Encoding select not found");
     setSelectValue(select, "gbk");
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledOnce());
 
     await startSave(mounted.container);
     await resolveInAct(confirmation, true);
@@ -251,7 +251,7 @@ describe("FileEditor read and save error messages", () => {
     mocks.read.mockRejectedValueOnce(new Error("permission denied"));
     const onClose = vi.fn();
     mounted = mountWithClient(createElement(FileEditor, { sessionId: "s", path: "/a.txt", onClose }));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.toast).toHaveBeenCalledWith("error", "打开失败：permission denied"),
     );
     expect(onClose).toHaveBeenCalledOnce();
@@ -265,6 +265,6 @@ describe("FileEditor read and save error messages", () => {
     const save = mounted.container.querySelector<HTMLButtonElement>('button[title^="保存（远端"]');
     if (!save) throw new Error("Save button not found");
     click(save);
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("error", "保存失败：disk full"));
+    await waitForRendered(() => expect(mocks.toast).toHaveBeenCalledWith("error", "保存失败：disk full"));
   });
 });

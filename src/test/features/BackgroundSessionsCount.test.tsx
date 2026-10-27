@@ -15,7 +15,7 @@ import { BackgroundSessions } from "../../features/terminal/BackgroundSessions";
 import { useBackgroundSessionCount } from "../../features/terminal/backgroundSessionsAccess";
 import { useUi, type Workspace } from "../../app/store";
 import type { LiveTabInfo, SessionInfo } from "../../ipc/commands";
-import { flush, mount, waitFor } from "./reactTestUtils";
+import { flush, mount, waitForRendered } from "./reactTestUtils";
 
 function session(id: string, kind: string, name: string, assetId: string | null): SessionInfo {
   return { id, assetId, name, kind, status: "connected", tabs: [], createdAt: 0 };
@@ -80,8 +80,8 @@ describe("background session badge and page share one rule", () => {
     const view = mount(createElement(Probe, { id: "wA" }));
     try {
       await flush();
-      await waitFor(() => expect(badge(view.container)).toBe("2"));
-      await waitFor(() => expect(rows(view.container)).toBe(2));
+      await waitForRendered(() => expect(badge(view.container)).toBe("2"));
+      await waitForRendered(() => expect(rows(view.container)).toBe(2));
       expect(view.container.textContent).toContain("甲-持久");
       expect(view.container.textContent).not.toContain("本机构建");
       expect(view.container.querySelector('[data-testid="background-count"]')?.textContent).toBe("2 个可恢复");
@@ -90,8 +90,8 @@ describe("background session badge and page share one rule", () => {
       const other = mount(createElement(Probe, { id: "wB" }));
       try {
         await flush();
-        await waitFor(() => expect(badge(other.container)).toBe("0"));
-        await waitFor(() => expect(other.container.textContent).toContain("这台主机上没有在后台运行的终端"));
+        await waitForRendered(() => expect(badge(other.container)).toBe("0"));
+        await waitForRendered(() => expect(other.container.textContent).toContain("这台主机上没有在后台运行的终端"));
         expect(rows(other.container)).toBe(0);
         expect(other.container.querySelector('[data-testid="background-host"]')?.textContent).toBe("主机乙");
       } finally {
@@ -101,8 +101,8 @@ describe("background session badge and page share one rule", () => {
       const local = mount(createElement(Probe, { id: "wL" }));
       try {
         await flush();
-        await waitFor(() => expect(badge(local.container)).toBe("1"));
-        await waitFor(() => expect(local.container.textContent).toContain("本机构建"));
+        await waitForRendered(() => expect(badge(local.container)).toBe("1"));
+        await waitForRendered(() => expect(local.container.textContent).toContain("本机构建"));
         expect(local.container.textContent).not.toContain("甲-");
       } finally {
         local.unmount();
@@ -121,8 +121,8 @@ describe("background session badge and page share one rule", () => {
     const view = mount(createElement(Probe, { id: "wA" }));
     try {
       await flush();
-      await waitFor(() => expect(badge(view.container)).toBe("1"));
-      await waitFor(() => expect(rows(view.container)).toBe(1));
+      await waitForRendered(() => expect(badge(view.container)).toBe("1"));
+      await waitForRendered(() => expect(rows(view.container)).toBe(1));
       expect(view.container.textContent).not.toContain("甲-持久");
     } finally {
       view.unmount();

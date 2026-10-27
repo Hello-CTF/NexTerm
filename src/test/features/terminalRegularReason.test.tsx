@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   prepareDurable: vi.fn(),
@@ -155,8 +155,8 @@ describe("regular SSH terminals always say why", () => {
     reportAttach({ durable: false, durableRequested: true, fallbackNotice: "持久终端不可用" });
     act(() => (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1"));
 
-    await waitFor(() => expect(storeTab()?.regularReason).toBe("持久组件准备中"));
-    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("neutral"));
+    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("持久组件准备中"));
+    await waitForRendered(() => expect(hintBar()?.dataset.tone).toBe("neutral"));
     expect(hintBar()?.textContent).toContain("持久组件准备中");
   });
 
@@ -167,7 +167,7 @@ describe("regular SSH terminals always say why", () => {
     await flush();
     reportAttach({ durable: false, durableRequested: true });
 
-    await waitFor(() => expect(storeTab()?.regularReason).toBe("持久组件不可用：目标主机不支持持久终端组件"));
+    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("持久组件不可用：目标主机不支持持久终端组件"));
   });
 
   it("names a durable asset override that fell back under the regular default", async () => {
@@ -177,7 +177,7 @@ describe("regular SSH terminals always say why", () => {
     await flush();
     reportAttach({ durable: false, durableRequested: true });
 
-    await waitFor(() => expect(storeTab()?.regularReason).toBe("持久组件准备中"));
+    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("持久组件准备中"));
   });
 
   it("names a reopened or AI-created regular terminal on a host that prefers durable terminals", async () => {
@@ -187,7 +187,7 @@ describe("regular SSH terminals always say why", () => {
     await flush();
     reportAttach({ durable: false });
 
-    await waitFor(() => expect(storeTab()?.regularReason).toBe("打开时持久组件未就绪"));
+    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("打开时持久组件未就绪"));
   });
 
   it("leaves terminals regular by choice unmarked", async () => {
@@ -221,7 +221,7 @@ describe("regular SSH terminals always say why", () => {
     await flush();
     succeedHelper();
 
-    await waitFor(() => expect(hintBar()?.textContent).toContain("这台主机的持久终端已就绪"));
+    await waitForRendered(() => expect(hintBar()?.textContent).toContain("这台主机的持久终端已就绪"));
     expect(storeTab()?.regularReason).toBe("持久组件准备中");
   });
 });
@@ -388,10 +388,10 @@ describe("persistence hint bar", () => {
     mountPane();
     await flush();
     succeedHelper();
-    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
+    await waitForRendered(() => expect(hintBar()?.dataset.tone).toBe("accent"));
 
     act(() => hintButton("新建持久终端")?.click());
-    await waitFor(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(2));
+    await waitForRendered(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(2));
     const reopened = useUi.getState().workspaces[0]?.panes[0]?.tabs.find((tab) => tab.id !== "t1");
     expect(reopened).toMatchObject({ kind: "terminal", sessionId: "s1" });
     expect(reopened?.regularReason).toBeUndefined();
@@ -409,10 +409,10 @@ describe("persistence hint bar", () => {
       cols: 80, rows: 24, gridRevision: 0, cwd: "/srv/app",
     }));
     helperProgress("ready", true);
-    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
+    await waitForRendered(() => expect(hintBar()?.dataset.tone).toBe("accent"));
 
     act(() => hintButton("新建持久终端")?.click());
-    await waitFor(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(2));
+    await waitForRendered(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(2));
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     expect(tabs.map((tab) => tab.id)).toContain("t1");
     expect(tabs.find((tab) => tab.id !== "t1")?.pendingDirectory).toBe("/srv/app");
@@ -432,7 +432,7 @@ describe("persistence hint bar", () => {
       expect(hintBar(other.container)?.dataset.tone).toBe("neutral");
 
       helperProgress("ready", true);
-      await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
+      await waitForRendered(() => expect(hintBar()?.dataset.tone).toBe("accent"));
       expect(hintButton("新建持久终端", other.container)).toBeDefined();
 
       mounted?.unmount();
@@ -449,7 +449,7 @@ describe("persistence hint bar", () => {
     mountPane();
     await flush();
     helperProgress("failed", true, { error: "目标主机不支持持久终端组件" });
-    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("danger"));
+    await waitForRendered(() => expect(hintBar()?.dataset.tone).toBe("danger"));
     expect(hintBar()?.textContent).toContain("目标主机不支持持久终端组件");
   });
 
@@ -467,7 +467,7 @@ describe("persistence hint bar", () => {
     expect(tooltip.container.textContent).toContain("持久组件准备中");
 
     helperProgress("ready", true);
-    await waitFor(() => expect(tooltip.container.textContent).toContain("持久终端已就绪"));
+    await waitForRendered(() => expect(tooltip.container.textContent).toContain("持久终端已就绪"));
     expect(tooltip.container.textContent).not.toContain("持久组件准备中");
   });
 
@@ -511,7 +511,7 @@ describe("persistence hint bar", () => {
     expect(hintBar()).toBeNull();
 
     succeedHelper();
-    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
+    await waitForRendered(() => expect(hintBar()?.dataset.tone).toBe("accent"));
   });
 
   it("leaves a named red mark on the tab after a failure hint is dismissed", async () => {
@@ -578,7 +578,7 @@ describe("local terminal hints", () => {
     mountPane();
     await flush();
     helperProgress("ready", true);
-    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
+    await waitForRendered(() => expect(hintBar()?.dataset.tone).toBe("accent"));
 
     for (const state of ["idle", "starting", "ready"]) {
       act(() => setLocalHelperStatusForTest({ state }));

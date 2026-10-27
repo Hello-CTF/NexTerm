@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, flushMacrotask, mount, setInputValue, waitFor, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flush, flushMacrotask, mount, setInputValue, waitForRendered, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -495,7 +495,7 @@ describe("App workspace actions", () => {
 
     const entry = () => mounted?.container.querySelector('button[aria-label="后台会话"]');
     expect(entry()).not.toBeNull();
-    await waitFor(() => expect(entry()?.querySelector(".nx-rail-count")?.textContent).toBe("1"));
+    await waitForRendered(() => expect(entry()?.querySelector(".nx-rail-count")?.textContent).toBe("1"));
     await clickRail("后台会话");
     expect(allTabs().some((tab) => tab.kind === "background")).toBe(true);
   });

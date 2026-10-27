@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, setInputValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -251,7 +251,7 @@ describe("AI interception rule drafts", () => {
 
     expect(useUi.getState().aiRulePrefill).toBeNull();
     const section = document.getElementById("settings-ai-rules")!;
-    await waitFor(() => expect(section.scrollIntoView).toHaveBeenCalled());
+    await waitForRendered(() => expect(section.scrollIntoView).toHaveBeenCalled());
     const draft = section.querySelector<HTMLInputElement>('input[placeholder*="Enter 保存"]')!;
     expect(draft.value).toBe("kubectl delete");
 

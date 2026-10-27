@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, clickButton, deferred, flush, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, clickButton, deferred, flush, flushUntil, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { SessionInfo } from "../../ipc/commands";
 import type { AppTab, ConnectOutcome, Workspace } from "../../app/store";
 
@@ -336,7 +336,7 @@ describe("workspace restore queue", () => {
     const view = mountBanner();
     clickButton(view.container, "全部重连");
 
-    await waitFor(() => {
+    await waitForRendered(() => {
       expect(useUi.getState().workspaceRestoreResults["ws-a"]?.status).toBe("success");
       expect(useUi.getState().workspaceRestoreResults["ws-b"]?.status).toBe("failed");
     });
@@ -380,7 +380,7 @@ describe("workspace restore queue", () => {
     const view = mountBanner();
     clickButton(view.container, "全部重连");
 
-    await waitFor(() => expect(useUi.getState().workspaceRestoreResults.normal?.status).toBe("success"));
+    await waitForRendered(() => expect(useUi.getState().workspaceRestoreResults.normal?.status).toBe("success"));
     const results = useUi.getState().workspaceRestoreResults;
     expect(results.empty).toMatchObject({ status: "skipped", detail: "空工作区无需重新连接" });
     expect(results.database).toMatchObject({ status: "skipped" });

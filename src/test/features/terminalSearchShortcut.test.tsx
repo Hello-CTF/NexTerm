@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, flushMacrotask, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, flushMacrotask, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   mac: false,
@@ -266,7 +266,7 @@ describe("terminal search shortcut", () => {
     const input = searchInput();
     expect(input).not.toBeNull();
     expect(input?.value).toBe("hello");
-    await waitFor(() => expect(harness.findNext).toHaveBeenCalledWith("hello"));
+    await waitForRendered(() => expect(harness.findNext).toHaveBeenCalledWith("hello"));
   });
 
   it("refocuses the search input when the shortcut fires while search is open", async () => {

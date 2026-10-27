@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { clickButton, flush, mount, waitFor, type MountedView } from "./features/reactTestUtils";
+import { clickButton, flush, mount, waitForRendered, type MountedView } from "./features/reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
@@ -263,7 +263,7 @@ describe("terminal overlay accessibility", () => {
 
     clickButton(mounted.container, "关闭标签");
 
-    await waitFor(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", undefined, "s1"));
+    await waitForRendered(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", undefined, "s1"));
     expect(harness.closeTab).not.toHaveBeenCalledWith("kernel-1", "kill", "s1");
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     expect(tabs.find((candidate) => candidate.id === "t1")).toBeUndefined();
@@ -291,7 +291,7 @@ describe("terminal overlay accessibility", () => {
 
     clickButton(mounted.container, "关闭标签");
 
-    await waitFor(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", "detach", "s1"));
+    await waitForRendered(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", "detach", "s1"));
     expect(harness.closeTab).not.toHaveBeenCalledWith("kernel-1", "kill", "s1");
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     expect(tabs.find((candidate) => candidate.id === "t1")).toBeUndefined();

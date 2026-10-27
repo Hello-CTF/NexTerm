@@ -29,7 +29,7 @@ import { ANSWER_TAKES_SIZE_NOTE, CHOICE_ARM_MS, OPEN_TO_ANSWER_LABEL } from "../
 import { applyAwareness, resetAwarenessStore } from "../../app/sessionAwarenessStore";
 import { applyAggregateList, resetSessionAggregateForTest } from "../../app/sessionAggregate";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
-import { click, deferred, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { AttentionEvent, AttentionPrompt } from "../../ipc/generated/types";
 
 const NOW = Date.parse("2026-10-27T12:00:00Z");
@@ -247,7 +247,7 @@ describe("choice buttons", () => {
       expect(mocks.tapPrompt).toHaveBeenCalledTimes(1);
       expect(mocks.attentionList).toHaveBeenCalledTimes(1);
       // The newer prompt instance replaced the refused one with fresh buttons; nothing was sent again.
-      await waitFor(() => expect(buttons(view.container).every((button) => !button.disabled)).toBe(true));
+      await waitForRendered(() => expect(buttons(view.container).every((button) => !button.disabled)).toBe(true));
       expect(mocks.tapPrompt).toHaveBeenCalledTimes(1);
       expect(mocks.write).not.toHaveBeenCalled();
     } finally {

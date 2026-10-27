@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -249,12 +249,12 @@ afterEach(() => {
 describe("FileTree drop targeting", () => {
   it("uploads into the directory row that receives the drop, not the current directory", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(rowByPath("~/sub")).toBeDefined());
+    await waitForRendered(() => expect(rowByPath("~/sub")).toBeDefined());
 
     const event = dispatchDrop(rowByPath("~/sub"), { files: [new File(["x"], "d.txt")] });
     expect(event.defaultPrevented).toBe(true);
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.upload).toHaveBeenCalledWith(
         SID,
         expect.any(String),
@@ -277,13 +277,13 @@ describe("FileTree drop targeting", () => {
 
   it("uploads into the current directory when the drop lands outside any row", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(rowByPath("~/sub")).toBeDefined());
+    await waitForRendered(() => expect(rowByPath("~/sub")).toBeDefined());
 
     const tree = mounted.container.querySelector("[role='tree']");
     if (!tree) throw new Error("tree container not found");
     dispatchDrop(tree, { files: [new File(["x"], "d.txt")] });
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.upload).toHaveBeenCalledWith(
         SID,
         expect.any(String),
@@ -299,7 +299,7 @@ describe("FileTree drop targeting", () => {
 describe("FileTree drop with unresolvable entries", () => {
   it("uploads nothing and shows the skip notice when a dropped directory cannot be resolved", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(rowByPath("~/sub")).toBeDefined());
+    await waitForRendered(() => expect(rowByPath("~/sub")).toBeDefined());
 
     // Platforms without webkitGetAsEntry surface a dropped folder as a 0-byte typeless File.
     const pseudo = new File([], "pics");
@@ -307,7 +307,7 @@ describe("FileTree drop with unresolvable entries", () => {
     if (!tree) throw new Error("tree container not found");
     dispatchDrop(tree, { items: [{ getAsFile: () => pseudo }], files: [pseudo] });
 
-    await waitFor(() => expect(toastTexts()).toContain("无法识别的条目"));
+    await waitForRendered(() => expect(toastTexts()).toContain("无法识别的条目"));
     expect(toastTexts()).toContain("pics");
     expect(mocks.upload).not.toHaveBeenCalled();
     expect(mocks.stageFile).not.toHaveBeenCalled();
@@ -318,7 +318,7 @@ describe("FileTree drop with unresolvable entries", () => {
 describe("FileTree drop with non-file content", () => {
   it("does not preventDefault and starts no upload when the drag carries no Files type", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(rowByPath("~/sub")).toBeDefined());
+    await waitForRendered(() => expect(rowByPath("~/sub")).toBeDefined());
 
     const event = dispatchDrop(rowByPath("~/sub"), { types: ["text/plain"] });
     expect(event.defaultPrevented).toBe(false);
