@@ -58,6 +58,49 @@ func TestListTabsReportsCreatedAndDetachedTimes(t *testing.T) {
 	}
 }
 
+func TestListTabsRecordsDetachTimeWhenSentToBackground(t *testing.T) {
+	provider := newFakeDurableProvider()
+	manager, _, _, connected := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, manager, connected, "background-tab", "a-1", false)
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-2", ReplayBytes: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if attached := listedTab(t, manager, info.ID); attached.DetachedAt != 0 {
+		t.Fatalf("an attached tab reports detached at %d", attached.DetachedAt)
+	}
+	before := time.Now().UnixMilli()
+	// Both channels of the client leave at once.
+	if err := manager.BackgroundTab(context.Background(), info.ID, "client-a"); err != nil {
+		t.Fatal(err)
+	}
+	detached := listedTab(t, manager, info.ID)
+	if detached.Subscribers != 0 || detached.DetachedAt < before {
+		t.Fatalf("after going to the background the tab reports %d subscribers, detached at %d (want >= %d)", detached.Subscribers, detached.DetachedAt, before)
+	}
+}
+
+func TestListTabsRecordsDetachTimeWhenTheLastClientDetaches(t *testing.T) {
+	provider := newFakeDurableProvider()
+	manager, _, _, connected := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, manager, connected, "client-tab", "a-1", false)
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1", ReplayBytes: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.DetachClient(info.ID, "client-a"); err != nil {
+		t.Fatal(err)
+	}
+	if still := listedTab(t, manager, info.ID); still.DetachedAt != 0 {
+		t.Fatalf("with client-b attached the tab reports detached at %d", still.DetachedAt)
+	}
+	before := time.Now().UnixMilli()
+	if err := manager.DetachClient(info.ID, "client-b"); err != nil {
+		t.Fatal(err)
+	}
+	if detached := listedTab(t, manager, info.ID); detached.DetachedAt < before {
+		t.Fatalf("detached at %d, want at or after %d", detached.DetachedAt, before)
+	}
+}
+
 type pushedStateAttachment struct {
 	base.DurableAttachment
 	state *base.SessionState

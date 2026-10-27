@@ -1010,7 +1010,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	tab.mu.Lock()
 	old, replaced := tab.subscribers[options.ChannelID]
 	if replaced {
-		delete(tab.subscribers, options.ChannelID)
+		tab.dropSubscriberLocked(options.ChannelID)
 		tab.syncRecoveryFloorLocked()
 		tab.releaseOrphanControllerLocked()
 	}
@@ -1035,6 +1035,8 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 				m.mu.Lock()
 				tab.mu.Lock()
 				if current, ok := tab.subscribers[options.ChannelID]; ok && current.co == co {
+					// A rolled-back attach never counted as attached, so the
+					// detach time it would have hidden stays as it was.
 					delete(tab.subscribers, options.ChannelID)
 					tab.syncRecoveryFloorLocked()
 					tab.releaseOrphanControllerLocked()
@@ -1271,10 +1273,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	}
 	delete(m.channelTabs, channelID)
 	delete(m.channelIncarnations, channelID)
-	delete(tab.subscribers, channelID)
-	if attached && len(tab.subscribers) == 0 {
-		tab.detachedAt = time.Now()
-	}
+	tab.dropSubscriberLocked(channelID)
 	tab.syncRecoveryFloorLocked()
 	throttleRecovered, throttleVersion := m.clearThrottleChannelLocked(tab.ID, channelID)
 	tab.releaseOrphanControllerLocked()
@@ -1390,7 +1389,7 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background b
 	for channel, subscriber := range tab.subscribers {
 		if match(subscriber.client) {
 			detached = append(detached, detachedOutput{channelID: channel, subscriber: subscriber})
-			delete(tab.subscribers, channel)
+			tab.dropSubscriberLocked(channel)
 			delete(m.channelTabs, channel)
 			delete(m.channelIncarnations, channel)
 			if recovered, version := m.clearThrottleChannelLocked(tab.ID, channel); recovered {

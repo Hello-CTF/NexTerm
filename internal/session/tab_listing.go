@@ -7,6 +7,18 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
+// dropSubscriberLocked removes a subscriber; when it was the last one the
+// tab went to the background now. The caller holds t.mu.
+func (t *Tab) dropSubscriberLocked(channelID string) {
+	if _, ok := t.subscribers[channelID]; !ok {
+		return
+	}
+	delete(t.subscribers, channelID)
+	if len(t.subscribers) == 0 {
+		t.detachedAt = time.Now()
+	}
+}
+
 // detachedAtLocked is when the last subscriber left, zero while one is
 // attached. The caller holds t.mu.
 func (t *Tab) detachedAtLocked() int64 {

@@ -85,7 +85,7 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 	tab.mu.Lock()
 	old, replaced := tab.subscribers[options.ChannelID]
 	if replaced {
-		delete(tab.subscribers, options.ChannelID)
+		tab.dropSubscriberLocked(options.ChannelID)
 		tab.syncRecoveryFloorLocked()
 		tab.releaseOrphanControllerLocked()
 	}
