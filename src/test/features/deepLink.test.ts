@@ -165,4 +165,20 @@ describe("host detail links", () => {
     expect(hostTabs().map((t) => t.assetId)).toEqual(["a-2"]);
     expect(useUi.getState().workspaces.every((w) => w.kind === "tools")).toBe(true);
   });
+
+  it("caps the host id length", () => {
+    expect(parseHostDeepLinkId(hostDeepLink("a".repeat(256)))).toBe("a".repeat(256));
+    expect(parseHostDeepLinkId(hostDeepLink("a".repeat(257)))).toBeNull();
+  });
+
+  it.each([["nexterm://host/"], ["nexterm://host/%ZZ"], [`nexterm://host/${"a".repeat(300)}`]])(
+    "shows a toast and opens no page for %s",
+    async (link) => {
+      useUi.setState({ workspaces: [], activeWorkspaceId: null });
+      await openDeepLink(link);
+      expect(hostTabs()).toEqual([]);
+      expect(mocks.toast).toHaveBeenCalledWith("error", "无效的主机链接");
+      expect(mocks.get).not.toHaveBeenCalled();
+    },
+  );
 });

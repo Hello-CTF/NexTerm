@@ -4,6 +4,7 @@ import { openHostDetail } from "../features/hosts/hostDetail";
 import { connectAsset, useUi } from "./store";
 
 const DEEP_LINK_PATTERN = /^nexterm:\/\/connect\/([^/?#]+)\/?$/;
+const HOST_LINK_PREFIX = "nexterm://host/";
 const HOST_LINK_PATTERN = /^nexterm:\/\/host\/([^/?#]+)\/?$/;
 
 export function assetDeepLink(assetId: string): string {
@@ -15,12 +16,15 @@ export function hostDeepLink(assetId: string): string {
   return `nexterm://host/${encodeURIComponent(assetId)}`;
 }
 
-function matchId(pattern: RegExp, url: string): string | null {
+// MAX_HOST_LINK_ID_LENGTH bounds the decoded id of a host link; real asset and device ids are far shorter.
+const MAX_HOST_LINK_ID_LENGTH = 256;
+
+function matchId(pattern: RegExp, url: string, maxLength = Infinity): string | null {
   const match = pattern.exec(url.trim());
   if (!match) return null;
   try {
     const id = decodeURIComponent(match[1]);
-    return id ? id : null;
+    return id && id.length <= maxLength ? id : null;
   } catch {
     return null;
   }
@@ -31,7 +35,7 @@ export function parseDeepLinkAssetId(url: string): string | null {
 }
 
 export function parseHostDeepLinkId(url: string): string | null {
-  return matchId(HOST_LINK_PATTERN, url);
+  return matchId(HOST_LINK_PATTERN, url, MAX_HOST_LINK_ID_LENGTH);
 }
 
 export async function openDeepLink(url: string): Promise<void> {
@@ -40,6 +44,10 @@ export async function openDeepLink(url: string): Promise<void> {
   const hostId = parseHostDeepLinkId(url);
   if (hostId) {
     openHostDetail(hostId);
+    return;
+  }
+  if (url.trim().startsWith(HOST_LINK_PREFIX)) {
+    pushToast("error", "无效的主机链接");
     return;
   }
   const assetId = parseDeepLinkAssetId(url);
