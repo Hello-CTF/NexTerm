@@ -19,6 +19,7 @@ interface FakeTerminal {
     selection: (() => void) | null;
   };
   drainWrites: (count?: number) => void;
+  host: HTMLElement | null;
 }
 
 const harness = vi.hoisted(() => ({
@@ -66,7 +67,10 @@ vi.mock("@xterm/xterm", () => ({
       harness.terminals.push(this);
     }
     parser = { registerOscHandler: () => ({ dispose: () => undefined }) };
-    open() {}
+    host: HTMLElement | null = null;
+    open(host: HTMLElement) {
+      this.host = host;
+    }
     loadAddon() {}
     attachCustomKeyEventHandler() {}
     write(data: string | Uint8Array, callback?: () => void) {
@@ -3392,6 +3396,44 @@ describe("XtermView replayed output", () => {
     feedBytes("\x1b[6n");
     act(() => t.drainWrites());
     expect(upstream()).toEqual(["\x1b[1;1R"]);
+  });
+
+  it("closes the replay once its last byte is parsed, with no live output after it", async () => {
+    harness.emitReplies = true;
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, expired: true, replayBytes: 4 });
+    feedBytes("\x1b[6n");
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual([]);
+    // Idle shell: nothing live follows. A focus report and a modified F3
+    // (which looks like a cursor report) still reach the shell.
+    act(() => t.handlers.data?.("\x1b[I"));
+    act(() => t.handlers.data?.("\x1b[1;5R"));
+    expect(upstream()).toEqual(["\x1b[I", "\x1b[1;5R"]);
+  });
+
+  it("passes reply-shaped user input while a replay is still being parsed", async () => {
+    harness.emitReplies = true;
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, replayBytes: 4 });
+    feedBytes("\x1b[6n");
+    // Parse the open marker only: xterm is inside the replayed bytes.
+    act(() => t.drainWrites(1));
+    act(() => {
+      t.host?.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
+      t.handlers.data?.("\x1b[1;5R");
+    });
+    // Without a DOM input event the same bytes are a reply to replay.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => t.handlers.data?.("\x1b[1;1R"));
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[1;5R"]);
   });
 
   it("keeps keystrokes typed while a replay is parsed", async () => {

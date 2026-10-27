@@ -1263,12 +1263,27 @@ export function XtermView(props: XtermViewProps) {
       void doAttach();
     }, 0);
 
+    // onData raised while a DOM input event is being dispatched comes from the
+    // user (keys, paste, focus reports, mouse), never from parsing output,
+    // even when it looks like a query reply (modified F3 matches CPR).
+    let userEvent = false;
+    const userEventHost = hostRef.current;
+    const USER_EVENTS = [
+      "keydown", "keypress", "input", "paste", "compositionend", "focus", "blur", "mousedown", "mouseup", "wheel",
+    ] as const;
+    const markUserEvent = () => {
+      userEvent = true;
+      queueMicrotask(() => {
+        userEvent = false;
+      });
+    };
+    for (const type of USER_EVENTS) userEventHost.addEventListener(type, markUserEvent, true);
     const dataDisposable = term.onData((raw) => {
       // A Ctrl/Alt latched on the key bar applies to the next character typed into the focused terminal.
       const data = term.textarea && document.activeElement === term.textarea ? applyStickyModifiersToTyped(raw) : raw;
       // A reply xterm produced while parsing replayed output answers a query
       // the live shell is not asking now: drop it.
-      if (replayParsing && isAutomaticTerminalReply(raw)) return;
+      if (replayParsing && !userEvent && isAutomaticTerminalReply(raw)) return;
       // Input in a visible pane switches hidden panes to the conservative drain tier.
       if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
       blocks.feedInput(data);
@@ -1447,6 +1462,7 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("paste", onPasteCapture, true);
       pasteHost.removeEventListener("dragover", onDragOver);
       pasteHost.removeEventListener("drop", onDropCapture, true);
+      for (const type of USER_EVENTS) userEventHost.removeEventListener(type, markUserEvent, true);
       pasteHost.removeEventListener("touchstart", trackTouch, true);
       pasteHost.removeEventListener("touchmove", trackTouch, true);
       pasteHost.removeEventListener("touchstart", onTapStart, true);

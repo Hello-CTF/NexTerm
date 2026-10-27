@@ -29,8 +29,8 @@ import { STREAM_MAX_PENDING_BYTES } from "./terminalBudget";
 // Replayed bytes (history redelivered on attach, reattach or recovery, never
 // new output) are pushed with replay set. Their OSC events are dispatched
 // with the replay flag, and onReplayChange reports exactly when xterm starts
-// and finishes parsing them: an empty write ahead of the first replayed unit
-// and after the last one fires its callback in parse order. A sequence counts
+// and finishes parsing them: empty writes before and after each replayed unit
+// fire their callbacks in parse order. A sequence counts
 // as replay when its final byte arrives in replayed bytes.
 export { STREAM_HIGH_WATER_BYTES, STREAM_LOW_WATER_BYTES, STREAM_MAX_PENDING_BYTES } from "./terminalBudget";
 
@@ -128,8 +128,6 @@ export function createTerminalStreamWriter(
   let suppressedEvents = 0;
   let refusedBytes = 0;
   let lastUnit: WriteUnit | null = null;
-  // Whether the last unit handed to xterm was replayed bytes.
-  let handedReplay = false;
   const emptyWrite = new Uint8Array(0);
 
   const pendingBytes = () => queuedBytes + inFlightBytes + filter.pendingBytes();
@@ -165,12 +163,15 @@ export function createTerminalStreamWriter(
         queuedBytes -= unit.data.length;
         inFlight.push(unit);
         inFlightBytes += unit.data.length;
-        if (unit.replay !== handedReplay) {
-          handedReplay = unit.replay;
-          const replaying = unit.replay;
-          term.write(emptyWrite, () => options.onReplayChange?.(replaying));
+        if (unit.replay) {
+          // Bracket each replayed unit so the replay state closes as soon as
+          // its last byte is parsed, even when no live output follows.
+          term.write(emptyWrite, () => options.onReplayChange?.(true));
+          term.write(unit.data, () => complete(unit));
+          term.write(emptyWrite, () => options.onReplayChange?.(false));
+        } else {
+          term.write(unit.data, () => complete(unit));
         }
-        term.write(unit.data, () => complete(unit));
         if (inFlightBytes >= highWaterBytes) setPaused(true);
       }
     } finally {
