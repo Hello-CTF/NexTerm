@@ -1240,15 +1240,22 @@ func (m *Manager) releaseChannelReservation(tabID, channelID string, incarnation
 }
 
 // answeringLocked reports whether a client whose terminal emulator answers
-// queries is attached. Callers hold t.mu.
+// queries is attached and taking output now. A paused subscriber (refusing
+// output) or one whose fanout entry was aborted would answer late or never,
+// so the headless screen answers instead and the range is announced as
+// answered. Callers hold t.mu.
 func (t *Tab) answeringLocked() bool {
 	if t.controller != "" {
 		return true
 	}
-	for _, subscriber := range t.subscribers {
-		if subscriber.answers {
-			return true
+	for channelID, subscriber := range t.subscribers {
+		if !subscriber.answers || subscriber.paused {
+			continue
 		}
+		if t.fanout != nil && !t.fanout.Has(channelID) {
+			continue
+		}
+		return true
 	}
 	return false
 }
