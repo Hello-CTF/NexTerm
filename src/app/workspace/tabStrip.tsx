@@ -5,6 +5,7 @@ import { useTerminalTabTitle } from "../terminalViewStore";
 import { fileVisual } from "../../features/files/fileTypes";
 import { useAssetProductionClassification } from "../../features/production/productionSettings";
 import {
+  reshowPersistenceHint,
   usePersistenceFailureMark,
   usePersistenceTabNote,
   type PersistenceTabInfo,
@@ -63,7 +64,8 @@ export function tabTooltip(t: AppTab, unread: boolean, live: PersistenceTabInfo 
 }
 
 // A durable terminal tab carries a small persistence mark before its title; regular tabs carry none. A failure
-// hint the user dismissed while it still applies leaves a red dot that names it.
+// hint the user dismissed while it still applies leaves a red dot that names it and shows the hint again; its hit
+// area extends past the dot without taking layout space.
 export function TabPersistenceMark({ tab }: { tab: AppTab }) {
   const failure = usePersistenceFailureMark(tab.id);
   if (tab.kind !== "terminal") return null;
@@ -75,7 +77,13 @@ export function TabPersistenceMark({ tab }: { tab: AppTab }) {
         </span>
       )}
       {failure && (
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" role="img" aria-label={failure} title={failure} />
+        <button
+          type="button"
+          className="relative h-1.5 w-1.5 shrink-0 rounded-full bg-red-500 p-0 before:absolute before:-inset-2 before:content-['']"
+          aria-label={`重新显示提示：${failure}`}
+          title={failure}
+          onClick={() => reshowPersistenceHint(tab.id)}
+        />
       )}
     </>
   );

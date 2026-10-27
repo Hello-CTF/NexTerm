@@ -9,10 +9,10 @@ import { PersistenceHintBar } from "./PersistenceHintBar";
 import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage, persistenceHintNote } from "./persistenceHint";
 import {
   dismissPersistenceHint,
-  dismissedPersistenceHints,
   forgetPersistenceHints,
   prunePersistenceHints,
   publishPersistenceTab,
+  usePersistenceDismissals,
 } from "./persistenceHintStore";
 import { localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 import { showSettingsSection } from "../settings/settingsNavigation";
@@ -1245,9 +1245,8 @@ export function TerminalPane({
     regularReason,
   });
   const hintKey = hint ? persistenceHintKey(hint) : null;
-  const [dismissedHints, setDismissedHints] = useState(() => dismissedPersistenceHints(storeTabId));
+  const dismissedHints = usePersistenceDismissals(storeTabId);
   useEffect(() => {
-    setDismissedHints(dismissedPersistenceHints(storeTabId));
     const live = new Set(useUi.getState().workspaces.flatMap((ws) => ws.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id))));
     prunePersistenceHints(live);
     return () => {
@@ -1256,14 +1255,13 @@ export function TerminalPane({
     };
   }, [storeTabId]);
   const hintShown = hint !== null && hintKey !== null && !dismissedHints.has(hintKey);
-  const failureMark = hint && hintKey && !hintShown && persistenceHintFailure(hint)
-    ? persistenceHintMessage(hint, sessionKind === "local")
-    : undefined;
+  const failureKey = hint && hintKey && !hintShown && persistenceHintFailure(hint) ? hintKey : undefined;
+  const failureMark = hint && failureKey ? persistenceHintMessage(hint, sessionKind === "local") : undefined;
   const hintNote = hint ? persistenceHintNote(hint) : undefined;
   useEffect(() => {
     // The tab strip names the live state; a dismissed failure that still applies leaves a mark on the tab.
-    publishPersistenceTab(storeTabId, { note: hintNote, failureMark });
-  }, [storeTabId, hintNote, failureMark]);
+    publishPersistenceTab(storeTabId, { note: hintNote, failureMark, failureKey });
+  }, [storeTabId, hintNote, failureMark, failureKey]);
   const hintShownRef = useRef(hintShown);
   hintShownRef.current = hintShown && visible !== false;
 
@@ -2171,7 +2169,7 @@ export function TerminalPane({
           local={sessionKind === "local"}
           onOpenDurable={durableHelper ? openDurableTerminal : undefined}
           onManageHelper={manageHelper}
-          onDismiss={() => setDismissedHints(dismissPersistenceHint(storeTabId, hintKey))}
+          onDismiss={() => dismissPersistenceHint(storeTabId, hintKey)}
         />
       )}
 

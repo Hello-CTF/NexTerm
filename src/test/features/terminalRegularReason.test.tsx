@@ -281,10 +281,10 @@ afterEach(() => {
   while (marks.length) marks.pop()?.unmount();
 });
 
-function tabMark(): Element | null {
+function tabMark(): HTMLButtonElement | null {
   const view = mount(createElement(TabPersistenceMark, { tab: storeTab()! }));
   marks.push(view);
-  return view.container.querySelector('[role="img"]');
+  return view.container.querySelector<HTMLButtonElement>('button[aria-label^="重新显示提示"]');
 }
 
 describe("persistence hint bar", () => {
@@ -521,9 +521,15 @@ describe("persistence hint bar", () => {
     expect(tabMark()).toBeNull();
 
     act(() => hintButton("关闭提示")?.click());
+    expect(hintBar()).toBeNull();
     const mark = tabMark();
     expect(mark?.getAttribute("aria-label")).toContain("创建持久终端失败，已改用普通终端");
-    expect(mark?.getAttribute("title")).toBe(mark?.getAttribute("aria-label"));
+    expect(mark?.getAttribute("title")).toContain("创建持久终端失败，已改用普通终端");
+
+    act(() => mark?.click());
+    await flush();
+    expect(hintBar()?.dataset.tone).toBe("danger");
+    expect(tabMark()).toBeNull();
   });
 
   it("leaves no mark after an expected limitation is dismissed", async () => {
