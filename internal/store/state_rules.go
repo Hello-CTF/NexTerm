@@ -362,6 +362,7 @@ func (s *Store) StateRuleReorder(ctx context.Context, order []string) ([]StateRu
 			rows, err := rule.WithContext(ctx).
 				Clauses(clause.Locking{Strength: "UPDATE"}).
 				Where(ownerConditions(ctx, rule.TableName())...).
+				Order(rule.ID).
 				Find()
 			if err != nil {
 				return err

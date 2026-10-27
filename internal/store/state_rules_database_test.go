@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -443,5 +444,64 @@ func TestValidateStateRuleInputChecksOneRule(t *testing.T) {
 			_, err := store.ValidateStateRuleInput(input)
 			requireStateRuleCode(t, err, ipc.CodeBadParam)
 		})
+	}
+}
+
+func TestStateRuleReorderConcurrentDatabase(t *testing.T) {
+	db := dbtest.NewFixture(t).OpenStore(t)
+	ctx := ipc.WithUserID(context.Background(), "state-rule-reorder-concurrent")
+	var base []string
+	for i := range 6 {
+		row, err := db.StateRuleSave(ctx, stateRuleInput(fmt.Sprintf("rule-%d", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		base = append(base, row.ID)
+	}
+	const workers, rounds = 4, 5
+	deadline, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	done := make(chan error, workers)
+	for w := range workers {
+		go func() {
+			for r := range rounds {
+				// Odd workers reverse the rotation so concurrent
+				// transactions disagree about the order.
+				order := make([]string, len(base))
+				for i := range base {
+					j := (i + r + w) % len(base)
+					if w%2 == 1 {
+						j = len(base) - 1 - j
+					}
+					order[i] = base[j]
+				}
+				if _, err := db.StateRuleReorder(deadline, order); err != nil {
+					done <- err
+					return
+				}
+			}
+			done <- nil
+		}()
+	}
+	for range workers {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-deadline.Done():
+			t.Fatal("concurrent reorders did not finish in 20s (possible deadlock)")
+		}
+	}
+	rows := mustStateRuleList(t, db, ctx)
+	if len(rows) != len(base) {
+		t.Fatalf("rules after reorders = %d, want %d", len(rows), len(base))
+	}
+	positions := map[int64]bool{}
+	for _, row := range rows {
+		positions[row.Position] = true
+	}
+	if len(positions) != len(base) {
+		t.Fatalf("positions are not unique: %+v", rows)
 	}
 }
