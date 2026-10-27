@@ -38,6 +38,7 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
       <button
         type="button"
         className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:cursor-default"
+        style={wailsNoDragRegionStyle}
         disabled={!reachable}
         title={reachable ? "转到该终端" : "此端没有打开这个终端"}
         onClick={open}
@@ -57,6 +58,7 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
       <button
         type="button"
         className="nx-icon-btn shrink-0"
+        style={wailsNoDragRegionStyle}
         aria-label={`标记 ${entry.title} 为已读`}
         title="标记为已读（所有设备）"
         disabled={marking}
@@ -130,6 +132,7 @@ export function InboxButton() {
         className={`nx-icon-btn relative ${open ? "is-active" : ""}`}
         title={label}
         aria-label={label}
+        style={wailsNoDragRegionStyle}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => {
@@ -144,12 +147,13 @@ export function InboxButton() {
               needsMe ? "bg-amber-400" : "bg-emerald-400"
             }`}
             data-inbox-count={count}
+            style={wailsNoDragRegionStyle}
           >
             {count > 99 ? "99+" : count}
           </span>
         )}
       </button>
-      <span role="status" aria-live="polite" className={
+      <span role="status" aria-live="polite" style={wailsNoDragRegionStyle} className={
           cue && !open
             ? "pointer-events-none absolute right-0 top-[30px] z-40 whitespace-nowrap rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11.5px] text-neutral-300 shadow-lg"
             : "sr-only"
@@ -162,6 +166,7 @@ export function InboxButton() {
           role="dialog"
           aria-label="收件箱"
           tabIndex={-1}
+          style={wailsNoDragRegionStyle}
           className="nx-inbox-panel fixed inset-x-2 top-[calc(var(--nx-inset-top,0px)+42px)] z-50 max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1.5 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-[30px] sm:w-[360px]"
         >
           {!guidanceDismissed && <InboxGuidance onNavigate={() => setOpen(false)} />}
