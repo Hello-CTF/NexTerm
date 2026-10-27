@@ -86,7 +86,7 @@ func waitForTabFeed(t *testing.T, tab *Tab, ok func(TabInfo) bool) {
 	}
 }
 
-// Clearing a durable tab's custom title also drops the persisted title, so a
+// Clearing a durable tab's custom title also clears the helper's title, so a
 // restart does not resurrect it.
 func TestDurableBlankRenameDropsPersistedTitle(t *testing.T) {
 	provider := newFakeDurableProvider()
@@ -102,8 +102,8 @@ func TestDurableBlankRenameDropsPersistedTitle(t *testing.T) {
 	if cleared.TitleCustom {
 		t.Fatalf("cleared info = %+v", cleared)
 	}
-	if got := provider.DurableTabTitleContext(context.Background(), info.ID); got != "" {
-		t.Fatalf("persisted title after clear = %q", got)
+	if got := fakeDescriptorTitle(t, provider, info.ID); got != "" {
+		t.Fatalf("helper title after clear = %q", got)
 	}
 }
 

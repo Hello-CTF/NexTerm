@@ -489,60 +489,6 @@ func TestDurableTranscriptOffsetRoundtrip(t *testing.T) {
 	}
 }
 
-func TestDurableTabTitleRoundtrip(t *testing.T) {
-	ctx := context.Background()
-	db := testStore(t)
-	title, err := db.DurableTabTitleGet(ctx, "tab-missing")
-	if err != nil || title != "" {
-		t.Fatalf("missing title = %q err=%v", title, err)
-	}
-	if err := db.DurableTabTitleSet(ctx, "tab-1", "构建机"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.DurableTabTitleSet(ctx, "tab-1", "部署终端"); err != nil {
-		t.Fatal(err)
-	}
-	title, err = db.DurableTabTitleGet(ctx, "tab-1")
-	if err != nil || title != "部署终端" {
-		t.Fatalf("title = %q err=%v", title, err)
-	}
-	if err := db.DurableTabTitleDelete(ctx, "tab-1"); err != nil {
-		t.Fatal(err)
-	}
-	title, err = db.DurableTabTitleGet(ctx, "tab-1")
-	if err != nil || title != "" {
-		t.Fatalf("title after delete = %q err=%v", title, err)
-	}
-}
-
-func TestDurableTabTitleDecisionTimeRoundtrip(t *testing.T) {
-	ctx := context.Background()
-	db := testStore(t)
-	if changedAt, err := db.DurableTabTitleChangedAt(ctx, "tab-missing"); err != nil || changedAt != 0 {
-		t.Fatalf("missing changedAt = %d err=%v", changedAt, err)
-	}
-	if err := db.DurableTabTitleSetAt(ctx, "tab-1", "构建机", 1_000); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.DurableTabTitleSetAt(ctx, "tab-1", "部署终端", 2_000); err != nil {
-		t.Fatal(err)
-	}
-	title, err := db.DurableTabTitleGet(ctx, "tab-1")
-	if err != nil || title != "部署终端" {
-		t.Fatalf("title = %q err=%v", title, err)
-	}
-	if changedAt, err := db.DurableTabTitleChangedAt(ctx, "tab-1"); err != nil || changedAt != 2_000 {
-		t.Fatalf("changedAt = %d err=%v", changedAt, err)
-	}
-	// The legacy setter records no decision time.
-	if err := db.DurableTabTitleSet(ctx, "tab-1", "运维"); err != nil {
-		t.Fatal(err)
-	}
-	if changedAt, err := db.DurableTabTitleChangedAt(ctx, "tab-1"); err != nil || changedAt != 0 {
-		t.Fatalf("legacy changedAt = %d err=%v", changedAt, err)
-	}
-}
-
 func TestDurableTranscriptOffsetAppendAccumulates(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)
@@ -965,28 +911,6 @@ func requireNoDurableOffsetRow(t *testing.T, db *Store, durableID string) {
 	}
 }
 
-func requireDurableTabTitleRow(t *testing.T, db *Store, durableID, owner, title string) {
-	t.Helper()
-	var row DurableTabTitle
-	if err := db.GORM().Model(&DurableTabTitle{}).Where("durable_id = ?", durableID).First(&row).Error; err != nil {
-		t.Fatalf("durable tab title row %s: %v", durableID, err)
-	}
-	if row.OwnerID != owner || row.Title != title {
-		t.Fatalf("durable tab title row %s = owner %q title %q, want owner %q title %q", durableID, row.OwnerID, row.Title, owner, title)
-	}
-}
-
-func requireNoDurableTabTitleRow(t *testing.T, db *Store, durableID string) {
-	t.Helper()
-	var count int64
-	if err := db.GORM().Model(&DurableTabTitle{}).Where("durable_id = ?", durableID).Count(&count).Error; err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("unexpected durable tab title row for %s", durableID)
-	}
-}
-
 func requireTranscriptTombstoneOwner(t *testing.T, db *Store, id, owner string, want bool) {
 	t.Helper()
 	var count int64
@@ -1184,47 +1108,4 @@ func TestDurableTranscriptOffsetGuardedSeedAndDeleteRace(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireNoDurableOffsetRow(t, db, "race-durable")
-}
-
-func TestDurableTabTitleOwnerGuard(t *testing.T) {
-	ctx := context.Background()
-	ctxA := ipc.WithUserID(ctx, "owner-a")
-	ctxB := ipc.WithUserID(ctx, "owner-b")
-	db := testStore(t)
-
-	if err := db.DurableTabTitleSet(ctxB, "title-shared", "bravo"); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableTabTitleRow(t, db, "title-shared", "owner-b", "bravo")
-
-	// A foreign owner cannot overwrite the title; the guarded update is a no-op.
-	if err := db.DurableTabTitleSet(ctxA, "title-shared", "alpha"); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableTabTitleRow(t, db, "title-shared", "owner-b", "bravo")
-	if title, err := db.DurableTabTitleGet(ctxA, "title-shared"); err != nil || title != "" {
-		t.Fatalf("owner-a scoped title = %q, %v", title, err)
-	}
-	if title, err := db.DurableTabTitleGet(ctxB, "title-shared"); err != nil || title != "bravo" {
-		t.Fatalf("owner-b scoped title = %q, %v", title, err)
-	}
-
-	// A legacy ownerless row is claimed by the first owner that sets it.
-	if err := db.GORM().Create(&DurableTabTitle{DurableID: "title-legacy", Title: "legacy", UpdatedAt: ids.NowMS(), OwnerID: ""}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.DurableTabTitleSet(ctxA, "title-legacy", "claimed"); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableTabTitleRow(t, db, "title-legacy", "owner-a", "claimed")
-
-	// Deletes are guarded the same way.
-	if err := db.DurableTabTitleDeleteIfOwned(ctx, "title-shared", "owner-a"); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableTabTitleRow(t, db, "title-shared", "owner-b", "bravo")
-	if err := db.DurableTabTitleDeleteIfOwned(ctx, "title-shared", "owner-b"); err != nil {
-		t.Fatal(err)
-	}
-	requireNoDurableTabTitleRow(t, db, "title-shared")
 }

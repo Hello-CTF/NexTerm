@@ -15,14 +15,12 @@ import (
 type ownerScopedStore struct {
 	mu      sync.Mutex
 	offsets map[string]map[string]int64
-	titles  map[string]map[string]string
 	calls   []string
 }
 
 func newOwnerScopedStore() *ownerScopedStore {
 	return &ownerScopedStore{
 		offsets: make(map[string]map[string]int64),
-		titles:  make(map[string]map[string]string),
 	}
 }
 
@@ -67,37 +65,7 @@ func (s *ownerScopedStore) DeleteDurableTranscriptOffsetContext(ctx context.Cont
 	delete(s.offsets[owner], tabID)
 }
 
-func (s *ownerScopedStore) DurableTabTitleContext(ctx context.Context, tabID string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	owner := userIDFromContext(ctx)
-	s.record("title", owner)
-	return s.titles[owner][tabID]
-}
-
-func (s *ownerScopedStore) PersistDurableTabTitleContext(ctx context.Context, tabID, title string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	owner := userIDFromContext(ctx)
-	s.record("title-write", owner)
-	if s.titles[owner] == nil {
-		s.titles[owner] = make(map[string]string)
-	}
-	s.titles[owner][tabID] = title
-}
-
-func (s *ownerScopedStore) DeleteDurableTabTitleContext(ctx context.Context, tabID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	owner := userIDFromContext(ctx)
-	s.record("title-delete", owner)
-	delete(s.titles[owner], tabID)
-}
-
-var (
-	_ OwnerScopedDurableTranscriptOffsetStore = (*ownerScopedStore)(nil)
-	_ OwnerScopedDurableTabTitleStore         = (*ownerScopedStore)(nil)
-)
+var _ OwnerScopedDurableTranscriptOffsetStore = (*ownerScopedStore)(nil)
 
 // ListDurableDescriptors reports each live record with the incarnation a
 // helper listing carries, so recovery can use checked attach.
@@ -123,7 +91,6 @@ func TestDurableOffsetCatchUpIsOwnerScoped(t *testing.T) {
 			Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
 			DurableResolver:   &countingResolver{provider: provider},
 			TranscriptOffsets: store,
-			TabTitles:         store,
 		})
 		t.Cleanup(func() { _ = manager.Close() })
 		return manager
@@ -190,7 +157,6 @@ func TestContextDurableStoreWorksWithEmptyOwner(t *testing.T) {
 			Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
 			DurableResolver:   &countingResolver{provider: provider},
 			TranscriptOffsets: store,
-			TabTitles:         store,
 			OpenAccess:        true,
 		})
 		t.Cleanup(func() { _ = manager.Close() })
@@ -235,9 +201,6 @@ func TestContextDurableStoreWorksWithEmptyOwner(t *testing.T) {
 	if err := recoveredManager.CloseTab(tabID); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := store.titles[""][tabID]; ok {
-		t.Fatal("empty-owner title survived durable close")
-	}
 	if _, ok := store.offsets[""][tabID]; ok {
 		t.Fatal("empty-owner offset survived durable close")
 	}
@@ -250,7 +213,6 @@ func TestReconnectSecondPeriodCarriesOwner(t *testing.T) {
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
 		DurableResolver:   &countingResolver{provider: provider},
 		TranscriptOffsets: store,
-		TabTitles:         store,
 		ReconnectBackoff:  []time.Duration{0},
 	})
 	t.Cleanup(func() { _ = manager.Close() })

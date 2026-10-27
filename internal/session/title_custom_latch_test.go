@@ -52,7 +52,7 @@ func TestDurableRecoverEmptyCanonicalTitleKeepsOSCTitle(t *testing.T) {
 	}
 	if _, err := manager.OpenTab(ctx, OpenTabOptions{
 		TabID: tabID, SessionID: connected.ID, Cols: 80, Rows: 24, Detached: true,
-		Durable: &DurableTabOptions{Recover: true, CanonicalMetadata: true, Title: "", Identity: recoveryIdentity(manager, tabID)},
+		Durable: &DurableTabOptions{Recover: true, Title: "", Identity: recoveryIdentity(manager, tabID)},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestDurableRecoverCanonicalTitleLatchesCustom(t *testing.T) {
 	}
 	if _, err := manager.OpenTab(ctx, OpenTabOptions{
 		TabID: tabID, SessionID: connected.ID, Cols: 80, Rows: 24, Detached: true,
-		Durable: &DurableTabOptions{Recover: true, CanonicalMetadata: true, Title: "deploy", Identity: recoveryIdentity(manager, tabID)},
+		Durable: &DurableTabOptions{Recover: true, Title: "deploy", Identity: recoveryIdentity(manager, tabID)},
 	}); err != nil {
 		t.Fatal(err)
 	}

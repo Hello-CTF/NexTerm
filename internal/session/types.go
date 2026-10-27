@@ -163,7 +163,6 @@ type Config struct {
 	// tabs of the context's owner; nil or zero uses the helper default.
 	DurableHistoryLimit func(context.Context) uint64
 	TranscriptOffsets   OwnerScopedDurableTranscriptOffsetStore
-	TabTitles           OwnerScopedDurableTabTitleStore
 	Hub                 *hub.Hub
 	Emitter             Emitter
 	Transcripts         TranscriptSink
@@ -514,14 +513,15 @@ type OpenTabOptions struct {
 }
 
 type DurableTabOptions struct {
-	Command           []string
-	Dir               string
-	Env               []string
-	Recover           bool
-	Identity          *base.DurableIdentity
-	Title             string
-	MetadataRevision  uint64
-	CanonicalMetadata bool
+	Command  []string
+	Dir      string
+	Env      []string
+	Recover  bool
+	Identity *base.DurableIdentity
+	// Title and MetadataRevision are the helper descriptor's canonical
+	// metadata a recovery starts from.
+	Title            string
+	MetadataRevision uint64
 	// RecoveredExited carries the authoritative dead state from the descriptor used for recovery.
 	RecoveredExited bool
 }

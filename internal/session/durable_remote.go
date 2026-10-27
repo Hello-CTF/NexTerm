@@ -765,7 +765,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 	options.TabID = tabID
 	options.SessionID = selected.sessionID
 	options.Durable = &DurableTabOptions{
-		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision, CanonicalMetadata: true,
+		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision,
 		RecoveredExited: selected.descriptor.Dead,
 	}
 	if selected.descriptor.Incarnation != "" {

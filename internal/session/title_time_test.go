@@ -64,7 +64,7 @@ func TestDurableCanonicalRecoveryStampsDecisionTime(t *testing.T) {
 	before := time.Now().UnixMilli()
 	info, err := manager.OpenTab(ctx, OpenTabOptions{
 		TabID: tabID, SessionID: connected.ID, Cols: 80, Rows: 24, Detached: true,
-		Durable: &DurableTabOptions{Recover: true, CanonicalMetadata: true, Title: "deploy", Identity: recoveryIdentity(manager, tabID)},
+		Durable: &DurableTabOptions{Recover: true, Title: "deploy", Identity: recoveryIdentity(manager, tabID)},
 	})
 	if err != nil {
 		t.Fatal(err)

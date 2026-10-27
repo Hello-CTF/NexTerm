@@ -19,7 +19,6 @@ var errFakeDurableIdentity = errors.New("fake durable identity changed")
 type fakeDurableProvider struct {
 	mu            sync.Mutex
 	records       map[string]*fakeDurableRecord
-	titles        map[string]string
 	createOptions []base.DurableCreateOptions
 	createCalls   int
 	attachCalls   int
@@ -51,7 +50,7 @@ type fakeDurableAttachment struct {
 }
 
 func newFakeDurableProvider() *fakeDurableProvider {
-	return &fakeDurableProvider{records: make(map[string]*fakeDurableRecord), titles: make(map[string]string)}
+	return &fakeDurableProvider{records: make(map[string]*fakeDurableRecord)}
 }
 
 func (p *fakeDurableProvider) Create(_ context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
@@ -212,24 +211,6 @@ func (p *fakeDurableProvider) DeleteDurableTranscriptOffsetContext(_ context.Con
 	}
 }
 
-func (p *fakeDurableProvider) DurableTabTitleContext(_ context.Context, tabID string) string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.titles[tabID]
-}
-
-func (p *fakeDurableProvider) PersistDurableTabTitleContext(_ context.Context, tabID, title string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.titles[tabID] = title
-}
-
-func (p *fakeDurableProvider) DeleteDurableTabTitleContext(_ context.Context, tabID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.titles, tabID)
-}
-
 func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurableRecord) *fakeDurableAttachment {
 	channel := newFakeChannel(0)
 	channel.id = id
@@ -373,9 +354,6 @@ func newDurableTestManager(t *testing.T, provider base.DurableProvider) (*Manage
 	if store, ok := provider.(OwnerScopedDurableTranscriptOffsetStore); ok {
 		config.TranscriptOffsets = store
 	}
-	if store, ok := provider.(OwnerScopedDurableTabTitleStore); ok {
-		config.TabTitles = store
-	}
 	manager := NewManager(config)
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(context.Background(), Asset{ID: ids.New(), Kind: KindLocal})
@@ -418,7 +396,7 @@ func recoverCanonicalDurableTestTab(t *testing.T, manager *Manager, connected *S
 		info, err := manager.OpenTab(context.Background(), OpenTabOptions{
 			TabID: id, SessionID: connected.ID, ClientID: "client-a", ChannelID: channel, Cols: 80, Rows: 24,
 			Durable: &DurableTabOptions{
-				Recover: true, Identity: &identity, CanonicalMetadata: true,
+				Recover: true, Identity: &identity,
 				Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision,
 			},
 		})
