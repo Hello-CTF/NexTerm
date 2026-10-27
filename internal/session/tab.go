@@ -2143,12 +2143,12 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 	// wait forever. Attach holds the feed gate, so no client can appear
 	// between this decision and the parse; a detach racing it leaves the
 	// range live, so the client answers it if it resumes.
-	unanswered := tab.answeringLocked()
+	clientAnswers := tab.answeringLocked()
 	kind := ""
 	switch {
 	case replay:
 		kind = classReplay
-	case !unanswered:
+	case !clientAnswers:
 		kind = classAnswered
 	}
 	var classFrame []byte
@@ -2166,7 +2166,7 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 	if source, ok := tab.terminal.(interface {
 		FeedWith([]byte, terminal.FeedOptions)
 	}); ok {
-		source.FeedWith(data, terminal.FeedOptions{Replay: replay, Unanswered: unanswered})
+		source.FeedWith(data, terminal.FeedOptions{Replay: replay, Unanswered: clientAnswers})
 	} else {
 		tab.terminal.Feed(data)
 	}
