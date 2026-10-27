@@ -25,6 +25,34 @@ func stateRuleInput(pattern string) store.StateRuleInput {
 	return store.StateRuleInput{Scope: store.StateRuleScopeGlobal, Region: staterule.RegionBottom, Pattern: pattern, State: "needs_me", Enabled: true}
 }
 
+func createStateRuleAsset(t *testing.T, db *store.Store, ctx context.Context, name string) store.AssetRow {
+	t.Helper()
+	asset, err := db.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: name, OptionsJSON: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return asset
+}
+
+func stateRuleByID(t *testing.T, rows []store.StateRuleRow, id string) store.StateRuleRow {
+	t.Helper()
+	for _, row := range rows {
+		if row.ID == id {
+			return row
+		}
+	}
+	t.Fatalf("rule %s not found in %+v", id, rows)
+	return store.StateRuleRow{}
+}
+
+func stateRuleIDs(rows []store.StateRuleRow) []string {
+	result := make([]string, len(rows))
+	for i, row := range rows {
+		result[i] = row.ID
+	}
+	return result
+}
+
 func TestStateRuleCRUDAndOwnershipDatabase(t *testing.T) {
 	db := dbtest.NewFixture(t).OpenStore(t)
 	ctxA := ipc.WithUserID(context.Background(), "state-rule-owner-a")
@@ -37,12 +65,25 @@ func TestStateRuleCRUDAndOwnershipDatabase(t *testing.T) {
 	if !ids.Valid(created.ID) || created.RegionLines != staterule.DefaultLines || created.Name != "Waiting for (you|review)" || created.UpdatedAt == 0 {
 		t.Fatalf("created = %+v", created)
 	}
+	assetA := createStateRuleAsset(t, db, ctxA, "a-host")
+	assetB := createStateRuleAsset(t, db, ctxB, "b-host")
 	host := stateRuleInput(`esc to interrupt`)
-	host.Scope, host.AssetID, host.State, host.Name = store.StateRuleScopeHost, ids.New(), "running", "agent thinking"
+	host.Scope, host.AssetID, host.State, host.Name = store.StateRuleScopeHost, assetA.ID, "running", "agent thinking"
 	hostRule, err := db.StateRuleSave(ctxA, host)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if hostRule.Position <= created.Position {
+		t.Fatalf("positions %d then %d", created.Position, hostRule.Position)
+	}
+	// A host-scoped rule must name one of the owner's own assets.
+	foreign := host
+	foreign.AssetID = assetB.ID
+	_, err = db.StateRuleSave(ctxA, foreign)
+	requireStateRuleCode(t, err, ipc.CodeBadParam)
+	foreign.AssetID = ids.New()
+	_, err = db.StateRuleSave(ctxA, foreign)
+	requireStateRuleCode(t, err, ipc.CodeBadParam)
 	if rows, err := db.StateRuleList(ctxB); err != nil || len(rows) != 0 {
 		t.Fatalf("other owner sees %d rules, %v", len(rows), err)
 	}
@@ -104,12 +145,32 @@ func TestStateRuleCRUDAndOwnershipDatabase(t *testing.T) {
 		t.Fatalf("rules for a host do not form a valid set: %v", err)
 	}
 
+	// The list keeps the order of the saves; an edit keeps the position.
+	rows, err := db.StateRuleList(ctxA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stateRuleIDs(rows), []string{created.ID, hostRule.ID, globalRule.ID}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("list order = %v, want %v", got, want)
+	}
+	before, err := db.StateRuleFingerprint(ctxA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if err := db.StateRuleDelete(ctxA, hostRule.ID); err != nil {
 		t.Fatal(err)
 	}
 	requireStateRuleCode(t, db.StateRuleDelete(ctxA, hostRule.ID), ipc.CodeNotFound)
 	if rows, err := db.StateRuleList(ctxA); err != nil || len(rows) != 2 {
 		t.Fatalf("after delete: %d rules, %v", len(rows), err)
+	}
+	after, err := db.StateRuleFingerprint(ctxA)
+	if err != nil || after == before || after.Count != 2 {
+		t.Fatalf("fingerprint %+v -> %+v, %v", before, after, err)
+	}
+	if empty, err := db.StateRuleFingerprint(ipc.WithUserID(context.Background(), "state-rule-nobody")); err != nil || empty != (store.StateRuleFingerprint{}) {
+		t.Fatalf("empty fingerprint = %+v, %v", empty, err)
 	}
 }
 
@@ -153,6 +214,18 @@ func TestStateRuleLimitsDatabase(t *testing.T) {
 	}
 }
 
+func stateRuleInputsFromRows(rows []store.StateRuleRow) []store.StateRuleInput {
+	inputs := make([]store.StateRuleInput, len(rows))
+	for i, row := range rows {
+		inputs[i] = store.StateRuleInput{
+			ID: row.ID, Name: row.Name, Scope: row.Scope, AssetID: row.AssetID, Region: row.Region,
+			Lines: row.RegionLines, Pattern: row.Pattern, State: row.TargetState, Keys: row.KeySequence,
+			Enabled: row.Enabled, UpdatedAt: row.UpdatedAt,
+		}
+	}
+	return inputs
+}
+
 func TestStateRuleImportRoundTripDatabase(t *testing.T) {
 	db := dbtest.NewFixture(t).OpenStore(t)
 	ctxA := ipc.WithUserID(context.Background(), "state-rule-import-a")
@@ -163,57 +236,68 @@ func TestStateRuleImportRoundTripDatabase(t *testing.T) {
 	}
 	second := stateRuleInput(`✳`)
 	second.Region, second.Keys = staterule.RegionTitle, "\r"
-	if _, err := db.StateRuleSave(ctxA, second); err != nil {
+	secondRule, err := db.StateRuleSave(ctxA, second)
+	if err != nil {
 		t.Fatal(err)
 	}
 	exported, err := db.StateRuleList(ctxA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputs := make([]store.StateRuleInput, len(exported))
-	for i, row := range exported {
-		inputs[i] = store.StateRuleInput{
-			ID: row.ID, Name: row.Name, Scope: row.Scope, AssetID: row.AssetID, Region: row.Region,
-			Lines: row.RegionLines, Pattern: row.Pattern, State: row.TargetState, Keys: row.KeySequence,
-			Enabled: row.Enabled, UpdatedAt: row.UpdatedAt,
-		}
-	}
+	inputs := stateRuleInputsFromRows(exported)
 
 	// Re-importing into the same owner changes nothing.
 	result, err := db.StateRuleImport(ctxA, inputs)
 	if err != nil || result != (store.StateRuleImportResult{Unchanged: 2}) {
 		t.Fatalf("re-import = %+v, %v", result, err)
 	}
-	// Another owner gets copies under new IDs; the originals stay.
+
+	// Another owner gets copies under derived IDs, in the order of the
+	// file; importing the same export again finds the copies.
 	result, err = db.StateRuleImport(ctxB, inputs)
 	if err != nil || result != (store.StateRuleImportResult{Created: 2}) {
 		t.Fatalf("import into another owner = %+v, %v", result, err)
+	}
+	result, err = db.StateRuleImport(ctxB, inputs)
+	if err != nil || result != (store.StateRuleImportResult{Unchanged: 2}) {
+		t.Fatalf("repeated import into another owner = %+v, %v", result, err)
 	}
 	copies, err := db.StateRuleList(ctxB)
 	if err != nil || len(copies) != 2 {
 		t.Fatalf("copies = %d, %v", len(copies), err)
 	}
+	if copies[0].Pattern != "Waiting" || copies[1].Pattern != "✳" || copies[1].KeySequence != "\r" || copies[1].Region != staterule.RegionTitle {
+		t.Fatalf("copies out of file order or missing fields: %+v", copies)
+	}
 	for _, row := range copies {
-		if row.ID == first.ID || row.ID == exported[1].ID {
-			t.Fatalf("copy reused the ID of another owner's rule: %+v", row)
+		if row.ID == first.ID || row.ID == secondRule.ID || !ids.Valid(row.ID) {
+			t.Fatalf("copy has the ID of another owner's rule or an invalid one: %+v", row)
 		}
 	}
-	titleCopies := 0
-	for _, row := range copies {
-		if row.Region == staterule.RegionTitle && row.KeySequence == "\r" && row.Pattern == "✳" {
-			titleCopies++
-		}
+	if original := stateRuleByID(t, mustStateRuleList(t, db, ctxA), first.ID); original.Pattern != "Waiting" {
+		t.Fatalf("original changed: %+v", original)
 	}
-	if titleCopies != 1 {
-		t.Fatalf("copies lost fields: %+v", copies)
+
+	// The file order decides the positions of new rules.
+	reversed := []store.StateRuleInput{stateRuleInput("third"), stateRuleInput("fourth")}
+	result, err = db.StateRuleImport(ctxA, reversed)
+	if err != nil || result.Created != 2 {
+		t.Fatalf("import of new rules = %+v, %v", result, err)
+	}
+	rows := mustStateRuleList(t, db, ctxA)
+	patterns := make([]string, len(rows))
+	for i, row := range rows {
+		patterns[i] = row.Pattern
+	}
+	if got := strings.Join(patterns, ","); got != "Waiting,✳,third,fourth" {
+		t.Fatalf("order after import = %s", got)
 	}
 
 	// A newer edit replaces the rule; an invalid one rejects the whole batch.
 	newer := inputs[0]
 	newer.Pattern, newer.UpdatedAt = "Waiting for input", inputs[0].UpdatedAt+1
-	fresh := stateRuleInput("fresh")
-	result, err = db.StateRuleImport(ctxA, []store.StateRuleInput{newer, fresh})
-	if err != nil || result != (store.StateRuleImportResult{Created: 1, Updated: 1}) {
+	result, err = db.StateRuleImport(ctxA, []store.StateRuleInput{newer})
+	if err != nil || result != (store.StateRuleImportResult{Updated: 1}) {
 		t.Fatalf("newer import = %+v, %v", result, err)
 	}
 	invalid := stateRuleInput("(bad")
@@ -222,13 +306,25 @@ func TestStateRuleImportRoundTripDatabase(t *testing.T) {
 	if !strings.Contains(err.Error(), "第 2 条") {
 		t.Fatalf("import error does not name the rule: %v", err)
 	}
-	rows, err := db.StateRuleList(ctxA)
-	if err != nil || len(rows) != 3 {
-		t.Fatalf("after the rejected import: %d rules, %v", len(rows), err)
+	// A host rule for an asset the owner does not have rejects the batch.
+	host := stateRuleInput("host")
+	host.Scope, host.AssetID = store.StateRuleScopeHost, ids.New()
+	_, err = db.StateRuleImport(ctxA, []store.StateRuleInput{host})
+	requireStateRuleCode(t, err, ipc.CodeBadParam)
+	rows = mustStateRuleList(t, db, ctxA)
+	if len(rows) != 4 {
+		t.Fatalf("after the rejected imports: %d rules", len(rows))
 	}
-	for _, row := range rows {
-		if row.ID == first.ID && row.Pattern != "Waiting for input" {
-			t.Fatalf("newer import did not land: %+v", row)
-		}
+	if got := stateRuleByID(t, rows, first.ID); got.Pattern != "Waiting for input" || got.Position != first.Position {
+		t.Fatalf("newer import did not land in place: %+v", got)
 	}
+}
+
+func mustStateRuleList(t *testing.T, db *store.Store, ctx context.Context) []store.StateRuleRow {
+	t.Helper()
+	rows, err := db.StateRuleList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
 }

@@ -38,6 +38,7 @@ func newStateRuleRow(db *gorm.DB, opts ...gen.DOOption) stateRuleRow {
 	_stateRuleRow.TargetState = field.NewString(tableName, "target_state")
 	_stateRuleRow.KeySequence = field.NewString(tableName, "key_sequence")
 	_stateRuleRow.Enabled = field.NewBool(tableName, "enabled")
+	_stateRuleRow.Position = field.NewInt64(tableName, "position")
 	_stateRuleRow.CreatedAt = field.NewInt64(tableName, "created_at")
 	_stateRuleRow.UpdatedAt = field.NewInt64(tableName, "updated_at")
 
@@ -61,6 +62,7 @@ type stateRuleRow struct {
 	TargetState field.String
 	KeySequence field.String
 	Enabled     field.Bool
+	Position    field.Int64
 	CreatedAt   field.Int64
 	UpdatedAt   field.Int64
 
@@ -90,6 +92,7 @@ func (s *stateRuleRow) updateTableName(table string) *stateRuleRow {
 	s.TargetState = field.NewString(table, "target_state")
 	s.KeySequence = field.NewString(table, "key_sequence")
 	s.Enabled = field.NewBool(table, "enabled")
+	s.Position = field.NewInt64(table, "position")
 	s.CreatedAt = field.NewInt64(table, "created_at")
 	s.UpdatedAt = field.NewInt64(table, "updated_at")
 
@@ -120,7 +123,7 @@ func (s *stateRuleRow) GetFieldByName(fieldName string) (field.OrderExpr, bool) 
 }
 
 func (s *stateRuleRow) fillFieldMap() {
-	s.fieldMap = make(map[string]field.Expr, 13)
+	s.fieldMap = make(map[string]field.Expr, 14)
 	s.fieldMap["id"] = s.ID
 	s.fieldMap["owner_id"] = s.OwnerID
 	s.fieldMap["name"] = s.Name
@@ -132,6 +135,7 @@ func (s *stateRuleRow) fillFieldMap() {
 	s.fieldMap["target_state"] = s.TargetState
 	s.fieldMap["key_sequence"] = s.KeySequence
 	s.fieldMap["enabled"] = s.Enabled
+	s.fieldMap["position"] = s.Position
 	s.fieldMap["created_at"] = s.CreatedAt
 	s.fieldMap["updated_at"] = s.UpdatedAt
 }

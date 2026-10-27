@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -135,7 +138,7 @@ func (s *Store) StateRuleList(ctx context.Context) ([]StateRuleRow, error) {
 	rows := []StateRuleRow{}
 	err := rule.WithContext(ctx).
 		Where(ownerConditions(ctx, rule.TableName())...).
-		Order(rule.CreatedAt, rule.ID).
+		Order(rule.Position, rule.CreatedAt, rule.ID).
 		Scan(&rows)
 	if err != nil {
 		return nil, dbError(err)
@@ -161,11 +164,19 @@ func (s *Store) StateRuleSave(ctx context.Context, input StateRuleInput) (StateR
 	var row StateRuleRow
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		rule := query.Use(tx).StateRuleRow
+		if err := stateRuleAssetAvailable(ctx, tx, normalized, ""); err != nil {
+			return err
+		}
 		if err := checkStateRuleLimits(ctx, tx, []StateRuleInput{normalized}); err != nil {
 			return err
 		}
 		if creating {
+			position, err := nextStateRulePosition(ctx, tx)
+			if err != nil {
+				return err
+			}
 			row = stateRuleRow(ctx, normalized, now, now)
+			row.Position = position
 			return rule.WithContext(ctx).Create(&row)
 		}
 		existing, err := rule.WithContext(ctx).
@@ -188,7 +199,7 @@ func (s *Store) StateRuleSave(ctx context.Context, input StateRuleInput) (StateR
 			return err
 		}
 		row = stateRuleRow(ctx, normalized, existing.CreatedAt, updatedAt)
-		row.OwnerID = existing.OwnerID
+		row.OwnerID, row.Position = existing.OwnerID, existing.Position
 		return nil
 	})
 	if err != nil {
@@ -205,12 +216,59 @@ func stateRuleRow(ctx context.Context, input StateRuleInput, createdAt, updatedA
 	}
 }
 
+// nextStateRulePosition is the position after the owner's last rule.
+func nextStateRulePosition(ctx context.Context, tx *gorm.DB) (int64, error) {
+	rule := query.Use(tx).StateRuleRow
+	last, err := rule.WithContext(ctx).
+		Where(ownerConditions(ctx, rule.TableName())...).
+		Order(rule.Position.Desc()).
+		First()
+	if isNoRows(err) {
+		return 1, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return last.Position + 1, nil
+}
+
+// stateRuleAssetAvailable rejects a host-scoped rule whose host is not an
+// asset of the owner.
+func stateRuleAssetAvailable(ctx context.Context, tx *gorm.DB, input StateRuleInput, prefix string) error {
+	if input.Scope != StateRuleScopeHost {
+		return nil
+	}
+	asset := query.Use(tx).AssetRow
+	row, err := asset.WithContext(ctx).
+		Where(asset.ID.Eq(input.AssetID)).
+		Where(ownerConditions(ctx, asset.TableName())...).
+		First()
+	if isNoRows(err) {
+		return badParam(fmt.Errorf("%s规则的主机不存在或不属于当前用户", prefix))
+	}
+	if err != nil {
+		return err
+	}
+	if row.DeletedAt != nil {
+		return badParam(fmt.Errorf("%s规则的主机已删除", prefix))
+	}
+	return nil
+}
+
+// importedStateRuleID is the ID a rule another owner holds is imported
+// under: derived from the owner and the original ID, so importing the same
+// export again finds the copy instead of making another.
+func importedStateRuleID(owner, id string) string {
+	sum := sha256.Sum256([]byte("state-rule\x00" + owner + "\x00" + id))
+	return strings.ToUpper(hex.EncodeToString(sum[:]))[:26]
+}
+
 // checkStateRuleLimits rejects changes that would take the owner's rules
 // beyond the rule count or the compiled pattern budget of one rule set, so
 // every subset pushed to a helper stays within the helper's limits.
 func checkStateRuleLimits(ctx context.Context, tx *gorm.DB, changes []StateRuleInput) error {
 	rule := query.Use(tx).StateRuleRow
-	rows, err := rule.WithContext(ctx).Where(ownerConditions(ctx, rule.TableName())...).Order(rule.CreatedAt, rule.ID).Find()
+	rows, err := rule.WithContext(ctx).Where(ownerConditions(ctx, rule.TableName())...).Order(rule.Position, rule.CreatedAt, rule.ID).Find()
 	if err != nil {
 		return err
 	}
@@ -267,7 +325,10 @@ func (s *Store) StateRuleDelete(ctx context.Context, id string) error {
 // StateRuleImport adds or updates rules by ID. Every rule is validated
 // first and any invalid one rejects the whole import, naming the rule. A rule
 // whose ID the owner already has replaces it only when its UpdatedAt is
-// newer; an ID another owner holds is imported under a new ID.
+// newer and keeps its position; new rules follow the owner's rules in the
+// order of the import. A rule whose ID another owner holds is imported under
+// an ID derived from the owner and that ID, so a repeated import of the same
+// export updates the copy instead of adding another.
 func (s *Store) StateRuleImport(ctx context.Context, inputs []StateRuleInput) (StateRuleImportResult, error) {
 	if len(inputs) > staterule.MaxRules {
 		return StateRuleImportResult{}, badParam(fmt.Errorf("一次最多导入 %d 条状态规则", staterule.MaxRules))
@@ -301,22 +362,46 @@ func (s *Store) StateRuleImport(ctx context.Context, inputs []StateRuleInput) (S
 		rule := query.Use(tx).StateRuleRow
 		var creates []*StateRuleRow
 		var changes []StateRuleInput
-		for _, input := range normalized {
-			existing, err := rule.WithContext(ctx).
+		position, err := nextStateRulePosition(ctx, tx)
+		if err != nil {
+			return err
+		}
+		owned := func(id string) (*StateRuleRow, error) {
+			row, err := rule.WithContext(ctx).
 				Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where(rule.ID.Eq(input.ID)).
+				Where(rule.ID.Eq(id)).
+				Where(ownerConditions(ctx, rule.TableName())...).
 				First()
-			switch {
-			case isNoRows(err):
-				row := stateRuleRow(ctx, input, now, input.UpdatedAt)
-				creates = append(creates, &row)
-				changes = append(changes, input)
-				continue
-			case err != nil:
+			if isNoRows(err) {
+				return nil, nil
+			}
+			return row, err
+		}
+		for i, input := range normalized {
+			if err := stateRuleAssetAvailable(ctx, tx, input, fmt.Sprintf("第 %d 条规则: ", i+1)); err != nil {
 				return err
-			case existing.OwnerID != ipc.OwnerID(ctx):
-				input.ID = ids.New()
+			}
+			existing, err := owned(input.ID)
+			if err != nil {
+				return err
+			}
+			if existing == nil {
+				taken, err := rule.WithContext(ctx).Where(rule.ID.Eq(input.ID)).Count()
+				if err != nil {
+					return err
+				}
+				if taken > 0 {
+					input.ID = importedStateRuleID(ipc.OwnerID(ctx), input.ID)
+					if existing, err = owned(input.ID); err != nil {
+						return err
+					}
+				}
+			}
+			switch {
+			case existing == nil:
 				row := stateRuleRow(ctx, input, now, input.UpdatedAt)
+				row.Position = position
+				position++
 				creates = append(creates, &row)
 				changes = append(changes, input)
 				continue
@@ -355,9 +440,10 @@ func (s *Store) StateRuleImport(ctx context.Context, inputs []StateRuleInput) (S
 	return result, nil
 }
 
-// StateRulesFor returns the enabled rules that apply to a host, in the order
-// a helper tries them: the host's own rules before global ones, each oldest
-// first. Rules that no longer validate are returned in skipped by ID.
+// StateRulesFor returns the enabled rules that apply to sessions created
+// through a host, in the order a helper tries them: the host's own rules
+// before global ones, each in position order. Rules that no longer validate
+// are returned in skipped by ID.
 func (s *Store) StateRulesFor(ctx context.Context, assetID string) (rules []staterule.Rule, skipped []string, err error) {
 	rows, err := s.StateRuleList(ctx)
 	if err != nil {
@@ -383,4 +469,30 @@ func (s *Store) StateRulesFor(ctx context.Context, assetID string) (rules []stat
 		}
 	}
 	return append(host, global...), skipped, nil
+}
+
+// StateRuleFingerprint summarizes the owner's rules so a cache can tell
+// whether they changed without reading them: any create, edit, import or
+// delete changes it.
+type StateRuleFingerprint struct {
+	Count   int64
+	Latest  int64
+	Updates int64
+}
+
+func (s *Store) StateRuleFingerprint(ctx context.Context) (StateRuleFingerprint, error) {
+	rule := query.Use(s.db).StateRuleRow
+	var result struct {
+		Count   int64
+		Latest  sql.NullInt64
+		Updates sql.NullInt64
+	}
+	err := rule.WithContext(ctx).
+		Select(rule.ID.Count().As("count"), rule.UpdatedAt.Max().As("latest"), rule.UpdatedAt.Sum().As("updates")).
+		Where(ownerConditions(ctx, rule.TableName())...).
+		Scan(&result)
+	if err != nil {
+		return StateRuleFingerprint{}, dbError(err)
+	}
+	return StateRuleFingerprint{Count: result.Count, Latest: result.Latest.Int64, Updates: result.Updates.Int64}, nil
 }
