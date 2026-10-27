@@ -3,6 +3,7 @@ package localhelper
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -31,13 +32,18 @@ func (h *fakeHelper) JobBound() bool             { return false }
 // InspectHelper reports, and what ConnectHelper does. A connect while a
 // helper is reported attaches to it; otherwise it "spawns" one.
 type fakeWorld struct {
-	mu        sync.Mutex
-	running   *supervisor.RunningHelper
-	connects  int
-	stops     []supervisor.RunningHelper
-	connect   func(attempt int) (helperHandle, error)
-	connected chan *fakeHelper
-	nextPID   int
+	mu      sync.Mutex
+	running *supervisor.RunningHelper
+	// inspectErr, when set, is what inspection returns instead.
+	inspectErr error
+	inspects   int
+	connects   int
+	stops      []supervisor.RunningHelper
+	connect    func(attempt int) (helperHandle, error)
+	connected  chan *fakeHelper
+	nextPID    int
+	// vanishOnAttach makes the reported helper exit before an attach.
+	vanishOnAttach bool
 }
 
 func newFakeWorld() *fakeWorld {
@@ -62,8 +68,12 @@ func (w *fakeWorld) config(t *testing.T) Config {
 		inspect: func(context.Context, string) (supervisor.RunningHelper, error) {
 			w.mu.Lock()
 			defer w.mu.Unlock()
+			w.inspects++
+			if w.inspectErr != nil {
+				return supervisor.RunningHelper{}, w.inspectErr
+			}
 			if w.running == nil {
-				return supervisor.RunningHelper{}, supervisor.ErrUnavailable
+				return supervisor.RunningHelper{}, fmt.Errorf("%w: test", supervisor.ErrHelperNotRunning)
 			}
 			return *w.running, nil
 		},
@@ -78,8 +88,13 @@ func (w *fakeWorld) config(t *testing.T) Config {
 			w.running = nil
 			return nil
 		},
-		connect: func(context.Context, supervisor.HelperConfig) (helperHandle, error) {
+		connect: func(_ context.Context, helperConfig supervisor.HelperConfig) (helperHandle, error) {
 			w.mu.Lock()
+			if helperConfig.NoSpawn && (w.running == nil || w.vanishOnAttach) {
+				w.running = nil
+				w.mu.Unlock()
+				return nil, fmt.Errorf("%w: test", supervisor.ErrHelperNotRunning)
+			}
 			w.connects++
 			attempt := w.connects
 			connect := w.connect
@@ -417,3 +432,63 @@ func TestWaitReadyWaitsOnlyWhileStarting(t *testing.T) {
 	close(release)
 	ready(t, service)
 }
+
+func (w *fakeWorld) inspectCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.inspects
+}
+
+func TestServiceReportsAHelperThatCannotBeInspectedInsteadOfNoHelper(t *testing.T) {
+	for name, inspectErr := range map[string]error{
+		"hello timeout": fmt.Errorf("%w: cannot be inspected: %w", supervisor.ErrUnavailable, context.DeadlineExceeded),
+		"pid mismatch":  fmt.Errorf("%w: endpoint served by pid 2, helper.pid names 3", supervisor.ErrStateMismatch),
+	} {
+		t.Run(name, func(t *testing.T) {
+			world := newFakeWorld()
+			world.inspectErr = inspectErr
+			service := startService(t, world.config(t))
+			_, err := service.WaitExisting(context.Background(), 10*time.Second)
+			var unavailable *UnavailableError
+			if errors.Is(err, ErrNotRunning) || !errors.As(err, &unavailable) || unavailable.Status.Reason == "" {
+				t.Fatalf("existing terminals of an uninspectable helper = %v, want an unavailable reason", err)
+			}
+			if _, err := service.WaitReady(context.Background(), time.Second); err == nil {
+				t.Fatal("a new terminal went to a helper that cannot be inspected")
+			}
+			if status := service.Status(); status.State != StateFailed {
+				t.Fatalf("status = %+v, want failed with a reason", status)
+			}
+			if !errors.Is(settled(t, service), ErrNotOutdated) || world.connectCount() != 0 {
+				t.Fatalf("connects = %d; nothing may be spawned beside a helper that answers", world.connectCount())
+			}
+			world.mu.Lock()
+			world.inspectErr = nil
+			world.mu.Unlock()
+			// Once it can be checked, the earlier durable request is served.
+			waitState(t, service, StateReady)
+		})
+	}
+}
+
+func TestServiceKeepsServingAHelperThatMissesAnInspection(t *testing.T) {
+	world := newFakeWorld()
+	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, ActivityKnown: true,
+		Runtime: &supervisor.RuntimeMetadata{SHA256: "self"}}
+	service := startService(t, world.config(t))
+	ready(t, service)
+	world.mu.Lock()
+	world.inspectErr = fmt.Errorf("%w: hello timed out", supervisor.ErrUnavailable)
+	world.mu.Unlock()
+	seen := world.inspectCount()
+	for world.inspectCount() < seen+3 {
+		time.Sleep(time.Millisecond)
+	}
+	if !errors.Is(settled(t, service), ErrNotOutdated) {
+		t.Fatal("the service left the ready helper")
+	}
+	if state := service.Status().State; state != StateReady {
+		t.Fatalf("a helper that missed inspections was declared gone: %s", state)
+	}
+}
+

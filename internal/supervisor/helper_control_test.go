@@ -186,8 +186,12 @@ func TestInspectHelperRejectsAHelperThatIsNotThePidFileOwner(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stateDir, "helper.pid"), []byte(strconv.Itoa(os.Getpid()+1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InspectHelper(context.Background(), stateDir); err == nil {
+	_, err = InspectHelper(context.Background(), stateDir)
+	if err == nil {
 		t.Fatal("inspect accepted an endpoint served by a process other than the recorded helper")
+	}
+	if errors.Is(err, ErrHelperNotRunning) {
+		t.Fatalf("a helper that answers with another pid was reported as not running: %v", err)
 	}
 }
 
@@ -273,4 +277,65 @@ func TestPidTargetNeverForceKillsAnUnverifiedPid(t *testing.T) {
 	if err := syscall.Kill(pid, 0); err != nil {
 		t.Fatalf("an unverified pid was killed: %v", err)
 	}
+}
+
+func TestInspectHelperTellsNoHelperFromAnUnanswerableOne(t *testing.T) {
+	stateDir, err := filepath.Abs(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InspectHelper(context.Background(), stateDir); !errors.Is(err, ErrHelperNotRunning) {
+		t.Fatalf("inspect with no endpoint = %v, want ErrHelperNotRunning", err)
+	}
+	if _, err := ConnectHelper(context.Background(), HelperConfig{StateDir: stateDir, NoSpawn: true}); !errors.Is(err, ErrHelperNotRunning) {
+		t.Fatalf("attach-only connect with no helper = %v, want ErrHelperNotRunning", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "helper.log")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an attach-only connect spawned a helper: %v", err)
+	}
+	silentHelper(t, stateDir)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, err = InspectHelper(ctx, stateDir)
+	if err == nil || errors.Is(err, ErrHelperNotRunning) {
+		t.Fatalf("inspect of a helper whose hello times out = %v, want an error other than ErrHelperNotRunning", err)
+	}
+}
+
+// silentHelper listens on the current protocol endpoint of stateDir as this
+// process and never answers a hello.
+func silentHelper(t *testing.T, stateDir string) {
+	t.Helper()
+	endpoint, err := helperEndpoint(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(endpoint), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		var conns []net.Conn
+		defer func() {
+			for _, conn := range conns {
+				_ = conn.Close()
+			}
+		}()
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conns = append(conns, conn)
+		}
+	}()
 }

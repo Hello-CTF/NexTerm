@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -58,13 +59,15 @@ type probeHelloMsg struct {
 
 // InspectHelper reports the helper that serves stateDir on this build's
 // protocol or an older one. It changes nothing: no session is attached and no
-// process is signalled. ErrUnavailable means no helper answers.
+// process is signalled. ErrHelperNotRunning means no helper listens; any
+// other error means one may run but could not be inspected.
 func InspectHelper(ctx context.Context, stateDir string) (RunningHelper, error) {
 	absolute, err := filepath.Abs(stateDir)
 	if err != nil {
 		return RunningHelper{}, fmt.Errorf("%w: helper state directory: %v", ErrInvalidInput, err)
 	}
 	var errs []error
+	listening := false
 	for version := ProtocolVersion; version >= ProtocolVersion-1 && version >= 1; version-- {
 		helper, err := inspectHelperVersion(ctx, absolute, version)
 		if err == nil {
@@ -73,9 +76,29 @@ func InspectHelper(ctx context.Context, stateDir string) (RunningHelper, error) 
 		if ctx.Err() != nil {
 			return RunningHelper{}, context.Cause(ctx)
 		}
+		if !errors.Is(err, errNoListener) {
+			listening = true
+		}
 		errs = append(errs, err)
 	}
-	return RunningHelper{}, fmt.Errorf("%w: no supervisor helper serves %s: %w", ErrUnavailable, absolute, errors.Join(errs...))
+	if !listening {
+		return RunningHelper{}, fmt.Errorf("%w: %s: %w", ErrHelperNotRunning, absolute, errors.Join(errs...))
+	}
+	// Something answers but cannot be inspected (a hello that times out, a
+	// pid that does not match helper.pid, a protocol error): that is not the
+	// same as no helper, so the caller must not treat it as one.
+	return RunningHelper{}, fmt.Errorf("%w: the supervisor helper serving %s cannot be inspected: %w", ErrUnavailable, absolute, errors.Join(errs...))
+}
+
+// ErrHelperNotRunning reports that no helper listens on any endpoint of a
+// state directory: no endpoint exists or the connection is refused.
+var ErrHelperNotRunning = fmt.Errorf("%w: no supervisor helper is running", ErrUnavailable)
+
+// errNoListener marks a dial that found no helper listening.
+var errNoListener = errors.New("no helper listens on the endpoint")
+
+func noListener(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED)
 }
 
 func inspectHelperVersion(ctx context.Context, stateDir string, version int) (RunningHelper, error) {
@@ -106,6 +129,9 @@ func inspectHelperConn(ctx context.Context, stateDir string, version int) (_ Run
 	defer cancel()
 	conn, err := dialSocket(probeCtx, endpoint)
 	if err != nil {
+		if noListener(err) {
+			return RunningHelper{}, nil, fmt.Errorf("%w: %v", errNoListener, err)
+		}
 		return RunningHelper{}, nil, err
 	}
 	defer func() {

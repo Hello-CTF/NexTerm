@@ -347,6 +347,13 @@ func (s *Service) wait(ctx context.Context, limit time.Duration, wanted bool, pr
 		case <-changed:
 		case <-s.checked:
 		case <-timer.C:
+			select {
+			case <-s.checked:
+			default:
+				// Not inspected yet: never answer "no helper" for a helper
+				// that may still turn out to run.
+				return nil, &UnavailableError{Status: Status{State: StateStarting, Reason: "正在检查本机持久组件"}}
+			}
 			if wanted && state == StateIdle {
 				return nil, &UnavailableError{Status: Status{State: StateStarting, Reason: "本机持久组件正在启动"}}
 			}
@@ -495,6 +502,19 @@ func (s *Service) run() {
 			s.setStatus(status, nil)
 			s.markChecked()
 			if !s.awaitOutdated(running, status.ConsentToken) {
+				return
+			}
+			continue
+		}
+		if inspectErr != nil && !errors.Is(inspectErr, supervisor.ErrHelperNotRunning) {
+			// Something serves the endpoint but cannot be inspected: a hello
+			// that times out, a pid that does not match, a protocol error. Its
+			// terminals may be alive, so this is reported, never taken for
+			// "no helper", and nothing is spawned beside it.
+			s.config.Logger.Warn("local helper cannot be inspected", "error", inspectErr)
+			s.setStatus(Status{State: StateFailed, Reason: "本机持久组件无响应或无法确认，暂时无法列出或新建本机持久终端：" + inspectErr.Error()}, nil)
+			s.markChecked()
+			if !s.pauseFor(s.config.PollInterval) {
 				return
 			}
 			continue
@@ -757,6 +777,13 @@ func (s *Service) awaitRetry(ticks <-chan time.Time) bool {
 	}
 }
 
+// pauseFor waits d, answering requests; a retry ends it early.
+func (s *Service) pauseFor(d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	return s.awaitRetry(timer.C)
+}
+
 // pause waits the backoff for the given attempt, answering requests.
 func (s *Service) pause(attempt int) bool {
 	index := attempt - 1
@@ -800,6 +827,16 @@ func (s *Service) watch(helper helperHandle) watchOutcome {
 			if s.ctx.Err() != nil {
 				return watchClosed
 			}
+			if err != nil && !errors.Is(err, supervisor.ErrHelperNotRunning) {
+				// A helper that does not answer one inspection is retried,
+				// not declared gone.
+				s.config.Logger.Warn("local helper did not answer an inspection", "error", err)
+				continue
+			}
+			// InspectHelper probes this protocol and older ones. A newer
+			// build's helper serves another endpoint, so a peer replacing
+			// this helper with a newer protocol reads as an exit here, and
+			// the run loop counts it only if this service spawned the helper.
 			if err != nil || !current.Current() || current.PID != running.PID && inspected {
 				return watchExited
 			}

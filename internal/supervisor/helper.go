@@ -31,6 +31,9 @@ type HelperConfig struct {
 	DisableStateDetection bool
 	// Limits are passed to a helper this call spawns and applied by RunHelper.
 	Limits Limits
+	// NoSpawn attaches only: when no helper answers, ConnectHelper returns
+	// ErrHelperNotRunning instead of starting one.
+	NoSpawn bool
 }
 
 // StateDetectionEnv in the helper's environment overrides the
@@ -136,6 +139,9 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 	}
 	if ctx.Err() != nil {
 		return nil, context.Cause(ctx)
+	}
+	if config.NoSpawn {
+		return nil, fmt.Errorf("%w: %s: %v", ErrHelperNotRunning, endpoint, err)
 	}
 	executable := config.Executable
 	if executable == "" {
