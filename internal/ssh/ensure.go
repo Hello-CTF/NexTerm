@@ -178,11 +178,15 @@ func permanentHelperFailure(err error) bool {
 		errors.Is(err, base.ErrUnsupported) || errors.Is(err, ErrHelperNotFound) ||
 		errors.Is(err, ErrTrust) || errors.Is(err, ErrDigestMismatch) || errors.Is(err, ErrNoExec) ||
 		errors.Is(err, ErrProtocol) || errors.Is(err, supervisor.ErrProtocol) ||
-		errors.Is(err, supervisor.ErrStateMismatch) || errors.Is(err, fs.ErrPermission)
+		errors.Is(err, supervisor.ErrStateMismatch) || errors.Is(err, fs.ErrPermission) ||
+		errors.Is(err, supervisor.ErrHelperReplaceFailed)
 }
 
 func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transportssh.Client, options EnsureOptions) (*Daemon, error) {
 	ctx = withCycleCache(ctx)
+	if options.ReplaceLegacy != "" {
+		ctx = context.WithValue(ctx, legacyConsentKey{}, &legacyConsent{token: options.ReplaceLegacy})
+	}
 	r.reportProgress(ctx, HelperProgress{Step: 1, Stage: "discover"})
 	target, err := DiscoverTarget(ctx, host)
 	if err != nil {
@@ -212,7 +216,7 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 	for _, location := range ordered {
 		connection, err := r.findRunningDaemon(ctx, host, location, source)
 		if err != nil {
-			if daemonRefusal(err) || errors.Is(err, errRunningProcessEvidence) {
+			if daemonRefusal(err) || errors.Is(err, errRunningProcessEvidence) || errors.Is(err, supervisor.ErrHelperReplaceFailed) {
 				return nil, err
 			}
 			if errors.Is(err, errUnsafeTemporaryRoot) {
@@ -570,9 +574,16 @@ func (r *Resolver) findRunningDaemon(ctx context.Context, host Host, location de
 			}
 		}
 		daemon := newTargetDaemon(host, location, binary)
-		if err := r.probeDaemon(ctx, daemon); err != nil {
+		err := r.probeDaemon(ctx, daemon)
+		if err != nil {
+			err = r.replaceLegacyHelper(ctx, daemon, err)
+		}
+		if err != nil {
 			if daemonRefusal(err) {
 				return nil, fmt.Errorf("%w: running supervisor daemon is incompatible or owns different state; refusing to replace it: %w", durable.ErrUnavailable, err)
+			}
+			if errors.Is(err, supervisor.ErrHelperReplaceFailed) {
+				return nil, err
 			}
 			lastErr = err
 			continue
@@ -606,6 +617,55 @@ func (r *Resolver) probeDaemon(ctx context.Context, daemon *Daemon) error {
 	return err
 }
 
+type legacyConsentKey struct{}
+
+// legacyConsent is the replacement consent of one ensure; it is spent by the
+// first replacement so a failed one is never repeated.
+type legacyConsent struct {
+	token string
+	spent bool
+	ended int
+}
+
+// legacyReplacer is the part of *supervisor.Client that replaces an older
+// helper through the target's bridge.
+type legacyReplacer interface {
+	ReplaceLegacyHelper(ctx context.Context, token string) error
+}
+
+// replaceLegacyHelper handles a probe that met an older-protocol helper. With
+// the user's consent in ctx, the bridge on the target verifies that helper
+// against the consent, stops it (TERM, bounded wait, KILL, state lock) and
+// starts this build's helper; the probe is then repeated. Without consent, or
+// once it is spent, probeErr is returned unchanged: the older helper is never
+// stopped on this side's own decision.
+func (r *Resolver) replaceLegacyHelper(ctx context.Context, daemon *Daemon, probeErr error) error {
+	var legacy *supervisor.LegacyHelperError
+	consent, _ := ctx.Value(legacyConsentKey{}).(*legacyConsent)
+	if !errors.As(probeErr, &legacy) || consent == nil || consent.spent {
+		return probeErr
+	}
+	replacer, ok := r.remoteClient(daemon).(legacyReplacer)
+	if !ok {
+		return probeErr
+	}
+	consent.spent = true
+	if expected, ok := supervisor.ParseHelperConsent(consent.token); ok {
+		consent.ended = expected.Activity.Total()
+	}
+	r.reportProgress(ctx, HelperProgress{Step: 5, Stage: "replace_legacy", Path: daemon.StateDir})
+	if err := replacer.ReplaceLegacyHelper(ctx, consent.token); err != nil {
+		var failed *supervisor.HelperReplaceError
+		if errors.As(err, &failed) && failed.RolledBack {
+			r.reportProgress(ctx, HelperProgress{Step: 6, Stage: "rollback", Cause: err.Error(), Path: daemon.StateDir})
+		}
+		return err
+	}
+	daemon.Update.ReplacedLegacy = true
+	daemon.Update.EndedSessions = consent.ended
+	return r.probeDaemon(ctx, daemon)
+}
+
 func daemonRefusal(err error) bool {
 	return errors.Is(err, supervisor.ErrProtocol) || errors.Is(err, supervisor.ErrVersionMismatch) || errors.Is(err, supervisor.ErrStateMismatch)
 }
@@ -615,7 +675,11 @@ func (r *Resolver) connectOrStartDaemon(ctx context.Context, host Host, location
 		return nil, err
 	}
 	daemon := newTargetDaemon(host, location, binary)
-	if err := r.probeDaemon(ctx, daemon); err == nil {
+	probeErr := r.probeDaemon(ctx, daemon)
+	if probeErr != nil {
+		probeErr = r.replaceLegacyHelper(ctx, daemon, probeErr)
+	}
+	if err := probeErr; err == nil {
 		metadata, known, err := r.remoteClient(daemon).RuntimeMetadata(ctx)
 		if err != nil {
 			return nil, helperUnavailable("read running helper metadata", err)
@@ -627,6 +691,10 @@ func (r *Resolver) connectOrStartDaemon(ctx context.Context, host Host, location
 		return &daemonConnection{daemon: daemon, metadata: metadata, known: known, running: true}, nil
 	} else if daemonRefusal(err) {
 		return nil, fmt.Errorf("%w: running supervisor daemon is incompatible or owns different state; refusing to replace it: %w", durable.ErrUnavailable, err)
+	} else if errors.Is(err, supervisor.ErrHelperReplaceFailed) {
+		// A consented replacement failed: it is reported, never followed by
+		// another start.
+		return nil, err
 	}
 	if err := ensureRemoteDirectory(ctx, host, location.target, location.paths.StateDir, true); err != nil {
 		return nil, err
