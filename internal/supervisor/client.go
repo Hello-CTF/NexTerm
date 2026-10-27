@@ -77,16 +77,11 @@ func (c *Client) rulesOwner() string {
 // pushStateRules sends the source's rules unless the helper already has
 // their revision, and reports the outcome to the source.
 func (c *Client) pushStateRules(ctx context.Context, conn *clientConn) error {
-	if conn.stateRules == nil {
-		err := fmt.Errorf("%w: the helper does not take state rules", ErrUnsupported)
-		c.rules.StateRulesPushed("", err)
-		return err
-	}
 	set, ok := c.rules.StateRules()
 	if !ok {
 		return nil
 	}
-	if set.Revision == conn.stateRules.Revision {
+	if set.Revision == conn.stateRules {
 		c.rules.StateRulesPushed(set.Revision, nil)
 		return nil
 	}
@@ -95,7 +90,7 @@ func (c *Client) pushStateRules(ctx context.Context, conn *clientConn) error {
 		err = protocolMismatch(kind)
 	}
 	if err == nil {
-		conn.stateRules = &stateRulesAck{Revision: set.Revision}
+		conn.stateRules = set.Revision
 	}
 	c.rules.StateRulesPushed(set.Revision, err)
 	return err
@@ -579,14 +574,16 @@ func (c *Client) dialHello(ctx context.Context, push bool) (*clientConn, error) 
 		return nil, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
 	}
 	conn.activity = *ack.Activity
-	conn.stateSeen = ack.StateSeen
-	conn.stateRules = ack.StateRules
-	conn.promptTap = ack.PromptTap
+	if ack.StateRules == nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("%w: hello acknowledgement lacks the state rule revision", ErrProtocol)
+	}
+	conn.stateRules = ack.StateRules.Revision
 	if push && owner != "" {
-		// A rejected push, or a helper without state rules, keeps the
-		// connection usable; a failed exchange leaves it broken.
+		// A rejected push keeps the connection usable; a failed exchange
+		// leaves it broken.
 		var remote *wireError
-		if err := c.pushStateRules(ctx, conn); err != nil && !errors.As(err, &remote) && !errors.Is(err, ErrUnsupported) {
+		if err := c.pushStateRules(ctx, conn); err != nil && !errors.As(err, &remote) {
 			_ = conn.Close()
 			return nil, err
 		}
@@ -615,14 +612,10 @@ type clientConn struct {
 	generation      string
 	runtimeMetadata *RuntimeMetadata
 	activity        ActivitySnapshot
-	// stateSeen: the helper accepts frameStateSeen.
-	stateSeen bool
-	// stateRules is the helper's state rule revision; nil when the helper
-	// does not take state rules.
-	stateRules *stateRulesAck
-	// promptTap: the helper accepts frameTapPrompt.
-	promptTap bool
-	writeMu   sync.Mutex
+	// stateRules is the helper's state rule revision for the hello's owner,
+	// empty for none.
+	stateRules string
+	writeMu    sync.Mutex
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {
@@ -1288,12 +1281,7 @@ func (s *Stream) Resize(ctx context.Context, cols, rows uint32) error {
 // MarkStateSeen tells the helper that the user saw the needs_me or
 // just_finished state that began at since; the helper pushes the seen state
 // to every attached client.
-// A helper that does not advertise the frame is not sent it: the call fails
-// with ErrStateSeenUnsupported and the seen mark stays with the caller.
 func (s *Stream) MarkStateSeen(ctx context.Context, since time.Time) error {
-	if !s.conn.stateSeen {
-		return fmt.Errorf("%w: helper does not advertise state_seen", ErrStateSeenUnsupported)
-	}
 	kind, _, err := s.request(ctx, frameStateSeen, stateSeenMsg{Since: since})
 	if err != nil {
 		return err
@@ -1308,12 +1296,8 @@ func (s *Stream) MarkStateSeen(ctx context.Context, since time.Time) error {
 // prompt identified by epoch and fingerprint is still shown and tappable,
 // and returns the bytes the helper wrote. It first waits for the stream's
 // earlier input to be acknowledged, so the keys follow it. A stale prompt
-// fails with ErrStalePrompt; a helper that does not advertise the frame is
-// not sent it and the call fails with ErrUnsupported.
+// fails with ErrStalePrompt.
 func (s *Stream) TapPrompt(ctx context.Context, epoch uint64, fingerprint string, option int) (string, error) {
-	if !s.conn.promptTap {
-		return "", fmt.Errorf("%w: helper does not accept prompt taps", ErrUnsupported)
-	}
 	if err := s.FlushInput(ctx); err != nil {
 		return "", err
 	}

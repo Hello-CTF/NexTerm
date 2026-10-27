@@ -52,8 +52,7 @@ type StateRuleSource interface {
 }
 
 // stateRulesAck is the owner's state rule revision in the hello
-// acknowledgement. Its presence tells the client the helper takes
-// frameSetStateRules.
+// acknowledgement; the client skips a push of the same revision.
 type stateRulesAck struct {
 	Revision string `json:"revision"`
 }

@@ -17,8 +17,8 @@ var (
 	ErrStateMismatch = errors.New("supervisor state mismatch")
 	ErrUnsupported   = errors.New("supervisor capability unsupported")
 	// ErrStateSeenUnsupported reports that seen attention states cannot be shared
-	// through this helper: it does not advertise state_seen, or its session has
-	// state detection disabled. Unlike ErrUnavailable it is permanent.
+	// through this helper because its session has state detection disabled.
+	// Unlike ErrUnavailable it is permanent.
 	ErrStateSeenUnsupported = errors.New("supervisor does not share seen attention states")
 	ErrActiveSessions       = errors.New("supervisor has active sessions")
 	// ErrLimit reports a create the helper refused because a configured

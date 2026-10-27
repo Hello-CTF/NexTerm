@@ -47,8 +47,6 @@ const (
 	// next connection.
 	stateRuleStatusPending = "pending"
 	stateRuleStatusFailed  = "failed"
-	// unsupported: the helper is of a build without state rules.
-	stateRuleStatusUnsupported = "unsupported"
 )
 
 // stateRulesIdentityName is the file in the data directory that holds this
@@ -207,8 +205,6 @@ func (h *stateRuleHelper) record(revision string, err error) {
 	switch {
 	case err == nil:
 		h.revision, h.status, h.err = revision, stateRuleStatusApplied, ""
-	case errors.Is(err, supervisor.ErrUnsupported):
-		h.status, h.err = stateRuleStatusUnsupported, err.Error()
 	case unreachableHelper(err):
 		h.status, h.err = stateRuleStatusPending, err.Error()
 	default:

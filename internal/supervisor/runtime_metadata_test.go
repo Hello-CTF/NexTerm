@@ -108,7 +108,7 @@ func TestRuntimeMetadataDescribesRunningExecutable(t *testing.T) {
 // the client reports that as unknown instead of inventing it.
 func TestRuntimeMetadataUnknownWithoutProof(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
-	client := NewClient(fakeHelloAckServer(t, stateDir, helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Activity: &ActivitySnapshot{}}), stateDir)
+	client := NewClient(fakeHelloAckServer(t, stateDir, helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Activity: &ActivitySnapshot{}, StateRules: &stateRulesAck{}}), stateDir)
 	metadata, known, err := client.RuntimeMetadata(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestRuntimeMetadataAllowsCompatibleReleaseDifference(t *testing.T) {
 		SHA256:   strings.Repeat("0123456789abcdef", 4),
 	}
 	stateDir := filepath.Join(t.TempDir(), "state")
-	ack := helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Runtime: &want, Activity: &ActivitySnapshot{}}
+	ack := helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Runtime: &want, Activity: &ActivitySnapshot{}, StateRules: &stateRulesAck{}}
 	client := NewClient(fakeHelloAckServer(t, stateDir, ack), stateDir)
 	got, known, err := client.RuntimeMetadata(context.Background())
 	if err != nil {
@@ -144,6 +144,14 @@ func TestRuntimeMetadataKeepsHandshakeGuards(t *testing.T) {
 		client := NewClient(fakeHelloAckServer(t, stateDir, ack), stateDir)
 		if _, _, err := client.RuntimeMetadata(context.Background()); !errors.Is(err, ErrClientUpgradeRequired) {
 			t.Fatalf("protocol mismatch error = %v, want ErrClientUpgradeRequired", err)
+		}
+	})
+	t.Run("state rules", func(t *testing.T) {
+		stateDir := filepath.Join(t.TempDir(), "state")
+		ack := helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Activity: &ActivitySnapshot{}}
+		client := NewClient(fakeHelloAckServer(t, stateDir, ack), stateDir)
+		if _, _, err := client.RuntimeMetadata(context.Background()); !errors.Is(err, ErrProtocol) {
+			t.Fatalf("ack without state rules error = %v, want ErrProtocol", err)
 		}
 	})
 	t.Run("state digest", func(t *testing.T) {
@@ -188,7 +196,7 @@ func TestHelloAcknowledgementCarriesRuntimeAndActivity(t *testing.T) {
 	if err := unmarshalFrame(payload, &ack); err != nil {
 		t.Fatal(err)
 	}
-	if ack.Version != ProtocolVersion || ack.Runtime == nil || ack.Runtime.Protocol != ProtocolVersion || ack.Activity == nil {
-		t.Fatalf("hello ack = %+v, want version, runtime metadata and activity", ack)
+	if ack.Version != ProtocolVersion || ack.Runtime == nil || ack.Runtime.Protocol != ProtocolVersion || ack.Activity == nil || ack.StateRules == nil {
+		t.Fatalf("hello ack = %+v, want version, runtime metadata, activity and state rules", ack)
 	}
 }

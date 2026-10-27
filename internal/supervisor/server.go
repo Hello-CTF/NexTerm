@@ -221,7 +221,7 @@ func (c *serverConn) serve() {
 	}
 	ack := helloMsg{
 		Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity,
-		StateSeen: true, StateRules: &stateRulesAck{Revision: c.server.supervisor.stateRulesSeen(c.rulesOwner)}, PromptTap: true,
+		StateRules: &stateRulesAck{Revision: c.server.supervisor.stateRulesSeen(c.rulesOwner)},
 	}
 	if err := c.reply(frameHelloAck, ack); err != nil {
 		return

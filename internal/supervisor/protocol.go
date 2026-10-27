@@ -77,20 +77,16 @@ const (
 	// frameSetStateRules replaces the state rules of the connection's rule
 	// owner (helloMsg.StateRulesOwner) with a StateRuleSet; the helper
 	// persists and applies it and answers frameOK. It needs no attach.
-	// Helpers that take it advertise the owner's revision in the hello
-	// acknowledgement (helloMsg.StateRules).
 	frameSetStateRules frameType = 33
 	// frameStateSeen tells the helper that the attached client showed the
 	// session's needs_me or just_finished state to its user (stateSeenMsg);
 	// the helper answers frameOK and pushes the seen state to every client.
-	// Only sent to a helper whose hello acknowledgement sets StateSeen.
 	frameStateSeen frameType = 34
 
 	// frameTapPrompt answers the attached session's detected prompt by one
 	// of its options (tapPromptMsg); the helper validates the prompt epoch
 	// and fingerprint against a fresh inspection, writes the option's keys
-	// and answers frameOK with tapPromptReply. Only sent to a helper whose
-	// hello acknowledgement sets PromptTap.
+	// and answers frameOK with tapPromptReply.
 	frameTapPrompt frameType = 35
 )
 
@@ -142,18 +138,14 @@ type helloMsg struct {
 	// Runtime is absent only when the helper could not hash its executable.
 	Runtime  *RuntimeMetadata  `json:"runtime,omitempty"`
 	Activity *ActivitySnapshot `json:"activity,omitempty"`
-	// StateSeen is set by a helper that accepts frameStateSeen.
-	StateSeen bool `json:"state_seen,omitempty"`
 	// ReplaceLegacy is sent by a client only: the consent token of a
 	// legacy_helper_running rejection the user approved. A bridge that stands
 	// in for that older helper replaces it; a current helper ignores it.
 	ReplaceLegacy string `json:"replace_legacy,omitempty"`
-	// StateRules is the revision of the hello's rule owner's state rules
-	// (empty for none or no owner), sent by helpers that take
-	// frameSetStateRules.
+	// StateRules is sent by the helper only, and is required in its
+	// acknowledgement: the revision of the hello's rule owner's state rules
+	// (empty for none or no owner).
 	StateRules *stateRulesAck `json:"state_rules,omitempty"`
-	// PromptTap is set by a helper that accepts frameTapPrompt.
-	PromptTap bool `json:"prompt_tap,omitempty"`
 }
 
 type createMsg struct {
@@ -308,8 +300,7 @@ const (
 	// codeStateSeenUnsupported is only sent for a state_seen request.
 	codeStateSeenUnsupported = "state_seen_unsupported"
 	codeStalePrompt          = "stale_prompt"
-	// codeLimit is unknown to older clients, which read it as unavailable.
-	codeLimit = "limit"
+	codeLimit                = "limit"
 )
 
 func errorCode(err error) string {
