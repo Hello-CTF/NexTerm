@@ -415,19 +415,21 @@ func validateStateRule(request stateRuleValidateRequest) stateRuleValidateResult
 	if err != nil {
 		return stateRuleValidateResult{Error: ipc.NormalizeError(err).Message, Field: stateRuleInvalidField(input)}
 	}
-	result := stateRuleValidateResult{Valid: true, Lines: normalized.Lines}
-	if request.Screen == nil {
-		return result
-	}
-	var compiled *staterule.Compiled
+	// A rule must fit the set cost on its own, as state_rule_save requires,
+	// whether or not a screen is given to test it on.
 	rule := staterule.Rule{
 		ID: normalized.ID, Region: normalized.Region, Lines: int(normalized.Lines),
 		Pattern: normalized.Pattern, State: normalized.State, Keys: normalized.Keys,
 	}
 	set, err := staterule.NewSet([]staterule.Rule{rule})
-	if err == nil {
-		compiled, err = staterule.Compile(set)
+	if err != nil {
+		return stateRuleValidateResult{Error: fmt.Sprintf("匹配模式过于复杂或区域行数过多: %v", err), Field: stateRuleCostField(rule)}
 	}
+	result := stateRuleValidateResult{Valid: true, Lines: normalized.Lines}
+	if request.Screen == nil {
+		return result
+	}
+	compiled, err := staterule.Compile(set)
 	if err != nil {
 		return stateRuleValidateResult{Error: fmt.Sprintf("匹配模式过于复杂或区域行数过多: %v", err), Field: "pattern"}
 	}
@@ -436,6 +438,18 @@ func validateStateRule(request stateRuleValidateRequest) stateRuleValidateResult
 	result.Tested = true
 	result.Region = staterule.RegionText(screen, rule)
 	return result
+}
+
+// stateRuleCostField names the field to change for a rule whose cost is too
+// high: the row count when a single row would fit, else the pattern.
+func stateRuleCostField(rule staterule.Rule) string {
+	if rule.Region == staterule.RegionBottom && rule.Lines > 1 {
+		rule.Lines = 1
+		if _, err := staterule.NewSet([]staterule.Rule{rule}); err == nil {
+			return "lines"
+		}
+	}
+	return "pattern"
 }
 
 // stateRuleInvalidField names the field of an invalid rule in the order

@@ -188,3 +188,28 @@ func TestStateRuleDraftRedactsSecretsBeforeThePrompt(t *testing.T) {
 		t.Fatalf("clean screen reported as redacted: %+v", draft)
 	}
 }
+
+func TestStateRuleValidateReportsSetCostWithoutAScreen(t *testing.T) {
+	dispatcher, _ := newStateRuleCommands(t, nil)
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		rule stateRuleSaveRequest
+		want string
+	}{
+		"lines": {stateRuleSaveRequest{Scope: store.StateRuleScopeGlobal, Region: "bottom", Lines: 50, Pattern: `[a-z]{400}`, State: "idle"}, "lines"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := store.ValidateStateRuleInput(store.StateRuleInput{Scope: tc.rule.Scope, Region: tc.rule.Region, Lines: tc.rule.Lines, Pattern: tc.rule.Pattern, State: tc.rule.State}); err != nil {
+				t.Fatalf("rule is not valid on its own: %v", err)
+			}
+			result := decodeFSTransferTest[stateRuleValidateResult](t, dispatchStateRule(dispatcher, ctx, "state_rule_validate", stateRuleValidateRequest{Rule: tc.rule}))
+			if result.Valid || result.Field != tc.want || result.Error == "" {
+				t.Fatalf("result = %+v", result)
+			}
+			response := dispatchStateRule(dispatcher, ctx, "state_rule_save", tc.rule)
+			if response.OK {
+				t.Fatal("save accepted a rule that validate rejects")
+			}
+		})
+	}
+}
