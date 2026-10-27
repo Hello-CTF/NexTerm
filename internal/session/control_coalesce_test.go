@@ -112,14 +112,14 @@ func TestControlStateChangeFlushesHeldTitleInOrder(t *testing.T) {
 		t.Fatalf("held titles leaked: %d events", got)
 	}
 	tab.mu.Lock()
-	tab.controller = "client-x"
+	tab.sizeOwner = "client-x"
 	event := tab.controlEventLocked()
 	tab.mu.Unlock()
 	manager.emit(context.Background(), TopicTerminalControl, event)
 	rec.waitCount(t, 3)
 	events := rec.snapshot()
-	if events[1].Title != "c" || events[1].Controller != "" || events[2].Controller != "client-x" || events[2].Title != "c" {
-		t.Fatalf("controller change must follow the held title, got %+v", events)
+	if events[1].Title != "c" || events[1].SizeOwner != "" || events[2].SizeOwner != "client-x" || events[2].Title != "c" {
+		t.Fatalf("size owner change must follow the held title, got %+v", events)
 	}
 }
 

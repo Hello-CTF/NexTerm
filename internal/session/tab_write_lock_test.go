@@ -30,7 +30,7 @@ func TestManagerWriteLockRespectsContext(t *testing.T) {
 	channel.writeHook = blockingWriteHook(started, release)
 	first := make(chan error, 1)
 	go func() {
-		first <- manager.Write(context.Background(), tab.ID, tab.Info().Controller, []byte("a"))
+		first <- manager.Write(context.Background(), tab.ID, tab.Info().SizeOwner, []byte("a"))
 	}()
 	select {
 	case <-started:
@@ -41,7 +41,7 @@ func TestManagerWriteLockRespectsContext(t *testing.T) {
 	defer cancel()
 	second := make(chan error, 1)
 	go func() {
-		second <- manager.Write(ctx, tab.ID, tab.Info().Controller, []byte("b"))
+		second <- manager.Write(ctx, tab.ID, tab.Info().SizeOwner, []byte("b"))
 	}()
 	select {
 	case err := <-second:
@@ -72,7 +72,7 @@ func TestManagerWriteUnblocksOnTabClose(t *testing.T) {
 	}
 	first := make(chan error, 1)
 	go func() {
-		first <- manager.Write(context.Background(), tab.ID, tab.Info().Controller, []byte("a"))
+		first <- manager.Write(context.Background(), tab.ID, tab.Info().SizeOwner, []byte("a"))
 	}()
 	select {
 	case <-started:
@@ -81,7 +81,7 @@ func TestManagerWriteUnblocksOnTabClose(t *testing.T) {
 	}
 	second := make(chan error, 1)
 	go func() {
-		second <- manager.Write(context.Background(), tab.ID, tab.Info().Controller, []byte("b"))
+		second <- manager.Write(context.Background(), tab.ID, tab.Info().SizeOwner, []byte("b"))
 	}()
 	// Let the queued Write reach the write gate before the tab goes away, so
 	// the close — not the lookup — is what must wake it.
@@ -112,11 +112,11 @@ func TestManagerWriteDoesNotReplayUnconfirmedInput(t *testing.T) {
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
 	channel := connector.transport(0).channel(0)
 	channel.writeErr = errors.New("transport lost")
-	if err := manager.Write(context.Background(), tab.ID, tab.Info().Controller, []byte("unconfirmed")); err == nil {
+	if err := manager.Write(context.Background(), tab.ID, tab.Info().SizeOwner, []byte("unconfirmed")); err == nil {
 		t.Fatal("Write succeeded against a failing channel")
 	}
 	channel.writeErr = nil
-	if err := manager.Write(context.Background(), tab.ID, tab.Info().Controller, []byte("confirmed")); err != nil {
+	if err := manager.Write(context.Background(), tab.ID, tab.Info().SizeOwner, []byte("confirmed")); err != nil {
 		t.Fatalf("Write after recovery = %v", err)
 	}
 	if got := string(channel.written()); got != "confirmed" {
@@ -158,7 +158,7 @@ func TestManagerResponseWriterSharesWriteLock(t *testing.T) {
 	defer cancel()
 	second := make(chan error, 1)
 	go func() {
-		second <- manager.Write(ctx, tab.ID, tab.Info().Controller, []byte("b"))
+		second <- manager.Write(ctx, tab.ID, tab.Info().SizeOwner, []byte("b"))
 	}()
 	select {
 	case err := <-second:
@@ -332,9 +332,9 @@ func TestManagerWriteBatchesQueuedInput(t *testing.T) {
 		channel.mu.Unlock()
 		return len(data), nil
 	}
-	controller := tab.Info().Controller
+	client := tab.Info().SizeOwner
 	results := make(chan error, 4)
-	go func() { results <- manager.Write(context.Background(), tab.ID, controller, []byte("a")) }()
+	go func() { results <- manager.Write(context.Background(), tab.ID, client, []byte("a")) }()
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
@@ -346,7 +346,7 @@ func TestManagerWriteBatchesQueuedInput(t *testing.T) {
 		return len(tab.inputQueue)
 	}
 	for index, data := range []string{"b", "c", "d"} {
-		go func() { results <- manager.Write(context.Background(), tab.ID, controller, []byte(data)) }()
+		go func() { results <- manager.Write(context.Background(), tab.ID, client, []byte(data)) }()
 		deadline := time.Now().Add(5 * time.Second)
 		for queued() != index+1 {
 			if time.Now().After(deadline) {
@@ -393,13 +393,13 @@ func TestManagerWriteWithdrawnQueuedInputIsNotSent(t *testing.T) {
 		channel.mu.Unlock()
 		return len(data), nil
 	}
-	controller := tab.Info().Controller
+	client := tab.Info().SizeOwner
 	first := make(chan error, 1)
-	go func() { first <- manager.Write(context.Background(), tab.ID, controller, []byte("a")) }()
+	go func() { first <- manager.Write(context.Background(), tab.ID, client, []byte("a")) }()
 	<-started
 	ctx, cancel := context.WithCancel(context.Background())
 	withdrawn := make(chan error, 1)
-	go func() { withdrawn <- manager.Write(ctx, tab.ID, controller, []byte("x")) }()
+	go func() { withdrawn <- manager.Write(ctx, tab.ID, client, []byte("x")) }()
 	for {
 		tab.inputMu.Lock()
 		n := len(tab.inputQueue)
@@ -414,7 +414,7 @@ func TestManagerWriteWithdrawnQueuedInputIsNotSent(t *testing.T) {
 		t.Fatalf("withdrawn Write = %v, want context canceled", err)
 	}
 	kept := make(chan error, 1)
-	go func() { kept <- manager.Write(context.Background(), tab.ID, controller, []byte("b")) }()
+	go func() { kept <- manager.Write(context.Background(), tab.ID, client, []byte("b")) }()
 	close(release)
 	if err := <-first; err != nil {
 		t.Fatalf("first Write = %v", err)

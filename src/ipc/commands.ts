@@ -402,7 +402,7 @@ export interface AttachedTabInfo {
   sessionId: string;
   cols: number;
   rows: number;
-  controller: string | null;
+  sizeOwner: string | null;
   subscribers: number;
   viewers: number;
   exited: boolean;
@@ -425,7 +425,7 @@ export interface LiveTabInfo {
   sessionKind: string;
   cols: number;
   rows: number;
-  controller: string | null;
+  sizeOwner: string | null;
   subscribers: number;
   viewers: number;
   exited: boolean;
@@ -686,10 +686,6 @@ export const terminalApi = {
     call<void>("terminal_resize_flush", { tabId, clientId: clientId() }),
   detach: (tabId: string, channelId?: string) =>
     call<void>("terminal_detach", { tabId, channelId }),
-  claim: (tabId: string) =>
-    call<string | null>("terminal_claim", { tabId, clientId: clientId() }),
-  release: (tabId: string) =>
-    call<boolean>("terminal_release", { tabId, clientId: clientId() }),
   listLive: () => listTerminal<LiveTabInfo[]>(),
   listDurable: (sessionId: string) => listTerminal<DurableDescriptor[]>(sessionId, true),
   screenText: (tabId: string) => call<string>("terminal_screen_text", { tabId }),
@@ -739,6 +735,18 @@ export const terminalApi = {
   // state. Hosts still answering after waitMs are pending; their result follows as a terminal://sessions event.
   sessionsAggregate: (waitMs?: number) =>
     call("terminal_sessions_aggregate", waitMs === undefined ? {} : { waitMs }),
+  // Answers the detected prompt of an attention event with one of its options. The helper writes the
+  // option's keys only while that prompt instance (generation, epoch, fingerprint) is still shown;
+  // otherwise the call fails with code "stale_prompt" and nothing is sent.
+  tapPrompt: (tabId: string, prompt: { generation?: string; epoch: number; fingerprint: string }, option: number) =>
+    ignoreResult(call("terminal_prompt_tap", {
+      tabId,
+      clientId: clientId(),
+      generation: prompt.generation ?? "",
+      epoch: prompt.epoch,
+      fingerprint: prompt.fingerprint,
+      option,
+    })),
   createTab: (sessionId: string, options?: { title?: string; command?: string }) =>
     call<AttachedTabInfo>("terminal_create_tab", {
       sessionId,

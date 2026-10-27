@@ -217,7 +217,7 @@ export type AttachedTabDTO = {
   sessionId: string;
   cols: number;
   rows: number;
-  controller: string | null;
+  sizeOwner: string | null;
   subscribers: number;
   viewers: number;
   exited: boolean;
@@ -245,7 +245,29 @@ export type AttentionEvent = {
   exitCode?: number | null;
   title?: string;
   body?: string;
+  prompt?: AttentionPrompt | null;
   version: number;
+};
+
+export type AttentionPrompt = {
+  kind: string;
+  question?: string;
+  options?: AttentionPromptOption[];
+  cursorIndex: number;
+  fingerprint: string;
+  epoch: number;
+  generation?: string;
+  tappable: boolean;
+  blocked?: string;
+  method?: string;
+  submit?: string;
+  enterKey?: string;
+};
+
+export type AttentionPromptOption = {
+  label: string;
+  keys?: string;
+  default?: boolean;
 };
 
 export type AttentionSeenRequest = {
@@ -1929,6 +1951,15 @@ export type ProductionSettingsUpdateRequest = {
   targetSetConnectProductionOptIn?: boolean | null;
   aiTerminalConnectOptIn?: boolean | null;
   aiTerminalConnectProductionOptIn?: boolean | null;
+};
+
+export type PromptTapRequest = {
+  tabId: string;
+  clientId?: string;
+  generation: string;
+  epoch: number;
+  fingerprint: string;
+  option: number;
 };
 
 export type PruneItem = {

@@ -306,7 +306,7 @@ describe("terminal://throttled badge", () => {
 
     act(() => {
       (harness.xtermProps?.onAttachInfo as ((info: unknown) => void) | undefined)?.({
-        controller: "me",
+        sizeOwner: "me",
         subscribers: 1,
         viewers: 1,
         exited: false,

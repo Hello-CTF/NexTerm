@@ -48,7 +48,11 @@ type Session struct {
 	// zero before any.
 	lastOutput atomic.Int64
 
-	inputQueue    chan []byte
+	inputQueue chan []byte
+	// inputMu orders input: a write records its input with the state
+	// tracker and queues its bytes as one step, so a prompt tap validated
+	// against the epoch is queued before any input that advances it.
+	inputMu       sync.Mutex
 	inputDone     chan struct{}
 	inputDoneOnce sync.Once
 
@@ -268,9 +272,16 @@ func (s *Session) writeInputCtx(ctx context.Context, p []byte, wait bool) (int, 
 	if dead {
 		return 0, fmt.Errorf("%w: %s", ErrExited, s.entry.ID)
 	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	if s.state != nil && len(p) > 0 {
 		s.state.input(time.Now())
 	}
+	return s.enqueueInputLocked(ctx, p, wait)
+}
+
+// enqueueInputLocked queues p in chunks. The caller holds s.inputMu.
+func (s *Session) enqueueInputLocked(ctx context.Context, p []byte, wait bool) (int, error) {
 	written := 0
 	for len(p) > 0 {
 		chunk := p

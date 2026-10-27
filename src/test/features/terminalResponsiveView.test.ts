@@ -273,7 +273,7 @@ beforeEach(() => {
     sessionId: "session",
     cols: 36,
     rows: 20,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -284,7 +284,7 @@ beforeEach(() => {
     tabId: "tab-existing",
     cols: 90,
     rows: 30,
-    controller: "other",
+    sizeOwner: "other",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -295,7 +295,7 @@ beforeEach(() => {
     sessionId: "session-1",
     cols: 80,
     rows: 30,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -400,7 +400,7 @@ describe("XtermView production grid lifecycle", () => {
 
   it("reports the durable fallback notice with the attach info", async () => {
     harness.attach.mockResolvedValue({
-      tabId: "tab-new", sessionId: "session", cols: 36, rows: 20, controller: "me", subscribers: 1, viewers: 1,
+      tabId: "tab-new", sessionId: "session", cols: 36, rows: 20, sizeOwner: "me", subscribers: 1, viewers: 1,
       exited: false, shell: "posix", retainable: false, durable: false, fallbackNotice: "持久终端不可用",
     });
     const notices: Array<[string | undefined, boolean | undefined]> = [];
@@ -505,7 +505,7 @@ describe("XtermView production grid lifecycle", () => {
       tabId: "tab-new",
       cols: 90,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -536,7 +536,7 @@ describe("XtermView production grid lifecycle", () => {
     await act(async () => root?.unmount());
     root = null;
     harness.detach.mockClear();
-    finish?.({ tabId: "tab-new", cols: 90, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false });
+    finish?.({ tabId: "tab-new", cols: 90, rows: 30, sizeOwner: "me", subscribers: 1, viewers: 1, exited: false });
     await flushWork();
     expect(harness.detach).toHaveBeenCalledWith("tab-new", "channel-1");
     expect(harness.attach).toHaveBeenCalledTimes(1);
@@ -550,7 +550,7 @@ describe("XtermView production grid lifecycle", () => {
       tabId: "tab-new",
       cols: 90,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -582,7 +582,7 @@ describe("XtermView production grid lifecycle", () => {
       tabId: "tab-existing",
       cols: 90,
       rows: 30,
-      controller: "other",
+      sizeOwner: "other",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -758,7 +758,7 @@ describe("XtermView stream anchors", () => {
     tabId: "tab-new",
     cols: 90,
     rows: 30,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,

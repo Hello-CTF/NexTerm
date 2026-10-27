@@ -49,10 +49,10 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.Code("helper_replace_failed"), helperReplaceMessage(detail), err).WithDetail(detail)
 	case errors.Is(err, ErrForbidden):
 		return ipc.WrapError(ipc.CodeForbidden, "无权访问该会话", err)
+	case errors.Is(err, base.ErrStalePrompt):
+		return ipc.WrapError(ipc.Code("stale_prompt"), userMessage(err), err)
 	case errors.Is(err, durable.ErrLimit):
 		return ipc.WrapError(ipc.Code("durable_limit"), userMessage(err), err)
-	case errors.Is(err, ErrNotController):
-		return ipc.WrapError(ipc.CodeNotController, userMessage(err), err)
 	case errors.Is(err, ErrSessionNotFound), errors.Is(err, ErrTabNotFound), errors.Is(err, durable.ErrNotFound):
 		return ipc.WrapError(ipc.CodeNotFound, userMessage(err), err)
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected), errors.Is(err, ErrSessionClosed), errors.Is(err, ErrTabClosed):
@@ -94,8 +94,8 @@ func userMessage(err error) string {
 		return connectErr.UserMessage()
 	}
 	switch {
-	case errors.Is(err, ErrNotController):
-		return "当前没有该终端的控制权，请先获取控制权"
+	case errors.Is(err, base.ErrStalePrompt):
+		return "屏幕上的提问已变化，选项未发送"
 	case errors.Is(err, ErrSessionNotFound):
 		return "会话不存在或已关闭，请刷新后重试"
 	case errors.Is(err, ErrTabNotFound):

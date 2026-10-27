@@ -85,6 +85,13 @@ const (
 	// the helper answers frameOK and pushes the seen state to every client.
 	// Only sent to a helper whose hello acknowledgement sets StateSeen.
 	frameStateSeen frameType = 34
+
+	// frameTapPrompt answers the attached session's detected prompt by one
+	// of its options (tapPromptMsg); the helper validates the prompt epoch
+	// and fingerprint against a fresh inspection, writes the option's keys
+	// and answers frameOK with tapPromptReply. Only sent to a helper whose
+	// hello acknowledgement sets PromptTap.
+	frameTapPrompt frameType = 35
 )
 
 // Every connection uses windowed input and credited output. The client may keep
@@ -145,6 +152,8 @@ type helloMsg struct {
 	// (empty for none or no owner), sent by helpers that take
 	// frameSetStateRules.
 	StateRules *stateRulesAck `json:"state_rules,omitempty"`
+	// PromptTap is set by a helper that accepts frameTapPrompt.
+	PromptTap bool `json:"prompt_tap,omitempty"`
 }
 
 type createMsg struct {
@@ -228,6 +237,22 @@ type stateSeenMsg struct {
 	Since time.Time `json:"since"`
 }
 
+// tapPromptMsg is the payload of frameTapPrompt: the helper generation and
+// session incarnation, the prompt epoch and fingerprint the client showed,
+// and the index of the chosen option.
+type tapPromptMsg struct {
+	ExpectGeneration  string `json:"expect_generation"`
+	ExpectIncarnation string `json:"expect_incarnation"`
+	Epoch             uint64 `json:"epoch"`
+	Fingerprint       string `json:"fingerprint"`
+	Option            int    `json:"option"`
+}
+
+// tapPromptReply is the frameOK payload of a tap: the bytes written.
+type tapPromptReply struct {
+	Sent string `json:"sent"`
+}
+
 type versionsMsg struct {
 	Event uint64 `json:"event"`
 	Grid  uint64 `json:"grid"`
@@ -282,6 +307,7 @@ const (
 	codeGenerationMismatch = "generation_mismatch"
 	// codeStateSeenUnsupported is only sent for a state_seen request.
 	codeStateSeenUnsupported = "state_seen_unsupported"
+	codeStalePrompt          = "stale_prompt"
 	// codeLimit is unknown to older clients, which read it as unavailable.
 	codeLimit = "limit"
 )
@@ -314,6 +340,8 @@ func errorCode(err error) string {
 		return codeGenerationMismatch
 	case errors.Is(err, ErrStateSeenUnsupported):
 		return codeStateSeenUnsupported
+	case errors.Is(err, ErrStalePrompt):
+		return codeStalePrompt
 	case errors.Is(err, ErrUnsupported):
 		return codeProtocol
 	default:
@@ -395,6 +423,8 @@ func errorSentinel(code string) error {
 		return ErrGenerationMismatch
 	case codeStateSeenUnsupported:
 		return ErrStateSeenUnsupported
+	case codeStalePrompt:
+		return ErrStalePrompt
 	case codeLimit:
 		return ErrLimit
 	default:

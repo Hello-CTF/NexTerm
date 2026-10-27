@@ -119,7 +119,7 @@ function mountPane(): void {
 function reportAttach(info: Record<string, unknown>): void {
   act(() => {
     (harness.props?.onAttachInfo as ((value: unknown) => void) | undefined)?.({
-      tabId: "kernel-1", controller: "me", subscribers: 1, viewers: 1, exited: false, shell: "posix", retainable: false,
+      tabId: "kernel-1", sizeOwner: "me", subscribers: 1, viewers: 1, exited: false, shell: "posix", retainable: false,
       ...info,
     });
   });
@@ -405,7 +405,7 @@ describe("persistence hint bar", () => {
     await flush();
     act(() => (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1"));
     act(() => harness.events.get("terminal-control")?.({
-      tabId: "kernel-1", version: 1, controller: "me", subscribers: 1, viewers: 1, exited: false,
+      tabId: "kernel-1", version: 1, sizeOwner: "me", subscribers: 1, viewers: 1, exited: false,
       cols: 80, rows: 24, gridRevision: 0, cwd: "/srv/app",
     }));
     helperProgress("ready", true);

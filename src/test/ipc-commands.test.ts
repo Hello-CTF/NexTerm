@@ -219,6 +219,18 @@ describe("desktop command envelopes", () => {
     });
   });
 
+  it("sends a prompt tap with the identity of the prompt the user saw", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    const { terminalApi } = await import("../ipc/commands");
+
+    await terminalApi.tapPrompt("tab-1", { generation: "gen-1", epoch: 7, fingerprint: "abc" }, 1);
+    expect(requestAt()).toEqual({
+      cmd: "terminal_prompt_tap",
+      args: { tabId: "tab-1", generation: "gen-1", epoch: 7, fingerprint: "abc", option: 1 },
+      clientId: expect.any(String),
+    });
+  });
+
   it("keeps broadcast preflight and confirmation inside nested terminal args", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
     const { terminalApi } = await import("../ipc/commands");
@@ -450,9 +462,8 @@ describe("desktop command envelopes", () => {
 
   it("preserves nullable returns and facade-specific normalization", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
-    const { terminalApi, modelApi, mountApi } = await import("../ipc/commands");
+    const { modelApi, mountApi } = await import("../ipc/commands");
 
-    await expect(terminalApi.claim("tab-1")).resolves.toBeNull();
     await expect(mountApi.capability()).resolves.toBeNull();
     await expect(modelApi.presets()).resolves.toEqual([]);
   });
@@ -1077,7 +1088,7 @@ describe("web command behavior compatibility", () => {
 
   it("preserves code/detail for business errors returned with HTTP 200", async () => {
     useWebTransport();
-    const error = { code: "not_controller", message: "Observer only", detail: null };
+    const error = { code: "forbidden", message: "Not allowed", detail: null };
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({

@@ -717,12 +717,11 @@ func TestTranscriptRecordsInputAndResize(t *testing.T) {
 		t.Fatal("input must not leak into recorded output")
 	}
 
-	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("rejected")); err == nil {
-		t.Fatal("non-controller write must fail")
+	// Another client's input is recorded like the first one's.
+	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("second-client")); err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Contains(recorder.inputBytes(), []byte("rejected")) {
-		t.Fatal("failed write must not be recorded")
-	}
+	waitFor(t, func() bool { return bytes.Contains(recorder.inputBytes(), []byte("second-client")) })
 
 	if err := manager.Resize(context.Background(), tab.ID, "client-a", 120, 40); err != nil {
 		t.Fatal(err)

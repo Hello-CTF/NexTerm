@@ -86,7 +86,7 @@ type recordingControlQueue struct {
 var controlCoalesceWindow = 150 * time.Millisecond
 
 // controlMergeable reports whether next differs from prev only in the fields safe to merge (latest wins): version and title.
-// Size, grid revision, controller, subscriber/viewer counts, exit and durability changes always flow through in order.
+// Size, grid revision, size owner, subscriber/viewer counts, exit and durability changes always flow through in order.
 func controlMergeable(prev, next ControlEvent) bool {
 	if next.Exited {
 		return false
@@ -625,7 +625,7 @@ func (m *Manager) SetVisible(tabID string, visible bool) error {
 		return ErrTabClosed
 	}
 	mode := terminalgrid.ModeHidden
-	if visible && tab.controller != "" {
+	if visible && tab.sizeOwner != "" {
 		mode = terminalgrid.ModeController
 	} else if visible {
 		mode = terminalgrid.ModeObserver

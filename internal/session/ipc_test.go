@@ -11,6 +11,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
@@ -37,8 +38,8 @@ func TestIPCErrorPreservesControlAndLifecycleCodes(t *testing.T) {
 		err  error
 		code ipc.Code
 	}{
-		{err: ErrNotController, code: ipc.CodeNotController},
 		{err: ErrSessionNotFound, code: ipc.CodeNotFound},
+		{err: fmt.Errorf("tap: %w", base.ErrStalePrompt), code: ipc.Code("stale_prompt")},
 		{err: ErrTabNotFound, code: ipc.CodeNotFound},
 		{err: durable.ErrNotFound, code: ipc.CodeNotFound},
 		{err: ErrDisconnected, code: ipc.CodeDisconnected},
@@ -69,7 +70,6 @@ func TestIPCErrorUserMessagesAreActionable(t *testing.T) {
 		{err: ErrSessionNotFound, code: ipc.CodeNotFound, want: "会话不存在或已关闭"},
 		{err: fmt.Errorf("lookup: %w", ErrSessionNotFound), code: ipc.CodeNotFound, want: "会话不存在或已关闭"},
 		{err: ErrTabNotFound, code: ipc.CodeNotFound, want: "终端标签页不存在或已关闭"},
-		{err: ErrNotController, code: ipc.CodeNotController, want: "请先获取控制权"},
 		{err: ErrDisconnected, code: ipc.CodeDisconnected, want: "请重新连接"},
 		{err: ErrSessionClosed, code: ipc.CodeDisconnected, want: "会话已关闭"},
 		{err: ErrTabClosed, code: ipc.CodeDisconnected, want: "终端标签页已关闭"},

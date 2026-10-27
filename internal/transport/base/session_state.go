@@ -2,6 +2,7 @@ package base
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -124,6 +125,28 @@ type DurableStateReporter interface {
 	MarkDurableStateSeen(ctx context.Context, since time.Time) error
 }
 
+// ErrStalePrompt reports a prompt tap whose prompt is no longer the one the
+// user saw: it changed, went away, was already answered, any input reached
+// the session since, the helper restarted, or it is not tappable.
+var ErrStalePrompt = errors.New("prompt is stale")
+
+// PromptTap answers a detected prompt by one of its options. Generation,
+// Epoch and Fingerprint identify the prompt instance the user saw.
+type PromptTap struct {
+	Generation  string
+	Epoch       uint64
+	Fingerprint string
+	Option      int
+}
+
+// DurablePromptTapper is implemented by durable attachments whose helper
+// answers detected prompts. TapDurablePrompt validates the tap against a
+// fresh inspection of the screen, consumes the prompt epoch and writes the
+// option's keys; it returns those bytes, or ErrStalePrompt.
+type DurablePromptTapper interface {
+	TapDurablePrompt(ctx context.Context, tap PromptTap) (string, error)
+}
+
 // SessionPrompt is a detected prompt with what a client may do about it.
 type SessionPrompt struct {
 	// Kind is yesno, choice or question.
@@ -135,6 +158,9 @@ type SessionPrompt struct {
 	// Fingerprint is the hexadecimal prompt fingerprint.
 	Fingerprint string `json:"fingerprint"`
 	Epoch       uint64 `json:"epoch"`
+	// Generation is the helper generation the prompt was detected in. The
+	// client side sets it from the attachment; the helper leaves it empty.
+	Generation string `json:"generation,omitempty"`
 	// Tappable reports that the options can be answered by sending each
 	// option's Send bytes; Blocked names the reason when it is false.
 	Tappable bool   `json:"tappable"`

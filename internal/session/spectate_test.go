@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -38,8 +39,8 @@ func TestAttachSpectatorSnapshotThenLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Controller != "owner-client" {
-		t.Fatalf("spectator stole control: controller = %q", info.Controller)
+	if info.SizeOwner != "owner-client" {
+		t.Fatalf("spectator took the size: size owner = %q", info.SizeOwner)
 	}
 
 	receiver, err := manager.Hub().Bind("spect-1")
@@ -87,8 +88,8 @@ func TestAttachSpectatorSnapshotThenLive(t *testing.T) {
 	}
 }
 
-// TestAttachSpectatorNoControlNoInput pins the read-only boundary: the watcher does not take control (not even when
-// no one holds it), and writing input as the watcher always yields ErrNotController.
+// TestAttachSpectatorNoControlNoInput pins the read-only boundary: the watcher does not take the size (not even when
+// no one owns it), and writing input as the watcher is always rejected.
 func TestAttachSpectatorNoControlNoInput(t *testing.T) {
 	connector := newFakeConnector()
 	manager := NewManager(Config{
@@ -102,25 +103,25 @@ func TestAttachSpectatorNoControlNoInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	tab := openTestTab(t, manager, connected, "owner-client", "owner-1")
-	// Detach the owner channel so the tab has no controller.
+	// Detach the owner channel so the tab has no size owner.
 	if err := manager.DetachChannel("owner-1"); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "" {
-		t.Fatalf("precondition: controller = %q, want empty", info.Controller)
+	if info := tab.Info(); info.SizeOwner != "" {
+		t.Fatalf("precondition: size owner = %q, want empty", info.SizeOwner)
 	}
 
 	if _, err := manager.AttachSpectator(ctx, tab.ID, SpectateOptions{ClientID: "viewer-1", ChannelID: "spect-1"}); err != nil {
 		t.Fatal(err)
 	}
 	info := tab.Info()
-	if info.Controller != "" {
-		t.Fatalf("spectator claimed control: %q", info.Controller)
+	if info.SizeOwner != "" {
+		t.Fatalf("spectator took the size: %q", info.SizeOwner)
 	}
 	if info.Viewers != 1 || info.Subscribers != 1 {
 		t.Fatalf("spectator accounting = viewers %d subscribers %d", info.Viewers, info.Subscribers)
 	}
-	if err := manager.Write(ctx, tab.ID, "viewer-1", []byte("echo nope\n")); err == nil {
+	if err := manager.Write(ctx, tab.ID, "viewer-1", []byte("echo nope\n")); !errors.Is(err, ErrForbidden) {
 		t.Fatal("spectator write accepted")
 	}
 

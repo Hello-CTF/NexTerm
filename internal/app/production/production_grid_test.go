@@ -77,7 +77,6 @@ func TestProductionApplicationGridCommandsWithRealLocalTerminal(t *testing.T) {
 		args    string
 		code    ipc.Code
 	}{
-		{name: "observer", command: session.CommandTerminalResizeFlush, args: `{"tabId":"` + tab.ID + `","clientId":"client-b"}`, code: ipc.CodeNotController},
 		{name: "invalid size", command: session.CommandTerminalResize, args: `{"tabId":"` + tab.ID + `","clientId":"client-a","cols":0,"rows":30}`, code: ipc.CodeBadParam},
 		{name: "missing tab", command: session.CommandTerminalResizeFlush, args: `{"tabId":"missing","clientId":"client-a"}`, code: ipc.CodeNotFound},
 		{name: "malformed", command: session.CommandTerminalResizeFlush, args: `{`, code: ipc.CodeBadParam},

@@ -388,7 +388,7 @@ func TestLocalExplicitBackgroundRetainsOutputInputAndKill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if attached.ID != tab.ID || attached.Controller != "client-a" || attached.Subscribers != 1 {
+	if attached.ID != tab.ID || attached.SizeOwner != "client-a" || attached.Subscribers != 1 {
 		t.Fatalf("reattached info = %+v", attached)
 	}
 	receiver := bindTestReceiver(t, manager, "background-b")
@@ -610,7 +610,7 @@ func TestDetachCleanupRechecksAttachBeforeReap(t *testing.T) {
 	if _, err := manager.Tab(tab.ID); err != nil {
 		t.Fatalf("stale cleanup killed the reattached tab: %v", err)
 	}
-	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+	if info := tab.Info(); info.Subscribers != 1 || info.SizeOwner != "client-b" {
 		t.Fatalf("reattached tab state = %+v", info)
 	}
 	if got := connector.transport(0).channel(0).closeCount.Load(); got != 0 {
@@ -903,7 +903,7 @@ func TestRealLocalPTYExplicitBackgroundCleanupRaceReplayInputAndKill(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if attached.ID != tab.ID || attached.Controller != "client-a" {
+	if attached.ID != tab.ID || attached.SizeOwner != "client-a" {
 		t.Fatalf("real reattached info = %+v", attached)
 	}
 	receiver := bindTestReceiver(t, manager, "real-background-c")

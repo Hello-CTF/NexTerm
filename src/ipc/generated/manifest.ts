@@ -2511,11 +2511,6 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalBroadcastPrepareRequest", ts: "TerminalBroadcastPrepareRequest" },
       output: { go: "any", ts: "unknown" },
     },
-    "terminal_claim": {
-      nested: false,
-      channel: false,
-      stream: "none",
-    },
     "terminal_close_tab": {
       nested: false,
       channel: true,
@@ -2578,6 +2573,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalPauseRequest", ts: "TerminalPauseRequest" },
       output: { go: "any", ts: "unknown" },
     },
+    "terminal_prompt_tap": {
+      scope: "attention",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.promptTapRequest", ts: "PromptTapRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "terminal_record_start": {
       nested: false,
       channel: false,
@@ -2600,11 +2603,6 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalRecoverRequest", ts: "TerminalRecoverRequest" },
       output: { go: "any", ts: "unknown" },
-    },
-    "terminal_release": {
-      nested: false,
-      channel: false,
-      stream: "none",
     },
     "terminal_rename_tab": {
       scope: "terminal",
@@ -2880,7 +2878,6 @@ export const ipcContractManifest = {
     "session_probe",
     "session_probe_host_key",
     "terminal_attach_tab",
-    "terminal_claim",
     "terminal_close_tab",
     "terminal_create_tab",
     "terminal_detach",
@@ -2890,7 +2887,6 @@ export const ipcContractManifest = {
     "terminal_record_start",
     "terminal_record_status",
     "terminal_record_stop",
-    "terminal_release",
     "terminal_resize",
     "terminal_resize_flush",
     "terminal_screen_text",
@@ -4227,6 +4223,10 @@ export interface IPCCommandTypeMap {
   };
   "terminal_pause": {
     input: contractTypes.TerminalPauseRequest;
+    output: unknown;
+  };
+  "terminal_prompt_tap": {
+    input: contractTypes.PromptTapRequest;
     output: unknown;
   };
   "terminal_recover": {

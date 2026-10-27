@@ -36,7 +36,6 @@ var (
 	ErrTabNotFound          = errors.New("terminal tab not found")
 	ErrSessionClosed        = errors.New("session closed")
 	ErrTabClosed            = errors.New("terminal tab closed")
-	ErrNotController        = errors.New("not_controller")
 	ErrUnsupported          = errors.New("session capability unsupported")
 	ErrDisconnected         = errors.New("session disconnected")
 	ErrInvalidSize          = errors.New("invalid terminal size")
@@ -221,7 +220,12 @@ type TabInfo struct {
 	Cols         uint32 `json:"cols"`
 	Rows         uint32 `json:"rows"`
 	GridRevision uint64 `json:"gridRevision"`
-	Controller   string `json:"controller,omitempty"`
+	// SizeOwner is the client whose terminal size the PTY follows: the
+	// client that typed last after the handoff hold, or the first to attach.
+	// Other clients render the PTY size. Empty when no attached client owns it.
+	SizeOwner string `json:"sizeOwner,omitempty"`
+	// GuestControl is the preview guest holding input control.
+	GuestControl string `json:"guestControl,omitempty"`
 	Subscribers  int    `json:"subscribers"`
 	Viewers      int    `json:"viewers"`
 	Exited       bool   `json:"exited"`
@@ -263,8 +267,8 @@ func (t TabInfo) MarshalJSON() ([]byte, error) {
 	type Alias TabInfo
 	return json.Marshal(struct {
 		Alias
-		Controller *string `json:"controller"`
-	}{Alias: Alias(t), Controller: nullableController(t.Controller)})
+		SizeOwner *string `json:"sizeOwner"`
+	}{Alias: Alias(t), SizeOwner: nullableClient(t.SizeOwner)})
 }
 
 type StatusEvent struct {
@@ -291,7 +295,8 @@ type ControlEvent struct {
 	Cols           uint32 `json:"cols"`
 	Rows           uint32 `json:"rows"`
 	GridRevision   uint64 `json:"gridRevision"`
-	Controller     string `json:"controller,omitempty"`
+	SizeOwner      string `json:"sizeOwner,omitempty"`
+	GuestControl   string `json:"guestControl,omitempty"`
 	Subscribers    int    `json:"subscribers"`
 	Viewers        int    `json:"viewers"`
 	Exited         bool   `json:"exited"`
@@ -315,15 +320,15 @@ func (e ControlEvent) MarshalJSON() ([]byte, error) {
 	type Alias ControlEvent
 	return json.Marshal(struct {
 		Alias
-		Controller *string `json:"controller"`
-	}{Alias: Alias(e), Controller: nullableController(e.Controller)})
+		SizeOwner *string `json:"sizeOwner"`
+	}{Alias: Alias(e), SizeOwner: nullableClient(e.SizeOwner)})
 }
 
-func nullableController(controller string) *string {
-	if controller == "" {
+func nullableClient(client string) *string {
+	if client == "" {
 		return nil
 	}
-	return &controller
+	return &client
 }
 
 type ThrottleEvent struct {

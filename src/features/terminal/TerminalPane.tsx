@@ -91,7 +91,6 @@ import {
   IconCopy,
   IconEdit,
   IconEye,
-  IconGamepad,
   IconList,
   IconMergeH,
   IconPlug,
@@ -294,7 +293,7 @@ export function TerminalPane({
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [control, setControl] = useState<{
-    controller: string | null;
+    sizeOwner: string | null;
     subscribers: number;
     viewers: number;
     exited?: boolean;
@@ -307,8 +306,6 @@ export function TerminalPane({
   const [throttle, setThrottle] = useState<ThrottleState | null>(null);
   const [streamBacklog, setStreamBacklog] = useState<TerminalStreamBacklog | null>(null);
   const [, setThrottleTick] = useState(0);
-  const [claiming, setClaiming] = useState(false);
-  const [handoffSyncing, setHandoffSyncing] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [attachDead, setAttachDead] = useState(false);
   const [execInterrupted, setExecInterrupted] = useState(false);
@@ -343,7 +340,6 @@ export function TerminalPane({
     if (resumeTabId !== kernelTabId) resumeRef.current = resumeTabId;
   }
   const resumeAttemptedRef = useRef(false);
-  const observerHintAt = useRef(0);
   const writeErrorAt = useRef(0);
   const [broadcastQueue] = useState(() => new BroadcastInputQueue());
   const [broadcastConfirmation, setBroadcastConfirmation] = useState<PendingBroadcastConfirmation | null>(null);
@@ -354,8 +350,6 @@ export function TerminalPane({
   const broadcastConfirmingRef = useRef(false);
   const broadcastVisibleRef = useRef(visible !== false);
   broadcastVisibleRef.current = visible !== false;
-  const controlRef = useRef(control);
-  controlRef.current = control;
   const controlRefreshGen = useRef(0);
   const kernelTabIdRef = useRef<string | null>(null);
   kernelTabIdRef.current = kernelTabId;
@@ -369,7 +363,6 @@ export function TerminalPane({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const exitedCloseBtnRef = useRef<HTMLButtonElement>(null);
   const reconnectBtnRef = useRef<HTMLButtonElement>(null);
-  const handoffTimerRef = useRef<number | null>(null);
   const switchingTimerRef = useRef<number | null>(null);
   const wasVisibleRef = useRef(visible !== false);
   const pushToast = useUi((s) => s.pushToast);
@@ -503,8 +496,9 @@ export function TerminalPane({
   );
 
   const controlSupported = !containerId && !effectiveWinrm;
-  const isObserver = controlSupported && control !== null && control.controller !== me;
-  const canResize = !isObserver;
+  // Every attached client may type. The PTY follows the size of the client
+  // that typed last; the others render the PTY size until they type.
+  const canResize = !controlSupported || control === null || control.sizeOwner === me;
 
   const refreshControl = useCallback(
     async (tabIdArg?: string) => {
@@ -518,7 +512,7 @@ export function TerminalPane({
         const hit = list.find((t) => t.tabId === tabId);
         if (hit) {
           setControl({
-            controller: hit.controller,
+            sizeOwner: hit.sizeOwner,
             subscribers: hit.subscribers,
             viewers: hit.viewers,
             exited: hit.exited,
@@ -586,22 +580,11 @@ export function TerminalPane({
       text: string,
       opts?: { fromCommand?: boolean },
       productionConfirmation?: BroadcastEnvironmentConfirmation,
-    ): Promise<"sent" | "observer" | "failed"> => {
+    ): Promise<"sent" | "failed"> => {
       if (containerId && (execInterrupted || useUi.getState().sessions.find((x) => x.id === sessionId)?.status !== "connected")) {
         return "failed";
       }
       if (!kernelTabId) return "failed";
-      const hintObserver = () => {
-        const now = Date.now();
-        if (opts?.fromCommand || now - observerHintAt.current > 4000) {
-          observerHintAt.current = now;
-          pushToast("info", "终端正由其他设备操作，点击「接管控制」可取得控制权");
-        }
-      };
-      if (isObserver) {
-        hintObserver();
-        return "observer";
-      }
       const broadcast = broadcastContext();
       if (broadcast) {
         const state = useUi.getState();
@@ -654,15 +637,6 @@ export function TerminalPane({
         await terminalApi.write(kernelTabId, new TextEncoder().encode(text));
         return "sent";
       } catch (e) {
-        const code = (e as { code?: string } | null)?.code;
-        if (code === "not_controller") {
-          if (controlRef.current?.controller === me) {
-            setControl((c) => (c ? { ...c, controller: "__other__" } : c));
-            void refreshControl();
-          }
-          hintObserver();
-          return "observer";
-        }
         const now = Date.now();
         if (opts?.fromCommand || now - writeErrorAt.current > 5000) {
           writeErrorAt.current = now;
@@ -671,7 +645,7 @@ export function TerminalPane({
         return "failed";
       }
     },
-    [kernelTabId, isObserver, me, pushToast, refreshControl, broadcastContext, broadcastQueue, queueBroadcastConfirmation, containerId, execInterrupted, sessionId, storeTabId],
+    [kernelTabId, pushToast, broadcastContext, broadcastQueue, queueBroadcastConfirmation, containerId, execInterrupted, sessionId, storeTabId],
   );
 
   const confirmBroadcastProduction = useCallback((environmentNames?: string[]) => {
@@ -698,32 +672,7 @@ export function TerminalPane({
     })();
   }, [advanceBroadcastConfirmation, pushToast, sendData, storeTabId]);
 
-  const takeControl = useCallback(async () => {
-    if (!kernelTabId || claiming) return;
-    setClaiming(true);
-    setHandoffSyncing(true);
-    if (handoffTimerRef.current !== null) window.clearTimeout(handoffTimerRef.current);
-    try {
-      const prev = await terminalApi.claim(kernelTabId);
-      setControl((c) =>
-        c ? { ...c, controller: me } : { controller: me, subscribers: 1, viewers: 1, exited: false },
-      );
-      handleRef.current?.fit();
-      pushToast("success", prev && prev !== me ? "已接管控制权（对方转为只读观看）" : "已取得控制权");
-      handoffTimerRef.current = window.setTimeout(() => {
-        handoffTimerRef.current = null;
-        setHandoffSyncing(false);
-      }, 900);
-    } catch (e) {
-      setHandoffSyncing(false);
-      pushToast("error", `接管失败：${describeError(e)}`);
-    } finally {
-      setClaiming(false);
-    }
-  }, [kernelTabId, claiming, me, pushToast]);
-
   useEffect(() => () => {
-    if (handoffTimerRef.current !== null) window.clearTimeout(handoffTimerRef.current);
     if (switchingTimerRef.current !== null) window.clearTimeout(switchingTimerRef.current);
   }, []);
 
@@ -795,7 +744,7 @@ export function TerminalPane({
     if (!controlVersions.current.accept(p.tabId, p.version)) return;
     controlRefreshGen.current += 1;
     setControl({
-      controller: p.controller,
+      sizeOwner: p.sizeOwner,
       subscribers: p.subscribers,
       viewers: p.viewers,
       exited: p.exited,
@@ -1496,10 +1445,6 @@ export function TerminalPane({
         return;
       }
       if (!kernelTabId) return;
-      if (isObserver) {
-        pushToast("info", "终端正由其他设备操作，点击「接管控制」可取得控制权");
-        return;
-      }
       const { accepted, skipped } = splitOversizedFiles(files);
       const notes: string[] = [];
       if (skipped.length > 0) {
@@ -1604,7 +1549,7 @@ export function TerminalPane({
         if (pasteUploadRef.current === run) pasteUploadRef.current = null;
       }
     },
-    [kernelTabId, isObserver, pushToast, sessionId, sessionKind, containerId, effectiveWinrm],
+    [kernelTabId, pushToast, sessionId, sessionKind, containerId, effectiveWinrm],
   );
 
   const cancelPasteUpload = () => {
@@ -2261,7 +2206,7 @@ export function TerminalPane({
                 setThrottle(null);
                 setStreamBacklog(null);
                 setControl({
-                  controller: info.controller,
+                  sizeOwner: info.sizeOwner,
                   subscribers: info.subscribers,
                   viewers: info.viewers,
                   exited: info.exited,
@@ -2383,18 +2328,7 @@ export function TerminalPane({
             />
           )}
 
-          {controlSupported && handoffSyncing && !control?.exited && (
-            <div
-              role="status"
-              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-neutral-950/45 px-6 text-center backdrop-blur-[1px]"
-            >
-              <span className="rounded-md border border-blue-400/30 bg-neutral-950/75 px-3 py-2 text-xs text-blue-100 shadow-lg">
-                正在同步终端窗口大小…
-              </span>
-            </div>
-          )}
-
-          {switching && !handoffSyncing && !attachDead && !control?.exited && (
+          {switching && !attachDead && !control?.exited && (
             <div
               role="status"
               className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-neutral-950/45 px-6 text-center backdrop-blur-[1px]"
@@ -2405,57 +2339,26 @@ export function TerminalPane({
             </div>
           )}
 
-          {controlSupported && control && (control.exited || isObserver) && (
+          {controlSupported && control?.exited && (
             <div
               role="alert"
               className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2.5 bg-neutral-950/70 px-6 text-center backdrop-blur-[1px]"
             >
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
                 <IconEye size={15} className="nx-term-overlay-warn text-amber-300" />
-                {control.exited
-                  ? "终端进程已结束"
-                  : control.controller
-                    ? "终端正由其他设备操作"
-                    : "当前无人操作"}
+                终端进程已结束
               </span>
-              {control.exited ? (
-                <>
-                  <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
-                    只能查看最后的终端输出。请新建终端继续操作
-                  </span>
-                  <button
-                    ref={exitedCloseBtnRef}
-                    className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto"
-                    onClick={() => void requestCloseTab(storeTabId)}
-                  >
-                    <IconClose size={13} />
-                    关闭标签
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
-                    {control.controller
-                      ? "多个设备可以同时观看，但同一时刻只有一个设备能操作。接管后，对方将转为只读观看，终端尺寸也会按你的窗口重排。"
-                      : "多个设备可以同时观看，但同一时刻只有一个设备能操作。接管后即可输入，终端尺寸会按你的窗口重排。"}
-                  </span>
-                  {control.subscribers > 1 && (
-                    <span className="nx-badge">{control.viewers} 个设备正在观看</span>
-                  )}
-                  <button
-                    className="nx-btn nx-btn-primary nx-btn-sm pointer-events-auto"
-                    disabled={claiming}
-                    onClick={() => void takeControl()}
-                  >
-                    {claiming ? (
-                      <IconRefresh size={13} className="animate-spin" />
-                    ) : (
-                      <IconGamepad size={13} />
-                    )}
-                    接管控制
-                  </button>
-                </>
-              )}
+              <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
+                只能查看最后的终端输出。请新建终端继续操作
+              </span>
+              <button
+                ref={exitedCloseBtnRef}
+                className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto"
+                onClick={() => void requestCloseTab(storeTabId)}
+              >
+                <IconClose size={13} />
+                关闭标签
+              </button>
             </div>
           )}
 

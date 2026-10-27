@@ -42,7 +42,7 @@ func (p *staleDescriptorProvider) ListDurableDescriptors(ctx context.Context) ([
 // machines, each with its own SSH transport) resolve their own remote durable
 // provider against the same helper daemon and share one durable session -
 // discovery by listing, replay for the late joiner, live fan-out to both,
-// detach without kill, controller recovery after reattach, reconnect without
+// detach without kill, size ownership after reattach, reconnect without
 // replay duplication, and cross-client kill visibility.
 func TestRemoteDurableTwoManagersShareSession(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "supervisor")

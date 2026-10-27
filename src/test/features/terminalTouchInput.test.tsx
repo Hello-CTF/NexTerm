@@ -133,7 +133,7 @@ beforeEach(() => {
     sessionId: "session",
     cols: 36,
     rows: 24,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,

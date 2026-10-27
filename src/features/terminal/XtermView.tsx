@@ -131,7 +131,7 @@ export interface XtermViewProps {
   sessionConnected?: boolean;
   onAttachInfo?: (info: {
     tabId: string;
-    controller: string | null;
+    sizeOwner: string | null;
     subscribers: number;
     viewers: number;
     exited: boolean;
@@ -249,12 +249,11 @@ export function XtermView(props: XtermViewProps) {
   canResizeRef.current = props.canResize;
   winrmRef.current = props.winrm;
 
-  const fitIfSized = (afterClaim = false, final = false): boolean => {
+  const fitIfSized = (final = false): boolean => {
     const host = hostRef.current;
     const term = termRef.current;
     const coordinator = gridRef.current;
     if (!host || !term || !coordinator) return false;
-    if (afterClaim) coordinator.setCanResize(true);
     const geometry = measureTerminalGeometry(term, host);
     if (!geometry) return false;
     // A soft keyboard only shrinks the visible height: keep the grid (no local or PTY resize) and let CSS bottom-align the
@@ -422,7 +421,7 @@ export function XtermView(props: XtermViewProps) {
       clear: () => term.clear(),
       getSelection: () => term.getSelection(),
       focus: () => term.focus(),
-      fit: () => fitIfSized(true),
+      fit: () => fitIfSized(),
       paste: (text, submit = false) => {
         // Like typed input (xterm's scrollOnUserInput), text sent from the composer or key bar returns to the bottom.
         touchScroll.stop();
@@ -439,7 +438,7 @@ export function XtermView(props: XtermViewProps) {
     let attachmentId = 0;
     const reportAttachInfo = (info: {
       tabId: string;
-      controller: string | null;
+      sizeOwner: string | null;
       subscribers: number;
       viewers: number;
       exited: boolean;
@@ -1112,7 +1111,7 @@ export function XtermView(props: XtermViewProps) {
           applyRemoteDimensions(info.cols, info.rows);
           reportAttachInfo({
             tabId: info.tabId,
-            controller: info.controller,
+            sizeOwner: info.sizeOwner,
             subscribers: info.subscribers,
             viewers: info.viewers,
             exited: info.exited,
@@ -1137,7 +1136,7 @@ export function XtermView(props: XtermViewProps) {
           );
           reportAttachInfo({
             tabId: id,
-            controller: null,
+            sizeOwner: null,
             subscribers: 1,
             viewers: 1,
             exited: false,
@@ -1152,7 +1151,7 @@ export function XtermView(props: XtermViewProps) {
           id = info.tabId;
           reportAttachInfo({
             tabId: info.tabId,
-            controller: info.controller,
+            sizeOwner: info.sizeOwner,
             subscribers: info.subscribers,
             viewers: info.viewers,
             exited: info.exited,
@@ -1192,7 +1191,7 @@ export function XtermView(props: XtermViewProps) {
           fallbackNotice = info.fallbackNotice;
           reportAttachInfo({
             tabId: info.tabId,
-            controller: info.controller,
+            sizeOwner: info.sizeOwner,
             subscribers: info.subscribers,
             viewers: info.viewers,
             exited: info.exited,
@@ -1288,7 +1287,7 @@ export function XtermView(props: XtermViewProps) {
           coordinator.attach(info.tabId, { cols: info.cols, rows: info.rows }, true);
           reportAttachInfo({
             tabId: info.tabId,
-            controller: info.controller,
+            sizeOwner: info.sizeOwner,
             subscribers: info.subscribers,
             viewers: info.viewers,
             exited: info.exited,
@@ -1474,7 +1473,7 @@ export function XtermView(props: XtermViewProps) {
         measureFrame = null;
         const accurate = finalFrame;
         finalFrame = false;
-        fitIfSized(false, accurate);
+        fitIfSized(accurate);
       });
     };
     const onFinalResize = () => scheduleMeasure(true);
@@ -1575,7 +1574,7 @@ export function XtermView(props: XtermViewProps) {
       const fontMetricsChanged = term.options.fontSize !== prefs.terminalFontSize || term.options.fontFamily !== fontFamily;
       term.options.fontSize = prefs.terminalFontSize;
       term.options.fontFamily = fontFamily;
-      if (fontMetricsChanged) fitIfSized(false, true);
+      if (fontMetricsChanged) fitIfSized(true);
       term.options.theme = { ...xtermThemeFor(getResolvedTerminalTheme(), prefs.terminalContrast), cursor: accentColor() };
     };
     return subscribeAppearancePrefs(applyAppearance);

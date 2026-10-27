@@ -441,7 +441,7 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     await flush();
     fireAttachInfo({
       tabId: "kernel-1",
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -470,7 +470,7 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     const control = (version: number, extra: Record<string, unknown>) => ({
       tabId: "kernel-1",
       version,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -509,7 +509,7 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     const control = (version: number) => ({
       tabId: "kernel-1",
       version,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -536,7 +536,7 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
 
   const attachInfo = (extra: Record<string, unknown>) => ({
     tabId: "kernel-1",
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,

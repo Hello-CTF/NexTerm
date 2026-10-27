@@ -66,7 +66,11 @@ export interface NotificationClickEvent {
 
 export interface TerminalControlEvent {
   tabId: string;
-  controller: string | null;
+  // The client whose terminal size the PTY follows (the client that typed
+  // last, after a short hold); null while no attached client owns it.
+  sizeOwner: string | null;
+  // The share-preview guest holding input control.
+  guestControl?: string;
   subscribers: number;
   viewers: number;
   exited: boolean;

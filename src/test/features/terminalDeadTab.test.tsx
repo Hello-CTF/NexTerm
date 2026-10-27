@@ -382,7 +382,7 @@ describe("terminal dead-tab overlay", () => {
       sessionKind: "ssh",
       cols: 80,
       rows: 24,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited,
@@ -394,7 +394,7 @@ describe("terminal dead-tab overlay", () => {
     act(() => {
       (harness.props?.onAttachInfo as ((info: Record<string, unknown>) => void) | undefined)?.({
         tabId: "kernel-1",
-        controller: "me",
+        sizeOwner: "me",
         subscribers: 1,
         viewers: 1,
         exited,

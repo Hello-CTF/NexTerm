@@ -290,7 +290,7 @@ describe("AiSidebar agent production mounting", () => {
         sessionKind: "ssh",
         cols: 80,
         rows: 24,
-        controller: null,
+        sizeOwner: null,
         subscribers: 1,
         viewers: 0,
         exited: false,

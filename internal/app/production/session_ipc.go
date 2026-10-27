@@ -56,11 +56,13 @@ type databaseLoginTester interface {
 }
 
 type dockerTabInfo struct {
-	sessionID  string
-	cols       uint
-	rows       uint
-	controller string
-	channels   map[string]string
+	sessionID string
+	cols      uint
+	rows      uint
+	// sizeOwner is the client whose size the exec follows: the client that
+	// typed last, or the one that opened it.
+	sizeOwner string
+	channels  map[string]string
 }
 
 type sessionConnectRequest struct {
@@ -211,7 +213,7 @@ type attachedTabDTO struct {
 	SessionID      string  `json:"sessionId"`
 	Cols           uint32  `json:"cols"`
 	Rows           uint32  `json:"rows"`
-	Controller     *string `json:"controller"`
+	SizeOwner      *string `json:"sizeOwner"`
 	Subscribers    int     `json:"subscribers"`
 	Viewers        int     `json:"viewers"`
 	Exited         bool    `json:"exited"`
@@ -240,6 +242,18 @@ type renameTerminalRequest struct {
 type attentionSeenRequest struct {
 	TabID string `json:"tabId"`
 	Since string `json:"since"`
+}
+
+// promptTapRequest answers the detected prompt of an attention event: the
+// generation, epoch and fingerprint come from that event's prompt and
+// option indexes its options.
+type promptTapRequest struct {
+	TabID       string `json:"tabId"`
+	ClientID    string `json:"clientId,omitempty"`
+	Generation  string `json:"generation"`
+	Epoch       uint64 `json:"epoch"`
+	Fingerprint string `json:"fingerprint"`
+	Option      int    `json:"option"`
 }
 
 type createTerminalRequest struct {
@@ -378,7 +392,7 @@ type liveTabDTO struct {
 	SessionKind     string  `json:"sessionKind"`
 	Cols            uint32  `json:"cols"`
 	Rows            uint32  `json:"rows"`
-	Controller      *string `json:"controller"`
+	SizeOwner       *string `json:"sizeOwner"`
 	Subscribers     int     `json:"subscribers"`
 	Viewers         int     `json:"viewers"`
 	Exited          bool    `json:"exited"`
@@ -872,7 +886,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			// The client's accepted-offset ACK for one channel: opens the
 			// recovery ring's retention floor without waiting for a pause/recover
-			// RPC. The caller must own the tab and be its controller.
+			// RPC. The caller must own the tab and be attached to the channel.
 			return ipc.Register(dispatcher, "terminal_stream_ack", func(ctx context.Context, call *ipc.Call, input terminalStreamAckRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				client, err := streamControlCaller(call, input.ClientID)
@@ -880,32 +894,6 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return nil, terminalIPCError(err)
 				}
 				return nil, terminalIPCError(s.sessions.StreamAckFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes))
-			})
-		},
-		func() error {
-			return ipc.Register(dispatcher, "terminal_claim", func(ctx context.Context, call *ipc.Call, input terminalIDRequest) (*string, error) {
-				ctx = productionSessionRequestContext(ctx)
-				previous, err := s.sessions.ClaimFor(ctx, input.TabID, call.ClientID)
-				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
-					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
-						return nil, terminalIPCError(authErr)
-					}
-					return s.claimDocker(input.TabID, call.ClientID)
-				}
-				return nullableProductionString(previous), terminalIPCError(err)
-			})
-		},
-		func() error {
-			return ipc.Register(dispatcher, "terminal_release", func(ctx context.Context, call *ipc.Call, input terminalIDRequest) (bool, error) {
-				ctx = productionSessionRequestContext(ctx)
-				released, err := s.sessions.ReleaseFor(ctx, input.TabID, call.ClientID)
-				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
-					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
-						return false, terminalIPCError(authErr)
-					}
-					return s.releaseDocker(input.TabID, call.ClientID)
-				}
-				return released, terminalIPCError(err)
 			})
 		},
 		func() error {
@@ -951,7 +939,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					sessionInfo := connected.Info()
 					result = append(result, liveTabDTO{
 						TabID: info.ID, SessionID: info.SessionID, SessionName: sessionInfo.Name, SessionKind: sessionInfo.Kind,
-						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
+						Cols: info.Cols, Rows: info.Rows, SizeOwner: nullableProductionString(info.SizeOwner),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
 						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt,
 						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, DetachedMSAgo: info.DetachedMSAgo, DetachedSinceOpen: info.DetachedSinceOpen, Durable: info.Durable, State: info.State,
@@ -1111,6 +1099,15 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			return ipc.Register(dispatcher, "terminal_attention_seen", func(ctx context.Context, _ *ipc.Call, input attentionSeenRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				return nil, terminalIPCError(s.sessions.MarkAttentionSeenFor(ctx, input.TabID, input.Since))
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_prompt_tap", func(ctx context.Context, call *ipc.Call, input promptTapRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client := gridRequestClient(call.ClientID, input.ClientID)
+				return nil, terminalIPCError(s.sessions.TapPromptFor(ctx, input.TabID, client, session.PromptTapRequest{
+					Generation: input.Generation, Epoch: input.Epoch, Fingerprint: input.Fingerprint, Option: input.Option,
+				}))
 			})
 		},
 		func() error {
@@ -1493,7 +1490,7 @@ func productionSessionInfo(info session.SessionInfo) sessionInfoDTO {
 func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
-		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
+		SizeOwner: nullableProductionString(info.SizeOwner), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
 		Retainable: info.Retainable, Durable: info.Durable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
 		AttachmentID: info.AttachmentID,
 	}

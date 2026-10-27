@@ -28,7 +28,7 @@ func (e *blockingControlEmitter) EmitSessionEvent(_ context.Context, event Event
 	return nil
 }
 
-func TestBlockingEmitterCannotMakeControllerSnapshotAuthoritativelyStale(t *testing.T) {
+func TestBlockingEmitterCannotMakeControlSnapshotAuthoritativelyStale(t *testing.T) {
 	emitter := &blockingControlEmitter{
 		blockVersion: 2,
 		started:      make(chan struct{}),
@@ -50,7 +50,7 @@ func TestBlockingEmitterCannotMakeControllerSnapshotAuthoritativelyStale(t *test
 		attached <- err
 	}()
 	<-emitter.started
-	if _, err := manager.Claim(tab.ID, "client-b"); err != nil {
+	if err := manager.DetachChannel("a-1"); err != nil {
 		t.Fatal(err)
 	}
 	close(emitter.release)
@@ -59,11 +59,11 @@ func TestBlockingEmitterCannotMakeControllerSnapshotAuthoritativelyStale(t *test
 	}
 	older := <-emitter.events
 	newer := <-emitter.events
-	if newer.Version != 3 || newer.Controller != "client-b" {
-		t.Fatalf("new event = %+v, want versioned client-b", newer)
+	if newer.Version != 3 || newer.Subscribers != 1 {
+		t.Fatalf("new event = %+v, want versioned single subscriber", newer)
 	}
-	if older.Version != 2 || older.Controller != "client-a" {
-		t.Fatalf("delayed event = %+v, want older client-a", older)
+	if older.Version != 2 || older.Subscribers != 2 {
+		t.Fatalf("delayed event = %+v, want older two subscribers", older)
 	}
 	latest := ControlEvent{}
 	for _, event := range []ControlEvent{newer, older} {
@@ -71,8 +71,8 @@ func TestBlockingEmitterCannotMakeControllerSnapshotAuthoritativelyStale(t *test
 			latest = event
 		}
 	}
-	if latest.Controller != "client-b" || tab.Info().Controller != "client-b" {
-		t.Fatalf("version-filtered controller = %q backend = %q", latest.Controller, tab.Info().Controller)
+	if latest.Subscribers != 1 || tab.Info().Subscribers != 1 {
+		t.Fatalf("version-filtered subscribers = %d backend = %d", latest.Subscribers, tab.Info().Subscribers)
 	}
 }
 

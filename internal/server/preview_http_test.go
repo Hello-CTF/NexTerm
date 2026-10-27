@@ -83,8 +83,8 @@ func (f *previewFixture) openTab(t *testing.T, ownerID string) string {
 	return tabID
 }
 
-// openTabWithChannel is like openTab, additionally returning the owner channel ID (detaching it clears the controller,
-// for tests of the guest control arbitration path).
+// openTabWithChannel is like openTab, additionally returning the owner channel ID (detaching it leaves no owner
+// attached, for tests of the guest control arbitration path).
 func (f *previewFixture) openTabWithChannel(t *testing.T, ownerID string) (string, string) {
 	t.Helper()
 	connectCtx := ipc.WithUserID(context.Background(), ownerID)
@@ -568,13 +568,13 @@ func writePreviewInput(t *testing.T, conn *websocket.Conn, data string) {
 	}
 }
 
-func previewTabController(t *testing.T, f *previewFixture, tabID string) string {
+func previewTabGuestControl(t *testing.T, f *previewFixture, tabID string) string {
 	t.Helper()
 	tab, err := f.manager.Tab(tabID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return tab.Info().Controller
+	return tab.Info().GuestControl
 }
 
 // TestSharePreviewWriteInputReachesTerminal pins the writable preview's full input direction: ready
@@ -610,13 +610,13 @@ func TestSharePreviewWriteInputReachesTerminal(t *testing.T) {
 	if leaseUntil, ok := control["lease_until"].(float64); !ok || leaseUntil <= 0 {
 		t.Fatalf("guest control lease_until = %v, want positive epoch ms", control["lease_until"])
 	}
-	if controller := previewTabController(t, f, tabID); controller != "preview-"+linkID {
-		t.Fatalf("controller = %q, want preview-%s", controller, linkID)
+	if guest := previewTabGuestControl(t, f, tabID); guest != "preview-"+linkID {
+		t.Fatalf("guest control = %q, want preview-%s", guest, linkID)
 	}
 	expectPreviewBinaryMarker(t, conn, "guest-rw-42", "", 10*time.Second)
 }
 
-// TestSharePreviewWriteOwnerControls pins owner-held arbitration: while the owner client holds the controller,
+// TestSharePreviewWriteOwnerControls pins owner-held arbitration: while an owner client is attached,
 // guest input is turned back with ErrGuestControlOwner (owner control frame), bytes never reach the terminal,
 // and the connection and output are unaffected.
 func TestSharePreviewWriteOwnerControls(t *testing.T) {
@@ -634,8 +634,8 @@ func TestSharePreviewWriteOwnerControls(t *testing.T) {
 	if control := awaitPreviewControl(t, conn, 10*time.Second); control["state"] != "owner" {
 		t.Fatalf("control frame = %v, want owner", control)
 	}
-	if controller := previewTabController(t, f, tabID); controller != "owner" {
-		t.Fatalf("controller = %q, want owner", controller)
+	if guest := previewTabGuestControl(t, f, tabID); guest != "" {
+		t.Fatalf("guest control = %q while the owner is attached", guest)
 	}
 	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo owner-flow-1\r")); err != nil {
 		t.Fatal(err)
@@ -644,7 +644,7 @@ func TestSharePreviewWriteOwnerControls(t *testing.T) {
 }
 
 // TestSharePreviewWriteGuestBusy pins guest-to-guest arbitration feedback at the preview protocol: while another guest's
-// lease is still within the disconnect grace window (controller orphan-cleaned but lease not expired), guest input is
+// lease is still within the disconnect grace window (guest control cleaned up but lease not expired), guest input is
 // turned back with a busy control frame.
 func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	f := newPreviewFixture(t)
@@ -657,7 +657,7 @@ func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	linkA, _ := createPreviewWithWrite(t, f, alice, tabID, true)
 	_, tokenB := createPreviewWithWrite(t, f, alice, tabID, true)
 
-	// Guest A takes control via the manager and then drops its subscription channel: orphan cleanup removes the controller,
+	// Guest A takes control via the manager and then drops its subscription channel: cleanup removes its control,
 	// and the lease is kept until expiry (disconnect grace).
 	if _, err := f.manager.AttachSpectator(context.Background(), tabID, session.SpectateOptions{
 		ClientID: "preview-" + linkA, ChannelID: "spec-a",
@@ -670,8 +670,8 @@ func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	if err := f.manager.DetachChannel("spec-a"); err != nil {
 		t.Fatal(err)
 	}
-	if controller := previewTabController(t, f, tabID); controller != "" {
-		t.Fatalf("precondition: controller = %q, want empty", controller)
+	if guest := previewTabGuestControl(t, f, tabID); guest != "" {
+		t.Fatalf("precondition: guest control = %q, want empty", guest)
 	}
 
 	conn := dialPreviewViewer(t, f.http.URL, tokenB)
@@ -708,10 +708,7 @@ func TestSharePreviewShrinkToReadRejectsInput(t *testing.T) {
 	writePreviewInput(t, conn, "echo denied-ro-1\r")
 	expectPreviewErrorFrame(t, conn, "read_only", "预览当前为只读", 10*time.Second)
 
-	// Non-terminal: the connection continues, the owner's output after taking over keeps arriving, and the rejected input never reached the terminal.
-	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
-		t.Fatal(err)
-	}
+	// Non-terminal: the connection continues, the owner's output keeps arriving, and the rejected input never reached the terminal.
 	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-ro-1\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -738,16 +735,16 @@ func TestSharePreviewDisconnectReleasesGuest(t *testing.T) {
 	if control := awaitPreviewControl(t, connA, 10*time.Second); control["state"] != "guest" {
 		t.Fatalf("guest A control = %v, want guest", control)
 	}
-	if controller := previewTabController(t, f, tabID); controller != "preview-"+linkA {
-		t.Fatalf("controller = %q, want preview-%s", controller, linkA)
+	if controller := previewTabGuestControl(t, f, tabID); controller != "preview-"+linkA {
+		t.Fatalf("guest control = %q, want preview-%s", controller, linkA)
 	}
 	if err := connA.Close(websocket.StatusNormalClosure, ""); err != nil {
 		t.Fatal(err)
 	}
-	// ReleaseGuest clears the controller and lease together before the preview receiver closes.
+	// ReleaseGuest clears guest control and lease together before the preview receiver closes.
 	waitFor(t, func() bool {
 		tab, err := f.manager.Tab(tabID)
-		return err == nil && tab.Info().Controller == ""
+		return err == nil && tab.Info().GuestControl == ""
 	})
 
 	connB := dialPreviewViewer(t, f.http.URL, tokenB)
@@ -757,8 +754,8 @@ func TestSharePreviewDisconnectReleasesGuest(t *testing.T) {
 	if control := awaitPreviewControl(t, connB, 10*time.Second); control["state"] != "guest" {
 		t.Fatalf("guest B control = %v, want guest", control)
 	}
-	if controller := previewTabController(t, f, tabID); controller != "preview-"+linkB {
-		t.Fatalf("controller = %q, want preview-%s", controller, linkB)
+	if controller := previewTabGuestControl(t, f, tabID); controller != "preview-"+linkB {
+		t.Fatalf("guest control = %q, want preview-%s", controller, linkB)
 	}
 }
 
@@ -789,7 +786,7 @@ func TestSharePreviewRevokeTerminatesWritable(t *testing.T) {
 	expectPreviewError(t, conn, "revoked", 10*time.Second)
 	waitFor(t, func() bool {
 		tab, err := f.manager.Tab(tabID)
-		return err == nil && tab.Info().Controller == ""
+		return err == nil && tab.Info().GuestControl == ""
 	})
 }
 
@@ -847,10 +844,7 @@ func TestSharePreviewRevokedInputFrame(t *testing.T) {
 	writePreviewInput(t, conn, "echo denied-rev-1\r")
 	expectPreviewErrorFrame(t, conn, "revoked", "分享链接已吊销", 10*time.Second)
 
-	// Non-terminal: the connection continues, the owner's output after taking over keeps arriving, and the rejected input never reached the terminal.
-	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
-		t.Fatal(err)
-	}
+	// Non-terminal: the connection continues, the owner's output keeps arriving, and the rejected input never reached the terminal.
 	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-rev-1\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -881,9 +875,6 @@ func TestSharePreviewExpiredInputFrame(t *testing.T) {
 	writePreviewInput(t, conn, "echo denied-exp-1\r")
 	expectPreviewErrorFrame(t, conn, "expired", "分享链接已过期", 10*time.Second)
 
-	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
-		t.Fatal(err)
-	}
 	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-exp-1\r")); err != nil {
 		t.Fatal(err)
 	}

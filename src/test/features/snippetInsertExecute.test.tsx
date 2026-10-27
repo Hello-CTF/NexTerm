@@ -262,9 +262,9 @@ describe("snippet insert and execute actions", () => {
     );
   });
 
-  it("explains missing control when the write is rejected as not_controller", async () => {
+  it("reports the write error when the write is rejected", async () => {
     seedTerminalTab();
-    mocks.write.mockRejectedValue({ code: "not_controller", message: "not_controller" });
+    mocks.write.mockRejectedValue({ code: "disconnected", message: "disconnected" });
     const onClosed = vi.fn();
     mounted = mountPanel(createElement(SnippetsHost, { onClosed }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
@@ -274,7 +274,7 @@ describe("snippet insert and execute actions", () => {
 
     expect(mocks.toast).toHaveBeenCalledWith(
       "error",
-      expect.stringContaining("请先在终端上接管控制"),
+      expect.stringContaining("执行失败"),
     );
     expect(onClosed).not.toHaveBeenCalled();
   });

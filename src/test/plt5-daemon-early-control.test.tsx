@@ -194,7 +194,7 @@ describe("TerminalPane early control state", () => {
     control({
       tabId: "kernel-9",
       version: 1,
-      controller: null,
+      sizeOwner: null,
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -220,7 +220,7 @@ describe("TerminalPane early control state", () => {
     control({
       tabId: "kernel-8",
       version: 1,
-      controller: null,
+      sizeOwner: null,
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -240,7 +240,7 @@ describe("TerminalPane early control state", () => {
     control({
       tabId: "kernel-9",
       version: 1,
-      controller: null,
+      sizeOwner: null,
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -261,7 +261,7 @@ describe("TerminalPane early control state", () => {
     control({
       tabId: "kernel-9",
       version: 1,
-      controller: null,
+      sizeOwner: null,
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -274,7 +274,7 @@ describe("TerminalPane early control state", () => {
     control({
       tabId: "kernel-9",
       version: 2,
-      controller: null,
+      sizeOwner: null,
       subscribers: 1,
       viewers: 1,
       exited: false,

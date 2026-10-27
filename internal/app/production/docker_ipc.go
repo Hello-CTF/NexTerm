@@ -105,7 +105,7 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 				clientID := gridRequestClient(call.ClientID, input.ClientID)
 				s.mu.Lock()
 				s.dockerTabs[id] = &dockerTabInfo{
-					sessionID: input.SessionID, cols: input.Cols, rows: input.Rows, controller: clientID,
+					sessionID: input.SessionID, cols: input.Cols, rows: input.Rows, sizeOwner: clientID,
 					channels: map[string]string{call.Channel.ID: clientID},
 				}
 				s.mu.Unlock()
@@ -285,13 +285,13 @@ func (s *terminalCommandService) attachDocker(ctx context.Context, call *ipc.Cal
 	s.mu.Lock()
 	meta := s.dockerTabs[id]
 	if meta == nil {
-		meta = &dockerTabInfo{sessionID: sessionID, cols: 80, rows: 24, controller: call.ClientID, channels: make(map[string]string)}
+		meta = &dockerTabInfo{sessionID: sessionID, cols: 80, rows: 24, sizeOwner: call.ClientID, channels: make(map[string]string)}
 		s.dockerTabs[id] = meta
 	}
 	meta.channels = map[string]string{call.Channel.ID: call.ClientID}
 	info := attachedTabDTO{
 		TabID: id, SessionID: meta.sessionID, Cols: uint32(meta.cols), Rows: uint32(meta.rows),
-		Controller: nullableProductionString(meta.controller), Subscribers: 1, Viewers: 1,
+		SizeOwner: nullableProductionString(meta.sizeOwner), Subscribers: 1, Viewers: 1,
 		Shell: string(session.ShellUnknown),
 	}
 	s.mu.Unlock()
@@ -325,51 +325,29 @@ func (s *terminalCommandService) closeDocker(id string) error {
 	return s.docker.CloseStream(id)
 }
 
-func (s *terminalCommandService) claimDocker(id, clientID string) (*string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	meta := s.dockerTabs[id]
-	if meta == nil {
-		return nil, session.ErrTabNotFound
-	}
-	previous := meta.controller
-	meta.controller = clientID
-	return nullableProductionString(previous), nil
-}
-
-func (s *terminalCommandService) releaseDocker(id, clientID string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	meta := s.dockerTabs[id]
-	if meta == nil {
-		return false, session.ErrTabNotFound
-	}
-	if meta.controller != clientID {
-		return false, nil
-	}
-	meta.controller = ""
-	return true, nil
-}
-
-func (s *terminalCommandService) dockerController(id string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if meta := s.dockerTabs[id]; meta != nil {
-		return meta.controller
-	}
-	return ""
-}
-
+// writeDocker writes a client's input; the client becomes the size owner.
 func (s *terminalCommandService) writeDocker(ctx context.Context, id, clientID string, data []byte) error {
-	if controller := s.dockerController(id); controller != "" && controller != clientID {
-		return session.ErrNotController
+	s.mu.Lock()
+	if meta := s.dockerTabs[id]; meta != nil {
+		meta.sizeOwner = clientID
 	}
+	s.mu.Unlock()
 	return s.docker.WriteExec(ctx, id, data)
 }
 
+// resizeDocker applies the size owner's size; another client's size is
+// ignored until its input makes it the owner. Unlike session tabs there is
+// no handoff hold and no promotion: a docker exec stream has one attached
+// channel at a time, so two clients never type into it together.
 func (s *terminalCommandService) resizeDocker(ctx context.Context, id, clientID string, cols, rows uint) error {
-	if controller := s.dockerController(id); controller != "" && controller != clientID {
-		return session.ErrNotController
+	s.mu.Lock()
+	owner := ""
+	if meta := s.dockerTabs[id]; meta != nil {
+		owner = meta.sizeOwner
+	}
+	s.mu.Unlock()
+	if owner != "" && owner != clientID {
+		return nil
 	}
 	return s.docker.ResizeExec(ctx, id, cols, rows)
 }

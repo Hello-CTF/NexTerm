@@ -137,10 +137,9 @@ func TestStreamAckLiteralInputPassesThrough(t *testing.T) {
 	}
 }
 
-// A non-controller attached observer cannot modify the retention floor: the
-// ACK-shaped write is rejected with ErrNotController, and the floor is
-// untouched.
-func TestStreamAckObserverForbidden(t *testing.T) {
+// Input never modifies the retention floor: an ACK-shaped write from another
+// attached client is ordinary input, and the floor is untouched.
+func TestStreamAckShapedInputLeavesFloor(t *testing.T) {
 	manager, _, _, connected := openOpenTestSession(t, KindLocal)
 	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
 	if err != nil {
@@ -157,11 +156,11 @@ func TestStreamAckObserverForbidden(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = manager.WriteFor(context.Background(), info.ID, "client-b", []byte(`{"type":"nexterm.stream-ack","offset":1048576}`))
-	if !errors.Is(err, ErrNotController) {
-		t.Fatalf("observer write = %v, want ErrNotController", err)
+	if err != nil {
+		t.Fatalf("second client write = %v", err)
 	}
 	if got := tab.recovery.floor; got != -1 {
-		t.Fatalf("floor = %d, want -1 (observer cannot set it)", got)
+		t.Fatalf("floor = %d, want -1 (input cannot set it)", got)
 	}
 }
 
@@ -193,7 +192,7 @@ func TestStreamAckDoesNotTriggerUserInputHook(t *testing.T) {
 	}
 }
 
-// A controller cannot ACK another client's channel: the ACK is bound to the
+// A client cannot ACK another client's channel: the ACK is bound to the
 // attached channel, and a cross-client report is rejected with the floor
 // untouched.
 func TestStreamAckCrossClientChannelForbidden(t *testing.T) {
@@ -237,8 +236,8 @@ func TestStreamAckUnknownChannelForbidden(t *testing.T) {
 	}
 }
 
-// A legitimate attached observer can ACK its own channel and establish its
-// floor: the retention guarantee does not depend on being the tab controller.
+// Any attached client can ACK its own channel and establish its floor: the
+// retention guarantee does not depend on input or the PTY size.
 func TestStreamAckObserverOwnChannelFloor(t *testing.T) {
 	manager, connector, _, connected := openOpenTestSession(t, KindLocal)
 	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})

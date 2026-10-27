@@ -55,7 +55,7 @@ function liveTab(extra: Partial<LiveTabInfo> & { tabId: string }): LiveTabInfo {
     sessionKind: "ssh",
     cols: 80,
     rows: 24,
-    controller: null,
+    sizeOwner: null,
     subscribers: 0,
     viewers: 0,
     exited: false,

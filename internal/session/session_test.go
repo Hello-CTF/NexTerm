@@ -182,7 +182,7 @@ func TestMultiClientReplayControlAndMultipleChannels(t *testing.T) {
 	if second.Subscribers != 2 || second.Viewers != 1 {
 		t.Fatalf("same-client channels counted incorrectly: %+v", second)
 	}
-	if third.Subscribers != 3 || third.Viewers != 2 || third.Controller != "client-a" {
+	if third.Subscribers != 3 || third.Viewers != 2 || third.SizeOwner != "client-a" {
 		t.Fatalf("two-client attach info = %+v", third)
 	}
 	a1 := bindTestReceiver(t, manager, "a-1")
@@ -197,247 +197,28 @@ func TestMultiClientReplayControlAndMultipleChannels(t *testing.T) {
 	for _, receiver := range []*hub.Receiver{a1, a2, b1} {
 		assertFrameData(t, receiver, raw)
 	}
-	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("no")); !errors.Is(err, ErrNotController) {
-		t.Fatalf("observer write error = %v", err)
-	}
-	if err := manager.Resize(context.Background(), tab.ID, "client-b", 100, 30); !errors.Is(err, ErrNotController) {
-		t.Fatalf("observer resize error = %v", err)
-	}
-	previous, err := manager.Claim(tab.ID, "client-b")
-	if err != nil || previous != "client-a" {
-		t.Fatalf("claim previous = %q, err = %v", previous, err)
-	}
-	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("no")); !errors.Is(err, ErrNotController) {
-		t.Fatalf("former controller write error = %v", err)
-	}
-	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("yes")); err != nil {
+	// Every attached client may type; the bytes reach the PTY in order.
+	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("b")); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Resize(context.Background(), tab.ID, "client-b", 100, 30); err != nil {
+	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("a")); err != nil {
 		t.Fatal(err)
 	}
-	if got := channel.written(); string(got) != "yes" {
+	if got := channel.written(); string(got) != "ba" {
 		t.Fatalf("PTY input = %q", got)
 	}
 	if err := manager.DetachChannel("a-1"); err != nil {
 		t.Fatal(err)
 	}
-	if got := tab.Info().Controller; got != "client-b" {
-		t.Fatalf("unrelated detach changed controller to %q", got)
-	}
-	if _, err := manager.Claim(tab.ID, "client-a"); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.DetachChannel("a-2"); err == nil {
-		t.Log("a-2 already detached through the explicit channel path")
+	if got := tab.Info().SizeOwner; got != "client-a" {
+		t.Fatalf("detaching one of client-a's channels moved the size to %q", got)
 	}
 	if err := manager.DetachClient(tab.ID, "client-a"); err != nil {
 		t.Fatal(err)
 	}
 	info := tab.Info()
-	if info.Subscribers != 1 || info.Viewers != 1 || info.Controller != "" {
-		t.Fatalf("client detach left inconsistent control state: %+v", info)
-	}
-	if err := manager.DetachAll(tab.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := channel.emit([]byte("background")); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return bytes.Contains(terminals.terminal(tab.ID).bytes(), []byte("background")) })
-	resumed, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-c", ChannelID: "c-1", ReplayBytes: -1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resumed.Controller != "client-c" || resumed.Subscribers != 1 {
-		t.Fatalf("resume info = %+v", resumed)
-	}
-	c1 := bindTestReceiver(t, manager, "c-1")
-	assertFrameData(t, c1, replayClear)
-	replay := receiveTestFrame(t, c1)
-	if !bytes.Contains(replay.Data, raw) || !bytes.Contains(replay.Data, []byte("background")) {
-		t.Fatalf("raw replay lost bytes: %q", replay.Data)
-	}
-}
-
-func TestReconnectCancellationAndSuccessfulPTYReopen(t *testing.T) {
-	connector := newFakeConnector()
-	reconnectStarted := make(chan struct{})
-	releaseReconnect := make(chan struct{})
-	connector.connect = func(_ context.Context, asset Asset, generation uint64, call int) (base.Transport, error) {
-		if call == 2 {
-			close(reconnectStarted)
-			<-releaseReconnect
-		}
-		return newFakeTransport(asset.Kind, uint64(call)+1000), nil
-	}
-	manager := NewManager(Config{
-		Connector: connector, Terminals: newFakeTerminalFactory(), ReconnectMax: 2,
-		ReconnectBackoff: []time.Duration{0},
-	})
-	t.Cleanup(func() { _ = manager.Close() })
-	session, err := manager.Connect(context.Background(), Asset{ID: "asset", Name: "server", Kind: KindSSH})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tab := openTestTab(t, manager, session, "client-a", "a-1")
-	firstTransport := connector.transport(0)
-	firstChannel := firstTransport.channel(0)
-	reconnectResult := make(chan error, 1)
-	go func() { reconnectResult <- manager.Reconnect(context.Background(), session.ID) }()
-	<-reconnectStarted
-	if err := manager.Disconnect(session.ID); err != nil {
-		t.Fatal(err)
-	}
-	close(releaseReconnect)
-	if err := <-reconnectResult; err == nil {
-		t.Fatal("stale reconnect unexpectedly succeeded")
-	}
-	if got := session.Info().Status; got != StatusDisconnected {
-		t.Fatalf("late reconnect resurrected session: %s", got)
-	}
-	lateTransport := connector.transport(1)
-	if got := lateTransport.closeCount.Load(); got != 1 {
-		t.Fatalf("late transport close count = %d", got)
-	}
-	if got := firstTransport.closeCount.Load(); got != 1 {
-		t.Fatalf("first transport close count = %d", got)
-	}
-	if got := firstChannel.closeCount.Load(); got != 1 {
-		t.Fatalf("first PTY close count = %d", got)
-	}
-
-	if err := manager.Reconnect(context.Background(), session.ID); err != nil {
-		t.Fatal(err)
-	}
-	if got := session.Info().Status; got != StatusConnected {
-		t.Fatalf("explicit reconnect status = %s", got)
-	}
-	current := connector.transport(2)
-	if current.channelCount() != 1 {
-		t.Fatalf("replacement PTY count = %d", current.channelCount())
-	}
-	tab.mu.Lock()
-	channel := tab.channel
-	generation := tab.generation
-	tab.mu.Unlock()
-	if channel == nil || generation != session.Info().Generation || channel.Generation() != current.Generation() {
-		t.Fatalf("tab was not rebound to current generations: channel=%v tab=%d session=%d transport=%d", channel != nil, generation, session.Info().Generation, current.Generation())
-	}
-	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("after")); err != nil {
-		t.Fatal(err)
-	}
-	raw := manager.terminals.(*fakeTerminalFactory).terminal(tab.ID).bytes()
-	if got := bytes.Count(raw, reconnectBanner); got != 1 {
-		t.Fatalf("reconnect banner count = %d, raw=%q", got, raw)
-	}
-}
-
-func TestShellExitDoesNotReconnectHealthyConnection(t *testing.T) {
-	manager, connector, _, session := openTestSession(t, KindSSH)
-	transport := connector.transport(0)
-	first := openTestTab(t, manager, session, "client-a", "a-1")
-	second := openTestTab(t, manager, session, "client-a", "a-2")
-	if err := transport.channel(0).Close(); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return first.Info().Exited })
-	time.Sleep(20 * time.Millisecond)
-	if got := connector.callCount(); got != 1 {
-		t.Fatalf("healthy shared connection reconnected after shell exit: %d calls", got)
-	}
-	if second.Info().Exited {
-		t.Fatal("one shell exit killed a sibling tab")
-	}
-	if got := session.Info().Status; got != StatusConnected {
-		t.Fatalf("healthy session status = %s", got)
-	}
-}
-
-func TestLocalDisconnectReapsAndNetworkDisconnectRetains(t *testing.T) {
-	local, _, _, localSession := openTestSession(t, KindLocal)
-	openTestTab(t, local, localSession, "client-a", "local-1")
-	if err := local.Disconnect(localSession.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := local.Session(localSession.ID); !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("local session was retained: %v", err)
-	}
-	if err := local.Reconnect(context.Background(), localSession.ID); !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("local reconnect error = %v", err)
-	}
-
-	network, connector, _, networkSession := openTestSession(t, KindSSH)
-	openTestTab(t, network, networkSession, "client-a", "ssh-1")
-	if err := network.Disconnect(networkSession.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := network.Session(networkSession.ID); err != nil {
-		t.Fatalf("network session lost reconnect state: %v", err)
-	}
-	if got := len(network.ListTabs()); got != 1 {
-		t.Fatalf("network disconnect removed %d tabs, want retained tab", 1-got)
-	}
-	if got := connector.transport(0).closeCount.Load(); got != 1 {
-		t.Fatalf("network transport close count = %d", got)
-	}
-}
-
-func TestIdleSweepRechecksTabStateAndDisconnectsExactlyOnce(t *testing.T) {
-	manager, connector, _, session := openTestSession(t, KindSSH)
-	clock := newSessionTestClock()
-	manager.now = clock.Now
-	manager.idleTimeout = time.Nanosecond
-	session.mu.Lock()
-	oldIdle := session.idleSince
-	session.mu.Unlock()
-	tab := openTestTab(t, manager, session, "client-a", "a-1")
-	if err := manager.disconnect(session.ID, &oldIdle); err != nil {
-		t.Fatal(err)
-	}
-	if got := session.Info().Status; got != StatusConnected {
-		t.Fatalf("stale idle candidate disconnected active tab: %s", got)
-	}
-	if err := manager.CloseTab(tab.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.disconnect(session.ID, &oldIdle); err != nil {
-		t.Fatal(err)
-	}
-	if got := session.Info().Status; got != StatusConnected {
-		t.Fatalf("old idle timestamp disconnected new idle period: %s", got)
-	}
-	clock.Advance(time.Nanosecond)
-	if err := manager.SweepIdle(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if got := session.Info().Status; got != StatusDisconnected {
-		t.Fatalf("idle session status = %s", got)
-	}
-	if err := manager.SweepIdle(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if got := connector.transport(0).closeCount.Load(); got != 1 {
-		t.Fatalf("idle cleanup transport close count = %d", got)
-	}
-}
-
-func TestExactlyOnceTabAndSessionCleanup(t *testing.T) {
-	manager, connector, terminals, session := openTestSession(t, KindLocal)
-	transport := connector.transport(0)
-	tab := openTestTab(t, manager, session, "client-a", "a-1")
-	channel := transport.channel(0)
-	if err := manager.CloseTab(tab.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.CloseTab(tab.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.Disconnect(session.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.Disconnect(session.ID); err != nil {
-		t.Fatal(err)
+	if info.Subscribers != 1 || info.Viewers != 1 || info.SizeOwner == "client-a" {
+		t.Fatalf("client detach left inconsistent input state: %+v", info)
 	}
 	if err := manager.Close(); err != nil {
 		t.Fatal(err)
@@ -459,8 +240,8 @@ func TestExactlyOnceTabAndSessionCleanup(t *testing.T) {
 func TestWinRMLineModeAndReconnect(t *testing.T) {
 	manager, connector, terminals, session := openTestSession(t, KindWinRM)
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
-	if _, err := manager.ExecLine(context.Background(), tab.ID, "client-b", "whoami"); !errors.Is(err, ErrNotController) {
-		t.Fatalf("WinRM observer exec error = %v", err)
+	if result, err := manager.ExecLine(context.Background(), tab.ID, "client-b", "whoami"); err != nil || result.Stdout != "ran:whoami" {
+		t.Fatalf("WinRM second client exec result = %+v, err = %v", result, err)
 	}
 	result, err := manager.ExecLine(context.Background(), tab.ID, "client-a", "whoami")
 	if err != nil || result.Stdout != "ran:whoami" {
@@ -920,7 +701,7 @@ func TestChannelReceiverCloseDoesNotDetachReplacementEphemeralIncarnation(t *tes
 	if err != nil {
 		t.Fatalf("stale receiver close detached replacement ephemeral tab: %v", err)
 	}
-	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+	if info := tab.Info(); info.Subscribers != 1 || info.SizeOwner != "client-b" {
 		t.Fatalf("replacement ephemeral tab state = %+v", info)
 	}
 	if got := manager.Hub().Stats().LiveChannels; got != 1 {
@@ -960,7 +741,7 @@ func TestChannelReceiverCloseDoesNotDetachReusedRetainableTab(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stale receiver close detached replacement tab: %v", err)
 	}
-	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+	if info := tab.Info(); info.Subscribers != 1 || info.SizeOwner != "client-b" {
 		t.Fatalf("replacement tab state = %+v", info)
 	}
 }
@@ -1033,7 +814,7 @@ func TestChannelReceiverCloseDuringAttachDoesNotCloseReusedRetainableTab(t *test
 	if err != nil {
 		t.Fatalf("stale attach cleanup detached replacement tab: %v", err)
 	}
-	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+	if info := tab.Info(); info.Subscribers != 1 || info.SizeOwner != "client-b" {
 		t.Fatalf("replacement tab state = %+v", info)
 	}
 	if got := fixture.manager.Hub().Stats().LiveChannels; got != 1 {
@@ -1416,7 +1197,7 @@ func TestConcurrentClientsCanWriteIndependentTabs(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for write := 0; write < 100; write++ {
-				if err := manager.Write(context.Background(), tab.ID, tab.Info().Controller, []byte("x")); err != nil {
+				if err := manager.Write(context.Background(), tab.ID, tab.Info().SizeOwner, []byte("x")); err != nil {
 					t.Errorf("write %s: %v", tab.ID, err)
 					return
 				}

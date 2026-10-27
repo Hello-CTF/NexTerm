@@ -349,7 +349,7 @@ beforeEach(() => {
     tabId: "kernel-1",
     cols: 80,
     rows: 30,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -362,7 +362,7 @@ beforeEach(() => {
     tabId: "kernel-1",
     cols: 80,
     rows: 30,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -384,7 +384,7 @@ beforeEach(() => {
     sessionId: "session-1",
     cols: 80,
     rows: 30,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -578,7 +578,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -617,7 +617,7 @@ describe("XtermView stream wiring", () => {
     // writer paused, so a replacement cannot end the refusal episode yet.
     act(() => t.drainWrites(1));
     await act(async () => {
-      attach.resolve({ tabId: "kernel-1", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, retainable: true, ephemeral: false, attachmentId: 12 });
+      attach.resolve({ tabId: "kernel-1", cols: 80, rows: 30, sizeOwner: "me", subscribers: 1, viewers: 1, exited: false, retainable: true, ephemeral: false, attachmentId: 12 });
       await flushMacrotask();
     });
     expect(harness.attachTab).toHaveBeenCalledTimes(1);
@@ -638,7 +638,7 @@ describe("XtermView stream wiring", () => {
     act(() => harness.channel?.onBytes?.(later));
     act(() => t.drainWrites());
     await act(async () => {
-      recovery.resolve({ tabId: "kernel-1", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, retainable: true, ephemeral: false, attachmentId: 13 });
+      recovery.resolve({ tabId: "kernel-1", cols: 80, rows: 30, sizeOwner: "me", subscribers: 1, viewers: 1, exited: false, retainable: true, ephemeral: false, attachmentId: 13 });
       await flushMacrotask();
     });
     expect(t.writeLog.reduce((total, entry) => total + entry.length, 0)).toBe(5 * chunk.length + later.length);
@@ -650,7 +650,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -706,7 +706,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -844,7 +844,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -920,7 +920,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1023,7 +1023,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1116,7 +1116,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1237,7 +1237,7 @@ describe("XtermView stream wiring", () => {
     await act(async () => { await flushMacrotask(); });
     expect(harness.attachTab).toHaveBeenCalledTimes(1);
     await act(async () => {
-      attach.resolve({ tabId: "kernel-1", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, attachmentId: 12 });
+      attach.resolve({ tabId: "kernel-1", cols: 80, rows: 30, sizeOwner: "me", subscribers: 1, viewers: 1, exited: false, attachmentId: 12 });
       await flushMacrotask();
     });
     expect(harness.attachTab).toHaveBeenCalledTimes(2);
@@ -1277,7 +1277,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1331,7 +1331,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1357,7 +1357,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1415,7 +1415,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1452,7 +1452,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1519,7 +1519,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1594,7 +1594,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1676,7 +1676,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1751,7 +1751,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1818,7 +1818,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1881,7 +1881,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -1957,7 +1957,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2015,7 +2015,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2081,7 +2081,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2171,7 +2171,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2260,7 +2260,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2325,7 +2325,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2395,7 +2395,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2464,7 +2464,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2515,7 +2515,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2569,7 +2569,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2623,7 +2623,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2684,7 +2684,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2747,7 +2747,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2804,7 +2804,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2866,7 +2866,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2917,7 +2917,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -2977,7 +2977,7 @@ describe("XtermView stream wiring", () => {
       tabId: "kernel-1",
       cols: 80,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -3326,7 +3326,7 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     // A's attach response lands and the pane switches tabId to the real kernel id:
     // the current value must carry over with no reset and no new signal.
     await act(async () => {
-      attachA.resolve({ tabId: "kernel-1", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, shell: "unknown", retainable: true, ephemeral: false, attachmentId: 11 });
+      attachA.resolve({ tabId: "kernel-1", cols: 80, rows: 30, sizeOwner: "me", subscribers: 1, viewers: 1, exited: false, shell: "unknown", retainable: true, ephemeral: false, attachmentId: 11 });
       await flushMacrotask();
     });
     expect(onAttachA).toHaveBeenCalledWith("kernel-1");
@@ -3340,7 +3340,7 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     // B attaches afterwards and still shows nothing: A's pre-response state never
     // leaked into B's key at any point of the lifecycle.
     await act(async () => {
-      attachB.resolve({ tabId: "kernel-2", cols: 80, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false, shell: "unknown", retainable: true, ephemeral: false, attachmentId: 12 });
+      attachB.resolve({ tabId: "kernel-2", cols: 80, rows: 30, sizeOwner: "me", subscribers: 1, viewers: 1, exited: false, shell: "unknown", retainable: true, ephemeral: false, attachmentId: 12 });
       await flushMacrotask();
     });
     await act(async () => {

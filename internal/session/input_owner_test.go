@@ -119,9 +119,6 @@ func (s *ownerStream) readAnnouncement(t *testing.T) {
 
 func writeAs(t *testing.T, manager *Manager, tab *Tab, client, data string) {
 	t.Helper()
-	if _, err := manager.Claim(tab.ID, client); err != nil {
-		t.Fatal(err)
-	}
 	if err := manager.Write(context.Background(), tab.ID, client, []byte(data)); err != nil {
 		t.Fatal(err)
 	}
@@ -284,15 +281,15 @@ func tabEpisodeGen(tab *Tab, channelID string) uint64 {
 	return tab.subscribers[channelID].episodeGen
 }
 
-// Input refused for a non-controller does not move the input owner.
+// Input refused for a read-only spectator does not move the input owner.
 func TestRejectedInputDoesNotMoveOwner(t *testing.T) {
 	manager, tab, _ := openOwnerTestTab(t)
 	ctx := context.Background()
-	if _, err := manager.AttachTab(ctx, tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-reject", ReplayBytes: -1}); err != nil {
+	if _, err := manager.AttachSpectator(ctx, tab.ID, SpectateOptions{ClientID: "viewer", ChannelID: "viewer-reject"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Write(ctx, tab.ID, "client-b", []byte("x")); !errors.Is(err, ErrNotController) {
-		t.Fatalf("write as observer = %v", err)
+	if err := manager.Write(ctx, tab.ID, "viewer", []byte("x")); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("write as spectator = %v", err)
 	}
 	tab.mu.Lock()
 	owner := tab.lastInputClient
@@ -310,9 +307,6 @@ func TestFailedWriteDoesNotMoveOwner(t *testing.T) {
 	a := &ownerStream{receiver: bindTestReceiver(t, manager, "cmd-channel")}
 	writeAs(t, manager, tab, "client-a", "copy\r")
 	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-failed", ReplayBytes: -1}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.Claim(tab.ID, "client-b"); err != nil {
 		t.Fatal(err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())

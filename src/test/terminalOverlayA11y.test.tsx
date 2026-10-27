@@ -213,7 +213,7 @@ describe("terminal overlay accessibility", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 1,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: true,
@@ -235,7 +235,7 @@ describe("terminal overlay accessibility", () => {
     sessionKind: "ssh",
     cols: 80,
     rows: 24,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited,
@@ -250,7 +250,7 @@ describe("terminal overlay accessibility", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 1,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: true,
@@ -277,7 +277,7 @@ describe("terminal overlay accessibility", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 1,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: true,
@@ -342,7 +342,7 @@ describe("terminal overlay accessibility", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 1,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: true,
@@ -405,7 +405,7 @@ describe("terminal overlay accessibility", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 1,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: true,
@@ -439,7 +439,7 @@ describe("terminal overlay accessibility", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 1,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: true,
@@ -456,7 +456,7 @@ describe("terminal overlay accessibility", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 2,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 2,
       viewers: 2,
       exited: true,

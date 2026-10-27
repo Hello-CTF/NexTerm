@@ -44,8 +44,8 @@ function seed(): void {
 	useUi.setState({
 		closeTab: mocks.closeTab,
 		sessions: [
-			{ id: "s-dev", assetId: "device/d-1", assetName: "web-01", kind: "device", status: "connected", controller: "" },
-			{ id: "s-ssh", assetId: "a-1", assetName: "prod", kind: "ssh", status: "connected", controller: "" },
+			{ id: "s-dev", assetId: "device/d-1", assetName: "web-01", kind: "device", status: "connected" },
+			{ id: "s-ssh", assetId: "a-1", assetName: "prod", kind: "ssh", status: "connected" },
 		] as never,
 		workspaces: [
 			{

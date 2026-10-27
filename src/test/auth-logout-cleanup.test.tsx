@@ -69,7 +69,7 @@ function seed(): void {
 		closeTab: mocks.closeTab,
 		toasts: [],
 		sessions: [
-			{ id: "s-dev", assetId: "device/d-1", assetName: "device", kind: "device", status: "connected", controller: "" },
+			{ id: "s-dev", assetId: "device/d-1", assetName: "device", kind: "device", status: "connected" },
 		] as never,
 		workspaces: [
 			{

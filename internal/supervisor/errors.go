@@ -27,6 +27,9 @@ var (
 	// ErrGenerationMismatch reports a request that expected another helper
 	// generation: the helper restarted since the client last saw it.
 	ErrGenerationMismatch = errors.New("supervisor helper generation changed")
+	// ErrStalePrompt reports a prompt tap whose prompt is no longer shown,
+	// changed, was already answered, or is not tappable.
+	ErrStalePrompt = errors.New("supervisor prompt is stale")
 
 	ErrVersionMismatch = fmt.Errorf("%w: protocol version mismatch", ErrProtocol)
 	// ErrHelperUpgradeRequired reports a helper that speaks an older protocol

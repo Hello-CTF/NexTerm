@@ -280,7 +280,7 @@ describe("cross-host grouping and terminate paths", () => {
       ["device:b", host("device:b", { name: "B", status: "pending", fetchedAt: undefined })],
     ]);
     const tab = (tabId: string, patch: Partial<BackgroundTab>): BackgroundTab => ({
-      tabId, sessionId: "", sessionName: "", sessionKind: "device", cols: 80, rows: 24, controller: null, subscribers: 0, viewers: 0, exited: false, ...patch,
+      tabId, sessionId: "", sessionName: "", sessionKind: "device", cols: 80, rows: 24, sizeOwner: null, subscribers: 0, viewers: 0, exited: false, ...patch,
     });
     const groups = groupBackgroundTabs([
       tab("x", { sessionId: "s9", sessionName: "other", sessionKind: "ssh" }),
