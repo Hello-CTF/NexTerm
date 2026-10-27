@@ -4,6 +4,7 @@ import { wailsNoDragRegionStyle } from "../../app/platform";
 import { TabAttentionBadge } from "../../app/workspace/tabStrip";
 import { describeError } from "../../ui/errorText";
 import { IconBell, IconCheck } from "../../ui/icons";
+import { SessionPromptChoices } from "../terminal/ChoiceButtons";
 import { InboxGuidance } from "./InboxGuidance";
 import { isInboxGuidanceDismissed, useInboxGuidanceDismissed } from "./firstRunGuidance";
 import { markInboxEntrySeen, openAggregateEntry, openInboxTab, useInboxEntries, type InboxEntry } from "./inbox";
@@ -50,38 +51,45 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
   // The seen mark goes through a tab this client holds; a session known only from the listing is marked once opened.
   const markable = shown || !entry.listedOnly;
   return (
-    <li className="nx-inbox-row flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-neutral-800/60" data-inbox-tab={entry.tabId}>
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:cursor-default"
-        style={wailsNoDragRegionStyle}
-        disabled={!reachable || opening}
-        title={shown ? "转到该终端" : reachable ? `在此端打开（${entry.place}）` : "此端没有打开这个终端"}
-        onClick={open}
-      >
-        <span className="mt-[5px] flex w-2.5 shrink-0 justify-center">
-          <TabAttentionBadge badge={entry.badge} />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-baseline gap-1.5">
-            <span className="truncate text-[12.5px] font-medium text-neutral-100">{entry.title}</span>
-            <span className="shrink-0 text-[11px] text-neutral-500">{sinceLabel(entry.awareness.since, now)}</span>
+    <li className="nx-inbox-row rounded-md px-2 py-1.5 hover:bg-neutral-800/60" data-inbox-tab={entry.tabId}>
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:cursor-default"
+          style={wailsNoDragRegionStyle}
+          disabled={!reachable || opening}
+          title={shown ? "转到该终端" : reachable ? `在此端打开（${entry.place}）` : "此端没有打开这个终端"}
+          onClick={open}
+        >
+          <span className="mt-[5px] flex w-2.5 shrink-0 justify-center">
+            <TabAttentionBadge badge={entry.badge} />
           </span>
-          <span className="block truncate text-[11.5px] text-neutral-300">{entry.detail}</span>
-          <span className="block truncate text-[11px] text-neutral-500">{entry.place}</span>
-        </span>
-      </button>
-      <button
-        type="button"
-        className="nx-icon-btn shrink-0"
-        style={wailsNoDragRegionStyle}
-        aria-label={`标记 ${entry.title} 为已读`}
-        title={markable ? "标记为已读（所有设备）" : "打开这个终端后才能标记为已读"}
-        disabled={marking || !markable}
-        onClick={markSeen}
-      >
-        <IconCheck size={14} />
-      </button>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-baseline gap-1.5">
+              <span className="truncate text-[12.5px] font-medium text-neutral-100">{entry.title}</span>
+              <span className="shrink-0 text-[11px] text-neutral-500">{sinceLabel(entry.awareness.since, now)}</span>
+            </span>
+            <span className="block truncate text-[11.5px] text-neutral-300">{entry.detail}</span>
+            <span className="block truncate text-[11px] text-neutral-500">{entry.place}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="nx-icon-btn shrink-0"
+          style={wailsNoDragRegionStyle}
+          aria-label={`标记 ${entry.title} 为已读`}
+          title={markable ? "标记为已读（所有设备）" : "打开这个终端后才能标记为已读"}
+          disabled={marking || !markable}
+          onClick={markSeen}
+        >
+          <IconCheck size={14} />
+        </button>
+      </div>
+      {entry.awareness.state === "needs_me" && entry.awareness.prompt && (
+        <div className="pl-[18px] pt-1" style={wailsNoDragRegionStyle} data-inbox-actions="">
+          <SessionPromptChoices tabId={entry.tabId} awareness={entry.awareness} attachedHere={shown} />
+        </div>
+      )}
     </li>
   );
 }

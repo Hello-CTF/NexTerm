@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { TerminalAttentionEvent } from "../ipc/events";
+import type { AttentionPrompt } from "../ipc/generated/types";
 
 // The attention state of a terminal tab, as the backend reports it. Helper tabs carry the helper's state; other tabs
 // a state the backend derived from their output (source "observed"). "unknown" is never a guess: the tab is not
@@ -19,6 +20,8 @@ export interface SessionAwareness {
   // The text of the notification behind a needs_me state with reason notify.
   title?: string;
   body?: string;
+  // The prompt the helper detected when output last went idle, with the identity a tap must name.
+  prompt?: AttentionPrompt;
   version: number;
 }
 
@@ -45,6 +48,7 @@ export function toAwareness(event: TerminalAttentionEvent): SessionAwareness {
     exitCode: event.exitCode,
     title: event.title || undefined,
     body: event.body || undefined,
+    prompt: event.prompt ?? undefined,
     version: event.version,
   };
 }

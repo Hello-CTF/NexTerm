@@ -1,4 +1,6 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import type { WallCard } from "../../features/mobile/statusWall";
+import { SessionPromptChoices } from "../../features/terminal/ChoiceButtons";
 import { IconHome } from "../../ui/icons";
 import { Lazy } from "../../ui/LazyBoundary";
 import { StatusWall } from "../lazyPanels";
@@ -19,6 +21,12 @@ function useLeaveHomeOnConnectFocus(): void {
     lastRevision.current = focusRevision;
     hideMobileHome();
   }, [focusRevision]);
+}
+
+// A card that needs the user answers its detected prompt in place; one this client holds no tab for is opened first.
+function wallPromptActions(card: WallCard): ReactNode {
+  if (card.state !== "needs_me" || !card.awareness?.prompt) return null;
+  return <SessionPromptChoices tabId={card.tabId} awareness={card.awareness} attachedHere={card.uiTabId !== undefined} />;
 }
 
 // MobileShell serves phones and tablets (the "mobile" mode). It hosts the shared layout with the overlay sidebars and
@@ -46,7 +54,7 @@ export function MobileShell(parts: ShellParts) {
   );
   const home = homeOpen ? (
     <Lazy>
-      <StatusWall onOpened={hideMobileHome} onOpenAssets={() => setLeftOpen(true)} />
+      <StatusWall onOpened={hideMobileHome} onOpenAssets={() => setLeftOpen(true)} cardActions={wallPromptActions} />
     </Lazy>
   ) : null;
   return <ShellFrame {...parts} header={{ ...parts.header, leading: homeButton }} body={{ ...parts.body, home }} />;

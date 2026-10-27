@@ -17,7 +17,7 @@ const ERROR_CODE_LABELS: Record<string, string> = {
   timeout: "超时",
   forbidden: "没有权限",
   needs_confirm: "需要确认",
-  stale_prompt: "提问已变化，选项未发送",
+  stale_prompt: "提示已变化，选项未发送",
   ssh: "SSH 错误",
   sftp: "SFTP 错误",
   winrm: "WinRM 错误",

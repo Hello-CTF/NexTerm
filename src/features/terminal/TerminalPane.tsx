@@ -4,6 +4,7 @@ import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistor
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
 import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
 import { CommandBlockPanel } from "./CommandBlockPanel";
+import { TerminalPromptBar } from "./TerminalPromptBar";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
@@ -2317,6 +2318,14 @@ export function TerminalPane({
               }}
             />
           </div>
+
+          {/* Overlays at the top of the screen: a detected prompt sits at the bottom, and taking layout height would
+              resize the PTY and redraw the prompt being answered. */}
+          {controlSupported && !control?.exited && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-col items-end gap-1 px-3 pt-1.5">
+              <TerminalPromptBar tabId={kernelTabId} />
+            </div>
+          )}
 
           {durable && (
             <EarlierHistory
