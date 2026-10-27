@@ -524,7 +524,7 @@ export interface BroadcastConfirmationChallenge {
 }
 
 export type HelperCompatibility = "compatible" | "incompatible" | "unknown";
-export type HelperOperationAction = "status" | "cancel" | "retry" | "update" | "update_interrupt";
+export type HelperOperationAction = "status" | "cancel" | "retry" | "update" | "update_interrupt" | "replace_legacy";
 
 export interface HelperVersionInfo {
   known: boolean;
@@ -535,11 +535,28 @@ export interface HelperVersionInfo {
 }
 
 export interface HelperUpdateInfo {
-  status: "current" | "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "unknown";
+  status: "current" | "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "legacy" | "replaced" | "unknown";
   detail?: string;
   updated?: boolean;
   interrupted?: boolean;
   rolledBack?: boolean;
+  replacedLegacy?: boolean;
+  endedSessions?: number;
+}
+
+/** An older-protocol helper that still owns the host's helper state, as inspected on that host. */
+export interface LegacyHelperInfo {
+  protocol: number;
+  pid?: number;
+  ptySessions: number;
+  execSessions: number;
+  /** False when the helper did not report its sessions; ptyListed then means only PTY sessions were counted. */
+  activityKnown: boolean;
+  ptyListed: boolean;
+  release?: string;
+  /** Names exactly this helper and count; empty when it could not be inspected. */
+  consentToken?: string;
+  stale?: boolean;
 }
 
 export interface HelperOfflineInfo {
@@ -560,6 +577,7 @@ export interface HelperOperationResult {
   compatibility: HelperCompatibility;
   update?: HelperUpdateInfo | null;
   offline?: HelperOfflineInfo | null;
+  legacy?: LegacyHelperInfo | null;
 }
 
 function normalizeHelperCompatibility(value: string): HelperCompatibility {
@@ -567,7 +585,8 @@ function normalizeHelperCompatibility(value: string): HelperCompatibility {
 }
 
 function normalizeHelperUpdateStatus(value: string): HelperUpdateInfo["status"] {
-  return value === "current" || value === "available" || value === "deferred" || value === "interrupted" || value === "updated" || value === "rolled_back"
+  return value === "current" || value === "available" || value === "deferred" || value === "interrupted" || value === "updated" || value === "rolled_back" ||
+    value === "legacy" || value === "replaced"
     ? value
     : "unknown";
 }
@@ -667,6 +686,9 @@ export const terminalApi = {
     call<number>("terminal_export_log", { tabId, path, maxBytes }),
   helperOperation: (sessionId: string, operationId: string, action: HelperOperationAction, interruptActive = false) =>
     call("terminal_helper_operation", { sessionId, operationId, action, interruptActive }).then(normalizeHelperOperationResult),
+  /** Ends the older helper the user approved (with its sessions) and starts this build's helper. */
+  helperReplaceLegacy: (sessionId: string, consentToken: string) =>
+    call("terminal_helper_operation", { sessionId, action: "replace_legacy", consentToken }).then(normalizeHelperOperationResult),
   helperUpdate: (sessionId: string, interruptActive = false) =>
     call("terminal_helper_operation", { sessionId, action: "update", interruptActive }).then(normalizeHelperOperationResult),
   helperOffline: (sessionId: string, path: string, sha256?: string, confirmed = false) =>

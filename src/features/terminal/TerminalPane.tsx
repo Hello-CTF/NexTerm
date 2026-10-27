@@ -1292,7 +1292,8 @@ export function TerminalPane({
   };
   // Only sessions served by a durable helper can reopen as durable or manage the helper.
   const durableHelper = sessionKind === "ssh" || (sessionKind === "local" && localDurableEnabled(localHelper));
-  const manageHelper = !durableHelper ? undefined : sessionKind === "local" ? openLocalHelperSettings : openHelper;
+  // A managed device's helper is managed from the same window: its agent bridges the consent the user gives here.
+  const manageHelper = sessionKind === "device" ? openHelper : !durableHelper ? undefined : sessionKind === "local" ? openLocalHelperSettings : openHelper;
 
   const closeHelperPanel = () => setHelperPanelOpen(false);
 
@@ -1366,6 +1367,25 @@ export function TerminalPane({
         setHelperPanelError(describeError(error));
       }
     }, generation, "正在更新持久终端组件…");
+  };
+
+  // Ends the older helper the user agreed to in the helper window, with the sessions it showed.
+  const replaceLegacyHelper = (consentToken: string) => {
+    if (helperActionBusy) return;
+    const generation = nextHelperRequestGeneration();
+    return runHelperAction(async () => {
+      const result = await terminalApi.helperReplaceLegacy(sessionId, consentToken);
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
+      setHelperDetails(result);
+      setHelperPanelError(null);
+      if (result.update?.status === "replaced") {
+        setHelperPanelOpen(false);
+        const ended = result.update.endedSessions;
+        pushToast("success", ended ? `已终止旧版组件及其中 ${ended} 个会话，持久终端组件已升级` : "已终止旧版组件，持久终端组件已升级");
+      } else if (result.legacy?.stale) {
+        setHelperPanelError("旧版组件的状态已变化，请核对最新的会话数后重新确认");
+      }
+    }, generation, "正在终止旧版组件并升级…");
   };
 
   const deferHelperUpdate = () => {
@@ -2483,6 +2503,10 @@ export function TerminalPane({
             compatibility={helperDetails?.compatibility}
             offlineTrust={helperDetails?.offline ?? null}
             update={helperDetails?.update ?? null}
+            legacy={helperDetails?.legacy ?? null}
+            onReplaceLegacy={helperDetails?.legacy?.consentToken
+              ? () => void replaceLegacyHelper(helperDetails.legacy?.consentToken ?? "")
+              : undefined}
             restoreFailure={helperOperation?.kind === "reattach" && helperOperation.originalSession === "not_restored"}
             busyLabel={helperActionBusy ? helperActionLabel : helperStatusLoading ? "正在检查持久终端组件…" : helperRetryPending ? "正在重试…" : ordinaryStarting ? "正在打开普通终端…" : undefined}
             controlsDisabled={helperActionBusy || helperRetryPending || ordinaryStarting}
