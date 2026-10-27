@@ -5,6 +5,10 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -57,4 +61,18 @@ func (t *pidfdTarget) kill(context.Context) error {
 
 func (t *pidfdTarget) close() {
 	_ = unix.Close(t.fd)
+}
+
+// helperProcessExecutable reports the executable a helper process runs, for
+// restarting it when its replacement fails. A replaced or deleted file is not
+// reported: starting whatever now has that path could run another program.
+func helperProcessExecutable(pid int) (string, error) {
+	path, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
+	if err != nil {
+		return "", err
+	}
+	if strings.HasSuffix(path, " (deleted)") {
+		return "", fmt.Errorf("%w: the executable of helper %d was deleted", ErrUnavailable, pid)
+	}
+	return path, nil
 }

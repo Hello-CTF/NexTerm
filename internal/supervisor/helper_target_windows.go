@@ -4,6 +4,7 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -58,4 +59,10 @@ func (t *handleTarget) kill(context.Context) error {
 
 func (t *handleTarget) close() {
 	_ = windows.CloseHandle(t.handle)
+}
+
+// helperProcessExecutable is not read on Windows yet, so a failed
+// replacement is reported without restarting the older helper.
+func helperProcessExecutable(int) (string, error) {
+	return "", fmt.Errorf("%w: the executable of a helper process is not read on Windows", ErrUnsupported)
 }

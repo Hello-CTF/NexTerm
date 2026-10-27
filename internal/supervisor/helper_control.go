@@ -26,6 +26,10 @@ type RunningHelper struct {
 	// ActivityKnown is false for a protocol 2 helper that did not report its
 	// sessions: an unknown count is not zero sessions.
 	ActivityKnown bool
+	// PTYListed is set when such a helper answered its own session list:
+	// Activity.PTY counts its live PTY sessions (whoever created them), and
+	// the exec count stays unknown because protocol 2 lists hide exec.
+	PTYListed bool
 	// Runtime is nil when the helper did not report the executable it runs.
 	Runtime *RuntimeMetadata
 }
@@ -39,12 +43,16 @@ func (h RunningHelper) Current() bool {
 // longer the one a caller inspected, so an action approved for it is refused.
 var ErrHelperChanged = fmt.Errorf("%w: the supervisor helper changed since it was inspected", ErrStateMismatch)
 
-const (
-	helperStopGrace   = helperShutdownTimeout + 5*time.Second
-	helperKillWait    = 5 * time.Second
-	helperUnlockWait  = 10 * time.Second
-	helperInspectWait = 5 * time.Second
+// Bounds of stopping a helper: the grace after TERM before KILL, the wait for
+// a killed helper to exit, and the wait for its state lock. Variables only so
+// tests can shorten them.
+var (
+	helperStopGrace  = helperShutdownTimeout + 5*time.Second
+	helperKillWait   = 5 * time.Second
+	helperUnlockWait = 10 * time.Second
 )
+
+const helperInspectWait = 5 * time.Second
 
 // probeHelloMsg is a hello understood by protocol 2 and 3 helpers: protocol 2
 // returns runtime metadata and activity only for the features it was offered.
@@ -192,6 +200,11 @@ func inspectHelperConn(ctx context.Context, stateDir string, version int) (_ Run
 		helper.Activity = *ack.Activity
 	} else if version >= 3 {
 		return RunningHelper{}, nil, fmt.Errorf("%w: hello acknowledgement lacks daemon activity", ErrProtocol)
+	} else if live, err := listLiveSessions(conn); err == nil {
+		// A protocol 2 helper from before the activity feature still lists
+		// its PTY sessions, including those other clients created.
+		helper.Activity.PTY = live
+		helper.PTYListed = true
 	}
 	if ack.Runtime != nil && validateRuntimeMetadata(*ack.Runtime, version) == nil {
 		runtime := *ack.Runtime
@@ -199,6 +212,40 @@ func inspectHelperConn(ctx context.Context, stateDir string, version int) (_ Run
 	}
 	_ = conn.SetDeadline(time.Time{})
 	return helper, conn, nil
+}
+
+// countKnown reports whether the helper reported a session count: every
+// session, or at least its PTY sessions.
+func (h RunningHelper) countKnown() bool {
+	return h.ActivityKnown || h.PTYListed
+}
+
+// listLiveSessions asks a protocol 2 helper for its session list on an open
+// inspection connection and counts the sessions that are still running.
+func listLiveSessions(conn net.Conn) (int, error) {
+	if err := writeFrame(conn, frameList, []byte("{}")); err != nil {
+		return 0, err
+	}
+	kind, reply, err := readFrame(conn)
+	if err != nil {
+		return 0, err
+	}
+	if kind != frameListed {
+		return 0, protocolMismatch(kind)
+	}
+	var infos []struct {
+		Dead bool `json:"dead"`
+	}
+	if err := unmarshalFrame(reply, &infos); err != nil {
+		return 0, err
+	}
+	live := 0
+	for _, info := range infos {
+		if !info.Dead {
+			live++
+		}
+	}
+	return live, nil
 }
 
 func writeDetach(conn net.Conn) error {
@@ -253,7 +300,7 @@ func StopHelper(ctx context.Context, stateDir string, expected RunningHelper) er
 	if current.PID != expected.PID || expected.PID <= 0 {
 		return fmt.Errorf("%w: pid %d now serves the state directory, consent covered pid %d", ErrHelperChanged, current.PID, expected.PID)
 	}
-	if expected.ActivityKnown && (!current.ActivityKnown || current.Activity.Total() > expected.Activity.Total()) {
+	if expected.countKnown() && (!current.countKnown() || current.Activity.Total() > expected.Activity.Total()) {
 		return fmt.Errorf("%w: the helper now runs %d sessions, consent covered %d", ErrHelperChanged, current.Activity.Total(), expected.Activity.Total())
 	}
 	reverify := func(ctx context.Context) (int, net.Conn, error) {

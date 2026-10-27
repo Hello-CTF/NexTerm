@@ -2,13 +2,21 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
 const legacyHelperProbeTimeout = time.Second
+
+// legacyBridgeReplaceTimeout bounds a consented replacement run by a bridge:
+// stopping the old helper (TERM, grace, KILL, lock release) and starting this
+// build's helper.
+const legacyBridgeReplaceTimeout = 3 * time.Minute
 
 // legacyHelperVersion reports the protocol of an older helper that still
 // serves stateDir on its own versioned endpoint. Such a helper holds the state
@@ -42,9 +50,87 @@ func legacyHelperMessage(stateDir string, version int) string {
 	return fmt.Sprintf("a protocol %d helper still serves %s; its sessions keep running there, and a protocol %d helper can start only after it exits", version, stateDir, ProtocolVersion)
 }
 
+// LegacyHelperError is ErrLegacyHelperRunning with what the user must see
+// before agreeing to end the older helper: the helper inspected on the host
+// that runs it (owner and pid verified) and its session count, read with a
+// protocol 2 compatible probe, plus the consent token naming exactly that
+// helper and count. ConsentToken is empty when the helper answers its
+// endpoint but could not be inspected; then nothing can be approved.
+type LegacyHelperError struct {
+	Helper       RunningHelper
+	ConsentToken string
+	// Stale is set when a replacement was requested with a token that no
+	// longer names the running helper; Helper and ConsentToken are fresh.
+	Stale   bool
+	message string
+}
+
+func (e *LegacyHelperError) Error() string {
+	return legacyHelperError(e.Helper.Protocol, e.message).Error()
+}
+
+func (e *LegacyHelperError) Unwrap() error { return ErrLegacyHelperRunning }
+
+// legacyHelperDetail inspects the older helper serving stateDir on version.
+func legacyHelperDetail(ctx context.Context, stateDir string, version int) *LegacyHelperError {
+	detail := &LegacyHelperError{Helper: RunningHelper{Protocol: version}, message: legacyHelperMessage(stateDir, version)}
+	running, err := inspectHelperVersion(ctx, stateDir, version)
+	if err != nil {
+		detail.message += "; it cannot be inspected: " + err.Error()
+		return detail
+	}
+	detail.Helper = running
+	detail.ConsentToken = HelperConsentToken(running)
+	return detail
+}
+
+// legacyErrorWire is the legacy helper detail carried by a legacy_helper_running
+// error frame.
+type legacyErrorWire struct {
+	PID           int    `json:"pid,omitempty"`
+	PTY           int    `json:"pty"`
+	Exec          int    `json:"exec"`
+	ActivityKnown bool   `json:"activity_known,omitempty"`
+	PTYListed     bool   `json:"pty_listed,omitempty"`
+	Release       string `json:"release,omitempty"`
+	ConsentToken  string `json:"consent_token,omitempty"`
+	Stale         bool   `json:"stale,omitempty"`
+}
+
+func legacyErrorMessage(detail *LegacyHelperError) errorMsg {
+	msg := errorMsg{Code: codeLegacyHelper, Message: detail.message, Version: detail.Helper.Protocol}
+	wire := &legacyErrorWire{
+		PID: detail.Helper.PID, PTY: detail.Helper.Activity.PTY, Exec: detail.Helper.Activity.Exec,
+		ActivityKnown: detail.Helper.ActivityKnown, PTYListed: detail.Helper.PTYListed,
+		ConsentToken: detail.ConsentToken, Stale: detail.Stale,
+	}
+	if detail.Helper.Runtime != nil {
+		wire.Release = detail.Helper.Runtime.Version
+	}
+	msg.Legacy = wire
+	return msg
+}
+
+func decodedLegacyError(msg errorMsg) error {
+	detail := &LegacyHelperError{Helper: RunningHelper{Protocol: msg.Version}, message: msg.Message}
+	if wire := msg.Legacy; wire != nil && wire.PTY >= 0 && wire.Exec >= 0 {
+		detail.Helper.PID = wire.PID
+		detail.Helper.Activity = ActivitySnapshot{PTY: wire.PTY, Exec: wire.Exec}
+		detail.Helper.ActivityKnown = wire.ActivityKnown
+		detail.Helper.PTYListed = wire.PTYListed && !wire.ActivityKnown
+		if wire.Release != "" {
+			detail.Helper.Runtime = &RuntimeMetadata{Version: wire.Release, Protocol: msg.Version}
+		}
+		detail.ConsentToken = wire.ConsentToken
+		detail.Stale = wire.Stale
+	}
+	return detail
+}
+
 // legacyHelperError explains a failed dial of this client's own helper
 // endpoint when an older helper owns the state directory, so the caller gets
-// an upgrade error instead of a bare connection failure.
+// an upgrade error with the older helper's sessions instead of a bare
+// connection failure.
 func (c *Client) legacyHelperError(ctx context.Context) error {
 	if c.dial != nil || c.stateDir == "" {
 		return nil
@@ -61,25 +147,87 @@ func (c *Client) legacyHelperError(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	return legacyHelperError(version, legacyHelperMessage(stateDir, version))
+	return legacyHelperDetail(ctx, stateDir, version)
 }
 
-// legacyRejectionConn stands in for the helper connection of a bridge whose
-// state directory is owned by an older helper. It answers the client's hello
-// with a version rejection, which the client reports as a helper upgrade,
-// instead of letting the bridge end with a bare EOF.
-func legacyRejectionConn(stateDir string, version int) net.Conn {
+// legacyBridgeConn stands in for the helper connection of a bridge whose
+// state directory is owned by an older helper. A plain hello is answered with
+// the legacy rejection and the older helper's sessions, so the client reports
+// a helper upgrade at once instead of a bare EOF or a timeout. A hello that
+// carries the consent token of that rejection replaces the older helper (see
+// ReplaceLegacyHelper) and, once this build's helper serves, is forwarded to
+// it so the connection continues as an ordinary one. The bridge never stops
+// a helper on its own.
+func legacyBridgeConn(stateDir string, version int) net.Conn {
 	client, server := net.Pipe()
-	go func() {
-		defer func() { _ = server.Close() }()
-		if _, _, err := readFrame(server); err != nil {
-			return
-		}
-		payload, err := marshalFrame(frameError, errorMsg{Code: codeLegacyHelper, Message: legacyHelperMessage(stateDir, version), Version: version})
-		if err != nil {
-			return
-		}
-		_ = writeFrame(server, frameError, payload)
-	}()
+	go serveLegacyBridge(server, stateDir, version)
 	return client
+}
+
+func serveLegacyBridge(server net.Conn, stateDir string, version int) {
+	kind, payload, err := readFrame(server)
+	if err != nil {
+		_ = server.Close()
+		return
+	}
+	reject := func(msg errorMsg) {
+		if encoded, err := marshalFrame(frameError, msg); err == nil {
+			_ = writeFrame(server, frameError, encoded)
+		}
+		_ = server.Close()
+	}
+	var hello helloMsg
+	if kind != frameHello || unmarshalFrame(payload, &hello) != nil || hello.ReplaceLegacy == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), helperInspectWait)
+		detail := legacyHelperDetail(ctx, stateDir, version)
+		cancel()
+		reject(legacyErrorMessage(detail))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), legacyBridgeReplaceTimeout)
+	defer cancel()
+	helper, err := ReplaceLegacyHelper(ctx, HelperConfig{StateDir: stateDir}, hello.ReplaceLegacy)
+	if err != nil {
+		reject(replaceErrorMessage(err))
+		return
+	}
+	upstream, err := dialSocket(ctx, helper.Endpoint())
+	if err != nil {
+		reject(errorMsg{Code: codeUnavailable, Message: "the replacement helper does not answer: " + err.Error()})
+		return
+	}
+	if err := writeFrame(upstream, kind, payload); err != nil {
+		_ = upstream.Close()
+		reject(errorMsg{Code: codeUnavailable, Message: "the replacement helper does not answer: " + err.Error()})
+		return
+	}
+	spliceConns(server, upstream)
+}
+
+func replaceErrorMessage(err error) errorMsg {
+	var legacy *LegacyHelperError
+	if errors.As(err, &legacy) {
+		return legacyErrorMessage(legacy)
+	}
+	var failed *HelperReplaceError
+	if errors.As(err, &failed) {
+		return errorMsg{Code: codeReplaceFailed, Message: err.Error(), Stage: string(failed.Stage), RolledBack: failed.RolledBack}
+	}
+	return errorMessage(err)
+}
+
+func spliceConns(a, b net.Conn) {
+	var once sync.Once
+	closeBoth := func() {
+		once.Do(func() {
+			_ = a.Close()
+			_ = b.Close()
+		})
+	}
+	go func() {
+		_, _ = io.Copy(a, b)
+		closeBoth()
+	}()
+	_, _ = io.Copy(b, a)
+	closeBoth()
 }

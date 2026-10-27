@@ -113,6 +113,10 @@ type helloMsg struct {
 	// Runtime is absent only when the helper could not hash its executable.
 	Runtime  *RuntimeMetadata  `json:"runtime,omitempty"`
 	Activity *ActivitySnapshot `json:"activity,omitempty"`
+	// ReplaceLegacy is sent by a client only: the consent token of a
+	// legacy_helper_running rejection the user approved. A bridge that stands
+	// in for that older helper replaces it; a current helper ignores it.
+	ReplaceLegacy string `json:"replace_legacy,omitempty"`
 }
 
 type createMsg struct {
@@ -209,8 +213,14 @@ type errorMsg struct {
 	Title            string `json:"title,omitempty"`
 	MetadataRevision uint64 `json:"metadata_revision,omitempty"`
 	// Version accompanies codeVersionMismatch: the protocol the rejecting
-	// helper speaks. Helpers before version 3 leave it empty.
+	// helper speaks. Helpers before version 3 leave it empty. With
+	// codeLegacyHelper it is the protocol of the older helper.
 	Version int `json:"version,omitempty"`
+	// Legacy accompanies codeLegacyHelper: the inspected older helper.
+	Legacy *legacyErrorWire `json:"legacy,omitempty"`
+	// Stage and RolledBack accompany codeReplaceFailed.
+	Stage      string `json:"stage,omitempty"`
+	RolledBack bool   `json:"rolled_back,omitempty"`
 }
 
 type exitMsg struct {
@@ -231,6 +241,7 @@ const (
 	codeProtocol           = "protocol"
 	codeVersionMismatch    = "version_mismatch"
 	codeLegacyHelper       = "legacy_helper_running"
+	codeReplaceFailed      = "helper_replace_failed"
 	codeStateMismatch      = "state_mismatch"
 	codeGenerationMismatch = "generation_mismatch"
 	// codeLimit is unknown to older clients, which read it as unavailable.
@@ -302,7 +313,10 @@ func decodedError(msg errorMsg) error {
 		return &wireError{versionMismatchError(msg.Version, msg.Message)}
 	}
 	if msg.Code == codeLegacyHelper {
-		return &wireError{legacyHelperError(msg.Version, msg.Message)}
+		return &wireError{decodedLegacyError(msg)}
+	}
+	if msg.Code == codeReplaceFailed {
+		return &wireError{&HelperReplaceError{Stage: ReplaceStage(msg.Stage), RolledBack: msg.RolledBack, Cause: errors.New(msg.Message)}}
 	}
 	if msg.Code == codeMetadataConflict {
 		return &wireError{&MetadataConflictError{
