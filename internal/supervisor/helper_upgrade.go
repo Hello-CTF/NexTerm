@@ -39,11 +39,11 @@ func HelperConsentToken(running RunningHelper) string {
 	return fmt.Sprintf("%d:%d:%d:%d:%s:%s", running.Protocol, running.PID, running.Activity.Total(), count, start, digest)
 }
 
-// ParseHelperConsent reads a token of HelperConsentToken. The start time and
-// digest may be empty, and a token without them (four fields) is accepted.
+// ParseHelperConsent reads a token of HelperConsentToken. The start time may
+// be empty (platforms that cannot read it); the state digest may not.
 func ParseHelperConsent(token string) (RunningHelper, bool) {
 	parts := strings.Split(token, ":")
-	if len(parts) != 4 && len(parts) != 6 {
+	if len(parts) != 6 {
 		return RunningHelper{}, false
 	}
 	values := make([]int, 4)
@@ -62,37 +62,38 @@ func ParseHelperConsent(token string) (RunningHelper, bool) {
 		Activity:      ActivitySnapshot{PTY: values[2]},
 		ActivityKnown: values[3] == 1, PTYListed: values[3] == 2,
 	}
-	if len(parts) == 6 {
-		if parts[4] != "" {
-			start, err := strconv.ParseUint(parts[4], 10, 64)
-			if err != nil || start == 0 {
-				return RunningHelper{}, false
-			}
-			running.StartTime = start
+	if parts[4] != "" {
+		start, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil || start == 0 {
+			return RunningHelper{}, false
 		}
-		for _, char := range parts[5] {
-			if !strings.ContainsRune("0123456789abcdef", char) {
-				return RunningHelper{}, false
-			}
-		}
-		running.StateDigest = parts[5]
+		running.StartTime = start
 	}
+	if parts[5] == "" {
+		return RunningHelper{}, false
+	}
+	for _, char := range parts[5] {
+		if !strings.ContainsRune("0123456789abcdef", char) {
+			return RunningHelper{}, false
+		}
+	}
+	running.StateDigest = parts[5]
 	return running, true
 }
 
-// sameProcessStart reports whether current is the process consent named,
-// when the consent recorded its start time.
+// sameProcessStart reports whether current is the process consent named. A
+// consent without a start time only covers a helper whose start time cannot
+// be read either.
 func sameProcessStart(consent, current RunningHelper) bool {
-	return consent.StartTime == 0 || consent.StartTime == current.StartTime
+	return consent.StartTime == current.StartTime
 }
 
 // ConsentCovers reports whether consent given for the helper described by
-// consent still covers current: the same process (pid and, where recorded,
-// start time), state directory, protocol and kind of count, and no more
+// consent still covers current: the same process (pid and start time), state directory, protocol and kind of count, and no more
 // sessions than the user agreed to end.
 func ConsentCovers(consent, current RunningHelper) bool {
 	return consent.PID == current.PID && consent.Protocol == current.Protocol && sameProcessStart(consent, current) &&
-		(consent.StateDigest == "" || strings.HasPrefix(current.StateDigest, consent.StateDigest)) &&
+		(consent.StateDigest != "" && strings.HasPrefix(current.StateDigest, consent.StateDigest)) &&
 		consent.ActivityKnown == current.ActivityKnown && consent.PTYListed == current.PTYListed &&
 		current.Activity.Total() <= consent.Activity.Total()
 }

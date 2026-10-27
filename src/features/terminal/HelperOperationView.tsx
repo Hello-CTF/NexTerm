@@ -27,6 +27,8 @@ export interface HelperUpdatePresentation {
   rolledBack?: boolean;
   endedSessions?: number;
   endedCount?: "exact" | "atLeast" | "unknown";
+  /** This action ended the older helper; absent or false when it was already gone. */
+  stopped?: boolean;
   forced?: boolean;
 }
 
@@ -41,11 +43,19 @@ export interface HelperReplaceFailurePresentation {
 
 const FORCED_STOP_NOTE = "旧版组件未响应退出请求，已被强制结束，部分后台进程可能仍在运行。";
 
-/** "N 个会话", "至少 N 个终端会话" or "全部会话", as exact as the old helper reported. */
+/** "结束了 N 个会话", "结束了至少 N 个终端会话" or "结束了全部会话", as exact as the old helper reported. */
 export function endedSessionsText(count: number | undefined, kind: "exact" | "atLeast" | "unknown" | undefined): string {
-  if (kind === "atLeast") return `至少 ${count ?? 0} 个终端会话`;
-  if (kind === "unknown" || count === undefined) return "全部会话";
-  return `${count} 个会话`;
+  if (kind === "exact") return `结束了 ${count ?? 0} 个会话`;
+  if (kind === "atLeast") return `结束了至少 ${count ?? 0} 个终端会话`;
+  return "结束了全部会话";
+}
+
+const ALREADY_GONE_TEXT = "旧版组件已不在运行，已启用新版组件";
+
+/** What a completed replacement did; it claims ended sessions only when this action ended the older helper. */
+export function replacedText(update: Pick<HelperUpdatePresentation, "stopped" | "endedSessions" | "endedCount">): string {
+  if (update.stopped !== true) return ALREADY_GONE_TEXT;
+  return `已终止旧版组件并启用新版持久终端组件，${endedSessionsText(update.endedSessions, update.endedCount)}`;
 }
 
 function replaceFailureText(failure: HelperReplaceFailurePresentation): string {
@@ -762,11 +772,9 @@ export function HelperOperationView({
             {update.status === "updated" && !update.updated && <p>持久终端组件已更新。</p>}
             {update.status === "rolled_back" && <p>更新失败，已恢复为原版本。</p>}
             {update.status === "replaced" && (
-              <p>
-                已终止旧版组件并启用新版持久终端组件，结束了{endedSessionsText(update.endedSessions, update.endedCount)}。
-              </p>
+              <p>{replacedText(update)}。</p>
             )}
-            {update.status === "replaced" && update.forced && <p className="text-[var(--nx-fg-warning)]">{FORCED_STOP_NOTE}</p>}
+            {update.status === "replaced" && update.stopped === true && update.forced && <p className="text-[var(--nx-fg-warning)]">{FORCED_STOP_NOTE}</p>}
             {update.status === "unknown" && (
               <p>
                 {compatibility === "incompatible"

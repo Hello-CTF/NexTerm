@@ -1335,7 +1335,8 @@ export type HelperUpdateDTO = {
   interrupted: boolean;
   rolledBack: boolean;
   replacedLegacy?: boolean;
-  endedSessions?: number;
+  stopped?: boolean;
+  endedSessions: number;
   endedCount?: string;
   forced?: boolean;
 };

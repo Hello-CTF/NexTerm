@@ -22,9 +22,12 @@ type legacyDaemonClient struct {
 	// afterReplace, when set, is what List returns once replaced.
 	afterReplace error
 	lists        int
+	// alreadyEnded makes the bridge report a helper that this call did not
+	// stop.
+	alreadyEnded bool
 }
 
-var legacyTargetHelper = supervisor.RunningHelper{Protocol: 2, PID: 4242, Activity: supervisor.ActivitySnapshot{PTY: 1, Exec: 1}, ActivityKnown: true}
+var legacyTargetHelper = supervisor.RunningHelper{Protocol: 2, PID: 4242, Activity: supervisor.ActivitySnapshot{PTY: 1, Exec: 1}, ActivityKnown: true, StateDigest: "abcd1234"}
 
 func (c *legacyDaemonClient) List(context.Context) ([]supervisor.Info, error) {
 	c.mu.Lock()
@@ -53,6 +56,9 @@ func (c *legacyDaemonClient) ReplaceLegacyHelper(_ context.Context, token string
 		return supervisor.ReplaceResult{}, &supervisor.LegacyHelperError{Helper: legacyTargetHelper, ConsentToken: supervisor.HelperConsentToken(legacyTargetHelper), Stale: true}
 	}
 	c.replaced = true
+	if c.alreadyEnded {
+		return supervisor.ReplaceResult{}, nil
+	}
 	return supervisor.ReplaceResult{Stopped: true, Forced: true}, nil
 }
 
@@ -97,7 +103,7 @@ func TestEnsureDaemonReplacesALegacyHelperWithConsent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(client.calls) != 1 || !daemon.Update.ReplacedLegacy || daemon.Update.EndedSessions != 2 ||
-		daemon.Update.EndedCount != "exact" || !daemon.Update.ForcedLegacy {
+		daemon.Update.EndedCount != "exact" || !daemon.Update.StoppedLegacy || !daemon.Update.ForcedLegacy {
 		t.Fatalf("replacement calls %v, update %+v; want one replacement ending 2 sessions", client.calls, daemon.Update)
 	}
 	if host.sawCommand("setsid") {
@@ -109,6 +115,18 @@ func TestEnsureDaemonReplacesALegacyHelperWithConsent(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("progress %v does not show the replacement", stages)
+	}
+}
+
+func TestEnsureDaemonDoesNotClaimToHaveStoppedAHelperThatWasAlreadyEnded(t *testing.T) {
+	client := &legacyDaemonClient{alreadyEnded: true}
+	resolver, _ := legacyTargetResolver(t, client)
+	daemon, err := resolver.EnsureDaemonWithOptions(t.Context(), nil, EnsureOptions{ReplaceLegacy: supervisor.HelperConsentToken(legacyTargetHelper)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !daemon.Update.ReplacedLegacy || daemon.Update.StoppedLegacy || daemon.Update.ForcedLegacy {
+		t.Fatalf("update = %+v, want a replacement that stopped nothing", daemon.Update)
 	}
 }
 

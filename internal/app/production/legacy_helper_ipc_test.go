@@ -110,7 +110,7 @@ func TestProductionHelperReplacesAProtocol2HelperOnlyWithConsent(t *testing.T) {
 	}
 
 	replaced := dispatchLegacyHelperOperation(t, service, connected.ID, "replace_legacy", status.Legacy.ConsentToken)
-	if replaced.Legacy != nil || replaced.Update == nil || replaced.Update.Status != "replaced" || replaced.Update.EndedSessions != 1 || replaced.Update.EndedCount != "exact" {
+	if replaced.Legacy != nil || replaced.Update == nil || replaced.Update.Status != "replaced" || !replaced.Update.Stopped || replaced.Update.EndedSessions != 1 || replaced.Update.EndedCount != "exact" {
 		t.Fatalf("replacement = %+v (update %+v), want the helper replaced after ending one session", replaced, replaced.Update)
 	}
 	select {
@@ -203,7 +203,7 @@ func TestProductionDeviceHelperReplacementNeedsTheServerConsent(t *testing.T) {
 	default:
 	}
 	replaced := dispatchLegacyHelperOperation(t, service, connected.ID, "replace_legacy", status.Legacy.ConsentToken)
-	if replaced.Update == nil || replaced.Update.Status != "replaced" || replaced.Update.EndedSessions != 2 || replaced.Update.EndedCount != "exact" || replaced.Update.Forced {
+	if replaced.Update == nil || replaced.Update.Status != "replaced" || !replaced.Update.Stopped || replaced.Update.EndedSessions != 2 || replaced.Update.EndedCount != "exact" || replaced.Update.Forced {
 		t.Fatalf("device replacement = %+v (update %+v)", replaced, replaced.Update)
 	}
 	select {
@@ -286,5 +286,42 @@ func TestProductionHelperReplaceFailureKeepsItsStage(t *testing.T) {
 	}
 	if !strings.Contains(response.Error.Message, "会话已终止") || !strings.Contains(response.Error.Message, "强制结束") {
 		t.Fatalf("failure message = %q", response.Error.Message)
+	}
+}
+
+// TestReplacedUpdateDTOReportsWhetherThisActionStoppedTheHelper keeps the
+// result honest when another replacement or the helper's own exit ended the
+// older helper first, and keeps a zero session count visible.
+func TestReplacedUpdateDTOReportsWhetherThisActionStoppedTheHelper(t *testing.T) {
+	token := supervisor.HelperConsentToken(supervisor.RunningHelper{Protocol: 2, PID: 5, ActivityKnown: true, StateDigest: "abcd1234"})
+	for name, replaced := range map[string]supervisor.ReplaceResult{
+		"stopped here":    {Stopped: true, Forced: true},
+		"already stopped": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			update := replacedUpdateDTO(token, replaced)
+			if update.Status != "replaced" || !update.ReplacedLegacy || update.Stopped != replaced.Stopped || update.Forced != replaced.Forced || update.EndedCount != "exact" {
+				t.Fatalf("update = %+v for %+v", update, replaced)
+			}
+			encoded, err := json.Marshal(update)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(encoded), `"endedSessions":0`) {
+				t.Fatalf("encoded update %s drops the zero session count", encoded)
+			}
+		})
+	}
+}
+
+func TestHelperDTOFromDaemonCarriesWhetherTheLegacyHelperWasStopped(t *testing.T) {
+	for _, stopped := range []bool{true, false} {
+		daemon := &sshdaemon.Daemon{}
+		daemon.Update.ReplacedLegacy = true
+		daemon.Update.StoppedLegacy = stopped
+		result := helperDTOFromDaemon("s1", "replace_legacy", daemon)
+		if result.Update == nil || result.Update.Status != "replaced" || result.Update.Stopped != stopped {
+			t.Fatalf("stopped=%v: update = %+v", stopped, result.Update)
+		}
 	}
 }

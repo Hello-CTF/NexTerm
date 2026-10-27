@@ -48,20 +48,16 @@ func TestHelperConsentTokenRoundTripsAndCovers(t *testing.T) {
 	for _, helper := range []RunningHelper{
 		{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2, Exec: 1}, ActivityKnown: true, StartTime: 9001, StateDigest: digest},
 		{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2}, PTYListed: true, StateDigest: digest},
-		{Protocol: 2, PID: 41},
+		{Protocol: 2, PID: 41, StateDigest: digest},
 	} {
 		parsed, ok := ParseHelperConsent(HelperConsentToken(helper))
 		if !ok || !ConsentCovers(parsed, helper) || parsed.StartTime != helper.StartTime {
 			t.Fatalf("token of %+v = %+v, %v; want it to cover the helper", helper, parsed, ok)
 		}
 	}
-	// A token without start time and digest (platforms that cannot read the
-	// start time, or a four-field token) still parses.
-	if parsed, ok := ParseHelperConsent("2:41:1:1"); !ok || parsed.StartTime != 0 || parsed.StateDigest != "" {
-		t.Fatalf("four-field token = %+v, %v", parsed, ok)
-	}
-	if _, ok := ParseHelperConsent("2:41:1:1::"); !ok {
-		t.Fatal("a token with an empty start time and digest was rejected")
+	// Platforms that cannot read the start time leave it empty.
+	if parsed, ok := ParseHelperConsent("2:41:1:1::" + digest[:consentDigestLength]); !ok || parsed.StartTime != 0 {
+		t.Fatalf("token without start time = %+v, %v", parsed, ok)
 	}
 	consent := RunningHelper{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2}, ActivityKnown: true, StartTime: 9001, StateDigest: digest[:consentDigestLength]}
 	for name, current := range map[string]RunningHelper{
@@ -76,10 +72,20 @@ func TestHelperConsentTokenRoundTripsAndCovers(t *testing.T) {
 			t.Fatalf("%s: consent %+v covered %+v", name, consent, current)
 		}
 	}
+	downgraded := consent
+	downgraded.StartTime = 0
+	if ConsentCovers(downgraded, RunningHelper{Protocol: 2, PID: 41, ActivityKnown: true, StartTime: 9001, StateDigest: digest}) {
+		t.Fatal("a consent without start time covered a helper with one")
+	}
+	noDigest := consent
+	noDigest.StateDigest = ""
+	if ConsentCovers(noDigest, RunningHelper{Protocol: 2, PID: 41, ActivityKnown: true, StartTime: 9001, StateDigest: digest}) {
+		t.Fatal("a consent without a state digest covered a helper")
+	}
 	if !ConsentCovers(consent, RunningHelper{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true, StartTime: 9001, StateDigest: digest}) {
 		t.Fatal("consent did not cover a helper whose sessions dropped since")
 	}
-	for _, token := range []string{"", "2:41:1", "2:41:1:3", "0:41:1:1", "2:0:1:1", "2:41:-1:1", "x:41:1:1", "2:41:1:1:x:", "2:41:1:1:0:", "2:41:1:1:5:XYZ", "2:41:1:1:5"} {
+	for _, token := range []string{"", "2:41:1", "2:41:1:3", "0:41:1:1", "2:0:1:1", "2:41:-1:1", "x:41:1:1", "2:41:1:1:x:", "2:41:1:1:0:", "2:41:1:1:5:XYZ", "2:41:1:1:5", "2:41:1:1", "2:41:1:1::", "2:41:1:1:5:"} {
 		if _, ok := ParseHelperConsent(token); ok {
 			t.Fatalf("malformed token %q parsed", token)
 		}
@@ -107,7 +113,7 @@ var (
 // TestReplaceStepsFollowTheTable runs every combination of step outcomes and
 // checks the stages taken, what was called and the reported result.
 func TestReplaceStepsFollowTheTable(t *testing.T) {
-	consent := RunningHelper{Protocol: 2, PID: 7, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true}
+	consent := RunningHelper{Protocol: 2, PID: 7, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true, StateDigest: strings.Repeat("ab", 8)}
 	for _, verify := range []error{nil, ErrHelperNotRunning, inspectErr} {
 		for _, stale := range []bool{false, true} {
 			for _, executable := range []bool{false, true} {

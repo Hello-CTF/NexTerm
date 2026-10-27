@@ -19,7 +19,7 @@ import {
 import { localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 import { showSettingsSection } from "../settings/settingsNavigation";
 import { HelperOperationDialog } from "./HelperOperationDialog";
-import { endedSessionsText } from "./HelperOperationView";
+import { replacedText } from "./HelperOperationView";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
 import {
@@ -1419,9 +1419,8 @@ export function TerminalPane({
       setHelperPanelError(null);
       if (result.update?.status === "replaced") {
         setHelperPanelOpen(false);
-        const ended = endedSessionsText(result.update.endedSessions, result.update.endedCount);
-        const forced = result.update.forced ? "；旧版组件被强制结束，部分后台进程可能仍在运行" : "";
-        pushToast(result.update.forced ? "info" : "success", `已终止旧版组件及其中${ended}，持久终端组件已升级${forced}`);
+        const forced = result.update.stopped === true && result.update.forced ? "；旧版组件被强制结束，部分后台进程可能仍在运行" : "";
+        pushToast(result.update.stopped !== true || result.update.forced ? "info" : "success", `${replacedText(result.update)}${forced}`);
       } else if (result.legacy?.stale) {
         setHelperPanelError("旧版组件的状态已变化，请核对最新的会话数后重新确认");
       }

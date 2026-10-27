@@ -608,20 +608,33 @@ describe("HelperOperationView", () => {
   });
 
   it("reports a completed replacement with the sessions it ended, as exactly as they were counted", () => {
-    const exact = renderView({ update: { status: "replaced", endedSessions: 3, endedCount: "exact" } });
-    expect(exact.container.textContent).toContain("已终止旧版组件并启用新版持久终端组件，结束了3 个会话");
+    const exact = renderView({ update: { status: "replaced", stopped: true, endedSessions: 3, endedCount: "exact" } });
+    expect(exact.container.textContent).toContain("已终止旧版组件并启用新版持久终端组件，结束了 3 个会话");
     expect(exact.container.textContent).not.toContain("强制结束");
     exact.unmount();
     mounted = undefined;
 
-    const listed = renderView({ update: { status: "replaced", endedSessions: 2, endedCount: "atLeast", forced: true } });
-    expect(listed.container.textContent).toContain("至少 2 个终端会话");
+    const none = renderView({ update: { status: "replaced", stopped: true, endedSessions: 0, endedCount: "exact" } });
+    expect(none.container.textContent).toContain("结束了 0 个会话");
+    expect(none.container.textContent).not.toContain("全部会话");
+    none.unmount();
+    mounted = undefined;
+
+    const listed = renderView({ update: { status: "replaced", stopped: true, endedSessions: 3, endedCount: "atLeast", forced: true } });
+    expect(listed.container.textContent).toContain("结束了至少 3 个终端会话");
     expect(listed.container.textContent).toContain("强制结束，部分后台进程可能仍在运行");
     listed.unmount();
     mounted = undefined;
 
-    const unknown = renderView({ update: { status: "replaced", endedSessions: 0, endedCount: "unknown" } });
+    const unknown = renderView({ update: { status: "replaced", stopped: true, endedSessions: 0, endedCount: "unknown" } });
     expect(unknown.container.textContent).toContain("结束了全部会话");
+  });
+
+  it("does not claim ended sessions when the older helper was already gone", () => {
+    const gone = renderView({ update: { status: "replaced", stopped: false, endedSessions: 3, endedCount: "exact", forced: true } });
+    expect(gone.container.textContent).toContain("旧版组件已不在运行，已启用新版组件");
+    expect(gone.container.textContent).not.toContain("结束了");
+    expect(gone.container.textContent).not.toContain("强制结束");
   });
 
   it("shows where a consented replacement failed and what it already did", () => {

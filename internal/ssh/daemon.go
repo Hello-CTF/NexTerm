@@ -62,11 +62,14 @@ type HelperUpdateStatus struct {
 	EndedSessions  int
 	// EndedCount is how exact EndedSessions is (see EndedCountOf);
 	// ForcedLegacy reports that the older helper had to be killed.
-	EndedCount   string
-	ForcedLegacy bool
-	Reason       string
-	Local        supervisor.RuntimeMetadata
-	Running      supervisor.RuntimeMetadata
+	EndedCount string
+	// StoppedLegacy reports that this replacement ended the older helper;
+	// false when it had already exited or another replacement ended it.
+	StoppedLegacy bool
+	ForcedLegacy  bool
+	Reason        string
+	Local         supervisor.RuntimeMetadata
+	Running       supervisor.RuntimeMetadata
 }
 
 // Daemon is a connected handle to a supervisor daemon on an SSH target.

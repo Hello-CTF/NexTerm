@@ -280,7 +280,7 @@ func TestServiceDoesNotCountAHelperAPeerReplaced(t *testing.T) {
 
 func TestServiceAsksBeforeRestartingAnOlderProtocolHelperWithSessions(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7, Activity: supervisor.ActivitySnapshot{PTY: 1}, ActivityKnown: true}
+	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7, Activity: supervisor.ActivitySnapshot{PTY: 1}, ActivityKnown: true, StateDigest: "abcd1234"}
 	config := world.config(t)
 	config.PollInterval = time.Hour
 	service := startService(t, config)
@@ -319,7 +319,7 @@ func TestServiceAsksBeforeRestartingAnOlderProtocolHelperWithSessions(t *testing
 
 func TestServiceNeverStopsAHelperWithAnUnknownSessionCount(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7}
+	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7, StateDigest: "abcd1234"}
 	service := startService(t, world.config(t))
 	if _, err := service.WaitReady(context.Background(), time.Second); err == nil {
 		t.Fatal("a helper with unknown sessions was replaced for a new terminal")
@@ -335,7 +335,7 @@ func TestServiceNeverStopsAHelperWithAnUnknownSessionCount(t *testing.T) {
 
 func TestServiceReplacesAnIdleOlderProtocolHelperOnlyWhenATerminalNeedsOne(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 9, ActivityKnown: true}
+	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 9, ActivityKnown: true, StateDigest: "abcd1234"}
 	config := world.config(t)
 	config.PollInterval = time.Hour
 	service := startService(t, config)
@@ -353,7 +353,7 @@ func TestServiceReplacesAnIdleOlderProtocolHelperOnlyWhenATerminalNeedsOne(t *te
 
 func TestServiceKeepsUsingASameProtocolHelperFromAnotherBuild(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, Activity: supervisor.ActivitySnapshot{PTY: 4}, ActivityKnown: true,
+	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, Activity: supervisor.ActivitySnapshot{PTY: 4}, ActivityKnown: true, StateDigest: "abcd1234",
 		Runtime: &supervisor.RuntimeMetadata{Version: "1.2.9", SHA256: "other"}}
 	service := startService(t, world.config(t))
 	ready(t, service)
@@ -378,7 +378,7 @@ func TestServiceKeepsUsingASameProtocolHelperFromAnotherBuild(t *testing.T) {
 
 func TestServiceUsesACurrentHelperOfThisBuildWithoutAskingToUpdate(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, Activity: supervisor.ActivitySnapshot{PTY: 4}, ActivityKnown: true,
+	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, Activity: supervisor.ActivitySnapshot{PTY: 4}, ActivityKnown: true, StateDigest: "abcd1234",
 		Runtime: &supervisor.RuntimeMetadata{Version: "dev", SHA256: "self"}}
 	service := startService(t, world.config(t))
 	if _, err := service.WaitExisting(context.Background(), 10*time.Second); err != nil {
@@ -506,7 +506,7 @@ func TestStartNeverSpawnsWhenTheHelperVanishesBeforeTheAttach(t *testing.T) {
 
 func TestRestartRefusesAHandMadeTokenThatHidesTheSessionCount(t *testing.T) {
 	world := newFakeWorld()
-	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7, Activity: supervisor.ActivitySnapshot{PTY: 3}, ActivityKnown: true}
+	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7, Activity: supervisor.ActivitySnapshot{PTY: 3}, ActivityKnown: true, StateDigest: "abcd1234"}
 	config := world.config(t)
 	config.PollInterval = time.Hour
 	service := startService(t, config)
