@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -191,7 +191,7 @@ describe("workspace switcher", () => {
     const close = menuItems().find((i) => i.getAttribute("aria-label") === "关闭工作区 ws-1");
     expect(close).toBeTruthy();
     click(close as HTMLButtonElement);
-    await waitFor(() => expect(useUi.getState().workspaces).toHaveLength(1));
+    await waitForRendered(() => expect(useUi.getState().workspaces).toHaveLength(1));
     expect(useUi.getState().activeWorkspaceId).toBe("ws2");
   });
 
@@ -209,7 +209,7 @@ describe("workspace switcher", () => {
     expect(document.activeElement).toBe(menuItems()[1]);
 
     keyDown(document.activeElement as HTMLElement, "Escape");
-    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
   });
 });
 
@@ -230,7 +230,7 @@ describe("pane tab strip keyboard support", () => {
     const close = list.querySelector<HTMLButtonElement>('button[aria-label="关闭标签 审计"]');
     expect(close).not.toBeNull();
     click(close as HTMLButtonElement);
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(1),
     );
     expect(useUi.getState().workspaces[0]?.panes[0]?.activeTabId).toBe("t1");
@@ -251,7 +251,7 @@ describe("pane tab strip keyboard support", () => {
     expect(menu?.textContent).toContain("关闭标签");
 
     keyDown(document.activeElement as HTMLElement, "Escape");
-    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
     expect(document.activeElement).toBe(settings);
   });
 
@@ -269,7 +269,7 @@ describe("pane tab strip keyboard support", () => {
     expect(useUi.getState().workspaces[0]?.panes[0]?.activeTabId).toBe("t1");
 
     click(close);
-    await waitFor(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(1));
+    await waitForRendered(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(1));
   });
 });
 
@@ -297,7 +297,7 @@ describe("pane tab context menu bulk close", () => {
     expect(menuButton("关闭左侧全部标签").disabled).toBe(true);
     expect(menuButton("关闭右侧全部标签").disabled).toBe(false);
     keyDown(document.activeElement as HTMLElement, "Escape");
-    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
 
     expect(openMenu(tabByText(list, "审计"))).not.toBeNull();
     expect(menuButton("关闭左侧全部标签").disabled).toBe(false);
@@ -311,7 +311,7 @@ describe("pane tab context menu bulk close", () => {
     const list = tablist(mounted.container, "标签页");
     openMenu(tabByText(list, "审计"));
     click(menuButton("关闭左侧全部标签"));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.map((t) => t.id)).toEqual(["t2"]),
     );
   });
@@ -323,7 +323,7 @@ describe("pane tab context menu bulk close", () => {
     const list = tablist(mounted.container, "标签页");
     openMenu(tabByText(list, "设置"));
     click(menuButton("关闭右侧全部标签"));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.map((t) => t.id)).toEqual(["t1"]),
     );
   });

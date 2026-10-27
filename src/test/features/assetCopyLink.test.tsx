@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -113,7 +113,7 @@ afterEach(() => {
 describe("asset link copying", () => {
   it("copies nexterm://connect/<id> from the row menu to the clipboard", async () => {
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(
         [...mounted!.container.querySelectorAll('[role="treeitem"][title]')].some((r) =>
           (r.getAttribute("title") ?? "").startsWith("web-1"),
@@ -128,8 +128,8 @@ describe("asset link copying", () => {
     expect(item).toBeTruthy();
     click(item!);
 
-    await waitFor(() => expect(mocks.writeText).toHaveBeenCalledWith("nexterm://connect/a1"));
-    await waitFor(() =>
+    await waitForRendered(() => expect(mocks.writeText).toHaveBeenCalledWith("nexterm://connect/a1"));
+    await waitForRendered(() =>
       expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已复制")),
     );
   });
@@ -137,7 +137,7 @@ describe("asset link copying", () => {
   it("opens the host detail page from the row menu without connecting", async () => {
     useUi.setState({ workspaces: [], activeWorkspaceId: null, sessions: [] });
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(
         [...mounted!.container.querySelectorAll('[role="treeitem"][title]')].some((r) =>
           (r.getAttribute("title") ?? "").startsWith("web-1"),

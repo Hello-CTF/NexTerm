@@ -37,7 +37,7 @@ import {
 import { useAuth } from "../../features/auth/store";
 import { setLocalHelperStatusForTest } from "../../features/terminal/localHelperStatus";
 import { useUi } from "../../app/store";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { SessionInfo } from "../../ipc/commands";
 import type { AggregateHostStatus, AggregateSession } from "../../ipc/generated/types";
 
@@ -91,7 +91,7 @@ function button(target: ParentNode, label: string): HTMLButtonElement {
 async function mountAllHosts(): Promise<MountedView> {
   const view = mount(createElement(BackgroundSessions, {}));
   await flush();
-  await waitFor(() => expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(3));
+  await waitForRendered(() => expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(3));
   return view;
 }
 
@@ -164,7 +164,7 @@ describe("BackgroundSessions across hosts", () => {
         button(row(view, "far-tab"), "结束进程").click();
         await flush();
       });
-      await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("far-tab", "kill", "s-far"));
+      await waitForRendered(() => expect(mocks.closeTab).toHaveBeenCalledWith("far-tab", "kill", "s-far"));
       expect(mocks.connectDevice).toHaveBeenCalledWith("far", "far box");
       expect(useUi.getState().activeWorkspaceId).toBe(before);
       expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("已结束进程");
@@ -185,12 +185,12 @@ describe("BackgroundSessions across hosts", () => {
     const view = mount(createElement(BackgroundSessions, {}));
     try {
       await flush();
-      await waitFor(() => expect(view.container.querySelector('tr[data-background-row="local-tab"]')).not.toBeNull());
+      await waitForRendered(() => expect(view.container.querySelector('tr[data-background-row="local-tab"]')).not.toBeNull());
       await act(async () => {
         button(row(view, "local-tab"), "结束进程").click();
         await flush();
       });
-      await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("local-tab", "kill", "s-local"));
+      await waitForRendered(() => expect(mocks.closeTab).toHaveBeenCalledWith("local-tab", "kill", "s-local"));
       expect(mocks.connectLocal).toHaveBeenCalledTimes(1);
     } finally {
       view.unmount();
@@ -207,7 +207,7 @@ describe("BackgroundSessions across hosts", () => {
         button(row(view, "near-tab"), "结束进程").click();
         await flush();
       });
-      await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("结束进程失败"))).toBe(true));
+      await waitForRendered(() => expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("结束进程失败"))).toBe(true));
       expect(row(view, "near-tab")).toBeTruthy();
       expect(view.container.querySelectorAll('tr[data-background-row="near-tab"]')).toHaveLength(1);
       expect(aggregateRows(useSessionAggregate.getState()).some((entry) => entry.session.tabId === "near-tab")).toBe(true);

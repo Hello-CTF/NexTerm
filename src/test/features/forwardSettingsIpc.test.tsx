@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -142,13 +142,13 @@ describe("ForwardPanel settings section", () => {
 
   it("loads rules through the real adapter and toggles autoStart", async () => {
     mountForwardPanel();
-    await waitFor(() => expect(settingsSwitch("自动启动 db").getAttribute("aria-checked")).toBe("false"));
+    await waitForRendered(() => expect(settingsSwitch("自动启动 db").getAttribute("aria-checked")).toBe("false"));
 
     click(settingsSwitch("自动启动 db"));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.call).toHaveBeenCalledWith("forward_rule_set_auto_start", { id: "rule-1", autoStart: true }),
     );
-    await waitFor(() => expect(settingsSwitch("自动启动 db").getAttribute("aria-checked")).toBe("true"));
+    await waitForRendered(() => expect(settingsSwitch("自动启动 db").getAttribute("aria-checked")).toBe("true"));
   });
 
   it("surfaces a recover-now failure in the panel instead of claiming success", async () => {
@@ -157,11 +157,11 @@ describe("ForwardPanel settings section", () => {
       forward_rule_recover_now: [{ assetId: "asset-1", error: "恢复设备连接失败: dial refused" }],
     });
     mountForwardPanel();
-    await waitFor(() => expect(settingsSwitch("启动时自动恢复转发").getAttribute("aria-checked")).toBe("true"));
+    await waitForRendered(() => expect(settingsSwitch("启动时自动恢复转发").getAttribute("aria-checked")).toBe("true"));
 
     click([...mounted!.container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "立即恢复")!);
-    await waitFor(() => expect(mocks.call).toHaveBeenCalledWith("forward_rule_recover_now"));
-    await waitFor(() => {
+    await waitForRendered(() => expect(mocks.call).toHaveBeenCalledWith("forward_rule_recover_now"));
+    await waitForRendered(() => {
       const alert = mounted!.container.querySelector('[role="alert"]');
       expect(alert?.textContent).toContain("asset-1: 恢复设备连接失败: dial refused");
     });
@@ -169,7 +169,7 @@ describe("ForwardPanel settings section", () => {
 
   it("reloads rules from scratch when the account generation advances", async () => {
     mountForwardPanel();
-    await waitFor(() => expect(settingsSwitch("自动启动 db")).toBeDefined());
+    await waitForRendered(() => expect(settingsSwitch("自动启动 db")).toBeDefined());
     const listCalls = () =>
       mocks.call.mock.calls.filter(([cmd]) => cmd === "forward_rule_settings_list").length;
     const before = listCalls();
@@ -177,8 +177,8 @@ describe("ForwardPanel settings section", () => {
     act(() => {
       useUi.getState().advanceAccountEpoch();
     });
-    await waitFor(() => expect(listCalls()).toBeGreaterThan(before));
-    await waitFor(() => expect(settingsSwitch("自动启动 db").getAttribute("aria-checked")).toBe("false"));
+    await waitForRendered(() => expect(listCalls()).toBeGreaterThan(before));
+    await waitForRendered(() => expect(settingsSwitch("自动启动 db").getAttribute("aria-checked")).toBe("false"));
   });
 
   it("keeps the app-wide settings section out of per-session forward tabs", async () => {

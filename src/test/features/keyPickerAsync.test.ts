@@ -10,7 +10,7 @@ import {
   mount,
   setInputValue,
   setSelectValue,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -145,7 +145,7 @@ describe.each<FormKind>(["credential", "asset"])("%s inline key picker ownership
     mocks.pickBrowserFile.mockResolvedValue({ name: "large.bin", size: 64 * 1024 + 1, text });
     mounted = await mountInlineForm(kind);
     clickButton(mounted.container, "浏览…");
-    await waitFor(() => {
+    await waitForRendered(() => {
       expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringMatching(/64 KB/));
     });
     expect(text).not.toHaveBeenCalled();
@@ -159,7 +159,7 @@ describe.each<FormKind>(["credential", "asset"])("%s inline key picker ownership
     });
     mounted = await mountInlineForm(kind);
     clickButton(mounted.container, "浏览…");
-    await waitFor(() => {
+    await waitForRendered(() => {
       expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringMatching(/browser read failed/));
     });
   });

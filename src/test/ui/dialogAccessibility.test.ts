@@ -9,7 +9,7 @@ import {
   flush,
   mount,
   setInputValue,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "../features/reactTestUtils";
 
@@ -313,7 +313,7 @@ describe("shared dialog accessibility", () => {
     const secondResult = ask("second");
     expect(askHandler).toHaveBeenCalledOnce();
     firstDialog.resolve(true);
-    await waitFor(() => expect(askHandler).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(askHandler).toHaveBeenCalledTimes(2));
     secondDialog.resolve(false);
     await expect(firstResult).resolves.toBe(true);
     await expect(secondResult).resolves.toBe(false);
@@ -328,7 +328,7 @@ describe("shared dialog accessibility", () => {
     const two = promptText("two");
     expect(promptHandler).toHaveBeenCalledOnce();
     firstPrompt.resolve("1");
-    await waitFor(() => expect(promptHandler).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(promptHandler).toHaveBeenCalledTimes(2));
     secondPrompt.resolve("2");
     await expect(one).resolves.toBe("1");
     await expect(two).resolves.toBe("2");

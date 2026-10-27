@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -524,7 +524,7 @@ describe("tab context menu move", () => {
     expect(menuButton("左移标签").disabled).toBe(true);
     expect(menuButton("右移标签").disabled).toBe(false);
     keyDown(document.activeElement as HTMLElement, "Escape");
-    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
 
     openMenu(tabByText(list, "凭据"));
     expect(menuButton("左移标签").disabled).toBe(false);
@@ -538,7 +538,7 @@ describe("tab context menu move", () => {
     const list = tablist(mounted.container);
     openMenu(tabByText(list, "设置"));
     click(menuButton("右移标签"));
-    await waitFor(() => expect(tabOrder()).toEqual(["t2", "t1", "t3"]));
+    await waitForRendered(() => expect(tabOrder()).toEqual(["t2", "t1", "t3"]));
     expect(activeTabId()).toBe("t1");
     expect(tabByText(list, "设置").getAttribute("aria-selected")).toBe("true");
   });
@@ -550,7 +550,7 @@ describe("tab context menu move", () => {
     const list = tablist(mounted.container);
     openMenu(tabByText(list, "凭据"));
     click(menuButton("左移标签"));
-    await waitFor(() => expect(tabOrder()).toEqual(["t1", "t3", "t2"]));
+    await waitForRendered(() => expect(tabOrder()).toEqual(["t1", "t3", "t2"]));
     expect(activeTabId()).toBe("t1");
   });
 });

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   listLive: vi.fn(),
@@ -187,7 +187,7 @@ describe("TerminalPane truthful command-input send feedback", () => {
     await flush();
 
     await clickMenuItem("命令输入");
-    await waitFor(() => expect(toastTexts()).toContain("success:命令已发送"));
+    await waitForRendered(() => expect(toastTexts()).toContain("success:命令已发送"));
 
     expect(mocks.write).toHaveBeenCalledTimes(1);
     const [tabId, data] = mocks.write.mock.calls[0] as [string, Uint8Array];
@@ -223,7 +223,7 @@ describe("TerminalPane truthful command-input send feedback", () => {
     await flush();
 
     await clickMenuItem("命令输入");
-    await waitFor(() => expect(toastTexts()).toContain("success:命令已发送"));
+    await waitForRendered(() => expect(toastTexts()).toContain("success:命令已发送"));
 
     expect(mocks.write).toHaveBeenCalledTimes(1);
   });
@@ -242,7 +242,7 @@ describe("TerminalPane truthful command-input send feedback", () => {
     await flush();
 
     await clickMenuItem("命令输入");
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(toastTexts().some((t) => t.startsWith("error:写入终端失败："))).toBe(true),
     );
 

@@ -20,7 +20,7 @@ import { buildStatusWall, WALL_GROUPS } from "../../features/mobile/statusWall";
 import { aggregateRows, applyAggregateList, applyAggregateUpdate, resetSessionAggregateForTest } from "../../app/sessionAggregate";
 import { applyAwareness, resetAwarenessStore, toAwareness, type SessionAwareness } from "../../app/sessionAwarenessStore";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { SessionInfo } from "../../ipc/commands";
 import type { AggregateHostStatus, AggregateList, AggregateSession, AttentionEvent } from "../../ipc/generated/types";
 
@@ -219,7 +219,7 @@ describe("StatusWall", () => {
         cardButton(view, "far-tab").click();
         await flush();
       });
-      await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(2));
+      await waitForRendered(() => expect(onOpened).toHaveBeenCalledTimes(2));
       const tabs = useUi.getState().workspaces.flatMap((entry) => entry.panes.flatMap((pane) => pane.tabs));
       expect(tabs.some((tab) => tab.kind === "terminal" && tab.tabId === "far-tab" && tab.sessionId === "s1")).toBe(true);
     } finally {

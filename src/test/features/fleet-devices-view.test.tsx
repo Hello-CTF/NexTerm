@@ -4,7 +4,7 @@
 // device://status online/offline events flip the online state in real time.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, setSelectValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 async function flushUntil(predicate: () => boolean): Promise<void> {
   if (predicate()) {
@@ -1152,7 +1152,7 @@ describe("Device management view - enrollment code issuance", () => {
 
     const doneButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成");
     click(doneButton as HTMLButtonElement);
-    await waitFor(() => {
+    await waitForRendered(() => {
       expect(document.body.textContent).not.toContain("fleet-code-1");
     });
   });
@@ -1170,7 +1170,7 @@ describe("Device management view - enrollment code issuance", () => {
     await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成") as HTMLButtonElement);
-    await waitFor(() => {
+    await waitForRendered(() => {
       expect(document.body.textContent).not.toContain("fleet-code-1");
     });
 

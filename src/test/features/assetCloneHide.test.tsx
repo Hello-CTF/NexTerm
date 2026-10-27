@@ -8,7 +8,7 @@ import {
   flush,
   mount,
   setInputValue,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -180,13 +180,13 @@ afterEach(() => {
 describe("asset cloning", () => {
   beforeEach(async () => {
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
+    await waitForRendered(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
   });
 
   it("creates an asset that shares credential references after confirmation without copying credential contents", async () => {
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "克隆");
-    await waitFor(() => expect(mocks.create).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.create).toHaveBeenCalled());
 
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("web-1 副本"),
@@ -207,13 +207,13 @@ describe("asset cloning", () => {
     expect(mocks.setCredential).not.toHaveBeenCalled();
     expect(mocks.revealCredential).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("web-1 副本"));
-    await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
+    await waitForRendered(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
   });
 
   it("shares private key path references unchanged", async () => {
     openRowMenu(mounted!.container, "build-1");
     clickMenuItem(mounted!.container, "克隆");
-    await waitFor(() => expect(mocks.create).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.create).toHaveBeenCalled());
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: "build-1 副本", keyPath: "/keys/ci_ed25519", credId: null }),
     );
@@ -231,14 +231,14 @@ describe("asset cloning", () => {
 describe("asset hiding and unhiding", () => {
   beforeEach(async () => {
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
+    await waitForRendered(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
   });
 
   it("hiding only affects visibility: removes the row, preserves data, and allows recovery", async () => {
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "隐藏");
     let eye: HTMLButtonElement | undefined;
-    await waitFor(() => {
+    await waitForRendered(() => {
       eye = [...mounted!.container.querySelectorAll("button")].find((b) =>
         (b.getAttribute("aria-label") ?? "").startsWith("显示已隐藏的资产"),
       ) as HTMLButtonElement | undefined;
@@ -255,7 +255,7 @@ describe("asset hiding and unhiding", () => {
 
     click(eye as HTMLButtonElement);
     let row: HTMLElement | undefined;
-    await waitFor(() => {
+    await waitForRendered(() => {
       row = rowByText(mounted!.container, "web-1");
     });
     expect(row?.textContent).toContain("已隐藏");
@@ -263,7 +263,7 @@ describe("asset hiding and unhiding", () => {
 
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "取消隐藏");
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(rowByText(mounted!.container, "web-1").textContent).not.toContain("已隐藏"),
     );
     expect(
@@ -281,14 +281,14 @@ describe("asset hiding and unhiding", () => {
     const input = mounted!.container.querySelector<HTMLInputElement>("input.nx-input");
     if (!input) throw new Error("Search input not found");
     setInputValue(input, "web");
-    await waitFor(() => expect(mocks.search).toHaveBeenCalledWith("web"));
+    await waitForRendered(() => expect(mocks.search).toHaveBeenCalledWith("web"));
     await flush();
     expect(mounted!.container.textContent).toContain("没有匹配的资产");
 
     act(() => {
       useAssetVisibility.getState().setShowHidden(true);
     });
-    await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
+    await waitForRendered(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
   });
 
   it("deleting a hidden asset clears its visibility record and removes the eye count", async () => {
@@ -298,7 +298,7 @@ describe("asset hiding and unhiding", () => {
     });
     mounted?.unmount();
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
+    await waitForRendered(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
     expect(
       [...mounted!.container.querySelectorAll("button")].some((b) =>
         (b.getAttribute("aria-label") ?? "").includes("已隐藏的资产"),
@@ -310,7 +310,7 @@ describe("asset hiding and unhiding", () => {
     );
     if (!del) throw new Error("Delete button not found: web-1");
     click(del);
-    await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
+    await waitForRendered(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
 
     expect(useAssetVisibility.getState().hiddenIds).not.toContain("a1");
     expect(JSON.parse(localStorage.getItem("nexterm.hiddenAssets.v1") ?? "[]")).not.toContain("a1");

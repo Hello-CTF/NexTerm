@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { mount, waitFor, type MountedView } from "./reactTestUtils";
+import { mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   roots: vi.fn(),
@@ -116,7 +116,7 @@ afterEach(() => {
 describe("FileTree large directory rendering", () => {
   it("lists directories first and orders names numerically", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(renderedPaths().length).toBeGreaterThan(3));
+    await waitForRendered(() => expect(renderedPaths().length).toBeGreaterThan(3));
     expect(renderedPaths().slice(0, 4)).toEqual(["~/zdir", "~/file1", "~/file2", "~/file3"]);
     expect(renderedPaths().indexOf("~/file10")).toBeGreaterThan(renderedPaths().indexOf("~/file9"));
   });
@@ -124,7 +124,7 @@ describe("FileTree large directory rendering", () => {
   it("does not re-sort the listing when unrelated store state changes", async () => {
     const compareGetter = vi.spyOn(Intl.Collator.prototype, "compare", "get");
     mounted = mountTree();
-    await waitFor(() => expect(renderedPaths().length).toBeGreaterThan(3));
+    await waitForRendered(() => expect(renderedPaths().length).toBeGreaterThan(3));
     expect(compareGetter).toHaveBeenCalled();
     const afterFirstSort = compareGetter.mock.calls.length;
 
@@ -141,13 +141,13 @@ describe("FileTree large directory rendering", () => {
 
   it("reuses a fresh listing on remount but refetches after explicit invalidation", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(renderedPaths().length).toBeGreaterThan(3));
+    await waitForRendered(() => expect(renderedPaths().length).toBeGreaterThan(3));
     expect(mocks.list).toHaveBeenCalledTimes(1);
     expect(mocks.roots).toHaveBeenCalledTimes(1);
 
     mounted.unmount();
     mounted = mountTree();
-    await waitFor(() => expect(renderedPaths().length).toBeGreaterThan(3));
+    await waitForRendered(() => expect(renderedPaths().length).toBeGreaterThan(3));
     expect(mocks.list).toHaveBeenCalledTimes(1);
     expect(mocks.roots).toHaveBeenCalledTimes(1);
 
@@ -163,13 +163,13 @@ describe("FileTree large directory rendering", () => {
       Promise.resolve(dir === "~/zdir" ? [inner] : HOME.map((e) => ({ ...e }))),
     );
     mounted = mountTree();
-    await waitFor(() => expect(renderedPaths()[0]).toBe("~/zdir"));
+    await waitForRendered(() => expect(renderedPaths()[0]).toBe("~/zdir"));
     const dir = mounted.container.querySelector<HTMLElement>('[data-row-path="~/zdir"]')!;
     act(() => dir.focus());
     act(() => {
       dir.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
     });
-    await waitFor(() => expect(renderedPaths()).toContain("~/zdir/inner"));
+    await waitForRendered(() => expect(renderedPaths()).toContain("~/zdir/inner"));
     const reads = mocks.list.mock.calls.length;
     const rootReads = mocks.roots.mock.calls.length;
 
@@ -179,7 +179,7 @@ describe("FileTree large directory rendering", () => {
       await client.invalidateQueries({ refetchType: "none" });
     });
     mounted = mountTree();
-    await waitFor(() => expect(renderedPaths()).toContain("~/zdir/inner"));
+    await waitForRendered(() => expect(renderedPaths()).toContain("~/zdir/inner"));
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });

@@ -8,7 +8,7 @@ import {
   deferred,
   flushUntil,
   mount,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "./features/reactTestUtils";
 
@@ -175,7 +175,7 @@ describe("FileBrowser skeleton", () => {
     expect(status?.querySelector(".nx-sr-only")?.textContent).toContain("加载中");
 
     d.resolve(HOME_ENTRIES.map((e) => ({ ...e })));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
     expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
     expect(mounted!.container.textContent).not.toContain("这个目录是空的");
   });
@@ -183,7 +183,7 @@ describe("FileBrowser skeleton", () => {
   it("shows the empty state instead of skeleton rows after a genuinely empty directory arrives", async () => {
     mocks.fsList.mockResolvedValue([]);
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mounted!.container.textContent).toContain("这个目录是空的"),
     );
     expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
@@ -208,7 +208,7 @@ describe("FileBrowser skeleton", () => {
       expect(bars![2].className).not.toMatch(/min-w-\[/);
 
       d.resolve([]);
-      await waitFor(() =>
+      await waitForRendered(() =>
         expect(mounted!.container.textContent).toContain("这个目录是空的"),
       );
       mounted.unmount();
@@ -228,7 +228,7 @@ describe("FileTree skeleton", () => {
     expect(mounted!.container.textContent).not.toContain("这个目录是空的");
 
     d.resolve(HOME_ENTRIES.map((e) => ({ ...e })));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
     expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
     expect(mounted!.container.textContent).not.toContain("这个目录是空的");
   });
@@ -248,7 +248,7 @@ describe("FileTree skeleton", () => {
       expect(bars![1].className).toContain("min-w-0");
 
       d.resolve([]);
-      await waitFor(() =>
+      await waitForRendered(() =>
         expect(mounted!.container.textContent).toContain("这个目录是空的"),
       );
       mounted.unmount();
@@ -272,7 +272,7 @@ describe("DockerPanel skeleton", () => {
     expect(mounted!.container.textContent).not.toContain("这台主机上还没有容器");
 
     ps.resolve(CONTAINERS.map((c) => ({ ...c })));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web"));
     expect(mounted!.container.querySelector('tbody tr[aria-hidden="true"]')).toBeNull();
     expect(mounted!.container.textContent).not.toContain("这台主机上还没有容器");
   });
@@ -283,7 +283,7 @@ describe("DockerPanel skeleton", () => {
     mocks.dockerImages.mockReturnValue(images.promise);
     mounted = mountWithClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web"));
     const imagesTab = [...mounted!.container.querySelectorAll<HTMLButtonElement>("button")].find(
       (b) => b.textContent?.includes("镜像"),
     );
@@ -297,7 +297,7 @@ describe("DockerPanel skeleton", () => {
     expect(mounted!.container.textContent).not.toContain("这台主机上还没有镜像");
 
     images.resolve(IMAGES.map((i) => ({ ...i })));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("nginx"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("nginx"));
     expect(mounted!.container.querySelector('tbody tr[aria-hidden="true"]')).toBeNull();
     expect(mounted!.container.textContent).not.toContain("这台主机上还没有镜像");
   });

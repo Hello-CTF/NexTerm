@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, mount, waitFor, type MountedView } from "./features/reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./features/reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
@@ -223,7 +223,7 @@ describe("terminal link menu", () => {
 
     act(() => onLinkMenu({ uri: "https://example.com/docs\u200b", x: 30, y: 40 }));
     click(menuItem("复制链接"));
-    await waitFor(() => expect(harness.copyText).toHaveBeenCalledWith("https://example.com/docs"));
+    await waitForRendered(() => expect(harness.copyText).toHaveBeenCalledWith("https://example.com/docs"));
   });
 
   it("right-click on a hovered link puts the link actions before the terminal actions", async () => {

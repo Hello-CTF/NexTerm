@@ -31,7 +31,7 @@ import { setLocalHelperStatusForTest } from "../../features/terminal/localHelper
 import { LocalHelperSettings } from "../../features/settings/LocalHelperSettings";
 import { useUi, type Workspace } from "../../app/store";
 import { useAuth } from "../../features/auth/store";
-import { flush, mount, waitFor } from "./reactTestUtils";
+import { flush, mount, waitForRendered } from "./reactTestUtils";
 import type { SessionInfo } from "../../ipc/commands";
 
 function session(kind: string, id: string): SessionInfo {
@@ -80,7 +80,7 @@ describe("local terminals in the local helper", () => {
     try {
       await flush();
       const regular = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "普通");
-      await waitFor(() => expect(regular?.disabled).toBe(false));
+      await waitForRendered(() => expect(regular?.disabled).toBe(false));
       await act(async () => regular!.click());
       await flush();
       expect(mocks.setMode).toHaveBeenCalledWith("regular");
@@ -97,7 +97,7 @@ describe("local terminals in the local helper", () => {
     const view = mount(createElement(BackgroundSessions, { workspaceId: "ws-local" }));
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建任务"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建任务"));
       expect(mocks.listDurable).toHaveBeenCalledWith("local-1");
       const kill = view.container.querySelector<HTMLButtonElement>('button[title="结束这个终端里运行的程序，无法恢复"]');
       expect(kill).not.toBeNull();
@@ -179,7 +179,7 @@ describe("local terminals in the local helper", () => {
     const view = mount(createElement(LocalHelperSettings));
     try {
       await flush();
-      await waitFor(() => expect(useUi.getState().toasts.map((toast) => toast.text).join("\n")).toContain("读取本机终端模式失败"));
+      await waitForRendered(() => expect(useUi.getState().toasts.map((toast) => toast.text).join("\n")).toContain("读取本机终端模式失败"));
     } finally {
       view.unmount();
     }

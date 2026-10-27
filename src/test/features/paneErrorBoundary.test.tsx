@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -143,7 +143,7 @@ describe("panel-level error boundary", () => {
     expect(close?.textContent).toBe("关闭标签");
     if (!close) throw new Error("close button missing");
     click(close);
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(1),
     );
     expect(useUi.getState().workspaces[0]?.panes[0]?.activeTabId).toBe("t2");

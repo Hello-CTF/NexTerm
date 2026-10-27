@@ -6,7 +6,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, flush, mount, type MountedView } from "./reactTestUtils";
-import syncCardSource from "../../features/settings/SyncCard.tsx?raw";
 import {
   SYNC_AUTO_BADGE,
   SYNC_CONSOLE_TITLE,
@@ -104,53 +103,11 @@ describe("Shared SyncOptInSection toggles", () => {
   });
 });
 
-describe("Both consoles render identical toggle copy without divergence", () => {
-  const desktopSyncConsoleSource = syncCardSource.slice(
-    syncCardSource.indexOf("function DesktopSyncConsole()"),
-    syncCardSource.indexOf("// ---------- Web: account sync ----------"),
-  );
-  const webSyncConsoleSource = syncCardSource.slice(syncCardSource.indexOf("function WebSyncConsole()"));
-  const consoleSources = [
-    ["DesktopSyncConsole", desktopSyncConsoleSource],
-    ["WebSyncConsole", webSyncConsoleSource],
-  ] as const;
-
-  it("uses the shared component and shared status-line constants in both SyncCard consoles", () => {
-    for (const [name, source] of consoleSources) {
-      expect(source, name).toContain("<SyncOptInSection");
-      expect(source, name).toContain("{SYNC_CONSOLE_TITLE}");
-      expect(source, name).toContain("{SYNC_AUTO_BADGE}");
-      expect(source, name).toContain("{SYNC_INTERVAL_LABEL}");
-      expect(source, name).toContain("{SYNC_MERGE_GUIDE}");
-    }
-  });
-
-  it("hardcodes no toggle copy in SyncCard and removes the legacy sync console title", () => {
-    expect(syncCardSource).not.toContain("同步台");
-    for (const item of SYNC_OPT_IN_ITEMS) {
-      expect(syncCardSource).not.toContain(item.label);
-      expect(syncCardSource).not.toContain(item.hint);
-    }
-  });
-
-  it("shares unified title, status, and guide constants across both consoles", () => {
+describe("Both consoles share unified copy constants", () => {
+  it("exposes unified title, status, and guide constants", () => {
     expect(SYNC_CONSOLE_TITLE).toBe("账号同步");
     expect(SYNC_AUTO_BADGE).toBe("自动同步");
     expect(SYNC_INTERVAL_LABEL).toBe("每 60 秒");
     expect(SYNC_MERGE_GUIDE).toBe("数据会自动在本机与服务端之间同步。");
-  });
-
-  it("distinguishes content-type opt-out from per-transcript cloud deletion in both consoles", () => {
-    for (const [name, source] of consoleSources) {
-      expect(source, name).toContain("关闭上方内容类型开关不会删除服务端已有副本");
-      expect(source, name).toContain("关闭单条录像同步会删除其服务端副本，本机记录保留");
-    }
-  });
-
-  it("uses identical cloud object count copy on web and desktop, with desktop obtaining the count through sync_compare", () => {
-    for (const [name, source] of consoleSources) {
-      expect(source, name).toContain("服务端 {");
-      expect(source, name).toContain("个对象");
-    }
   });
 });

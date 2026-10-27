@@ -68,8 +68,8 @@ beforeAll(async () => {
   ]);
 });
 
-// waitFor polls in short act() steps: lazy panels and queries settle between steps, which one long act() would hold back.
-async function waitFor(assertion: () => void, timeoutMs = 3000): Promise<void> {
+// waitForRendered polls in short act() steps: lazy panels and queries settle between steps, which one long act() would hold back.
+async function waitForRendered(assertion: () => void, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
@@ -174,12 +174,12 @@ describe("session side panel host tabs", () => {
   it("lists the focused host's containers and follows focus to the next host", async () => {
     seedHosts();
     mountPanel("containers");
-    await waitFor(() => expect(text()).toContain("web-nginx"));
+    await waitForRendered(() => expect(text()).toContain("web-nginx"));
     expect(mocks.ps).toHaveBeenCalledWith("s1");
     expect(text()).not.toContain("db-postgres");
 
     focusWorkspace("ws2");
-    await waitFor(() => expect(text()).toContain("db-postgres"));
+    await waitForRendered(() => expect(text()).toContain("db-postgres"));
     expect(mocks.ps).toHaveBeenLastCalledWith("s2");
     expect(text()).not.toContain("web-nginx");
   });
@@ -195,18 +195,18 @@ describe("session side panel host tabs", () => {
   it("shows only the forwards of the focused host", async () => {
     seedHosts();
     mountPanel("ports");
-    await waitFor(() => expect(text()).toContain("15432"));
+    await waitForRendered(() => expect(text()).toContain("15432"));
     expect(text()).not.toContain("16379");
 
     focusWorkspace("ws2");
-    await waitFor(() => expect(text()).toContain("16379"));
+    await waitForRendered(() => expect(text()).toContain("16379"));
     expect(text()).not.toContain("15432");
   });
 
   it("follows logs on the focused host only, without the multi-host picker", async () => {
     seedHosts();
     mountPanel("logs");
-    await waitFor(() => expect(mounted?.container.querySelector('[aria-label="来源 web-01"]')).not.toBeNull());
+    await waitForRendered(() => expect(mounted?.container.querySelector('[aria-label="来源 web-01"]')).not.toBeNull());
     expect(text()).not.toContain("并发数");
     expect(mounted?.container.querySelector('[aria-label="来源 db-01"]')).toBeNull();
 
@@ -214,7 +214,7 @@ describe("session side panel host tabs", () => {
     setInputValue(source, "/var/log/app.log");
     const start = [...mounted!.container.querySelectorAll("button")].find((b) => b.textContent?.includes("开始跟随"))!;
     click(start);
-    await waitFor(() => expect(mocks.logStart).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.logStart).toHaveBeenCalledTimes(1));
     expect(mocks.logStart.mock.calls[0][0].sources).toEqual([
       { sourceId: "s1", sessionId: "s1", kind: "file", value: "/var/log/app.log" },
     ]);
@@ -223,13 +223,13 @@ describe("session side panel host tabs", () => {
   it("cancels the running log follow when the tab is left", async () => {
     seedHosts();
     mountPanel("logs");
-    await waitFor(() => expect(mounted?.container.querySelector('[aria-label="来源 web-01"]')).not.toBeNull());
+    await waitForRendered(() => expect(mounted?.container.querySelector('[aria-label="来源 web-01"]')).not.toBeNull());
     setInputValue(mounted!.container.querySelector<HTMLInputElement>('[aria-label="来源 web-01"]')!, "/var/log/app.log");
     click([...mounted!.container.querySelectorAll("button")].find((b) => b.textContent?.includes("开始跟随"))!);
-    await waitFor(() => expect(mocks.logStart).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.logStart).toHaveBeenCalledTimes(1));
 
     act(() => useSessionPanel.getState().setTab("files"));
-    await waitFor(() => expect(mocks.logCancel).toHaveBeenCalledWith("run-1"));
+    await waitForRendered(() => expect(mocks.logCancel).toHaveBeenCalledWith("run-1"));
   });
 
   it("explains that local terminals have no log follow", async () => {
