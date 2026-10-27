@@ -71,7 +71,12 @@ export function WorkspaceBody({
   const setSplitRatio = useUi((s) => s.setSplitRatio);
   const { leftDockOpen, rightDockOpen, sessionDockOpen, sessionSheet, setLeftOpen, setOverlayDock, setSessionOpen } = docks;
   const aiPanelSlot = useAiPanelSlot();
-  const aiInPanel = aiPanelSlot !== null && !rightDockOpen;
+  // Placement comes from store state, not from the slot element: the slot is published one render after the dock closes,
+  // and a dock placement in between would hide (and remount) the chat view.
+  const sessionPanelTab = useSessionPanel((s) => s.tab);
+  const aiTabShown = sessionDockOpen && sessionPanelTab === "ai";
+  const aiInPanel = aiTabShown && !rightDockOpen;
+  const aiVisible = rightDockOpen || aiTabShown;
 
   return (
     <div
@@ -215,19 +220,26 @@ export function WorkspaceBody({
             onChange={setRightWidth}
           />
         )}
-        <MovableHost target={aiInPanel ? aiPanelSlot : null}>
+        <MovableHost target={aiInPanel ? aiPanelSlot : null} onMoved={focusAiComposer}>
           <Lazy>
             <AiSidebar
               key={aiAccountEpoch}
               sessionId={activeSessionId}
               tabId={activeTab?.kind === "terminal" ? activeTab.tabId : undefined}
               placement={aiInPanel ? "panel" : "dock"}
+              visible={aiVisible}
             />
           </Lazy>
         </MovableHost>
       </div>
     </div>
   );
+}
+
+// focusAiComposer puts the caret back in the active conversation's composer after the assistant moved.
+function focusAiComposer(node: HTMLElement): void {
+  const fields = Array.from(node.querySelectorAll<HTMLTextAreaElement>("textarea"));
+  fields.find((field) => !field.closest(".hidden"))?.focus();
 }
 
 const MOVE_DIRECTIONS: { direction: FocusDirection; label: string }[] = [

@@ -19,10 +19,13 @@ export function AiSidebar({
   sessionId,
   tabId,
   placement = "dock",
+  visible,
 }: {
   sessionId?: string;
   tabId?: string;
   placement?: "dock" | "panel";
+  // visible overrides the right dock open state while the assistant is shown elsewhere.
+  visible?: boolean;
 }) {
   const inPanel = placement === "panel";
   const setRightOpen = useUi((s) => s.setRightOpen);
@@ -363,7 +366,7 @@ export function AiSidebar({
             conversationId={t.conversationId}
             active={t.id === activeTabId}
             tabKey={t.id}
-            visible={inPanel ? true : undefined}
+            visible={visible}
             draft={t.draft}
             onDraftChange={(v) => updateAiTab(boardKey, t.id, { draft: v }, aiAccountEpoch)}
             onConversationChange={(id, title) => handleConversationChange(t.id, id, title)}
