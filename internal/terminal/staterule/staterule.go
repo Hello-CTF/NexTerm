@@ -58,8 +58,8 @@ const (
 	// MaxKeysBytes bounds a rule's key sequence.
 	MaxKeysBytes = 64
 	// MaxLineBytes is what one row of a bottom region contributes at most:
-	// a region of n rows is matched against at most its last n*MaxLineBytes
-	// bytes. MaxTitleBytes bounds the title text.
+	// the first MaxLineBytes of each row are matched. MaxTitleBytes bounds
+	// the title text.
 	MaxLineBytes  = 256
 	MaxTitleBytes = 1024
 )
@@ -69,7 +69,7 @@ func RegionBytes(rule Rule) int {
 	if rule.Region == RegionTitle {
 		return MaxTitleBytes
 	}
-	return rule.Lines * MaxLineBytes
+	return rule.Lines * (MaxLineBytes + 1)
 }
 
 // Rule is one state rule as pushed to a helper. Rules are tried in order and
@@ -376,7 +376,24 @@ func bottomText(screen Screen, lines int) string {
 		return ""
 	}
 	start := max(0, end-lines+1)
-	return clipTail(strings.Join(screen.Lines[start:end+1], "\n"), lines*MaxLineBytes)
+	rows := make([]string, 0, end+1-start)
+	for _, row := range screen.Lines[start : end+1] {
+		rows = append(rows, clipHead(row, MaxLineBytes))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// clipHead keeps the first limit bytes of text, cut at a rune start, so
+// every row of a region contributes its beginning however wide it is.
+func clipHead(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
 }
 
 // clipTail keeps the last limit bytes of text, cut at a rune start.

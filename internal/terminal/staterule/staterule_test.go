@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -156,9 +157,9 @@ func TestMatchRegionsAndOrder(t *testing.T) {
 	}
 }
 
-func TestMatchClipsLongRegions(t *testing.T) {
-	marker := Rule{ID: ids.New(), Region: RegionBottom, Lines: MaxLines, Pattern: `^START`, State: base.SessionIdle}
-	set, err := NewSet([]Rule{marker})
+func compileRules(t *testing.T, rules ...Rule) *Compiled {
+	t.Helper()
+	set, err := NewSet(rules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,16 +167,44 @@ func TestMatchClipsLongRegions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := make([]string, MaxLines)
-	for i := range lines {
-		lines[i] = strings.Repeat("é", 200)
+	return compiled
+}
+
+func TestMatchClipsLongRows(t *testing.T) {
+	compiled := compileRules(t, Rule{ID: ids.New(), Region: RegionBottom, Lines: 2, Pattern: `END`, State: base.SessionIdle})
+	// Only the first MaxLineBytes of a row are matched.
+	long := strings.Repeat("é", MaxLineBytes) + "END"
+	if _, ok := compiled.Match(Screen{Lines: []string{"", long}, CursorRow: 1}); ok {
+		t.Fatal("text beyond the row byte limit was matched")
 	}
-	lines[0] = "START"
-	if _, ok := compiled.Match(Screen{Lines: lines, CursorRow: len(lines) - 1}); ok {
-		t.Fatal("text beyond the region byte limit was matched")
+	if _, ok := compiled.Match(Screen{Lines: []string{"", "short END"}, CursorRow: 1}); !ok {
+		t.Fatal("short row did not match")
 	}
-	lines = lines[:2]
-	if _, ok := compiled.Match(Screen{Lines: lines, CursorRow: 1}); !ok {
-		t.Fatal("short region did not match")
+}
+
+// A dialog drawn with box characters fills each row with multi-byte
+// borders; every row of the region still contributes its beginning.
+func TestMatchSeesEveryRowOfABoxDrawnRegion(t *testing.T) {
+	compiled := compileRules(t, Rule{ID: ids.New(), Region: RegionBottom, Lines: 5, Pattern: `╭─ Confirm`, State: base.SessionNeedsMe})
+	const width = 200
+	border := func(left, title, right string) string {
+		inner := width - 2 - utf8.RuneCountInString(title)
+		return left + title + strings.Repeat("─", inner) + right
+	}
+	row := func(text string) string {
+		return "│" + text + strings.Repeat(" ", width-2-utf8.RuneCountInString(text)) + "│"
+	}
+	lines := []string{
+		border("╭", "─ Confirm ", "╮"),
+		row(" Do you want to proceed?"),
+		row(" ❯ 1. Yes"),
+		row("   2. No"),
+		border("╰", "", "╯"),
+	}
+	if total := len(strings.Join(lines, "\n")); total <= 5*MaxLineBytes {
+		t.Fatalf("the region is only %d bytes; the test needs a wider box", total)
+	}
+	if _, ok := compiled.Match(Screen{Lines: lines, CursorRow: 4}); !ok {
+		t.Fatal("the top row of a box-drawn region was not matched")
 	}
 }
