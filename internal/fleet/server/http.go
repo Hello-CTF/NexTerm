@@ -295,6 +295,7 @@ type deviceEnrollRequest struct {
 	Name       string `json:"name"`
 	Platform   string `json:"platform"`
 	AppVersion string `json:"app_version"`
+	Kind       string `json:"kind,omitempty"`
 }
 
 type deviceEnrollView struct {
@@ -304,6 +305,7 @@ type deviceEnrollView struct {
 	MetricsIntervalMS int64          `json:"metrics_interval_ms"`
 	DesiredAutostart  bool           `json:"desired_autostart"`
 	TerminalEnabled   bool           `json:"terminal_enabled"`
+	Kind              string         `json:"kind,omitempty"`
 }
 
 func (s *Service) serveDeviceEnroll(w http.ResponseWriter, r *http.Request) {
@@ -317,7 +319,7 @@ func (s *Service) serveDeviceEnroll(w http.ResponseWriter, r *http.Request) {
 		writeFleetJSON(w, http.StatusTooManyRequests, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试")))
 		return
 	}
-	result, err := s.ConsumeEnrollCode(r.Context(), request.Code, request.Name, request.Platform, request.AppVersion)
+	result, err := s.ConsumeEnrollCodeKind(r.Context(), request.Code, request.Name, request.Platform, request.AppVersion, request.Kind)
 	if err != nil {
 		s.enrollGate.RecordFailure(key)
 		writeFleetFailure(w, err)
@@ -331,6 +333,7 @@ func (s *Service) serveDeviceEnroll(w http.ResponseWriter, r *http.Request) {
 		MetricsIntervalMS: result.MetricsIntervalMS,
 		DesiredAutostart:  result.DesiredAutostart,
 		TerminalEnabled:   result.TerminalEnabled,
+		Kind:              result.Kind,
 	})
 }
 

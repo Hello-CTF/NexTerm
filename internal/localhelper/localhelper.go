@@ -269,6 +269,9 @@ func (s *Service) Close() {
 	s.syncs.Wait()
 }
 
+// StateDir returns the helper state directory, which names its endpoint.
+func (s *Service) StateDir() string { return s.config.StateDir }
+
 // Status returns the current status.
 func (s *Service) Status() Status {
 	s.mu.Lock()

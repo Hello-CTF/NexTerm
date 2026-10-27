@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	stdsync "sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -81,6 +82,8 @@ type Service struct {
 	permissionsReload func(context.Context) error
 	grantsReload      func(context.Context) error
 	syncPeriod        time.Duration
+	// linkChanged is called after the saved sync link was written.
+	linkChanged atomic.Pointer[func()]
 
 	settingsMu  stdsync.Mutex
 	lifecycleMu stdsync.Mutex
@@ -112,6 +115,18 @@ func (s *Service) SetPermissionsReload(reload func(context.Context) error) {
 
 func (s *Service) SetGrantsReload(reload func(context.Context) error) {
 	s.grantsReload = reload
+}
+
+// SetLinkChanged registers a callback run after every write of the saved sync
+// link, such as a switch to another account. It must not block.
+func (s *Service) SetLinkChanged(changed func()) {
+	s.linkChanged.Store(&changed)
+}
+
+func (s *Service) notifyLinkChanged() {
+	if changed := s.linkChanged.Load(); changed != nil && *changed != nil {
+		(*changed)()
+	}
 }
 
 func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Service {
@@ -516,6 +531,7 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	if err := s.store.SettingSet(ctx, settingLink, protected); err != nil {
 		return LinkResult{}, err
 	}
+	s.notifyLinkChanged()
 	if changed {
 		// The new link is already saved. A failed login must not leave the old
 		// account or old password's cookie available to desktop commands.
@@ -659,7 +675,11 @@ func (s *Service) saveLinkSecret(ctx context.Context, secret linkSecret) error {
 	if err != nil {
 		return err
 	}
-	return s.store.SettingSet(ctx, settingLink, protected)
+	if err := s.store.SettingSet(ctx, settingLink, protected); err != nil {
+		return err
+	}
+	s.notifyLinkChanged()
+	return nil
 }
 
 func (s *Service) recordProbe(ctx context.Context, probeErr error) {

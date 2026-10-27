@@ -35,6 +35,7 @@ import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { LocalHelperSettings } from "./LocalHelperSettings";
 import { NotificationSettings } from "../inbox/NotificationSettings";
+import { LocalHelperExposureSettings } from "./LocalHelperExposureSettings";
 import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
 import { ProductionSettingsPanel } from "../production/ProductionSettingsPanel";
@@ -738,6 +739,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </p>
           </div>
           <LocalHelperSettings />
+          <LocalHelperExposureSettings />
           <label className="flex cursor-pointer items-start gap-3">
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px] text-neutral-200" data-setting="osc52">允许远程主机写入剪贴板（OSC 52）</div>

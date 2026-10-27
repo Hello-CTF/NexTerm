@@ -242,7 +242,9 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   const hasServiceReport = Boolean(serviceState && (serviceState.installed || serviceState.enabled || serviceState.active || serviceState.last_reconcile_at));
   const autostartActual = Boolean(serviceState?.installed && serviceState?.enabled);
   const runningText = !hasServiceReport ? "未上报" : serviceState?.active ? "运行中" : "未运行";
-  const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== autostartActual && !revoked);
+  // A desktop exposing its local terminals runs inside the desktop app and has no autostart service.
+  const localHelper = device.kind === "local-helper";
+  const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== autostartActual && !revoked && !localHelper);
   const serviceError = serviceState?.last_error;
 
   const openMenu = (e: ReactMouseEvent<HTMLButtonElement>) => {
@@ -337,7 +339,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             </span>
           </>
         ) : (
-          <span>{device.kind === "browser" ? "浏览器设备" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
+          <span>{device.kind === "browser" ? "浏览器设备" : device.kind === "local-helper" ? "桌面本机终端" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
         )}
       </div>
 
@@ -440,7 +442,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             </label>
             {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：服务器立即按新设置拒绝或放行，设备上线后同步</div>}
           </DetailRow>
-          <DetailRow label="随登录自动启动">
+          {!localHelper && <DetailRow label="随登录自动启动">
             <label className="flex flex-wrap items-center gap-1.5">
               <input
                 type="checkbox"
@@ -455,7 +457,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
               </span>
             </label>
             {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：修改只会保存为期望状态，上线后生效</div>}
-          </DetailRow>
+          </DetailRow>}
           <DetailRow label="后台服务">{runningText}</DetailRow>
         </dl>
       )}

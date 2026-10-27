@@ -78,6 +78,21 @@ func (unsupportedManager) Status(context.Context) ServiceState {
 	return ServiceState{LastError: ErrServiceUnsupported.Error()}
 }
 
+// EmbeddedServiceManager is the service manager of an agent that runs inside
+// another application, such as the desktop app exposing its local helper. It
+// installs nothing and reports a clean, uninstalled service.
+func EmbeddedServiceManager() ServiceManager { return embeddedManager{} }
+
+type embeddedManager struct{}
+
+func (embeddedManager) Install(context.Context, string, string) error {
+	return ErrServiceUnsupported
+}
+
+func (embeddedManager) Uninstall(context.Context) error { return nil }
+
+func (embeddedManager) Status(context.Context) ServiceState { return ServiceState{} }
+
 func trimOutput(output string) string {
 	return strings.TrimSpace(string(output))
 }

@@ -220,6 +220,9 @@ type deviceGrant struct {
 	deviceID string
 	userID   string
 	revoked  bool
+	// localHelper marks a desktop exposing its local helper, which only its
+	// owner may reach.
+	localHelper bool
 }
 
 func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant, error) {
@@ -231,7 +234,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	if err != nil {
 		return nil, dbError(err)
 	}
-	return &deviceGrant{deviceID: deviceID, userID: device.UserID, revoked: device.RevokedAt != nil}, nil
+	return &deviceGrant{deviceID: deviceID, userID: device.UserID, revoked: device.RevokedAt != nil, localHelper: device.Kind == store.DeviceKindLocalHelper}, nil
 }
 
 // authorizeDevice decides device ownership and yields outcome/reason without writing an audit.
@@ -244,9 +247,15 @@ func (s *Service) authorizeDevice(ctx context.Context, identity *account.Identit
 		return nil, "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	case grant.userID != identity.UserID:
 		return nil, "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
+	case grant.localHelper:
+		return nil, "deny", "local_helper", errLocalHelperNotShareable
 	}
 	return grant, "allow", "", nil
 }
+
+// errLocalHelperNotShareable denies every share of a desktop that exposes its
+// local helper: its terminals are reachable by its owner only.
+var errLocalHelperNotShareable = ipc.NewError(ipc.CodeForbidden, "桌面本机终端只对设备所有者开放，不能分享")
 
 // authorize is the authorization point for share device actions: only the device owner is allowed, and revoked devices
 // are always denied; every decision (allow or deny) is written to the audit log.
@@ -279,6 +288,9 @@ func (s *Service) checkDeviceBinding(ctx context.Context, grant *Grant) (string,
 	}
 	if device.UserID != grant.OwnerID {
 		return "owner_mismatch", ipc.NewError(ipc.CodeForbidden, "设备归属与授权不一致")
+	}
+	if device.Kind == store.DeviceKindLocalHelper {
+		return "local_helper", errLocalHelperNotShareable
 	}
 	return "", nil
 }

@@ -1331,6 +1331,22 @@ describe("Device management view - revocation and autostart", () => {
     expect(autostartCall?.body).toEqual({ desired: false });
   });
 
+  it("offers no autostart for a desktop exposing its local terminals", async () => {
+    const desk = {
+      ...AGENT_DEVICE, id: "d-desk", name: "desk-01", kind: "local-helper",
+      agent: { ...AGENT_DEVICE.agent, desired_autostart: false, service_state: { installed: false, enabled: false, active: false, last_reconcile_at: NOW - 60_000 } },
+    };
+    route(fleetHandler({ devices: { devices: [desk] } }));
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("desk-01") ?? false);
+
+    const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("desk-01"));
+    expandDetails(card);
+    expect(card?.textContent).toContain("后台服务");
+    expect(card?.querySelector('input[aria-label="随登录自动启动"]')).toBeNull();
+  });
+
   it("confirms that offline autostart changes only save desired state", async () => {
     const calls = route(fleetHandler());
     mocks.ask.mockResolvedValue(true);

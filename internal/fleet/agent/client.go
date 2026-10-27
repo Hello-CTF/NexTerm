@@ -120,6 +120,8 @@ type EnrollRequest struct {
 	Name       string `json:"name"`
 	Platform   string `json:"platform"`
 	AppVersion string `json:"app_version"`
+	// Kind is empty for a managed host agent, or DeviceKindLocalHelper.
+	Kind string `json:"kind,omitempty"`
 }
 
 type EnrollResponse struct {
@@ -129,6 +131,9 @@ type EnrollResponse struct {
 	MetricsIntervalMS int64          `json:"metrics_interval_ms"`
 	DesiredAutostart  bool           `json:"desired_autostart"`
 	TerminalEnabled   bool           `json:"terminal_enabled"`
+	// Kind echoes a non-empty requested kind. Older servers reject the request
+	// field; one that accepted it without echoing it is not trusted.
+	Kind string `json:"kind,omitempty"`
 }
 
 func (c *EndpointClient) Enroll(ctx context.Context, request EnrollRequest) (*EnrollResponse, error) {
