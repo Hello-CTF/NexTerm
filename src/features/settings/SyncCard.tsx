@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { assetApi, syncApi, transcriptApi, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
+import { assetApi, localHelperApi, syncApi, transcriptApi, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
 import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncStatus } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { remoteLinkApi, syncCompareApi, type SyncCompareRow } from "../../ipc/remoteApi";
@@ -275,7 +275,14 @@ function DesktopLinkCard() {
     setBusy("logout");
     setError(null);
     try {
-      if (!(await ask("登出当前账号？本机将停止自动登录和同步；本机和服务端的数据都会保留。", {
+      let exposing = false;
+      try {
+        exposing = (await localHelperApi.getExposure()).enabled;
+      } catch {
+        // Exposure is unsupported or unreadable here; the plain confirmation applies.
+      }
+      const exposureNote = exposing ? "登出期间会停止开放本机终端。" : "";
+      if (!(await ask(`登出当前账号？本机将停止自动登录和同步；本机和服务端的数据都会保留。${exposureNote}`, {
         title: "登出账号", kind: "warning",
       })) || !active.current || currentAccount.current !== account) return;
       const [latestLink, latestStatus] = await Promise.all([syncApi.linkGet(), syncApi.status()]);
