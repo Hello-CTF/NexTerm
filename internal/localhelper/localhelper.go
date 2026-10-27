@@ -15,8 +15,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -633,6 +631,8 @@ func (s *Service) legacyStatus(running supervisor.RunningHelper) Status {
 	sessions := "数量未知的会话"
 	if running.ActivityKnown {
 		sessions = fmt.Sprintf(" %d 个会话", status.ActiveSessions)
+	} else if running.PTYListed {
+		sessions = fmt.Sprintf("至少 %d 个终端会话（后台命令数未知）", status.ActiveSessions)
 	}
 	status.Reason = fmt.Sprintf("本机持久组件为旧版本（协议 v%d），其中有%s在运行；新开的本机终端暂用普通模式。重启组件会结束这些会话", running.Protocol, sessions)
 	return status
@@ -667,30 +667,7 @@ func (s *Service) readyStatus(helper helperHandle, running supervisor.RunningHel
 }
 
 func consentToken(running supervisor.RunningHelper) string {
-	known := 0
-	if running.ActivityKnown {
-		known = 1
-	}
-	return fmt.Sprintf("%d:%d:%d:%d", running.Protocol, running.PID, running.Activity.Total(), known)
-}
-
-func parseConsentToken(token string) (supervisor.RunningHelper, bool) {
-	parts := strings.Split(token, ":")
-	if len(parts) != 4 {
-		return supervisor.RunningHelper{}, false
-	}
-	values := make([]int, len(parts))
-	for index, part := range parts {
-		value, err := strconv.Atoi(part)
-		if err != nil || value < 0 {
-			return supervisor.RunningHelper{}, false
-		}
-		values[index] = value
-	}
-	return supervisor.RunningHelper{
-		Protocol: values[0], PID: values[1],
-		Activity: supervisor.ActivitySnapshot{PTY: values[2]}, ActivityKnown: values[3] == 1,
-	}, true
+	return supervisor.HelperConsentToken(running)
 }
 
 // restartWith stops the helper a consent token names. It reports whether the
@@ -699,7 +676,7 @@ func parseConsentToken(token string) (supervisor.RunningHelper, bool) {
 // dropped since consent is accepted, so a hand-made token cannot skip the
 // count check.
 func (s *Service) restartWith(token string) (bool, error) {
-	expected, ok := parseConsentToken(token)
+	expected, ok := supervisor.ParseHelperConsent(token)
 	if !ok {
 		return false, ErrStaleConsent
 	}
@@ -707,8 +684,7 @@ func (s *Service) restartWith(token string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("%w: %v", ErrStaleConsent, err)
 	}
-	if expected.PID != current.PID || expected.Protocol != current.Protocol || expected.ActivityKnown != current.ActivityKnown ||
-		current.Activity.Total() > expected.Activity.Total() {
+	if !supervisor.ConsentCovers(expected, current) {
 		return false, ErrStaleConsent
 	}
 	s.config.Logger.Info("stopping a local helper with consent", "protocol", expected.Protocol, "pid", expected.PID, "sessions", expected.Activity.Total())

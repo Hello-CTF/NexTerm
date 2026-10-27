@@ -807,7 +807,7 @@ func TestProductionHelperRollbackReturnsStructuredResult(t *testing.T) {
 	oldPath, _ := buildHelperUpdateBinaries(t)
 	failingPath := buildFailingHelper(t)
 	service, _, sessionID := newHelperUpdateService(t, oldPath)
-	if _, err := service.ensure(t.Context(), sessionID, "update"); err != nil {
+	if _, err := service.ensure(t.Context(), sessionID, "update", ""); err != nil {
 		t.Fatal(err)
 	}
 	service.ssh.HelperExecutable = failingPath

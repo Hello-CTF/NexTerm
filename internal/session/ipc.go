@@ -39,6 +39,14 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.Code("local_helper_unavailable"), localUnavailable.Error(), err)
 	}
 	switch {
+	// A failed replacement wraps whatever stopped it; its stage decides
+	// what the user is told, so it comes first.
+	case errors.Is(err, supervisor.ErrHelperReplaceFailed):
+		detail := HelperReplaceFailureFor(err)
+		if detail == nil {
+			detail = &HelperReplaceFailure{Cause: err.Error()}
+		}
+		return ipc.WrapError(ipc.Code("helper_replace_failed"), helperReplaceMessage(detail), err).WithDetail(detail)
 	case errors.Is(err, ErrForbidden):
 		return ipc.WrapError(ipc.CodeForbidden, "无权访问该会话", err)
 	case errors.Is(err, durable.ErrLimit):
@@ -52,7 +60,11 @@ func IPCError(err error) *ipc.Error {
 	case errors.Is(err, ErrDurableDisabled):
 		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
 	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
-		return ipc.WrapError(ipc.Code("helper_upgrade_required"), userMessage(err), err)
+		wrapped := ipc.WrapError(ipc.Code("helper_upgrade_required"), userMessage(err), err)
+		if detail := LegacyHelperDetailFor(err); detail != nil {
+			return wrapped.WithDetail(detail)
+		}
+		return wrapped
 	case errors.Is(err, supervisor.ErrClientUpgradeRequired):
 		return ipc.WrapError(ipc.Code("client_upgrade_required"), userMessage(err), err)
 	case errors.Is(err, ErrAmbiguousDurable):
@@ -95,8 +107,8 @@ func userMessage(err error) string {
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected):
 		return "会话已断开，请重新连接"
 	case errors.Is(err, supervisor.ErrLegacyHelperRunning):
-		return "主机上仍在运行旧版 helper，当前无法连接它，也看不到其中的持久终端。这些终端会继续在旧 helper 中运行，不会被结束或迁移；" +
-			"旧 helper 退出后重新连接即会改用新版 helper。升级旧 helper 的确认流程将在后续更新中提供"
+		return "主机上仍在运行旧版持久终端组件，当前版本无法接入其中的持久终端。它们会继续在旧版组件中运行，不会被自动结束或迁移；" +
+			"可在持久终端组件窗口查看其中的会话数并确认升级，升级会结束这些会话"
 	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
 		return "主机上的 helper 或 nexterm-agent 版本过旧，需要升级后才能使用持久终端；其中已有的会话不会被结束"
 	case errors.Is(err, supervisor.ErrClientUpgradeRequired):

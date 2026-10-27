@@ -49,6 +49,7 @@ type Manager struct {
 	throttleChannels       map[string]map[string]bool
 	slowKicks              map[string]*time.Timer
 	attention              attentionRegistry
+	legacyEnded            legacyEndedTabs
 	closed                 bool
 	started                bool
 	openAccess             bool
@@ -888,6 +889,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 			session.transport = nil
 			session.reapRetry = false
 			delete(m.sessions, id)
+			m.legacyEnded.forget(id)
 			if m.byAsset[session.assetOwnerKey()] == session.ID {
 				delete(m.byAsset, session.assetOwnerKey())
 			}

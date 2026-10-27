@@ -46,6 +46,10 @@ type registryEntry struct {
 	Signal           string                  `json:"signal,omitempty"`
 	FinishedAt       *time.Time              `json:"finished_at,omitempty"`
 	HistoryLimit     uint64                  `json:"history_limit,omitempty"`
+	// legacy marks an entry an older helper (protocol 2) recorded: its
+	// recording is output.raw. This helper never rewrites or removes such an
+	// entry on its own; only an explicit kill by a client deletes it.
+	legacy bool
 }
 
 func (e registryEntry) info() Info {
@@ -60,6 +64,7 @@ func (e registryEntry) info() Info {
 		Dead:             !e.Running,
 		ExitCode:         e.ExitCode,
 		Signal:           e.Signal,
+		Legacy:           e.legacy,
 	}
 	if e.FinishedAt != nil {
 		finished := *e.FinishedAt
@@ -173,6 +178,9 @@ func (s *Supervisor) Rename(ctx context.Context, request RenameRequest) (Info, e
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	if session.entry.legacy {
+		return Info{}, fmt.Errorf("%w: %s is a read-only recording of an older helper", ErrExited, request.ID)
+	}
 	current := session.entry.info()
 	if record, exists := session.entry.RenameRequests[request.RequestID]; exists {
 		if record.ExpectedMetadataRevision != request.ExpectedMetadataRevision || record.Title != request.Title {
@@ -269,6 +277,11 @@ func loadRegistry(stateDir string) (map[string]registryEntry, error) {
 		}
 		entry, err := readEntry(root, id)
 		if errors.Is(err, os.ErrNotExist) {
+			if legacyRecording(root, id) {
+				// An older helper's recording without its entry is left as
+				// it is: this helper never removes another helper's data.
+				continue
+			}
 			if err := removeRegistryArtifacts(root, id); err != nil {
 				return nil, err
 			}
@@ -277,19 +290,32 @@ func loadRegistry(stateDir string) (map[string]registryEntry, error) {
 		if err != nil {
 			return nil, err
 		}
+		entry.legacy = legacyRecording(root, id)
 		if entry.Running {
+			// The helper that ran it is gone, so it has exited. An older
+			// helper's entry stays as that helper wrote it: it is read-only
+			// history, read as exited without an exit status.
 			entry.Running = false
 			entry.ExitCode = nil
 			entry.Signal = ""
 			finished := time.Now()
 			entry.FinishedAt = &finished
-			if err := writeEntry(root, entry); err != nil {
-				return nil, err
+			if !entry.legacy {
+				if err := writeEntry(root, entry); err != nil {
+					return nil, err
+				}
 			}
 		}
 		entries[id] = entry
 	}
 	return entries, nil
+}
+
+// legacyRecording reports whether the session directory holds the single
+// output.raw recording of a protocol 2 helper.
+func legacyRecording(root, id string) bool {
+	info, err := os.Lstat(filepath.Join(root, id, recordingName))
+	return err == nil && info.Mode().IsRegular()
 }
 
 func readEntry(root, id string) (registryEntry, error) {

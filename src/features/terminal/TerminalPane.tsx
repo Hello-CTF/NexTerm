@@ -17,6 +17,7 @@ import {
 import { localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 import { showSettingsSection } from "../settings/settingsNavigation";
 import { HelperOperationDialog } from "./HelperOperationDialog";
+import { endedSessionsText } from "./HelperOperationView";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
 import {
@@ -40,6 +41,7 @@ import {
   assetApi,
   syncApi,
   type HelperOperationResult,
+  type HelperReplaceFailureInfo,
 } from "../../ipc/commands";
 import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } from "../production/productionChallenge";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
@@ -185,6 +187,22 @@ function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
   return true;
 }
 
+function replaceFailureFromError(error: unknown): HelperReplaceFailureInfo | null {
+  if (!error || typeof error !== "object") return null;
+  if ((error as { code?: unknown }).code !== "helper_replace_failed") return null;
+  const detail = (error as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object") return null;
+  const candidate = detail as Partial<HelperReplaceFailureInfo>;
+  if (typeof candidate.stage !== "string") return null;
+  return {
+    stage: candidate.stage,
+    stopped: candidate.stopped === true,
+    forced: candidate.forced === true,
+    rolledBack: candidate.rolledBack === true,
+    cause: typeof candidate.cause === "string" ? candidate.cause : undefined,
+  };
+}
+
 function rollbackResultFromError(error: unknown): HelperOperationResult | null {
   if (!error || typeof error !== "object") return null;
   const detail = (error as { detail?: unknown }).detail;
@@ -303,6 +321,7 @@ export function TerminalPane({
   const [helperStatusLoading, setHelperStatusLoading] = useState(false);
   const [helperReady, setHelperReady] = useState(false);
   const [helperDetails, setHelperDetails] = useState<HelperOperationResult | null>(null);
+  const [replaceFailure, setReplaceFailure] = useState<HelperReplaceFailureInfo | null>(null);
   const [helperPanelError, setHelperPanelError] = useState<string | null>(null);
   const [offlinePath, setOfflinePath] = useState<string | null>(null);
   const [imagePaste, setImagePaste] = useState<{
@@ -1192,6 +1211,7 @@ export function TerminalPane({
       if (!helperRequestIsCurrent(generation, sessionId)) return;
       setHelperDetails(result);
       setOfflinePath(null);
+      setReplaceFailure(null);
     } catch (error) {
       if (!helperRequestIsCurrent(generation, sessionId)) return;
       const message = describeError(error);
@@ -1212,6 +1232,7 @@ export function TerminalPane({
     setHelperStatusLoading(false);
     setHelperReady(false);
     setHelperDetails(null);
+    setReplaceFailure(null);
     setHelperPanelError(null);
     setOfflinePath(null);
   }, [sessionId, storeTabId]);
@@ -1284,7 +1305,8 @@ export function TerminalPane({
   };
   // Only sessions served by a durable helper can reopen as durable or manage the helper.
   const durableHelper = sessionKind === "ssh" || (sessionKind === "local" && localDurableEnabled(localHelper));
-  const manageHelper = !durableHelper ? undefined : sessionKind === "local" ? openLocalHelperSettings : openHelper;
+  // A managed device's helper is managed from the same window: its agent bridges the consent the user gives here.
+  const manageHelper = sessionKind === "device" ? openHelper : !durableHelper ? undefined : sessionKind === "local" ? openLocalHelperSettings : openHelper;
 
   const closeHelperPanel = () => setHelperPanelOpen(false);
 
@@ -1358,6 +1380,39 @@ export function TerminalPane({
         setHelperPanelError(describeError(error));
       }
     }, generation, "正在更新持久终端组件…");
+  };
+
+  // Ends the older helper the user agreed to in the helper window, with the sessions it showed.
+  const replaceLegacyHelper = (consentToken: string) => {
+    if (helperActionBusy) return;
+    const generation = nextHelperRequestGeneration();
+    setReplaceFailure(null);
+    return runHelperAction(async () => {
+      let result: HelperOperationResult;
+      try {
+        result = await terminalApi.helperReplaceLegacy(sessionId, consentToken);
+      } catch (error) {
+        const failure = replaceFailureFromError(error);
+        if (!failure) throw error;
+        if (!helperRequestIsCurrent(generation, sessionId)) return;
+        // The window keeps the failure and its stage; the old helper's detail no longer applies.
+        setReplaceFailure(failure);
+        setHelperDetails((current) => current ? { ...current, legacy: null } : current);
+        setHelperPanelError(null);
+        return;
+      }
+      if (!helperRequestIsCurrent(generation, sessionId)) return;
+      setHelperDetails(result);
+      setHelperPanelError(null);
+      if (result.update?.status === "replaced") {
+        setHelperPanelOpen(false);
+        const ended = endedSessionsText(result.update.endedSessions, result.update.endedCount);
+        const forced = result.update.forced ? "；旧版组件被强制结束，部分后台进程可能仍在运行" : "";
+        pushToast(result.update.forced ? "info" : "success", `已终止旧版组件及其中${ended}，持久终端组件已升级${forced}`);
+      } else if (result.legacy?.stale) {
+        setHelperPanelError("旧版组件的状态已变化，请核对最新的会话数后重新确认");
+      }
+    }, generation, "正在终止旧版组件并升级…");
   };
 
   const deferHelperUpdate = () => {
@@ -2475,6 +2530,11 @@ export function TerminalPane({
             compatibility={helperDetails?.compatibility}
             offlineTrust={helperDetails?.offline ?? null}
             update={helperDetails?.update ?? null}
+            legacy={helperDetails?.legacy ?? null}
+            replaceFailure={replaceFailure}
+            onReplaceLegacy={helperDetails?.legacy?.consentToken
+              ? () => void replaceLegacyHelper(helperDetails.legacy?.consentToken ?? "")
+              : undefined}
             restoreFailure={helperOperation?.kind === "reattach" && helperOperation.originalSession === "not_restored"}
             busyLabel={helperActionBusy ? helperActionLabel : helperStatusLoading ? "正在检查持久终端组件…" : helperRetryPending ? "正在重试…" : ordinaryStarting ? "正在打开普通终端…" : undefined}
             controlsDisabled={helperActionBusy || helperRetryPending || ordinaryStarting}

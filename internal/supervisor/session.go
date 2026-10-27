@@ -174,6 +174,7 @@ func (s *Session) infoLocked() Info {
 		Dead:             s.dead,
 		ExitCode:         s.entry.ExitCode,
 		Signal:           s.entry.Signal,
+		Legacy:           s.entry.legacy,
 	}
 	if s.entry.FinishedAt != nil {
 		finished := *s.entry.FinishedAt

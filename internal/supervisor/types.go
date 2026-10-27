@@ -68,6 +68,9 @@ type Info struct {
 	ExitCode         *int       `json:"exit_code,omitempty"`
 	Signal           string     `json:"signal,omitempty"`
 	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	// Legacy marks the read-only recording of a session an older helper
+	// (protocol 2) ran; it is always dead and never renamed.
+	Legacy bool `json:"legacy,omitempty"`
 	// HistoryBase is the oldest retained offset of the recorded output and
 	// HistoryNext the offset the next output byte gets. Offsets are absolute
 	// and never decrease; HistoryTruncated reports that output before

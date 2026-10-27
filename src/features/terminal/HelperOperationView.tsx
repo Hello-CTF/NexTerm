@@ -20,11 +20,60 @@ export interface HelperOfflineTrustPresentation {
 }
 
 export interface HelperUpdatePresentation {
-  status: "current" | "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "unknown";
+  status: "current" | "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "legacy" | "replaced" | "unknown";
   detail?: string | null;
   updated?: boolean;
   interrupted?: boolean;
   rolledBack?: boolean;
+  endedSessions?: number;
+  endedCount?: "exact" | "atLeast" | "unknown";
+  forced?: boolean;
+}
+
+/** A consented replacement that failed: where, and what had already happened to the older helper. */
+export interface HelperReplaceFailurePresentation {
+  stage: string;
+  stopped: boolean;
+  forced: boolean;
+  rolledBack: boolean;
+  cause?: string;
+}
+
+const FORCED_STOP_NOTE = "旧版组件未响应退出请求，已被强制结束，部分后台进程可能仍在运行。";
+
+/** "N 个会话", "至少 N 个终端会话" or "全部会话", as exact as the old helper reported. */
+export function endedSessionsText(count: number | undefined, kind: "exact" | "atLeast" | "unknown" | undefined): string {
+  if (kind === "atLeast") return `至少 ${count ?? 0} 个终端会话`;
+  if (kind === "unknown" || count === undefined) return "全部会话";
+  return `${count} 个会话`;
+}
+
+function replaceFailureText(failure: HelperReplaceFailurePresentation): string {
+  switch (failure.stage) {
+    case "verify":
+      return "无法核实主机上的旧版组件，未做任何更改。";
+    case "terminate":
+      return "未能结束旧版组件，它和其中的会话仍在运行；未启动新版持久终端组件。";
+    case "start":
+      if (failure.stopped && failure.rolledBack) return "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动；已重新启动旧版组件，原会话不会恢复。";
+      if (failure.stopped) return "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动。";
+      return "新版持久终端组件未能启动。";
+    default:
+      return "升级持久终端组件失败。";
+  }
+}
+
+/** An older-protocol helper that blocks durable terminals until the user agrees to end it. */
+export interface LegacyHelperPresentation {
+  protocol: number;
+  pid?: number;
+  ptySessions: number;
+  execSessions: number;
+  activityKnown: boolean;
+  ptyListed: boolean;
+  release?: string;
+  consentToken?: string;
+  stale?: boolean;
 }
 
 export interface HelperOperationViewProps {
@@ -44,6 +93,8 @@ export interface HelperOperationViewProps {
   busyLabel?: string;
   offlineTrust?: HelperOfflineTrustPresentation | null;
   update?: HelperUpdatePresentation | null;
+  legacy?: LegacyHelperPresentation | null;
+  replaceFailure?: HelperReplaceFailurePresentation | null;
   onRetryPersistent?: () => void;
   onContinueOrdinary?: () => void;
   onCancel?: () => void;
@@ -51,6 +102,8 @@ export interface HelperOperationViewProps {
   onUpdate?: () => void;
   onDeferUpdate?: () => void;
   onInterruptAndUpdate?: () => void;
+  /** Ends the legacy helper the user approved; only offered with a consent token. */
+  onReplaceLegacy?: () => void;
 }
 
 const STAGE_LABELS = new Map<string, string>([
@@ -166,10 +219,11 @@ function versionSummary(version: HelperVersionPresentation): string {
   return parts.join(" · ") || "组件版本";
 }
 
-// NexTerm has no in-app way to replace a running helper that speaks another protocol: the user stops it on the host.
-// The status carries no path or process name for the running helper, so the instruction stays generic.
+// An older helper that was inspected is replaced in the app after explicit consent (the 旧版组件 section). Any other
+// incompatible helper reports no process or session count, so the only way past it is to stop it on the host.
 const INCOMPATIBLE_REMEDY =
   "可以在主机上手动结束旧的持久终端组件进程（其中运行的终端会话会随之结束），然后重新连接，NexTerm 会安装新组件。";
+const LEGACY_REMEDY = "可在下方「旧版组件」中查看其中的会话并确认升级。";
 
 function versionCompatibilityText(
   compatibility: HelperCompatibility,
@@ -177,6 +231,7 @@ function versionCompatibilityText(
   running: HelperVersionPresentation | null | undefined,
   update: HelperUpdatePresentation | null | undefined,
   failed: boolean,
+  legacy: boolean,
 ): string {
   switch (compatibility) {
     case "compatible": {
@@ -189,7 +244,7 @@ function versionCompatibilityText(
       const localProtocol = versionValue(local, "protocol");
       const runningProtocol = versionValue(running, "protocol");
       const protocols = localProtocol && runningProtocol ? `（本地 ${localProtocol}，主机 ${runningProtocol}）` : "";
-      return `协议不兼容${protocols}：NexTerm 无法使用主机上正在运行的持久终端组件，也不会自动替换它，持久终端暂不可用。${INCOMPATIBLE_REMEDY}`;
+      return `协议不兼容${protocols}：NexTerm 无法使用主机上正在运行的持久终端组件，也不会自动替换它，持久终端暂不可用。${legacy ? LEGACY_REMEDY : INCOMPATIBLE_REMEDY}`;
     }
     case "unknown":
       return "无法确认兼容性，不能推断可安全继续。";
@@ -212,6 +267,91 @@ function activateFromKeyboard(event: KeyboardEvent<HTMLButtonElement | HTMLInput
   }
   event.preventDefault();
   event.currentTarget.click();
+}
+
+function legacySessionText(legacy: LegacyHelperPresentation): string {
+  if (legacy.activityKnown) {
+    const total = legacy.ptySessions + legacy.execSessions;
+    if (total === 0) return "其中没有正在运行的会话。";
+    return `其中有 ${total} 个会话在运行（终端 ${legacy.ptySessions} 个，后台命令 ${legacy.execSessions} 个），包括其他设备或客户端创建的会话。`;
+  }
+  if (legacy.ptyListed) {
+    return `其中至少有 ${legacy.ptySessions} 个终端会话在运行（包括其他设备或客户端创建的会话）；后台命令数未知。`;
+  }
+  return "无法确认其中有多少会话在运行。";
+}
+
+function legacyConsentLabel(legacy: LegacyHelperPresentation): string {
+  if (legacy.activityKnown) {
+    const total = legacy.ptySessions + legacy.execSessions;
+    return total === 0 ? "我已了解：将终止旧版组件" : `我已了解：将终止这 ${total} 个会话，且无法恢复`;
+  }
+  if (legacy.ptyListed) return `我已了解：将终止旧版组件中的全部会话（至少 ${legacy.ptySessions} 个终端会话），且无法恢复`;
+  return "我已了解：将终止旧版组件中的全部会话，且无法恢复";
+}
+
+function LegacySection({
+  legacy,
+  controlsDisabled,
+  onReplaceLegacy,
+}: {
+  legacy: LegacyHelperPresentation;
+  controlsDisabled: boolean;
+  onReplaceLegacy?: () => void;
+}) {
+  const id = useId();
+  const noteId = `${id}-legacy-note`;
+  const [agreed, setAgreed] = useState(false);
+  const identity = [
+    `协议 v${legacy.protocol}`,
+    legacy.release ? `版本 ${legacy.release}` : null,
+    legacy.pid ? `进程 ${legacy.pid}` : null,
+  ].filter(Boolean).join("，");
+  const canReplace = Boolean(legacy.consentToken) && onReplaceLegacy !== undefined;
+  return (
+    <section aria-label="旧版组件" className="flex flex-col gap-2 rounded border border-[var(--nx-fg-warning)]/40 p-2">
+      <h3 className="font-medium text-neutral-200">旧版组件</h3>
+      <p>
+        主机上仍在运行旧版持久终端组件（{identity}），当前版本无法接入其中的终端；不升级时它们继续在旧版组件中运行。
+      </p>
+      <p>{legacySessionText(legacy)}</p>
+      {legacy.stale && <p role="alert" className="text-[var(--nx-fg-warning)]">旧版组件的状态已变化，请核对上面最新的会话数后重新确认。</p>}
+      {legacy.consentToken ? (
+        <p id={noteId} className="text-[var(--nx-fg-warning)]">
+          升级会先请求旧版组件退出，超时后强制结束，再启动新版组件。上述会话会被终止且无法恢复；它们的输出记录保留为只读。
+        </p>
+      ) : (
+        <p className="text-neutral-500">无法核实旧版组件的进程归属或会话数，不能在应用内升级。</p>
+      )}
+      {canReplace && (
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={agreed}
+              disabled={controlsDisabled}
+              aria-describedby={noteId}
+              onChange={(event) => setAgreed(event.currentTarget.checked)}
+              onKeyDown={activateFromKeyboard}
+            />
+            {legacyConsentLabel(legacy)}
+          </label>
+          <div>
+            <button
+              type="button"
+              className="nx-btn nx-btn-danger nx-btn-sm"
+              disabled={controlsDisabled || !agreed}
+              aria-describedby={noteId}
+              onClick={onReplaceLegacy}
+              onKeyDown={activateFromKeyboard}
+            >
+              终止旧版组件并升级
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function Definition({ term, value }: { term: string; value: string }) {
@@ -350,12 +490,14 @@ function VersionComparison({
   compatibility,
   update,
   failed,
+  legacy,
 }: {
   local: HelperVersionPresentation | null | undefined;
   running: HelperVersionPresentation | null | undefined;
   compatibility: HelperCompatibility | undefined;
   update: HelperUpdatePresentation | null | undefined;
   failed: boolean;
+  legacy: boolean;
 }) {
   if (local?.known === true && versionsIdentical(local, running)) return <IdenticalVersion version={local} />;
   const anyKnown = local?.known === true || running?.known === true;
@@ -371,7 +513,7 @@ function VersionComparison({
       )}
       <p className="text-neutral-400">
         <span className="font-medium">兼容性：</span>
-        {versionCompatibilityText(compatibility ?? "unknown", local, running, update, failed)}
+        {versionCompatibilityText(compatibility ?? "unknown", local, running, update, failed, legacy)}
       </p>
     </div>
   );
@@ -399,6 +541,8 @@ export function HelperOperationView({
   busyLabel,
   offlineTrust,
   update,
+  legacy,
+  replaceFailure,
   onRetryPersistent,
   onContinueOrdinary,
   onCancel,
@@ -406,6 +550,7 @@ export function HelperOperationView({
   onUpdate,
   onDeferUpdate,
   onInterruptAndUpdate,
+  onReplaceLegacy,
 }: HelperOperationViewProps) {
   const id = useId();
   const titleId = `${id}-title`;
@@ -482,6 +627,7 @@ export function HelperOperationView({
                 compatibility={compatibility}
                 update={update}
                 failed={failed}
+                legacy={Boolean(legacy)}
               />
             )}
           </div>
@@ -548,6 +694,25 @@ export function HelperOperationView({
         </div>
       )}
 
+      {replaceFailure && (
+        <section aria-label="组件升级失败" className="flex flex-col gap-1 rounded border border-red-500/40 p-2">
+          <h3 className="font-medium text-neutral-200">组件升级失败</h3>
+          <p role="alert" className="text-red-300">{replaceFailureText(replaceFailure)}</p>
+          {replaceFailure.forced && <p className="text-[var(--nx-fg-warning)]">{FORCED_STOP_NOTE}</p>}
+          {replaceFailure.cause && <p className="break-words text-neutral-500">{replaceFailure.cause}</p>}
+          <p className="text-neutral-500">不会自动重试；如需再次升级，请重新检查组件状态并确认。</p>
+        </section>
+      )}
+
+      {legacy && (
+        <LegacySection
+          key={legacy.consentToken ?? "uninspected"}
+          legacy={legacy}
+          controlsDisabled={controlsDisabled}
+          onReplaceLegacy={onReplaceLegacy}
+        />
+      )}
+
       {offlineTrust && (
         <section
           aria-label="信任离线组件文件"
@@ -596,6 +761,12 @@ export function HelperOperationView({
             {update.status === "interrupted" && <p>{update.updated ? "已中断运行中的进程并完成更新。" : "活动进程已中断，尚未确认更新完成。"}</p>}
             {update.status === "updated" && !update.updated && <p>持久终端组件已更新。</p>}
             {update.status === "rolled_back" && <p>更新失败，已恢复为原版本。</p>}
+            {update.status === "replaced" && (
+              <p>
+                已终止旧版组件并启用新版持久终端组件，结束了{endedSessionsText(update.endedSessions, update.endedCount)}。
+              </p>
+            )}
+            {update.status === "replaced" && update.forced && <p className="text-[var(--nx-fg-warning)]">{FORCED_STOP_NOTE}</p>}
             {update.status === "unknown" && (
               <p>
                 {compatibility === "incompatible"
