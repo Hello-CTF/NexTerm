@@ -26,7 +26,6 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
-	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // State is the exposure state shown to the user.
@@ -514,9 +513,6 @@ func (c *Controller) enroll(account Account) (*Enrollment, error) {
 	}
 	response, err := c.config.Host.Enroll(ctx, account, request)
 	if err != nil {
-		if isUnknownKindError(err) {
-			return nil, errors.New(serverTooOldReason)
-		}
 		return nil, fmt.Errorf("向服务器注册本机失败：%w", err)
 	}
 	if response.Kind != agent.DeviceKindLocalHelper {
@@ -612,14 +608,6 @@ func (c *Controller) agentExited(err error) {
 }
 
 const serverTooOldReason = "服务器版本过旧，不支持开放桌面本机终端，请升级服务器"
-
-// isUnknownKindError reports a bad-parameter rejection of an enroll request
-// that carried the kind field: a server that predates the field refuses the
-// request body as a whole.
-func isUnknownKindError(err error) bool {
-	var serverErr *agent.ServerError
-	return errors.As(err, &serverErr) && serverErr.Code == string(ipc.CodeBadParam)
-}
 
 // enrollmentStore is the agent config store of a running agent. The agent
 // saves its current server URL through it; a save that cannot reach the
