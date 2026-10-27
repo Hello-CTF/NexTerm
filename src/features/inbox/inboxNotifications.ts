@@ -1,6 +1,7 @@
 import { useUi, type ToastAction } from "../../app/store";
 import { needsAttention, tabAwareness, toAwareness, type SessionAwareness } from "../../app/sessionAwarenessStore";
 import { visibleTerminalTabIds } from "../../app/sessionAwareness";
+import { clientId } from "../../ipc/env";
 import { EVENTS, listenEvent, type TerminalAttentionEvent } from "../../ipc/events";
 import { attentionDetail, openInboxTab, uiTabForBackendTab } from "./inbox";
 import { getNotificationPrefs } from "./notificationPrefs";
@@ -15,11 +16,16 @@ import {
 // at the session marks it seen within this window, and the others then drop it instead of popping a notification
 // for something already handled.
 export const NOTIFY_GRACE_MS = 1500;
+// A device that is not the tab's last input client waits this long instead, and notifies only when the state is
+// still unseen: the device the user last typed on is the one expected to notify.
+export const NOTIFY_FALLBACK_MS = 60_000;
 
 export interface InboxNotificationDeps {
   notifier: SystemNotifier;
   // The user looks at the app: the page is shown and the window has the focus.
   appFocused: () => boolean;
+  // This device's client id, compared with the tab's last input client.
+  clientId: () => string;
   // The backend tab ids shown on screen.
   visibleTabIds: () => ReadonlySet<string>;
   // A system notification could not be shown.
@@ -31,6 +37,7 @@ export interface InboxNotificationDeps {
 const defaultDeps = (): InboxNotificationDeps => ({
   notifier: systemNotifier(),
   appFocused: () => !document.hidden && document.hasFocus(),
+  clientId,
   visibleTabIds: visibleTerminalTabIds,
   onError: (message) => useUi.getState().pushToast("error", message),
   toast: (text, action) => useUi.getState().pushToast("info", text, action),
@@ -89,12 +96,15 @@ export function considerAttention(event: TerminalAttentionEvent): void {
     return;
   }
   if (pending.has(tabId)) return;
+  // Without a known last input client every device keeps the short grace.
+  const owner = event.lastInputClient;
+  const delay = !owner || owner === deps.clientId() ? NOTIFY_GRACE_MS : NOTIFY_FALLBACK_MS;
   pending.set(
     tabId,
     setTimeout(() => {
       pending.delete(tabId);
       deliver(tabId);
-    }, NOTIFY_GRACE_MS),
+    }, delay),
   );
 }
 

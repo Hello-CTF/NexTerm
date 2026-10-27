@@ -56,6 +56,10 @@ type AttentionEvent struct {
 	// Prompt is the prompt detected when output last went idle, absent when
 	// none is shown or output arrived since.
 	Prompt *AttentionPrompt `json:"prompt,omitempty"`
+	// LastInputClient is the client that last typed into the tab, empty when
+	// none is known. It is read when the event is emitted or listed and is
+	// not part of the state's identity.
+	LastInputClient string `json:"lastInputClient,omitempty"`
 	// Version increases with every published change of the tab; a client
 	// keeps the highest version it saw per tab. Versions restart with the
 	// process.
@@ -354,6 +358,7 @@ func (m *Manager) emitAttention(tab *Tab, event AttentionEvent) {
 	if m.emitter == nil {
 		return
 	}
+	event.LastInputClient = tab.LastInputClient()
 	ctx := context.Background()
 	if session := tab.session; session != nil {
 		session.mu.Lock()
@@ -459,14 +464,25 @@ func (m *Manager) ListAttentionFor(ctx context.Context) ([]AttentionEvent, error
 		}
 	}
 	result := make([]AttentionEvent, 0, len(infos))
+	owners := make([]*Tab, 0, len(infos))
 	for _, info := range infos {
 		entry := r.entries[info.ID]
 		if entry == nil || !entry.published {
 			result = append(result, AttentionEvent{TabID: info.ID, State: AttentionUnknown})
+			owners = append(owners, nil)
 			continue
 		}
 		result = append(result, entry.last)
+		owners = append(owners, entry.tab)
 	}
+	// Tab.mu is taken outside the registry lock.
+	r.mu.Unlock()
+	for i, tab := range owners {
+		if tab != nil {
+			result[i].LastInputClient = tab.LastInputClient()
+		}
+	}
+	r.mu.Lock()
 	return result, nil
 }
 

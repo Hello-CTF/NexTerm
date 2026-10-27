@@ -246,6 +246,7 @@ export type AttentionEvent = {
   title?: string;
   body?: string;
   prompt?: AttentionPrompt | null;
+  lastInputClient?: string;
   version: number;
 };
 

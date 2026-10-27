@@ -23,6 +23,7 @@ import type { TerminalAttentionEvent } from "../../ipc/events";
 import { buildInbox } from "../../features/inbox/inbox";
 import { InboxButton } from "../../features/inbox/InboxButton";
 import {
+  NOTIFY_FALLBACK_MS,
   NOTIFY_GRACE_MS,
   considerAttention,
   refreshNotificationStatus,
@@ -107,6 +108,7 @@ beforeEach(() => {
   startInboxNotifications({
     notifier,
     appFocused: () => focused,
+    clientId: () => "me",
     visibleTabIds: () => new Set(["T1"]),
     onError: () => {},
     toast: (text, action) => {
@@ -251,6 +253,30 @@ describe("system notifications", () => {
     live(attention({ tabId: "T2", since: "2026-10-27T11:00:00Z", body: "second" }));
     await grace();
     expect(toasts).toEqual(["db-01 · 需要你处理：migration waits", "db-01 · 需要你处理：second"]);
+  });
+
+  it("notifies at the grace period when this device typed last", async () => {
+    live(attention({ tabId: "T2", reason: "notify", body: "approve?", lastInputClient: "me" }));
+    await grace();
+    expect(notifier.shown).toHaveLength(1);
+  });
+
+  it("makes another device wait, then notifies only if the state is still unseen", async () => {
+    live(attention({ tabId: "T2", reason: "notify", body: "approve?", lastInputClient: "other" }));
+    await grace();
+    expect(notifier.shown).toEqual([]);
+    await vi.advanceTimersByTimeAsync(NOTIFY_FALLBACK_MS - NOTIFY_GRACE_MS);
+    expect(notifier.shown).toHaveLength(1);
+  });
+
+  it("makes another device skip a state that was seen in the meantime", async () => {
+    const event = attention({ tabId: "T2", reason: "notify", body: "approve?", lastInputClient: "other" });
+    live(event);
+    await vi.advanceTimersByTimeAsync(NOTIFY_FALLBACK_MS / 2);
+    live({ ...event, seen: true, version: event.version + 1 });
+    await vi.advanceTimersByTimeAsync(NOTIFY_FALLBACK_MS);
+    expect(notifier.shown).toEqual([]);
+    expect(toasts).toEqual([]);
   });
 
   it("does not replay states that were waiting when the list loaded", async () => {
