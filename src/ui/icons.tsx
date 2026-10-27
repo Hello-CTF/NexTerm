@@ -472,6 +472,13 @@ export const IconAlert = (p: IconProps) => (
   </Svg>
 );
 
+export const IconFlag = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 21V4" />
+    <path d="M5 4h11l-2 4 2 4H5" />
+  </Svg>
+);
+
 export const IconInfo = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="8.7" />
