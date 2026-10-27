@@ -10,6 +10,7 @@ import { Lazy } from "../../ui/LazyBoundary";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { AssetEditor, JumpPalette } from "../lazyPanels";
 import type { JumpScope } from "../JumpPalette";
+import { jumpAttentionOf } from "../jump/jumpAttention";
 
 // LazyAuthGate loads the account gate only under WEB, so the desktop does not pull the auth store into env mocks of terminal tests.
 function LazyAuthGate() {
@@ -61,6 +62,7 @@ export function AppDialogs({
             onClose={() => setJumpScope(null)}
             onOpenFiles={onOpenFiles}
             onEditAsset={(asset) => setEditingAsset(asset)}
+            attentionOf={jumpAttentionOf}
           />
         </Lazy>
       )}

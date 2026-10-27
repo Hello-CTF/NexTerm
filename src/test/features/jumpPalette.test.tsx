@@ -29,6 +29,9 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import { JumpPalette } from "../../app/JumpPalette";
 import { noteTabActivated, resetTabRecency, tabRecency, useTabRecencyTracker } from "../../app/jump/tabRecency";
+import { jumpAttentionOf } from "../../app/jump/jumpAttention";
+import { applyAwareness, resetAwarenessStore } from "../../app/sessionAwarenessStore";
+import type { TerminalAttentionEvent } from "../../ipc/events";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { Asset, SessionInfo } from "../../ipc/commands";
 
@@ -128,6 +131,7 @@ beforeEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
   resetTabRecency();
+  resetAwarenessStore();
   mocks.list.mockResolvedValue([WEB]);
   mocks.snippetList.mockResolvedValue([]);
   mocks.probeBatch.mockResolvedValue({ results: [] });
@@ -384,5 +388,40 @@ describe("jump palette scopes", () => {
     keyDown(combobox(view), "Tab");
     expect(combobox(view).getAttribute("aria-label")).toBe("数据库资产搜索");
     expect(optionLabels(view)).toEqual([]);
+  });
+});
+
+function attention(tabId: string, version: number, patch: Partial<TerminalAttentionEvent> = {}): TerminalAttentionEvent {
+  return { tabId, state: "needs_me", confidence: "signal", source: "helper", since: "2026-10-27T10:00:00Z", version, ...patch };
+}
+
+describe("jump palette attention from the awareness store", () => {
+  it("ranks needs_me, then just_finished, then the rest; seen and unknown states stay in the rest", async () => {
+    act(() => applyAwareness([
+      attention("kernel-t-logs", 1),
+      attention("kernel-t-deploy", 1, { state: "just_finished", exitCode: 0 }),
+      attention("kernel-t-build", 1, { state: "needs_me", seen: true }),
+    ]));
+    const view = await mountPalette({ attentionOf: jumpAttentionOf });
+    expect(optionLabels(view).slice(0, 3)).toEqual(["logs", "deploy", "build"]);
+    expect(jumpAttentionOf({ terminalId: "kernel-t-build" } as never)).toBeUndefined();
+    expect(jumpAttentionOf({ terminalId: null } as never)).toBeUndefined();
+  });
+
+  it("shows the state badge on session rows and updates it without reordering", async () => {
+    act(() => applyAwareness([attention("kernel-t-logs", 1)]));
+    const view = await mountPalette({ attentionOf: jumpAttentionOf });
+    const rowOf = (label: string) => options(view).find((option) => option.textContent?.startsWith(label))!;
+    expect(rowOf("logs").querySelector('[data-attention="needs_me"]')).not.toBeNull();
+    expect(rowOf("deploy").querySelector("[data-attention]")).toBeNull();
+    const before = optionLabels(view).slice(0, 3);
+
+    act(() => applyAwareness([attention("kernel-t-deploy", 1, { state: "just_finished", exitCode: 2 })]));
+    expect(rowOf("deploy").querySelector('[data-attention="just_finished"]')).not.toBeNull();
+    expect(optionLabels(view).slice(0, 3)).toEqual(before);
+
+    setInputValue(combobox(view), "o");
+    setInputValue(combobox(view), "");
+    expect(optionLabels(view).slice(0, 2)).toEqual(["logs", "deploy"]);
   });
 });

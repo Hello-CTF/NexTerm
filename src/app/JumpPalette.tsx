@@ -28,6 +28,8 @@ import { isInventoryOnlyKind } from "../features/explorer/inventory";
 import { AssetEditor } from "../features/explorer/AssetTree";
 import { SshImportDialog } from "../features/explorer/SshImportDialog";
 import { useShell } from "./shell";
+import { TabAttentionBadge } from "./workspace/tabStrip";
+import { awarenessBadge, useTabAwareness } from "./sessionAwarenessStore";
 import { IconDownload, IconLoader, IconPlus, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
 import {
   formatQuickConnectTarget,
@@ -104,6 +106,12 @@ const SCOPE_TEXT: Record<JumpScope, { title: string; input: string; placeholder:
     list: "数据库资产连接",
   },
 };
+
+// SessionAttentionBadge follows one session row's awareness state live; the row order stays frozen.
+function SessionAttentionBadge({ terminalId }: { terminalId: string | null }) {
+  const awareness = useTabAwareness(terminalId ?? undefined);
+  return <TabAttentionBadge badge={awarenessBadge(awareness)} />;
+}
 
 // JumpPalette is the single keyboard-first palette for open and background sessions, hosts and commands.
 // The hosts scope is the former quick connect; Tab switches between it and the full list.
@@ -571,6 +579,7 @@ export function JumpPalette({
         <button {...optionProps}>
           <IconTerminal size={15} className="shrink-0 text-neutral-400" />
           <span className="min-w-0 flex-1 truncate">{row.entry.label}</span>
+          <SessionAttentionBadge terminalId={row.entry.terminalId} />
           {row.entry.hint && <span className="nx-command-hint min-w-0 shrink truncate text-[11px]">{row.entry.hint}</span>}
         </button>
       );
