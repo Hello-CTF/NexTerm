@@ -4,6 +4,12 @@ import type { Asset } from "../../ipc/commands";
 // One host detail tab exists at a time; opening another host retargets it.
 export const HOST_DETAIL_TAB_ID = "host-detail";
 export const HOST_DETAIL_TITLE = "主机详情";
+export const DATABASE_DETAIL_TITLE = "数据库详情";
+
+// hostDetailTitle is the tab title once the page knows what it shows.
+export function hostDetailTitle(name: string, database: boolean): string {
+  return `${database ? DATABASE_DETAIL_TITLE : HOST_DETAIL_TITLE} · ${name}`;
+}
 
 const DEVICE_PREFIX = deviceAssetId("");
 
@@ -32,13 +38,32 @@ export function deviceIdOfHost(assetId: string): string | null {
 // terminal: the page offers that as an explicit action.
 export function openHostDetail(assetId: string): void {
   if (!assetId) return;
+  // Reopening the page that is already showing this host keeps its resolved title.
+  const current = findHostDetailTab();
   useUi.getState().addTab({
     id: HOST_DETAIL_TAB_ID,
     kind: "host",
-    title: HOST_DETAIL_TITLE,
+    title: current?.assetId === assetId ? current.title : HOST_DETAIL_TITLE,
     assetId,
     closable: true,
   });
+}
+
+function findHostDetailTab(): { assetId?: string; title: string } | undefined {
+  for (const workspace of useUi.getState().workspaces) {
+    for (const pane of workspace.panes) {
+      const tab = pane.tabs.find((item) => item.id === HOST_DETAIL_TAB_ID);
+      if (tab) return tab;
+    }
+  }
+  return undefined;
+}
+
+// setHostDetailTitle names the open detail tab after the host it shows, once the asset or device has resolved.
+export function setHostDetailTitle(assetId: string, title: string): void {
+  const tab = findHostDetailTab();
+  if (!tab || tab.assetId !== assetId || tab.title === title) return;
+  useUi.getState().updateTab(HOST_DETAIL_TAB_ID, { title });
 }
 
 // hostWorkspaceOf finds the open host workspace of an asset; database workspaces are not host workspaces.
@@ -62,19 +87,48 @@ function viaAssetIdOf(asset: Asset): string {
   return typeof via === "string" ? via : "";
 }
 
-// relatedDatabases lists the database assets served by a host: those tunnelled through it, and, without a tunnel,
-// those whose address is the host's address (a loopback address for the local host).
-export function relatedDatabases(host: Pick<Asset, "id" | "kind" | "host">, assets: readonly Asset[]): Asset[] {
-  const hostAddress = normalizedHost(host.host);
-  return assets.filter((asset) => {
-    if (asset.deletedAt || asset.id === host.id || !dbKindOf(asset.kind)) return false;
-    const via = viaAssetIdOf(asset);
-    if (via) return via === host.id;
-    const address = normalizedHost(asset.host);
-    if (!address) return false;
-    if (host.kind === "local") return LOOPBACK_HOSTS.has(address);
-    return hostAddress !== "" && address === hostAddress;
-  });
+function optionText(asset: Pick<Asset, "options">, key: string): string {
+  const value = asset.options?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+// hasJump is true when connecting to the asset goes through a jump host.
+export function hasJump(asset: Pick<Asset, "options">): boolean {
+  return optionText(asset, "jumpAssetId") !== "";
+}
+
+// hasIndirectRoute is true when the asset's address is not the machine the connection ends on: a jump host, a proxy
+// or a ProxyCommand sits in between, so databases at the same address cannot be assumed to live on this host.
+function hasIndirectRoute(asset: Pick<Asset, "options">): boolean {
+  return ["jumpAssetId", "proxyCommand", "proxy", "proxyJump"].some((key) => optionText(asset, key) !== "");
+}
+
+export type DatabaseRelation = "via" | "address";
+
+export const DATABASE_RELATION_LABEL: Record<DatabaseRelation, string> = {
+  via: "经由此主机",
+  address: "同地址",
+};
+
+// databaseRelation says why a database belongs to a host, or null when it does not. Tunnelled databases belong to
+// their via host only. Address matches need a directly reached host: loopback addresses only match the local host,
+// and a host behind a jump host or proxy never matches by address.
+export function databaseRelation(host: Pick<Asset, "id" | "kind" | "host" | "options">, database: Asset): DatabaseRelation | null {
+  if (database.deletedAt || database.id === host.id || !dbKindOf(database.kind)) return null;
+  const via = viaAssetIdOf(database);
+  if (via) return via === host.id ? "via" : null;
+  if (hasIndirectRoute(host)) return null;
+  const address = normalizedHost(database.host);
+  if (!address) return null;
+  if (host.kind === "local") return LOOPBACK_HOSTS.has(address) ? "address" : null;
+  if (LOOPBACK_HOSTS.has(address)) return null;
+  const hostAddr = normalizedHost(host.host);
+  return hostAddr !== "" && address === hostAddr ? "address" : null;
+}
+
+// relatedDatabases lists the database assets served by a host; see databaseRelation for the matching rules.
+export function relatedDatabases(host: Pick<Asset, "id" | "kind" | "host" | "options">, assets: readonly Asset[]): Asset[] {
+  return assets.filter((asset) => databaseRelation(host, asset) !== null);
 }
 
 // tunnelHostOf returns the host a database asset is tunnelled through, when it is a known asset.

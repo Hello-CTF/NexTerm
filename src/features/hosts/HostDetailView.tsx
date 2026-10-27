@@ -2,11 +2,12 @@
 // It reads existing APIs only. Opening the page never connects; "打开工作区" opens or switches to the host's workspace
 // without creating a terminal, like selecting the host in the asset tree.
 
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { connectAsset, connectDevice, DB_KIND_LABEL, dbKindOf, useUi } from "../../app/store";
 import { copyHostDeepLink } from "../../app/deepLink";
 import { assetApi, type Asset } from "../../ipc/commands";
+import { isMobileShell } from "../../app/shell";
 import { WEB } from "../../ipc/env";
 import type { FleetDevice } from "../../ipc/fleetApi";
 import { describeError } from "../../ui/errorText";
@@ -18,7 +19,20 @@ import { formatTime, isOnline, relativeTime } from "../fleet/format";
 import { MetricsPanel } from "../fleet/MetricsPanel";
 import { useFleetAccount } from "../fleet/useFleetAccount";
 import { showSettingsSection } from "../settings/settingsNavigation";
-import { deviceIdOfHost, hostAddress, hostWorkspaceOf, isHostAssetKind, relatedDatabases, tunnelHostOf, openHostDetail } from "./hostDetail";
+import {
+  databaseRelation,
+  DATABASE_RELATION_LABEL,
+  deviceIdOfHost,
+  hasJump,
+  hostAddress,
+  hostDetailTitle,
+  hostWorkspaceOf,
+  isHostAssetKind,
+  openHostDetail,
+  relatedDatabases,
+  setHostDetailTitle,
+  tunnelHostOf,
+} from "./hostDetail";
 import { ContainersSection, DatabasesSection, HostSection, SectionHint, SessionsSection, SshHealthSection } from "./HostSections";
 
 const ASSET_KIND_LABEL: Record<string, string> = {
@@ -85,8 +99,8 @@ function Header({
 }
 
 function CopyLinkButton({ assetId }: { assetId: string }) {
-  // nexterm:// links open the desktop app; the browser has no handler for them.
-  if (WEB) return null;
+  // nexterm:// links open the desktop app; the browser has no handler for them and mobile registers no URL scheme.
+  if (WEB || isMobileShell()) return null;
   return (
     <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => copyHostDeepLink(assetId)}>
       <IconGlobe size={11} />
@@ -143,6 +157,15 @@ function ProductionBadge({ assetId }: { assetId: string }) {
 function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: readonly Asset[]; visible: boolean }) {
   const workspace = useUi((state) => hostWorkspaceOf(state.workspaces, asset.id));
   const databases = useMemo(() => relatedDatabases(asset, assets), [asset, assets]);
+  const relations = useMemo(() => {
+    const labels: Record<string, string> = {};
+    for (const database of databases) {
+      const relation = databaseRelation(asset, database);
+      if (relation) labels[database.id] = DATABASE_RELATION_LABEL[relation];
+    }
+    return labels;
+  }, [asset, databases]);
+  useEffect(() => setHostDetailTitle(asset.id, hostDetailTitle(asset.name, false)), [asset.id, asset.name]);
   const address = hostAddress(asset);
   const kindLabel = ASSET_KIND_LABEL[asset.kind] ?? asset.kind;
   const hostKind = isHostAssetKind(asset.kind);
@@ -181,11 +204,12 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
         {dockerCapable && <ContainersSection workspace={workspace} visible={visible} />}
         <DatabasesSection
           databases={databases}
+          relations={relations}
           visible={visible}
           emptyHint="没有经由这台主机或指向它的地址的数据库资产。"
         />
         {asset.kind === "ssh" ? (
-          <SshHealthSection assetId={asset.id} workspace={workspace} />
+          <SshHealthSection assetId={asset.id} workspace={workspace} viaJump={hasJump(asset)} />
         ) : (
           <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
             <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "这类主机不采集指标。"}</SectionHint>
@@ -199,6 +223,8 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
 function DatabaseAssetDetail({ asset, assets, visible }: { asset: Asset; assets: readonly Asset[]; visible: boolean }) {
   const tunnel = tunnelHostOf(asset, assets);
   const dbKind = dbKindOf(asset.kind);
+  const viaAssetId = typeof asset.options?.viaAssetId === "string" ? asset.options.viaAssetId : "";
+  useEffect(() => setHostDetailTitle(asset.id, hostDetailTitle(asset.name, true)), [asset.id, asset.name]);
   return (
     <Page>
       <Header
@@ -219,6 +245,8 @@ function DatabaseAssetDetail({ asset, assets, visible }: { asset: Asset; assets:
               </button>{" "}
               连接
             </span>
+          ) : viaAssetId ? (
+            <span className="text-amber-300">经由的主机已删除</span>
           ) : undefined
         }
         actions={<CopyLinkButton assetId={asset.id} />}
@@ -299,6 +327,7 @@ function DeviceHostDetail({
   visible: boolean;
 }) {
   const workspace = useUi((state) => hostWorkspaceOf(state.workspaces, assetId));
+  useEffect(() => setHostDetailTitle(assetId, hostDetailTitle(device.name, false)), [assetId, device.name]);
   const now = Date.now();
   const agent = device.agent;
   const revoked = device.revoked_at !== 0;

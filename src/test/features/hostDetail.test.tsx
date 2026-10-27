@@ -38,7 +38,7 @@ vi.mock("../../app/store", async (importOriginal) => {
 });
 
 import { HostDetailView } from "../../features/hosts/HostDetailView";
-import { deviceIdOfHost, hostAddress, hostDetailLabel, relatedDatabases } from "../../features/hosts/hostDetail";
+import { deviceIdOfHost, HOST_DETAIL_TAB_ID, hostAddress, hostDetailLabel, openHostDetail, relatedDatabases } from "../../features/hosts/hostDetail";
 import { useAuth } from "../../features/auth/store";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { Asset, SessionInfo } from "../../ipc/commands";
@@ -192,6 +192,23 @@ describe("host detail helpers", () => {
     expect(relatedDatabases(WEB, [{ ...SAME_HOST_DB, deletedAt: 5 }])).toEqual([]);
   });
 
+  it("never matches by address behind a jump host, proxy or ProxyCommand", () => {
+    const all = [WEB, SAME_HOST_DB, TUNNELLED_DB];
+    for (const options of [{ jumpAssetId: "a-jump" }, { proxyCommand: "nc %h %p" }, { proxy: "socks5://p:1080" }]) {
+      // Only the explicitly tunnelled database remains.
+      expect(relatedDatabases({ ...WEB, options }, all).map((a) => a.id)).toEqual(["db-1"]);
+    }
+    expect(relatedDatabases({ ...WEB, options: { jumpAssetId: "" } }, all).map((a) => a.id).sort()).toEqual(["db-1", "db-2"]);
+  });
+
+  it("never matches loopback addresses for hosts that are not local", () => {
+    const loopbackHost = { ...WEB, host: "127.0.0.1" };
+    const loopbackDbs = [LOCAL_DB, { ...SAME_HOST_DB, host: "127.0.0.1" }, { ...SAME_HOST_DB, id: "db-6", host: "::1" }];
+    expect(relatedDatabases(loopbackHost, loopbackDbs)).toEqual([]);
+    expect(relatedDatabases(WEB, loopbackDbs)).toEqual([]);
+    expect(relatedDatabases(LOCAL, loopbackDbs).map((a) => a.id)).toEqual(["db-3", "db-2", "db-6"]);
+  });
+
   it("names device hosts and formats addresses", () => {
     expect(deviceIdOfHost("device/d-1")).toBe("d-1");
     expect(deviceIdOfHost("device/")).toBeNull();
@@ -276,6 +293,94 @@ describe("host detail page for an asset", () => {
     await flushUntil(() => text().includes("41.3%"));
     expect(mocks.healthProbe).toHaveBeenCalledWith(expect.objectContaining({ targets: [{ assetId: "a-web" }] }));
     expect(section("host-metrics").textContent).toContain("0.50 / 0.25 / 0.10");
+  });
+
+  it("shows reachability and the reason when there is no session to read metrics from", async () => {
+    mocks.healthProbe.mockResolvedValue({
+      batchId: "b",
+      results: [{ assetId: "a-web", reachable: true, latencyMs: 4, status: "success", error: "未连接 SSH，无法采集系统指标", load1: null, memoryUsedPercent: null, diskUsedPercent: null, uptimeSeconds: null }],
+    });
+    mountView("a-web");
+    await flushUntil(() => text().includes("web-01"));
+    expect(section("host-metrics").textContent).toContain("未连接时只检查可达性；打开工作区后可读取负载、内存、磁盘和运行时长");
+    clickButton(section("host-metrics"), "检查");
+    await flushUntil(() => section("host-metrics").textContent!.includes("未连接 SSH，无法采集系统指标"));
+    const metrics = section("host-metrics").textContent!;
+    expect(metrics).toContain("可达");
+    expect(metrics).not.toContain("运行时长");
+    expect(metrics).not.toContain("—");
+  });
+
+  it("reads metrics through the connected session", async () => {
+    useUi.setState({
+      workspaces: [hostWorkspace([])],
+      activeWorkspaceId: "ws-web",
+      sessions: [session("connected")],
+    });
+    mocks.healthProbe.mockResolvedValue({
+      batchId: "b",
+      results: [{ assetId: "a-web", reachable: true, latencyMs: 4, status: "success", load1: 1, load5: 0.5, load15: 0.25, memoryUsedPercent: 12.5, diskUsedPercent: 30, uptimeSeconds: 7200 }],
+    });
+    mountView("a-web");
+    await flushUntil(() => text().includes("web-01"));
+    clickButton(section("host-metrics"), "检查");
+    await flushUntil(() => text().includes("12.5%"));
+    expect(mocks.healthProbe).toHaveBeenCalledWith(
+      expect.objectContaining({ targets: [{ assetId: "a-web", sessionId: "s-web" }] }),
+    );
+    expect(section("host-metrics").textContent).toContain("1.00 / 0.50 / 0.25");
+    expect(section("host-metrics").textContent).toContain("30.0%");
+  });
+
+  it("says the check logs in to the jump host for a host behind one", async () => {
+    mocks.assetList.mockResolvedValue([{ ...WEB, options: { jumpAssetId: "a-jump" } }]);
+    mountView("a-web");
+    await flushUntil(() => text().includes("web-01"));
+    expect(section("host-metrics").textContent).toContain("登录跳板机");
+  });
+
+  it("labels databases by why they are listed", async () => {
+    mountView("a-web");
+    await flushUntil(() => text().includes("orders") && text().includes("cache"));
+    const rows = [...section("host-databases").querySelectorAll("li")];
+    const row = (name: string) => rows.find((li) => li.textContent?.includes(name))?.textContent ?? "";
+    expect(row("orders")).toContain("经由此主机");
+    expect(row("cache")).toContain("同地址");
+    expect(row("cache")).not.toContain("经由此主机");
+  });
+
+  it("does not list same-address databases for a host behind a jump host", async () => {
+    mocks.assetList.mockResolvedValue([{ ...WEB, options: { jumpAssetId: "a-jump" } }, TUNNELLED_DB, SAME_HOST_DB]);
+    mountView("a-web");
+    await flushUntil(() => text().includes("orders"));
+    expect(section("host-databases").textContent).not.toContain("cache");
+  });
+
+  it("titles the tab after the host once it resolves", async () => {
+    openHostDetail("a-web");
+    const title = () =>
+      useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).find((t) => t.id === HOST_DETAIL_TAB_ID)?.title;
+    expect(title()).toBe("主机详情");
+    mountView("a-web");
+    await flushUntil(() => title() === "主机详情 · web-01");
+    // Reopening the same host keeps the resolved title.
+    openHostDetail("a-web");
+    expect(title()).toBe("主机详情 · web-01");
+  });
+
+  it("titles a database tab as a database detail", async () => {
+    openHostDetail("db-1");
+    mountView("db-1");
+    await flushUntil(() =>
+      useUi.getState().workspaces.some((w) => w.panes.some((p) => p.tabs.some((t) => t.title === "数据库详情 · orders"))),
+    );
+  });
+
+  it("says when the tunnel host of a database was deleted", async () => {
+    mocks.assetList.mockResolvedValue([{ ...TUNNELLED_DB, options: { viaAssetId: "gone" } }]);
+    mountView("db-1");
+    await flushUntil(() => text().includes("orders"));
+    expect(text()).toContain("经由的主机已删除");
   });
 
   it("explains a missing asset", async () => {

@@ -232,7 +232,7 @@ function SchemaList({ connId, visible }: { connId: string; visible: boolean }) {
   );
 }
 
-function DatabaseRow({ database, visible }: { database: Asset; visible: boolean }) {
+function DatabaseRow({ database, relation, visible }: { database: Asset; relation?: string; visible: boolean }) {
   const workspace = useUi((state) => databaseWorkspaceOf(state.workspaces, database.id));
   const dbKind = dbKindOf(database.kind);
   const open = Boolean(workspace?.connId) && !workspace?.restorePending;
@@ -243,6 +243,7 @@ function DatabaseRow({ database, visible }: { database: Asset; visible: boolean 
         <span className="min-w-0 truncate font-medium text-neutral-100">{database.name}</span>
         {dbKind && <span className="nx-badge shrink-0">{DB_KIND_LABEL[dbKind]}</span>}
         {address && <span className="nx-hint min-w-0 truncate text-[11px]">{address}</span>}
+        {relation && <span className="nx-badge shrink-0">{relation}</span>}
         <span className="nx-spacer" />
         <span className={`shrink-0 text-[11px] ${open ? "text-green-300" : "text-neutral-500"}`}>{open ? "已连接" : "未连接"}</span>
         <button
@@ -263,10 +264,13 @@ function DatabaseRow({ database, visible }: { database: Asset; visible: boolean 
 // DatabasesSection lists database assets on this host; an open connection also lists its schemas.
 export function DatabasesSection({
   databases,
+  relations,
   visible,
   emptyHint,
 }: {
   databases: readonly Asset[];
+  // relations maps a database id to why it is listed (同地址 or 经由此主机).
+  relations?: Readonly<Record<string, string>>;
   visible: boolean;
   emptyHint: string;
 }) {
@@ -277,7 +281,7 @@ export function DatabasesSection({
       ) : (
         <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
           {databases.map((database) => (
-            <DatabaseRow key={database.id} database={database} visible={visible} />
+            <DatabaseRow key={database.id} database={database} relation={relations?.[database.id]} visible={visible} />
           ))}
         </ul>
       )}
@@ -290,7 +294,15 @@ function percent(value: number | null | undefined): string {
 }
 
 // SshHealthSection probes an SSH host on demand with the fleet health check; it reuses the open workspace session.
-export function SshHealthSection({ assetId, workspace }: { assetId: string; workspace: Workspace | undefined }) {
+export function SshHealthSection({
+  assetId,
+  workspace,
+  viaJump = false,
+}: {
+  assetId: string;
+  workspace: Workspace | undefined;
+  viaJump?: boolean;
+}) {
   const session = useSessionById(workspace?.sessionId);
   const sessionId = isConnected(session?.status) ? session?.id : undefined;
   const [result, setResult] = useState<ExecBatchHealthResult | null>(null);
@@ -360,11 +372,21 @@ export function SshHealthSection({ assetId, workspace }: { assetId: string; work
       ) : running && !result ? (
         <SectionHint>正在检查…</SectionHint>
       ) : !result ? (
-        <SectionHint>
-          {sessionId ? "通过当前会话读取负载、内存、磁盘和运行时长。" : "检查时会单独登录这台主机读取负载、内存、磁盘和运行时长。"}
-        </SectionHint>
+        <>
+          <SectionHint>
+            {sessionId
+              ? "通过当前会话读取负载、内存、磁盘和运行时长。"
+              : "未连接时只检查可达性；打开工作区后可读取负载、内存、磁盘和运行时长"}
+          </SectionHint>
+          {viaJump && !sessionId && <SectionHint>这台主机经跳板机连接，检查时会登录跳板机。</SectionHint>}
+        </>
       ) : !result.reachable ? (
         <p className="m-0 text-[12px] text-red-300">主机不可达{result.error ? `：${result.error}` : ""}</p>
+      ) : result.error ? (
+        <div className="flex flex-col gap-1 text-[12px]">
+          <span className="text-green-300">可达</span>
+          <span className="nx-hint">{result.error}</span>
+        </div>
       ) : (
         <>
           <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-1 text-[12px] sm:grid-cols-4">
