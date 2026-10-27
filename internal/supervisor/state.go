@@ -112,6 +112,9 @@ type stateTracker struct {
 	exitCode   *int
 	durationMS int64
 	notable    bool
+	// seen is set when a client showed the current needs_me or
+	// just_finished state to its user.
+	seen bool
 
 	// active is set by output or input since the last idle inspection and
 	// lastActivity is when it happened. settling is set when that inspection
@@ -228,7 +231,7 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 			return true
 		}
 		t.addEventLocked(SessionEvent{Kind: base.SessionEventBell, At: event.At})
-		t.signalPending, t.finishedPending = true, false
+		t.signalPending, t.finishedPending, t.seen = true, false, false
 		t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "bell", now)
 	case signals.KindNotify:
 		title, cutTitle := clipText(event.Title)
@@ -237,7 +240,7 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 			Kind: base.SessionEventNotify, At: event.At, Source: event.Source,
 			Title: title, Body: body, TextTruncated: cutTitle || cutBody,
 		})
-		t.signalPending, t.finishedPending = true, false
+		t.signalPending, t.finishedPending, t.seen = true, false, false
 		t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "notify", now)
 	case signals.KindCommandStart:
 		t.signalPending, t.finishedPending = false, false
@@ -478,6 +481,23 @@ func (t *stateTracker) exit(code *int, now time.Time) {
 	t.changed()
 }
 
+// markSeen records that a client showed the needs_me or just_finished state
+// that began at since to its user. It reports whether anything changed; a
+// state that has moved on since is left alone.
+func (t *stateTracker) markSeen(since time.Time) bool {
+	t.mu.Lock()
+	changed := !t.seen && t.since.Equal(since) &&
+		(t.state == base.SessionNeedsMe || t.state == base.SessionJustFinished)
+	if changed {
+		t.seen = true
+	}
+	t.mu.Unlock()
+	if changed {
+		t.changed()
+	}
+	return changed
+}
+
 func (t *stateTracker) changed() {
 	if t.opts.onChange != nil {
 		t.opts.onChange()
@@ -496,7 +516,7 @@ func (t *stateTracker) setLocked(state, confidence, reason string, now time.Time
 
 func (t *stateTracker) forceLocked(state, confidence, reason string, now time.Time) {
 	t.state, t.confidence, t.reason, t.since = state, confidence, reason, now
-	t.exitCode, t.durationMS, t.notable = nil, 0, false
+	t.exitCode, t.durationMS, t.notable, t.seen = nil, 0, false, false
 	t.heldCheck = time.Time{}
 	t.addEventLocked(SessionEvent{Kind: base.SessionEventState, At: now, State: state, Confidence: confidence, Reason: reason})
 }
@@ -525,6 +545,7 @@ func (t *stateTracker) snapshot(withEvents bool, after uint64) *SessionState {
 		ExitCode:     copyInt(t.exitCode),
 		DurationMS:   t.durationMS,
 		Notable:      t.notable,
+		Seen:         t.seen,
 		PromptEpoch:  t.epoch,
 		Prompt:       t.publishedPromptLocked(),
 		LastEventSeq: t.lastSeq,

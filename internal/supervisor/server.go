@@ -242,6 +242,8 @@ func (c *serverConn) serve() {
 			}
 		case frameResize:
 			c.handleResize(payload)
+		case frameStateSeen:
+			c.handleStateSeen(payload)
 		case frameKill:
 			c.handleKill()
 		case frameGetVersions:
@@ -616,6 +618,24 @@ func (c *serverConn) handleResize(payload []byte) {
 		return
 	}
 	if err := attachment.Resize(context.Background(), msg.Cols, msg.Rows); err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		return
+	}
+	_ = c.reply(frameOK, struct{}{})
+}
+
+func (c *serverConn) handleStateSeen(payload []byte) {
+	attachment := c.attached()
+	if attachment == nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "state seen frame without attach"})
+		return
+	}
+	var msg stateSeenMsg
+	if err := unmarshalFrame(payload, &msg); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if err := attachment.MarkStateSeen(msg.Since); err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}

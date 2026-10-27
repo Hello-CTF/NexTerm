@@ -454,6 +454,45 @@ func TestStateExit(t *testing.T) {
 	h.expect(base.SessionExited, base.ConfidenceSignal)
 }
 
+func TestStateSeenFollowsTheStateItNames(t *testing.T) {
+	h := newHarness(t)
+	h.out(time.Second, "waiting for approval\a")
+	asked := h.expect(base.SessionNeedsMe, base.ConfidenceSignal)
+	if asked.Seen {
+		t.Fatal("a new bell is already seen")
+	}
+	if h.tracker.markSeen(asked.Since.Add(-time.Second)) || h.state().Seen {
+		t.Fatal("seen applied to a state that began at another time")
+	}
+	changes := h.changes
+	if !h.tracker.markSeen(asked.Since) || !h.state().Seen || h.changes != changes+1 {
+		t.Fatalf("seen not recorded: %+v, changes %d -> %d", h.state(), changes, h.changes)
+	}
+	if h.tracker.markSeen(asked.Since) {
+		t.Fatal("marking seen twice reported a change")
+	}
+
+	// Another bell asks again, although the state stays needs_me.
+	h.out(2*time.Second, "\a")
+	again := h.expect(base.SessionNeedsMe, base.ConfidenceSignal)
+	if again.Seen {
+		t.Fatalf("a new bell kept the seen mark: %+v", again)
+	}
+
+	// The next state starts unseen, and only needs_me and just_finished
+	// can be seen.
+	h.in(time.Second)
+	idle := h.expect(base.SessionIdle, base.ConfidenceSignal)
+	if idle.Seen || h.tracker.markSeen(idle.Since) {
+		t.Fatalf("idle state took a seen mark: %+v", h.state())
+	}
+	h.out(time.Second, "\x1b]133;C\x07work\r\n\x1b]133;D;0\x07")
+	finished := h.expect(base.SessionJustFinished, base.ConfidenceSignal)
+	if !h.tracker.markSeen(finished.Since) || !h.state().Seen {
+		t.Fatalf("just_finished not marked seen: %+v", h.state())
+	}
+}
+
 func TestStateEventRingAndSequences(t *testing.T) {
 	h := newHarness(t)
 	for i := 0; i < maxStateEvents+8; i++ {

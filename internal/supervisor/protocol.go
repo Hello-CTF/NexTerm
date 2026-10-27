@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 // ProtocolVersion is the only protocol a helper and its clients speak. Version
@@ -68,6 +69,10 @@ const (
 	// after it changes, with the events since the previous push. The
 	// attach reply carries the state at attach time.
 	frameState
+	// frameStateSeen tells the helper that the attached client showed the
+	// session's needs_me or just_finished state to its user (stateSeenMsg);
+	// the helper answers frameOK and pushes the seen state to every client.
+	frameStateSeen
 )
 
 // Every connection uses windowed input and credited output. The client may keep
@@ -188,6 +193,12 @@ type resizeMsg struct {
 type stateMsg struct {
 	ID    string       `json:"id"`
 	State SessionState `json:"state"`
+}
+
+// stateSeenMsg is the payload of frameStateSeen. Since identifies the state
+// the user saw; a state that has changed since is left unseen.
+type stateSeenMsg struct {
+	Since time.Time `json:"since"`
 }
 
 type versionsMsg struct {

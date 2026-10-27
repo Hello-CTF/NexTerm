@@ -1,6 +1,9 @@
 package base
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Session attention states reported by a durable helper. They are derived
 // inside the helper from terminal-standard signals and generic screen
@@ -73,6 +76,10 @@ type SessionState struct {
 	// Notable marks a just_finished command that ran at least the helper's
 	// notification threshold; shorter commands are not worth a notification.
 	Notable bool `json:"notable,omitempty"`
+	// Seen reports that a client showed this needs_me or just_finished state
+	// to its user. It is shared by every client of the session and cleared by
+	// the next state change or a new bell or notification.
+	Seen bool `json:"seen,omitempty"`
 	// PromptEpoch advances whenever the detected prompt changes or appears
 	// or disappears, and on any input written to the session. Together with
 	// the helper generation it identifies one prompt instance.
@@ -89,6 +96,20 @@ type SessionState struct {
 	// EventsDropped reports that events after the requested sequence were
 	// evicted from the helper's ring or left out to bound the reply size.
 	EventsDropped bool `json:"events_dropped,omitempty"`
+}
+
+// DurableStateReporter is implemented by durable attachments whose helper
+// reports the session's attention state.
+type DurableStateReporter interface {
+	// DurableSessionState returns the latest state without events, or nil
+	// while the helper has reported none.
+	DurableSessionState() *SessionState
+	// DurableStateUpdates is signalled after each state change. Signals
+	// coalesce; read DurableSessionState after each one.
+	DurableStateUpdates() <-chan struct{}
+	// MarkDurableStateSeen marks the state that began at since as seen for
+	// every client of the session. A state that has moved on is left alone.
+	MarkDurableStateSeen(ctx context.Context, since time.Time) error
 }
 
 // SessionPrompt is a detected prompt with what a client may do about it.

@@ -206,6 +206,59 @@ func TestStateVisibleWithoutClientsAndPushedToAttached(t *testing.T) {
 	}
 }
 
+func TestStateSeenReachesEveryAttachedClient(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	session := testScriptSession(t, supervisor, `read go; sleep 1.5; printf 'needs you\007'; sleep 30`)
+	desktop, err := testClient(t, server).Attach(context.Background(), session.ID(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = desktop.Close() }()
+	phone, err := testClient(t, server).Attach(context.Background(), session.ID(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = phone.Close() }()
+	if _, err := desktop.Write([]byte("go\n")); err != nil {
+		t.Fatal(err)
+	}
+	asked := waitStreamState(t, phone, "bell", func(s *SessionState) bool { return s.State == base.SessionNeedsMe })
+	waitStreamState(t, desktop, "bell on the desktop", func(s *SessionState) bool { return s.State == base.SessionNeedsMe })
+	if asked.Seen {
+		t.Fatalf("new attention already seen: %+v", asked)
+	}
+
+	if err := desktop.MarkStateSeen(context.Background(), asked.Since); err != nil {
+		t.Fatal(err)
+	}
+	seen := waitStreamState(t, phone, "seen on the other client", func(s *SessionState) bool { return s.Seen })
+	if seen.State != base.SessionNeedsMe || !seen.Since.Equal(asked.Since) {
+		t.Fatalf("seen state %+v, want the bell state since %v", seen, asked.Since)
+	}
+	listed, err := testClient(t, server).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].State == nil || !listed[0].State.Seen {
+		t.Fatalf("listed %+v", listed)
+	}
+
+	// An embedded attachment applies the same rule: a since that names no
+	// current state changes nothing.
+	attachment, err := session.attach(AttachOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = attachment.Detach() }()
+	if err := attachment.MarkStateSeen(asked.Since.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if state := attachment.SessionState(0); !state.Seen || !state.Since.Equal(asked.Since) {
+		t.Fatalf("a stale since changed the state: %+v", state)
+	}
+}
+
 func waitStreamState(t *testing.T, stream *Stream, what string, match func(*SessionState) bool) *SessionState {
 	t.Helper()
 	timeout := time.After(testReadTimeout)

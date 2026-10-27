@@ -1190,6 +1190,20 @@ func (s *Stream) Resize(ctx context.Context, cols, rows uint32) error {
 	return nil
 }
 
+// MarkStateSeen tells the helper that the user saw the needs_me or
+// just_finished state that began at since; the helper pushes the seen state
+// to every attached client.
+func (s *Stream) MarkStateSeen(ctx context.Context, since time.Time) error {
+	kind, _, err := s.request(ctx, frameStateSeen, stateSeenMsg{Since: since})
+	if err != nil {
+		return err
+	}
+	if kind != frameOK {
+		return protocolMismatch(kind)
+	}
+	return nil
+}
+
 func (s *Stream) Kill(ctx context.Context) error {
 	kind, _, err := s.request(ctx, frameKill, struct{}{})
 	if err != nil {
