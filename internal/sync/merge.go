@@ -87,12 +87,16 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 	collection := &localCollection{objects: map[string]localObject{}, report: report, optIn: optIn, userID: firstUserID(userIDs)}
 	for index := range syncKinds {
 		spec := &syncKinds[index]
-		if !optIn.enabled(spec.optIn) || (spec.collectNeedsUser && collection.userID == "") {
+		if spec.collect == nil || !optIn.enabled(spec.optIn) || (spec.collectNeedsUser && collection.userID == "") {
 			continue
 		}
 		if err := spec.collect(e, ctx, collection); err != nil {
 			return nil, err
 		}
+	}
+	// Tombstones always collect last: one replaces a live object only when it is newer.
+	if err := e.collectTombstoneObjects(ctx, collection); err != nil {
+		return nil, err
 	}
 	return collection.objects, nil
 }

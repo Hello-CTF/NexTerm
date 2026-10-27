@@ -73,7 +73,9 @@ type localCollection struct {
 	userID  string
 }
 
-// kindSpec describes everything kind-specific about one sync object kind. Adding a kind means adding one spec.
+// kindSpec describes everything kind-specific about one sync object kind in the Go engine. Adding a kind means
+// adding one spec here; browser mode collects through the per-kind IPC in collect.go and the frontend push, so a
+// new kind also needs a collect command there and frontend support.
 type kindSpec struct {
 	kind string
 	// rank orders kinds by dependency for push and plaintext apply.
@@ -97,6 +99,7 @@ type kindSpec struct {
 	// applyTombstone is nil when the kind cannot be a tombstone target.
 	applyTombstone func(e *Engine, ctx context.Context, objectID string, tombstone tombstoneObject, report *SyncReport, userID string) (bool, bool)
 	// collect adds the kind's local objects; specs run in registry order, and later specs win on ID collisions.
+	// Tombstones have no collect hook: collectLocalObjects always collects them after every other kind.
 	collect func(e *Engine, ctx context.Context, c *localCollection) error
 	// collectNeedsUser skips collection without a session user.
 	collectNeedsUser bool
@@ -106,9 +109,15 @@ type kindSpec struct {
 var (
 	syncKinds   []kindSpec
 	syncKindMap map[string]*kindSpec
-	// objectKinds is the decryption attempt order; AAD binds kind, so a wrong kind can never decrypt.
+	// objectKinds is the validated decryption attempt order, copied from decryptOrder.
 	objectKinds []string
+	// aiOwnerKinds lists the kinds whose objects and tombstones require an AI owner identity.
+	aiOwnerKinds []string
 )
+
+// decryptOrder is the fixed decryption attempt order; AAD binds kind, so a wrong kind can never decrypt.
+// It must list every registered kind exactly once.
+var decryptOrder = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference}
 
 func init() {
 	syncKinds = []kindSpec{
@@ -235,29 +244,65 @@ func init() {
 			collectNeedsUser: true,
 		},
 		{
-			// Tombstones collect last: a tombstone replaces a live object only when it is newer.
 			kind: KindTombstone, rank: 9, revision: revisionDeleted,
 			newPayload:  newPayload[tombstoneObject],
 			displayName: func(objectID string, _ []byte) string { return objectID },
 			apply: func(e *Engine, ctx context.Context, objectID string, plaintext []byte, report *SyncReport, userID string) (bool, bool) {
 				return e.applyTombstoneObject(ctx, objectID, plaintext, report, userID)
 			},
-			collect: (*Engine).collectTombstoneObjects,
 		},
 	}
+	validateKindRegistry()
+}
+
+func validateKindRegistry() {
+	optInDeclared := make(map[optInID]bool, len(optInSpecs))
+	for _, spec := range optInSpecs {
+		if spec.id <= optInNone || spec.id >= optInCount || optInDeclared[spec.id] {
+			panic("invalid or duplicate sync opt-in spec")
+		}
+		optInDeclared[spec.id] = true
+	}
 	syncKindMap = make(map[string]*kindSpec, len(syncKinds))
-	objectKinds = make([]string, 0, len(syncKinds))
+	ranks := make(map[int]string, len(syncKinds))
+	aiOwnerKinds = nil
 	for index := range syncKinds {
 		spec := &syncKinds[index]
 		if _, exists := syncKindMap[spec.kind]; exists {
 			panic("duplicate sync kind " + spec.kind)
 		}
-		if spec.newPayload == nil || spec.apply == nil || spec.collect == nil {
+		if other, exists := ranks[spec.rank]; exists {
+			panic("sync kinds " + other + " and " + spec.kind + " share a rank")
+		}
+		if spec.newPayload == nil || spec.apply == nil {
 			panic("incomplete sync kind " + spec.kind)
 		}
+		if (spec.kind == KindTombstone) != (spec.collect == nil) {
+			panic("sync kind " + spec.kind + ": only tombstones are collected outside the registry loop")
+		}
+		if spec.optIn != optInNone && !optInDeclared[spec.optIn] {
+			panic("sync kind " + spec.kind + " uses an undeclared opt-in")
+		}
 		syncKindMap[spec.kind] = spec
-		objectKinds = append(objectKinds, spec.kind)
+		ranks[spec.rank] = spec.kind
+		if spec.aiOwner {
+			aiOwnerKinds = append(aiOwnerKinds, spec.kind)
+		}
 	}
+	if _, ok := syncKindMap[KindTombstone]; !ok {
+		panic("sync kind registry lacks tombstones")
+	}
+	if len(decryptOrder) != len(syncKinds) {
+		panic("decryptOrder must list every sync kind once")
+	}
+	seen := make(map[string]bool, len(decryptOrder))
+	for _, kind := range decryptOrder {
+		if _, ok := syncKindMap[kind]; !ok || seen[kind] {
+			panic("decryptOrder must list every sync kind once")
+		}
+		seen[kind] = true
+	}
+	objectKinds = append([]string(nil), decryptOrder...)
 }
 
 func lookupKind(kind string) (*kindSpec, bool) {

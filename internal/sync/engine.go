@@ -805,7 +805,7 @@ func (e *Engine) syncTombstoneList(ctx context.Context, includeAI ...bool) ([]sy
 	result := []syncTombstoneRow{}
 	statement := tombstone.WithContext(ctx).Select(tombstone.ID, tombstone.Kind, tombstone.DeletedAt)
 	if len(includeAI) > 0 && !includeAI[0] {
-		statement = statement.Where(tombstone.Kind.NotIn(KindAIProfile, KindAIPermission, KindAIGrant))
+		statement = statement.Where(tombstone.Kind.NotIn(aiOwnerKinds...))
 	}
 	err := statement.
 		Where(ownerConditions(ctx, tombstone.TableName())...).
