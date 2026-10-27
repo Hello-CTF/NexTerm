@@ -268,6 +268,47 @@ describe("multi-line paste prompt", () => {
     await expect(back.result).resolves.toBe(false);
   });
 
+  it("keeps one account's choice away from another account in the same browser", async () => {
+    const alice = memoryStore();
+    registerAccountPreferenceStore(alice);
+    await flush();
+    const first = await paste("a\nb", "t1");
+    act(() => {
+      checkbox("以后都不再提示").click();
+    });
+    click(button("粘贴"));
+    await expect(first.result).resolves.toBe(true);
+    expect(alice.puts).toContainEqual({ [KEY]: false });
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe(false);
+    expect(localStorage.getItem("nexterm.terminalClose.v1") ?? "").not.toContain("confirmMultilinePaste");
+
+    const bob = memoryStore();
+    registerAccountPreferenceStore(bob);
+    await flush();
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe(true);
+    const bobPaste = await paste("a\nb", "t2");
+    expect(bobPaste.prompted).toBe(true);
+    click(button("取消"));
+    await expect(bobPaste.result).resolves.toBe(false);
+    expect(bob.puts).toEqual([]);
+  });
+
+  it("lets the server default decide over a value saved on this device without an account", async () => {
+    setTerminalConfirmMultilinePaste(false);
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe(false);
+    const store: AccountPreferenceStore = {
+      getView: async () => ({ defaults: { [KEY]: true }, overrides: {} }),
+      putOverrides: async () => undefined,
+      deleteOverrides: async () => undefined,
+    };
+    registerAccountPreferenceStore(store);
+    await flush();
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe(true);
+
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe(false);
+  });
+
   it("honours the preference synced from another device", async () => {
     registerAccountPreferenceStore(memoryStore({ [KEY]: false }));
     await vi.waitFor(() => expect(getTerminalPrefs().confirmMultilinePaste).toBe(false));

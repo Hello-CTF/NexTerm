@@ -275,11 +275,11 @@ function loadTerminal(): TerminalPrefs {
     : local.defaultMode;
   const gpu = preferenceValue<unknown>(TERMINAL_GPU_ACCELERATION_KEY, local.gpuAcceleration, TERMINAL_DEFAULTS.gpuAcceleration);
   const links = preferenceValue<unknown>(TERMINAL_LINK_ACTIVATION_KEY, local.linkActivation, TERMINAL_DEFAULTS.linkActivation);
-  const confirmPaste = preferenceValue<unknown>(
-    TERMINAL_CONFIRM_MULTILINE_PASTE_KEY,
-    local.confirmMultilinePaste,
-    TERMINAL_DEFAULTS.confirmMultilinePaste,
-  );
+  // A signed-in account reads only its own layers (override, then server default): a device value saved without an
+  // account, or by another account in this browser, must not decide whether this account is asked before pasting.
+  const confirmPaste = terminalDefaultUsesAccount()
+    ? accountOverrides[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY] ?? accountDefaults[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]
+    : local.confirmMultilinePaste;
   return {
     closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction,
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
@@ -364,20 +364,22 @@ export function setTerminalLinkActivation(value: TerminalLinkActivation): void {
   for (const listener of terminalListeners) listener();
 }
 
-// setTerminalConfirmMultilinePaste is an account preference like the other terminal choices: once an account store is
-// registered it is written as an override and reaches the user's other devices through preference sync.
+// setTerminalConfirmMultilinePaste writes a signed-in account's choice only as that account's override, which reaches
+// its other devices through preference sync; without an account it is kept on this device only.
 export function setTerminalConfirmMultilinePaste(value: boolean): void {
   if (terminalPrefs.confirmMultilinePaste === value) return;
   terminalPrefs = { ...terminalPrefs, confirmMultilinePaste: value };
-  try {
-    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
-    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
-    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, confirmMultilinePaste: value }));
-  } catch {
-  }
-  if (accountStore) {
-    void accountStore.putOverrides({ [TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]: value }).catch(() => undefined);
+  const store = terminalDefaultUsesAccount() ? accountStore : null;
+  if (store) {
+    void store.putOverrides({ [TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]: value }, []);
+  } else {
+    try {
+      const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+      const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+      localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, confirmMultilinePaste: value }));
+    } catch {
+    }
   }
   for (const listener of terminalListeners) listener();
 }
