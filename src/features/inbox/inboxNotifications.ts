@@ -1,10 +1,15 @@
-import { useUi } from "../../app/store";
+import { useUi, type ToastAction } from "../../app/store";
 import { needsAttention, tabAwareness, toAwareness, type SessionAwareness } from "../../app/sessionAwarenessStore";
 import { visibleTerminalTabIds } from "../../app/sessionAwareness";
 import { EVENTS, listenEvent, type TerminalAttentionEvent } from "../../ipc/events";
 import { attentionDetail, openInboxTab, uiTabForBackendTab } from "./inbox";
 import { getNotificationPrefs } from "./notificationPrefs";
-import { notificationErrorText, systemNotifier, type SystemNotifier } from "./systemNotifications";
+import {
+  notificationErrorText,
+  systemNotifier,
+  type SystemNotificationStatus,
+  type SystemNotifier,
+} from "./systemNotifications";
 
 // A state is notified only after it held this long. Every device receives the same state; a device whose user is
 // at the session marks it seen within this window, and the others then drop it instead of popping a notification
@@ -19,6 +24,8 @@ export interface InboxNotificationDeps {
   visibleTabIds: () => ReadonlySet<string>;
   // A system notification could not be shown.
   onError: (message: string) => void;
+  // The in-app fallback while system notifications are off or unavailable.
+  toast: (text: string, action: ToastAction) => void;
 }
 
 const defaultDeps = (): InboxNotificationDeps => ({
@@ -26,6 +33,7 @@ const defaultDeps = (): InboxNotificationDeps => ({
   appFocused: () => !document.hidden && document.hasFocus(),
   visibleTabIds: visibleTerminalTabIds,
   onError: (message) => useUi.getState().pushToast("error", message),
+  toast: (text, action) => useUi.getState().pushToast("info", text, action),
 });
 
 let deps: InboxNotificationDeps | null = null;
@@ -36,6 +44,23 @@ const notified = new Map<string, string>();
 // shown holds the tabs with a system notification on screen.
 const shown = new Set<string>();
 let errorReported = false;
+// statusCache holds the notifier's status for this run; refreshNotificationStatus drops it.
+let statusCache: Promise<SystemNotificationStatus> | null = null;
+
+// refreshNotificationStatus makes the next notification read the status again, after the user granted or
+// refused the permission.
+export function refreshNotificationStatus(): void {
+  statusCache = null;
+}
+
+// systemUsable: notifications can be shown, or the desktop can still ask for the permission. A browser can only
+// ask from a user gesture, so there a pending permission means no.
+async function systemUsable(notifier: SystemNotifier): Promise<boolean> {
+  statusCache ??= notifier.status().catch(() => ({ available: false }));
+  const status = await statusCache;
+  if (!status.available || status.permission === "denied") return false;
+  return status.permission === "granted" || !notifier.knownStatus;
+}
 
 const notificationId = (tabId: string) => `attention:${tabId}`;
 
@@ -84,8 +109,11 @@ function deliver(tabId: string): void {
   if (notified.get(tabId) === key) return;
   notified.set(tabId, key);
   const prefs = getNotificationPrefs();
-  const wanted = awareness.state === "needs_me" ? prefs.needsMe : prefs.finished && awareness.notable;
-  if (!prefs.system || !wanted) return;
+  const wanted =
+    awareness.state === "needs_me"
+      ? prefs.needsMe && (!awareness.inferred || prefs.inferred)
+      : prefs.finished && awareness.notable;
+  if (!wanted) return;
   // The user sees the tab: its badge is enough.
   if (deps.appFocused() && deps.visibleTabIds().has(tabId)) return;
   // A click must lead somewhere: only sessions this client shows notify here.
@@ -93,19 +121,31 @@ function deliver(tabId: string): void {
   if (!uiTabId) return;
   const { workspaces } = useUi.getState();
   const workspace = workspaces.find((w) => w.panes.some((p) => p.tabs.some((t) => t.id === uiTabId)));
-  const tab = workspace?.panes.flatMap((p) => p.tabs).find((t) => t.id === uiTabId);
-  const name = tab?.title ?? "终端";
-  const title = awareness.state === "needs_me" ? `${name} 需要你处理` : `${name} 命令已结束`;
-  const body = [attentionDetail(awareness), workspace?.title].filter(Boolean).join(" · ");
-  const notifier = deps.notifier;
-  shown.add(tabId);
-  void notifier.show({ id: notificationId(tabId), title, body, tabId }).catch((error: unknown) => {
-    shown.delete(tabId);
-    if (errorReported) return;
-    // Reported once per run, so a broken notification service does not repeat the same error.
-    errorReported = true;
-    deps?.onError(notificationErrorText(error));
-  });
+  // The title leads with the workspace the user named; text a remote program controls (its notification, the tab
+  // title it set) stays in the body.
+  const place = workspace?.title ?? "终端";
+  const title = `${place} · ${awareness.state === "needs_me" ? "需要你处理" : "命令已结束"}`;
+  const detail = attentionDetail(awareness);
+  const active = deps;
+  void (async () => {
+    const usable = prefs.system && (await systemUsable(active.notifier));
+    // The state may have been seen or replaced while the status was read.
+    if (deps !== active || notified.get(tabId) !== key) return;
+    if (!usable) {
+      active.toast(`${title}：${detail}`, { label: "查看", onSelect: () => openInboxTab(tabId) });
+      return;
+    }
+    shown.add(tabId);
+    try {
+      await active.notifier.show({ id: notificationId(tabId), title, body: `来自 ${place}：${detail}`, tabId });
+    } catch (error) {
+      shown.delete(tabId);
+      if (errorReported) return;
+      // Reported once per run, so a broken notification service does not repeat the same error.
+      errorReported = true;
+      active.onError(notificationErrorText(error));
+    }
+  })();
 }
 
 // notifyAi shows an AI notify-tool message as a system notification while the user is away from the app; the
@@ -114,7 +154,9 @@ export function notifyAi(text: string): void {
   const active = deps ?? defaultDeps();
   const prefs = getNotificationPrefs();
   if (!prefs.system || !prefs.ai || active.appFocused()) return;
-  void active.notifier.show({ id: "ai", title: "AI 通知", body: text }).catch(() => {});
+  void systemUsable(active.notifier).then((usable) => {
+    if (usable) return active.notifier.show({ id: "ai", title: "AI 通知", body: text });
+  }).catch(() => {});
 }
 
 export function startInboxNotifications(override?: Partial<InboxNotificationDeps>): void {
@@ -132,6 +174,7 @@ export function resetInboxNotifications(): void {
   for (const tabId of [...pending.keys(), ...shown]) withdraw(tabId);
   notified.clear();
   errorReported = false;
+  statusCache = null;
 }
 
 export function stopInboxNotificationsForTest(): void {

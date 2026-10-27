@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { describeError } from "../../ui/errorText";
 import { setNotificationPrefs, useNotificationPrefs, type NotificationPrefs } from "./notificationPrefs";
+import { refreshNotificationStatus } from "./inboxNotifications";
 import { systemNotifier, type SystemNotificationStatus } from "./systemNotifications";
 
 const CATEGORIES: readonly { key: Exclude<keyof NotificationPrefs, "system">; label: string; hint: string }[] = [
-  { key: "needsMe", label: "需要我处理", hint: "终端响铃、程序发出通知（OSC 9/777/99）或停在提问处" },
+  { key: "needsMe", label: "需要我处理", hint: "终端响铃或程序发出通知（OSC 9/777/99）" },
+  { key: "inferred", label: "根据屏幕推测的提问", hint: "屏幕看起来停在提问处，可能误判" },
   { key: "finished", label: "长命令结束", hint: "运行 10 秒以上的命令结束（需要 shell 集成）" },
   { key: "ai", label: "AI 通知", hint: "AI 助手的通知，仅在窗口不在前台时弹出" },
 ];
@@ -41,7 +43,10 @@ export function NotificationSettings() {
     setError(null);
     systemNotifier()
       .request()
-      .then(setStatus)
+      .then((next) => {
+        refreshNotificationStatus();
+        setStatus(next);
+      })
       .catch((e: unknown) => setError(describeError(e)));
   }, []);
 
@@ -52,7 +57,7 @@ export function NotificationSettings() {
         <div className="min-w-0 flex-1">
           <div className="text-[12.5px] text-neutral-200">在此设备弹出系统通知</div>
           <p className="nx-hint mt-0.5">
-            另一个工作区或主机的会话需要你时弹出系统通知，点击回到该终端；正在看的终端不弹出。顶栏铃铛始终列出这些会话。只影响本设备。
+            另一个工作区或主机的会话需要你时弹出系统通知，点击回到该终端；正在看的终端不弹出。关闭或系统不支持时改为应用内提示。顶栏铃铛始终列出这些会话。只影响本设备。
           </p>
           <p className="nx-hint mt-0.5" role="status">
             {statusText(status)}

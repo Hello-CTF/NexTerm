@@ -25,6 +25,7 @@ import { InboxButton } from "../../features/inbox/InboxButton";
 import {
   NOTIFY_GRACE_MS,
   considerAttention,
+  refreshNotificationStatus,
   startInboxNotifications,
   stopInboxNotificationsForTest,
 } from "../../features/inbox/inboxNotifications";
@@ -65,8 +66,8 @@ class FakeNotifier implements SystemNotifier {
   shown: SystemNotificationInput[] = [];
   removed: string[] = [];
   click: (click: NotificationClickEvent) => void = () => {};
-  status = () => Promise.resolve({ available: true, permission: "granted" as const });
-  request = this.status;
+  status: SystemNotifier["status"] = () => Promise.resolve({ available: true, permission: "granted" });
+  request: SystemNotifier["request"] = () => this.status();
   show = (notification: SystemNotificationInput) => {
     this.shown.push(notification);
     return Promise.resolve();
@@ -81,6 +82,13 @@ class FakeNotifier implements SystemNotifier {
 
 let notifier: FakeNotifier;
 let focused = true;
+let toasts: string[] = [];
+let toastActions: (() => void)[] = [];
+
+// grace lets the grace period pass and the notification settle.
+async function grace(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(NOTIFY_GRACE_MS);
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -89,12 +97,18 @@ beforeEach(() => {
   resetAwarenessStore();
   seed();
   focused = true;
+  toasts = [];
+  toastActions = [];
   notifier = new FakeNotifier();
   startInboxNotifications({
     notifier,
     appFocused: () => focused,
     visibleTabIds: () => new Set(["T1"]),
     onError: () => {},
+    toast: (text, action) => {
+      toasts.push(text);
+      toastActions.push(action.onSelect);
+    },
   });
   mocks.attentionSeen.mockReset().mockResolvedValue(undefined);
 });
@@ -127,77 +141,107 @@ describe("inbox entries", () => {
 });
 
 describe("system notifications", () => {
-  it("notifies a session in another workspace after the grace period and opens it on click", () => {
+  it("notifies a session in another workspace after the grace period and opens it on click", async () => {
     live(attention({ tabId: "T2", reason: "notify", body: "migration waits" }));
     expect(notifier.shown).toEqual([]);
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
+    await grace();
+    // The title is the workspace the user named; the program's text only reaches the body.
     expect(notifier.shown).toEqual([
-      { id: "attention:T2", title: "migrate 需要你处理", body: "migration waits · db-01", tabId: "T2" },
+      { id: "attention:T2", title: "db-01 · 需要你处理", body: "来自 db-01：migration waits", tabId: "T2" },
     ]);
+    expect(toasts).toEqual([]);
 
     notifier.click({ id: "attention:T2", tabId: "T2" });
     expect(useUi.getState().activeWorkspaceId).toBe("ws2");
   });
 
-  it("does not notify a state another device saw within the grace period, and takes back one seen later", () => {
+  it("does not notify a state another device saw within the grace period, and takes back one seen later", async () => {
     live(attention({ tabId: "T2" }));
     live(attention({ tabId: "T2", seen: true }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
+    await grace();
     expect(notifier.shown).toEqual([]);
 
     live(attention({ tabId: "T2", since: "2026-10-27T11:00:00Z" }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
+    await grace();
     expect(notifier.shown).toHaveLength(1);
     live(attention({ tabId: "T2", since: "2026-10-27T11:00:00Z", seen: true }));
     expect(notifier.removed).toEqual(["attention:T2"]);
   });
 
-  it("merges repeated bells of one state and notifies again for new notification text", () => {
+  it("merges repeated bells of one state and notifies again for new notification text", async () => {
     live(attention({ tabId: "T2" }));
     live(attention({ tabId: "T2" }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
+    await grace();
     live(attention({ tabId: "T2" }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
+    await grace();
     expect(notifier.shown).toHaveLength(1);
 
     live(attention({ tabId: "T2", reason: "notify", body: "second step" }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
+    await grace();
     expect(notifier.shown.map((n) => n.id)).toEqual(["attention:T2", "attention:T2"]);
     expect(notifier.shown[1].body).toContain("second step");
   });
 
-  it("stays quiet for a session on screen while the app has focus, but not once the app is in the background", () => {
+  it("stays quiet for a session on screen while the app has focus, but not once the app is in the background", async () => {
     live(attention({ tabId: "T1" }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
+    await grace();
     expect(notifier.shown).toEqual([]);
+    expect(toasts).toEqual([]);
 
     focused = false;
     live(attention({ tabId: "T1", since: "2026-10-27T11:00:00Z" }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
+    await grace();
     expect(notifier.shown.map((n) => n.tabId)).toEqual(["T1"]);
   });
 
-  it("notifies only long finished commands and follows the device preferences", () => {
+  it("notifies only long finished commands, signalled prompts by default, and follows the device preferences", async () => {
     live(attention({ tabId: "T2", state: "just_finished", reason: "command_end", exitCode: 0 }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
+    await grace();
     expect(notifier.shown).toEqual([]);
     live(attention({ tabId: "T2", state: "just_finished", reason: "command_end", exitCode: 0, notable: true, since: "2026-10-27T11:00:00Z" }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
-    expect(notifier.shown.map((n) => n.title)).toEqual(["migrate 命令已结束"]);
+    await grace();
+    expect(notifier.shown.map((n) => n.title)).toEqual(["db-01 · 命令已结束"]);
+
+    // A prompt guessed from the screen stays in the inbox only, unless the user asks for it.
+    live(attention({ tabId: "T2", reason: "prompt", confidence: "heuristic", since: "2026-10-27T11:30:00Z" }));
+    await grace();
+    expect(notifier.shown).toHaveLength(1);
+    setNotificationPrefs({ inferred: true });
+    live(attention({ tabId: "T2", reason: "prompt", confidence: "heuristic", since: "2026-10-27T11:40:00Z" }));
+    await grace();
+    expect(notifier.shown).toHaveLength(2);
 
     setNotificationPrefs({ needsMe: false });
     live(attention({ tabId: "T2", since: "2026-10-27T12:00:00Z" }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
-    setNotificationPrefs({ needsMe: true, system: false });
-    live(attention({ tabId: "T2", since: "2026-10-27T13:00:00Z" }));
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS);
-    expect(notifier.shown).toHaveLength(1);
+    await grace();
+    expect(notifier.shown).toHaveLength(2);
+    expect(toasts).toEqual([]);
   });
 
-  it("does not replay states that were waiting when the list loaded", () => {
-    applyAwareness([attention({ tabId: "T2" })]);
-    vi.advanceTimersByTime(NOTIFY_GRACE_MS * 2);
+  it("falls back to an in-app toast while system notifications are off or unavailable", async () => {
+    setNotificationPrefs({ system: false });
+    live(attention({ tabId: "T2", reason: "notify", body: "migration waits" }));
+    await grace();
     expect(notifier.shown).toEqual([]);
+    expect(toasts).toEqual(["db-01 · 需要你处理：migration waits"]);
+    toastActions[0]();
+    expect(useUi.getState().activeWorkspaceId).toBe("ws2");
+
+    setNotificationPrefs({ system: true });
+    useUi.setState({ activeWorkspaceId: "ws1" });
+    refreshNotificationStatus();
+    notifier.status = () => Promise.resolve({ available: false, reason: "unsupported" });
+    live(attention({ tabId: "T2", since: "2026-10-27T11:00:00Z" }));
+    await grace();
+    expect(notifier.shown).toEqual([]);
+    expect(toasts).toHaveLength(2);
+  });
+
+  it("does not replay states that were waiting when the list loaded", async () => {
+    applyAwareness([attention({ tabId: "T2" })]);
+    await vi.advanceTimersByTimeAsync(NOTIFY_GRACE_MS * 2);
+    expect(notifier.shown).toEqual([]);
+    expect(toasts).toEqual([]);
   });
 });
 
@@ -218,6 +262,15 @@ describe("inbox button", () => {
     view = mount(createElement(InboxButton));
     const bell = view.container.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
     expect(bell.getAttribute("aria-label")).toContain("2 个会话");
+
+    click(bell);
+    // Focus moves into the list and comes back to the bell on Escape.
+    expect(view.container.querySelector('[role="dialog"]')?.contains(document.activeElement)).toBe(true);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(bell);
 
     click(bell);
     const rows = [...view.container.querySelectorAll("[data-inbox-tab]")];

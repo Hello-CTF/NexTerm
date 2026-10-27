@@ -69,9 +69,22 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
 export function InboxButton() {
   const entries = useInboxEntries();
   const [open, setOpen] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement>(null);
+  const bellRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const count = entries.length;
   const needsMe = entries.some((entry) => entry.awareness.state === "needs_me");
+
+  // While the list is open, focus starts in it and the "minutes ago" labels keep up.
+  useEffect(() => {
+    if (!open) return;
+    setNow(Date.now());
+    const panel = panelRef.current;
+    (panel?.querySelector<HTMLElement>("button:not([disabled])") ?? panel)?.focus();
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -79,7 +92,9 @@ export function InboxButton() {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      bellRef.current?.focus();
     };
     window.addEventListener("pointerdown", onDown, true);
     window.addEventListener("keydown", onKey);
@@ -93,6 +108,7 @@ export function InboxButton() {
   return (
     <div className="relative" ref={rootRef} style={wailsNoDragRegionStyle}>
       <button
+        ref={bellRef}
         type="button"
         className={`nx-icon-btn relative ${open ? "is-active" : ""}`}
         title={label}
@@ -115,8 +131,10 @@ export function InboxButton() {
       </button>
       {open && (
         <div
+          ref={panelRef}
           role="dialog"
           aria-label="收件箱"
+          tabIndex={-1}
           className="nx-inbox-panel fixed inset-x-2 top-[calc(var(--nx-inset-top,0px)+42px)] z-50 max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1.5 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-[30px] sm:w-[360px]"
         >
           <div className="px-2 pb-1 pt-0.5 text-[11.5px] font-semibold text-neutral-400">需要关注的会话</div>
@@ -125,7 +143,7 @@ export function InboxButton() {
           ) : (
             <ul className="flex flex-col">
               {entries.map((entry) => (
-                <InboxRow key={entry.tabId} entry={entry} now={Date.now()} onOpen={() => setOpen(false)} />
+                <InboxRow key={entry.tabId} entry={entry} now={now} onOpen={() => setOpen(false)} />
               ))}
             </ul>
           )}
