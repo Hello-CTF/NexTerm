@@ -66,7 +66,7 @@ beforeEach(() => {
     verifiedAt: 1,
     lastError: "",
   });
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: true, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: true, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false });
   mocks.compare.mockResolvedValue({ rows: [], remote: 0, warnings: [], userId: "u-1", compareToken: "compare-1" });
   mocks.ask.mockResolvedValue(true);
 });

@@ -213,6 +213,12 @@ type CronJob struct {
 	RunCoalesced        bool   `gorm:"column:run_coalesced;not null;default:0;check:chk_cron_run_coalesced,run_coalesced IN (false,true)" json:"runCoalesced"`
 	OwnerID             string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_cron_job_owner" json:"owner_id"`
 	OwnerKind           string `gorm:"size:16;column:owner_kind;not null;default:''" json:"owner_kind"`
+	// DeviceID binds the job to the device that runs it; jobs synced from another device are kept but never run here.
+	// An empty value is a job created before binding existed, run by the device that holds it.
+	DeviceID   string `gorm:"size:64;column:device_id;not null;default:''" json:"deviceId"`
+	DeviceName string `gorm:"size:256;column:device_name;not null;default:''" json:"deviceName"`
+	// ConfigUpdatedAt is the sync revision: it moves when the job's configuration changes, not on run bookkeeping.
+	ConfigUpdatedAt int64 `gorm:"column:config_updated_at;not null;default:0" json:"configUpdatedAt"`
 }
 
 func (CronJob) TableName() string { return "cron_job" }

@@ -460,6 +460,8 @@ func cronIPCError(err error) error {
 		return ipc.WrapError(ipc.CodeBadParam, cron.ErrConflict.Error(), err)
 	case errors.Is(err, cron.ErrJobLimit):
 		return ipc.WrapError(ipc.CodeBadParam, cron.ErrJobLimit.Error(), err)
+	case errors.Is(err, cron.ErrForeignDevice):
+		return ipc.WrapError(ipc.CodeBadParam, cron.ErrForeignDevice.Error(), err)
 	case errors.Is(err, cron.ErrJobRunning):
 		return ipc.WrapError(ipc.CodeBadParam, cron.ErrJobRunning.Error(), err)
 	case errors.Is(err, cron.ErrInvalidSchedule):

@@ -674,6 +674,10 @@ export type CronJob = {
   run: CronRunState;
   ownerId: string;
   ownerKind: string;
+  deviceId?: string;
+  deviceName?: string;
+  foreignDevice?: boolean;
+  configUpdatedAt?: string;
 };
 
 export type CronJobRequest = {
@@ -1215,6 +1219,21 @@ export type FinderQuery = {
   value: string;
 };
 
+export type ForeignCronJob = {
+  id: string;
+  name: string;
+  prompt: string;
+  schedule: string;
+  timezone: string;
+  enabled: boolean;
+  deviceId: string;
+  deviceName: string;
+};
+
+export type ForeignCronRemoveRequest = {
+  id: string;
+};
+
 export type ForwardRecoverOutcomeDTO = {
   assetId: string;
   sessionId?: string;
@@ -1519,6 +1538,7 @@ export type KindOptIn = {
   runbookTemplates: boolean;
   skills: boolean;
   memory: boolean;
+  cron: boolean;
 };
 
 export type KindOptInPatch = {
@@ -1531,6 +1551,7 @@ export type KindOptInPatch = {
   runbookTemplates?: boolean | null;
   skills?: boolean | null;
   memory?: boolean | null;
+  cron?: boolean | null;
 };
 
 export type KnownHostRequest = {

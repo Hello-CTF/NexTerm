@@ -8,7 +8,7 @@ import (
 )
 
 // Each opt-in switch must persist, read back and gate its own kinds independently of the others.
-// AI memory defaults off; every other switch defaults on.
+// AI memory and cron default off; every other switch defaults on.
 func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 	instance := newTestInstance(t, false)
 	cases := []struct {
@@ -26,14 +26,15 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 		{"runbookTemplates", KindOptInPatch{RunbookTemplates: boolPtr(false)}, func(v KindOptIn) bool { return !v.RunbookTemplates }, KindRunbookTemplate},
 		{"skills", KindOptInPatch{Skills: boolPtr(false)}, func(v KindOptIn) bool { return !v.Skills }, KindSkill},
 		{"memory", KindOptInPatch{Memory: boolPtr(false)}, func(v KindOptIn) bool { return !v.Memory }, KindMemory},
+		{"cron", KindOptInPatch{Cron: boolPtr(false)}, func(v KindOptIn) bool { return !v.Cron }, KindCron},
 	}
-	gated := []string{KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference, KindStateRule, KindRunbookTemplate, KindSkill, KindMemory}
+	gated := []string{KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference, KindStateRule, KindRunbookTemplate, KindSkill, KindMemory, KindCron}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			userID := "u-" + tc.name
 			ctx := WithUserID(context.Background(), userID)
 			// Default-off switches start enabled so each case disables exactly one.
-			if _, err := instance.service.KindOptInSet(ctx, KindOptInPatch{Memory: boolPtr(true)}); err != nil {
+			if _, err := instance.service.KindOptInSet(ctx, KindOptInPatch{Memory: boolPtr(true), Cron: boolPtr(true)}); err != nil {
 				t.Fatal(err)
 			}
 			view, err := instance.service.KindOptInSet(ctx, tc.patch)
@@ -44,7 +45,7 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 				t.Fatalf("switch not disabled: %+v", view)
 			}
 			disabled := 0
-			for _, flag := range []bool{view.KnownHost, view.AIProfile, view.AIPermission, view.AIGrant, view.Preferences, view.StateRules, view.RunbookTemplates, view.Skills, view.Memory} {
+			for _, flag := range []bool{view.KnownHost, view.AIProfile, view.AIPermission, view.AIGrant, view.Preferences, view.StateRules, view.RunbookTemplates, view.Skills, view.Memory, view.Cron} {
 				if !flag {
 					disabled++
 				}
@@ -81,20 +82,20 @@ func TestKindOptInDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Memory || !view.StateRules || !view.RunbookTemplates || !view.Skills || !view.Preferences {
-		t.Fatalf("defaults=%+v, want memory off and the others on", view)
+	if view.Memory || view.Cron || !view.StateRules || !view.RunbookTemplates || !view.Skills || !view.Preferences {
+		t.Fatalf("defaults=%+v, want memory and cron off and the others on", view)
 	}
 }
 
 // The opt-in key is stored with reconciled cursors; its encoding must not change for existing switches.
 func TestKindOptInKeyEncoding(t *testing.T) {
-	if got := (kindOptIn{}).key(); got != "optin:000000000" {
+	if got := (kindOptIn{}).key(); got != "optin:0000000000" {
 		t.Fatalf("zero key=%q", got)
 	}
-	if got := (kindOptIn{optInKnownHost: true, optInAIGrant: true}).key(); got != "optin:100100000" {
+	if got := (kindOptIn{optInKnownHost: true, optInAIGrant: true}).key(); got != "optin:1001000000" {
 		t.Fatalf("key=%q", got)
 	}
-	if got := allKindOptIn().key(); got != "optin:111111111" {
+	if got := allKindOptIn().key(); got != "optin:1111111111" {
 		t.Fatalf("all key=%q", got)
 	}
 }
@@ -142,9 +143,10 @@ func TestSortObjectsForPushKindOrder(t *testing.T) {
 		"n-runbook":    {kind: KindRunbookTemplate},
 		"o-skill":      {kind: KindSkill},
 		"p-memory":     {kind: KindMemory},
+		"q-cron":       {kind: KindCron},
 	}
 	want := []string{"k-group", "j-credential", "i-snippet", "h-asset", "g-knownhost", "f-profile",
-		"e-permission", "d-grant", "c-preference", "m-rule", "n-runbook", "o-skill", "p-memory", "b-tombstone", "a-transcript", "l-unknown"}
+		"e-permission", "d-grant", "c-preference", "m-rule", "n-runbook", "o-skill", "p-memory", "q-cron", "b-tombstone", "a-transcript", "l-unknown"}
 	got := sortObjectsForPush(objects)
 	if len(got) != len(want) {
 		t.Fatalf("order=%v", got)

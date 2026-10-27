@@ -209,6 +209,21 @@ func (s *Store) SetMemorySyncOptIn(ctx context.Context, userID string, enabled b
 	return s.SettingSet(ctx, "sync.optin.memory."+userID, syncOptInValue(enabled))
 }
 
+// CronSyncOptIn defaults off: synced scheduled jobs carry AI prompts and only ever run on the device they are bound to.
+func (s *Store) CronSyncOptIn(ctx context.Context, userID string) (bool, error) {
+	if err := syncOptInUser(userID, "定时任务"); err != nil {
+		return false, err
+	}
+	return s.syncOptInGetOr(ctx, "sync.optin.cron."+userID, false)
+}
+
+func (s *Store) SetCronSyncOptIn(ctx context.Context, userID string, enabled bool) error {
+	if err := syncOptInUser(userID, "定时任务"); err != nil {
+		return err
+	}
+	return s.SettingSet(ctx, "sync.optin.cron."+userID, syncOptInValue(enabled))
+}
+
 func (s *Store) AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombstoneID string, deletedAt int64) error {
 	userID, hasIdentity := SyncOptInUserID(ctx)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

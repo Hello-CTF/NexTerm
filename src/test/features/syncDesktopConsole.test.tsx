@@ -64,7 +64,7 @@ import { SyncCard } from "../../features/settings/SyncCard";
 import { useUi } from "../../app/store";
 
 const LINK = { url: "https://nexterm.example.com", username: "alice", insecure: false, hasPassword: true, verifiedAt: 1700000000000, lastError: "" };
-const OPT_IN = { knownHost: true, aiProfile: false, aiPermission: true, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false };
+const OPT_IN = { knownHost: true, aiProfile: false, aiPermission: true, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false };
 
 let mounted: MountedView | undefined;
 

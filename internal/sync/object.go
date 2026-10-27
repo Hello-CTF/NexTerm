@@ -30,6 +30,7 @@ const (
 	KindRunbookTemplate = "runbook_template"
 	KindSkill           = "skill"
 	KindMemory          = "memory"
+	KindCron            = "cron"
 )
 
 const (

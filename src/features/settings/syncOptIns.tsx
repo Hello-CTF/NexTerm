@@ -43,7 +43,7 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     key: "preferences",
     summary: "外观快捷键",
     label: "同步外观与快捷键",
-    hint: "默认开启。关闭后不再同步界面外观和快捷键覆盖；Cron 任务不同步。",
+    hint: "默认开启。关闭后不再同步界面外观和快捷键覆盖；定时任务由单独的开关控制。",
   },
   {
     key: "stateRules",
@@ -68,6 +68,12 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     summary: "AI 记忆",
     label: "同步 AI 记忆",
     hint: "默认关闭。记忆内容端到端加密同步，离开本机前和写入前都会再次脱敏疑似密钥。",
+  },
+  {
+    key: "cron",
+    summary: "定时任务",
+    label: "同步 AI 定时任务",
+    hint: "默认关闭。每个任务只在创建它的设备上运行；其他设备只显示，可在此删除不再需要的任务。",
   },
 ];
 

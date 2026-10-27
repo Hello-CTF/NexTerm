@@ -36,7 +36,7 @@ vi.mock("../ipc/commands", () => ({
   syncApi: {
     linkGet: vi.fn().mockResolvedValue({ url: "" }),
     status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
-    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false }),
+    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false }),
     wake: vi.fn().mockResolvedValue(undefined),
   },
   appUpdateApi: { check: mocks.updateCheck },

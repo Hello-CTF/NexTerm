@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron"
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"log/slog"
 	"math/rand/v2"
@@ -193,6 +194,10 @@ type Engine struct {
 	// skills is the AI skill manager whose per-owner cache synced overrides go through.
 	skillsMu sync.Mutex
 	skills   *skills.Manager
+
+	// cron is the cron job store bound to this database's device.
+	cronMu sync.Mutex
+	cron   *cron.SQLStore
 }
 
 func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog.Logger) *Engine {

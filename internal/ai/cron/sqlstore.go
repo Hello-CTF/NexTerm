@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
@@ -18,6 +19,9 @@ import (
 type SQLStore struct {
 	db     *gorm.DB
 	shared bool
+	// device is this database's device: new jobs are bound to it, and only
+	// its jobs (and unbound ones) are scheduled here.
+	device store.LocalDevice
 }
 
 type StoreOption func(*SQLStore)
@@ -39,11 +43,28 @@ func NewSQLStore(ctx context.Context, db *gorm.DB, options ...StoreOption) (*SQL
 	if !db.WithContext(ctx).Migrator().HasTable(&store.CronJob{}) {
 		return nil, fmt.Errorf("cron: cron_job table is missing or unreadable")
 	}
-	store := &SQLStore{db: db, shared: true}
-	for _, apply := range options {
-		apply(store)
+	device, err := store.LoadLocalDevice(ctx, db)
+	if err != nil {
+		return nil, err
 	}
-	return store, nil
+	sqlStore := &SQLStore{db: db, shared: true, device: device}
+	for _, apply := range options {
+		apply(sqlStore)
+	}
+	return sqlStore, nil
+}
+
+// Device is the device this store schedules jobs for.
+func (s *SQLStore) Device() store.LocalDevice { return s.device }
+
+// cronLocalDeviceWhere keeps the scheduler on jobs bound to this device or to none.
+const cronLocalDeviceWhere = `device_id IN ('', ?)`
+
+func (s *SQLStore) markForeign(jobs []Job) []Job {
+	for index := range jobs {
+		jobs[index].ForeignDevice = jobs[index].DeviceID != "" && jobs[index].DeviceID != s.device.ID
+	}
+	return jobs
 }
 
 func (s *SQLStore) Close() error {
@@ -74,7 +95,7 @@ func (s *SQLStore) List(ctx context.Context) ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	return jobsFromModels(rows), nil
+	return s.markForeign(jobsFromModels(rows)), nil
 }
 
 const (
@@ -93,7 +114,7 @@ func (s *SQLStore) ListDueIdle(ctx context.Context, now time.Time, limit int) ([
 	}
 	stamp := now.UnixMilli()
 	rows := []store.CronJob{}
-	statement := scopeCronJobs(ctx, s.db).Where(cronDueIdleWhere, true, stamp, stamp, stamp)
+	statement := scopeCronJobs(ctx, s.db).Where(cronDueIdleWhere, true, stamp, stamp, stamp).Where(cronLocalDeviceWhere, s.device.ID)
 	if !s.shared {
 		// Account mode leaves Open-mode jobs alone until the data upgrade
 		// attributes them to an account (it may be waiting for the first
@@ -118,7 +139,7 @@ func (s *SQLStore) ListRecoveryCandidates(ctx context.Context, now time.Time, li
 	rows := []store.CronJob{}
 	// run_id > '' is the sargable form of run_id <> '' (run_id is NOT NULL):
 	// the comparison keeps the recovery scan on idx_cron_job_recovery.
-	scoped := scopeCronJobs(ctx, s.db).Where(cronRecoveryWhere, stamp, stamp)
+	scoped := scopeCronJobs(ctx, s.db).Where(cronRecoveryWhere, stamp, stamp).Where(cronLocalDeviceWhere, s.device.ID)
 	if len(excludedIDs) > 0 {
 		scoped = scoped.Where("id NOT IN ?", excludedIDs)
 	}
@@ -157,6 +178,7 @@ func (s *SQLStore) Create(ctx context.Context, job Job, maxPerSession int) (Job,
 		return Job{}, err
 	}
 	job.OwnerID, job.OwnerKind = ownerFromContext(ctx)
+	job.DeviceID, job.DeviceName = s.device.ID, s.device.Name
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		cronJob := query.Use(tx).CronJob
 		existing, err := cronJob.WithContext(ctx).
@@ -261,7 +283,8 @@ func (s *SQLStore) Delete(ctx context.Context, sessionID, jobID string, expected
 		if info.RowsAffected != 1 {
 			return ErrConflict
 		}
-		return nil
+		// The tombstone lets the deletion reach the owner's other devices.
+		return store.RecordSyncTombstoneTx(ctx, tx, jobID, SyncTombstoneKind, ids.NowMS())
 	})
 }
 
@@ -276,6 +299,7 @@ func jobToModel(job Job) store.CronJob {
 		RunID: job.Run.ID, RunScheduledFor: optionalTimeMS(job.Run.ScheduledFor), RunStartedAt: optionalTimeMS(job.Run.StartedAt),
 		RunDeadline: optionalTimeMS(job.Run.Deadline), RunCoalesced: job.Run.Coalesced,
 		OwnerID: job.OwnerID, OwnerKind: string(job.OwnerKind),
+		DeviceID: job.DeviceID, DeviceName: job.DeviceName, ConfigUpdatedAt: timeMS(job.ConfigUpdatedAt),
 	}
 }
 
@@ -288,7 +312,7 @@ func jobAssignments(job store.CronJob) map[string]any {
 		"last_run_at": job.LastRunAt, "last_scheduled_for": job.LastScheduledFor, "last_coalesced": job.LastCoalesced, "last_error": job.LastError,
 		"lease_owner": job.LeaseOwner, "lease_expires_at": job.LeaseExpiresAt, "run_id": job.RunID,
 		"run_scheduled_for": job.RunScheduledFor, "run_started_at": job.RunStartedAt, "run_deadline": job.RunDeadline,
-		"run_coalesced": job.RunCoalesced,
+		"run_coalesced": job.RunCoalesced, "config_updated_at": job.ConfigUpdatedAt,
 	}
 }
 
@@ -302,6 +326,7 @@ func jobFromModel(row *store.CronJob) Job {
 		ConsecutiveFailures: int(row.ConsecutiveFailures), LastRunAt: nullTimeMS(row.LastRunAt), LastScheduledFor: nullTimeMS(row.LastScheduledFor),
 		LastCoalesced: row.LastCoalesced, LastError: row.LastError,
 		Lease: Lease{Owner: row.LeaseOwner}, Run: RunState{ID: row.RunID}, OwnerID: ownerID, OwnerKind: ownerKind,
+		DeviceID: row.DeviceID, DeviceName: row.DeviceName, ConfigUpdatedAt: configUpdatedAt(row),
 	}
 	if job.Lease.Owner != "" {
 		job.Lease.ExpiresAt = nullTimeMS(row.LeaseExpiresAt)
@@ -313,6 +338,15 @@ func jobFromModel(row *store.CronJob) Job {
 		job.Run.Coalesced = row.RunCoalesced
 	}
 	return job
+}
+
+// configUpdatedAt is the job's sync revision; a job written before the
+// column existed counts from its creation.
+func configUpdatedAt(row *store.CronJob) time.Time {
+	if row.ConfigUpdatedAt > 0 {
+		return time.UnixMilli(row.ConfigUpdatedAt).UTC()
+	}
+	return time.UnixMilli(row.CreatedAt).UTC()
 }
 
 func (s *SQLStore) validateAccess(ctx context.Context) error {

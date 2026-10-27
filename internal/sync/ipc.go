@@ -43,7 +43,7 @@ type LinkResetPasswordRequest struct {
 
 // KindOptIn is the per-account-user isolated sync opt-in view: known_host (host trust), AI model profiles, AI permissions,
 // AI grants (device authorization and permission modes), and appearance shortcuts are enabled by default.
-// State rules, runbook templates and AI skill overrides are enabled by default too; AI memory is off by default.
+// State rules, runbook templates and AI skill overrides are enabled by default too; AI memory and scheduled jobs are off by default.
 type KindOptIn struct {
 	KnownHost        bool `json:"knownHost"`
 	AIProfile        bool `json:"aiProfile"`
@@ -54,6 +54,7 @@ type KindOptIn struct {
 	RunbookTemplates bool `json:"runbookTemplates"`
 	Skills           bool `json:"skills"`
 	Memory           bool `json:"memory"`
+	Cron             bool `json:"cron"`
 }
 
 type KindOptInPatch struct {
@@ -66,6 +67,7 @@ type KindOptInPatch struct {
 	RunbookTemplates *bool `json:"runbookTemplates,omitempty"`
 	Skills           *bool `json:"skills,omitempty"`
 	Memory           *bool `json:"memory,omitempty"`
+	Cron             *bool `json:"cron,omitempty"`
 }
 
 // kindOptInUserID resolves the owning user of the opt-in: the /rpc session-injected identity takes precedence; desktop anonymous
@@ -237,6 +239,16 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.RegisterNested(dispatcher, CommandCollectKindObjects, func(ctx context.Context, _ *ipc.Call, input CollectKindObjectsRequest) (CollectKindObjectsResult, error) {
 				return s.CollectKindObjects(ctx, input)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, CommandCronForeignList, func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]ForeignCronJob, error) {
+				return s.ForeignCronJobs(ctx)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandCronForeignRemove, func(ctx context.Context, _ *ipc.Call, input ForeignCronRemoveRequest) (struct{}, error) {
+				return struct{}{}, s.ForeignCronRemove(ctx, input)
 			})
 		},
 		// Sync opt-in read/write: the user identity is injected by the /rpc session (UserIDFromContext); desktop anonymous direct connections
