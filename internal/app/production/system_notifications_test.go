@@ -117,3 +117,9 @@ func TestSystemNotifyDropsControlsAndBoundsIDs(t *testing.T) {
 		t.Fatalf("remove with a long id = %+v", response)
 	}
 }
+
+func TestSystemNotifyTurnsUnicodeLineSeparatorsIntoSpaces(t *testing.T) {
+	if got := cleanNotificationText("a\u2028b\u2029c"); got != "a b c" {
+		t.Fatalf("cleanNotificationText = %q", got)
+	}
+}

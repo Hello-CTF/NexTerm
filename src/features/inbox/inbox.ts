@@ -8,6 +8,7 @@ import {
   type AwarenessBadge,
   type SessionAwareness,
 } from "../../app/sessionAwarenessStore";
+import { isSeenUnsupported } from "../../app/sessionAwareness";
 import { terminalApi } from "../../ipc/commands";
 
 // An inbox entry is a terminal session whose needs_me or just_finished state nobody has seen yet, on any device. The
@@ -114,14 +115,14 @@ export function openInboxTab(tabId: string): boolean {
 }
 
 // markInboxEntrySeen clears the entry on every device through the backend's seen mark. A helper that cannot share
-// the mark (an older build answers unsupported) clears it on this device only.
+// the mark (an older build answers unsupported) clears it on this device only; other errors are transient and thrown for a retry.
 export async function markInboxEntrySeen(entry: Pick<InboxEntry, "tabId" | "awareness">): Promise<void> {
   const since = entry.awareness.since;
   if (!since) return;
   try {
     await terminalApi.attentionSeen(entry.tabId, since);
   } catch (error) {
-    if ((error as { code?: unknown } | null)?.code !== "unsupported") throw error;
+    if (!isSeenUnsupported(error)) throw error;
     markAwarenessSeenLocally(entry.tabId, since);
   }
 }

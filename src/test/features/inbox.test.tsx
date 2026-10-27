@@ -237,6 +237,18 @@ describe("system notifications", () => {
     expect(toasts).toHaveLength(2);
   });
 
+  it("falls back to a toast when showing fails, and reads the status again for the next state", async () => {
+    notifier.show = () => Promise.reject(new Error("permission refused"));
+    live(attention({ tabId: "T2", reason: "notify", body: "migration waits" }));
+    await grace();
+    expect(toasts).toEqual(["db-01 · 需要你处理：migration waits"]);
+
+    notifier.status = () => Promise.resolve({ available: true, permission: "denied" });
+    live(attention({ tabId: "T2", since: "2026-10-27T11:00:00Z", body: "second" }));
+    await grace();
+    expect(toasts).toEqual(["db-01 · 需要你处理：migration waits", "db-01 · 需要你处理：second"]);
+  });
+
   it("does not replay states that were waiting when the list loaded", async () => {
     applyAwareness([attention({ tabId: "T2" })]);
     await vi.advanceTimersByTimeAsync(NOTIFY_GRACE_MS * 2);
@@ -290,7 +302,7 @@ describe("inbox button", () => {
 
     // An older helper cannot share the mark: the entry clears on this device only.
     act(() => applyAwareness([attention({ tabId: "T2", since: "2026-10-27T11:00:00Z" })]));
-    mocks.attentionSeen.mockRejectedValueOnce({ code: "unsupported", message: "old helper" });
+    mocks.attentionSeen.mockRejectedValueOnce({ code: "unsupported", message: "old helper", detail: { reason: "seen_unsupported" } });
     click(view.container.querySelector('button[aria-haspopup="dialog"]') as Element);
     click(view.container.querySelector('[data-inbox-tab="T2"] button[aria-label^="标记"]') as Element);
     await flush();

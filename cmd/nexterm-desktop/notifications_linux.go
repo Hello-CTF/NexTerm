@@ -29,10 +29,11 @@ var bodyMarkup = sync.OnceValue(func() bool {
 	return slices.Contains(capabilities, "body-markup")
 })
 
-// platformNotification escapes the body for a notification server that
+// platformNotification escapes the summary and body for a notification server that
 // renders body markup, so remote text cannot add links or images.
 func platformNotification(notification production.SystemNotification) production.SystemNotification {
 	if bodyMarkup() {
+		notification.Title = escapeNotificationMarkup(notification.Title)
 		notification.Body = escapeNotificationMarkup(notification.Body)
 	}
 	return notification
