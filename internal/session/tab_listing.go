@@ -28,6 +28,13 @@ func (t *Tab) detachedAtLocked() int64 {
 	return unixMilliOrZero(t.detachedAt)
 }
 
+// detachedSinceOpenLocked reports that DetachedAt is only when this app run
+// reopened an existing helper session: no client has left it since, so the
+// real detach happened no later than that. The caller holds t.mu.
+func (t *Tab) detachedSinceOpenLocked() bool {
+	return t.reopened && t.detaches == 0 && len(t.subscribers) == 0
+}
+
 func unixMilliOrZero(at time.Time) int64 {
 	if at.IsZero() {
 		return 0

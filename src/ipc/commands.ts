@@ -430,6 +430,8 @@ export interface LiveTabInfo {
   detachedAt?: number;
   // Age of detachedAt on the backend's clock when it answered; omitted when zero.
   detachedMsAgo?: number;
+  // detachedAt is only when this app reopened an existing helper session that no client has left since.
+  detachedSinceOpen?: boolean;
   durable?: boolean;
   // The helper's attention state of a durable tab; absent when none is reported.
   state?: SessionAttentionState;

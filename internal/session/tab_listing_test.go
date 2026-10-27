@@ -8,6 +8,25 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
+func TestDetachedSinceOpenOnlyUntilAClientLeaves(t *testing.T) {
+	reopened := &Tab{reopened: true, subscribers: map[string]subscriber{}}
+	if !reopened.detachedSinceOpenLocked() {
+		t.Fatal("a reopened helper session nobody attached to is not marked")
+	}
+	reopened.subscribers["a-1"] = subscriber{}
+	if reopened.detachedSinceOpenLocked() {
+		t.Fatal("a subscribed tab is marked")
+	}
+	reopened.dropSubscriberLocked("a-1")
+	if reopened.detachedSinceOpenLocked() {
+		t.Fatal("a tab a client left is still marked: its detach time is real now")
+	}
+	created := &Tab{subscribers: map[string]subscriber{}}
+	if created.detachedSinceOpenLocked() {
+		t.Fatal("a tab this app run created is marked")
+	}
+}
+
 func listedTab(t *testing.T, manager *Manager, id string) TabInfo {
 	t.Helper()
 	for _, info := range manager.ListTabs() {

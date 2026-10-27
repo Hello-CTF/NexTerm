@@ -442,7 +442,8 @@ describe("BackgroundSessions table", () => {
     seedHost(s1, "ssh");
     const opened = NOW - 6 * MINUTE;
     mocks.listLive.mockResolvedValue([
-      liveTab({ tabId: "reopened", sessionKind: "ssh", title: "重开", durable: true, createdAt: opened, detachedAt: opened, detachedMsAgo: 6 * MINUTE }),
+      liveTab({ tabId: "reopened", sessionKind: "ssh", title: "重开", durable: true, createdAt: opened, detachedAt: opened, detachedMsAgo: 6 * MINUTE,
+        detachedSinceOpen: true }),
     ]);
     mocks.listDurable.mockResolvedValue([
       descriptor({ id: "reopened", title: "重开", state: "idle", createdAt: NOW - 300 * MINUTE,

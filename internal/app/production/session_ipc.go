@@ -374,8 +374,10 @@ type liveTabDTO struct {
 	CreatedAt       int64   `json:"createdAt,omitempty"`
 	DetachedAt      int64   `json:"detachedAt,omitempty"`
 	DetachedMSAgo   int64   `json:"detachedMsAgo,omitempty"`
-	Durable         bool    `json:"durable,omitempty"`
-	State           string  `json:"state,omitempty"`
+	// DetachedSinceOpen: the detach time is only when this app reopened the helper session.
+	DetachedSinceOpen bool   `json:"detachedSinceOpen,omitempty"`
+	Durable           bool   `json:"durable,omitempty"`
+	State             string `json:"state,omitempty"`
 }
 
 func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver, desktop bool) *terminalCommandService {
@@ -923,7 +925,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
 						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt,
-						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, DetachedMSAgo: info.DetachedMSAgo, Durable: info.Durable, State: info.State,
+						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, DetachedMSAgo: info.DetachedMSAgo, DetachedSinceOpen: info.DetachedSinceOpen, Durable: info.Durable, State: info.State,
 					})
 				}
 				return result, nil

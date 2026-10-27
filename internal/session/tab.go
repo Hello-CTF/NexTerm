@@ -193,6 +193,8 @@ type Tab struct {
 	// detaches counts subscribers removed by dropSubscriberLocked, so a rolled-back
 	// attach can tell whether another subscriber left while it was registered.
 	detaches uint64
+	// reopened marks a durable tab recovered from a helper session this app run did not create.
+	reopened bool
 }
 
 // acquireWrite takes the tab's write gate, giving up early when the caller's
@@ -238,7 +240,7 @@ func (t *Tab) infoLocked() TabInfo {
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
 		Exited: t.exited, Retainable: t.retainable || !t.ephemeral && !t.regularRemote, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
 		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
-		CreatedAt: unixMilliOrZero(t.createdAt), DetachedAt: t.detachedAtLocked(),
+		CreatedAt: unixMilliOrZero(t.createdAt), DetachedAt: t.detachedAtLocked(), DetachedSinceOpen: t.detachedSinceOpenLocked(),
 	}
 }
 
@@ -556,7 +558,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
 		streamEpoch: ids.New(), outputWake: make(chan struct{}),
-		createdAt: openStart, detachedAt: openStart,
+		createdAt: openStart, detachedAt: openStart, reopened: options.Durable != nil && options.Durable.Recover,
 	}
 	if options.Durable == nil {
 		tab.runtimeEpisode = ids.New()

@@ -248,6 +248,9 @@ type TabInfo struct {
 	DetachedAt int64 `json:"detachedAt,omitempty"`
 	// DetachedMSAgo is the age of DetachedAt when a listing was taken.
 	DetachedMSAgo int64 `json:"-"`
+	// DetachedSinceOpen reports that DetachedAt is when this app run reopened
+	// an existing helper session that no client has left since.
+	DetachedSinceOpen bool `json:"detachedSinceOpen,omitempty"`
 	// State is the helper's attention state of a durable tab; set only by
 	// listings and empty when the helper reports none.
 	State string `json:"state,omitempty"`

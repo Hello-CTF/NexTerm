@@ -19,9 +19,6 @@ export type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   hostClock?: boolean;
   // createdAt is the helper's creation time, on the host's clock.
   createdOnHost?: boolean;
-  // The helper session predates this app's run and no client attached since, so detachedAt is only when this
-  // app reopened it: the real detach was no later than that.
-  detachedSinceOpen?: boolean;
 };
 
 export interface KnownDurableTab {
@@ -191,9 +188,6 @@ export function collectBackgroundTabs(
         live.state ??= tab.state;
         // The helper created the session; this app may only have reattached to it.
         if (tab.createdAt > 0) {
-          if (live.createdAt !== undefined && tab.createdAt < live.createdAt && live.detachedAt === live.createdAt) {
-            live.detachedSinceOpen = true;
-          }
           live.createdAt = tab.createdAt;
           live.createdOnHost = true;
         }
