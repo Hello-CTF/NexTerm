@@ -158,6 +158,10 @@ func TestAttentionObservedForTabsOutsideAHelper(t *testing.T) {
 	recorder.wait(t, tab.ID, "answered", func(event AttentionEvent) bool {
 		return event.State == base.SessionIdle && !event.Seen && event.Reason == "input"
 	})
+	// The state carries the client that typed last.
+	if listed, err = manager.ListAttentionFor(ctx); err != nil || len(listed) != 1 || listed[0].LastInputClient != "client-a" {
+		t.Fatalf("listed %+v (%v), want lastInputClient client-a", listed, err)
+	}
 
 	// A notification carries its text to every client.
 	if err := channel.emit([]byte("\x1b]777;notify;Build;finished\a")); err != nil {
