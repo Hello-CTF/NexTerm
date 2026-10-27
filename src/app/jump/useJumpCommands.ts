@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useUi, nextTabId, openTerminalTab, requestKillTab, type Workspace, useSessionList, useWorkspaceList } from "../store";
+import { useUi, nextTabId, openTerminalTab, requestKillTab, reconnectWorkspaceConnection, workspaceConnectionState, workspaceNeedsReconnect, type Workspace, useSessionList, useWorkspaceList } from "../store";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "../keybindings";
 import { sessionApi, type Asset } from "../../ipc/commands";
 import type { SnippetDto } from "../../ipc/types";
@@ -129,7 +129,18 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
         }
       },
     }));
+    const reconnectCommands: JumpCommand[] =
+      currentWorkspace && workspaceNeedsReconnect(workspaceConnectionState(currentWorkspace, sessions))
+        ? [{
+            id: "reconnect-workspace",
+            label: "重新连接当前工作区",
+            hint: currentWorkspace.title,
+            icon: IconRefresh,
+            run: () => void reconnectWorkspaceConnection(currentWorkspace.id),
+          }]
+        : [];
     const list: JumpCommand[] = [
+      ...reconnectCommands,
       {
         id: "quick-connect",
         label: "快速连接…",

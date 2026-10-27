@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, clickButton, flush, mount, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, mount, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({ reconnect: vi.fn(async (_id: string) => true) }));
 
@@ -135,5 +135,25 @@ describe("workspace strip reconnect menu", () => {
   it("offers nothing when connected", () => {
     openMenu("connected");
     expect(menuItem()).toBeUndefined();
+  });
+});
+
+describe("jump command", () => {
+  async function commandIds(status: SessionRuntimeInfo["status"]): Promise<string[]> {
+    const { useJumpCommands } = await import("../../app/jump/useJumpCommands");
+    useUi.setState({ sessions: [session(status)], workspaces: [workspace([])], activeWorkspaceId: "ws1" });
+    let ids: string[] = [];
+    function Probe() {
+      ids = useJumpCommands({ assets: [], snippets: [], onShowHosts: () => undefined }).map((c) => c.id);
+      return null;
+    }
+    mounted = mountWithClient(createElement(Probe));
+    return ids;
+  }
+
+  it("lists the reconnect command only when the workspace is not connected", async () => {
+    expect(await commandIds("failed")).toContain("reconnect-workspace");
+    mounted?.unmount();
+    expect(await commandIds("connected")).not.toContain("reconnect-workspace");
   });
 });
