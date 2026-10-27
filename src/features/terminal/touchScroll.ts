@@ -76,17 +76,11 @@ export function attachTouchScroll(
   const screen = () => term.element?.querySelector<HTMLElement>(".xterm-screen") ?? null;
 
   const sendWheel = (target: HTMLElement, rows: number) => {
-    // Report at the finger's cell, kept inside the screen so a finger that slid past the edge still reports.
-    const rect = target.getBoundingClientRect();
-    const clientX = Math.min(Math.max(lastX, rect.left), Math.max(rect.left, rect.right - 1));
-    const clientY = Math.min(Math.max(lastY, rect.top), Math.max(rect.top, rect.bottom - 1));
-    const deltaY = rows > 0 ? 1 : -1;
     // A line-mode wheel step is exactly one report (or one cursor key) in xterm's own wheel handling, so the
-    // application sees what a mouse wheel would send, in the protocol and encoding it asked for.
+    // application sees what a mouse wheel at the finger would send, in the protocol and encoding it asked for.
+    const init = { deltaY: rows > 0 ? 1 : -1, deltaMode: WheelEvent.DOM_DELTA_LINE, clientX: lastX, clientY: lastY };
     for (let i = 0; i < Math.abs(rows); i++) {
-      target.dispatchEvent(
-        new WheelEvent("wheel", { deltaY, deltaMode: WheelEvent.DOM_DELTA_LINE, clientX, clientY, bubbles: true, cancelable: true }),
-      );
+      target.dispatchEvent(new WheelEvent("wheel", { ...init, bubbles: true, cancelable: true }));
     }
   };
 

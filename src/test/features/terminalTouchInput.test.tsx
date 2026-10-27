@@ -256,3 +256,130 @@ describe("terminal handle paste", () => {
     expect(sent).toEqual(["\x1b[200~echo a\necho b\x1b[201~\r", "\x1b[200~draft\x1b[201~"]);
   });
 });
+
+describe("touch scrolling", () => {
+  let frames: FrameRequestCallback[] = [];
+  const flushFrames = () =>
+    act(() => {
+      const pending = frames;
+      frames = [];
+      for (const frame of pending) {
+        try {
+          frame(performance.now());
+        } catch {
+          // xterm's own render frames need a canvas jsdom lacks; the badge's frame is asserted through the DOM.
+        }
+      }
+    });
+
+  beforeEach(() => {
+    frames = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+  });
+
+  // jsdom lays nothing out: give the real terminal the cell and canvas sizes a browser would measure.
+  function measureCells(): void {
+    const core = (harness.terminals[0] as unknown as {
+      _core: {
+        _charSizeService: { width: number; height: number };
+        _renderService: { dimensions: { css: { cell: object; canvas: object }; device: { cell: { height: number } } } };
+      };
+    })._core;
+    Object.assign(core._charSizeService, { width: 10, height: 20 });
+    Object.assign(core._renderService.dimensions.css.cell, { width: 10, height: 20 });
+    Object.assign(core._renderService.dimensions.css.canvas, { width: 800, height: 480 });
+    core._renderService.dimensions.device.cell.height = 20;
+  }
+
+  const write = (data: string) =>
+    act(async () => {
+      await new Promise<void>((resolve) => harness.terminals[0].write(data, resolve));
+    });
+
+  // A slow one-finger swipe (no fling): past the slop first, then on by `distance` pixels.
+  function swipe(from: { x: number; y: number }, distance: number): void {
+    let clock = 1000;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => clock);
+    try {
+      const slop = Math.sign(distance) * 15;
+      touch("touchstart", screen(), from);
+      clock += 300;
+      touch("touchmove", screen(), { x: from.x, y: from.y + slop });
+      clock += 300;
+      touch("touchmove", screen(), { x: from.x, y: from.y + slop + distance });
+      clock += 300;
+      touch("touchend", screen(), { x: from.x, y: from.y + slop + distance });
+    } finally {
+      now.mockRestore();
+    }
+  }
+
+  const viewport = () => {
+    const buffer = (harness.terminals[0] as unknown as { buffer: { active: { baseY: number; viewportY: number } } }).buffer
+      .active;
+    return { baseY: buffer.baseY, viewportY: buffer.viewportY };
+  };
+  const jumpButton = () => container?.querySelector<HTMLButtonElement>("button[aria-label^='回到底部']") ?? null;
+
+  it("scrolls the scrollback and offers a jump back to the bottom", async () => {
+    const textarea = await show();
+    // Measured before the output arrives, so xterm's viewport tracks the scroll position as it would in a browser.
+    measureCells();
+    await write(Array.from({ length: 60 }, (_, i) => `line ${i}`).join("\r\n"));
+    (document.activeElement as HTMLElement | null)?.blur();
+    const { baseY } = viewport();
+    expect(baseY).toBeGreaterThan(10);
+
+    swipe({ x: 40, y: 40 }, 60);
+    expect(viewport().viewportY).toBe(baseY - 3);
+    // A swipe is not a tap: the soft keyboard stays closed.
+    expect(document.activeElement).not.toBe(textarea);
+
+    // New output does not pull the view back down.
+    await write("\r\nmore output");
+    expect(viewport().viewportY).toBe(baseY - 3);
+
+    flushFrames();
+    expect(jumpButton()?.getAttribute("aria-label")).toBe("回到底部，下方还有 4 行");
+    act(() => jumpButton()?.click());
+    expect(viewport().viewportY).toBe(viewport().baseY);
+    flushFrames();
+    expect(jumpButton()).toBeNull();
+  });
+
+  it("returns to the bottom when the composer sends text", async () => {
+    await show();
+    // Measured before the output arrives, so xterm's viewport tracks the scroll position as it would in a browser.
+    measureCells();
+    await write(Array.from({ length: 60 }, (_, i) => `line ${i}`).join("\r\n"));
+    swipe({ x: 40, y: 40 }, 60);
+    expect(viewport().viewportY).toBeLessThan(viewport().baseY);
+    act(() => handle?.paste("ls", true));
+    expect(viewport().viewportY).toBe(viewport().baseY);
+  });
+
+  it("reports wheel steps at the finger's cell when the application tracks the mouse", async () => {
+    await show();
+    await write("\x1b[?1049h\x1b[?1000h\x1b[?1006h");
+    measureCells();
+    swipe({ x: 45, y: 40 }, 40);
+    await settle();
+    // Finger down: towards older content, so wheel up (button 64), at column 5, row 5 (y = 95px).
+    expect(sent).toEqual(["\x1b[<64;5;5M", "\x1b[<64;5;5M"]);
+  });
+
+  it("sends cursor keys in the alternate screen without mouse tracking, honouring application cursor mode", async () => {
+    await show();
+    await write("\x1b[?1049h");
+    measureCells();
+    swipe({ x: 45, y: 200 }, -40);
+    await settle();
+    expect(sent).toEqual(["\x1b[B", "\x1b[B"]);
+
+    sent = [];
+    await write("\x1b[?1h");
+    swipe({ x: 45, y: 40 }, 20);
+    await settle();
+    expect(sent).toEqual(["\x1bOA"]);
+  });
+});
