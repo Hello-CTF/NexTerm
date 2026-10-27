@@ -59,20 +59,15 @@ func (m *Manager) startDurableReplay(ctx context.Context, tab *Tab, generation u
 	}
 	if len(prelude) > 0 {
 		// The prelude restores the replayed tail's modes: it is replay too.
-		if err := m.feedWith(ctx, tab, generation, prelude, feedOptions{replay: true}); err != nil {
-			// It was never rendered: later attaches must not count it.
-			tab.mu.Lock()
-			tab.replayPending = max(0, tab.replayPending-int64(len(prelude)))
-			tab.mu.Unlock()
-		}
+		_ = m.feedWith(ctx, tab, generation, prelude, feedOptions{replay: true})
 	}
 	if banner {
 		// A reconnect inside the recovered tail renders its notice where the
-		// tail resumes: replay by position, without consuming the tail count.
+		// tail resumes: replay by position.
 		tab.mu.Lock()
-		inReplay := tab.replayPending > 0
+		inReplay := tab.replayUntil > tab.durableFed
 		tab.mu.Unlock()
-		_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, feedOptions{replay: inReplay, uncounted: true})
+		_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, feedOptions{replay: inReplay})
 	}
 }
 
@@ -97,7 +92,7 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 		m.logger.Warn("durable output dropped by the history limit before it was streamed", "tab", tab.ID, "from", fed, "to", start)
 		m.transcriptGap(ctx, tab, gap)
 		if start >= displayFrom {
-			_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, feedOptions{replay: start < replayUntil, uncounted: true})
+			_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, feedOptions{replay: start < replayUntil})
 		}
 		m.emit(context.Background(), TopicTerminalControl, control)
 	}
@@ -108,48 +103,28 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 	}
 	// The recovered tail before replayUntil is history, not new output. A
 	// sequence straddling replayUntil belongs to the live part: whatever its
-	// final byte completes is new output. The feed that reaches replayUntil
-	// closes the replay window, so output the helper dropped inside the tail
-	// never leaves a pending count behind.
-	ends := replayUntil > 0 && end >= replayUntil
-	replayed := min(max(replayUntil-start, 0), int64(len(chunk)))
-	if replayed > 0 {
-		last := ends && replayed == int64(len(chunk))
-		if err := m.feedWith(ctx, tab, generation, chunk[:replayed], feedOptions{transcript: true, replay: true, endReplay: last}); err != nil {
+	// final byte completes is new output. Every fed range is classified by
+	// stream sequence, so deliveries stay exact however the tail ends.
+	if replayed := min(max(replayUntil-start, 0), int64(len(chunk))); replayed > 0 {
+		if err := m.feedWith(ctx, tab, generation, chunk[:replayed], feedOptions{transcript: true, replay: true}); err != nil {
 			return err
 		}
 		chunk = chunk[replayed:]
-		if last {
-			ends = false
-		}
 	}
 	if len(chunk) > 0 {
-		if err := m.feedWith(ctx, tab, generation, chunk, feedOptions{transcript: true, endReplay: ends}); err != nil {
+		if err := m.feed(ctx, tab, generation, chunk); err != nil {
 			return err
 		}
-	} else if ends {
-		m.endReplay(ctx, tab)
 	}
 	tab.mu.Lock()
 	if tab.durable != nil && tab.generation == generation {
 		tab.durableFed = end
+		if replayUntil > 0 && end >= replayUntil {
+			tab.replayUntil = 0
+		}
 	}
 	tab.mu.Unlock()
 	return nil
-}
-
-// endReplay closes a recovered tab's replay window when no bytes are left to
-// feed with it (the tail ended in output the helper dropped or hid). It holds
-// the feed gate so no attach observes a half-closed window.
-func (m *Manager) endReplay(ctx context.Context, tab *Tab) {
-	if err := tab.lockFeed(ctx); err != nil {
-		return
-	}
-	defer tab.unlockFeed()
-	tab.mu.Lock()
-	tab.replayPending = 0
-	tab.replayUntil = 0
-	tab.mu.Unlock()
 }
 
 // noteDurableReplacement records where a reconnect's replacement attachment

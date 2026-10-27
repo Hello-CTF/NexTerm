@@ -274,11 +274,17 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, clien
 		tab.signalOutputWakeLocked()
 	}
 	tab.mu.Unlock()
+	// Recovery offsets are stream sequences: the refused suffix keeps the
+	// classes it was fed with (replay stays replay).
+	tab.mu.Lock()
+	classes := tab.classes.within(uint64(acceptedBytes), uint64(subscriber.flushedOffset))
+	tab.mu.Unlock()
 	anchor, err := json.Marshal(streamAnchor{
 		Type:         streamAnchorType,
 		Epoch:        "recovery-" + tabID,
 		StreamSeq:    uint64(acceptedBytes),
 		AttachmentID: subscriber.attachmentId,
+		Classes:      classes,
 	})
 	if err != nil {
 		return 0, 0, err

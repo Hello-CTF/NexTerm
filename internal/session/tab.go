@@ -34,7 +34,10 @@ var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 const sshFallbackNotice = "持久终端不可用，已切换为普通 SSH 终端；关闭或断开后无法恢复此终端"
 
 type subscriber struct {
-	client   string
+	client string
+	// answers is set for an interactive client whose terminal emulator
+	// answers queries; preview spectators do not.
+	answers  bool
 	producer *hub.Producer
 	co       *outCoalescer
 	paused   bool
@@ -73,19 +76,19 @@ const streamAnchorType = "nexterm.stream-anchor"
 // control bytes at the stream head that do not count toward the sequence (clear-screen escape); expired means the client
 // anchor was not adopted and this attach fell back to a full clear-screen replay. The client computes the consumed
 // sequence as streamSeq + max(0, bytes received - controlBytes) and brings it back via AttachOptions.FromSeq/FromEpoch on reconnect.
-// replayBytes is how many stream bytes after the anchor (control bytes included) are replayed history the client already
-// rendered rather than output it has not seen: clients render them without side effects such as automatic query replies,
-// clipboard writes or notifications. Recovery anchors and adopted resumes carry missed output and announce none.
+// classes lists the output-class spans (by stream sequence) of the bytes this stream will deliver: replay spans render
+// without side effects, answered spans without automatic query replies; later spans arrive as stream-class frames ahead
+// of their bytes. A full clear-screen replay is one replay span.
 // attachmentId is the incarnation this frame was sent for: the client adopts it as its current attachment identity, so
 // the ordered stream itself carries the incarnation even when the attach RPC response has not arrived yet.
 type streamAnchor struct {
-	Type         string `json:"type"`
-	Epoch        string `json:"epoch"`
-	StreamSeq    uint64 `json:"streamSeq"`
-	ControlBytes int    `json:"controlBytes,omitempty"`
-	Expired      bool   `json:"expired,omitempty"`
-	AttachmentID uint64 `json:"attachmentId,omitempty"`
-	ReplayBytes  int64  `json:"replayBytes,omitempty"`
+	Type         string      `json:"type"`
+	Epoch        string      `json:"epoch"`
+	StreamSeq    uint64      `json:"streamSeq"`
+	ControlBytes int         `json:"controlBytes,omitempty"`
+	Expired      bool        `json:"expired,omitempty"`
+	AttachmentID uint64      `json:"attachmentId,omitempty"`
+	Classes      []classSpan `json:"classes,omitempty"`
 }
 
 type Tab struct {
@@ -180,11 +183,10 @@ type Tab struct {
 	// A recovered durable tab replays its recent history through the pump
 	// before live output. replayUntil is the helper offset where that replay
 	// ends; output before it is rendered without raising events (no query
-	// replies, unread marks or command records). replayPending is how many
-	// subscriber stream bytes the pump will still feed as replay; attach
-	// announces it in the stream anchor so clients treat them the same way.
-	replayUntil   int64
-	replayPending int64
+	// replies, unread marks or command records).
+	replayUntil int64
+	// classes records how each output range was fed, by stream sequence.
+	classes outputClasses
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -626,9 +628,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			tab.historyTruncated = replay.HistoryBase > 0
 			if replay.HistoryNext > replay.DisplayFrom {
 				tab.replayUntil = int64(replay.HistoryNext)
-				tab.replayPending = int64(len(replay.Prelude)) + int64(replay.HistoryNext-replay.DisplayFrom)
-			} else if len(replay.Prelude) > 0 {
-				tab.replayPending = int64(len(replay.Prelude))
 			}
 		}
 		if store, ok := durableAttachment.(durableVersionFloor); ok {
@@ -1115,7 +1114,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	m.nextAttachmentId++
 	attachmentId := m.nextAttachmentId
 	tab.subscribers[options.ChannelID] = subscriber{
-		client: client, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
+		client: client, answers: true, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
 	}
 	registeredDetaches = tab.detaches
 	tab.mu.Unlock()
@@ -1125,17 +1124,16 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	anchor, control, replay := m.planAttachReplay(tab, options, clear)
 	if anchor != nil {
 		anchor.AttachmentID = attachmentId
-		// Only bytes the client already rendered are replay: a full
-		// clear-screen replay, and a recovered durable tail still being fed.
-		// An adopted resume delivers output this view missed, which keeps its
-		// effects (the overlap the client already has is skipped client-side).
-		// The feed gate is held: no feed can run between this read and the
-		// replay send, so the pending replay follows the ring replay exactly.
-		tab.mu.Lock()
-		pending := tab.replayPending
-		tab.mu.Unlock()
-		if resumed := options.FromSeq > 0 && !anchor.Expired; !resumed || pending > 0 {
-			anchor.ReplayBytes = int64(len(control)+len(replay)) + pending
+		// A full clear-screen replay redraws history: all replay. An adopted
+		// resume delivers output this view missed, classified as it was fed.
+		// The feed gate is held, so the classes match the bytes sent.
+		end := anchor.StreamSeq + uint64(len(replay))
+		if options.FromSeq > 0 && !anchor.Expired {
+			tab.mu.Lock()
+			anchor.Classes = tab.classes.within(anchor.StreamSeq, end)
+			tab.mu.Unlock()
+		} else if len(replay) > 0 {
+			anchor.Classes = []classSpan{{From: anchor.StreamSeq, To: end, Kind: classReplay}}
 		}
 		frame, _ := json.Marshal(anchor)
 		if err := producer.SendJSON(attachCtx, frame); err != nil {
@@ -1239,6 +1237,20 @@ func (m *Manager) releaseChannelReservation(tabID, channelID string, incarnation
 		delete(m.channelIncarnations, channelID)
 	}
 	m.mu.Unlock()
+}
+
+// answeringLocked reports whether a client whose terminal emulator answers
+// queries is attached. Callers hold t.mu.
+func (t *Tab) answeringLocked() bool {
+	if t.controller != "" {
+		return true
+	}
+	for _, subscriber := range t.subscribers {
+		if subscriber.answers {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *Tab) releaseOrphanControllerLocked() {
@@ -2089,13 +2101,6 @@ type feedOptions struct {
 	// replay marks history replayed by a recovered durable tab: it renders
 	// and reaches subscribers like any output but raises no events.
 	replay bool
-	// uncounted replay is not part of the announced replayPending (a notice
-	// rendered inside the replay window), so it does not consume it.
-	uncounted bool
-	// endReplay closes the replay window once this data is fed, so a
-	// shortfall (output the helper dropped) is never announced to later
-	// attaches as replay.
-	endReplay bool
 }
 
 // feedWith renders data and fans it out. Replayed data raises no events — no
@@ -2115,23 +2120,42 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		return err
 	}
 	defer tab.unlockFeed()
+	// The feed gate is held: nothing else feeds the ring, so its sequence is
+	// where this data starts.
+	core, sequenced := tab.terminal.(interface{ LatestSeq() uint64 })
+	var from uint64
+	if sequenced {
+		from = core.LatestSeq()
+	}
 	tab.mu.Lock()
 	if tab.closed || tab.generation != generation {
 		tab.mu.Unlock()
 		return ErrStaleGeneration
 	}
-	if replay && !options.uncounted {
-		tab.replayPending = max(0, tab.replayPending-int64(len(data)))
+	// An answering client's terminal emulator answers queries itself; the
+	// headless screen answers only while none is attached, so programs never
+	// wait forever. Attach holds the feed gate, so no client can appear
+	// between this decision and the parse; a detach racing it leaves the
+	// range live, so the client answers it if it resumes.
+	unanswered := tab.answeringLocked()
+	kind := ""
+	switch {
+	case replay:
+		kind = classReplay
+	case !unanswered:
+		kind = classAnswered
 	}
-	if options.endReplay {
-		tab.replayPending = 0
-		tab.replayUntil = 0
+	var classFrame []byte
+	if sequenced {
+		to := from + uint64(len(data))
+		tab.classes.add(from, to, kind)
+		if to > classRetention {
+			tab.classes.trim(to - classRetention)
+		}
+		if kind != "" {
+			classFrame, _ = json.Marshal(streamClassFrame{Type: streamClassType, classSpan: classSpan{From: from, To: to, Kind: kind}})
+		}
 	}
-	// An interactive client's terminal emulator answers queries itself; the
-	// headless screen answers only for a tab nobody is attached to, so
-	// programs never wait forever and never get two replies. Attach holds the
-	// feed gate, so no client can appear between this decision and the parse.
-	unanswered := tab.controller != "" || len(tab.subscribers) > 0
 	tab.mu.Unlock()
 	if source, ok := tab.terminal.(interface {
 		FeedWith([]byte, terminal.FeedOptions)
@@ -2188,6 +2212,12 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		recovery.add(data)
 	}
 	for _, target := range subscribers {
+		// The class frame is keyed by stream sequence, so it only has to
+		// precede the bytes, which the coalescer sends later on the same
+		// ordered fanout queue.
+		if classFrame != nil && target.subscriber.answers {
+			fanout.SendJSONTo(target.channelID, classFrame)
+		}
 		if target.subscriber.paused {
 			target.subscriber.co.addPaused(data)
 			continue
