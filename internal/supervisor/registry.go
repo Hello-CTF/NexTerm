@@ -79,6 +79,7 @@ func (s *Session) canonicalInfoWith(options listOptions) Info {
 	info.Generation = s.supervisor.generation
 	s.historyInfo(&info)
 	info.State = s.stateInfoLocked(options.Events, options.EventsAfter)
+	info.Activity = s.activityLocked()
 	return info
 }
 

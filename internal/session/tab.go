@@ -128,7 +128,10 @@ type Tab struct {
 	titleCustom     bool
 	// titleChangedAt is the client-supplied time (Unix ms) of the last explicit
 	// title decision (a rename or a clear); zero when unknown.
-	titleChangedAt  int64
+	titleChangedAt int64
+	// createdAt and detachedAt back TabInfo.CreatedAt and DetachedAt.
+	createdAt       time.Time
+	detachedAt      time.Time
 	cancelPump      context.CancelFunc
 	cwdTracker      *shellintegr.Tracker
 	cwd             string
@@ -210,9 +213,11 @@ func (t *Tab) Info() TabInfo {
 
 func (t *Tab) listInfo() TabInfo {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	info := t.infoLocked()
 	info.LastOutputMSAgo = terminalLastOutputMSAgo(t.terminal)
+	durable := t.durable
+	t.mu.Unlock()
+	info.State = durableAttentionState(durable)
 	return info
 }
 
@@ -226,6 +231,7 @@ func (t *Tab) infoLocked() TabInfo {
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
 		Exited: t.exited, Retainable: t.retainable || !t.ephemeral && !t.regularRemote, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
 		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
+		CreatedAt: unixMilliOrZero(t.createdAt), DetachedAt: t.detachedAtLocked(),
 	}
 }
 
@@ -543,6 +549,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
 		streamEpoch: ids.New(), outputWake: make(chan struct{}),
+		createdAt: openStart, detachedAt: openStart,
 	}
 	if options.Durable == nil {
 		tab.runtimeEpisode = ids.New()
@@ -1264,6 +1271,9 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	delete(m.channelTabs, channelID)
 	delete(m.channelIncarnations, channelID)
 	delete(tab.subscribers, channelID)
+	if attached && len(tab.subscribers) == 0 {
+		tab.detachedAt = time.Now()
+	}
 	tab.syncRecoveryFloorLocked()
 	throttleRecovered, throttleVersion := m.clearThrottleChannelLocked(tab.ID, channelID)
 	tab.releaseOrphanControllerLocked()

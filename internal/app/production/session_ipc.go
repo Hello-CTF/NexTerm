@@ -142,6 +142,36 @@ type durableDescriptorDTO struct {
 	ExitCode         *int   `json:"exitCode"`
 	Signal           string `json:"signal,omitempty"`
 	FinishedAt       *int64 `json:"finishedAt"`
+	// State is the helper's attention state; omitted when it reports none.
+	State string `json:"state,omitempty"`
+	// Activity is omitted when the helper predates activity reporting.
+	Activity *durableActivityDTO `json:"activity,omitempty"`
+}
+
+// durableActivityDTO carries Unix ms times; a nil time is unknown to the helper.
+type durableActivityDTO struct {
+	LastOutputAt *int64 `json:"lastOutputAt"`
+	DetachedAt   *int64 `json:"detachedAt"`
+	Attached     bool   `json:"attached"`
+}
+
+func newDurableActivityDTO(activity *base.DurableActivity) *durableActivityDTO {
+	if activity == nil {
+		return nil
+	}
+	return &durableActivityDTO{
+		LastOutputAt: unixMilliPointer(activity.LastOutputAt),
+		DetachedAt:   unixMilliPointer(activity.DetachedAt),
+		Attached:     activity.Attached,
+	}
+}
+
+func unixMilliPointer(at *time.Time) *int64 {
+	if at == nil {
+		return nil
+	}
+	value := at.UnixMilli()
+	return &value
 }
 
 type terminalListRequest struct {
@@ -329,6 +359,9 @@ type liveTabDTO struct {
 	Title           string  `json:"title,omitempty"`
 	TitleCustom     bool    `json:"titleCustom,omitempty"`
 	TitleChangedAt  int64   `json:"titleChangedAt,omitempty"`
+	CreatedAt       int64   `json:"createdAt,omitempty"`
+	DetachedAt      int64   `json:"detachedAt,omitempty"`
+	State           string  `json:"state,omitempty"`
 }
 
 func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver, desktop bool) *terminalCommandService {
@@ -847,6 +880,10 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 							ID: descriptor.ID, Incarnation: descriptor.Incarnation, CreatedAt: descriptor.CreatedAt.UnixMilli(),
 							Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision,
 							Cols: descriptor.Cols, Rows: descriptor.Rows, Dead: descriptor.Dead, ExitCode: descriptor.ExitCode, Signal: descriptor.Signal,
+							Activity: newDurableActivityDTO(descriptor.Activity),
+						}
+						if descriptor.State != nil {
+							item.State = descriptor.State.State
 						}
 						if descriptor.FinishedAt != nil {
 							finishedAt := descriptor.FinishedAt.UnixMilli()
@@ -872,6 +909,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
 						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt,
+						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, State: info.State,
 					})
 				}
 				return result, nil

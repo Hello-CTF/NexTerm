@@ -233,11 +233,19 @@ type TabInfo struct {
 	TitleCustom bool `json:"titleCustom,omitempty"`
 	// TitleChangedAt is the client time (Unix ms) of the last explicit title
 	// decision, so clients can order it against their own; zero when unknown.
-	TitleChangedAt  int64  `json:"titleChangedAt,omitempty"`
-	Shell           Shell  `json:"shell"`
-	LastOutputAt    int64  `json:"lastOutputAt,omitempty"`
-	LastOutputMSAgo int64  `json:"-"`
-	FallbackNotice  string `json:"-"`
+	TitleChangedAt  int64 `json:"titleChangedAt,omitempty"`
+	Shell           Shell `json:"shell"`
+	LastOutputAt    int64 `json:"lastOutputAt,omitempty"`
+	LastOutputMSAgo int64 `json:"-"`
+	// CreatedAt is when this process opened the tab (Unix ms). DetachedAt is
+	// when its last subscriber left, or CreatedAt when none ever attached;
+	// zero while subscribed. Both are in memory only.
+	CreatedAt  int64 `json:"createdAt,omitempty"`
+	DetachedAt int64 `json:"detachedAt,omitempty"`
+	// State is the helper's attention state of a durable tab; set only by
+	// listings and empty when the helper reports none.
+	State          string `json:"state,omitempty"`
+	FallbackNotice string `json:"-"`
 	// AttachmentID is the unique incarnation of this attachment, established
 	// at attach time and bound to the ACK and the floor high-water.
 	AttachmentID uint64 `json:"attachmentId,omitempty"`
