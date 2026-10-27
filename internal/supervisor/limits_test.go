@@ -130,3 +130,13 @@ func TestHelperArgsCarryLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestSupervisorDoesNotRateLimitExecSessions(t *testing.T) {
+	supervisor := limitedSupervisor(t, Limits{MaxCreates: 1, CreateWindow: time.Hour})
+	client := testClient(t, testServer(t, supervisor))
+	for index := 0; index < 3; index++ {
+		if _, _, _, _, err := client.Exec(context.Background(), ExecSpec{Command: []string{"/bin/true"}}); err != nil {
+			t.Fatalf("exec %d = %v; exec sessions must not hit the create rate", index, err)
+		}
+	}
+}

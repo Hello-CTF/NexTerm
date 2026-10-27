@@ -13,7 +13,10 @@ import (
 type Limits struct {
 	// MaxSessions is the most live or starting sessions, PTY and exec together.
 	MaxSessions int
-	// MaxCreates is the most creates accepted within CreateWindow.
+	// MaxCreates is the most PTY creates accepted within CreateWindow. Exec
+	// sessions (batch commands, AI and probe execs) are not rate limited:
+	// they are short and their callers bound their own concurrency, so only
+	// MaxSessions applies to them.
 	MaxCreates   int
 	CreateWindow time.Duration
 }
@@ -42,7 +45,7 @@ func (l Limits) validate() error {
 
 // admitCreateLocked charges one create against the limits. It must run under
 // s.mu before the create counts itself as starting.
-func (s *Supervisor) admitCreateLocked() error {
+func (s *Supervisor) admitCreateLocked(usePTY bool) error {
 	live := s.startingPTY + s.startingExec
 	for _, session := range s.sessions {
 		session.mu.RLock()
@@ -54,6 +57,9 @@ func (s *Supervisor) admitCreateLocked() error {
 	}
 	if live >= s.limits.MaxSessions {
 		return fmt.Errorf("%w: %d sessions are running and the helper allows %d", ErrLimit, live, s.limits.MaxSessions)
+	}
+	if !usePTY {
+		return nil
 	}
 	now := s.now()
 	cutoff := now.Add(-s.limits.CreateWindow)

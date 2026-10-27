@@ -134,7 +134,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		s.mu.Unlock()
 		return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, id)
 	}
-	if err := s.admitCreateLocked(); err != nil {
+	if err := s.admitCreateLocked(usePTY); err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
