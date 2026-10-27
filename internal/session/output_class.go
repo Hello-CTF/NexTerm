@@ -61,8 +61,14 @@ func (c *outputClasses) trim(floor uint64) {
 	for drop < len(c.spans) && c.spans[drop].To <= floor {
 		drop++
 	}
-	if drop > 0 {
-		c.spans = append([]classSpan(nil), c.spans[drop:]...)
+	if drop == 0 {
+		return
+	}
+	c.spans = c.spans[drop:]
+	// Reslicing leaves the dropped prefix in the backing array; copy into a
+	// fresh one only once the live spans are a small part of it.
+	if cap(c.spans) > 16 && len(c.spans) < cap(c.spans)/4 {
+		c.spans = append([]classSpan(nil), c.spans...)
 	}
 }
 
