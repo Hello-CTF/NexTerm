@@ -219,7 +219,6 @@ func TestStateRuleHelperStatusNamesTheOutcome(t *testing.T) {
 		{nil, stateRuleStatusApplied},
 		{supervisor.ErrLimit, stateRuleStatusFailed},
 		{supervisor.ErrInvalidInput, stateRuleStatusFailed},
-		{supervisor.ErrUnsupported, stateRuleStatusUnsupported},
 		{base.ErrDisconnected, stateRuleStatusPending},
 	} {
 		h.StateRulesPushed("rev", tc.err)

@@ -108,8 +108,9 @@ export function visibleTerminalTabIds(): Set<string> {
   return visible;
 }
 
-// isSeenUnsupported is true only for the backend answer that the helper can never share a seen mark. Other
-// "unsupported" answers (a helper that is momentarily unavailable) are transient and retried.
+// isSeenUnsupported is true only for the backend answer that the session cannot share a seen mark because its
+// state detection is off. Other "unsupported" answers (a helper that is momentarily unavailable) are transient and
+// retried.
 export function isSeenUnsupported(error: unknown): boolean {
   if (typeof error !== "object" || error === null || (error as { code?: unknown }).code !== "unsupported") return false;
   const detail = (error as { detail?: unknown }).detail;

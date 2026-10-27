@@ -52,7 +52,6 @@ const STATUS_LABELS: Record<string, string> = {
   applied: "已生效",
   pending: "等待连接",
   failed: "下发失败",
-  unsupported: "组件版本不支持",
 };
 
 interface TerminalChoice {

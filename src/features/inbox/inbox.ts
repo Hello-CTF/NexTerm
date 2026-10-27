@@ -168,7 +168,7 @@ export async function openAggregateEntry(entry: Pick<InboxEntry, "tabId" | "titl
 }
 
 // markInboxEntrySeen clears the entry on every device through the backend's seen mark. A helper that cannot share
-// the mark (an older build answers unsupported) clears it on this device only; other errors are transient and thrown for a retry.
+// the mark (state detection is off) clears it on this device only; other errors are transient and thrown for a retry.
 export async function markInboxEntrySeen(entry: Pick<InboxEntry, "tabId" | "awareness">): Promise<void> {
   const since = entry.awareness.since;
   if (!since) return;
