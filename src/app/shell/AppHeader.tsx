@@ -108,6 +108,8 @@ export interface AppHeaderProps {
   onOpenPalette: () => void;
   // windowControls is the desktop shell's minimise/maximise/close group; the mobile shell has none.
   windowControls?: ReactNode;
+  // leading sits before the app name; the mobile shell puts its home button there.
+  leading?: ReactNode;
 }
 
 export function AppHeader({
@@ -123,6 +125,7 @@ export function AppHeader({
   onToggleSessionPanel,
   onOpenPalette,
   windowControls,
+  leading,
 }: AppHeaderProps) {
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
   const wsStatus = useSessionStatus(ws?.sessionId);
@@ -135,6 +138,7 @@ export function AppHeader({
       }`}
       data-wails-drag-region style={wailsDragRegionStyle}
     >
+      {leading}
       <span
         className="text-[12.5px] font-semibold tracking-tight text-neutral-100"
         data-wails-drag-region style={wailsDragRegionStyle}

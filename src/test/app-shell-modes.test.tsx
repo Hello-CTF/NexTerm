@@ -111,6 +111,7 @@ import App from "../app/App";
 import { setMacPlatform } from "../app/platform";
 import { useShell } from "../app/shell";
 import { useUi } from "../app/store";
+import { resetMobileHomeForTest } from "../app/shell/mobileHome";
 
 interface DeviceProfile {
   mobileUserAgent: boolean;
@@ -173,6 +174,7 @@ beforeEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
   setMacPlatform(false);
+  resetMobileHomeForTest();
   mocks.assetList.mockResolvedValue([]);
   mocks.sessionList.mockResolvedValue([]);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
@@ -281,6 +283,32 @@ describe("app shell modes", () => {
     expect(document.querySelector('[role="navigation"][aria-label="左栏"]')).not.toBeNull();
     expect(button("收起侧栏")).not.toBeNull();
     expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("打开本地终端"))).toBe(false);
+  });
+
+  it("mobile: launches on the status wall over the workspaces; the home button and the asset drawer leave it", async () => {
+    stubDevice(PHONE);
+    mounted = mountApp();
+    await flush();
+
+    const wall = () => document.querySelector("[data-status-wall]");
+    expect(wall()).not.toBeNull();
+    expect(document.querySelector(".nx-workspace-body")?.parentElement?.classList.contains("hidden")).toBe(true);
+    act(() => button("返回工作区")?.click());
+    expect(wall()).toBeNull();
+    expect(document.querySelector(".nx-workspace-body")?.parentElement?.classList.contains("hidden")).toBe(false);
+    act(() => button("会话状态首页")?.click());
+    expect(wall()).not.toBeNull();
+    await openAssetsSidebar();
+    expect(wall()).toBeNull();
+    expect(document.querySelector('[role="navigation"][aria-label="左栏"]')).not.toBeNull();
+  });
+
+  it("desktop and compact windows have no status wall", async () => {
+    stubDevice(NARROW_WINDOW);
+    mounted = mountApp();
+    await flush();
+    expect(document.querySelector("[data-status-wall]")).toBeNull();
+    expect(button("会话状态首页")).toBeNull();
   });
 
   it("mobile on a wide tablet keeps docked sidebars and still hides the desktop window chrome", async () => {
