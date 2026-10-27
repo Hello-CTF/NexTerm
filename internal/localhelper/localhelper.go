@@ -695,13 +695,24 @@ func parseConsentToken(token string) (supervisor.RunningHelper, bool) {
 
 // restartWith stops the helper a consent token names. It reports whether the
 // helper was stopped.
-func (s *Service) restartWith(token string, current supervisor.RunningHelper) (bool, error) {
+// The token must name the helper as it is now; only a session count that
+// dropped since consent is accepted, so a hand-made token cannot skip the
+// count check.
+func (s *Service) restartWith(token string) (bool, error) {
 	expected, ok := parseConsentToken(token)
-	if !ok || expected.PID != current.PID || expected.Protocol != current.Protocol {
+	if !ok {
+		return false, ErrStaleConsent
+	}
+	current, err := s.config.inspect(s.ctx, s.config.StateDir)
+	if err != nil {
+		return false, fmt.Errorf("%w: %v", ErrStaleConsent, err)
+	}
+	if expected.PID != current.PID || expected.Protocol != current.Protocol || expected.ActivityKnown != current.ActivityKnown ||
+		current.Activity.Total() > expected.Activity.Total() {
 		return false, ErrStaleConsent
 	}
 	s.config.Logger.Info("stopping a local helper with consent", "protocol", expected.Protocol, "pid", expected.PID, "sessions", expected.Activity.Total())
-	err := s.config.stop(s.ctx, s.config.StateDir, expected)
+	err = s.config.stop(s.ctx, s.config.StateDir, expected)
 	if errors.Is(err, supervisor.ErrHelperChanged) {
 		return false, fmt.Errorf("%w: %v", ErrStaleConsent, err)
 	}
@@ -736,7 +747,7 @@ func (s *Service) awaitOutdated(running supervisor.RunningHelper, token string) 
 				req.reply <- nil
 				return true
 			case requestRestart:
-				stopped, err := s.restartWith(req.token, running)
+				stopped, err := s.restartWith(req.token)
 				req.reply <- err
 				if stopped {
 					s.setWanted(true)
@@ -867,7 +878,7 @@ func (s *Service) watch(helper helperHandle) watchOutcome {
 					req.reply <- ErrNotOutdated
 					continue
 				}
-				stopped, err := s.restartWith(req.token, running)
+				stopped, err := s.restartWith(req.token)
 				req.reply <- err
 				if stopped {
 					return watchRestarted

@@ -504,3 +504,17 @@ func TestStartNeverSpawnsWhenTheHelperVanishesBeforeTheAttach(t *testing.T) {
 	}
 }
 
+func TestRestartRefusesAHandMadeTokenThatHidesTheSessionCount(t *testing.T) {
+	world := newFakeWorld()
+	world.running = &supervisor.RunningHelper{Protocol: 2, PID: 7, Activity: supervisor.ActivitySnapshot{PTY: 3}, ActivityKnown: true}
+	config := world.config(t)
+	config.PollInterval = time.Hour
+	service := startService(t, config)
+	waitState(t, service, StateOutdated)
+	if err := service.Restart(context.Background(), "2:7:0:0"); !errors.Is(err, ErrStaleConsent) {
+		t.Fatalf("restart with an unknown-count token for a known count = %v, want ErrStaleConsent", err)
+	}
+	if world.stopCount() != 0 {
+		t.Fatal("a hand-made token stopped the helper")
+	}
+}
