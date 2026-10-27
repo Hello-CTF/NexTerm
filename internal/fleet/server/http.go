@@ -156,6 +156,7 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	sessionCSRF("POST /fleet/devices/{id}/terminal-access", s.serveDeviceTerminalAccess)
 	session("GET /fleet/devices/{id}/metrics", s.serveDeviceMetrics)
 	session("GET /fleet/devices/{id}/bridge", s.serveDeviceBridgeRelay)
+	session("GET /fleet/sessions", s.serveSessionList)
 
 	session("GET /fleet/base-urls", s.serveBaseURLsGet)
 	adminCSRF("PUT /fleet/base-urls", s.serveBaseURLsPut)

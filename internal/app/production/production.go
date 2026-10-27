@@ -93,6 +93,7 @@ type ProductionServices struct {
 	Transcripts         *transcriptWriter
 	aiRetention         *aiRetentionComponent
 	inventory           *inventoryService
+	sessionAggregate    *sessionAggregateService
 
 	retryDeferredUpgrade func(context.Context)
 }
@@ -143,6 +144,9 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status
+	}
+	if services.sessionAggregate == nil && services.Sessions != nil {
+		services.sessionAggregate = newSessionAggregateService(services.Sessions, services.sshConnector, services.Events)
 	}
 	if services.inventory == nil && services.Store != nil {
 		services.inventory = newInventoryService(services.Store, services.Events, services.desktop, services.dataDir,
@@ -312,7 +316,7 @@ func productionModules(services ProductionServices) []Module {
 		})
 	}
 	if services.Sessions != nil {
-		aggregate := newSessionAggregateService(services.Sessions, services.sshConnector, services.Events)
+		aggregate := services.sessionAggregate
 		modules = append(modules, Module{
 			Name:             "session-aggregate",
 			RegisterCommands: aggregate.register,

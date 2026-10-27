@@ -316,6 +316,12 @@ func run(args []string) int {
 				}
 				return result, nil
 			},
+			CheckDevice: fleetService.CheckDeviceTerminal,
+		})
+		// Desktops and phones ask for their devices' sessions in one request
+		// instead of dialing a bridge per device.
+		fleetService.SetSessionLister(func(ctx context.Context, userID string, wait time.Duration) (any, error) {
+			return application.DeviceSessions(ctx, userID, wait)
 		})
 	}
 	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())

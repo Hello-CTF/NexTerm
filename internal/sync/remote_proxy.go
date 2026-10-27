@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
@@ -77,6 +78,12 @@ func remoteGet[T any](ctx context.Context, p *RemoteProxy, fetch func(context.Co
 func (p *RemoteProxy) ListDevices(ctx context.Context) (*RemoteFleetDevices, error) {
 	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (*RemoteFleetDevices, error) {
 		return client.ListDevices(ctx)
+	})
+}
+
+func (p *RemoteProxy) ListSessions(ctx context.Context, waitMS int) (json.RawMessage, error) {
+	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (json.RawMessage, error) {
+		return client.ListSessions(ctx, waitMS)
 	})
 }
 

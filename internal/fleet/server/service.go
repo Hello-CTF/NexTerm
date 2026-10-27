@@ -91,6 +91,8 @@ type Service struct {
 	onlineDevices map[string]bool
 
 	shareRevalidateInterval time.Duration
+
+	sessionList sessionListState
 }
 
 type Option func(*Service)
