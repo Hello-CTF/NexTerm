@@ -149,6 +149,11 @@ func (h *localHelperExposureHost) Enroll(ctx context.Context, account exposure.A
 	if err != nil {
 		return nil, err
 	}
+	// The code belongs to whichever account the link named when it was
+	// issued; one that moved meanwhile is not used, so no device is enrolled.
+	if current, err := h.Account(ctx); err != nil || !current.Same(account) {
+		return nil, errors.New("注册期间同步账号已变更，已放弃这次注册")
+	}
 	client, err := agent.NewEndpointClient(agent.BaseURLEntry{URL: account.URL, Insecure: account.Insecure})
 	if err != nil {
 		return nil, err

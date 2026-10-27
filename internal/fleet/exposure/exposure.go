@@ -430,7 +430,7 @@ func (c *Controller) reconcile() {
 	}
 	if c.running != nil {
 		if !c.running.enrollment.Account.Same(account) {
-			c.forget("已更换同步账号，本机终端不再向原账号开放；如需开放给当前账号，请重新开启")
+			c.forget(accountChangedReason)
 		}
 		return
 	}
@@ -450,7 +450,7 @@ func (c *Controller) reconcile() {
 	if enrollment != nil && !enrollment.Account.Same(account) {
 		// Linked to another account since the user turned exposure on: it
 		// is never moved to that account without the user.
-		c.forget("已更换同步账号，本机终端不再向原账号开放；如需开放给当前账号，请重新开启")
+		c.forget(accountChangedReason)
 		return
 	}
 	if enrollment == nil {
@@ -462,6 +462,27 @@ func (c *Controller) reconcile() {
 		}
 	}
 	c.startAgent(enrollment)
+}
+
+// accountChangedReason explains a stop after the linked account changed; the
+// earlier account still lists the device, offline, until it is revoked there.
+const accountChangedReason = "已更换同步账号，本机终端不再向原账号开放。原账号的设备列表中仍有这台设备（离线），建议在那里吊销；如需开放给当前账号，请重新开启"
+
+// pinnedBaseURLs is the only server the agent of an enrollment talks to: the
+// linked account's server, never an address the enroll response or the agent
+// itself advertises.
+func pinnedBaseURLs(account Account) []agent.BaseURLEntry {
+	return []agent.BaseURLEntry{{URL: account.URL, Insecure: account.Insecure}}
+}
+
+// failClosed revokes a device that must not stay enrolled. When the revoke
+// fails the user is told which device to revoke by hand.
+func (c *Controller) failClosed(ctx context.Context, deviceID, reason string) error {
+	if err := c.config.Host.Revoke(ctx, deviceID); err != nil {
+		c.config.Logger.Warn("revoke a device that must not stay enrolled", "device_id", deviceID, "error", err)
+		return fmt.Errorf("%s；自动吊销设备 %s 失败，请在设备列表中吊销：%v", reason, deviceID, err)
+	}
+	return errors.New(reason)
 }
 
 // forget stops exposure for good after the linked account changed: the
@@ -492,39 +513,39 @@ func (c *Controller) enroll(account Account) (*Enrollment, error) {
 	}
 	response, err := c.config.Host.Enroll(ctx, account, request)
 	if err != nil {
+		if isUnknownKindError(err) {
+			return nil, errors.New(serverTooOldReason)
+		}
 		return nil, fmt.Errorf("向服务器注册本机失败：%w", err)
 	}
 	if response.Kind != agent.DeviceKindLocalHelper {
 		// The server enrolled an ordinary, shareable device: take it back.
-		if err := c.config.Host.Revoke(ctx, response.DeviceID); err != nil {
-			c.config.Logger.Warn("revoke a device enrolled without the local helper kind", "device_id", response.DeviceID, "error", err)
-		}
-		return nil, errors.New("服务器版本过旧，不支持开放桌面本机终端，请升级服务器")
+		return nil, c.failClosed(ctx, response.DeviceID, serverTooOldReason)
 	}
-	baseURLs := response.BaseURLs
-	if len(baseURLs) == 0 {
-		baseURLs = []agent.BaseURLEntry{{URL: account.URL, Insecure: account.Insecure}}
+	// The link may have moved to another account while enrolling: the device
+	// must not stay with an account the user no longer links to.
+	if current, err := c.config.Host.Account(ctx); err != nil || !current.Same(account) {
+		return nil, c.failClosed(ctx, response.DeviceID, "注册期间同步账号已变更，已放弃这次注册")
 	}
 	enrollment := &Enrollment{
 		Account: account,
 		Config: agent.Config{
 			Version: agent.ConfigVersion, DeviceID: response.DeviceID, Secret: response.Secret,
 			Name: request.Name, Platform: request.Platform, AppVersion: request.AppVersion,
-			BaseURLs: baseURLs, MetricsIntervalMS: response.MetricsIntervalMS,
+			BaseURLs: pinnedBaseURLs(account), MetricsIntervalMS: response.MetricsIntervalMS,
 			DesiredAutostart: response.DesiredAutostart, TerminalEnabled: response.TerminalEnabled,
 			EnrolledAt: ids.NowMS(),
 		},
 	}
 	if err := c.config.Host.SaveEnrollment(ctx, enrollment); err != nil {
-		if revokeErr := c.config.Host.Revoke(ctx, response.DeviceID); revokeErr != nil {
-			c.config.Logger.Warn("revoke a device whose credentials could not be saved", "device_id", response.DeviceID, "error", revokeErr)
-		}
-		return nil, fmt.Errorf("保存本机设备凭据失败：%w", err)
+		return nil, c.failClosed(ctx, response.DeviceID, fmt.Sprintf("保存本机设备凭据失败：%v", err))
 	}
 	return enrollment, nil
 }
 
 func (c *Controller) startAgent(enrollment *Enrollment) {
+	// An enrollment saved by an earlier build may carry other addresses.
+	enrollment.Config.BaseURLs = pinnedBaseURLs(enrollment.Account)
 	store := &enrollmentStore{host: c.config.Host, enrollment: *enrollment, logger: c.config.Logger}
 	connected := make(chan bool, 1)
 	onChannel := func(up bool) {
@@ -589,6 +610,15 @@ func (c *Controller) agentExited(err error) {
 	}
 }
 
+const serverTooOldReason = "服务器版本过旧，不支持开放桌面本机终端，请升级服务器"
+
+// isUnknownKindError reports a server that predates the enroll kind and
+// rejected the request field.
+func isUnknownKindError(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "unknown field") && strings.Contains(message, `"kind"`)
+}
+
 // enrollmentStore is the agent config store of a running agent. The agent
 // saves its current server URL through it; a save that cannot reach the
 // vault is kept in memory and logged.
@@ -610,8 +640,10 @@ func (s *enrollmentStore) Load() (*agent.Config, error) {
 
 func (s *enrollmentStore) Save(config *agent.Config) error {
 	s.mu.Lock()
+	pinned := s.enrollment.Config.BaseURLs
 	s.enrollment.Config = *config
-	s.enrollment.Config.BaseURLs = append([]agent.BaseURLEntry(nil), config.BaseURLs...)
+	// The pinned server stays the only one, whatever the agent saves.
+	s.enrollment.Config.BaseURLs = pinned
 	enrollment := s.enrollment
 	s.mu.Unlock()
 	if err := s.host.SaveEnrollment(context.Background(), &enrollment); err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +25,11 @@ type fakeHost struct {
 	echoKind   bool
 	enrollErr  error
 	nextID     int
+	// advertised is the base URL list the fake server returns at enroll.
+	advertised []agent.BaseURLEntry
+	// afterEnroll runs with the host locked once a device is enrolled.
+	afterEnroll func(h *fakeHost)
+	revokeErr   error
 }
 
 func newFakeHost() *fakeHost {
@@ -97,12 +103,19 @@ func (h *fakeHost) Enroll(_ context.Context, account Account, request agent.Enro
 	if h.echoKind {
 		response.Kind = request.Kind
 	}
+	response.BaseURLs = h.advertised
+	if h.afterEnroll != nil {
+		h.afterEnroll(h)
+	}
 	return response, nil
 }
 
 func (h *fakeHost) Revoke(_ context.Context, deviceID string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.revokeErr != nil {
+		return h.revokeErr
+	}
 	h.revoked = append(h.revoked, deviceID)
 	return nil
 }
@@ -363,8 +376,8 @@ func TestAccountChangeStopsExposureForGood(t *testing.T) {
 	if status.State != StateOff {
 		t.Fatalf("status = %+v, want off after the account changed", status)
 	}
-	if status.Reason == "" {
-		t.Fatal("account change stopped exposure without saying why")
+	if !strings.Contains(status.Reason, "吊销") {
+		t.Fatalf("reason = %q, want advice to revoke the device under the earlier account", status.Reason)
 	}
 	select {
 	case <-runner.stopped:
@@ -482,5 +495,107 @@ func TestAgentFailureHoldsUntilReenabled(t *testing.T) {
 	enable(t, controller)
 	if runners.count() != 2 || len(host.snapshot().enrolls) != 1 {
 		t.Fatal("re-enable did not restart the agent with the same enrollment")
+	}
+}
+
+// The agent only ever talks to the linked account's server: base URLs the
+// enroll response advertises, insecure ones included, are ignored, and the
+// agent cannot add one through its config store.
+func TestAgentIsPinnedToTheLinkedServer(t *testing.T) {
+	host := newFakeHost()
+	host.advertised = []agent.BaseURLEntry{{URL: "http://attacker.example.net", Insecure: true}, {URL: "https://mirror.example.org"}}
+	runners := &runnerLog{}
+	controller := newTestController(t, host, runners)
+	enable(t, controller)
+
+	pinned := []agent.BaseURLEntry{{URL: host.account.URL}}
+	runner := runners.last(t)
+	if !equalBaseURLs(runner.config.BaseURLs, pinned) {
+		t.Fatalf("agent base URLs = %+v, want only the linked server", runner.config.BaseURLs)
+	}
+	if saved := host.snapshot().enrollment; saved == nil || !equalBaseURLs(saved.Config.BaseURLs, pinned) {
+		t.Fatalf("saved enrollment = %+v, want only the linked server", saved)
+	}
+	config, err := runner.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.BaseURLs = append(config.BaseURLs, agent.BaseURLEntry{URL: "http://attacker.example.net", Insecure: true})
+	if err := runner.store.Save(config); err != nil {
+		t.Fatal(err)
+	}
+	if saved := host.snapshot().enrollment; !equalBaseURLs(saved.Config.BaseURLs, pinned) {
+		t.Fatalf("agent save changed the server list to %+v", saved.Config.BaseURLs)
+	}
+	if reloaded, _ := runner.store.Load(); !equalBaseURLs(reloaded.BaseURLs, pinned) {
+		t.Fatalf("agent store serves %+v, want only the linked server", reloaded.BaseURLs)
+	}
+}
+
+// A stored enrollment carrying other addresses runs against the linked server only.
+func TestStoredEnrollmentIsPinnedOnStart(t *testing.T) {
+	host := newFakeHost()
+	host.enabled = true
+	host.enrollment = &Enrollment{Account: host.account, Config: agent.Config{
+		Version: agent.ConfigVersion, DeviceID: "kept", Secret: "s",
+		BaseURLs: []agent.BaseURLEntry{{URL: "http://attacker.example.net", Insecure: true}},
+	}}
+	runners := &runnerLog{}
+	controller := newTestController(t, host, runners)
+	waitStatus(t, controller, "agent started", stateIs(StateConnecting))
+	if got := runners.last(t).config.BaseURLs; !equalBaseURLs(got, []agent.BaseURLEntry{{URL: host.account.URL}}) {
+		t.Fatalf("agent base URLs = %+v, want only the linked server", got)
+	}
+}
+
+func equalBaseURLs(got, want []agent.BaseURLEntry) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestAccountChangeDuringEnrollRevokesTheDevice(t *testing.T) {
+	host := newFakeHost()
+	host.afterEnroll = func(h *fakeHost) { h.account = Account{URL: h.account.URL, Username: "mallory"} }
+	runners := &runnerLog{}
+	controller := newTestController(t, host, runners)
+	if _, err := controller.SetEnabled(context.Background(), true); err == nil {
+		t.Fatal("enable kept a device enrolled while the account changed")
+	}
+	snapshot := host.snapshot()
+	if len(snapshot.revoked) != 1 || snapshot.enrollment != nil || runners.count() != 0 {
+		t.Fatalf("host = %+v runners=%d, want the device revoked, nothing saved and no agent", snapshot, runners.count())
+	}
+}
+
+func TestFailedFailClosedRevokeNamesTheDevice(t *testing.T) {
+	host := newFakeHost()
+	host.echoKind = false
+	host.revokeErr = errors.New("network down")
+	runners := &runnerLog{}
+	controller := newTestController(t, host, runners)
+	_, err := controller.SetEnabled(context.Background(), true)
+	if err == nil || !strings.Contains(err.Error(), "device-1") || !strings.Contains(err.Error(), "请在设备列表中吊销") {
+		t.Fatalf("enable error = %v, want the device ID and how to revoke it", err)
+	}
+	if status := controller.Status(); !strings.Contains(status.Reason, "device-1") {
+		t.Fatalf("status = %+v, want the device ID in the reason", status)
+	}
+}
+
+func TestOldServerRejectingTheKindIsNamed(t *testing.T) {
+	host := newFakeHost()
+	host.enrollErr = errors.New(`请求体不是合法 JSON: json: unknown field "kind"`)
+	runners := &runnerLog{}
+	controller := newTestController(t, host, runners)
+	_, err := controller.SetEnabled(context.Background(), true)
+	if err == nil || err.Error() != serverTooOldReason {
+		t.Fatalf("enable error = %v, want %q", err, serverTooOldReason)
 	}
 }
