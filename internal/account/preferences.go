@@ -93,7 +93,6 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.linkActivation":           {kind: preferenceKindEnumString, strings: []string{"modifier", "click"}},
 	"terminal.confirmMultilinePaste":    {kind: preferenceKindEnumString, strings: []string{"unbracketed", "always", "never"}},
 	"terminal.durableHistoryMiB":        {kind: preferenceKindIntRange, min: 1, max: 1024},
-	"terminal.scrollback":               {kind: preferenceKindEnumFloat, floats: []float64{5000, 10000, 25000, 50000, 100000}},
 	"terminal.keyBar":                   {kind: preferenceKindKeyBar},
 	"terminal.quickCommands":            {kind: preferenceKindQuickCommands},
 	"keybinding.commandPalette":         {kind: preferenceKindBinding},

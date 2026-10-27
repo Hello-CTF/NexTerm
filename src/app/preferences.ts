@@ -241,7 +241,8 @@ export type TerminalLinkActivation = "modifier" | "click";
 // every multi-line paste; never does not ask.
 export type TerminalMultilinePasteConfirm = "unbracketed" | "always" | "never";
 // Lines each terminal keeps in its own scrollback. Older output of a durable terminal stays on the host and is
-// loaded on demand from the top of the scrollback.
+// loaded on demand from the top of the scrollback. The right size depends on the device's memory, so it is a device
+// setting and never synced.
 export const TERMINAL_SCROLLBACK_OPTIONS = [5_000, 10_000, 25_000, 50_000, 100_000] as const;
 export type TerminalScrollback = (typeof TERMINAL_SCROLLBACK_OPTIONS)[number];
 
@@ -262,7 +263,6 @@ const TERMINAL_DEFAULT_MODE_KEY = "terminal.defaultMode";
 const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
 const TERMINAL_LINK_ACTIVATION_KEY = "terminal.linkActivation";
 const TERMINAL_CONFIRM_MULTILINE_PASTE_KEY = "terminal.confirmMultilinePaste";
-const TERMINAL_SCROLLBACK_KEY = "terminal.scrollback";
 const TERMINAL_DURABLE_HISTORY_KEY = "terminal.durableHistoryMiB";
 // The helper's own history limit per durable terminal when the account sets none.
 export const DEFAULT_DURABLE_HISTORY_MIB = 8;
@@ -316,7 +316,6 @@ function loadTerminal(): TerminalPrefs {
   const confirmPaste: unknown = accountPreferencesReady()
     ? accountOverrides[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY] ?? accountDefaults[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]
     : local.confirmMultilinePaste;
-  const scrollback = preferenceValue<unknown>(TERMINAL_SCROLLBACK_KEY, local.scrollback, TERMINAL_DEFAULTS.scrollback);
   // The server applies the history limit when it creates a durable terminal, so only the account layers count.
   const durableHistory: unknown = terminalDefaultUsesAccount()
     ? accountOverrides[TERMINAL_DURABLE_HISTORY_KEY] ?? accountDefaults[TERMINAL_DURABLE_HISTORY_KEY]
@@ -327,7 +326,7 @@ function loadTerminal(): TerminalPrefs {
     gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
     confirmMultilinePaste: normalizeMultilinePasteConfirm(confirmPaste),
-    scrollback: normalizeTerminalScrollback(scrollback),
+    scrollback: normalizeTerminalScrollback(local.scrollback),
     durableHistoryMiB: normalizeDurableHistoryMiB(durableHistory),
   };
 }
@@ -422,10 +421,6 @@ export function setTerminalScrollback(value: TerminalScrollback): void {
     const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
     localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, scrollback: value }));
   } catch {
-  }
-  if (accountStore) {
-    void accountStore.putOverrides({ [TERMINAL_SCROLLBACK_KEY]: value }).catch(() => undefined);
-    patchAccountOverrideCache({ [TERMINAL_SCROLLBACK_KEY]: value }, []);
   }
   for (const listener of terminalListeners) listener();
 }

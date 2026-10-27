@@ -414,7 +414,9 @@ describe("terminal GPU acceleration preference", () => {
 describe("terminal scrollback preference", () => {
   afterEach(() => registerAccountPreferenceStore(null));
 
-  it("defaults to ten thousand lines and round-trips through the account store", async () => {
+  it("defaults to ten thousand lines and stays on this device, even with an account", async () => {
+    registerAccountPreferenceStore(null);
+    window.localStorage.clear();
     registerAccountPreferenceStore(null);
     expect(getTerminalPrefs().scrollback).toBe(10_000);
     const store = memoryStore({});
@@ -426,23 +428,19 @@ describe("terminal scrollback preference", () => {
     setTerminalScrollback(50_000);
     unsubscribe();
     expect(changed).toHaveBeenCalledTimes(1);
-    expect(store.puts).toEqual([{ "terminal.scrollback": 50_000 }]);
-
-    registerAccountPreferenceStore(null);
-    window.localStorage.clear();
-    registerAccountPreferenceStore(memoryStore({ ...store.data }));
-    await flushMacrotask();
+    expect(store.puts).toEqual([]);
     expect(getTerminalPrefs().scrollback).toBe(50_000);
+
+    // Another device with the same account keeps its own value.
+    window.localStorage.clear();
+    registerAccountPreferenceStore(memoryStore({ "terminal.scrollback": 25_000 }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().scrollback).toBe(10_000);
   });
 
-  it("keeps a device value without an account and ignores values that are not an option", async () => {
+  it("ignores stored values that are not an option", () => {
+    window.localStorage.setItem("nexterm.terminalClose.v1", JSON.stringify({ scrollback: 12_345 }));
     registerAccountPreferenceStore(null);
-    setTerminalScrollback(5_000);
-    registerAccountPreferenceStore(null);
-    expect(getTerminalPrefs().scrollback).toBe(5_000);
-
-    registerAccountPreferenceStore(memoryStore({ "terminal.scrollback": 12_345 }));
-    await flushMacrotask();
     expect(getTerminalPrefs().scrollback).toBe(10_000);
   });
 });
