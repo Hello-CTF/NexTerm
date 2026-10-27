@@ -15,6 +15,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/staterule"
 )
 
 type Supervisor struct {
@@ -32,6 +33,8 @@ type Supervisor struct {
 	// numbers state events across all sessions.
 	stateDetection bool
 	eventSeq       atomic.Uint64
+	// stateRules are the user state rules of each rule owner.
+	stateRules *stateRuleOwners
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -102,6 +105,8 @@ func New(config Config) (*Supervisor, error) {
 	for _, entry := range entries {
 		supervisor.sessions[entry.ID] = newRecoveredSession(supervisor, entry)
 	}
+	supervisor.stateRules = loadStateRuleOwners(stateDir)
+	supervisor.stateRules.bound = supervisor.boundRuleOwners
 	return supervisor, nil
 }
 
@@ -211,6 +216,8 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 				seq:         &s.eventSeq,
 				onChange:    session.notifyState,
 				timers:      true,
+				rulesOwner:  options.StateRulesOwner,
+				rules:       func() *staterule.Compiled { return s.stateRules.compiled(options.StateRulesOwner) },
 			}, time.Now())
 		}
 		if err := writeEntry(sessionsRoot(s.stateDir), session.entry); err != nil {

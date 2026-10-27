@@ -150,6 +150,8 @@ type serverConn struct {
 	// compress records the client's hello preference for gzip replay batches
 	// and zstd live output.
 	compress bool
+	// rulesOwner is the hello's state rule owner key; empty for none.
+	rulesOwner string
 
 	// done closes with the connection so goroutines parked on input or credit
 	// stop without waiting for the peer.
@@ -207,12 +209,20 @@ func (c *serverConn) serve() {
 		return
 	}
 	c.compress = hello.CompressOutput
+	if hello.StateRulesOwner != "" && !validStateRulesOwner(hello.StateRulesOwner) {
+		c.replyError(frameError, errorMsg{Code: codeInvalidInput, Message: "malformed state rule owner key"})
+		return
+	}
+	c.rulesOwner = hello.StateRulesOwner
 	activity, err := c.server.supervisor.Activity(context.Background())
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
-	ack := helloMsg{Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity, StateSeen: true}
+	ack := helloMsg{
+		Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity,
+		StateSeen: true, StateRules: &stateRulesAck{Revision: c.server.supervisor.stateRulesSeen(c.rulesOwner)},
+	}
 	if err := c.reply(frameHelloAck, ack); err != nil {
 		return
 	}
@@ -254,6 +264,8 @@ func (c *serverConn) serve() {
 			c.handleKillSession(payload)
 		case frameReadHistory:
 			c.handleReadHistory(payload)
+		case frameSetStateRules:
+			c.handleSetStateRules(payload)
 		case frameDetach:
 			_ = c.reply(frameOK, struct{}{})
 			return
@@ -286,7 +298,8 @@ func (c *serverConn) handleCreate(payload []byte) {
 		Rows:    msg.Rows,
 		Pty:     msg.Pty,
 
-		HistoryLimit: msg.HistoryLimit,
+		HistoryLimit:    msg.HistoryLimit,
+		StateRulesOwner: c.rulesOwner,
 	})
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
@@ -666,6 +679,23 @@ func (c *serverConn) handleKill() {
 	}
 	if err := attachment.Kill(context.Background()); err != nil {
 		c.replyOperationError(err)
+		return
+	}
+	_ = c.reply(frameOK, struct{}{})
+}
+
+func (c *serverConn) handleSetStateRules(payload []byte) {
+	var set StateRuleSet
+	if err := unmarshalFrame(payload, &set); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if c.rulesOwner == "" {
+		c.replyError(frameError, errorMsg{Code: codeInvalidInput, Message: "state rules need a rule owner in the hello"})
+		return
+	}
+	if err := c.server.supervisor.SetStateRules(c.rulesOwner, set); err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
 	_ = c.reply(frameOK, struct{}{})

@@ -87,6 +87,8 @@ type productionDurableResolver struct {
 	ssh     *sshdaemon.Resolver
 	events  ipc.Emitter
 	helpers *productionHelperService
+	// rules keeps every resolved helper on its owner's state rules.
+	rules *stateRulesRuntime
 }
 
 func productionHelperProgressEvent(scope ipc.HelperProgressScope, progress sshdaemon.HelperProgress) ipc.HelperProgressEvent {
@@ -105,6 +107,14 @@ func productionHelperProgressEvent(scope ipc.HelperProgressScope, progress sshda
 }
 
 func (r productionDurableResolver) ResolveDurable(ctx context.Context, transport base.Transport) (base.DurableProvider, error) {
+	provider, err := r.resolveDurable(ctx, transport)
+	if err != nil {
+		return nil, err
+	}
+	return r.rules.wrapProvider(ctx, ipc.HelperProgressScopeFromContext(ctx).AssetID, provider), nil
+}
+
+func (r productionDurableResolver) resolveDurable(ctx context.Context, transport base.Transport) (base.DurableProvider, error) {
 	if deviceTransport, ok := transport.(*device.Transport); ok {
 		return deviceTransport.Provider(), nil
 	}

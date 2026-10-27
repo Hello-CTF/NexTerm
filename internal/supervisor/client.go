@@ -30,6 +30,75 @@ type Client struct {
 	// compressOutput asks the helper for compressed replay and live output;
 	// remote clients set it because their bytes cross a network.
 	compressOutput bool
+	// rules, when set, names the rule owner in every hello and is pushed to
+	// the helper when the acknowledgement reports another revision.
+	rules StateRuleSource
+}
+
+// WithStateRules returns a copy of the client that acts for the rule owner
+// of source: every connection it opens names the owner in its hello, so the
+// sessions it creates are evaluated with that owner's rules, and pushes the
+// owner's rules when the helper reports another revision. A push the helper
+// rejects is reported to source and does not fail the connection. A source
+// with a malformed owner key is ignored.
+func (c *Client) WithStateRules(source StateRuleSource) *Client {
+	copied := *c
+	copied.rules = source
+	return &copied
+}
+
+// SyncStateRules connects to the helper once so it takes the current state
+// rules, and returns the push error, including a rejection. It does nothing
+// without a state rule source.
+func (c *Client) SyncStateRules(ctx context.Context) error {
+	if c.rulesOwner() == "" {
+		return nil
+	}
+	conn, err := c.dialHello(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	return c.pushStateRules(ctx, conn)
+}
+
+// rulesOwner is the owner key the client sends in its hello; empty without a
+// source or for a malformed key.
+func (c *Client) rulesOwner() string {
+	if c.rules == nil {
+		return ""
+	}
+	if key := c.rules.StateRulesOwner(); validStateRulesOwner(key) {
+		return key
+	}
+	return ""
+}
+
+// pushStateRules sends the source's rules unless the helper already has
+// their revision, and reports the outcome to the source.
+func (c *Client) pushStateRules(ctx context.Context, conn *clientConn) error {
+	if conn.stateRules == nil {
+		err := fmt.Errorf("%w: the helper does not take state rules", ErrUnsupported)
+		c.rules.StateRulesPushed("", err)
+		return err
+	}
+	set, ok := c.rules.StateRules()
+	if !ok {
+		return nil
+	}
+	if set.Revision == conn.stateRules.Revision {
+		c.rules.StateRulesPushed(set.Revision, nil)
+		return nil
+	}
+	kind, _, err := conn.request(ctx, frameSetStateRules, set)
+	if err == nil && kind != frameOK {
+		err = protocolMismatch(kind)
+	}
+	if err == nil {
+		conn.stateRules = &stateRulesAck{Revision: set.Revision}
+	}
+	c.rules.StateRulesPushed(set.Revision, err)
+	return err
 }
 
 func NewClient(socketPath, stateDir string) *Client {
@@ -447,6 +516,13 @@ func (c *Client) Kill(ctx context.Context, id string, expect *Identity) error {
 }
 
 func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
+	return c.dialHello(ctx, true)
+}
+
+// dialHello connects and says hello; with push it also brings the helper
+// to the rule owner's current rules.
+func (c *Client) dialHello(ctx context.Context, push bool) (*clientConn, error) {
+	owner := c.rulesOwner()
 	netConn, err := c.dialNet(ctx)
 	if err != nil {
 		if legacyErr := c.legacyHelperError(ctx); legacyErr != nil {
@@ -463,7 +539,7 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		}
 	}
 	conn := &clientConn{conn: netConn, compress: c.compressOutput}
-	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, CompressOutput: conn.compress})
+	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, CompressOutput: conn.compress, StateRulesOwner: owner})
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -504,6 +580,16 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 	}
 	conn.activity = *ack.Activity
 	conn.stateSeen = ack.StateSeen
+	conn.stateRules = ack.StateRules
+	if push && owner != "" {
+		// A rejected push, or a helper without state rules, keeps the
+		// connection usable; a failed exchange leaves it broken.
+		var remote *wireError
+		if err := c.pushStateRules(ctx, conn); err != nil && !errors.As(err, &remote) && !errors.Is(err, ErrUnsupported) {
+			_ = conn.Close()
+			return nil, err
+		}
+	}
 	return conn, nil
 }
 
@@ -530,7 +616,10 @@ type clientConn struct {
 	activity        ActivitySnapshot
 	// stateSeen: the helper accepts frameStateSeen.
 	stateSeen bool
-	writeMu   sync.Mutex
+	// stateRules is the helper's state rule revision; nil when the helper
+	// does not take state rules.
+	stateRules *stateRulesAck
+	writeMu    sync.Mutex
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {

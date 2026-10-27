@@ -68,6 +68,7 @@ type ProductionServices struct {
 	// LocalHelper runs local terminals in a detached helper; nil keeps them
 	// in this process.
 	LocalHelper      *localhelper.Service
+	stateRules       *stateRulesRuntime
 	Events           ipc.Emitter
 	Update           *update.Manager
 	ScreenInsets     func(context.Context) (ScreenInsets, error)
@@ -307,6 +308,9 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.fsUploads != nil {
 		modules = append(modules, Module{Name: "fs-chunk-uploads", Component: services.fsUploads})
+	}
+	if services.stateRules != nil {
+		modules = append(modules, Module{Name: "state-rules", RegisterCommands: services.stateRules.registerCommands})
 	}
 	if services.Sessions != nil {
 		localHelper := services.LocalHelper

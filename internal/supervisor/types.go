@@ -47,6 +47,10 @@ type CreateOptions struct {
 	// cannot be attached, persist nothing, and are dropped when the process
 	// exits.
 	Pty *bool
+	// StateRulesOwner selects the state rules the session is evaluated
+	// with; empty uses none. A remote session takes the rule owner of the
+	// connection that created it.
+	StateRulesOwner string
 }
 
 func (o CreateOptions) usePTY() bool {

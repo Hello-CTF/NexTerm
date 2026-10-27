@@ -358,6 +358,20 @@ func NewRemoteProvider(client *Client) *RemoteProvider {
 	return &RemoteProvider{client: client, create: remoteProviderCreate, attach: remoteProviderAttach, createAttach: remoteProviderCreateAttach}
 }
 
+// WithStateRules returns a copy of the provider whose connections keep the
+// helper on the state rules of source; see Client.WithStateRules.
+func (p *RemoteProvider) WithStateRules(source StateRuleSource) *RemoteProvider {
+	copied := *p
+	copied.client = p.client.WithStateRules(source)
+	return &copied
+}
+
+// SyncStateRules pushes the current state rules to the helper now; see
+// Client.SyncStateRules.
+func (p *RemoteProvider) SyncStateRules(ctx context.Context) error {
+	return p.client.SyncStateRules(ctx)
+}
+
 func remoteProviderCreate(ctx context.Context, client *Client, options CreateOptions) (Info, error) {
 	return client.Create(ctx, options)
 }
