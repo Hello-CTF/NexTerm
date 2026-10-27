@@ -128,10 +128,7 @@ type Tab struct {
 	titleCustom     bool
 	// titleChangedAt is the client-supplied time (Unix ms) of the last explicit
 	// title decision (a rename or a clear); zero when unknown.
-	titleChangedAt int64
-	// createdAt and detachedAt back TabInfo.CreatedAt and DetachedAt.
-	createdAt       time.Time
-	detachedAt      time.Time
+	titleChangedAt  int64
 	cancelPump      context.CancelFunc
 	cwdTracker      *shellintegr.Tracker
 	cwd             string
@@ -189,6 +186,10 @@ type Tab struct {
 	lifecycleMu  sync.Mutex
 	closeMu      sync.Mutex
 	closeRetry   bool
+
+	// createdAt and detachedAt back TabInfo.CreatedAt and DetachedAt; guarded by mu.
+	createdAt  time.Time
+	detachedAt time.Time
 }
 
 // acquireWrite takes the tab's write gate, giving up early when the caller's
