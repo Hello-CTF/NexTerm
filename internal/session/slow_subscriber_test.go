@@ -424,6 +424,6 @@ func TestFanoutOverflowEmitsResyncNotice(t *testing.T) {
 	select {
 	case event := <-events:
 		t.Fatalf("unexpected second resync notice %+v", event)
-	default:
+	case <-time.After(100 * time.Millisecond):
 	}
 }

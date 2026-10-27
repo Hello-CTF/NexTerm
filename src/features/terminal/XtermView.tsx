@@ -1542,6 +1542,7 @@ export function XtermView(props: XtermViewProps) {
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
       }
       disposeChannel(channel);
+      onChannelRef.current?.(undefined);
       kernelTabIdRef.current = "";
       unsubscribeGpuPreference();
       webgl.cancel();
