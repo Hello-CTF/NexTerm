@@ -1,4 +1,4 @@
-import { useId, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { copyText } from "../../ui/clipboard";
 import { IconLoader } from "../../ui/icons";
 
@@ -224,8 +224,24 @@ function Definition({ term, value }: { term: string; value: string }) {
 }
 
 // CopyButton copies one identifier; the outcome is shown on the button and announced through a live region.
+// The copy outcome is cleared again after this long, and at the start of every copy, so a repeated copy of the same
+// value changes the live region again and is announced again.
+const COPY_STATUS_RESET_MS = 2_000;
+
 function CopyButton({ name, value }: { name: string; value: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+  }, []);
+  const show = (next: "copied" | "failed") => {
+    setState(next);
+    if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+    resetTimer.current = setTimeout(() => {
+      resetTimer.current = null;
+      setState("idle");
+    }, COPY_STATUS_RESET_MS);
+  };
   return (
     <>
       <button
@@ -233,7 +249,8 @@ function CopyButton({ name, value }: { name: string; value: string }) {
         className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
         aria-label={`复制${name}`}
         onClick={() => {
-          copyText(value).then(() => setState("copied"), () => setState("failed"));
+          setState("idle");
+          copyText(value).then(() => show("copied"), () => show("failed"));
         }}
       >
         {state === "copied" ? "已复制" : state === "failed" ? "复制失败" : "复制"}
@@ -317,7 +334,7 @@ function VersionSection({
               <dd className={`flex min-w-0 flex-wrap items-start gap-x-1.5 gap-y-1 ${differs ? "font-medium text-[var(--nx-fg-warning)]" : "text-neutral-300"}`}>
                 <span data-value className={copyable ? "min-w-0 break-all font-mono" : "min-w-0 break-words"}>{value ?? "未提供"}</span>
                 {differs && <span className="nx-badge nx-badge-amber">不同</span>}
-                {copyable && <CopyButton name={`${label}${term}`} value={value} />}
+                {copyable && <CopyButton name={`${label}的${term}`} value={value} />}
               </dd>
             </div>
           );

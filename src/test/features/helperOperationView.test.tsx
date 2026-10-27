@@ -178,16 +178,41 @@ describe("HelperOperationView", () => {
     expect(local.querySelectorAll("button")).toHaveLength(2);
     expect(running.querySelectorAll("button")).toHaveLength(2);
 
-    click(buttonByLabel(local, "复制本地携带版本提交"));
+    click(buttonByLabel(local, "复制本地携带版本的提交"));
     await flush();
     expect(clipboard.copyText).toHaveBeenCalledWith("local-commit");
-    expect(liveText(local)).toContain("已复制本地携带版本提交");
+    expect(liveText(local)).toContain("已复制本地携带版本的提交");
 
-    click(buttonByLabel(running, "复制远端运行版本SHA-256"));
+    click(buttonByLabel(running, "复制远端运行版本的SHA-256"));
     await flush();
     expect(clipboard.copyText).toHaveBeenLastCalledWith(RUNNING_SHA);
-    expect(liveText(running)).toContain("复制远端运行版本SHA-256失败");
-    expect(buttonByLabel(running, "复制远端运行版本SHA-256").textContent).toBe("复制失败");
+    expect(liveText(running)).toContain("复制远端运行版本的SHA-256失败");
+    expect(buttonByLabel(running, "复制远端运行版本的SHA-256").textContent).toBe("复制失败");
+  });
+
+  it("announces a repeated copy of the same value again and clears the announcement afterwards", async () => {
+    vi.useFakeTimers();
+    clipboard.copyText.mockReset().mockResolvedValue(undefined);
+    const view = renderView({ stage: "ready", localVersion: IDENTICAL, runningVersion: IDENTICAL, compatibility: "compatible" });
+    const version = sectionByLabel(view.container, "组件版本");
+    const copyCommit = buttonByLabel(version, "复制提交");
+
+    click(copyCommit);
+    await flush();
+    expect(liveText(version)).toContain("已复制提交");
+
+    click(copyCommit);
+    expect(liveText(version)).not.toContain("已复制提交");
+    await flush();
+    expect(liveText(version)).toContain("已复制提交");
+    expect(clipboard.copyText).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(liveText(version)).not.toContain("已复制提交");
+    expect(copyCommit.textContent).toBe("复制");
+    vi.useRealTimers();
   });
 
   it("renders identical local and running versions once, with full identifiers behind a detail", () => {
