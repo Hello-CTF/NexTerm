@@ -136,7 +136,8 @@ export function createTerminalResponseLimiter(options: TerminalResponseLimiterOp
   const burst = options.burstBytes ?? RESPONSE_BURST_BYTES;
   const rate = options.refillBytesPerSecond ?? RESPONSE_REFILL_BYTES_PER_SECOND;
   const maxQueuedBytes = options.maxQueuedBytes ?? RESPONSE_MAX_QUEUED_BYTES;
-  const now = options.now ?? Date.now;
+  // Read the clock on each call rather than capturing Date.now once, so a replaced clock applies.
+  const now = options.now ?? (() => Date.now());
   const log = options.log ?? defaultLog;
 
   let tokens = burst;
