@@ -836,7 +836,7 @@ describe("terminal dead-tab overlay", () => {
     expect(useUi.getState().toasts.some((toast) => toast.text.includes(status === "current" ? "最新版本" : "更新已延后"))).toBe(true);
   });
 
-  it("shows deployment in the terminal badge and offers a durable tab when ready", async () => {
+  it("stays quiet while the helper deploys and offers a durable tab when ready", async () => {
     seedTab({ tabId: undefined });
     mounted = mountPane();
     await flush();
@@ -845,16 +845,16 @@ describe("terminal dead-tab overlay", () => {
       deadline: Date.now() + 600_000, step: 3, steps: 6, stage: "upload", transferred: 50, total: 100, percent: 50, done: false,
     };
     act(() => useUi.getState().setHelperProgress(progress));
-    const badge = () => mounted?.container.querySelector('button[aria-label$="查看持久终端组件"]');
-    expect(badge()?.textContent).toContain("正在启用持久终端");
-    expect(badge()?.getAttribute("title")).toContain("上传持久终端组件");
+    const hint = () => mounted?.container.querySelector<HTMLElement>('[data-testid="persistence-hint"]');
+    expect(hint()).toBeNull();
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
     expect(mounted.container.textContent).not.toContain("尝试次数");
     act(() => useUi.getState().setHelperProgress({ ...progress, stage: "ready", done: true }));
     await flush();
-    expect(badge()?.textContent).toContain("持久已就绪");
+    expect(hint()?.textContent).toContain("这台主机的持久终端已就绪");
+    expect([...(hint()?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).toContain("在持久终端中重开");
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
-    expect(useUi.getState().toasts.find((toast) => toast.text.includes("持久终端已就绪"))?.action?.label).toBe("新建持久标签");
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("持久终端已就绪"))).toBe(false);
     expect(mocks.helperOperation).not.toHaveBeenCalled();
   });
 
