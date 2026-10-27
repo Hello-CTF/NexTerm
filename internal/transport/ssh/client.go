@@ -49,6 +49,14 @@ type Client struct {
 	forwardAgent bool
 	env          map[string]string
 	identity     string
+
+	heartbeatMu      sync.Mutex
+	heartbeatPending *heartbeatCall
+}
+
+type heartbeatCall struct {
+	done chan struct{}
+	err  error
 }
 
 // HostIdentity names the authenticated server: the login user plus the host key
@@ -245,6 +253,41 @@ func (c *Client) Ping(ctx context.Context) (time.Duration, error) {
 		return result.Duration, &base.ExitError{Code: *result.ExitCode, Signal: result.Signal}
 	}
 	return result.Duration, nil
+}
+
+// Heartbeat sends one keepalive@openssh.com global request and waits for the
+// server's reply. Concurrent callers share the request in flight, so a reply
+// that never arrives holds at most one blocked request per connection.
+func (c *Client) Heartbeat(ctx context.Context) error {
+	if !c.IsAlive() {
+		return base.ErrDisconnected
+	}
+	c.heartbeatMu.Lock()
+	call := c.heartbeatPending
+	if call == nil {
+		call = &heartbeatCall{done: make(chan struct{})}
+		c.heartbeatPending = call
+		go func() {
+			_, _, err := c.ssh.SendRequest("keepalive@openssh.com", true, nil)
+			c.heartbeatMu.Lock()
+			call.err = err
+			c.heartbeatPending = nil
+			c.heartbeatMu.Unlock()
+			close(call.done)
+		}()
+	}
+	c.heartbeatMu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.done:
+		return base.ErrDisconnected
+	case <-call.done:
+	}
+	if call.err != nil {
+		return fmt.Errorf("%w: %v", base.ErrDisconnected, call.err)
+	}
+	return nil
 }
 
 func (c *Client) check(ctx context.Context, generation uint64) error {
