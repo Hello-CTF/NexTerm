@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clickButton, flush, flushUntil as flushUntilBase, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
@@ -137,6 +137,15 @@ function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {})
   });
   return event;
 }
+
+// The shell loads these panels through React.lazy or dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([
+    import("../app/AutoSync"),
+    import("../app/QuickConnect"),
+  ]);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

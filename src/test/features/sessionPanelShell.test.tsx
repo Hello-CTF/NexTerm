@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
@@ -81,8 +81,18 @@ function panel(): HTMLElement | null {
 }
 
 async function settlePanel(): Promise<void> {
-  await flushUntil(() => panel() !== null, 200);
+  await flushUntil(() => panel() !== null);
 }
+
+// The shell loads these panels through React.lazy or dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([
+    import("../../features/session-panel/SessionPanel"),
+    import("../../features/ai/AiSidebar"),
+    import("../../features/files/FileTree"),
+  ]);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { act, createElement } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 import type { AccountUser } from "../ipc/authApi";
@@ -158,6 +158,15 @@ function expectDevicePreserved(): void {
 	expect(mocks.disconnect).not.toHaveBeenCalled();
 	expect(resetAccountWorkspaces).not.toHaveBeenCalled();
 }
+
+// The shell loads these panels through React.lazy or dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+	await Promise.all([
+		import("../app/AutoSync"),
+		import("../features/auth/AuthGate"),
+	]);
+});
 
 beforeEach(() => {
 	vi.clearAllMocks();

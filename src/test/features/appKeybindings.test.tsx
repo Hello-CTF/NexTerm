@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
@@ -85,6 +85,15 @@ function mountApp(): MountedView {
 function activePaneTabId(): string | null {
   return useUi.getState().workspaces[0]?.panes[0]?.activeTabId ?? null;
 }
+
+// The shell loads these panels through React.lazy or dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([
+    import("../../app/CommandPalette"),
+    import("../../app/QuickConnect"),
+  ]);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -212,7 +221,7 @@ describe("rebound app shortcuts", () => {
     await flush();
 
     keyDown(window, "o", { ctrlKey: true, shiftKey: true });
-    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null, 400);
+    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null);
     expect(mounted?.container.querySelector('[data-testid="command-palette"]')).not.toBeNull();
 
     mounted.unmount();
@@ -221,7 +230,7 @@ describe("rebound app shortcuts", () => {
     keyDown(window, "p", { ctrlKey: true, shiftKey: true });
     expect(mounted.container.querySelector('[data-testid="command-palette"]')).toBeNull();
     keyDown(window, "o", { ctrlKey: true, shiftKey: true });
-    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null, 400);
+    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null);
     expect(mounted?.container.querySelector('[data-testid="command-palette"]')).not.toBeNull();
   });
 
@@ -303,7 +312,7 @@ describe("rebound app shortcuts", () => {
     await flush();
 
     keyDown(window, "q", { altKey: true });
-    await flushUntil(() => (mounted?.container.querySelector('[data-testid="quick-connect"]') ?? null) !== null, 400);
+    await flushUntil(() => (mounted?.container.querySelector('[data-testid="quick-connect"]') ?? null) !== null);
     expect(mounted?.container.querySelector('[data-testid="quick-connect"]')).not.toBeNull();
 
     mounted.unmount();
