@@ -156,6 +156,8 @@ describe("regular SSH terminals always say why", () => {
     act(() => (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1"));
 
     await waitFor(() => expect(storeTab()?.regularReason).toBe("持久组件准备中"));
+    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("neutral"));
+    expect(hintBar()?.textContent).toContain("持久组件准备中");
   });
 
   it("names later fallbacks on the same connection that carry no backend notice", async () => {
