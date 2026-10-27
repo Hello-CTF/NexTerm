@@ -1,13 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 import { measureTerminalGeometry } from "./terminalGeometry";
-import {
-  FOLLOWER_FONT_STEP_PX,
-  FOLLOWER_MIN_FONT_PX,
-  followerFontSize,
-  followerGridFits,
-  type FollowerScale,
-  type FollowerZoom,
-} from "./followerScale";
+import { followerFontSize, followerGridFits, type FollowerScale, type FollowerZoom } from "./followerScale";
 
 // The follower display state of one terminal view, kept in a ref and read when the view measures.
 export interface FollowerView {
@@ -23,7 +16,10 @@ export interface FollowerView {
 
 function report(view: FollowerView, scale: FollowerScale | null): void {
   const last = view.scale;
-  if (last === scale || (last && scale && last.ratio === scale.ratio && last.zoom === scale.zoom && last.panX === scale.panX)) {
+  if (
+    last === scale ||
+    (last && scale && last.ratio === scale.ratio && last.zoom === scale.zoom && last.panX === scale.panX && last.panY === scale.panY)
+  ) {
     return;
   }
   view.scale = scale;
@@ -31,8 +27,9 @@ function report(view: FollowerView, scale: FollowerScale | null): void {
 }
 
 // applyFollowerFont shows the PTY grid another device sized without resizing it: the font shrinks until the grid
-// fits the pane (its rows only when zoomed), never past the user's size. While the view sizes the PTY, the font is
-// the user's and the pane does not pan.
+// fits the pane (its rows only when zoomed), never past the user's size. The target size is computed first and the
+// font set once. Columns wider than the pane pan sideways; rows taller than the pane at the smallest font pan up and
+// down. While the view sizes the PTY, the font is the user's and the pane does not pan.
 export function applyFollowerFont(term: Terminal | null, host: HTMLElement | null, view: FollowerView): void {
   if (!host || !term) return;
   const base = view.base;
@@ -40,7 +37,9 @@ export function applyFollowerFont(term: Terminal | null, host: HTMLElement | nul
     if (view.scale === null) return;
     if (term.options.fontSize !== base) term.options.fontSize = base;
     host.style.overflowX = "";
+    host.style.overflowY = "";
     host.scrollLeft = 0;
+    host.scrollTop = 0;
     report(view, null);
     return;
   }
@@ -53,19 +52,16 @@ export function applyFollowerFont(term: Terminal | null, host: HTMLElement | nul
     widthPx: (geometry.metrics.widthPx * base) / current,
     heightPx: (geometry.metrics.heightPx * base) / current,
   };
-  let size = followerFontSize(base, grid, geometry.viewport, cellAtBase, zoom);
+  const size = followerFontSize(base, grid, geometry.viewport, cellAtBase, zoom, window.devicePixelRatio || 1);
   if (size !== current) term.options.fontSize = size;
-  // Cell sizes snap to device pixels, so the estimate can miss by a step.
-  let measured = measureTerminalGeometry(term, host);
-  for (let step = 0; step < 4 && measured && size > FOLLOWER_MIN_FONT_PX; step++) {
-    if (followerGridFits(grid, measured.viewport, measured.metrics, zoom).fits) break;
-    size = Math.max(FOLLOWER_MIN_FONT_PX, size - FOLLOWER_FONT_STEP_PX);
-    term.options.fontSize = size;
-    measured = measureTerminalGeometry(term, host);
-  }
-  const panX = measured ? !followerGridFits(grid, measured.viewport, measured.metrics, zoom).widthFits : false;
-  // overflow-x hidden (not clip) lets the gestures pan the columns; the host clips again once they fit.
+  const measured = size === current ? geometry : measureTerminalGeometry(term, host);
+  const fit = measured ? followerGridFits(grid, measured.viewport, measured.metrics, zoom) : null;
+  const panX = fit ? !fit.widthFits : false;
+  const panY = fit ? !fit.heightFits : false;
+  // overflow hidden (not clip) lets the gestures pan; the host clips again once the grid fits.
   host.style.overflowX = panX ? "hidden" : "";
+  host.style.overflowY = panY ? "hidden" : "";
   if (!panX) host.scrollLeft = 0;
-  report(view, { ratio: Math.round((size / base) * 100) / 100, zoom, panX });
+  if (!panY) host.scrollTop = 0;
+  report(view, { ratio: Math.round((size / base) * 100) / 100, zoom, panX, panY });
 }

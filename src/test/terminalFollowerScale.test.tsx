@@ -13,6 +13,8 @@ const harness = vi.hoisted(() => ({
     resize: ReturnType<typeof vi.fn>;
   }>,
   frames: new Map<number, () => void>(),
+  viewport: { widthPx: 360, heightPx: 400 },
+  observers: [] as Array<() => void>,
   attach: vi.fn(),
   detach: vi.fn(),
   setVisible: vi.fn(),
@@ -84,14 +86,15 @@ vi.mock("../features/terminal/commandBlocks", () => ({
     feedInput() {}
   },
 }));
-// A 360x400 pane; a cell is half the font size wide and the font size high.
+// A 360x400 pane unless a test changes it; a cell is half the font size wide and the font size high.
 vi.mock("../features/terminal/terminalGeometry", () => ({
   measureTerminalGeometry: (term: { options: Record<string, unknown> }) => {
     const fontSize = Number(term.options.fontSize) || 13;
+    const viewport = { ...harness.viewport };
     return {
-      viewport: { widthPx: 360, heightPx: 400 },
+      viewport,
       metrics: { widthPx: fontSize / 2, heightPx: fontSize },
-      grid: { cols: Math.floor(360 / (fontSize / 2)), rows: Math.floor(400 / fontSize) },
+      grid: { cols: Math.floor(viewport.widthPx / (fontSize / 2)), rows: Math.floor(viewport.heightPx / fontSize) },
     };
   },
   resizeTerminalToGrid: (term: { resize: (cols: number, rows: number) => void }, grid: { cols: number; rows: number }) =>
@@ -127,7 +130,9 @@ import { XtermView, type XtermViewProps } from "../features/terminal/XtermView";
 import { resetAppearancePrefs, setTerminalFontSize } from "../app/preferences";
 import {
   FOLLOWER_MIN_FONT_PX,
+  FOLLOWER_SETTLE_MS,
   followerFontSize,
+  predictedCell,
   followerGridFits,
   followerReadable,
   pinchDirection,
@@ -180,6 +185,8 @@ beforeEach(() => {
   resetAppearancePrefs();
   harness.terminals.length = 0;
   harness.frames.clear();
+  harness.viewport = { widthPx: 360, heightPx: 400 };
+  harness.observers.length = 0;
   frameId = 0;
   harness.attach.mockReset().mockResolvedValue({
     tabId: "tab-1",
@@ -204,6 +211,9 @@ beforeEach(() => {
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => harness.frames.delete(id));
   vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: () => void) {
+      harness.observers.push(callback);
+    }
     observe() {}
     disconnect() {}
   });
@@ -216,6 +226,7 @@ afterEach(() => {
   container?.remove();
   container = null;
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("follower scale", () => {
@@ -232,16 +243,26 @@ describe("follower scale", () => {
     expect(followerFontSize(13, { cols: 1000, rows: 300 }, { widthPx: 360, heightPx: 400 }, cell, "fit")).toBe(FOLLOWER_MIN_FONT_PX);
   });
 
+  it("picks the size against cells rounded up to device pixels, so one font change is enough", () => {
+    const wide = { widthPx: 6.6, heightPx: 13 };
+    // The plain estimate is 7.5 px; at 8 px the 4.06 px cells would round up to 5 px and overflow.
+    const size = followerFontSize(13, { cols: 90, rows: 30 }, { widthPx: 360, heightPx: 400 }, wide, "fit");
+    expect(size).toBe(7.5);
+    expect(followerGridFits({ cols: 90, rows: 30 }, { widthPx: 360, heightPx: 400 }, predictedCell(13, wide, size), "fit").fits).toBe(true);
+    expect(followerGridFits({ cols: 90, rows: 30 }, { widthPx: 360, heightPx: 400 }, predictedCell(13, wide, size + 0.5), "fit").fits).toBe(false);
+  });
+
   it("fits only the rows when zoomed, and the columns then pan", () => {
     const size = followerFontSize(13, { cols: 90, rows: 30 }, { widthPx: 360, heightPx: 400 }, cell, "height");
     expect(size).toBe(13);
     const fit = followerGridFits({ cols: 90, rows: 30 }, { widthPx: 360, heightPx: 400 }, cell, "height");
-    expect(fit).toEqual({ fits: true, widthFits: false });
+    expect(fit).toEqual({ fits: true, widthFits: false, heightFits: true });
   });
 
   it("flags text below the readable share and classifies pinches", () => {
-    expect(followerReadable({ ratio: 0.62, zoom: "fit", panX: false })).toBe(true);
-    expect(followerReadable({ ratio: 0.4, zoom: "fit", panX: false })).toBe(false);
+    expect(followerReadable({ ratio: 0.62, zoom: "fit", panX: false, panY: false })).toBe(true);
+    expect(followerReadable({ ratio: 0.4, zoom: "fit", panX: false, panY: false })).toBe(false);
+    expect(followerReadable({ ratio: 0.62, zoom: "fit", panX: true, panY: true })).toBe(false);
     expect(pinchDirection(100, 150)).toBe("out");
     expect(pinchDirection(150, 100)).toBe("in");
     expect(pinchDirection(100, 105)).toBeNull();
@@ -255,7 +276,7 @@ describe("follower gestures", () => {
     let following = true;
     let panX = false;
     const onPinch = vi.fn();
-    const detach = attachFollowerGestures(element, { following: () => following, panX: () => panX, onPinch });
+    const detach = attachFollowerGestures(element, { following: () => following, panX: () => panX, panY: () => false, onPinch });
     try {
       element.dispatchEvent(touchEvent("touchstart", [[100, 100], [200, 100]]));
       element.dispatchEvent(touchEvent("touchmove", [[50, 100], [250, 100]]));
@@ -279,11 +300,38 @@ describe("follower gestures", () => {
 
       following = false;
       onPinch.mockClear();
+      // Not following: nothing pans.
+      element.dispatchEvent(touchEvent("touchstart", [[200, 100]]));
+      const ignored = touchEvent("touchmove", [[150, 102]]);
+      element.dispatchEvent(ignored);
+      expect(ignored.defaultPrevented).toBe(false);
+      element.dispatchEvent(touchEvent("touchend", []));
       element.dispatchEvent(touchEvent("touchstart", [[100, 100], [200, 100]]));
       element.dispatchEvent(touchEvent("touchmove", [[50, 100], [250, 100]]));
       element.dispatchEvent(touchEvent("touchend", []));
       expect(onPinch).not.toHaveBeenCalled();
     } finally {
+      detach();
+    }
+  });
+});
+
+describe("follower vertical pan", () => {
+  it("pans rows taller than the pane and keeps the swipe from the scrollback scrolling", () => {
+    const element = document.createElement("div");
+    const detach = attachFollowerGestures(element, { following: () => true, panX: () => false, panY: () => true, onPinch: vi.fn() });
+    // The terminal's own touch scrolling is attached after the gestures.
+    const scrollback = vi.fn();
+    element.addEventListener("touchmove", scrollback, { capture: true });
+    try {
+      element.dispatchEvent(touchEvent("touchstart", [[100, 200]]));
+      const move = touchEvent("touchmove", [[102, 150]]);
+      element.dispatchEvent(move);
+      expect(move.defaultPrevented).toBe(true);
+      expect(scrollback).not.toHaveBeenCalled();
+      element.dispatchEvent(touchEvent("touchend", []));
+    } finally {
+      element.removeEventListener("touchmove", scrollback, { capture: true });
       detach();
     }
   });
@@ -302,7 +350,7 @@ describe("terminal view following another device's size", () => {
     await render({ canResize: false, remoteGrid: { cols: 90, rows: 30, revision: 1 }, onFollowerScale });
     expect([term.cols, term.rows]).toEqual([90, 30]);
     expect(term.options.fontSize).toBe(8);
-    expect(onFollowerScale).toHaveBeenLastCalledWith({ ratio: 0.62, zoom: "fit", panX: false });
+    expect(onFollowerScale).toHaveBeenLastCalledWith({ ratio: 0.62, zoom: "fit", panX: false, panY: false });
 
     // A pane resize while following keeps the PTY grid and sends nothing.
     act(() => {
@@ -314,7 +362,7 @@ describe("terminal view following another device's size", () => {
     // Zoomed: the rows fit at the user's font and the columns pan.
     await render({ canResize: false, remoteGrid: { cols: 90, rows: 30, revision: 1 }, followerZoom: "height", onFollowerScale });
     expect(term.options.fontSize).toBe(13);
-    expect(onFollowerScale).toHaveBeenLastCalledWith({ ratio: 1, zoom: "height", panX: true });
+    expect(onFollowerScale).toHaveBeenLastCalledWith({ ratio: 1, zoom: "height", panX: true, panY: false });
     expect(host().style.overflowX).toBe("hidden");
     expect(harness.resize).not.toHaveBeenCalled();
 
@@ -325,6 +373,45 @@ describe("terminal view following another device's size", () => {
     expect(host().style.overflowX).toBe("");
     expect(harness.resize).toHaveBeenCalledWith("tab-1", { cols: 55, rows: 30 });
     expect(harness.resize).not.toHaveBeenCalledWith("tab-1", { cols: 90, rows: 50 });
+  });
+
+  it("holds the font during a drag and applies it once after the drag settles", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await render({ canResize: true });
+    const term = harness.terminals[0];
+    await render({ canResize: false, remoteGrid: { cols: 90, rows: 30, revision: 1 } });
+    expect(term.options.fontSize).toBe(8);
+    const sizes: unknown[] = [];
+    const options = term.options;
+    term.options = new Proxy(options, {
+      set(target, key, value) {
+        if (key === "fontSize") sizes.push(value);
+        return Reflect.set(target, key, value);
+      },
+    });
+    // The pane narrows step by step, as during a drag.
+    for (const width of [340, 320, 300, 270]) {
+      harness.viewport = { widthPx: width, heightPx: 400 };
+      act(() => harness.observers.forEach((callback) => callback()));
+      await flushWork();
+    }
+    expect(sizes).toEqual([]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FOLLOWER_SETTLE_MS + 10);
+    });
+    // 90 columns in 270 px: 3 px cells, a 6 px font, set once.
+    expect(sizes).toEqual([6]);
+    expect(harness.resize).not.toHaveBeenCalled();
+  });
+
+  it("warns and pans vertically when even the smallest font leaves the grid taller than the pane", async () => {
+    const onFollowerScale = vi.fn<(scale: FollowerScale | null) => void>();
+    await render({ canResize: true, onFollowerScale });
+    const term = harness.terminals[0];
+    await render({ canResize: false, remoteGrid: { cols: 400, rows: 200, revision: 1 }, onFollowerScale });
+    expect(term.options.fontSize).toBe(FOLLOWER_MIN_FONT_PX);
+    expect(onFollowerScale).toHaveBeenLastCalledWith({ ratio: 0.31, zoom: "fit", panX: true, panY: true });
+    expect(host().style.overflowY).toBe("hidden");
   });
 
   it("follows a font size change while following without leaving the shrunken size", async () => {
@@ -356,36 +443,51 @@ describe("terminal view following another device's size", () => {
 });
 
 describe("follower size badge", () => {
-  it("says the size follows another device, how to take it, and toggles the zoom", () => {
+  it("is a compact chip that names the follow state, explains on demand and toggles the zoom", () => {
     const element = document.createElement("div");
     document.body.append(element);
     const badgeRoot = createRoot(element);
     const onZoom = vi.fn();
+    const scale = (patch: Partial<FollowerScale>): FollowerScale => ({ ratio: 0.4, zoom: "fit", panX: false, panY: false, ...patch });
     try {
-      act(() => badgeRoot.render(createElement(FollowerSizeBadge, {
-        scale: { ratio: 0.4, zoom: "fit", panX: false },
-        ownedElsewhere: true,
-        zoom: "fit",
-        onZoom,
-      })));
-      expect(element.textContent).toContain("尺寸跟随另一台设备 · 40%");
-      expect(element.textContent).toContain("在此输入即改用本设备尺寸");
+      act(() => badgeRoot.render(createElement(FollowerSizeBadge, { scale: scale({}), ownedElsewhere: true, zoom: "fit", onZoom })));
+      const chip = element.querySelector<HTMLButtonElement>("[data-follower-chip]")!;
+      expect(chip.textContent).toBe("跟随 · 40%");
+      expect(chip.getAttribute("aria-label")).toBe("终端尺寸跟随另一台设备，缩放到 40%");
+      expect(element.querySelector('[role="status"]')?.textContent).toBe("终端尺寸跟随另一台设备");
       expect(element.querySelector("[data-follower-small]")).not.toBeNull();
-      const button = element.querySelector("button");
-      expect(button?.getAttribute("aria-pressed")).toBe("false");
+
+      // The explanation is behind the chip and collapses again.
+      expect(element.querySelector("[data-follower-why]")).toBeNull();
       act(() => {
-        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        chip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(chip.getAttribute("aria-expanded")).toBe("true");
+      expect(element.querySelector("[data-follower-why]")?.textContent).toContain("在此输入即改用本设备尺寸");
+      act(() => {
+        chip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(element.querySelector("[data-follower-why]")).toBeNull();
+
+      const zoom = element.querySelector<HTMLButtonElement>("[data-follower-zoom-toggle]")!;
+      expect(zoom.textContent).toBe("放大文字");
+      expect(zoom.getAttribute("aria-pressed")).toBe("false");
+      act(() => {
+        zoom.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
       expect(onZoom).toHaveBeenCalledWith("height");
+      act(() => badgeRoot.render(createElement(FollowerSizeBadge, { scale: scale({ ratio: 1, zoom: "height", panX: true }), ownedElsewhere: true, zoom: "height", onZoom })));
+      const pressed = element.querySelector<HTMLButtonElement>("[data-follower-zoom-toggle]")!;
+      expect(pressed.textContent).toBe("放大文字");
+      expect(pressed.getAttribute("aria-pressed")).toBe("true");
 
-      act(() => badgeRoot.render(createElement(FollowerSizeBadge, {
-        scale: { ratio: 1, zoom: "fit", panX: false },
-        ownedElsewhere: true,
-        zoom: "fit",
-        onZoom,
-      })));
+      act(() => badgeRoot.render(createElement(FollowerSizeBadge, { scale: scale({ ratio: 0.31, panX: true, panY: true }), ownedElsewhere: true, zoom: "fit", onZoom })));
+      expect(element.querySelector("[data-follower-small]")?.textContent).toContain("上下滑动查看");
+
+      act(() => badgeRoot.render(createElement(FollowerSizeBadge, { scale: scale({ ratio: 1 }), ownedElsewhere: true, zoom: "fit", onZoom })));
       // A grid that fits at the user's size has nothing to zoom.
-      expect(element.querySelector("button")).toBeNull();
+      expect(element.querySelector("[data-follower-zoom-toggle]")).toBeNull();
+      expect(element.querySelector("[data-follower-chip]")?.textContent).toBe("跟随");
     } finally {
       act(() => badgeRoot.unmount());
       element.remove();

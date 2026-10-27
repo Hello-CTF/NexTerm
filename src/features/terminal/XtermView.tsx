@@ -60,7 +60,7 @@ import { pasteUploadFiles } from "./imagePaste";
 import { attachTouchScroll } from "./touchScroll";
 import { attachFollowerGestures } from "./followerGestures";
 import { applyFollowerFont, type FollowerView } from "./followerFont";
-import type { FollowerScale, FollowerZoom } from "./followerScale";
+import { FOLLOWER_SETTLE_MS, type FollowerScale, type FollowerZoom } from "./followerScale";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
 
@@ -237,6 +237,7 @@ export function XtermView(props: XtermViewProps) {
   const onFollowerScaleRef = useRef(props.onFollowerScale);
   const onFollowerPinchRef = useRef(props.onFollowerPinch);
   // The shown font differs from the user's only while another device owns the PTY size (followerFont.ts).
+  const followerTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const followerRef = useRef<FollowerView>({
     base: 0,
     following: false,
@@ -292,7 +293,19 @@ export function XtermView(props: XtermViewProps) {
       !sameGrid(snapshot.desired, geometry.grid) || !sameGrid(snapshot.committed, geometry.grid);
     coordinator.update(geometry.viewport, geometry.metrics);
     if (final) coordinator.flush();
-    if (followerRef.current.following) applyFollowerFont(term, host, followerRef.current);
+    if (followerRef.current.following) {
+      // During a drag the font holds still; it changes once, on the final fit or after the drag settles.
+      if (followerTimerRef.current !== undefined) clearTimeout(followerTimerRef.current);
+      followerTimerRef.current = undefined;
+      if (final) {
+        applyFollowerFont(term, host, followerRef.current);
+      } else {
+        followerTimerRef.current = setTimeout(() => {
+          followerTimerRef.current = undefined;
+          applyFollowerFont(termRef.current, hostRef.current, followerRef.current);
+        }, FOLLOWER_SETTLE_MS);
+      }
+    }
     onGeometryRef.current?.();
     return localChanged || remoteChanged;
   };
@@ -304,6 +317,7 @@ export function XtermView(props: XtermViewProps) {
     followerRef.current.base = appearance.terminalFontSize;
     followerRef.current.scale = null;
     hostRef.current.style.overflowX = "";
+    hostRef.current.style.overflowY = "";
     const kittyKeyboard = kittyKeyboardSwitch();
     const linkHost = hostRef.current;
     // The host a remote session's shell reports through OSC 7 (file://host/cwd).
@@ -347,13 +361,15 @@ export function XtermView(props: XtermViewProps) {
       return false;
     });
     term.open(hostRef.current);
-    // One-finger vertical swipes scroll like the wheel; a touch that stops a fling is not a tap.
-    const touchScroll = attachTouchScroll(term, hostRef.current);
+    // Attached before the touch scrolling, so panning rows taller than the pane can keep a swipe from it.
     const detachFollowerGestures = attachFollowerGestures(hostRef.current, {
       following: () => followerRef.current.following,
       panX: () => followerRef.current.scale?.panX === true,
+      panY: () => followerRef.current.scale?.panY === true,
       onPinch: (direction) => onFollowerPinchRef.current?.(direction),
     });
+    // One-finger vertical swipes scroll like the wheel; a touch that stops a fling is not a tap.
+    const touchScroll = attachTouchScroll(term, hostRef.current);
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
     const detachTerminalInput = attachTerminalInput(term, hostRef.current, { kittyKeyboard });
 
@@ -1564,6 +1580,8 @@ export function XtermView(props: XtermViewProps) {
       detachLinkLongPress();
       touchScroll.dispose();
       detachFollowerGestures();
+      if (followerTimerRef.current !== undefined) clearTimeout(followerTimerRef.current);
+      followerTimerRef.current = undefined;
       osc7Disposable.dispose();
       links.dispose();
       dataDisposable.dispose();

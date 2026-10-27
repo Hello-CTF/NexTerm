@@ -1,3 +1,4 @@
+import { useId, useState } from "react";
 import { followerReadable, type FollowerScale, type FollowerZoom } from "./followerScale";
 
 export interface FollowerSizeBadgeProps {
@@ -9,40 +10,62 @@ export interface FollowerSizeBadgeProps {
   onZoom: (zoom: FollowerZoom) => void;
 }
 
-// FollowerSizeBadge marks a terminal that renders the PTY size another device set. The PTY follows the device that
-// typed last, so typing here takes the size; there is no other way to take it. The zoom button (and a pinch on the
-// terminal) switches between the whole grid and a larger font that fits the rows and pans the columns.
+// FollowerSizeBadge is a compact chip on a terminal that renders the PTY size another device set: "跟随 · 62%" and a
+// zoom toggle. The chip expands to explain that the PTY follows the device that typed last, so typing here takes the
+// size; there is no other way to take it. The zoom switches between the whole grid and a larger font that fits the
+// rows and pans the columns (a pinch on the terminal does the same).
 export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom }: FollowerSizeBadgeProps) {
+  const id = useId();
+  const [expanded, setExpanded] = useState(false);
   const percent = scale && scale.ratio < 1 ? Math.round(scale.ratio * 100) : null;
   const zoomable = zoom === "height" || percent !== null;
-  const small = scale !== null && zoom === "fit" && !followerReadable(scale);
+  const small = scale !== null && (scale.panY || (zoom === "fit" && !followerReadable(scale)));
+  const state = ownedElsewhere ? "终端尺寸跟随另一台设备" : "终端按当前尺寸显示";
+  const spoken = percent === null ? state : `${state}，缩放到 ${percent}%`;
   return (
-    <div
-      className="pointer-events-none flex max-w-full flex-col items-end gap-0.5"
-      data-follower-size=""
-      data-follower-zoom={zoom}
-    >
-      <div className="flex items-center gap-1.5 rounded border border-neutral-700/70 bg-neutral-900/85 px-2 py-0.5 text-[11px] text-neutral-300 shadow">
-        <span title="终端尺寸跟随最后输入的设备；在这里输入后改用本设备的尺寸">
-          {ownedElsewhere ? "尺寸跟随另一台设备" : "按终端当前尺寸显示"}
-          {percent !== null && ` · ${percent}%`}
-          <span className="text-[var(--nx-fg-soft)]"> · 在此输入即改用本设备尺寸</span>
-        </span>
+    <div className="pointer-events-none flex max-w-full flex-col items-end gap-0.5" data-follower-size="" data-follower-zoom={zoom}>
+      {/* Announced once when the view starts following; the chip's own label carries the scale. */}
+      <span role="status" className="sr-only">
+        {state}
+      </span>
+      <div className="flex items-center gap-1 rounded border border-neutral-700/70 bg-neutral-900/85 px-1 py-0.5 text-[11px] text-neutral-300 shadow">
+        <button
+          type="button"
+          className="pointer-events-auto rounded px-1 pointer-coarse:min-h-8"
+          aria-label={spoken}
+          aria-expanded={expanded}
+          aria-controls={`${id}-why`}
+          title={spoken}
+          data-follower-chip=""
+          onClick={() => setExpanded((value) => !value)}
+        >
+          跟随{percent !== null && ` · ${percent}%`}
+        </button>
         {zoomable && (
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto pointer-coarse:min-h-8 px-1.5 py-0 text-[11px]"
             aria-pressed={zoom === "height"}
-            title={zoom === "height" ? "显示整个终端" : "放大文字，左右滑动查看"}
+            title={zoom === "height" ? "再按一次显示整个终端" : "放大文字，左右滑动查看"}
+            data-follower-zoom-toggle=""
             onClick={() => onZoom(zoom === "height" ? "fit" : "height")}
           >
-            {zoom === "height" ? "显示全部" : "放大"}
+            放大文字
           </button>
         )}
       </div>
+      {expanded && (
+        <p
+          id={`${id}-why`}
+          className="pointer-events-auto max-w-[320px] rounded bg-neutral-900/90 px-2 py-1 text-right text-[11px] text-neutral-300"
+          data-follower-why=""
+        >
+          终端尺寸跟随最后输入的设备。在此输入即改用本设备尺寸，另一台设备随后按比例显示。
+        </p>
+      )}
       {small && (
         <span className="rounded bg-neutral-900/85 px-2 py-0.5 text-[11px] text-amber-300" data-follower-small="">
-          文字较小：双指张开或点「放大」查看
+          {scale?.panY ? "文字已缩到最小，终端仍显示不全：上下滑动查看" : "文字较小：双指张开或点「放大文字」"}
         </span>
       )}
     </div>
