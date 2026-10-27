@@ -213,6 +213,8 @@ func newProductionLocalHelperExposure(desktop bool, dataDir, appVersion string, 
 		},
 	})
 	secrets.AddUnlockListener(controller.Reconcile)
+	// A switch to another account stops exposure at once, not at the next recheck.
+	account.SetLinkChanged(controller.Reconcile)
 	return controller
 }
 
