@@ -26,7 +26,7 @@ vi.mock("@xterm/xterm", () => ({
     options = { scrollback: 1000 };
     element: HTMLElement | null = null;
     modes = { bracketedPasteMode: false };
-    buffer = { active: { type: "normal", baseY: 0, viewportY: 0 } };
+    buffer = { active: { type: "normal", baseY: 0, viewportY: 0 }, onBufferChange: () => ({ dispose: () => {} }) };
     constructor() {
       harness.terminals.push(this);
     }

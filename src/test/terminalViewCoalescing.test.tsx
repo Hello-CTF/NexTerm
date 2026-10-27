@@ -46,7 +46,7 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     options: Record<string, unknown> = {};
     modes = { bracketedPasteMode: false };
-    buffer = { active: { baseY: 0, viewportY: 0 } };
+    buffer = { active: { baseY: 0, viewportY: 0 }, onBufferChange: () => ({ dispose: () => {} }) };
     writeLog: string[] = [];
     pendingWrites: (() => void)[] = [];
     handlers: {
