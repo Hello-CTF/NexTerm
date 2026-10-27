@@ -33,6 +33,12 @@ const (
 	// wire means a terminal bridge, and agents pre-dating purposes serve only it.
 	PurposeTerminal = "terminal"
 
+	// DeviceKindLocalHelper is the enroll kind of a desktop that exposes its
+	// local helper sessions to its own account. The server never shares such
+	// a device and echoes the kind, so a server that does not know it is
+	// detected instead of enrolling an ordinary, shareable device.
+	DeviceKindLocalHelper = "local-helper"
+
 	configVersion = 1
 
 	PathHealth     = "/healthz"
