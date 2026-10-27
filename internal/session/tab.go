@@ -2073,20 +2073,35 @@ func (m *Manager) disconnectSubscriberOutput(tab *Tab, channelID string, incarna
 }
 
 func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []byte) error {
-	return m.feedWith(ctx, tab, generation, data, true, false)
+	return m.feedWith(ctx, tab, generation, data, feedOptions{transcript: true})
 }
 
 // feedDisplay renders data without recording it in the transcript: replay
 // preludes and notices that are not session output.
 func (m *Manager) feedDisplay(ctx context.Context, tab *Tab, generation uint64, data []byte) error {
-	return m.feedWith(ctx, tab, generation, data, false, false)
+	return m.feedWith(ctx, tab, generation, data, feedOptions{})
 }
 
-// feedWith renders data and fans it out. replay marks history replayed by a
-// recovered durable tab: it renders and reaches subscribers like any output,
-// but raises no events — no automatic query replies to the shell, no unread
-// mark and no command records.
-func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, data []byte, transcript, replay bool) error {
+// feedOptions selects how feedWith treats data.
+type feedOptions struct {
+	// transcript records the data in the session transcript.
+	transcript bool
+	// replay marks history replayed by a recovered durable tab: it renders
+	// and reaches subscribers like any output but raises no events.
+	replay bool
+	// uncounted replay is not part of the announced replayPending (a notice
+	// rendered inside the replay window), so it does not consume it.
+	uncounted bool
+	// endReplay closes the replay window once this data is fed, so a
+	// shortfall (output the helper dropped) is never announced to later
+	// attaches as replay.
+	endReplay bool
+}
+
+// feedWith renders data and fans it out. Replayed data raises no events — no
+// automatic query replies to the shell, no unread mark and no command records.
+func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, data []byte, options feedOptions) error {
+	replay, transcript := options.replay, options.transcript
 	if len(data) == 0 {
 		return nil
 	}
@@ -2105,8 +2120,12 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		tab.mu.Unlock()
 		return ErrStaleGeneration
 	}
-	if replay {
+	if replay && !options.uncounted {
 		tab.replayPending = max(0, tab.replayPending-int64(len(data)))
+	}
+	if options.endReplay {
+		tab.replayPending = 0
+		tab.replayUntil = 0
 	}
 	tab.mu.Unlock()
 	if source, ok := tab.terminal.(interface{ FeedReplay([]byte) }); ok && replay {

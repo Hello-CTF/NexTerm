@@ -132,3 +132,67 @@ func TestRecoveredDurableTailHasNoSideEffects(t *testing.T) {
 		t.Fatal("live output did not update lastOutputAt")
 	}
 }
+
+// assertAttachAnnouncesRingReplay attaches a new client and checks that only
+// the clear-screen control and the ring replay are announced as replay.
+func assertAttachAnnouncesRingReplay(t *testing.T, manager *Manager, tab *Tab, channelID string) {
+	t.Helper()
+	want := int64(len(replayClear) + len(tab.terminal.Dump(manager.defaultReplay)))
+	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-z", ChannelID: channelID, ReplayBytes: -1}); err != nil {
+		t.Fatal(err)
+	}
+	receiver := bindTestReceiver(t, manager, channelID)
+	if anchor := receiveTestAnchor(t, receiver); anchor.ReplayBytes != want {
+		t.Fatalf("replayBytes = %d, want control + ring replay = %d", anchor.ReplayBytes, want)
+	}
+}
+
+// Output the helper dropped inside the recovered tail leaves fewer bytes to
+// feed than announced: reaching the end of the tail closes the window, so a
+// later attach never counts live output as replay.
+func TestRecoveredTailGapClosesReplayWindow(t *testing.T) {
+	manager, tab, _, _ := openCommandTestTab(t, &fakeCommandSink{}, "")
+	ctx := context.Background()
+	tab.mu.Lock()
+	tab.durable = replayAttachment{}
+	tab.replayUntil = 100
+	tab.replayPending = 100
+	generation := tab.generation
+	tab.mu.Unlock()
+
+	if err := manager.feedDurable(ctx, tab, generation, bytes.Repeat([]byte("a"), 40), 40); err != nil {
+		t.Fatal(err)
+	}
+	// Offsets 40..80 were dropped by the helper; the chunk crosses the end.
+	if err := manager.feedDurable(ctx, tab, generation, bytes.Repeat([]byte("b"), 40), 120); err != nil {
+		t.Fatal(err)
+	}
+	tab.mu.Lock()
+	pending, until := tab.replayPending, tab.replayUntil
+	tab.mu.Unlock()
+	if pending != 0 || until != 0 {
+		t.Fatalf("replay window still open: pending %d until %d", pending, until)
+	}
+	assertAttachAnnouncesRingReplay(t, manager, tab, "gap-late")
+}
+
+// A prelude that could not be rendered is not counted for later attaches.
+func TestStalePreludeIsNotAnnouncedAsReplay(t *testing.T) {
+	manager, tab, _, _ := openCommandTestTab(t, &fakeCommandSink{}, "")
+	prelude := []byte("\x1b[?1h")
+	tab.mu.Lock()
+	tab.durable = replayAttachment{}
+	tab.historyPrelude = prelude
+	tab.replayPending = int64(len(prelude))
+	stale := tab.generation + 1
+	tab.mu.Unlock()
+
+	manager.startDurableReplay(context.Background(), tab, stale)
+	tab.mu.Lock()
+	pending := tab.replayPending
+	tab.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("stale prelude left replayPending %d", pending)
+	}
+	assertAttachAnnouncesRingReplay(t, manager, tab, "prelude-late")
+}
