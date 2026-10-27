@@ -39,7 +39,14 @@ func TestEventBrokerFilteredPendingOverflowDropsAndResyncs(t *testing.T) {
 	broker := NewEventBroker()
 	broker.QueueSize = 2 // pending bound = 2*QueueSize = 4
 	var slowDrops atomic.Int32
-	broker.OnSlowSubscriber = func() { slowDrops.Add(1) }
+	slowFired := make(chan struct{}, 1)
+	broker.OnSlowSubscriber = func() {
+		slowDrops.Add(1)
+		select {
+		case slowFired <- struct{}{}:
+		default:
+		}
+	}
 
 	gate := newGatedEventFilter()
 	filtered, unsubscribeFiltered, err := broker.subscribe(0, false, false, gate.filter)
@@ -75,8 +82,12 @@ func TestEventBrokerFilteredPendingOverflowDropsAndResyncs(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("overflowed subscriber was not dropped; pending backlog is unbounded")
 	}
-	if got := slowDrops.Load(); got != 1 {
-		t.Fatalf("slow subscriber hook fired %d times, want 1", got)
+	// The broker closes done before it runs the hook, so wait for the hook
+	// itself rather than assuming it already ran once done is observed.
+	select {
+	case <-slowFired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow subscriber hook did not fire after the overflow drop")
 	}
 	// Unblock: the retained backlog drains exactly once (no double-complete panic).
 	gate.unblock()
@@ -97,6 +108,10 @@ func TestEventBrokerFilteredPendingOverflowDropsAndResyncs(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("Emit %d did not complete after unblock", seq)
 		}
+	}
+	// Every Emit has returned, so no hook call can still be in flight.
+	if got := slowDrops.Load(); got != 1 {
+		t.Fatalf("slow subscriber hook fired %d times, want 1", got)
 	}
 	// A fresh subscriber resyncs instead of replaying the overflowed backlog.
 	resynced, unsubscribeResynced, err := broker.subscribe(0, true, false, nil)
