@@ -25,11 +25,13 @@ import (
 //
 // Each owner's set is kept in its own file under the state directory, so a
 // helper restarted without any client online applies them. At most
-// maxStateRuleOwners sets are kept; a new owner evicts the one least
-// recently pushed or confirmed in a hello.
+// maxStateRuleOwners sets are kept. A new owner evicts the one least
+// recently pushed or confirmed in a hello among owners no live session is
+// bound to; an owner whose rules live sessions use is never evicted, and
+// when every set is in use the new owner's push is refused with ErrLimit.
 const (
 	stateRulesDirName  = "state-rules"
-	maxStateRuleOwners = 16
+	maxStateRuleOwners = 64
 	// stateRulesOwnerLen is the length of an owner key: hexadecimal.
 	stateRulesOwnerLen = 32
 )
@@ -74,6 +76,10 @@ func validStateRulesOwner(key string) bool {
 // stateRuleOwners holds the rule sets of all owners.
 type stateRuleOwners struct {
 	dir string
+	// limit is the most owner sets kept; bound returns the owners live
+	// sessions are bound to, which are never evicted.
+	limit int
+	bound func() map[string]bool
 
 	// mu guards sets; writeMu orders updates and their files.
 	mu      sync.RWMutex
@@ -101,7 +107,7 @@ func stateRulesDir(stateDir string) string {
 // is logged and skipped: its owner's sessions use no rules and the owner's
 // next client pushes the set again, as the helper reports no revision.
 func loadStateRuleOwners(stateDir string) *stateRuleOwners {
-	owners := &stateRuleOwners{dir: stateRulesDir(stateDir), sets: make(map[string]*ownerRules)}
+	owners := &stateRuleOwners{dir: stateRulesDir(stateDir), limit: maxStateRuleOwners, sets: make(map[string]*ownerRules)}
 	entries, err := os.ReadDir(owners.dir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -250,7 +256,9 @@ func (o *stateRuleOwners) set(key string, set StateRuleSet, now time.Time) (chan
 		return true, nil, nil
 	}
 	if current == nil {
-		evicted = o.evictionsLocked()
+		if evicted, err = o.evictionsLocked(); err != nil {
+			return false, nil, err
+		}
 	}
 	if err := writeOwnerRules(o.dir, key, ownerRulesFile{PushedAt: now.UnixMilli(), Set: compiled.Set()}); err != nil {
 		return false, nil, err
@@ -270,17 +278,27 @@ func (o *stateRuleOwners) set(key string, set StateRuleSet, now time.Time) (chan
 }
 
 // evictionsLocked picks the owners to drop so a new one fits, least recently
-// used first. The caller holds writeMu.
-func (o *stateRuleOwners) evictionsLocked() []string {
+// used first, never an owner live sessions are bound to. It fails with
+// ErrLimit when too few owners can go. The caller holds writeMu.
+func (o *stateRuleOwners) evictionsLocked() ([]string, error) {
+	var bound map[string]bool
+	if o.bound != nil {
+		bound = o.bound()
+	}
 	o.mu.RLock()
 	defer o.mu.RUnlock()
-	excess := len(o.sets) + 1 - maxStateRuleOwners
+	excess := len(o.sets) + 1 - o.limit
 	if excess <= 0 {
-		return nil
+		return nil, nil
 	}
 	keys := make([]string, 0, len(o.sets))
 	for key := range o.sets {
-		keys = append(keys, key)
+		if !bound[key] {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) < excess {
+		return nil, fmt.Errorf("%w: all %d state rule sets are in use by live sessions", ErrLimit, o.limit)
 	}
 	sort.Slice(keys, func(i, j int) bool {
 		a, b := o.sets[keys[i]].used, o.sets[keys[j]].used
@@ -289,7 +307,7 @@ func (o *stateRuleOwners) evictionsLocked() []string {
 		}
 		return keys[i] < keys[j]
 	})
-	return keys[:excess]
+	return keys[:excess], nil
 }
 
 // StateRules returns the state rules of an owner.
@@ -307,10 +325,34 @@ func (s *Supervisor) stateRulesSeen(owner string) string {
 	return s.stateRules.seen(owner, s.now())
 }
 
+// boundRuleOwners returns the rule owners of live sessions.
+func (s *Supervisor) boundRuleOwners() map[string]bool {
+	s.mu.Lock()
+	sessions := make([]*Session, 0, len(s.sessions))
+	for _, session := range s.sessions {
+		if session.state != nil && session.state.opts.rulesOwner != "" {
+			sessions = append(sessions, session)
+		}
+	}
+	s.mu.Unlock()
+	bound := make(map[string]bool)
+	for _, session := range sessions {
+		session.mu.RLock()
+		dead := session.dead
+		session.mu.RUnlock()
+		if !dead {
+			bound[session.state.opts.rulesOwner] = true
+		}
+	}
+	return bound
+}
+
 // SetStateRules validates, persists and applies an owner's rule set. That
 // owner's live sessions whose output is quiet are evaluated again at once;
 // the others apply the rules at their next idle inspection. Invalid rules
 // are rejected whole with ErrInvalidInput and the owner's rules stay.
+// A new owner that would need an owner in use by live sessions evicted is
+// refused with ErrLimit.
 func (s *Supervisor) SetStateRules(owner string, set StateRuleSet) error {
 	changed, evicted, err := s.stateRules.set(owner, set, s.now())
 	if err != nil || !changed {

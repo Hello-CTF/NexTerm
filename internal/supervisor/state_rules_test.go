@@ -249,3 +249,92 @@ func TestSupervisorEvictsTheLeastRecentlyUsedOwner(t *testing.T) {
 		}
 	}
 }
+
+func testOwners(t *testing.T, limit int, bound map[string]bool) *stateRuleOwners {
+	t.Helper()
+	owners := loadStateRuleOwners(filepath.Join(t.TempDir(), "state"))
+	owners.limit = limit
+	owners.bound = func() map[string]bool { return bound }
+	return owners
+}
+
+func TestStateRuleOwnersNeverEvictAnOwnerInUse(t *testing.T) {
+	inUse := map[string]bool{testOwnerKey(0): true}
+	owners := testOwners(t, 3, inUse)
+	set := testRuleSet(t, bottomRule(`Waiting`, base.SessionNeedsMe))
+	now := stateEpoch0
+	for i := 0; i < 3; i++ {
+		now = now.Add(time.Second)
+		if _, _, err := owners.set(testOwnerKey(i), set, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Owner 0 is the least recently used but live sessions use its rules:
+	// owner 1 goes instead.
+	_, evicted, err := owners.set(testOwnerKey(3), set, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evicted) != 1 || evicted[0] != testOwnerKey(1) {
+		t.Fatalf("evicted %v, want owner 1", evicted)
+	}
+	if owners.compiled(testOwnerKey(0)) == nil || owners.compiled(testOwnerKey(1)) != nil {
+		t.Fatal("the owner in use lost its rules or the idle one kept them")
+	}
+}
+
+func TestStateRuleOwnersRefuseAPushWhenEverySetIsInUse(t *testing.T) {
+	inUse := map[string]bool{testOwnerKey(0): true, testOwnerKey(1): true}
+	owners := testOwners(t, 2, inUse)
+	set := testRuleSet(t, bottomRule(`Waiting`, base.SessionNeedsMe))
+	for i := 0; i < 2; i++ {
+		if _, _, err := owners.set(testOwnerKey(i), set, stateEpoch0.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := owners.set(testOwnerKey(2), set, stateEpoch0.Add(time.Minute)); !errors.Is(err, ErrLimit) {
+		t.Fatalf("push with every set in use = %v, want ErrLimit", err)
+	}
+	if owners.compiled(testOwnerKey(2)) != nil {
+		t.Fatal("the refused owner's rules were installed")
+	}
+	if _, err := os.Stat(filepath.Join(owners.dir, testOwnerKey(2)+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused owner's rules were written: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if owners.compiled(testOwnerKey(i)) == nil {
+			t.Fatalf("owner %d in use lost its rules", i)
+		}
+	}
+	// An owner already holding a set may still replace it.
+	other := testRuleSet(t, bottomRule(`Thinking`, base.SessionRunning))
+	if _, _, err := owners.set(testOwnerKey(1), other, stateEpoch0.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A rule change that lands between the inspection prepared outside the
+// lock and its use must not leave the old rules' result in force.
+func TestStateRulesChangedBetweenPrepareAndInspect(t *testing.T) {
+	h := newHarness(t)
+	owners := testOwners(t, maxStateRuleOwners, nil)
+	owner := testOwnerKey(0)
+	h.tracker.opts.rules = func() *staterule.Compiled { return owners.compiled(owner) }
+	h.out(time.Second, "Agent: Waiting for your review")
+	now := h.clock.advance(defaultStateIdle)
+	pre := h.tracker.prepare(now)
+	if pre == nil || pre.ruled {
+		t.Fatalf("prepared inspection = %+v", pre)
+	}
+	rule := bottomRule(`Waiting for your review`, base.SessionNeedsMe)
+	if _, _, err := owners.set(owner, testRuleSet(t, rule), now); err != nil {
+		t.Fatal(err)
+	}
+	h.tracker.mu.Lock()
+	h.tracker.inspectLocked(pre)
+	ruled, matched := h.tracker.ruled, h.tracker.rule
+	h.tracker.mu.Unlock()
+	if !ruled || matched.ID != rule.ID {
+		t.Fatalf("inspection used the rules from before the change: ruled %v, rule %+v", ruled, matched)
+	}
+}

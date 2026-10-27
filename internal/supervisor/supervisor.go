@@ -106,6 +106,7 @@ func New(config Config) (*Supervisor, error) {
 		supervisor.sessions[entry.ID] = newRecoveredSession(supervisor, entry)
 	}
 	supervisor.stateRules = loadStateRuleOwners(stateDir)
+	supervisor.stateRules.bound = supervisor.boundRuleOwners
 	return supervisor, nil
 }
 

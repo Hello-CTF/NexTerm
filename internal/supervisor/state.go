@@ -466,9 +466,11 @@ func (t *stateTracker) due() (time.Time, bool) {
 }
 
 // inspection is the screen evaluated for one inspection: the state rule that
-// matched and the detected prompt, for the screen at writes.
+// matched and the detected prompt, for the screen at writes and the rule set
+// rules.
 type inspection struct {
 	writes   uint64
+	rules    *staterule.Compiled
 	rule     staterule.Match
 	ruled    bool
 	detected shape.Prompt
@@ -492,20 +494,27 @@ func (t *stateTracker) prepare(now time.Time) *inspection {
 }
 
 func (t *stateTracker) evaluate(snap terminal.Snapshot, writes uint64) *inspection {
-	result := &inspection{writes: writes, detected: shape.Detect(snap)}
-	if t.opts.rules != nil {
-		result.rule, result.ruled = t.opts.rules().Match(staterule.Screen{Lines: snap.Lines, CursorRow: snap.CursorRow, Title: snap.Title})
-	}
+	rules := t.currentRules()
+	result := &inspection{writes: writes, rules: rules, detected: shape.Detect(snap)}
+	result.rule, result.ruled = rules.Match(staterule.Screen{Lines: snap.Lines, CursorRow: snap.CursorRow, Title: snap.Title})
 	return result
 }
 
+// currentRules returns the rule set in force; nil for none.
+func (t *stateTracker) currentRules() *staterule.Compiled {
+	if t.opts.rules == nil {
+		return nil
+	}
+	return t.opts.rules()
+}
+
 // inspectLocked applies an inspection of the current screen: pre when it
-// was made for the screen as it is, otherwise one made now. It updates the
-// matched rule, the prompt and its epoch, and reports whether the published
-// prompt changed.
+// was made for the screen and the rule set as they are, otherwise one made
+// now. It updates the matched rule, the prompt and its epoch, and reports
+// whether the published prompt changed.
 func (t *stateTracker) inspectLocked(pre *inspection) bool {
 	t.inspections++
-	if pre == nil || pre.writes != t.writes {
+	if pre == nil || pre.writes != t.writes || pre.rules != t.currentRules() {
 		pre = t.evaluate(t.screenLocked(), t.writes)
 	}
 	t.rule, t.ruled = pre.rule, pre.ruled

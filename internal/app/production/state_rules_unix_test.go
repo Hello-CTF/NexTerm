@@ -208,3 +208,23 @@ func TestStateRulesOfAccountsStayApartOnOneHelper(t *testing.T) {
 		}
 	}
 }
+
+func TestStateRuleHelperStatusNamesTheOutcome(t *testing.T) {
+	runtime := newStateRulesRuntime(nil, nil, testStateRulesIdentity, false)
+	h := runtime.helper("", ids.New())
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{nil, stateRuleStatusApplied},
+		{supervisor.ErrLimit, stateRuleStatusFailed},
+		{supervisor.ErrInvalidInput, stateRuleStatusFailed},
+		{supervisor.ErrUnsupported, stateRuleStatusUnsupported},
+		{base.ErrDisconnected, stateRuleStatusPending},
+	} {
+		h.StateRulesPushed("rev", tc.err)
+		if got := runtime.status("")[0].Status; got != tc.want {
+			t.Fatalf("status for %v = %s, want %s", tc.err, got, tc.want)
+		}
+	}
+}
