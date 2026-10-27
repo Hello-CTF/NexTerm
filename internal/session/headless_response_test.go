@@ -113,9 +113,10 @@ func TestOwnerViewAnswersWhileGuestControls(t *testing.T) {
 	}
 }
 
-// The answering client leaves while a view that never typed stays
-// attached: that view has no input yet, so the headless screen answers.
-func TestHeadlessScreenAnswersAfterAnsweringClientLeaves(t *testing.T) {
+// The answering client leaves while another view that never typed stays
+// attached: that view takes over answering and the PTY size, so the headless
+// screen stays silent; it answers again once no client is attached.
+func TestRemainingClientAnswersAfterAnsweringClientLeaves(t *testing.T) {
 	manager, tab, channel, _ := openCommandTestTab(t, &fakeCommandSink{}, "")
 	ctx := context.Background()
 	if _, err := manager.AttachTab(ctx, tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "observer-b"}); err != nil {
@@ -124,11 +125,21 @@ func TestHeadlessScreenAnswersAfterAnsweringClientLeaves(t *testing.T) {
 	if err := manager.DetachChannel("cmd-channel"); err != nil {
 		t.Fatal(err)
 	}
-	if owner := tab.Info().SizeOwner; owner != "" {
-		t.Fatalf("size owner = %q after the size owner left", owner)
+	if owner := tab.Info().SizeOwner; owner != "client-b" {
+		t.Fatalf("size owner = %q after the size owner left, want the remaining client", owner)
 	}
 	if err := channel.emit([]byte("\x1b[5n")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return bytes.Equal(channel.written(), []byte("\x1b[0n")) })
+	waitFor(t, func() bool { return tab.ScreenSeq() == 4 })
+	if err := manager.DetachChannel("observer-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := channel.emit([]byte("\x1b[6n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(channel.written()) > 0 })
+	if written := channel.written(); bytes.Contains(written, []byte("\x1b[0n")) {
+		t.Fatalf("shell input = %q, want no headless reply while client-b answered", written)
+	}
 }

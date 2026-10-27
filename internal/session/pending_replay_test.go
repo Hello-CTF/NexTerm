@@ -68,11 +68,18 @@ func TestAttachResumesFromConsumedOffset(t *testing.T) {
 	if anchor.Epoch != tab.streamEpoch || anchor.StreamSeq != 5 || anchor.ControlBytes != 0 || anchor.Expired {
 		t.Fatalf("anchor = %+v, want epoch %q streamSeq 5 control 0 expired false", anchor, tab.streamEpoch)
 	}
+	// client-a answered the resumed output, so client-b must not answer it.
+	assertSpans(t, "resume", anchor.Classes, span(5, 11, classAnswered))
 	assertFrameData(t, receiver, []byte(" world"))
 	if err := channel.emit([]byte("!")); err != nil {
 		t.Fatal(err)
 	}
-	assertFrameData(t, receiver, []byte("!"))
+	// Live output client-a answers is announced as answered to client-b.
+	spans, out := receiveClassified(t, receiver, 1)
+	assertSpans(t, "live", spans, span(11, 12, classAnswered))
+	if string(out) != "!" {
+		t.Fatalf("live output = %q, want !", out)
+	}
 }
 
 // TestAttachExpiredAnchorFallsBackToFullReplay pins the explicit degradation:

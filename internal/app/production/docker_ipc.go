@@ -336,7 +336,9 @@ func (s *terminalCommandService) writeDocker(ctx context.Context, id, clientID s
 }
 
 // resizeDocker applies the size owner's size; another client's size is
-// ignored until its input makes it the owner.
+// ignored until its input makes it the owner. Unlike session tabs there is
+// no handoff hold and no promotion: a docker exec stream has one attached
+// channel at a time, so two clients never type into it together.
 func (s *terminalCommandService) resizeDocker(ctx context.Context, id, clientID string, cols, rows uint) error {
 	s.mu.Lock()
 	owner := ""

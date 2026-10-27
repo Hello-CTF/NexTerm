@@ -110,7 +110,7 @@ function seed(): void {
 		rightOpen: false,
 		leftMode: "assets",
 		sessions: [
-			{ id: "s-dev", assetId: "device/d-1", assetName: "web-01", kind: "device", status: "connected", controller: "" },
+			{ id: "s-dev", assetId: "device/d-1", assetName: "web-01", kind: "device", status: "connected" },
 		] as never,
 		workspaces: [
 			{

@@ -140,15 +140,13 @@ type Tab struct {
 	// clients by their latest input (inputSeq numbers inputs); sizeOwner is
 	// the client whose size the PTY follows and sizeOwnerInput its latest
 	// input; sizeOwned reports that the tab had a size owner, so a new one
-	// must claim the grid back from observer mode; clientSizes holds the
-	// size each attached client last asked for.
+	// must claim the grid back from observer mode.
 	lastInputClient string
 	inputSeq        uint64
 	inputOrder      map[string]uint64
 	sizeOwner       string
 	sizeOwnerInput  time.Time
 	sizeOwned       bool
-	clientSizes     map[string]terminalgrid.Grid
 	// guestControl is the preview guest holding input control.
 	guestControl string
 	// guestLease/guestLeaseUntil record the preview guest control lease holder and expiry:
@@ -1791,11 +1789,8 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 		return ErrTabClosed
 	}
 	if tab.sizeOwner != client {
-		// The PTY follows the size owner; this client's size applies once
-		// its input makes it the owner.
-		if tab.clientAttachedLocked(client) {
-			tab.rememberSizeLocked(client, size)
-		}
+		// The PTY follows the size owner; a follower's view renders the PTY
+		// size and sends its own once its input makes it the owner.
 		tab.mu.Unlock()
 		return nil
 	}
@@ -1822,7 +1817,6 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 		tab.mu.Unlock()
 		return ErrTabClosed
 	}
-	tab.rememberSizeLocked(client, size)
 	if tab.sizeOwner != client {
 		tab.mu.Unlock()
 		return nil

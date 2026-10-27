@@ -265,7 +265,7 @@ export function aggregateBackgroundTabs(
       sessionKind: host.kind,
       cols: item.cols,
       rows: item.rows,
-      controller: null,
+      sizeOwner: null,
       subscribers: 0,
       viewers: 0,
       exited: false,
@@ -442,7 +442,7 @@ export async function takeOverAggregateSession(host: AggregateHost, tabId: strin
   const { session } = connection;
   return takeOverBackgroundTab({
     tabId, sessionId: session.id, sessionName: session.name, sessionKind: session.kind,
-    cols: 0, rows: 0, controller: null, subscribers: 0, viewers: 0, exited: false, title,
+    cols: 0, rows: 0, sizeOwner: null, subscribers: 0, viewers: 0, exited: false, title,
   });
 }
 

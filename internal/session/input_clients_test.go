@@ -46,11 +46,13 @@ func TestSizeFollowsLastInputClientAfterHold(t *testing.T) {
 	if owner := tab.Info().SizeOwner; owner != "client-b" {
 		t.Fatalf("size owner after the hold = %q, want client-b", owner)
 	}
-	// The new owner's size applies without another resize request.
-	waitFor(t, func() bool {
-		info := tab.Info()
-		return info.Cols == 100 && info.Rows == 30
-	})
+	// The new owner's view sends its size, which now reaches the PTY.
+	if err := manager.Resize(ctx, tab.ID, "client-b", 100, 30); err != nil {
+		t.Fatal(err)
+	}
+	if info := tab.Info(); info.Cols != 100 || info.Rows != 30 {
+		t.Fatalf("size owner's resize = %+v", info)
+	}
 
 	// client-a types right away: client-b keeps the size.
 	if err := manager.Write(ctx, tab.ID, "client-a", []byte("3")); err != nil {
@@ -63,18 +65,20 @@ func TestSizeFollowsLastInputClientAfterHold(t *testing.T) {
 		t.Fatalf("last input client = %q, want client-a", last)
 	}
 
-	// The size owner leaves: nobody owns the size until the next input.
+	// The size owner leaves: the most recently active remaining client
+	// takes the size.
 	if err := manager.DetachChannel("b-1"); err != nil {
 		t.Fatal(err)
 	}
-	if owner := tab.Info().SizeOwner; owner != "" {
-		t.Fatalf("size owner after it left = %q", owner)
+	if owner := tab.Info().SizeOwner; owner != "client-a" {
+		t.Fatalf("size owner after it left = %q, want client-a", owner)
 	}
-	if err := manager.Write(ctx, tab.ID, "client-a", []byte("4")); err != nil {
+	// With the last client gone nobody owns it.
+	if err := manager.DetachChannel("a-1"); err != nil {
 		t.Fatal(err)
 	}
-	if owner := tab.Info().SizeOwner; owner != "client-a" {
-		t.Fatalf("size owner after input with nobody owning it = %q", owner)
+	if owner := tab.Info().SizeOwner; owner != "" {
+		t.Fatalf("size owner with no client attached = %q", owner)
 	}
 }
 

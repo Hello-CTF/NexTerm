@@ -542,7 +542,8 @@ func TestSlowConsumerKickedAfterGraceOthersUnaffected(t *testing.T) {
 	if recovery.Version >= resync.Version {
 		t.Fatalf("recovery version %d not older than resync %d", recovery.Version, resync.Version)
 	}
-	if info := tab.Info(); info.Subscribers != 1 || info.SizeOwner != "" {
+	// The kicked view owned the size: the remaining client takes it.
+	if info := tab.Info(); info.Subscribers != 1 || info.SizeOwner != "client-b" {
 		t.Fatalf("tab info after kick = %+v", info)
 	}
 

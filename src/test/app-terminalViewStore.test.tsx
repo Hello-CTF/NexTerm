@@ -470,7 +470,7 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     const control = (version: number, extra: Record<string, unknown>) => ({
       tabId: "kernel-1",
       version,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,

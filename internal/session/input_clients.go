@@ -20,9 +20,14 @@ import (
 //   - lastInputClient (input_owner.go) is the newest client whose input was
 //     written; live clipboard writes apply only on its views.
 //
-// A client that attaches while no attached client has typed counts as the
-// most recent input client, and takes the size while nobody owns it, so a
-// single client answers and sizes its tab without typing first.
+// "Most recently active" ranks attached clients by their latest input and,
+// among clients that have not typed, the size owner first, then the latest
+// attach. So a single
+// client answers and sizes its tab without typing first, and when the
+// answering client or the size owner leaves, the most recently active
+// remaining client takes over: the headless screen answers only while no
+// interactive client is attached. A client that attaches while nobody owns
+// the size takes it.
 //
 // Preview guests write through WriteGuest under their own lease rules: a
 // guest may take input control only while no owner client is attached, and
@@ -71,25 +76,10 @@ func (t *Tab) noteInputLocked(client string, now time.Time) bool {
 	return changed
 }
 
-// noteAttachLocked runs when an interactive client's attach commits: it
-// counts as the most recent input client while no other attached client
-// has typed, and takes the size while nobody owns it. It reports whether
-// the size owner changed. The caller holds t.mu.
+// noteAttachLocked runs when an interactive client's attach commits: the
+// client takes the size while nobody owns it. It reports whether the size
+// owner changed. The caller holds t.mu.
 func (t *Tab) noteAttachLocked(client string, now time.Time) bool {
-	typed := false
-	for _, subscriber := range t.subscribers {
-		if subscriber.client != client && !subscriber.spectator && t.inputOrder[subscriber.client] > 0 {
-			typed = true
-			break
-		}
-	}
-	if !typed && t.inputOrder[client] == 0 {
-		t.inputSeq++
-		if t.inputOrder == nil {
-			t.inputOrder = make(map[string]uint64)
-		}
-		t.inputOrder[client] = t.inputSeq
-	}
 	if t.sizeOwner != "" {
 		return false
 	}
@@ -97,32 +87,32 @@ func (t *Tab) noteAttachLocked(client string, now time.Time) bool {
 	return true
 }
 
-// takeSizeLocked makes client the size owner and applies the size it last
-// asked for. The grid fences a resize still in flight for the previous
-// owner. The caller holds t.mu.
-func (t *Tab) takeSizeLocked(client string, now time.Time) {
+// takeSizeLocked makes client the size owner; inputAt is its latest input,
+// zero for a client promoted without typing. The grid fences a resize
+// still in flight for the previous owner; the new owner's view then sends
+// its own size. The caller holds t.mu.
+func (t *Tab) takeSizeLocked(client string, inputAt time.Time) {
 	t.sizeOwner = client
-	t.sizeOwnerInput = now
-	if t.grid == nil {
-		t.sizeOwned = true
-		return
-	}
-	if t.sizeOwned {
+	t.sizeOwnerInput = inputAt
+	if t.grid != nil && t.sizeOwned {
 		_ = t.grid.Claim()
 	}
 	t.sizeOwned = true
-	if size, ok := t.clientSizes[client]; ok {
-		_, _ = t.grid.SetDesired(size)
-	}
 }
 
-// rememberSizeLocked records the size a client asked for, applied when it
-// owns the size. The caller holds t.mu.
-func (t *Tab) rememberSizeLocked(client string, size terminalgrid.Grid) {
-	if t.clientSizes == nil {
-		t.clientSizes = make(map[string]terminalgrid.Grid)
+// moreActiveLocked reports whether subscriber a was active more recently
+// than b: later input first; between clients without input, the size owner
+// (the client already sizing the tab), then the later attach. The caller
+// holds t.mu.
+func (t *Tab) moreActiveLocked(a, b subscriber) bool {
+	orderA, orderB := t.inputOrder[a.client], t.inputOrder[b.client]
+	if orderA != orderB {
+		return orderA > orderB
 	}
-	t.clientSizes[client] = size
+	if ownerA, ownerB := a.client == t.sizeOwner, b.client == t.sizeOwner; ownerA != ownerB {
+		return ownerA
+	}
+	return a.attachmentId > b.attachmentId
 }
 
 // clientAttachedLocked reports an interactive subscriber of client. The
@@ -153,13 +143,13 @@ func (t *Tab) spectatorOnlyLocked(client string) bool {
 }
 
 // answererLocked returns the client whose terminal emulator answers queries
-// now: the most recent input client among the subscribers that answer and
-// take output. A paused subscriber (refusing output) or one whose fanout
-// entry was aborted would answer late or never. "" means the headless
-// screen answers. Callers hold t.mu.
+// now: among the subscribers that answer and take output, the last input
+// client, else the most recently active one. A paused subscriber (refusing
+// output) or one whose fanout entry was aborted would answer late or never.
+// "" means the headless screen answers. Callers hold t.mu.
 func (t *Tab) answererLocked() string {
-	answerer := ""
-	newest := uint64(0)
+	var best subscriber
+	found := false
 	for channelID, subscriber := range t.subscribers {
 		if !subscriber.answers || subscriber.paused {
 			continue
@@ -171,18 +161,19 @@ func (t *Tab) answererLocked() string {
 			// The last input client ranks first whenever it can answer.
 			return subscriber.client
 		}
-		if order := t.inputOrder[subscriber.client]; order > newest {
-			answerer, newest = subscriber.client, order
+		if !found || t.moreActiveLocked(subscriber, best) {
+			best, found = subscriber, true
 		}
 	}
-	return answerer
+	return best.client
 }
 
 // releaseDetachedInputLocked forgets the input state of clients that no
-// longer have a subscriber: a size owner without a view hands the PTY size
-// back (the grid keeps the committed size until the next owner), and a
-// guest without its preview subscription loses control while its lease
-// stays until expiry. The caller holds t.mu.
+// longer have a subscriber. A size owner without a view hands the size to
+// the most recently active remaining interactive client; with none left the
+// grid keeps the committed size until the next owner. A guest without its
+// preview subscription loses control while its lease stays until expiry.
+// The caller holds t.mu.
 func (t *Tab) releaseDetachedInputLocked() {
 	attached := make(map[string]bool, len(t.subscribers))
 	for _, subscriber := range t.subscribers {
@@ -193,15 +184,24 @@ func (t *Tab) releaseDetachedInputLocked() {
 			delete(t.inputOrder, client)
 		}
 	}
-	for client := range t.clientSizes {
-		if !attached[client] {
-			delete(t.clientSizes, client)
-		}
-	}
 	if t.guestControl != "" && !attached[t.guestControl] {
 		t.guestControl = ""
 	}
 	if t.sizeOwner == "" || t.clientAttachedLocked(t.sizeOwner) {
+		return
+	}
+	var next subscriber
+	found := false
+	for _, subscriber := range t.subscribers {
+		if subscriber.spectator {
+			continue
+		}
+		if !found || t.moreActiveLocked(subscriber, next) {
+			next, found = subscriber, true
+		}
+	}
+	if found {
+		t.takeSizeLocked(next.client, time.Time{})
 		return
 	}
 	t.sizeOwner = ""
@@ -216,5 +216,4 @@ func (t *Tab) resetInputLocked() {
 	t.sizeOwner = ""
 	t.guestControl = ""
 	t.inputOrder = nil
-	t.clientSizes = nil
 }
