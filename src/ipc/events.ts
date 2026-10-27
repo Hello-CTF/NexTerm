@@ -48,6 +48,7 @@ export const EVENTS = {
 } as const satisfies typeof ipcEventTopics;
 
 export type { SessionStatusEvent, TerminalExitEvent } from "./types";
+export type { AttentionEvent as TerminalAttentionEvent } from "./generated/types";
 
 export interface TerminalControlEvent {
   tabId: string;

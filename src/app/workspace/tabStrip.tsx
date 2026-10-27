@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { hasCustomTitle, useUi, type AppTab } from "../store";
 import { useTabUnread } from "../unreadStore";
+import { awarenessBadge, useTabAwareness, type AwarenessBadge } from "../sessionAwarenessStore";
 import { useTerminalTabTitle } from "../terminalViewStore";
 import { fileVisual } from "../../features/files/fileTypes";
 import { useAssetProductionClassification } from "../../features/production/productionSettings";
@@ -52,8 +53,14 @@ export function tabIcon(t: AppTab) {
 
 // tabTooltip prefers what the tab's pane reports about persistence (live) over the reason recorded when the tab
 // opened, which only applies until a pane has reported.
-export function tabTooltip(t: AppTab, unread: boolean, live: PersistenceTabInfo = {}): string {
+export function tabTooltip(
+  t: AppTab,
+  unread: boolean,
+  live: PersistenceTabInfo = {},
+  attention: AwarenessBadge | null = null,
+): string {
   const notes: string[] = [];
+  if (t.kind === "terminal" && attention) notes.push(attention.label);
   const persistence = t.kind === "terminal" ? live.failureMark ?? live.note : undefined;
   if (persistence) notes.push(persistence);
   else if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
@@ -89,17 +96,52 @@ export function TabPersistenceMark({ tab }: { tab: AppTab }) {
   );
 }
 
+// The attention badge sits with the persistence marks and keeps their scale: a dot for signalled states, a hollow
+// ring for states inferred from the screen shape, and a grey question mark when the state cannot be known. A tab
+// the user is on shows no running badge, and a needs_me or just_finished state seen on any device shows nothing.
+export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
+  if (!badge) return null;
+  if (badge.kind === "unknown") {
+    return (
+      <span className="shrink-0 text-[10px] font-semibold leading-none text-slate-500" role="img" aria-label={badge.label} title={badge.label}>
+        ?
+      </span>
+    );
+  }
+  const tone = {
+    needs_me: badge.inferred ? "border border-amber-400/80" : "bg-amber-400 ring-2 ring-amber-400/30",
+    just_finished: badge.inferred ? "border border-emerald-400/80" : "bg-emerald-400",
+    running: "bg-slate-400 motion-safe:animate-pulse",
+  }[badge.kind];
+  const size = badge.kind === "running" ? "h-1.5 w-1.5" : "h-2 w-2";
+  return (
+    <span
+      className={`${size} shrink-0 rounded-full ${tone}`}
+      role="img"
+      aria-label={badge.label}
+      title={badge.label}
+      data-attention={badge.kind}
+      data-inferred={badge.inferred ? "true" : undefined}
+    />
+  );
+}
+
 export function TabStripItem({
   tab,
+  active = false,
   children,
 }: {
   tab: AppTab;
-  children: (unread: boolean, persistence: PersistenceTabInfo) => ReactNode;
+  active?: boolean;
+  children: (unread: boolean, persistence: PersistenceTabInfo, attention: AwarenessBadge | null) => ReactNode;
 }) {
   const unread = useTabUnread(tab.id);
   const note = usePersistenceTabNote(tab.id);
   const failureMark = usePersistenceFailureMark(tab.id);
-  return children(unread, { note, failureMark });
+  const awareness = useTabAwareness(tab.kind === "terminal" && !tab.exited ? tab.tabId : undefined);
+  let attention = awarenessBadge(awareness);
+  if (attention?.kind === "running" && active) attention = null;
+  return children(unread, { note, failureMark }, attention);
 }
 
 // A terminal tab's label prefers the OSC-derived remote title from the per-tab view

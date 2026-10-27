@@ -6,6 +6,7 @@ import { resetTransferQueue } from "../features/files/transferStore";
 import { cleanupDeviceSessions, reportDeviceSessionCleanup } from "../features/fleet/deviceSessionCleanup";
 import { useAssetReachability } from "../features/explorer/assetReachability";
 import { resetUnreadTracking } from "./unread";
+import { resetAwarenessTracking } from "./sessionAwareness";
 
 // Account-level query keys, aligned with the queryKeys of AssetTree/CredentialsSidebar/CredentialsPanel
 // (assets/groups/credentials/snippets/search/vault status/forwards/inventory watch). Reset together on auth
@@ -46,6 +47,7 @@ export function subscribeAccountSwitchCleanup(auth: AuthStore, queryClient: Quer
       useUi.getState().resetAccountWorkspaces();
       useAssetReachability.getState().reset();
       resetUnreadTracking();
+      resetAwarenessTracking();
       if (s.gate === "ready") onRemoteChange(null);
       for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
     }
@@ -55,6 +57,7 @@ export function subscribeAccountSwitchCleanup(auth: AuthStore, queryClient: Quer
       onRemoteChange(null);
       if (!accountChanged) for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
       void useUi.getState().resyncSessions({ silent: true });
+      resetAwarenessTracking();
     } else if (prev.gate === "ready" && s.gate === "login") {
       if (!accountChanged) for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
       if (!accountChanged) useUi.getState().resetSessions({ clearWorkspaceRuntime: true });
