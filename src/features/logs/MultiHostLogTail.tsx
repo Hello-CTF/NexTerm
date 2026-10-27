@@ -506,6 +506,7 @@ export function MultiHostLogTail({ sessions, singleHost = false }: { sessions: S
             />
           </label>
           <span className="nx-spacer" />
+          {singleHost && !running && <span className="nx-hint">切换页签会停止跟随</span>}
           {running ? (
             <button type="button" className="nx-btn nx-btn-danger" disabled={stopping} onClick={() => void stop()}>
               <IconStop size={13} />

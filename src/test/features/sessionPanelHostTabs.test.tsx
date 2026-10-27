@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement, useState } from "react";
+import { act, createElement, useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
@@ -220,6 +220,18 @@ describe("session side panel host tabs", () => {
     ]);
   });
 
+  it("cancels the running log follow when the tab is left", async () => {
+    seedHosts();
+    mountPanel("logs");
+    await waitFor(() => expect(mounted?.container.querySelector('[aria-label="来源 web-01"]')).not.toBeNull());
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>('[aria-label="来源 web-01"]')!, "/var/log/app.log");
+    click([...mounted!.container.querySelectorAll("button")].find((b) => b.textContent?.includes("开始跟随"))!);
+    await waitFor(() => expect(mocks.logStart).toHaveBeenCalledTimes(1));
+
+    act(() => useSessionPanel.getState().setTab("files"));
+    await waitFor(() => expect(mocks.logCancel).toHaveBeenCalledWith("run-1"));
+  });
+
   it("explains that local terminals have no log follow", async () => {
     useUi.setState({
       workspaces: [workspace("ws1", "本地终端", "l1", [terminal("t1", "k1", "l1")])],
@@ -233,25 +245,40 @@ describe("session side panel host tabs", () => {
   });
 });
 
-// Counter stands in for the AI sidebar: its state must survive moving between the dock and the panel.
-function Counter() {
+// Counter stands in for the AI sidebar: its state must survive moving between the dock and the panel, and like
+// AiChatTab it only runs while it is visible (visible ?? rightOpen).
+const aiMounts = { count: 0, gated: [] as boolean[] };
+
+function Counter({ visible }: { visible: boolean }) {
   const [count, setCount] = useState(0);
+  useEffect(() => {
+    aiMounts.count += 1;
+  }, []);
+  aiMounts.gated.push(visible);
   return createElement("button", { type: "button", "data-testid": "counter", onClick: () => setCount((c) => c + 1) }, `count ${count}`);
 }
 
-function Shell({ docked }: { docked: boolean }) {
+// Shell mirrors WorkspaceBody: placement is derived from store state, not from the slot element.
+function Shell({ overlay = false }: { overlay?: boolean }) {
   const slot = useAiPanelSlot();
+  const rightOpen = useUi((s) => s.rightOpen);
+  const tab = useSessionPanel((s) => s.tab);
+  const aiTabShown = tab === "ai";
+  const inPanel = aiTabShown && !rightOpen;
+  const visible = rightOpen || aiTabShown;
   return createElement(
     "div",
     null,
-    createElement(SessionPanel, { overlay: false, aiDocked: docked, onClose: () => undefined }),
+    createElement(SessionPanel, { overlay, aiDocked: rightOpen, onClose: onPanelClose }),
     createElement(
       "div",
       { "data-testid": "dock" },
-      createElement(MovableHost, { target: slot && !docked ? slot : null, children: createElement(Counter) }),
+      createElement(MovableHost, { target: inPanel ? slot : null, children: createElement(Counter, { visible }) }),
     ),
   );
 }
+
+const onPanelClose = vi.fn();
 
 describe("session side panel AI tab", () => {
   function counter(): HTMLButtonElement {
@@ -262,16 +289,20 @@ describe("session side panel AI tab", () => {
     return Boolean(counter().closest('[data-testid="session-panel-ai"]'));
   }
 
-  function renderShell(docked: boolean): void {
+  function renderShell(overlay = false): void {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const node = createElement(QueryClientProvider, { client }, createElement(Shell, { docked }));
-    if (mounted) act(() => mounted!.root.render(node));
-    else mounted = mount(node);
+    const node = createElement(QueryClientProvider, { client }, createElement(Shell, { overlay }));
+    mounted = mount(node);
   }
 
-  it("moves the one AI instance into the panel and back without losing its state", async () => {
+  beforeEach(() => {
+    aiMounts.count = 0;
+    aiMounts.gated = [];
+  });
+
+  it("moves the one AI instance into the panel and back without remounting it", async () => {
     seedHosts();
-    renderShell(false);
+    renderShell();
     await flush();
     expect(inPanel()).toBe(false);
     click(counter());
@@ -281,18 +312,20 @@ describe("session side panel AI tab", () => {
     expect(inPanel()).toBe(true);
     expect(counter().textContent).toBe("count 1");
     expect(mounted!.container.querySelectorAll('[data-testid="counter"]')).toHaveLength(1);
+    expect(aiMounts.gated[aiMounts.gated.length - 1]).toBe(true);
 
     act(() => useSessionPanel.getState().setTab("files"));
     await flush();
     expect(inPanel()).toBe(false);
     expect(counter().textContent).toBe("count 1");
+    expect(aiMounts.count).toBe(1);
   });
 
-  it("keeps the AI in the open right dock and offers to move it into the panel", async () => {
+  it("keeps the AI in the open right dock and moves it into the panel when the dock closes", async () => {
     seedHosts();
     act(() => useUi.setState({ rightOpen: true }));
     act(() => useSessionPanel.getState().setTab("ai"));
-    renderShell(true);
+    renderShell();
     await flush();
     expect(inPanel()).toBe(false);
     expect(mounted!.container.textContent).toContain("AI 助手在右侧栏中打开");
@@ -300,8 +333,22 @@ describe("session side panel AI tab", () => {
     const move = [...mounted!.container.querySelectorAll("button")].find((b) => b.textContent === "在会话侧栏中显示")!;
     click(move);
     expect(useUi.getState().rightOpen).toBe(false);
-    renderShell(false);
     await flush();
     expect(inPanel()).toBe(true);
+    expect(aiMounts.count).toBe(1);
+    expect(aiMounts.gated[aiMounts.gated.length - 1]).toBe(true);
+  });
+
+  it("closes the sheet on Escape pressed inside the portalled AI", async () => {
+    seedHosts();
+    act(() => useSessionPanel.getState().setTab("ai"));
+    renderShell(true);
+    await flush();
+    expect(inPanel()).toBe(true);
+    onPanelClose.mockClear();
+    act(() => {
+      counter().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(onPanelClose).toHaveBeenCalledTimes(1);
   });
 });

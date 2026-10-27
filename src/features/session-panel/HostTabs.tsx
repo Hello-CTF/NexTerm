@@ -1,4 +1,7 @@
 import { lazy, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { fsApi } from "../../ipc/commands";
+import { isDockerNotInstalled, isDockerUnavailable } from "../docker/dockerErrors";
 import { Lazy } from "../../ui/LazyBoundary";
 import { IconBox, IconInfo, IconList, IconNetwork } from "../../ui/icons";
 import { type SessionPanelContext } from "./sessionContext";
@@ -29,6 +32,39 @@ const LOGS_COPY: SessionGateCopy = {
   ready: "日志",
 };
 
+// HostContainers observes the panel's own docker-ps query (no extra fetch) so a host without a running Docker gets a
+// plain explanation with a retry.
+function HostContainers({ sessionId }: { sessionId: string }) {
+  const qc = useQueryClient();
+  const ps = useQuery({ queryKey: ["docker-ps", sessionId], enabled: false });
+  const unavailable = ps.isError && !ps.data && isDockerUnavailable(ps.error);
+  return (
+    <>
+      {unavailable && (
+        <PanelEmpty
+          icon={IconBox}
+          title={isDockerNotInstalled(ps.error) ? "这台主机未安装 Docker" : "这台主机未运行 Docker"}
+          hint="安装或启动 Docker 后可重试。"
+          action={
+            <button
+              type="button"
+              className="nx-btn"
+              onClick={() => void qc.invalidateQueries({ queryKey: ["docker-ps", sessionId] })}
+            >
+              重试
+            </button>
+          }
+        />
+      )}
+      <div className={unavailable ? "hidden" : undefined}>
+        <Lazy>
+          <DockerPanel sessionId={sessionId} />
+        </Lazy>
+      </div>
+    </>
+  );
+}
+
 // ContainersTab lists the Docker containers of the context terminal's host. A container terminal still shows its
 // host's containers, which include the one it runs in.
 export function ContainersTab({ context }: { context: SessionPanelContext | null }) {
@@ -36,9 +72,7 @@ export function ContainersTab({ context }: { context: SessionPanelContext | null
     <SessionGate context={context} copy={CONTAINERS_COPY}>
       {(_session, sessionId) => (
         <div className="h-full min-h-0 overflow-auto" data-testid="session-panel-containers">
-          <Lazy>
-            <DockerPanel key={sessionId} sessionId={sessionId} />
-          </Lazy>
+          <HostContainers key={sessionId} sessionId={sessionId} />
         </div>
       )}
     </SessionGate>
@@ -60,6 +94,15 @@ export function PortsTab({ context }: { context: SessionPanelContext | null }) {
   );
 }
 
+// DeviceLogs gates managed devices on their path style: Windows devices cannot run the tail commands.
+function DeviceLogs({ session }: { session: ConnectedSession }) {
+  const roots = useQuery({ queryKey: ["session-panel-path-style", session.id], queryFn: () => fsApi.roots(session.id) });
+  if (roots.data?.pathStyle === "windows") {
+    return <PanelEmpty icon={IconInfo} title="Windows 设备暂不支持日志跟随" hint="日志跟随需要 POSIX 主机。" />;
+  }
+  return <HostLogs session={session} />;
+}
+
 function HostLogs({ session }: { session: ConnectedSession }) {
   const sessions = useMemo(() => [session], [session]);
   return (
@@ -77,8 +120,10 @@ export function LogsTab({ context }: { context: SessionPanelContext | null }) {
   return (
     <SessionGate context={context} copy={LOGS_COPY}>
       {(session, sessionId) =>
-        session.kind === "ssh" || session.kind === "device" ? (
+        session.kind === "ssh" ? (
           <HostLogs key={sessionId} session={session} />
+        ) : session.kind === "device" ? (
+          <DeviceLogs key={sessionId} session={session} />
         ) : (
           <PanelEmpty
             icon={IconInfo}
