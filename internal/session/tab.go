@@ -1239,16 +1239,21 @@ func (m *Manager) releaseChannelReservation(tabID, channelID string, incarnation
 	m.mu.Unlock()
 }
 
-// answeringLocked reports whether a client whose terminal emulator answers
-// queries is attached and taking output now. A paused subscriber (refusing
-// output) or one whose fanout entry was aborted would answer late or never,
-// so the headless screen answers instead and the range is announced as
-// answered. Control alone answers nothing: a controller counts only through
-// its attached answering subscriber, never as a claim or a spectator. Callers
-// hold t.mu.
+// answeringLocked reports whether the client whose replies reach the shell
+// is attached and taking output now: only the controller's input is written
+// (an observer's replies fail with ErrNotController), so only the
+// controller's answering subscriber counts. A paused subscriber (refusing
+// output) or one whose fanout entry was aborted would answer late or never.
+// Without such a subscriber (no controller, a guest controlling through
+// WriteGuest, a claim without a view) the headless screen answers and the
+// range is announced as answered. B14 replaces the controller model with
+// multi-client input; this rule moves with it. Callers hold t.mu.
 func (t *Tab) answeringLocked() bool {
+	if t.controller == "" {
+		return false
+	}
 	for channelID, subscriber := range t.subscribers {
-		if !subscriber.answers || subscriber.paused {
+		if subscriber.client != t.controller || !subscriber.answers || subscriber.paused {
 			continue
 		}
 		if t.fanout != nil && !t.fanout.Has(channelID) {
