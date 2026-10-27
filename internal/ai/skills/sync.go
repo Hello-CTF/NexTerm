@@ -21,10 +21,11 @@ const SyncObjectPrefix = "skill/"
 // caller read it; the synced write was not applied.
 var ErrSyncConflict = errors.New("AI 技能在同步期间被修改")
 
-// syncTombstoneRecorder is implemented by the store: it records the deletion
-// of an override so other devices of the owner remove it too.
-type syncTombstoneRecorder interface {
-	SyncTombstoneRecord(ctx context.Context, id, kind string, deletedAt int64) error
+// tombstoneSettings is implemented by the store: it saves the overrides and
+// records the deletion of one in a single transaction, so other devices of the
+// owner remove it too.
+type tombstoneSettings interface {
+	SettingSetWithTombstone(ctx context.Context, key, value, id, kind string, deletedAt int64) error
 }
 
 // SyncObjectID is the sync object ID of the named override.
@@ -135,11 +136,20 @@ func (m *Manager) RemoveSynced(ctx context.Context, name string, deletedAt int64
 	return true, nil
 }
 
-// recordDeleteTombstone lets a user removal reach the owner's other devices.
-func (m *Manager) recordDeleteTombstone(ctx context.Context, name string) error {
-	recorder, ok := m.settings.(syncTombstoneRecorder)
+// saveDeletion saves overrides without the removed name and, when the
+// settings store supports it, records the removal's sync tombstone in the
+// same transaction.
+func (m *Manager) saveDeletion(ctx context.Context, ownerID string, overrides map[string]Override, removed string) (map[string]Override, error) {
+	writer, ok := m.settings.(tombstoneSettings)
 	if !ok {
-		return nil
+		return save(ctx, m.settings, ownerID, overrides)
 	}
-	return recorder.SyncTombstoneRecord(ctx, SyncObjectID(name), SyncTombstoneKind, ids.NowMS())
+	encoded, ordered, err := encodeOverrides(overrides)
+	if err != nil {
+		return nil, err
+	}
+	if err := writer.SettingSetWithTombstone(ctx, SettingKeyForUser(ownerID), encoded, SyncObjectID(removed), SyncTombstoneKind, ids.NowMS()); err != nil {
+		return nil, err
+	}
+	return overrideMap(ordered), nil
 }

@@ -224,6 +224,22 @@ func (s *Store) SetCronSyncOptIn(ctx context.Context, userID string, enabled boo
 	return s.SettingSet(ctx, "sync.optin.cron."+userID, syncOptInValue(enabled))
 }
 
+// SettingSetWithTombstone writes a setting and records the deletion of the
+// caller's sync object id in one transaction, for stores that keep several
+// objects in one setting.
+func (s *Store) SettingSetWithTombstone(ctx context.Context, key, value, id, kind string, deletedAt int64) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := settingUpsert(ctx, tx, key, value, deletedAt); err != nil {
+			return err
+		}
+		return s.syncTombstonePut(ctx, tx, id, kind, deletedAt)
+	})
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
 func (s *Store) AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombstoneID string, deletedAt int64) error {
 	userID, hasIdentity := SyncOptInUserID(ctx)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

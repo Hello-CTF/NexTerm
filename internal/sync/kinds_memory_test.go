@@ -83,3 +83,34 @@ func TestApplyObjectsRedactsIncomingMemory(t *testing.T) {
 		t.Fatalf("stored entry=%+v, want the secret redacted", got)
 	}
 }
+
+// A browser applies memory and cron objects, and tombstones targeting them, only for an account that opted in.
+func TestApplyObjectsGatesDefaultOffKindsByTheAccountSwitch(t *testing.T) {
+	instance := newTestInstance(t, false)
+	ctx := WithUserID(context.Background(), "gated-user")
+	id := ids.New()
+	objects := []ApplyObject{
+		{ID: id, Kind: KindMemory, Payload: applyPayload(t, memoryObject{ID: id, Topic: "db", Content: "port 5432", CreatedAt: 100, UpdatedAt: 100})},
+		{ID: "job-x", Kind: KindTombstone, Payload: applyPayload(t, tombstoneObject{TargetKind: KindCron, DeletedAt: 100})},
+	}
+	result, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: objects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range result.Objects {
+		requireApplyResult(t, entry, ApplyResultSkipped)
+		if entry.Warning == "" {
+			t.Fatalf("gated object %s must carry a warning", entry.ID)
+		}
+	}
+	if _, err := instance.service.KindOptInSet(ctx, KindOptInPatch{Memory: testPtr(true), Cron: testPtr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: objects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range result.Objects {
+		requireApplyResult(t, entry, ApplyResultApplied)
+	}
+}

@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -128,6 +129,9 @@ type kindSpec struct {
 	collect func(e *Engine, ctx context.Context, c *localCollection) error
 	// collectNeedsUser skips collection without a session user.
 	collectNeedsUser bool
+	// serverGated kinds (and tombstones targeting them) are applied for a browser only while the
+	// account's switch is on; the browser filters every optional kind itself, and these default off.
+	serverGated bool
 	// browserCollect lets the browser collect the kind's payloads through CommandCollectKindObjects
 	// instead of a kind-specific collect command.
 	browserCollect bool
@@ -311,7 +315,7 @@ func init() {
 			browserCollect: true,
 		},
 		{
-			kind: KindMemory, rank: 12, optIn: optInMemory, aiOwner: true, idInPayload: true,
+			kind: KindMemory, rank: 12, optIn: optInMemory, aiOwner: true, idInPayload: true, serverGated: true,
 			newPayload:  newPayload[memoryObject],
 			displayName: memoryDisplayName,
 			apply: func(e *Engine, ctx context.Context, _ string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {
@@ -324,7 +328,7 @@ func init() {
 			browserCollect: true,
 		},
 		{
-			kind: KindCron, rank: 13, optIn: optInCron, aiOwner: true, idInPayload: true,
+			kind: KindCron, rank: 13, optIn: optInCron, aiOwner: true, idInPayload: true, serverGated: true,
 			newPayload: newPayload[cronObject],
 			apply: func(e *Engine, ctx context.Context, _ string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {
 				return e.applyCronObject(ctx, plaintext, report)
@@ -450,6 +454,21 @@ func (o kindOptIn) enabled(id optInID) bool {
 func (o kindOptIn) allowsKind(kind string) bool {
 	spec, ok := lookupKind(kind)
 	return !ok || o.enabled(spec.optIn)
+}
+
+// allowsServerApply reports whether a browser-applied object may write: serverGated kinds and
+// tombstones targeting them need the account's switch on.
+func (o kindOptIn) allowsServerApply(object ApplyObject) bool {
+	kind := object.Kind
+	if kind == KindTombstone {
+		var payload tombstoneObject
+		if json.Unmarshal(object.Payload, &payload) != nil {
+			return true
+		}
+		kind = payload.TargetKind
+	}
+	spec, ok := lookupKind(kind)
+	return !ok || !spec.serverGated || o.enabled(spec.optIn)
 }
 
 func (o kindOptIn) view() KindOptIn {

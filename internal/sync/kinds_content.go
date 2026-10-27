@@ -177,6 +177,34 @@ func (e *Engine) collectSkillObjects(ctx context.Context, c *localCollection) er
 	return nil
 }
 
+// maxPendingRounds bounds how many rounds an object waiting for something
+// outside its own payload (a host, room under a limit) stays unreconciled;
+// after that it is recorded as reconciled with a warning.
+const maxPendingRounds = 10
+
+// holdPending keeps objectID unreconciled for this round unless it already
+// waited maxPendingRounds rounds in this process; it reports whether it did.
+func (e *Engine) holdPending(report *SyncReport, objectID string) bool {
+	e.pendingMu.Lock()
+	defer e.pendingMu.Unlock()
+	if e.pendingRounds == nil {
+		e.pendingRounds = map[string]int{}
+	}
+	e.pendingRounds[objectID]++
+	if e.pendingRounds[objectID] > maxPendingRounds {
+		delete(e.pendingRounds, objectID)
+		return false
+	}
+	report.markUnresolvedRef(objectID)
+	return true
+}
+
+func (e *Engine) pendingDone(objectID string) {
+	e.pendingMu.Lock()
+	defer e.pendingMu.Unlock()
+	delete(e.pendingRounds, objectID)
+}
+
 // tombstoneWins reports whether the object's local tombstone is at least as
 // new as revision, so an older live copy must not resurrect it.
 func (e *Engine) tombstoneWins(ctx context.Context, objectID string, revision int64, report *SyncReport, what string) (bool, bool) {
@@ -224,15 +252,28 @@ func (e *Engine) applyStateRuleObject(ctx context.Context, plaintext []byte, rep
 	}, payload.CreatedAt, expected)
 	switch {
 	case err == nil:
+		e.pendingDone(payload.ID)
 		return true, false
+	case errors.Is(err, store.ErrStateRuleAssetDeleted):
+		report.warnf("状态规则 %s 的主机 %s 已在本机删除，规则未应用", payload.ID, payload.AssetID)
 	case errors.Is(err, store.ErrStateRuleAssetMissing):
 		if tombstone, found, tombstoneErr := e.syncTombstoneGet(ctx, payload.AssetID); tombstoneErr == nil && found && tombstone.Kind == KindAsset {
 			report.warnf("状态规则 %s 的主机 %s 已删除，规则未应用", payload.ID, payload.AssetID)
 			return false, false
 		}
-		// The host may arrive in a later round; stay unreconciled until then.
-		report.markUnresolvedRef(payload.ID)
-		report.warnf("状态规则 %s 的主机 %s 尚未同步，稍后重试", payload.ID, payload.AssetID)
+		// The host may arrive in a later round; stay unreconciled for a bounded number of rounds.
+		if e.holdPending(report, payload.ID) {
+			report.warnf("状态规则 %s 的主机 %s 尚未同步，稍后重试", payload.ID, payload.AssetID)
+		} else {
+			report.warnf("状态规则 %s 的主机 %s 在 %d 轮同步后仍未到达，已跳过；主机同步后请重新保存该规则", payload.ID, payload.AssetID, maxPendingRounds)
+		}
+	case errors.Is(err, store.ErrStateRuleLimit):
+		// Removing rules may make room; keep it pending and visible for a bounded number of rounds.
+		if e.holdPending(report, payload.ID) {
+			report.warnf("状态规则 %s 超出本机规则上限，删除部分规则后会重试：%v", payload.ID, err)
+		} else {
+			report.warnf("状态规则 %s 超出本机规则上限，在 %d 轮同步后已跳过；腾出空间后请重新保存该规则", payload.ID, maxPendingRounds)
+		}
 	case errors.Is(err, store.ErrWriteConflict):
 		report.markUnresolvedRef(payload.ID)
 	default:

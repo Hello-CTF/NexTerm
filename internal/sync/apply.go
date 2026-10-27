@@ -115,10 +115,26 @@ func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequ
 	if err := e.preflightAIObjects(ctx, request.Objects); err != nil {
 		return ApplyObjectsResult{}, err
 	}
+	// Kinds that default off are checked against the account's own switches here too,
+	// so a browser cannot write them for an account that has not opted in.
+	var optIn kindOptIn
+	gate := firstUserID(userIDs) != ""
+	if gate {
+		loaded, err := loadKindOptIn(ctx, e.store, firstUserID(userIDs))
+		if err != nil {
+			return ApplyObjectsResult{}, err
+		}
+		optIn = loaded
+	}
 	result := ApplyObjectsResult{Objects: make([]ApplyObjectResult, len(request.Objects))}
 	for _, index := range applyObjectOrder(request.Objects) {
 		object := request.Objects[index]
-		entry := e.applyPlainObject(ctx, object, userIDs...)
+		var entry ApplyObjectResult
+		if gate && !optIn.allowsServerApply(object) {
+			entry = ApplyObjectResult{ID: object.ID, Kind: object.Kind, Result: ApplyResultSkipped, Warning: "该同步内容开关未开启，已跳过"}
+		} else {
+			entry = e.applyPlainObject(ctx, object, userIDs...)
+		}
 		for kind := range entry.changed {
 			if result.changed == nil {
 				result.changed = map[string]bool{}

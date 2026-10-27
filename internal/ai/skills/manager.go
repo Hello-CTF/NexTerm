@@ -210,6 +210,10 @@ func (m *Manager) SaveOverride(ctx context.Context, input OverrideInput) (Entry,
 		Disabled:    input.Disabled,
 		UpdatedAt:   ids.NowMS(),
 	}
+	// Keep updated_at strictly increasing so a newer edit always wins a sync.
+	if previous, ok := entry.overrides[name]; ok {
+		override.UpdatedAt = max(override.UpdatedAt, previous.UpdatedAt+1)
+	}
 	if override.Description != nil {
 		trimmed := strings.TrimSpace(*override.Description)
 		override.Description = &trimmed
@@ -245,12 +249,12 @@ func (m *Manager) DeleteOverride(ctx context.Context, name string) error {
 	}
 	next := cloneOverrides(entry.overrides)
 	delete(next, name)
-	saved, err := save(ctx, m.settings, ownerID, next)
+	saved, err := m.saveDeletion(ctx, ownerID, next, name)
 	if err != nil {
 		return err
 	}
 	entry.overrides = saved
-	return m.recordDeleteTombstone(ctx, name)
+	return nil
 }
 
 // Dispatch resolves the effective skill material for the load_skill path and
@@ -359,6 +363,17 @@ func load(ctx context.Context, settings Settings, ownerID string, index *Index) 
 }
 
 func save(ctx context.Context, settings Settings, ownerID string, overrides map[string]Override) (map[string]Override, error) {
+	encoded, ordered, err := encodeOverrides(overrides)
+	if err != nil {
+		return nil, err
+	}
+	if err := settings.SettingSet(ctx, SettingKeyForUser(ownerID), encoded); err != nil {
+		return nil, err
+	}
+	return overrideMap(ordered), nil
+}
+
+func encodeOverrides(overrides map[string]Override) (string, []Override, error) {
 	names := make([]string, 0, len(overrides))
 	for name := range overrides {
 		names = append(names, name)
@@ -370,12 +385,9 @@ func save(ctx context.Context, settings Settings, ownerID string, overrides map[
 	}
 	encoded, err := json.Marshal(persistedState{Version: StoreVersion, Overrides: ordered})
 	if err != nil {
-		return nil, fmt.Errorf("encode AI skills: %w", err)
+		return "", nil, fmt.Errorf("encode AI skills: %w", err)
 	}
-	if err := settings.SettingSet(ctx, SettingKeyForUser(ownerID), string(encoded)); err != nil {
-		return nil, err
-	}
-	return overrideMap(ordered), nil
+	return string(encoded), ordered, nil
 }
 
 type persistedState struct {

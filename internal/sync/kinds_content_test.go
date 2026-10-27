@@ -4,11 +4,14 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron"
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/staterule"
 )
 
@@ -249,6 +252,46 @@ func TestApplyObjectsHostStateRuleWaitsForItsHost(t *testing.T) {
 	requireApplyResult(t, result.Objects[1], ApplyResultApplied)
 }
 
+// A host rule for a host deleted on this device is skipped for good; one whose host never arrives
+// stops waiting after a bounded number of rounds, with a warning saying so.
+func TestApplyObjectsHostStateRuleGivesUp(t *testing.T) {
+	ctx := context.Background()
+	instance := newTestInstance(t, false)
+	asset, err := instance.db.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "retired", OptionsJSON: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.db.AssetDelete(ctx, asset.ID); err != nil {
+		t.Fatal(err)
+	}
+	hostRule := func(assetID string) ApplyObject {
+		id := ids.New()
+		return ApplyObject{ID: id, Kind: KindStateRule, Payload: applyPayload(t, stateRuleObject{
+			ID: id, Name: "host", Scope: store.StateRuleScopeHost, AssetID: assetID, Region: staterule.RegionBottom, Lines: 3,
+			Pattern: `sudo`, State: "needs_me", Enabled: true, CreatedAt: 100, UpdatedAt: 100,
+		})}
+	}
+	result := mustApplyObjects(t, instance, hostRule(asset.ID))
+	requireApplyResult(t, result.Objects[0], ApplyResultSkipped)
+	if !strings.Contains(result.Objects[0].Warning, "已在本机删除") {
+		t.Fatalf("warning=%q, want the deleted host named as final", result.Objects[0].Warning)
+	}
+
+	missing := hostRule(ids.New())
+	for round := 1; round <= maxPendingRounds; round++ {
+		report := &SyncReport{}
+		instance.service.engine.applyStateRuleObject(ctx, missing.Payload, report)
+		if !report.hasUnresolvedRef(missing.ID) {
+			t.Fatalf("round %d: the rule must stay pending while its host may still arrive", round)
+		}
+	}
+	report := &SyncReport{}
+	instance.service.engine.applyStateRuleObject(ctx, missing.Payload, report)
+	if report.hasUnresolvedRef(missing.ID) || len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "已跳过") {
+		t.Fatalf("after %d rounds: pending=%v warnings=%v, want it recorded with a warning", maxPendingRounds, report.hasUnresolvedRef(missing.ID), report.Warnings)
+	}
+}
+
 // A skill for a built-in this build does not ship must carry its own content.
 func TestApplyObjectsRejectsInvalidSkills(t *testing.T) {
 	instance := newTestInstance(t, false)
@@ -270,6 +313,7 @@ func TestApplyObjectsRejectsInvalidSkills(t *testing.T) {
 }
 
 // The browser collects the same canonical payload the engine pushes, so both sides agree on hashes and revisions.
+// Memory leaves the device redacted and a cron job from before device binding is sent bound to this device.
 func TestCollectKindObjectsMatchesEngineCollection(t *testing.T) {
 	ctx := context.Background()
 	instance := newTestInstance(t, false)
@@ -281,14 +325,53 @@ func TestCollectKindObjectsMatchesEngineCollection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	manager, err := instance.service.engine.skillManager(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	description, body := "Check the disks", "Run df -h."
+	skill, err := manager.SaveOverride(ctx, skills.OverrideInput{Name: "disk-check", Description: &description, Body: &body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A memory entry stored before a redaction rule existed still leaves the device redacted.
+	memoryID := ids.New()
+	if err := instance.db.GORM().Create(&model.MemoryEntry{
+		ID: memoryID, Tenant: "local", Subject: "default", Topic: "db", Content: "login with password=hunter2",
+		Version: 1, CreatedAt: 100, UpdatedAt: 200,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := instance.service.engine.cronJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if _, err := jobs.Create(ctx, cron.Job{
+		ID: "job-legacy", SessionID: "s", Prompt: "p", Schedule: "0 9 * * *", Timezone: "UTC", Enabled: true,
+		Timeout: time.Minute, CreatedAt: now, UpdatedAt: now, ConfigUpdatedAt: now, NextRunAt: now.Add(time.Hour),
+	}, 4); err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.db.GORM().Model(&model.CronJob{}).Where("id = ?", "job-legacy").Update("device_id", "").Error; err != nil {
+		t.Fatal(err)
+	}
+
 	engineObjects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{}, allKindOptIn(), "user-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+	collectedPayload := map[string]string{}
 	for _, check := range []struct {
 		kind, id string
 		updated  int64
-	}{{KindStateRule, rule.ID, rule.UpdatedAt}, {KindRunbookTemplate, template.ID, template.UpdatedAt}} {
+	}{
+		{KindStateRule, rule.ID, rule.UpdatedAt},
+		{KindRunbookTemplate, template.ID, template.UpdatedAt},
+		{KindSkill, skills.SyncObjectID("disk-check"), skill.UpdatedAt},
+		{KindMemory, memoryID, 200},
+		{KindCron, "job-legacy", now.UnixMilli()},
+	} {
 		collected, err := instance.service.CollectKindObjects(ctx, CollectKindObjectsRequest{Kind: check.kind})
 		if err != nil {
 			t.Fatal(err)
@@ -300,6 +383,13 @@ func TestCollectKindObjectsMatchesEngineCollection(t *testing.T) {
 		if object.ID != check.id || object.UpdatedAt != check.updated || object.Payload != string(engineObjects[check.id].plaintext) {
 			t.Fatalf("%s collected %+v, engine payload %s", check.kind, object, engineObjects[check.id].plaintext)
 		}
+		collectedPayload[check.kind] = object.Payload
+	}
+	if strings.Contains(collectedPayload[KindMemory], "hunter2") || !strings.Contains(collectedPayload[KindMemory], `"redacted":true`) {
+		t.Fatalf("memory payload %s, want the secret redacted", collectedPayload[KindMemory])
+	}
+	if !strings.Contains(collectedPayload[KindCron], `"deviceId":"`+jobs.Device().ID+`"`) {
+		t.Fatalf("cron payload %s, want the unbound job sent as bound to this device %s", collectedPayload[KindCron], jobs.Device().ID)
 	}
 	if _, err := instance.service.CollectKindObjects(ctx, CollectKindObjectsRequest{Kind: KindAsset}); err == nil {
 		t.Fatal("kinds with their own collect command must be rejected")

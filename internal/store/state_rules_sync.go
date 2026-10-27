@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -18,6 +19,14 @@ const SyncTombstoneKindStateRule = "state_rule"
 // ErrStateRuleAssetMissing rejects a synced host-scoped rule whose host has
 // not arrived on this device yet.
 var ErrStateRuleAssetMissing = errors.New("store: state rule host is missing")
+
+// ErrStateRuleAssetDeleted rejects a synced host-scoped rule whose host was
+// deleted on this device; waiting cannot make it apply.
+var ErrStateRuleAssetDeleted = errors.New("store: state rule host is deleted")
+
+// ErrStateRuleLimit rejects a synced rule that would take the owner beyond
+// the rule count or pattern budget; it may fit once rules are removed.
+var ErrStateRuleLimit = errors.New("store: state rule limit reached")
 
 // StateRuleGet returns the owner's rule by ID; found is false when the owner
 // has no such rule.
@@ -55,12 +64,18 @@ func (s *Store) StateRuleSyncPut(ctx context.Context, input StateRuleInput, crea
 	err = retryStateRulePosition(func() error {
 		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if normalized.Scope == StateRuleScopeHost {
-				if err := stateRuleAssetAvailable(ctx, tx, normalized, ""); err != nil {
-					var appErr *ipc.Error
-					if errors.As(err, &appErr) {
-						return ErrStateRuleAssetMissing
-					}
+				asset := query.Use(tx).AssetRow
+				host, err := asset.WithContext(ctx).
+					Where(asset.ID.Eq(normalized.AssetID)).
+					Where(ownerConditions(ctx, asset.TableName())...).
+					First()
+				switch {
+				case isNoRows(err):
+					return ErrStateRuleAssetMissing
+				case err != nil:
 					return err
+				case host.DeletedAt != nil:
+					return ErrStateRuleAssetDeleted
 				}
 			}
 			rule := query.Use(tx).StateRuleRow
@@ -74,11 +89,11 @@ func (s *Store) StateRuleSyncPut(ctx context.Context, input StateRuleInput, crea
 			} else if err != nil {
 				return err
 			}
-			if (current == nil) != (expected == nil) || current != nil && current.UpdatedAt != expected.UpdatedAt {
+			if (current == nil) != (expected == nil) || current != nil && !sameStateRuleRow(*current, *expected) {
 				return ErrWriteConflict
 			}
 			if err := checkStateRuleLimits(ctx, tx, []StateRuleInput{normalized}); err != nil {
-				return err
+				return fmt.Errorf("%w: %s", ErrStateRuleLimit, err.Error())
 			}
 			if current == nil {
 				position, err := nextStateRulePosition(ctx, tx)
@@ -109,7 +124,7 @@ func (s *Store) StateRuleSyncPut(ctx context.Context, input StateRuleInput, crea
 		})
 	})
 	if err != nil {
-		if errors.Is(err, ErrWriteConflict) || errors.Is(err, ErrStateRuleAssetMissing) {
+		if errors.Is(err, ErrWriteConflict) || errors.Is(err, ErrStateRuleAssetMissing) || errors.Is(err, ErrStateRuleAssetDeleted) || errors.Is(err, ErrStateRuleLimit) {
 			return StateRuleRow{}, err
 		}
 		return StateRuleRow{}, dbError(err)
@@ -148,6 +163,13 @@ func (s *Store) StateRuleSyncDelete(ctx context.Context, id string, deletedAt in
 		return false, dbError(err)
 	}
 	return applied, nil
+}
+
+// sameStateRuleRow reports whether a rule is unchanged since the caller read
+// it: state rules carry no version, so every stored field is compared.
+func sameStateRuleRow(current, expected StateRuleRow) bool {
+	current.OwnerID, expected.OwnerID = "", ""
+	return current == expected
 }
 
 // deleteSyncTombstone clears the caller's tombstone for id: a newer live

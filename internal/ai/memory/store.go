@@ -143,7 +143,8 @@ func (s *Store) Edit(ctx context.Context, scope Scope, id string, expectedVersio
 			next.Redacted = redacted
 		}
 		next.Version++
-		next.UpdatedAt = s.now()
+		// Keep updated_at strictly increasing so a newer edit always wins a sync.
+		next.UpdatedAt = max(s.now(), current.UpdatedAt+1)
 		result := tx.Model(&entryRow{}).
 			Where("id = ? AND tenant = ? AND subject = ? AND version = ?", id, scope.Tenant, scope.Subject, expectedVersion).
 			Updates(map[string]any{

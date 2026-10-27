@@ -80,7 +80,7 @@ func (s *Store) RunbookTemplateSyncPut(ctx context.Context, template RunbookTemp
 		} else if err != nil {
 			return err
 		}
-		if (current == nil) != (expected == nil) || current != nil && current.UpdatedAt != expected.UpdatedAt {
+		if (current == nil) != (expected == nil) || current != nil && (current.UpdatedAt != expected.UpdatedAt || current.Version != expected.Version) {
 			return ErrWriteConflict
 		}
 		if current == nil {

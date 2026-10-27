@@ -53,6 +53,19 @@ func TestStateRuleSyncWritesDatabase(t *testing.T) {
 	if _, err := db.StateRuleSyncPut(ctxA, host, 100, nil); !errors.Is(err, store.ErrStateRuleAssetMissing) {
 		t.Fatalf("host rule without its host: %v", err)
 	}
+	deleted := createStateRuleAsset(t, db, ctxA, "retired")
+	if err := db.AssetDelete(ctxA, deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+	host.AssetID = deleted.ID
+	if _, err := db.StateRuleSyncPut(ctxA, host, 100, nil); !errors.Is(err, store.ErrStateRuleAssetDeleted) {
+		t.Fatalf("host rule for a deleted host: %v", err)
+	}
+	stale := row
+	stale.Pattern = "changed elsewhere"
+	if _, err := db.StateRuleSyncPut(ctxA, input, 4000, &stale); !errors.Is(err, store.ErrWriteConflict) {
+		t.Fatalf("a write bound to a rule with other content: %v", err)
+	}
 
 	if applied, err := db.StateRuleSyncDelete(ctxA, input.ID, 4999); err != nil || applied {
 		t.Fatalf("an older deletion applied=%v err=%v", applied, err)
@@ -131,6 +144,18 @@ func TestRunbookTemplateSyncWritesDatabase(t *testing.T) {
 	created, err := db.RunbookTemplateCreate(ctxB, store.RunbookTemplateInput{Name: "local", Steps: []store.RunbookTemplateStep{{ID: "s1", Name: "x", Command: "uptime"}}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Back-to-back edits keep the revision strictly increasing, so the latest edit wins a sync.
+	first, err := db.RunbookTemplateUpdate(ctxB, created.ID, store.RunbookTemplateInput{Name: "local 2", Steps: created.Steps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := db.RunbookTemplateUpdate(ctxB, created.ID, store.RunbookTemplateInput{Name: "local 3", Steps: created.Steps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.UpdatedAt <= created.UpdatedAt || second.UpdatedAt <= first.UpdatedAt || second.Version != created.Version+2 {
+		t.Fatalf("revisions %d -> %d -> %d, versions %d -> %d", created.UpdatedAt, first.UpdatedAt, second.UpdatedAt, created.Version, second.Version)
 	}
 	if err := db.RunbookTemplateDelete(ctxB, created.ID); err != nil {
 		t.Fatal(err)
