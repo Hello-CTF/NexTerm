@@ -182,9 +182,9 @@ export interface StreamAnchorControl {
   // it as its current attachment identity, so the ordered stream itself
   // carries the incarnation even before the attach RPC response arrives.
   attachmentId?: number;
-  // How many stream bytes after the anchor (control bytes included) are
-  // replayed history rather than new output.
-  replayBytes?: number;
+  // Output-class spans (by stream sequence) of the bytes this stream will
+  // deliver; later spans arrive as stream-class frames.
+  classes?: StreamClassControl[];
 }
 
 export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";
@@ -197,6 +197,28 @@ export interface StreamReplayControl {
 }
 
 export const STREAM_REPLAY_TYPE = "nexterm.stream-replay";
+
+// Classifies the stream sequence range [from, to) ahead of its bytes:
+// "replay" renders without side effects, "answered" without automatic replies.
+export interface StreamClassControl {
+  type?: string;
+  from: number;
+  to: number;
+  kind: string;
+}
+
+export const STREAM_CLASS_TYPE = "nexterm.stream-class";
+
+function isStreamClass(raw: unknown): raw is StreamClassControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === STREAM_CLASS_TYPE &&
+    typeof (raw as { from?: unknown }).from === "number" &&
+    typeof (raw as { to?: unknown }).to === "number" &&
+    typeof (raw as { kind?: unknown }).kind === "string"
+  );
+}
 
 function isStreamReplay(raw: unknown): raw is StreamReplayControl {
   return (
@@ -251,6 +273,7 @@ export function createBinaryChannel(
   onBytes: (data: Uint8Array) => void,
   onControl?: (control: StreamAnchorControl) => void,
   onReplay?: (control: StreamReplayControl) => void,
+  onClass?: (control: StreamClassControl) => void,
 ): IpcChannel<unknown> {
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = (raw) => {
@@ -261,6 +284,10 @@ export function createBinaryChannel(
     }
     if (isStreamReplay(raw)) {
       onReplay?.(raw);
+      return;
+    }
+    if (isStreamClass(raw)) {
+      onClass?.(raw);
       return;
     }
     decodeBytes(raw, onBytes);

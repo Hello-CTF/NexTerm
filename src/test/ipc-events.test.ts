@@ -124,6 +124,26 @@ describe("Wails events and channels", () => {
     expect(frames).toEqual([[1, 2]]);
   });
 
+  it("routes stream class frames to onClass, never to the byte stream", async () => {
+    const { createBinaryChannel, STREAM_CLASS_TYPE } = await import("../ipc/events");
+    const frames: number[][] = [];
+    const classes: unknown[] = [];
+    const channel = createBinaryChannel(
+      (bytes) => frames.push(Array.from(bytes)),
+      undefined,
+      undefined,
+      (control) => classes.push(control),
+    );
+    await ready(channel);
+    const push = handlerAt();
+
+    push({ data: { type: STREAM_CLASS_TYPE, from: 4, to: 9, kind: "replay" } });
+    push({ data: [1] });
+
+    expect(classes).toEqual([{ type: STREAM_CLASS_TYPE, from: 4, to: 9, kind: "replay" }]);
+    expect(frames).toEqual([[1]]);
+  });
+
   it("silently ignores anchor frames when onControl is not registered", async () => {
     const { createBinaryChannel, STREAM_ANCHOR_TYPE } = await import("../ipc/events");
     const frames: number[] = [];

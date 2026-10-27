@@ -28,6 +28,7 @@ const harness = vi.hoisted(() => ({
     onBytes?: (bytes: Uint8Array) => void;
     onControl?: (control: unknown) => void;
     onReplay?: (control: unknown) => void;
+    onClass?: (control: unknown) => void;
   } | null,
   channels: [] as { onBytes?: (bytes: Uint8Array) => void; onControl?: (control: unknown) => void }[],
   // When set, the fake terminal answers DA1 and DSR 6 queries through onData
@@ -187,8 +188,9 @@ vi.mock("../ipc/events", () => ({
     onBytes: (bytes: Uint8Array) => void,
     onControl?: (control: unknown) => void,
     onReplay?: (control: unknown) => void,
+    onClass?: (control: unknown) => void,
   ) => {
-    const entry = { onBytes, onControl, onReplay };
+    const entry = { onBytes, onControl, onReplay, onClass };
     harness.channel = entry;
     harness.channels.push(entry);
     return {};
@@ -3348,7 +3350,7 @@ describe("XtermView replayed output", () => {
       epoch: "e1",
       streamSeq: 0,
       expired: true,
-      replayBytes: enc.encode(REPLAYED).length,
+      classes: [{ from: 0, to: enc.encode(REPLAYED).length, kind: "replay" }],
     });
     // One chunk carries the end of the replay and the first live bytes.
     feedBytes(REPLAYED + LIVE);
@@ -3398,7 +3400,7 @@ describe("XtermView replayed output", () => {
       type: "nexterm.stream-anchor",
       epoch: "e1",
       streamSeq: 0,
-      replayBytes: enc.encode(suffix).length,
+      classes: [{ from: 0, to: enc.encode(suffix).length, kind: "replay" }],
     });
     // The replay arrives split across frames: the count spans them.
     feedBytes(suffix.slice(0, 6));
@@ -3416,7 +3418,7 @@ describe("XtermView replayed output", () => {
     await show();
     await attachOk();
     const t = term();
-    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, expired: true, replayBytes: 4 });
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, expired: true, classes: [{ from: 0, to: 4, kind: "replay" }] });
     feedBytes("\x1b[6n");
     act(() => t.drainWrites());
     expect(upstream()).toEqual([]);
@@ -3432,7 +3434,7 @@ describe("XtermView replayed output", () => {
     await show();
     await attachOk();
     const t = term();
-    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, replayBytes: 4 });
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, classes: [{ from: 0, to: 4, kind: "replay" }] });
     feedBytes("\x1b[6n");
     // Parse the open marker only: xterm is inside the replayed bytes.
     act(() => t.drainWrites(1));
@@ -3440,9 +3442,68 @@ describe("XtermView replayed output", () => {
       t.host?.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
       t.handlers.data?.("\x1b[1;5R");
     });
-    // Without a DOM input event the same bytes are a reply to replay.
+    // Once the event task is over, the same bytes are a reply to replay.
     await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    act(() => t.handlers.data?.("\x1b[1;1R"));
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[1;5R"]);
+  });
+
+  it("classifies bytes by stream sequence across class frames: replay, answered and live", async () => {
+    harness.emitReplies = true;
+    const onNotification = vi.fn();
+    const onClipboard = vi.fn();
+    await show({ onNotification, onClipboard });
+    await attachOk();
+    const t = term();
+    // A resumed stream at sequence 100: the first 4 bytes were answered by
+    // the server while nobody was attached.
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "e1",
+      streamSeq: 100,
+      classes: [{ from: 100, to: 104, kind: "answered" }],
+    });
+    feedBytes("\x1b[6n");
+    // A recovered tail continues on the live fanout: its class frame comes
+    // ahead of the bytes.
+    const tail = "\x1b[c\x1b]52;c;b2xk\x07\x1b]9;x\x07";
+    act(() => {
+      harness.channel?.onClass?.({ type: "nexterm.stream-class", from: 104, to: 104 + enc.encode(tail).length, kind: "replay" });
+    });
+    feedBytes(tail + "\x1b[6n\x1b]9;live\x07");
+    act(() => t.drainWrites());
+    // Answered and replayed queries get no reply; the live one does.
+    expect(upstream()).toEqual(["\x1b[1;1R"]);
+    expect(onClipboard).not.toHaveBeenCalled();
+    expect(onNotification).toHaveBeenCalledTimes(1);
+    expect(onNotification).toHaveBeenCalledWith("live");
+  });
+
+  it("keeps the user-event mark across microtask checkpoints between listeners", async () => {
+    harness.emitReplies = true;
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, classes: [{ from: 0, to: 4, kind: "replay" }] });
+    feedBytes("\x1b[6n");
+    // Parse the open marker only: xterm is inside the replayed bytes.
+    act(() => t.drainWrites(1));
+    const textarea = document.createElement("textarea");
+    t.host?.appendChild(textarea);
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
+      // A trusted event reaches xterm's own listener after a microtask
+      // checkpoint; the mark must survive it.
       await Promise.resolve();
+      await Promise.resolve();
+      t.handlers.data?.("\x1b[1;5R");
+    });
+    // After a macrotask the mark is gone: a reply-shaped report is a reply.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     act(() => t.handlers.data?.("\x1b[1;1R"));
     act(() => t.drainWrites());
@@ -3454,7 +3515,7 @@ describe("XtermView replayed output", () => {
     await show();
     await attachOk();
     const t = term();
-    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, expired: true, replayBytes: 4 });
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, expired: true, classes: [{ from: 0, to: 4, kind: "replay" }] });
     feedBytes("\x1b[6n");
     // Parse the start marker only: xterm is now inside the replayed bytes.
     act(() => t.drainWrites(1));
