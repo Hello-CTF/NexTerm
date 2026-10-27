@@ -10,6 +10,9 @@ import { IconRefresh, IconSparkles } from "../../ui/icons";
 import { showSettingsSection } from "../settings/settingsNavigation";
 import type { StateMarkRequest } from "./stateMarkRequests";
 import {
+  STATE_RULE_DRAFT_ROWS,
+  STATE_RULE_REDACTED_NOTE,
+  draftRegionText,
   emptyRuleForm,
   formFromDraft,
   heuristicDraft,
@@ -21,16 +24,7 @@ import {
 } from "./stateRuleDraft";
 import { StateRuleForm, useRuleValidation, type HostOption } from "./StateRuleForm";
 
-// Rows of the screen shown in the dialog; the AI sees the bottom rows the backend picks.
-const EXCERPT_ROWS = 12;
-
 type ScreenState = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; screen: StateRuleScreenDTO };
-
-function excerpt(screen: StateRuleScreenDTO): string {
-  let end = screen.lines.length;
-  while (end > 0 && screen.lines[end - 1].trim() === "" && end - 1 > screen.cursorRow) end--;
-  return screen.lines.slice(Math.max(0, end - EXCERPT_ROWS), end).join("\n");
-}
 
 export function StateMarkDialog({ request, onClose }: { request: StateMarkRequest; onClose: () => void }) {
   const titleId = useId();
@@ -55,6 +49,7 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
   const hosts: HostOption[] = (assetsQuery.data ?? []).map((asset) => ({ id: asset.id, name: asset.name }));
 
   const screen = screenState.status === "ready" ? screenState.screen : null;
+  const sent = screen ? draftRegionText(screen) : null;
   const validation = useRuleValidation(form, screen);
   const targets = stateRuleTargets(request.intent, request.current);
 
@@ -68,7 +63,9 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
         const draft = heuristicDraft(read, request.intent, request.current);
         if (draft) {
           setForm(formFromDraft(draft, request.assetId));
-          setDraftNote("草稿引用了屏幕的最后一行文字，可让 AI 起草更通用的规则，或直接修改。");
+          setDraftNote(
+            `草稿引用了屏幕的最后一行文字，可让 AI 起草更通用的规则，或直接修改。${draft.redacted ? `（${STATE_RULE_REDACTED_NOTE}，请核对匹配模式。）` : ""}`,
+          );
         } else {
           setForm((previous) => ({ ...previous, scope: request.assetId ? "host" : "global", assetId: request.assetId ?? "" }));
           setDraftNote("屏幕上没有文字，请手动填写匹配模式。");
@@ -90,7 +87,8 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
       const draft = await stateRuleApi.draft(request.intent, request.current, screen);
       if (!aliveRef.current) return;
       setForm((previous) => ({ ...formFromDraft(draft, request.assetId), enabled: previous.enabled }));
-      setDraftNote(draft.explanation ? `AI：${draft.explanation}` : "AI 起草的规则，保存前请确认。");
+      const note = draft.explanation ? `AI：${draft.explanation}` : "AI 起草的规则，保存前请确认。";
+      setDraftNote(draft.redacted ? `${note}（发送前${STATE_RULE_REDACTED_NOTE}。）` : note);
       setAiState({ busy: false, error: null });
     } catch (cause) {
       if (!aliveRef.current) return;
@@ -167,8 +165,15 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
           )}
           {screen && (
             <details>
-              <summary className="cursor-pointer text-[12px] text-neutral-300">当前屏幕</summary>
-              <pre className="nx-code mt-1.5 max-h-40 overflow-auto whitespace-pre text-[11px]">{excerpt(screen) || "（空）"}</pre>
+              <summary className="cursor-pointer text-[12px] text-neutral-300">AI 起草会发送的内容（屏幕末尾 {STATE_RULE_DRAFT_ROWS} 行和标题）</summary>
+              <div className="nx-hint mt-1.5 text-[11.5px]">窗口标题</div>
+              <pre className="nx-code mt-1 max-h-12 overflow-auto whitespace-pre text-[11px]" data-ai-sent-title>
+                {sent?.title || "（空）"}
+              </pre>
+              <div className="nx-hint mt-1.5 text-[11.5px]">屏幕末尾</div>
+              <pre className="nx-code mt-1 max-h-60 overflow-auto whitespace-pre text-[11px]" data-ai-sent-rows>
+                {sent?.rows || "（空）"}
+              </pre>
             </details>
           )}
           <div className="flex flex-wrap items-center gap-2">
@@ -181,7 +186,7 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
               {aiState.busy ? <IconRefresh size={11} className="animate-spin" /> : <IconSparkles size={11} />}
               AI 起草
             </button>
-            <span className="nx-hint text-[11.5px]">会把屏幕末尾 30 行和标题发送给当前 AI 模型。</span>
+            <span className="nx-hint text-[11.5px]">会把上面的内容发送给当前 AI 模型，疑似密钥/密码会先隐去。</span>
           </div>
           {aiState.error && (
             <div className="nx-alert nx-alert-danger text-[12px]" role="alert" data-ai-draft-error>

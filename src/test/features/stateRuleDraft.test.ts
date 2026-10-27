@@ -5,6 +5,7 @@ import {
   STATE_RULE_MAX_PATTERN_BYTES,
   STATE_RULE_MAX_RULES,
   defaultCorrection,
+  draftRegionText,
   formFromRule,
   heuristicDraft,
   parseRuleFile,
@@ -47,6 +48,24 @@ describe("heuristic state rule drafts", () => {
   it("keeps quoted patterns within the pattern limit for wide multi-byte rows", () => {
     const draft = heuristicDraft({ lines: ["确认？".repeat(200)], cursorRow: 0 }, "this_is_it", "idle");
     expect(new TextEncoder().encode(draft!.pattern).length).toBeLessThanOrEqual(STATE_RULE_MAX_PATTERN_BYTES);
+  });
+
+  it("masks suspected secrets in the quoted line and says so", () => {
+    const draft = heuristicDraft({ lines: ["export TOKEN=abc123secret"], cursorRow: 0 }, "this_is_it", "idle");
+    expect(draft?.redacted).toBe(true);
+    expect(draft?.pattern).toBe("export TOKEN=\\S+");
+    expect(draft?.name).not.toContain("abc123secret");
+    const mysql = heuristicDraft({ lines: ["$ mysql -pSecret0 -u root"], cursorRow: 0 }, "this_is_it", "idle");
+    expect(mysql?.pattern).not.toContain("Secret0");
+    expect(heuristicDraft({ lines: ["Continue? [y/N]"], cursorRow: 0 }, "this_is_it", "idle")?.redacted).toBeUndefined();
+  });
+
+  it("picks the region an AI draft is built from like the backend", () => {
+    const lines = Array.from({ length: 40 }, (_, i) => `row ${i}`);
+    const { rows, title } = draftRegionText({ lines, cursorRow: 39, title: "deploy" });
+    expect(rows.split("\n")).toHaveLength(30);
+    expect(rows.startsWith("row 10")).toBe(true);
+    expect(title).toBe("deploy");
   });
 
   it("escapes every RE2 metacharacter", () => {

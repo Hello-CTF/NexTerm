@@ -159,3 +159,32 @@ func TestStateRuleDraftWithoutAModelIsUnsupported(t *testing.T) {
 		t.Fatalf("draft without a model = %+v", response)
 	}
 }
+
+func TestStateRuleDraftRedactsSecretsBeforeThePrompt(t *testing.T) {
+	chat := &draftChatModel{reply: `{"name":"n","region":"bottom","lines":2,"pattern":"Continue","state":"needs_me"}`}
+	dispatcher, _ := newStateRuleCommands(t, chat)
+	screen := stateRuleScreenDTO{
+		Lines:     []string{"$ export TOKEN=abc123secret", "$ mysql -pSecret0 -u root", "Continue? [y/N] "},
+		CursorRow: 2,
+		Title:     "deploy password=hunter2",
+	}
+	draft := decodeFSTransferTest[stateRuleDraftDTO](t, dispatchStateRule(dispatcher, context.Background(), "state_rule_draft", stateRuleDraftRequest{
+		Intent: stateRuleIntentThisIsIt, Current: "running", Screen: screen,
+	}))
+	for _, secret := range []string{"abc123secret", "Secret0", "hunter2"} {
+		if strings.Contains(chat.prompt, secret) {
+			t.Fatalf("prompt leaks %q:\n%s", secret, chat.prompt)
+		}
+	}
+	if !strings.Contains(chat.prompt, "Continue? [y/N]") || !draft.Redacted {
+		t.Fatalf("prompt = %s, draft = %+v", chat.prompt, draft)
+	}
+
+	// A clean screen is not reported as redacted.
+	draft = decodeFSTransferTest[stateRuleDraftDTO](t, dispatchStateRule(dispatcher, context.Background(), "state_rule_draft", stateRuleDraftRequest{
+		Intent: stateRuleIntentThisIsIt, Current: "running", Screen: draftScreen,
+	}))
+	if draft.Redacted {
+		t.Fatalf("clean screen reported as redacted: %+v", draft)
+	}
+}

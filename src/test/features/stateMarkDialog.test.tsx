@@ -156,4 +156,40 @@ describe("state marking dialog", () => {
     expect(alerts.some((text) => text.startsWith("保存失败") && text.includes("状态规则最多 64 条"))).toBe(true);
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("shows the region the AI receives and says when secrets were masked", async () => {
+    mocks.snapshot.mockResolvedValue({
+      text: "",
+      lines: ["$ export TOKEN=abc123secret", "Overwrite app.js? [y/N] ", ""],
+      cursorRow: 1,
+      cursorCol: 24,
+      cols: 80,
+      rows: 3,
+      altScreen: false,
+      lastOutputMsAgo: 0,
+    });
+    mocks.draft.mockResolvedValue({ name: "n", region: "bottom", lines: 3, pattern: "Overwrite", state: "needs_me", redacted: true });
+    await open();
+    expect(mounted!.container.querySelector("[data-ai-sent-rows]")?.textContent).toBe("$ export TOKEN=abc123secret\nOverwrite app.js? [y/N] ");
+    expect(mounted!.container.textContent).not.toContain("发送前已隐去疑似密钥/密码");
+    clickButton(mounted!.container, "AI 起草");
+    await flush();
+    expect(mounted!.container.textContent).toContain("已隐去疑似密钥/密码");
+  });
+
+  it("warns when the heuristic draft had to mask a secret", async () => {
+    mocks.snapshot.mockResolvedValue({
+      text: "",
+      lines: ["export TOKEN=abc123secret", ""],
+      cursorRow: 1,
+      cursorCol: 0,
+      cols: 80,
+      rows: 2,
+      altScreen: false,
+      lastOutputMsAgo: 0,
+    });
+    await open();
+    expect(patternInput().value).not.toContain("abc123secret");
+    expect(mounted!.container.textContent).toContain("已隐去疑似密钥/密码");
+  });
 });
