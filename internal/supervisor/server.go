@@ -259,7 +259,11 @@ func (c *serverConn) serve() {
 			return
 		default:
 			// A frame from a newer client is refused without ending the
-			// connection, so the client keeps its session.
+			// connection, so the client keeps its session. Only request/reply
+			// frames may rely on this refusal, because the client waits for
+			// an answer. A new frame that has no reply must first be
+			// advertised in the hello ack, so the client never sends it to a
+			// helper that would answer with an unexpected error frame.
 			c.replyError(frameError, errorMsg{Code: codeProtocol, Message: fmt.Sprintf("unexpected frame type %d", kind)})
 		}
 	}

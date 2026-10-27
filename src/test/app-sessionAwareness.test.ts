@@ -13,6 +13,7 @@ vi.mock("../ipc/commands", () => ({
 
 import {
   ACTIVE_USER_WINDOW_MS,
+  ACTIVITY_SCAN_INTERVAL_MS,
   markVisibleAwarenessSeen,
   noteUserActivity,
   reloadAwareness,
@@ -129,8 +130,42 @@ describe("seen state", () => {
     expect(mocks.attentionSeen).toHaveBeenCalledWith("T1", event("T1", 1).since);
   });
 
+  it("scans at most once per interval on a burst of activity, with a trailing scan for the last event", () => {
+    vi.useFakeTimers();
+    try {
+      now += 10_000;
+      noteUserActivity();
+      // The state arrives after the first scan, so only a later scan can report it.
+      applyAwareness([event("T1", 2, { since: "2026-10-27T10:00:09Z" })]);
+      // Three events inside the interval: none scans now, a single trailing scan fires after the interval.
+      now += 50;
+      noteUserActivity();
+      now += 50;
+      noteUserActivity();
+      now += 50;
+      noteUserActivity();
+      expect(mocks.attentionSeen).not.toHaveBeenCalled();
+      now += 100;
+      vi.advanceTimersByTime(ACTIVITY_SCAN_INTERVAL_MS);
+      expect(mocks.attentionSeen).toHaveBeenCalledOnce();
+      expect(mocks.attentionSeen).toHaveBeenCalledWith("T1", "2026-10-27T10:00:09Z");
+      // After the interval has passed the next event scans at once again.
+      applyAwareness([event("T1", 3, { since: "2026-10-27T10:00:10Z" })]);
+      mocks.attentionSeen.mockClear();
+      now += ACTIVITY_SCAN_INTERVAL_MS + 1;
+      noteUserActivity();
+      expect(mocks.attentionSeen).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the mark on this device when the helper cannot share it, without asking again", async () => {
-    mocks.attentionSeen.mockRejectedValue({ code: "unsupported", message: "helper does not share seen attention states" });
+    mocks.attentionSeen.mockRejectedValue({
+      code: "unsupported",
+      message: "helper does not share seen attention states",
+      detail: { reason: "seen_unsupported" },
+    });
     applyAwareness([event("T1", 1)]);
     markVisibleAwarenessSeen();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -139,6 +174,16 @@ describe("seen state", () => {
     noteUserActivity();
     markVisibleAwarenessSeen();
     expect(mocks.attentionSeen).toHaveBeenCalledOnce();
+  });
+
+  it("retries an unsupported answer that is not seen_unsupported instead of marking it local-only", async () => {
+    mocks.attentionSeen.mockRejectedValueOnce({ code: "unsupported", message: "durable terminal unavailable" });
+    applyAwareness([event("T1", 1)]);
+    markVisibleAwarenessSeen();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(tabAwareness("T1")?.seen).toBeFalsy();
+    markVisibleAwarenessSeen();
+    expect(mocks.attentionSeen).toHaveBeenCalledTimes(2);
   });
 
   it("reports the next state again and retries a report that failed", async () => {

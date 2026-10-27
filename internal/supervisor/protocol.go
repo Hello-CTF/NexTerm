@@ -254,6 +254,8 @@ const (
 	codeLegacyHelper       = "legacy_helper_running"
 	codeStateMismatch      = "state_mismatch"
 	codeGenerationMismatch = "generation_mismatch"
+	// codeStateSeenUnsupported is only sent for a state_seen request.
+	codeStateSeenUnsupported = "state_seen_unsupported"
 	// codeLimit is unknown to older clients, which read it as unavailable.
 	codeLimit = "limit"
 )
@@ -284,6 +286,8 @@ func errorCode(err error) string {
 		return codeStateMismatch
 	case errors.Is(err, ErrGenerationMismatch):
 		return codeGenerationMismatch
+	case errors.Is(err, ErrStateSeenUnsupported):
+		return codeStateSeenUnsupported
 	case errors.Is(err, ErrUnsupported):
 		return codeProtocol
 	default:
@@ -360,6 +364,8 @@ func errorSentinel(code string) error {
 		return ErrStateMismatch
 	case codeGenerationMismatch:
 		return ErrGenerationMismatch
+	case codeStateSeenUnsupported:
+		return ErrStateSeenUnsupported
 	case codeLimit:
 		return ErrLimit
 	default:

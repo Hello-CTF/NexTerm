@@ -87,7 +87,7 @@ func (a *Attachment) StateUpdates() <-chan struct{} {
 
 // MarkStateSeen marks the needs_me or just_finished state that began at
 // since as seen by a user; every attached client is told. A state that has
-// changed since is left alone. It fails with ErrUnsupported when state
+// changed since is left alone. It fails with ErrStateSeenUnsupported when state
 // detection is disabled.
 func (a *Attachment) MarkStateSeen(since time.Time) error {
 	s := a.session
@@ -95,7 +95,7 @@ func (a *Attachment) MarkStateSeen(since time.Time) error {
 	tracker := s.state
 	s.mu.RUnlock()
 	if tracker == nil {
-		return fmt.Errorf("%w: session state detection is disabled", ErrUnsupported)
+		return fmt.Errorf("%w: session state detection is disabled", ErrStateSeenUnsupported)
 	}
 	tracker.markSeen(since)
 	return nil

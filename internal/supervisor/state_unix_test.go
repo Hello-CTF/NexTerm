@@ -286,18 +286,37 @@ func TestStateSeenNotSentToAHelperWithoutIt(t *testing.T) {
 	}
 	asked := waitStreamState(t, stream, "bell", func(s *SessionState) bool { return s.State == base.SessionNeedsMe })
 	stream.conn.stateSeen = ack.StateSeen
-	if err := stream.MarkStateSeen(context.Background(), asked.Since); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("seen without helper support = %v, want ErrUnsupported", err)
+	if err := stream.MarkStateSeen(context.Background(), asked.Since); !errors.Is(err, ErrStateSeenUnsupported) {
+		t.Fatalf("seen without helper support = %v, want ErrStateSeenUnsupported", err)
 	}
-	// Clients see it as an unavailable capability, which the IPC layer reports as unsupported.
-	if err := (&streamAttachment{Stream: stream}).MarkDurableStateSeen(context.Background(), asked.Since); !errors.Is(err, durable.ErrUnavailable) {
-		t.Fatalf("durable seen without helper support = %v, want durable.ErrUnavailable", err)
+	// The permanent case gets its own durable error, which the IPC layer reports as seen_unsupported.
+	if err := (&streamAttachment{Stream: stream}).MarkDurableStateSeen(context.Background(), asked.Since); !errors.Is(err, durable.ErrSeenUnsupported) {
+		t.Fatalf("durable seen without helper support = %v, want durable.ErrSeenUnsupported", err)
 	}
 	if state := session.Info().State; state == nil || state.Seen {
 		t.Fatalf("the helper took a seen mark it was never sent: %+v", state)
 	}
 	if _, err := stream.Write([]byte("x\n")); err != nil {
 		t.Fatalf("stream unusable after the refused seen: %v", err)
+	}
+}
+
+// A transient helper failure is not a seen_unsupported answer, so the client retries it.
+func TestStateSeenTransientErrorIsNotUnsupported(t *testing.T) {
+	for _, err := range []error{ErrUnavailable, ErrProtocol, ErrUnsupported, ErrClosed} {
+		if got := translateError(err); errors.Is(got, durable.ErrSeenUnsupported) {
+			t.Fatalf("translateError(%v) = %v, must not be durable.ErrSeenUnsupported", err, got)
+		}
+	}
+	if got := translateError(ErrUnavailable); !errors.Is(got, durable.ErrUnavailable) {
+		t.Fatalf("translateError(ErrUnavailable) = %v, want durable.ErrUnavailable", got)
+	}
+	// The wire code survives a round trip, so a helper with detection disabled is permanent too.
+	if got := errorSentinel(errorCode(ErrStateSeenUnsupported)); !errors.Is(got, ErrStateSeenUnsupported) {
+		t.Fatalf("wire round trip = %v, want ErrStateSeenUnsupported", got)
+	}
+	if got := translateError(ErrStateSeenUnsupported); !errors.Is(got, durable.ErrSeenUnsupported) {
+		t.Fatalf("translateError(ErrStateSeenUnsupported) = %v, want durable.ErrSeenUnsupported", got)
 	}
 }
 

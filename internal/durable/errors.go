@@ -17,4 +17,7 @@ var (
 	// ErrLimit reports a create the helper refused at its session-count or
 	// create-rate limit.
 	ErrLimit = errors.New("durable terminal limit reached")
+	// ErrSeenUnsupported reports that the helper cannot share a seen attention
+	// state, now or later. Transient failures stay ErrUnavailable.
+	ErrSeenUnsupported = errors.New("durable terminal does not share seen attention states")
 )

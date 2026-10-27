@@ -1197,10 +1197,10 @@ func (s *Stream) Resize(ctx context.Context, cols, rows uint32) error {
 // just_finished state that began at since; the helper pushes the seen state
 // to every attached client.
 // A helper that does not advertise the frame is not sent it: the call fails
-// with ErrUnsupported and the seen mark stays with the caller.
+// with ErrStateSeenUnsupported and the seen mark stays with the caller.
 func (s *Stream) MarkStateSeen(ctx context.Context, since time.Time) error {
 	if !s.conn.stateSeen {
-		return fmt.Errorf("%w: helper does not share seen attention states", ErrUnsupported)
+		return fmt.Errorf("%w: helper does not advertise state_seen", ErrStateSeenUnsupported)
 	}
 	kind, _, err := s.request(ctx, frameStateSeen, stateSeenMsg{Since: since})
 	if err != nil {

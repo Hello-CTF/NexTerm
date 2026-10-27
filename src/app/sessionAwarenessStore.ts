@@ -101,6 +101,8 @@ export interface AwarenessBadge {
   kind: AwarenessBadgeKind;
   inferred: boolean;
   label: string;
+  // outcome is set on just_finished only: "failed" for a nonzero exit code, "ok" for exit 0 or an unknown code.
+  outcome?: "ok" | "failed";
 }
 
 // awarenessBadge decides what a tab shows. Idle and exited tabs show nothing (an exited tab is marked already), and a
@@ -117,7 +119,8 @@ export function awarenessBadge(awareness: SessionAwareness | undefined): Awarene
       if (awareness.seen) return null;
       const code = awareness.exitCode;
       const result = typeof code === "number" ? (code === 0 ? "，成功" : `，退出码 ${code}`) : "";
-      return { kind: "just_finished", inferred: awareness.inferred, label: `命令刚结束${result}` };
+      const outcome = typeof code === "number" && code !== 0 ? "failed" : "ok";
+      return { kind: "just_finished", inferred: awareness.inferred, label: `命令刚结束${result}`, outcome };
     }
     case "running":
       return { kind: "running", inferred: awareness.inferred, label: "运行中" };
