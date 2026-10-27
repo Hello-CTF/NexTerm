@@ -39,6 +39,8 @@ type fakeDurableRecord struct {
 	rows        uint32
 	floorEvent  uint64
 	floorGrid   uint64
+	title       string
+	revision    uint64
 }
 
 type fakeDurableAttachment struct {
@@ -104,6 +106,73 @@ func (p *fakeDurableProvider) AttachFromWithIdentity(_ context.Context, id strin
 		attachment.reads <- append([]byte(nil), record.output[offset:]...)
 	}
 	return attachment, nil
+}
+
+// AttachTailWithIdentity replays the whole recorded output: the fake keeps
+// no history limit worth trimming.
+func (p *fakeDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+func (p *fakeDurableProvider) liveRecordLocked(id string, identity base.DurableIdentity) (*fakeDurableRecord, error) {
+	if identity.Incarnation == "" {
+		return nil, durable.ErrInvalidInput
+	}
+	record := p.records[id]
+	if record == nil || record.killed > 0 {
+		return nil, durable.ErrNotFound
+	}
+	if identity.Incarnation != fakeIncarnation(record.identity) {
+		return nil, durable.ErrIdentity
+	}
+	return record, nil
+}
+
+func (p *fakeDurableProvider) KillWithIdentity(_ context.Context, id string, identity base.DurableIdentity) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.killErr != nil {
+		return p.killErr
+	}
+	record, err := p.liveRecordLocked(id, identity)
+	if err != nil {
+		return err
+	}
+	record.killed++
+	return nil
+}
+
+func (p *fakeDurableProvider) ReadDurableHistory(_ context.Context, id string, identity base.DurableIdentity, request base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record, err := p.liveRecordLocked(id, identity)
+	if err != nil {
+		return base.DurableHistoryChunk{}, err
+	}
+	next := uint64(len(record.output))
+	end := min(request.Before, next)
+	start := end - min(end, uint64(max(request.MaxBytes, 0)))
+	return base.DurableHistoryChunk{
+		Start: start, End: end, HistoryNext: next,
+		Data: append([]byte(nil), record.output[start:end]...),
+	}, nil
+}
+
+// RenameDurable stores the canonical title the way a helper does, rejecting
+// a stale expected revision.
+func (p *fakeDurableProvider) RenameDurable(_ context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record, err := p.liveRecordLocked(options.ID, base.DurableIdentity{Incarnation: options.Incarnation})
+	if err != nil {
+		return base.DurableRenameResult{}, err
+	}
+	if options.ExpectedMetadataRevision != record.revision {
+		return base.DurableRenameResult{}, &base.DurableMetadataConflictError{CurrentTitle: record.title, CurrentMetadataRevision: record.revision}
+	}
+	record.title = options.Title
+	record.revision++
+	return base.DurableRenameResult{Title: record.title, MetadataRevision: record.revision}, nil
 }
 
 // currentDurableIdentity is the identity a descriptor listing would report.
@@ -332,6 +401,50 @@ func openDurableTestTab(t *testing.T, manager *Manager, connected *Session, id, 
 	return info
 }
 
+// recoverCanonicalDurableTestTab recovers a durable tab the way
+// RecoverRemoteDurable does, with the title and revision of the helper's
+// descriptor.
+func recoverCanonicalDurableTestTab(t *testing.T, manager *Manager, connected *Session, id, channel string) TabInfo {
+	t.Helper()
+	descriptors, err := manager.durable.ListDurableDescriptors(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, descriptor := range descriptors {
+		if descriptor.ID != id {
+			continue
+		}
+		identity := base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
+		info, err := manager.OpenTab(context.Background(), OpenTabOptions{
+			TabID: id, SessionID: connected.ID, ClientID: "client-a", ChannelID: channel, Cols: 80, Rows: 24,
+			Durable: &DurableTabOptions{
+				Recover: true, Identity: &identity, CanonicalMetadata: true,
+				Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	t.Fatalf("no descriptor for %s", id)
+	return TabInfo{}
+}
+
+func fakeDescriptorTitle(t *testing.T, provider *fakeDurableProvider, id string) string {
+	t.Helper()
+	descriptors, err := provider.ListDurableDescriptors(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, descriptor := range descriptors {
+		if descriptor.ID == id {
+			return descriptor.Title
+		}
+	}
+	return ""
+}
+
 // recoveryIdentity returns the identity production recovery reads from the
 // provider's descriptor listing, or nil when the provider cannot report one.
 func recoveryIdentity(manager *Manager, id string) *base.DurableIdentity {
@@ -468,15 +581,15 @@ func TestDurableTabTitleSurvivesRestartAndDiesWithTab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renamed.Title != "构建机" || provider.DurableTabTitleContext(context.Background(), info.ID) != "构建机" {
-		t.Fatalf("rename info = %+v, persisted = %q", renamed, provider.DurableTabTitleContext(context.Background(), info.ID))
+	if renamed.Title != "构建机" || fakeDescriptorTitle(t, provider, info.ID) != "构建机" {
+		t.Fatalf("rename info = %+v, helper title = %q", renamed, fakeDescriptorTitle(t, provider, info.ID))
 	}
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	second, _, _, secondSession := newDurableTestManager(t, provider)
-	recovered := openDurableTestTab(t, second, secondSession, info.ID, "b-1", true)
+	recovered := recoverCanonicalDurableTestTab(t, second, secondSession, info.ID, "b-1")
 	if recovered.Title != "构建机" {
 		t.Fatalf("recovered title = %q", recovered.Title)
 	}
@@ -490,8 +603,8 @@ func TestDurableTabTitleSurvivesRestartAndDiesWithTab(t *testing.T) {
 	if err := second.CloseTab(info.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.DurableTabTitleContext(context.Background(), info.ID); got != "" {
-		t.Fatalf("title after kill = %q", got)
+	if descriptors, err := provider.ListDurableDescriptors(context.Background()); err != nil || len(descriptors) != 0 {
+		t.Fatalf("descriptors after kill = %+v, %v", descriptors, err)
 	}
 }
 

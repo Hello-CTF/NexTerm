@@ -81,6 +81,10 @@ func (p *rosterIdentityDurableProvider) AttachWithIdentity(ctx context.Context, 
 	return p.AttachFromWithIdentity(ctx, id, identity, 0)
 }
 
+func (p *rosterIdentityDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
 func (p *rosterIdentityDurableProvider) currentDurableIdentity(id string) (base.DurableIdentity, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

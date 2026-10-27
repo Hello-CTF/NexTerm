@@ -11,54 +11,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 )
 
-// timedTitleProvider is a durable provider whose title store also keeps each
-// title's decision time, like the production store.
-type timedTitleProvider struct {
-	*fakeDurableProvider
-	times map[string]int64
-}
-
-func newTimedTitleProvider() *timedTitleProvider {
-	return &timedTitleProvider{fakeDurableProvider: newFakeDurableProvider(), times: map[string]int64{}}
-}
-
-func (p *timedTitleProvider) DurableTabTitleChangedAtContext(_ context.Context, tabID string) int64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.times[tabID]
-}
-
-func (p *timedTitleProvider) PersistDurableTabTitleAtContext(ctx context.Context, tabID, title string, changedAt int64) {
-	p.PersistDurableTabTitleContext(ctx, tabID, title)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.times[tabID] = changedAt
-}
-
-// A restart reports the persisted decision time, so a stale timestamped
-// client decision cannot overwrite the newer title.
-func TestDurableTitleDecisionTimeSurvivesRestart(t *testing.T) {
-	provider := newTimedTitleProvider()
-	first, _, _, firstSession := newDurableTestManager(t, provider)
-	info := openDurableTestTab(t, first, firstSession, "timed-tab", "a-1", false)
-	at := time.Now().UnixMilli() - 60_000
-	if _, err := first.RenameTabAt(context.Background(), info.ID, "构建机", at); err != nil {
-		t.Fatal(err)
-	}
-	if err := first.Close(); err != nil {
-		t.Fatal(err)
-	}
-	second, _, _, secondSession := newDurableTestManager(t, provider)
-	recovered := openDurableTestTab(t, second, secondSession, info.ID, "b-1", true)
-	if recovered.Title != "构建机" || !recovered.TitleCustom || recovered.TitleChangedAt != at {
-		t.Fatalf("recovered = %+v, want the persisted decision time %d", recovered, at)
-	}
-}
-
 // A custom title made of emoji sequences is accepted up to the rune limit,
-// persisted unchanged and recovered unchanged after a restart.
+// stored by the helper unchanged and recovered unchanged after a restart.
 func TestDurableEmojiTitleSurvivesRestart(t *testing.T) {
-	provider := newTimedTitleProvider()
+	provider := newFakeDurableProvider()
 	first, _, _, firstSession := newDurableTestManager(t, provider)
 	info := openDurableTestTab(t, first, firstSession, "emoji-tab", "a-1", false)
 	// 11 seven-rune family emoji plus "构建机" is exactly maxTabTitleRunes.
@@ -80,29 +36,9 @@ func TestDurableEmojiTitleSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, _, _, secondSession := newDurableTestManager(t, provider)
-	recovered := openDurableTestTab(t, second, secondSession, info.ID, "b-1", true)
+	recovered := recoverCanonicalDurableTestTab(t, second, secondSession, info.ID, "b-1")
 	if recovered.Title != title || !recovered.TitleCustom {
 		t.Fatalf("recovered = %+v, want title %q", recovered, title)
-	}
-}
-
-// A title persisted without a decision time is stamped when the backend
-// first observes it on recovery, never reported as unknown (zero).
-func TestDurableTitleWithoutDecisionTimeIsStampedOnRecovery(t *testing.T) {
-	provider := newFakeDurableProvider()
-	first, _, _, firstSession := newDurableTestManager(t, provider)
-	info := openDurableTestTab(t, first, firstSession, "legacy-tab", "a-1", false)
-	if _, err := first.RenameTab(context.Background(), info.ID, "构建机"); err != nil {
-		t.Fatal(err)
-	}
-	if err := first.Close(); err != nil {
-		t.Fatal(err)
-	}
-	before := time.Now().UnixMilli()
-	second, _, _, secondSession := newDurableTestManager(t, provider)
-	recovered := openDurableTestTab(t, second, secondSession, info.ID, "b-1", true)
-	if !recovered.TitleCustom || recovered.TitleChangedAt < before {
-		t.Fatalf("recovered = %+v, want a decision time stamped at recovery (>= %d)", recovered, before)
 	}
 }
 

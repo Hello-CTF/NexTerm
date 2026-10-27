@@ -100,12 +100,6 @@ func (f DurableResolverFunc) ResolveDurable(ctx context.Context, transport base.
 	return f(ctx, transport)
 }
 
-// DurableLister enumerates the durable tab IDs a provider owns. Providers
-// that cannot enumerate return nothing through this interface.
-type DurableLister interface {
-	ListDurable(ctx context.Context) ([]string, error)
-}
-
 type ConnectorFunc func(context.Context, Asset, uint64) (base.Transport, error)
 
 func (f ConnectorFunc) Connect(ctx context.Context, asset Asset, generation uint64) (base.Transport, error) {

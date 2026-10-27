@@ -913,19 +913,13 @@ func (m *Manager) RenameTabAt(ctx context.Context, tabID, title string, at int64
 		if err != nil {
 			return TabInfo{}, err
 		}
-		supported, err := durableMetadataSupported(ctx, provider)
-		if err != nil {
-			return TabInfo{}, err
+		unlocked = true
+		tab.lifecycleMu.Unlock()
+		info, err := m.renameCanonicalTab(ctx, tab, provider, title, at)
+		if err != nil || info.TitleCustom {
+			return info, err
 		}
-		if supported {
-			unlocked = true
-			tab.lifecycleMu.Unlock()
-			info, err := m.renameCanonicalTab(ctx, tab, provider, title, at)
-			if err != nil || info.TitleCustom {
-				return info, err
-			}
-			return m.restoreDynamicTitle(ctx, tab, info), nil
-		}
+		return m.restoreDynamicTitle(ctx, tab, info), nil
 	}
 	tab.mu.Lock()
 	if clear {
@@ -941,14 +935,6 @@ func (m *Manager) RenameTabAt(ctx context.Context, tabID, title string, at int64
 	event := tab.controlEventLocked()
 	info := tab.infoLocked()
 	tab.mu.Unlock()
-	if durable {
-		owner := ownerCtx(context.Background(), tab.session.userID)
-		if clear {
-			m.deleteDurableTabTitle(owner, tabID)
-		} else {
-			m.persistDurableTabTitle(owner, tabID, title, at)
-		}
-	}
 	m.emit(ctx, TopicTerminalControl, event)
 	return info, nil
 }

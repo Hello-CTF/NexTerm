@@ -336,13 +336,13 @@ func TestRegistryWithoutMetadataLoadsAndPersistsRename(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = supervisor.Close() })
 	provider := NewProvider(supervisor)
-	descriptors, err := requireDurableDescriptorLister(t, provider).ListDurableDescriptors(context.Background())
+	descriptors, err := provider.ListDurableDescriptors(context.Background())
 	if err != nil || len(descriptors) != 1 || descriptors[0].Title != "" || descriptors[0].MetadataRevision != 0 {
 		t.Fatal("unexpected registry result")
 	}
 
 	request := base.DurableRenameOptions{ID: id, Incarnation: incarnation, RequestID: ids.New(), Title: "recovered-title"}
-	result, err := requireDurableMetadataProvider(t, provider).RenameDurable(context.Background(), request)
+	result, err := provider.RenameDurable(context.Background(), request)
 	if err != nil || result.Title != request.Title || result.MetadataRevision != 1 {
 		t.Fatal("unexpected registry result")
 	}
@@ -360,11 +360,11 @@ func TestRegistryWithoutMetadataLoadsAndPersistsRename(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = restarted.Close() })
 	provider = NewProvider(restarted)
-	descriptors, err = requireDurableDescriptorLister(t, provider).ListDurableDescriptors(context.Background())
+	descriptors, err = provider.ListDurableDescriptors(context.Background())
 	if err != nil || len(descriptors) != 1 || descriptors[0].Title != request.Title || descriptors[0].MetadataRevision != 1 {
 		t.Fatal("unexpected registry result")
 	}
-	retry, err := requireDurableMetadataProvider(t, provider).RenameDurable(context.Background(), request)
+	retry, err := provider.RenameDurable(context.Background(), request)
 	if err != nil || retry != result {
 		t.Fatal("unexpected registry result")
 	}

@@ -698,11 +698,7 @@ func (m *Manager) listReadyDurable(ctx context.Context, sessionID string) ([]bas
 		}
 		provider = entry.provider
 	}
-	lister, ok := provider.(base.DurableDescriptorLister)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	descriptors, err := lister.ListDurableDescriptors(ctx)
+	descriptors, err := provider.ListDurableDescriptors(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -722,11 +718,7 @@ func (m *Manager) listLocalDurable(ctx context.Context) ([]base.DurableDescripto
 	if err != nil {
 		return nil, err
 	}
-	lister, ok := provider.(base.DurableDescriptorLister)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	descriptors, err := lister.ListDurableDescriptors(ctx)
+	descriptors, err := provider.ListDurableDescriptors(ctx)
 	if err != nil {
 		return nil, err
 	}

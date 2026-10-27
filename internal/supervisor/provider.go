@@ -194,13 +194,6 @@ func (p *Provider) KillWithIdentity(ctx context.Context, id string, identity bas
 	return translateError(p.supervisor.kill(ctx, id, expected))
 }
 
-func (p *Provider) DurableMetadataSupported(ctx context.Context) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func (p *Provider) RenameDurable(ctx context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
 	info, err := p.supervisor.Rename(ctx, renameRequest(options))
 	if err != nil {
@@ -513,13 +506,6 @@ func (p *RemoteProvider) KillWithIdentity(ctx context.Context, id string, identi
 	return translateError(p.client.Kill(ctx, id, expected))
 }
 
-func (p *RemoteProvider) DurableMetadataSupported(ctx context.Context) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func (p *RemoteProvider) RenameDurable(ctx context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
 	info, err := p.client.Rename(ctx, renameRequest(options))
 	if err != nil {
@@ -590,8 +576,8 @@ func (a *streamAttachment) TapDurablePrompt(ctx context.Context, tap base.Prompt
 	}
 	sent, err := a.TapPrompt(ctx, tap.Epoch, tap.Fingerprint, tap.Option)
 	if errors.Is(err, ErrUnsupported) {
-		// An older helper, or one without state detection: taps are not
-		// supported there, which is not an unavailable helper.
+		// A helper without state detection does not support taps, which is
+		// not an unavailable helper.
 		return "", fmt.Errorf("%w: %w", base.ErrUnsupported, err)
 	}
 	return sent, translateError(err)
@@ -652,24 +638,12 @@ func (a *streamAttachment) DurableGrid() (cols, rows uint32, ok bool) {
 }
 
 var (
-	_ base.DurableProvider         = (*Provider)(nil)
-	_ base.DurableDescriptorLister = (*Provider)(nil)
-	_ base.DurableMetadataProvider = (*Provider)(nil)
-	_ base.DurableIdentityAttacher = (*Provider)(nil)
-	_ base.DurableIdentityKiller   = (*Provider)(nil)
-	_ base.DurableTailAttacher     = (*Provider)(nil)
-	_ base.DurableHistoryReader    = (*Provider)(nil)
-	_ base.DurableAttachment       = (*channelAttachment)(nil)
-	_ base.DurableReplayReporter   = (*channelAttachment)(nil)
-	_ base.DurableStateReporter    = (*channelAttachment)(nil)
-	_ base.DurableProvider         = (*RemoteProvider)(nil)
-	_ base.DurableDescriptorLister = (*RemoteProvider)(nil)
-	_ base.DurableMetadataProvider = (*RemoteProvider)(nil)
-	_ base.DurableIdentityAttacher = (*RemoteProvider)(nil)
-	_ base.DurableIdentityKiller   = (*RemoteProvider)(nil)
-	_ base.DurableTailAttacher     = (*RemoteProvider)(nil)
-	_ base.DurableHistoryReader    = (*RemoteProvider)(nil)
-	_ base.DurableAttachment       = (*streamAttachment)(nil)
-	_ base.DurableReplayReporter   = (*streamAttachment)(nil)
-	_ base.DurableStateReporter    = (*streamAttachment)(nil)
+	_ base.DurableProvider       = (*Provider)(nil)
+	_ base.DurableAttachment     = (*channelAttachment)(nil)
+	_ base.DurableReplayReporter = (*channelAttachment)(nil)
+	_ base.DurableStateReporter  = (*channelAttachment)(nil)
+	_ base.DurableProvider       = (*RemoteProvider)(nil)
+	_ base.DurableAttachment     = (*streamAttachment)(nil)
+	_ base.DurableReplayReporter = (*streamAttachment)(nil)
+	_ base.DurableStateReporter  = (*streamAttachment)(nil)
 )

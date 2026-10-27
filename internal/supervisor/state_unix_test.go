@@ -186,7 +186,7 @@ func TestStateVisibleWithoutClientsAndPushedToAttached(t *testing.T) {
 
 	// Durable descriptors carry the state end to end, local and remote,
 	// without the events polling callers do not read.
-	for name, lister := range map[string]base.DurableDescriptorLister{
+	for name, lister := range map[string]base.DurableProvider{
 		"local":  NewProvider(supervisor),
 		"remote": NewRemoteProvider(client),
 	} {

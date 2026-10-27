@@ -46,7 +46,7 @@ func TestRestartedHelperRejectsPreviousGeneration(t *testing.T) {
 	}
 	server := testServer(t, second)
 	stale := base.DurableIdentity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation, Generation: previous}
-	providers := map[string]base.DurableIdentityAttacher{
+	providers := map[string]base.DurableProvider{
 		"embedded": NewProvider(second),
 		"remote":   NewRemoteProvider(testClient(t, server)),
 	}

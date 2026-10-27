@@ -86,8 +86,7 @@ type Info struct {
 	// State is the session's attention state; nil when the helper runs
 	// with state detection disabled.
 	State *SessionState `json:"state,omitempty"`
-	// Activity is absent from helpers that predate it; clients treat its
-	// times as unknown then.
+	// Activity is the session's in-memory activity record.
 	Activity *SessionActivity `json:"activity,omitempty"`
 }
 
