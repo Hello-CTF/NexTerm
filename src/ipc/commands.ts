@@ -961,6 +961,7 @@ export const fsApi = {
 };
 
 export type LocalHelperStatus = import("./generated/types").LocalHelperStatusDTO;
+export type LocalTerminalMode = "durable" | "regular";
 
 // The local helper runs local terminals detached from the app so they survive it. restart replaces an
 // outdated helper and ends its sessions, so it takes the consent token the user confirmed.
@@ -968,6 +969,9 @@ export const localHelperApi = {
   status: () => call("local_helper_status") as Promise<LocalHelperStatus>,
   restart: (consentToken: string) => call("local_helper_restart", { consentToken }) as Promise<LocalHelperStatus>,
   retry: () => call("local_helper_retry") as Promise<LocalHelperStatus>,
+  // The device's choice for new local terminals; the backend applies it to every local terminal it creates.
+  getMode: () => call("local_helper_mode_get").then((value) => (value as { mode: LocalTerminalMode }).mode),
+  setMode: (mode: LocalTerminalMode) => call("local_helper_mode_set", { mode }).then((value) => (value as { mode: LocalTerminalMode }).mode),
 };
 
 export type LocalFolderFileDto = import("./generated/types").LocalFolderFileDTO;

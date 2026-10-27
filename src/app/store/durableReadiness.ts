@@ -52,10 +52,10 @@ function queryReadiness(sessionId: string): Promise<DurableReadiness> {
 }
 
 // The desktop keeps the default terminal mode on the device; the server applies the account preference itself and
-// reports it as "disabled". Local terminals follow the device's local terminal mode instead, which belongs to the
-// local helper of this machine.
+// reports it as "disabled". Local terminals follow this device's local terminal setting, which the backend applies
+// and reports as "disabled" too.
 async function regularPreferred(kind?: string): Promise<boolean> {
-  if (kind === "local") return getTerminalPrefs().localMode === "regular";
+  if (kind === "local") return false;
   if (WEB) return false;
   const loading = waitAccountPreferences();
   if (loading) await loading;

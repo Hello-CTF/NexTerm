@@ -67,7 +67,7 @@ export function setLocalHelperStatusForTest(status: LocalHelperStatus | null): v
 // localHelperBadge describes a regular local terminal by the local helper state, so a terminal that opened
 // regular because the helper was not ready says so on its tab.
 export function localHelperBadge(status: LocalHelperStatus | null): DaemonHelperState | null {
-  if (!localDurableEnabled(status) || !status) return null;
+  if (!localDurableEnabled(status) || !status || status.state === "idle") return null;
   if (status.state === "ready") return { state: "ready" };
   if (status.state === "starting") return { state: "installing", stage: "本机持久组件正在启动" };
   return { state: "attention", message: status.reason };

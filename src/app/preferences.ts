@@ -236,16 +236,12 @@ export type TerminalDefaultMode = "durable" | "regular";
 export type TerminalGpuAcceleration = "auto" | "on" | "off";
 // modifier opens terminal links with Ctrl+click (Cmd+click on macOS); click opens them with a plain click.
 export type TerminalLinkActivation = "modifier" | "click";
-// durable runs local terminals in the local helper so they outlive the app; regular keeps them in the app.
-// It is a device setting: the local helper belongs to this machine.
-export type TerminalLocalMode = "durable" | "regular";
 
 export interface TerminalPrefs {
   closeAction: TerminalCloseAction;
   defaultMode: TerminalDefaultMode;
   gpuAcceleration: TerminalGpuAcceleration;
   linkActivation: TerminalLinkActivation;
-  localMode: TerminalLocalMode;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
@@ -258,7 +254,6 @@ const TERMINAL_DEFAULTS: TerminalPrefs = {
   defaultMode: "durable",
   gpuAcceleration: "auto",
   linkActivation: "modifier",
-  localMode: "durable",
 };
 
 function loadTerminal(): TerminalPrefs {
@@ -281,7 +276,6 @@ function loadTerminal(): TerminalPrefs {
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
     gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
-    localMode: local.localMode === "regular" ? "regular" : TERMINAL_DEFAULTS.localMode,
   };
 }
 
@@ -324,18 +318,6 @@ export function setTerminalCloseAction(value: TerminalCloseAction): void {
   if (accountStore) {
     void accountStore.putOverrides({ [TERMINAL_CLOSE_ACTION_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [TERMINAL_CLOSE_ACTION_KEY]: value }, []);
-  }
-  for (const listener of terminalListeners) listener();
-}
-
-export function setTerminalLocalMode(value: TerminalLocalMode): void {
-  if (terminalPrefs.localMode === value) return;
-  terminalPrefs = { ...terminalPrefs, localMode: value };
-  try {
-    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
-    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
-    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, localMode: value }));
-  } catch {
   }
   for (const listener of terminalListeners) listener();
 }

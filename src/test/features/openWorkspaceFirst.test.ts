@@ -31,7 +31,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { READINESS_QUERY_TIMEOUT_MS, connectAsset, forgetDurableReadiness, noteHelperProgress, openTerminalTab, useUi, type AppTab, type Workspace } from "../../app/store";
-import { setTerminalDefaultMode, setTerminalLocalMode } from "../../app/preferences";
+import { setTerminalDefaultMode } from "../../app/preferences";
 import { tabTooltip } from "../../app/workspace/tabStrip";
 import type { SessionInfo } from "../../ipc/commands";
 
@@ -212,15 +212,11 @@ describe("explicitly opening a terminal", () => {
     expect(terminalTabs()[0]?.regularReason).toBe("持久组件不可用：本机持久组件为旧版本（协议 v2），有 2 个会话在运行");
   });
 
-  it("opens local terminals regular without asking when this device prefers regular local terminals", async () => {
-    setTerminalLocalMode("regular");
-    try {
-      await openTerminalTab(LOCAL_SESSION);
-    } finally {
-      setTerminalLocalMode("durable");
-    }
+  it("opens local terminals regular without a reason when this device keeps them regular", async () => {
+    mocks.prepareDurable.mockResolvedValue({ state: "disabled" });
+    await openTerminalTab(LOCAL_SESSION);
 
-    expect(mocks.prepareDurable).not.toHaveBeenCalled();
+    expect(mocks.prepareDurable).toHaveBeenCalledWith("local-1");
     expect(terminalTabs()[0]?.regularReason).toBeUndefined();
   });
 
