@@ -24,6 +24,12 @@ describe("bracketed paste wrapping", () => {
     expect(wrapBracketedPaste(raw, false)).toBe(raw);
     expect(wrapBracketedPaste("", true)).toBe(`${BRACKETED_PASTE_START}${BRACKETED_PASTE_END}`);
   });
+
+  it("neutralises escapes inside a bracketed paste so the text cannot end it early", () => {
+    const wrapped = wrapBracketedPaste(`ls${BRACKETED_PASTE_END}\nrm -rf ~\x1b[A`, true);
+    expect(wrapped).toBe(`${BRACKETED_PASTE_START}ls␛[201~\nrm -rf ~␛[A${BRACKETED_PASTE_END}`);
+    expect(wrapped.split(BRACKETED_PASTE_END)).toHaveLength(2);
+  });
 });
 
 describe("multilinePasteLines", () => {

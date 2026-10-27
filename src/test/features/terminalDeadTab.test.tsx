@@ -922,7 +922,7 @@ describe("terminal dead-tab overlay", () => {
     expect(mounted.container.textContent).toContain(localSHA);
     expect(mounted.container.textContent).toContain("v1.3.9");
     expect(mounted.container.textContent).toContain(runningSHA);
-    expect(mounted.container.textContent).toContain("协议兼容；发布版本不同不妨碍继续");
+    expect(mounted.container.textContent).toContain("协议兼容，可继续使用；有可用更新");
     expect(mocks.helperOperation).toHaveBeenCalledWith("s1", "", "status");
 
     clickButton(mounted.container, "更新组件");

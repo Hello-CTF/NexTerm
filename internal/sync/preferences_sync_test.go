@@ -112,6 +112,51 @@ func TestEngineAIPermissionAndPreferencesConverge(t *testing.T) {
 	}
 }
 
+// The multi-line paste confirmation mode converges between devices: each enum value set on one device reaches the
+// other as the account override the terminal reads.
+func TestEngineMultilinePastePreferenceConverges(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	for _, device := range []*testDevice{deviceA, deviceB} {
+		enableDeviceKindOptIn(t, device, userID)
+	}
+	const key = "terminal.confirmMultilinePaste"
+	overrides := func(device *testDevice) string {
+		t.Helper()
+		values, err := account.NewPreferences(device.db).UserOverrides(context.Background(), userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(values[key])
+	}
+	round := func(from, to *testDevice) {
+		t.Helper()
+		syncDevice(t, from, server, "alice", "alice-pw-123")
+		syncDevice(t, to, server, "alice", "alice-pw-123")
+	}
+
+	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, `"never"`, 100)
+	round(deviceA, deviceB)
+	if got := overrides(deviceB); got != `"never"` {
+		t.Fatalf("device B mode = %s, want \"never\"", got)
+	}
+
+	putPreferenceSetting(t, deviceB, "prefs.user."+userID+"."+key, `"unbracketed"`, 200)
+	round(deviceB, deviceA)
+	if got := overrides(deviceA); got != `"unbracketed"` {
+		t.Fatalf("device A mode = %s, want \"unbracketed\"", got)
+	}
+
+	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, `"always"`, 300)
+	round(deviceA, deviceB)
+	if got := overrides(deviceB); got != `"always"` {
+		t.Fatalf("device B mode = %s, want \"always\"", got)
+	}
+}
+
 func TestPreferenceViewAndUpdate(t *testing.T) {
 	device := newTestDevice(t)
 	ctx := WithUserID(context.Background(), ids.New())

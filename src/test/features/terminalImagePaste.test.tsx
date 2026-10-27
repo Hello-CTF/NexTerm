@@ -119,6 +119,7 @@ vi.mock("../../ipc/events", () => ({
 vi.mock("../../ipc/env", () => ({ clientId: () => "me", WEB: false }));
 
 import { XtermView, type XtermViewProps } from "../../features/terminal/XtermView";
+import { setTerminalConfirmMultilinePaste } from "../../app/preferences";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -406,5 +407,58 @@ describe("XtermView image paste interception", () => {
 
     expect(onPasteFiles).toHaveBeenCalledWith([], ["文件夹「photos」"]);
     expect(event.defaultPrevented).toBe(true);
+  });
+});
+
+describe("XtermView multi-line text paste", () => {
+  afterEach(() => {
+    setTerminalConfirmMultilinePaste("unbracketed");
+  });
+
+  it("pastes without a prompt once the user turned the multi-line prompt off", async () => {
+    setTerminalConfirmMultilinePaste("never");
+    const onData = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onData });
+
+    const event = pasteEvent([], "echo one\necho two");
+    await act(async () => {
+      host().dispatchEvent(event);
+      await flushMacrotask();
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onData).toHaveBeenCalledWith("echo one\necho two");
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("sends a multi-line paste bracketed without a prompt when the program turned bracketed paste on", async () => {
+    setTerminalConfirmMultilinePaste("unbracketed");
+    const onData = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onData });
+    const terminal = harness.terminals[0] as unknown as { modes: { bracketedPasteMode: boolean } };
+    terminal.modes.bracketedPasteMode = true;
+
+    await act(async () => {
+      host().dispatchEvent(pasteEvent([], "echo one\necho two"));
+      await flushMacrotask();
+    });
+
+    expect(onData).toHaveBeenCalledWith("\x1b[200~echo one\necho two\x1b[201~");
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("keeps the bracketed paste closed against an embedded end sequence while the prompt is off", async () => {
+    setTerminalConfirmMultilinePaste("never");
+    const onData = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onData });
+    const terminal = harness.terminals[0] as unknown as { modes: { bracketedPasteMode: boolean } };
+    terminal.modes.bracketedPasteMode = true;
+
+    await act(async () => {
+      host().dispatchEvent(pasteEvent([], "echo one\x1b[201~\nrm -rf ~"));
+      await flushMacrotask();
+    });
+
+    expect(onData).toHaveBeenCalledWith("\x1b[200~echo one␛[201~\nrm -rf ~\x1b[201~");
   });
 });

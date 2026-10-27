@@ -236,12 +236,17 @@ export type TerminalDefaultMode = "durable" | "regular";
 export type TerminalGpuAcceleration = "auto" | "on" | "off";
 // modifier opens terminal links with Ctrl+click (Cmd+click on macOS); click opens them with a plain click.
 export type TerminalLinkActivation = "modifier" | "click";
+// When a multi-line paste is confirmed first: unbracketed asks only when the program in the terminal has not turned on
+// bracketed paste (a bracketed paste reaches the shell as one paste instead of running line by line); always asks for
+// every multi-line paste; never does not ask.
+export type TerminalMultilinePasteConfirm = "unbracketed" | "always" | "never";
 
 export interface TerminalPrefs {
   closeAction: TerminalCloseAction;
   defaultMode: TerminalDefaultMode;
   gpuAcceleration: TerminalGpuAcceleration;
   linkActivation: TerminalLinkActivation;
+  confirmMultilinePaste: TerminalMultilinePasteConfirm;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
@@ -249,12 +254,20 @@ const TERMINAL_CLOSE_ACTION_KEY = "terminal.closeAction";
 const TERMINAL_DEFAULT_MODE_KEY = "terminal.defaultMode";
 const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
 const TERMINAL_LINK_ACTIVATION_KEY = "terminal.linkActivation";
+const TERMINAL_CONFIRM_MULTILINE_PASTE_KEY = "terminal.confirmMultilinePaste";
 const TERMINAL_DEFAULTS: TerminalPrefs = {
   closeAction: "ask",
   defaultMode: "durable",
   gpuAcceleration: "auto",
   linkActivation: "modifier",
+  confirmMultilinePaste: "unbracketed",
 };
+
+// Any value that is not one of the modes, including a missing one, is the default.
+export function normalizeMultilinePasteConfirm(value: unknown): TerminalMultilinePasteConfirm {
+  if (value === "unbracketed" || value === "always" || value === "never") return value;
+  return TERMINAL_DEFAULTS.confirmMultilinePaste;
+}
 
 function loadTerminal(): TerminalPrefs {
   let local: Partial<TerminalPrefs> = {};
@@ -271,11 +284,19 @@ function loadTerminal(): TerminalPrefs {
     : local.defaultMode;
   const gpu = preferenceValue<unknown>(TERMINAL_GPU_ACCELERATION_KEY, local.gpuAcceleration, TERMINAL_DEFAULTS.gpuAcceleration);
   const links = preferenceValue<unknown>(TERMINAL_LINK_ACTIVATION_KEY, local.linkActivation, TERMINAL_DEFAULTS.linkActivation);
+  // A signed-in account reads only its own layers (override, then server default) once they have loaded: a device
+  // value saved by another account in this browser must not decide whether this account is asked before pasting.
+  // Until then, including on desktop where the store is registered before it is known whether a sync account exists
+  // (and again on wake), and on a desktop without a sync account, the device value applies.
+  const confirmPaste: unknown = accountPreferencesReady()
+    ? accountOverrides[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY] ?? accountDefaults[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]
+    : local.confirmMultilinePaste;
   return {
     closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction,
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
     gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
+    confirmMultilinePaste: normalizeMultilinePasteConfirm(confirmPaste),
   };
 }
 
@@ -352,6 +373,41 @@ export function setTerminalLinkActivation(value: TerminalLinkActivation): void {
     patchAccountOverrideCache({ [TERMINAL_LINK_ACTIVATION_KEY]: value }, []);
   }
   for (const listener of terminalListeners) listener();
+}
+
+// setTerminalConfirmMultilinePaste writes a signed-in account's choice only as that account's override, which reaches
+// its other devices through preference sync; without an account it is kept on this device only.
+// A choice made while the account view is still loading waits for it, so it lands where it will be read: the account
+// once it turns out to have one, otherwise the device. An account switch in the meantime drops it.
+export function setTerminalConfirmMultilinePaste(value: TerminalMultilinePasteConfirm): void {
+  if (terminalPrefs.confirmMultilinePaste === value) return;
+  const apply = () => {
+    const store = accountPreferencesReady() ? accountStore : null;
+    if (store) {
+      void store.putOverrides({ [TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]: value }).catch(() => undefined);
+      patchAccountOverrideCache({ [TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]: value }, []);
+    } else {
+      try {
+        const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+        const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+        localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, confirmMultilinePaste: value }));
+      } catch {
+      }
+    }
+    terminalPrefs = { ...terminalPrefs, confirmMultilinePaste: value };
+    for (const listener of terminalListeners) listener();
+  };
+  const loading = waitAccountPreferences();
+  if (!loading) {
+    apply();
+    return;
+  }
+  const generation = registerGeneration;
+  terminalPrefs = { ...terminalPrefs, confirmMultilinePaste: value };
+  for (const listener of terminalListeners) listener();
+  void loading.then(() => {
+    if (generation === registerGeneration) apply();
+  });
 }
 
 export function subscribeTerminalPrefs(listener: () => void): () => void {

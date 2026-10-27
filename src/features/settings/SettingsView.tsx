@@ -7,11 +7,14 @@ import {
   setTerminalDefaultMode,
   setTerminalGpuAcceleration,
   setTerminalLinkActivation,
+  setTerminalConfirmMultilinePaste,
+  normalizeMultilinePasteConfirm,
   useTerminalPrefs,
   type TerminalCloseAction,
   type TerminalDefaultMode,
   type TerminalGpuAcceleration,
   type TerminalLinkActivation,
+  type TerminalMultilinePasteConfirm,
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
@@ -151,6 +154,12 @@ const LINK_ACTIVATION_OPTIONS: { value: TerminalLinkActivation; label: string }[
   { value: "click", label: "单击" },
 ];
 
+const MULTILINE_PASTE_OPTIONS: { value: TerminalMultilinePasteConfirm; label: string }[] = [
+  { value: "unbracketed", label: "仅在程序未开启括号粘贴时确认" },
+  { value: "always", label: "每次都确认" },
+  { value: "never", label: "从不确认" },
+];
+
 const DEFAULT_MODE_OPTIONS: { value: TerminalDefaultMode; label: string }[] = [
   { value: "durable", label: "持久终端（推荐）" },
   { value: "regular", label: "普通终端" },
@@ -176,6 +185,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
   const setTerminalOsc52 = useUi((s) => s.setTerminalOsc52);
   const terminalPrefs = useTerminalPrefs();
+  const multilinePasteSelectId = useId();
   const [terminalModeSaving, setTerminalModeSaving] = useState(false);
   const saveTerminalMode = async (value: TerminalDefaultMode) => {
     if (terminalModeSaving) return;
@@ -783,6 +793,30 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                 ? "按住 Ctrl（macOS 为 Cmd）单击终端中的网址或 OSC 8 超链接时打开；直接单击仍可选择文本。触屏设备长按链接可打开或复制。"
                 : "单击终端中的网址或 OSC 8 超链接即打开。"}
               {" "}http/https 与 mailto 链接用系统程序打开，本会话主机上的 file:// 链接在 NexTerm 中打开，其他协议需要确认，可执行系统操作的协议会被拒绝。终端程序捕获鼠标时（如 tmux、htop、vim mouse=a）需同时按住 Shift。
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <label className="nx-setting-label mb-1.5 block" htmlFor={multilinePasteSelectId} data-setting="terminal-confirm-multiline-paste">
+              多行粘贴确认
+            </label>
+            <select
+              id={multilinePasteSelectId}
+              className="nx-select w-full sm:w-auto"
+              value={terminalPrefs.confirmMultilinePaste}
+              onChange={(event) => setTerminalConfirmMultilinePaste(normalizeMultilinePasteConfirm(event.target.value))}
+            >
+              {MULTILINE_PASTE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="nx-hint mt-1.5">
+              开启括号粘贴的程序（如 bash/zsh）会把多行内容当成一次粘贴，不会逐行执行。
+              {terminalPrefs.confirmMultilinePaste === "unbracketed" && "只有程序未开启括号粘贴、多行内容可能被逐行执行时，才先预览并确认。"}
+              {terminalPrefs.confirmMultilinePaste === "always" && "每次粘贴多行文本前都先预览并确认。"}
+              {terminalPrefs.confirmMultilinePaste === "never" && "多行文本直接粘贴，不再确认。"}
+              确认窗口里的「本终端不再提示」在关闭该终端前有效。登录账号后随账号同步到你的其他设备。
             </p>
           </div>
           {showCloseToTray && (

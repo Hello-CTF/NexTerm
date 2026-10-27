@@ -405,7 +405,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
         <dl className="m-0 mt-2 flex flex-col gap-1.5">
           <DetailRow label="创建时间">{formatTime(device.created_at)}</DetailRow>
           <DetailRow label="代理版本">{agent.app_version ? `v${agent.app_version.replace(/^v/i, "")}` : "未上报"}</DetailRow>
-          <DetailRow label="系统平台">{agent.platform ? platformLabel(agent.platform) : "未知"}</DetailRow>
+          {agent.platform && <DetailRow label="系统平台">{platformLabel(agent.platform)}</DetailRow>}
           <DetailRow label="接入地址">
             {agent.current_url ? (
               <span className="flex flex-wrap items-center gap-2">

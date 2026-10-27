@@ -98,6 +98,8 @@ export interface TerminalHandle {
   fit: () => boolean;
   /** Sends text as a paste (bracketed when the terminal enabled it), followed by Enter when submit is set. */
   paste: (text: string, submit?: boolean) => void;
+  /** Whether the program in the terminal turned on bracketed paste (DECSET 2004), read live. */
+  bracketedPasteMode: () => boolean;
   dimensions: () => { cols: number; rows: number };
   // The link target (URL or OSC 8 target) under the pointer, if any.
   hoveredLink: () => string | null;
@@ -410,6 +412,7 @@ export function XtermView(props: XtermViewProps) {
         term.scrollToBottom();
         sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text);
       },
+      bracketedPasteMode: () => term.modes.bracketedPasteMode,
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
       hoveredLink: () => links.hovered(),
       openLink,
@@ -1331,7 +1334,7 @@ export function XtermView(props: XtermViewProps) {
       if (multilinePasteLines(text) === null) return;
       event.preventDefault();
       event.stopPropagation();
-      void confirmMultilinePaste(text).then((ok) => {
+      void confirmMultilinePaste(text, viewKeyRef.current, term.modes.bracketedPasteMode).then((ok) => {
         if (ok) sendInput(wrapBracketedPaste(text, term.modes.bracketedPasteMode), text);
       });
     };

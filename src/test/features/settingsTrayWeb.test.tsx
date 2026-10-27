@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { click, flush, mountWithClient, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
@@ -142,5 +142,36 @@ describe("terminal link activation settings", () => {
     expect(put).toHaveBeenCalledWith({ "terminal.linkActivation": "click" });
     expect(getTerminalPrefs().linkActivation).toBe("click");
     expect(mounted.container.textContent).toContain("单击终端中的网址或 OSC 8 超链接即打开");
+  });
+});
+
+describe("multi-line paste confirmation setting", () => {
+  it("shows the account mode and saves the chosen mode to the account", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    registerAccountPreferenceStore({
+      getView: async () => ({ defaults: {}, overrides: { "terminal.confirmMultilinePaste": "never" } }),
+      putOverrides: put,
+      deleteOverrides: async () => {},
+    });
+    mounted = mountWithClient(createElement(SettingsView));
+    await flush();
+    const label = [...mounted.container.querySelectorAll("label")].find((node) => node.textContent?.trim() === "多行粘贴确认");
+    const select = label ? mounted.container.querySelector<HTMLSelectElement>(`#${CSS.escape(label.htmlFor)}`) : null;
+    if (!select) throw new Error("multi-line paste select not found");
+    await waitFor(() => expect(select.value).toBe("never"));
+    expect([...select.options].map((option) => option.textContent)).toEqual([
+      "仅在程序未开启括号粘贴时确认",
+      "每次都确认",
+      "从不确认",
+    ]);
+    expect(mounted.container.textContent).toContain("开启括号粘贴的程序（如 bash/zsh）会把多行内容当成一次粘贴，不会逐行执行");
+
+    act(() => {
+      select.value = "unbracketed";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await waitFor(() => expect(select.value).toBe("unbracketed"));
+    expect(put).toHaveBeenCalledWith({ "terminal.confirmMultilinePaste": "unbracketed" });
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("unbracketed");
   });
 });

@@ -1064,7 +1064,7 @@ export function TerminalPane({
     if (!kernelTabId) return;
     try {
       const text = await readText();
-      if (text && (await confirmMultilinePaste(text))) handleRef.current?.paste(text);
+      if (text && (await confirmMultilinePaste(text, storeTabId, handleRef.current?.bracketedPasteMode() ?? false))) handleRef.current?.paste(text);
     } catch (e) {
       pushToast("error", `读取剪贴板失败：${describeError(e)}`);
     }
@@ -1423,7 +1423,7 @@ export function TerminalPane({
     if (!kernelTabId) return;
     const selected = handleRef.current?.getSelection() ?? "";
     if (!selected) return;
-    if (!(await confirmMultilinePaste(selected))) return;
+    if (!(await confirmMultilinePaste(selected, storeTabId, handleRef.current?.bracketedPasteMode() ?? false))) return;
     handleRef.current?.paste(selected);
   };
 

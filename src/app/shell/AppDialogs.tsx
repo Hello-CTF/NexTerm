@@ -4,6 +4,7 @@ import { type Asset } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { PromptModal } from "../../ui/PromptModal";
 import { DialogHost } from "../../ui/DialogHost";
+import { MultilinePasteDialogHost } from "../../features/terminal/MultilinePasteDialog";
 import { Lazy } from "../../ui/LazyBoundary";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { AssetEditor, CommandPalette, QuickConnect } from "../lazyPanels";
@@ -93,6 +94,7 @@ export function AppDialogs({
       <LazyAuthGate />
       <PromptModal />
       <DialogHost />
+      <MultilinePasteDialogHost />
     </>
   );
 }
