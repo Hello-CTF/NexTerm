@@ -13,7 +13,18 @@ import { AiChatTab } from "./panel/AiChatTab";
 export { AI_RESYNC_BACKOFF_MS, AI_RESYNC_MAX_ATTEMPTS, AI_SYNC_NOTICE_DISMISS_MS, AI_HITL_EXPIRY_GRACE_MS, aiCreatedTerminalOf, runStatusOf } from "./panel/aiSidebarShared";
 
 
-export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: string }) {
+// placement "panel" shows the assistant inside the session side panel: it fills the panel, is visible whenever it is
+// there, and leaves closing to the panel.
+export function AiSidebar({
+  sessionId,
+  tabId,
+  placement = "dock",
+}: {
+  sessionId?: string;
+  tabId?: string;
+  placement?: "dock" | "panel";
+}) {
+  const inPanel = placement === "panel";
   const setRightOpen = useUi((s) => s.setRightOpen);
   const rightWidth = useUi((s) => s.rightWidth);
   const pushToast = useUi((s) => s.pushToast);
@@ -163,8 +174,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
   return (
     <aside
-      className="flex h-full shrink-0 flex-col overflow-y-auto border-l border-neutral-800/60 bg-neutral-950"
-      style={{ width: rightWidth }}
+      className={`flex h-full flex-col overflow-y-auto bg-neutral-950 ${
+        inPanel ? "min-h-0 w-full min-w-0" : "shrink-0 border-l border-neutral-800/60"
+      }`}
+      style={inPanel ? undefined : { width: rightWidth }}
+      aria-label={inPanel ? "AI 助手" : undefined}
     >
       <div className="flex h-[38px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2 pl-3 [@media(max-height:480px)]:h-8">
         <span className="text-[12.5px] font-semibold text-neutral-100">AI 助手</span>
@@ -185,14 +199,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           </span>
         )}
         <div className="nx-spacer" />
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title={`收起 AI 侧栏${bindings.toggleAiSidebar ? ` (${aiSidebarKeyLabel})` : ""}`}
-          aria-keyshortcuts={formatBindingAria(bindings.toggleAiSidebar) ?? undefined}
-          onClick={() => setRightOpen(false)}
-        >
-          <IconChevronRight size={14} />
-        </button>
+        {!inPanel && (
+          <button
+            className="nx-icon-btn nx-icon-btn-sm"
+            title={`收起 AI 侧栏${bindings.toggleAiSidebar ? ` (${aiSidebarKeyLabel})` : ""}`}
+            aria-keyshortcuts={formatBindingAria(bindings.toggleAiSidebar) ?? undefined}
+            onClick={() => setRightOpen(false)}
+          >
+            <IconChevronRight size={14} />
+          </button>
+        )}
       </div>
 
       <div className="nx-ai-tabstrip flex h-[34px] shrink-0 items-center gap-1 border-b border-neutral-800/60 pl-1.5 pr-1 [@media(max-height:480px)]:h-7">
@@ -347,6 +363,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             conversationId={t.conversationId}
             active={t.id === activeTabId}
             tabKey={t.id}
+            visible={inPanel ? true : undefined}
             draft={t.draft}
             onDraftChange={(v) => updateAiTab(boardKey, t.id, { draft: v }, aiAccountEpoch)}
             onConversationChange={(id, title) => handleConversationChange(t.id, id, title)}

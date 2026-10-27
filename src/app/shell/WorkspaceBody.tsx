@@ -11,6 +11,8 @@ import { ResizeHandle } from "../../ui/ResizeHandle";
 import { Lazy } from "../../ui/LazyBoundary";
 import { AiSidebar, AssetTree, CredentialsSidebar, SessionPanel } from "../lazyPanels";
 import { SESSION_PANEL_WIDTH, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
+import { useAiPanelSlot } from "../../features/session-panel/aiSlot";
+import { MovableHost } from "./MovableHost";
 import { PaneGroup, PaneTabPanel, type PaneMoveTarget } from "../workspace/PaneGroup";
 import { SplitView } from "../workspace/SplitView";
 import { workspaceLayoutTree } from "../paneLayout";
@@ -35,7 +37,8 @@ export interface WorkspaceBodyProps {
 
 // WorkspaceBody is the row under the header: the left dock, the workspace panes, the session side panel and the right
 // (AI) dock. The session panel sits left of the AI sidebar so both can stay open. In overlay layouts the docks float
-// above the panes behind a tap-to-close backdrop, and the session panel is a full-screen sheet.
+// above the panes behind a tap-to-close backdrop, and the session panel is a full-screen sheet. The AI sidebar is
+// mounted once: it shows in the right dock, or in the session panel's AI tab while that tab is open and the dock is not.
 export function WorkspaceBody({
   ws,
   visibleWorkspaces,
@@ -67,6 +70,8 @@ export function WorkspaceBody({
   const setActivePane = useUi((s) => s.setActivePane);
   const setSplitRatio = useUi((s) => s.setSplitRatio);
   const { leftDockOpen, rightDockOpen, sessionDockOpen, sessionSheet, setLeftOpen, setOverlayDock, setSessionOpen } = docks;
+  const aiPanelSlot = useAiPanelSlot();
+  const aiInPanel = aiPanelSlot !== null && !rightDockOpen;
 
   return (
     <div
@@ -193,7 +198,7 @@ export function WorkspaceBody({
           )}
           <div className="nx-session-dock-body" style={sessionSheet ? undefined : { width: sessionWidth }}>
             <Lazy>
-              <SessionPanel overlay={sessionSheet} onClose={() => setSessionOpen(false)} />
+              <SessionPanel overlay={sessionSheet} aiDocked={rightDockOpen} onClose={() => setSessionOpen(false)} />
             </Lazy>
           </div>
         </div>
@@ -210,7 +215,16 @@ export function WorkspaceBody({
             onChange={setRightWidth}
           />
         )}
-        <Lazy><AiSidebar key={aiAccountEpoch} sessionId={activeSessionId} tabId={activeTab?.kind === "terminal" ? activeTab.tabId : undefined} /></Lazy>
+        <MovableHost target={aiInPanel ? aiPanelSlot : null}>
+          <Lazy>
+            <AiSidebar
+              key={aiAccountEpoch}
+              sessionId={activeSessionId}
+              tabId={activeTab?.kind === "terminal" ? activeTab.tabId : undefined}
+              placement={aiInPanel ? "panel" : "dock"}
+            />
+          </Lazy>
+        </MovableHost>
       </div>
     </div>
   );

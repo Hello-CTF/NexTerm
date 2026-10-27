@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement } from "react";
+import { act, createElement, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
@@ -51,6 +51,8 @@ vi.mock("../../ipc/events", async (importOriginal) => {
 
 import { SessionPanel } from "../../features/session-panel/SessionPanel";
 import { resetSessionPanelForTest, useSessionPanel, type SessionPanelTabId } from "../../features/session-panel/sessionPanelStore";
+import { useAiPanelSlot } from "../../features/session-panel/aiSlot";
+import { MovableHost } from "../../app/shell/MovableHost";
 import { resetCwdFollowForTest } from "../../features/files/cwdFollow";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { SessionInfo } from "../../ipc/commands";
@@ -121,14 +123,14 @@ function forward(id: string, sessionId: string, listenPort: number) {
   return { id, sessionId, status: "active", listenPort, targetHost: "127.0.0.1", targetPort: 80, kind: "local", createdAt: 0 };
 }
 
-function mountPanel(tab: SessionPanelTabId): MountedView {
+function mountPanel(tab: SessionPanelTabId, aiDocked = false): MountedView {
   act(() => useSessionPanel.getState().setTab(tab));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = mount(
     createElement(
       QueryClientProvider,
       { client },
-      createElement(SessionPanel, { overlay: false, onClose: () => undefined }),
+      createElement(SessionPanel, { overlay: false, aiDocked, onClose: () => undefined }),
     ),
   );
   mounted = view;
@@ -228,5 +230,78 @@ describe("session side panel host tabs", () => {
     await flush();
     expect(text()).toContain("此会话不支持日志跟随");
     expect(mocks.logStart).not.toHaveBeenCalled();
+  });
+});
+
+// Counter stands in for the AI sidebar: its state must survive moving between the dock and the panel.
+function Counter() {
+  const [count, setCount] = useState(0);
+  return createElement("button", { type: "button", "data-testid": "counter", onClick: () => setCount((c) => c + 1) }, `count ${count}`);
+}
+
+function Shell({ docked }: { docked: boolean }) {
+  const slot = useAiPanelSlot();
+  return createElement(
+    "div",
+    null,
+    createElement(SessionPanel, { overlay: false, aiDocked: docked, onClose: () => undefined }),
+    createElement(
+      "div",
+      { "data-testid": "dock" },
+      createElement(MovableHost, { target: slot && !docked ? slot : null, children: createElement(Counter) }),
+    ),
+  );
+}
+
+describe("session side panel AI tab", () => {
+  function counter(): HTMLButtonElement {
+    return mounted!.container.querySelector<HTMLButtonElement>('[data-testid="counter"]')!;
+  }
+
+  function inPanel(): boolean {
+    return Boolean(counter().closest('[data-testid="session-panel-ai"]'));
+  }
+
+  function renderShell(docked: boolean): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const node = createElement(QueryClientProvider, { client }, createElement(Shell, { docked }));
+    if (mounted) act(() => mounted!.root.render(node));
+    else mounted = mount(node);
+  }
+
+  it("moves the one AI instance into the panel and back without losing its state", async () => {
+    seedHosts();
+    renderShell(false);
+    await flush();
+    expect(inPanel()).toBe(false);
+    click(counter());
+
+    act(() => useSessionPanel.getState().setTab("ai"));
+    await flush();
+    expect(inPanel()).toBe(true);
+    expect(counter().textContent).toBe("count 1");
+    expect(mounted!.container.querySelectorAll('[data-testid="counter"]')).toHaveLength(1);
+
+    act(() => useSessionPanel.getState().setTab("files"));
+    await flush();
+    expect(inPanel()).toBe(false);
+    expect(counter().textContent).toBe("count 1");
+  });
+
+  it("keeps the AI in the open right dock and offers to move it into the panel", async () => {
+    seedHosts();
+    act(() => useUi.setState({ rightOpen: true }));
+    act(() => useSessionPanel.getState().setTab("ai"));
+    renderShell(true);
+    await flush();
+    expect(inPanel()).toBe(false);
+    expect(mounted!.container.textContent).toContain("AI 助手在右侧栏中打开");
+
+    const move = [...mounted!.container.querySelectorAll("button")].find((b) => b.textContent === "在会话侧栏中显示")!;
+    click(move);
+    expect(useUi.getState().rightOpen).toBe(false);
+    renderShell(false);
+    await flush();
+    expect(inPanel()).toBe(true);
   });
 });

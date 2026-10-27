@@ -1,18 +1,20 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keybindings";
 import { useUi } from "../../app/store";
-import { IconBox, IconClose, IconFolderOpen, IconList, IconLock, IconNetwork, IconServer, type IconInfo } from "../../ui/icons";
+import { IconBox, IconClose, IconFolderOpen, IconList, IconLock, IconNetwork, IconServer, IconSparkles, type IconInfo } from "../../ui/icons";
 import { openHostDetail } from "../hosts/hostDetail";
 import { trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { useTerminalCwd } from "../files/cwdFollow";
 import { FilesTab } from "./FilesTab";
 import { ContainersTab, LogsTab, PortsTab } from "./HostTabs";
+import { AiTab } from "./AiTab";
 import { PanelEmpty } from "./PanelEmpty";
 import { useSessionPanelContext, type SessionPanelContext } from "./sessionContext";
 import { useSessionPanel, type SessionPanelTabId } from "./sessionPanelStore";
 
 interface TabEnv {
   context: SessionPanelContext | null;
+  aiDocked: boolean;
 }
 
 interface PanelTab {
@@ -26,7 +28,8 @@ interface PanelTab {
   render: (env: TabEnv) => ReactNode;
 }
 
-// The panel's tabs, in order. Each renders from the same context; the AI tab joins this list later.
+// The panel's tabs, in order. The host tabs render from the same context; the AI tab hosts the app's AI assistant,
+// which follows the active workspace like the right AI dock.
 const PANEL_TABS: readonly PanelTab[] = [
   { id: "files", label: "文件", icon: IconFolderOpen, hostBound: true, render: ({ context }) => <FilesTab context={context} /> },
   {
@@ -53,16 +56,26 @@ const PANEL_TABS: readonly PanelTab[] = [
     hostBound: true,
     render: ({ context }) => <LogsTab context={context} />,
   },
+  {
+    id: "ai",
+    label: "AI",
+    title: "AI 助手",
+    icon: IconSparkles,
+    hostBound: false,
+    render: ({ aiDocked }) => <AiTab aiDocked={aiDocked} />,
+  },
 ];
 
 export interface SessionPanelProps {
   // overlay is true when the panel is a full-screen sheet (mobile and compact layouts).
   overlay: boolean;
+  // aiDocked is true while the right AI dock shows the assistant; the AI tab then points there instead.
+  aiDocked?: boolean;
   onClose: () => void;
 }
 
 // SessionPanel is the right-side panel that follows the focused terminal session: its host and working directory.
-export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
+export function SessionPanel({ overlay, aiDocked = false, onClose }: SessionPanelProps) {
   const { context, source, lockedGone } = useSessionPanelContext();
   const activeTab = useSessionPanel((s) => s.tab);
   const setTab = useSessionPanel((s) => s.setTab);
@@ -234,7 +247,7 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
             }
           />
         ) : (
-          current.render({ context })
+          current.render({ context, aiDocked })
         )}
       </div>
     </section>
