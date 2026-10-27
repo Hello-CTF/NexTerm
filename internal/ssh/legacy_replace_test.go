@@ -24,7 +24,7 @@ type legacyDaemonClient struct {
 	lists        int
 }
 
-var legacyTargetHelper = supervisor.RunningHelper{Protocol: 2, PID: 4242, Activity: supervisor.ActivitySnapshot{PTY: 1, Exec: 1}, ActivityKnown: true}
+var legacyTargetHelper = supervisor.RunningHelper{Protocol: 2, PID: 4242, Activity: supervisor.ActivitySnapshot{PTY: 1, Exec: 1}, ActivityKnown: true, StateDigest: "abcd1234"}
 
 func (c *legacyDaemonClient) List(context.Context) ([]supervisor.Info, error) {
 	c.mu.Lock()
