@@ -130,7 +130,11 @@ describe("seen state", () => {
   });
 
   it("keeps the mark on this device when the helper cannot share it, without asking again", async () => {
-    mocks.attentionSeen.mockRejectedValue({ code: "unsupported", message: "helper does not share seen attention states" });
+    mocks.attentionSeen.mockRejectedValue({
+      code: "unsupported",
+      message: "helper does not share seen attention states",
+      detail: { reason: "seen_unsupported" },
+    });
     applyAwareness([event("T1", 1)]);
     markVisibleAwarenessSeen();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -139,6 +143,16 @@ describe("seen state", () => {
     noteUserActivity();
     markVisibleAwarenessSeen();
     expect(mocks.attentionSeen).toHaveBeenCalledOnce();
+  });
+
+  it("retries an unsupported answer that is not seen_unsupported instead of marking it local-only", async () => {
+    mocks.attentionSeen.mockRejectedValueOnce({ code: "unsupported", message: "durable terminal unavailable" });
+    applyAwareness([event("T1", 1)]);
+    markVisibleAwarenessSeen();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(tabAwareness("T1")?.seen).toBeFalsy();
+    markVisibleAwarenessSeen();
+    expect(mocks.attentionSeen).toHaveBeenCalledTimes(2);
   });
 
   it("reports the next state again and retries a report that failed", async () => {

@@ -31,6 +31,8 @@ func translateError(err error) error {
 		return durable.ErrClosed
 	case errors.Is(err, ErrGenerationMismatch):
 		return durable.ErrGenerationMismatch
+	case errors.Is(err, ErrStateSeenUnsupported):
+		return durable.ErrSeenUnsupported
 	case errors.Is(err, ErrLimit):
 		// Keep the helper's message: it names the limit that was reached.
 		return fmt.Errorf("%w: %w", durable.ErrLimit, err)

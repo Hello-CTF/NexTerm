@@ -1534,6 +1534,9 @@ func terminalIPCError(err error) error {
 	if errors.Is(err, docker.ErrDaemonUnavailable) {
 		return ipc.WrapError(ipc.Code("docker_unavailable"), "Docker 服务未运行或无法连接，请在主机上启动 Docker 后重试", err)
 	}
+	if errors.Is(err, durable.ErrSeenUnsupported) {
+		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err).WithDetail(map[string]any{"reason": "seen_unsupported"})
+	}
 	if errors.Is(err, docker.ErrUnsupported) || errors.Is(err, docker.ErrNoBackend) || errors.Is(err, durable.ErrUnavailable) {
 		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err)
 	}
