@@ -54,6 +54,7 @@ import { confirmMultilinePaste, multilinePasteLines, quickCommandBytes, wrapBrac
 import { SelectionActionBar, isCoarsePointerDevice } from "./SelectionActionBar";
 import { copyText } from "../../ui/clipboard";
 import { pasteUploadFiles } from "./imagePaste";
+import { attachTouchScroll } from "./touchScroll";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
 
@@ -172,7 +173,8 @@ function LinesBelowBadge({ tabId, onJump }: { tabId: string; onJump: () => void 
   return (
     <button
       type="button"
-      className="nx-btn nx-btn-sm absolute bottom-1.5 right-3 z-10 border border-neutral-700/80 bg-neutral-800/95 text-neutral-100 shadow-lg"
+      className="nx-btn nx-btn-sm pointer-coarse:min-h-11 pointer-coarse:px-3 absolute bottom-1.5 right-3 z-10 border border-neutral-700/80 bg-neutral-800/95 text-neutral-100 shadow-lg"
+      aria-label={`回到底部，下方还有 ${linesBelow} 行`}
       onClick={onJump}
     >
       <IconArrowDown size={12} />
@@ -400,8 +402,11 @@ export function XtermView(props: XtermViewProps) {
       getSelection: () => term.getSelection(),
       focus: () => term.focus(),
       fit: () => fitIfSized(true),
-      paste: (text, submit = false) =>
-        sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text),
+      paste: (text, submit = false) => {
+        // Like typed input (xterm's scrollOnUserInput), text sent from the composer or key bar returns to the bottom.
+        term.scrollToBottom();
+        sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text);
+      },
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
       hoveredLink: () => links.hovered(),
       openLink,
@@ -1257,6 +1262,8 @@ export function XtermView(props: XtermViewProps) {
     };
     pasteHost.addEventListener("touchstart", trackTouch, true);
     pasteHost.addEventListener("touchmove", trackTouch, true);
+    // One-finger vertical swipes scroll like the wheel; a touch that stops a fling is not a tap.
+    const touchScroll = attachTouchScroll(term, pasteHost);
     // xterm cancels the touch events on its screen (for touch scrolling), so a tap never becomes the mousedown that
     // focuses it and the soft keyboard stays closed. A short, still, single-finger tap focuses the terminal here,
     // inside the touchend that iOS and Android accept as the gesture opening the keyboard.
@@ -1275,7 +1282,7 @@ export function XtermView(props: XtermViewProps) {
     const onTapEnd = (event: TouchEvent) => {
       const started = tap;
       tap = null;
-      if (!started?.valid || event.touches.length > 0) return;
+      if (!started?.valid || event.touches.length > 0 || touchScroll.stoppedFling()) return;
       if (performance.now() - started.at > TAP_MAX_MS || tapMoved(started, event.changedTouches[0])) return;
       if (term.getSelection()) return;
       if (onTouchTapRef.current?.()) return;
@@ -1411,6 +1418,7 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("touchend", onTapEnd, true);
       pasteHost.removeEventListener("touchcancel", onTapCancel, true);
       detachLinkLongPress();
+      touchScroll.dispose();
       osc7Disposable.dispose();
       links.dispose();
       dataDisposable.dispose();
