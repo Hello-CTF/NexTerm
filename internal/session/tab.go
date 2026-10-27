@@ -96,6 +96,9 @@ type streamAnchor struct {
 	// output byte at or after streamSeq: recorded output before it is read
 	// with ReadDurableHistoryFor to show this view's earlier history.
 	HistoryFrom *uint64 `json:"historyFrom,omitempty"`
+	// InputPassive tells the view it is not the device that last typed into
+	// the tab, so it must not write live clipboard requests (input_owner.go).
+	InputPassive bool `json:"inputPassive,omitempty"`
 }
 
 type Tab struct {
@@ -1135,6 +1138,9 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	anchor, control, replay := m.planAttachReplay(tab, options, clear)
 	if anchor != nil {
 		anchor.AttachmentID = attachmentId
+		tab.mu.Lock()
+		anchor.InputPassive = tab.anchorInputPassiveLocked(options.ChannelID)
+		tab.mu.Unlock()
 		// A full clear-screen replay redraws history: all replay. An adopted
 		// resume delivers output this view missed, classified as it was fed.
 		// The feed gate is held, so the classes match the bytes sent.
@@ -1193,7 +1199,8 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	tab.mu.Unlock()
 	m.mu.Unlock()
 	attached = true
-	// The anchor reset this view to active; the feed gate is still held.
+	// The anchor carried this view's state; other views may change with it
+	// (the input owner came back). The feed gate is still held.
 	m.syncInputOwnerFeedLocked(tab)
 	m.emit(attachCtx, TopicTerminalControl, event)
 	return info, nil
@@ -1389,7 +1396,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 			// The input owner left: the remaining views become active. The
 			// cleanup may run where the feed gate is held, so announce from
 			// a goroutine.
-			m.startGoroutine(func() { m.syncInputOwner(tab) })
+			m.startGoroutine(func() { m.syncInputOwner(context.Background(), tab) })
 		}
 		if attached && empty && ephemeral {
 			_ = m.reapEphemeralTab(tab, generation)
@@ -1501,15 +1508,15 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background b
 	generation := tab.generation
 	tab.mu.Unlock()
 	m.mu.Unlock()
-	if ownerStale {
-		m.syncInputOwner(tab)
-	}
 	for _, detached := range detached {
 		if tab.fanout != nil {
 			tab.fanout.Detach(detached.channelID)
 		}
 		detached.subscriber.co.teardown()
 		_ = detached.subscriber.producer.Close()
+	}
+	if ownerStale {
+		m.syncInputOwner(context.Background(), tab)
 	}
 	if len(detached) > 0 {
 		m.emit(context.Background(), TopicTerminalControl, event)
@@ -1766,10 +1773,6 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 	channel := tab.channel
 	generation := tab.generation
 	exited := tab.exited
-	ownerChanged := false
-	for _, input := range accepted {
-		ownerChanged = tab.noteInputClientLocked(input.client) || ownerChanged
-	}
 	echoing := make([]*outCoalescer, 0, len(tab.subscribers))
 	for _, subscriber := range tab.subscribers {
 		echoing = append(echoing, subscriber.co)
@@ -1781,11 +1784,6 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 	// Keystrokes end bulk coalescing so their echo is not held for the wide window.
 	for _, co := range echoing {
 		co.noteInput()
-	}
-	// Announce the new input owner before the shell sees the input, so the
-	// output it causes follows the announcement.
-	if ownerChanged {
-		m.syncInputOwner(tab)
 	}
 	tab.session.mu.Lock()
 	connected := tab.session.status == StatusConnected && tab.session.generation == generation
@@ -1801,6 +1799,17 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 	if err := ctx.Err(); err != nil {
 		finish(accepted, err)
 		return
+	}
+	// Announce the new input owner before the shell sees the input, so the
+	// output it causes follows the announcement.
+	tab.mu.Lock()
+	ownerChanged := false
+	for _, input := range accepted {
+		ownerChanged = tab.noteInputClientLocked(input.client) || ownerChanged
+	}
+	tab.mu.Unlock()
+	if ownerChanged {
+		m.syncInputOwner(ctx, tab)
 	}
 	data := accepted[0].data
 	if len(accepted) > 1 {

@@ -286,6 +286,7 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, clien
 	}
 	tab.mu.Lock()
 	classes := tab.classes.within(uint64(acceptedBytes), end)
+	inputPassive := tab.anchorInputPassiveLocked(channelID)
 	tab.mu.Unlock()
 	anchor, err := json.Marshal(streamAnchor{
 		Type:         streamAnchorType,
@@ -293,6 +294,7 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, clien
 		StreamSeq:    uint64(acceptedBytes),
 		AttachmentID: subscriber.attachmentId,
 		Classes:      classes,
+		InputPassive: inputPassive,
 	})
 	if err != nil {
 		return 0, 0, err
@@ -307,10 +309,5 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, clien
 		}
 		replay = replay[size:]
 	}
-	// The anchor reset the client to active: announce a passive view again.
-	tab.mu.Lock()
-	tab.resetInputOwnerLocked(channelID)
-	tab.mu.Unlock()
-	m.syncInputOwnerFeedLocked(tab)
 	return subscriber.flushedOffset, episodeGen, nil
 }

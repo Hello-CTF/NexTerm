@@ -869,11 +869,11 @@ export function XtermView(props: XtermViewProps) {
     // in parse order); suppressed effects are dropped silently.
     let parseMode: StreamMode = "live";
     // With several devices on one tab, live clipboard writes apply only on
-    // the device that most recently typed into it. The server announces in
-    // the stream whether this view is that device (input-owner frames) and
-    // every anchor resets it to active; both are applied through the writer
-    // in stream order, so a clipboard write is judged by the state in effect
-    // where its bytes arrived. Servers that never announce leave it active.
+    // the device that most recently typed into it. Every anchor carries
+    // whether this view is that device, and input-owner frames announce
+    // later changes; both are applied through the writer in stream order,
+    // so a clipboard write is judged by the state in effect where its bytes
+    // arrived. Servers that never announce leave it active.
     let inputOwner = true;
     const streamWriter = createTerminalStreamWriter(
       output,
@@ -1020,7 +1020,7 @@ export function XtermView(props: XtermViewProps) {
         // that arrive before the response is processed are still accepted.
         streamWriter.beginAttachment();
         streamWriter.mark(() => {
-          inputOwner = true;
+          inputOwner = control.inputPassive !== true;
         });
         // Every anchor carries the classes of all output from its sequence to
         // the latest fed byte, including bytes a paused coalescer still holds,

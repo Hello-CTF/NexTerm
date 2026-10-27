@@ -200,6 +200,9 @@ export interface StreamAnchorControl {
   // Durable tabs, full replays: helper offset of the first helper byte this
   // view renders; earlier output is read with terminal.historyRead.
   historyFrom?: number;
+  // Set when this view is not the device that last typed into the tab: it
+  // must not write live clipboard requests (OSC 52).
+  inputPassive?: boolean;
 }
 
 export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";
@@ -236,8 +239,8 @@ function isStreamClass(raw: unknown): raw is StreamClassControl {
 }
 
 // Tells this view whether it is the device that most recently typed into the
-// tab: only that device writes live OSC 52 clipboard requests. Every anchor
-// resets the view to active.
+// tab: only that device writes live OSC 52 clipboard requests. Anchors carry
+// the state at their position (inputPassive); these frames announce changes.
 export interface InputOwnerControl {
   type: string;
   active: boolean;

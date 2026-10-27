@@ -13,12 +13,14 @@ import (
 // the client that wrote it has no answering subscriber left, every
 // subscriber is active, so a single client behaves as before.
 //
-// Both sides start every anchored stream as active: the client resets at
-// each anchor frame, and the server, which records per subscriber what it
-// last announced, announces a passive subscriber again after the anchor.
-// Announcements are sent under the feed gate after the subscriber's
-// coalesced output, so they follow every byte fed before the change; a
-// paused subscriber's held bytes still flush after it.
+// Every stream anchor carries the subscriber's current state, so a view
+// adopts it before any byte the anchor delivers, and the server records it
+// as announced. Later changes are sent under the feed gate after the
+// subscriber's coalesced output, so they follow every byte fed before the
+// change. Limits: bytes a paused subscriber still holds flush after a
+// change announced meanwhile, and bytes an anchor redelivers (a resume or a
+// recovery) are judged with the state at the anchor, not the state when
+// they were fed.
 
 const inputOwnerType = "nexterm.input-owner"
 
@@ -66,9 +68,10 @@ func (t *Tab) inputOwnerStaleLocked() bool {
 }
 
 // syncInputOwner announces changed input-owner states; it takes the feed
-// gate.
-func (m *Manager) syncInputOwner(tab *Tab) {
-	if err := tab.lockFeed(context.Background()); err != nil {
+// gate. When ctx ends first nothing is recorded, so the next sync announces
+// the change.
+func (m *Manager) syncInputOwner(ctx context.Context, tab *Tab) {
+	if err := tab.lockFeed(ctx); err != nil {
 		return
 	}
 	defer tab.unlockFeed()
@@ -115,11 +118,14 @@ func (m *Manager) syncInputOwnerFeedLocked(tab *Tab) {
 	}
 }
 
-// resetInputOwnerLocked records that channelID's client starts a new stream
-// as active (an anchor was sent). Callers hold t.mu.
-func (t *Tab) resetInputOwnerLocked(channelID string) {
-	if subscriber, ok := t.subscribers[channelID]; ok && subscriber.inputPassive {
-		subscriber.inputPassive = false
-		t.subscribers[channelID] = subscriber
+// anchorInputPassiveLocked returns the state an anchor for channelID
+// carries and records it as announced. Callers hold t.mu.
+func (t *Tab) anchorInputPassiveLocked(channelID string) bool {
+	subscriber, ok := t.subscribers[channelID]
+	if !ok || !subscriber.answers {
+		return false
 	}
+	subscriber.inputPassive = t.inputPassiveLocked(subscriber.client)
+	t.subscribers[channelID] = subscriber
+	return subscriber.inputPassive
 }

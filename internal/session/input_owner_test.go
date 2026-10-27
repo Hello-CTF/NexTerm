@@ -195,8 +195,8 @@ func TestSingleDeviceGetsNoInputOwnerFrames(t *testing.T) {
 	assertAnnouncements(t, "single device", a.announcements())
 }
 
-// A device attaching after another one typed starts passive: the
-// announcement follows its anchor.
+// A device attaching after another one typed starts passive: its anchor
+// says so, and no separate announcement follows.
 func TestLateAttachStartsPassive(t *testing.T) {
 	manager, tab, channel := openOwnerTestTab(t)
 	ctx := context.Background()
@@ -206,22 +206,21 @@ func TestLateAttachStartsPassive(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := &ownerStream{receiver: bindTestReceiver(t, manager, "b-late")}
-	receiveTestAnchor(t, b.receiver)
+	if anchor := receiveTestAnchor(t, b.receiver); !anchor.InputPassive {
+		t.Fatalf("late device anchor = %+v, want inputPassive", anchor)
+	}
 	if err := channel.emit([]byte("\x1b]52;c;YQ==\x07late")); err != nil {
 		t.Fatal(err)
 	}
 	b.readUntil(t, []byte("late"))
 	a.readUntil(t, []byte("late"))
-	if !b.announcedBefore("passive", "late") {
-		t.Fatalf("late device stream = %q", b.events)
-	}
-	assertAnnouncements(t, "late device", b.announcements(), "passive")
+	assertAnnouncements(t, "late device", b.announcements())
 	assertAnnouncements(t, "typing device", a.announcements())
 }
 
-// A recovery anchor resets the client to active, so a passive view is
-// announced again right after the redelivered suffix.
-func TestRecoveryReannouncesPassiveView(t *testing.T) {
+// A recovery anchor carries the passive state, so the view never writes
+// OSC 52 from the bytes it redelivers, and no announcement follows them.
+func TestRecoveryAnchorCarriesPassiveState(t *testing.T) {
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, Terminals: terminalFactory{}, OpenAccess: true})
 	t.Cleanup(func() { _ = manager.Close() })
@@ -248,27 +247,41 @@ func TestRecoveryReannouncesPassiveView(t *testing.T) {
 	tab.mu.Lock()
 	generation := tab.generation
 	tab.mu.Unlock()
-	if err := manager.feed(ctx, tab, generation, []byte("before-recover")); err != nil {
-		t.Fatal(err)
+	feed := func(data string) {
+		t.Helper()
+		if err := manager.feed(ctx, tab, generation, []byte(data)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	a.readUntil(t, []byte("before-recover"))
+	redelivered := "\x1b]52;c;YQ==\x07recover"
+	feed("before-" + redelivered)
+	a.readUntil(t, []byte("recover"))
 	assertAnnouncements(t, "A before recovery", a.announcements(), "passive")
 
 	tab.mu.Lock()
 	subscriber := tab.subscribers["client-a-channel"]
 	tab.mu.Unlock()
-	if _, _, err := manager.RecoverChannelFor(ctx, tab.ID, "client-a-channel", "client-a", subscriber.attachmentId, subscriber.flushedOffset-int64(len("recover"))); err != nil {
+	if _, _, err := manager.RecoverChannelFor(ctx, tab.ID, "client-a-channel", "client-a", subscriber.attachmentId, subscriber.flushedOffset-int64(len(redelivered))); err != nil {
 		t.Fatal(err)
 	}
-	if anchor := receiveTestAnchor(t, a.receiver); anchor.Epoch != "recovery-"+tab.ID {
-		t.Fatalf("anchor = %+v, want the recovery anchor", anchor)
+	anchor := receiveTestAnchor(t, a.receiver)
+	if anchor.Epoch != "recovery-"+tab.ID || !anchor.InputPassive {
+		t.Fatalf("anchor = %+v, want a passive recovery anchor", anchor)
 	}
-	assertFrameData(t, a.receiver, []byte("recover"))
-	frame := receiveTestFrame(t, a.receiver)
-	var owner inputOwnerFrame
-	if frame.Kind != hub.FrameJSON || json.Unmarshal(frame.Data, &owner) != nil || owner.Type != inputOwnerType || owner.Active {
-		t.Fatalf("frame after the redelivered suffix = %v %s, want a passive announcement", frame.Kind, frame.Data)
+	assertFrameData(t, a.receiver, []byte(redelivered))
+	if err := manager.ResumeChannelFor(ctx, tab.ID, "client-a-channel", "client-a", subscriber.attachmentId, tabEpisodeGen(tab, "client-a-channel")); err != nil {
+		t.Fatal(err)
 	}
+	a.events, a.output = nil, nil
+	feed("after-recover")
+	a.readUntil(t, []byte("after-recover"))
+	assertAnnouncements(t, "A after recovery", a.announcements())
+}
+
+func tabEpisodeGen(tab *Tab, channelID string) uint64 {
+	tab.mu.Lock()
+	defer tab.mu.Unlock()
+	return tab.subscribers[channelID].episodeGen
 }
 
 // Input refused for a non-controller does not move the input owner.
@@ -287,4 +300,46 @@ func TestRejectedInputDoesNotMoveOwner(t *testing.T) {
 	if owner != "" {
 		t.Fatalf("last input client = %q after a rejected write", owner)
 	}
+}
+
+// A write that fails before reaching the shell (cancelled, or the session
+// is disconnected) does not move the input owner: the other device is not
+// told to stop writing its clipboard.
+func TestFailedWriteDoesNotMoveOwner(t *testing.T) {
+	manager, tab, channel := openOwnerTestTab(t)
+	a := &ownerStream{receiver: bindTestReceiver(t, manager, "cmd-channel")}
+	writeAs(t, manager, tab, "client-a", "copy\r")
+	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-failed", ReplayBytes: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Claim(tab.ID, "client-b"); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for range 20 {
+		if err := manager.Write(cancelled, tab.ID, "client-b", []byte("x")); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled write = %v", err)
+		}
+	}
+	session := tab.session
+	session.mu.Lock()
+	status := session.status
+	session.status = StatusDisconnected
+	session.mu.Unlock()
+	err := manager.Write(context.Background(), tab.ID, "client-b", []byte("x"))
+	session.mu.Lock()
+	session.status = status
+	session.mu.Unlock()
+	if !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("disconnected write = %v", err)
+	}
+	if written := channel.written(); bytes.Contains(written, []byte("x")) {
+		t.Fatalf("shell input = %q, want no failed write", written)
+	}
+	if err := channel.emit([]byte("\x1b]52;c;YQ==\x07marker")); err != nil {
+		t.Fatal(err)
+	}
+	a.readUntil(t, []byte("marker"))
+	assertAnnouncements(t, "device A", a.announcements())
 }

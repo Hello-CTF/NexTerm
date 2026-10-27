@@ -3417,19 +3417,27 @@ describe("XtermView live clipboard on the last input device", () => {
     expect(onClipboard.mock.calls).toEqual([["c;YQ=="], ["c;Yw=="]]);
   });
 
-  it("resets to active at every anchor", async () => {
+  it("takes the state from every anchor: redelivered bytes of a passive view write nothing", async () => {
     const onClipboard = vi.fn();
     await show({ onClipboard });
     await attachOk();
     const t = term();
-    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0 });
-    owner(false);
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, inputPassive: true });
     const first = "\x1b]52;c;YQ==\x07";
     feedBytes(first);
-    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: enc.encode(first).length });
-    feedBytes("\x1b]52;c;Yg==\x07");
+    // A recovery anchor redelivers the same bytes: still passive.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: 0, inputPassive: true });
+    feedBytes(first + "\x1b]52;c;Yg==\x07");
     act(() => t.drainWrites());
-    expect(onClipboard.mock.calls).toEqual([["c;Yg=="]]);
+    expect(onClipboard).not.toHaveBeenCalled();
+
+    // An anchor without the flag (this view typed last, or an older server)
+    // is active.
+    const seq = enc.encode(first + "\x1b]52;c;Yg==\x07").length;
+    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: seq });
+    feedBytes("\x1b]52;c;Yw==\x07");
+    act(() => t.drainWrites());
+    expect(onClipboard.mock.calls).toEqual([["c;Yw=="]]);
   });
 });
 
