@@ -1,9 +1,9 @@
-import type { SessionInfo } from "../../ipc/commands";
+import { sessionApi, type SessionInfo } from "../../ipc/commands";
 import type { ConnectProgressEvent } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
 import { reconnectSessionAndWait, reconnectWorkspaceSession } from "./reconnect";
-import type { SessionRuntimeInfo, SessionStatusEvent, SessionStatusEvidence } from "./types";
+import type { SessionRuntimeInfo, SessionStatusEvent, SessionStatusEvidence, UiState } from "./types";
 import { useUi } from "./useUi";
 
 export const abnormalDisconnectNotices = new Set<string>();
@@ -75,6 +75,7 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
         errorCode: p.errorCode ?? null,
         attempt: p.attempt ?? 0,
         nextRetryAt: p.nextRetryAt ?? null,
+        liveness: p.liveness ?? null,
       }
     : session));
   if (p.status !== "connecting" && p.status !== "reconnecting" && current?.assetId) {
@@ -130,7 +131,13 @@ async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void>
   }
 }
 
-export function sessionStatusText(status: SessionInfo["status"] | undefined): string {
+// isSessionSuspect reports a connected session whose heartbeats are going unanswered.
+export function isSessionSuspect(status: SessionInfo["status"] | undefined, liveness: string | null | undefined): boolean {
+  return status === "connected" && liveness === "suspect";
+}
+
+export function sessionStatusText(status: SessionInfo["status"] | undefined, liveness?: string | null): string {
+  if (isSessionSuspect(status, liveness)) return "连接不稳定";
   if (status === "connected") return "已连接";
   if (status === "reconnecting") return "重连中";
   if (status === "connecting") return "连接中";
@@ -150,4 +157,40 @@ export function connectProgressText(progress: ConnectProgressEvent): string {
   const hop =
     progress.hop > 0 ? `跳板 ${progress.hop}/${progress.hops}` : "目标主机";
   return `${hop} · ${connectStageText(progress.stage)}`;
+}
+
+// foregroundProbeTargets lists the sessions shown in the active workspace (its own session and the
+// session of each pane's visible tab) that a foreground probe can act on: connected sessions are
+// checked, reconnecting ones retry now. Failed and disconnected sessions keep their manual retry.
+export function foregroundProbeTargets(
+  state: Pick<UiState, "workspaces" | "activeWorkspaceId" | "sessions">,
+): string[] {
+  const workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId);
+  if (!workspace) return [];
+  const candidates = new Set<string>();
+  if (workspace.sessionId) candidates.add(workspace.sessionId);
+  for (const pane of workspace.panes) {
+    const tab = pane.tabs.find((item) => item.id === pane.activeTabId);
+    if (tab?.sessionId) candidates.add(tab.sessionId);
+  }
+  return [...candidates].filter((id) => {
+    const status = state.sessions.find((session) => session.id === id)?.status;
+    return status === "connected" || status === "reconnecting";
+  });
+}
+
+// probeForegroundSessions asks the backend to check the visible sessions now. Results arrive as
+// session status events (suspect, reconnecting, connected); a probe that fails is left to the
+// heartbeat, which reports the same states. Single-flight: a trigger while a round is still running
+// joins that round instead of stacking another.
+let foregroundProbe: Promise<void> | null = null;
+
+export function probeForegroundSessions(): Promise<void> {
+  foregroundProbe ??= (async () => {
+    const targets = foregroundProbeTargets(useUi.getState());
+    await Promise.all(targets.map((sessionId) => sessionApi.probeLiveness(sessionId).catch(() => undefined)));
+  })().finally(() => {
+    foregroundProbe = null;
+  });
+  return foregroundProbe;
 }

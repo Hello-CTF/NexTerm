@@ -10,7 +10,8 @@ import { mountApi, systemApi } from "./ipc/commands";
 import { WEB } from "./ipc/env";
 import { consumeDeepLinks } from "./ipc/wails";
 import { openDeepLink } from "./app/deepLink";
-import { applySessionStatusEvent, noteHelperProgress, useUi } from "./app/store";
+import { applySessionStatusEvent, noteHelperProgress, probeForegroundSessions, useUi } from "./app/store";
+import { installForegroundResume } from "./app/foregroundResume";
 import { onRemoteChange } from "./app/layout";
 import { setMacPlatform, setWindowsPlatform } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
@@ -82,6 +83,10 @@ function wireDesktopShell(): void {
       for (const url of urls) void openDeepLink(url);
     });
   }
+
+  // Returning to the foreground (tab shown, app resumed, machine woke, network back) checks the visible
+  // sessions at once instead of waiting for the next heartbeat or reconnect backoff.
+  installForegroundResume(() => void probeForegroundSessions());
 
   onEventsResync(() => {
     void useUi.getState().resyncSessions();

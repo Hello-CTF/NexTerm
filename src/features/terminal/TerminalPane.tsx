@@ -376,6 +376,7 @@ export function TerminalPane({
   const localHelper = useLocalHelperStatus(sessionKind === "local" && !WEB);
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
+  const sessionLiveness = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.liveness);
   const productionClassification = useAssetProductionClassification(sessionAssetId);
   const staleConfig = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.staleConfig === true);
   const execTabAssetId = useUi((s) => s.workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs).find((tab) => tab.id === storeTabId)?.assetId);
@@ -451,7 +452,7 @@ export function TerminalPane({
     if (assetEncoding && !encodingTouchedRef.current) setEncoding(assetEncoding);
   }, [assetEncoding]);
   const effectiveWinrm = resolveWinrmMode(winrm, sessionKind);
-  const statusText = sessionStatusText(sessionStatus);
+  const statusText = sessionStatusText(sessionStatus, sessionLiveness);
   const showConnectProgress =
     sessionStatus === "connecting" || sessionStatus === "reconnecting";
   const canReconnect =
@@ -1962,7 +1963,7 @@ export function TerminalPane({
         <span
           className={`nx-badge ${
             sessionStatus === "connected"
-              ? "nx-badge-green"
+              ? sessionLiveness === "suspect" ? "nx-badge-amber" : "nx-badge-green"
               : sessionStatus === "failed"
                 ? "nx-badge-red"
                 : ""

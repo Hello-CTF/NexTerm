@@ -89,7 +89,8 @@ async function pollAndSchedule(): Promise<void> {
   } finally {
     // Completion scheduling: the next poll is due POLL_MS after the previous one finished.
     // While the page is hidden the loop pauses; visibilitychange resumes it.
-    if (!document.hidden) schedule(POLL_MS);
+    // A poll can outlive the page or test environment; nothing is scheduled once document is gone.
+    if (typeof document !== "undefined" && !document.hidden) schedule(POLL_MS);
   }
 }
 

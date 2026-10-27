@@ -184,6 +184,8 @@ type Config struct {
 	DefaultReplay       int
 	SlowConsumerGrace   time.Duration
 	OpenAccess          bool
+	// Liveness tunes the per-session connection heartbeat.
+	Liveness LivenessPolicy
 }
 
 type SessionInfo struct {
@@ -199,6 +201,7 @@ type SessionInfo struct {
 	ErrorCode              ipc.Code   `json:"errorCode,omitempty"`
 	Attempt                int        `json:"attempt,omitempty"`
 	NextRetryAt            *time.Time `json:"nextRetryAt,omitempty"`
+	Liveness               Liveness   `json:"liveness,omitempty"`
 	StaleConfig            bool       `json:"staleConfig"`
 	AssetConfigFingerprint string     `json:"-"`
 }
@@ -271,7 +274,10 @@ type StatusEvent struct {
 	ErrorCode   ipc.Code   `json:"errorCode,omitempty"`
 	Attempt     int        `json:"attempt,omitempty"`
 	NextRetryAt *time.Time `json:"nextRetryAt,omitempty"`
-	Version     uint64     `json:"version"`
+	// Liveness is "suspect" while a connected session's heartbeats go
+	// unanswered and is omitted otherwise.
+	Liveness Liveness `json:"liveness,omitempty"`
+	Version  uint64   `json:"version"`
 }
 
 type ExitEvent struct {
@@ -361,7 +367,14 @@ type Session struct {
 	reconnectCompletion *reconnectCompletion
 	reconnectAttempt    int
 	reconnectNextRetry  time.Time
-	statusErr           error
+	// reconnectWake cuts the current reconnect backoff short (foreground
+	// probe); it belongs to the running reconnect loop.
+	reconnectWake chan struct{}
+	statusErr     error
+	// liveness tracks the heartbeat of the connection of generation
+	// livenessGen.
+	liveness    livenessTracker
+	livenessGen uint64
 
 	durableMu            sync.Mutex
 	helperCandidateMu    sync.Mutex
@@ -400,7 +413,7 @@ func (s *Session) statusEventLocked(status Status, cause error) StatusEvent {
 	}
 	s.statusErr = cause
 	s.eventVersion++
-	event := StatusEvent{SessionID: s.ID, Status: status, Attempt: s.reconnectAttempt, Version: s.eventVersion}
+	event := StatusEvent{SessionID: s.ID, Status: status, Attempt: s.reconnectAttempt, Liveness: s.livenessLabelLocked(status), Version: s.eventVersion}
 	if !s.reconnectNextRetry.IsZero() {
 		next := s.reconnectNextRetry
 		event.NextRetryAt = &next
@@ -457,7 +470,7 @@ func (s *Session) Info() SessionInfo {
 	info := SessionInfo{
 		ID: s.ID, AssetID: asset.ID, Name: asset.Name, Kind: asset.Kind,
 		Status: s.status, Tabs: tabs, Generation: s.generation, CreatedAt: s.CreatedAt,
-		Attempt: s.reconnectAttempt, StaleConfig: s.staleConfig, AssetConfigFingerprint: asset.ConfigFingerprint,
+		Attempt: s.reconnectAttempt, Liveness: s.livenessLabelLocked(s.status), StaleConfig: s.staleConfig, AssetConfigFingerprint: asset.ConfigFingerprint,
 	}
 	if !s.reconnectNextRetry.IsZero() {
 		next := s.reconnectNextRetry

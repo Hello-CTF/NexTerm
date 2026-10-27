@@ -37,7 +37,7 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
           hint: [
             w.kind === "tools" ? "工具" : null,
             w.panes.length > 1 ? "已分屏" : null,
-            sessionReconnectStatusText(session) || (session ? sessionStatusText(session.status) : null),
+            sessionReconnectStatusText(session) || (session ? sessionStatusText(session.status, session.liveness) : null),
             `${tabCount} 个标签`,
           ]
             .filter(Boolean)

@@ -2340,6 +2340,7 @@ export type SessionInfoDTO = {
   errorCode?: string;
   attempt?: number;
   nextRetryAt?: string | null;
+  liveness?: string;
   staleConfig: boolean;
 };
 

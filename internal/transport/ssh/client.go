@@ -49,6 +49,29 @@ type Client struct {
 	forwardAgent bool
 	env          map[string]string
 	identity     string
+
+	heartbeatMu      sync.Mutex
+	heartbeatPending *heartbeatCall
+	inbound          *countingConn
+}
+
+// countingConn counts the bytes read from the server connection.
+type countingConn struct {
+	net.Conn
+	read atomic.Uint64
+}
+
+func (c *countingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.read.Add(uint64(n))
+	}
+	return n, err
+}
+
+type heartbeatCall struct {
+	done chan struct{}
+	err  error
 }
 
 // HostIdentity names the authenticated server: the login user plus the host key
@@ -139,6 +162,8 @@ func connect(ctx context.Context, cfg Config, depth, hops int, progress func(Con
 			return nil, classifyDialError(cfg.Host, cfg.Port, err)
 		}
 	}
+	counted := &countingConn{Conn: netConn}
+	netConn = counted
 	stop := context.AfterFunc(connectCtx, func() { netConn.Close() })
 	report(ConnectStageHandshake)
 	conn, channels, requests, err := gossh.NewClientConn(netConn, target, sshConfig)
@@ -164,6 +189,7 @@ func connect(ctx context.Context, cfg Config, depth, hops int, progress func(Con
 		done:         make(chan struct{}),
 		forwardAgent: cfg.ForwardAgent,
 		env:          cfg.Env,
+		inbound:      counted,
 	}
 	if presentedKey != "" {
 		// The endpoint is part of the identity so machines cloned with the same host key never share state.
@@ -247,6 +273,61 @@ func (c *Client) Ping(ctx context.Context) (time.Duration, error) {
 	return result.Duration, nil
 }
 
+// startHeartbeat returns the keepalive@openssh.com request in flight, sending
+// a new one when none is pending. The background keepalive and Heartbeat share
+// it, so a reply that never arrives holds at most one blocked request per
+// connection and is never counted twice as two separate misses.
+func (c *Client) startHeartbeat() *heartbeatCall {
+	c.heartbeatMu.Lock()
+	defer c.heartbeatMu.Unlock()
+	if call := c.heartbeatPending; call != nil {
+		return call
+	}
+	call := &heartbeatCall{done: make(chan struct{})}
+	c.heartbeatPending = call
+	go func() {
+		_, _, err := c.ssh.SendRequest("keepalive@openssh.com", true, nil)
+		c.heartbeatMu.Lock()
+		call.err = err
+		c.heartbeatPending = nil
+		c.heartbeatMu.Unlock()
+		close(call.done)
+	}()
+	return call
+}
+
+// Heartbeat waits for the reply to the keepalive request in flight (sending
+// one when none is pending). It returns nil on a reply, the context error when
+// none arrived in time, and an error wrapping base.ErrDisconnected when the
+// connection is gone or the request failed.
+func (c *Client) Heartbeat(ctx context.Context) error {
+	if !c.IsAlive() {
+		return base.ErrDisconnected
+	}
+	call := c.startHeartbeat()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.done:
+		return base.ErrDisconnected
+	case <-call.done:
+	}
+	if call.err != nil {
+		return fmt.Errorf("%w: %v", base.ErrDisconnected, call.err)
+	}
+	return nil
+}
+
+// InboundBytes is the number of bytes read from the server so far. Any
+// growth proves the peer is still sending, even while a keepalive reply is
+// queued behind bulk output.
+func (c *Client) InboundBytes() uint64 {
+	if c.inbound == nil {
+		return 0
+	}
+	return c.inbound.read.Load()
+}
+
 func (c *Client) check(ctx context.Context, generation uint64) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -265,30 +346,39 @@ func (c *Client) watch(conn gossh.Conn) {
 	c.stateOnce.Do(func() { close(c.done) })
 }
 
+// keepalive is the transport's own death detector, also used by connections
+// that no session monitors: it closes the client after maximum consecutive
+// periods in which the shared keepalive request stayed unanswered and nothing
+// at all arrived from the server. A session liveness monitor shares the same
+// request (startHeartbeat), so both never add separate traffic or misses.
 func (c *Client) keepalive(interval time.Duration, maximum int) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	var response chan error
+	var pending *heartbeatCall
 	missed := 0
+	inbound := c.InboundBytes()
 	for {
+		var replied <-chan struct{}
+		if pending != nil {
+			replied = pending.done
+		}
 		select {
 		case <-c.done:
 			return
-		case err := <-response:
-			response = nil
-			if err == nil {
+		case <-replied:
+			if pending.err == nil {
 				missed = 0
 			} else {
 				missed++
 			}
+			pending = nil
 		case <-ticker.C:
-			if response == nil {
-				pending := make(chan error, 1)
-				response = pending
-				go func() {
-					_, _, err := c.ssh.SendRequest("keepalive@openssh.com", true, nil)
-					pending <- err
-				}()
+			if current := c.InboundBytes(); current != inbound {
+				inbound = current
+				missed = 0
+			}
+			if pending == nil {
+				pending = c.startHeartbeat()
 				continue
 			}
 			missed++
