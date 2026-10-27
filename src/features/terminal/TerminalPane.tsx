@@ -6,7 +6,6 @@ import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
 import { Daemon, type DaemonHelperState } from "./Daemon";
-import { localHelperBadge, useLocalHelperStatus } from "./localHelperStatus";
 import { helperStageText } from "./HelperOperationView";
 import { HelperOperationDialog } from "./HelperOperationDialog";
 import { resolveWinrmMode } from "./terminalPolicy";
@@ -343,7 +342,6 @@ export function TerminalPane({
   const wasVisibleRef = useRef(visible !== false);
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
-  const localHelper = useLocalHelperStatus(sessionKind === "local");
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
   const productionClassification = useAssetProductionClassification(sessionAssetId);
@@ -1242,13 +1240,11 @@ export function TerminalPane({
     );
   }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
 
-  const helperBadge: DaemonHelperState | null = sessionKind === "local"
-    ? localHelperBadge(localHelper)
-    : helperOperation?.status === "running"
-      ? { state: "installing", stage: helperStageText(helperOperation.stage) }
-      : helperOperation?.status === "awaiting_choice"
-        ? { state: "attention", message: helperOperation.reason?.message }
-        : helperReady ? { state: "ready" } : null;
+  const helperBadge: DaemonHelperState | null = helperOperation?.status === "running"
+    ? { state: "installing", stage: helperStageText(helperOperation.stage) }
+    : helperOperation?.status === "awaiting_choice"
+      ? { state: "attention", message: helperOperation.reason?.message }
+      : helperReady ? { state: "ready" } : null;
   useEffect(() => {
     // The header now reports the ready helper; drop the "not durable" reason so the tab strip marker agrees with it.
     if (helperBadge?.state === "ready" && regularReason) useUi.getState().updateTab(storeTabId, { regularReason: undefined });

@@ -1,7 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { localHelperApi, type LocalHelperStatus } from "../../ipc/commands";
 import { EVENTS, listenEvent } from "../../ipc/events";
-import type { DaemonHelperState } from "./Daemon";
 import { forgetDurableReadiness } from "../../app/store";
 
 // The local helper runs local terminals outside the app. Its status decides whether local terminals
@@ -62,13 +61,4 @@ export function useLocalHelperStatus(enabled = true): LocalHelperStatus | null {
 
 export function setLocalHelperStatusForTest(status: LocalHelperStatus | null): void {
   publish(status);
-}
-
-// localHelperBadge describes a regular local terminal by the local helper state, so a terminal that opened
-// regular because the helper was not ready says so on its tab.
-export function localHelperBadge(status: LocalHelperStatus | null): DaemonHelperState | null {
-  if (!localDurableEnabled(status) || !status || status.state === "idle") return null;
-  if (status.state === "ready") return { state: "ready" };
-  if (status.state === "starting") return { state: "installing", stage: "本机持久组件正在启动" };
-  return { state: "attention", message: status.reason };
 }

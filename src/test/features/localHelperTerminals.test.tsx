@@ -27,7 +27,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import { BackgroundSessions } from "../../features/terminal/BackgroundSessions";
 import { backgroundTargets, type BackgroundScope } from "../../features/terminal/backgroundSessionsAccess";
-import { localHelperBadge, setLocalHelperStatusForTest } from "../../features/terminal/localHelperStatus";
+import { setLocalHelperStatusForTest } from "../../features/terminal/localHelperStatus";
 import { LocalHelperSettings } from "../../features/settings/LocalHelperSettings";
 import { useUi, type Workspace } from "../../app/store";
 import { useAuth } from "../../features/auth/store";
@@ -70,15 +70,6 @@ describe("local terminals in the local helper", () => {
     expect(withoutHelper.map((item) => item.id)).toEqual(["ssh-1"]);
     const withHelper = backgroundTargets({ ...scope, localDurable: true }, { showAll: true, hostSessionId: null, remoteOwner: false });
     expect(withHelper.map((item) => item.id)).toEqual(["local-1", "ssh-1"]);
-  });
-
-  it("marks a regular local terminal with the helper state", () => {
-    expect(localHelperBadge(null)).toBeNull();
-    expect(localHelperBadge({ state: "disabled" })).toBeNull();
-    expect(localHelperBadge({ state: "ready" })).toEqual({ state: "ready" });
-    expect(localHelperBadge({ state: "idle" })).toBeNull();
-    expect(localHelperBadge({ state: "starting" })?.state).toBe("installing");
-    expect(localHelperBadge({ state: "outdated", reason: "旧版本" })).toEqual({ state: "attention", message: "旧版本" });
   });
 
   it("stores the local terminal mode in the backend, where agent terminals read it", async () => {
