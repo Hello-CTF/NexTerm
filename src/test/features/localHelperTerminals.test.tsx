@@ -171,4 +171,17 @@ describe("local terminals in the local helper", () => {
       view.unmount();
     }
   });
+
+  it("shows why the local terminal mode could not be read", async () => {
+    setLocalHelperStatusForTest({ state: "idle" });
+    mocks.getMode.mockRejectedValue(new Error("settings unavailable"));
+    useUi.setState({ toasts: [] });
+    const view = mount(createElement(LocalHelperSettings));
+    try {
+      await flush();
+      await waitFor(() => expect(useUi.getState().toasts.map((toast) => toast.text).join("\n")).toContain("读取本机终端模式失败"));
+    } finally {
+      view.unmount();
+    }
+  });
 });

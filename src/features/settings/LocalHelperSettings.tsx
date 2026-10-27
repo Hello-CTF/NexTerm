@@ -38,9 +38,11 @@ export function LocalHelperSettings() {
     void Promise.resolve()
       .then(() => localHelperApi.getMode())
       .then((value) => { if (!cancelled) setMode(value); })
-      .catch(() => undefined);
+      .catch((error) => {
+        if (!cancelled) pushToast("error", `读取本机终端模式失败：${describeError(error)}`);
+      });
     return () => { cancelled = true; };
-  }, [enabled]);
+  }, [enabled, pushToast]);
 
   if (!status || !enabled) return null;
 
