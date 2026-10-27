@@ -6,6 +6,7 @@ import {
   listBackgroundTabs,
   openTerminalTabIds,
   resolveHostGate,
+  takeOverAggregateSession,
   takeOverBackgroundTab,
   visibleBackgroundTabs,
   workspaceHostKey,
@@ -22,6 +23,7 @@ import {
   useUi,
   type Workspace,
 } from "../../app/store";
+import { aggregateRows, useSessionAggregate } from "../../app/sessionAggregate";
 import { apiBase, TRANSPORT } from "../../ipc/env";
 import { listenEvent } from "../../ipc/events";
 import { useAuth } from "../auth/store";
@@ -357,6 +359,7 @@ export function BackgroundSessions({
         scope,
         targets,
         openTerminalTabIds(showAll ? st.workspaces : ownerWorkspace ? [ownerWorkspace] : []),
+        showAll ? aggregateRows(useSessionAggregate.getState()) : undefined,
       );
       if (generation !== loadGenerationRef.current) return;
       const errors: string[] = [];
@@ -443,6 +446,8 @@ export function BackgroundSessions({
     return rows;
   }, [showAll, workspaces, ownerWorkspace, sessions, memoryKnown, verifiedQuickSessions]);
 
+  // The all-hosts view also follows the cross-host listing, whose hosts answer one by one.
+  const aggregateSessions = useSessionAggregate((s) => (showAll ? s.sessionsByHost : null));
   // A change to a followed session restarts polling, so the list reloads at once.
   useEffect(() => {
     if (!visible || (!hostSessionId && !showAll)) return;
@@ -451,21 +456,24 @@ export function BackgroundSessions({
       stopPoll();
       loadGenerationRef.current += 1;
     };
-  }, [visible, hostSessionId, showAll, load, sessions]);
+  }, [visible, hostSessionId, showAll, load, sessions, aggregateSessions]);
 
   const takeOver = async (info: BackgroundTab) => {
     const ownerGeneration = ownerGenerationRef.current;
     const key = backgroundTabKey(info);
     setBusy((b) => ({ ...b, [key]: "takeover" }));
     try {
-      const result = await takeOverBackgroundTab(info, {
-        isCurrent: () => ownerGeneration === ownerGenerationRef.current,
-        guard: (session) => {
-          if (remoteOwner && (!ownerWorkspace || !workspaceSessionMatches(ownerWorkspace, session, verifiedQuickSessions))) {
-            throw new Error("这个终端不属于当前主机，请重新连接后再接管");
-          }
-        },
-      });
+      // A row from the cross-host listing is taken over through its host, opening a device workspace when needed.
+      const result = info.aggregateHost
+        ? await takeOverAggregateSession(info.aggregateHost, info.tabId, info.title)
+        : await takeOverBackgroundTab(info, {
+          isCurrent: () => ownerGeneration === ownerGenerationRef.current,
+          guard: (session) => {
+            if (remoteOwner && (!ownerWorkspace || !workspaceSessionMatches(ownerWorkspace, session, verifiedQuickSessions))) {
+              throw new Error("这个终端不属于当前主机，请重新连接后再接管");
+            }
+          },
+        });
       if (result.ok) {
         setItems((prev) => (prev ? prev.filter((t) => backgroundTabKey(t) !== key) : prev));
         pushToast("info", `已接管「${result.sessionName}」的终端`);
@@ -703,8 +711,8 @@ export function BackgroundSessions({
                       </button>
                       <button
                         className="nx-btn nx-btn-danger nx-btn-xs"
-                        disabled={rowBusy}
-                        title="结束这个终端里运行的程序，无法恢复"
+                        disabled={rowBusy || !t.sessionId}
+                        title={t.sessionId ? "结束这个终端里运行的程序，无法恢复" : "接管后才能在这里结束这个终端"}
                         onClick={() => void kill(t)}
                       >
                         {action === "kill" ? (

@@ -6,7 +6,7 @@ import { describeError } from "../../ui/errorText";
 import { IconBell, IconCheck } from "../../ui/icons";
 import { InboxGuidance } from "./InboxGuidance";
 import { isInboxGuidanceDismissed, useInboxGuidanceDismissed } from "./firstRunGuidance";
-import { markInboxEntrySeen, openInboxTab, useInboxEntries, type InboxEntry } from "./inbox";
+import { markInboxEntrySeen, openAggregateEntry, openInboxTab, useInboxEntries, type InboxEntry } from "./inbox";
 
 const CUE_MS = 8000;
 
@@ -22,9 +22,22 @@ function sinceLabel(since: string | undefined, now: number): string {
 
 function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOpen: () => void }) {
   const [marking, setMarking] = useState(false);
+  const [opening, setOpening] = useState(false);
   const open = () => {
-    if (!openInboxTab(entry.tabId)) return;
-    onOpen();
+    if (openInboxTab(entry.tabId)) {
+      onOpen();
+      return;
+    }
+    if (!entry.host) return;
+    // A session on a host this client holds no tab for is taken over through that host.
+    setOpening(true);
+    void openAggregateEntry(entry)
+      .then((problem) => {
+        if (problem) useUi.getState().pushToast("error", `无法打开终端：${problem}`);
+        else onOpen();
+      })
+      .catch((error: unknown) => useUi.getState().pushToast("error", `无法打开终端：${describeError(error)}`))
+      .finally(() => setOpening(false));
   };
   const markSeen = () => {
     setMarking(true);
@@ -32,14 +45,17 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
       .catch((error: unknown) => useUi.getState().pushToast("error", `标记已读失败：${describeError(error)}`))
       .finally(() => setMarking(false));
   };
-  const reachable = entry.uiTabId !== undefined;
+  const shown = entry.uiTabId !== undefined;
+  const reachable = shown || entry.host !== undefined;
+  // The seen mark goes through a tab this client holds; a session known only from the listing is marked once opened.
+  const markable = shown || entry.host === undefined;
   return (
     <li className="nx-inbox-row flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-neutral-800/60" data-inbox-tab={entry.tabId}>
       <button
         type="button"
         className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:cursor-default"
-        disabled={!reachable}
-        title={reachable ? "转到该终端" : "此端没有打开这个终端"}
+        disabled={!reachable || opening}
+        title={shown ? "转到该终端" : reachable ? `在此端打开（${entry.place}）` : "此端没有打开这个终端"}
         onClick={open}
       >
         <span className="mt-[5px] flex w-2.5 shrink-0 justify-center">
@@ -58,8 +74,8 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
         type="button"
         className="nx-icon-btn shrink-0"
         aria-label={`标记 ${entry.title} 为已读`}
-        title="标记为已读（所有设备）"
-        disabled={marking}
+        title={markable ? "标记为已读（所有设备）" : "打开这个终端后才能标记为已读"}
+        disabled={marking || !markable}
         onClick={markSeen}
       >
         <IconCheck size={14} />

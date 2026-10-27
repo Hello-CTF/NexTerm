@@ -14,6 +14,7 @@ import {
   type WailsChannel,
 } from "./wails";
 import type { ipcEventTopics } from "./generated/events";
+import type { AggregateHostStatus, AggregateSession } from "./generated/types";
 
 export type UnlistenFn = () => void;
 
@@ -30,6 +31,7 @@ export const EVENTS = {
   terminalThrottled: "terminal://throttled",
   terminalControl: "terminal://control",
   terminalAttention: "terminal://attention",
+  terminalSessions: "terminal://sessions",
   fsProgress: "fs://progress",
   updateProgress: "update://progress",
   dockerStats: "docker://stats",
@@ -50,6 +52,11 @@ export const EVENTS = {
 
 export type { SessionStatusEvent, TerminalExitEvent } from "./types";
 export type { AttentionEvent as TerminalAttentionEvent } from "./generated/types";
+// One host's durable sessions after a cross-host listing refreshed it; it replaces what was known of that host.
+export interface TerminalSessionsEvent {
+  host: AggregateHostStatus;
+  sessions: AggregateSession[];
+}
 
 // A click on a system notification the desktop showed; tabId is the backend tab it was about.
 export interface NotificationClickEvent {

@@ -735,6 +735,10 @@ export const terminalApi = {
   attentionList: () => call("terminal_attention_list"),
   // Marks the needs_me or just_finished state that began at since as seen by the user, for every device.
   attentionSeen: (tabId: string, since: string) => ignoreResult(call("terminal_attention_seen", { tabId, since })),
+  // The durable sessions of every host this client can reach without connecting anything, with their attention
+  // state. Hosts still answering after waitMs are pending; their result follows as a terminal://sessions event.
+  sessionsAggregate: (waitMs?: number) =>
+    call("terminal_sessions_aggregate", waitMs === undefined ? {} : { waitMs }),
   createTab: (sessionId: string, options?: { title?: string; command?: string }) =>
     call<AttachedTabInfo>("terminal_create_tab", {
       sessionId,
