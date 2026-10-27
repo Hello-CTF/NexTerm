@@ -291,9 +291,7 @@ export async function openSyncObject(dek: Uint8Array, blob: Uint8Array, id: stri
 // Compressed transcripts (internal/sync/object_compress.go). Both labels seal "NXZ1" | uint64 BE decoded size | stream.
 // "transcript.gzip" carries a gzip stream of the logical JSON. "transcript.zpack" carries a zstd frame of a pack body:
 // the JSON skeleton with every chunk "data" string emptied, followed by the raw chunk bytes; refilling each string
-// with the base64 of its bytes rebuilds the exact JSON, so payload hashes match the Go side. The legacy
-// "transcript.zstd" label is deliberately not read here; such an object fails as undecryptable and is quarantined
-// visibly.
+// with the base64 of its bytes rebuilds the exact JSON, so payload hashes match the Go side.
 export const COMPRESSED_TRANSCRIPT_LABEL = "transcript.gzip";
 export const PACKED_TRANSCRIPT_LABEL = "transcript.zpack";
 // Must equal maxSyncObjectBytes in internal/sync.

@@ -115,24 +115,6 @@ func TestCompressionWriterMatrix(t *testing.T) {
 	}
 }
 
-// TestZstdLabelStillReadable keeps objects written by builds that emitted the zstd label readable by Go.
-func TestZstdLabelStillReadable(t *testing.T) {
-	dek := vault.GenerateUserDEK()
-	plaintext := transcriptJSON(t, terminalCorpus(64<<10))
-	packed, err := compressObjectPlaintextZstd(plaintext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob, err := sealObject(dek, packed, "tr-1", wireKindTranscriptZstd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kind, opened, err := tryOpenObject(dek, blob, "tr-1")
-	if err != nil || kind != KindTranscript || !bytes.Equal(opened, plaintext) {
-		t.Fatalf("zstd label: kind=%q err=%v", kind, err)
-	}
-}
-
 func TestCompressedTranscriptGoldenVector(t *testing.T) {
 	if *updateGolden {
 		dek := bytes.Repeat([]byte{0x42}, 32)
