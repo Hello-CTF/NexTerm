@@ -16,6 +16,9 @@ export interface SessionAwareness {
   seen: boolean;
   notable: boolean;
   exitCode?: number | null;
+  // The text of the notification behind a needs_me state with reason notify.
+  title?: string;
+  body?: string;
   version: number;
 }
 
@@ -40,6 +43,8 @@ export function toAwareness(event: TerminalAttentionEvent): SessionAwareness {
     seen: event.seen === true,
     notable: event.notable === true,
     exitCode: event.exitCode,
+    title: event.title || undefined,
+    body: event.body || undefined,
     version: event.version,
   };
 }

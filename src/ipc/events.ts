@@ -38,6 +38,7 @@ export const EVENTS = {
   aiWatchToolData: "ai://watch-tool-data",
   appError: "app://error",
   deepLink: "app://deep-link",
+  notificationClick: "app://notification-click",
   deviceStatus: "device://status",
   filesDropped: "files://dropped",
   layoutChanged: "layout://changed",
@@ -49,6 +50,12 @@ export const EVENTS = {
 
 export type { SessionStatusEvent, TerminalExitEvent } from "./types";
 export type { AttentionEvent as TerminalAttentionEvent } from "./generated/types";
+
+// A click on a system notification the desktop showed; tabId is the backend tab it was about.
+export interface NotificationClickEvent {
+  id: string;
+  tabId?: string;
+}
 
 export interface TerminalControlEvent {
   tabId: string;

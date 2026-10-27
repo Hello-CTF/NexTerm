@@ -441,33 +441,33 @@ describe("XtermView stream wiring", () => {
   });
 
   it("suppresses pre-expiry OSC events whose write callbacks fire after the expired control frame", async () => {
-    const onNotification = vi.fn();
-    await show({ onNotification });
+    const onClipboard = vi.fn();
+    await show({ onClipboard });
     await attachOk();
     const t = term();
-    feedBytes("before\x1b]9;stale notification\x07");
+    feedBytes("before\x1b]52;c;stale\x07");
     expect(t.writeLog).toEqual(["before"]);
     feedControl({ type: "nexterm.stream-anchor", epoch: "e2", streamSeq: 0, controlBytes: 0, expired: true });
     expect(harness.blocksClear).toHaveBeenCalledTimes(1);
     expect(t.writeLog.some((entry) => entry.includes("输出历史已过期"))).toBe(true);
-    feedBytes("after\x1b]9;fresh notification\x07");
+    feedBytes("after\x1b]52;c;fresh\x07");
     act(() => t.drainWrites());
-    expect(onNotification).toHaveBeenCalledTimes(1);
-    expect(onNotification).toHaveBeenCalledWith("fresh notification");
+    expect(onClipboard).toHaveBeenCalledTimes(1);
+    expect(onClipboard).toHaveBeenCalledWith("c;fresh");
     expect(t.writeLog[0]).toBe("before");
     expect(t.writeLog[t.writeLog.length - 1]).toBe("after");
   });
 
   it("keeps pre-expiry events when the reattach control frame is not expired", async () => {
-    const onNotification = vi.fn();
-    await show({ onNotification });
+    const onClipboard = vi.fn();
+    await show({ onClipboard });
     await attachOk();
     const t = term();
-    feedBytes("before\x1b]9;still valid\x07");
+    feedBytes("before\x1b]52;c;valid\x07");
     feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 7, controlBytes: 0 });
     feedBytes("after");
     act(() => t.drainWrites());
-    expect(onNotification).toHaveBeenCalledWith("still valid");
+    expect(onClipboard).toHaveBeenCalledWith("c;valid");
   });
 
   it("pauses upstream writes past the high watermark and resumes with visibility", async () => {
@@ -3402,9 +3402,8 @@ describe("XtermView replayed output", () => {
   it("renders a session replay without replies, clipboard writes or notifications; live output still acts", async () => {
     harness.emitReplies = true;
     const onClipboard = vi.fn();
-    const onNotification = vi.fn();
     const onTitle = vi.fn();
-    await show({ onClipboard, onNotification, onTitle });
+    await show({ onClipboard, onTitle });
     await attachOk();
     const t = term();
     feedControl({
@@ -3424,8 +3423,6 @@ describe("XtermView replayed output", () => {
     expect(upstream()).toEqual(["\x1b[?1;2c"]);
     expect(onClipboard).toHaveBeenCalledTimes(1);
     expect(onClipboard).toHaveBeenCalledWith("c;bmV3");
-    expect(onNotification).toHaveBeenCalledTimes(1);
-    expect(onNotification).toHaveBeenCalledWith("new note");
     // Titles are display state: the replayed title still reaches the tab,
     // where a custom title keeps precedence (applyRemoteTabTitle).
     expect(onTitle).toHaveBeenCalledWith("Replayed title");
@@ -3435,29 +3432,28 @@ describe("XtermView replayed output", () => {
     act(() => t.drainWrites());
     expect(upstream()).toEqual(["\x1b[?1;2c", "\x1b[?1;2c", "\x1b[1;1R"]);
     expect(onClipboard).toHaveBeenLastCalledWith("c;b2xk");
-    expect(onNotification).toHaveBeenLastCalledWith("old note");
   });
 
   it("renders a recovery anchor's refused suffix with its effects: it was never shown", async () => {
     harness.emitReplies = true;
-    const onNotification = vi.fn();
-    await show({ onNotification });
+    const onClipboard = vi.fn();
+    await show({ onClipboard });
     await attachOk();
     const t = term();
     feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: 0 });
-    feedBytes("\x1b[6n\x1b]9;refused\x07");
+    feedBytes("\x1b[6n\x1b]52;c;cmVm\x07");
     act(() => t.drainWrites());
     expect(upstream()).toEqual(["\x1b[1;1R"]);
-    expect(onNotification).toHaveBeenCalledWith("refused");
+    expect(onClipboard).toHaveBeenCalledWith("c;cmVm");
   });
 
   it("counts replayed bytes across frames", async () => {
     harness.emitReplies = true;
-    const onNotification = vi.fn();
-    await show({ onNotification });
+    const onClipboard = vi.fn();
+    await show({ onClipboard });
     await attachOk();
     const t = term();
-    const suffix = "\x1b[6n\x1b]9;replayed\x07";
+    const suffix = "\x1b[6n\x1b]52;c;cmVw\x07";
     feedControl({
       type: "nexterm.stream-anchor",
       epoch: "e1",
@@ -3469,7 +3465,7 @@ describe("XtermView replayed output", () => {
     feedBytes(suffix.slice(6));
     act(() => t.drainWrites());
     expect(upstream()).toEqual([]);
-    expect(onNotification).not.toHaveBeenCalled();
+    expect(onClipboard).not.toHaveBeenCalled();
     feedBytes("\x1b[6n");
     act(() => t.drainWrites());
     expect(upstream()).toEqual(["\x1b[1;1R"]);
@@ -3515,9 +3511,8 @@ describe("XtermView replayed output", () => {
 
   it("classifies bytes by stream sequence across class frames: replay, answered and live", async () => {
     harness.emitReplies = true;
-    const onNotification = vi.fn();
     const onClipboard = vi.fn();
-    await show({ onNotification, onClipboard });
+    await show({ onClipboard });
     await attachOk();
     const t = term();
     // A resumed stream at sequence 100: the first 4 bytes were answered by
@@ -3535,13 +3530,12 @@ describe("XtermView replayed output", () => {
     act(() => {
       harness.channel?.onClass?.({ type: "nexterm.stream-class", from: 104, to: 104 + enc.encode(tail).length, kind: "replay" });
     });
-    feedBytes(tail + "\x1b[6n\x1b]9;live\x07");
+    feedBytes(tail + "\x1b[6n\x1b]52;c;bGl2ZQ==\x07");
     act(() => t.drainWrites());
     // Answered and replayed queries get no reply; the live one does.
     expect(upstream()).toEqual(["\x1b[1;1R"]);
-    expect(onClipboard).not.toHaveBeenCalled();
-    expect(onNotification).toHaveBeenCalledTimes(1);
-    expect(onNotification).toHaveBeenCalledWith("live");
+    expect(onClipboard).toHaveBeenCalledTimes(1);
+    expect(onClipboard).toHaveBeenCalledWith("c;bGl2ZQ==");
   });
 
   it("classifies held bytes by the recovery anchor's spans", async () => {
@@ -3624,7 +3618,6 @@ describe("XtermView replayed output", () => {
 
   it("renders a docker exec backlog announced as replay without replies", async () => {
     harness.emitReplies = true;
-    const onNotification = vi.fn();
     await show({ containerId: "container-1" });
     await attachOk();
     const t = term();
@@ -3635,6 +3628,5 @@ describe("XtermView replayed output", () => {
     feedBytes(backlog + "\x1b[c");
     act(() => t.drainWrites());
     expect(upstream()).toEqual(["\x1b[?1;2c"]);
-    expect(onNotification).not.toHaveBeenCalled();
   });
 });

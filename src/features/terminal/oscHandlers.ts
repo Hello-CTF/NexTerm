@@ -63,23 +63,3 @@ export function createOsc52Handler(deps: Osc52HandlerDeps): (payload: string) =>
       });
   };
 }
-
-export interface Osc9NotifierDeps {
-  notify: (body: string) => void;
-  now?: () => number;
-  throttleMs?: number;
-}
-
-export function createOsc9Notifier(deps: Osc9NotifierDeps): (body: string) => void {
-  const now = deps.now ?? Date.now;
-  const throttleMs = deps.throttleMs ?? 1500;
-  let last = Number.NEGATIVE_INFINITY;
-  return (body: string) => {
-    const text = body.replace(/\s+/g, " ").trim().slice(0, 200).trim();
-    if (!text) return;
-    const t = now();
-    if (t - last < throttleMs) return;
-    last = t;
-    deps.notify(text);
-  };
-}

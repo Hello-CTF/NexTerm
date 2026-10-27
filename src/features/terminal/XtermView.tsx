@@ -156,7 +156,6 @@ export interface XtermViewProps {
   onBlocks?: (blocks: CommandBlock[]) => void;
   onHandle?: (h: TerminalHandle) => void;
   onTitle?: (title: string) => void;
-  onNotification?: (body: string) => void;
   onClipboard?: (payload: string) => void;
   onStreamBacklog?: (backlog: TerminalStreamBacklog | null) => void;
   onSelectionCopy?: (text: string, error: unknown | null) => void;
@@ -211,7 +210,6 @@ export function XtermView(props: XtermViewProps) {
   const onAttachFailedRef = useRef(props.onAttachFailed);
   const onDataRef = useRef(props.onData);
   const onTitleRef = useRef(props.onTitle);
-  const onNotificationRef = useRef(props.onNotification);
   const onClipboardRef = useRef(props.onClipboard);
   const onStreamBacklogRef = useRef(props.onStreamBacklog);
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
@@ -235,7 +233,6 @@ export function XtermView(props: XtermViewProps) {
   onAttachFailedRef.current = props.onAttachFailed;
   onDataRef.current = props.onData;
   onTitleRef.current = props.onTitle;
-  onNotificationRef.current = props.onNotification;
   onClipboardRef.current = props.onClipboard;
   onStreamBacklogRef.current = props.onStreamBacklog;
   onSelectionCopyRef.current = props.onSelectionCopy;
@@ -871,8 +868,8 @@ export function XtermView(props: XtermViewProps) {
       output,
       (event, mode) => {
         if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
-        else if (mode === "replay") return;
-        else if (event.kind === "notification") onNotificationRef.current?.(event.body);
+        // OSC 9 is stripped from the screen; the backend reports it as an attention state.
+        else if (mode === "replay" || event.kind === "notification") return;
         else onClipboardRef.current?.(event.payload);
       },
       {
@@ -902,9 +899,6 @@ export function XtermView(props: XtermViewProps) {
         },
         onRefused: () => refuseStream(),
         onWritten: scheduleUiFlush,
-        // A hidden pane's backlog drains on the background budget; its
-        // desktop notifications need no screen state, so they need not wait.
-        dispatchEarly: (event) => event.kind === "notification" && visibleRef.current === false,
         onReplayChange: (mode) => {
           parseMode = mode;
         },

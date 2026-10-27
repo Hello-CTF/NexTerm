@@ -5,6 +5,7 @@ import { layoutBootstrapped, layoutRestoreStatus, startLayoutSync } from "../lay
 import { wireAccountSwitchCleanup } from "../accountSwitch";
 import { startUnreadTracking } from "../unread";
 import { startAwarenessTracking } from "../sessionAwareness";
+import { startInboxNotifications } from "../../features/inbox/inboxNotifications";
 import { subscribeKeybindings, takeKeybindingMigrationNotice } from "../keybindings";
 import { getUpdateState } from "../useUpdate";
 import { promptUpdateIfNeeded } from "../updatePrompt";
@@ -90,6 +91,7 @@ export function useAppBootEffects(queryClient: QueryClient): void {
     startLayoutSync();
     startUnreadTracking();
     startAwarenessTracking();
+    startInboxNotifications();
   }, []);
 
   // Custom bindings of the replaced split / pane focus shortcuts move to their successors once;
