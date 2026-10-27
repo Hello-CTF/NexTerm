@@ -91,6 +91,7 @@ func (r *relayTestRemote) shellCount() int {
 type relayTestFeed struct {
 	mu        sync.Mutex
 	writes    []relayTestWrite
+	failed    []relayTestWrite
 	succeeded int
 	failAfter int
 	closeNow  bool
@@ -118,6 +119,7 @@ func (f *relayTestFeed) Write(_ context.Context, messageType websocket.MessageTy
 		return errors.New("feed closed")
 	}
 	if f.succeeded >= f.failAfter {
+		f.failed = append(f.failed, relayTestWrite{typ: messageType, data: append([]byte(nil), data...)})
 		return errors.New("scripted write failure")
 	}
 	f.succeeded++
@@ -158,6 +160,40 @@ func (f *relayTestFeed) waitWrite(t *testing.T, from int, match func(relayTestWr
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// waitBinaryStream waits until the concatenated binary payloads contain want. PTY reads split output at arbitrary
+// points (even mid-word), so a marker is only guaranteed to appear in the stream, not inside a single frame.
+func (f *relayTestFeed) waitBinaryStream(t *testing.T, want string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		f.mu.Lock()
+		var stream strings.Builder
+		for _, write := range f.writes {
+			if write.typ == websocket.MessageBinary {
+				stream.Write(write.data)
+			}
+		}
+		changed := f.changed
+		f.mu.Unlock()
+		if strings.Contains(stream.String(), want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %q in feed stream %q", want, stream.String())
+		}
+		select {
+		case <-changed:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (f *relayTestFeed) failedWrites() []relayTestWrite {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]relayTestWrite(nil), f.failed...)
 }
 
 func (f *relayTestFeed) writeAt(index int) relayTestWrite {
@@ -347,9 +383,19 @@ func TestPreviewRelayReconnect(t *testing.T) {
 	if dials.Load() < 2 {
 		t.Fatal("feed write failure did not trigger redial")
 	}
+	// The frame whose write failed must be the first output frame on the new connection, byte for byte: nothing lost and
+	// nothing already delivered to the old connection repeated. Its content depends on how the PTY chunked the output, so
+	// it is compared with what the old connection rejected rather than with a marker.
+	failed := first.failedWrites()
+	if len(failed) != 1 || failed[0].typ != websocket.MessageBinary {
+		t.Fatalf("old feed failed writes = %+v, want exactly one output frame", failed)
+	}
+	resent := second.waitWrite(t, 0, func(write relayTestWrite) bool { return write.typ == websocket.MessageBinary })
+	if got := second.writeAt(resent).data; string(got) != string(failed[0].data) {
+		t.Fatalf("first frame on new feed = %q, want the failed frame %q", got, failed[0].data)
+	}
 	_ = sessions.Write(context.Background(), tab.ID, "owner", []byte("echo after-reconnect\n"))
-	second.waitWrite(t, 0, hasBinaryContaining("reconnect-marker"))
-	second.waitWrite(t, 0, hasBinaryContaining("after-reconnect"))
+	second.waitBinaryStream(t, "after-reconnect\r\n")
 
 	if err := sessions.Write(context.Background(), tab.ID, "owner", []byte("exit\n")); err != nil {
 		t.Fatal(err)
