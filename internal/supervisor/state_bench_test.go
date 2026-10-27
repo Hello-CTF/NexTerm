@@ -111,7 +111,7 @@ func BenchmarkStateInspect(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				tracker.mu.Lock()
-				tracker.inspectLocked()
+				tracker.inspectLocked(nil)
 				tracker.mu.Unlock()
 			}
 			if tracker.prompt.Kind != shape.KindChoice {

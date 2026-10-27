@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,47 +119,87 @@ func TestStateRulesChangedReevaluatesAQuietSession(t *testing.T) {
 	h.expect(base.SessionIdle, base.ConfidenceSignal)
 }
 
-func TestSupervisorPersistsStateRules(t *testing.T) {
+func TestStateRuleThatStopsMatchingLeavesTheRuleState(t *testing.T) {
+	h := newHarness(t)
+	h.withRules(testRuleSet(t, bottomRule(`esc to interrupt`, base.SessionRunning)))
+	h.out(time.Second, "✻ Thinking… (esc to interrupt)")
+	h.tracker.tick(h.clock.advance(defaultStateIdle))
+	h.expect(base.SessionRunning, base.ConfidenceRule)
+	// The spinner line is replaced by plain output: the session is running
+	// on the output signal until it settles, no longer on the rule.
+	h.out(time.Second, "\r\x1b[Kdone")
+	if wait := h.tracker.tick(h.clock.advance(defaultStateIdle)); wait == 0 {
+		t.Fatal("expected the session to settle")
+	}
+	got := h.expect(base.SessionRunning, base.ConfidenceSignal)
+	if got.RuleID != "" {
+		t.Fatalf("rule kept: %+v", got)
+	}
+}
+
+func testOwnerKey(n int) string {
+	return fmt.Sprintf("%032x", n+1)
+}
+
+func TestSupervisorKeepsStateRulesPerOwner(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	first, err := New(Config{StateDir: stateDir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	set := testRuleSet(t, bottomRule(`Waiting`, base.SessionNeedsMe))
-	if err := first.SetStateRules(set); err != nil {
+	ownerA, ownerB := testOwnerKey(0), testOwnerKey(1)
+	setA := testRuleSet(t, bottomRule(`Waiting`, base.SessionNeedsMe))
+	setB := testRuleSet(t, bottomRule(`Thinking`, base.SessionRunning))
+	if err := first.SetStateRules(ownerA, setA); err != nil {
 		t.Fatal(err)
 	}
-	invalid := set
-	invalid.Rules = append([]staterule.Rule(nil), set.Rules...)
+	if err := first.SetStateRules(ownerB, setB); err != nil {
+		t.Fatal(err)
+	}
+	if first.StateRulesRevision(ownerA) != setA.Revision || first.StateRulesRevision(ownerB) != setB.Revision {
+		t.Fatal("one owner's set replaced another's")
+	}
+	if err := first.SetStateRules("not-a-key", setA); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("malformed owner key = %v", err)
+	}
+	invalid := setA
+	invalid.Rules = append([]staterule.Rule(nil), setA.Rules...)
 	invalid.Rules[0].Pattern = "(unclosed"
 	invalid.Revision = staterule.Revision(invalid.Rules)
-	if err := first.SetStateRules(invalid); !errors.Is(err, ErrInvalidInput) {
+	if err := first.SetStateRules(ownerA, invalid); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("invalid rules = %v", err)
 	}
-	if got := first.StateRulesRevision(); got != set.Revision {
-		t.Fatalf("revision after a rejected push = %q, want %q", got, set.Revision)
+	if got := first.StateRulesRevision(ownerA); got != setA.Revision {
+		t.Fatalf("revision after a rejected push = %q, want %q", got, setA.Revision)
 	}
 	_ = first.Close()
 
-	// A restarted helper applies the rules without any client.
+	// A restarted helper applies every owner's rules without any client.
 	second, err := New(Config{StateDir: stateDir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := second.StateRules(); got.Revision != set.Revision || len(got.Rules) != 1 || got.Rules[0].ID != set.Rules[0].ID {
-		t.Fatalf("reloaded rules = %+v", got)
+	if got := second.StateRules(ownerA); got.Revision != setA.Revision || got.Rules[0].ID != setA.Rules[0].ID {
+		t.Fatalf("reloaded rules of A = %+v", got)
 	}
-	if err := second.SetStateRules(staterule.Set{}); err != nil {
+	if got := second.StateRulesRevision(ownerB); got != setB.Revision {
+		t.Fatalf("reloaded revision of B = %q", got)
+	}
+	// Clearing A's rules leaves B's.
+	if err := second.SetStateRules(ownerA, staterule.Set{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(stateRulesPath(second.StateDir())); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(stateRulesDir(second.StateDir()), ownerA+".json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("clearing the rules left the file: %v", err)
+	}
+	if second.StateRulesRevision(ownerB) != setB.Revision {
+		t.Fatal("clearing A's rules changed B's")
 	}
 	_ = second.Close()
 
-	// A damaged file leaves the helper without rules and an empty revision,
-	// so the next client pushes again.
-	if err := os.WriteFile(stateRulesPath(second.StateDir()), []byte("{not json"), 0o600); err != nil {
+	// A damaged file leaves its owner without rules and an empty revision,
+	// so the owner's next client pushes again.
+	if err := os.WriteFile(filepath.Join(stateRulesDir(stateDir), ownerB+".json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	third, err := New(Config{StateDir: stateDir})
@@ -166,7 +207,45 @@ func TestSupervisorPersistsStateRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = third.Close() }()
-	if got := third.StateRulesRevision(); got != "" {
+	if got := third.StateRulesRevision(ownerB); got != "" {
 		t.Fatalf("revision from a damaged file = %q", got)
+	}
+}
+
+func TestSupervisorEvictsTheLeastRecentlyUsedOwner(t *testing.T) {
+	supervisor, err := New(Config{StateDir: filepath.Join(t.TempDir(), "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = supervisor.Close() }()
+	clock := stateEpoch0
+	supervisor.now = func() time.Time { return clock }
+	set := testRuleSet(t, bottomRule(`Waiting`, base.SessionNeedsMe))
+	for i := 0; i < maxStateRuleOwners; i++ {
+		clock = clock.Add(time.Second)
+		if err := supervisor.SetStateRules(testOwnerKey(i), set); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A hello from the oldest owner counts as a use; the second oldest is
+	// then the least recently used.
+	clock = clock.Add(time.Second)
+	if got := supervisor.stateRulesSeen(testOwnerKey(0)); got != set.Revision {
+		t.Fatalf("seen revision = %q", got)
+	}
+	clock = clock.Add(time.Second)
+	if err := supervisor.SetStateRules(testOwnerKey(maxStateRuleOwners), set); err != nil {
+		t.Fatal(err)
+	}
+	if supervisor.StateRulesRevision(testOwnerKey(1)) != "" {
+		t.Fatal("the least recently used owner was kept")
+	}
+	if _, err := os.Stat(filepath.Join(stateRulesDir(supervisor.StateDir()), testOwnerKey(1)+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("evicted owner's file remains: %v", err)
+	}
+	for _, i := range []int{0, 2, maxStateRuleOwners} {
+		if supervisor.StateRulesRevision(testOwnerKey(i)) != set.Revision {
+			t.Fatalf("owner %d lost its rules", i)
+		}
 	}
 }

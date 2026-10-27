@@ -158,7 +158,7 @@ func TestFrameNumbersArePinned(t *testing.T) {
 		{frameVersions, 16}, {frameSetVersions, 17}, {frameDetach, 18}, {frameOutput, 19}, {frameExit, 20},
 		{frameFatal, 21}, {frameKillSession, 22}, {frameExecOutput, 23}, {frameRename, 24}, {frameRenamed, 25},
 		{frameReplayGzip, 26}, {frameCredit, 27}, {frameOutputZstd, 28}, {frameHistoryGap, 29},
-		{frameReadHistory, 30}, {frameHistory, 31}, {frameState, 32}, {frameStateSeen, 34},
+		{frameReadHistory, 30}, {frameHistory, 31}, {frameState, 32}, {frameSetStateRules, 33}, {frameStateSeen, 34},
 	}
 	for _, entry := range frames {
 		if byte(entry.frame) != entry.want {

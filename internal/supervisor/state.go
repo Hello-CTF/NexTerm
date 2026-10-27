@@ -79,8 +79,10 @@ type stateOptions struct {
 	// timers arms a real timer for the idle transition; tests leave it off
 	// and call tick with their own clock.
 	timers bool
-	// rules returns the user state rules in force; nil means none.
-	rules func() *staterule.Compiled
+	// rules returns the state rules of rulesOwner, the rule owner of the
+	// client that created the session; nil means none.
+	rules      func() *staterule.Compiled
+	rulesOwner string
 }
 
 // stateTracker derives a session's attention state from its output and
@@ -170,6 +172,9 @@ type stateTracker struct {
 	timer    *time.Timer
 	exited   bool
 
+	// writes counts changes to the screen, so an inspection prepared
+	// outside the lock can tell whether the screen moved on since.
+	writes uint64
 	// inspections counts prompt detector runs.
 	inspections uint64
 }
@@ -219,6 +224,7 @@ func (t *stateTracker) output(p []byte, now time.Time) {
 	if t.emu != nil {
 		t.emu.Write(p)
 	}
+	t.writes++
 	changed := false
 	for _, event := range t.scanner.Feed(p, now) {
 		if t.signalLocked(event, now) {
@@ -356,6 +362,7 @@ func (t *stateTracker) fire() {
 // shell shows its own prompt, and otherwise after the settle time. tick
 // returns how long to wait for the next step, or zero when none is due.
 func (t *stateTracker) tick(now time.Time) time.Duration {
+	pre := t.prepare(now)
 	t.mu.Lock()
 	changed := false
 	wait := time.Duration(0)
@@ -366,7 +373,7 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 		// Output has kept a held prompt busy for settle: check that the
 		// prompt is still there.
 		before := t.prompt
-		changed = t.inspectLocked()
+		changed = t.inspectLocked(pre)
 		t.heldCheck = now.Add(t.opts.settle)
 		switch {
 		case t.signalPending, t.finishedPending:
@@ -390,7 +397,9 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 	case t.active:
 		t.active, t.heldCheck = false, time.Time{}
 		before := t.prompt
-		changed = t.inspectLocked()
+		ruleGone := t.confidence == base.ConfidenceRule
+		changed = t.inspectLocked(pre)
+		ruleGone = ruleGone && !t.ruled
 		held, atPrompt := t.heldLocked(), t.scanner.AtPrompt()
 		switch {
 		case t.signalPending, t.finishedPending:
@@ -412,6 +421,12 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 		case atPrompt || quiet >= t.opts.settle || t.state != base.SessionRunning:
 			changed = t.setLocked(base.SessionIdle, base.ConfidenceSignal, "quiet", now) || changed
 		default:
+			if ruleGone {
+				// The rule that set the state no longer matches: the session
+				// counts as running until it settles.
+				t.forceLocked(base.SessionRunning, base.ConfidenceSignal, "output", now)
+				changed = true
+			}
 			t.settling = true
 			wait = t.opts.settle - quiet
 		}
@@ -450,17 +465,51 @@ func (t *stateTracker) due() (time.Time, bool) {
 	return t.deadline, !t.deadline.IsZero()
 }
 
-// inspectLocked runs the prompt detector on the current screen and updates
-// the prompt and its epoch. It reports whether the published prompt
-// changed.
-func (t *stateTracker) inspectLocked() bool {
-	t.inspections++
-	snap := t.screenLocked()
-	t.rule, t.ruled = staterule.Match{}, false
-	if t.opts.rules != nil {
-		t.rule, t.ruled = t.opts.rules().Match(staterule.Screen{Lines: snap.Lines, CursorRow: snap.CursorRow, Title: snap.Title})
+// inspection is the screen evaluated for one inspection: the state rule that
+// matched and the detected prompt, for the screen at writes.
+type inspection struct {
+	writes   uint64
+	rule     staterule.Match
+	ruled    bool
+	detected shape.Prompt
+}
+
+// prepare evaluates the screen for an inspection tick is about to make, so
+// the rule match and prompt detection run outside the tracker lock and do
+// not stall the output pump. It returns nil when no inspection is due.
+func (t *stateTracker) prepare(now time.Time) *inspection {
+	t.mu.Lock()
+	quiet := now.Sub(t.lastActivity)
+	heldDue := t.heldLocked() && !t.heldCheck.IsZero() && !now.Before(t.heldCheck)
+	if t.exited || !t.active || (quiet < t.opts.idle && !heldDue) {
+		t.mu.Unlock()
+		return nil
 	}
-	detected := shape.Detect(snap)
+	snap := t.screenLocked()
+	writes := t.writes
+	t.mu.Unlock()
+	return t.evaluate(snap, writes)
+}
+
+func (t *stateTracker) evaluate(snap terminal.Snapshot, writes uint64) *inspection {
+	result := &inspection{writes: writes, detected: shape.Detect(snap)}
+	if t.opts.rules != nil {
+		result.rule, result.ruled = t.opts.rules().Match(staterule.Screen{Lines: snap.Lines, CursorRow: snap.CursorRow, Title: snap.Title})
+	}
+	return result
+}
+
+// inspectLocked applies an inspection of the current screen: pre when it
+// was made for the screen as it is, otherwise one made now. It updates the
+// matched rule, the prompt and its epoch, and reports whether the published
+// prompt changed.
+func (t *stateTracker) inspectLocked(pre *inspection) bool {
+	t.inspections++
+	if pre == nil || pre.writes != t.writes {
+		pre = t.evaluate(t.screenLocked(), t.writes)
+	}
+	t.rule, t.ruled = pre.rule, pre.ruled
+	detected := pre.detected
 	wasFresh := t.fresh
 	before := t.prompt
 	if (before.Kind == shape.KindNone) != (detected.Kind == shape.KindNone) ||
@@ -487,7 +536,7 @@ func (t *stateTracker) currentPrompt() *SessionPrompt {
 	changed := false
 	var prompt *SessionPrompt
 	if !t.exited {
-		changed = t.inspectLocked()
+		changed = t.inspectLocked(nil)
 		prompt = t.publishedPromptLocked()
 	}
 	t.mu.Unlock()
@@ -517,6 +566,7 @@ func (t *stateTracker) resize(cols, rows int) {
 	if t.emu != nil {
 		t.emu.Resize(cols, rows)
 	}
+	t.writes++
 	t.mu.Unlock()
 }
 

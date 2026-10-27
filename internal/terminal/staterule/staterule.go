@@ -5,10 +5,12 @@
 // durable helper, which applies them.
 //
 // Patterns are Go RE2 regular expressions, which match in time linear in
-// the input. Matching cost is bounded further by the limits below: every
-// rule's compiled program and the whole set's are capped, and the text a
-// rule is matched against is capped, so evaluating a set at an idle
-// transition does a bounded amount of work regardless of its content.
+// the input: the work of one rule grows with its compiled program size times
+// the bytes it is matched against. Both are capped per rule, the text of a
+// bottom region at MaxLineBytes per row, and a set is limited by the sum of
+// program size times region bytes over its rules (MaxSetCost), so evaluating
+// a set at an idle transition does a bounded amount of work whatever the
+// screen holds.
 package staterule
 
 import (
@@ -46,16 +48,29 @@ const (
 	MaxProgram = 1000
 	// MaxSetProgram bounds the compiled patterns of a whole set.
 	MaxSetProgram = 8000
+	// MaxSetCost bounds the sum over a set's rules of program size times
+	// the most bytes the rule's region can hold (RegionBytes).
+	MaxSetCost = 4_000_000
 	// MaxLines bounds the rows of a bottom region; DefaultLines is used
 	// when a rule leaves Lines zero.
 	MaxLines     = 50
 	DefaultLines = 5
 	// MaxKeysBytes bounds a rule's key sequence.
 	MaxKeysBytes = 64
-	// MaxTextBytes bounds the text a rule is matched against; a longer
-	// bottom region keeps its last MaxTextBytes.
-	MaxTextBytes = 8 * 1024
+	// MaxLineBytes is what one row of a bottom region contributes at most:
+	// a region of n rows is matched against at most its last n*MaxLineBytes
+	// bytes. MaxTitleBytes bounds the title text.
+	MaxLineBytes  = 256
+	MaxTitleBytes = 1024
 )
+
+// RegionBytes returns the most bytes a normalized rule is matched against.
+func RegionBytes(rule Rule) int {
+	if rule.Region == RegionTitle {
+		return MaxTitleBytes
+	}
+	return rule.Lines * MaxLineBytes
+}
 
 // Rule is one state rule as pushed to a helper. Rules are tried in order and
 // the first match decides.
@@ -220,7 +235,7 @@ func validateSet(rules []Rule) error {
 		return limitError(-1, "rules", MaxRules, "%d rules exceed the limit of %d", len(rules), MaxRules)
 	}
 	seen := make(map[string]struct{}, len(rules))
-	total := 0
+	total, cost := 0, 0
 	for i, rule := range rules {
 		size, err := validate(i, rule)
 		if err != nil {
@@ -231,9 +246,13 @@ func validateSet(rules []Rule) error {
 		}
 		seen[rule.ID] = struct{}{}
 		total += size
+		cost += size * RegionBytes(rule)
 	}
 	if total > MaxSetProgram {
 		return limitError(-1, "rules", MaxSetProgram, "patterns compile to %d instructions, more than %d", total, MaxSetProgram)
+	}
+	if cost > MaxSetCost {
+		return limitError(-1, "rules", MaxSetCost, "patterns times region sizes come to %d, more than %d; use fewer rows or simpler patterns", cost, MaxSetCost)
 	}
 	return nil
 }
@@ -323,7 +342,7 @@ func (c *Compiled) Match(screen Screen) (Match, bool) {
 		return Match{}, false
 	}
 	var regions map[int]string
-	title := clipTail(screen.Title)
+	title := clipTail(screen.Title, MaxTitleBytes)
 	for _, rule := range c.rules {
 		text := title
 		if rule.Region == RegionBottom {
@@ -357,15 +376,15 @@ func bottomText(screen Screen, lines int) string {
 		return ""
 	}
 	start := max(0, end-lines+1)
-	return clipTail(strings.Join(screen.Lines[start:end+1], "\n"))
+	return clipTail(strings.Join(screen.Lines[start:end+1], "\n"), lines*MaxLineBytes)
 }
 
-// clipTail keeps the last MaxTextBytes of text, cut at a rune start.
-func clipTail(text string) string {
-	if len(text) <= MaxTextBytes {
+// clipTail keeps the last limit bytes of text, cut at a rune start.
+func clipTail(text string, limit int) string {
+	if len(text) <= limit {
 		return text
 	}
-	cut := len(text) - MaxTextBytes
+	cut := len(text) - limit
 	for cut < len(text) && !utf8.RuneStart(text[cut]) {
 		cut++
 	}

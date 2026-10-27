@@ -74,10 +74,11 @@ const (
 // Frames added after frameState carry explicit values so concurrent
 // additions cannot shift each other.
 const (
-	// frameSetStateRules replaces the helper's user state rules with a
-	// StateRuleSet; the helper persists and applies it and answers frameOK.
-	// It needs no attach. Helpers that take it advertise their revision in
-	// the hello acknowledgement (helloMsg.StateRules).
+	// frameSetStateRules replaces the state rules of the connection's rule
+	// owner (helloMsg.StateRulesOwner) with a StateRuleSet; the helper
+	// persists and applies it and answers frameOK. It needs no attach.
+	// Helpers that take it advertise the owner's revision in the hello
+	// acknowledgement (helloMsg.StateRules).
 	frameSetStateRules frameType = 33
 	// frameStateSeen tells the helper that the attached client showed the
 	// session's needs_me or just_finished state to its user (stateSeenMsg);
@@ -119,6 +120,11 @@ const (
 type helloMsg struct {
 	Version     int    `json:"version"`
 	StateDigest string `json:"state_digest,omitempty"`
+	// StateRulesOwner is the opaque key of the state rule owner the client
+	// acts for. Sessions the connection creates are evaluated with that
+	// owner's rules, and frameSetStateRules replaces them. Empty means no
+	// rules: such sessions use none.
+	StateRulesOwner string `json:"state_rules_owner,omitempty"`
 	// CompressOutput is a client preference, not a capability: remote clients
 	// ask for gzip replay batches and per-frame zstd live output, local clients
 	// keep raw frames to save CPU.
@@ -131,8 +137,9 @@ type helloMsg struct {
 	Activity *ActivitySnapshot `json:"activity,omitempty"`
 	// StateSeen is set by a helper that accepts frameStateSeen.
 	StateSeen bool `json:"state_seen,omitempty"`
-	// StateRules is the revision of the helper's user state rules, sent by
-	// helpers that take frameSetStateRules.
+	// StateRules is the revision of the hello's rule owner's state rules
+	// (empty for none or no owner), sent by helpers that take
+	// frameSetStateRules.
 	StateRules *stateRulesAck `json:"state_rules,omitempty"`
 }
 
