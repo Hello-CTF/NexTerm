@@ -96,9 +96,9 @@ export function visibleTerminalTabIds(): Set<string> {
   return visible;
 }
 
-// seenUnsupported is true only for the backend answer that the helper can never share a seen mark. Other
+// isSeenUnsupported is true only for the backend answer that the helper can never share a seen mark. Other
 // "unsupported" answers (a helper that is momentarily unavailable) are transient and retried.
-function seenUnsupported(error: unknown): boolean {
+export function isSeenUnsupported(error: unknown): boolean {
   if (typeof error !== "object" || error === null || (error as { code?: unknown }).code !== "unsupported") return false;
   const detail = (error as { detail?: unknown }).detail;
   return typeof detail === "object" && detail !== null && (detail as { reason?: unknown }).reason === "seen_unsupported";
@@ -116,7 +116,7 @@ export function markVisibleAwarenessSeen(): void {
     if (!needsAttention(awareness) || !since || requestedSeen.get(tabId) === since) continue;
     requestedSeen.set(tabId, since);
     void terminalApi.attentionSeen(tabId, since).catch((error: unknown) => {
-      if (seenUnsupported(error)) {
+      if (isSeenUnsupported(error)) {
         markAwarenessSeenLocally(tabId, since);
         return;
       }

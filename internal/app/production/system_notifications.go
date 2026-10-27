@@ -123,11 +123,11 @@ func validNotificationID(id string) bool {
 // cleanNotificationText drops controls and format characters (bidi overrides,
 // zero-width spaces) but keeps ZWJ/ZWNJ and the tag characters of
 // subdivision flags, the rule the terminal signal scanner applies to
-// notification text. Line breaks and tabs become spaces.
+// notification text. Line breaks, tabs and the Unicode line and paragraph separators become spaces.
 func cleanNotificationText(text string) string {
 	text = strings.ToValidUTF8(text, "\uFFFD")
 	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' || r == '\r' {
+		if r == '\n' || r == '\t' || r == '\r' || r == '\u2028' || r == '\u2029' {
 			return ' '
 		}
 		if unicode.IsControl(r) || (unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d' && (r < 0xe0020 || r > 0xe007f)) {

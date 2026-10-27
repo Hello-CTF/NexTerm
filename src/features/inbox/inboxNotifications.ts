@@ -127,12 +127,13 @@ function deliver(tabId: string): void {
   const title = `${place} · ${awareness.state === "needs_me" ? "需要你处理" : "命令已结束"}`;
   const detail = attentionDetail(awareness);
   const active = deps;
+  const fallbackToast = () => active.toast(`${title}：${detail}`, { label: "查看", onSelect: () => openInboxTab(tabId) });
   void (async () => {
     const usable = prefs.system && (await systemUsable(active.notifier));
     // The state may have been seen or replaced while the status was read.
     if (deps !== active || notified.get(tabId) !== key) return;
     if (!usable) {
-      active.toast(`${title}：${detail}`, { label: "查看", onSelect: () => openInboxTab(tabId) });
+      fallbackToast();
       return;
     }
     shown.add(tabId);
@@ -140,6 +141,10 @@ function deliver(tabId: string): void {
       await active.notifier.show({ id: notificationId(tabId), title, body: `来自 ${place}：${detail}`, tabId });
     } catch (error) {
       shown.delete(tabId);
+      // The permission may have been refused behind the status read; read it again next time and do not lose this
+      // notification.
+      statusCache = null;
+      fallbackToast();
       if (errorReported) return;
       // Reported once per run, so a broken notification service does not repeat the same error.
       errorReported = true;
