@@ -1618,6 +1618,18 @@ export type LocalFolderListRequest = {
   path: string;
 };
 
+export type LocalHelperExposeRequest = {
+  enabled: boolean;
+};
+
+export type LocalHelperExposureDTO = {
+  enabled: boolean;
+  state: string;
+  reason?: string;
+  deviceId?: string;
+  server?: string;
+};
+
 export type LocalHelperRestartRequest = {
   consentToken: string;
 };

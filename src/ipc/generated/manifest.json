@@ -1117,6 +1117,18 @@
       "channel": false,
       "stream": "none"
     },
+    "local_helper_expose_get": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_expose_set": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "local_helper_mode_get": {
       "scope": "local-helper",
       "nested": false,

@@ -129,7 +129,8 @@ func localHelperDisabledByEnv(value string) bool {
 	return false
 }
 
-func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelper.Service, database localTerminalModeStore) error {
+// onModeChange is called after the local terminal mode was saved.
+func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelper.Service, database localTerminalModeStore, onModeChange func()) error {
 	current := func() localHelperStatusDTO {
 		if service == nil {
 			return localHelperStatusDTO{State: string(localhelper.StateDisabled), Reason: "本机终端在此环境中不使用持久组件"}
@@ -175,6 +176,9 @@ func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelpe
 				}
 				if err := database.SettingSet(ctx, LocalTerminalModeSettingKey, input.Mode); err != nil {
 					return localTerminalModeDTO{}, err
+				}
+				if onModeChange != nil {
+					onModeChange()
 				}
 				return input, nil
 			})

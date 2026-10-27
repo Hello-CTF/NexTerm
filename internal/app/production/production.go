@@ -13,6 +13,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
+	"github.com/Hello-CTF/NexTerm/internal/fleet/exposure"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -67,27 +68,30 @@ type ProductionServices struct {
 	Skills *skills.Manager
 	// LocalHelper runs local terminals in a detached helper; nil keeps them
 	// in this process.
-	LocalHelper      *localhelper.Service
-	stateRules       *stateRulesRuntime
-	Events           ipc.Emitter
-	Update           *update.Manager
-	ScreenInsets     func(context.Context) (ScreenInsets, error)
-	channelBridge    *terminalBridge
-	previewRelay     *previewRelayManager
-	terminalCommands *terminalCommandService
-	fsUploads        *fsChunkUploadRegistry
-	hostKeys         *productionHostKeyStore
-	sshConnector     *productionConnector
-	stagedBlobs      StagedBlobResolver
-	dataDir          string
-	desktop          bool
-	hostKeysShared   bool
-	aiRelease        func()
-	cron             *cronRuntime
-	watches          *watchService
-	Transcripts      *transcriptWriter
-	aiRetention      *aiRetentionComponent
-	inventory        *inventoryService
+	LocalHelper *localhelper.Service
+	// LocalHelperExposure exposes the local terminals of a desktop to its
+	// server account when the user turns it on; nil elsewhere.
+	LocalHelperExposure *exposure.Controller
+	stateRules          *stateRulesRuntime
+	Events              ipc.Emitter
+	Update              *update.Manager
+	ScreenInsets        func(context.Context) (ScreenInsets, error)
+	channelBridge       *terminalBridge
+	previewRelay        *previewRelayManager
+	terminalCommands    *terminalCommandService
+	fsUploads           *fsChunkUploadRegistry
+	hostKeys            *productionHostKeyStore
+	sshConnector        *productionConnector
+	stagedBlobs         StagedBlobResolver
+	dataDir             string
+	desktop             bool
+	hostKeysShared      bool
+	aiRelease           func()
+	cron                *cronRuntime
+	watches             *watchService
+	Transcripts         *transcriptWriter
+	aiRetention         *aiRetentionComponent
+	inventory           *inventoryService
 
 	retryDeferredUpgrade func(context.Context)
 }
@@ -314,6 +318,7 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Sessions != nil {
 		localHelper := services.LocalHelper
+		exposureController := services.LocalHelperExposure
 		modules = append(modules, Module{
 			Name: "local-helper",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
@@ -321,7 +326,14 @@ func productionModules(services ProductionServices) []Module {
 				if services.Store != nil {
 					settings = services.Store
 				}
-				return registerLocalHelperCommands(dispatcher, localHelper, settings)
+				onModeChange := func() {}
+				if exposureController != nil {
+					onModeChange = exposureController.Reconcile
+				}
+				if err := registerLocalHelperCommands(dispatcher, localHelper, settings, onModeChange); err != nil {
+					return err
+				}
+				return registerLocalHelperExposureCommands(dispatcher, exposureController)
 			},
 			// Shutdown stops watching the helper; the helper and its local
 			// terminals keep running after the app exits.
@@ -334,9 +346,17 @@ func productionModules(services ProductionServices) []Module {
 					if localHelper != nil && services.desktop {
 						localHelper.Start()
 					}
+					if exposureController != nil {
+						exposureController.Start()
+					}
 					return nil
 				},
 				ShutdownFunc: func(context.Context) error {
+					// The exposed agent stops first: its bridges end, while the
+					// helper and its terminals keep running.
+					if exposureController != nil {
+						exposureController.Close()
+					}
 					if localHelper != nil {
 						localHelper.Close()
 					}

@@ -367,6 +367,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		aiRetention:    newAIRetentionComponent(database, config.RetentionInterval),
 		Events:         config.Config.Events,
 	}
+	services.LocalHelperExposure = newProductionLocalHelperExposure(config.Desktop, config.DataDir, config.Config.Version, localHelper, database, credentialVault, syncService, config.Config.Logger)
 	services.channelBridge = newTerminalBridge(sessionManager, streams)
 	services.retryDeferredUpgrade = dataUpgrade.retry
 	services.ScreenInsets = config.ScreenInsets
