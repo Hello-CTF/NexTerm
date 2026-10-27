@@ -428,7 +428,7 @@ export interface LiveTabInfo {
   // Unix ms; detachedAt is absent while a client is subscribed.
   createdAt?: number;
   detachedAt?: number;
-  // Age of detachedAt on the backend's clock when it answered.
+  // Age of detachedAt on the backend's clock when it answered; omitted when zero.
   detachedMsAgo?: number;
   durable?: boolean;
   // The helper's attention state of a durable tab; absent when none is reported.

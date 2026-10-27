@@ -373,7 +373,7 @@ type liveTabDTO struct {
 	TitleChangedAt  int64   `json:"titleChangedAt,omitempty"`
 	CreatedAt       int64   `json:"createdAt,omitempty"`
 	DetachedAt      int64   `json:"detachedAt,omitempty"`
-	DetachedMSAgo   int64   `json:"detachedMsAgo"`
+	DetachedMSAgo   int64   `json:"detachedMsAgo,omitempty"`
 	Durable         bool    `json:"durable,omitempty"`
 	State           string  `json:"state,omitempty"`
 }

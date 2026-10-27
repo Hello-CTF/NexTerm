@@ -163,6 +163,8 @@ export function collectBackgroundTabs(
     known.add(key);
     if (tab.subscribers === 0) {
       const row: BackgroundTab = { ...tab, fetchedAt: liveFetchedAt };
+      // The backend leaves a zero age out; the live listing always sends one with a detach time.
+      if (row.detachedAt) row.detachedMsAgo ??= 0;
       liveRows.set(key, row);
       list.push(row);
     }

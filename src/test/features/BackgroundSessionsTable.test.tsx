@@ -254,8 +254,8 @@ describe("BackgroundSessions table", () => {
     seedHost({ ...s1, kind: "local", assetId: null }, "local");
     mocks.listLive.mockResolvedValue([
       liveTab({ tabId: "busy", title: "构建", cols: 132, rows: 43, lastOutputAt: NOW - 3 * MINUTE, lastOutputMsAgo: 3 * MINUTE,
-        detachedAt: NOW - 20 * MINUTE, createdAt: NOW - 90 * MINUTE }),
-      liveTab({ tabId: "quiet", title: "安静", lastOutputAt: 0, lastOutputMsAgo: 0, detachedAt: NOW - 2 * MINUTE }),
+        detachedAt: NOW - 20 * MINUTE, detachedMsAgo: 20 * MINUTE, createdAt: NOW - 90 * MINUTE }),
+      liveTab({ tabId: "quiet", title: "安静", lastOutputAt: 0, lastOutputMsAgo: 0, detachedAt: NOW - 2 * MINUTE, detachedMsAgo: 2 * MINUTE }),
     ]);
     const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(2));
     try {
@@ -393,6 +393,17 @@ describe("BackgroundSessions table", () => {
     }
   });
 
+  it("reads an omitted live detach age as zero, not as a clock comparison", async () => {
+    seedHost({ ...s1, kind: "local", assetId: null }, "local");
+    mocks.listLive.mockResolvedValue([liveTab({ tabId: "fresh", title: "刚放", detachedAt: NOW + 10 * MINUTE })]);
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(1));
+    try {
+      expect(cell(view.container, "background-detached").textContent).toBe("刚刚转入后台");
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("uses the backend's detach age for live rows", async () => {
     seedHost({ ...s1, kind: "local", assetId: null }, "local");
     // The backend clock runs ten minutes ahead of this device.
@@ -411,7 +422,7 @@ describe("BackgroundSessions table", () => {
   it("adds the helper's state and creation time to a durable tab this app still holds", async () => {
     seedHost(s1, "ssh");
     mocks.listLive.mockResolvedValue([
-      liveTab({ tabId: "held", sessionKind: "ssh", title: "持有", durable: true, detachedAt: NOW - 4 * MINUTE, createdAt: NOW - MINUTE }),
+      liveTab({ tabId: "held", sessionKind: "ssh", title: "持有", durable: true, detachedAt: NOW - 4 * MINUTE, detachedMsAgo: 4 * MINUTE, createdAt: NOW - MINUTE }),
     ]);
     mocks.listDurable.mockResolvedValue([
       descriptor({ id: "held", title: "持有", state: "just_finished", createdAt: NOW - 120 * MINUTE,
