@@ -105,7 +105,7 @@ export {
   DURABLE_NOT_READY_AT_OPEN_REASON,
   DURABLE_PREPARING_REASON,
   DURABLE_UNAVAILABLE_PREFIX,
-  knownDurableReadiness,
+  useKnownDurableReadiness,
 } from "./store/durableReadiness";
 export {
   closeActionHint,

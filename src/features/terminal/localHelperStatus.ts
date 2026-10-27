@@ -52,11 +52,16 @@ export function localDurableEnabled(status: LocalHelperStatus | null = current):
   return status !== null && status.state !== "disabled";
 }
 
+function subscribeNothing(): () => void {
+  return () => {};
+}
+
+// A disabled reader neither starts the status watch nor re-renders on status changes.
 export function useLocalHelperStatus(enabled = true): LocalHelperStatus | null {
   useEffect(() => {
     if (enabled) ensureLocalHelperStatus();
   }, [enabled]);
-  return useSyncExternalStore(subscribe, () => current);
+  return useSyncExternalStore(enabled ? subscribe : subscribeNothing, () => (enabled ? current : null));
 }
 
 export function setLocalHelperStatusForTest(status: LocalHelperStatus | null): void {

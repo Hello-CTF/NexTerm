@@ -63,18 +63,21 @@ vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () 
 
 const harness = vi.hoisted(() => ({
   props: null as Record<string, unknown> | null,
+  // Counts renders of the pane's view, a probe for renders of the pane itself.
+  renders: 0,
 }));
 
 vi.mock("../../features/terminal/XtermView", () => ({
   XtermView: (props: Record<string, unknown>) => {
     harness.props = props;
+    harness.renders += 1;
     return null;
   },
 }));
 
 import { TerminalPane } from "../../features/terminal/TerminalPane";
 import { createHelperOperationState, helperOperationReducer } from "../../features/terminal/helperOperationState";
-import { forgetDurableReadiness, noteHelperProgress, useUi, type AppTab } from "../../app/store";
+import { fallbackTerminalReason, forgetDurableReadiness, noteHelperProgress, useUi, type AppTab } from "../../app/store";
 import { TabPersistenceMark } from "../../app/workspace/tabStrip";
 import { setLocalHelperStatusForTest } from "../../features/terminal/localHelperStatus";
 import { setTerminalDefaultMode } from "../../app/preferences";
@@ -420,6 +423,32 @@ describe("persistence hint bar", () => {
     helperProgress("failed", true, { error: "目标主机不支持持久终端组件" });
     await waitFor(() => expect(hintBar()?.dataset.tone).toBe("danger"));
     expect(hintBar()?.textContent).toContain("目标主机不支持持久终端组件");
+  });
+
+  it("updates the hint when a readiness query answers, without any other change", async () => {
+    mocks.prepareDurable.mockResolvedValue({ state: "ready" });
+    seed({ regularReason: "持久组件准备中" });
+    mountPane();
+    await flush();
+    expect(hintBar()?.dataset.tone).toBe("neutral");
+
+    await act(async () => {
+      await fallbackTerminalReason("s1", { fallbackNotice: false, durableRequested: true, kind: "ssh" });
+    });
+    expect(hintBar()?.dataset.tone).toBe("accent");
+  });
+
+  it("does not re-render a pane for helper progress on another session", async () => {
+    seed({ regularReason: "持久组件准备中" });
+    mountPane();
+    await flush();
+    const before = harness.renders;
+
+    for (const percent of [10, 40, 80]) {
+      helperProgress("upload", false, { sessionId: "s2", assetId: "asset-2", transferred: percent, total: 100, percent });
+    }
+    await flush();
+    expect(harness.renders).toBe(before);
   });
 
   it("stays dismissed for the tab until a different state appears", async () => {

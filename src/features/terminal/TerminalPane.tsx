@@ -48,7 +48,7 @@ import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } f
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, fallbackTerminalReason, knownDurableReadiness, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
+import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -1236,15 +1236,14 @@ export function TerminalPane({
     setHelperReady(true);
   }, [helperOperation?.operationId, helperOperation?.status, storeTabId, durable]);
 
-  const helperProgressSnapshot = useUi((s) => s.helperProgress);
+  const readiness = useKnownDurableReadiness(sessionId);
   const hint = persistenceHint({
     durable,
     eligible: (sessionKind === "ssh" || sessionKind === "local") && !containerId && !effectiveWinrm,
     local: sessionKind === "local",
     operation: helperOperation && { status: helperOperation.status, kind: helperOperation.kind, message: helperOperation.reason?.message },
     ownedReady: helperReady,
-    // Helper progress events update the shared readiness cache; the snapshot re-renders this pane when they do.
-    readiness: helperProgressSnapshot && knownDurableReadiness(sessionId),
+    readiness,
     localHelper,
     regularReason,
   });
