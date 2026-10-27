@@ -270,7 +270,7 @@ func TestApplyKnownHostTripleConflictIncarnationReIDed(t *testing.T) {
 	}
 
 	// The collect map must no longer have a same-ID slot conflict: the incarnation object and the original-ID tombstone are separate objects.
-	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{optInKnownHost: true, optInAIProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestApplyKnownHostConflictTombstoneReIDsNewerIncarnation(t *testing.T) {
 	}
 
 	// Collect: the original ID slot is the conflict tombstone carrying the triple, the new ID is the live object.
-	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{optInKnownHost: true, optInAIProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +351,7 @@ func TestApplyKnownHostUserTombstoneDeletesRegardlessOfTriple(t *testing.T) {
 	requireNoKnownHost(t, instance, rowID)
 	requireSyncTombstone(t, instance, rowID, KindKnownHost, 100)
 
-	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{optInKnownHost: true, optInAIProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,7 @@ func TestApplyKnownHostConflictTombstoneMetaFollowsMaxRevision(t *testing.T) {
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, hostID, "b.example.com", 2222, "ssh-ed25519", 200)).Objects[0], ApplyResultApplied)
 	assertTombstoneTriple := func(wantHost string, wantDeletedAt int64) {
 		t.Helper()
-		objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
+		objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{optInKnownHost: true, optInAIProfile: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -408,7 +408,7 @@ func TestApplyKnownHostConflictTombstoneMetaFollowsMaxRevision(t *testing.T) {
 	otherID := ids.New()
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, otherID, "b.example.com", 2222, "ssh-ed25519", 200)).Objects[0], ApplyResultApplied)
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, otherID, "a.example.com", 22, "ssh-rsa", 50)).Objects[0], ApplyResultApplied)
-	objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
+	objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{optInKnownHost: true, optInAIProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +517,7 @@ func TestApplyAIProfileRoundtripPreservesFieldsAndSealsKey(t *testing.T) {
 	}
 
 	// The canonical payload rebuilt from the persisted form must be byte-identical to the applied payload (including the revealed apiKey).
-	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{optInKnownHost: true, optInAIProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}

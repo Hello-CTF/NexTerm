@@ -27,9 +27,6 @@ const (
 	KindPreference   = "preference"
 )
 
-// objectKinds is the fixed enumeration order for decryption attempts; AAD binds kind, so a wrong kind can never decrypt.
-var objectKinds = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference}
-
 const (
 	objectAADPrefix = "nexterm/go/sync-object/v1"
 	objectNonceSize = 12
@@ -83,7 +80,7 @@ func openObject(dek, blob []byte, id, kind string) ([]byte, error) {
 	return plaintext, nil
 }
 
-// tryOpenObject attempts decryption with the fixed kind enumeration; if all fail, the key does not match or the data was tampered with.
+// tryOpenObject attempts decryption with the registered kind enumeration; if all fail, the key does not match or the data was tampered with.
 func tryOpenObject(dek, blob []byte, id string) (string, []byte, error) {
 	for _, kind := range objectKinds {
 		plaintext, err := openObject(dek, blob, id, kind)
@@ -260,6 +257,24 @@ type transcriptObject struct {
 	ContentOmitted bool                    `json:"contentOmitted,omitempty"`
 	Content        []transcriptChunkObject `json:"content,omitempty"`
 }
+
+// identifiedPayload is implemented by payloads whose JSON carries the object ID.
+type identifiedPayload interface {
+	payloadID() string
+}
+
+func (p *groupObject) payloadID() string         { return p.ID }
+func (p *assetObject) payloadID() string         { return p.ID }
+func (p *credentialObject) payloadID() string    { return p.ID }
+func (p *snippetObject) payloadID() string       { return p.ID }
+func (p *transcriptObject) payloadID() string    { return p.ID }
+func (p *knownHostObject) payloadID() string     { return p.ID }
+func (p *aiProfileObject) payloadID() string     { return p.ID }
+func (p *aiPermissionObject) payloadID() string  { return p.ID }
+func (p *aiGrantDeviceObject) payloadID() string { return p.ID }
+func (p *aiGrantRuleObject) payloadID() string   { return p.ID }
+func (p *aiGrantModeObject) payloadID() string   { return p.ID }
+func (p *preferenceObject) payloadID() string    { return p.ID }
 
 // marshalObject produces deterministic JSON as the payload plaintext; the same content always yields the same bytes, for LWW tiebreaks and incremental reconciliation.
 func marshalObject(payload any) ([]byte, error) {

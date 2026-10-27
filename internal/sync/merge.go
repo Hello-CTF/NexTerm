@@ -44,13 +44,16 @@ func localRevision(kind string, plaintext []byte) int64 {
 	if err := json.Unmarshal(plaintext, &payload); err != nil {
 		return 0
 	}
-	if kind == KindTranscript {
+	var source revisionSource
+	if spec, ok := lookupKind(kind); ok {
+		source = spec.revision
+	}
+	switch source {
+	case revisionEnded:
 		return payload.EndedAt
-	}
-	if kind == KindKnownHost {
+	case revisionAdded:
 		return payload.AddedAt
-	}
-	if kind == KindTombstone {
+	case revisionDeleted:
 		if payload.DeletedAt != nil {
 			return *payload.DeletedAt
 		}
@@ -81,10 +84,27 @@ func (report *SyncReport) warnf(format string, args ...any) {
 // Known hosts, AI profiles, AI permissions, AI grants, and preferences are collected per the session user's opt-in: when off, the corresponding objects and their tombstones are not collected
 // (disabling sync must not delete remote objects).
 func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, optIn kindOptIn, userIDs ...string) (map[string]localObject, error) {
-	objects := map[string]localObject{}
+	collection := &localCollection{objects: map[string]localObject{}, report: report, optIn: optIn, userID: firstUserID(userIDs)}
+	for index := range syncKinds {
+		spec := &syncKinds[index]
+		if spec.collect == nil || !optIn.enabled(spec.optIn) || (spec.collectNeedsUser && collection.userID == "") {
+			continue
+		}
+		if err := spec.collect(e, ctx, collection); err != nil {
+			return nil, err
+		}
+	}
+	// Tombstones always collect last: one replaces a live object only when it is newer.
+	if err := e.collectTombstoneObjects(ctx, collection); err != nil {
+		return nil, err
+	}
+	return collection.objects, nil
+}
+
+func (e *Engine) collectGroupObjects(ctx context.Context, c *localCollection) error {
 	groups, err := e.store.GroupList(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, group := range groups {
 		payload, err := marshalObject(groupObject{
@@ -92,39 +112,47 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 			CreatedAt: group.CreatedAt, UpdatedAt: group.UpdatedAt,
 		})
 		if err != nil {
-			return nil, err
+			return err
 		}
-		objects[group.ID] = localObject{KindGroup, payload}
+		c.objects[group.ID] = localObject{KindGroup, payload}
 	}
+	return nil
+}
+
+func (e *Engine) collectCredentialObjects(ctx context.Context, c *localCollection) error {
 	credentials, err := e.store.CredentialList(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if len(credentials) > 0 {
 		// Credentials are not synced this round while the vault is locked/uninitialized (same deferred semantics as keyed AI profiles); other objects are collected as usual.
 		// Credentials stay out of objects, so no reconciliation state is written; the next round after unlock pushes them automatically.
 		if err := e.requireVault(ctx); err != nil {
-			report.warnf("%d 条凭据因凭据库未解锁而跳过本次同步，其余对象正常同步：%v", len(credentials), err)
+			c.report.warnf("%d 条凭据因凭据库未解锁而跳过本次同步，其余对象正常同步：%v", len(credentials), err)
 			credentials = nil
 		}
 	}
 	for _, row := range credentials {
 		secret, err := e.vault.DecryptCredentialString(ctx, row)
 		if err != nil {
-			report.warnf("凭据 %s 解密失败，本次不同步：%v", row.ID, err)
+			c.report.warnf("凭据 %s 解密失败，本次不同步：%v", row.ID, err)
 			continue
 		}
 		payload, err := marshalObject(credentialObject{
 			ID: row.ID, Name: row.Name, Kind: row.Kind, Secret: secret, UpdatedAt: row.UpdatedAt,
 		})
 		if err != nil {
-			return nil, err
+			return err
 		}
-		objects[row.ID] = localObject{KindCredential, payload}
+		c.objects[row.ID] = localObject{KindCredential, payload}
 	}
+	return nil
+}
+
+func (e *Engine) collectSnippetObjects(ctx context.Context, c *localCollection) error {
 	snippets, err := e.store.SnippetList(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, snippet := range snippets {
 		payload, err := marshalObject(snippetObject{
@@ -132,13 +160,17 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 			Sort: snippet.Sort, CreatedAt: snippet.CreatedAt, UpdatedAt: snippet.UpdatedAt,
 		})
 		if err != nil {
-			return nil, err
+			return err
 		}
-		objects[snippet.ID] = localObject{KindSnippet, payload}
+		c.objects[snippet.ID] = localObject{KindSnippet, payload}
 	}
+	return nil
+}
+
+func (e *Engine) collectAssetObjects(ctx context.Context, c *localCollection) error {
 	assets, err := e.store.AssetList(ctx, true)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, asset := range assets {
 		if asset.Builtin || asset.ID == store.BuiltinLocalAssetID {
@@ -152,91 +184,88 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 			UpdatedAt: asset.UpdatedAt, DeletedAt: asset.DeletedAt,
 		})
 		if err != nil {
-			return nil, err
+			return err
 		}
-		objects[asset.ID] = localObject{KindAsset, payload}
+		c.objects[asset.ID] = localObject{KindAsset, payload}
 	}
+	return nil
+}
+
+func (e *Engine) collectTranscriptObjects(ctx context.Context, c *localCollection) error {
 	transcripts, err := e.store.TranscriptListOptedIn(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, transcript := range transcripts {
 		payload, err := e.transcriptPayload(ctx, transcript)
 		if err != nil {
-			report.warnf("会话记录 %s 打包失败，本次不同步：%v", transcript.ID, err)
+			c.report.warnf("会话记录 %s 打包失败，本次不同步：%v", transcript.ID, err)
 			continue
 		}
-		objects[transcript.ID] = localObject{KindTranscript, payload}
+		c.objects[transcript.ID] = localObject{KindTranscript, payload}
 	}
-	if optIn.knownHost {
-		knownHosts, err := e.store.KnownHostList(ctx)
+	return nil
+}
+
+func (e *Engine) collectKnownHostObjects(ctx context.Context, c *localCollection) error {
+	knownHosts, err := e.store.KnownHostList(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range knownHosts {
+		payload, err := marshalObject(knownHostObject{
+			ID: row.ID, Host: row.Host, Port: row.Port, KeyType: row.KeyType,
+			Fingerprint: row.Fingerprint, AddedAt: row.AddedAt,
+		})
 		if err != nil {
-			return nil, err
+			return err
 		}
-		for _, row := range knownHosts {
-			payload, err := marshalObject(knownHostObject{
-				ID: row.ID, Host: row.Host, Port: row.Port, KeyType: row.KeyType,
-				Fingerprint: row.Fingerprint, AddedAt: row.AddedAt,
-			})
-			if err != nil {
-				return nil, err
-			}
-			objects[row.ID] = localObject{KindKnownHost, payload}
-		}
+		c.objects[row.ID] = localObject{KindKnownHost, payload}
 	}
-	if optIn.aiProfile {
-		profileState, profileRevision, _, err := e.aiProfilesLoad(ctx)
+	return nil
+}
+
+func (e *Engine) collectAIProfileObjects(ctx context.Context, c *localCollection) error {
+	profileState, profileRevision, _, err := e.aiProfilesLoad(ctx)
+	if err != nil {
+		if !errors.Is(err, errAIProfilesCorrupt) {
+			return err
+		}
+		c.report.warnf("AI 模型档案数据损坏，本次不同步：%v", err)
+		return nil
+	}
+	for _, record := range profileState.Profiles {
+		key, err := e.revealAIProfileKey(ctx, record.APIKey)
 		if err != nil {
-			if !errors.Is(err, errAIProfilesCorrupt) {
-				return nil, err
-			}
-			report.warnf("AI 模型档案数据损坏，本次不同步：%v", err)
-		} else {
-			for _, record := range profileState.Profiles {
-				key, err := e.revealAIProfileKey(ctx, record.APIKey)
-				if err != nil {
-					report.warnf("AI 模型档案 %s 解密失败，本次不同步：%v", record.ID, err)
-					continue
-				}
-				record.APIKey = key
-				payload, err := marshalObject(aiProfilePayloadFromRecord(record, profileRevision))
-				if err != nil {
-					return nil, err
-				}
-				objects[record.ID] = localObject{KindAIProfile, payload}
-			}
+			c.report.warnf("AI 模型档案 %s 解密失败，本次不同步：%v", record.ID, err)
+			continue
 		}
-	}
-	if len(userIDs) > 0 && userIDs[0] != "" {
-		if err := e.collectPreferenceObjects(ctx, userIDs[0], objects, optIn, report); err != nil {
-			return nil, err
+		record.APIKey = key
+		payload, err := marshalObject(aiProfilePayloadFromRecord(record, profileRevision))
+		if err != nil {
+			return err
 		}
+		c.objects[record.ID] = localObject{KindAIProfile, payload}
 	}
+	return nil
+}
+
+// collectTombstoneObjects adds deletion tombstones for opted-in target kinds; a live object newer than its tombstone is kept.
+// Credential tombstones are stored separately and win same-ID conflicts with sync tombstones.
+func (e *Engine) collectTombstoneObjects(ctx context.Context, c *localCollection) error {
 	tombstones, err := e.syncTombstoneList(ctx, e.aiSharedAccess(ctx))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	knownHostMetas, err := e.knownHostTombstoneMetas(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, tombstone := range tombstones {
-		if tombstone.Kind == KindKnownHost && !optIn.knownHost {
+		if !c.optIn.allowsKind(tombstone.Kind) {
 			continue
 		}
-		if tombstone.Kind == KindAIProfile && !optIn.aiProfile {
-			continue
-		}
-		if tombstone.Kind == KindAIPermission && !optIn.aiPermission {
-			continue
-		}
-		if tombstone.Kind == KindAIGrant && !optIn.aiGrant {
-			continue
-		}
-		if tombstone.Kind == KindPreference && !optIn.preferences {
-			continue
-		}
-		if live, exists := objects[tombstone.ID]; exists && localRevision(live.kind, live.plaintext) > tombstone.DeletedAt {
+		if live, exists := c.objects[tombstone.ID]; exists && localRevision(live.kind, live.plaintext) > tombstone.DeletedAt {
 			continue
 		}
 		object := tombstoneObject{TargetKind: tombstone.Kind, DeletedAt: tombstone.DeletedAt}
@@ -247,25 +276,25 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 		}
 		payload, err := marshalObject(object)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		objects[tombstone.ID] = localObject{KindTombstone, payload}
+		c.objects[tombstone.ID] = localObject{KindTombstone, payload}
 	}
 	credentialTombstones, err := e.store.CredentialTombstoneList(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, tombstone := range credentialTombstones {
-		if live, exists := objects[tombstone.ID]; exists && localRevision(live.kind, live.plaintext) > tombstone.DeletedAt {
+		if live, exists := c.objects[tombstone.ID]; exists && localRevision(live.kind, live.plaintext) > tombstone.DeletedAt {
 			continue
 		}
 		payload, err := marshalObject(tombstoneObject{TargetKind: KindCredential, DeletedAt: tombstone.DeletedAt})
 		if err != nil {
-			return nil, err
+			return err
 		}
-		objects[tombstone.ID] = localObject{KindTombstone, payload}
+		c.objects[tombstone.ID] = localObject{KindTombstone, payload}
 	}
-	return objects, nil
+	return nil
 }
 
 func transcriptCacheKeyFor(ctx context.Context, transcript store.TranscriptRow) transcriptCacheKey {
@@ -832,35 +861,18 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 	return true, false
 }
 
-func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plaintext []byte, report *SyncReport, userIDs ...string) (bool, bool) {
+func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plaintext []byte, report *SyncReport, userID string) (bool, bool) {
 	var payload tombstoneObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
 		report.warnf("删除标记对象数据损坏：%v", err)
 		return false, false
 	}
-	switch payload.TargetKind {
-	case KindGroup:
-		return e.applyGroupTombstone(ctx, objectID, payload.DeletedAt, report)
-	case KindSnippet:
-		return e.applySnippetTombstone(ctx, objectID, payload.DeletedAt, report)
-	case KindCredential:
-		return e.applyCredentialTombstone(ctx, objectID, payload.DeletedAt, report)
-	case KindTranscript:
-		return e.applyTranscriptTombstone(ctx, objectID, payload.DeletedAt, report)
-	case KindKnownHost:
-		return e.applyKnownHostTombstone(ctx, objectID, payload, report)
-	case KindAIProfile:
-		return e.applyAIProfileTombstone(ctx, objectID, payload.DeletedAt, report)
-	case KindAIPermission:
-		return e.applyAIPermissionTombstone(ctx, objectID, payload.DeletedAt, report)
-	case KindAIGrant:
-		return e.applyAIGrantTombstone(ctx, objectID, payload.DeletedAt, report)
-	case KindPreference:
-		return e.applyPreferenceTombstone(ctx, objectID, payload.DeletedAt, report, firstUserID(userIDs))
-	default:
+	target, ok := lookupKind(payload.TargetKind)
+	if !ok || target.applyTombstone == nil {
 		report.warnf("删除标记对象目标种类 %s 不受支持", payload.TargetKind)
 		return false, false
 	}
+	return target.applyTombstone(e, ctx, objectID, payload, report, userID)
 }
 
 func (e *Engine) applyGroupTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport) (bool, bool) {
@@ -1273,37 +1285,6 @@ func (e *Engine) requireVault(ctx context.Context) error {
 		return ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
 	}
 	return nil
-}
-
-// objectKindRank orders kinds by dependency; group ancestry is sorted separately within the group kind.
-// Plain tombstones rank after content objects but before session records, matching the browser push order.
-func objectKindRank(kind string) int {
-	switch kind {
-	case KindGroup:
-		return 0
-	case KindCredential:
-		return 1
-	case KindSnippet:
-		return 2
-	case KindAsset:
-		return 3
-	case KindKnownHost:
-		return 4
-	case KindAIProfile:
-		return 5
-	case KindAIPermission:
-		return 6
-	case KindAIGrant:
-		return 7
-	case KindPreference:
-		return 8
-	case KindTombstone:
-		return 9
-	case KindTranscript:
-		return 10
-	default:
-		return 11
-	}
 }
 
 func sortObjectsForPush(objects map[string]localObject) []string {

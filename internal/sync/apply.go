@@ -171,17 +171,16 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 		entry.Warning = fmt.Sprintf(format, args...)
 		return entry
 	}
-	switch object.Kind {
-	case KindGroup, KindAsset, KindCredential, KindSnippet, KindTranscript, KindKnownHost, KindAIProfile:
+	spec, ok := lookupKind(object.Kind)
+	if !ok {
+		return reject("不支持的同步对象种类 %q", object.Kind)
+	}
+	if spec.strictID {
 		if err := store.EnsureID(object.ID); err != nil {
 			return reject("%v", err)
 		}
-	case KindTombstone, KindAIPermission, KindAIGrant, KindPreference:
-		if !validObjectID(object.ID) {
-			return reject("%v", ipc.NewError(ipc.CodeBadParam, "同步对象 ID 不合法"))
-		}
-	default:
-		return reject("不支持的同步对象种类 %q", object.Kind)
+	} else if !validObjectID(object.ID) {
+		return reject("%v", ipc.NewError(ipc.CodeBadParam, "同步对象 ID 不合法"))
 	}
 	if len(object.Payload) == 0 {
 		return reject("对象数据为空")
@@ -193,26 +192,9 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 	if err != nil {
 		return reject("%v", err)
 	}
-	if object.Kind == KindGroup {
-		var group groupObject
-		if err := json.Unmarshal(canonical, &group); err != nil {
-			return reject("%v", err)
-		}
-		if group.ParentID != nil && *group.ParentID != "" {
-			if *group.ParentID == group.ID {
-				return reject("分组不能将自身设为父级")
-			}
-			if _, err := e.store.GroupGet(ctx, *group.ParentID); isNotFound(err) {
-				tombstone, found, tombstoneErr := e.syncTombstoneGet(ctx, *group.ParentID)
-				if tombstoneErr != nil {
-					return reject("无法检查父级删除标记：%v", tombstoneErr)
-				}
-				if !found || tombstone.Kind != KindGroup || tombstone.DeletedAt < group.UpdatedAt {
-					return reject("父级分组 %s 尚未同步，稍后重试", *group.ParentID)
-				}
-			} else if err != nil {
-				return reject("无法检查父级分组：%v", err)
-			}
+	if spec.validateApply != nil {
+		if warning := spec.validateApply(e, ctx, canonical); warning != "" {
+			return reject("%s", warning)
 		}
 	}
 	report := &SyncReport{}
@@ -229,41 +211,13 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 // canonicalApplyPayload strictly decodes the transport payload into the corresponding protocol struct and re-encodes it as canonical JSON:
 // identical byte decisions and equal-revision LWW hashes are based on the canonical payload, independent of the source device's encoding.
 func canonicalApplyPayload(object ApplyObject) ([]byte, error) {
-	var decoded any
-	switch object.Kind {
-	case KindGroup:
-		decoded = &groupObject{}
-	case KindAsset:
-		decoded = &assetObject{}
-	case KindCredential:
-		decoded = &credentialObject{}
-	case KindSnippet:
-		decoded = &snippetObject{}
-	case KindTombstone:
-		decoded = &tombstoneObject{}
-	case KindTranscript:
-		decoded = &transcriptObject{}
-	case KindKnownHost:
-		decoded = &knownHostObject{}
-	case KindAIProfile:
-		decoded = &aiProfileObject{}
-	case KindAIPermission:
-		decoded = &aiPermissionObject{}
-	case KindAIGrant:
-		switch {
-		case strings.HasPrefix(object.ID, aiGrantDevicePrefix):
-			decoded = &aiGrantDeviceObject{}
-		case strings.HasPrefix(object.ID, aiGrantRulePrefix):
-			decoded = &aiGrantRuleObject{}
-		case strings.HasPrefix(object.ID, aiGrantModePrefix):
-			decoded = &aiGrantModeObject{}
-		default:
-			return nil, ipc.NewError(ipc.CodeBadParam, "AI 授权对象 ID 不受支持")
-		}
-	case KindPreference:
-		decoded = &preferenceObject{}
-	default:
+	spec, ok := lookupKind(object.Kind)
+	if !ok {
 		return nil, ipc.NewError(ipc.CodeBadParam, "不支持的同步对象种类")
+	}
+	decoded, err := spec.newPayload(object.ID)
+	if err != nil {
+		return nil, err
 	}
 	if !json.Valid(object.Payload) {
 		return nil, ipc.NewError(ipc.CodeBadParam, "对象数据不是合法 JSON")
@@ -273,40 +227,13 @@ func canonicalApplyPayload(object ApplyObject) ([]byte, error) {
 	if err := decoder.Decode(decoded); err != nil {
 		return nil, ipc.WrapError(ipc.CodeBadParam, "对象数据与对象种类不匹配", err)
 	}
-	if object.Kind != KindTombstone && applyPayloadID(decoded) != object.ID {
-		return nil, ipc.NewError(ipc.CodeBadParam, "对象数据 ID 与对象 ID 不一致")
+	if spec.idInPayload {
+		identified, ok := decoded.(identifiedPayload)
+		if !ok || identified.payloadID() != object.ID {
+			return nil, ipc.NewError(ipc.CodeBadParam, "对象数据 ID 与对象 ID 不一致")
+		}
 	}
 	return marshalObject(decoded)
-}
-
-func applyPayloadID(decoded any) string {
-	switch payload := decoded.(type) {
-	case *groupObject:
-		return payload.ID
-	case *assetObject:
-		return payload.ID
-	case *credentialObject:
-		return payload.ID
-	case *snippetObject:
-		return payload.ID
-	case *transcriptObject:
-		return payload.ID
-	case *knownHostObject:
-		return payload.ID
-	case *aiProfileObject:
-		return payload.ID
-	case *aiPermissionObject:
-		return payload.ID
-	case *aiGrantDeviceObject:
-		return payload.ID
-	case *aiGrantRuleObject:
-		return payload.ID
-	case *aiGrantModeObject:
-		return payload.ID
-	case *preferenceObject:
-		return payload.ID
-	}
-	return ""
 }
 
 func firstUserID(ids []string) string {
@@ -318,29 +245,35 @@ func firstUserID(ids []string) string {
 
 // applyDecryptedObject applies one decrypted object by kind; pull-merge and browser plaintext application share the same apply semantics.
 func (e *Engine) applyDecryptedObject(ctx context.Context, objectID, kind string, plaintext []byte, report *SyncReport, userIDs ...string) (bool, bool) {
-	switch kind {
-	case KindGroup:
-		return e.applyGroupObject(ctx, plaintext, report)
-	case KindAsset:
-		return e.applyAssetObject(ctx, plaintext, report)
-	case KindCredential:
-		return e.applyCredentialObject(ctx, plaintext, report)
-	case KindSnippet:
-		return e.applySnippetObject(ctx, plaintext, report)
-	case KindTombstone:
-		return e.applyTombstoneObject(ctx, objectID, plaintext, report, userIDs...)
-	case KindTranscript:
-		return e.applyTranscriptObject(ctx, plaintext, report)
-	case KindKnownHost:
-		return e.applyKnownHostObject(ctx, plaintext, report)
-	case KindAIProfile:
-		return e.applyAIProfileObject(ctx, plaintext, report)
-	case KindAIPermission:
-		return e.applyAIPermissionObject(ctx, plaintext, report)
-	case KindAIGrant:
-		return e.applyAIGrantObject(ctx, objectID, plaintext, report)
-	case KindPreference:
-		return e.applyPreferenceObject(ctx, plaintext, report, firstUserID(userIDs))
+	spec, ok := lookupKind(kind)
+	if !ok {
+		return false, false
 	}
-	return false, false
+	return spec.apply(e, ctx, objectID, plaintext, report, firstUserID(userIDs))
+}
+
+// validateGroupApply rejects a browser-applied group whose parent is itself or has not synced yet.
+func (e *Engine) validateGroupApply(ctx context.Context, canonical []byte) string {
+	var group groupObject
+	if err := json.Unmarshal(canonical, &group); err != nil {
+		return err.Error()
+	}
+	if group.ParentID == nil || *group.ParentID == "" {
+		return ""
+	}
+	if *group.ParentID == group.ID {
+		return "分组不能将自身设为父级"
+	}
+	if _, err := e.store.GroupGet(ctx, *group.ParentID); isNotFound(err) {
+		tombstone, found, tombstoneErr := e.syncTombstoneGet(ctx, *group.ParentID)
+		if tombstoneErr != nil {
+			return fmt.Sprintf("无法检查父级删除标记：%v", tombstoneErr)
+		}
+		if !found || tombstone.Kind != KindGroup || tombstone.DeletedAt < group.UpdatedAt {
+			return fmt.Sprintf("父级分组 %s 尚未同步，稍后重试", *group.ParentID)
+		}
+	} else if err != nil {
+		return fmt.Sprintf("无法检查父级分组：%v", err)
+	}
+	return ""
 }

@@ -25,7 +25,8 @@ func (e *Engine) aiSharedAccess(ctx context.Context) bool {
 }
 
 func aiKindRequiresOwner(kind string) bool {
-	return kind == KindAIProfile || kind == KindAIPermission || kind == KindAIGrant
+	spec, ok := lookupKind(kind)
+	return ok && spec.aiOwner
 }
 
 func aiObjectRequiresOwner(object ApplyObject) bool {

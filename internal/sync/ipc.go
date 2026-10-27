@@ -85,27 +85,11 @@ func (s *Service) kindOptInGetLocked(ctx context.Context) (KindOptIn, error) {
 	if !ok {
 		return KindOptIn{}, nil
 	}
-	knownHost, err := s.store.KnownHostSyncOptIn(ctx, userID)
+	optIn, err := loadKindOptIn(ctx, s.store, userID)
 	if err != nil {
 		return KindOptIn{}, err
 	}
-	aiProfile, err := s.store.AIProfileSyncOptIn(ctx, userID)
-	if err != nil {
-		return KindOptIn{}, err
-	}
-	aiPermission, err := s.store.AIPermissionSyncOptIn(ctx, userID)
-	if err != nil {
-		return KindOptIn{}, err
-	}
-	aiGrant, err := s.store.AIGrantSyncOptIn(ctx, userID)
-	if err != nil {
-		return KindOptIn{}, err
-	}
-	preferences, err := s.store.PreferencesSyncOptIn(ctx, userID)
-	if err != nil {
-		return KindOptIn{}, err
-	}
-	return KindOptIn{KnownHost: knownHost, AIProfile: aiProfile, AIPermission: aiPermission, AIGrant: aiGrant, Preferences: preferences}, nil
+	return optIn.view(), nil
 }
 
 // KindOptInSet only writes the owning user's own opt-in; with no identity (anonymous and desktop engine not logged in) it is always forbidden, and client-reported userIDs are not accepted (cross-user writes cannot happen).
@@ -116,29 +100,11 @@ func (s *Service) KindOptInSet(ctx context.Context, patch KindOptInPatch) (KindO
 	if !ok {
 		return KindOptIn{}, ipc.NewError(ipc.CodeForbidden, "需要账号会话才能修改同步内容开关")
 	}
-	if patch.KnownHost != nil {
-		if err := s.store.SetKnownHostSyncOptIn(ctx, userID, *patch.KnownHost); err != nil {
-			return KindOptIn{}, err
-		}
-	}
-	if patch.AIProfile != nil {
-		if err := s.store.SetAIProfileSyncOptIn(ctx, userID, *patch.AIProfile); err != nil {
-			return KindOptIn{}, err
-		}
-	}
-	if patch.AIPermission != nil {
-		if err := s.store.SetAIPermissionSyncOptIn(ctx, userID, *patch.AIPermission); err != nil {
-			return KindOptIn{}, err
-		}
-	}
-	if patch.AIGrant != nil {
-		if err := s.store.SetAIGrantSyncOptIn(ctx, userID, *patch.AIGrant); err != nil {
-			return KindOptIn{}, err
-		}
-	}
-	if patch.Preferences != nil {
-		if err := s.store.SetPreferencesSyncOptIn(ctx, userID, *patch.Preferences); err != nil {
-			return KindOptIn{}, err
+	for _, spec := range optInSpecs {
+		if enabled := spec.patch(patch); enabled != nil {
+			if err := spec.set(s.store, ctx, userID, *enabled); err != nil {
+				return KindOptIn{}, err
+			}
 		}
 	}
 	return s.kindOptInGetLocked(ctx)
