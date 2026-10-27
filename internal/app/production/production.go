@@ -311,6 +311,14 @@ func productionModules(services ProductionServices) []Module {
 			Component:        ComponentFuncs{ShutdownFunc: logTails.Shutdown},
 		})
 	}
+	if services.Sessions != nil {
+		aggregate := newSessionAggregateService(services.Sessions, services.sshConnector, services.Events)
+		modules = append(modules, Module{
+			Name:             "session-aggregate",
+			RegisterCommands: aggregate.register,
+			Component:        ComponentFuncs{ShutdownFunc: aggregate.shutdown},
+		})
+	}
 	if services.fsUploads != nil {
 		modules = append(modules, Module{Name: "fs-chunk-uploads", Component: services.fsUploads})
 	}

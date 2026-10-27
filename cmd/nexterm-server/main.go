@@ -300,6 +300,22 @@ func run(args []string) int {
 				return digest, nil
 			},
 			Authorize: fleetService.AuthorizeDeviceTerminal,
+			// The cross-host session listing reaches the account's devices
+			// through the bridge, so a phone sees them with the desktop closed.
+			Devices: func(ctx context.Context, userID string) ([]production.AggregateDevice, error) {
+				devices, err := fleetService.TerminalDevices(ctx, userID)
+				if err != nil {
+					return nil, err
+				}
+				result := make([]production.AggregateDevice, 0, len(devices))
+				for _, device := range devices {
+					result = append(result, production.AggregateDevice{
+						ID: device.ID, Name: device.Name, Kind: device.Kind, Platform: device.Platform,
+						Online: device.Digest != "", Digest: device.Digest, TerminalEnabled: device.TerminalEnabled,
+					})
+				}
+				return result, nil
+			},
 		})
 	}
 	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())

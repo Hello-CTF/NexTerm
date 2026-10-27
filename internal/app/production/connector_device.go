@@ -40,6 +40,10 @@ type DeviceConnectorConfig struct {
 	// Platform resolves the agent's GOOS for the exec wrapper (windows selects PowerShell); nil means unknown
 	// and falls back to the POSIX default.
 	Platform func(ctx context.Context, deviceID string) (string, error)
+	// Devices lists the devices of userID that the cross-host session
+	// listing may ask through Dial, without opening a session; nil lists
+	// none. It must return only devices that account owns.
+	Devices func(ctx context.Context, userID string) ([]AggregateDevice, error)
 }
 
 // SetDeviceConnector injects the device session dialing surface; without it, device session connections report unsupported.

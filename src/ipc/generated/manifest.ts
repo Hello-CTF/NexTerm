@@ -2605,6 +2605,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "terminal_sessions_aggregate": {
+      scope: "attention",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionAggregateRequest", ts: "SessionAggregateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/session.AggregateList", ts: "AggregateList" },
+    },
     "terminal_set_visible": {
       nested: false,
       channel: false,
@@ -4184,6 +4192,10 @@ export interface IPCCommandTypeMap {
   "terminal_resume": {
     input: contractTypes.TerminalResumeRequest;
     output: unknown;
+  };
+  "terminal_sessions_aggregate": {
+    input: contractTypes.SessionAggregateRequest;
+    output: contractTypes.AggregateList;
   };
   "terminal_stream_ack": {
     input: contractTypes.TerminalStreamAckRequest;

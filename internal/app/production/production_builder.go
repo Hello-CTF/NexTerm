@@ -278,6 +278,24 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 				}
 				return "", ipc.NewError(ipc.CodeNotFound, "设备不存在或已吊销")
 			},
+			Devices: func(ctx context.Context, _ string) ([]AggregateDevice, error) {
+				// The linked account decides which devices this desktop sees;
+				// the server lists only that account's devices.
+				link, err := syncService.LinkGet(ctx)
+				if err != nil || !link.IsConfigured() {
+					return nil, err
+				}
+				listed, err := syncService.Remote().ListDevices(ctx)
+				if err != nil {
+					return nil, err
+				}
+				self := ""
+				if services.LocalHelperExposure != nil {
+					// This desktop's own local terminals are listed locally.
+					self = services.LocalHelperExposure.Status().DeviceID
+				}
+				return remoteAggregateDevices(listed.Devices, self), nil
+			},
 		})
 	}
 	retention, err := NewRetentionRunner(RetentionConfig{
