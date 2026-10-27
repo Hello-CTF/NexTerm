@@ -1135,7 +1135,8 @@ func awaitFrame(t *testing.T, conn net.Conn, kind frameType) []byte {
 		if got == kind {
 			return payload
 		}
-		if got != frameOutput {
+		// Output and attention-state frames are pushed asynchronously while attached.
+		if got != frameOutput && got != frameState {
 			t.Fatalf("await frame %d: got unexpected frame %d", kind, got)
 		}
 	}

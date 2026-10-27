@@ -144,7 +144,8 @@ func rawErrorCode(t *testing.T, conn net.Conn, want frameType) string {
 	t.Helper()
 	for {
 		kind, payload := readErrorFrame(t, conn)
-		if kind == frameOutput {
+		// Output and attention-state frames are pushed asynchronously while attached.
+		if kind == frameOutput || kind == frameState {
 			continue
 		}
 		if kind != want {
