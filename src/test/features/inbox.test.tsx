@@ -29,6 +29,7 @@ import {
   startInboxNotifications,
   stopInboxNotificationsForTest,
 } from "../../features/inbox/inboxNotifications";
+import { dismissInboxGuidance, resetInboxGuidanceForTest } from "../../features/inbox/firstRunGuidance";
 import { resetNotificationPrefsForTest, setNotificationPrefs } from "../../features/inbox/notificationPrefs";
 import { createBrowserNotifier, type SystemNotificationInput, type SystemNotifier } from "../../features/inbox/systemNotifications";
 import type { NotificationClickEvent } from "../../ipc/events";
@@ -94,6 +95,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
   resetNotificationPrefsForTest();
+  // The first-run guidance opens the list on its own; these tests exercise the list itself.
+  resetInboxGuidanceForTest();
+  dismissInboxGuidance();
   resetAwarenessStore();
   seed();
   focused = true;

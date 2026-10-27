@@ -4,6 +4,8 @@ import { wailsNoDragRegionStyle } from "../../app/platform";
 import { TabAttentionBadge } from "../../app/workspace/tabStrip";
 import { describeError } from "../../ui/errorText";
 import { IconBell, IconCheck } from "../../ui/icons";
+import { InboxGuidance } from "./InboxGuidance";
+import { isInboxGuidanceDismissed, useInboxGuidanceDismissed } from "./firstRunGuidance";
 import { markInboxEntrySeen, openInboxTab, useInboxEntries, type InboxEntry } from "./inbox";
 
 function sinceLabel(since: string | undefined, now: number): string {
@@ -74,7 +76,16 @@ export function InboxButton() {
   const bellRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const count = entries.length;
+  const guidanceDismissed = useInboxGuidanceDismissed();
+  const guidanceOpened = useRef(false);
   const needsMe = entries.some((entry) => entry.awareness.state === "needs_me");
+
+  // The first time the bell gets a count on a device, open the list once so the guidance is seen.
+  useEffect(() => {
+    if (count === 0 || guidanceOpened.current || isInboxGuidanceDismissed()) return;
+    guidanceOpened.current = true;
+    setOpen(true);
+  }, [count]);
 
   // While the list is open, focus starts in it and the "minutes ago" labels keep up.
   useEffect(() => {
@@ -137,6 +148,7 @@ export function InboxButton() {
           tabIndex={-1}
           className="nx-inbox-panel fixed inset-x-2 top-[calc(var(--nx-inset-top,0px)+42px)] z-50 max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1.5 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-[30px] sm:w-[360px]"
         >
+          {!guidanceDismissed && <InboxGuidance onNavigate={() => setOpen(false)} />}
           <div className="px-2 pb-1 pt-0.5 text-[11.5px] font-semibold text-neutral-400">需要关注的会话</div>
           {count === 0 ? (
             <p className="px-2 py-3 text-[12px] text-neutral-500">没有需要你处理或刚结束的会话。</p>
