@@ -349,6 +349,64 @@ describe("multi-line paste prompt", () => {
     expect(getTerminalPrefs().confirmMultilinePaste).toBe("never");
   });
 
+  it("keeps the choice on the device when the desktop has no sync account, including across a re-registration", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    const deviceOnly: AccountPreferenceStore = {
+      getView: async () => ({ defaults: {}, overrides: {}, deviceOnly: true }),
+      putOverrides: put,
+      deleteOverrides: async () => undefined,
+    };
+    registerAccountPreferenceStore(deviceOnly);
+    await flush();
+    setTerminalConfirmMultilinePaste("never");
+    await flush();
+    expect(put).not.toHaveBeenCalled();
+    expect(localStorage.getItem("nexterm.terminalClose.v1")).toContain('"confirmMultilinePaste":"never"');
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("never");
+
+    // Waking re-registers the store; while its view loads, the device value still applies.
+    let resolveView: (() => void) | undefined;
+    registerAccountPreferenceStore({
+      ...deviceOnly,
+      getView: () => new Promise((resolve) => {
+        resolveView = () => resolve({ defaults: {}, overrides: {}, deviceOnly: true });
+      }),
+    });
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("never");
+    const quiet = await paste("a\nb", "t1");
+    expect(quiet.prompted).toBe(false);
+    await expect(quiet.result).resolves.toBe(true);
+
+    // A choice made before the view loads lands on the device once it turns out to have no account.
+    setTerminalConfirmMultilinePaste("always");
+    resolveView?.();
+    await flush();
+    expect(put).not.toHaveBeenCalled();
+    expect(localStorage.getItem("nexterm.terminalClose.v1")).toContain('"confirmMultilinePaste":"always"');
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("always");
+  });
+
+  it("holds a choice made while the account view loads until it can go to the account", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    let resolveView: (() => void) | undefined;
+    registerAccountPreferenceStore({
+      getView: () => new Promise((resolve) => {
+        resolveView = () => resolve({ defaults: {}, overrides: {} });
+      }),
+      putOverrides: put,
+      deleteOverrides: async () => undefined,
+    });
+    setTerminalConfirmMultilinePaste("never");
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("never");
+    expect(put).not.toHaveBeenCalled();
+
+    resolveView?.();
+    await flush();
+    expect(put).toHaveBeenCalledWith({ [KEY]: "never" });
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("never");
+    expect(localStorage.getItem("nexterm.terminalClose.v1") ?? "").not.toContain("confirmMultilinePaste");
+  });
+
   it("honours the preference synced from another device", async () => {
     registerAccountPreferenceStore(memoryStore({ [KEY]: "never" }));
     await vi.waitFor(() => expect(getTerminalPrefs().confirmMultilinePaste).toBe("never"));
