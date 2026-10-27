@@ -25,3 +25,35 @@ func (s *Session) activityLocked() *SessionActivity {
 	}
 	return activity
 }
+
+// StateName is the session's attention state without its events; empty
+// when state detection is disabled.
+func (a *Attachment) StateName() string {
+	s := a.session
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.state != nil {
+		return s.state.name()
+	}
+	if state := s.stateInfoLocked(false, 0); state != nil {
+		return state.State
+	}
+	return ""
+}
+
+func (t *stateTracker) name() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.state
+}
+
+// StateName is the latest attention state the helper pushed, without the
+// events SessionState copies; empty when the helper reports none.
+func (s *Stream) StateName() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		return ""
+	}
+	return s.state.State
+}

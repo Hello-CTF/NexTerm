@@ -1,7 +1,6 @@
 package session
 
 import (
-	"math"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -36,22 +35,12 @@ func unixMilliOrZero(at time.Time) int64 {
 }
 
 // durableAttentionState reads the helper's attention state from a durable
-// attachment: a remote stream reports the latest pushed state and an
-// in-process attachment reads it directly. It is empty for a regular tab
-// and when the helper reports no state.
+// attachment (a remote stream or an in-process attachment) without copying
+// its events. It is empty for a regular tab and when the helper reports no
+// state.
 func durableAttentionState(attachment base.DurableAttachment) string {
-	var state *base.SessionState
-	switch source := attachment.(type) {
-	case interface{ SessionState() *base.SessionState }:
-		state = source.SessionState()
-	case interface {
-		SessionState(after uint64) *base.SessionState
-	}:
-		// The newest possible sequence leaves out the retained events.
-		state = source.SessionState(math.MaxUint64)
+	if source, ok := attachment.(interface{ StateName() string }); ok {
+		return source.StateName()
 	}
-	if state == nil {
-		return ""
-	}
-	return state.State
+	return ""
 }

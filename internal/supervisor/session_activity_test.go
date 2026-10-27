@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func sessionInfoByID(t *testing.T, infos []Info, id string) Info {
@@ -69,6 +71,12 @@ func TestListReportsSessionActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	attached := sessionInfoByID(t, mustList(t, client), session.ID())
+	// The state may move on between the two reads; it must name a state.
+	switch name := first.StateName(); name {
+	case base.SessionRunning, base.SessionNeedsMe, base.SessionJustFinished, base.SessionIdle:
+	default:
+		t.Fatalf("attachment state name %q", name)
+	}
 	if attached.Activity == nil || !attached.Activity.Attached || attached.Activity.DetachedAt != nil {
 		t.Fatalf("an attached session reports %+v", attached.Activity)
 	}

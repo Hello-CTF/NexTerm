@@ -101,39 +101,21 @@ func TestListTabsRecordsDetachTimeWhenTheLastClientDetaches(t *testing.T) {
 	}
 }
 
-type pushedStateAttachment struct {
+type namedStateAttachment struct {
 	base.DurableAttachment
-	state *base.SessionState
+	state string
 }
 
-func (a pushedStateAttachment) SessionState() *base.SessionState { return a.state }
-
-type readStateAttachment struct {
-	base.DurableAttachment
-	state *base.SessionState
-	after uint64
-}
-
-func (a *readStateAttachment) SessionState(after uint64) *base.SessionState {
-	a.after = after
-	return a.state
-}
+func (a namedStateAttachment) StateName() string { return a.state }
 
 func TestDurableAttentionState(t *testing.T) {
 	if got := durableAttentionState(nil); got != "" {
 		t.Fatalf("a regular tab reports state %q", got)
 	}
-	if got := durableAttentionState(pushedStateAttachment{}); got != "" {
+	if got := durableAttentionState(namedStateAttachment{}); got != "" {
 		t.Fatalf("a helper without state detection reports %q", got)
 	}
-	if got := durableAttentionState(pushedStateAttachment{state: &base.SessionState{State: base.SessionNeedsMe}}); got != base.SessionNeedsMe {
-		t.Fatalf("pushed state = %q", got)
-	}
-	read := &readStateAttachment{state: &base.SessionState{State: base.SessionJustFinished}}
-	if got := durableAttentionState(read); got != base.SessionJustFinished {
-		t.Fatalf("read state = %q", got)
-	}
-	if read.after != ^uint64(0) {
-		t.Fatalf("in-process read asked for events after %d, want none", read.after)
+	if got := durableAttentionState(namedStateAttachment{state: base.SessionNeedsMe}); got != base.SessionNeedsMe {
+		t.Fatalf("state = %q", got)
 	}
 }
