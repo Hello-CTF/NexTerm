@@ -113,11 +113,38 @@ describe("session liveness", () => {
     const first = probeForegroundSessions();
     const second = probeForegroundSessions();
     expect(second).toBe(first);
-    release();
-    await first;
     expect(mocks.probeLiveness).toHaveBeenCalledTimes(1);
     mocks.probeLiveness.mockResolvedValue(undefined);
+    release();
+    await first;
+    // The joined trigger re-runs once after the round; the next idle trigger starts a fresh round.
+    expect(mocks.probeLiveness).toHaveBeenCalledTimes(2);
     await probeForegroundSessions();
+    expect(mocks.probeLiveness).toHaveBeenCalledTimes(3);
+  });
+
+  it("runs one trailing round for triggers that arrive while a round is in flight", async () => {
+    useUi.setState({
+      sessions: [session("s1", "connected"), session("s2", "connected")],
+      workspaces: [workspace("w1", "s1", [])],
+      activeWorkspaceId: "w1",
+    });
+    const releases: Array<() => void> = [];
+    mocks.probeLiveness.mockImplementation(() => new Promise<void>((resolve) => {
+      releases.push(resolve);
+    }));
+    const first = probeForegroundSessions();
+    expect(mocks.probeLiveness.mock.calls.map(([id]) => String(id))).toEqual(["s1"]);
+    // The visible set changes mid-round, then several triggers pile up.
+    useUi.setState({ workspaces: [workspace("w1", "s2", [])] });
+    void probeForegroundSessions();
+    void probeForegroundSessions();
+    void probeForegroundSessions();
+    releases.shift()?.();
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    expect(mocks.probeLiveness.mock.calls.map(([id]) => String(id))).toEqual(["s1", "s2"]);
+    releases.shift()?.();
+    await first;
     expect(mocks.probeLiveness).toHaveBeenCalledTimes(2);
   });
 });

@@ -141,8 +141,10 @@ export {
   SESSION_RECONNECT_WAIT_MS,
 } from "./store/reconnect";
 export {
+  confirmSuspectReconnect,
   reconnectLiveSession,
   reconnectWorkspaceConnection,
+  workspaceHasOrdinaryTerminals,
   workspaceConnectionState,
   workspaceNeedsReconnect,
   type LiveSessionReconnect,

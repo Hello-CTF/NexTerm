@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import {
+  confirmSuspectReconnect,
+  isSessionSuspect,
   reconnectWorkspaceConnection,
   useSessionById,
   useUi,
@@ -8,6 +10,7 @@ import {
   type SessionRuntimeInfo,
   type Workspace,
 } from "../store";
+import { sessionApi } from "../../ipc/commands";
 import { IconRefresh } from "../../ui/icons";
 
 function retryDeadline(session: Pick<SessionRuntimeInfo, "nextRetryAt"> | undefined): number | null {
@@ -45,6 +48,7 @@ export function WorkspaceConnectionBar({
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const reconnecting = state === "reconnecting";
+  const suspect = isSessionSuspect(session?.status, session?.liveness);
   useEffect(() => {
     if (!reconnecting) return;
     setNow(Date.now());
@@ -53,7 +57,7 @@ export function WorkspaceConnectionBar({
   }, [reconnecting]);
 
   if (!ws || ws.deletedTarget) return null;
-  if (state !== "disconnected" && state !== "failed" && state !== "reconnecting") return null;
+  if (state !== "disconnected" && state !== "failed" && state !== "reconnecting" && !suspect) return null;
   if (activeTab?.kind === "terminal" && activeTab.dead === true) return null;
 
   const reason = session?.error?.trim();
@@ -61,12 +65,17 @@ export function WorkspaceConnectionBar({
     if (busy) return;
     setBusy(true);
     try {
+      // A suspect link may still be alive, so dropping ordinary terminals needs the user's consent.
+      if (suspect && !(await confirmSuspectReconnect(ws.id))) return;
       await reconnectWorkspaceConnection(ws.id);
     } finally {
       setBusy(false);
     }
   };
-  const dot = reconnecting ? "bg-[var(--nx-fg-tertiary)] animate-pulse" : "bg-red-500";
+  const retryNow = () => {
+    if (ws.sessionId) void sessionApi.probeLiveness(ws.sessionId).catch(() => undefined);
+  };
+  const dot = reconnecting || suspect ? "bg-[var(--nx-fg-tertiary)] animate-pulse" : "bg-red-500";
   return (
     <div
       role="status"
@@ -78,6 +87,8 @@ export function WorkspaceConnectionBar({
       <span className="min-w-[min(12rem,70%)] flex-1 break-words">
         {reconnecting ? (
           reconnectingText(session, now)
+        ) : suspect ? (
+          "连接不稳定"
         ) : (
           <>
             与 {ws.title} 的连接已断开
@@ -85,6 +96,16 @@ export function WorkspaceConnectionBar({
           </>
         )}
       </span>
+      {reconnecting && (
+        <button
+          type="button"
+          className="nx-btn nx-btn-primary nx-btn-sm shrink-0 pointer-coarse:min-h-11 pointer-coarse:px-4"
+          onClick={retryNow}
+        >
+          <IconRefresh size={13} />
+          立即重试
+        </button>
+      )}
       {!reconnecting && (
         <button
           type="button"
@@ -93,7 +114,7 @@ export function WorkspaceConnectionBar({
           onClick={() => void reconnect()}
         >
           <IconRefresh size={13} className={busy ? "animate-spin" : undefined} />
-          重新连接
+          {suspect ? "立即重连" : "重新连接"}
         </button>
       )}
     </div>

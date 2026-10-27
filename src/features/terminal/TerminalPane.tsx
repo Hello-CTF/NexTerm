@@ -49,7 +49,7 @@ import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } f
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectLiveSession, reconnectDeadHost, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
+import { openTerminalTab, takePendingDirectory, sessionStatusText, isSessionSuspect, confirmSuspectReconnect, connectProgressText, reconnectLiveSession, reconnectDeadHost, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -457,7 +457,8 @@ export function TerminalPane({
     sessionStatus === "connecting" || sessionStatus === "reconnecting";
   const canReconnect =
     sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined ||
-    (staleConfig && sessionStatus === "connected");
+    (staleConfig && sessionStatus === "connected") ||
+    isSessionSuspect(sessionStatus, sessionLiveness);
   const canDisconnect =
     sessionStatus === "connected" ||
     sessionStatus === "connecting" ||
@@ -1121,6 +1122,7 @@ export function TerminalPane({
       item.panes.some((pane) => pane.tabs.some((tab) => tab.id === storeTabId)),
     );
     try {
+      if (isSessionSuspect(sessionStatus, sessionLiveness) && !(await confirmSuspectReconnect(workspace?.id))) return;
       const result = await reconnectLiveSession(sessionId, workspace?.id);
       if (result.kind === "missing") {
         pushToast("error", "会话已在服务端删除，请改用「重新连接这台主机」新建连接");

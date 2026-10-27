@@ -4,7 +4,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { click, clickButton, flush, mount, mountWithClient, type MountedView } from "./reactTestUtils";
 
-const mocks = vi.hoisted(() => ({ reconnect: vi.fn(async (_id: string) => true) }));
+const mocks = vi.hoisted(() => ({
+  reconnect: vi.fn(async (_id: string) => true),
+  probe: vi.fn(async (_id: string) => undefined),
+  confirm: vi.fn(async (_message: string) => true),
+}));
+
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../ipc/commands")>();
+  return { ...original, sessionApi: { ...original.sessionApi, probeLiveness: mocks.probe } };
+});
+
+vi.mock("../../ui/dialogs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../ui/dialogs")>();
+  return { ...original, confirmDialog: mocks.confirm };
+});
 
 vi.mock("../../app/store/workspaceReconnect", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../app/store/workspaceReconnect")>();
@@ -48,6 +62,9 @@ const bar = () => mounted?.container.querySelector('[data-testid="workspace-conn
 beforeEach(() => {
   document.body.replaceChildren();
   mocks.reconnect.mockClear();
+  mocks.probe.mockClear();
+  mocks.confirm.mockReset();
+  mocks.confirm.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -82,11 +99,72 @@ describe("WorkspaceConnectionBar", () => {
     expect(mocks.reconnect).toHaveBeenCalledWith("ws1");
   });
 
-  it("shows the attempt count and retry countdown while reconnecting, without a reconnect button", () => {
+  it("shows the attempt count and retry countdown while reconnecting, with only a retry-now button", () => {
     useUi.setState({ sessions: [session("reconnecting", { attempt: 3, nextRetryAt: Date.now() + 30_000 })] });
     renderBar(workspace([filesTab]), filesTab);
     expect(bar()?.textContent).toMatch(/正在重新连接（第 3 次，\d+ 秒后重试）/);
-    expect(mounted!.container.querySelector("button")).toBeNull();
+    const buttons = [...mounted!.container.querySelectorAll("button")].map((b) => b.textContent?.trim());
+    expect(buttons).toEqual(["立即重试"]);
+  });
+
+  it("立即重试 probes the session liveness to cut the backoff short", async () => {
+    useUi.setState({ sessions: [session("reconnecting", { attempt: 2, nextRetryAt: Date.now() + 30_000 })] });
+    renderBar(workspace([]), null);
+    clickButton(mounted!.container, "立即重试");
+    await flush();
+    expect(mocks.probe).toHaveBeenCalledWith("s1");
+    expect(mocks.reconnect).not.toHaveBeenCalled();
+  });
+
+  describe("suspect connection", () => {
+    const durableTerm = { ...termTab, id: "t-durable", durable: true } as AppTab;
+    const ordinaryTerm = { ...termTab, id: "t-ordinary", durable: false } as AppTab;
+    const suspectSession = () => session("connected", { liveness: "suspect" });
+
+    function setup(tabs: AppTab[]) {
+      const ws = workspace(tabs);
+      useUi.setState({ sessions: [suspectSession()], workspaces: [ws] });
+      renderBar(ws, tabs[0] ?? null);
+    }
+
+    it("shows 连接不稳定 with 立即重连 while connected but suspect", () => {
+      setup([filesTab]);
+      expect(bar()?.textContent).toContain("连接不稳定");
+      expect(bar()?.getAttribute("data-state")).toBe("connected");
+      const buttons = [...mounted!.container.querySelectorAll("button")].map((b) => b.textContent?.trim());
+      expect(buttons).toEqual(["立即重连"]);
+    });
+
+    it("stays hidden for a connected session whose liveness is alive", () => {
+      useUi.setState({ sessions: [session("connected", { liveness: "alive" })] });
+      renderBar(workspace([filesTab]), filesTab);
+      expect(bar()).toBeNull();
+    });
+
+    it("reconnects without a confirm when the workspace has no ordinary terminals", async () => {
+      setup([filesTab, durableTerm]);
+      clickButton(mounted!.container, "立即重连");
+      await flush();
+      expect(mocks.confirm).not.toHaveBeenCalled();
+      expect(mocks.reconnect).toHaveBeenCalledWith("ws1");
+    });
+
+    it("warns before reconnecting when an ordinary terminal would be dropped", async () => {
+      setup([durableTerm, ordinaryTerm]);
+      clickButton(mounted!.container, "立即重连");
+      await flush();
+      expect(mocks.confirm).toHaveBeenCalledWith("普通终端会断开，正在运行的程序会结束");
+      expect(mocks.reconnect).toHaveBeenCalledWith("ws1");
+    });
+
+    it("does not reconnect when the warning is declined", async () => {
+      mocks.confirm.mockResolvedValue(false);
+      setup([ordinaryTerm]);
+      clickButton(mounted!.container, "立即重连");
+      await flush();
+      expect(mocks.confirm).toHaveBeenCalledTimes(1);
+      expect(mocks.reconnect).not.toHaveBeenCalled();
+    });
   });
 
   it("does not stack on a terminal pane that shows its own dead-session overlay", () => {
