@@ -106,6 +106,9 @@ type Config struct {
 	Logger     *slog.Logger
 	// OnChange is called after every status change, outside any lock.
 	OnChange func(Status)
+	// StateRules, when set, are pushed to the helper when it becomes ready
+	// and after every hello that finds another revision.
+	StateRules supervisor.StateRuleSource
 
 	// QuickExit is how soon after becoming ready an exit counts as a crash.
 	QuickExit time.Duration
@@ -270,6 +273,23 @@ func (s *Service) Status() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.status
+}
+
+// stateRulesSyncTimeout bounds one state rule push to the local helper.
+const stateRulesSyncTimeout = 5 * time.Second
+
+// SyncStateRules pushes the current state rules to the running helper now.
+// Without a ready helper it does nothing: the rules are pushed when one
+// becomes ready.
+func (s *Service) SyncStateRules(ctx context.Context) error {
+	s.mu.Lock()
+	provider := s.provider
+	ready := s.status.State == StateReady
+	s.mu.Unlock()
+	if !ready || provider == nil {
+		return nil
+	}
+	return provider.SyncStateRules(ctx)
 }
 
 // Provider returns the durable provider of a ready helper, or an
@@ -830,11 +850,21 @@ func (s *Service) pause(attempt int) bool {
 // which also keeps the session count of a helper from another build current.
 func (s *Service) watch(helper helperHandle) watchOutcome {
 	provider := supervisor.NewRemoteProvider(helper.Client())
+	if s.config.StateRules != nil {
+		provider = provider.WithStateRules(s.config.StateRules)
+	}
 	running, err := s.config.inspect(s.ctx, s.config.StateDir)
 	inspected := err == nil && running.Current()
 	status := s.readyStatus(helper, running, inspected && !helper.Spawned())
 	s.setStatus(status, provider)
 	s.markChecked()
+	if s.config.StateRules != nil {
+		// The outcome reaches the rule source; a helper that cannot take
+		// the rules now gets them with the next connection.
+		ctx, cancel := context.WithTimeout(s.ctx, stateRulesSyncTimeout)
+		_ = provider.SyncStateRules(ctx)
+		cancel()
+	}
 	exited := helper.Exited()
 	ticker := time.NewTicker(s.config.PollInterval)
 	defer ticker.Stop()

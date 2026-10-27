@@ -11,6 +11,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 )
 
 // localHelperStatusDTO is the local helper state shown in settings and used to
@@ -85,7 +86,7 @@ func localHelperStatus(status localhelper.Status) localHelperStatusDTO {
 // single-account server, or nil when local terminals stay in-process: on
 // mobile, when not requested, and on a multi-account server, where one helper
 // would be shared by every account.
-func newProductionLocalHelper(config ProductionConfig, singleAccount bool, logger *slog.Logger, events ipc.Emitter) *localhelper.Service {
+func newProductionLocalHelper(config ProductionConfig, singleAccount bool, logger *slog.Logger, events ipc.Emitter, rules supervisor.StateRuleSource) *localhelper.Service {
 	if !config.LocalHelper || !singleAccount || !localhelper.Supported {
 		return nil
 	}
@@ -106,6 +107,7 @@ func newProductionLocalHelper(config ProductionConfig, singleAccount bool, logge
 		StateDir:   filepath.Join(config.DataDir, "durable", "supervisor"),
 		Executable: executable,
 		Logger:     logger,
+		StateRules: rules,
 		OnChange: func(status localhelper.Status) {
 			if status.State == localhelper.StateFailed || status.State == localhelper.StateOutdated {
 				logger.Warn("local helper needs attention", "state", status.State, "reason", status.Reason)

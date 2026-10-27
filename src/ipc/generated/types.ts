@@ -2458,6 +2458,69 @@ export type StartRequest = {
   maxConcurrent?: number;
 };
 
+export type StateRuleDTO = {
+  id: string;
+  name: string;
+  scope: string;
+  assetId?: string;
+  region: string;
+  lines?: number;
+  pattern: string;
+  state: string;
+  keys?: string;
+  enabled: boolean;
+  createdAt?: number;
+  updatedAt: number;
+};
+
+export type StateRuleDeleteRequest = {
+  id: string;
+};
+
+export type StateRuleDeleteResult = {
+  id: string;
+};
+
+export type StateRuleExportDTO = {
+  format: string;
+  version: number;
+  rules: StateRuleDTO[];
+};
+
+export type StateRuleHelperStatusDTO = {
+  assetId: string;
+  status: string;
+  revision?: string;
+  error?: string;
+  skipped?: string[];
+  at?: number;
+};
+
+export type StateRuleImportRequest = {
+  format: string;
+  version: number;
+  rules: StateRuleDTO[];
+};
+
+export type StateRuleImportResultDTO = {
+  created: number;
+  updated: number;
+  unchanged: number;
+};
+
+export type StateRuleSaveRequest = {
+  id?: string;
+  name: string;
+  scope: string;
+  assetId?: string;
+  region: string;
+  lines?: number;
+  pattern: string;
+  state: string;
+  keys?: string;
+  enabled: boolean;
+};
+
 export type Status = {
   configured: boolean;
   loggedIn: boolean;

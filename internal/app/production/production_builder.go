@@ -167,7 +167,11 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	} else {
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}
-	localHelper := newProductionLocalHelper(config, config.Desktop || owner.OpenAccess(ctx), config.Config.Logger, config.Config.Events)
+	stateRules := newStateRulesRuntime(database, config.Config.Logger)
+	localHelper := newProductionLocalHelper(config, config.Desktop || owner.OpenAccess(ctx), config.Config.Logger, config.Config.Events, stateRules.localSource())
+	if localHelper != nil {
+		stateRules.bindLocal(localHelper.SyncStateRules)
+	}
 	var localDurable session.LocalDurableSource
 	var localTerminalMode func(context.Context) (string, error)
 	if localHelper != nil {
@@ -177,7 +181,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		localTerminalMode = newProductionLocalTerminalMode(database)
 	}
 	helperService := &productionHelperService{ssh: sshResolver}
-	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events, helpers: helperService}
+	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events, helpers: helperService, rules: stateRules}
 	sessionManager = session.NewManager(session.Config{
 		Connector:            connector,
 		Terminals:            config.Terminals,
@@ -342,6 +346,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	fsUploads.resumeStaging = forwardRuntime.ResumeUploadStaging
 	services = ProductionServices{
 		LocalHelper: localHelper,
+		stateRules:  stateRules,
 		Store:       database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
 		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
 		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {

@@ -2057,6 +2057,54 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sshImportPreviewRequest", ts: "SshImportPreviewRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sshImportPreviewDTO", ts: "SshImportPreviewDTO" },
     },
+    "state_rule_delete": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDeleteRequest", ts: "StateRuleDeleteRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDeleteResult", ts: "StateRuleDeleteResult" },
+    },
+    "state_rule_export": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleExportDTO", ts: "StateRuleExportDTO" },
+    },
+    "state_rule_import": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleImportRequest", ts: "StateRuleImportRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleImportResultDTO", ts: "StateRuleImportResultDTO" },
+    },
+    "state_rule_list": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDTO", ts: "StateRuleDTO[]" },
+    },
+    "state_rule_save": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleSaveRequest", ts: "StateRuleSaveRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDTO", ts: "StateRuleDTO" },
+    },
+    "state_rule_status": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleHelperStatusDTO", ts: "StateRuleHelperStatusDTO[]" },
+    },
     "sync_apply_objects": {
       scope: "sync",
       nested: true,
@@ -3820,6 +3868,30 @@ export interface IPCCommandTypeMap {
   "ssh_import_preview": {
     input: contractTypes.SshImportPreviewRequest;
     output: contractTypes.SshImportPreviewDTO;
+  };
+  "state_rule_delete": {
+    input: contractTypes.StateRuleDeleteRequest;
+    output: contractTypes.StateRuleDeleteResult;
+  };
+  "state_rule_export": {
+    input: Record<string, never>;
+    output: contractTypes.StateRuleExportDTO;
+  };
+  "state_rule_import": {
+    input: contractTypes.StateRuleImportRequest;
+    output: contractTypes.StateRuleImportResultDTO;
+  };
+  "state_rule_list": {
+    input: Record<string, never>;
+    output: contractTypes.StateRuleDTO[];
+  };
+  "state_rule_save": {
+    input: contractTypes.StateRuleSaveRequest;
+    output: contractTypes.StateRuleDTO;
+  };
+  "state_rule_status": {
+    input: Record<string, never>;
+    output: contractTypes.StateRuleHelperStatusDTO[];
   };
   "sync_apply_objects": {
     input: contractTypes.ApplyObjectsRequest;
