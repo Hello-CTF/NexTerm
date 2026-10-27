@@ -114,6 +114,9 @@ type helperOperationRequest struct {
 	OperationID     string `json:"operationId,omitempty"`
 	Action          string `json:"action"`
 	InterruptActive bool   `json:"interruptActive,omitempty"`
+	// ConsentToken is the consentToken of the legacy helper the user agreed
+	// to end, for the replace_legacy action.
+	ConsentToken string `json:"consentToken,omitempty"`
 }
 
 // durableReadinessDTO reports whether a new terminal can be durable now: ready, preparing, unavailable (with a
@@ -1101,11 +1104,14 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						SessionID: input.SessionID, OperationID: input.OperationID, Action: action, Accepted: true,
 						Local: helperVersionDTO{Known: false}, Running: helperVersionDTO{Known: false}, Compatibility: "unknown",
 					}, nil
-				case "status", "update", "update_interrupt":
+				case "status", "update", "update_interrupt", "replace_legacy":
 					if s.helpers == nil {
 						return helperOperationDTO{}, terminalIPCError(session.ErrUnsupported)
 					}
-					result, err := s.helpers.ensure(ctx, input.SessionID, action)
+					if action == "replace_legacy" && input.ConsentToken == "" {
+						return helperOperationDTO{}, ipc.BadParam(errors.New("缺少升级确认"))
+					}
+					result, err := s.helpers.ensure(ctx, input.SessionID, action, input.ConsentToken)
 					if err != nil {
 						if result.Update != nil && result.Update.RolledBack {
 							return result, ipc.NormalizeError(err).WithDetail(result)

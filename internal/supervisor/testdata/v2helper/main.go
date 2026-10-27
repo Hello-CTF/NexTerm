@@ -11,7 +11,9 @@
 //
 // Flags beyond the released ones select older or misbehaving helpers:
 // --no-activity answers like a protocol 2 helper from before the activity
-// feature, --ignore-term keeps running after SIGTERM so only SIGKILL ends it.
+// feature, --ignore-term keeps running after SIGTERM so only SIGKILL ends it,
+// and --session <shell command> starts a PTY session as if a client had
+// created it (repeatable).
 package main
 
 import (
@@ -152,6 +154,7 @@ func main() {
 		os.Exit(2)
 	}
 	var stateDir string
+	var sessions []string
 	activity, ignoreTerm := true, false
 	for index := 2; index < len(os.Args); index++ {
 		switch os.Args[index] {
@@ -167,15 +170,20 @@ func main() {
 			activity = false
 		case "--ignore-term":
 			ignoreTerm = true
+		case "--session":
+			index++
+			if index < len(os.Args) {
+				sessions = append(sessions, os.Args[index])
+			}
 		}
 	}
-	if err := run(stateDir, activity, ignoreTerm); err != nil {
+	if err := run(stateDir, activity, ignoreTerm, sessions); err != nil {
 		fmt.Fprintln(os.Stderr, "supervisor-helper:", err)
 		os.Exit(1)
 	}
 }
 
-func run(stateDir string, activity, ignoreTerm bool) error {
+func run(stateDir string, activity, ignoreTerm bool, sessions []string) error {
 	stateDir, err := filepath.Abs(stateDir)
 	if err != nil {
 		return err
@@ -205,6 +213,11 @@ func run(stateDir string, activity, ignoreTerm bool) error {
 	listener, err := net.Listen("unix", endpoint)
 	if err != nil {
 		return err
+	}
+	for _, command := range sessions {
+		if _, err := h.create(createMsg{ID: newID(), Command: []string{"/bin/sh", "-c", command}, Cols: 80, Rows: 24}, false); err != nil {
+			return err
+		}
 	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)

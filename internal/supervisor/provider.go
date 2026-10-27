@@ -323,6 +323,18 @@ type RemoteProvider struct {
 	createAttach func(context.Context, *Client, CreateOptions) (Info, *Stream, error)
 }
 
+// ReplaceLegacyHelper asks the helper's host to end the older helper the
+// consent token names; see Client.ReplaceLegacyHelper.
+func (p *RemoteProvider) ReplaceLegacyHelper(ctx context.Context, token string) error {
+	return p.client.ReplaceLegacyHelper(ctx, token)
+}
+
+// HelperStatus reads the serving helper's runtime metadata; an older helper
+// that owns the state directory is reported as a *LegacyHelperError.
+func (p *RemoteProvider) HelperStatus(ctx context.Context) (RuntimeMetadata, bool, error) {
+	return p.client.RuntimeMetadata(ctx)
+}
+
 func NewRemoteProvider(client *Client) *RemoteProvider {
 	if client == nil {
 		return nil

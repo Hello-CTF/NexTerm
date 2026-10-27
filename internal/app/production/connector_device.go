@@ -157,6 +157,10 @@ type helperUpdateDTO struct {
 	Updated     bool   `json:"updated"`
 	Interrupted bool   `json:"interrupted"`
 	RolledBack  bool   `json:"rolledBack"`
+	// ReplacedLegacy reports that an older-protocol helper was ended with the
+	// user's consent, with the EndedSessions they agreed to end.
+	ReplacedLegacy bool `json:"replacedLegacy,omitempty"`
+	EndedSessions  int  `json:"endedSessions,omitempty"`
 }
 
 type helperOfflineDTO struct {
@@ -177,6 +181,9 @@ type helperOperationDTO struct {
 	Compatibility string            `json:"compatibility"`
 	Update        *helperUpdateDTO  `json:"update,omitempty"`
 	Offline       *helperOfflineDTO `json:"offline,omitempty"`
+	// Legacy is an older-protocol helper that still owns the host's helper
+	// state: what ending it would end, and the token to approve that.
+	Legacy *session.LegacyHelperDetail `json:"legacy,omitempty"`
 }
 
 type trustedOfflineHelper struct {
@@ -269,8 +276,11 @@ func helperDTOFromDaemon(sessionID, action string, daemon *sshdaemon.Daemon) hel
 	update := &helperUpdateDTO{
 		Status: "unknown", Updated: daemon.Update.Updated,
 		Interrupted: daemon.Update.Interrupted, RolledBack: daemon.Update.RolledBack,
+		ReplacedLegacy: daemon.Update.ReplacedLegacy, EndedSessions: daemon.Update.EndedSessions,
 	}
 	switch {
+	case daemon.Update.ReplacedLegacy:
+		update.Status = "replaced"
 	case daemon.Update.RolledBack:
 		update.Status = "rolled_back"
 	case daemon.Update.Updated && daemon.Update.Interrupted:
@@ -301,18 +311,86 @@ func helperDTOFromDaemon(sessionID, action string, daemon *sshdaemon.Daemon) hel
 	}
 }
 
-func (s *productionHelperService) ensure(ctx context.Context, sessionID, action string) (helperOperationDTO, error) {
+// legacyHelperDTO reports an older helper that blocks durable terminals:
+// what ending it would end and the token to approve that. It is a result,
+// not an error, so the helper window can ask for consent.
+func legacyHelperDTO(sessionID, action string, err error) (helperOperationDTO, bool) {
+	detail := session.LegacyHelperDetailFor(err)
+	if detail == nil {
+		return helperOperationDTO{}, false
+	}
+	protocol := detail.Protocol
+	running := helperVersionDTO{Known: detail.Release != "", Release: detail.Release, Protocol: &protocol}
+	return helperOperationDTO{
+		SessionID: sessionID, Action: action, Local: helperVersionDTO{Known: false}, Running: running,
+		Compatibility: "incompatible", Update: &helperUpdateDTO{Status: "legacy"}, Legacy: detail,
+	}, true
+}
+
+// replacedLegacy finishes a consented replacement: the tabs that ended with
+// the legacy banner learn that their sessions were ended.
+func (s *productionHelperService) replacedLegacy(ctx context.Context, sessionID string) {
+	s.sessions.LegacyHelperReplaced(ctx, sessionID)
+}
+
+// ensureDevice reads or replaces the helper of a managed device through its
+// terminal bridge; the device's agent acts only on the consent sent here.
+func (s *productionHelperService) ensureDevice(ctx context.Context, sessionID, action, consentToken string, transport base.Transport) (helperOperationDTO, error) {
+	provider, ok := transport.(interface {
+		Provider() *supervisor.RemoteProvider
+	})
+	if !ok || provider.Provider() == nil {
+		return helperOperationDTO{}, session.ErrUnsupported
+	}
+	switch action {
+	case "status":
+	case "replace_legacy":
+		if err := provider.Provider().ReplaceLegacyHelper(ctx, consentToken); err != nil {
+			if result, ok := legacyHelperDTO(sessionID, action, err); ok {
+				return result, nil
+			}
+			return helperOperationDTO{}, err
+		}
+		s.replacedLegacy(ctx, sessionID)
+	default:
+		return helperOperationDTO{}, session.ErrUnsupported
+	}
+	metadata, known, err := provider.Provider().HelperStatus(ctx)
+	if err != nil {
+		if result, ok := legacyHelperDTO(sessionID, action, err); ok {
+			return result, nil
+		}
+		return helperOperationDTO{}, err
+	}
+	running := helperRuntimeVersion(metadata, known)
+	result := helperOperationDTO{
+		SessionID: sessionID, Action: action, Local: helperVersionDTO{Known: false}, Running: running,
+		Compatibility: helperCompatibility(running), Update: &helperUpdateDTO{Status: "unknown"},
+	}
+	if action == "replace_legacy" {
+		result.Update = &helperUpdateDTO{Status: "replaced", ReplacedLegacy: true}
+		if consent, ok := supervisor.ParseHelperConsent(consentToken); ok {
+			result.Update.EndedSessions = consent.Activity.Total()
+		}
+	}
+	return result, nil
+}
+
+func (s *productionHelperService) ensure(ctx context.Context, sessionID, action, consentToken string) (helperOperationDTO, error) {
 	connected, err := s.sessions.SessionFor(ctx, sessionID)
 	if err != nil {
 		return helperOperationDTO{}, err
 	}
 	asset := connected.Asset()
-	if asset.Kind != session.KindSSH {
+	if asset.Kind != session.KindSSH && asset.Kind != session.KindDevice {
 		return helperOperationDTO{}, session.ErrUnsupported
 	}
 	transport, err := s.sessions.TransportFor(ctx, sessionID)
 	if err != nil {
 		return helperOperationDTO{}, err
+	}
+	if asset.Kind == session.KindDevice {
+		return s.ensureDevice(ctx, sessionID, action, consentToken, transport)
 	}
 	client, ok := transport.(*transportssh.Client)
 	if !ok {
@@ -325,9 +403,19 @@ func (s *productionHelperService) ensure(ctx context.Context, sessionID, action 
 	if action == "status" {
 		resolver.DisableAutoInstall = true
 	}
-	daemon, err := resolver.EnsureDaemonWithOptions(ctx, client, sshdaemon.EnsureOptions{InterruptActive: action == "update_interrupt"})
+	options := sshdaemon.EnsureOptions{InterruptActive: action == "update_interrupt"}
+	if action == "replace_legacy" {
+		options.ReplaceLegacy = consentToken
+	}
+	daemon, err := resolver.EnsureDaemonWithOptions(ctx, client, options)
 	if daemon == nil {
+		if result, ok := legacyHelperDTO(sessionID, action, err); ok {
+			return result, nil
+		}
 		return helperOperationDTO{}, err
+	}
+	if daemon.Update.ReplacedLegacy {
+		s.replacedLegacy(ctx, sessionID)
 	}
 	return helperDTOFromDaemon(sessionID, action, daemon), err
 }

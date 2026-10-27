@@ -1299,6 +1299,7 @@ export type HelperOperationDTO = {
   compatibility: string;
   update?: HelperUpdateDTO | null;
   offline?: HelperOfflineDTO | null;
+  legacy?: LegacyHelperDetail | null;
 };
 
 export type HelperOperationRequest = {
@@ -1306,6 +1307,7 @@ export type HelperOperationRequest = {
   operationId?: string;
   action: string;
   interruptActive?: boolean;
+  consentToken?: string;
 };
 
 export type HelperUpdateDTO = {
@@ -1314,6 +1316,8 @@ export type HelperUpdateDTO = {
   updated: boolean;
   interrupted: boolean;
   rolledBack: boolean;
+  replacedLegacy?: boolean;
+  endedSessions?: number;
 };
 
 export type HelperVersionDTO = {
@@ -1504,6 +1508,18 @@ export type LayoutSaveDTO = {
   saved: boolean;
   revision: number;
   conflict: boolean;
+};
+
+export type LegacyHelperDetail = {
+  protocol: number;
+  pid?: number;
+  ptySessions: number;
+  execSessions: number;
+  activityKnown: boolean;
+  ptyListed: boolean;
+  release?: string;
+  consentToken?: string;
+  stale?: boolean;
 };
 
 export type Link = {
