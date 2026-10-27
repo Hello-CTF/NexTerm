@@ -313,7 +313,17 @@ func TestTranscriptWriterCrashLeavesTranscriptOpen(t *testing.T) {
 	writer.SessionStarted(ctx, transcriptIdentity("session-crash"))
 	writer.SessionOutput(ctx, "", "session-crash", "tab-1", []byte("before-crash\r\n"))
 	waitForTranscriptChunks(t, database, mustTranscriptID(t, database), 1)
+	// Simulate the crash by closing the store under the running writer, so
+	// nothing it does afterwards (ending the session) reaches the file. Then
+	// join the writer and its retention pass before reopening: database/sql
+	// Close does not wait for statements in flight, and a reopen must not
+	// race the old handle.
 	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
 		t.Fatal(err)
 	}
 
