@@ -162,45 +162,47 @@ func (s *Store) StateRuleSave(ctx context.Context, input StateRuleInput) (StateR
 	}
 	now := ids.NowMS()
 	var row StateRuleRow
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		rule := query.Use(tx).StateRuleRow
-		if err := stateRuleAssetAvailable(ctx, tx, normalized, ""); err != nil {
-			return err
-		}
-		if err := checkStateRuleLimits(ctx, tx, []StateRuleInput{normalized}); err != nil {
-			return err
-		}
-		if creating {
-			position, err := nextStateRulePosition(ctx, tx)
+	err = retryStateRulePosition(func() error {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			rule := query.Use(tx).StateRuleRow
+			if err := stateRuleAssetAvailable(ctx, tx, normalized, ""); err != nil {
+				return err
+			}
+			if err := checkStateRuleLimits(ctx, tx, []StateRuleInput{normalized}); err != nil {
+				return err
+			}
+			if creating {
+				position, err := nextStateRulePosition(ctx, tx)
+				if err != nil {
+					return err
+				}
+				row = stateRuleRow(ctx, normalized, now, now)
+				row.Position = position
+				return rule.WithContext(ctx).Create(&row)
+			}
+			existing, err := rule.WithContext(ctx).
+				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where(rule.ID.Eq(normalized.ID)).
+				Where(ownerConditions(ctx, rule.TableName())...).
+				First()
+			if isNoRows(err) {
+				return notFound("状态规则")
+			}
 			if err != nil {
 				return err
 			}
-			row = stateRuleRow(ctx, normalized, now, now)
-			row.Position = position
-			return rule.WithContext(ctx).Create(&row)
-		}
-		existing, err := rule.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(rule.ID.Eq(normalized.ID)).
-			Where(ownerConditions(ctx, rule.TableName())...).
-			First()
-		if isNoRows(err) {
-			return notFound("状态规则")
-		}
-		if err != nil {
-			return err
-		}
-		// Keep updated_at strictly increasing so a newer edit always wins an
-		// import or a sync.
-		updatedAt := max(now, existing.UpdatedAt+1)
-		if _, err := rule.WithContext(ctx).
-			Where(rule.ID.Eq(normalized.ID), rule.OwnerID.Eq(existing.OwnerID)).
-			UpdateColumns(stateRuleAssignments(normalized, updatedAt)); err != nil {
-			return err
-		}
-		row = stateRuleRow(ctx, normalized, existing.CreatedAt, updatedAt)
-		row.OwnerID, row.Position = existing.OwnerID, existing.Position
-		return nil
+			// Keep updated_at strictly increasing so a newer edit always wins an
+			// import or a sync.
+			updatedAt := max(now, existing.UpdatedAt+1)
+			if _, err := rule.WithContext(ctx).
+				Where(rule.ID.Eq(normalized.ID), rule.OwnerID.Eq(existing.OwnerID)).
+				UpdateColumns(stateRuleAssignments(normalized, updatedAt)); err != nil {
+				return err
+			}
+			row = stateRuleRow(ctx, normalized, existing.CreatedAt, updatedAt)
+			row.OwnerID, row.Position = existing.OwnerID, existing.Position
+			return nil
+		})
 	})
 	if err != nil {
 		return StateRuleRow{}, dbError(err)
@@ -214,6 +216,24 @@ func stateRuleRow(ctx context.Context, input StateRuleInput, createdAt, updatedA
 		Region: input.Region, RegionLines: input.Lines, Pattern: input.Pattern, TargetState: input.State,
 		KeySequence: input.Keys, Enabled: input.Enabled, CreatedAt: createdAt, UpdatedAt: updatedAt,
 	}
+}
+
+// stateRulePositionAttempts bounds the retries of a write that lost a race
+// for the next position (or a new ID) to a concurrent create.
+const stateRulePositionAttempts = 16
+
+// retryStateRulePosition runs a write transaction again when it failed on a
+// unique key or a lock conflict: two creates that read the same next
+// position collide on the owner's unique position index, and the loser
+// starts over. Every round lets at least one writer through.
+func retryStateRulePosition(write func() error) error {
+	var err error
+	for attempt := 0; attempt < stateRulePositionAttempts; attempt++ {
+		if err = write(); err == nil || !IsUniqueErr(err) && !isBusyErr(err) {
+			return err
+		}
+	}
+	return err
 }
 
 // nextStateRulePosition is the position after the owner's last rule.
@@ -358,81 +378,92 @@ func (s *Store) StateRuleImport(ctx context.Context, inputs []StateRuleInput) (S
 		normalized[i] = value
 	}
 	var result StateRuleImportResult
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		rule := query.Use(tx).StateRuleRow
-		var creates []*StateRuleRow
-		var changes []StateRuleInput
-		position, err := nextStateRulePosition(ctx, tx)
-		if err != nil {
-			return err
-		}
-		owned := func(id string) (*StateRuleRow, error) {
-			row, err := rule.WithContext(ctx).
-				Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where(rule.ID.Eq(id)).
-				Where(ownerConditions(ctx, rule.TableName())...).
-				First()
-			if isNoRows(err) {
-				return nil, nil
-			}
-			return row, err
-		}
-		for i, input := range normalized {
-			if err := stateRuleAssetAvailable(ctx, tx, input, fmt.Sprintf("第 %d 条规则: ", i+1)); err != nil {
-				return err
-			}
-			existing, err := owned(input.ID)
+	err := retryStateRulePosition(func() error {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			result = StateRuleImportResult{}
+			rule := query.Use(tx).StateRuleRow
+			var creates []*StateRuleRow
+			var changes []StateRuleInput
+			position, err := nextStateRulePosition(ctx, tx)
 			if err != nil {
 				return err
 			}
-			if existing == nil {
-				taken, err := rule.WithContext(ctx).Where(rule.ID.Eq(input.ID)).Count()
+			owned := func(id string) (*StateRuleRow, error) {
+				row, err := rule.WithContext(ctx).
+					Clauses(clause.Locking{Strength: "UPDATE"}).
+					Where(rule.ID.Eq(id)).
+					Where(ownerConditions(ctx, rule.TableName())...).
+					First()
+				if isNoRows(err) {
+					return nil, nil
+				}
+				return row, err
+			}
+			for i, input := range normalized {
+				if err := stateRuleAssetAvailable(ctx, tx, input, fmt.Sprintf("第 %d 条规则: ", i+1)); err != nil {
+					return err
+				}
+				existing, err := owned(input.ID)
 				if err != nil {
 					return err
 				}
-				if taken > 0 {
-					input.ID = importedStateRuleID(ipc.OwnerID(ctx), input.ID)
-					if existing, err = owned(input.ID); err != nil {
+				if existing == nil {
+					taken, err := rule.WithContext(ctx).Where(rule.ID.Eq(input.ID)).Count()
+					if err != nil {
 						return err
 					}
+					if taken > 0 {
+						input.ID = importedStateRuleID(ipc.OwnerID(ctx), input.ID)
+						if existing, err = owned(input.ID); err != nil {
+							return err
+						}
+						if existing == nil {
+							// The derived ID is taken by yet another owner.
+							if taken, err := rule.WithContext(ctx).Where(rule.ID.Eq(input.ID)).Count(); err != nil {
+								return err
+							} else if taken > 0 {
+								input.ID = ids.New()
+							}
+						}
+					}
 				}
-			}
-			switch {
-			case existing == nil:
-				row := stateRuleRow(ctx, input, now, input.UpdatedAt)
-				row.Position = position
-				position++
-				creates = append(creates, &row)
+				switch {
+				case existing == nil:
+					row := stateRuleRow(ctx, input, now, input.UpdatedAt)
+					row.Position = position
+					position++
+					creates = append(creates, &row)
+					changes = append(changes, input)
+					continue
+				case input.UpdatedAt <= existing.UpdatedAt:
+					result.Unchanged++
+					continue
+				}
 				changes = append(changes, input)
-				continue
-			case input.UpdatedAt <= existing.UpdatedAt:
-				result.Unchanged++
-				continue
+				if _, err := rule.WithContext(ctx).
+					Where(rule.ID.Eq(input.ID), rule.OwnerID.Eq(existing.OwnerID)).
+					UpdateColumns(stateRuleAssignments(input, input.UpdatedAt)); err != nil {
+					return err
+				}
+				result.Updated++
 			}
-			changes = append(changes, input)
-			if _, err := rule.WithContext(ctx).
-				Where(rule.ID.Eq(input.ID), rule.OwnerID.Eq(existing.OwnerID)).
-				UpdateColumns(stateRuleAssignments(input, input.UpdatedAt)); err != nil {
+			if len(changes) == 0 {
+				return nil
+			}
+			// The updates above already landed in this transaction; the check
+			// overlays the same values, and a rejection rolls everything back.
+			if err := checkStateRuleLimits(ctx, tx, changes); err != nil {
 				return err
 			}
-			result.Updated++
-		}
-		if len(changes) == 0 {
+			if len(creates) == 0 {
+				return nil
+			}
+			if err := rule.WithContext(ctx).Create(creates...); err != nil {
+				return err
+			}
+			result.Created = len(creates)
 			return nil
-		}
-		// The updates above already landed in this transaction; the check
-		// overlays the same values, and a rejection rolls everything back.
-		if err := checkStateRuleLimits(ctx, tx, changes); err != nil {
-			return err
-		}
-		if len(creates) == 0 {
-			return nil
-		}
-		if err := rule.WithContext(ctx).Create(creates...); err != nil {
-			return err
-		}
-		result.Created = len(creates)
-		return nil
+		})
 	})
 	if err != nil {
 		return StateRuleImportResult{}, dbError(err)

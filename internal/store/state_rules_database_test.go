@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -327,4 +328,33 @@ func mustStateRuleList(t *testing.T, db *store.Store, ctx context.Context) []sto
 		t.Fatal(err)
 	}
 	return rows
+}
+
+func TestStateRuleConcurrentCreatesGetDistinctPositionsDatabase(t *testing.T) {
+	db := dbtest.NewFixture(t).OpenStore(t)
+	ctx := ipc.WithUserID(context.Background(), "state-rule-concurrent")
+	const writers = 6
+	errs := make(chan error, writers)
+	for i := 0; i < writers; i++ {
+		go func() {
+			_, err := db.StateRuleSave(ctx, stateRuleInput(fmt.Sprintf("rule %d", i)))
+			errs <- err
+		}()
+	}
+	for i := 0; i < writers; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := mustStateRuleList(t, db, ctx)
+	seen := make(map[int64]bool, len(rows))
+	for _, row := range rows {
+		if seen[row.Position] {
+			t.Fatalf("position %d used twice: %+v", row.Position, rows)
+		}
+		seen[row.Position] = true
+	}
+	if len(rows) != writers {
+		t.Fatalf("stored %d rules", len(rows))
+	}
 }

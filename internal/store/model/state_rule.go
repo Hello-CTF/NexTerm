@@ -8,7 +8,7 @@ package model
 // orders concurrent edits, so rules can be exported, imported and synced.
 type StateRuleRow struct {
 	ID          string `gorm:"column:id;primaryKey" json:"id"`
-	OwnerID     string `gorm:"column:owner_id;size:191;not null;default:'';index:idx_state_rule_owner" json:"-"`
+	OwnerID     string `gorm:"column:owner_id;size:191;not null;default:'';index:idx_state_rule_owner;uniqueIndex:idx_state_rule_owner_position,priority:1" json:"-"`
 	Name        string `gorm:"column:name;not null;default:''" json:"name"`
 	Scope       string `gorm:"column:scope;size:16;not null" json:"scope"`
 	AssetID     string `gorm:"column:asset_id;size:191;not null;default:''" json:"assetId"`
@@ -18,7 +18,7 @@ type StateRuleRow struct {
 	TargetState string `gorm:"column:target_state;size:32;not null" json:"state"`
 	KeySequence string `gorm:"column:key_sequence;not null;default:''" json:"keys"`
 	Enabled     bool   `gorm:"column:enabled;not null" json:"enabled"`
-	Position    int64  `gorm:"column:position;not null;default:0" json:"position"`
+	Position    int64  `gorm:"column:position;not null;default:0;uniqueIndex:idx_state_rule_owner_position,priority:2" json:"position"`
 	CreatedAt   int64  `gorm:"column:created_at;not null" json:"createdAt"`
 	UpdatedAt   int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
 }
