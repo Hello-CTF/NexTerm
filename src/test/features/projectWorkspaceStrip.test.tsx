@@ -11,7 +11,7 @@ import {
   type ProjectFocus,
   type ProjectInventory,
 } from "../../app/projectFocus";
-import type { SessionRuntimeInfo, Workspace } from "../../app/store";
+import { useUi, type SessionRuntimeInfo, type Workspace } from "../../app/store";
 import type { Asset, AssetGroup } from "../../ipc/commands";
 
 function group(id: string, parentId: string | null = null): AssetGroup {
@@ -86,7 +86,6 @@ function renderStrip(activeProject: ProjectFocus, onSelect = vi.fn(), onReorder?
     activeProject,
     projectInventory: inventory,
     groups: inventory.groups,
-    sessions,
     onSelect,
     onReorder,
   }));
@@ -100,6 +99,7 @@ function stripWorkspaceIds(): string[] {
 
 beforeEach(() => {
   document.body.replaceChildren();
+  useUi.setState({ sessions });
 });
 
 afterEach(() => {

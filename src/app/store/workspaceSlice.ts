@@ -238,14 +238,15 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
 
       const outcome = await executeWorkspaceClose(closePlan);
       if (get().workspaceRuntimeEpoch !== epoch) return false;
+      const titleNow = get().workspaces.find((w) => w.id === id)?.title ?? currentTarget.title;
       if (outcome.failed > 0) {
-        pushWorkspaceCloseToast(target.title, outcome, false);
+        pushWorkspaceCloseToast(titleNow, outcome, false);
         return false;
       }
       if (outcome.dbFailed > 0) {
         get().pushToast(
           "error",
-          `「${target.title}」保持打开：${outcome.dbFailed}/${closePlan.dbConnIds.length} 个数据库断开失败：${outcome.dbError}`,
+          `「${titleNow}」保持打开：${outcome.dbFailed}/${closePlan.dbConnIds.length} 个数据库断开失败：${outcome.dbError}`,
         );
       }
 

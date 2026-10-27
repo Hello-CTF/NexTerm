@@ -1,5 +1,6 @@
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
+import { storeSubscriptionPlugin } from "./scripts/lib/store-subscription-rule.mjs";
 
 const stringRestrictions = (pattern, message) => [
   { selector: `Literal[value=/${pattern}/]`, message },
@@ -71,60 +72,6 @@ const shellPredicateRestrictions = [
     message: "Use useShellLayout() or the helpers exported from src/app/shell instead of computing the workspace viewport.",
   },
 ];
-
-// Store collections that change on every session status event or workspace edit. Subscribing a component to the
-// whole collection re-renders it on any change; src/app/store/selectors.ts holds the narrower hooks.
-const WHOLE_COLLECTION_HOOKS = {
-  sessions: "useSessionById, useSessionStatus, useSessionSummary or useSessionList",
-  workspaces: "useWorkspaceById, useActiveWorkspace or useWorkspaceList",
-};
-
-function selectedMember(fn) {
-  if (fn.params.length !== 1 || fn.params[0].type !== "Identifier") return null;
-  let body = fn.body;
-  if (body.type === "BlockStatement") {
-    if (body.body.length !== 1 || body.body[0].type !== "ReturnStatement") return null;
-    body = body.body[0].argument;
-  }
-  if (
-    body?.type === "MemberExpression" &&
-    !body.computed &&
-    body.object.type === "Identifier" &&
-    body.object.name === fn.params[0].name &&
-    body.property.type === "Identifier" &&
-    Object.hasOwn(WHOLE_COLLECTION_HOOKS, body.property.name)
-  ) {
-    return body.property.name;
-  }
-  return null;
-}
-
-const storeSubscriptionPlugin = {
-  rules: {
-    "no-whole-collection-subscription": {
-      meta: {
-        type: "problem",
-        docs: { description: "Disallow subscribing to a whole UI store collection with useUi((s) => s.collection)." },
-        schema: [],
-      },
-      create(context) {
-        return {
-          CallExpression(node) {
-            if (node.callee.type !== "Identifier" || node.callee.name !== "useUi") return;
-            const [selector] = node.arguments;
-            if (selector?.type !== "ArrowFunctionExpression" && selector?.type !== "FunctionExpression") return;
-            const collection = selectedMember(selector);
-            if (!collection) return;
-            context.report({
-              node,
-              message: `Subscribing to the whole ${collection} collection re-renders on every change; use ${WHOLE_COLLECTION_HOOKS[collection]} from src/app/store.ts.`,
-            });
-          },
-        };
-      },
-    },
-  },
-};
 
 // Files that may read the raw shell predicates: the platform module and shell itself, tests that exercise them,
 // and the store, which cannot import the React shell (src/app/store/connection.ts reads the width-only overlay rule).

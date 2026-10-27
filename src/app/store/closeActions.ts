@@ -462,23 +462,25 @@ export async function requestKillTab(id: string): Promise<void> {
 }
 
 export async function requestKillWorkspaceTerminals(workspaceId: string): Promise<void> {
+  const before = useUi.getState().workspaces.find((w) => w.id === workspaceId);
+  if (!before) return;
   const st = useUi.getState();
-  const ws = st.workspaces.find((w) => w.id === workspaceId);
-  if (!ws) return;
-  const live = ws.panes.flatMap((p) => p.tabs).filter(isRunningTerminal);
+  const live = before.panes.flatMap((p) => p.tabs).filter(isRunningTerminal);
   if (live.length === 0) {
     st.pushToast("info", "这个工作区里没有正在运行的终端");
     return;
   }
   const { ask } = await import("../../ui/dialogs");
-  const ok = await ask(`结束「${ws.title}」里 ${live.length} 个终端的进程？\n\n进程会被终止，无法恢复。`, {
+  const ok = await ask(`结束「${before.title}」里 ${live.length} 个终端的进程？\n\n进程会被终止，无法恢复。`, {
     title: "结束全部终端进程",
     kind: "warning",
   });
   if (!ok) return;
+  // The dialog can stay open for a while; resolve session kinds from the state at confirmation time.
+  const { sessions } = useUi.getState();
   const results = await Promise.allSettled(
     live.map((tab) => {
-      const kind = st.sessions.find((session) => session.id === tab.sessionId)?.kind ?? ws.assetKind;
+      const kind = sessions.find((session) => session.id === tab.sessionId)?.kind ?? before.assetKind;
       return !tab.containerId && (kind === "ssh" || kind === "device")
         ? terminalApi.closeTab(tab.tabId as string, "kill", tab.sessionId)
         : terminalApi.closeTab(tab.tabId as string, "kill");

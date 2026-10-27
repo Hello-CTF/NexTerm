@@ -366,6 +366,21 @@ describe("workspace and pane reclaim follow terminal close preferences", () => {
     expect(toastText()).not.toContain("转入后台");
   });
 
+  it("reports a failed workspace close under the current workspace title", async () => {
+    const tab = { ...terminal("t1"), retainable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: "t1" }], "local");
+    setTerminalCloseAction("detach");
+    mocks.closeTab.mockImplementationOnce(async () => {
+      useUi.setState({ workspaces: [{ ...useUi.getState().workspaces[0], title: "renamed" }] });
+      throw new Error("boom");
+    });
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(toastText()).toContain("关闭「renamed」");
+    expect(toastText()).not.toContain("关闭「workspace」");
+  });
+
   it("keeps failed workspace tabs with closeError and removes only successful detach operations", async () => {
     const tabs = [{ ...terminal("t1"), retainable: true }, { ...terminal("t2"), retainable: true }];
     seed([{ id: "p", tabs, activeTabId: "t1" }], "local");
@@ -429,6 +444,19 @@ describe("kill danger actions", () => {
     const remaining = useUi.getState().workspaces[0].panes[0].tabs;
     expect(remaining).toHaveLength(3);
     expect(remaining.every((t) => t.exited === true)).toBe(true);
+  });
+
+  it("requestKillWorkspaceTerminals reads sessions after the confirmation, not before the dialog", async () => {
+    const tab = terminal("t1");
+    seed([{ id: "p", tabs: [tab], activeTabId: "t1" }], "local");
+    mocks.ask.mockImplementationOnce(async () => {
+      useUi.setState({ sessions: [sessionInfo("ssh")] });
+      return true;
+    });
+
+    await requestKillWorkspaceTerminals("ws");
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
   });
 
   it("requestKillWorkspaceTerminals keeps failures with closeError and no success toast", async () => {
