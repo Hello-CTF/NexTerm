@@ -55,12 +55,15 @@ export async function waitFor(assertion: () => void, timeout = 1000): Promise<vo
   });
 }
 
+// flushUntil counts macrotask ticks, so it only bounds work driven by mocks and timers. Real asynchronous work,
+// such as the first dynamic import of a React.lazy panel, takes wall-clock time that machine load stretches past
+// any tick budget: warm such modules in beforeAll instead.
 export async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
   for (let i = 0; i < maxTicks; i++) {
     if (predicate()) return;
     await flush();
   }
-  if (!predicate()) throw new Error("flushUntil: condition not met");
+  if (!predicate()) throw new Error(`flushUntil: condition not met after ${maxTicks} ticks`);
 }
 
 export function click(element: Element): void {

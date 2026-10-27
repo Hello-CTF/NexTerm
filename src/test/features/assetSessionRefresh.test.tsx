@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, Fragment } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
@@ -302,6 +302,16 @@ function mountApp(withImport = false, leftOpen = false, paneCount = 1): MountedV
   ));
 }
 
+// The terminal pane, command palette and asset editor are React.lazy panels. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([
+    import("../../features/terminal/TerminalPane"),
+    import("../../app/CommandPalette"),
+    import("../../features/explorer/AssetTree"),
+  ]);
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.syncHandlers.length = 0;
@@ -362,7 +372,7 @@ async function openPaletteEditor(): Promise<void> {
   const palette = document.querySelector<HTMLButtonElement>('button[aria-label^="命令面板"]');
   expect(palette).not.toBeNull();
   click(palette!);
-  await flushUntil(() => document.querySelector('input[aria-label="命令或资产搜索"]') !== null, 400);
+  await flushUntil(() => document.querySelector('input[aria-label="命令或资产搜索"]') !== null);
   const search = document.querySelector<HTMLInputElement>('input[aria-label="命令或资产搜索"]');
   expect(search).not.toBeNull();
   setInputValue(search!, "编辑资产 web-01");
@@ -372,7 +382,7 @@ async function openPaletteEditor(): Promise<void> {
   );
   expect(option).not.toBeUndefined();
   click(option!);
-  await flushUntil(() => document.querySelector('.nx-modal input[type="number"]') !== null, 400);
+  await flushUntil(() => document.querySelector('.nx-modal input[type="number"]') !== null);
   const port = document.querySelector<HTMLInputElement>('.nx-modal input[type="number"]');
   expect(port).not.toBeNull();
   setInputValue(port!, "2202");
