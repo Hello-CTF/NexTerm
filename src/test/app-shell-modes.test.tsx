@@ -102,8 +102,7 @@ vi.mock("../features/explorer/AssetTree", () => ({
   AssetEditor: () => null,
 }));
 vi.mock("../features/fleet/DeviceSessionBoundary", () => ({ DeviceSessionBoundary: () => null }));
-vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
-vi.mock("../app/QuickConnect", () => ({ QuickConnect: () => null }));
+vi.mock("../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
 vi.mock("../app/DekUnlockBanner", () => ({ DekUnlockBanner: () => null }));

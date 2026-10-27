@@ -49,10 +49,8 @@ export const CredentialsPanel = lazy(() =>
 export const CredentialsSidebar = lazy(() =>
   import("../features/credentials/CredentialsSidebar").then((m) => ({ default: m.CredentialsSidebar })),
 );
-const loadCommandPalette = () => import("./CommandPalette");
-const loadQuickConnect = () => import("./QuickConnect");
-export const CommandPalette = lazy(() => loadCommandPalette().then((m) => ({ default: m.CommandPalette })));
-export const QuickConnect = lazy(() => loadQuickConnect().then((m) => ({ default: m.QuickConnect })));
+const loadJumpPalette = () => import("./JumpPalette");
+export const JumpPalette = lazy(() => loadJumpPalette().then((m) => ({ default: m.JumpPalette })));
 export const AutoSync = lazy(() => import("./AutoSync"));
 
 // The asset tree is on the first screen: start downloading it in parallel with the rest of boot.
@@ -77,8 +75,7 @@ export function prefetchOverlaysWhenIdle(): void {
   const connection = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
   if (!shouldPrefetch(connection)) return;
   const run = () => {
-    void loadCommandPalette().catch(() => undefined);
-    void loadQuickConnect().catch(() => undefined);
+    void loadJumpPalette().catch(() => undefined);
   };
   const schedule = () => {
     if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(run, { timeout: 5000 });

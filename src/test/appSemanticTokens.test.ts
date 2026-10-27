@@ -111,8 +111,7 @@ vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: (
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null, AssetEditor: () => null }));
 vi.mock("../features/fleet/DeviceSessionBoundary", () => ({ DeviceSessionBoundary: () => null }));
-vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
-vi.mock("../app/QuickConnect", () => ({ QuickConnect: () => null }));
+vi.mock("../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
 vi.mock("../app/DekUnlockBanner", () => ({ DekUnlockBanner: () => null }));
@@ -202,7 +201,7 @@ describe("App semantic tokens", () => {
     for (const selector of [
       'button[aria-label^="切换工作区"]',
       'button[aria-label="AI 助手"]',
-      'button[aria-label^="命令面板"]',
+      'button[aria-label^="跳转面板"]',
       'button[aria-label="最小化窗口"]',
       'button[aria-label="最大化或还原窗口"]',
       'button[aria-label="关闭窗口"]',

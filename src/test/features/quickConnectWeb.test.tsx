@@ -46,7 +46,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
   return { ...actual, promptText: mocks.promptText };
 });
 
-import { QuickConnect } from "../../app/QuickConnect";
+import { JumpPalette } from "../../app/JumpPalette";
 import { SshImportDialog } from "../../features/explorer/SshImportDialog";
 import { useUi } from "../../app/store";
 import { useAssetReachability } from "../../features/explorer/assetReachability";
@@ -112,7 +112,7 @@ describe("QuickConnect web mode (server assembly)", () => {
   it("shows only save-as-asset-and-connect for user@host:port, without a temporary connection", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = mount(
-      createElement(QueryClientProvider, { client }, createElement(QuickConnect, { onClose: vi.fn() })),
+      createElement(QueryClientProvider, { client }, createElement(JumpPalette, { onClose: vi.fn(), scope: "hosts" })),
     );
     mountedViews.push(view);
     await waitFor(() => expect(options(view.container).length).toBeGreaterThan(0));
@@ -128,7 +128,7 @@ describe("QuickConnect web mode (server assembly)", () => {
   it("does not prefill the server OS user when saving as an asset (session_quick_connect_user is disabled)", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = mount(
-      createElement(QueryClientProvider, { client }, createElement(QuickConnect, { onClose: vi.fn() })),
+      createElement(QueryClientProvider, { client }, createElement(JumpPalette, { onClose: vi.fn(), scope: "hosts" })),
     );
     mountedViews.push(view);
     await waitFor(() => expect(options(view.container).length).toBeGreaterThan(0));
@@ -157,7 +157,7 @@ describe("QuickConnect web mode (server assembly)", () => {
     mocks.list.mockResolvedValue([]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = mount(
-      createElement(QueryClientProvider, { client }, createElement(QuickConnect, { onClose: vi.fn() })),
+      createElement(QueryClientProvider, { client }, createElement(JumpPalette, { onClose: vi.fn(), scope: "hosts" })),
     );
     mountedViews.push(view);
     await waitFor(() => expect(view.container.textContent).toContain("新建连接"));

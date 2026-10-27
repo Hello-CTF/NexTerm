@@ -144,8 +144,7 @@ vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null, AssetEditor: () => null }));
-vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
-vi.mock("../../app/QuickConnect", () => ({ QuickConnect: () => null }));
+vi.mock("../../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({
   TakeoverBanner: () => (mocks.banners.takeover ? <div data-testid="takeover-banner" /> : null),
 }));

@@ -172,8 +172,8 @@ export function AppHeader({
       </button>
       <button
         className="nx-icon-btn" style={wailsNoDragRegionStyle}
-        title={`命令面板 (${commandPaletteLabel})`}
-        aria-label={`命令面板 (${commandPaletteLabel})`}
+        title={`跳转面板 (${commandPaletteLabel})`}
+        aria-label={`跳转面板 (${commandPaletteLabel})`}
         onClick={onOpenPalette}
       >
         <IconCommand size={15} />

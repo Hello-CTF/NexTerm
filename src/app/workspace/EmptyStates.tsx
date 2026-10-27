@@ -60,7 +60,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
         {onPalette && (
           <button className="nx-btn nx-btn-outline" onClick={onPalette}>
             <IconCommand size={14} />
-            命令面板
+            跳转面板
           </button>
         )}
       </div>
@@ -69,7 +69,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
           [
             ["newTerminal", "新建终端"],
             ["quickConnect", "快速连接"],
-            ["commandPalette", "命令面板"],
+            ["commandPalette", "跳转面板"],
             ["toggleSidebar", "左栏"],
             ["toggleSessionPanel", "会话侧栏"],
             ["toggleAiSidebar", "AI 侧栏"],

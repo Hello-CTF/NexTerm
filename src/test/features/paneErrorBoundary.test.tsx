@@ -63,7 +63,7 @@ vi.mock("../../features/explorer/AssetTree", () => ({
     throw new Error("asset tree exploded");
   },
 }));
-vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
+vi.mock("../../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../../app/App";

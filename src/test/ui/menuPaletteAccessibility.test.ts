@@ -29,7 +29,7 @@ vi.mock("../../ipc/commands", () => ({
   terminalApi: {},
 }));
 
-import { CommandPalette } from "../../app/CommandPalette";
+import { JumpPalette } from "../../app/JumpPalette";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { useUi } from "../../app/store";
 
@@ -111,7 +111,7 @@ describe("menu and command palette accessibility", () => {
     const trigger = document.body.appendChild(document.createElement("button"));
     trigger.focus();
     const onClose = vi.fn();
-    mounted = mountPalette(createElement(CommandPalette, { onClose }));
+    mounted = mountPalette(createElement(JumpPalette, { onClose }));
     await flush();
 
     const input = mounted.container.querySelector<HTMLInputElement>('[role="combobox"]');
@@ -157,10 +157,10 @@ describe("menu and command palette accessibility", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("traps Tab and Shift+Tab on the combobox so focus matches the active option", async () => {
+  it("switches scope with Tab, traps Shift+Tab on the combobox and keeps focus off the options", async () => {
     const trigger = document.body.appendChild(document.createElement("button"));
     trigger.focus();
-    mounted = mountPalette(createElement(CommandPalette, { onClose: vi.fn() }));
+    mounted = mountPalette(createElement(JumpPalette, { onClose: vi.fn() }));
     await flush();
 
     const input = mounted.container.querySelector<HTMLInputElement>('[role="combobox"]');
@@ -173,13 +173,25 @@ describe("menu and command palette accessibility", () => {
     const tab = keyDown(input, "Tab");
     expect(tab.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(input);
+    expect(input.getAttribute("aria-label")).toBe("资产搜索");
+    expect([...mounted.container.querySelectorAll('[aria-live="polite"]')].map((node) => node.textContent)).toContain("只看主机");
+    // With no assets the hosts scope offers first-connection actions, so Tab is left to move focus to them.
+    expect(mounted.container.querySelector('[role="group"][aria-label="连接操作"]')).not.toBeNull();
+    const toActions = keyDown(input, "Tab");
+    expect(toActions.defaultPrevented).toBe(false);
+    expect(input.getAttribute("aria-label")).toBe("资产搜索");
+    const all = [...mounted.container.querySelectorAll<HTMLButtonElement>('[aria-label="跳转范围"] button')]
+      .find((button) => button.textContent === "全部");
+    click(all!);
+    await flush();
+    expect(input.getAttribute("aria-label")).toBe("搜索会话、主机或命令");
+    input.focus();
     const shiftTab = keyDown(input, "Tab", { shiftKey: true });
     expect(shiftTab.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(input);
     expect(document.activeElement?.getAttribute("role")).not.toBe("option");
 
     setInputValue(input, "设置");
-    keyDown(input, "Tab");
     keyDown(input, "Tab", { shiftKey: true });
     expect(document.activeElement).toBe(input);
     keyDown(input, "Enter");
@@ -193,7 +205,7 @@ describe("menu and command palette accessibility", () => {
 
   it("surfaces deferred asset loading errors through an inline alert", async () => {
     mocks.list.mockRejectedValue(new Error("offline"));
-    mounted = mountPalette(createElement(CommandPalette, { onClose: vi.fn() }));
+    mounted = mountPalette(createElement(JumpPalette, { onClose: vi.fn() }));
 
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("offline"));
     expect(mocks.list).toHaveBeenCalledOnce();
@@ -297,7 +309,7 @@ describe("menu and command palette accessibility", () => {
       createElement(
         StrictMode,
         null,
-        createElement(CommandPalette, { onClose: vi.fn() }),
+        createElement(JumpPalette, { onClose: vi.fn() }),
       ),
     );
     await flush();

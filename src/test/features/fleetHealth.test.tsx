@@ -60,7 +60,7 @@ import {
   FLEET_HEALTH_TAB_ID,
   isFleetHealthTab,
 } from "../../features/fleet/fleetHealthTab";
-import { CommandPalette } from "../../app/CommandPalette";
+import { JumpPalette } from "../../app/JumpPalette";
 
 function group(id: string, parentId: string | null = null): AssetGroup {
   return { id, parentId, name: `Project ${id}`, sort: 0, createdAt: 1, updatedAt: 1 };
@@ -512,7 +512,7 @@ describe("fleet health palette entry", () => {
       createElement(
         QueryClientProvider,
         { client: currentClient },
-        createElement(CommandPalette, { onClose: () => undefined }),
+        createElement(JumpPalette, { onClose: () => undefined }),
       ),
     );
     return palette;

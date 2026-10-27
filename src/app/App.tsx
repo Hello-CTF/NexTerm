@@ -8,7 +8,8 @@ import { useBackgroundSessionsAccess } from "../features/terminal/backgroundSess
 import { ErrorBoundary } from "../ui/ErrorBoundary";
 import { useShellLayout } from "./shell";
 import { useAppBootEffects, useAppDialogHandlers, useWebAuthRefresh } from "./shell/AppBootEffects";
-import { type QuickConnectMode } from "./shell/AppDialogs";
+import type { JumpScope } from "./JumpPalette";
+import { useTabRecencyTracker } from "./jump/tabRecency";
 import { aiToastPlacement, useAiToastInset, useKeysToolbarHeight } from "./shell/chromeInsets";
 import { DesktopShell } from "./shell/DesktopShell";
 import { useKeyboardInset } from "./shell/keyboardInset";
@@ -62,13 +63,12 @@ function AppShell() {
   const tabs = pane?.tabs ?? [];
   const activeTabId = pane?.activeTabId ?? null;
 
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [jumpScope, setJumpScope] = useState<JumpScope | null>(null);
   const [paletteEditingAsset, setPaletteEditingAsset] = useState<Asset | null>(null);
-  const [quickConnectMode, setQuickConnectMode] = useState<QuickConnectMode>(null);
-  const openCommandPalette = useCallback(() => setPaletteOpen(true), []);
-  const closeCommandPalette = useCallback(() => setPaletteOpen(false), []);
-  const openQuickConnect = useCallback(() => setQuickConnectMode("all"), []);
-  const openDatabasePicker = useCallback(() => setQuickConnectMode("database"), []);
+  const openCommandPalette = useCallback(() => setJumpScope("all"), []);
+  const openQuickConnect = useCallback(() => setJumpScope("hosts"), []);
+  const openDatabasePicker = useCallback(() => setJumpScope("database"), []);
+  useTabRecencyTracker();
 
   const queryClient = useQueryClient();
   const { vaultStatus, vaultLocked, lockVault } = useVaultStatus();
@@ -214,11 +214,9 @@ function AppShell() {
       onOpenSyncSettings: actions.openSyncSettings,
     },
     dialogs: {
-      paletteOpen,
-      onClosePalette: closeCommandPalette,
+      jumpScope,
+      setJumpScope,
       onOpenFiles: actions.openFiles,
-      quickConnectMode,
-      setQuickConnectMode,
       editingAsset: paletteEditingAsset,
       setEditingAsset: setPaletteEditingAsset,
       workspaceMenu: wsMenu,

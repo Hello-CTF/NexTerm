@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { sessionApi, syncApi, terminalApi, type LiveTabInfo, type SessionAttentionState } from "../../ipc/commands";
+import { syncApi, terminalApi, type SessionAttentionState } from "../../ipc/commands";
 import {
   backgroundTabKey,
   backgroundTargets,
-  collectBackgroundTabs,
+  listBackgroundTabs,
   openTerminalTabIds,
   resolveHostGate,
+  takeOverBackgroundTab,
   visibleBackgroundTabs,
   workspaceHostKey,
   workspaceSessionMatches,
@@ -14,7 +15,6 @@ import {
   type KnownDurableTab,
 } from "./backgroundSessionsAccess";
 import {
-  nextTabId,
   reconnectDeadHost,
   reconnectWorkspaceSession,
   sanitizeRemoteTabTitle,
@@ -353,29 +353,14 @@ export function BackgroundSessions({
         sessions: st.sessions, workspaces: st.workspaces, verified: verifiedQuickSessions, localDurable: localDurableEnabled(localHelper),
       };
       const targets = backgroundTargets(scope, { showAll, hostSessionId, owner: ownerWorkspace, remoteOwner });
-      // Each listing keeps its own arrival time: its ages count from when it answered, not from the slowest one.
-      const received = <T,>(request: Promise<T>) => request.then((value) => ({ value, at: Date.now() }));
-      const [live, ...remote] = await Promise.allSettled([
-        received(terminalApi.listLive()),
-        ...targets.map((session) => received(terminalApi.listDurable(session.id))),
-      ]);
+      const { collected, liveFailed, liveError } = await listBackgroundTabs(
+        scope,
+        targets,
+        openTerminalTabIds(showAll ? st.workspaces : ownerWorkspace ? [ownerWorkspace] : []),
+      );
       if (generation !== loadGenerationRef.current) return;
       const errors: string[] = [];
-      if (live.status === "rejected") errors.push(describeError(live.reason));
-      const collected = collectBackgroundTabs(scope, {
-        live: live.status === "fulfilled" ? (live.value.value as LiveTabInfo[]) : null,
-        liveFetchedAt: live.status === "fulfilled" ? live.value.at : undefined,
-        remote: targets.map((session, index) => {
-          const result = remote[index];
-          return {
-            session,
-            tabs: result.status === "fulfilled" ? (result.value.value as Awaited<ReturnType<typeof terminalApi.listDurable>>) : null,
-            reason: result.status === "rejected" ? result.reason : undefined,
-            fetchedAt: result.status === "fulfilled" ? result.value.at : undefined,
-          };
-        }),
-        openTabIds: openTerminalTabIds(showAll ? st.workspaces : ownerWorkspace ? [ownerWorkspace] : []),
-      });
+      if (liveFailed) errors.push(describeError(liveError));
       for (const failure of collected.failedRemote) errors.push(`${failure.session.name}: ${describeError(failure.reason)}`);
       const { list, knownTabsByHost, incompleteHosts } = collected;
       if (knownTabsByHost.size > 0) {
@@ -473,35 +458,19 @@ export function BackgroundSessions({
     const key = backgroundTabKey(info);
     setBusy((b) => ({ ...b, [key]: "takeover" }));
     try {
-      const list = await sessionApi.list();
-      if (ownerGeneration !== ownerGenerationRef.current) return;
-      const session = list.find((s) => s.id === info.sessionId);
-      if (!session || session.status !== "connected") {
-        throw new Error("主机未连接，请先重新连接再接管");
-      }
-      if (remoteOwner && (!ownerWorkspace || !workspaceSessionMatches(ownerWorkspace, session, verifiedQuickSessions))) {
-        throw new Error("这个终端不属于当前主机，请重新连接后再接管");
-      }
-      const st = useUi.getState();
-      st.setSessions(list);
-      st.addTab({
-        id: nextTabId(`term-${info.sessionId}`),
-        kind: "terminal",
-        title: info.title || session?.name || info.sessionName,
-        // Only the backend's own decision time may lock the title; a listing without one
-        // (a durable descriptor) leaves it unlocked until the attach reports the time.
-        ...(info.title && info.titleCustom && info.titleChangedAt
-          ? { renamedByUser: true, customTitleAt: info.titleChangedAt }
-          : {}),
-        sessionId: info.sessionId,
-        tabId: info.tabId,
-        closable: true,
+      const result = await takeOverBackgroundTab(info, {
+        isCurrent: () => ownerGeneration === ownerGenerationRef.current,
+        guard: (session) => {
+          if (remoteOwner && (!ownerWorkspace || !workspaceSessionMatches(ownerWorkspace, session, verifiedQuickSessions))) {
+            throw new Error("这个终端不属于当前主机，请重新连接后再接管");
+          }
+        },
       });
-      setItems((prev) => (prev ? prev.filter((t) => backgroundTabKey(t) !== key) : prev));
-      pushToast("info", `已接管「${session?.name ?? info.sessionName}」的终端`);
-    } catch (e) {
-      if (ownerGeneration === ownerGenerationRef.current) {
-        pushToast("error", `接管失败：${describeError(e)}`);
+      if (result.ok) {
+        setItems((prev) => (prev ? prev.filter((t) => backgroundTabKey(t) !== key) : prev));
+        pushToast("info", `已接管「${result.sessionName}」的终端`);
+      } else if ("error" in result) {
+        pushToast("error", `接管失败：${result.error}`);
       }
     } finally {
       if (ownerGeneration === ownerGenerationRef.current) {

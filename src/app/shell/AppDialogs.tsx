@@ -7,7 +7,8 @@ import { DialogHost } from "../../ui/DialogHost";
 import { MultilinePasteDialogHost } from "../../features/terminal/MultilinePasteDialog";
 import { Lazy } from "../../ui/LazyBoundary";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
-import { AssetEditor, CommandPalette, QuickConnect } from "../lazyPanels";
+import { AssetEditor, JumpPalette } from "../lazyPanels";
+import type { JumpScope } from "../JumpPalette";
 
 // LazyAuthGate loads the account gate only under WEB, so the desktop does not pull the auth store into env mocks of terminal tests.
 function LazyAuthGate() {
@@ -27,28 +28,22 @@ function LazyAuthGate() {
   return <Gate />;
 }
 
-export type QuickConnectMode = "all" | "database" | null;
-
 export interface AppDialogsProps {
-  paletteOpen: boolean;
-  onClosePalette: () => void;
+  jumpScope: JumpScope | null;
+  setJumpScope: (scope: JumpScope | null) => void;
   onOpenFiles: () => void;
-  quickConnectMode: QuickConnectMode;
-  setQuickConnectMode: (mode: QuickConnectMode) => void;
   editingAsset: Asset | null;
   setEditingAsset: (asset: Asset | null) => void;
   workspaceMenu: ContextMenuState | null;
   onCloseWorkspaceMenu: () => void;
 }
 
-// AppDialogs hosts the app-level overlays: command palette, quick connect, the palette's asset editor,
+// AppDialogs hosts the app-level overlays: the jump palette, the palette's asset editor,
 // the workspace switcher menu, the account gate and the prompt/dialog hosts.
 export function AppDialogs({
-  paletteOpen,
-  onClosePalette,
+  jumpScope,
+  setJumpScope,
   onOpenFiles,
-  quickConnectMode,
-  setQuickConnectMode,
   editingAsset,
   setEditingAsset,
   workspaceMenu,
@@ -57,21 +52,14 @@ export function AppDialogs({
   const queryClient = useQueryClient();
   return (
     <>
-      {paletteOpen && (
+      {jumpScope && (
         <Lazy fallback="none" overlay>
-          <CommandPalette
-            onClose={onClosePalette}
+          <JumpPalette
+            key={jumpScope}
+            scope={jumpScope}
+            onClose={() => setJumpScope(null)}
             onOpenFiles={onOpenFiles}
             onEditAsset={(asset) => setEditingAsset(asset)}
-            onQuickConnect={() => setQuickConnectMode("all")}
-          />
-        </Lazy>
-      )}
-      {quickConnectMode && (
-        <Lazy fallback="none" overlay>
-          <QuickConnect
-            kindFilter={quickConnectMode === "database" ? "database" : undefined}
-            onClose={() => setQuickConnectMode(null)}
           />
         </Lazy>
       )}

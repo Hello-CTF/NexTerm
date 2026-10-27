@@ -248,7 +248,6 @@ vi.mock("../../features/settings/SettingsView", () => ({ SettingsView: () => nul
 vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
-vi.mock("../../app/QuickConnect", () => ({ QuickConnect: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
 vi.mock("../../app/DekUnlockBanner", () => ({ DekUnlockBanner: () => null }));
@@ -307,7 +306,7 @@ function mountApp(withImport = false, leftOpen = false, paneCount = 1): MountedV
 beforeAll(async () => {
   await Promise.all([
     import("../../features/terminal/TerminalPane"),
-    import("../../app/CommandPalette"),
+    import("../../app/JumpPalette"),
     import("../../features/explorer/AssetTree"),
   ]);
 });
@@ -369,11 +368,11 @@ function fireSyncEvent(topic: string): void {
 }
 
 async function openPaletteEditor(): Promise<void> {
-  const palette = document.querySelector<HTMLButtonElement>('button[aria-label^="命令面板"]');
+  const palette = document.querySelector<HTMLButtonElement>('button[aria-label^="跳转面板"]');
   expect(palette).not.toBeNull();
   click(palette!);
-  await flushUntil(() => document.querySelector('input[aria-label="命令或资产搜索"]') !== null);
-  const search = document.querySelector<HTMLInputElement>('input[aria-label="命令或资产搜索"]');
+  await flushUntil(() => document.querySelector('input[aria-label="搜索会话、主机或命令"]') !== null);
+  const search = document.querySelector<HTMLInputElement>('input[aria-label="搜索会话、主机或命令"]');
   expect(search).not.toBeNull();
   setInputValue(search!, "编辑资产 web-01");
   await flush();
@@ -426,7 +425,7 @@ async function reconnectAndExpectStaleCleared(): Promise<void> {
 
 describe("persistent asset session refresh", () => {
   for (const leftOpen of [false, true]) {
-    it(`uses real CommandPalette and AssetEditor with leftOpen=${leftOpen}, then clears stale after reconnect`, async () => {
+    it(`uses real JumpPalette and AssetEditor with leftOpen=${leftOpen}, then clears stale after reconnect`, async () => {
       mounted = mountApp(false, leftOpen);
       await flush();
       await openPaletteEditor();
