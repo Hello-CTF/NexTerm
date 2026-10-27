@@ -8,6 +8,8 @@ import { InboxGuidance } from "./InboxGuidance";
 import { isInboxGuidanceDismissed, useInboxGuidanceDismissed } from "./firstRunGuidance";
 import { markInboxEntrySeen, openInboxTab, useInboxEntries, type InboxEntry } from "./inbox";
 
+const CUE_MS = 8000;
+
 function sinceLabel(since: string | undefined, now: number): string {
   const at = since ? Date.parse(since) : Number.NaN;
   if (Number.isNaN(at)) return "";
@@ -78,13 +80,17 @@ export function InboxButton() {
   const count = entries.length;
   const guidanceDismissed = useInboxGuidanceDismissed();
   const guidanceOpened = useRef(false);
+  const [cue, setCue] = useState(false);
   const needsMe = entries.some((entry) => entry.awareness.state === "needs_me");
 
-  // The first time the bell gets a count on a device, open the list once so the guidance is seen.
+  // The first time the bell gets a count on a device, show a short cue next to it. It never takes focus, so
+  // typing into a terminal is not interrupted; it fades after a few seconds or when the bell is used.
   useEffect(() => {
     if (count === 0 || guidanceOpened.current || isInboxGuidanceDismissed()) return;
     guidanceOpened.current = true;
-    setOpen(true);
+    setCue(true);
+    const timer = setTimeout(() => setCue(false), CUE_MS);
+    return () => clearTimeout(timer);
   }, [count]);
 
   // While the list is open, focus starts in it and the "minutes ago" labels keep up.
@@ -126,7 +132,10 @@ export function InboxButton() {
         aria-label={label}
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          setCue(false);
+          setOpen((value) => !value);
+        }}
       >
         <IconBell size={15} />
         {count > 0 && (
@@ -140,6 +149,13 @@ export function InboxButton() {
           </span>
         )}
       </button>
+      <span role="status" aria-live="polite" className={
+          cue && !open
+            ? "pointer-events-none absolute right-0 top-[30px] z-40 whitespace-nowrap rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11.5px] text-neutral-300 shadow-lg"
+            : "sr-only"
+        } data-inbox-cue={cue && !open ? "" : undefined}>
+        {cue && !open ? "新：有会话需要关注，点铃铛查看" : ""}
+      </span>
       {open && (
         <div
           ref={panelRef}

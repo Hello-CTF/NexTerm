@@ -95,7 +95,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
   resetNotificationPrefsForTest();
-  // The first-run guidance opens the list on its own; these tests exercise the list itself.
+  // Keep the first-run guidance card out of the way; these tests exercise the list itself.
   resetInboxGuidanceForTest();
   dismissInboxGuidance();
   resetAwarenessStore();

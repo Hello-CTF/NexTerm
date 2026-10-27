@@ -47,6 +47,7 @@ describe("inbox first-run guidance", () => {
   let view: MountedView | undefined;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     localStorage.clear();
     resetInboxGuidanceForTest();
     resetAwarenessStore();
@@ -61,32 +62,50 @@ describe("inbox first-run guidance", () => {
     view = undefined;
     setSystemNotifierForTest(null);
     resetAwarenessStore();
+    vi.useRealTimers();
   });
 
-  it("stays hidden until the bell first gets a count, then opens once", () => {
+  it("shows a cue at the first count without opening the list or moving focus", () => {
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
     view = mount(createElement(InboxButton));
-    expect(guidance(view)).toBeNull();
+    expect(view.container.querySelector("[data-inbox-cue]")).toBeNull();
 
     act(() => applyAwareness([attention("T1")]));
-    expect(guidance(view)).not.toBeNull();
+    expect(view.container.querySelector("[data-inbox-cue]")).not.toBeNull();
+    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("新");
+    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(input);
 
-    // Closing the list does not bring it back by itself when the count changes.
+    act(() => {
+      vi.advanceTimersByTime(8000);
+    });
+    expect(view.container.querySelector("[data-inbox-cue]")).toBeNull();
+    input.remove();
+  });
+
+  it("clears the cue on click and shows the card when the user opens the list", () => {
+    view = mount(createElement(InboxButton));
+    act(() => applyAwareness([attention("T1")]));
+    expect(guidance(view)).toBeNull();
     click(bell(view));
-    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
-    act(() => applyAwareness([attention("T1"), attention("T2")]));
-    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(view.container.querySelector("[data-inbox-cue]")).toBeNull();
+    expect(view.container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(guidance(view)).not.toBeNull();
   });
 
   it("is not shown again after it was dismissed, including after a reload", () => {
     act(() => applyAwareness([attention("T1")]));
     view = mount(createElement(InboxButton));
+    click(bell(view));
     click(view.container.querySelector('[data-guidance="dismiss"]') as Element);
     expect(guidance(view)).toBeNull();
     view.unmount();
 
     resetInboxGuidanceForTest();
     view = mount(createElement(InboxButton));
-    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(view.container.querySelector("[data-inbox-cue]")).toBeNull();
     click(bell(view));
     expect(view.container.querySelector('[role="dialog"]')).not.toBeNull();
     expect(guidance(view)).toBeNull();
@@ -95,6 +114,7 @@ describe("inbox first-run guidance", () => {
   it("asks for the system notification permission from the enable button", async () => {
     act(() => applyAwareness([attention("T1")]));
     view = mount(createElement(InboxButton));
+    click(bell(view));
     click(view.container.querySelector('[data-guidance="enable"]') as Element);
     await flush();
     expect(request).toHaveBeenCalledTimes(1);
@@ -106,6 +126,7 @@ describe("inbox first-run guidance", () => {
     permission = "granted";
     act(() => applyAwareness([attention("T1")]));
     view = mount(createElement(InboxButton));
+    click(bell(view));
     expect(guidance(view)).not.toBeNull();
     expect(view.container.querySelector('[data-guidance="enable"]')).toBeNull();
   });
@@ -113,6 +134,7 @@ describe("inbox first-run guidance", () => {
   it("opens the terminal settings section from the settings link", () => {
     act(() => applyAwareness([attention("T1")]));
     view = mount(createElement(InboxButton));
+    click(bell(view));
     const sections: string[] = [];
     const off = onSettingsSection((id) => sections.push(id));
     click(view.container.querySelector('[data-guidance="settings"]') as Element);
