@@ -5,8 +5,14 @@ import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
-import { Daemon, type DaemonHelperState } from "./Daemon";
-import { helperStageText } from "./HelperOperationView";
+import {
+  PersistenceHintBar,
+  dismissPersistenceHint,
+  dismissedPersistenceHints,
+  forgetPersistenceHints,
+  persistenceHint,
+  persistenceHintKey,
+} from "./PersistenceHintBar";
 import { HelperOperationDialog } from "./HelperOperationDialog";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
@@ -1221,14 +1227,7 @@ export function TerminalPane({
     if (durable) return;
     // This tab started as a regular terminal while the helper deployed; only new tabs become durable.
     setHelperReady(true);
-    pushToast("success", "持久终端已就绪：当前标签仍是普通终端，新建的标签将是持久终端", {
-      label: "新建持久标签",
-      onSelect: () => {
-        const session = useUi.getState().sessions.find((item) => item.id === sessionId);
-        if (session) void openTerminalTab(session, undefined, myPaneId ?? undefined);
-      },
-    });
-  }, [helperOperation?.operationId, helperOperation?.status, storeTabId, durable, pushToast, sessionId, myPaneId]);
+  }, [helperOperation?.operationId, helperOperation?.status, storeTabId, durable]);
 
   useEffect(() => {
     if (helperOperation?.status !== "awaiting_choice") return;
@@ -1240,15 +1239,35 @@ export function TerminalPane({
     );
   }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
 
-  const helperBadge: DaemonHelperState | null = helperOperation?.status === "running"
-    ? { state: "installing", stage: helperStageText(helperOperation.stage) }
+  const helperState = helperOperation?.status === "running"
+    ? "running"
     : helperOperation?.status === "awaiting_choice"
-      ? { state: "attention", message: helperOperation.reason?.message }
-      : helperReady ? { state: "ready" } : null;
+      ? "attention"
+      : helperReady ? "ready" : null;
   useEffect(() => {
-    // The header now reports the ready helper; drop the "not durable" reason so the tab strip marker agrees with it.
-    if (helperBadge?.state === "ready" && regularReason) useUi.getState().updateTab(storeTabId, { regularReason: undefined });
-  }, [helperBadge?.state, regularReason, storeTabId]);
+    // The hint now reports the ready helper; drop the "not durable" reason so the tab tooltip agrees with it.
+    if (helperState === "ready" && regularReason) useUi.getState().updateTab(storeTabId, { regularReason: undefined });
+  }, [helperState, regularReason, storeTabId]);
+  const hint = persistenceHint({
+    durable,
+    eligible: (sessionKind === "ssh" || sessionKind === "local") && !containerId && !effectiveWinrm,
+    helper: helperState,
+    helperMessage: helperOperation?.reason?.message,
+    regularReason,
+  });
+  const hintKey = hint ? persistenceHintKey(hint) : null;
+  const [dismissedHints, setDismissedHints] = useState(() => dismissedPersistenceHints(storeTabId));
+  useEffect(() => {
+    setDismissedHints(dismissedPersistenceHints(storeTabId));
+    return () => {
+      // Dismissals last for the life of the tab; a remount of a live tab keeps them.
+      if (!findStoreTab(useUi.getState().workspaces, storeTabId)) forgetPersistenceHints(storeTabId);
+    };
+  }, [storeTabId]);
+  const reopenDurable = () => {
+    const session = useUi.getState().sessions.find((item) => item.id === sessionId);
+    if (session) void openTerminalTab(session, undefined, myPaneId ?? undefined);
+  };
   const openHelper = () => {
     if (helperOperation) setHelperPanelOpen(true);
     else void refreshHelperDetails();
@@ -1948,9 +1967,6 @@ export function TerminalPane({
           </span>
         )}
         <Cwd cwd={cwd} />
-        {(kernelTabId || helperBadge) && (
-          <Daemon durable={durable} sessionKind={sessionKind} helper={helperBadge} regularReason={regularReason} onOpenHelper={openHelper} />
-        )}
         {previewShareEnabled && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
         </div>
         <div className="nx-spacer" />
@@ -2124,6 +2140,15 @@ export function TerminalPane({
             <IconClose size={12} />
           </button>
         </div>
+      )}
+
+      {hint && hintKey && !dismissedHints.has(hintKey) && (
+        <PersistenceHintBar
+          hint={hint}
+          onReopenDurable={sessionKind === "ssh" ? reopenDurable : undefined}
+          onOpenHelper={sessionKind === "ssh" ? openHelper : undefined}
+          onDismiss={() => setDismissedHints(dismissPersistenceHint(storeTabId, hintKey))}
+        />
       )}
 
       <div className="nx-terminal-body relative flex min-h-0 flex-1">

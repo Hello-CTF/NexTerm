@@ -17,6 +17,7 @@ import {
   IconList,
   IconMonitor,
   IconNetwork,
+  IconPersist,
   IconSettings,
   IconTerminal,
 } from "../../ui/icons";
@@ -50,6 +51,16 @@ export function tabTooltip(t: AppTab, unread: boolean): string {
   if (unread) notes.push("有新输出");
   if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
+}
+
+// A durable terminal tab carries a small persistence mark before its title; regular tabs carry none.
+export function TabPersistenceMark({ tab }: { tab: AppTab }) {
+  if (tab.kind !== "terminal" || tab.durable !== true) return null;
+  return (
+    <span className="flex shrink-0 items-center" role="img" aria-label="持久终端" data-testid="tab-persistence-mark">
+      <IconPersist size={12} />
+    </span>
+  );
 }
 
 export function TabStripItem({
