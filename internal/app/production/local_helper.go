@@ -167,8 +167,9 @@ func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelpe
 				if input.Mode != "durable" && input.Mode != "regular" {
 					return localTerminalModeDTO{}, ipc.BadParam(errors.New("本机终端模式无效"))
 				}
-				if database == nil {
-					return localTerminalModeDTO{}, ipc.NewError(ipc.CodeUnsupported, "本机终端模式在此环境中不可设置")
+				if service == nil || database == nil {
+					// Without a local helper local terminals are always regular.
+					return localTerminalModeDTO{}, ipc.NewError(ipc.CodeUnsupported, "本机终端在此环境中不使用持久组件")
 				}
 				if err := database.SettingSet(ctx, LocalTerminalModeSettingKey, input.Mode); err != nil {
 					return localTerminalModeDTO{}, err

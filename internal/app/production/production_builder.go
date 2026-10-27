@@ -169,8 +169,12 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	localHelper := newProductionLocalHelper(config, config.Desktop || owner.OpenAccess(ctx), config.Config.Logger, config.Config.Events)
 	var localDurable session.LocalDurableSource
+	var localTerminalMode func(context.Context) (string, error)
 	if localHelper != nil {
 		localDurable = localHelper
+		// The setting chooses between the helper and the app; without a
+		// helper there is nothing to choose.
+		localTerminalMode = newProductionLocalTerminalMode(database)
 	}
 	helperService := &productionHelperService{ssh: sshResolver}
 	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events, helpers: helperService}
@@ -179,7 +183,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Terminals:            config.Terminals,
 		DurableResolver:      durableResolver,
 		LocalDurable:         localDurable,
-		LocalTerminalMode:    newProductionLocalTerminalMode(database),
+		LocalTerminalMode:    localTerminalMode,
 		TerminalModeResolver: newProductionTerminalModeResolver(database),
 		DurableHistoryLimit:  newProductionDurableHistoryLimit(database),
 		TranscriptOffsets:    durableTranscriptOffsets{database: database},

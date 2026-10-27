@@ -122,9 +122,13 @@ func TestProductionWithoutALocalHelperKeepsLocalTerminalsRegular(t *testing.T) {
 	if info := tab.Info(); info.Durable || !info.Ephemeral || attached.FallbackNotice != "" {
 		t.Fatalf("local tab without a helper = %+v (notice %q)", info, attached.FallbackNotice)
 	}
-	response := dispatchDurableTest(t, production, "local_helper_restart", `{"consentToken":"3:1:0"}`, "", "client-a")
+	response := dispatchDurableTest(t, production, "local_helper_restart", `{"consentToken":"3:1:0:1"}`, "", "client-a")
 	if response.OK {
 		t.Fatal("restart without a local helper succeeded")
+	}
+	response = dispatchDurableTest(t, production, "local_helper_mode_set", `{"mode":"regular"}`, "", "client-a")
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("mode set without a local helper = %+v, want unsupported", response)
 	}
 }
 
