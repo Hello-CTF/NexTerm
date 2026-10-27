@@ -167,7 +167,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	} else {
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}
-	stateRules := newStateRulesRuntime(database, config.Config.Logger)
+	stateRules := newStateRulesRuntime(database, config.Config.Logger, loadStateRulesIdentity(config.DataDir, config.Config.Logger), !shared)
 	localHelper := newProductionLocalHelper(config, config.Desktop || owner.OpenAccess(ctx), config.Config.Logger, config.Config.Events, stateRules.localSource())
 	if localHelper != nil {
 		stateRules.bindLocal(localHelper.SyncStateRules)

@@ -17,22 +17,24 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
+const testStateRulesIdentity = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 type stateRuleFixture struct {
+	database   *store.Store
 	runtime    *stateRulesRuntime
 	dispatcher *ipc.Dispatcher
 	helper     *supervisor.Supervisor
-	provider   base.DurableProvider
-	assetID    string
+	server     *supervisor.Server
 }
 
-func newStateRuleFixture(t *testing.T) stateRuleFixture {
+func newStateRuleFixture(t *testing.T, multiAccount bool) stateRuleFixture {
 	t.Helper()
 	database, err := store.OpenInMemory(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	runtime := newStateRulesRuntime(database, nil)
+	runtime := newStateRulesRuntime(database, nil, testStateRulesIdentity, multiAccount)
 	dispatcher := ipc.NewDispatcher()
 	if err := runtime.registerCommands(dispatcher); err != nil {
 		t.Fatal(err)
@@ -56,52 +58,73 @@ func newStateRuleFixture(t *testing.T) stateRuleFixture {
 		defer cancel()
 		_ = server.Shutdown(ctx)
 	})
-	assetID := ids.New()
-	resolveCtx := ipc.WithHelperProgressScope(context.Background(), ipc.HelperProgressScope{AssetID: assetID})
-	provider := runtime.wrapProvider(resolveCtx, assetID, supervisor.NewRemoteProvider(supervisor.NewClient(server.SocketPath(), helper.StateDir())))
-	return stateRuleFixture{runtime: runtime, dispatcher: dispatcher, helper: helper, provider: provider, assetID: assetID}
+	return stateRuleFixture{database: database, runtime: runtime, dispatcher: dispatcher, helper: helper, server: server}
 }
 
-func (f stateRuleFixture) dispatch(t *testing.T, command string, input any) ipc.Response {
+func (f stateRuleFixture) asset(t *testing.T, ctx context.Context, name string) string {
 	t.Helper()
-	return dispatchFSTransferTest(f.dispatcher, context.Background(), command, input, nil)
+	asset, err := f.database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: name, OptionsJSON: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return asset.ID
+}
+
+// provider resolves a helper provider for assetID as the resolver does.
+func (f stateRuleFixture) provider(ctx context.Context, assetID string) base.DurableProvider {
+	resolveCtx := ipc.WithHelperProgressScope(ctx, ipc.HelperProgressScope{AssetID: assetID})
+	return f.runtime.wrapProvider(resolveCtx, assetID, supervisor.NewRemoteProvider(supervisor.NewClient(f.server.SocketPath(), f.helper.StateDir())))
+}
+
+func (f stateRuleFixture) dispatch(t *testing.T, ctx context.Context, command string, input any) ipc.Response {
+	t.Helper()
+	return dispatchFSTransferTest(f.dispatcher, ctx, command, input, nil)
 }
 
 // awaitRevision waits for the asynchronous push a rule change starts.
-func (f stateRuleFixture) awaitRevision(t *testing.T, want func(string) bool) string {
+func (f stateRuleFixture) awaitRevision(t *testing.T, account string, want func(string) bool) string {
 	t.Helper()
+	key := stateRulesOwnerKey(testStateRulesIdentity, account)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		revision := f.helper.StateRulesRevision()
+		revision := f.helper.StateRulesRevision(key)
 		if want(revision) {
 			return revision
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("helper revision stayed %q", revision)
+			t.Fatalf("helper revision of %q stayed %q", account, revision)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 }
 
-func TestStateRuleChangesReachAnOnlineHelper(t *testing.T) {
-	f := newStateRuleFixture(t)
-	// Any helper operation registers the helper and syncs it.
-	if _, err := f.provider.(*supervisor.RemoteProvider).ListDurable(context.Background()); err != nil {
+func listDurable(t *testing.T, provider base.DurableProvider) {
+	t.Helper()
+	if _, err := provider.(*supervisor.RemoteProvider).ListDurable(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if status := f.runtime.status(""); len(status) != 1 || status[0].Status != stateRuleStatusApplied || status[0].AssetID != f.assetID {
+}
+
+func TestStateRuleChangesReachAnOnlineHelper(t *testing.T) {
+	f := newStateRuleFixture(t, false)
+	ctx := context.Background()
+	assetID := f.asset(t, ctx, "agent-host")
+	otherAsset := f.asset(t, ctx, "other-host")
+	// Any helper operation registers the helper and confirms it.
+	listDurable(t, f.provider(ctx, assetID))
+	if status := f.runtime.status(""); len(status) != 1 || status[0].Status != stateRuleStatusApplied || status[0].AssetID != assetID {
 		t.Fatalf("status before rules = %+v", status)
 	}
 
-	hostRule := decodeFSTransferTest[stateRuleDTO](t, f.dispatch(t, "state_rule_save", stateRuleSaveRequest{
-		Name: "review", Scope: store.StateRuleScopeHost, AssetID: f.assetID, Region: "bottom",
+	hostRule := decodeFSTransferTest[stateRuleDTO](t, f.dispatch(t, ctx, "state_rule_save", stateRuleSaveRequest{
+		Name: "review", Scope: store.StateRuleScopeHost, AssetID: assetID, Region: "bottom",
 		Pattern: "Waiting for your review", State: "needs_me", Keys: "\r", Enabled: true,
 	}))
-	otherHost := decodeFSTransferTest[stateRuleDTO](t, f.dispatch(t, "state_rule_save", stateRuleSaveRequest{
-		Scope: store.StateRuleScopeHost, AssetID: ids.New(), Region: "title", Pattern: "elsewhere", State: "idle", Enabled: true,
+	otherHost := decodeFSTransferTest[stateRuleDTO](t, f.dispatch(t, ctx, "state_rule_save", stateRuleSaveRequest{
+		Scope: store.StateRuleScopeHost, AssetID: otherAsset, Region: "title", Pattern: "elsewhere", State: "idle", Enabled: true,
 	}))
-	revision := f.awaitRevision(t, func(revision string) bool { return revision != "" })
-	rules := f.helper.StateRules().Rules
+	revision := f.awaitRevision(t, "", func(revision string) bool { return revision != "" })
+	rules := f.helper.StateRules(stateRulesOwnerKey(testStateRulesIdentity, "")).Rules
 	if len(rules) != 1 || rules[0].ID != hostRule.ID || rules[0].Keys != "\r" || rules[0].Lines != 5 {
 		t.Fatalf("helper rules = %+v (other host rule %s must not apply)", rules, otherHost.ID)
 	}
@@ -110,25 +133,78 @@ func TestStateRuleChangesReachAnOnlineHelper(t *testing.T) {
 		t.Fatalf("status after push = %+v", status)
 	}
 
-	// An invalid rule is rejected visibly and the helper keeps its rules.
-	response := f.dispatch(t, "state_rule_save", stateRuleSaveRequest{Scope: store.StateRuleScopeGlobal, Region: "bottom", Pattern: `(a)\1`, State: "idle", Enabled: true})
+	// Invalid rules, and host rules for an unknown host, are rejected
+	// visibly and the helper keeps its rules.
+	response := f.dispatch(t, ctx, "state_rule_save", stateRuleSaveRequest{Scope: store.StateRuleScopeGlobal, Region: "bottom", Pattern: `(a)\1`, State: "idle", Enabled: true})
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam || !strings.Contains(response.Error.Message, "匹配模式") {
 		t.Fatalf("invalid rule response = %+v", response)
 	}
+	response = f.dispatch(t, ctx, "state_rule_save", stateRuleSaveRequest{Scope: store.StateRuleScopeHost, AssetID: ids.New(), Region: "bottom", Pattern: "a", State: "idle", Enabled: true})
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("unknown host response = %+v", response)
+	}
 
-	// Export and import round-trip; a disabled copy of the export does not
-	// change what the helper runs, deleting the rule clears it.
-	exported := decodeFSTransferTest[stateRuleExportDTO](t, f.dispatch(t, "state_rule_export", struct{}{}))
-	if exported.Format != stateRuleExportFormat || len(exported.Rules) != 2 {
+	// Export and import round-trip; deleting the rule clears the helper.
+	exported := decodeFSTransferTest[stateRuleExportDTO](t, f.dispatch(t, ctx, "state_rule_export", struct{}{}))
+	if exported.Format != stateRuleExportFormat || len(exported.Rules) != 2 || exported.Rules[0].ID != hostRule.ID {
 		t.Fatalf("export = %+v", exported)
 	}
-	result := decodeFSTransferTest[stateRuleImportResultDTO](t, f.dispatch(t, "state_rule_import", stateRuleImportRequest(exported)))
+	result := decodeFSTransferTest[stateRuleImportResultDTO](t, f.dispatch(t, ctx, "state_rule_import", stateRuleImportRequest(exported)))
 	if result != (stateRuleImportResultDTO{Unchanged: 2}) {
 		t.Fatalf("re-import = %+v", result)
 	}
-	if response := f.dispatch(t, "state_rule_import", stateRuleImportRequest{Format: "other", Version: 1}); response.OK {
+	if response := f.dispatch(t, ctx, "state_rule_import", stateRuleImportRequest{Format: "other", Version: 1}); response.OK {
 		t.Fatal("a foreign file was imported")
 	}
-	decodeFSTransferTest[stateRuleDeleteResult](t, f.dispatch(t, "state_rule_delete", stateRuleDeleteRequest{ID: hostRule.ID}))
-	f.awaitRevision(t, func(revision string) bool { return revision == "" })
+	decodeFSTransferTest[stateRuleDeleteResult](t, f.dispatch(t, ctx, "state_rule_delete", stateRuleDeleteRequest{ID: hostRule.ID}))
+	f.awaitRevision(t, "", func(revision string) bool { return revision == "" })
+}
+
+func TestStateRulesOfAccountsStayApartOnOneHelper(t *testing.T) {
+	f := newStateRuleFixture(t, true)
+	ctxA := ipc.WithUserID(context.Background(), "rules-account-a")
+	ctxB := ipc.WithUserID(context.Background(), "rules-account-b")
+	assetA := f.asset(t, ctxA, "shared-host-a")
+	assetB := f.asset(t, ctxB, "shared-host-b")
+	// Both accounts reach the same helper, as through one SSH user.
+	providerA := f.provider(ctxA, assetA)
+	providerB := f.provider(ctxB, assetB)
+	listDurable(t, providerA)
+	listDurable(t, providerB)
+
+	ruleA := decodeFSTransferTest[stateRuleDTO](t, f.dispatch(t, ctxA, "state_rule_save", stateRuleSaveRequest{
+		Scope: store.StateRuleScopeGlobal, Region: "bottom", Pattern: "Waiting", State: "needs_me", Enabled: true,
+	}))
+	f.awaitRevision(t, "rules-account-a", func(revision string) bool { return revision != "" })
+	// B has no rules; its connections leave A's alone.
+	listDurable(t, providerB)
+	if rules := f.helper.StateRules(stateRulesOwnerKey(testStateRulesIdentity, "rules-account-a")).Rules; len(rules) != 1 || rules[0].ID != ruleA.ID {
+		t.Fatalf("A's rules after B connected = %+v", rules)
+	}
+	if got := f.helper.StateRulesRevision(stateRulesOwnerKey(testStateRulesIdentity, "rules-account-b")); got != "" {
+		t.Fatalf("B holds rules %q", got)
+	}
+	ruleB := decodeFSTransferTest[stateRuleDTO](t, f.dispatch(t, ctxB, "state_rule_save", stateRuleSaveRequest{
+		Scope: store.StateRuleScopeGlobal, Region: "title", Pattern: "Thinking", State: "running", Enabled: true,
+	}))
+	f.awaitRevision(t, "rules-account-b", func(revision string) bool { return revision != "" })
+	if rules := f.helper.StateRules(stateRulesOwnerKey(testStateRulesIdentity, "rules-account-b")).Rules; len(rules) != 1 || rules[0].ID != ruleB.ID {
+		t.Fatalf("B's rules = %+v", rules)
+	}
+	if rules := f.helper.StateRules(stateRulesOwnerKey(testStateRulesIdentity, "rules-account-a")).Rules; len(rules) != 1 || rules[0].ID != ruleA.ID {
+		t.Fatalf("A's rules after B pushed = %+v", rules)
+	}
+
+	// A provider resolved without an account is not given anyone's rules,
+	// and no account sees another's helpers.
+	plain := supervisor.NewRemoteProvider(supervisor.NewClient(f.server.SocketPath(), f.helper.StateDir()))
+	if wrapped := f.runtime.wrapProvider(context.Background(), assetA, plain); wrapped != base.DurableProvider(plain) {
+		t.Fatal("an ownerless provider was wrapped on a multi-account server")
+	}
+	for account, asset := range map[string]string{"rules-account-a": assetA, "rules-account-b": assetB} {
+		status := f.runtime.status(account)
+		if len(status) != 1 || status[0].AssetID != asset {
+			t.Fatalf("status of %s = %+v", account, status)
+		}
+	}
 }

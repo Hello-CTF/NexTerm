@@ -2,13 +2,21 @@ package production
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -23,6 +31,7 @@ type stateRuleStore interface {
 	StateRuleDelete(ctx context.Context, id string) error
 	StateRuleImport(ctx context.Context, inputs []store.StateRuleInput) (store.StateRuleImportResult, error)
 	StateRulesFor(ctx context.Context, assetID string) ([]staterule.Rule, []string, error)
+	StateRuleFingerprint(ctx context.Context) (store.StateRuleFingerprint, error)
 }
 
 // stateRulePushTimeout bounds one push to a helper after a rule change.
@@ -35,16 +44,66 @@ const (
 	// next connection.
 	stateRuleStatusPending = "pending"
 	stateRuleStatusFailed  = "failed"
+	// unsupported: the helper is of a build without state rules.
+	stateRuleStatusUnsupported = "unsupported"
 )
 
+// stateRulesIdentityName is the file in the data directory that holds this
+// installation's random state rule identity.
+const stateRulesIdentityName = "state-rules-identity"
+
+// loadStateRulesIdentity reads this installation's state rule identity,
+// creating it on first use. Without a readable data directory it returns a
+// fresh identity for this run only.
+func loadStateRulesIdentity(dataDir string, logger *slog.Logger) string {
+	path := filepath.Join(dataDir, stateRulesIdentityName)
+	if data, err := os.ReadFile(path); err == nil {
+		if identity := strings.TrimSpace(string(data)); len(identity) == 64 {
+			if _, err := hex.DecodeString(identity); err == nil {
+				return identity
+			}
+		}
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		panic(fmt.Sprintf("read random state rule identity: %v", err))
+	}
+	identity := hex.EncodeToString(raw)
+	if err := atomicfile.Write(path, 0o600, func(writer io.Writer) error {
+		_, err := io.WriteString(writer, identity+"\n")
+		return err
+	}); err != nil {
+		logger.Warn("persist the state rule identity; helpers will not recognize this run's rule owners after a restart", "error", err)
+	}
+	return identity
+}
+
+// stateRulesOwnerKey is the opaque key a helper knows a rule owner by: a
+// hash of this installation's identity and the account, so the account ID
+// never leaves the app and owners of different installations or accounts
+// sharing one helper stay apart.
+func stateRulesOwnerKey(identity, account string) string {
+	sum := sha256.Sum256([]byte("nexterm-state-rules\x00" + identity + "\x00" + account))
+	return hex.EncodeToString(sum[:16])
+}
+
 // stateRulesRuntime keeps durable helpers on their owner's state rules. Every
-// helper provider the app resolves is wrapped so each connection pushes the
-// rules after the hello when the helper holds another revision, and a rule
-// change pushes to every known helper of the owner at once, so a helper
-// online takes a change with one push.
+// helper provider the app resolves is wrapped so it acts for the owner's
+// rule key: the sessions it creates are evaluated with that owner's rules,
+// and each connection pushes the rules after the hello when the helper holds
+// another revision. A rule change pushes to every known helper of the owner
+// at once, so a helper online takes a change with one push.
+//
+// A host-scoped rule applies to sessions created through that asset: the
+// set pushed for a provider holds the global rules and those of the asset it
+// was resolved for.
 type stateRulesRuntime struct {
-	store  stateRuleStore
-	logger *slog.Logger
+	store    stateRuleStore
+	logger   *slog.Logger
+	identity string
+	// multiAccount refuses helpers without an account: one set would
+	// otherwise serve every account.
+	multiAccount bool
 
 	mu      sync.Mutex
 	helpers map[stateRuleHelperKey]*stateRuleHelper
@@ -55,28 +114,36 @@ type stateRuleHelperKey struct {
 	asset string
 }
 
-func newStateRulesRuntime(database stateRuleStore, logger *slog.Logger) *stateRulesRuntime {
+func newStateRulesRuntime(database stateRuleStore, logger *slog.Logger, identity string, multiAccount bool) *stateRulesRuntime {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &stateRulesRuntime{store: database, logger: logger, helpers: make(map[stateRuleHelperKey]*stateRuleHelper)}
+	return &stateRulesRuntime{
+		store: database, logger: logger, identity: identity, multiAccount: multiAccount,
+		helpers: make(map[stateRuleHelperKey]*stateRuleHelper),
+	}
 }
 
 // stateRuleHelper is the rule source of one owner's helper on one host.
 type stateRuleHelper struct {
-	runtime *stateRulesRuntime
-	key     stateRuleHelperKey
+	runtime  *stateRulesRuntime
+	key      stateRuleHelperKey
+	ownerKey string
+
+	mu sync.Mutex
 	// sync pushes the rules now; nil until a provider is registered.
 	sync func(context.Context) error
-
-	mu       sync.Mutex
-	revision string
-	status   string
-	err      string
-	skipped  []string
-	at       time.Time
-	pushing  bool
-	again    bool
+	// cached is the set built for fingerprint; valid while cacheOK.
+	cached      supervisor.StateRuleSet
+	fingerprint store.StateRuleFingerprint
+	cacheOK     bool
+	revision    string
+	status      string
+	err         string
+	skipped     []string
+	at          time.Time
+	pushing     bool
+	again       bool
 }
 
 func (h *stateRuleHelper) ownerContext() context.Context {
@@ -87,10 +154,27 @@ func (h *stateRuleHelper) ownerContext() context.Context {
 	return ctx
 }
 
-// StateRules builds the set for this helper from the store. A store failure
-// keeps the helper on the rules it has.
+func (h *stateRuleHelper) StateRulesOwner() string { return h.ownerKey }
+
+// StateRules returns the set for this helper, built from the store and kept
+// until the owner's rules change. A store failure keeps the helper on the
+// rules it has. An owner without rules gets an empty set, which is pushed
+// only to clear rules the helper still holds for this owner key.
 func (h *stateRuleHelper) StateRules() (supervisor.StateRuleSet, bool) {
-	rules, skipped, err := h.runtime.store.StateRulesFor(h.ownerContext(), h.key.asset)
+	ctx := h.ownerContext()
+	fingerprint, err := h.runtime.store.StateRuleFingerprint(ctx)
+	if err != nil {
+		h.runtime.logger.Warn("read state rules for a helper", "asset", h.key.asset, "error", err)
+		return supervisor.StateRuleSet{}, false
+	}
+	h.mu.Lock()
+	if h.cacheOK && h.fingerprint == fingerprint {
+		set := h.cached
+		h.mu.Unlock()
+		return set, true
+	}
+	h.mu.Unlock()
+	rules, skipped, err := h.runtime.store.StateRulesFor(ctx, h.key.asset)
 	if err != nil {
 		h.runtime.logger.Warn("read state rules for a helper", "asset", h.key.asset, "error", err)
 		return supervisor.StateRuleSet{}, false
@@ -102,7 +186,7 @@ func (h *stateRuleHelper) StateRules() (supervisor.StateRuleSet, bool) {
 		return supervisor.StateRuleSet{}, false
 	}
 	h.mu.Lock()
-	h.skipped = skipped
+	h.cached, h.fingerprint, h.cacheOK, h.skipped = set, fingerprint, true, skipped
 	h.mu.Unlock()
 	return set, true
 }
@@ -118,6 +202,8 @@ func (h *stateRuleHelper) record(revision string, err error) {
 	switch {
 	case err == nil:
 		h.revision, h.status, h.err = revision, stateRuleStatusApplied, ""
+	case errors.Is(err, supervisor.ErrUnsupported):
+		h.status, h.err = stateRuleStatusUnsupported, err.Error()
 	case unreachableHelper(err):
 		h.status, h.err = stateRuleStatusPending, err.Error()
 	default:
@@ -128,6 +214,13 @@ func (h *stateRuleHelper) record(revision string, err error) {
 func unreachableHelper(err error) bool {
 	return errors.Is(err, supervisor.ErrUnavailable) || errors.Is(err, base.ErrDisconnected) ||
 		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+// invalidate drops the cached set.
+func (h *stateRuleHelper) invalidate() {
+	h.mu.Lock()
+	h.cacheOK = false
+	h.mu.Unlock()
 }
 
 // push runs sync, coalescing pushes requested while one is in flight.
@@ -171,21 +264,27 @@ func (r *stateRulesRuntime) helper(owner, asset string) *stateRuleHelper {
 	defer r.mu.Unlock()
 	h := r.helpers[key]
 	if h == nil {
-		h = &stateRuleHelper{runtime: r, key: key}
+		h = &stateRuleHelper{runtime: r, key: key, ownerKey: stateRulesOwnerKey(r.identity, owner)}
 		r.helpers[key] = h
 	}
 	return h
 }
 
-// wrapProvider makes a resolved durable provider keep its helper on the
-// state rules of the owner in ctx for assetID. Providers that do not speak
-// to a helper are returned unchanged.
+// wrapProvider makes a resolved durable provider act for the rule owner in
+// ctx on assetID. Providers that do not speak to a helper, and on a
+// multi-account server providers resolved without an account, are returned
+// unchanged: their sessions use no rules.
 func (r *stateRulesRuntime) wrapProvider(ctx context.Context, assetID string, provider base.DurableProvider) base.DurableProvider {
 	remote, ok := provider.(*supervisor.RemoteProvider)
 	if r == nil || !ok || remote == nil {
 		return provider
 	}
-	h := r.helper(ipc.OwnerID(ctx), assetID)
+	owner := ipc.OwnerID(ctx)
+	if owner == "" && r.multiAccount {
+		r.logger.Warn("durable helper resolved without an account; its sessions use no state rules", "asset", assetID)
+		return provider
+	}
+	h := r.helper(owner, assetID)
 	wrapped := remote.WithStateRules(h)
 	h.mu.Lock()
 	h.sync = wrapped.SyncStateRules
@@ -213,19 +312,25 @@ func (r *stateRulesRuntime) bindLocal(sync func(context.Context) error) {
 	h.mu.Unlock()
 }
 
-// changed pushes the rules to every known helper of owner. The local
-// helper, registered without an owner, serves the desktop or the single
-// account and is pushed for any owner.
+// owns reports whether a helper registered for key.owner serves owner. A
+// helper registered without an account serves the desktop or the single
+// account, so it serves any owner except on a multi-account server.
+func (r *stateRulesRuntime) owns(key stateRuleHelperKey, owner string) bool {
+	return key.owner == owner || key.owner == "" && !r.multiAccount
+}
+
+// changed pushes the rules to every known helper of owner.
 func (r *stateRulesRuntime) changed(owner string) {
 	r.mu.Lock()
 	targets := make([]*stateRuleHelper, 0, len(r.helpers))
 	for key, h := range r.helpers {
-		if key.owner == owner || key.owner == "" {
+		if r.owns(key, owner) {
 			targets = append(targets, h)
 		}
 	}
 	r.mu.Unlock()
 	for _, h := range targets {
+		h.invalidate()
 		h.push()
 	}
 }
@@ -315,7 +420,7 @@ func (r *stateRulesRuntime) status(owner string) []stateRuleHelperStatusDTO {
 	r.mu.Lock()
 	helpers := make([]*stateRuleHelper, 0, len(r.helpers))
 	for key, h := range r.helpers {
-		if key.owner == owner || key.owner == "" {
+		if r.owns(key, owner) {
 			helpers = append(helpers, h)
 		}
 	}

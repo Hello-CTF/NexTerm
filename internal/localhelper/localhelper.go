@@ -151,7 +151,9 @@ type Service struct {
 	mu       sync.Mutex
 	status   Status
 	provider *supervisor.RemoteProvider
-	changed  chan struct{}
+	// syncs tracks state rule pushes started when a helper became ready.
+	syncs   sync.WaitGroup
+	changed chan struct{}
 	// wanted is set when a durable local terminal asked for a helper.
 	wanted bool
 	// checked is closed once the first inspection decided the state.
@@ -266,6 +268,7 @@ func (s *Service) Close() {
 	if started {
 		<-s.done
 	}
+	s.syncs.Wait()
 }
 
 // Status returns the current status.
@@ -859,11 +862,16 @@ func (s *Service) watch(helper helperHandle) watchOutcome {
 	s.setStatus(status, provider)
 	s.markChecked()
 	if s.config.StateRules != nil {
-		// The outcome reaches the rule source; a helper that cannot take
-		// the rules now gets them with the next connection.
-		ctx, cancel := context.WithTimeout(s.ctx, stateRulesSyncTimeout)
-		_ = provider.SyncStateRules(ctx)
-		cancel()
+		// The push runs beside the watch loop. Its outcome reaches the rule
+		// source; a helper that cannot take the rules now gets them with
+		// the next connection.
+		s.syncs.Add(1)
+		go func() {
+			defer s.syncs.Done()
+			ctx, cancel := context.WithTimeout(s.ctx, stateRulesSyncTimeout)
+			defer cancel()
+			_ = provider.SyncStateRules(ctx)
+		}()
 	}
 	exited := helper.Exited()
 	ticker := time.NewTicker(s.config.PollInterval)
