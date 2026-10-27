@@ -27,15 +27,14 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   };
 });
 
-import { CommandPalette } from "../../app/CommandPalette";
+import { JumpPalette } from "../../app/JumpPalette";
 
 let mounted: MountedView | undefined;
 
 function mountPalette(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const node: ReactNode = createElement(CommandPalette, {
+  const node: ReactNode = createElement(JumpPalette, {
     onClose: () => {},
-    onQuickConnect: () => {},
   });
   return mount(createElement(QueryClientProvider, { client }, node));
 }

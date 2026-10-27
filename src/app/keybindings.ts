@@ -39,8 +39,8 @@ export interface KeybindingAction {
 }
 
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
-  { id: "commandPalette", label: "命令面板", defaultBinding: "Mod+Shift+p" },
-  { id: "quickConnect", label: "快速连接", defaultBinding: "Mod+Shift+k" },
+  { id: "commandPalette", label: "跳转面板", defaultBinding: "Mod+Shift+p" },
+  { id: "quickConnect", label: "跳转面板（只看主机）", defaultBinding: "Mod+Shift+k" },
   { id: "newTerminal", label: "新建终端标签", defaultBinding: "Mod+t" },
   { id: "nextWorkspace", label: "下一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowRight" : "Mod+Alt+ArrowRight" },
   { id: "previousWorkspace", label: "上一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowLeft" : "Mod+Alt+ArrowLeft" },

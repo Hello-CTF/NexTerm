@@ -75,7 +75,7 @@ vi.mock("../../app/platform", async (importOriginal) => {
   return { ...actual, isMobile: () => mocks.mobile };
 });
 
-import { QuickConnect } from "../../app/QuickConnect";
+import { JumpPalette } from "../../app/JumpPalette";
 import {
   assetConnectionProblemKey,
   quickConnectionProblemKey,
@@ -160,7 +160,10 @@ const mountedViews: MountedView[] = [];
 function mountOverlay(props: { onClose: () => void; kindFilter?: "database" }): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mounted = mount(
-    createElement(QueryClientProvider, { client }, createElement(QuickConnect, props)),
+    createElement(QueryClientProvider, { client }, createElement(JumpPalette, {
+      onClose: props.onClose,
+      scope: props.kindFilter === "database" ? "database" : "hosts",
+    })),
   );
   mountedViews.push(mounted);
   return mounted;

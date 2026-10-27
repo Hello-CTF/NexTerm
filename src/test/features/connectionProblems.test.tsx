@@ -78,7 +78,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   };
 });
 
-import { QuickConnect } from "../../app/QuickConnect";
+import { JumpPalette } from "../../app/JumpPalette";
 import { AssetTree } from "../../features/explorer/AssetTree";
 import {
   assetConnectionProblemKey,
@@ -527,7 +527,7 @@ describe("connection problem visibility and retry", () => {
     expect(useUi.getState().workspaces).toEqual([]);
     const onClose = vi.fn();
 
-    const view = mountWithClient(createElement(QuickConnect, { onClose }));
+    const view = mountWithClient(createElement(JumpPalette, { onClose, scope: "hosts" }));
     await waitFor(() => {
       const section = view.container.querySelector('section[aria-label="本次问题"]');
       expect(section?.textContent).toContain("quick still visible");
@@ -547,7 +547,7 @@ describe("connection problem visibility and retry", () => {
     mocks.sessionConnectQuick.mockRejectedValueOnce(new Error("dismiss quick"));
     await connectQuickTarget(QUICK_TARGET);
     const key = quickConnectionProblemKey(QUICK_TARGET);
-    const view = mountWithClient(createElement(QuickConnect, { onClose: vi.fn() }));
+    const view = mountWithClient(createElement(JumpPalette, { onClose: vi.fn(), scope: "hosts" }));
     await waitFor(() => expect(view.container.textContent).toContain("dismiss quick"));
 
     const dismiss = view.container.querySelector<HTMLButtonElement>(

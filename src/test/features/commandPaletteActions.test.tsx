@@ -46,7 +46,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   };
 });
 
-import { CommandPalette } from "../../app/CommandPalette";
+import { JumpPalette } from "../../app/JumpPalette";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { Asset } from "../../ipc/commands";
@@ -94,6 +94,12 @@ function optionByText(container: HTMLElement, text: string): HTMLButtonElement {
   );
   if (!option) throw new Error(`Palette option not found: ${text}`);
   return option;
+}
+
+function hostOption(container: HTMLElement, name: string): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(
+    (o) => o.querySelector("span span")?.textContent === name,
+  );
 }
 
 function setTerminalWorkspace(tabId: string | null) {
@@ -189,7 +195,7 @@ afterEach(() => {
 });
 
 async function mountPalette(props: { onClose: () => void; onEditAsset?: (a: Asset) => void }) {
-  mounted = mountWithClient(createElement(CommandPalette, props));
+  mounted = mountWithClient(createElement(JumpPalette, props));
   await flush();
   await flush();
 }
@@ -254,12 +260,13 @@ describe("command palette snippet entries", () => {
 });
 
 describe("command palette asset secondary actions", () => {
-  it("provides connect, edit, clone, and hide entries for every visible asset", async () => {
+  it("provides a host row plus edit, clone, and hide entries for every visible asset", async () => {
     await mountPalette({ onClose: vi.fn() });
-    expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
 
     setInputValue(searchInput(mounted!.container), "web-01");
-    for (const label of ["连接 web-01", "编辑资产 web-01", "克隆资产 web-01", "隐藏资产 web-01"]) {
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
+    for (const label of ["编辑资产 web-01", "克隆资产 web-01", "隐藏资产 web-01"]) {
       expect(optionByText(mounted!.container, label)).toBeTruthy();
     }
   });
@@ -272,9 +279,9 @@ describe("command palette asset secondary actions", () => {
     ]);
     await mountPalette({ onClose: vi.fn() });
     const options = [...mounted!.container.querySelectorAll('[role="option"]')].map((option) => option.textContent ?? "");
-    expect(options.some((text) => text.includes("连接 web-01"))).toBe(true);
-    expect(options.some((text) => text.includes("连接 docker-prod"))).toBe(false);
-    expect(options.some((text) => text.includes("连接 ops/api-0"))).toBe(false);
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "docker-prod")).toBeUndefined();
+    expect(hostOption(mounted!.container, "ops/api-0")).toBeUndefined();
     expect(options.some((text) => text.includes("编辑资产 docker-prod"))).toBe(true);
     expect(options.some((text) => text.includes("编辑资产 ops/api-0"))).toBe(true);
     await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
@@ -290,13 +297,13 @@ describe("command palette asset secondary actions", () => {
 
     const options = [...mounted!.container.querySelectorAll('[role="option"]')];
     expect(options.some((option) => option.textContent?.includes("打开数据库工作台"))).toBe(false);
-    expect(optionByText(mounted!.container, "连接 db-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "db-01")).toBeTruthy();
   });
 
   it("passes the asset to the existing editor flow from the edit entry", async () => {
     const onEditAsset = vi.fn();
     await mountPalette({ onClose: vi.fn(), onEditAsset });
-    expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
 
     setInputValue(searchInput(mounted!.container), "编辑资产 web-01");
     click(optionByText(mounted!.container, "编辑资产 web-01"));
@@ -305,7 +312,7 @@ describe("command palette asset secondary actions", () => {
 
   it("cloning reuses the existing creation flow and shares credential references", async () => {
     await mountPalette({ onClose: vi.fn() });
-    expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
 
     setInputValue(searchInput(mounted!.container), "克隆资产 web-01");
     click(optionByText(mounted!.container, "克隆资产 web-01"));
@@ -318,7 +325,7 @@ describe("command palette asset secondary actions", () => {
 
   it("hiding removes the asset from the palette without modifying data", async () => {
     await mountPalette({ onClose: vi.fn() });
-    expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
 
     setInputValue(searchInput(mounted!.container), "隐藏资产 web-01");
     click(optionByText(mounted!.container, "隐藏资产 web-01"));
@@ -358,7 +365,6 @@ describe("command palette workspace actions", () => {
     await mountPalette({ onClose });
 
     const firstOption = mounted!.container.querySelector('[role="option"]');
-    expect(firstOption?.textContent).toContain("快速连接…");
     expect(firstOption?.getAttribute("aria-selected")).toBe("true");
     expect(mounted!.container.querySelectorAll('[data-command-section="已打开的工作区"]')).toHaveLength(1);
     expect(optionByText(mounted!.container, "alpha-workspace").textContent).toContain("当前");

@@ -128,7 +128,7 @@ vi.mock("../features/settings/SettingsView", () => ({ SettingsView: () => null }
 vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
-vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
+vi.mock("../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../app/App";

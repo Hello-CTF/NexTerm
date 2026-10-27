@@ -141,15 +141,15 @@ vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null, AssetEditor: () => null }));
-vi.mock("../app/CommandPalette", () => ({
-  CommandPalette: (props: { onOpenFiles?: () => void }) => (
-    <button type="button" data-testid="palette-files" onClick={props.onOpenFiles}>
-      Open file browser
-    </button>
-  ),
-}));
-vi.mock("../app/QuickConnect", () => ({
-  QuickConnect: () => <div data-testid="quick-connect" />,
+vi.mock("../app/JumpPalette", () => ({
+  JumpPalette: (props: { scope?: string; onOpenFiles?: () => void }) =>
+    props.scope === "all" ? (
+      <button type="button" data-testid="palette-files" onClick={props.onOpenFiles}>
+        Open file browser
+      </button>
+    ) : (
+      <div data-testid="quick-connect" data-scope={props.scope} />
+    ),
 }));
 vi.mock("../app/TakeoverBanner", () => ({
   TakeoverBanner: () =>
@@ -248,7 +248,7 @@ function expectShellOrder(expected: string[]): void {
 }
 
 async function openPaletteFiles(): Promise<void> {
-  const paletteButton = mounted?.container.querySelector('button[aria-label^="命令面板"]');
+  const paletteButton = mounted?.container.querySelector('button[aria-label^="跳转面板"]');
   if (!paletteButton) throw new Error("Command palette button not found");
   click(paletteButton);
   await flush();
@@ -762,7 +762,7 @@ describe("App empty states", () => {
     const main = mounted.container.querySelector("main");
     expect(
       [...(main?.querySelectorAll("button") ?? [])].some(
-        (button) => button.textContent?.trim() === "命令面板",
+        (button) => button.textContent?.trim() === "跳转面板",
       ),
     ).toBe(true);
     expect(main?.textContent).toContain("MySQL / PostgreSQL / Redis");
@@ -788,7 +788,7 @@ describe("App empty states", () => {
       const main = mounted.container.querySelector("main");
       expect(
         [...(main?.querySelectorAll("button") ?? [])].some(
-          (button) => button.textContent?.trim() === "命令面板",
+          (button) => button.textContent?.trim() === "跳转面板",
         ),
       ).toBe(false);
       expect(main?.textContent).toContain("MySQL / PostgreSQL / Redis");

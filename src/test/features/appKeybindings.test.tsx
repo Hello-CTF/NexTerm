@@ -55,11 +55,10 @@ vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
-vi.mock("../../app/CommandPalette", () => ({
-  CommandPalette: () => <div data-testid="command-palette" />,
-}));
-vi.mock("../../app/QuickConnect", () => ({
-  QuickConnect: () => <div data-testid="quick-connect" />,
+vi.mock("../../app/JumpPalette", () => ({
+  JumpPalette: (props: { scope?: string }) => (
+    <div data-testid={props.scope === "hosts" ? "quick-connect" : "command-palette"} />
+  ),
 }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
