@@ -148,22 +148,34 @@ type durableDescriptorDTO struct {
 	Activity *durableActivityDTO `json:"activity,omitempty"`
 }
 
-// durableActivityDTO carries Unix ms times; a nil time is unknown to the helper.
+// durableActivityDTO carries Unix ms times on the host's clock; a nil time
+// is unknown to the helper. The ages and asOf are measured on that clock too,
+// so clients show ages and rebase times instead of comparing clocks; they are
+// nil for a helper that reports times without ages.
 type durableActivityDTO struct {
-	LastOutputAt *int64 `json:"lastOutputAt"`
-	DetachedAt   *int64 `json:"detachedAt"`
-	Attached     bool   `json:"attached"`
+	LastOutputAt    *int64 `json:"lastOutputAt"`
+	DetachedAt      *int64 `json:"detachedAt"`
+	Attached        bool   `json:"attached"`
+	AsOf            *int64 `json:"asOf,omitempty"`
+	LastOutputMSAgo *int64 `json:"lastOutputMsAgo,omitempty"`
+	DetachedMSAgo   *int64 `json:"detachedMsAgo,omitempty"`
 }
 
 func newDurableActivityDTO(activity *base.DurableActivity) *durableActivityDTO {
 	if activity == nil {
 		return nil
 	}
-	return &durableActivityDTO{
-		LastOutputAt: unixMilliPointer(activity.LastOutputAt),
-		DetachedAt:   unixMilliPointer(activity.DetachedAt),
-		Attached:     activity.Attached,
+	dto := &durableActivityDTO{
+		LastOutputAt:    unixMilliPointer(activity.LastOutputAt),
+		DetachedAt:      unixMilliPointer(activity.DetachedAt),
+		Attached:        activity.Attached,
+		LastOutputMSAgo: activity.LastOutputMSAgo,
+		DetachedMSAgo:   activity.DetachedMSAgo,
 	}
+	if !activity.AsOf.IsZero() {
+		dto.AsOf = unixMilliPointer(&activity.AsOf)
+	}
+	return dto
 }
 
 func unixMilliPointer(at *time.Time) *int64 {
@@ -361,6 +373,7 @@ type liveTabDTO struct {
 	TitleChangedAt  int64   `json:"titleChangedAt,omitempty"`
 	CreatedAt       int64   `json:"createdAt,omitempty"`
 	DetachedAt      int64   `json:"detachedAt,omitempty"`
+	DetachedMSAgo   int64   `json:"detachedMsAgo"`
 	Durable         bool    `json:"durable,omitempty"`
 	State           string  `json:"state,omitempty"`
 }
@@ -910,7 +923,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
 						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt,
-						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, Durable: info.Durable, State: info.State,
+						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, DetachedMSAgo: info.DetachedMSAgo, Durable: info.Durable, State: info.State,
 					})
 				}
 				return result, nil

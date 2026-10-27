@@ -216,6 +216,9 @@ func (t *Tab) listInfo() TabInfo {
 	t.mu.Lock()
 	info := t.infoLocked()
 	info.LastOutputMSAgo = terminalLastOutputMSAgo(t.terminal)
+	if info.DetachedAt != 0 {
+		info.DetachedMSAgo = max(time.Since(t.detachedAt).Milliseconds(), 0)
+	}
 	durable := t.durable
 	t.mu.Unlock()
 	info.State = durableAttentionState(durable)

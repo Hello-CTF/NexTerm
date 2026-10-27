@@ -77,7 +77,7 @@ func TestListReportsSessionActivity(t *testing.T) {
 	default:
 		t.Fatalf("attachment state name %q", name)
 	}
-	if attached.Activity == nil || !attached.Activity.Attached || attached.Activity.DetachedAt != nil {
+	if attached.Activity == nil || !attached.Activity.Attached || attached.Activity.DetachedAt != nil || attached.Activity.DetachedMSAgo != nil {
 		t.Fatalf("an attached session reports %+v", attached.Activity)
 	}
 
@@ -98,6 +98,18 @@ func TestListReportsSessionActivity(t *testing.T) {
 	}
 	if detached.Activity.DetachedAt.Before(beforeDetach) {
 		t.Fatalf("detached at %v, before the last client left at %v", detached.Activity.DetachedAt, beforeDetach)
+	}
+	// Ages are measured on the helper's clock at AsOf, so they match its
+	// times; the monotonic reading may differ from the wall one by under 1ms.
+	activity := detached.Activity
+	if activity.AsOf.IsZero() || activity.DetachedMSAgo == nil || activity.LastOutputMSAgo == nil {
+		t.Fatalf("activity without ages: %+v", activity)
+	}
+	if want := activity.AsOf.Sub(*activity.DetachedAt).Milliseconds(); abs64(*activity.DetachedMSAgo-want) > 1 {
+		t.Fatalf("detached age %d, want %d from as_of", *activity.DetachedMSAgo, want)
+	}
+	if want := activity.AsOf.Sub(*activity.LastOutputAt).Milliseconds(); abs64(*activity.LastOutputMSAgo-want) > 1 {
+		t.Fatalf("output age %d, want %d from as_of", *activity.LastOutputMSAgo, want)
 	}
 	// A repeated detach of a gone attachment does not move the time.
 	if err := first.Detach(); err != nil {
@@ -233,4 +245,11 @@ func TestListFromHelperWithoutActivityDecodesAsUnknown(t *testing.T) {
 	if want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC); !descriptor.CreatedAt.Equal(want) {
 		t.Fatalf("created at %v, want %v", descriptor.CreatedAt, want)
 	}
+}
+
+func abs64(value int64) int64 {
+	if value < 0 {
+		return -value
+	}
+	return value
 }

@@ -281,7 +281,9 @@ describe("BackgroundSessions table", () => {
       expect(cell(current, "background-size").textContent).toBe("120×40");
       expect(cell(current, "background-output").textContent).toBe("5 分钟前有输出");
       expect(cell(current, "background-detached").textContent).toBe("30 分钟前转入后台");
-      expect(cell(current, "background-time").title).toContain("创建：2026-10-27 11:00:00");
+      expect(cell(current, "background-time").title).toContain("创建（主机时间）：2026-10-27 11:00:00");
+      // A helper that reports times without ages: its times are labelled as host time.
+      expect(cell(current, "background-time").title).toContain("最近输出（主机时间）：2026-10-27 11:55:00");
 
       const silent = row(view, "silent");
       expect(cell(silent, "background-output").textContent).toBe("暂无输出");
@@ -293,7 +295,7 @@ describe("BackgroundSessions table", () => {
       expect(cell(old, "background-output").textContent).toBe("—");
       expect(cell(old, "background-detached").textContent).toBe("—");
       expect(cell(old, "background-time").title).toContain("版本较旧");
-      expect(cell(old, "background-time").title).toContain("创建：2026-10-27 11:00:00");
+      expect(cell(old, "background-time").title).toContain("创建（主机时间）：2026-10-27 11:00:00");
       expect(view.container.textContent).not.toContain("在主机上运行");
     } finally {
       view.unmount();
@@ -323,6 +325,44 @@ describe("BackgroundSessions table", () => {
     }
   });
 
+  it("shows helper ages instead of comparing this device's clock with a skewed host clock", async () => {
+    seedHost(s1, "ssh");
+    const hostNow = NOW + 60 * MINUTE;
+    mocks.listDurable.mockResolvedValue([
+      descriptor({ id: "skewed", title: "偏差", state: "idle", activity: {
+        lastOutputAt: hostNow - 5 * MINUTE, detachedAt: hostNow - 30 * MINUTE, attached: false,
+        asOf: hostNow, lastOutputMsAgo: 5 * MINUTE, detachedMsAgo: 30 * MINUTE,
+      } }),
+    ]);
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(1));
+    try {
+      expect(cell(view.container, "background-output").textContent).toBe("5 分钟前有输出");
+      expect(cell(view.container, "background-detached").textContent).toBe("30 分钟前转入后台");
+      const tooltip = cell(view.container, "background-time").title;
+      // Rebased to this device's clock, so not labelled as host time.
+      expect(tooltip).toContain("最近输出：2026-10-27 11:55:00");
+      expect(tooltip).toContain("转入后台：2026-10-27 11:30:00");
+      expect(tooltip).not.toContain("最近输出（主机时间）");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("uses the backend's detach age for live rows", async () => {
+    seedHost({ ...s1, kind: "local", assetId: null }, "local");
+    // The backend clock runs ten minutes ahead of this device.
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "ahead", title: "超前", detachedAt: NOW + 10 * MINUTE - 3 * MINUTE, detachedMsAgo: 3 * MINUTE }),
+    ]);
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(1));
+    try {
+      expect(cell(view.container, "background-detached").textContent).toBe("3 分钟前转入后台");
+      expect(cell(view.container, "background-time").title).toContain("转入后台：2026-10-27 11:57:00");
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("adds the helper's state and creation time to a durable tab this app still holds", async () => {
     seedHost(s1, "ssh");
     mocks.listLive.mockResolvedValue([
@@ -336,7 +376,7 @@ describe("BackgroundSessions table", () => {
     try {
       expect(rows(view)).toHaveLength(1);
       expect(cell(view.container, "background-detached").textContent).toBe("4 分钟前转入后台");
-      expect(cell(view.container, "background-time").title).toContain("创建：2026-10-27 10:00:00");
+      expect(cell(view.container, "background-time").title).toContain("创建（主机时间）：2026-10-27 10:00:00");
     } finally {
       view.unmount();
     }

@@ -246,6 +246,8 @@ type TabInfo struct {
 	// zero while subscribed. Both are in memory only.
 	CreatedAt  int64 `json:"createdAt,omitempty"`
 	DetachedAt int64 `json:"detachedAt,omitempty"`
+	// DetachedMSAgo is the age of DetachedAt when a listing was taken.
+	DetachedMSAgo int64 `json:"-"`
 	// State is the helper's attention state of a durable tab; set only by
 	// listings and empty when the helper reports none.
 	State string `json:"state,omitempty"`

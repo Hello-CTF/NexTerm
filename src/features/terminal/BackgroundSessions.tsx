@@ -157,28 +157,49 @@ interface TimeView {
   tooltip: string;
 }
 
+interface MomentView {
+  // How long ago, on this device's clock.
+  age: number;
+  // When, on this device's clock unless hostClock.
+  at: number;
+}
+
+// moment prefers the backend's age, measured on the clock that recorded the time, and rebases it
+// to this device's clock; without an age the raw time is used as is.
+function moment(at: number | undefined, msAgo: number | undefined, fetchedAt: number, now: number): MomentView | null {
+  if (msAgo !== undefined && msAgo >= 0) {
+    return { age: msAgo + Math.max(0, now - fetchedAt), at: fetchedAt - msAgo };
+  }
+  if (at !== undefined && at > 0) return { age: now - at, at };
+  return null;
+}
+
 function timeView(tab: BackgroundTab, now: number): TimeView {
-  const created = tab.createdAt && tab.createdAt > 0 ? `创建：${absoluteTime(tab.createdAt)}` : null;
+  const createdLabel = tab.createdOnHost ? "创建（主机时间）" : "创建";
+  const created = tab.createdAt && tab.createdAt > 0 ? `${createdLabel}：${absoluteTime(tab.createdAt)}` : null;
   if (tab.activityUnknown) {
     return { output: "—", detached: "—", tooltip: [OLD_HELPER_TIMES, created].filter(Boolean).join("\n") };
   }
+  const fetchedAt = tab.fetchedAt ?? now;
+  const clock = tab.hostClock ? "（主机时间）" : "";
   const lines: string[] = [];
   let output: string;
   if (tab.lastOutputAt !== undefined && tab.lastOutputAt <= 0) {
     output = "暂无输出";
     lines.push("最近输出：暂无");
   } else {
-    const msAgo = tab.lastOutputMsAgo ?? (tab.lastOutputAt ? now - tab.lastOutputAt : 0);
-    output = `${ago(msAgo)}有输出`;
-    if (tab.lastOutputAt) lines.push(`最近输出：${absoluteTime(tab.lastOutputAt)}`);
+    const last = moment(tab.lastOutputAt, tab.lastOutputMsAgo, fetchedAt, now);
+    output = `${ago(last?.age ?? 0)}有输出`;
+    if (last) lines.push(`最近输出${clock}：${absoluteTime(last.at)}`);
   }
   let detached: string;
+  const left = moment(tab.detachedAt, tab.detachedAt ? tab.detachedMsAgo : undefined, fetchedAt, now);
   if (tab.attachedElsewhere) {
     detached = "仍有设备连接着";
     lines.push("转入后台：仍有设备连接着这个终端");
-  } else if (tab.detachedAt && tab.detachedAt > 0) {
-    detached = `${ago(now - tab.detachedAt)}转入后台`;
-    lines.push(`转入后台：${absoluteTime(tab.detachedAt)}`);
+  } else if (left) {
+    detached = `${ago(left.age)}转入后台`;
+    lines.push(`转入后台${clock}：${absoluteTime(left.at)}`);
   } else {
     detached = "—";
     lines.push("转入后台：时间未知");

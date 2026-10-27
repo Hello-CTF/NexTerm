@@ -150,7 +150,7 @@ func TestTerminalListUsesOutputMetadataWithoutSnapshots(t *testing.T) {
 		t.Fatalf("initial output metadata = %+v, want explicit zero values", initial[0])
 	}
 	// A regular tab opened detached is in the background since creation and has no helper state.
-	if initial[0].CreatedAt == 0 || initial[0].DetachedAt != initial[0].CreatedAt || initial[0].Durable || initial[0].State != "" {
+	if initial[0].CreatedAt == 0 || initial[0].DetachedAt != initial[0].CreatedAt || initial[0].DetachedMSAgo < 0 || initial[0].Durable || initial[0].State != "" {
 		t.Fatalf("initial listing times and state = %+v", initial[0])
 	}
 	if got := factory.state.snapshotCalls.Load(); got != initialSnapshots {

@@ -49,6 +49,9 @@ func TestListTabsReportsCreatedAndDetachedTimes(t *testing.T) {
 	if detached.DetachedAt < beforeDetach || detached.DetachedAt < detached.CreatedAt {
 		t.Fatalf("detached at %d, want at or after %d", detached.DetachedAt, beforeDetach)
 	}
+	if age := detached.DetachedMSAgo; age < 0 || age > time.Now().UnixMilli()-beforeDetach {
+		t.Fatalf("detached age %d, want within the time since the detach", age)
+	}
 	if detached.CreatedAt != attached.CreatedAt {
 		t.Fatalf("created at moved from %d to %d", attached.CreatedAt, detached.CreatedAt)
 	}

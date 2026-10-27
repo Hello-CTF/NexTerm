@@ -65,6 +65,13 @@ type DurableActivity struct {
 	DetachedAt *time.Time `json:"detached_at,omitempty"`
 	// Attached reports that at least one client is attached now.
 	Attached bool `json:"attached,omitempty"`
+	// AsOf is the helper's clock when it reported the activity. The ages
+	// are measured on that clock, so a client can show them without
+	// comparing its own clock with the host's; they are set exactly when
+	// the matching time is.
+	AsOf            time.Time `json:"as_of,omitzero"`
+	LastOutputMSAgo *int64    `json:"last_output_ms_ago,omitempty"`
+	DetachedMSAgo   *int64    `json:"detached_ms_ago,omitempty"`
 }
 
 type DurableIdentity struct {

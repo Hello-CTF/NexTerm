@@ -428,6 +428,8 @@ export interface LiveTabInfo {
   // Unix ms; detachedAt is absent while a client is subscribed.
   createdAt?: number;
   detachedAt?: number;
+  // Age of detachedAt on the backend's clock when it answered.
+  detachedMsAgo?: number;
   durable?: boolean;
   // The helper's attention state of a durable tab; absent when none is reported.
   state?: SessionAttentionState;
@@ -441,6 +443,11 @@ export interface DurableActivity {
   lastOutputAt: number | null;
   detachedAt: number | null;
   attached: boolean;
+  // Measured on the host's clock at asOf, so they need no comparison with this device's clock.
+  // A helper that reports times without ages leaves them out.
+  asOf?: number;
+  lastOutputMsAgo?: number;
+  detachedMsAgo?: number;
 }
 
 export type RecordingState = "never-started" | "running" | "stopped" | "failed";

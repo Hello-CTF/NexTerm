@@ -12,6 +12,13 @@ export type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   activityUnknown?: boolean;
   // A client is attached to the helper session right now, so it has no detach time.
   attachedElsewhere?: boolean;
+  detachedMsAgo?: number;
+  // When this device received the listing; ages are relative to it.
+  fetchedAt?: number;
+  // The times come from the host's clock without ages, so they are shown as host time.
+  hostClock?: boolean;
+  // createdAt is the helper's creation time, on the host's clock.
+  createdOnHost?: boolean;
 };
 
 export interface KnownDurableTab {
@@ -127,8 +134,11 @@ export function collectBackgroundTabs(
     live: LiveTabInfo[] | null;
     remote: { session: SessionInfo; tabs: DurableList | null; reason?: unknown }[];
     openTabIds: Set<string>;
+    // When the listings arrived on this device's clock; defaults to now.
+    fetchedAt?: number;
   },
 ): CollectedBackgroundTabs {
+  const fetchedAt = input.fetchedAt ?? Date.now();
   const list: BackgroundTab[] = [];
   const known = new Set<string>();
   const knownTabsByHost = new Map<string, Map<string, KnownDurableTab>>();
@@ -147,7 +157,7 @@ export function collectBackgroundTabs(
     if (known.has(key)) continue;
     known.add(key);
     if (tab.subscribers === 0) {
-      const row: BackgroundTab = { ...tab };
+      const row: BackgroundTab = { ...tab, fetchedAt };
       liveRows.set(key, row);
       list.push(row);
     }
@@ -173,7 +183,10 @@ export function collectBackgroundTabs(
       if (live) {
         live.state ??= tab.state;
         // The helper created the session; this app may only have reattached to it.
-        if (tab.createdAt > 0) live.createdAt = tab.createdAt;
+        if (tab.createdAt > 0) {
+          live.createdAt = tab.createdAt;
+          live.createdOnHost = true;
+        }
       }
       if (known.has(key)) continue;
       known.add(key);
@@ -194,12 +207,17 @@ export function collectBackgroundTabs(
         remote: true,
         durable: true,
         createdAt: tab.createdAt > 0 ? tab.createdAt : undefined,
+        createdOnHost: true,
         state: tab.state,
+        fetchedAt,
         ...(tab.activity
           ? {
               // Zero means no output yet; a null detach time means a client is attached.
               lastOutputAt: tab.activity.lastOutputAt ?? 0,
+              lastOutputMsAgo: tab.activity.lastOutputMsAgo,
               detachedAt: tab.activity.detachedAt ?? undefined,
+              detachedMsAgo: tab.activity.detachedMsAgo,
+              hostClock: tab.activity.asOf === undefined || undefined,
               attachedElsewhere: tab.activity.attached || undefined,
             }
           : { activityUnknown: true }),

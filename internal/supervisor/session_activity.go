@@ -14,16 +14,25 @@ type SessionActivity = base.DurableActivity
 // its last client detached. A session recovered from an earlier helper has
 // no record of either. The caller holds s.mu.
 func (s *Session) activityLocked() *SessionActivity {
-	activity := &SessionActivity{Attached: len(s.attachments) > 0}
+	now := time.Now()
+	activity := &SessionActivity{Attached: len(s.attachments) > 0, AsOf: now}
 	if at := s.lastOutput.Load(); at != 0 {
 		last := time.Unix(0, at)
 		activity.LastOutputAt = &last
+		activity.LastOutputMSAgo = ageMS(now, last)
 	}
 	if !activity.Attached && !s.detachedAt.IsZero() {
 		detached := s.detachedAt
 		activity.DetachedAt = &detached
+		activity.DetachedMSAgo = ageMS(now, detached)
 	}
 	return activity
+}
+
+// ageMS is how long before now the time was, never negative.
+func ageMS(now, at time.Time) *int64 {
+	age := max(now.Sub(at).Milliseconds(), 0)
+	return &age
 }
 
 // StateName is the session's attention state without its events; empty
