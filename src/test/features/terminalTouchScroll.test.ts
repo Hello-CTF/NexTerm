@@ -11,7 +11,7 @@ const CELL = 20;
 interface FakeTerminal {
   element: HTMLElement;
   modes: { mouseTrackingMode: string };
-  buffer: { active: { type: string } };
+  buffer: { active: { type: string }; onBufferChange: (listener: () => void) => { dispose(): void } };
   scrollLines: ReturnType<typeof vi.fn<(amount: number) => void>>;
 }
 
@@ -22,6 +22,13 @@ let handle: TouchScrollHandle | null;
 let wheels: WheelEvent[];
 let clock: number;
 let frames: Array<() => void>;
+let bufferListeners: Set<() => void>;
+
+// What xterm does when an application enters or leaves the alternate screen.
+function switchBuffer(type: string): void {
+  term.buffer.active.type = type;
+  for (const listener of bufferListeners) listener();
+}
 
 function attach(options: TouchScrollOptions = {}): TouchScrollHandle {
   handle = attachTouchScroll(term, host, {
@@ -83,7 +90,19 @@ beforeEach(() => {
   element.append(screen);
   host.append(element);
   document.body.append(host);
-  term = { element, modes: { mouseTrackingMode: "none" }, buffer: { active: { type: "normal" } }, scrollLines: vi.fn<(amount: number) => void>() };
+  bufferListeners = new Set();
+  term = {
+    element,
+    modes: { mouseTrackingMode: "none" },
+    buffer: {
+      active: { type: "normal" },
+      onBufferChange: (listener) => {
+        bufferListeners.add(listener);
+        return { dispose: () => bufferListeners.delete(listener) };
+      },
+    },
+    scrollLines: vi.fn<(amount: number) => void>(),
+  };
   wheels = [];
   screen.addEventListener("wheel", (event) => wheels.push(event));
   clock = 1000;
@@ -218,6 +237,58 @@ describe("fling", () => {
     expect(touchScroll.stoppedFling()).toBe(false);
   });
 
+  it("advances at most one short frame after a long pause", () => {
+    attach();
+    swipe(50, 300, [289, 260, 240], { msPerStep: 16 });
+    const before = scrolled();
+    // A five-second gap (hidden page, blocked main thread) must not replay as a burst of rows.
+    runFrame(5000);
+    expect(scrolled() - before).toBeLessThanOrEqual(2);
+    expect(frames.length).toBe(1);
+  });
+
+  it("stops when asked, e.g. before input jumps to the bottom", () => {
+    const touchScroll = attach();
+    swipe(50, 300, [289, 260, 240], { msPerStep: 16 });
+    runFrame();
+    const atStop = scrolled();
+    touchScroll.stop();
+    for (let i = 0; i < 20; i++) runFrame();
+    expect(scrolled()).toBe(atStop);
+  });
+
+  it("stops when the application switches screens and sends nothing to the new one", () => {
+    attach();
+    swipe(50, 300, [289, 260, 240], { msPerStep: 16 });
+    runFrame();
+    const atSwitch = scrolled();
+    switchBuffer("alternate");
+    for (let i = 0; i < 20; i++) runFrame();
+    expect(frames).toEqual([]);
+    expect(wheels).toEqual([]);
+    expect(scrolled()).toBe(atSwitch);
+  });
+
+  it("stops when the application turns on mouse tracking mid-fling", () => {
+    attach();
+    swipe(50, 300, [289, 260, 240], { msPerStep: 16 });
+    runFrame();
+    term.modes.mouseTrackingMode = "any";
+    for (let i = 0; i < 20; i++) runFrame();
+    expect(frames).toEqual([]);
+    expect(wheels).toEqual([]);
+  });
+
+  it("stops when a second finger lands", () => {
+    attach();
+    swipe(50, 300, [289, 260, 240], { msPerStep: 16 });
+    runFrame();
+    const atTouch = scrolled();
+    touch("touchstart", [{ x: 50, y: 200 }, { x: 150, y: 200, id: 1 }]);
+    for (let i = 0; i < 20; i++) runFrame();
+    expect(scrolled()).toBe(atTouch);
+  });
+
   it("does not fling a slow release", () => {
     attach();
     swipe(50, 300, [289, 280, 270], { msPerStep: 200 });
@@ -249,6 +320,14 @@ describe("applications", () => {
       [-1, WheelEvent.DOM_DELTA_LINE, 70, 175],
       [-1, WheelEvent.DOM_DELTA_LINE, 70, 175],
     ]);
+  });
+
+  it("scrolls the scrollback in X10 mouse mode, which reports no wheel", () => {
+    term.modes.mouseTrackingMode = "x10";
+    attach();
+    swipe(70, 200, [185, 145], { msPerStep: 200 });
+    expect(wheels).toEqual([]);
+    expect(term.scrollLines.mock.calls).toEqual([[2]]);
   });
 
   it("sends wheel steps in the alternate screen so xterm turns them into cursor keys", () => {

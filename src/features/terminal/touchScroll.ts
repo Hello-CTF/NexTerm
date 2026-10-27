@@ -10,7 +10,10 @@
 export interface TouchScrollTerminal {
   readonly element: HTMLElement | undefined;
   readonly modes: { readonly mouseTrackingMode: string };
-  readonly buffer: { readonly active: { readonly type: string } };
+  readonly buffer: {
+    readonly active: { readonly type: string };
+    onBufferChange(listener: () => void): { dispose(): void };
+  };
   scrollLines(amount: number): void;
 }
 
@@ -26,6 +29,8 @@ export interface TouchScrollOptions {
 export interface TouchScrollHandle {
   /** True while the current touch (or the one that just ended) began by stopping a fling; it is not a tap. */
   stoppedFling(): boolean;
+  /** Ends a running fling, e.g. before input jumps the view to the bottom. */
+  stop(): void;
   dispose(): void;
 }
 
@@ -36,6 +41,9 @@ const VELOCITY_WINDOW_MS = 100;
 const MIN_FLING_VELOCITY = 0.3; // px/ms
 const STOP_FLING_VELOCITY = 0.02; // px/ms
 const FLING_DECAY_PER_MS = 0.998;
+// A frame after a pause (hidden page, busy main thread) advances the fling by at most this much time, so it never
+// replays the whole gap at once as a burst of rows, wheel reports or cursor keys.
+const MAX_FLING_FRAME_MS = 32;
 
 interface CoreLike {
   _core?: { _renderService?: { dimensions?: { css?: { cell?: { height?: number } } } } };
@@ -50,6 +58,15 @@ function prefersReducedMotion(): boolean {
 }
 
 type Phase = "idle" | "pending" | "scrolling" | "ignored";
+// Where a scroll goes. "wheel" and "keys" both go through xterm's wheel handling, which reports the wheel to a
+// mouse-tracking application or sends cursor keys in the alternate screen. X10 mouse mode reports no wheel.
+type Route = "scrollback" | "wheel" | "keys";
+
+function routeOf(term: TouchScrollTerminal): Route {
+  const tracking = term.modes.mouseTrackingMode;
+  if (tracking !== "none" && tracking !== "x10") return "wheel";
+  return term.buffer.active.type === "alternate" ? "keys" : "scrollback";
+}
 
 export function attachTouchScroll(
   term: TouchScrollTerminal,
@@ -70,6 +87,7 @@ export function attachTouchScroll(
   let lastY = 0;
   let samples: Array<{ t: number; y: number }> = [];
   let pixels = 0;
+  let route: Route = "scrollback";
   let fling: number | null = null;
   let flingStopped = false;
 
@@ -88,13 +106,19 @@ export function attachTouchScroll(
   const scrollBy = (deltaPx: number) => {
     const height = cellHeight();
     if (!(height > 0)) return;
+    if (routeOf(term) !== route) {
+      // The application switched screens or mouse modes mid-gesture: rows meant for one must not reach the other.
+      stopFling();
+      if (phase === "scrolling") phase = "ignored";
+      return;
+    }
     pixels += deltaPx;
     const rows = Math.trunc(pixels / height);
     if (rows === 0) return;
     pixels -= rows * height;
-    const target = screen();
-    if (target && (term.modes.mouseTrackingMode !== "none" || term.buffer.active.type === "alternate")) {
-      sendWheel(target, rows);
+    if (route !== "scrollback") {
+      const target = screen();
+      if (target) sendWheel(target, rows);
     } else {
       term.scrollLines(rows);
     }
@@ -118,9 +142,11 @@ export function attachTouchScroll(
     let last = now();
     const step = () => {
       const time = now();
-      const dt = Math.max(0, time - last);
+      const dt = Math.min(MAX_FLING_FRAME_MS, Math.max(0, time - last));
       last = time;
       scrollBy(velocity * dt);
+      // The step itself may stop the fling (the route changed).
+      if (fling === null) return;
       velocity *= Math.pow(FLING_DECAY_PER_MS, dt);
       fling = Math.abs(velocity) < STOP_FLING_VELOCITY ? null : requestFrame(step);
     };
@@ -144,6 +170,7 @@ export function attachTouchScroll(
   const onStart = (event: TouchEvent) => {
     if (event.touches.length > 1) {
       // A second finger (pinch, two-finger gestures) is not a scroll.
+      stopFling();
       phase = "ignored";
       return;
     }
@@ -159,6 +186,7 @@ export function attachTouchScroll(
     startX = lastX = touch.clientX;
     startY = lastY = touch.clientY;
     pixels = 0;
+    route = routeOf(term);
     samples = [{ t: now(), y: touch.clientY }];
   };
 
@@ -207,11 +235,16 @@ export function attachTouchScroll(
   host.addEventListener("touchend", onEnd, { capture: true, passive: true });
   host.addEventListener("touchcancel", onEnd, { capture: true, passive: true });
   host.addEventListener(XTERM_GESTURE_CHANGE, suppressXtermScroll, true);
+  const bufferChange = term.buffer.onBufferChange(() => stopFling());
 
   return {
     stoppedFling: () => flingStopped,
+    stop: () => {
+      stopFling();
+    },
     dispose: () => {
       stopFling();
+      bufferChange.dispose();
       host.removeEventListener("touchstart", onStart, true);
       host.removeEventListener("touchmove", onMove, true);
       host.removeEventListener("touchend", onEnd, true);

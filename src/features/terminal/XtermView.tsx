@@ -315,6 +315,8 @@ export function XtermView(props: XtermViewProps) {
       return false;
     });
     term.open(hostRef.current);
+    // One-finger vertical swipes scroll like the wheel; a touch that stops a fling is not a tap.
+    const touchScroll = attachTouchScroll(term, hostRef.current);
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
     const detachTerminalInput = attachTerminalInput(term, hostRef.current, { kittyKeyboard });
 
@@ -404,6 +406,7 @@ export function XtermView(props: XtermViewProps) {
       fit: () => fitIfSized(true),
       paste: (text, submit = false) => {
         // Like typed input (xterm's scrollOnUserInput), text sent from the composer or key bar returns to the bottom.
+        touchScroll.stop();
         term.scrollToBottom();
         sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text);
       },
@@ -1262,8 +1265,6 @@ export function XtermView(props: XtermViewProps) {
     };
     pasteHost.addEventListener("touchstart", trackTouch, true);
     pasteHost.addEventListener("touchmove", trackTouch, true);
-    // One-finger vertical swipes scroll like the wheel; a touch that stops a fling is not a tap.
-    const touchScroll = attachTouchScroll(term, pasteHost);
     // xterm cancels the touch events on its screen (for touch scrolling), so a tap never becomes the mousedown that
     // focuses it and the soft keyboard stays closed. A short, still, single-finger tap focuses the terminal here,
     // inside the touchend that iOS and Android accept as the gesture opening the keyboard.

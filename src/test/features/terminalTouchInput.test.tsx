@@ -258,11 +258,15 @@ describe("terminal handle paste", () => {
 });
 
 describe("touch scrolling", () => {
-  let frames: FrameRequestCallback[] = [];
+  let frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 1;
+  // One clock for touches, frames and the tap timing, advanced only by the test.
+  let clock = 1000;
   const flushFrames = () =>
     act(() => {
-      const pending = frames;
-      frames = [];
+      clock += 16;
+      const pending = [...frames.values()];
+      frames = new Map();
       for (const frame of pending) {
         try {
           frame(performance.now());
@@ -273,8 +277,18 @@ describe("touch scrolling", () => {
     });
 
   beforeEach(() => {
-    frames = [];
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+    frames = new Map();
+    clock = 1000;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(nextFrame, callback);
+      return nextFrame++;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    vi.spyOn(performance, "now").mockImplementation(() => clock);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   // jsdom lays nothing out: give the real terminal the cell and canvas sizes a browser would measure.
@@ -298,20 +312,14 @@ describe("touch scrolling", () => {
 
   // A slow one-finger swipe (no fling): past the slop first, then on by `distance` pixels.
   function swipe(from: { x: number; y: number }, distance: number): void {
-    let clock = 1000;
-    const now = vi.spyOn(performance, "now").mockImplementation(() => clock);
-    try {
-      const slop = Math.sign(distance) * 15;
-      touch("touchstart", screen(), from);
-      clock += 300;
-      touch("touchmove", screen(), { x: from.x, y: from.y + slop });
-      clock += 300;
-      touch("touchmove", screen(), { x: from.x, y: from.y + slop + distance });
-      clock += 300;
-      touch("touchend", screen(), { x: from.x, y: from.y + slop + distance });
-    } finally {
-      now.mockRestore();
-    }
+    const slop = Math.sign(distance) * 15;
+    touch("touchstart", screen(), from);
+    clock += 300;
+    touch("touchmove", screen(), { x: from.x, y: from.y + slop });
+    clock += 300;
+    touch("touchmove", screen(), { x: from.x, y: from.y + slop + distance });
+    clock += 300;
+    touch("touchend", screen(), { x: from.x, y: from.y + slop + distance });
   }
 
   const viewport = () => {
@@ -345,6 +353,68 @@ describe("touch scrolling", () => {
     expect(viewport().viewportY).toBe(viewport().baseY);
     flushFrames();
     expect(jumpButton()).toBeNull();
+  });
+
+  // A fast swipe released while moving: the finger travels `distance` pixels in 32ms, which leaves a fling running.
+  function fling(from: { x: number; y: number }, distance: number): void {
+    const slop = Math.sign(distance) * 15;
+    touch("touchstart", screen(), from);
+    clock += 16;
+    touch("touchmove", screen(), { x: from.x, y: from.y + slop });
+    clock += 16;
+    touch("touchmove", screen(), { x: from.x, y: from.y + slop + distance });
+    touch("touchend", screen(), { x: from.x, y: from.y + slop + distance });
+  }
+
+  const fillScrollback = async () => {
+    // Measured before the output arrives, so xterm's viewport tracks the scroll position as it would in a browser.
+    measureCells();
+    await write(Array.from({ length: 60 }, (_, i) => `line ${i}`).join("\r\n"));
+  };
+
+  it("treats a tap that stops a fling as stopping it, not as a tap", async () => {
+    const onTouchTap = vi.fn(() => false);
+    const textarea = await show(onTouchTap);
+    await fillScrollback();
+    (document.activeElement as HTMLElement | null)?.blur();
+    fling({ x: 40, y: 40 }, 60);
+    flushFrames();
+    const stoppedAt = viewport().viewportY;
+
+    tap(screen());
+    expect(onTouchTap).not.toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(textarea);
+    flushFrames();
+    expect(viewport().viewportY).toBe(stoppedAt);
+
+    // With nothing moving, the next tap is an ordinary one.
+    tap(screen());
+    expect(onTouchTap).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("stays at the bottom when the composer sends text during a fling", async () => {
+    await show();
+    await fillScrollback();
+    fling({ x: 40, y: 40 }, 60);
+    flushFrames();
+    const flung = viewport().viewportY;
+    flushFrames();
+    expect(viewport().viewportY).toBeLessThan(flung);
+    act(() => handle?.paste("ls", true));
+    for (let i = 0; i < 10; i++) flushFrames();
+    expect(viewport().viewportY).toBe(viewport().baseY);
+  });
+
+  it("sends nothing to the alternate screen when an application enters it during a fling", async () => {
+    await show();
+    await fillScrollback();
+    fling({ x: 40, y: 40 }, 60);
+    flushFrames();
+    await write("\x1b[?1049h");
+    for (let i = 0; i < 10; i++) flushFrames();
+    await settle();
+    expect(sent).toEqual([]);
   });
 
   it("returns to the bottom when the composer sends text", async () => {
