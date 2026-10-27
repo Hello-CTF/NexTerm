@@ -33,6 +33,8 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
   const pushToast = useUi((state) => state.pushToast);
   const [screenState, setScreenState] = useState<ScreenState>({ status: "loading" });
   const [form, setForm] = useState<StateRuleDraftForm>(() => ({ ...emptyRuleForm(), state: request.intent === "this_is_it" ? "needs_me" : "idle" }));
+  // Set once the user edits the form, so a stray click outside no longer discards their work.
+  const [dirty, setDirty] = useState(false);
   const [draftNote, setDraftNote] = useState<string | null>(null);
   const [aiState, setAiState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
   const [saving, setSaving] = useState(false);
@@ -86,7 +88,14 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
     try {
       const draft = await stateRuleApi.draft(request.intent, request.current, screen);
       if (!aliveRef.current) return;
-      setForm((previous) => ({ ...formFromDraft(draft, request.assetId), enabled: previous.enabled }));
+      // The draft proposes the match; the scope, keys and enabled flag stay as the user set them.
+      setForm((previous) => ({
+        ...formFromDraft(draft, request.assetId),
+        scope: previous.scope,
+        assetId: previous.assetId,
+        keys: previous.keys,
+        enabled: previous.enabled,
+      }));
       const note = draft.explanation ? `AI：${draft.explanation}` : "AI 起草的规则，保存前请确认。";
       setDraftNote(draft.redacted ? `${note}（发送前${STATE_RULE_REDACTED_NOTE}。）` : note);
       setAiState({ busy: false, error: null });
@@ -130,7 +139,7 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
   const canSave = Boolean(validation.result?.valid) && !validation.pending && !saving;
 
   return (
-    <div className="nx-overlay" onClick={onClose}>
+    <div className="nx-overlay" onClick={() => !dirty && onClose()}>
       <div
         ref={modalRef}
         className="nx-modal max-w-[640px]"
@@ -194,7 +203,16 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
             </div>
           )}
           {draftNote && <p className="nx-hint text-[11.5px]">{draftNote}</p>}
-          <StateRuleForm form={form} onChange={setForm} hosts={hosts} validation={validation} saveError={saveError} targets={targets} />
+          <StateRuleForm
+            form={form}
+            onChange={(next) => {
+              setDirty(true);
+              setForm(next);
+            }} hosts={hosts}
+            validation={validation}
+            saveError={saveError}
+            targets={targets}
+          />
         </div>
         <div className="nx-modal-footer">
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mr-auto" onClick={openRules}>

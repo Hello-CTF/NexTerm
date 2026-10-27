@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clickButton, flush, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, mountWithClient, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 import type { StateRuleSaveRequest, StateRuleScreenDTO } from "../../ipc/stateRuleApi";
 
 const mocks = vi.hoisted(() => ({
@@ -121,8 +121,10 @@ describe("state marking dialog", () => {
     expect(patternInput().value).toBe("(?=Overwrite)");
     await settleValidation();
 
-    const alerts = [...mounted!.container.querySelectorAll('[role="alert"]')].map((alert) => alert.textContent);
-    expect(alerts.some((text) => text?.includes("匹配模式无效"))).toBe(true);
+    const describedBy = patternInput().getAttribute("aria-describedby")!;
+    const error = mounted!.container.querySelector(`#${CSS.escape(describedBy.split(" ")[0])}`)!;
+    expect(error.textContent).toContain("匹配模式无效");
+    expect(error.getAttribute("role")).toBeNull();
     expect(patternInput().getAttribute("aria-invalid")).toBe("true");
     expect(saveButton().disabled).toBe(true);
     clickButton(mounted!.container, "保存规则");
@@ -191,5 +193,42 @@ describe("state marking dialog", () => {
     await open();
     expect(patternInput().value).not.toContain("abc123secret");
     expect(mounted!.container.textContent).toContain("已隐去疑似密钥/密码");
+  });
+
+  it("keeps the chosen scope and typed keys when the AI drafts", async () => {
+    mocks.draft.mockResolvedValue({ name: "n", region: "bottom", lines: 3, pattern: "Overwrite", state: "needs_me" });
+    await open();
+    const select = [...mounted!.container.querySelectorAll("select")].find((item) => item.textContent?.includes("所有主机"))!;
+    setSelectValue(select, "global");
+    const keys = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="例如 y"]')!;
+    setInputValue(keys, "y");
+    clickButton(mounted!.container, "AI 起草");
+    await flush();
+    expect(patternInput().value).toBe("Overwrite");
+    expect(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="例如 y"]')!.value).toBe("y");
+    await settleValidation();
+    expect(mocks.validate).toHaveBeenLastCalledWith(expect.objectContaining({ scope: "global", keys: "y" }), expect.anything());
+  });
+
+  it("warns about a very short or open pattern", async () => {
+    await open();
+    const warning = () => mounted!.container.querySelector("[data-pattern-warning]")?.textContent ?? null;
+    expect(warning()).toBeNull();
+    setInputValue(patternInput(), "ok");
+    expect(warning()).toContain("很短");
+    setInputValue(patternInput(), ".*");
+    expect(warning()).toContain("几乎匹配任何内容");
+    setInputValue(patternInput(), "Overwrite");
+    expect(warning()).toBeNull();
+  });
+
+  it("closes on an overlay click until the form is edited", async () => {
+    await open();
+    const overlay = mounted!.container.querySelector<HTMLElement>(".nx-overlay")!;
+    click(overlay);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    setInputValue(patternInput(), "changed");
+    click(overlay);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

@@ -2,6 +2,7 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -211,5 +212,23 @@ func TestStateRuleValidateReportsSetCostWithoutAScreen(t *testing.T) {
 				t.Fatal("save accepted a rule that validate rejects")
 			}
 		})
+	}
+}
+
+func TestStateRuleDraftNeverCarriesKeys(t *testing.T) {
+	chat := &draftChatModel{reply: `{"name":"n","region":"bottom","lines":2,"pattern":"Continue","state":"needs_me","keys":"y\n"}`}
+	dispatcher, _ := newStateRuleCommands(t, chat)
+	response := dispatchStateRule(dispatcher, context.Background(), "state_rule_draft", stateRuleDraftRequest{
+		Intent: stateRuleIntentThisIsIt, Current: "running", Screen: draftScreen,
+	})
+	if !response.OK {
+		t.Fatalf("draft = %+v", response)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(response.Data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := fields["keys"]; has || fields["pattern"] != "Continue" {
+		t.Fatalf("draft fields = %v, want a pattern and no keys", fields)
 	}
 }

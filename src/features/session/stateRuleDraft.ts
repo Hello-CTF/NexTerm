@@ -172,6 +172,18 @@ export interface StateRuleDraftForm {
   enabled: boolean;
 }
 
+// A pattern this short or this open matches almost any screen, so the rule would fire everywhere.
+const MIN_SPECIFIC_PATTERN_CHARS = 4;
+
+// patternWarning is a hint, not an error, for a pattern that is probably too broad. It is null for an empty pattern.
+export function patternWarning(pattern: string): string | null {
+  const trimmed = pattern.trim();
+  if (!trimmed) return null;
+  if (/^\.[*+]$/.test(trimmed)) return "这个模式几乎匹配任何内容，规则会在所有屏幕上生效。";
+  if (Array.from(trimmed).length < MIN_SPECIFIC_PATTERN_CHARS) return "匹配模式很短，可能误匹配其他屏幕，建议写得更具体。";
+  return null;
+}
+
 export function emptyRuleForm(): StateRuleDraftForm {
   return { name: "", scope: "global", assetId: "", region: "bottom", lines: STATE_RULE_DEFAULT_LINES, pattern: "", state: "needs_me", keys: "", enabled: true };
 }
