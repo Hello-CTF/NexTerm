@@ -26,25 +26,6 @@ const (
 	aiGrantModePrefix   = "mode/"
 )
 
-func (e *Engine) collectPreferenceObjects(ctx context.Context, userID string, objects map[string]localObject, optIn kindOptIn, report *SyncReport) error {
-	if optIn.aiPermission {
-		if err := e.collectAIPermission(ctx, objects); err != nil {
-			return err
-		}
-	}
-	if optIn.aiGrant {
-		if err := e.collectAIGrantObjects(ctx, objects, report); err != nil {
-			return err
-		}
-	}
-	if optIn.preferences {
-		if err := e.collectPreferences(ctx, userID, objects); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (e *Engine) collectAIPermission(ctx context.Context, objects map[string]localObject) error {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		return err

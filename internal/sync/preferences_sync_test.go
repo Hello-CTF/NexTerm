@@ -261,7 +261,7 @@ func TestCollectLocalObjectsHonorsPreferenceOptOut(t *testing.T) {
 	if len(objects) != 0 {
 		t.Fatalf("disabled preference kinds produced %d objects", len(objects))
 	}
-	objects, err = device.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{aiPermission: true, preferences: true}, userID)
+	objects, err = device.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{optInAIPermission: true, optInPreferences: true}, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +552,7 @@ func TestCollectLocalObjectsHonorsAIGrantOptOut(t *testing.T) {
 	if len(objects) != 0 {
 		t.Fatalf("disabled aiGrant produced %d objects", len(objects))
 	}
-	objects, err = device.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{aiGrant: true}, userID)
+	objects, err = device.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{optInAIGrant: true}, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
