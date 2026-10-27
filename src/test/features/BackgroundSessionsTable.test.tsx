@@ -395,6 +395,25 @@ describe("BackgroundSessions table", () => {
     }
   });
 
+  it("marks a detach time that only starts when this app reopened an older durable tab", async () => {
+    seedHost(s1, "ssh");
+    const opened = NOW - 6 * MINUTE;
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "reopened", sessionKind: "ssh", title: "重开", durable: true, createdAt: opened, detachedAt: opened, detachedMsAgo: 6 * MINUTE }),
+    ]);
+    mocks.listDurable.mockResolvedValue([
+      descriptor({ id: "reopened", title: "重开", state: "idle", createdAt: NOW - 300 * MINUTE,
+        activity: { lastOutputAt: null, detachedAt: null, attached: true, asOf: NOW } }),
+    ]);
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(cell(v.container, "background-status").textContent).toBe("空闲"));
+    try {
+      expect(cell(view.container, "background-detached").textContent).toBe("至少 6 分钟前转入后台");
+      expect(cell(view.container, "background-time").title).toContain("转入后台：不晚于 2026-10-27 11:54:00（自本次打开应用起）");
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("keeps takeover and kill with their confirmation", async () => {
     seedHost({ ...s1, kind: "local", assetId: null }, "local");
     mocks.listSessions.mockResolvedValue([{ ...s1, kind: "local", assetId: null }]);
