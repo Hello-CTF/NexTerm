@@ -1615,6 +1615,12 @@
       "channel": false,
       "stream": "none"
     },
+    "state_rule_draft": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "state_rule_export": {
       "scope": "state-rule",
       "nested": false,
@@ -1633,6 +1639,12 @@
       "channel": false,
       "stream": "none"
     },
+    "state_rule_reorder": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "state_rule_save": {
       "scope": "state-rule",
       "nested": false,
@@ -1640,6 +1652,12 @@
       "stream": "none"
     },
     "state_rule_status": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "state_rule_validate": {
       "scope": "state-rule",
       "nested": false,
       "channel": false,

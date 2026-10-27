@@ -2500,6 +2500,21 @@ export type StateRuleDeleteResult = {
   id: string;
 };
 
+export type StateRuleDraftDTO = {
+  name: string;
+  region: string;
+  lines?: number;
+  pattern: string;
+  state: string;
+  explanation?: string;
+};
+
+export type StateRuleDraftRequest = {
+  intent: string;
+  current?: string;
+  screen: StateRuleScreenDTO;
+};
+
 export type StateRuleExportDTO = {
   format: string;
   version: number;
@@ -2527,6 +2542,10 @@ export type StateRuleImportResultDTO = {
   unchanged: number;
 };
 
+export type StateRuleReorderRequest = {
+  ids: string[];
+};
+
 export type StateRuleSaveRequest = {
   id?: string;
   name: string;
@@ -2538,6 +2557,27 @@ export type StateRuleSaveRequest = {
   state: string;
   keys?: string;
   enabled: boolean;
+};
+
+export type StateRuleScreenDTO = {
+  lines: string[];
+  cursorRow: number;
+  title?: string;
+};
+
+export type StateRuleValidateRequest = {
+  rule: StateRuleSaveRequest;
+  screen?: StateRuleScreenDTO | null;
+};
+
+export type StateRuleValidateResult = {
+  valid: boolean;
+  field?: string;
+  error?: string;
+  lines?: number;
+  tested: boolean;
+  matched: boolean;
+  region?: string;
 };
 
 export type Status = {

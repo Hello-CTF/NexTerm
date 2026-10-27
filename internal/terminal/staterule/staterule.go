@@ -362,6 +362,15 @@ func (c *Compiled) Match(screen Screen) (Match, bool) {
 	return Match{}, false
 }
 
+// RegionText returns the text a normalized rule is matched against on
+// screen: the clipped bottom rows or the clipped title.
+func RegionText(screen Screen, rule Rule) string {
+	if rule.Region == RegionTitle {
+		return clipTail(screen.Title, MaxTitleBytes)
+	}
+	return bottomText(screen, rule.Lines)
+}
+
 // bottomText joins the bottom lines rows of the screen, ending at the lower
 // of the cursor row and the last non-blank row.
 func bottomText(screen Screen, lines int) string {

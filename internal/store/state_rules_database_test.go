@@ -358,3 +358,90 @@ func TestStateRuleConcurrentCreatesGetDistinctPositionsDatabase(t *testing.T) {
 		t.Fatalf("stored %d rules", len(rows))
 	}
 }
+
+func TestStateRuleReorderDatabase(t *testing.T) {
+	db := dbtest.NewFixture(t).OpenStore(t)
+	ctx := ipc.WithUserID(context.Background(), "state-rule-reorder")
+	other := ipc.WithUserID(context.Background(), "state-rule-reorder-other")
+	var created []store.StateRuleRow
+	for _, pattern := range []string{"first", "second", "third"} {
+		row, err := db.StateRuleSave(ctx, stateRuleInput(pattern))
+		if err != nil {
+			t.Fatal(err)
+		}
+		created = append(created, row)
+	}
+	if _, err := db.StateRuleSave(other, stateRuleInput("foreign")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := db.StateRuleFingerprint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	order := []string{created[2].ID, created[0].ID, created[1].ID}
+	rows, err := db.StateRuleReorder(ctx, order)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stateRuleIDs(rows); strings.Join(got, ",") != strings.Join(order, ",") {
+		t.Fatalf("reordered = %v, want %v", got, order)
+	}
+	if got := stateRuleIDs(mustStateRuleList(t, db, ctx)); strings.Join(got, ",") != strings.Join(order, ",") {
+		t.Fatalf("listed after reorder = %v, want %v", got, order)
+	}
+	rules, _, err := db.StateRulesFor(ctx, "")
+	if err != nil || len(rules) != 3 || rules[0].ID != created[2].ID {
+		t.Fatalf("rules for a helper after reorder = %+v, %v", rules, err)
+	}
+	after, err := db.StateRuleFingerprint(ctx)
+	if err != nil || after == before {
+		t.Fatalf("fingerprint %+v -> %+v, %v", before, after, err)
+	}
+	if foreign := mustStateRuleList(t, db, other); len(foreign) != 1 || foreign[0].Pattern != "foreign" {
+		t.Fatalf("other owner's rules = %+v", foreign)
+	}
+
+	// The order must name exactly the owner's rules.
+	for name, rejected := range map[string][]string{
+		"missing":   {created[0].ID, created[1].ID},
+		"duplicate": {created[0].ID, created[0].ID, created[1].ID},
+		"unknown":   {created[0].ID, created[1].ID, ids.New()},
+	} {
+		_, err := db.StateRuleReorder(ctx, rejected)
+		requireStateRuleCode(t, err, ipc.CodeBadParam)
+		if got := stateRuleIDs(mustStateRuleList(t, db, ctx)); strings.Join(got, ",") != strings.Join(order, ",") {
+			t.Fatalf("%s: a rejected reorder changed the order to %v", name, got)
+		}
+	}
+
+	// A rule created after a reorder still goes last.
+	last, err := db.StateRuleSave(ctx, stateRuleInput("fourth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stateRuleIDs(mustStateRuleList(t, db, ctx)); got[len(got)-1] != last.ID {
+		t.Fatalf("new rule not last: %v", got)
+	}
+}
+
+func TestValidateStateRuleInputChecksOneRule(t *testing.T) {
+	valid, err := store.ValidateStateRuleInput(stateRuleInput(`Continue\? \[y/N\]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ids.Valid(valid.ID) || valid.Lines != staterule.DefaultLines || valid.Name != `Continue\? \[y/N\]` {
+		t.Fatalf("normalized = %+v", valid)
+	}
+	for name, input := range map[string]store.StateRuleInput{
+		"pattern":     stateRuleInput(`(unclosed`),
+		"empty match": stateRuleInput(`x*`),
+		"scope":       {Scope: "everywhere", Region: staterule.RegionBottom, Pattern: "a", State: "idle"},
+		"state":       {Scope: store.StateRuleScopeGlobal, Region: staterule.RegionBottom, Pattern: "a", State: "exited"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := store.ValidateStateRuleInput(input)
+			requireStateRuleCode(t, err, ipc.CodeBadParam)
+		})
+	}
+}

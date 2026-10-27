@@ -2073,6 +2073,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDeleteRequest", ts: "StateRuleDeleteRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDeleteResult", ts: "StateRuleDeleteResult" },
     },
+    "state_rule_draft": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDraftRequest", ts: "StateRuleDraftRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDraftDTO", ts: "StateRuleDraftDTO" },
+    },
     "state_rule_export": {
       scope: "state-rule",
       nested: false,
@@ -2097,6 +2105,14 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDTO", ts: "StateRuleDTO[]" },
     },
+    "state_rule_reorder": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleReorderRequest", ts: "StateRuleReorderRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDTO", ts: "StateRuleDTO[]" },
+    },
     "state_rule_save": {
       scope: "state-rule",
       nested: false,
@@ -2112,6 +2128,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleHelperStatusDTO", ts: "StateRuleHelperStatusDTO[]" },
+    },
+    "state_rule_validate": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleValidateRequest", ts: "StateRuleValidateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleValidateResult", ts: "StateRuleValidateResult" },
     },
     "sync_apply_objects": {
       scope: "sync",
@@ -3885,6 +3909,10 @@ export interface IPCCommandTypeMap {
     input: contractTypes.StateRuleDeleteRequest;
     output: contractTypes.StateRuleDeleteResult;
   };
+  "state_rule_draft": {
+    input: contractTypes.StateRuleDraftRequest;
+    output: contractTypes.StateRuleDraftDTO;
+  };
   "state_rule_export": {
     input: Record<string, never>;
     output: contractTypes.StateRuleExportDTO;
@@ -3897,6 +3925,10 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.StateRuleDTO[];
   };
+  "state_rule_reorder": {
+    input: contractTypes.StateRuleReorderRequest;
+    output: contractTypes.StateRuleDTO[];
+  };
   "state_rule_save": {
     input: contractTypes.StateRuleSaveRequest;
     output: contractTypes.StateRuleDTO;
@@ -3904,6 +3936,10 @@ export interface IPCCommandTypeMap {
   "state_rule_status": {
     input: Record<string, never>;
     output: contractTypes.StateRuleHelperStatusDTO[];
+  };
+  "state_rule_validate": {
+    input: contractTypes.StateRuleValidateRequest;
+    output: contractTypes.StateRuleValidateResult;
   };
   "sync_apply_objects": {
     input: contractTypes.ApplyObjectsRequest;

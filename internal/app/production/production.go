@@ -310,6 +310,9 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{Name: "fs-chunk-uploads", Component: services.fsUploads})
 	}
 	if services.stateRules != nil {
+		if services.Profiles != nil {
+			services.stateRules.draftModel = stateRuleModelFactory(aiModelFactory(services.Profiles))
+		}
 		modules = append(modules, Module{Name: "state-rules", RegisterCommands: services.stateRules.registerCommands})
 	}
 	if services.Sessions != nil {
