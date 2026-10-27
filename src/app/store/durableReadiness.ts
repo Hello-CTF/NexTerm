@@ -21,6 +21,12 @@ function durableKind(kind: string | undefined): boolean {
 
 // The latest readiness known per session, from prepare replies and helper progress events.
 const knownReadiness = new Map<string, DurableReadiness>();
+// Sessions known to be local; their answers depend on the local helper rather than a remote host.
+const localSessions = new Set<string>();
+
+function noteKind(sessionId: string, kind: string | undefined): void {
+  if (kind === "local") localSessions.add(sessionId);
+}
 
 export function knownDurableReadiness(sessionId: string): DurableReadiness | undefined {
   return knownReadiness.get(sessionId);
@@ -28,6 +34,13 @@ export function knownDurableReadiness(sessionId: string): DurableReadiness | und
 
 export function forgetDurableReadiness(): void {
   knownReadiness.clear();
+  localSessions.clear();
+}
+
+// forgetLocalDurableReadiness drops only the answers for local sessions, after the local helper changed state or
+// mode; remote hosts' answers stay valid.
+export function forgetLocalDurableReadiness(): void {
+  for (const sessionId of localSessions) knownReadiness.delete(sessionId);
 }
 
 // noteHelperProgress keeps the readiness cache current while a helper deploys, including deployments that started
@@ -44,7 +57,8 @@ export function noteHelperProgress(progress: HelperProgressEvent | null | undefi
   }
 }
 
-function queryReadiness(sessionId: string): Promise<DurableReadiness> {
+function queryReadiness(sessionId: string, kind?: string): Promise<DurableReadiness> {
+  noteKind(sessionId, kind);
   return sessionApi.prepareDurable(sessionId).then((readiness) => {
     knownReadiness.set(sessionId, readiness);
     return readiness;
@@ -71,7 +85,7 @@ export function prepareDurableInBackground(session: ReadinessSession): void {
   knownReadiness.delete(session.id);
   void (async () => {
     if (await regularPreferred(session.kind)) return;
-    await queryReadiness(session.id);
+    await queryReadiness(session.id, session.kind);
   })().catch(() => undefined);
 }
 
@@ -87,13 +101,13 @@ function reasonFor(readiness: DurableReadiness): string | undefined {
   }
 }
 
-async function readinessWithin(sessionId: string, timeoutMs: number): Promise<DurableReadiness> {
+async function readinessWithin(sessionId: string, timeoutMs: number, kind?: string): Promise<DurableReadiness> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<DurableReadiness>((resolve) => {
     timer = setTimeout(() => resolve(knownReadiness.get(sessionId) ?? { state: "preparing" }), timeoutMs);
   });
   try {
-    return await Promise.race([queryReadiness(sessionId), timeout]);
+    return await Promise.race([queryReadiness(sessionId, kind), timeout]);
   } finally {
     clearTimeout(timer);
   }
@@ -108,11 +122,11 @@ export async function regularTerminalReason(session: ReadinessSession): Promise<
   if (await regularPreferred(session.kind)) return undefined;
   const cached = knownReadiness.get(session.id);
   if (cached && cached.state !== "preparing") {
-    void queryReadiness(session.id).catch(() => undefined);
+    void queryReadiness(session.id, session.kind).catch(() => undefined);
     return reasonFor(cached);
   }
   try {
-    return reasonFor(await readinessWithin(session.id, READINESS_QUERY_TIMEOUT_MS));
+    return reasonFor(await readinessWithin(session.id, READINESS_QUERY_TIMEOUT_MS, session.kind));
   } catch (error) {
     return `${DURABLE_UNAVAILABLE_PREFIX}：${describeError(error)}`;
   }
@@ -131,7 +145,7 @@ export async function fallbackTerminalReason(
   const fallbackNotice = options.fallbackNotice;
   let readiness: DurableReadiness;
   try {
-    readiness = await readinessWithin(sessionId, READINESS_QUERY_TIMEOUT_MS);
+    readiness = await readinessWithin(sessionId, READINESS_QUERY_TIMEOUT_MS, options.kind);
   } catch (error) {
     return `${DURABLE_UNAVAILABLE_PREFIX}：${describeError(error)}`;
   }

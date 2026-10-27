@@ -492,6 +492,21 @@ describe("local terminal hints", () => {
     expect(useUi.getState().workspaces.some((ws) => ws.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "settings")))).toBe(true);
   });
 
+  it("keeps a remote host's ready hint while the local helper changes state", async () => {
+    seed({ regularReason: "持久组件准备中" });
+    mountPane();
+    await flush();
+    helperProgress("ready", true);
+    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
+
+    for (const state of ["idle", "starting", "ready"]) {
+      act(() => setLocalHelperStatusForTest({ state }));
+      await flush();
+      expect(hintBar()?.dataset.tone).toBe("accent");
+    }
+    expect(hintBar()?.textContent).toContain("这台主机的持久终端已就绪");
+  });
+
   it("shows nothing when this device keeps local terminals regular", async () => {
     setLocalHelperStatusForTest({ state: "disabled" });
     seed({ regularReason: "持久组件准备中" }, "local");

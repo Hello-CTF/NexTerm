@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { localHelperApi, type LocalHelperStatus } from "../../ipc/commands";
 import { EVENTS, listenEvent } from "../../ipc/events";
-import { forgetDurableReadiness } from "../../app/store";
+import { forgetLocalDurableReadiness } from "../../app/store";
 
 // The local helper runs local terminals outside the app. Its status decides whether local terminals
 // open durable and whether the background list asks the local helper for terminals.
@@ -11,7 +11,7 @@ const listeners = new Set<() => void>();
 
 function publish(next: LocalHelperStatus | null): void {
   // A changed helper state makes cached local readiness answers stale.
-  if (next?.state !== current?.state) forgetDurableReadiness();
+  if (next?.state !== current?.state) forgetLocalDurableReadiness();
   current = next;
   for (const listener of listeners) listener();
 }
