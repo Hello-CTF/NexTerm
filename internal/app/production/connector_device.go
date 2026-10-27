@@ -170,7 +170,12 @@ type helperUpdateDTO struct {
 	// ReplacedLegacy reports that an older-protocol helper was ended with the
 	// user's consent, with the EndedSessions they agreed to end.
 	ReplacedLegacy bool `json:"replacedLegacy,omitempty"`
-	EndedSessions  int  `json:"endedSessions,omitempty"`
+	// Stopped reports that this action ended the older helper; false when
+	// it had already exited or another replacement ended it, so the
+	// sessions were not ended by it. Meaningful with ReplacedLegacy.
+	Stopped bool `json:"stopped,omitempty"`
+	// EndedSessions is always sent with ReplacedLegacy, 0 included.
+	EndedSessions int `json:"endedSessions"`
 	// EndedCount is how exact EndedSessions is: "exact", "atLeast" (only
 	// terminal sessions were counted) or "unknown".
 	EndedCount string `json:"endedCount,omitempty"`
@@ -293,7 +298,7 @@ func helperDTOFromDaemon(sessionID, action string, daemon *sshdaemon.Daemon) hel
 		Status: "unknown", Updated: daemon.Update.Updated,
 		Interrupted: daemon.Update.Interrupted, RolledBack: daemon.Update.RolledBack,
 		ReplacedLegacy: daemon.Update.ReplacedLegacy, EndedSessions: daemon.Update.EndedSessions,
-		EndedCount: daemon.Update.EndedCount, Forced: daemon.Update.ForcedLegacy,
+		EndedCount: daemon.Update.EndedCount, Stopped: daemon.Update.StoppedLegacy, Forced: daemon.Update.ForcedLegacy,
 	}
 	switch {
 	case daemon.Update.ReplacedLegacy:
@@ -367,11 +372,12 @@ func (s *productionHelperService) ensureDevice(ctx context.Context, sessionID, a
 	if !ok || provider.Provider() == nil {
 		return helperOperationDTO{}, session.ErrUnsupported
 	}
-	forced := false
+	var replaced supervisor.ReplaceResult
 	switch action {
 	case "status":
 	case "replace_legacy":
-		replaced, err := provider.Provider().ReplaceLegacyHelper(ctx, consentToken)
+		var err error
+		replaced, err = provider.Provider().ReplaceLegacyHelper(ctx, consentToken)
 		if err != nil {
 			if result, ok := legacyHelperDTO(sessionID, action, err); ok {
 				return result, nil
@@ -379,7 +385,6 @@ func (s *productionHelperService) ensureDevice(ctx context.Context, sessionID, a
 			s.replaceFailed(ctx, sessionID, err)
 			return helperOperationDTO{}, err
 		}
-		forced = replaced.Forced
 		s.replacedLegacy(ctx, sessionID)
 	default:
 		return helperOperationDTO{}, session.ErrUnsupported
@@ -397,13 +402,19 @@ func (s *productionHelperService) ensureDevice(ctx context.Context, sessionID, a
 		Compatibility: helperCompatibility(running), Update: &helperUpdateDTO{Status: "unknown"},
 	}
 	if action == "replace_legacy" {
-		result.Update = &helperUpdateDTO{Status: "replaced", ReplacedLegacy: true, Forced: forced}
-		if consent, ok := supervisor.ParseHelperConsent(consentToken); ok {
-			result.Update.EndedSessions = consent.Activity.Total()
-			result.Update.EndedCount = sshdaemon.EndedCountOf(consent)
-		}
+		result.Update = replacedUpdateDTO(consentToken, replaced)
 	}
 	return result, nil
+}
+
+// replacedUpdateDTO describes a replacement the device bridge completed.
+func replacedUpdateDTO(consentToken string, replaced supervisor.ReplaceResult) *helperUpdateDTO {
+	update := &helperUpdateDTO{Status: "replaced", ReplacedLegacy: true, Stopped: replaced.Stopped, Forced: replaced.Forced}
+	if consent, ok := supervisor.ParseHelperConsent(consentToken); ok {
+		update.EndedSessions = consent.Activity.Total()
+		update.EndedCount = sshdaemon.EndedCountOf(consent)
+	}
+	return update
 }
 
 func (s *productionHelperService) ensure(ctx context.Context, sessionID, action, consentToken string) (helperOperationDTO, error) {

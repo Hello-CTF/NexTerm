@@ -687,6 +687,7 @@ func (r *Resolver) replaceLegacyHelper(ctx context.Context, daemon *Daemon, prob
 	daemon.Update.ReplacedLegacy = true
 	daemon.Update.EndedSessions = consent.ended
 	daemon.Update.EndedCount = consent.count
+	daemon.Update.StoppedLegacy = result.Stopped
 	daemon.Update.ForcedLegacy = result.Forced
 	if err := r.probeDaemon(ctx, daemon); err != nil {
 		// The older helper is gone but its replacement does not answer: this
