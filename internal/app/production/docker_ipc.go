@@ -229,17 +229,16 @@ func (s dockerExecSink) AnnounceReplay(ctx context.Context, bytes int) error {
 	if err != nil {
 		return err
 	}
-	switch stream := s.stream.(type) {
-	case ipc.JSONStream:
-		return stream.SendJSON(ctx, frame)
-	case interface {
-		sendJSON(context.Context, json.RawMessage) error
-	}:
-		return stream.sendJSON(ctx, frame)
+	stream, ok := s.stream.(ipc.JSONStream)
+	if wrapped, isWrapper := s.stream.(interface{ jsonStream() (ipc.JSONStream, bool) }); !ok && isWrapper {
+		stream, ok = wrapped.jsonStream()
 	}
-	// Without an in-band control path the backlog is delivered unmarked, as
-	// before.
-	return nil
+	if !ok {
+		// Without an in-band control path the backlog is delivered
+		// unmarked, as before.
+		return nil
+	}
+	return stream.SendJSON(ctx, frame)
 }
 
 func (s *terminalCommandService) watchDockerStream(id string, stream ipc.BinaryStream) {
