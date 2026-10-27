@@ -338,6 +338,22 @@ describe("BackgroundSessions table", () => {
     }
   });
 
+  it("keeps the old-component note away from a current helper that reports no state", async () => {
+    seedHost(s1, "ssh");
+    mocks.listDurable.mockResolvedValue([
+      descriptor({ id: "stateless", title: "无状态", activity: { lastOutputAt: NOW - MINUTE, detachedAt: NOW - 2 * MINUTE, attached: false,
+        asOf: NOW, lastOutputMsAgo: MINUTE, detachedMsAgo: 2 * MINUTE } }),
+    ]);
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(1));
+    try {
+      expect(cell(view.container, "background-status").textContent).toBe("—");
+      expect(cell(view.container, "background-detached").textContent).toBe("2 分钟前转入后台");
+      expect(view.container.querySelector('[data-testid="background-old-helper-note"]')).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("shows helper ages instead of comparing this device's clock with a skewed host clock", async () => {
     seedHost(s1, "ssh");
     const hostNow = NOW + 60 * MINUTE;
