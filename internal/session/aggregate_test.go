@@ -229,6 +229,65 @@ func TestAggregatorBoundsConcurrentListings(t *testing.T) {
 	}
 }
 
+func TestAggregatorKeepsOneOwnersStuckHostsFromDelayingAnother(t *testing.T) {
+	updates := newAggregateUpdates()
+	aggregator := NewAggregator(AggregatorConfig{Concurrency: 4, OwnerConcurrency: 2, Publish: updates.publish})
+	t.Cleanup(aggregator.Close)
+	stuck := make([]AggregateTarget, 0, 5)
+	fakes := make([]*aggregateHostFake, 0, 5)
+	for _, key := range []string{"a1", "a2", "a3", "a4", "a5"} {
+		fake := &aggregateHostFake{block: true}
+		fakes = append(fakes, fake)
+		stuck = append(stuck, aggregateTarget(key, fake))
+	}
+	aggregator.List(t.Context(), "alice", stuck, 0)
+	// Wait until alice holds every slot her share allows.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		started := int32(0)
+		for _, fake := range fakes {
+			started += fake.calls.Load()
+		}
+		if started >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("alice's listings did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	bob := &aggregateHostFake{ids: []string{"b1"}}
+	// Alice's hosts hold their slots until the 10 s timeout; bob is answered well before.
+	list := aggregator.List(t.Context(), "bob", []AggregateTarget{aggregateTarget("b", bob)}, 5*time.Second)
+	if got := hostStatus(t, list, "b"); got.Status != AggregateHostOK || len(list.Sessions) != 1 {
+		t.Fatalf("bob's host = %+v; alice's stuck hosts must not hold every slot", got)
+	}
+}
+
+func TestAggregatorStampsWhenEachStateWasLearned(t *testing.T) {
+	clock := newSessionTestClock()
+	updates := newAggregateUpdates()
+	aggregator := NewAggregator(AggregatorConfig{TTL: time.Second, Now: clock.Now, Publish: updates.publish})
+	t.Cleanup(aggregator.Close)
+	host := &aggregateHostFake{ids: []string{"x"}}
+	targets := []AggregateTarget{aggregateTarget("h", host), {Host: AggregateHost{Key: "away"}, Offline: true}}
+	first := aggregator.List(t.Context(), "", targets, time.Minute)
+	updates.next(t)
+	if got := hostStatus(t, first, "h"); got.AnsweredAt != clock.Now().UnixMilli() || got.AnsweredAt != got.FetchedAt {
+		t.Fatalf("ok host = %+v", got)
+	}
+	if got := hostStatus(t, first, "away"); got.AnsweredAt != clock.Now().UnixMilli() {
+		t.Fatalf("offline host = %+v", got)
+	}
+	host.err = errors.New("down")
+	clock.Advance(2 * time.Second)
+	aggregator.List(t.Context(), "", targets, 0)
+	_, update := updates.next(t)
+	if update.Host.Status != AggregateHostFailed || update.Host.AnsweredAt != clock.Now().UnixMilli() || update.Host.FetchedAt != 0 {
+		t.Fatalf("failed host = %+v; want the failure's time", update.Host)
+	}
+}
+
 func TestAggregatorServesCachedListingsAndMarksThemStale(t *testing.T) {
 	clock := newSessionTestClock()
 	updates := newAggregateUpdates()

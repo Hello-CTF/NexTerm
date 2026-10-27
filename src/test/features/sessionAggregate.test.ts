@@ -27,8 +27,11 @@ import { aggregateBackgroundTabs, collectBackgroundTabs, visibleBackgroundTabs }
 import type { SessionInfo } from "../../ipc/commands";
 import type { AggregateHostStatus, AggregateList, AggregateSession, AttentionEvent } from "../../ipc/generated/types";
 
+// host builds a host status the way the backend stamps it: an answered state carries when it was learned, which is
+// the listing time for an ok host; a pending host carries none.
 function host(key: string, patch: Partial<AggregateHostStatus> = {}): AggregateHostStatus {
-  return { key, kind: "device", name: key, status: "ok", fetchedAt: 1, ...patch };
+  const status: AggregateHostStatus = { key, kind: "device", name: key, status: "ok", fetchedAt: 1, ...patch };
+  return { answeredAt: status.status === "pending" ? undefined : status.fetchedAt, ...status };
 }
 
 function attention(tabId: string, patch: Partial<AttentionEvent> = {}): AttentionEvent {
@@ -76,6 +79,24 @@ describe("session aggregate store", () => {
     applyAggregateUpdate({ host: host("device:a", { fetchedAt: 10 }), sessions: [item("device:a", "old-event")] });
     applyAggregateList(listing([host("device:a", { fetchedAt: 5 })], [item("device:a", "old-reply")]));
     expect(aggregateRows(useSessionAggregate.getState()).map((row) => row.session.tabId)).toEqual(["fresh"]);
+  });
+
+  it("drops the sessions of a host whose later answer is a failure", () => {
+    applyAggregateList(listing([host("device:a", { fetchedAt: 20 })], [item("device:a", "gone")]));
+    applyAggregateUpdate({ host: host("device:a", { status: "failed", fetchedAt: undefined, answeredAt: 25, error: "down" }), sessions: [] });
+    expect(aggregateRows(useSessionAggregate.getState())).toEqual([]);
+    expect(useSessionAggregate.getState().hosts.get("device:a")?.status).toBe("failed");
+
+    applyAggregateList(listing([host("device:b", { fetchedAt: 20 })], [item("device:b", "away")]));
+    applyAggregateList(listing([host("device:b", { status: "offline", fetchedAt: undefined, answeredAt: 30 })], []));
+    expect(aggregateRows(useSessionAggregate.getState())).toEqual([]);
+  });
+
+  it("keeps a newer listing over a pending or older answer", () => {
+    applyAggregateList(listing([host("device:a", { fetchedAt: 20 })], [item("device:a", "kept")]));
+    applyAggregateList(listing([host("device:a", { status: "pending", fetchedAt: undefined })], []));
+    applyAggregateUpdate({ host: host("device:a", { status: "failed", fetchedAt: undefined, answeredAt: 10 }), sessions: [] });
+    expect(aggregateRows(useSessionAggregate.getState()).map((row) => row.session.tabId)).toEqual(["kept"]);
   });
 
   it("applies events that arrive during a reload after its reply", async () => {

@@ -34,6 +34,7 @@ export type AggregateHostStatus = AggregateHost & {
   errorCode?: string;
   fetchedAt?: number;
   stale?: boolean;
+  answeredAt?: number;
 };
 
 export type AggregateList = {

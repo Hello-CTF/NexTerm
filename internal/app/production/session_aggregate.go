@@ -338,6 +338,7 @@ func (s *sessionAggregateService) fetchRemote(ctx context.Context, config *Devic
 	failed := session.AggregateHostStatus{
 		AggregateHost: session.AggregateHost{Key: session.AggregateKeyDevice + "*", Kind: session.KindDevice, Name: "设备列表"},
 		Status:        session.AggregateHostFailed,
+		AnsweredAt:    next.at.UnixMilli(),
 	}
 	failed.ErrorCode, failed.Error = describeAggregateError(err)
 	return session.AggregateList{Hosts: []session.AggregateHostStatus{failed}, Sessions: []session.AggregateSession{}}, current
@@ -430,6 +431,21 @@ func withoutDevice(list session.AggregateList, deviceID string) session.Aggregat
 		}
 	}
 	return result
+}
+
+// onSyncLinkChanged is the desktop's single sync link callback (the sync
+// service keeps one): a switch to another account stops exposing local
+// terminals at once, and the device listing, which belongs to the linked
+// account, starts over.
+func onSyncLinkChanged(reconcileExposure func(), aggregate *sessionAggregateService) func() {
+	return func() {
+		if reconcileExposure != nil {
+			reconcileExposure()
+		}
+		if aggregate != nil {
+			aggregate.reset()
+		}
+	}
 }
 
 // startLocked admits one background refresh unless the service shut down.

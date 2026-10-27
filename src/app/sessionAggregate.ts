@@ -15,7 +15,7 @@ export const AGGREGATE_WAIT_MS = 1500;
 export const AGGREGATE_REFRESH_MS = 30_000;
 // An answer with hosts still pending is asked again after this long, for hosts whose result arrives as no event
 // (devices a desktop or phone lists through its server).
-export const AGGREGATE_FOLLOW_UP_MS = 3000;
+export const AGGREGATE_FOLLOW_UP_MS = 1000;
 
 export interface AggregateRow {
   session: AggregateSession;
@@ -41,9 +41,10 @@ let inFlight = false;
 let buffered: TerminalSessionsEvent[] | null = null;
 let followUp: ReturnType<typeof setTimeout> | undefined;
 
-// newer: a host state that was read later than the other one, which then must not replace it.
+// newer: the known state of a host was learned after the incoming one, which then must not replace it. Every answer
+// (a listing, a failure, offline) carries when it was learned; a pending host carries none and replaces no answer.
 function newer(a: AggregateHostStatus | undefined, b: AggregateHostStatus): boolean {
-  return a !== undefined && (a.fetchedAt ?? 0) > (b.fetchedAt ?? 0);
+  return a !== undefined && (a.answeredAt ?? 0) > (b.answeredAt ?? 0);
 }
 
 // applyAggregateList replaces the listing with a reply. A host whose known listing was read after the reply's keeps

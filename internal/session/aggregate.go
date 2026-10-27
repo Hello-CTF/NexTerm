@@ -34,6 +34,10 @@ const (
 	DefaultAggregateTimeout     = 10 * time.Second
 	DefaultAggregateRetain      = 2 * time.Minute
 	DefaultAggregateConcurrency = 8
+	// DefaultAggregateOwnerConcurrency bounds one owner's share of the
+	// listings, so hosts of one account that do not answer cannot hold
+	// every slot.
+	DefaultAggregateOwnerConcurrency = 3
 )
 
 // AggregateHost is one place durable sessions live: a connected SSH or
@@ -66,6 +70,11 @@ type AggregateHostStatus struct {
 	// Stale reports that the listed sessions are older than the cache
 	// lifetime because a refresh is still running.
 	Stale bool `json:"stale,omitempty"`
+	// AnsweredAt is when the state reported here was learned (Unix ms): the
+	// listing for an ok host, the failure for a failed one, the listing
+	// itself for an offline one; zero while pending. A client keeps, per
+	// host, the state answered last.
+	AnsweredAt int64 `json:"answeredAt,omitempty"`
 }
 
 // AggregateSession is one durable session of a host.
@@ -135,10 +144,13 @@ type AggregatorConfig struct {
 	// refresh runs, and how long an idle owner's cache is kept.
 	Retain      time.Duration
 	Concurrency int
-	Now         func() time.Time
+	// OwnerConcurrency bounds the listings one owner runs at once.
+	OwnerConcurrency int
+	Now              func() time.Time
 	// Describe turns a listing error into the code and message shown.
 	Describe func(error) (code, message string)
-	// Publish receives each host refresh as it ends.
+	// Publish receives each host refresh of an unscoped listing as it
+	// ends; a scoped listing's caller polls instead.
 	Publish func(owner string, update AggregateUpdate)
 }
 
@@ -155,7 +167,14 @@ type Aggregator struct {
 
 	mu     sync.Mutex
 	owners map[aggregateCacheKey]*aggregateOwner
-	closed bool
+	// ownerSlots holds each owner's share of the slots while it lists.
+	ownerSlots map[string]*aggregateOwnerSlots
+	closed     bool
+}
+
+type aggregateOwnerSlots struct {
+	slots chan struct{}
+	users int
 }
 
 // aggregateCacheKey separates owners, and the listings of one owner that ask
@@ -193,6 +212,9 @@ func NewAggregator(config AggregatorConfig) *Aggregator {
 	if config.Concurrency <= 0 {
 		config.Concurrency = DefaultAggregateConcurrency
 	}
+	if config.OwnerConcurrency <= 0 {
+		config.OwnerConcurrency = min(DefaultAggregateOwnerConcurrency, config.Concurrency)
+	}
 	if config.Now == nil {
 		config.Now = time.Now
 	}
@@ -206,6 +228,8 @@ func NewAggregator(config AggregatorConfig) *Aggregator {
 		ctx:    ctx,
 		cancel: cancel,
 		owners: make(map[aggregateCacheKey]*aggregateOwner),
+
+		ownerSlots: make(map[string]*aggregateOwnerSlots),
 	}
 }
 
@@ -314,7 +338,7 @@ func (a *Aggregator) startRefresh(ctx context.Context, key aggregateCacheKey, ca
 		defer cancel()
 		stop := context.AfterFunc(a.ctx, cancel)
 		defer stop()
-		descriptors, err := a.listHost(refreshCtx, list)
+		descriptors, err := a.listHost(refreshCtx, key.owner, list)
 		at := a.config.Now()
 
 		a.mu.Lock()
@@ -333,13 +357,24 @@ func (a *Aggregator) startRefresh(ctx context.Context, key aggregateCacheKey, ca
 			update.Sessions = visibleSessions(update.Host, entry)
 		}
 		a.mu.Unlock()
-		if current && a.config.Publish != nil {
+		if current && key.scope == "" && a.config.Publish != nil {
 			a.config.Publish(key.owner, update)
 		}
 	}()
 }
 
-func (a *Aggregator) listHost(ctx context.Context, list func(context.Context) ([]base.DurableDescriptor, error)) ([]base.DurableDescriptor, error) {
+// listHost runs one listing within the owner's share and the global pool:
+// the owner's slot is taken first, so an owner waiting on its own hosts
+// holds no global slot another owner could use.
+func (a *Aggregator) listHost(ctx context.Context, owner string, list func(context.Context) ([]base.DurableDescriptor, error)) ([]base.DurableDescriptor, error) {
+	own := a.acquireOwnerSlots(owner)
+	defer a.releaseOwnerSlots(owner, own)
+	select {
+	case own.slots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-own.slots }()
 	select {
 	case a.slots <- struct{}{}:
 	case <-ctx.Done():
@@ -347,6 +382,27 @@ func (a *Aggregator) listHost(ctx context.Context, list func(context.Context) ([
 	}
 	defer func() { <-a.slots }()
 	return list(ctx)
+}
+
+func (a *Aggregator) acquireOwnerSlots(owner string) *aggregateOwnerSlots {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	own := a.ownerSlots[owner]
+	if own == nil {
+		own = &aggregateOwnerSlots{slots: make(chan struct{}, a.config.OwnerConcurrency)}
+		a.ownerSlots[owner] = own
+	}
+	own.users++
+	return own
+}
+
+func (a *Aggregator) releaseOwnerSlots(owner string, own *aggregateOwnerSlots) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	own.users--
+	if own.users == 0 && a.ownerSlots[owner] == own {
+		delete(a.ownerSlots, owner)
+	}
 }
 
 func (a *Aggregator) await(ctx context.Context, waits []chan struct{}, wait time.Duration) {
@@ -373,12 +429,15 @@ func (a *Aggregator) statusLocked(entry *aggregateEntry, now time.Time) Aggregat
 	case entry.err != nil && !entry.errAt.Before(entry.fetchedAt) && errors.Is(entry.err, ErrHelperNotReady):
 		status.Status = AggregateHostOffline
 		status.ErrorCode, status.Error = "helper_not_ready", "主机上的持久终端组件尚未就绪，状态未知"
+		status.AnsweredAt = entry.errAt.UnixMilli()
 	case entry.err != nil && !entry.errAt.Before(entry.fetchedAt):
 		status.Status = AggregateHostFailed
 		status.ErrorCode, status.Error = a.describe(entry.err)
+		status.AnsweredAt = entry.errAt.UnixMilli()
 	case fresh:
 		status.Status = AggregateHostOK
 		status.FetchedAt = entry.fetchedAt.UnixMilli()
+		status.AnsweredAt = status.FetchedAt
 		status.Stale = now.Sub(entry.fetchedAt) >= a.config.TTL
 	default:
 		status.Status = AggregateHostPending
@@ -410,10 +469,10 @@ func (a *Aggregator) snapshotLocked(cache *aggregateOwner, targets []AggregateTa
 		var sessions []AggregateSession
 		switch {
 		case target.Failed != nil:
-			status = AggregateHostStatus{AggregateHost: target.Host, Status: AggregateHostFailed}
+			status = AggregateHostStatus{AggregateHost: target.Host, Status: AggregateHostFailed, AnsweredAt: now.UnixMilli()}
 			status.ErrorCode, status.Error = a.describe(target.Failed)
 		case target.Offline || target.List == nil:
-			status = AggregateHostStatus{AggregateHost: target.Host, Status: AggregateHostOffline}
+			status = AggregateHostStatus{AggregateHost: target.Host, Status: AggregateHostOffline, AnsweredAt: now.UnixMilli()}
 		default:
 			entry := cache.hosts[target.Host.Key]
 			if entry == nil {
@@ -445,8 +504,9 @@ func (a *Aggregator) snapshotLocked(cache *aggregateOwner, targets []AggregateTa
 
 func (a *Aggregator) snapshotClosed(targets []AggregateTarget) AggregateList {
 	list := AggregateList{Hosts: make([]AggregateHostStatus, 0, len(targets)), Sessions: []AggregateSession{}}
+	now := a.config.Now().UnixMilli()
 	for _, target := range targets {
-		list.Hosts = append(list.Hosts, AggregateHostStatus{AggregateHost: target.Host, Status: AggregateHostOffline})
+		list.Hosts = append(list.Hosts, AggregateHostStatus{AggregateHost: target.Host, Status: AggregateHostOffline, AnsweredAt: now})
 	}
 	return list
 }
