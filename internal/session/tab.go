@@ -67,6 +67,9 @@ type subscriber struct {
 	// spectator marks a read-only preview channel; it never keeps a tab from
 	// counting as detached.
 	spectator bool
+	// inputPassive is the input-owner state last announced to this answering
+	// subscriber (input_owner.go); a new attachment starts active.
+	inputPassive bool
 }
 
 const streamAnchorType = "nexterm.stream-anchor"
@@ -130,6 +133,9 @@ type Tab struct {
 	retainedBy   string
 	controller   string
 	controlled   bool
+	// lastInputClient is the client whose input was last written to the
+	// shell (input_owner.go).
+	lastInputClient string
 	// guestLease/guestLeaseUntil record the preview guest control lease holder and expiry:
 	// after the controller is removed by orphan cleanup on disconnect, the lease is kept until expiry (disconnect grace) and lazily cleared.
 	guestLease      string
@@ -1187,6 +1193,8 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	tab.mu.Unlock()
 	m.mu.Unlock()
 	attached = true
+	// The anchor reset this view to active; the feed gate is still held.
+	m.syncInputOwnerFeedLocked(tab)
 	m.emit(attachCtx, TopicTerminalControl, event)
 	return info, nil
 }
@@ -1355,6 +1363,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	tab.syncRecoveryFloorLocked()
 	throttleRecovered, throttleVersion := m.clearThrottleChannelLocked(tab.ID, channelID)
 	tab.releaseOrphanControllerLocked()
+	ownerStale := tab.inputOwnerStaleLocked()
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
 	ephemeral := tab.ephemeral
@@ -1375,6 +1384,12 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 		m.emit(context.Background(), TopicTerminalControl, event)
 		if throttleRecovered {
 			m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, ChannelID: channelID, Recovered: true, Version: throttleVersion})
+		}
+		if ownerStale {
+			// The input owner left: the remaining views become active. The
+			// cleanup may run where the feed gate is held, so announce from
+			// a goroutine.
+			m.startGoroutine(func() { m.syncInputOwner(tab) })
 		}
 		if attached && empty && ephemeral {
 			_ = m.reapEphemeralTab(tab, generation)
@@ -1479,12 +1494,16 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background b
 	}
 	tab.syncRecoveryFloorLocked()
 	tab.releaseOrphanControllerLocked()
+	ownerStale := tab.inputOwnerStaleLocked()
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
 	ephemeral := tab.ephemeral
 	generation := tab.generation
 	tab.mu.Unlock()
 	m.mu.Unlock()
+	if ownerStale {
+		m.syncInputOwner(tab)
+	}
 	for _, detached := range detached {
 		if tab.fanout != nil {
 			tab.fanout.Detach(detached.channelID)
@@ -1747,6 +1766,10 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 	channel := tab.channel
 	generation := tab.generation
 	exited := tab.exited
+	ownerChanged := false
+	for _, input := range accepted {
+		ownerChanged = tab.noteInputClientLocked(input.client) || ownerChanged
+	}
 	echoing := make([]*outCoalescer, 0, len(tab.subscribers))
 	for _, subscriber := range tab.subscribers {
 		echoing = append(echoing, subscriber.co)
@@ -1758,6 +1781,11 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 	// Keystrokes end bulk coalescing so their echo is not held for the wide window.
 	for _, co := range echoing {
 		co.noteInput()
+	}
+	// Announce the new input owner before the shell sees the input, so the
+	// output it causes follows the announcement.
+	if ownerChanged {
+		m.syncInputOwner(tab)
 	}
 	tab.session.mu.Lock()
 	connected := tab.session.status == StatusConnected && tab.session.generation == generation

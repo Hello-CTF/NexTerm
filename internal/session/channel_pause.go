@@ -307,5 +307,10 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, clien
 		}
 		replay = replay[size:]
 	}
+	// The anchor reset the client to active: announce a passive view again.
+	tab.mu.Lock()
+	tab.resetInputOwnerLocked(channelID)
+	tab.mu.Unlock()
+	m.syncInputOwnerFeedLocked(tab)
 	return subscriber.flushedOffset, episodeGen, nil
 }

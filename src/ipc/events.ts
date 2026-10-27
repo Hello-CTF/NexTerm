@@ -232,6 +232,25 @@ function isStreamClass(raw: unknown): raw is StreamClassControl {
   );
 }
 
+// Tells this view whether it is the device that most recently typed into the
+// tab: only that device writes live OSC 52 clipboard requests. Every anchor
+// resets the view to active.
+export interface InputOwnerControl {
+  type: string;
+  active: boolean;
+}
+
+export const INPUT_OWNER_TYPE = "nexterm.input-owner";
+
+function isInputOwner(raw: unknown): raw is InputOwnerControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === INPUT_OWNER_TYPE &&
+    typeof (raw as { active?: unknown }).active === "boolean"
+  );
+}
+
 function isStreamReplay(raw: unknown): raw is StreamReplayControl {
   return (
     typeof raw === "object" &&
@@ -286,6 +305,7 @@ export function createBinaryChannel(
   onControl?: (control: StreamAnchorControl) => void,
   onReplay?: (control: StreamReplayControl) => void,
   onClass?: (control: StreamClassControl) => void,
+  onInputOwner?: (control: InputOwnerControl) => void,
 ): IpcChannel<unknown> {
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = (raw) => {
@@ -300,6 +320,10 @@ export function createBinaryChannel(
     }
     if (isStreamClass(raw)) {
       onClass?.(raw);
+      return;
+    }
+    if (isInputOwner(raw)) {
+      onInputOwner?.(raw);
       return;
     }
     decodeBytes(raw, onBytes);
