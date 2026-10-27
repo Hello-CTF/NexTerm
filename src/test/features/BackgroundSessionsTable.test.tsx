@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   closeTab: vi.fn(),
   resyncSessions: vi.fn(),
+  helperStatus: vi.fn(),
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoiceRemember: mocks.askChoiceRemember }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -18,11 +19,13 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
     sessionApi: { list: mocks.listSessions },
     terminalApi: { listLive: mocks.listLive, listDurable: mocks.listDurable, closeTab: mocks.closeTab },
+    localHelperApi: { status: mocks.helperStatus },
   });
 });
 
 import { BackgroundSessions } from "../../features/terminal/BackgroundSessions";
 import { useAuth } from "../../features/auth/store";
+import { setLocalHelperStatusForTest } from "../../features/terminal/localHelperStatus";
 import { useUi, type Workspace } from "../../app/store";
 import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 import type { DurableDescriptor, LiveTabInfo, SessionAttentionState, SessionInfo } from "../../ipc/commands";
@@ -141,10 +144,13 @@ describe("BackgroundSessions table", () => {
     mocks.listSessions.mockResolvedValue([s1, s2]);
     mocks.closeTab.mockResolvedValue(undefined);
     mocks.resyncSessions.mockResolvedValue(undefined);
+    mocks.helperStatus.mockResolvedValue({ state: "disabled" });
+    setLocalHelperStatusForTest(null);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    setLocalHelperStatusForTest(null);
   });
 
   it("shows the 名称 / 状态 / 大小 / 时间 / 操作 columns without a host column", async () => {
@@ -289,6 +295,29 @@ describe("BackgroundSessions table", () => {
       expect(cell(old, "background-time").title).toContain("版本较旧");
       expect(cell(old, "background-time").title).toContain("创建：2026-10-27 11:00:00");
       expect(view.container.textContent).not.toContain("在主机上运行");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("reads local durable terminals' status and times from the local helper", async () => {
+    mocks.helperStatus.mockResolvedValue({ state: "ready" });
+    setLocalHelperStatusForTest({ state: "ready" });
+    const local = { ...s1, kind: "local", assetId: "local-asset", name: "本机" };
+    seedHost(local, "local");
+    mocks.listSessions.mockResolvedValue([local]);
+    mocks.listDurable.mockResolvedValue([
+      descriptor({ id: "local-shell", title: "本机构建", state: "running",
+        activity: { lastOutputAt: NOW - 10_000, detachedAt: NOW - 8 * MINUTE, attached: false } }),
+    ]);
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(1));
+    try {
+      expect(mocks.listDurable).toHaveBeenCalledWith("s1");
+      const shell = row(view, "local-shell");
+      expect(cell(shell, "background-name").textContent).toBe("本机构建");
+      expect(cell(shell, "background-status").textContent).toBe("运行中");
+      expect(cell(shell, "background-output").textContent).toBe("10 秒前有输出");
+      expect(cell(shell, "background-detached").textContent).toBe("8 分钟前转入后台");
     } finally {
       view.unmount();
     }
