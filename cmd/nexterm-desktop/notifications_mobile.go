@@ -2,6 +2,10 @@
 
 package main
 
+import "time"
+
+const notificationMinInterval time.Duration = 0
+
 // Mobile builds have no system notification bridge yet: the Wails service
 // only stubs iOS and has no Android implementation.
 func newNotificationBackend() (notificationBackend, string) {

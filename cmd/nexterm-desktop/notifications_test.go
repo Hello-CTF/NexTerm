@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	production "github.com/Hello-CTF/NexTerm/internal/app/production"
 )
@@ -15,6 +17,12 @@ type fakeNotificationBackend struct {
 	asked      bool
 	sent       []production.SystemNotification
 	click      func(notificationClick)
+	stops      int
+}
+
+func (f *fakeNotificationBackend) Stop() error {
+	f.stops++
+	return nil
 }
 
 func (f *fakeNotificationBackend) Start(context.Context) error {
@@ -39,7 +47,7 @@ func (f *fakeNotificationBackend) OnClick(click func(notificationClick)) { f.cli
 func TestDesktopNotifierStartsOnceAndHandsBackClicks(t *testing.T) {
 	backend := &fakeNotificationBackend{}
 	var clicks []notificationClick
-	notifier := newDesktopNotifier(backend, "", func(click notificationClick) { clicks = append(clicks, click) })
+	notifier := newDesktopNotifier(backend, "", 0, func(click notificationClick) { clicks = append(clicks, click) })
 	ctx := context.Background()
 
 	if status := notifier.Status(ctx); !status.Available || status.Permission != production.SystemNotificationPrompt {
@@ -65,7 +73,7 @@ func TestDesktopNotifierStartsOnceAndHandsBackClicks(t *testing.T) {
 }
 
 func TestDesktopNotifierReportsWhyItIsUnavailable(t *testing.T) {
-	failing := newDesktopNotifier(&fakeNotificationBackend{startErr: errors.New("no session bus")}, "", nil)
+	failing := newDesktopNotifier(&fakeNotificationBackend{startErr: errors.New("no session bus")}, "", 0, nil)
 	if status := failing.Status(context.Background()); status.Available || status.Reason == "" {
 		t.Fatalf("status with a failed service = %+v", status)
 	}
@@ -73,8 +81,71 @@ func TestDesktopNotifierReportsWhyItIsUnavailable(t *testing.T) {
 		t.Fatal("notify through a failed service succeeded")
 	}
 
-	mobile := newDesktopNotifier(nil, "移动端暂不支持系统通知", nil)
+	mobile := newDesktopNotifier(nil, "移动端暂不支持系统通知", 0, nil)
 	if status := mobile.Status(context.Background()); status.Available || status.Reason != "移动端暂不支持系统通知" {
 		t.Fatalf("status without a backend = %+v", status)
+	}
+}
+
+func TestDesktopNotifierLimitsEachTabAndStopsAStartedService(t *testing.T) {
+	backend := &fakeNotificationBackend{authorized: true}
+	notifier := newDesktopNotifier(backend, "", 30*time.Second, nil)
+	clock := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
+	notifier.now = func() time.Time { return clock }
+	ctx := context.Background()
+	if err := notifier.Shutdown(); err != nil || backend.stops != 0 {
+		t.Fatalf("shutdown before start: err %v, stops %d", err, backend.stops)
+	}
+	send := func(tab string) {
+		t.Helper()
+		if err := notifier.Notify(ctx, production.SystemNotification{ID: "attention:" + tab, Title: "t", TabID: tab}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send("T1")
+	send("T1")
+	send("T2")
+	clock = clock.Add(30 * time.Second)
+	send("T1")
+	var tabs []string
+	for _, sent := range backend.sent {
+		tabs = append(tabs, sent.TabID)
+	}
+	if len(tabs) != 3 || tabs[0] != "T1" || tabs[1] != "T2" || tabs[2] != "T1" {
+		t.Fatalf("sent tabs = %v", tabs)
+	}
+	if err := notifier.Shutdown(); err != nil || backend.stops != 1 {
+		t.Fatalf("shutdown: err %v, stops %d", err, backend.stops)
+	}
+}
+
+func TestToastTextCannotReachThePowerShellTemplate(t *testing.T) {
+	for _, text := range []string{"$(x)", "`$x", "a $env:USERPROFILE b", "``"} {
+		got := escapeToastScript(text)
+		for _, special := range []string{"$", "`"} {
+			if strings.Contains(got, special) {
+				t.Fatalf("escapeToastScript(%q) = %q keeps %q", text, got, special)
+			}
+		}
+	}
+	if got := escapeToastScript("$(x) `$x"); got != "\uFF04(x) \uFF40\uFF04x" {
+		t.Fatalf("escapeToastScript = %q", got)
+	}
+}
+
+func TestNotificationMarkupIsEscaped(t *testing.T) {
+	if got := escapeNotificationMarkup(`<a href="x">a & b</a>`); got != "&lt;a href=&#34;x&#34;&gt;a &amp; b&lt;/a&gt;" {
+		t.Fatalf("escapeNotificationMarkup = %q", got)
+	}
+}
+
+func TestRunIgnoresToastActivationArguments(t *testing.T) {
+	for _, args := range [][]string{{"-Embedding", "--version"}, {"/Embedding", "%1", "--version"}} {
+		if code := run(args); code != 0 {
+			t.Fatalf("run(%q) = %d, want 0", args, code)
+		}
+	}
+	if code := run([]string{"-Embeddingx", "--version"}); code != 2 {
+		t.Fatalf("an unknown argument still has to fail, got %d", code)
 	}
 }

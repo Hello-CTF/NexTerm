@@ -25,6 +25,10 @@ func (w *wailsNotifications) Start(ctx context.Context) error {
 	return w.service.ServiceStartup(ctx, application.ServiceOptions{})
 }
 
+func (w *wailsNotifications) Stop() error {
+	return w.service.ServiceShutdown()
+}
+
 func (w *wailsNotifications) Authorized(_ context.Context, ask bool) (bool, error) {
 	if ask {
 		return w.service.RequestNotificationAuthorization()
@@ -33,6 +37,7 @@ func (w *wailsNotifications) Authorized(_ context.Context, ask bool) (bool, erro
 }
 
 func (w *wailsNotifications) Send(notification production.SystemNotification) error {
+	notification = platformNotification(notification)
 	options := notifications.NotificationOptions{
 		ID:    notification.ID,
 		Title: notification.Title,

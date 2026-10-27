@@ -36,6 +36,7 @@ func run(args []string) int {
 		return supervisor.RunHelperCLI(args[1:])
 	}
 	args, launchLink := extractDeepLink(args)
+	args, toastActivation := stripToastActivationArgs(args)
 	invocation, err := core.ParseCLI(args, core.CommandDesktop, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
@@ -99,7 +100,7 @@ func run(args []string) int {
 		return nil
 	})
 	notificationBackend, notificationsUnsupported := newNotificationBackend()
-	notifier := newDesktopNotifier(notificationBackend, notificationsUnsupported, func(click notificationClick) {
+	notifier := newDesktopNotifier(notificationBackend, notificationsUnsupported, notificationMinInterval, func(click notificationClick) {
 		if window != nil {
 			showWindow(window)
 		}
@@ -216,6 +217,16 @@ func run(args []string) int {
 	if launchLink != "" {
 		service.links.deliver(launchLink)
 	}
+	if toastActivation {
+		// Started by a click on a toast: register the activator at once so
+		// the click reaches the frontend.
+		go notifier.Status(context.Background())
+	}
+	defer func() {
+		if err := notifier.Shutdown(); err != nil {
+			logger.Warn("notification service shutdown", "error", err)
+		}
+	}()
 	window.Show()
 	if err := wailsApp.Run(); err != nil {
 		logger.Error("desktop stopped", "error", err)

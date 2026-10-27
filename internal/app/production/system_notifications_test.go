@@ -87,3 +87,33 @@ func TestSystemNotifyPassesOneLineOfBoundedText(t *testing.T) {
 		t.Fatalf("removed = %v", notifier.removed)
 	}
 }
+
+func TestSystemNotifyDropsControlsAndBoundsIDs(t *testing.T) {
+	notifier := &fakeSystemNotifier{status: SystemNotificationStatus{Available: true, Permission: SystemNotificationGranted}}
+	dispatcher := newSystemNotificationDispatcher(t, notifier)
+	var ignored any
+	// ESC, C1 NEXT LINE, RIGHT-TO-LEFT OVERRIDE and ZERO WIDTH SPACE go; ZWJ stays.
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "system_notify",
+		`{"id":"a","title":"ok\u001b[31m\u0085\u202egnp.exe\u200b","body":"family \ud83d\udc68\u200d\ud83d\udc69"}`), &ignored)
+	if len(notifier.sent) != 1 {
+		t.Fatalf("sent = %+v", notifier.sent)
+	}
+	if got := notifier.sent[0]; got.Title != "ok[31mgnp.exe" || got.Body != "family \U0001F468\u200d\U0001F469" {
+		t.Fatalf("sent = %q / %q", got.Title, got.Body)
+	}
+
+	long := strings.Repeat("i", maxSystemNotificationID+1)
+	for _, args := range []string{
+		`{"id":"` + long + `","title":"t"}`,
+		`{"id":"a","title":"t","tabId":"` + long + `"}`,
+		`{"id":"a\u202e","title":"t"}`,
+	} {
+		response := dispatchStoreTest(dispatcher, "system_notify", args)
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("notify %s = %+v", args, response)
+		}
+	}
+	if response := dispatchStoreTest(dispatcher, "system_notification_remove", `{"id":"`+long+`"}`); response.OK {
+		t.Fatalf("remove with a long id = %+v", response)
+	}
+}
