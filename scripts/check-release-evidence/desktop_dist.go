@@ -38,9 +38,8 @@ func main() {
 		os.Exit(2)
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(struct {
-		Protocol int      ` + "`json:\"protocol\"`" + `
-		Features []string ` + "`json:\"features\"`" + `
-	}{Protocol: %d, Features: []string{%s}})
+		Protocol int ` + "`json:\"protocol\"`" + `
+	}{Protocol: %d})
 }
 `
 
@@ -121,25 +120,19 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 		return fmt.Errorf("read helper metadata: %s", metadataRaw.stderr)
 	}
 	var metadata struct {
-		Protocol int      `json:"protocol"`
-		Features []string `json:"features"`
+		Protocol int `json:"protocol"`
 	}
 	if err := json.Unmarshal([]byte(metadataRaw.stdout), &metadata); err != nil {
 		return fmt.Errorf("parse helper metadata: %w", err)
 	}
-	if metadata.Protocol <= 0 || len(metadata.Features) == 0 {
+	if metadata.Protocol <= 0 {
 		return fmt.Errorf("helper metadata is incomplete: %s", metadataRaw.stdout)
 	}
 	helperCommand := filepath.Join(base, "cmd", "nexterm-helper")
 	if err := os.MkdirAll(helperCommand, 0o755); err != nil {
 		return err
 	}
-	featuresJSON, err := json.Marshal(metadata.Features)
-	if err != nil {
-		return err
-	}
-	featuresLiteral := strings.TrimSuffix(strings.TrimPrefix(string(featuresJSON), "["), "]")
-	mainSource := fmt.Sprintf(helperMetadataMain, metadata.Protocol, featuresLiteral)
+	mainSource := fmt.Sprintf(helperMetadataMain, metadata.Protocol)
 	if err := os.WriteFile(filepath.Join(helperCommand, "main.go"), []byte(mainSource), 0o644); err != nil {
 		return err
 	}
@@ -160,7 +153,7 @@ func prepareDesktopPackageRepo(root, base, version string) error {
 		if err := copyFile(helper, destination, 0o755); err != nil {
 			return err
 		}
-		if err := writeHelperFixtureManifest(destination, target.goos, target.arch, target.representative, version, metadata.Protocol, metadata.Features); err != nil {
+		if err := writeHelperFixtureManifest(destination, target.goos, target.arch, target.representative, version, metadata.Protocol); err != nil {
 			return err
 		}
 	}
@@ -210,7 +203,7 @@ func copyFile(source, destination string, mode os.FileMode) error {
 	return os.WriteFile(destination, contents, mode)
 }
 
-func writeHelperFixtureManifest(file, goos, arch string, representative bool, version string, protocol int, features []string) error {
+func writeHelperFixtureManifest(file, goos, arch string, representative bool, version string, protocol int) error {
 	if err := writeBinaryManifest(file, "helper", goos, arch, "0", version, "unknown"); err != nil {
 		return err
 	}
@@ -231,7 +224,6 @@ func writeHelperFixtureManifest(file, goos, arch string, representative bool, ve
 		}
 		digest := sha256.Sum256(binaryBytes)
 		manifest["protocol"] = protocol
-		manifest["features"] = features
 		manifest["sha256"] = fmt.Sprintf("%x", digest)
 		manifest["binary_metadata_verified"] = true
 		manifest["metadata_host"] = map[string]string{"os": goos, "arch": arch}
@@ -425,12 +417,6 @@ func runDesktopDistChecks(root, version, goos, goarch string) []checkResult {
 			want:       "features",
 			helperName: "nexterm-helper-linux-amd64",
 			helperEdit: func(manifest map[string]interface{}) { manifest["features"] = []string{"exec"} },
-		},
-		{
-			name:       "helper features missing",
-			want:       "features",
-			helperName: "nexterm-helper-linux-amd64",
-			helperEdit: func(manifest map[string]interface{}) { delete(manifest, "features") },
 		},
 		{
 			name: "updater public key mismatch",
