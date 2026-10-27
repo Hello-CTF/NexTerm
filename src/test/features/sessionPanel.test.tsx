@@ -488,6 +488,34 @@ describe("session side panel host link", () => {
     expect(hostWorkspace?.panes.flatMap((p) => p.tabs).map((t) => t.id)).toEqual(["t1"]);
   });
 
+  it("closes the overlay sheet after opening the host page", async () => {
+    useUi.setState({
+      workspaces: [{ ...workspace("ws1", "web-01", "s1", [terminal("t1", "k1", "s1")]), assetId: "a-web", assetKind: "ssh" }],
+      activeWorkspaceId: "ws1",
+      sessions: [{ ...session("s1", "web-01"), assetId: "a-web" }],
+    });
+    useSessionPanel.getState().setOpen(true);
+    mountPanel(true);
+    await flush();
+    click(button("查看主机详情"));
+    expect(hostTab()?.assetId).toBe("a-web");
+    expect(useSessionPanel.getState().open).toBe(false);
+  });
+
+  it("keeps the docked panel open after opening the host page", async () => {
+    useUi.setState({
+      workspaces: [{ ...workspace("ws1", "web-01", "s1", [terminal("t1", "k1", "s1")]), assetId: "a-web", assetKind: "ssh" }],
+      activeWorkspaceId: "ws1",
+      sessions: [{ ...session("s1", "web-01"), assetId: "a-web" }],
+    });
+    useSessionPanel.getState().setOpen(true);
+    mountPanel(false);
+    await flush();
+    click(button("查看主机详情"));
+    expect(hostTab()?.assetId).toBe("a-web");
+    expect(useSessionPanel.getState().open).toBe(true);
+  });
+
   it("has no host link for a session without a saved host", async () => {
     seedTwoHosts();
     mountPanel();

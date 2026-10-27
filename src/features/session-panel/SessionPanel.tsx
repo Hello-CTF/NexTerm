@@ -117,7 +117,11 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
             className="nx-icon-btn nx-icon-btn-sm"
             aria-label="查看主机详情"
             title="查看主机详情：会话、容器、数据库和指标"
-            onClick={() => openHostDetail(hostAssetId)}
+            onClick={() => {
+              openHostDetail(hostAssetId);
+              // The overlay sheet covers the page that just opened.
+              if (overlay) onClose();
+            }}
           >
             <IconServer size={13} />
           </button>
