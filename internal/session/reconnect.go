@@ -627,7 +627,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		session.idleSince = m.now()
 	}
 	session.finishReconnectLocked(nil)
-	heartbeater := m.armLivenessLocked(session)
+	liveness := m.armLivenessLocked(session)
 	reconnectCtx := session.ctx
 	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
@@ -679,7 +679,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			_ = m.feed(reconnectCtx, tab, generation, reconnectBanner)
 		}
 	}
-	m.startLiveness(session, generation, heartbeater)
+	m.startLiveness(session, liveness)
 	m.emit(context.Background(), TopicSessionStatus, connectedEvent)
 	committed = true
 	return true, nil

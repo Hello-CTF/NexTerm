@@ -187,27 +187,32 @@ func (s *Session) livenessLabelLocked(status Status) Liveness {
 }
 
 // armLivenessLocked resets the tracker for a freshly connected transport and
-// reports the heartbeater to monitor, if any. Callers hold s.mu.
-func (m *Manager) armLivenessLocked(session *Session) base.Heartbeater {
+// captures what the monitor needs while the connection is current. Callers
+// hold s.mu.
+func (m *Manager) armLivenessLocked(session *Session) livenessStart {
 	session.liveness = newLivenessTracker(m.livenessPolicy, m.livenessClock.read())
 	session.livenessGen = session.generation
-	if m.livenessPolicy.Interval < 0 || session.transport == nil {
-		return nil
+	start := livenessStart{ctx: session.ctx, generation: session.generation}
+	if m.livenessPolicy.Interval >= 0 && session.transport != nil {
+		start.heartbeater, _ = session.transport.Transport.(base.Heartbeater)
 	}
-	heartbeater, _ := session.transport.Transport.(base.Heartbeater)
-	return heartbeater
+	return start
+}
+
+type livenessStart struct {
+	ctx         context.Context
+	generation  uint64
+	heartbeater base.Heartbeater
 }
 
 // startLiveness runs the background heartbeat for one connection generation.
 // It stops when the session context ends (reconnect, close, manager close) or
 // once the connection is declared dead.
-func (m *Manager) startLiveness(session *Session, generation uint64, heartbeater base.Heartbeater) {
+func (m *Manager) startLiveness(session *Session, start livenessStart) {
+	heartbeater, ctx, generation := start.heartbeater, start.ctx, start.generation
 	if heartbeater == nil {
 		return
 	}
-	session.mu.Lock()
-	ctx := session.ctx
-	session.mu.Unlock()
 	m.startGoroutine(func() {
 		for {
 			session.mu.Lock()

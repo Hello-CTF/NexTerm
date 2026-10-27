@@ -498,11 +498,11 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	session.status = StatusConnected
 	session.idleSince = m.now()
 	session.finishConnectLocked(nil)
-	heartbeater := m.armLivenessLocked(session)
+	liveness := m.armLivenessLocked(session)
 	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
-	m.startLiveness(session, generation, heartbeater)
+	m.startLiveness(session, liveness)
 	m.emit(ctx, TopicSessionStatus, connectedEvent)
 	m.transcriptStarted(ctx, session)
 	return session, nil
