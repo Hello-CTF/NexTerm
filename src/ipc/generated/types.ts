@@ -2630,6 +2630,7 @@ export type TerminalHistoryReadRequest = {
   tabId: string;
   before: number;
   maxBytes: number;
+  latest: boolean;
 };
 
 export type TerminalPauseRequest = {
