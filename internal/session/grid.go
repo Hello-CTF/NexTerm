@@ -118,9 +118,10 @@ func (m *Manager) FlushResize(ctx context.Context, tabID, client string) error {
 		tab.mu.Unlock()
 		return ErrTabClosed
 	}
-	if tab.controller != clientID(client) {
+	if tab.sizeOwner != clientID(client) {
+		// Only the size owner's resizes reach the grid.
 		tab.mu.Unlock()
-		return ErrNotController
+		return nil
 	}
 	grid := tab.grid
 	tab.mu.Unlock()
@@ -139,7 +140,9 @@ func mapGridError(err error) error {
 	case errors.Is(err, terminalgrid.ErrDisconnected):
 		return ErrDisconnected
 	case errors.Is(err, terminalgrid.ErrNotController):
-		return ErrNotController
+		// The grid rejects a resize after its size owner left: the
+		// size stays until the next owner.
+		return nil
 	case errors.Is(err, terminalgrid.ErrHidden):
 		return ErrHidden
 	case errors.Is(err, terminalgrid.ErrNoDesiredGrid):

@@ -259,9 +259,6 @@ async function writeTarget(
   } catch (error) {
     const code = (error as { code?: string } | null)?.code;
     if (code === "needs_confirm") throw error;
-    if (code === "not_controller") {
-      return skipped(targetId, target.title, "正被其他设备控制");
-    }
     return { targetId, title: target.title, status: "failed", reason: "写入失败" };
   }
 }

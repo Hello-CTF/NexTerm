@@ -16,7 +16,6 @@ const ERROR_CODE_LABELS: Record<string, string> = {
   disconnected: "已断开",
   timeout: "超时",
   forbidden: "没有权限",
-  not_controller: "没有控制权",
   needs_confirm: "需要确认",
   ssh: "SSH 错误",
   sftp: "SFTP 错误",

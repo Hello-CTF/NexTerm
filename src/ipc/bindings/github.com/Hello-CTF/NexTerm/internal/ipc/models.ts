@@ -35,7 +35,6 @@ export enum Code {
      * CodeMFAEnrollmentRequired means that under the mfa_required policy, unenrolled sessions are restricted to enrollment-related routes.
      */
     CodeMFAEnrollmentRequired = "mfa_enrollment_required",
-    CodeNotController = "not_controller",
     CodeNeedsConfirm = "needs_confirm",
     CodeTimeout = "timeout",
     CodeCrypto = "crypto",

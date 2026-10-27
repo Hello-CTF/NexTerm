@@ -285,7 +285,7 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, clien
 		end = max(end, core.LatestSeq())
 	}
 	tab.mu.Lock()
-	classes := tab.classes.within(uint64(acceptedBytes), end)
+	classes := tab.classes.within(uint64(acceptedBytes), end, subscriber.client)
 	inputPassive := tab.anchorInputPassiveLocked(channelID)
 	tab.mu.Unlock()
 	anchor, err := json.Marshal(streamAnchor{

@@ -57,7 +57,8 @@ func newSlowSubscriberFixture(t *testing.T, queueFrames, queueBytes int, kinds .
 func attachSlowSubscriberReceiver(t *testing.T, manager *Manager, tab *Tab, channelID string) (*hub.Receiver, streamAnchor) {
 	t.Helper()
 	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{
-		ClientID: channelID + "-client", ChannelID: channelID, ReplayBytes: 0,
+		// One client: these tests follow the output, not which client answers it.
+		ClientID: "slow-client", ChannelID: channelID, ReplayBytes: 0,
 	}); err != nil {
 		t.Fatal(err)
 	}

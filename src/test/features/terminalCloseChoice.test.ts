@@ -84,7 +84,7 @@ function backendLiveTabs(): LiveTabInfo[] {
           sessionKind: "ssh",
           cols: 80,
           rows: 24,
-          controller: null,
+          sizeOwner: null,
           subscribers: 1,
           viewers: 1,
           exited: tab.exited === true,

@@ -137,7 +137,7 @@ function liveTab(patch: Partial<LiveTabInfo> = {}): LiveTabInfo {
     sessionKind: "ssh",
     cols: 80,
     rows: 24,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -269,13 +269,13 @@ describe("terminal control resync compensation", () => {
   it("re-fetches live control state through listLive when events resync", async () => {
     harness.listLive
       .mockResolvedValueOnce([liveTab()])
-      .mockResolvedValue([liveTab({ controller: "other", subscribers: 2, viewers: 2 })]);
+      .mockResolvedValue([liveTab({ sizeOwner: "other", subscribers: 2, viewers: 2 })]);
     mounted = mountPane();
     await act(async () => {
       await flush();
     });
     expect(harness.listLive).toHaveBeenCalledTimes(1);
-    expect(overlayText("终端正由其他设备操作")).toBeNull();
+    expect(harness.xtermProps?.canResize).toBe(true);
 
     fireResync();
     await act(async () => {
@@ -283,7 +283,8 @@ describe("terminal control resync compensation", () => {
     });
 
     expect(harness.listLive).toHaveBeenCalledTimes(2);
-    expect(overlayText("终端正由其他设备操作")).not.toBeNull();
+    // Another device typed last: this view renders the PTY size.
+    expect(harness.xtermProps?.canResize).toBe(false);
   });
 
   it("marks the tab exited when the resync refresh finds the process gone", async () => {
@@ -345,7 +346,7 @@ describe("terminal control resync compensation", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 2,
-      controller: "other",
+      sizeOwner: "other",
       subscribers: 2,
       viewers: 2,
       exited: false,
@@ -353,14 +354,14 @@ describe("terminal control resync compensation", () => {
       rows: 24,
       gridRevision: 0,
     });
-    expect(overlayText("终端正由其他设备操作")).not.toBeNull();
+    expect(harness.xtermProps?.canResize).toBe(false);
 
-    stale.resolve([liveTab({ controller: "me" })]);
+    stale.resolve([liveTab({ sizeOwner: "me" })]);
     await act(async () => {
       await flush();
     });
 
-    expect(overlayText("终端正由其他设备操作")).not.toBeNull();
+    expect(harness.xtermProps?.canResize).toBe(false);
   });
 
   it("drops the listLive response when the kernel tab switched before it returned", async () => {
@@ -382,12 +383,12 @@ describe("terminal control resync compensation", () => {
       await flush();
     });
 
-    stale.resolve([liveTab({ controller: "other", subscribers: 2, viewers: 2 })]);
+    stale.resolve([liveTab({ sizeOwner: "other", subscribers: 2, viewers: 2 })]);
     await act(async () => {
       await flush();
     });
 
-    expect(overlayText("终端正由其他设备操作")).toBeNull();
+    expect(harness.xtermProps?.canResize).toBe(true);
     expect(overlayText("终端进程已结束")).toBeNull();
   });
 
@@ -401,7 +402,7 @@ describe("terminal control resync compensation", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 2,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -433,7 +434,7 @@ describe("terminal control resync compensation", () => {
     deliverControl({
       tabId: "kernel-1",
       version: 2,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,

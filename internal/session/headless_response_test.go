@@ -36,18 +36,15 @@ func TestHeadlessScreenAnswersOnlyWithoutAttachedClients(t *testing.T) {
 	}
 }
 
-// Control alone answers nothing: a controller that only spectates (or has
-// claimed without a subscriber) leaves the answering to the headless screen.
-func TestHeadlessScreenAnswersForControllerWithoutAnsweringSubscriber(t *testing.T) {
+// A spectator does not answer: a tab watched only by a read-only preview
+// leaves the answering to the headless screen.
+func TestHeadlessScreenAnswersForSpectatorOnly(t *testing.T) {
 	manager, tab, channel, _ := openCommandTestTab(t, &fakeCommandSink{}, "")
 	ctx := context.Background()
 	if err := manager.DetachChannel("cmd-channel"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.AttachSpectator(ctx, tab.ID, SpectateOptions{ClientID: "guest", ChannelID: "guest-view"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.Claim(tab.ID, "guest"); err != nil {
 		t.Fatal(err)
 	}
 	if err := channel.emit([]byte("\x1b[5n")); err != nil {
@@ -60,7 +57,7 @@ func TestHeadlessScreenAnswersForControllerWithoutAnsweringSubscriber(t *testing
 // screen answers while it is paused.
 func TestHeadlessScreenAnswersForPausedSubscriber(t *testing.T) {
 	_, tab, channel, _ := openCommandTestTab(t, &fakeCommandSink{}, "")
-	// The attached controller answers this one itself.
+	// The attached client answers this one itself.
 	if err := channel.emit([]byte("\x1b[c")); err != nil {
 		t.Fatal(err)
 	}
@@ -80,30 +77,45 @@ func TestHeadlessScreenAnswersForPausedSubscriber(t *testing.T) {
 	}
 }
 
-// A guest controlling through WriteGuest has no answering view, and the
-// owner's still-attached view is an observer whose replies would be
-// rejected: the headless screen answers, exactly once.
-func TestHeadlessScreenAnswersWhileGuestControls(t *testing.T) {
+// Guest input never makes the guest answer: a guest that kept control
+// while the owner reattached leaves the answering to the owner's view, so
+// the headless screen stays silent.
+func TestOwnerViewAnswersWhileGuestControls(t *testing.T) {
 	manager, tab, channel, _ := openCommandTestTab(t, &fakeCommandSink{}, "")
 	ctx := context.Background()
-	if _, err := manager.Release(tab.ID, "client-a"); err != nil {
+	if err := manager.DetachChannel("cmd-channel"); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-share1", []byte("ls\n"), time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := manager.AttachTab(ctx, tab.ID, AttachOptions{ClientID: "client-a", ChannelID: "owner-view"}); err != nil {
+		t.Fatal(err)
+	}
+	if info := tab.Info(); info.GuestControl != "preview-share1" {
+		t.Fatalf("guest control = %q after the owner reattached", info.GuestControl)
+	}
 	if err := channel.emit([]byte("\x1b[5n")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return bytes.Contains(channel.written(), []byte("\x1b[0n")) })
-	if written := channel.written(); bytes.Count(written, []byte("\x1b[0n")) != 1 {
-		t.Fatalf("shell input = %q, want exactly one DSR reply", written)
+	waitFor(t, func() bool { return tab.ScreenSeq() == 4 })
+	// A detached-time query still gets its reply, which is written after
+	// any reply to the attached-time one.
+	if err := manager.DetachChannel("owner-view"); err != nil {
+		t.Fatal(err)
+	}
+	if err := channel.emit([]byte("\x1b[c")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(channel.written()) > len("ls\n") })
+	if written := string(channel.written()); written[:len("ls\n")] != "ls\n" || bytes.Contains([]byte(written), []byte("\x1b[0n")) {
+		t.Fatalf("shell input = %q, want no reply to the query the owner view answered", written)
 	}
 }
 
-// The controller leaves while an observer view stays attached: orphan
-// cleanup clears control, and the headless screen answers.
-func TestHeadlessScreenAnswersAfterControllerLeaves(t *testing.T) {
+// The answering client leaves while a view that never typed stays
+// attached: that view has no input yet, so the headless screen answers.
+func TestHeadlessScreenAnswersAfterAnsweringClientLeaves(t *testing.T) {
 	manager, tab, channel, _ := openCommandTestTab(t, &fakeCommandSink{}, "")
 	ctx := context.Background()
 	if _, err := manager.AttachTab(ctx, tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "observer-b"}); err != nil {
@@ -112,8 +124,8 @@ func TestHeadlessScreenAnswersAfterControllerLeaves(t *testing.T) {
 	if err := manager.DetachChannel("cmd-channel"); err != nil {
 		t.Fatal(err)
 	}
-	if controller := tab.Info().Controller; controller != "" {
-		t.Fatalf("controller = %q after the controller left", controller)
+	if owner := tab.Info().SizeOwner; owner != "" {
+		t.Fatalf("size owner = %q after the size owner left", owner)
 	}
 	if err := channel.emit([]byte("\x1b[5n")); err != nil {
 		t.Fatal(err)

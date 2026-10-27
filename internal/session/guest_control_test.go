@@ -36,8 +36,8 @@ func openGuestArbitrationTab(t *testing.T, manager *Manager, session *Session) *
 	if err := manager.DetachChannel("owner-1"); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "" {
-		t.Fatalf("precondition: controller = %q, want empty", info.Controller)
+	if info := tab.Info(); info.GuestControl != "" || info.SizeOwner != "" {
+		t.Fatalf("precondition: guest control = %q size owner = %q, want empty", info.GuestControl, info.SizeOwner)
 	}
 	return tab
 }
@@ -68,8 +68,8 @@ func drainControlEvents(events chan ControlEvent) {
 	}
 }
 
-// TestWriteGuestTakesControlAndWrites pins the basic path: with no controller, a guest write takes
-// control (controller=guest, grid same semantics as Claim, emits a control event), bytes land in the PTY
+// TestWriteGuestTakesControlAndWrites pins the basic path: with no owner attached, a guest write takes
+// input control (emits a control event), bytes land in the PTY
 // channel, and a second write from the same guest renews the lease (expiry advances, no repeated event); after
 // lease expiry the same guest can still renew and resume.
 func TestWriteGuestTakesControlAndWrites(t *testing.T) {
@@ -91,16 +91,16 @@ func TestWriteGuestTakesControlAndWrites(t *testing.T) {
 	if got := string(channel.written()); got != "ls\n" {
 		t.Fatalf("pty input = %q, want %q", got, "ls\n")
 	}
-	if info := tab.Info(); info.Controller != "preview-share1" {
-		t.Fatalf("controller = %q, want preview-share1", info.Controller)
+	if info := tab.Info(); info.GuestControl != "preview-share1" {
+		t.Fatalf("guest control = %q, want preview-share1", info.GuestControl)
 	}
 	lease, until := guestLeaseState(tab)
 	if lease != "preview-share1" || !until.After(before) {
 		t.Fatalf("lease = %q until %v, want preview-share1 after %v", lease, until, before)
 	}
 	event := <-events
-	if event.Controller != "preview-share1" {
-		t.Fatalf("control event controller = %q, want preview-share1", event.Controller)
+	if event.GuestControl != "preview-share1" {
+		t.Fatalf("control event guest control = %q, want preview-share1", event.GuestControl)
 	}
 
 	// The same guest renews: the expiry advances and no control event is emitted again.
@@ -125,12 +125,12 @@ func TestWriteGuestTakesControlAndWrites(t *testing.T) {
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-share1", []byte("again\n"), time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "preview-share1" {
-		t.Fatalf("controller after expired renew = %q", info.Controller)
+	if info := tab.Info(); info.GuestControl != "preview-share1" {
+		t.Fatalf("guest control after expired renew = %q", info.GuestControl)
 	}
 }
 
-// TestWriteGuestOwnerActive pins owner-active arbitration: when the controller is held by someone else, a guest
+// TestWriteGuestOwnerActive pins owner-active arbitration: while an owner client is attached, a guest
 // write returns ErrGuestControlOwner, bytes do not reach the channel, and no lease is recorded.
 func TestWriteGuestOwnerActive(t *testing.T) {
 	manager, connector := newGuestControlManager(t, nil)
@@ -152,13 +152,13 @@ func TestWriteGuestOwnerActive(t *testing.T) {
 	if lease, _ := guestLeaseState(tab); lease != "" {
 		t.Fatalf("rejected write recorded lease %q", lease)
 	}
-	if info := tab.Info(); info.Controller != "owner-client" {
-		t.Fatalf("controller = %q, want owner-client", info.Controller)
+	if info := tab.Info(); info.GuestControl != "" || info.SizeOwner != "owner-client" {
+		t.Fatalf("guest control = %q size owner = %q, want none and owner-client", info.GuestControl, info.SizeOwner)
 	}
 }
 
 // TestWriteGuestGuestBusyUntilLeaseExpiry pins guest-to-guest arbitration: the controlling guest turns away
-// other guests (ErrGuestControlOwner); after its disconnect the controller is orphan-cleaned but the lease
+// other guests (ErrGuestControlOwner); after its disconnect its control is cleaned up but the lease
 // remains, so other guests get ErrGuestControlBusy; once the lease expires and is lazily cleared, they can take over immediately.
 func TestWriteGuestGuestBusyUntilLeaseExpiry(t *testing.T) {
 	manager, connector := newGuestControlManager(t, nil)
@@ -184,8 +184,8 @@ func TestWriteGuestGuestBusyUntilLeaseExpiry(t *testing.T) {
 	if err := manager.DetachChannel("spec-a"); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "" {
-		t.Fatalf("controller after guest disconnect = %q, want empty", info.Controller)
+	if info := tab.Info(); info.GuestControl != "" {
+		t.Fatalf("guest control after guest disconnect = %q, want empty", info.GuestControl)
 	}
 	err = manager.WriteGuest(ctx, tab.ID, "preview-b", []byte("b\n"), time.Hour)
 	if !errors.Is(err, ErrGuestControlBusy) {
@@ -199,8 +199,8 @@ func TestWriteGuestGuestBusyUntilLeaseExpiry(t *testing.T) {
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-b", []byte("b\n"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "preview-b" {
-		t.Fatalf("controller = %q, want preview-b", info.Controller)
+	if info := tab.Info(); info.GuestControl != "preview-b" {
+		t.Fatalf("guest control = %q, want preview-b", info.GuestControl)
 	}
 	if lease, _ := guestLeaseState(tab); lease != "preview-b" {
 		t.Fatalf("lease = %q, want preview-b", lease)
@@ -210,40 +210,47 @@ func TestWriteGuestGuestBusyUntilLeaseExpiry(t *testing.T) {
 	}
 }
 
-// TestWriteGuestOwnerClaimPreempts pins the owner reclaiming: Claim immediately clears the guest lease and takes over,
-// and a further guest write gets ErrGuestControlOwner.
-func TestWriteGuestOwnerClaimPreempts(t *testing.T) {
-	manager, _ := newGuestControlManager(t, nil)
+// TestWriteGuestOwnerInputPreempts pins the owner taking input back: an owner attaching does not take a
+// controlling guest's control, but owner input ends it and its lease at once, and a further guest write
+// gets ErrGuestControlOwner while the owner stays attached.
+func TestWriteGuestOwnerInputPreempts(t *testing.T) {
+	manager, connector := newGuestControlManager(t, nil)
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "guest-preempt", Kind: KindSSH})
 	if err != nil {
 		t.Fatal(err)
 	}
 	tab := openGuestArbitrationTab(t, manager, connected)
+	channel := connector.transport(0).channel(0)
 
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-share1", []byte("ls\n"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	previous, err := manager.Claim(tab.ID, "owner-client")
-	if err != nil {
+	if _, err := manager.AttachTab(ctx, tab.ID, AttachOptions{ClientID: "owner-client", ChannelID: "owner-2"}); err != nil {
 		t.Fatal(err)
 	}
-	if previous != "preview-share1" {
-		t.Fatalf("Claim previous = %q, want preview-share1", previous)
+	if err := manager.WriteGuest(ctx, tab.ID, "preview-share1", []byte("pwd\n"), time.Hour); err != nil {
+		t.Fatalf("controlling guest after owner attach = %v", err)
 	}
-	if info := tab.Info(); info.Controller != "owner-client" {
-		t.Fatalf("controller = %q, want owner-client", info.Controller)
+	if err := manager.Write(ctx, tab.ID, "owner-client", []byte("id\n")); err != nil {
+		t.Fatal(err)
+	}
+	if info := tab.Info(); info.GuestControl != "" || info.SizeOwner != "owner-client" {
+		t.Fatalf("guest control = %q size owner = %q, want none and owner-client", info.GuestControl, info.SizeOwner)
 	}
 	if lease, _ := guestLeaseState(tab); lease != "" {
-		t.Fatalf("Claim left guest lease %q", lease)
+		t.Fatalf("owner input left guest lease %q", lease)
 	}
 	err = manager.WriteGuest(ctx, tab.ID, "preview-share1", []byte("ls\n"), time.Hour)
 	if !errors.Is(err, ErrGuestControlOwner) {
-		t.Fatalf("WriteGuest after owner claim = %v, want ErrGuestControlOwner", err)
+		t.Fatalf("WriteGuest after owner input = %v, want ErrGuestControlOwner", err)
+	}
+	if got := string(channel.written()); got != "ls\npwd\nid\n" {
+		t.Fatalf("pty input = %q, want %q", got, "ls\npwd\nid\n")
 	}
 }
 
-// TestReleaseGuest pins the release semantics: control is handed back (grid observer semantics + control event) and
+// TestReleaseGuest pins the release semantics: control is handed back (control event) and
 // the lease is cleared; repeated calls and calls from unrelated guests are idempotent no-ops; other guests take over immediately after release.
 func TestReleaseGuest(t *testing.T) {
 	events := make(chan ControlEvent, 64)
@@ -261,22 +268,22 @@ func TestReleaseGuest(t *testing.T) {
 	if err := manager.ReleaseGuest(tab.ID, "preview-b"); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "preview-a" {
-		t.Fatalf("unrelated ReleaseGuest changed controller to %q", info.Controller)
+	if info := tab.Info(); info.GuestControl != "preview-a" {
+		t.Fatalf("unrelated ReleaseGuest changed guest control to %q", info.GuestControl)
 	}
 
 	drainControlEvents(events)
 	if err := manager.ReleaseGuest(tab.ID, "preview-a"); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "" {
-		t.Fatalf("controller after release = %q, want empty", info.Controller)
+	if info := tab.Info(); info.GuestControl != "" {
+		t.Fatalf("guest control after release = %q, want empty", info.GuestControl)
 	}
 	if lease, _ := guestLeaseState(tab); lease != "" {
 		t.Fatalf("release left lease %q", lease)
 	}
-	if event := <-events; event.Controller != "" {
-		t.Fatalf("release event controller = %q, want empty", event.Controller)
+	if event := <-events; event.GuestControl != "" {
+		t.Fatalf("release event guest control = %q, want empty", event.GuestControl)
 	}
 
 	if err := manager.ReleaseGuest(tab.ID, "preview-a"); err != nil {
@@ -291,13 +298,13 @@ func TestReleaseGuest(t *testing.T) {
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-b", []byte("b\n"), time.Hour); err != nil {
 		t.Fatalf("guest take-over after release: %v", err)
 	}
-	if info := tab.Info(); info.Controller != "preview-b" {
-		t.Fatalf("controller = %q, want preview-b", info.Controller)
+	if info := tab.Info(); info.GuestControl != "preview-b" {
+		t.Fatalf("guest control = %q, want preview-b", info.GuestControl)
 	}
 }
 
 // TestWriteGuestDisconnectCleanup pins the disconnect interaction: when a guest's subscription channel drops, orphan cleanup
-// removes the controller but keeps the lease (reconnect grace), the same guest can resume immediately, other guests are blocked
+// removes guest control but keeps the lease (reconnect grace), the same guest can resume immediately, other guests are blocked
 // by busy, and after ReleaseGuest explicitly clears the lease other guests can write immediately.
 func TestWriteGuestDisconnectCleanup(t *testing.T) {
 	manager, _ := newGuestControlManager(t, nil)
@@ -317,8 +324,8 @@ func TestWriteGuestDisconnectCleanup(t *testing.T) {
 	if err := manager.DetachChannel("spec-1"); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "" {
-		t.Fatalf("controller after disconnect = %q, want empty", info.Controller)
+	if info := tab.Info(); info.GuestControl != "" {
+		t.Fatalf("guest control after disconnect = %q, want empty", info.GuestControl)
 	}
 	if lease, _ := guestLeaseState(tab); lease != "preview-share1" {
 		t.Fatalf("lease after disconnect = %q, want preview-share1 (grace window)", lease)
@@ -328,8 +335,8 @@ func TestWriteGuestDisconnectCleanup(t *testing.T) {
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-share1", []byte("x"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "preview-share1" {
-		t.Fatalf("controller after resume = %q", info.Controller)
+	if info := tab.Info(); info.GuestControl != "preview-share1" {
+		t.Fatalf("guest control after resume = %q", info.GuestControl)
 	}
 
 	// After another disconnect, an explicit lease release lets other guests take over immediately.
@@ -352,13 +359,13 @@ func TestWriteGuestDisconnectCleanup(t *testing.T) {
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-other", []byte("y"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if info := tab.Info(); info.Controller != "preview-other" {
-		t.Fatalf("controller = %q, want preview-other", info.Controller)
+	if info := tab.Info(); info.GuestControl != "preview-other" {
+		t.Fatalf("guest control = %q, want preview-other", info.GuestControl)
 	}
 }
 
 // TestWriteGuestUnsupportedKinds pins the capability boundary: KindRemote shells and non-ptyBacked
-// (WinRM) tabs always return ErrUnsupported, even when the controller is free or held.
+// (WinRM) tabs always return ErrUnsupported, whoever is attached.
 func TestWriteGuestUnsupportedKinds(t *testing.T) {
 	manager, _ := newGuestControlManager(t, nil)
 	ctx := context.Background()
@@ -405,7 +412,7 @@ func TestWriteGuestClosedTab(t *testing.T) {
 }
 
 // TestWriteGuestConcurrentArbitration shakes guest write/release against owner
-// Claim/Release concurrently, exposing concurrent access issues in the lease fields with -race.
+// input and attach/detach concurrently, exposing concurrent access issues in the lease fields with -race.
 func TestWriteGuestConcurrentArbitration(t *testing.T) {
 	manager, _ := newGuestControlManager(t, nil)
 	ctx := context.Background()
@@ -431,8 +438,10 @@ func TestWriteGuestConcurrentArbitration(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for round := 0; round < 25; round++ {
-			_, _ = manager.Claim(tab.ID, "owner-client")
-			_, _ = manager.Release(tab.ID, "owner-client")
+			_ = manager.Write(ctx, tab.ID, "owner-client", []byte("y"))
+			_, _ = manager.AttachTab(ctx, tab.ID, AttachOptions{ClientID: "owner-client", ChannelID: "owner-race"})
+			_ = manager.Write(ctx, tab.ID, "owner-client", []byte("y"))
+			_ = manager.DetachChannel("owner-race")
 		}
 	}()
 	wg.Wait()

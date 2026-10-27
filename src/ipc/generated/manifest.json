@@ -1944,11 +1944,6 @@
       "channel": false,
       "stream": "none"
     },
-    "terminal_claim": {
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
     "terminal_close_tab": {
       "nested": false,
       "channel": true,
@@ -2020,11 +2015,6 @@
     },
     "terminal_recover": {
       "scope": "terminal-stream",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "terminal_release": {
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -2257,7 +2247,6 @@
     "session_probe",
     "session_probe_host_key",
     "terminal_attach_tab",
-    "terminal_claim",
     "terminal_close_tab",
     "terminal_create_tab",
     "terminal_detach",
@@ -2267,7 +2256,6 @@
     "terminal_record_start",
     "terminal_record_status",
     "terminal_record_stop",
-    "terminal_release",
     "terminal_resize",
     "terminal_resize_flush",
     "terminal_screen_text",

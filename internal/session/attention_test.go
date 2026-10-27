@@ -152,7 +152,7 @@ func TestAttentionObservedForTabsOutsideAHelper(t *testing.T) {
 	}
 
 	// Input answers it.
-	if err := manager.Write(ctx, tab.ID, tab.Info().Controller, []byte("y\r")); err != nil {
+	if err := manager.Write(ctx, tab.ID, tab.Info().SizeOwner, []byte("y\r")); err != nil {
 		t.Fatal(err)
 	}
 	recorder.wait(t, tab.ID, "answered", func(event AttentionEvent) bool {
@@ -169,7 +169,7 @@ func TestAttentionObservedForTabsOutsideAHelper(t *testing.T) {
 	if notified.Title != "Build" || notified.Body != "finished" {
 		t.Fatalf("notification state %+v", notified)
 	}
-	if err := manager.Write(ctx, tab.ID, tab.Info().Controller, []byte("\r")); err != nil {
+	if err := manager.Write(ctx, tab.ID, tab.Info().SizeOwner, []byte("\r")); err != nil {
 		t.Fatal(err)
 	}
 	cleared := recorder.wait(t, tab.ID, "answered notification", func(event AttentionEvent) bool { return event.State == base.SessionIdle })

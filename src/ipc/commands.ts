@@ -402,7 +402,7 @@ export interface AttachedTabInfo {
   sessionId: string;
   cols: number;
   rows: number;
-  controller: string | null;
+  sizeOwner: string | null;
   subscribers: number;
   viewers: number;
   exited: boolean;
@@ -425,7 +425,7 @@ export interface LiveTabInfo {
   sessionKind: string;
   cols: number;
   rows: number;
-  controller: string | null;
+  sizeOwner: string | null;
   subscribers: number;
   viewers: number;
   exited: boolean;
@@ -686,10 +686,6 @@ export const terminalApi = {
     call<void>("terminal_resize_flush", { tabId, clientId: clientId() }),
   detach: (tabId: string, channelId?: string) =>
     call<void>("terminal_detach", { tabId, channelId }),
-  claim: (tabId: string) =>
-    call<string | null>("terminal_claim", { tabId, clientId: clientId() }),
-  release: (tabId: string) =>
-    call<boolean>("terminal_release", { tabId, clientId: clientId() }),
   listLive: () => listTerminal<LiveTabInfo[]>(),
   listDurable: (sessionId: string) => listTerminal<DurableDescriptor[]>(sessionId, true),
   screenText: (tabId: string) => call<string>("terminal_screen_text", { tabId }),

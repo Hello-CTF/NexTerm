@@ -134,13 +134,25 @@ type Tab struct {
 	subscribers  map[string]subscriber
 	retained     bool
 	retainedBy   string
-	controller   string
-	controlled   bool
-	// lastInputClient is the client whose input was last written to the
-	// shell (input_owner.go).
+	// Multi-client input state; see input_clients.go. lastInputClient is
+	// the client whose input was last written to the shell, written only by
+	// noteInputClientLocked (input_owner.go). inputOrder ranks the attached
+	// clients by their latest input (inputSeq numbers inputs); sizeOwner is
+	// the client whose size the PTY follows and sizeOwnerInput its latest
+	// input; sizeOwned reports that the tab had a size owner, so a new one
+	// must claim the grid back from observer mode; clientSizes holds the
+	// size each attached client last asked for.
 	lastInputClient string
+	inputSeq        uint64
+	inputOrder      map[string]uint64
+	sizeOwner       string
+	sizeOwnerInput  time.Time
+	sizeOwned       bool
+	clientSizes     map[string]terminalgrid.Grid
+	// guestControl is the preview guest holding input control.
+	guestControl string
 	// guestLease/guestLeaseUntil record the preview guest control lease holder and expiry:
-	// after the controller is removed by orphan cleanup on disconnect, the lease is kept until expiry (disconnect grace) and lazily cleared.
+	// after guest control is removed by cleanup on disconnect, the lease is kept until expiry (disconnect grace) and lazily cleared.
 	guestLease      string
 	guestLeaseUntil time.Time
 	hidden          bool
@@ -269,7 +281,7 @@ func (t *Tab) infoLocked() TabInfo {
 	}
 	return TabInfo{
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
-		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
+		SizeOwner: t.sizeOwner, GuestControl: t.guestControl, Subscribers: len(t.subscribers), Viewers: len(viewers),
 		Exited: t.exited, Retainable: t.retainable || !t.ephemeral && !t.regularRemote, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
 		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
 		CreatedAt: unixMilliOrZero(t.createdAt), DetachedAt: t.detachedAtLocked(), DetachedSinceOpen: t.detachedSinceOpenLocked(),
@@ -299,7 +311,7 @@ func (t *Tab) controlEventLocked() ControlEvent {
 	t.persistVersionFloorLocked()
 	event := ControlEvent{
 		TabID: t.ID, Cols: info.Cols, Rows: info.Rows, GridRevision: info.GridRevision,
-		Controller: info.Controller, Subscribers: info.Subscribers,
+		SizeOwner: info.SizeOwner, GuestControl: info.GuestControl, Subscribers: info.Subscribers,
 		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion, Cwd: t.cwd, Durable: info.Durable,
 		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt,
 		HistoryFrom: t.historyFrom, HistoryBase: t.historyBase, HistoryTruncated: t.historyTruncated,
@@ -1055,7 +1067,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	if replaced {
 		tab.dropSubscriberLocked(options.ChannelID)
 		tab.syncRecoveryFloorLocked()
-		tab.releaseOrphanControllerLocked()
+		tab.releaseDetachedInputLocked()
 	}
 	tab.mu.Unlock()
 	if replaced {
@@ -1088,7 +1100,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 						tab.detachedAt = time.Now()
 					}
 					tab.syncRecoveryFloorLocked()
-					tab.releaseOrphanControllerLocked()
+					tab.releaseDetachedInputLocked()
 				}
 				tab.mu.Unlock()
 				m.mu.Unlock()
@@ -1106,8 +1118,8 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	// anchor carries the new incarnation, and the client's first ACK must
 	// land on a live subscriber even when it arrives ahead of the attach
 	// response. Live output cannot interleave with the replay — the feed gate
-	// is held for the whole attach — and the fanout wiring and the controller
-	// claim still commit only after the sends succeed.
+	// is held for the whole attach — and the fanout wiring and the input
+	// state still commit only after the sends succeed.
 	m.mu.Lock()
 	if m.closed || m.tabs[tab.ID] != tab || m.channelTabs[options.ChannelID] != tab.ID || m.channelIncarnations[options.ChannelID] != incarnation {
 		m.mu.Unlock()
@@ -1147,7 +1159,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		end := anchor.StreamSeq + uint64(len(replay))
 		if options.FromSeq > 0 && !anchor.Expired {
 			tab.mu.Lock()
-			anchor.Classes = tab.classes.within(anchor.StreamSeq, end)
+			anchor.Classes = tab.classes.within(anchor.StreamSeq, end, client)
 			tab.mu.Unlock()
 		} else if len(replay) > 0 {
 			anchor.Classes = []classSpan{{From: anchor.StreamSeq, To: end, Kind: classReplay}}
@@ -1181,17 +1193,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		m.mu.Unlock()
 		return TabInfo{}, ErrTabClosed
 	}
-	if tab.controller == "" {
-		if tab.controlled && tab.grid != nil {
-			if err := tab.grid.Claim(); err != nil {
-				tab.mu.Unlock()
-				m.mu.Unlock()
-				return TabInfo{}, mapGridError(err)
-			}
-		}
-		tab.controller = client
-		tab.controlled = true
-	}
+	tab.noteAttachLocked(client, m.now())
 	m.attachSubscriberOutput(tab, options.ChannelID, incarnation, producer, co)
 	info := tab.infoLocked()
 	info.AttachmentID = attachmentId
@@ -1258,46 +1260,6 @@ func (m *Manager) releaseChannelReservation(tabID, channelID string, incarnation
 		delete(m.channelIncarnations, channelID)
 	}
 	m.mu.Unlock()
-}
-
-// answeringLocked reports whether the client whose replies reach the shell
-// is attached and taking output now: only the controller's input is written
-// (an observer's replies fail with ErrNotController), so only the
-// controller's answering subscriber counts. A paused subscriber (refusing
-// output) or one whose fanout entry was aborted would answer late or never.
-// Without such a subscriber (no controller, a guest controlling through
-// WriteGuest, a claim without a view) the headless screen answers and the
-// range is announced as answered. B14 replaces the controller model with
-// multi-client input; this rule moves with it. Callers hold t.mu.
-func (t *Tab) answeringLocked() bool {
-	if t.controller == "" {
-		return false
-	}
-	for channelID, subscriber := range t.subscribers {
-		if subscriber.client != t.controller || !subscriber.answers || subscriber.paused {
-			continue
-		}
-		if t.fanout != nil && !t.fanout.Has(channelID) {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func (t *Tab) releaseOrphanControllerLocked() {
-	if t.controller == "" {
-		return
-	}
-	for _, subscriber := range t.subscribers {
-		if subscriber.client == t.controller {
-			return
-		}
-	}
-	t.controller = ""
-	if t.grid != nil && !t.hidden {
-		_ = t.grid.SetMode(terminalgrid.ModeObserver)
-	}
 }
 
 func (t *Tab) lockFeed(ctx context.Context) error {
@@ -1369,7 +1331,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	tab.dropSubscriberLocked(channelID)
 	tab.syncRecoveryFloorLocked()
 	throttleRecovered, throttleVersion := m.clearThrottleChannelLocked(tab.ID, channelID)
-	tab.releaseOrphanControllerLocked()
+	tab.releaseDetachedInputLocked()
 	ownerStale := tab.inputOwnerStaleLocked()
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
@@ -1500,7 +1462,7 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background b
 		}
 	}
 	tab.syncRecoveryFloorLocked()
-	tab.releaseOrphanControllerLocked()
+	tab.releaseDetachedInputLocked()
 	ownerStale := tab.inputOwnerStaleLocked()
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
@@ -1572,56 +1534,6 @@ func (m *Manager) reapEphemeralTab(tab *Tab, generation uint64) error {
 	session.mu.Unlock()
 	m.mu.Unlock()
 	return nil
-}
-
-func (m *Manager) Claim(tabID, client string) (string, error) {
-	tab, err := m.Tab(tabID)
-	if err != nil {
-		return "", err
-	}
-	tab.mu.Lock()
-	if tab.closed || tab.destroying {
-		tab.mu.Unlock()
-		return "", ErrTabClosed
-	}
-	previous := tab.controller
-	if tab.grid != nil {
-		if err := tab.grid.Claim(); err != nil {
-			tab.mu.Unlock()
-			return "", mapGridError(err)
-		}
-	}
-	tab.controller = clientID(client)
-	tab.controlled = true
-	tab.clearGuestLeaseLocked()
-	event := tab.controlEventLocked()
-	tab.mu.Unlock()
-	m.emit(context.Background(), TopicTerminalControl, event)
-	return previous, nil
-}
-
-func (m *Manager) Release(tabID, client string) (bool, error) {
-	tab, err := m.Tab(tabID)
-	if err != nil {
-		return false, err
-	}
-	tab.mu.Lock()
-	released := tab.controller == clientID(client)
-	if released && tab.grid != nil && !tab.hidden {
-		if err := tab.grid.SetMode(terminalgrid.ModeObserver); err != nil {
-			tab.mu.Unlock()
-			return false, mapGridError(err)
-		}
-	}
-	if released {
-		tab.controller = ""
-	}
-	event := tab.controlEventLocked()
-	tab.mu.Unlock()
-	if released {
-		m.emit(context.Background(), TopicTerminalControl, event)
-	}
-	return released, nil
 }
 
 // streamAckType is the reserved control-frame type for the client's
@@ -1740,9 +1652,10 @@ func (t *Tab) withdrawInput(input *queuedInput, cause error) error {
 	return <-input.done
 }
 
-// writeInputBatch sends the queued inputs of every current controller as one
-// channel write and reports the result to each of them. The caller holds the
-// tab's write gate.
+// writeInputBatch sends the queued inputs of every client as one channel
+// write and reports the result to each of them. Each input counts as its
+// client's latest input (input_clients.go). The caller holds the tab's
+// write gate.
 func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queuedInput) {
 	finish := func(inputs []*queuedInput, err error) {
 		for _, input := range inputs {
@@ -1763,8 +1676,9 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 	accepted := make([]*queuedInput, 0, len(batch))
 	size := 0
 	for _, input := range batch {
-		if tab.controller != clientID(input.client) {
-			input.done <- ErrNotController
+		if tab.spectatorOnlyLocked(clientID(input.client)) {
+			// A read-only watcher never writes, whatever path it tries.
+			input.done <- ErrForbidden
 			continue
 		}
 		accepted = append(accepted, input)
@@ -1801,13 +1715,23 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 		return
 	}
 	// Announce the new input owner before the shell sees the input, so the
-	// output it causes follows the announcement.
+	// output it causes follows the announcement; the input also ranks its
+	// client for answering and the PTY size (input_clients.go).
 	tab.mu.Lock()
-	ownerChanged := false
+	ownerChanged, controlChanged := false, false
+	now := m.now()
 	for _, input := range accepted {
 		ownerChanged = tab.noteInputClientLocked(input.client) || ownerChanged
+		controlChanged = tab.noteInputLocked(clientID(input.client), now) || controlChanged
+	}
+	var control ControlEvent
+	if controlChanged {
+		control = tab.controlEventLocked()
 	}
 	tab.mu.Unlock()
+	if controlChanged {
+		m.emit(context.Background(), TopicTerminalControl, control)
+	}
 	if ownerChanged {
 		m.syncInputOwner(ctx, tab)
 	}
@@ -1859,14 +1783,21 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 	if err != nil {
 		return err
 	}
+	size := terminalgrid.Grid{Cols: int(cols), Rows: int(rows)}
+	client = clientID(client)
 	tab.mu.Lock()
 	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
 		return ErrTabClosed
 	}
-	if tab.controller != clientID(client) {
+	if tab.sizeOwner != client {
+		// The PTY follows the size owner; this client's size applies once
+		// its input makes it the owner.
+		if tab.clientAttachedLocked(client) {
+			tab.rememberSizeLocked(client, size)
+		}
 		tab.mu.Unlock()
-		return ErrNotController
+		return nil
 	}
 	channel := tab.channel
 	generation := tab.generation
@@ -1891,15 +1822,16 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 		tab.mu.Unlock()
 		return ErrTabClosed
 	}
-	if tab.controller != clientID(client) {
+	tab.rememberSizeLocked(client, size)
+	if tab.sizeOwner != client {
 		tab.mu.Unlock()
-		return ErrNotController
+		return nil
 	}
 	if tab.generation != generation || tab.channel != channel {
 		tab.mu.Unlock()
 		return ErrDisconnected
 	}
-	revision, err := grid.SetDesired(terminalgrid.Grid{Cols: int(cols), Rows: int(rows)})
+	revision, err := grid.SetDesired(size)
 	tab.mu.Unlock()
 	if err != nil {
 		return mapGridError(err)
@@ -1925,12 +1857,20 @@ func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (
 		tab.mu.Unlock()
 		return base.ExecResult{}, ErrUnsupported
 	}
-	if tab.controller != clientID(client) {
-		tab.mu.Unlock()
-		return base.ExecResult{}, ErrNotController
+	ownerChanged := tab.noteInputClientLocked(client)
+	controlChanged := tab.noteInputLocked(clientID(client), m.now())
+	var control ControlEvent
+	if controlChanged {
+		control = tab.controlEventLocked()
 	}
 	generation := tab.generation
 	tab.mu.Unlock()
+	if controlChanged {
+		m.emit(context.Background(), TopicTerminalControl, control)
+	}
+	if ownerChanged {
+		m.syncInputOwner(ctx, tab)
+	}
 	tab.session.mu.Lock()
 	if tab.session.status != StatusConnected || tab.session.transport == nil || tab.session.generation != generation {
 		tab.session.mu.Unlock()
@@ -2061,7 +2001,7 @@ func (m *Manager) closeTabResources(tab *Tab, bestEffortChannel bool, afterClose
 	tab.channel = nil
 	subscribers := tab.subscribers
 	tab.subscribers = make(map[string]subscriber)
-	tab.controller = ""
+	tab.resetInputLocked()
 	if tab.grid != nil {
 		tab.grid.Close()
 		close(tab.retire)
@@ -2200,12 +2140,14 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		tab.mu.Unlock()
 		return ErrStaleGeneration
 	}
-	// An answering client's terminal emulator answers queries itself; the
-	// headless screen answers only while none is attached, so programs never
-	// wait forever. Attach holds the feed gate, so no client can appear
-	// between this decision and the parse; a detach racing it leaves the
-	// range live, so the client answers it if it resumes.
-	clientAnswers := tab.answeringLocked()
+	// The answering client's terminal emulator answers queries itself and
+	// every other client is told the range is answered; the headless screen
+	// answers only while no client answers, so programs never wait forever.
+	// Attach holds the feed gate, so no client can appear between this
+	// decision and the parse; a detach racing it leaves the range live for
+	// that client, so it answers it if it resumes.
+	answerer := tab.answererLocked()
+	clientAnswers := answerer != ""
 	kind := ""
 	switch {
 	case replay:
@@ -2213,7 +2155,9 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 	case !clientAnswers:
 		kind = classAnswered
 	}
-	var classFrame []byte
+	// classFrame goes to every answering subscriber, answeredFrame to the
+	// subscribers of other clients while a client answers live output.
+	var classFrame, answeredFrame []byte
 	if sequenced && options.helper {
 		// Recorded before the bytes reach the ring, so an attach that
 		// already sees them can map its stream start to a helper offset.
@@ -2221,12 +2165,14 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 	}
 	if sequenced {
 		to := from + uint64(len(data))
-		tab.classes.add(from, to, kind)
+		tab.classes.add(from, to, kind, answerer)
 		if to > classRetention {
 			tab.classes.trim(to - classRetention)
 		}
 		if kind != "" {
 			classFrame, _ = json.Marshal(streamClassFrame{Type: streamClassType, classSpan: classSpan{From: from, To: to, Kind: kind}})
+		} else {
+			answeredFrame, _ = json.Marshal(streamClassFrame{Type: streamClassType, classSpan: classSpan{From: from, To: to, Kind: classAnswered}})
 		}
 	}
 	tab.mu.Unlock()
@@ -2288,8 +2234,13 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		// The class frame is keyed by stream sequence, so it only has to
 		// precede the bytes, which the coalescer sends later on the same
 		// ordered fanout queue.
-		if classFrame != nil && target.subscriber.answers {
-			fanout.SendJSONTo(target.channelID, classFrame)
+		if target.subscriber.answers {
+			switch {
+			case classFrame != nil:
+				fanout.SendJSONTo(target.channelID, classFrame)
+			case answeredFrame != nil && target.subscriber.client != answerer:
+				fanout.SendJSONTo(target.channelID, answeredFrame)
+			}
 		}
 		if target.subscriber.paused {
 			target.subscriber.co.addPaused(data)
@@ -2585,20 +2536,6 @@ func (m *Manager) DetachAllFor(ctx context.Context, tabID string) error {
 		return err
 	}
 	return m.DetachAll(tabID)
-}
-
-func (m *Manager) ClaimFor(ctx context.Context, tabID, client string) (string, error) {
-	if _, err := m.TabFor(ctx, tabID); err != nil {
-		return "", err
-	}
-	return m.Claim(tabID, client)
-}
-
-func (m *Manager) ReleaseFor(ctx context.Context, tabID, client string) (bool, error) {
-	if _, err := m.TabFor(ctx, tabID); err != nil {
-		return false, err
-	}
-	return m.Release(tabID, client)
 }
 
 func (m *Manager) WriteFor(ctx context.Context, tabID, client string, data []byte) error {

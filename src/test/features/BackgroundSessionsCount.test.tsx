@@ -37,7 +37,7 @@ function workspace(id: string, sessionId: string, assetKind: string, assetId?: s
 
 function live(tabId: string, sessionId: string, kind: string, title: string): LiveTabInfo {
   return {
-    tabId, sessionId, sessionName: sessionId, sessionKind: kind, cols: 80, rows: 24, controller: null,
+    tabId, sessionId, sessionName: sessionId, sessionKind: kind, cols: 80, rows: 24, sizeOwner: null,
     subscribers: 0, viewers: 0, exited: false, lastOutputMsAgo: 1000, title,
   };
 }

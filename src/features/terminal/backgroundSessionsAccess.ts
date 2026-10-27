@@ -214,7 +214,7 @@ export function collectBackgroundTabs(
         sessionKind: session.kind,
         cols: tab.cols,
         rows: tab.rows,
-        controller: null,
+        sizeOwner: null,
         subscribers: 0,
         viewers: 0,
         exited: false,

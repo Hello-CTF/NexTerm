@@ -542,7 +542,7 @@ func TestSlowConsumerKickedAfterGraceOthersUnaffected(t *testing.T) {
 	if recovery.Version >= resync.Version {
 		t.Fatalf("recovery version %d not older than resync %d", recovery.Version, resync.Version)
 	}
-	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "" {
+	if info := tab.Info(); info.Subscribers != 1 || info.SizeOwner != "" {
 		t.Fatalf("tab info after kick = %+v", info)
 	}
 

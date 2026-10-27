@@ -37,7 +37,6 @@ func TestIPCErrorPreservesControlAndLifecycleCodes(t *testing.T) {
 		err  error
 		code ipc.Code
 	}{
-		{err: ErrNotController, code: ipc.CodeNotController},
 		{err: ErrSessionNotFound, code: ipc.CodeNotFound},
 		{err: ErrTabNotFound, code: ipc.CodeNotFound},
 		{err: durable.ErrNotFound, code: ipc.CodeNotFound},
@@ -69,7 +68,6 @@ func TestIPCErrorUserMessagesAreActionable(t *testing.T) {
 		{err: ErrSessionNotFound, code: ipc.CodeNotFound, want: "会话不存在或已关闭"},
 		{err: fmt.Errorf("lookup: %w", ErrSessionNotFound), code: ipc.CodeNotFound, want: "会话不存在或已关闭"},
 		{err: ErrTabNotFound, code: ipc.CodeNotFound, want: "终端标签页不存在或已关闭"},
-		{err: ErrNotController, code: ipc.CodeNotController, want: "请先获取控制权"},
 		{err: ErrDisconnected, code: ipc.CodeDisconnected, want: "请重新连接"},
 		{err: ErrSessionClosed, code: ipc.CodeDisconnected, want: "会话已关闭"},
 		{err: ErrTabClosed, code: ipc.CodeDisconnected, want: "终端标签页已关闭"},

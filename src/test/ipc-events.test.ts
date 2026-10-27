@@ -277,7 +277,7 @@ describe("shared event DTOs and version high-water marks", () => {
   it("carries the authoritative grid and event version in TerminalControlEvent (matching Go ControlEvent)", () => {
     const control: TerminalControlEvent = {
       tabId: "t-1",
-      controller: null,
+      sizeOwner: null,
       subscribers: 2,
       viewers: 1,
       exited: false,

@@ -248,15 +248,6 @@ describe("broadcastInput", () => {
     ]);
   });
 
-  it("maps not_controller write failures to the observer skip reason", async () => {
-    const write = vi.fn().mockImplementation((id: string) =>
-      id === "k-t2" ? Promise.reject({ code: "not_controller" }) : Promise.resolve(),
-    );
-    const outcome = await broadcastInput({ candidates, targetIds: ["t1", "t2"], data: "x", write });
-    expect(outcome.sent).toBe(1);
-    expect(outcome.skipped).toEqual([{ title: "t2", reason: "正被其他设备控制" }]);
-  });
-
   it("reports other write failures as failed instead of skipped", async () => {
     const write = vi.fn().mockRejectedValue(new Error("boom"));
     const outcome = await broadcastInput({ candidates, targetIds: ["t1"], data: "x", write });

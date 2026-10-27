@@ -573,7 +573,6 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 		"session_probe",
 		"session_probe_host_key",
 		"terminal_attach_tab",
-		"terminal_claim",
 		"terminal_close_tab",
 		"terminal_create_tab",
 		"terminal_detach",
@@ -583,7 +582,6 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 		"terminal_record_start",
 		"terminal_record_status",
 		"terminal_record_stop",
-		"terminal_release",
 		"terminal_resize",
 		"terminal_resize_flush",
 		"terminal_screen_text",
@@ -1669,7 +1667,6 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 		"session_probe",
 		"session_probe_host_key",
 		"terminal_attach_tab",
-		"terminal_claim",
 		"terminal_close_tab",
 		"terminal_create_tab",
 		"terminal_detach",
@@ -1679,7 +1676,6 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 		"terminal_record_start",
 		"terminal_record_status",
 		"terminal_record_stop",
-		"terminal_release",
 		"terminal_resize",
 		"terminal_resize_flush",
 		"terminal_screen_text",
@@ -1714,8 +1710,8 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("remaining legacy commands = %v, want %v", got, want)
 	}
-	if len(got) != 71 || aiMemory != 46 || sessionTerminal != 24 || appInfo != 1 {
-		t.Fatalf("legacy categories = total:%d AI/memory:%d session/terminal:%d app_info:%d, want 71/46/24/1", len(got), aiMemory, sessionTerminal, appInfo)
+	if len(got) != 69 || aiMemory != 46 || sessionTerminal != 22 || appInfo != 1 {
+		t.Fatalf("legacy categories = total:%d AI/memory:%d session/terminal:%d app_info:%d, want 69/46/22/1", len(got), aiMemory, sessionTerminal, appInfo)
 	}
 	if scopes := deferredScopes(); !reflect.DeepEqual(scopes, []string{"memory-owner", "ai-owner"}) {
 		t.Fatalf("deferred scopes = %v, want only memory-owner and ai-owner", scopes)

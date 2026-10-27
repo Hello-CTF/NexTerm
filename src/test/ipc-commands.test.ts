@@ -450,9 +450,8 @@ describe("desktop command envelopes", () => {
 
   it("preserves nullable returns and facade-specific normalization", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
-    const { terminalApi, modelApi, mountApi } = await import("../ipc/commands");
+    const { modelApi, mountApi } = await import("../ipc/commands");
 
-    await expect(terminalApi.claim("tab-1")).resolves.toBeNull();
     await expect(mountApi.capability()).resolves.toBeNull();
     await expect(modelApi.presets()).resolves.toEqual([]);
   });
@@ -1077,7 +1076,7 @@ describe("web command behavior compatibility", () => {
 
   it("preserves code/detail for business errors returned with HTTP 200", async () => {
     useWebTransport();
-    const error = { code: "not_controller", message: "Observer only", detail: null };
+    const error = { code: "forbidden", message: "Not allowed", detail: null };
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({

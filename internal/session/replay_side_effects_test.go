@@ -61,7 +61,7 @@ func recoveredTab(t *testing.T, tab *Tab, tailEnd int) uint64 {
 }
 
 // A full clear-screen replay is one replay span; an adopted resume over live
-// output carries no classes.
+// output another client answered is answered.
 func TestAttachAnchorClassifiesReplay(t *testing.T) {
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, Terminals: terminalFactory{}})
@@ -90,8 +90,10 @@ func TestAttachAnchorClassifiesReplay(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// client-a answered that live output, so another client resuming over
+	// it must not answer it again.
 	resumed := bindTestReceiver(t, manager, "classes-resume")
-	assertSpans(t, "resume", receiveTestAnchor(t, resumed).Classes)
+	assertSpans(t, "resume", receiveTestAnchor(t, resumed).Classes, span(5, 11, classAnswered))
 	assertFrameData(t, resumed, []byte(" world"))
 }
 
