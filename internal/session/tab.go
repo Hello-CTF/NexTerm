@@ -190,6 +190,9 @@ type Tab struct {
 	// createdAt and detachedAt back TabInfo.CreatedAt and DetachedAt; guarded by mu.
 	createdAt  time.Time
 	detachedAt time.Time
+	// detaches counts subscribers removed by dropSubscriberLocked, so a rolled-back
+	// attach can tell whether another subscriber left while it was registered.
+	detaches uint64
 }
 
 // acquireWrite takes the tab's write gate, giving up early when the caller's
@@ -1027,6 +1030,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	}
 	attached := false
 	registered := false
+	var registeredDetaches uint64
 	var co *outCoalescer
 	defer func() {
 		if !attached {
@@ -1038,9 +1042,14 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 				m.mu.Lock()
 				tab.mu.Lock()
 				if current, ok := tab.subscribers[options.ChannelID]; ok && current.co == co {
-					// A rolled-back attach never counted as attached, so the
-					// detach time it would have hidden stays as it was.
+					// A rolled-back attach never counted as attached: the
+					// detach time it hid stays, unless another subscriber
+					// left meanwhile and this one only kept the tab from
+					// counting as detached.
 					delete(tab.subscribers, options.ChannelID)
+					if len(tab.subscribers) == 0 && tab.detaches != registeredDetaches {
+						tab.detachedAt = time.Now()
+					}
 					tab.syncRecoveryFloorLocked()
 					tab.releaseOrphanControllerLocked()
 				}
@@ -1084,6 +1093,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	tab.subscribers[options.ChannelID] = subscriber{
 		client: client, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
 	}
+	registeredDetaches = tab.detaches
 	tab.mu.Unlock()
 	m.mu.Unlock()
 	registered = true

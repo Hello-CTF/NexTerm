@@ -13,6 +13,7 @@ func (t *Tab) dropSubscriberLocked(channelID string) {
 		return
 	}
 	delete(t.subscribers, channelID)
+	t.detaches++
 	if len(t.subscribers) == 0 {
 		t.detachedAt = time.Now()
 	}
