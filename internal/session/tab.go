@@ -61,6 +61,9 @@ type subscriber struct {
 	// belongs to is no longer current, and clearing the floor or unpausing on
 	// its behalf would evict a live episode's retained suffix.
 	episodeGen uint64
+	// spectator marks a read-only preview channel; it never keeps a tab from
+	// counting as detached.
+	spectator bool
 }
 
 const streamAnchorType = "nexterm.stream-anchor"
@@ -1049,7 +1052,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 					// left meanwhile and this one only kept the tab from
 					// counting as detached.
 					delete(tab.subscribers, options.ChannelID)
-					if len(tab.subscribers) == 0 && tab.detaches != registeredDetaches {
+					if !tab.hasInteractiveSubscriberLocked() && tab.detaches != registeredDetaches {
 						tab.detachedAt = time.Now()
 					}
 					tab.syncRecoveryFloorLocked()

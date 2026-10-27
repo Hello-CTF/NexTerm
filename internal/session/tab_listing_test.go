@@ -27,6 +27,26 @@ func TestDetachedSinceOpenOnlyUntilAClientLeaves(t *testing.T) {
 	}
 }
 
+func TestSpectatorsDoNotMoveTheDetachTime(t *testing.T) {
+	tab := &Tab{subscribers: map[string]subscriber{
+		"client":  {},
+		"preview": {spectator: true},
+	}}
+	if tab.detachedAtLocked() != 0 {
+		t.Fatal("a tab with an interactive subscriber reports a detach time")
+	}
+	tab.dropSubscriberLocked("client")
+	left := tab.detachedAt
+	// The spectator still watching does not keep the tab attached.
+	if left.IsZero() || tab.detachedAtLocked() != left.UnixMilli() {
+		t.Fatalf("after the last interactive client left: detached at %v, listed %d", left, tab.detachedAtLocked())
+	}
+	tab.dropSubscriberLocked("preview")
+	if !tab.detachedAt.Equal(left) || tab.detaches != 1 {
+		t.Fatalf("a spectator leaving moved the detach time to %v (detaches %d)", tab.detachedAt, tab.detaches)
+	}
+}
+
 func listedTab(t *testing.T, manager *Manager, id string) TabInfo {
 	t.Helper()
 	for _, info := range manager.ListTabs() {

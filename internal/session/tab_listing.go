@@ -6,23 +6,39 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-// dropSubscriberLocked removes a subscriber; when it was the last one the
-// tab went to the background now. The caller holds t.mu.
+// dropSubscriberLocked removes a subscriber; when it was the last
+// interactive one the tab went to the background now. Spectators (read-only
+// previews) come and go without moving the time. The caller holds t.mu.
 func (t *Tab) dropSubscriberLocked(channelID string) {
-	if _, ok := t.subscribers[channelID]; !ok {
+	removed, ok := t.subscribers[channelID]
+	if !ok {
 		return
 	}
 	delete(t.subscribers, channelID)
+	if removed.spectator {
+		return
+	}
 	t.detaches++
-	if len(t.subscribers) == 0 {
+	if !t.hasInteractiveSubscriberLocked() {
 		t.detachedAt = time.Now()
 	}
 }
 
-// detachedAtLocked is when the last subscriber left, zero while one is
-// attached. The caller holds t.mu.
+// hasInteractiveSubscriberLocked reports a subscriber other than a spectator.
+// The caller holds t.mu.
+func (t *Tab) hasInteractiveSubscriberLocked() bool {
+	for _, subscriber := range t.subscribers {
+		if !subscriber.spectator {
+			return true
+		}
+	}
+	return false
+}
+
+// detachedAtLocked is when the last interactive subscriber left, zero while
+// one is attached. The caller holds t.mu.
 func (t *Tab) detachedAtLocked() int64 {
-	if len(t.subscribers) > 0 {
+	if t.hasInteractiveSubscriberLocked() {
 		return 0
 	}
 	return unixMilliOrZero(t.detachedAt)
@@ -32,7 +48,7 @@ func (t *Tab) detachedAtLocked() int64 {
 // reopened an existing helper session: no client has left it since, so the
 // real detach happened no later than that. The caller holds t.mu.
 func (t *Tab) detachedSinceOpenLocked() bool {
-	return t.reopened && t.detaches == 0 && len(t.subscribers) == 0
+	return t.reopened && t.detaches == 0 && !t.hasInteractiveSubscriberLocked()
 }
 
 func unixMilliOrZero(at time.Time) int64 {
