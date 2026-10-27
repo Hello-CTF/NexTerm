@@ -60,6 +60,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		Setting:                 newSetting(db, opts...),
 		SharePreviewLink:        newSharePreviewLink(db, opts...),
 		SnippetRow:              newSnippetRow(db, opts...),
+		StateRuleRow:            newStateRuleRow(db, opts...),
 		SyncCredential:          newSyncCredential(db, opts...),
 		SyncState:               newSyncState(db, opts...),
 		SyncTombstone:           newSyncTombstone(db, opts...),
@@ -123,6 +124,7 @@ type Query struct {
 	Setting                 setting
 	SharePreviewLink        sharePreviewLink
 	SnippetRow              snippetRow
+	StateRuleRow            stateRuleRow
 	SyncCredential          syncCredential
 	SyncState               syncState
 	SyncTombstone           syncTombstone
@@ -189,6 +191,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		Setting:                 q.Setting.clone(db),
 		SharePreviewLink:        q.SharePreviewLink.clone(db),
 		SnippetRow:              q.SnippetRow.clone(db),
+		StateRuleRow:            q.StateRuleRow.clone(db),
 		SyncCredential:          q.SyncCredential.clone(db),
 		SyncState:               q.SyncState.clone(db),
 		SyncTombstone:           q.SyncTombstone.clone(db),
@@ -260,6 +263,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		Setting:                 q.Setting.replaceDB(db),
 		SharePreviewLink:        q.SharePreviewLink.replaceDB(db),
 		SnippetRow:              q.SnippetRow.replaceDB(db),
+		StateRuleRow:            q.StateRuleRow.replaceDB(db),
 		SyncCredential:          q.SyncCredential.replaceDB(db),
 		SyncState:               q.SyncState.replaceDB(db),
 		SyncTombstone:           q.SyncTombstone.replaceDB(db),
@@ -321,6 +325,7 @@ type queryCtx struct {
 	Setting                 *settingDo
 	SharePreviewLink        *sharePreviewLinkDo
 	SnippetRow              *snippetRowDo
+	StateRuleRow            *stateRuleRowDo
 	SyncCredential          *syncCredentialDo
 	SyncState               *syncStateDo
 	SyncTombstone           *syncTombstoneDo
@@ -382,6 +387,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		Setting:                 q.Setting.WithContext(ctx),
 		SharePreviewLink:        q.SharePreviewLink.WithContext(ctx),
 		SnippetRow:              q.SnippetRow.WithContext(ctx),
+		StateRuleRow:            q.StateRuleRow.WithContext(ctx),
 		SyncCredential:          q.SyncCredential.WithContext(ctx),
 		SyncState:               q.SyncState.WithContext(ctx),
 		SyncTombstone:           q.SyncTombstone.WithContext(ctx),
