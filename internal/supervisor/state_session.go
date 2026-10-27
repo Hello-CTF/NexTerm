@@ -126,3 +126,29 @@ func (h *history) appCursor() bool {
 	defer h.mu.Unlock()
 	return h.modes.AppCursor
 }
+
+// TapPrompt answers the session's detected prompt with option when the
+// prompt shown to the user, identified by epoch and fingerprint, is still
+// on screen and tappable, and returns the bytes written. Any mismatch fails
+// with ErrStalePrompt and writes nothing; a valid tap consumes the epoch.
+// It fails with ErrUnsupported when state detection is disabled.
+func (a *Attachment) TapPrompt(epoch uint64, fingerprint string, option int) (string, error) {
+	if a.closed() {
+		return "", ErrClosed
+	}
+	s := a.session
+	s.mu.RLock()
+	tracker := s.state
+	s.mu.RUnlock()
+	if tracker == nil {
+		return "", fmt.Errorf("%w: session state detection is disabled", ErrUnsupported)
+	}
+	send, err := tracker.tap(epoch, fingerprint, option)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.writeInputCtx(a.ctx, []byte(send), true); err != nil {
+		return "", err
+	}
+	return send, nil
+}

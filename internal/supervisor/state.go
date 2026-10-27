@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -574,6 +575,45 @@ func (t *stateTracker) rulesChanged(now time.Time) {
 	t.lastActivity = now.Add(-t.opts.idle)
 	t.mu.Unlock()
 	t.tick(now)
+}
+
+// tap validates a tap on option of the prompt identified by epoch and
+// fingerprint and returns the bytes that answer it. The screen is inspected
+// again first: the prompt must still be published with the same epoch and
+// fingerprint and be tappable. A valid tap consumes the epoch, so a repeated
+// or concurrent tap with the same epoch fails. Any mismatch is ErrStalePrompt.
+func (t *stateTracker) tap(epoch uint64, fingerprint string, option int) (string, error) {
+	t.mu.Lock()
+	if t.exited {
+		t.mu.Unlock()
+		return "", fmt.Errorf("%w: the session exited", ErrStalePrompt)
+	}
+	changed := t.inspectLocked(nil)
+	prompt := t.publishedPromptLocked()
+	var send string
+	var err error
+	switch {
+	case prompt == nil:
+		err = fmt.Errorf("%w: no prompt is shown", ErrStalePrompt)
+	case prompt.Epoch != epoch || prompt.Fingerprint != fingerprint:
+		err = fmt.Errorf("%w: the prompt changed", ErrStalePrompt)
+	case !prompt.Tappable:
+		err = fmt.Errorf("%w: the prompt is not tappable (%s)", ErrStalePrompt, prompt.Blocked)
+	case option < 0 || option >= len(prompt.Options) || prompt.Options[option].Send == "":
+		err = fmt.Errorf("%w: option %d does not exist", ErrInvalidInput, option)
+	default:
+		send = prompt.Options[option].Send
+		// Consume the epoch now: the write that follows advances it again,
+		// but a second tap racing it must already fail.
+		t.epoch++
+		t.fresh = false
+		changed = true
+	}
+	t.mu.Unlock()
+	if changed {
+		t.changed()
+	}
+	return send, err
 }
 
 func (t *stateTracker) resize(cols, rows int) {

@@ -53,17 +53,63 @@ type AttentionEvent struct {
 	// state with reason notify.
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
+	// Prompt is the prompt detected when output last went idle, absent when
+	// none is shown or output arrived since.
+	Prompt *AttentionPrompt `json:"prompt,omitempty"`
 	// Version increases with every published change of the tab; a client
 	// keeps the highest version it saw per tab. Versions restart with the
 	// process.
 	Version uint64 `json:"version"`
 }
 
+// AttentionPrompt is a detected prompt and how a client may answer it.
+// Generation, Epoch and Fingerprint identify this prompt instance to
+// terminal_prompt_tap; the epoch advances whenever the prompt changes,
+// appears or disappears and on any input to the session.
+type AttentionPrompt struct {
+	// Kind is yesno, choice or question.
+	Kind string `json:"kind"`
+	// Question is the prompt text, shown with the options: the choice may
+	// be a security decision such as an SSH host key confirmation.
+	Question    string                  `json:"question,omitempty"`
+	Options     []AttentionPromptOption `json:"options,omitempty"`
+	CursorIndex int                     `json:"cursorIndex"`
+	Fingerprint string                  `json:"fingerprint"`
+	Epoch       uint64                  `json:"epoch"`
+	Generation  string                  `json:"generation,omitempty"`
+	// Tappable reports that an option can be sent with terminal_prompt_tap;
+	// Blocked names why not: question, shell_prompt, shell_foreground,
+	// foreground_unknown, weak_marker or not_line_mode.
+	Tappable bool   `json:"tappable"`
+	Blocked  string `json:"blocked,omitempty"`
+	// Method is keys or arrows. Submit is enter when a tap also presses
+	// Enter, or separate when Enter is offered as its own action: EnterKey
+	// is then written with an ordinary terminal write.
+	Method   string `json:"method,omitempty"`
+	Submit   string `json:"submit,omitempty"`
+	EnterKey string `json:"enterKey,omitempty"`
+}
+
+// AttentionPromptOption is one answer of a detected prompt.
+type AttentionPromptOption struct {
+	Label   string `json:"label"`
+	Keys    string `json:"keys,omitempty"`
+	Default bool   `json:"default,omitempty"`
+}
+
+func (p *AttentionPrompt) sameAs(other *AttentionPrompt) bool {
+	if p == nil || other == nil {
+		return p == other
+	}
+	return p.Epoch == other.Epoch && p.Fingerprint == other.Fingerprint && p.Generation == other.Generation &&
+		p.Tappable == other.Tappable && p.Blocked == other.Blocked && p.Submit == other.Submit && p.Method == other.Method
+}
+
 func (e AttentionEvent) sameAs(other AttentionEvent) bool {
 	sameExit := (e.ExitCode == nil) == (other.ExitCode == nil) && (e.ExitCode == nil || *e.ExitCode == *other.ExitCode)
 	return e.State == other.State && e.Confidence == other.Confidence && e.Source == other.Source &&
 		e.Reason == other.Reason && e.Since == other.Since && e.Seen == other.Seen && e.Notable == other.Notable && sameExit &&
-		e.Title == other.Title && e.Body == other.Body
+		e.Title == other.Title && e.Body == other.Body && e.Prompt.sameAs(other.Prompt)
 }
 
 // attentionRegistry holds the attention state of every tab whose output
@@ -335,7 +381,23 @@ func attentionFromState(state *base.SessionState, source string) AttentionEvent 
 		code := *state.ExitCode
 		event.ExitCode = &code
 	}
+	event.Prompt = attentionPrompt(state.Prompt)
 	return event
+}
+
+func attentionPrompt(prompt *base.SessionPrompt) *AttentionPrompt {
+	if prompt == nil {
+		return nil
+	}
+	out := &AttentionPrompt{
+		Kind: prompt.Kind, Question: prompt.Question, CursorIndex: prompt.CursorIndex,
+		Fingerprint: prompt.Fingerprint, Epoch: prompt.Epoch, Generation: prompt.Generation,
+		Tappable: prompt.Tappable, Blocked: prompt.Blocked, Method: prompt.Method, Submit: prompt.Submit, EnterKey: prompt.EnterKey,
+	}
+	for _, option := range prompt.Options {
+		out.Options = append(out.Options, AttentionPromptOption{Label: option.Label, Keys: option.Keys, Default: option.Default})
+	}
+	return out
 }
 
 // observeAttentionOutput feeds tab output to the observed tracker of a tab

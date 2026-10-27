@@ -33,6 +33,8 @@ func translateError(err error) error {
 		return durable.ErrGenerationMismatch
 	case errors.Is(err, ErrStateSeenUnsupported):
 		return durable.ErrSeenUnsupported
+	case errors.Is(err, ErrStalePrompt):
+		return fmt.Errorf("%w: %w", base.ErrStalePrompt, err)
 	case errors.Is(err, ErrLimit):
 		// Keep the helper's message: it names the limit that was reached.
 		return fmt.Errorf("%w: %w", durable.ErrLimit, err)
@@ -274,6 +276,9 @@ func (a *channelAttachment) DurableSessionState() *base.SessionState {
 	state := a.SessionState(^uint64(0))
 	if state != nil {
 		state.Events, state.EventsDropped = nil, false
+		if state.Prompt != nil {
+			state.Prompt.Generation = a.Identity().Generation
+		}
 	}
 	return state
 }
@@ -282,6 +287,16 @@ func (a *channelAttachment) DurableStateUpdates() <-chan struct{} { return a.Sta
 
 func (a *channelAttachment) MarkDurableStateSeen(_ context.Context, since time.Time) error {
 	return translateError(a.MarkStateSeen(since))
+}
+
+// TapDurablePrompt answers the in-process session's prompt; the helper
+// generation is this process's supervisor.
+func (a *channelAttachment) TapDurablePrompt(_ context.Context, tap base.PromptTap) (string, error) {
+	if generation := a.Identity().Generation; tap.Generation != generation {
+		return "", fmt.Errorf("%w: prompt from helper generation %q, attached to %q", base.ErrStalePrompt, tap.Generation, generation)
+	}
+	sent, err := a.TapPrompt(tap.Epoch, tap.Fingerprint, tap.Option)
+	return sent, translateError(err)
 }
 
 func (a *channelAttachment) DurableReplay() base.DurableReplay { return durableReplay(a.Replay()) }
@@ -549,6 +564,11 @@ func (a *streamAttachment) DurableSessionState() *base.SessionState {
 	state := a.SessionState()
 	if state != nil {
 		state.Events, state.EventsDropped = nil, false
+		if state.Prompt != nil {
+			prompt := *state.Prompt
+			prompt.Generation = a.Identity().Generation
+			state.Prompt = &prompt
+		}
 	}
 	return state
 }
@@ -557,6 +577,16 @@ func (a *streamAttachment) DurableStateUpdates() <-chan struct{} { return a.Stat
 
 func (a *streamAttachment) MarkDurableStateSeen(ctx context.Context, since time.Time) error {
 	return translateError(a.MarkStateSeen(ctx, since))
+}
+
+// TapDurablePrompt answers the helper session's prompt; a prompt from
+// another helper generation is stale.
+func (a *streamAttachment) TapDurablePrompt(ctx context.Context, tap base.PromptTap) (string, error) {
+	if generation := a.Identity().Generation; tap.Generation != generation {
+		return "", fmt.Errorf("%w: prompt from helper generation %q, attached to %q", base.ErrStalePrompt, tap.Generation, generation)
+	}
+	sent, err := a.TapPrompt(ctx, tap.Epoch, tap.Fingerprint, tap.Option)
+	return sent, translateError(err)
 }
 
 func (a *streamAttachment) Read(p []byte) (int, error) {

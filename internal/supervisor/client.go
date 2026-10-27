@@ -581,6 +581,7 @@ func (c *Client) dialHello(ctx context.Context, push bool) (*clientConn, error) 
 	conn.activity = *ack.Activity
 	conn.stateSeen = ack.StateSeen
 	conn.stateRules = ack.StateRules
+	conn.promptTap = ack.PromptTap
 	if push && owner != "" {
 		// A rejected push, or a helper without state rules, keeps the
 		// connection usable; a failed exchange leaves it broken.
@@ -619,7 +620,9 @@ type clientConn struct {
 	// stateRules is the helper's state rule revision; nil when the helper
 	// does not take state rules.
 	stateRules *stateRulesAck
-	writeMu    sync.Mutex
+	// promptTap: the helper accepts frameTapPrompt.
+	promptTap bool
+	writeMu   sync.Mutex
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {
@@ -1299,6 +1302,36 @@ func (s *Stream) MarkStateSeen(ctx context.Context, since time.Time) error {
 		return protocolMismatch(kind)
 	}
 	return nil
+}
+
+// TapPrompt answers the session's detected prompt with option when the
+// prompt identified by epoch and fingerprint is still shown and tappable,
+// and returns the bytes the helper wrote. It first waits for the stream's
+// earlier input to be acknowledged, so the keys follow it. A stale prompt
+// fails with ErrStalePrompt; a helper that does not advertise the frame is
+// not sent it and the call fails with ErrUnsupported.
+func (s *Stream) TapPrompt(ctx context.Context, epoch uint64, fingerprint string, option int) (string, error) {
+	if !s.conn.promptTap {
+		return "", fmt.Errorf("%w: helper does not accept prompt taps", ErrUnsupported)
+	}
+	if err := s.FlushInput(ctx); err != nil {
+		return "", err
+	}
+	kind, payload, err := s.request(ctx, frameTapPrompt, tapPromptMsg{
+		ExpectGeneration: s.identity.Generation, ExpectIncarnation: s.identity.Incarnation,
+		Epoch: epoch, Fingerprint: fingerprint, Option: option,
+	})
+	if err != nil {
+		return "", err
+	}
+	if kind != frameOK {
+		return "", protocolMismatch(kind)
+	}
+	var reply tapPromptReply
+	if err := unmarshalFrame(payload, &reply); err != nil {
+		return "", err
+	}
+	return reply.Sent, nil
 }
 
 func (s *Stream) Kill(ctx context.Context) error {

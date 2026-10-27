@@ -1998,6 +1998,12 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_prompt_tap": {
+      "scope": "attention",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_record_start": {
       "nested": false,
       "channel": false,
