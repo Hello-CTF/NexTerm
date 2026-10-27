@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { jumpMatchTier, rankJumpItems, type JumpAttention, type JumpCandidate } from "../../app/jump/jumpRanking";
+import { freezeOrder, jumpMatchTier, rankJumpItems, type JumpAttention, type JumpCandidate } from "../../app/jump/jumpRanking";
 
 type Item = JumpCandidate & { id: string };
 
@@ -77,5 +77,15 @@ describe("rankJumpItems", () => {
     const before = ids(items);
     rankJumpItems(items, "web");
     expect(ids(items)).toEqual(before);
+  });
+});
+
+describe("freezeOrder", () => {
+  it("keeps shown rows in place, drops removed ones and appends new ones in ranked order", () => {
+    expect(freezeOrder(["b", "a", "c"], ["a", "d", "b", "e"])).toEqual(["b", "a", "d", "e"]);
+  });
+
+  it("returns the ranked order without a snapshot", () => {
+    expect(freezeOrder(null, ["a", "b"])).toEqual(["a", "b"]);
   });
 });

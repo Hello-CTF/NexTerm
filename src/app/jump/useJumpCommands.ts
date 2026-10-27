@@ -379,6 +379,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       list.push({
         id: `edit-${asset.id}`,
         label: `编辑资产 ${asset.name}`,
+        section: "资产操作",
         hint: "主机 / 端口 / 凭据",
         icon: IconEdit,
         run: () => onEditAsset?.(asset),
@@ -386,6 +387,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       list.push({
         id: `clone-${asset.id}`,
         label: `克隆资产 ${asset.name}`,
+        section: "资产操作",
         hint: "共享凭据引用",
         icon: IconCopy,
         run: () => void runClone(asset),
@@ -393,6 +395,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       list.push({
         id: `${hidden ? "unhide" : "hide"}-${asset.id}`,
         label: `${hidden ? "取消隐藏" : "隐藏"}资产 ${asset.name}`,
+        section: "资产操作",
         hint: hidden ? "恢复显示" : "仅界面隐藏",
         icon: hidden ? IconEye : IconEyeOff,
         run: () => (hidden ? unhideAsset(asset) : hideAsset(asset)),
@@ -402,6 +405,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       list.push({
         id: `snippet-${s.id}`,
         label: `插入片段 ${s.name}`,
+        section: "片段",
         hint: snippetHint(s.body),
         icon: IconCommand,
         run: () => void insertSnippet(s),

@@ -2,7 +2,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, flushUntil, mount, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { click, deferred, flush, flushUntil, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -27,7 +28,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { JumpPalette } from "../../app/JumpPalette";
-import { noteTabActivated, resetTabRecency, useTabRecencyTracker } from "../../app/jump/tabRecency";
+import { noteTabActivated, resetTabRecency, tabRecency, useTabRecencyTracker } from "../../app/jump/tabRecency";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { Asset, SessionInfo } from "../../ipc/commands";
 
@@ -61,6 +62,10 @@ const SESSION: SessionInfo = {
   tabs: [],
   createdAt: 1,
 };
+
+const SESSION_B: SessionInfo = { ...SESSION, id: "s2" };
+
+const DURABLE = { id: "durable-1", incarnation: "i1", createdAt: 1, title: "long job", metadataRevision: 1, cols: 80, rows: 24, dead: false };
 
 function terminal(id: string, title: string, sessionId: string): AppTab {
   return { id, kind: "terminal", title, sessionId, tabId: `kernel-${id}`, closable: true };
@@ -103,9 +108,16 @@ function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {})
 }
 
 let mounted: MountedView | undefined;
+let currentClient: QueryClient | undefined;
+
+function ownerOf(terminalId: string): Workspace | undefined {
+  return useUi.getState().workspaces.find((item) => item.panes.some((pane) => pane.tabs.some((tab) => tab.tabId === terminalId)));
+}
 
 async function mountPalette(props: Partial<Parameters<typeof JumpPalette>[0]> = {}): Promise<MountedView> {
-  mounted = mountWithClient(createElement(JumpPalette, { onClose: vi.fn(), ...props }));
+  currentClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  mounted = mount(createElement(QueryClientProvider, { client: currentClient },
+    createElement(JumpPalette, { onClose: vi.fn(), ...props })));
   await flush();
   await flush();
   return mounted;
@@ -160,9 +172,15 @@ describe("jump palette sessions", () => {
     act(() => useUi.getState().setActiveTab("t-logs"));
     act(() => useUi.getState().setActiveTab("t-deploy"));
     const view = await mountPalette();
-    tracker.unmount();
-
     expect(optionLabels(view).slice(0, 3)).toEqual(["logs", "build", "deploy"]);
+
+    expect(tabRecency("t-logs")).toBeGreaterThan(0);
+    act(() => useUi.setState((state) => ({
+      workspaces: state.workspaces.filter((item) => item.id !== "ws-b"),
+    })));
+    tracker.unmount();
+    expect(tabRecency("t-logs")).toBe(0);
+    expect(tabRecency("t-deploy")).toBeGreaterThan(0);
   });
 
   it("jumps to the selected terminal in its workspace with Enter and closes", async () => {
@@ -194,11 +212,10 @@ describe("jump palette sessions", () => {
     expect(optionLabels(view)[0]).toBe("build");
   });
 
-  it("lists background terminals of connected hosts and takes one over", async () => {
-    useUi.setState({ sessions: [SESSION] });
-    mocks.listDurable.mockResolvedValue([
-      { id: "durable-1", incarnation: "i1", createdAt: 1, title: "long job", metadataRevision: 1, cols: 80, rows: 24, dead: false },
-    ]);
+  it("takes a background terminal over into its own host workspace, not the active one", async () => {
+    useUi.setState({ sessions: [SESSION, SESSION_B] });
+    mocks.sessionList.mockResolvedValue([SESSION, SESSION_B]);
+    mocks.listDurable.mockImplementation((sessionId: string) => Promise.resolve(sessionId === "s2" ? [DURABLE] : []));
     const onClose = vi.fn();
     const view = await mountPalette({ onClose });
     await flushUntil(() => optionLabels(view).includes("long job"));
@@ -207,25 +224,114 @@ describe("jump palette sessions", () => {
     expect(row?.textContent).toContain("后台");
     click(row!);
     expect(onClose).toHaveBeenCalledTimes(1);
-    await flushUntil(() =>
-      useUi.getState().workspaces.some((item) => item.panes.some((pane) => pane.tabs.some((tab) => tab.tabId === "durable-1"))),
-    );
-    const owner = useUi.getState().workspaces.find((item) => item.panes.some((pane) => pane.tabs.some((tab) => tab.tabId === "durable-1")));
-    expect(owner?.id).toBe("ws-a");
+    await flushUntil(() => ownerOf("durable-1") !== undefined);
+    expect(ownerOf("durable-1")?.id).toBe("ws-b");
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("已接管"));
   });
 
-  it("keeps the palette usable and reports it when background terminals cannot be listed", async () => {
+  it("reports a takeover whose host disconnected meanwhile", async () => {
+    useUi.setState({ sessions: [SESSION, SESSION_B] });
+    mocks.listDurable.mockImplementation((sessionId: string) => Promise.resolve(sessionId === "s2" ? [DURABLE] : []));
+    mocks.sessionList.mockResolvedValue([SESSION, { ...SESSION_B, status: "disconnected" }]);
+    const view = await mountPalette();
+    await flushUntil(() => optionLabels(view).includes("long job"));
+    click(options(view).find((option) => option.textContent?.includes("long job"))!);
+
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("主机未连接"));
+    expect(ownerOf("durable-1")).toBeUndefined();
+  });
+
+  it("drops a takeover that resolves after the workspace runtime was reset", async () => {
+    useUi.setState({ sessions: [SESSION, SESSION_B] });
+    mocks.listDurable.mockImplementation((sessionId: string) => Promise.resolve(sessionId === "s2" ? [DURABLE] : []));
+    const pending = deferred<SessionInfo[]>();
+    mocks.sessionList.mockReturnValue(pending.promise);
+    const view = await mountPalette();
+    await flushUntil(() => optionLabels(view).includes("long job"));
+    click(options(view).find((option) => option.textContent?.includes("long job"))!);
+    mounted?.unmount();
+    mounted = undefined;
+
+    act(() => useUi.setState((state) => ({ workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + 1 })));
+    await act(async () => {
+      pending.resolve([SESSION, SESSION_B]);
+      await pending.promise;
+    });
+    await flush();
+    expect(ownerOf("durable-1")).toBeUndefined();
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("notes unlisted background terminals without repeating the error and stays usable", async () => {
     useUi.setState({ sessions: [SESSION] });
     mocks.listDurable.mockRejectedValue(new Error("helper offline"));
     const view = await mountPalette();
-    await flushUntil(() => (view.container.textContent ?? "").includes("helper offline"));
-    expect(view.container.textContent).toContain("部分后台会话未列出");
+    await flushUntil(() => (view.container.textContent ?? "").includes("未能列出"));
+    expect(view.container.textContent).not.toContain("helper offline");
     expect(optionLabels(view)).toContain("deploy");
+  });
+
+  it("keeps the shown order while the palette is open and reorders on a query change", async () => {
+    const needs = (label: string) => (session: { label: string }) => (session.label === label ? "needsMe" as const : undefined);
+    const view = await mountPalette({ attentionOf: needs("build") });
+    expect(optionLabels(view)[0]).toBe("build");
+
+    act(() => view.root.render(createElement(QueryClientProvider, { client: currentClient! },
+      createElement(JumpPalette, { onClose: vi.fn(), attentionOf: needs("logs") }))));
+    await flush();
+    expect(optionLabels(view)[0]).toBe("build");
+
+    setInputValue(combobox(view), "o");
+    setInputValue(combobox(view), "");
+    expect(optionLabels(view)[0]).toBe("logs");
+  });
+});
+
+describe("jump palette hosts and commands", () => {
+  it("leaves inventory-only assets out of the host rows", async () => {
+    mocks.list.mockResolvedValue([
+      WEB,
+      { ...WEB, id: "k8s-1", name: "ops/api-0", kind: "kubernetes", host: null, options: { inventory: { source: "kubernetes", key: "pod/ops/api-0" } } },
+    ]);
+    const view = await mountPalette({ scope: "hosts" });
+    expect(optionLabels(view)).toEqual(["web-01"]);
+  });
+
+  it("matches hosts by kind", async () => {
+    const view = await mountPalette({ scope: "hosts" });
+    setInputValue(combobox(view), "ssh");
+    expect(optionLabels(view)).toEqual(["web-01"]);
+  });
+
+  it("shows each section header once, as presentation, with asset actions in their own section", async () => {
+    const view = await mountPalette();
+    const headers = [...view.container.querySelectorAll<HTMLElement>("[data-command-section]")];
+    const names = headers.map((header) => header.textContent);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toEqual(expect.arrayContaining(["会话", "主机", "命令", "资产操作"]));
+    expect(headers.every((header) => header.getAttribute("role") === "presentation")).toBe(true);
+  });
+
+  it("probes reachability once and not again when a tab title changes while open", async () => {
+    const view = await mountPalette();
+    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
+    act(() => useUi.setState((state) => ({
+      workspaces: state.workspaces.map((item) => ({
+        ...item,
+        panes: item.panes.map((pane) => ({ ...pane, tabs: pane.tabs.map((tab) => ({ ...tab, title: `${tab.title}!` })) })),
+      })),
+    })));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(optionLabels(view)).toContain("logs!");
+    expect(mocks.probeBatch).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("jump palette scopes", () => {
-  it("switches between all results and hosts with Tab in the search field", async () => {
+  it("switches between all results and hosts with Tab in the search field and announces it", async () => {
     const view = await mountPalette();
     expect(optionLabels(view)).toContain("打开设置");
 
@@ -233,9 +339,32 @@ describe("jump palette scopes", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(optionLabels(view)).toEqual(["web-01"]);
     expect(combobox(view).getAttribute("aria-label")).toBe("资产搜索");
+    expect(view.container.querySelector('[aria-live="polite"][aria-atomic="true"]')?.textContent).toBe("只看主机");
 
     keyDown(combobox(view), "Tab");
     expect(optionLabels(view)).toContain("打开设置");
+  });
+
+  it("leaves Tab to focus movement while the panel shows a retry control", async () => {
+    mocks.snippetList.mockRejectedValue(new Error("offline"));
+    const view = await mountPalette();
+    await flushUntil(() => (view.container.textContent ?? "").includes("片段列表加载失败"));
+    const event = keyDown(combobox(view), "Tab");
+    expect(event.defaultPrevented).toBe(false);
+    expect(combobox(view).getAttribute("aria-label")).toBe("搜索会话、主机或命令");
+  });
+
+  it("clears the query when the quick connect command switches to hosts", async () => {
+    const onClose = vi.fn();
+    const view = await mountPalette({ onClose });
+    setInputValue(combobox(view), "快速连接");
+    click(options(view).find((option) => option.textContent?.includes("快速连接…"))!);
+    await flush();
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(combobox(view).value).toBe("");
+    expect(optionLabels(view)).toEqual(["web-01"]);
+    expect(options(view)[0].getAttribute("aria-selected")).toBe("true");
   });
 
   it("opens in the hosts scope for quick connect and offers the scope toggle as buttons", async () => {

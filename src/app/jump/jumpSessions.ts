@@ -1,17 +1,19 @@
-import { useEffect, useState } from "react";
-import { sessionApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
-import { describeError } from "../../ui/errorText";
-import { nextTabId, useUi, type Workspace } from "../store";
+import { useQuery } from "@tanstack/react-query";
+import { useUi, useWorkspaceList, type Workspace } from "../store";
 import {
   backgroundTargets,
-  collectBackgroundTabs,
+  listBackgroundTabs,
   openTerminalTabIds,
+  takeOverBackgroundTab,
   visibleBackgroundTabs,
+  workspaceSessionMatches,
   type BackgroundScope,
   type BackgroundTab,
 } from "../../features/terminal/backgroundSessionsAccess";
 import { getLocalHelperStatus, localDurableEnabled } from "../../features/terminal/localHelperStatus";
 import { tabRecency } from "./tabRecency";
+
+const BACKGROUND_STALE_MS = 5_000;
 
 export type JumpSessionTarget =
   | { source: "tab"; workspaceId: string; tabId: string; current: boolean; ended: boolean }
@@ -84,55 +86,57 @@ export function backgroundSessionEntries(tabs: BackgroundTab[]): JumpSessionEntr
 
 export interface BackgroundJumpState {
   tabs: BackgroundTab[];
-  error: string | null;
+  // unlisted counts the listings that failed; the background sessions page reports their details.
+  unlisted: number;
 }
 
-// useBackgroundJumpSessions lists takeable background terminals of every connected host once per open.
+const NO_BACKGROUND: BackgroundJumpState = { tabs: [], unlisted: 0 };
+
+// useBackgroundJumpSessions lists takeable background terminals of every connected host. The listing is cached
+// per runtime epoch and connected session set, so reopening the palette right away does not list again.
 export function useBackgroundJumpSessions(enabled: boolean): BackgroundJumpState {
-  const [state, setState] = useState<BackgroundJumpState>({ tabs: [], error: null });
-  useEffect(() => {
-    if (!enabled) return;
-    const st = useUi.getState();
-    if (!st.sessions.some((session) => session.status === "connected")) return;
-    const scope: BackgroundScope = {
-      sessions: st.sessions,
-      workspaces: st.workspaces,
-      verified: {},
-      localDurable: localDurableEnabled(getLocalHelperStatus()),
-    };
-    const targets = backgroundTargets(scope, { showAll: true, hostSessionId: null, remoteOwner: false });
-    let cancelled = false;
-    void Promise.allSettled([
-      Promise.resolve().then(() => terminalApi.listLive()),
-      ...targets.map((session) => Promise.resolve().then(() => terminalApi.listDurable(session.id))),
-    ]).then(([live, ...remote]) => {
-      if (cancelled) return;
-      const collected = collectBackgroundTabs(scope, {
-        live: live.status === "fulfilled" ? (live.value as LiveTabInfo[]) : null,
-        remote: targets.map((session, index) => {
-          const result = remote[index];
-          return {
-            session,
-            tabs: result.status === "fulfilled" ? result.value : null,
-            reason: result.status === "rejected" ? result.reason : undefined,
-          };
-        }),
-        openTabIds: openTerminalTabIds(useUi.getState().workspaces),
-      });
-      const errors = [
-        ...(live.status === "rejected" ? [describeError(live.reason)] : []),
-        ...collected.failedRemote.map((failure) => `${failure.session.name}: ${describeError(failure.reason)}`),
-      ];
-      setState({
+  const epoch = useUi((s) => s.workspaceRuntimeEpoch);
+  const connected = useUi((s) =>
+    s.sessions
+      .filter((session) => session.status === "connected")
+      .map((session) => session.id)
+      .sort()
+      .join("\n"),
+  );
+  const query = useQuery({
+    queryKey: ["jump-background", epoch, connected],
+    enabled: enabled && connected.length > 0,
+    staleTime: BACKGROUND_STALE_MS,
+    retry: false,
+    refetchOnWindowFocus: false,
+    queryFn: async (): Promise<BackgroundJumpState> => {
+      const st = useUi.getState();
+      const scope: BackgroundScope = {
+        sessions: st.sessions,
+        workspaces: st.workspaces,
+        verified: {},
+        localDurable: localDurableEnabled(getLocalHelperStatus()),
+      };
+      const targets = backgroundTargets(scope, { showAll: true, hostSessionId: null, remoteOwner: false });
+      const { collected, liveFailed } = await listBackgroundTabs(scope, targets, openTerminalTabIds(st.workspaces));
+      return {
         tabs: visibleBackgroundTabs(collected.list, scope, { hostSessionId: null, showAll: true, blocked: false }),
-        error: errors.length > 0 ? errors.join("; ") : null,
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled]);
-  return state;
+        unlisted: collected.failedRemote.length + (liveFailed ? 1 : 0),
+      };
+    },
+  });
+  const workspaces = useWorkspaceList();
+  const data = enabled && connected.length > 0 ? (query.data ?? NO_BACKGROUND) : NO_BACKGROUND;
+  // A cached listing may predate a takeover, so terminals opened since are left out.
+  const open = openTerminalTabIds(workspaces);
+  return data.tabs.some((tab) => open.has(tab.tabId)) ? { ...data, tabs: data.tabs.filter((tab) => !open.has(tab.tabId)) } : data;
+}
+
+// The palette lists every host, so a host qualifies while an asset or a matching open workspace still owns it.
+function ownedByApp(session: { id: string; assetId: string | null; kind: string }): boolean {
+  if (session.assetId) return true;
+  return useUi.getState().workspaces.some((workspace) =>
+    workspace.kind === "session" && workspace.sessionId === session.id && workspaceSessionMatches(workspace, session, {}));
 }
 
 // jumpToSession brings an open tab to the front or takes a background terminal over into its host workspace.
@@ -143,27 +147,12 @@ export async function jumpToSession(target: JumpSessionTarget): Promise<void> {
     st.setActiveTab(target.tabId);
     return;
   }
-  const info = target.tab;
+  const result = await takeOverBackgroundTab(target.tab, {
+    guard: (session) => {
+      if (!ownedByApp(session)) throw new Error("这个终端的主机已不在工作区中，请重新连接后再接管");
+    },
+  });
   const { pushToast } = useUi.getState();
-  try {
-    const list = await sessionApi.list();
-    const session = list.find((item) => item.id === info.sessionId);
-    if (!session || session.status !== "connected") throw new Error("主机未连接，请先重新连接再接管");
-    const st = useUi.getState();
-    st.setSessions(list);
-    st.addTab({
-      id: nextTabId(`term-${info.sessionId}`),
-      kind: "terminal",
-      title: info.title || session.name || info.sessionName,
-      ...(info.title && info.titleCustom && info.titleChangedAt
-        ? { renamedByUser: true, customTitleAt: info.titleChangedAt }
-        : {}),
-      sessionId: info.sessionId,
-      tabId: info.tabId,
-      closable: true,
-    });
-    pushToast("info", `已接管「${session.name}」的终端`);
-  } catch (error) {
-    pushToast("error", `接管失败：${describeError(error)}`);
-  }
+  if (result.ok) pushToast("info", `已接管「${result.sessionName}」的终端`);
+  else if ("error" in result) pushToast("error", `接管失败：${result.error}`);
 }

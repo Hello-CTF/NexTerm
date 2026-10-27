@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   assetConnectionProblemKey,
@@ -34,7 +34,7 @@ import {
   parseQuickConnectTarget,
   type QuickConnectTarget,
 } from "./quickConnectTarget";
-import { hostCandidates, rankJumpItems, type JumpAttention, type JumpCandidate } from "./jump/jumpRanking";
+import { freezeOrder, hostCandidates, rankJumpItems, type JumpAttention, type JumpCandidate } from "./jump/jumpRanking";
 import {
   backgroundSessionEntries,
   jumpToSession,
@@ -160,6 +160,8 @@ export function JumpPalette({
   const modalRef = useRef<HTMLDivElement>(null);
   const closedRef = useRef(false);
   const probeSeq = useRef(0);
+  const orderRef = useRef<{ token: string; keys: string[] } | null>(null);
+  const [announcement, setAnnouncement] = useState("");
   const queryClient = useQueryClient();
   const listId = useId();
   const titleId = useId();
@@ -174,7 +176,16 @@ export function JumpPalette({
   const mobile = useShell() === "mobile";
   const text = SCOPE_TEXT[scope];
 
-  const showHosts = useCallback(() => setScope("hosts"), []);
+  const changeScope = useCallback((next: JumpScope) => {
+    setScope(next);
+    setConnectError(null);
+    setAnnouncement(next === "hosts" ? "只看主机" : "显示全部会话、主机和命令");
+  }, []);
+  const showHosts = useCallback(() => {
+    changeScope("hosts");
+    setQuery("");
+    setCursor(0);
+  }, [changeScope]);
   const commands = useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, onShowHosts: showHosts });
 
   const hostAssets = useMemo(
@@ -195,6 +206,10 @@ export function JumpPalette({
     [workspaces, activeWorkspaceId, background.tabs],
   );
 
+  // The order is snapshot when the palette opens and when the query or scope changes; later updates such as a
+  // renamed tab or a newly listed background terminal change rows in place or append them, never reorder.
+  const orderToken = `${scope}\n${query}`;
+  const grouped = !query.trim();
   const ranked = useMemo(() => {
     const now = Date.now();
     const items: RankedRow[] = [];
@@ -222,29 +237,43 @@ export function JumpPalette({
         });
       }
     }
-    return rankJumpItems(items, query, {
+    const fresh = rankJumpItems(items, query, {
       attentionOf: attentionOf
         ? (item) => (item.row.kind === "session" ? attentionOf(item.row.entry) : undefined)
         : undefined,
     }).map((item) => item.row);
-  }, [showAll, sessions, hostAssets, commands, historyEntries, query, attentionOf]);
+    const previous = orderRef.current?.token === orderToken ? orderRef.current.keys : null;
+    const byKey = new Map(fresh.map((row) => [rowKey(row), row]));
+    // Without a query each section freezes on its own, so rows that arrive late stay in their section.
+    const groups = grouped
+      ? (["session", "asset", "command"] as const).map((kind) => fresh.filter((row) => row.kind === kind))
+      : [fresh];
+    return groups.flatMap((group) =>
+      freezeOrder(previous, group.map(rowKey)).map((key) => byKey.get(key)!),
+    );
+  }, [showAll, sessions, hostAssets, commands, historyEntries, query, attentionOf, orderToken, grouped]);
+  useLayoutEffect(() => {
+    orderRef.current = { token: orderToken, keys: ranked.map(rowKey) };
+  }, [orderToken, ranked]);
 
-  const probeTargets = useMemo(
+  // Probe targets depend only on the hosts and the query, so unrelated updates do not probe again.
+  const probeKey = useMemo(
     () =>
-      ranked
-        .flatMap((row) => (row.kind === "asset" && row.asset.host ? [row.asset.id] : []))
-        .slice(0, PROBE_VISIBLE_LIMIT),
-    [ranked],
+      rankJumpItems(hostCandidates(hostAssets, () => 0), query)
+        .flatMap((candidate) => (candidate.asset.host ? [candidate.asset.id] : []))
+        .slice(0, PROBE_VISIBLE_LIMIT)
+        .join("\n"),
+    [hostAssets, query],
   );
 
   useEffect(() => {
-    if (probeTargets.length === 0) return;
+    if (!probeKey) return;
     const seq = ++probeSeq.current;
     const timer = window.setTimeout(() => {
-      if (seq === probeSeq.current) void useAssetReachability.getState().probe(probeTargets);
+      if (seq === probeSeq.current) void useAssetReachability.getState().probe(probeKey.split("\n"));
     }, PROBE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [probeTargets]);
+  }, [probeKey]);
 
   const quickTarget = useMemo(
     () => (databaseOnly ? null : parseQuickConnectTarget(query)),
@@ -278,7 +307,6 @@ export function JumpPalette({
         (showHidden || !hiddenIds.includes(asset.id)),
     ) ?? null;
   const showConnectionActions = assetsQuery.isSuccess && rows.length === 0;
-  const grouped = !query.trim();
 
   const activeIndex = rows.length > 0 ? Math.min(cursor, rows.length - 1) : 0;
   const activeRow = rows[activeIndex];
@@ -452,10 +480,15 @@ export function JumpPalette({
     }
   };
 
-  const toggleScope = () => {
-    setScope((current) => (current === "all" ? "hosts" : "all"));
-    setConnectError(null);
-  };
+  // Tab switches scope only while the panel has nothing else to reach; otherwise it moves between controls.
+  const panelHasControls =
+    Boolean(connectError) ||
+    Boolean(!databaseOnly && connectionProblem) ||
+    Boolean(!connectError && batchError) ||
+    assetsQuery.isError ||
+    (showAll && snippetsQuery.isError) ||
+    showConnectionActions;
+  const tabSwitchesScope = !databaseOnly && !panelHasControls;
 
   const moveCursor = (next: number) => {
     if (rows.length > 0) setCursor((next + rows.length) % rows.length);
@@ -466,9 +499,9 @@ export function JumpPalette({
     if (event.key === "Tab") {
       // Tab in the search field switches between all results and hosts; elsewhere it keeps focus in the dialog.
       const plainTab = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
-      if (plainTab && !databaseOnly && event.target === inputRef.current && !isImeKeyEvent(event)) {
+      if (plainTab && tabSwitchesScope && event.target === inputRef.current && !isImeKeyEvent(event)) {
         event.preventDefault();
-        toggleScope();
+        changeScope(scope === "all" ? "hosts" : "all");
         return;
       }
       trapOverlayTab(event, modalRef.current);
@@ -637,12 +670,11 @@ export function JumpPalette({
                   key={value}
                   type="button"
                   tabIndex={-1}
-                  className={`nx-btn nx-btn-xs ${scope === value ? "nx-btn-primary" : "nx-btn-ghost"}`}
+                  className={`nx-btn ${mobile ? "nx-btn-sm min-h-[44px] min-w-[44px]" : "nx-btn-xs"} ${scope === value ? "nx-btn-primary" : "nx-btn-ghost"}`}
                   aria-pressed={scope === value}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
-                    setScope(value);
-                    setConnectError(null);
+                    if (value !== scope) changeScope(value);
                     inputRef.current?.focus({ preventScroll: true });
                   }}
                 >
@@ -659,7 +691,7 @@ export function JumpPalette({
             return (
               <Fragment key={rowKey(row)}>
                 {header && (
-                  <div className="px-3 pb-1 pt-2 text-[10.5px] font-medium text-neutral-500" data-command-section={section}>
+                  <div role="presentation" className="px-3 pb-1 pt-2 text-[10.5px] font-medium text-neutral-500" data-command-section={section}>
                     {section}
                   </div>
                 )}
@@ -745,18 +777,19 @@ export function JumpPalette({
           />
         )}
         {!connectError && batchError &&
-          errorBanner(`可达性检测失败：${batchError}`, () => void useAssetReachability.getState().probe(probeTargets))}
+          errorBanner(`可达性检测失败：${batchError}`, () => void useAssetReachability.getState().probe(probeKey.split("\n")))}
         {assetsQuery.isError &&
           errorBanner(`资产列表加载失败：${describeError(assetsQuery.error)}`, () => void assetsQuery.refetch())}
         {showAll && snippetsQuery.isError &&
           errorBanner(`片段列表加载失败：${describeError(snippetsQuery.error)}`, () => void snippetsQuery.refetch())}
-        {showAll && background.error && (
+        {showAll && background.unlisted > 0 && (
           <div className="nx-command-error" role="status">
-            <span className="min-w-0 flex-1 truncate" title={background.error}>
-              部分后台会话未列出：{background.error}
+            <span className="min-w-0 flex-1 truncate">
+              有 {background.unlisted} 处后台会话未能列出，原因见「后台会话」页
             </span>
           </div>
         )}
+        <div className="nx-sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
         <div id={helpId} className="nx-command-help flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/70 bg-neutral-950/40 px-4 py-2 text-[10.5px]">
           <span className="flex items-center gap-1.5">
             <span className="nx-kbd">↑</span>
@@ -765,7 +798,7 @@ export function JumpPalette({
           <span className="flex items-center gap-1.5">
             <span className="nx-kbd">Enter</span> {showAll ? "打开" : "连接"}
           </span>
-          {!databaseOnly && (
+          {tabSwitchesScope && (
             <span className="flex items-center gap-1.5">
               <span className="nx-kbd">Tab</span> {showAll ? "只看主机" : "全部"}
             </span>

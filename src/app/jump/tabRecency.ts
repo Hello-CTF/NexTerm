@@ -18,6 +18,14 @@ export function tabRecency(tabId: string): number {
   return activations.get(tabId) ?? 0;
 }
 
+// pruneTabRecency forgets tabs that are no longer open.
+export function pruneTabRecency(openTabIds: ReadonlySet<string>): void {
+  for (const tabId of activations.keys()) {
+    if (!openTabIds.has(tabId)) activations.delete(tabId);
+  }
+  if (lastActive && !openTabIds.has(lastActive)) lastActive = null;
+}
+
 export function resetTabRecency(): void {
   activations.clear();
   sequence = 0;
@@ -35,7 +43,12 @@ function activeTabOf(state: RecencyState): string | null {
 // useTabRecencyTracker records which tab is active as the user moves around, for the jump palette's order.
 export function useTabRecencyTracker(): void {
   useEffect(() => {
+    let workspaces: RecencyState["workspaces"] | null = null;
     const record = (state: RecencyState) => {
+      if (state.workspaces !== workspaces) {
+        workspaces = state.workspaces;
+        pruneTabRecency(new Set(workspaces.flatMap((workspace) => workspace.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id)))));
+      }
       const tabId = activeTabOf(state);
       if (tabId) noteTabActivated(tabId);
     };

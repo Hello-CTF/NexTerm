@@ -89,6 +89,7 @@ export interface JumpHostLike {
   host: string | null;
   username: string | null;
   tags: string;
+  kind: string;
 }
 
 // hostCandidates turns assets into host candidates: searchable by name, host, user and tags, ranked by
@@ -102,8 +103,18 @@ export function hostCandidates<T extends JumpHostLike>(
     .map((asset) => ({
       section: "host",
       label: asset.name,
-      keywords: [asset.host, asset.username, asset.tags],
+      keywords: [asset.host, asset.username, asset.tags, asset.kind],
       recency: recencyOf(asset),
       asset,
     }));
+}
+
+// freezeOrder keeps the rows already shown in their shown order, drops the ones that are gone and appends new
+// ones in ranked order. Without a previous order it returns the ranked order.
+export function freezeOrder(previous: readonly string[] | null, ranked: readonly string[]): string[] {
+  if (!previous) return [...ranked];
+  const present = new Set(ranked);
+  const kept = previous.filter((key) => present.has(key));
+  const seen = new Set(kept);
+  return [...kept, ...ranked.filter((key) => !seen.has(key))];
 }

@@ -174,8 +174,18 @@ describe("menu and command palette accessibility", () => {
     expect(tab.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(input);
     expect(input.getAttribute("aria-label")).toBe("资产搜索");
-    keyDown(input, "Tab");
+    expect([...mounted.container.querySelectorAll('[aria-live="polite"]')].map((node) => node.textContent)).toContain("只看主机");
+    // With no assets the hosts scope offers first-connection actions, so Tab is left to move focus to them.
+    expect(mounted.container.querySelector('[role="group"][aria-label="连接操作"]')).not.toBeNull();
+    const toActions = keyDown(input, "Tab");
+    expect(toActions.defaultPrevented).toBe(false);
+    expect(input.getAttribute("aria-label")).toBe("资产搜索");
+    const all = [...mounted.container.querySelectorAll<HTMLButtonElement>('[aria-label="跳转范围"] button')]
+      .find((button) => button.textContent === "全部");
+    click(all!);
+    await flush();
     expect(input.getAttribute("aria-label")).toBe("搜索会话、主机或命令");
+    input.focus();
     const shiftTab = keyDown(input, "Tab", { shiftKey: true });
     expect(shiftTab.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(input);

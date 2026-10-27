@@ -14,10 +14,11 @@ interface TestAsset {
   host: string | null;
   username: string | null;
   tags: string;
+  kind: string;
 }
 
 function asset(id: string, name: string, extra: Partial<TestAsset> = {}): TestAsset {
-  return { id, name, host: null, username: null, tags: "", ...extra };
+  return { id, name, host: null, username: null, tags: "", kind: "ssh", ...extra };
 }
 
 const NOW = 1_700_000_000_000;
