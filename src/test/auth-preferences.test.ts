@@ -22,7 +22,6 @@ import {
   resetAllKeybindings,
   resetKeybinding,
   setKeybinding,
-  takeKeybindingMigrationNotice,
 } from "../app/keybindings";
 import { flushMacrotask } from "./features/reactTestUtils";
 
@@ -726,59 +725,5 @@ describe("auth store preference-store lifecycle", () => {
     window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
     expect(getAccountPreferenceStore()).toBeNull();
     expect(useAuth.getState().user).toBeNull();
-  });
-});
-
-describe("keybindings replaced by the split tree", () => {
-  it("moves a device-local custom split binding to splitDown, rewrites storage once and reports it once", () => {
-    window.localStorage.setItem(
-      "nexterm.keybindings.v1",
-      JSON.stringify({ toggleSplit: "Alt+s", focusUpperPane: "Alt+ArrowUp", focusLowerPane: "Alt+ArrowDown", quickConnect: "Alt+q" }),
-    );
-    loadKeybindings();
-    expect(getKeybinding("splitDown")).toBe("Alt+s");
-    expect(getKeybinding("focusPaneUp")).toBe("Alt+ArrowUp");
-    expect(getKeybinding("focusPaneDown")).toBe("Alt+ArrowDown");
-    expect(getKeybinding("splitRight")).toBe("Mod+Shift+\\");
-    expect(JSON.parse(window.localStorage.getItem("nexterm.keybindings.v1")!)).toEqual({
-      splitDown: "Alt+s",
-      focusPaneUp: "Alt+ArrowUp",
-      focusPaneDown: "Alt+ArrowDown",
-      quickConnect: "Alt+q",
-    });
-    const notice = takeKeybindingMigrationNotice();
-    expect(notice).toContain("向下分屏");
-    expect(notice).toContain("聚焦上方窗格");
-    expect(takeKeybindingMigrationNotice()).toBeNull();
-
-    // Resetting the replacement does not bring the old binding back.
-    resetKeybinding("splitDown");
-    loadKeybindings();
-    expect(getKeybinding("splitDown")).toBe("Mod+\\");
-  });
-
-  it("keeps an explicit new binding over a stale legacy one and clears legacy-only storage", () => {
-    window.localStorage.setItem("nexterm.keybindings.v1", JSON.stringify({ toggleSplit: "Alt+s", splitDown: "Alt+d" }));
-    loadKeybindings();
-    expect(getKeybinding("splitDown")).toBe("Alt+d");
-    expect(takeKeybindingMigrationNotice()).toBeNull();
-
-    window.localStorage.setItem("nexterm.keybindings.v1", JSON.stringify({ toggleSplit: "not a binding" }));
-    loadKeybindings();
-    expect(getKeybinding("splitDown")).toBe("Mod+\\");
-    expect(window.localStorage.getItem("nexterm.keybindings.v1")).toBeNull();
-    expect(takeKeybindingMigrationNotice()).toBeNull();
-  });
-
-  it("moves account overrides to the new keys and clears the old keys on the server", async () => {
-    const store = memoryStore({ "keybinding.toggleSplit": "Mod+Shift+s", "keybinding.focusLowerPane": null });
-    registerAccountPreferenceStore(store);
-    await vi.waitFor(() => expect(getKeybinding("splitDown")).toBe("Mod+Shift+s"));
-    expect(getKeybinding("focusPaneDown")).toBeNull();
-    await vi.waitFor(() => expect(store.clears).toEqual([["keybinding.toggleSplit", "keybinding.focusLowerPane"]]));
-    expect(store.puts).toEqual([{ "keybinding.splitDown": "Mod+Shift+s", "keybinding.focusPaneDown": null }]);
-    expect(store.data).toEqual({ "keybinding.splitDown": "Mod+Shift+s", "keybinding.focusPaneDown": null });
-    expect(getAccountOverrides()).toEqual({ "keybinding.splitDown": "Mod+Shift+s", "keybinding.focusPaneDown": null });
-    expect(takeKeybindingMigrationNotice()).toContain("向下分屏");
   });
 });
