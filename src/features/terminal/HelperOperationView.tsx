@@ -176,11 +176,14 @@ function versionCompatibilityText(
   local: HelperVersionPresentation | null | undefined,
   running: HelperVersionPresentation | null | undefined,
   update: HelperUpdatePresentation | null | undefined,
+  failed: boolean,
 ): string {
   switch (compatibility) {
     case "compatible": {
+      // A failed operation cannot be "continued": the protocol matching is all that can be said.
+      const base = failed ? "协议兼容" : "协议兼容，可继续使用";
       const updateAvailable = update?.status === "available" || update?.status === "deferred";
-      return updateAvailable ? "协议兼容，可继续使用；有可用更新。" : "协议兼容，可继续使用。";
+      return updateAvailable ? `${base}；有可用更新。` : `${base}。`;
     }
     case "incompatible": {
       const localProtocol = versionValue(local, "protocol");
@@ -314,11 +317,13 @@ function VersionComparison({
   running,
   compatibility,
   update,
+  failed,
 }: {
   local: HelperVersionPresentation | null | undefined;
   running: HelperVersionPresentation | null | undefined;
   compatibility: HelperCompatibility | undefined;
   update: HelperUpdatePresentation | null | undefined;
+  failed: boolean;
 }) {
   if (local?.known === true && versionsIdentical(local, running)) return <IdenticalVersion version={local} />;
   const anyKnown = local?.known === true || running?.known === true;
@@ -334,7 +339,7 @@ function VersionComparison({
       )}
       <p className="text-neutral-400">
         <span className="font-medium">兼容性：</span>
-        {versionCompatibilityText(compatibility ?? "unknown", local, running, update)}
+        {versionCompatibilityText(compatibility ?? "unknown", local, running, update, failed)}
       </p>
     </div>
   );
@@ -444,6 +449,7 @@ export function HelperOperationView({
                 running={runningVersion}
                 compatibility={compatibility}
                 update={update}
+                failed={failed}
               />
             )}
           </div>

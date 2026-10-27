@@ -266,6 +266,18 @@ describe("HelperOperationView", () => {
     expect(sectionByLabel(view.container, "组件更新").textContent).toContain("有可用更新");
   });
 
+  it("does not promise continuing on a compatible protocol when the operation failed", () => {
+    const view = renderView({
+      stage: "failed",
+      reason: "启动超时",
+      localVersion: { ...IDENTICAL, release: "1.3.0" },
+      runningVersion: IDENTICAL,
+      compatibility: "compatible",
+    });
+    expect(view.container.textContent).toContain("兼容性：协议兼容。");
+    expect(view.container.textContent).not.toContain("可继续使用");
+  });
+
   it("explains the consequence of an incompatible protocol", () => {
     const view = renderView({
       stage: "vendor_specific_stage",
