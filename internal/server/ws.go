@@ -255,7 +255,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	connection, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Terminal, &websocket.AcceptOptions{
 		OriginPatterns: s.options.AllowedOrigins,
-		Subprotocols:   []string{channelInputSubprotocol, channelSubprotocol},
+		Subprotocols:   []string{channelInputSubprotocol},
 	}))
 	if err != nil {
 		return

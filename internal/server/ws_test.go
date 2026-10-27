@@ -19,15 +19,15 @@ import (
 var errTestReceiverDetached = errors.New("test receiver detached")
 
 func TestWebSocketCompressionNegotiation(t *testing.T) {
-	for _, test := range []struct{ name, path string }{
-		{name: "events", path: "/ws/events"},
-		{name: "channel", path: "/ws/channel/test"},
+	for _, test := range []struct{ name, path, subprotocol string }{
+		{name: "events", path: "/ws/events", subprotocol: channelSubprotocol},
+		{name: "channel", path: "/ws/channel/test", subprotocol: channelInputSubprotocol},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, httpServer := newTestHTTP(t, testConfig(t, false))
 			conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(httpServer.URL, "http")+test.path, &websocket.DialOptions{
 				CompressionMode: websocket.CompressionContextTakeover,
-				Subprotocols:    []string{"nexterm"},
+				Subprotocols:    []string{test.subprotocol},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -36,8 +36,8 @@ func TestWebSocketCompressionNegotiation(t *testing.T) {
 			if got := response.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(got, "permessage-deflate") {
 				t.Fatalf("compression extensions = %q, want permessage-deflate", got)
 			}
-			if got := response.Header.Get("Sec-WebSocket-Protocol"); got != "nexterm" {
-				t.Fatalf("subprotocol = %q, want nexterm", got)
+			if got := response.Header.Get("Sec-WebSocket-Protocol"); got != test.subprotocol {
+				t.Fatalf("subprotocol = %q, want %q", got, test.subprotocol)
 			}
 		})
 	}
