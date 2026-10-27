@@ -301,7 +301,7 @@ describe("BackgroundSessions table", () => {
 
       const old = row(view, "old");
       expect(cell(old, "background-status").textContent).toBe("—");
-      expect(cell(old, "background-status").title).toContain("版本较旧");
+      expect(cell(old, "background-status").title).toContain("未开启状态检测");
       expect(cell(old, "background-output").textContent).toBe("—");
       expect(cell(old, "background-detached").textContent).toBe("—");
       expect(cell(old, "background-time").title).toContain("创建（主机时间）：2026-10-27 11:00:00");

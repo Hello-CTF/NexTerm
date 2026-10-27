@@ -131,7 +131,7 @@ function statusView(tab: BackgroundTab): StatusView {
   return {
     label: "—",
     hint: tab.durable || tab.remote
-      ? "这台主机上的 NexTerm 组件没有报告状态：组件版本较旧，或关闭了状态检测"
+      ? "这台主机上的 NexTerm 组件未开启状态检测"
       : "普通终端不会报告状态",
     tone: "muted",
   };
