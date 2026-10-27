@@ -26,7 +26,7 @@ vi.mock("@xterm/xterm", () => ({
     cols = 80;
     rows = 24;
     modes = { bracketedPasteMode: false };
-    buffer = { active: { type: "normal", baseY: 0, viewportY: 0 } };
+    buffer = { active: { type: "normal", baseY: 0, viewportY: 0 }, onBufferChange: () => ({ dispose: () => {} }) };
     element: HTMLElement | null = null;
     options: Record<string, unknown>;
     resize = vi.fn((cols: number, rows: number) => {

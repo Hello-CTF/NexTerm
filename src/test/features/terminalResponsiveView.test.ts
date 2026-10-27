@@ -63,6 +63,7 @@ vi.mock("@xterm/xterm", () => ({
     };
     buffer = {
       active: { type: "normal", baseY: 0, viewportY: 0 },
+      onBufferChange: () => ({ dispose: () => {} }),
     };
     scrollToBottom = vi.fn(() => {
       this.buffer.active.viewportY = this.buffer.active.baseY;
