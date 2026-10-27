@@ -122,9 +122,11 @@ export function applyEarlierHistoryPage(
   };
 }
 
-// The replay terminal filled its scrollback: stop loading earlier pages.
+// The replay terminal filled its scrollback: stop loading earlier pages. This
+// also applies when the read reached the base, because the terminal dropped
+// the top of the loaded output.
 export function capEarlierHistoryLines(state: EarlierHistoryState): EarlierHistoryState {
-  if (state.exhausted || state.capped !== null) return state;
+  if (state.capped !== null) return state;
   return { ...state, capped: "lines" };
 }
 
