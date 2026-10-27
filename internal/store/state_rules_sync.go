@@ -161,6 +161,12 @@ func deleteSyncTombstone(ctx context.Context, tx *gorm.DB, id string) error {
 	return err
 }
 
+// RecordSyncTombstoneTx records the deletion of the caller's object id inside
+// tx, for stores that keep their own rows in the application database.
+func RecordSyncTombstoneTx(ctx context.Context, tx *gorm.DB, id, kind string, deletedAt int64) error {
+	return (*Store)(nil).syncTombstonePut(ctx, tx, id, kind, deletedAt)
+}
+
 // recordSyncTombstoneNow records a user deletion of id at the current time.
 func (s *Store) recordSyncTombstoneNow(ctx context.Context, tx *gorm.DB, id, kind string) error {
 	return s.syncTombstonePut(ctx, tx, id, kind, ids.NowMS())

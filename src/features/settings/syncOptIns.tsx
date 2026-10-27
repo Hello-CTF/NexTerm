@@ -63,6 +63,12 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     label: "同步自定义 AI 技能与内置技能的修改",
     hint: "默认开启。只同步你的自定义技能、对内置技能的修改和禁用；内置技能本身随应用提供。",
   },
+  {
+    key: "memory",
+    summary: "AI 记忆",
+    label: "同步 AI 记忆",
+    hint: "默认关闭。记忆内容端到端加密同步，离开本机前和写入前都会再次脱敏疑似密钥。",
+  },
 ];
 
 export function syncOptInSummary(optIn: SyncKindOptIn): string {

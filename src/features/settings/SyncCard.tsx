@@ -1094,11 +1094,12 @@ const OPT_IN_BY_KIND: Partial<Record<string, keyof SyncKindOptIn>> = {
   state_rule: "stateRules",
   runbook_template: "runbookTemplates",
   skill: "skills",
+  memory: "memory",
 };
 
 // GENERIC_COLLECT_KINDS are collected through sync_collect_kind_objects: the server returns each object's
 // canonical payload, which is sealed as is so hashes and revisions match the desktop engine.
-const GENERIC_COLLECT_KINDS: SyncObjectKind[] = ["state_rule", "runbook_template", "skill"];
+const GENERIC_COLLECT_KINDS: SyncObjectKind[] = ["state_rule", "runbook_template", "skill", "memory"];
 
 function allKindOptIn(): SyncKindOptIn {
   const optIn = {} as SyncKindOptIn;
@@ -1269,6 +1270,10 @@ async function decodeRemoteObject(entry: { id: string; seq: number; blob_hash: s
       : entry.id;
     return { ...base, name, updatedAt: g.updatedAt ?? 0 };
   }
+  if (kind === "memory") {
+    const m = JSON.parse(text) as { topic?: string; updatedAt?: number };
+    return { ...base, name: m.topic || entry.id, updatedAt: m.updatedAt ?? 0 };
+  }
   const p = JSON.parse(text) as { name?: string; updatedAt?: number; deletedAt?: number };
   return { ...base, name: p.name ?? entry.id, updatedAt: p.updatedAt ?? 0, deletedAt: p.deletedAt ?? null };
 }
@@ -1373,6 +1378,7 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
       case "state_rule": return 9;
       case "runbook_template": return 10;
       case "skill": return 11;
+      case "memory": return 12;
       case "tombstone": return 14;
       case "transcript": return 15;
       default: return 16;

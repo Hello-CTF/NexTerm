@@ -1518,6 +1518,7 @@ export type KindOptIn = {
   stateRules: boolean;
   runbookTemplates: boolean;
   skills: boolean;
+  memory: boolean;
 };
 
 export type KindOptInPatch = {
@@ -1529,6 +1530,7 @@ export type KindOptInPatch = {
   stateRules?: boolean | null;
   runbookTemplates?: boolean | null;
   skills?: boolean | null;
+  memory?: boolean | null;
 };
 
 export type KnownHostRequest = {

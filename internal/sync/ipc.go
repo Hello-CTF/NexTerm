@@ -43,7 +43,7 @@ type LinkResetPasswordRequest struct {
 
 // KindOptIn is the per-account-user isolated sync opt-in view: known_host (host trust), AI model profiles, AI permissions,
 // AI grants (device authorization and permission modes), and appearance shortcuts are enabled by default.
-// State rules, runbook templates and AI skill overrides are enabled by default too.
+// State rules, runbook templates and AI skill overrides are enabled by default too; AI memory is off by default.
 type KindOptIn struct {
 	KnownHost        bool `json:"knownHost"`
 	AIProfile        bool `json:"aiProfile"`
@@ -53,6 +53,7 @@ type KindOptIn struct {
 	StateRules       bool `json:"stateRules"`
 	RunbookTemplates bool `json:"runbookTemplates"`
 	Skills           bool `json:"skills"`
+	Memory           bool `json:"memory"`
 }
 
 type KindOptInPatch struct {
@@ -64,6 +65,7 @@ type KindOptInPatch struct {
 	StateRules       *bool `json:"stateRules,omitempty"`
 	RunbookTemplates *bool `json:"runbookTemplates,omitempty"`
 	Skills           *bool `json:"skills,omitempty"`
+	Memory           *bool `json:"memory,omitempty"`
 }
 
 // kindOptInUserID resolves the owning user of the opt-in: the /rpc session-injected identity takes precedence; desktop anonymous

@@ -17,9 +17,9 @@ import {
   syncOptInSummary,
 } from "../../features/settings/syncOptIns";
 
-const ALL_ON = { knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true, stateRules: true, runbookTemplates: true, skills: true };
-const MIXED = { knownHost: true, aiProfile: false, aiPermission: true, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false };
-const ALL_OFF = { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false };
+const ALL_ON = { knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true, stateRules: true, runbookTemplates: true, skills: true, memory: true };
+const MIXED = { knownHost: true, aiProfile: false, aiPermission: true, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false };
+const ALL_OFF = { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false };
 
 let mounted: MountedView | undefined;
 
@@ -48,6 +48,7 @@ describe("Shared SyncOptInSection toggles", () => {
     expect(rendered[5]).toBe("同步会话状态规则默认开启。同步后的规则会推送到本机的会话助手；规则顺序按各设备收到的先后排列。");
     expect(rendered[6]).toBe("同步 Runbook 模板默认开启。模板中的命令按保存时的快照同步。");
     expect(rendered[7]).toBe("同步自定义 AI 技能与内置技能的修改默认开启。只同步你的自定义技能、对内置技能的修改和禁用；内置技能本身随应用提供。");
+    expect(rendered[8]).toBe("同步 AI 记忆默认关闭。记忆内容端到端加密同步，离开本机前和写入前都会再次脱敏疑似密钥。");
     // Rendered output matches the exported constants verbatim: both consoles get this exact same copy
     for (const [i, item] of SYNC_OPT_IN_ITEMS.entries()) {
       expect(rendered[i]).toBe(item.label + item.hint);
@@ -57,7 +58,7 @@ describe("Shared SyncOptInSection toggles", () => {
   it("renders the exact on/off summary for every toggle", async () => {
     mountSection(MIXED);
     await flush();
-    const summary = "已知主机 已开启 · AI 模型档案 已关闭 · AI 权限 已开启 · AI 授权 已关闭 · 外观快捷键 已关闭 · 状态规则 已关闭 · Runbook 模板 已关闭 · AI 技能 已关闭";
+    const summary = "已知主机 已开启 · AI 模型档案 已关闭 · AI 权限 已开启 · AI 授权 已关闭 · 外观快捷键 已关闭 · 状态规则 已关闭 · Runbook 模板 已关闭 · AI 技能 已关闭 · AI 记忆 已关闭";
     expect(mounted!.container.textContent).toContain(summary);
     expect(syncOptInSummary(MIXED)).toBe(summary);
   });
@@ -66,7 +67,7 @@ describe("Shared SyncOptInSection toggles", () => {
     const onChange = mountSection(MIXED);
     await flush();
     const boxes = [...mounted!.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-    expect(boxes.map((b) => b.checked)).toEqual([true, false, true, false, false, false, false, false]);
+    expect(boxes.map((b) => b.checked)).toEqual([true, false, true, false, false, false, false, false, false]);
     click(boxes[0]);
     expect(onChange).toHaveBeenCalledWith({ knownHost: false });
     click(boxes[1]);

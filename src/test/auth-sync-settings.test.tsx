@@ -145,7 +145,7 @@ const AI_PROFILE_DTO = {
 };
 
 let mounted: MountedView | undefined;
-let optInState: { knownHost: boolean; aiProfile: boolean; aiPermission?: boolean; aiGrant?: boolean; preferences?: boolean; stateRules?: boolean; runbookTemplates?: boolean; skills?: boolean };
+let optInState: { knownHost: boolean; aiProfile: boolean; aiPermission?: boolean; aiGrant?: boolean; preferences?: boolean; stateRules?: boolean; runbookTemplates?: boolean; skills?: boolean; memory?: boolean };
 
 function mountSyncCard(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -167,7 +167,7 @@ async function runAutoSync(wrapInAct = true) {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../features/settings/SyncCard");
   const execute = async () => {
     try {
-      const result = await runWebSync(DEK, { aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, ...optInState });
+      const result = await runWebSync(DEK, { aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, ...optInState });
       if (result) {
         if (wrapInAct) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
         else await act(() => window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result })));

@@ -21,6 +21,7 @@ const (
 	optInStateRule
 	optInRunbookTemplate
 	optInSkill
+	optInMemory
 	optInCount
 )
 
@@ -67,6 +68,10 @@ var optInSpecs = []optInSpec{
 	{
 		id: optInSkill, get: (*store.Store).SkillSyncOptIn, set: (*store.Store).SetSkillSyncOptIn,
 		view: func(v *KindOptIn) *bool { return &v.Skills }, patch: func(p KindOptInPatch) *bool { return p.Skills },
+	},
+	{
+		id: optInMemory, get: (*store.Store).MemorySyncOptIn, set: (*store.Store).SetMemorySyncOptIn,
+		view: func(v *KindOptIn) *bool { return &v.Memory }, patch: func(p KindOptInPatch) *bool { return p.Memory },
 	},
 }
 
@@ -138,7 +143,7 @@ var (
 // decryptOrder is the fixed decryption attempt order; AAD binds kind, so a wrong kind can never decrypt.
 // It must list every registered kind exactly once.
 var decryptOrder = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference,
-	KindStateRule, KindRunbookTemplate, KindSkill}
+	KindStateRule, KindRunbookTemplate, KindSkill, KindMemory}
 
 func init() {
 	syncKinds = []kindSpec{
@@ -298,6 +303,19 @@ func init() {
 				return e.applySkillTombstone(ctx, objectID, tombstone.DeletedAt, report)
 			},
 			collect:        (*Engine).collectSkillObjects,
+			browserCollect: true,
+		},
+		{
+			kind: KindMemory, rank: 12, optIn: optInMemory, aiOwner: true, idInPayload: true,
+			newPayload:  newPayload[memoryObject],
+			displayName: memoryDisplayName,
+			apply: func(e *Engine, ctx context.Context, _ string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {
+				return e.applyMemoryObject(ctx, plaintext, report)
+			},
+			applyTombstone: func(e *Engine, ctx context.Context, objectID string, tombstone tombstoneObject, report *SyncReport, _ string) (bool, bool) {
+				return e.applyMemoryTombstone(ctx, objectID, tombstone.DeletedAt, report)
+			},
+			collect:        (*Engine).collectMemoryObjects,
 			browserCollect: true,
 		},
 		{

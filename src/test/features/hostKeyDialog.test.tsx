@@ -40,7 +40,7 @@ vi.mock("../../ipc/commands", () => ({
       lastError: null,
     }),
     status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
-    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false }),
+    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false }),
     wake: vi.fn().mockResolvedValue(undefined),
   },
   terminalApi: {},

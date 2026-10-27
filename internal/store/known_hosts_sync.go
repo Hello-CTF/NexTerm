@@ -194,6 +194,21 @@ func (s *Store) SetSkillSyncOptIn(ctx context.Context, userID string, enabled bo
 	return s.SettingSet(ctx, "sync.optin.skill."+userID, syncOptInValue(enabled))
 }
 
+// MemorySyncOptIn defaults off: AI memory may hold sensitive notes, so it syncs only when the user opts in.
+func (s *Store) MemorySyncOptIn(ctx context.Context, userID string) (bool, error) {
+	if err := syncOptInUser(userID, " AI 记忆"); err != nil {
+		return false, err
+	}
+	return s.syncOptInGetOr(ctx, "sync.optin.memory."+userID, false)
+}
+
+func (s *Store) SetMemorySyncOptIn(ctx context.Context, userID string, enabled bool) error {
+	if err := syncOptInUser(userID, " AI 记忆"); err != nil {
+		return err
+	}
+	return s.SettingSet(ctx, "sync.optin.memory."+userID, syncOptInValue(enabled))
+}
+
 func (s *Store) AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombstoneID string, deletedAt int64) error {
 	userID, hasIdentity := SyncOptInUserID(ctx)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

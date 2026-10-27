@@ -29,6 +29,7 @@ const (
 	KindStateRule       = "state_rule"
 	KindRunbookTemplate = "runbook_template"
 	KindSkill           = "skill"
+	KindMemory          = "memory"
 )
 
 const (

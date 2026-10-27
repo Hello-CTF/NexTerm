@@ -8,6 +8,7 @@ import (
 )
 
 // Each opt-in switch must persist, read back and gate its own kinds independently of the others.
+// AI memory defaults off; every other switch defaults on.
 func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 	instance := newTestInstance(t, false)
 	cases := []struct {
@@ -24,12 +25,17 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 		{"stateRules", KindOptInPatch{StateRules: boolPtr(false)}, func(v KindOptIn) bool { return !v.StateRules }, KindStateRule},
 		{"runbookTemplates", KindOptInPatch{RunbookTemplates: boolPtr(false)}, func(v KindOptIn) bool { return !v.RunbookTemplates }, KindRunbookTemplate},
 		{"skills", KindOptInPatch{Skills: boolPtr(false)}, func(v KindOptIn) bool { return !v.Skills }, KindSkill},
+		{"memory", KindOptInPatch{Memory: boolPtr(false)}, func(v KindOptIn) bool { return !v.Memory }, KindMemory},
 	}
-	gated := []string{KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference, KindStateRule, KindRunbookTemplate, KindSkill}
+	gated := []string{KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference, KindStateRule, KindRunbookTemplate, KindSkill, KindMemory}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			userID := "u-" + tc.name
 			ctx := WithUserID(context.Background(), userID)
+			// Default-off switches start enabled so each case disables exactly one.
+			if _, err := instance.service.KindOptInSet(ctx, KindOptInPatch{Memory: boolPtr(true)}); err != nil {
+				t.Fatal(err)
+			}
 			view, err := instance.service.KindOptInSet(ctx, tc.patch)
 			if err != nil {
 				t.Fatal(err)
@@ -38,7 +44,7 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 				t.Fatalf("switch not disabled: %+v", view)
 			}
 			disabled := 0
-			for _, flag := range []bool{view.KnownHost, view.AIProfile, view.AIPermission, view.AIGrant, view.Preferences, view.StateRules, view.RunbookTemplates, view.Skills} {
+			for _, flag := range []bool{view.KnownHost, view.AIProfile, view.AIPermission, view.AIGrant, view.Preferences, view.StateRules, view.RunbookTemplates, view.Skills, view.Memory} {
 				if !flag {
 					disabled++
 				}
@@ -69,15 +75,26 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 	}
 }
 
+func TestKindOptInDefaults(t *testing.T) {
+	instance := newTestInstance(t, false)
+	view, err := instance.service.KindOptInGet(WithUserID(context.Background(), "u-defaults"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Memory || !view.StateRules || !view.RunbookTemplates || !view.Skills || !view.Preferences {
+		t.Fatalf("defaults=%+v, want memory off and the others on", view)
+	}
+}
+
 // The opt-in key is stored with reconciled cursors; its encoding must not change for existing switches.
 func TestKindOptInKeyEncoding(t *testing.T) {
-	if got := (kindOptIn{}).key(); got != "optin:00000000" {
+	if got := (kindOptIn{}).key(); got != "optin:000000000" {
 		t.Fatalf("zero key=%q", got)
 	}
-	if got := (kindOptIn{optInKnownHost: true, optInAIGrant: true}).key(); got != "optin:10010000" {
+	if got := (kindOptIn{optInKnownHost: true, optInAIGrant: true}).key(); got != "optin:100100000" {
 		t.Fatalf("key=%q", got)
 	}
-	if got := allKindOptIn().key(); got != "optin:11111111" {
+	if got := allKindOptIn().key(); got != "optin:111111111" {
 		t.Fatalf("all key=%q", got)
 	}
 }
@@ -124,9 +141,10 @@ func TestSortObjectsForPushKindOrder(t *testing.T) {
 		"m-rule":       {kind: KindStateRule},
 		"n-runbook":    {kind: KindRunbookTemplate},
 		"o-skill":      {kind: KindSkill},
+		"p-memory":     {kind: KindMemory},
 	}
 	want := []string{"k-group", "j-credential", "i-snippet", "h-asset", "g-knownhost", "f-profile",
-		"e-permission", "d-grant", "c-preference", "m-rule", "n-runbook", "o-skill", "b-tombstone", "a-transcript", "l-unknown"}
+		"e-permission", "d-grant", "c-preference", "m-rule", "n-runbook", "o-skill", "p-memory", "b-tombstone", "a-transcript", "l-unknown"}
 	got := sortObjectsForPush(objects)
 	if len(got) != len(want) {
 		t.Fatalf("order=%v", got)

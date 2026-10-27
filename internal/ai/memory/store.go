@@ -194,7 +194,7 @@ func (s *Store) Delete(ctx context.Context, scope Scope, id string, expectedVers
 		if result.RowsAffected != 1 {
 			return &VersionConflictError{ID: id, Expected: expectedVersion, Actual: current.Version}
 		}
-		return nil
+		return s.recordDeleteTombstone(ctx, tx, id)
 	})
 }
 
