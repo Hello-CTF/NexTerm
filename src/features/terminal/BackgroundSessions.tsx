@@ -205,7 +205,7 @@ function timeView(tab: BackgroundTab, now: number): TimeView {
     lines.push("转入后台：仍有设备连接着这个终端");
   } else if (left && tab.detachedSinceOpen) {
     detached = `至少 ${ago(left.age)}转入后台`;
-    lines.push(`转入后台：不晚于 ${absoluteTime(left.at)}（自本次打开应用起）`);
+    lines.push(`转入后台：不晚于 ${absoluteTime(left.at)}（自本应用重新打开此终端起）`);
   } else if (left) {
     detached = `${ago(left.age)}转入后台`;
     lines.push(`转入后台${clock}：${absoluteTime(left.at)}`);

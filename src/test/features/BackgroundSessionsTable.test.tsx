@@ -452,7 +452,7 @@ describe("BackgroundSessions table", () => {
     const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(cell(v.container, "background-status").textContent).toBe("空闲"));
     try {
       expect(cell(view.container, "background-detached").textContent).toBe("至少 6 分钟前转入后台");
-      expect(cell(view.container, "background-time").title).toContain("转入后台：不晚于 2026-10-27 11:54:00（自本次打开应用起）");
+      expect(cell(view.container, "background-time").title).toContain("转入后台：不晚于 2026-10-27 11:54:00（自本应用重新打开此终端起）");
     } finally {
       view.unmount();
     }
