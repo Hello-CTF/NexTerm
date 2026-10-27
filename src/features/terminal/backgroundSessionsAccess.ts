@@ -12,8 +12,6 @@ const COUNT_REFRESH_MS = 10_000;
 export type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   lastOutputMsAgo?: number;
   remote?: boolean;
-  // The host's helper predates activity reporting, so output and detach times are unknown.
-  activityUnknown?: boolean;
   // A client is attached to the helper session right now, so it has no detach time.
   attachedElsewhere?: boolean;
   detachedMsAgo?: number;
@@ -234,10 +232,9 @@ export function collectBackgroundTabs(
               lastOutputMsAgo: tab.activity.lastOutputMsAgo,
               detachedAt: tab.activity.detachedAt ?? undefined,
               detachedMsAgo: tab.activity.detachedMsAgo,
-              hostClock: tab.activity.asOf === undefined || undefined,
               attachedElsewhere: tab.activity.attached || undefined,
             }
-          : { activityUnknown: true }),
+          : {}),
       });
     }
   }
