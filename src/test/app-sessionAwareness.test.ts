@@ -23,6 +23,7 @@ import {
 import { applyAwareness, awarenessBadge, tabAwareness } from "../app/sessionAwarenessStore";
 import { useUi, type AppTab, type Pane, type Workspace } from "../app/store";
 import type { TerminalAttentionEvent } from "../ipc/events";
+import { hideMobileHome, resetMobileHomeForTest, showMobileHome } from "../app/shell/mobileHome";
 
 function terminal(id: string, tabId: string): AppTab {
   return { id, kind: "terminal", title: id, sessionId: "s", tabId, closable: true };
@@ -98,6 +99,20 @@ describe("session awareness store", () => {
 });
 
 describe("seen state", () => {
+  it("reports nothing while the mobile home covers the workspaces, and the tab once the home closes", () => {
+    showMobileHome();
+    try {
+      applyAwareness([event("T1", 1)]);
+      markVisibleAwarenessSeen();
+      expect(mocks.attentionSeen).not.toHaveBeenCalled();
+      hideMobileHome();
+      markVisibleAwarenessSeen();
+      expect(mocks.attentionSeen).toHaveBeenCalledWith("T1", event("T1", 1).since);
+    } finally {
+      resetMobileHomeForTest();
+    }
+  });
+
   it("reports a needs_me state on a visible tab once, and not for tabs out of view", () => {
     applyAwareness([event("T1", 1), event("T2", 2), event("T3", 3)]);
     markVisibleAwarenessSeen();

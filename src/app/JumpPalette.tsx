@@ -32,6 +32,7 @@ import { workspaceLayoutTree } from "./paneLayout";
 import { resolveActivePane } from "./splitTree";
 import { TabAttentionBadge } from "./workspace/tabStrip";
 import { awarenessBadge, useTabAwareness } from "./sessionAwarenessStore";
+import { hideMobileHome } from "./shell/mobileHome";
 import { IconDownload, IconLoader, IconPlus, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
 import {
   formatQuickConnectTarget,
@@ -510,6 +511,7 @@ export function JumpPalette({
       case "session":
         if (closedRef.current) return;
         closeOverlay();
+        hideMobileHome();
         void jumpToSession(row.entry.target);
         return;
       case "command":

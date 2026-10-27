@@ -3,6 +3,7 @@ import { EVENTS, listenEvent, type TerminalAttentionEvent } from "../ipc/events"
 import { onEventsResync } from "../ipc/webTransport";
 import { resetSessionAggregate, startSessionAggregateTracking } from "./sessionAggregate";
 import { useUi } from "./store";
+import { isMobileHomeOpen, useMobileHome } from "./shell/mobileHome";
 import {
   applyAwareness,
   markAwarenessSeenLocally,
@@ -85,10 +86,11 @@ export async function reloadAwareness(): Promise<void> {
 }
 
 // visibleTerminalTabIds are the backend ids of the terminal tabs on screen: the active tab of each pane in the
-// active workspace.
+// active workspace. While the mobile home covers the workspaces, no terminal is on screen.
 export function visibleTerminalTabIds(): Set<string> {
-  const { workspaces, activeWorkspaceId } = useUi.getState();
   const visible = new Set<string>();
+  if (isMobileHomeOpen()) return visible;
+  const { workspaces, activeWorkspaceId } = useUi.getState();
   const workspace = workspaces.find((w) => w.id === activeWorkspaceId);
   for (const pane of workspace?.panes ?? []) {
     const tab = pane.tabs.find((t) => t.id === pane.activeTabId);
@@ -141,12 +143,14 @@ export function startAwarenessTracking(): void {
   });
   onEventsResync(() => void reloadAwareness());
   let lastVisible = visibleKey();
-  useUi.subscribe(() => {
+  const onVisibleChange = () => {
     const key = visibleKey();
     if (key === lastVisible) return;
     lastVisible = key;
     markVisibleAwarenessSeen();
-  });
+  };
+  useUi.subscribe(onVisibleChange);
+  useMobileHome.subscribe(onVisibleChange);
   useAwarenessStore.subscribe(markVisibleAwarenessSeen);
   for (const type of ["keydown", "pointerdown", "wheel", "touchstart"]) {
     window.addEventListener(type, noteUserActivity, { capture: true, passive: true });

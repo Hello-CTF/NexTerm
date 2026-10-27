@@ -1,11 +1,48 @@
+import { useEffect, useLayoutEffect, useRef } from "react";
+import { StatusWall } from "../../features/mobile/StatusWall";
+import { IconHome } from "../../ui/icons";
+import { wailsNoDragRegionStyle } from "../platform";
+import { useUi } from "../store";
+import { hideMobileHome, showMobileHome, showMobileHomeOnLaunch, useMobileHome } from "./mobileHome";
 import { ShellFrame, type ShellParts } from "./ShellFrame";
 import { useMobileTerminalDockCollapse } from "./useOverlayDocks";
 
-// MobileShell serves phones and tablets (the "mobile" mode). It currently hosts the shared layout with the
-// overlay sidebars and the bottom terminal key bar that narrow and touch viewports already get, and adds the
-// mobile-only behaviour: no window chrome, and an overlay sidebar that steps aside while a terminal tab is
-// active. It is the place for a mobile-specific home (the status wall) later.
+// useLeaveHomeOnConnectFocus closes the home when a connect the user started takes the focus. Other ways to a session
+// (a new terminal, the palette, the inbox, the workspace switcher, a takeover, the wall's own cards) close it where
+// the user asks for them; restoring the saved workspaces at startup does neither, so the home stays.
+function useLeaveHomeOnConnectFocus(): void {
+  const focusRevision = useUi((state) => state.connectFocusRevision);
+  const lastRevision = useRef(focusRevision);
+  useEffect(() => {
+    if (focusRevision === lastRevision.current) return;
+    lastRevision.current = focusRevision;
+    hideMobileHome();
+  }, [focusRevision]);
+}
+
+// MobileShell serves phones and tablets (the "mobile" mode). It hosts the shared layout with the overlay sidebars and
+// the bottom terminal key bar, without window chrome, with an overlay sidebar that steps aside while a terminal tab
+// is active, and with the status wall as its home: shown at launch in the workspace area, until the user opens a
+// session or goes to one. The docks stay usable beside or over it, and the header's home button toggles it.
 export function MobileShell(parts: ShellParts) {
   useMobileTerminalDockCollapse(parts.body.docks, parts.layout.overlaySidebars, parts.activeTabKind);
-  return <ShellFrame {...parts} />;
+  useLayoutEffect(() => showMobileHomeOnLaunch(), []);
+  useLeaveHomeOnConnectFocus();
+  const homeOpen = useMobileHome((state) => state.open);
+  const { setLeftOpen } = parts.body.docks;
+  const homeButton = (
+    <button
+      type="button"
+      className={`nx-icon-btn ${homeOpen ? "is-active" : ""}`}
+      style={wailsNoDragRegionStyle}
+      aria-label="会话状态首页"
+      aria-pressed={homeOpen}
+      title="会话状态首页"
+      onClick={() => (homeOpen ? hideMobileHome() : showMobileHome())}
+    >
+      <IconHome size={15} />
+    </button>
+  );
+  const home = homeOpen ? <StatusWall onOpened={hideMobileHome} onOpenAssets={() => setLeftOpen(true)} /> : null;
+  return <ShellFrame {...parts} header={{ ...parts.header, leading: homeButton }} body={{ ...parts.body, home }} />;
 }

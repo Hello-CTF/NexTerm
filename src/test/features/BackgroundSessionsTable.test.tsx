@@ -172,14 +172,17 @@ describe("BackgroundSessions table", () => {
     }
   });
 
-  it("puts the host name under the terminal name only in the all-hosts view", async () => {
+  it("groups the all-hosts view under host headings", async () => {
     seedAllHosts();
     mocks.listDurable.mockImplementation(async (sessionId: string) =>
       sessionId === "s1" ? [descriptor({ id: "one", title: "一号任务" })] : [descriptor({ id: "two", title: "二号任务" })]);
     const view = await mountLoaded({}, (v) => expect(rows(v)).toHaveLength(2));
     try {
-      expect(cell(row(view, "one"), "background-host-name").textContent).toBe("主机一");
-      expect(cell(row(view, "two"), "background-host-name").textContent).toBe("主机二");
+      const body = [...view.container.querySelectorAll<HTMLTableRowElement>("tbody tr")];
+      const shape = body.map((tr) => tr.dataset.backgroundGroup ? `host:${cell(tr, "background-host-name").textContent}` : tr.dataset.backgroundRow);
+      expect(shape).toEqual(["host:主机一", "one", "host:主机二", "two"]);
+      expect(body[0].querySelector("th")?.colSpan).toBe(5);
+      expect(row(view, "one").querySelector('[data-testid="background-host-name"]')).toBeNull();
       expect(cell(row(view, "one"), "background-name").textContent).toBe("一号任务");
     } finally {
       view.unmount();
@@ -232,7 +235,7 @@ describe("BackgroundSessions table", () => {
     try {
       for (const [state, label] of states) {
         const status = cell(row(view, state), "background-status");
-        expect(status.textContent).toBe(label);
+        expect(cell(status, "background-status-label").textContent).toBe(label);
         expect(status.classList.contains("text-blue-300")).toBe(state === "needs_me");
         expect(status.classList.contains("text-[var(--nx-fg-soft)]")).toBe(state === "exited");
       }
@@ -244,7 +247,10 @@ describe("BackgroundSessions table", () => {
       expect(future.title).toBe("未知状态");
       // A newer state is not mistaken for an old component.
       expect(view.container.querySelector('[data-testid="background-old-helper-note"]')).toBeNull();
-      expect(view.container.querySelector('[class*="amber"]')).toBeNull();
+      // Amber marks only the needs_me badge, as on a tab; normal states carry none.
+      expect([...view.container.querySelectorAll('[class*="amber"]')].map((node) => node.getAttribute("data-attention"))).toEqual(["needs_me"]);
+      const badges = (state: string) => row(view, state).querySelector("[data-attention]")?.getAttribute("data-attention") ?? null;
+      expect(states.map(([state]) => badges(state))).toEqual(["running", "needs_me", "just_finished", null, null]);
     } finally {
       view.unmount();
     }
@@ -287,7 +293,7 @@ describe("BackgroundSessions table", () => {
     const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(3));
     try {
       const current = row(view, "current");
-      expect(cell(current, "background-status").textContent).toBe("需要我");
+      expect(cell(current, "background-status-label").textContent).toBe("需要我");
       expect(cell(current, "background-size").textContent).toBe("120×40");
       expect(cell(current, "background-output").textContent).toBe("5 分钟前有输出");
       expect(cell(current, "background-detached").textContent).toBe("30 分钟前转入后台");

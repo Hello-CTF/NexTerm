@@ -8,6 +8,7 @@ import {
   restoreClosedTab,
 } from "../store";
 import { keybindingRepeats, matchAppKeybinding } from "../keybindings";
+import { hideMobileHome } from "./mobileHome";
 
 export interface AppKeybindingHandlers {
   leftDockOpen: boolean;
@@ -135,6 +136,7 @@ export function useAppKeybindings({
           const target = currentPane?.tabs[hit.digit - 1];
           if (!target) return;
           e.preventDefault();
+          hideMobileHome();
           st.setActiveTab(target.id);
           return;
         }

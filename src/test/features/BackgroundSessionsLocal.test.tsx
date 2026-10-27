@@ -1092,7 +1092,7 @@ describe("BackgroundSessions host-scoped view", () => {
     try {
       await flush();
       await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("s2"));
-      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+      expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(1);
       expect(view.container.textContent).toContain("共享任务");
       await act(async () => {
         actionButton(view, "接管").click();
@@ -1112,7 +1112,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+      expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(1);
       expect(view.container.textContent).toContain("现场任务");
       expect(view.container.textContent).not.toContain("持久任务");
     } finally {
@@ -1131,7 +1131,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+      expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(1);
       expect(view.container.textContent).toContain("仍在运行的任务");
       expect(view.container.textContent).not.toContain("已退出任务");
     } finally {
@@ -1249,9 +1249,9 @@ describe("BackgroundSessions host-scoped view", () => {
       await flush();
       await waitFor(() => expect(view.container.textContent).toContain("主机二任务"));
       expect(view.container.textContent).toContain("主机一任务");
-      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(2);
+      expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(2);
 
-      const firstRow = [...view.container.querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("主机一任务"));
+      const firstRow = [...view.container.querySelectorAll("tbody tr[data-background-row]")].find((row) => row.textContent?.includes("主机一任务"));
       const killFirst = [...(firstRow?.querySelectorAll("button") ?? [])].find((button) => button.textContent?.includes("结束进程"));
       if (!killFirst) throw new Error("主机一的结束按钮未找到");
       await act(async () => {
@@ -1262,7 +1262,7 @@ describe("BackgroundSessions host-scoped view", () => {
       expect(view.container.textContent).toContain("主机二任务");
       expect(view.container.textContent).not.toContain("主机一任务");
 
-      const secondRow = [...view.container.querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("主机二任务"));
+      const secondRow = [...view.container.querySelectorAll("tbody tr[data-background-row]")].find((row) => row.textContent?.includes("主机二任务"));
       const takeOverSecond = [...(secondRow?.querySelectorAll("button") ?? [])].find((button) => button.textContent?.includes("接管"));
       if (!takeOverSecond) throw new Error("主机二的接管按钮未找到");
       await act(async () => {

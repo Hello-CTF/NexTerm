@@ -37,9 +37,19 @@ let started = false;
 // epoch discards replies an account reset or a newer reload has overtaken.
 let epoch = 0;
 let inFlight = false;
+let inFlightLoad: Promise<void> | null = null;
 // Events that arrive while a reload is in flight are applied after its reply, which may predate them.
 let buffered: TerminalSessionsEvent[] | null = null;
 let followUp: ReturnType<typeof setTimeout> | undefined;
+// Sessions this client ended (forgetAggregateSession), newest last; a listing read before the end still names them.
+const ENDED_LIMIT = 256;
+const ended = new Set<string>();
+
+function withoutEnded(sessions: readonly AggregateSession[]): readonly AggregateSession[] {
+  return ended.size > 0 && sessions.some((session) => ended.has(session.tabId))
+    ? sessions.filter((session) => !ended.has(session.tabId))
+    : sessions;
+}
 
 // newer: the known state of a host was learned after the incoming one, which then must not replace it. Every answer
 // (a listing, a failure, offline) carries when it was learned; a pending host carries none and replaces no answer.
@@ -67,7 +77,7 @@ export function applyAggregateList(list: AggregateList): void {
         continue;
       }
       hosts.set(host.key, host);
-      sessionsByHost.set(host.key, replied.get(host.key) ?? []);
+      sessionsByHost.set(host.key, withoutEnded(replied.get(host.key) ?? []));
     }
     return { hosts, sessionsByHost, loaded: true };
   });
@@ -84,8 +94,24 @@ export function applyAggregateUpdate(update: TerminalSessionsEvent): void {
     const hosts = new Map(current.hosts);
     hosts.set(update.host.key, update.host);
     const sessionsByHost = new Map(current.sessionsByHost);
-    sessionsByHost.set(update.host.key, update.sessions);
+    sessionsByHost.set(update.host.key, withoutEnded(update.sessions));
     return { hosts, sessionsByHost, loaded: current.loaded };
+  });
+}
+
+// forgetAggregateSession drops a session this client just ended. Terminal ids are never reused, so a reply or a
+// buffered event that still lists it was read before the end (a host cache, or a reload in flight) and it stays out.
+export function forgetAggregateSession(tabId: string): void {
+  ended.add(tabId);
+  if (ended.size > ENDED_LIMIT) ended.delete(ended.values().next().value as string);
+  useSessionAggregate.setState((current) => {
+    let sessionsByHost: Map<string, readonly AggregateSession[]> | undefined;
+    for (const [key, sessions] of current.sessionsByHost) {
+      if (!sessions.some((session) => session.tabId === tabId)) continue;
+      sessionsByHost ??= new Map(current.sessionsByHost);
+      sessionsByHost.set(key, sessions.filter((session) => session.tabId !== tabId));
+    }
+    return sessionsByHost ? { ...current, sessionsByHost } : current;
   });
 }
 
@@ -108,7 +134,14 @@ function clearFollowUp(): void {
   followUp = undefined;
 }
 
-export async function reloadSessionAggregate(waitMs = AGGREGATE_WAIT_MS): Promise<void> {
+// reloadSessionAggregate lists every host again. A call while a listing is in flight waits for that one instead.
+export function reloadSessionAggregate(waitMs = AGGREGATE_WAIT_MS): Promise<void> {
+  if (inFlight && inFlightLoad) return inFlightLoad;
+  inFlightLoad = runReload(waitMs);
+  return inFlightLoad;
+}
+
+async function runReload(waitMs: number): Promise<void> {
   if (inFlight) return;
   inFlight = true;
   clearFollowUp();
@@ -147,6 +180,7 @@ function resetState(): void {
   epoch += 1;
   inFlight = false;
   buffered = null;
+  ended.clear();
   clearFollowUp();
   useSessionAggregate.setState(EMPTY);
 }
