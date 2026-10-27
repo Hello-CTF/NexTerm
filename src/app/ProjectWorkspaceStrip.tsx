@@ -14,6 +14,8 @@ import {
   workspaceNeedsReconnect,
   type Workspace,
 } from "./store";
+import { useWorkspaceAttention } from "./sessionAwarenessStore";
+import { TabAttentionBadge } from "./workspace/tabStrip";
 import { ContextMenu, type ContextMenuState } from "../ui/ContextMenu";
 import type { AssetGroup } from "../ipc/commands";
 import { IconDatabase, IconLayers, IconRefresh, IconSettings, assetIcon } from "../ui/icons";
@@ -52,7 +54,10 @@ function WorkspaceStripTab({
   const Icon = workspaceIcon(workspace);
   const status = useUi((state) => workspaceConnectionState(workspace, state.sessions));
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  const tabCount = workspace.panes.flatMap((pane) => pane.tabs).length;
+  const allTabs = workspace.panes.flatMap((pane) => pane.tabs);
+  const tabCount = allTabs.length;
+  const terminalTabIds = allTabs.flatMap((tab) => (tab.kind === "terminal" && !tab.exited && tab.tabId ? [tab.tabId] : []));
+  const attention = useWorkspaceAttention(terminalTabIds);
   const statusLabel = status ? sessionStatusText(status) : null;
   const needsReconnect = workspaceNeedsReconnect(status);
   const onContextMenu = (event: MouseEvent<HTMLButtonElement>) => {
@@ -80,12 +85,13 @@ function WorkspaceStripTab({
         tabIndex={selected ? 0 : -1}
         draggable={draggable}
         className={`nx-tab ${selected ? "is-active" : ""}${dropEdge ? ` nx-drop-${dropEdge}` : ""}${dragging ? " nx-drag-source" : ""}`}
-        title={[statusLabel, `${tabCount} 个标签`].filter(Boolean).join(" · ")}
+        title={[statusLabel, attention?.label, `${tabCount} 个标签`].filter(Boolean).join(" · ")}
         onContextMenu={onContextMenu}
         {...handlers}
       >
         <Icon size={13} />
         <span className="truncate">{workspace.title}</span>
+        <TabAttentionBadge badge={attention} />
         {statusLabel && (
           <span
             role="img"

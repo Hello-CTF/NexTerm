@@ -28,6 +28,10 @@ import { isInventoryOnlyKind } from "../features/explorer/inventory";
 import { AssetEditor } from "../features/explorer/AssetTree";
 import { SshImportDialog } from "../features/explorer/SshImportDialog";
 import { useShell } from "./shell";
+import { workspaceLayoutTree } from "./paneLayout";
+import { resolveActivePane } from "./splitTree";
+import { TabAttentionBadge } from "./workspace/tabStrip";
+import { awarenessBadge, useTabAwareness } from "./sessionAwarenessStore";
 import { IconDownload, IconLoader, IconPlus, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
 import {
   formatQuickConnectTarget,
@@ -104,6 +108,12 @@ const SCOPE_TEXT: Record<JumpScope, { title: string; input: string; placeholder:
     list: "数据库资产连接",
   },
 };
+
+// SessionAttentionBadge follows one session row's awareness state live; the row order stays frozen.
+function SessionAttentionBadge({ terminalId }: { terminalId: string | null }) {
+  const awareness = useTabAwareness(terminalId ?? undefined);
+  return <TabAttentionBadge badge={awarenessBadge(awareness)} />;
+}
 
 // JumpPalette is the single keyboard-first palette for open and background sessions, hosts and commands.
 // The hosts scope is the former quick connect; Tab switches between it and the full list.
@@ -461,7 +471,35 @@ export function JumpPalette({
     }
   };
 
-  const activate = (row: JumpRow) => {
+  // Shift+Enter: put the session or host to the right of the current pane. Panes belong to one host, so only the
+  // active workspace's own sessions and host can split; anything else opens normally and says so.
+  const openInSplit = (row: JumpRow) => {
+    if (closedRef.current) return;
+    const st = useUi.getState();
+    const current = st.workspaces.find((item) => item.id === st.activeWorkspaceId);
+    const tree = current ? workspaceLayoutTree(current) : null;
+    const paneId = current && tree ? resolveActivePane(tree, current.activePaneId) : null;
+    if (row.kind === "session" && row.entry.target.source === "tab" && current && paneId && row.entry.target.workspaceId === current.id) {
+      closeOverlay();
+      st.splitPaneWithTab(row.entry.target.tabId, paneId, "right", current.id);
+      return;
+    }
+    if (row.kind === "asset" && current && paneId && current.kind === "session" && current.assetId === row.asset.id && current.sessionId) {
+      closeOverlay();
+      st.splitPane("right", paneId, current.id);
+      return;
+    }
+    if (row.kind === "session" || row.kind === "asset") {
+      st.pushToast("info", "只能把当前工作区的会话或同一主机拆到右侧，已直接打开");
+    }
+    activate(row);
+  };
+
+  const activate = (row: JumpRow, split = false) => {
+    if (split && (row.kind === "session" || row.kind === "asset")) {
+      openInSplit(row);
+      return;
+    }
     switch (row.kind) {
       case "asset":
         void connect(row.asset);
@@ -526,7 +564,16 @@ export function JumpPalette({
     } else if (event.key === "Enter" && !event.repeat && rows[activeIndex]) {
       if (isEditableTarget(event.target)) {
         event.preventDefault();
-        activate(rows[activeIndex]);
+        activate(rows[activeIndex], event.shiftKey);
+      }
+    } else if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.repeat) {
+      // Alt+1..9 opens the Nth row as shown, whether or not the search box has text; plain digits stay text so
+      // host names and addresses such as 10.0.0.8 can still be typed. event.code, since Alt changes event.key on macOS.
+      const digit = /^(?:Digit|Numpad)([1-9])$/.exec(event.code)?.[1];
+      const row = digit ? rows[Number(digit) - 1] : undefined;
+      if (row) {
+        event.preventDefault();
+        activate(row);
       }
     }
   };
@@ -542,8 +589,10 @@ export function JumpPalette({
       className: `nx-command-item ${index === activeIndex ? "is-active" : ""}`,
       onMouseEnter: () => setCursor(index),
       onMouseDown: (event: { preventDefault: () => void }) => event.preventDefault(),
-      onClick: () => activate(row),
+      onClick: (event: { shiftKey: boolean }) => activate(row, event.shiftKey),
+      "aria-keyshortcuts": index < 9 ? `Alt+${index + 1}` : undefined,
     };
+    const numberHint = index < 9 ? <span aria-hidden="true" className="nx-command-hint shrink-0 text-[10.5px]">⌥{index + 1}</span> : null;
     if (row.kind === "quick") {
       const Icon = row.mode === "temporary" ? IconTerminal : IconSave;
       const pending = pendingQuick === row.mode;
@@ -563,6 +612,7 @@ export function JumpPalette({
               {row.mode === "temporary" ? "不保存资产" : "存入资产树"}
             </span>
           )}
+          {numberHint}
         </button>
       );
     }
@@ -571,7 +621,9 @@ export function JumpPalette({
         <button {...optionProps}>
           <IconTerminal size={15} className="shrink-0 text-neutral-400" />
           <span className="min-w-0 flex-1 truncate">{row.entry.label}</span>
+          <SessionAttentionBadge terminalId={row.entry.terminalId} />
           {row.entry.hint && <span className="nx-command-hint min-w-0 shrink truncate text-[11px]">{row.entry.hint}</span>}
+          {numberHint}
         </button>
       );
     }
@@ -582,6 +634,7 @@ export function JumpPalette({
           <Icon size={15} className="shrink-0 text-neutral-400" />
           <span className="min-w-0 flex-1 truncate">{row.command.label}</span>
           {row.command.hint && <span className="nx-command-hint shrink-0 text-[11px]">{row.command.hint}</span>}
+          {numberHint}
         </button>
       );
     }
@@ -610,6 +663,7 @@ export function JumpPalette({
             连接中…
           </span>
         ) : null}
+        {numberHint}
       </button>
     );
   };
@@ -803,6 +857,14 @@ export function JumpPalette({
               <span className="nx-kbd">Tab</span> {showAll ? "只看主机" : "全部"}
             </span>
           )}
+          <span className="flex items-center gap-1.5">
+            <span className="nx-kbd">Alt</span>
+            <span className="nx-kbd">1-9</span> 直达
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="nx-kbd">Shift</span>
+            <span className="nx-kbd">Enter</span> 右侧分屏
+          </span>
           <span className="flex items-center gap-1.5">
             <span className="nx-kbd">Esc</span> 关闭
           </span>

@@ -135,3 +135,43 @@ export function awarenessBadge(awareness: SessionAwareness | undefined): Awarene
       return null;
   }
 }
+
+const aggregateBadges = new Map<string, AwarenessBadge>();
+
+function canonicalBadge(badge: AwarenessBadge): AwarenessBadge {
+  const key = `${badge.kind}|${badge.inferred}|${badge.outcome ?? ""}`;
+  let known = aggregateBadges.get(key);
+  if (!known) {
+    known = badge;
+    aggregateBadges.set(key, known);
+  }
+  return known;
+}
+
+// aggregateAttention picks the highest-priority unseen state across tabs: needs_me over just_finished, a signalled
+// state over an inferred one, a failed finish over a successful one. Running and unknown never aggregate: a workspace
+// shows only what asks for the user.
+export function aggregateAttention(
+  byTabId: ReadonlyMap<string, SessionAwareness>,
+  tabIds: readonly string[],
+): AwarenessBadge | null {
+  let best: AwarenessBadge | null = null;
+  let bestRank = -1;
+  for (const id of tabIds) {
+    const badge = awarenessBadge(byTabId.get(id));
+    if (!badge || (badge.kind !== "needs_me" && badge.kind !== "just_finished")) continue;
+    const rank =
+      (badge.kind === "needs_me" ? 4 : 0) + (badge.inferred ? 0 : 2) + (badge.outcome === "failed" ? 1 : 0);
+    if (rank > bestRank) {
+      best = badge;
+      bestRank = rank;
+    }
+  }
+  return best && canonicalBadge(best);
+}
+
+// useWorkspaceAttention subscribes to the aggregate only; the result is one of a few shared badge objects, so a
+// workspace re-renders when its own aggregate changes and not on other tabs' updates.
+export function useWorkspaceAttention(tabIds: readonly string[]): AwarenessBadge | null {
+  return useAwarenessStore((state) => aggregateAttention(state.byTabId, tabIds));
+}
