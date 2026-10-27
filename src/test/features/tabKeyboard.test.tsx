@@ -357,3 +357,32 @@ describe("rail and toast accessibility", () => {
     expect(toast?.className).not.toMatch(/#[0-9a-fA-F]{3,8}/);
   });
 });
+
+describe("pane tab strip persistence marks", () => {
+  it("marks only the durable terminal tab with the persistence icon", async () => {
+    useUi.setState((state) => ({
+      workspaces: state.workspaces.map((ws) =>
+        ws.id !== "ws1"
+          ? ws
+          : {
+              ...ws,
+              panes: ws.panes.map((pane) => ({
+                ...pane,
+                tabs: [
+                  ...pane.tabs,
+                  { id: "t4", kind: "terminal", title: "持久的终端", sessionId: "s1", durable: true, closable: true },
+                  { id: "t5", kind: "terminal", title: "普通的终端", sessionId: "s1", regularReason: "打开时持久组件未就绪", closable: true },
+                ],
+              })),
+            },
+      ),
+    }));
+    mounted = mountApp();
+    await flush();
+
+    const list = tablist(mounted.container, "标签页");
+    expect(tabByText(list, "持久的终端").querySelector('[role="img"][aria-label="持久终端"]')).not.toBeNull();
+    expect(tabByText(list, "普通的终端").querySelector('[role="img"]')).toBeNull();
+    expect(tabByText(list, "普通的终端").getAttribute("title")).toContain("普通终端：打开时持久组件未就绪");
+  });
+});

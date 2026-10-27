@@ -104,7 +104,8 @@ export {
   DURABLE_FALLBACK_REASON,
   DURABLE_NOT_READY_AT_OPEN_REASON,
   DURABLE_PREPARING_REASON,
-  LOCAL_DURABLE_UNAVAILABLE_REASON,
+  DURABLE_UNAVAILABLE_PREFIX,
+  knownDurableReadiness,
 } from "./store/durableReadiness";
 export {
   closeActionHint,

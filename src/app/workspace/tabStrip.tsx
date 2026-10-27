@@ -4,6 +4,7 @@ import { useTabUnread } from "../unreadStore";
 import { useTerminalTabTitle } from "../terminalViewStore";
 import { fileVisual } from "../../features/files/fileTypes";
 import { useAssetProductionClassification } from "../../features/production/productionSettings";
+import { usePersistenceFailureMark } from "../../features/terminal/persistenceHintState";
 import {
   IconActivity,
   IconBox,
@@ -53,13 +54,22 @@ export function tabTooltip(t: AppTab, unread: boolean): string {
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
 }
 
-// A durable terminal tab carries a small persistence mark before its title; regular tabs carry none.
+// A durable terminal tab carries a small persistence mark before its title; regular tabs carry none. A failure
+// hint the user dismissed while it still applies leaves a red dot that names it.
 export function TabPersistenceMark({ tab }: { tab: AppTab }) {
-  if (tab.kind !== "terminal" || tab.durable !== true) return null;
+  const failure = usePersistenceFailureMark(tab.id);
+  if (tab.kind !== "terminal") return null;
   return (
-    <span className="flex shrink-0 items-center" role="img" aria-label="持久终端" data-testid="tab-persistence-mark">
-      <IconPersist size={12} />
-    </span>
+    <>
+      {tab.durable === true && (
+        <span className="flex shrink-0 items-center" role="img" aria-label="持久终端">
+          <IconPersist size={12} />
+        </span>
+      )}
+      {failure && (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" role="img" aria-label={failure} title={failure} />
+      )}
+    </>
   );
 }
 

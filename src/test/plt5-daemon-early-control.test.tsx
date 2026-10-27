@@ -235,6 +235,23 @@ describe("TerminalPane early control state", () => {
     await flush();
     expect(badge("/elsewhere")).toBeNull();
     expect(durableTab()).toBe(false);
+
+    // The attached tab's own state still applies.
+    control({
+      tabId: "kernel-9",
+      version: 1,
+      controller: null,
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+      cwd: "/mine",
+      durable: true,
+    });
+    expect(badge("/mine")).not.toBeNull();
+    expect(durableTab()).toBe(true);
   });
 
   it("prefers the newest cached event per tab", async () => {

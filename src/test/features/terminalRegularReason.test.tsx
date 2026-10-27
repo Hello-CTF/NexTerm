@@ -74,7 +74,9 @@ vi.mock("../../features/terminal/XtermView", () => ({
 
 import { TerminalPane } from "../../features/terminal/TerminalPane";
 import { createHelperOperationState, helperOperationReducer } from "../../features/terminal/helperOperationState";
-import { forgetDurableReadiness, useUi, type AppTab } from "../../app/store";
+import { forgetDurableReadiness, noteHelperProgress, useUi, type AppTab } from "../../app/store";
+import { TabPersistenceMark } from "../../app/workspace/tabStrip";
+import { setLocalHelperStatusForTest } from "../../features/terminal/localHelperStatus";
 import { setTerminalDefaultMode } from "../../app/preferences";
 
 let mounted: MountedView | undefined;
@@ -145,8 +147,6 @@ describe("regular SSH terminals always say why", () => {
     act(() => (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1"));
 
     await waitFor(() => expect(storeTab()?.regularReason).toBe("持久组件准备中"));
-    // Background preparation is not worth an interruption; the reason stays in the tab tooltip.
-    expect(hintBar()).toBeNull();
   });
 
   it("names later fallbacks on the same connection that carry no backend notice", async () => {
@@ -204,31 +204,25 @@ describe("regular SSH terminals always say why", () => {
     expect(storeTab()?.regularReason).toBeUndefined();
   });
 
-  it("drops the tab reason once the hint reports the helper ready", async () => {
+  it("keeps the reason while the hint reports the helper ready", async () => {
     seed({ regularReason: "持久组件准备中" });
     mountPane();
     await flush();
-    act(() => {
-      useUi.setState((state) => {
-        let operations = helperOperationReducer(state.helperOperations, {
-          type: "start", tabId: "t1", operationId: "op-1", kind: "deploy", now: Date.now(),
-        });
-        operations = helperOperationReducer(operations, { type: "succeeded", tabId: "t1", operationId: "op-1", attempt: 1, now: Date.now() });
-        return { helperOperations: operations };
-      });
-    });
+    succeedHelper();
 
-    await waitFor(() => expect(storeTab()?.regularReason).toBeUndefined());
-    expect(hintBar()?.textContent).toContain("这台主机的持久终端已就绪");
+    await waitFor(() => expect(hintBar()?.textContent).toContain("这台主机的持久终端已就绪"));
+    expect(storeTab()?.regularReason).toBe("持久组件准备中");
   });
 });
 
-function hintBar(): HTMLElement | null {
-  return mounted?.container.querySelector<HTMLElement>('[data-testid="persistence-hint"]') ?? null;
+type OperationsState = ReturnType<typeof createHelperOperationState>;
+
+function hintBar(container: ParentNode | undefined = mounted?.container): HTMLElement | null {
+  return container?.querySelector<HTMLElement>('[data-testid="persistence-hint"]') ?? null;
 }
 
-function hintButton(label: string): HTMLButtonElement | undefined {
-  return [...(hintBar()?.querySelectorAll("button") ?? [])].find(
+function hintButton(label: string, container?: ParentNode): HTMLButtonElement | undefined {
+  return [...(hintBar(container)?.querySelectorAll("button") ?? [])].find(
     (button) => button.textContent === label || button.getAttribute("aria-label") === label,
   );
 }
@@ -237,16 +231,49 @@ function helperDialog(): Element | null {
   return document.querySelector('[role="dialog"][aria-label="持久终端组件"]');
 }
 
-function succeedHelper(): void {
+function operations(...steps: Array<(state: OperationsState) => OperationsState>): void {
   act(() => {
-    useUi.setState((state) => {
-      let operations = helperOperationReducer(state.helperOperations, {
-        type: "start", tabId: "t1", operationId: "op-1", kind: "deploy", now: Date.now(),
-      });
-      operations = helperOperationReducer(operations, { type: "succeeded", tabId: "t1", operationId: "op-1", attempt: 1, now: Date.now() });
-      return { helperOperations: operations };
-    });
+    useUi.setState((state) => ({ helperOperations: steps.reduce((acc, step) => step(acc), state.helperOperations) }));
   });
+}
+
+const startOp = (kind: "deploy" | "reattach" = "deploy") => (state: OperationsState) =>
+  helperOperationReducer(state, { type: "start", tabId: "t1", operationId: "op-1", kind, now: Date.now() });
+const failOp = (message: string) => (state: OperationsState) => {
+  const started = helperOperationReducer(state, { type: "attemptStarted", tabId: "t1", operationId: "op-1", attempt: 1, now: Date.now() });
+  return helperOperationReducer(started, {
+    type: "attemptFailed", tabId: "t1", operationId: "op-1", attempt: 1, now: Date.now(),
+    reason: { kind: "permanent", code: "upload_failed", message },
+  });
+};
+const succeedOp = (state: OperationsState) =>
+  helperOperationReducer(state, { type: "succeeded", tabId: "t1", operationId: "op-1", attempt: 1, now: Date.now() });
+
+function succeedHelper(): void {
+  operations(startOp(), succeedOp);
+}
+
+// The helper progress listener records readiness and then stores the progress, as the app shell does.
+function helperProgress(stage: string, done: boolean, extra: Record<string, unknown> = {}): void {
+  const progress = {
+    sessionId: "s1", assetId: "asset-1", operationId: "", attempt: 0, attempts: 0, deadline: 0,
+    step: 1, steps: 1, stage, transferred: 0, total: 0, percent: 0, done, ...extra,
+  };
+  act(() => {
+    noteHelperProgress(progress);
+    useUi.getState().setHelperProgress(progress);
+  });
+}
+
+const marks: MountedView[] = [];
+afterEach(() => {
+  while (marks.length) marks.pop()?.unmount();
+});
+
+function tabMark(): Element | null {
+  const view = mount(createElement(TabPersistenceMark, { tab: storeTab()! }));
+  marks.push(view);
+  return view.container.querySelector('[role="img"]');
 }
 
 describe("persistence hint bar", () => {
@@ -264,6 +291,24 @@ describe("persistence hint bar", () => {
     mountPane();
     await flush();
     reportAttach({ durable: false, durableRequested: false });
+    await flush();
+    expect(hintBar()).toBeNull();
+  });
+
+  it("shows nothing on a terminal regular by choice although the helper is ready", async () => {
+    seed({ tabId: "kernel-1" });
+    mountPane();
+    await flush();
+    helperProgress("ready", true);
+    await flush();
+    expect(hintBar()).toBeNull();
+  });
+
+  it("stays quiet while the deployment this tab started runs", async () => {
+    seed({ regularReason: "持久组件准备中" });
+    mountPane();
+    await flush();
+    operations(startOp());
     await flush();
     expect(hintBar()).toBeNull();
   });
@@ -290,37 +335,38 @@ describe("persistence hint bar", () => {
     expect(mocks.helperOperation).toHaveBeenCalledWith("s1", "", "status");
   });
 
-  it("explains local terminals without offering the SSH helper", async () => {
-    seed({ regularReason: "持久组件不可用：本机终端暂不支持持久模式" }, "local");
-    mountPane();
-    await flush();
-
-    expect(hintBar()?.dataset.tone).toBe("neutral");
-    expect(hintBar()?.textContent).toContain("本机终端暂不支持持久模式");
-    expect(hintButton("持久终端组件…")).toBeUndefined();
-  });
-
-  it("asks for attention when the helper deployment needs a choice", async () => {
+  it("asks for attention when the helper deployment needs a choice, without a duplicate toast", async () => {
     seed({ regularReason: "持久组件准备中" });
     mountPane();
     await flush();
-    act(() => {
-      useUi.setState((state) => {
-        let operations = helperOperationReducer(state.helperOperations, {
-          type: "start", tabId: "t1", operationId: "op-1", kind: "deploy", now: Date.now(),
-        });
-        operations = helperOperationReducer(operations, { type: "attemptStarted", tabId: "t1", operationId: "op-1", attempt: 1, now: Date.now() });
-        operations = helperOperationReducer(operations, {
-          type: "attemptFailed", tabId: "t1", operationId: "op-1", attempt: 1, now: Date.now(),
-          reason: { kind: "permanent", code: "upload_failed", message: "磁盘空间不足" },
-        });
-        return { helperOperations: operations };
-      });
-    });
+    operations(startOp(), failOp("磁盘空间不足"));
 
     expect(hintBar()?.dataset.tone).toBe("danger");
-    expect(hintBar()?.textContent).toContain("磁盘空间不足");
+    expect(hintBar()?.textContent).toContain("持久终端暂时不可用：磁盘空间不足");
+    expect(useUi.getState().toasts).toHaveLength(0);
     expect(helperDialog()).toBeNull();
+    act(() => hintButton("处理")?.click());
+    expect(helperDialog()).not.toBeNull();
+  });
+
+  it("keeps the toast for a deployment choice on a hidden pane", async () => {
+    seed({ regularReason: "持久组件准备中" });
+    mounted = mount(createElement(TerminalPane, { sessionId: "s1", title: "web-01", storeTabId: "t1", visible: false }));
+    await flush();
+    operations(startOp(), failOp("磁盘空间不足"));
+
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("持久终端暂时不可用，当前标签使用普通终端");
+  });
+
+  it("names a failed restore of a durable terminal as such", async () => {
+    seed({ tabId: "kernel-1", durable: true });
+    mountPane();
+    await flush();
+    operations(startOp("reattach"), failOp("远端进程已退出"));
+
+    expect(hintBar()?.dataset.tone).toBe("danger");
+    expect(hintBar()?.textContent).toContain("原持久终端恢复失败：远端进程已退出");
+    expect(hintBar()?.textContent).not.toContain("本标签是普通终端");
     act(() => hintButton("处理")?.click());
     expect(helperDialog()).not.toBeNull();
   });
@@ -330,7 +376,6 @@ describe("persistence hint bar", () => {
     seed({ regularReason: "持久组件准备中" });
     mountPane();
     await flush();
-    expect(hintBar()).toBeNull();
     succeedHelper();
     await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
 
@@ -340,6 +385,41 @@ describe("persistence hint bar", () => {
     expect(reopened).toMatchObject({ kind: "terminal", sessionId: "s1" });
     expect(reopened?.regularReason).toBeUndefined();
     expect(useUi.getState().toasts).toHaveLength(0);
+  });
+
+  it("offers every regular tab on a session the ready helper, including after a remount", async () => {
+    const second: AppTab = { id: "t2", kind: "terminal", title: "终端 2", sessionId: "s1", closable: true, regularReason: "持久组件准备中" };
+    seed({ regularReason: "持久组件准备中" });
+    useUi.setState((state) => ({
+      workspaces: state.workspaces.map((ws) => ({ ...ws, panes: ws.panes.map((pane) => ({ ...pane, tabs: [...pane.tabs, second] })) })),
+    }));
+    mountPane();
+    const other = mount(createElement(TerminalPane, { sessionId: "s1", title: "web-01", storeTabId: "t2" }));
+    try {
+      await flush();
+      expect(hintBar()?.dataset.tone).toBe("neutral");
+      expect(hintBar(other.container)?.dataset.tone).toBe("neutral");
+
+      helperProgress("ready", true);
+      await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
+      expect(hintButton("在持久终端中重开", other.container)).toBeDefined();
+
+      mounted?.unmount();
+      mountPane();
+      await flush();
+      expect(hintBar()?.dataset.tone).toBe("accent");
+    } finally {
+      other.unmount();
+    }
+  });
+
+  it("reports an unavailable helper on a tab that opened while it was preparing", async () => {
+    seed({ regularReason: "持久组件准备中" });
+    mountPane();
+    await flush();
+    helperProgress("failed", true, { error: "目标主机不支持持久终端组件" });
+    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("danger"));
+    expect(hintBar()?.textContent).toContain("目标主机不支持持久终端组件");
   });
 
   it("stays dismissed for the tab until a different state appears", async () => {
@@ -357,5 +437,66 @@ describe("persistence hint bar", () => {
 
     succeedHelper();
     await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
+  });
+
+  it("leaves a named red mark on the tab after a failure hint is dismissed", async () => {
+    seed({ regularReason: "持久组件不可用：创建持久终端失败，已改用普通终端" });
+    mountPane();
+    await flush();
+    expect(tabMark()).toBeNull();
+
+    act(() => hintButton("关闭提示")?.click());
+    const mark = tabMark();
+    expect(mark?.getAttribute("aria-label")).toContain("创建持久终端失败，已改用普通终端");
+    expect(mark?.getAttribute("title")).toBe(mark?.getAttribute("aria-label"));
+  });
+
+  it("leaves no mark after an expected limitation is dismissed", async () => {
+    seed({ regularReason: "打开时持久组件未就绪" });
+    mountPane();
+    await flush();
+    act(() => hintButton("关闭提示")?.click());
+    expect(tabMark()).toBeNull();
+  });
+});
+
+describe("local terminal hints", () => {
+  afterEach(() => {
+    act(() => setLocalHelperStatusForTest(null));
+  });
+
+  it("offers a ready local helper to a regular local tab", async () => {
+    setLocalHelperStatusForTest({ state: "ready" });
+    seed({ regularReason: "持久组件准备中" }, "local");
+    mountPane();
+    await flush();
+
+    expect(hintBar()?.dataset.tone).toBe("accent");
+    expect(hintBar()?.textContent).toContain("本机的持久终端已就绪");
+    expect(hintButton("在持久终端中重开")).toBeDefined();
+  });
+
+  it("keeps a starting local helper neutral and a failed one red with its settings", async () => {
+    setLocalHelperStatusForTest({ state: "starting" });
+    seed({ regularReason: "持久组件准备中" }, "local");
+    mountPane();
+    await flush();
+    expect(hintBar()?.dataset.tone).toBe("neutral");
+    expect(hintButton("本机持久组件设置…")).toBeUndefined();
+
+    act(() => setLocalHelperStatusForTest({ state: "failed", reason: "本机持久组件启动失败" }));
+    await flush();
+    expect(hintBar()?.dataset.tone).toBe("danger");
+    expect(hintBar()?.textContent).toContain("本机持久组件启动失败");
+    act(() => hintButton("本机持久组件设置…")?.click());
+    expect(useUi.getState().workspaces.some((ws) => ws.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "settings")))).toBe(true);
+  });
+
+  it("shows nothing when this device keeps local terminals regular", async () => {
+    setLocalHelperStatusForTest({ state: "disabled" });
+    seed({ regularReason: "持久组件准备中" }, "local");
+    mountPane();
+    await flush();
+    expect(hintBar()).toBeNull();
   });
 });
