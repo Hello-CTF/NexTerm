@@ -39,7 +39,6 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		DeviceEnrollCode:        newDeviceEnrollCode(db, opts...),
 		DeviceMetrics:           newDeviceMetrics(db, opts...),
 		DeviceMetricsHourly:     newDeviceMetricsHourly(db, opts...),
-		DurableTabTitle:         newDurableTabTitle(db, opts...),
 		DurableTranscriptOffset: newDurableTranscriptOffset(db, opts...),
 		ExecBatchResultRow:      newExecBatchResultRow(db, opts...),
 		ExecBatchRow:            newExecBatchRow(db, opts...),
@@ -103,7 +102,6 @@ type Query struct {
 	DeviceEnrollCode        deviceEnrollCode
 	DeviceMetrics           deviceMetrics
 	DeviceMetricsHourly     deviceMetricsHourly
-	DurableTabTitle         durableTabTitle
 	DurableTranscriptOffset durableTranscriptOffset
 	ExecBatchResultRow      execBatchResultRow
 	ExecBatchRow            execBatchRow
@@ -170,7 +168,6 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		DeviceEnrollCode:        q.DeviceEnrollCode.clone(db),
 		DeviceMetrics:           q.DeviceMetrics.clone(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.clone(db),
-		DurableTabTitle:         q.DurableTabTitle.clone(db),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.clone(db),
 		ExecBatchResultRow:      q.ExecBatchResultRow.clone(db),
 		ExecBatchRow:            q.ExecBatchRow.clone(db),
@@ -242,7 +239,6 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		DeviceEnrollCode:        q.DeviceEnrollCode.replaceDB(db),
 		DeviceMetrics:           q.DeviceMetrics.replaceDB(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.replaceDB(db),
-		DurableTabTitle:         q.DurableTabTitle.replaceDB(db),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.replaceDB(db),
 		ExecBatchResultRow:      q.ExecBatchResultRow.replaceDB(db),
 		ExecBatchRow:            q.ExecBatchRow.replaceDB(db),
@@ -304,7 +300,6 @@ type queryCtx struct {
 	DeviceEnrollCode        *deviceEnrollCodeDo
 	DeviceMetrics           *deviceMetricsDo
 	DeviceMetricsHourly     *deviceMetricsHourlyDo
-	DurableTabTitle         *durableTabTitleDo
 	DurableTranscriptOffset *durableTranscriptOffsetDo
 	ExecBatchResultRow      *execBatchResultRowDo
 	ExecBatchRow            *execBatchRowDo
@@ -366,7 +361,6 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		DeviceEnrollCode:        q.DeviceEnrollCode.WithContext(ctx),
 		DeviceMetrics:           q.DeviceMetrics.WithContext(ctx),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.WithContext(ctx),
-		DurableTabTitle:         q.DurableTabTitle.WithContext(ctx),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.WithContext(ctx),
 		ExecBatchResultRow:      q.ExecBatchResultRow.WithContext(ctx),
 		ExecBatchRow:            q.ExecBatchRow.WithContext(ctx),

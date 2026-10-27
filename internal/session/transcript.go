@@ -158,23 +158,3 @@ func (m *Manager) deleteDurableTranscriptOffset(ctx context.Context, tabID strin
 		m.offsets.DeleteDurableTranscriptOffsetContext(ctx, tabID)
 	}
 }
-
-func (m *Manager) durableTabTitle(ctx context.Context, tabID string) string {
-	if m.titles == nil {
-		return ""
-	}
-	return m.titles.DurableTabTitleContext(ctx, tabID)
-}
-
-func (m *Manager) durableTabTitleChangedAt(ctx context.Context, tabID string) int64 {
-	if times, ok := m.titles.(DurableTabTitleTimeStore); ok {
-		return times.DurableTabTitleChangedAtContext(ctx, tabID)
-	}
-	return 0
-}
-
-func (m *Manager) deleteDurableTabTitle(ctx context.Context, tabID string) {
-	if m.titles != nil {
-		m.titles.DeleteDurableTabTitleContext(ctx, tabID)
-	}
-}

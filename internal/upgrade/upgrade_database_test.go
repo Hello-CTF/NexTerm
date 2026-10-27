@@ -86,7 +86,6 @@ func TestMigrateOwnershipAndOpaqueDataDatabase(t *testing.T) {
 		&store.TranscriptRow{ID: "transcript", SessionID: "session", AssetID: "asset", StartedAt: 9},
 		&store.TranscriptChunkRow{TranscriptID: "transcript", Seq: 1, TS: 10, Data: []byte{0, 1, 2}},
 		&store.DurableTranscriptOffset{DurableID: "durable", Offset: 11, UpdatedAt: 11},
-		&store.DurableTabTitle{DurableID: "durable", Title: "title", UpdatedAt: 12},
 		&store.RecordingRow{ID: "recording", SessionID: "session", TabID: "tab", Path: "/tmp/recording", StartedAt: 13},
 		&store.AuditRow{ID: 1, TS: 14, Source: "test", Kind: "upgrade", PayloadJSON: "{}"},
 		&store.CredentialRow{ID: "credential", Name: "credential", Kind: "password", Cipher: "enc:v1:opaque", Nonce: []byte{3, 2, 1}, Blob: []byte{9, 8, 7}, KEKHint: "hint", CreatedAt: 15, UpdatedAt: 15},
@@ -140,8 +139,8 @@ func TestMigrateOwnershipAndOpaqueDataDatabase(t *testing.T) {
 	if report.OwnerID != "admin-a" || report.DeferredNoActiveSuperadmin {
 		t.Fatalf("owner selection/deferral = %+v", report)
 	}
-	if report.Ownership.Assigned != 15 || report.Ownership.Conflicts != 0 {
-		t.Fatalf("ownership report = %+v, want 15 assignments and no conflicts", report.Ownership)
+	if report.Ownership.Assigned != 14 || report.Ownership.Conflicts != 0 {
+		t.Fatalf("ownership report = %+v, want 14 assignments and no conflicts", report.Ownership)
 	}
 	if report.Layout.Copied != 1 || report.AI.CronJobsAssigned != 1 || report.AI.RunsAssigned != 1 || report.AI.MessagesAssigned != 1 {
 		t.Fatalf("layout/AI report = %+v", report)
@@ -161,7 +160,6 @@ func TestMigrateOwnershipAndOpaqueDataDatabase(t *testing.T) {
 		{&store.TranscriptRow{}, "id", "transcript"},
 		{&store.TranscriptChunkRow{}, "transcript_id", "transcript"},
 		{&store.DurableTranscriptOffset{}, "durable_id", "durable"},
-		{&store.DurableTabTitle{}, "durable_id", "durable"},
 		{&store.RecordingRow{}, "id", "recording"},
 		{&store.AuditRow{}, "id", "1"},
 		{&store.CredentialRow{}, "id", "credential"},

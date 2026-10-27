@@ -448,7 +448,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if destroyOnFailure && durableAttachment != nil {
 			killErr = durableAttachment.Kill(context.Background())
 			m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID)
-			m.deleteDurableTabTitle(ownerCtx(context.Background(), session.userID), tabID)
 		}
 		if channel != nil {
 			_ = channel.Close()
@@ -660,7 +659,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 				tab.gridRevision = gridRevision
 			}
 		}
-		if options.Durable.CanonicalMetadata {
+		if options.Durable.Recover {
+			// The helper's descriptor title is canonical.
 			tab.title = options.Durable.Title
 			// Only a real custom title latches the precedence over the OSC
 			// dynamic title; the default empty canonical title must not
@@ -670,13 +670,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 				// Helper metadata carries no decision time: stamp the moment
 				// this backend first observes the title, never zero, so a
 				// stale timestamped client decision cannot overwrite it.
-				tab.titleChangedAt = time.Now().UnixMilli()
-			}
-		} else if title := m.durableTabTitle(ownerCtx(context.Background(), session.userID), tabID); title != "" {
-			tab.title = title
-			tab.titleCustom = true
-			tab.titleChangedAt = m.durableTabTitleChangedAt(ownerCtx(context.Background(), session.userID), tabID)
-			if tab.titleChangedAt <= 0 {
 				tab.titleChangedAt = time.Now().UnixMilli()
 			}
 		}
@@ -1911,7 +1904,6 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 			return err
 		}
 		m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), tab.session.userID), id)
-		m.deleteDurableTabTitle(ownerCtx(context.Background(), tab.session.userID), id)
 	} else {
 		m.mu.Unlock()
 		if err := m.closeTabResources(tab, false); err != nil {

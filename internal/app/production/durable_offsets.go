@@ -30,39 +30,4 @@ func (o durableTranscriptOffsets) DeleteDurableTranscriptOffsetContext(ctx conte
 	_ = o.database.DurableTranscriptOffsetDelete(ctx, tabID)
 }
 
-type durableTabTitles struct {
-	database *store.Store
-}
-
-func (t durableTabTitles) DurableTabTitleContext(ctx context.Context, tabID string) string {
-	title, err := t.database.DurableTabTitleGet(ctx, tabID)
-	if err != nil {
-		return ""
-	}
-	return title
-}
-
-func (t durableTabTitles) PersistDurableTabTitleContext(ctx context.Context, tabID, title string) {
-	_ = t.database.DurableTabTitleSet(ctx, tabID, title)
-}
-
-func (t durableTabTitles) DurableTabTitleChangedAtContext(ctx context.Context, tabID string) int64 {
-	changedAt, err := t.database.DurableTabTitleChangedAt(ctx, tabID)
-	if err != nil {
-		return 0
-	}
-	return changedAt
-}
-
-func (t durableTabTitles) PersistDurableTabTitleAtContext(ctx context.Context, tabID, title string, changedAt int64) {
-	_ = t.database.DurableTabTitleSetAt(ctx, tabID, title, changedAt)
-}
-
-func (t durableTabTitles) DeleteDurableTabTitleContext(ctx context.Context, tabID string) {
-	_ = t.database.DurableTabTitleDelete(ctx, tabID)
-}
-
-var (
-	_ session.OwnerScopedDurableTranscriptOffsetStore = durableTranscriptOffsets{}
-	_ session.OwnerScopedDurableTabTitleStore         = durableTabTitles{}
-)
+var _ session.OwnerScopedDurableTranscriptOffsetStore = durableTranscriptOffsets{}

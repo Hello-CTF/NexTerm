@@ -65,7 +65,6 @@ type Manager struct {
 	terminalModeResolver func(context.Context, string) (string, error)
 	historyLimit         func(context.Context) uint64
 	offsets              OwnerScopedDurableTranscriptOffsetStore
-	titles               OwnerScopedDurableTabTitleStore
 	bus                  *hub.Hub
 	ownsBus              bool
 	emitter              Emitter
@@ -183,7 +182,6 @@ func NewManager(config Config) *Manager {
 		manager.bus = config.Hub
 	}
 	manager.offsets = config.TranscriptOffsets
-	manager.titles = config.TabTitles
 	manager.logger = config.Logger
 	if manager.logger == nil {
 		manager.logger = slog.Default()

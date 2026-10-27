@@ -173,11 +173,11 @@ func TestRemoteDurableTwoManagersShareSession(t *testing.T) {
 	if err := managerA.DetachAll(tabID); err != nil {
 		t.Fatal(err)
 	}
-	listed, err := providerB.ListDurable(ctx)
+	listed, err := providerB.ListDurableDescriptors(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || listed[0] != tabID {
+	if len(listed) != 1 || listed[0].ID != tabID {
 		t.Fatalf("detach killed the shared session: %v", listed)
 	}
 	if err := managerB.Write(ctx, tabID, "client-b", []byte("echo shared-''four\n")); err != nil {
@@ -204,7 +204,7 @@ func TestRemoteDurableTwoManagersShareSession(t *testing.T) {
 	if err := managerB.CloseTab(tabID); err != nil {
 		t.Fatal(err)
 	}
-	listed, err = providerA.ListDurable(ctx)
+	listed, err = providerA.ListDurableDescriptors(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

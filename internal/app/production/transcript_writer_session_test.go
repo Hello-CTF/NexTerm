@@ -209,10 +209,9 @@ func TestTranscriptWriterSessionsIsolateOwners(t *testing.T) {
 	}
 }
 
-// The production adapters isolate durable offsets and tab titles per owner on
-// a real store: the first owner claims the shared row, every other owner's
-// reads return the zero value and their writes and deletes are skipped, and a
-// legacy ownerless row is claimable exactly once.
+// The production offset adapter isolates durable offsets per owner on a real
+// store: the first owner claims the shared row, and every other owner's reads
+// return the zero value and their writes and deletes are skipped.
 func TestDurableTranscriptAdaptersIsolateOwners(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
@@ -221,26 +220,9 @@ func TestDurableTranscriptAdaptersIsolateOwners(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	offsets := durableTranscriptOffsets{database: database}
-	titles := durableTabTitles{database: database}
 	ownerA := transcriptOwnerContext("owner-a")
 	ownerB := transcriptOwnerContext("owner-b")
 	const tabID = "shared-tab"
-
-	titles.PersistDurableTabTitleContext(ownerA, tabID, "title-a")
-	if got := titles.DurableTabTitleContext(ownerB, tabID); got != "" {
-		t.Fatalf("owner-b read owner-a's title %q", got)
-	}
-	titles.PersistDurableTabTitleContext(ownerB, tabID, "title-b")
-	if got := titles.DurableTabTitleContext(ownerA, tabID); got != "title-a" {
-		t.Fatalf("owner-b's write touched owner-a's title: %q", got)
-	}
-	if got := titles.DurableTabTitleContext(ownerB, tabID); got != "" {
-		t.Fatalf("owner-b read a row claimed by owner-a: %q", got)
-	}
-	titles.DeleteDurableTabTitleContext(ownerB, tabID)
-	if got := titles.DurableTabTitleContext(ownerA, tabID); got != "title-a" {
-		t.Fatalf("owner-b's delete removed owner-a's title: %q", got)
-	}
 
 	offsets.PersistDurableTranscriptOffsetContext(ownerA, tabID, 100)
 	if got := offsets.DurableTranscriptCatchUpBytesContext(ownerB, tabID); got != 0 {
@@ -253,23 +235,6 @@ func TestDurableTranscriptAdaptersIsolateOwners(t *testing.T) {
 	offsets.DeleteDurableTranscriptOffsetContext(ownerB, tabID)
 	if got := offsets.DurableTranscriptCatchUpBytesContext(ownerA, tabID); got != 100 {
 		t.Fatalf("owner-b's delete removed owner-a's offset: %d", got)
-	}
-
-	// Legacy ownerless rows stay claimable by the first owner that writes them,
-	// and a claimed row rejects every other owner.
-	if err := database.DurableTabTitleSet(context.Background(), "legacy-tab", "legacy-title"); err != nil {
-		t.Fatal(err)
-	}
-	titles.PersistDurableTabTitleContext(ownerA, "legacy-tab", "claimed")
-	if got := titles.DurableTabTitleContext(ownerA, "legacy-tab"); got != "claimed" {
-		t.Fatalf("owner-a claim on a legacy ownerless row = %q, want claimed", got)
-	}
-	titles.PersistDurableTabTitleContext(ownerB, "legacy-tab", "hijack")
-	if got := titles.DurableTabTitleContext(ownerA, "legacy-tab"); got != "claimed" {
-		t.Fatalf("owner-b overwrote a claimed row: %q", got)
-	}
-	if got := titles.DurableTabTitleContext(ownerB, "legacy-tab"); got != "" {
-		t.Fatalf("owner-b read a row claimed by owner-a: %q", got)
 	}
 }
 

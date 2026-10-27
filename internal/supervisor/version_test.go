@@ -83,7 +83,7 @@ func TestV3ClientReportsHelperUpgradeForV2Helper(t *testing.T) {
 	remote := NewRemoteClient(func(ctx context.Context) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", path)
 	}, "digest")
-	_, err = NewRemoteProvider(remote).ListDurable(context.Background())
+	_, err = NewRemoteProvider(remote).ListDurableDescriptors(context.Background())
 	if !errors.Is(err, durable.ErrUnavailable) {
 		t.Fatalf("provider error = %v, want durable.ErrUnavailable", err)
 	}

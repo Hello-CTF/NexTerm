@@ -88,12 +88,12 @@ func TestSupervisorDurableRestartRecovery(t *testing.T) {
 	if err := second.CloseTab(tabID); err != nil {
 		t.Fatal(err)
 	}
-	ids, err := provider.ListDurable(ctx)
+	descriptors, err := provider.ListDurableDescriptors(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range ids {
-		if id == tabID {
+	for _, descriptor := range descriptors {
+		if descriptor.ID == tabID {
 			t.Fatal("killed durable tab is still enumerated by the daemon")
 		}
 	}

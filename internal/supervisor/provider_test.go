@@ -485,10 +485,6 @@ func TestRemoteProviderDescriptorsSharedAcrossClients(t *testing.T) {
 				t.Fatalf("ListDurableDescriptors with active attachment = %+v, %v", descriptors, err)
 			}
 			requireDurableDescriptorMatchesInfo(t, descriptors[0], infos[0])
-			legacyIDs, err := provider.ListDurable(ctx)
-			if err != nil || len(legacyIDs) != 1 || legacyIDs[0] != id {
-				t.Fatalf("ListDurable compatibility = %v, %v", legacyIDs, err)
-			}
 		})
 	}
 	after, err := supervisor.List(ctx)
@@ -688,10 +684,6 @@ func TestDurableDescriptorProvidersPropagateListErrors(t *testing.T) {
 	descriptors, err = remote.ListDurableDescriptors(context.Background())
 	if descriptors != nil || !errors.Is(err, durable.ErrUnavailable) {
 		t.Fatalf("failed remote ListDurableDescriptors = %+v, %v", descriptors, err)
-	}
-	legacyIDs, legacyErr := remote.ListDurable(context.Background())
-	if legacyIDs != nil || !errors.Is(legacyErr, durable.ErrUnavailable) {
-		t.Fatalf("failed legacy ListDurable = %v, %v", legacyIDs, legacyErr)
 	}
 }
 
