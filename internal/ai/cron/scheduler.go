@@ -123,7 +123,7 @@ func (s *Scheduler) Register(ctx context.Context, registration Registration) (Jo
 		Schedule: strings.TrimSpace(registration.Schedule), Timezone: registration.Timezone,
 		Enabled: !registration.Disabled, Timeout: registration.Timeout,
 		ModelProfileID: strings.TrimSpace(registration.ModelProfileID),
-		CreatedAt:      now, UpdatedAt: now, NextRunAt: next,
+		CreatedAt:      now, UpdatedAt: now, NextRunAt: next, ConfigUpdatedAt: now,
 	}
 	stored, err := s.store.Create(ctx, job, s.options.MaxJobsPerSession)
 	if err != nil {
@@ -163,6 +163,9 @@ func (s *Scheduler) SetEnabled(ctx context.Context, sessionID, jobID string, ena
 	if err != nil {
 		return Job{}, err
 	}
+	if job.ForeignDevice {
+		return Job{}, ErrForeignDevice
+	}
 	if job.Running() {
 		return Job{}, ErrJobRunning
 	}
@@ -183,6 +186,7 @@ func (s *Scheduler) SetEnabled(ctx context.Context, sessionID, jobID string, ena
 	}
 	job.Enabled = enabled
 	job.UpdatedAt = now
+	job.ConfigUpdatedAt = laterConfigRevision(job.ConfigUpdatedAt, now)
 	stored, err := s.store.CompareAndSwap(ctx, job, job.Revision)
 	if err != nil {
 		return Job{}, storageError("set enabled", job.ID, err)
@@ -399,6 +403,8 @@ func (s *Scheduler) disableUnexecutable(ctx context.Context, job Job, now time.T
 	job.RetryAt = time.Time{}
 	job.CircuitOpenUntil = time.Time{}
 	job.UpdatedAt = now
+	// Disabling is a configuration change the owner's other devices should see.
+	job.ConfigUpdatedAt = laterConfigRevision(job.ConfigUpdatedAt, now)
 	if _, err := s.store.CompareAndSwap(ctx, job, job.Revision); err != nil {
 		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
 			return nil

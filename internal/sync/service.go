@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"log/slog"
 	"strings"
 	stdsync "sync"
@@ -51,6 +52,14 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// WithDeviceInstall names the installation fingerprint kept outside the
+// database, the same one the cron scheduler uses, so both agree on the device ID.
+func WithDeviceInstall(install string) Option {
+	return func(s *Service) {
+		s.deviceInstall = install
+	}
+}
+
 func WithProfilesReload(reload func(context.Context) error) Option {
 	return func(s *Service) {
 		s.profilesReload = reload
@@ -81,6 +90,8 @@ type Service struct {
 	profilesReload    func(context.Context) error
 	permissionsReload func(context.Context) error
 	grantsReload      func(context.Context) error
+	stateRulesChanged func(context.Context)
+	deviceInstall     string
 	syncPeriod        time.Duration
 	// linkChanged is called after the saved sync link was written.
 	linkChanged atomic.Pointer[func()]
@@ -129,6 +140,25 @@ func (s *Service) notifyLinkChanged() {
 	}
 }
 
+// SetStateRulesChanged sets the hook run after a sync changed the caller's
+// state rules, so the rules reach the owner's helpers on this device.
+func (s *Service) SetStateRulesChanged(changed func(context.Context)) {
+	s.stateRulesChanged = changed
+}
+
+// SetSkills routes synced AI skill overrides through the manager that serves
+// them, keeping its per-owner cache current.
+func (s *Service) SetSkills(manager *skills.Manager) {
+	s.engine.setSkills(manager)
+}
+
+// afterKindsChanged runs the hooks of kinds a sync changed locally.
+func (s *Service) afterKindsChanged(ctx context.Context, changed map[string]bool) {
+	if changed[KindStateRule] && s.stateRulesChanged != nil {
+		s.stateRulesChanged(ctx)
+	}
+}
+
 func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Service {
 	s := &Service{store: db, vault: credentialVault, syncPeriod: defaultBackgroundSyncPeriod, wakeCh: make(chan struct{}, 1)}
 	for _, option := range options {
@@ -136,6 +166,7 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 	}
 	s.engine = NewEngine(db, credentialVault, s.logger)
 	s.engine.aiShared = s.desktop
+	s.engine.deviceInstall = s.deviceInstall
 	if credentialVault != nil {
 		// Wake a background sync round immediately after the vault unlocks: a vault locked at startup no longer waits for the next period.
 		credentialVault.AddUnlockListener(s.wake)
@@ -777,6 +808,7 @@ func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error)
 	report, syncErr := s.engine.Sync(ctx, RemoteConfig{
 		URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure,
 	})
+	s.afterKindsChanged(ctx, report.changedKinds)
 	if syncReportChanged(report) {
 		if s.profilesReload != nil {
 			if err := s.profilesReload(ctx); err != nil {

@@ -246,7 +246,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if dockerService == nil {
 		dockerService = newProductionDockerService(sessionManager, database)
 	}
-	syncService := syncservice.New(database, credentialVault, syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithGatewayAuthKey(os.Getenv("NEXTERM_GATEWAY_AUTH")), syncservice.WithEvents(config.Config.Events), syncservice.WithProfilesReload(profileManager.Reload), syncservice.WithLogger(config.Config.Logger))
+	deviceInstall := loadDeviceInstall(config.DataDir, config.Config.Logger)
+	syncService := syncservice.New(database, credentialVault, syncservice.WithDeviceInstall(deviceInstall), syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithGatewayAuthKey(os.Getenv("NEXTERM_GATEWAY_AUTH")), syncservice.WithEvents(config.Config.Events), syncservice.WithProfilesReload(profileManager.Reload), syncservice.WithLogger(config.Config.Logger))
+	syncService.SetStateRulesChanged(func(ctx context.Context) { stateRules.changed(ipc.OwnerID(ctx)) })
 	if config.Desktop && sshConnector != nil {
 		sshConnector.device.Store(&DeviceConnectorConfig{
 			Dial: syncService.Remote().DialDeviceBridge,
@@ -373,9 +375,10 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	})
 	fsUploads.resumeStaging = forwardRuntime.ResumeUploadStaging
 	services = ProductionServices{
-		LocalHelper: localHelper,
-		stateRules:  stateRules,
-		Store:       database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
+		LocalHelper:   localHelper,
+		stateRules:    stateRules,
+		deviceInstall: deviceInstall,
+		Store:         database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
 		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
 		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
@@ -422,6 +425,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		return nil, err
 	}
 	services.Skills = skillsManager
+	syncService.SetSkills(skillsManager)
 	if err := composeAIRuntime(ctx, &services); err != nil {
 		services.closeAIRuntime()
 		return nil, err

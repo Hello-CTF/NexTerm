@@ -2217,6 +2217,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectCredentialsRequest", ts: "CollectCredentialsRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectCredentialsResult", ts: "CollectCredentialsResult" },
     },
+    "sync_collect_kind_objects": {
+      scope: "sync",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectKindObjectsRequest", ts: "CollectKindObjectsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectKindObjectsResult", ts: "CollectKindObjectsResult" },
+    },
     "sync_collect_known_hosts": {
       scope: "sync",
       nested: true,
@@ -2248,6 +2256,30 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CompareResult", ts: "CompareResult" },
+    },
+    "sync_cron_foreign_adopt": {
+      scope: "sync",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ForeignCronAdoptRequest", ts: "ForeignCronAdoptRequest" },
+      output: { go: "struct{}", ts: "Record<string, never>" },
+    },
+    "sync_cron_foreign_list": {
+      scope: "sync",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/sync.ForeignCronJob", ts: "ForeignCronJob[]" },
+    },
+    "sync_cron_foreign_remove": {
+      scope: "sync",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ForeignCronRemoveRequest", ts: "ForeignCronRemoveRequest" },
+      output: { go: "struct{}", ts: "Record<string, never>" },
     },
     "sync_digest": {
       scope: "sync",
@@ -4037,6 +4069,10 @@ export interface IPCCommandTypeMap {
     input: contractTypes.CollectCredentialsRequest;
     output: contractTypes.CollectCredentialsResult;
   };
+  "sync_collect_kind_objects": {
+    input: contractTypes.CollectKindObjectsRequest;
+    output: contractTypes.CollectKindObjectsResult;
+  };
   "sync_collect_known_hosts": {
     input: contractTypes.CollectKnownHostsRequest;
     output: contractTypes.CollectKnownHostsResult;
@@ -4052,6 +4088,18 @@ export interface IPCCommandTypeMap {
   "sync_compare": {
     input: Record<string, never>;
     output: contractTypes.CompareResult;
+  };
+  "sync_cron_foreign_adopt": {
+    input: contractTypes.ForeignCronAdoptRequest;
+    output: Record<string, never>;
+  };
+  "sync_cron_foreign_list": {
+    input: Record<string, never>;
+    output: contractTypes.ForeignCronJob[];
+  };
+  "sync_cron_foreign_remove": {
+    input: contractTypes.ForeignCronRemoveRequest;
+    output: Record<string, never>;
   };
   "sync_digest": {
     input: Record<string, never>;

@@ -11,6 +11,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type RunbookTemplateRow = model.RunbookTemplateRow
@@ -128,14 +129,29 @@ func (s *Store) RunbookTemplateUpdate(ctx context.Context, id string, input Runb
 	if err != nil {
 		return RunbookTemplate{}, dbError(err)
 	}
-	t := query.Use(s.db).RunbookTemplateRow
-	_, err = t.WithContext(ctx).
-		Where(t.ID.Eq(id)).
-		Where(ownerConditions(ctx, t.TableName())...).
-		Updates(map[string]any{
-			"name": name, "description": desc, "steps": string(encoded),
-			"version": gorm.Expr("version + 1"), "updated_at": ids.NowMS(),
-		})
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		t := query.Use(tx).RunbookTemplateRow
+		current, err := t.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(t.ID.Eq(id)).
+			Where(ownerConditions(ctx, t.TableName())...).
+			First()
+		if isNoRows(err) {
+			return notFound("Runbook 模板")
+		}
+		if err != nil {
+			return err
+		}
+		// Keep updated_at strictly increasing so a newer edit always wins a sync.
+		_, err = t.WithContext(ctx).
+			Where(t.ID.Eq(id)).
+			Where(ownerConditions(ctx, t.TableName())...).
+			Updates(map[string]any{
+				"name": name, "description": desc, "steps": string(encoded),
+				"version": current.Version + 1, "updated_at": max(ids.NowMS(), current.UpdatedAt+1),
+			})
+		return err
+	})
 	if err != nil {
 		return RunbookTemplate{}, dbError(err)
 	}
@@ -146,11 +162,18 @@ func (s *Store) RunbookTemplateDelete(ctx context.Context, id string) error {
 	if _, err := s.RunbookTemplateGet(ctx, id); err != nil {
 		return err
 	}
-	t := query.Use(s.db).RunbookTemplateRow
-	if _, err := t.WithContext(ctx).
-		Where(t.ID.Eq(id)).
-		Where(ownerConditions(ctx, t.TableName())...).
-		Delete(); err != nil {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		t := query.Use(tx).RunbookTemplateRow
+		if _, err := t.WithContext(ctx).
+			Where(t.ID.Eq(id)).
+			Where(ownerConditions(ctx, t.TableName())...).
+			Delete(); err != nil {
+			return err
+		}
+		// The tombstone lets the deletion reach the owner's other devices.
+		return s.recordSyncTombstoneNow(ctx, tx, id, SyncTombstoneKindRunbookTemplate)
+	})
+	if err != nil {
 		return dbError(err)
 	}
 	return nil

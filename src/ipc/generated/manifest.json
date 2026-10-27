@@ -1723,6 +1723,12 @@
       "channel": false,
       "stream": "none"
     },
+    "sync_collect_kind_objects": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
     "sync_collect_known_hosts": {
       "scope": "sync",
       "nested": true,
@@ -1744,6 +1750,24 @@
     "sync_compare": {
       "scope": "sync",
       "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_cron_foreign_adopt": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_cron_foreign_list": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_cron_foreign_remove": {
+      "scope": "sync",
+      "nested": true,
       "channel": false,
       "stream": "none"
     },

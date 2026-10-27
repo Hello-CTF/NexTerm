@@ -456,6 +456,23 @@ export type CollectCredentialsResult = {
   nextAfterId?: string;
 };
 
+export type CollectKindObject = {
+  id: string;
+  kind: string;
+  name: string;
+  updatedAt: number;
+  payload: string;
+};
+
+export type CollectKindObjectsRequest = {
+  kind: string;
+};
+
+export type CollectKindObjectsResult = {
+  objects: CollectKindObject[];
+  warnings: string[];
+};
+
 export type CollectKnownHost = {
   id: string;
   host: string;
@@ -697,6 +714,10 @@ export type CronJob = {
   run: CronRunState;
   ownerId: string;
   ownerKind: string;
+  deviceId?: string;
+  deviceName?: string;
+  foreignDevice?: boolean;
+  configUpdatedAt?: string;
 };
 
 export type CronJobRequest = {
@@ -1238,6 +1259,25 @@ export type FinderQuery = {
   value: string;
 };
 
+export type ForeignCronAdoptRequest = {
+  id: string;
+};
+
+export type ForeignCronJob = {
+  id: string;
+  name: string;
+  prompt: string;
+  schedule: string;
+  timezone: string;
+  enabled: boolean;
+  deviceId: string;
+  deviceName: string;
+};
+
+export type ForeignCronRemoveRequest = {
+  id: string;
+};
+
 export type ForwardRecoverOutcomeDTO = {
   assetId: string;
   sessionId?: string;
@@ -1538,6 +1578,11 @@ export type KindOptIn = {
   aiPermission: boolean;
   aiGrant: boolean;
   preferences: boolean;
+  stateRules: boolean;
+  runbookTemplates: boolean;
+  skills: boolean;
+  memory: boolean;
+  cron: boolean;
 };
 
 export type KindOptInPatch = {
@@ -1546,6 +1591,11 @@ export type KindOptInPatch = {
   aiPermission?: boolean | null;
   aiGrant?: boolean | null;
   preferences?: boolean | null;
+  stateRules?: boolean | null;
+  runbookTemplates?: boolean | null;
+  skills?: boolean | null;
+  memory?: boolean | null;
+  cron?: boolean | null;
 };
 
 export type KnownHostRequest = {

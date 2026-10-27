@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
     collectAIPermission: vi.fn(),
     collectAIGrants: vi.fn(),
     collectPreferences: vi.fn(),
+    collectKindObjects: vi.fn(),
     kindOptInGet: vi.fn(),
     kindOptInSet: vi.fn(),
     applyObjects: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock("../ipc/commands", () => ({
     collectAIPermission: mocks.collectAIPermission,
     collectAIGrants: mocks.collectAIGrants,
     collectPreferences: mocks.collectPreferences,
+    collectKindObjects: mocks.collectKindObjects,
     kindOptInGet: mocks.kindOptInGet,
     kindOptInSet: mocks.kindOptInSet,
   },
@@ -143,7 +145,7 @@ const AI_PROFILE_DTO = {
 };
 
 let mounted: MountedView | undefined;
-let optInState: { knownHost: boolean; aiProfile: boolean; aiPermission?: boolean; aiGrant?: boolean; preferences?: boolean };
+let optInState: { knownHost: boolean; aiProfile: boolean; aiPermission?: boolean; aiGrant?: boolean; preferences?: boolean; stateRules?: boolean; runbookTemplates?: boolean; skills?: boolean; memory?: boolean; cron?: boolean };
 
 function mountSyncCard(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -165,7 +167,7 @@ async function runAutoSync(wrapInAct = true) {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../features/settings/SyncCard");
   const execute = async () => {
     try {
-      const result = await runWebSync(DEK, { aiPermission: false, aiGrant: false, preferences: false, ...optInState });
+      const result = await runWebSync(DEK, { aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false, ...optInState });
       if (result) {
         if (wrapInAct) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
         else await act(() => window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result })));
@@ -252,6 +254,7 @@ beforeEach(() => {
   });
   mocks.collectAIPermission.mockResolvedValue({ id: "global", mode: "read_write", dangerRules: [], updatedAt: 0, found: false });
   mocks.collectPreferences.mockResolvedValue([]);
+  mocks.collectKindObjects.mockResolvedValue({ objects: [], warnings: [] });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
@@ -483,11 +486,35 @@ describe("M166 AI permission and preference sync", () => {
     expect(mocks.collectAIPermission).not.toHaveBeenCalled();
     expect(mocks.collectAIGrants).not.toHaveBeenCalled();
     expect(mocks.collectPreferences).not.toHaveBeenCalled();
+    expect(mocks.collectKindObjects).not.toHaveBeenCalled();
     expect(text()).not.toContain("preference:keybinding.newTerminal");
     expect(text()).not.toContain("dev-9");
 
     await runAutoSync();
     expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+});
+
+describe("generic kind collection", () => {
+  it("seals the server's canonical payload as is and skips kinds whose switch is off", async () => {
+    optInState = { knownHost: false, aiProfile: false, stateRules: true, runbookTemplates: false };
+    const payload = '{"id":"01J00000000000000000000001","name":"confirm <y>","scope":"global","region":"bottom","lines":3,"pattern":"Continue\\\\?","state":"needs_me","enabled":true,"createdAt":100,"updatedAt":200}';
+    mocks.collectKindObjects.mockImplementation(async (kind: string) => kind === "state_rule"
+      ? { objects: [{ id: "01J00000000000000000000001", kind: "state_rule", name: "confirm <y>", updatedAt: 200, payload }], warnings: [] }
+      : { objects: [], warnings: [] });
+    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 1, applied: 1, skipped: 0 });
+
+    mounted = mountSyncCard();
+    await flushUntilOptInRendered();
+    openDetails();
+    await flushUntil(() => text().includes("confirm <y>"));
+    expect(mocks.collectKindObjects.mock.calls.map(([kind]) => kind)).not.toContain("runbook_template");
+
+    await runAutoSync();
+    await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
+    const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
+    expect(objects.map((o) => o.id)).toEqual(["01J00000000000000000000001"]);
+    expect(await openPushed(objects[0], "state_rule")).toBe(payload);
   });
 });
 

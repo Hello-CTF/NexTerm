@@ -25,6 +25,12 @@ const (
 	KindAIPermission = "ai_permission"
 	KindAIGrant      = "ai_grant"
 	KindPreference   = "preference"
+
+	KindStateRule       = "state_rule"
+	KindRunbookTemplate = "runbook_template"
+	KindSkill           = "skill"
+	KindMemory          = "memory"
+	KindCron            = "cron"
 )
 
 const (

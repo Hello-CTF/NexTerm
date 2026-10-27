@@ -316,7 +316,7 @@ func composeCronScheduler(ctx context.Context, services *ProductionServices, opt
 	if services.Store == nil {
 		return nil, nil, errors.New("cron runtime requires store and agent services")
 	}
-	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.GORM(), cron.WithShared(services.desktop || owner.OpenAccess(ctx)))
+	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.GORM(), cron.WithShared(services.desktop || owner.OpenAccess(ctx)), cron.WithInstall(services.deviceInstall))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -460,6 +460,8 @@ func cronIPCError(err error) error {
 		return ipc.WrapError(ipc.CodeBadParam, cron.ErrConflict.Error(), err)
 	case errors.Is(err, cron.ErrJobLimit):
 		return ipc.WrapError(ipc.CodeBadParam, cron.ErrJobLimit.Error(), err)
+	case errors.Is(err, cron.ErrForeignDevice):
+		return ipc.WrapError(ipc.CodeBadParam, cron.ErrForeignDevice.Error(), err)
 	case errors.Is(err, cron.ErrJobRunning):
 		return ipc.WrapError(ipc.CodeBadParam, cron.ErrJobRunning.Error(), err)
 	case errors.Is(err, cron.ErrInvalidSchedule):

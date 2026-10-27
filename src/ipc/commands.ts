@@ -1713,6 +1713,11 @@ export const syncApi = {
   collectAIGrants: () => call("sync_collect_ai_grants") as Promise<import("./types").SyncCollectAIGrants>,
 
   collectPreferences: () => call("sync_collect_preferences") as Promise<import("./types").SyncCollectPreference[]>,
+  collectKindObjects: (kind: string) =>
+    call("sync_collect_kind_objects", { args: { kind } }) as Promise<import("./types").SyncCollectKindObjectsResult>,
+  cronForeignList: () => call("sync_cron_foreign_list") as Promise<import("./types").SyncForeignCronJob[]>,
+  cronForeignRemove: (id: string) => call("sync_cron_foreign_remove", { args: { id } }),
+  cronForeignAdopt: (id: string) => call("sync_cron_foreign_adopt", { args: { id } }),
 
   preferencesGet: () => call("sync_preferences_get") as Promise<import("./types").PreferenceScopeView>,
 

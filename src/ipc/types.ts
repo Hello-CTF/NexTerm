@@ -186,7 +186,8 @@ export type SyncReport = {
   warnings?: string[],
 };
 
-export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript" | "known_host" | "ai_profile" | "ai_permission" | "ai_grant" | "preference";
+export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript" | "known_host" | "ai_profile" | "ai_permission" | "ai_grant" | "preference"
+  | "state_rule" | "runbook_template" | "skill" | "memory" | "cron";
 
 export type SyncApplyObject = { id: string, kind: SyncApplyObjectKind, payload: JsonValue, };
 
@@ -229,7 +230,15 @@ export type SyncCollectKnownHostsResult = { knownHosts: SyncCollectKnownHost[], 
 export type SyncCollectAIProfilesResult = { profiles: SyncCollectAIProfile[], hasMore: boolean, nextAfterId?: string, };
 
 // Per-account-user sync opt-in (default on); user identity is injected by the server session, not reported by the client.
-export type SyncKindOptIn = { knownHost: boolean, aiProfile: boolean, aiPermission: boolean, aiGrant: boolean, preferences: boolean, };
+export type SyncKindOptIn = { knownHost: boolean, aiProfile: boolean, aiPermission: boolean, aiGrant: boolean, preferences: boolean,
+stateRules: boolean, runbookTemplates: boolean, skills: boolean, memory: boolean, cron: boolean, };
+
+// A synced scheduled job bound to another device: shown here, run only there.
+export type SyncForeignCronJob = { id: string, name: string, prompt: string, schedule: string, timezone: string, enabled: boolean, deviceId: string, deviceName: string, };
+
+// One object collected through sync_collect_kind_objects; payload is the canonical JSON the Go engine seals.
+export type SyncCollectKindObject = { id: string, kind: string, name: string, updatedAt: number, payload: string, };
+export type SyncCollectKindObjectsResult = { objects: SyncCollectKindObject[], warnings: string[], };
 
 export type SyncCollectAIPermission = { id: string, mode: string, dangerRules: string[], updatedAt: number, found: boolean, };
 export type SyncCollectAIGrantDevice = { id: string, deviceId: string, kinds: string[], updatedAt: number, };

@@ -38,6 +38,11 @@ export const COMPARE_KIND_LABELS: Record<string, string> = {
   ai_permission: "AI 权限",
   ai_grant: "AI 授权",
   preference: "偏好设置",
+  state_rule: "状态规则",
+  runbook_template: "Runbook 模板",
+  skill: "AI 技能",
+  memory: "AI 记忆",
+  cron: "定时任务",
 };
 
 export function compareRowLabel(state: CompareRowState): { text: string; tone: string; hint: string } {
@@ -63,7 +68,7 @@ export function compareRowLabel(state: CompareRowState): { text: string; tone: s
 
 const SUMMARY_KIND_ORDER = [
   "asset", "group", "snippet", "credential", "known_host", "ai_profile", "ai_permission",
-  "ai_grant", "preference", "transcript", "tombstone",
+  "ai_grant", "preference", "state_rule", "runbook_template", "skill", "memory", "cron", "transcript", "tombstone",
 ];
 
 // Internal bookkeeping objects are not worth a count when they match; a differing one is described plainly.
