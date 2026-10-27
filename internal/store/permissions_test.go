@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -61,5 +62,41 @@ func TestDatabaseFilesAreOwnerOnlyAndRepairedOnReopen(t *testing.T) {
 	value, found, err := reopened.SettingGet(ctx, "key")
 	if err != nil || !found || value != "value" {
 		t.Fatalf("setting value=%q found=%v err=%v", value, found, err)
+	}
+}
+
+func TestPrepareDatabaseFilePermissionsCreateOrRepairOwnerOnly(t *testing.T) {
+	if !ownerOnlyPermissionsSupported() {
+		t.Skip("platform does not expose owner/group/other permission bits")
+	}
+	dir := t.TempDir()
+
+	created := filepath.Join(dir, "new.db")
+	if err := prepareDatabaseFile(created); err != nil {
+		t.Fatal(err)
+	}
+	requireOwnerOnlyMode(t, created)
+	if info, err := os.Stat(created); err != nil || info.Size() != 0 {
+		t.Fatalf("created file = %+v, %v; want an empty file", info, err)
+	}
+
+	existing := filepath.Join(dir, "existing.db")
+	content := []byte("existing database content")
+	if err := os.WriteFile(existing, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(existing, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareDatabaseFile(existing); err != nil {
+		t.Fatal(err)
+	}
+	requireOwnerOnlyMode(t, existing)
+	if data, err := os.ReadFile(existing); err != nil || !bytes.Equal(data, content) {
+		t.Fatalf("existing file content = %q, %v; want it unchanged", data, err)
+	}
+
+	if err := prepareDatabaseFile(filepath.Join(dir, "missing", "data.db")); err == nil {
+		t.Fatal("a database path in a missing directory must fail")
 	}
 }
