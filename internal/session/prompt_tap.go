@@ -21,9 +21,9 @@ type PromptTapRequest struct {
 // The helper inspects the screen again and writes the option's keys only
 // when the prompt is still the one identified by the request and tappable;
 // the tap consumes the prompt epoch, so a repeated tap fails. A stale tap
-// fails with base.ErrStalePrompt and writes nothing. Tabs outside a helper
-// cannot read the terminal foreground, so their prompts are never tappable
-// (ErrUnsupported).
+// fails with base.ErrStalePrompt, writes nothing and counts as no input.
+// Tabs outside a helper cannot read the terminal foreground, so their
+// prompts are never tappable (ErrUnsupported).
 func (m *Manager) TapPromptFor(ctx context.Context, tabID, client string, request PromptTapRequest) error {
 	tab, err := m.TabFor(ctx, tabID)
 	if err != nil {
@@ -32,17 +32,29 @@ func (m *Manager) TapPromptFor(ctx context.Context, tabID, client string, reques
 	if request.Generation == "" || request.Fingerprint == "" || request.Option < 0 {
 		return fmt.Errorf("%w: prompt tap needs a generation, a fingerprint and an option", ErrInvalidOptions)
 	}
-	m.notifyUserInput(tabID)
-	// The write gate orders the keys after input this process already sent.
+	client = clientID(client)
+	// The write gate orders the keys after input this process already
+	// queued: input waiting for the gate is sent first.
 	release, err := tab.acquireWrite(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
+	tab.inputMu.Lock()
+	queued := tab.inputQueue
+	tab.inputQueue = nil
+	tab.inputMu.Unlock()
+	if len(queued) > 0 {
+		m.writeInputBatch(ctx, tab, queued)
+	}
 	tab.mu.Lock()
 	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
 		return ErrTabClosed
+	}
+	if tab.spectatorOnlyLocked(client) {
+		tab.mu.Unlock()
+		return ErrForbidden
 	}
 	tapper, ok := tab.durable.(base.DurablePromptTapper)
 	generation := tab.generation
@@ -60,29 +72,32 @@ func (m *Manager) TapPromptFor(ctx context.Context, tabID, client string, reques
 	if exited {
 		return ErrTabClosed
 	}
-	// Like typed input, the tap makes this client the input owner before
-	// the helper writes, so the output it causes follows the announcement.
-	tab.mu.Lock()
-	ownerChanged := tab.noteInputClientLocked(client)
-	tab.mu.Unlock()
-	if ownerChanged {
-		m.syncInputOwner(ctx, tab)
-	}
 	sent, err := tapper.TapDurablePrompt(ctx, base.PromptTap{
 		Generation: request.Generation, Epoch: request.Epoch, Fingerprint: request.Fingerprint, Option: request.Option,
 	})
 	if err != nil {
 		return err
 	}
+	// Only an accepted tap is this client's input. The input owner is
+	// announced after the helper queued the keys: the tap is validated and
+	// written as one step there, so a refused tap never moves the owner.
+	m.notifyUserInput(tabID)
 	tab.mu.Lock()
-	controlChanged := !tab.closed && tab.noteInputLocked(clientID(client), m.now())
+	ownerChanged, controlChanged := false, false
 	var control ControlEvent
-	if controlChanged {
-		control = tab.controlEventLocked()
+	if !tab.closed {
+		ownerChanged = tab.noteInputClientLocked(client)
+		controlChanged = tab.noteInputLocked(client, m.now())
+		if controlChanged {
+			control = tab.controlEventLocked()
+		}
 	}
 	tab.mu.Unlock()
 	if controlChanged {
 		m.emit(context.Background(), TopicTerminalControl, control)
+	}
+	if ownerChanged {
+		m.syncInputOwner(ctx, tab)
 	}
 	m.transcriptInput(ctx, tab, []byte(sent))
 	return nil

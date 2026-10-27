@@ -143,11 +143,15 @@ func (a *Attachment) TapPrompt(epoch uint64, fingerprint string, option int) (st
 	if tracker == nil {
 		return "", fmt.Errorf("%w: session state detection is disabled", ErrUnsupported)
 	}
+	// Validation, the epoch it consumes and the queued keys are one step
+	// under the input lock: no other input can be queued between them.
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	send, err := tracker.tap(epoch, fingerprint, option)
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.writeInputCtx(a.ctx, []byte(send), true); err != nil {
+	if _, err := s.enqueueInputLocked(a.ctx, []byte(send), true); err != nil {
 		return "", err
 	}
 	return send, nil

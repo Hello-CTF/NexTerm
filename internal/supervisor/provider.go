@@ -296,6 +296,9 @@ func (a *channelAttachment) TapDurablePrompt(_ context.Context, tap base.PromptT
 		return "", fmt.Errorf("%w: prompt from helper generation %q, attached to %q", base.ErrStalePrompt, tap.Generation, generation)
 	}
 	sent, err := a.TapPrompt(tap.Epoch, tap.Fingerprint, tap.Option)
+	if errors.Is(err, ErrUnsupported) {
+		return "", fmt.Errorf("%w: %w", base.ErrUnsupported, err)
+	}
 	return sent, translateError(err)
 }
 
@@ -586,6 +589,11 @@ func (a *streamAttachment) TapDurablePrompt(ctx context.Context, tap base.Prompt
 		return "", fmt.Errorf("%w: prompt from helper generation %q, attached to %q", base.ErrStalePrompt, tap.Generation, generation)
 	}
 	sent, err := a.TapPrompt(ctx, tap.Epoch, tap.Fingerprint, tap.Option)
+	if errors.Is(err, ErrUnsupported) {
+		// An older helper, or one without state detection: taps are not
+		// supported there, which is not an unavailable helper.
+		return "", fmt.Errorf("%w: %w", base.ErrUnsupported, err)
+	}
 	return sent, translateError(err)
 }
 

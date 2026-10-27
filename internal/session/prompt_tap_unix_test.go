@@ -96,6 +96,13 @@ func TestPromptTapAnswersOnceAcrossDevices(t *testing.T) {
 	if err := desktop.TapPromptFor(ctx, tabID, "client-a", request); !errors.Is(err, base.ErrStalePrompt) {
 		t.Fatalf("second tap of the same prompt = %v, want ErrStalePrompt", err)
 	}
+	desktopTab, err := desktop.Tab(tabID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := desktopTab.LastInputClient(); last != "" {
+		t.Fatalf("a refused tap made %q the input owner", last)
+	}
 	stale := request
 	stale.Generation = "another-helper"
 	if err := phone.TapPromptFor(ctx, phoneAsked.TabID, "client-b", stale); !errors.Is(err, base.ErrStalePrompt) {
@@ -105,9 +112,14 @@ func TestPromptTapAnswersOnceAcrossDevices(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for !bytes.Contains(terminals.terminal(tabID).bytes(), []byte("got:y\r\n")) {
 		if time.Now().After(deadline) {
-			t.Fatalf("desktop output = %q, want exactly one answer", terminals.terminal(tabID).bytes())
+			t.Fatalf("desktop output = %q, want the answer", terminals.terminal(tabID).bytes())
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	// The script reads one line: a second written answer would echo as more
+	// input after it. The refused taps wrote nothing.
+	if output := terminals.terminal(tabID).bytes(); bytes.Count(output, []byte("got:")) != 1 || bytes.Count(output, []byte("[y/N] y\r\n")) != 1 || bytes.Count(output, []byte("y\r\n")) != 2 {
+		t.Fatalf("desktop output = %q, want exactly one answer", output)
 	}
 	// The tap counts as the phone client's input.
 	tab, err := phone.Tab(phoneAsked.TabID)
