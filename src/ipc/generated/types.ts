@@ -18,6 +18,46 @@ export type AdvanceRequest = {
   productionConfirmation?: ProductionConfirmation | null;
 };
 
+export type AggregateHost = {
+  key: string;
+  kind: string;
+  name: string;
+  sessionId?: string;
+  assetId?: string;
+  deviceId?: string;
+  deviceKind?: string;
+};
+
+export type AggregateHostStatus = AggregateHost & {
+  status: string;
+  error?: string;
+  errorCode?: string;
+  fetchedAt?: number;
+  stale?: boolean;
+  answeredAt?: number;
+};
+
+export type AggregateList = {
+  hosts: AggregateHostStatus[];
+  sessions: AggregateSession[];
+  complete: boolean;
+};
+
+export type AggregateSession = {
+  hostKey: string;
+  tabId: string;
+  title?: string;
+  createdAt?: number;
+  cols: number;
+  rows: number;
+  dead?: boolean;
+  exitCode?: number | null;
+  attention: AttentionEvent;
+  lastOutputAt?: number;
+  detachedAt?: number;
+  attached?: boolean;
+};
+
 export type ApplyObject = {
   id: string;
   kind: string;
@@ -2332,6 +2372,10 @@ export type ServiceUnit = {
   active: string;
   sub: string;
   description: string;
+};
+
+export type SessionAggregateRequest = {
+  waitMs?: number;
 };
 
 export type SessionConnectDeviceRequest = {

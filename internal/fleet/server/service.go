@@ -91,6 +91,8 @@ type Service struct {
 	onlineDevices map[string]bool
 
 	shareRevalidateInterval time.Duration
+
+	sessionList sessionListState
 }
 
 type Option func(*Service)
@@ -244,6 +246,8 @@ type auditPayload struct {
 	Outcome   string `json:"outcome"`
 	Reason    string `json:"reason,omitempty"`
 	URL       string `json:"url,omitempty"`
+	// Devices is how many devices a terminal_list covered.
+	Devices *int `json:"devices,omitempty"`
 }
 
 // audit writes a fleet audit; when the payload carries a device ID the asset_id column is populated as well, so the audit view can filter

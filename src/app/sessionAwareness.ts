@@ -1,6 +1,7 @@
 import { terminalApi } from "../ipc/commands";
 import { EVENTS, listenEvent, type TerminalAttentionEvent } from "../ipc/events";
 import { onEventsResync } from "../ipc/webTransport";
+import { resetSessionAggregate, startSessionAggregateTracking } from "./sessionAggregate";
 import { useUi } from "./store";
 import {
   applyAwareness,
@@ -153,11 +154,14 @@ export function startAwarenessTracking(): void {
   document.addEventListener("visibilitychange", markVisibleAwarenessSeen);
   window.addEventListener("focus", markVisibleAwarenessSeen);
   void reloadAwareness();
+  // Sessions on hosts this client holds no tab for come from the cross-host listing.
+  startSessionAggregateTracking();
 }
 
 // resetAwarenessTracking drops everything known for the previous account and loads the current one's states.
 export function resetAwarenessTracking(): void {
   requestedSeen.clear();
+  resetSessionAggregate();
   if (started) void reloadAwareness();
   else resetAwarenessStore();
 }

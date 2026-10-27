@@ -2032,6 +2032,12 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_sessions_aggregate": {
+      "scope": "attention",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_set_visible": {
       "nested": false,
       "channel": false,

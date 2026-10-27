@@ -278,6 +278,31 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 				}
 				return "", ipc.NewError(ipc.CodeNotFound, "设备不存在或已吊销")
 			},
+			RemoteSessions: func(ctx context.Context, waitMS int) (session.AggregateList, error) {
+				// The linked account decides which devices this desktop sees;
+				// the server lists only that account's devices, in one request.
+				link, err := syncService.LinkGet(ctx)
+				if err != nil {
+					return session.AggregateList{}, err
+				}
+				if !link.IsConfigured() {
+					return session.AggregateList{Hosts: []session.AggregateHostStatus{}, Sessions: []session.AggregateSession{}, Complete: true}, nil
+				}
+				raw, err := syncService.Remote().ListSessions(ctx, waitMS)
+				if err != nil {
+					return session.AggregateList{}, err
+				}
+				var list session.AggregateList
+				if err := json.Unmarshal(raw, &list); err != nil {
+					return session.AggregateList{}, ipc.WrapError(ipc.CodeInternal, "服务器返回的会话列表无法解析", err)
+				}
+				self := ""
+				if services.LocalHelperExposure != nil {
+					// This desktop's own local terminals are listed locally.
+					self = services.LocalHelperExposure.Status().DeviceID
+				}
+				return withoutDevice(list, self), nil
+			},
 		})
 	}
 	retention, err := NewRetentionRunner(RetentionConfig{
@@ -414,6 +439,13 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		return nil, err
 	}
 	production.Services.terminalCommands.helpers = helperService
+	if config.Desktop {
+		var reconcileExposure func()
+		if services.LocalHelperExposure != nil {
+			reconcileExposure = services.LocalHelperExposure.Reconcile
+		}
+		syncService.SetLinkChanged(onSyncLinkChanged(reconcileExposure, production.Services.sessionAggregate))
+	}
 	return production, nil
 }
 

@@ -32,6 +32,47 @@ func (s *Service) AuthorizeDeviceTerminal(ctx context.Context, userID, deviceID 
 	return nil
 }
 
+// TerminalDevice is a device of one account and whether its terminal helper
+// can be reached through the bridge now.
+type TerminalDevice struct {
+	ID              string
+	Name            string
+	Kind            string
+	Platform        string
+	TerminalEnabled bool
+	// Digest is the supervisor state digest of an online device; empty
+	// while it is offline.
+	Digest string
+}
+
+// TerminalDevices lists userID's devices that are not revoked and have an
+// agent, for read-only listings of their terminal sessions. It applies the
+// owner rule of canAccess and writes no audit; an empty userID lists none.
+func (s *Service) TerminalDevices(ctx context.Context, userID string) ([]TerminalDevice, error) {
+	if userID == "" {
+		return nil, nil
+	}
+	devices, err := s.ListDevices(ctx, &account.Identity{UserID: userID})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]TerminalDevice, 0, len(devices))
+	for _, device := range devices {
+		if device.RevokedAt != 0 || device.Agent == nil {
+			continue
+		}
+		item := TerminalDevice{
+			ID: device.ID, Name: device.Name, Kind: device.Kind,
+			Platform: device.Agent.Platform, TerminalEnabled: device.Agent.TerminalEnabled,
+		}
+		if digest, ok := s.registry.StateDigest(device.ID); ok {
+			item.Digest = digest
+		}
+		result = append(result, item)
+	}
+	return result, nil
+}
+
 // RequestDeviceBridge dials a bridge to the device supervisor helper for an authorized device session;
 // authorization was decided at session connection time, so the bridge itself is not audited again (same semantics as registry.RequestBridge).
 func (s *Service) RequestDeviceBridge(ctx context.Context, deviceID string) (net.Conn, error) {

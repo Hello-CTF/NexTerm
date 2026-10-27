@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { sessionApi, terminalApi, type LiveTabInfo, type SessionInfo } from "../../ipc/commands";
-import { nextTabId, useUi, type Workspace } from "../../app/store";
+import { sessionApi, terminalApi, type LiveTabInfo, type SessionAttentionState, type SessionInfo } from "../../ipc/commands";
+import type { AggregateHost } from "../../ipc/generated/types";
+import { connectDevice, deviceAssetId, nextTabId, useUi, type Workspace } from "../../app/store";
+import type { AggregateRow } from "../../app/sessionAggregate";
 import { describeError } from "../../ui/errorText";
 import { getLocalHelperStatus, localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 
@@ -20,6 +22,9 @@ export type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   hostClock?: boolean;
   // createdAt is the helper's creation time, on the host's clock.
   createdOnHost?: boolean;
+  // The row comes from the cross-host listing: its host has no session here that was listed directly, such as a
+  // device reached through the server. Taking it over goes through this host.
+  aggregateHost?: AggregateHost;
 };
 
 export interface KnownDurableTab {
@@ -125,6 +130,9 @@ export interface CollectedBackgroundTabs {
   knownTabsByHost: Map<string, Map<string, KnownDurableTab>>;
   incompleteHosts: Set<string>;
   failedRemote: { session: SessionInfo; reason: unknown }[];
+  // The sessions listed directly and every tab this app holds: the cross-host listing adds only what they miss.
+  listedSessionIds: Set<string>;
+  coveredTabIds: Set<string>;
 }
 
 // collectBackgroundTabs is the single place that decides which terminals are takeable. Both the page and the
@@ -229,8 +237,53 @@ export function collectBackgroundTabs(
       });
     }
   }
-  return { list, knownTabsByHost, incompleteHosts, failedRemote };
+  const listedSessionIds = new Set(input.remote.map(({ session }) => session.id));
+  const coveredTabIds = new Set([...list.map((tab) => tab.tabId), ...(input.live ?? []).map((tab) => tab.tabId)]);
+  return { list, knownTabsByHost, incompleteHosts, failedRemote, listedSessionIds, coveredTabIds };
 }
+
+// aggregateBackgroundTabs turns the cross-host listing into rows for the hosts the direct listing did not cover, such
+// as a device reached only through the server. A tab open here, held by this app or already listed is left out.
+export function aggregateBackgroundTabs(
+  aggregate: readonly AggregateRow[],
+  covered: { listedSessionIds: ReadonlySet<string>; coveredTabIds: ReadonlySet<string>; openTabIds: ReadonlySet<string> },
+): BackgroundTab[] {
+  const rows: BackgroundTab[] = [];
+  const seen = new Set<string>();
+  for (const { session: item, host } of aggregate) {
+    if (item.dead || covered.openTabIds.has(item.tabId) || covered.coveredTabIds.has(item.tabId) || seen.has(item.tabId)) continue;
+    if (host.sessionId && covered.listedSessionIds.has(host.sessionId)) continue;
+    seen.add(item.tabId);
+    rows.push({
+      tabId: item.tabId,
+      sessionId: host.sessionId ?? "",
+      sessionName: host.name,
+      sessionKind: host.kind,
+      cols: item.cols,
+      rows: item.rows,
+      controller: null,
+      subscribers: 0,
+      viewers: 0,
+      exited: false,
+      title: item.title,
+      titleCustom: item.title ? true : undefined,
+      remote: true,
+      durable: true,
+      createdAt: item.createdAt || undefined,
+      createdOnHost: true,
+      state: ATTENTION_STATES.has(item.attention.state) ? (item.attention.state as SessionAttentionState) : undefined,
+      fetchedAt: host.fetchedAt || Date.now(),
+      lastOutputAt: item.lastOutputAt ?? 0,
+      detachedAt: item.detachedAt || undefined,
+      hostClock: true,
+      attachedElsewhere: item.attached || undefined,
+      aggregateHost: host,
+    });
+  }
+  return rows;
+}
+
+const ATTENTION_STATES: ReadonlySet<string> = new Set(["running", "needs_me", "just_finished", "idle", "exited"]);
 
 export interface BackgroundListing {
   collected: CollectedBackgroundTabs;
@@ -322,6 +375,41 @@ export async function takeOverBackgroundTab(
   }
 }
 
+// takeOverAggregateSession opens a session known from the cross-host listing as a tab: through its host's connected
+// session, or, for a device no workspace here holds, after opening the device's workspace.
+export async function takeOverAggregateSession(host: AggregateHost, tabId: string, title?: string): Promise<TakeOverResult> {
+  const connected = () => {
+    const sessions = useUi.getState().sessions;
+    const byId = host.sessionId ? sessions.find((item) => item.id === host.sessionId) : undefined;
+    if (byId?.status === "connected") return byId;
+    const assetId = host.deviceId ? deviceAssetId(host.deviceId) : undefined;
+    return assetId ? sessions.find((item) => item.assetId === assetId && item.status === "connected") : undefined;
+  };
+  let session = connected();
+  if (!session && host.kind === "local") {
+    // The local helper's sessions are taken over through this device's local session.
+    try {
+      const local = useUi.getState().sessions.find((item) => item.kind === "local" && item.status === "connected") ??
+        await sessionApi.connectLocal();
+      const st = useUi.getState();
+      st.setSessions([...st.sessions.filter((item) => item.id !== local.id), local]);
+      session = local.status === "connected" ? local : undefined;
+    } catch (e) {
+      return { ok: false, error: describeError(e) };
+    }
+  }
+  if (!session && host.deviceId) {
+    const outcome = await connectDevice({ id: host.deviceId, name: host.name });
+    if (!outcome.ok) return outcome.canceled ? { ok: false, canceled: true } : { ok: false, error: outcome.error ?? "无法连接设备" };
+    session = connected();
+  }
+  if (!session) return { ok: false, error: "主机未连接，请先从资产树打开这台主机" };
+  return takeOverBackgroundTab({
+    tabId, sessionId: session.id, sessionName: session.name, sessionKind: session.kind,
+    cols: 0, rows: 0, controller: null, subscribers: 0, viewers: 0, exited: false, title,
+  });
+}
+
 // visibleBackgroundTabs narrows collected terminals to the selected host (or, for the all-hosts view, to
 // every reachable host). Local terminals only appear when the local workspace itself is selected.
 export function visibleBackgroundTabs(
@@ -332,6 +420,8 @@ export function visibleBackgroundTabs(
   if (opts.hostSessionId && !opts.blocked) return all.filter((t) => t.sessionId === opts.hostSessionId);
   if (!opts.showAll) return [];
   return all.filter((tab) => {
+    // The cross-host listing only names hosts of this account.
+    if (tab.aggregateHost) return true;
     if (tab.sessionKind !== "ssh" && tab.sessionKind !== "device") return true;
     const session = scope.sessions.find((candidate) => candidate.id === tab.sessionId);
     if (!session || session.status !== "connected") return false;

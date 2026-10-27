@@ -22,6 +22,7 @@ export const ipcEventTopics = {
   "terminalAttention": "terminal://attention",
   "terminalControl": "terminal://control",
   "terminalExit": "terminal://exit",
+  "terminalSessions": "terminal://sessions",
   "terminalThrottled": "terminal://throttled",
   "updateProgress": "update://progress",
 } as const;

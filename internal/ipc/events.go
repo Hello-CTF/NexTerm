@@ -29,6 +29,9 @@ const (
 	TopicInventoryChanged  Topic = "inventory://changed"
 	// TopicLocalHelperStatus carries the local helper status after each change.
 	TopicLocalHelperStatus Topic = "local://helper-status"
+	// TopicTerminalSessions carries one host's durable sessions after a
+	// cross-host listing refreshed it.
+	TopicTerminalSessions Topic = "terminal://sessions"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")

@@ -114,7 +114,7 @@ func TestGeneratedContractMetadata(t *testing.T) {
 		"notificationClick": "app://notification-click", "terminalAttention": "terminal://attention",
 		"inventoryChanged": "inventory://changed", "localHelperStatus": "local://helper-status",
 		"syncRoundComplete": "sync://round-complete", "syncStatus": "sync://status",
-		"terminalControl": "terminal://control", "terminalExit": "terminal://exit",
+		"terminalControl": "terminal://control", "terminalExit": "terminal://exit", "terminalSessions": "terminal://sessions",
 		"terminalThrottled": "terminal://throttled", "updateProgress": "update://progress",
 	}
 	if !reflect.DeepEqual(events, wantEvents) {
@@ -634,8 +634,9 @@ func TestAttentionContracts(t *testing.T) {
 	commands := commandsByName(generated.commands)
 	registry := newTypeRegistry()
 	for name, want := range map[string]string{
-		"terminal_attention_list": "AttentionEvent[]",
-		"terminal_attention_seen": "unknown",
+		"terminal_attention_list":     "AttentionEvent[]",
+		"terminal_attention_seen":     "unknown",
+		"terminal_sessions_aggregate": "AggregateList",
 	} {
 		command, ok := commands[name]
 		if !ok {
