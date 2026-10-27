@@ -71,6 +71,8 @@ Mobile builds are previews and are not officially supported until real-device si
 
 **Quick start**: add an SSH or WinRM asset (or use the built-in "This device") → initialize the vault in Settings → Credential protection before saving passwords or keys → optionally add a model in Settings → AI models → optionally sign in under Settings → Account sync to sync across devices. The protection password only unlocks this device; if you forget it, saved credentials cannot be recovered.
 
+**AI privacy redaction**: off by default. Download the latest released `QuantumNous/astrlink-guard` model in Settings → 信息脱敏, select INT8, FP32, or FP16, then enable it. Model weights are not bundled. The local inference runtime currently requires macOS 13.4+, iOS/iPadOS 15.1+, or Android 7.0+; the application’s minimum OS versions are unchanged. Detection runs on the device running AI, or on the server in browser mode. Placeholders stay stable across turns in a conversation; responses and tool arguments are restored. When enabled, unavailable models or runtimes block requests instead of sending plaintext. Images, audio, and other non-text content are currently unsupported. Detection can miss sensitive information. The implementation reuses [AstrLink](https://github.com/Calcium-Ion/AstrLink); see the [source and license notice](internal/ai/privacy/third_party/ASTRLINK_NOTICE.md).
+
 ## Deploy the server
 
 On Linux with systemd (amd64 / arm64), run as root:

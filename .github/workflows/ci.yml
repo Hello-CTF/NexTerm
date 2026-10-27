@@ -313,6 +313,38 @@ jobs:
         with:
           go-version: 1.27.3
           cache: true
+      - name: Install the pinned privacy runtime Rust toolchain
+        if: contains(matrix.kinds, 'desktop') || contains(matrix.kinds, 'server')
+        shell: bash
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+          cpu=x86_64
+          if [ "${{ matrix.arch }}" = "arm64" ]; then cpu=aarch64; fi
+          case "${{ matrix.os }}" in
+            windows) triple="$cpu-pc-windows-msvc" ;;
+            darwin) triple="$cpu-apple-darwin" ;;
+            linux) triple="$cpu-unknown-linux-gnu" ;;
+          esac
+          rustup target add "$triple" --toolchain 1.95.0
+          rustc --version
+          cargo --version
+      - name: Install the Windows CGO compiler
+        if: matrix.os == 'windows' && contains(matrix.kinds, 'desktop')
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cpu = if ('${{ matrix.arch }}' -eq 'arm64') { 'aarch64' } else { 'x86_64' }
+          $expected = if ($cpu -eq 'aarch64') { '881c77afafb1ecc4b93c0d403280a4d297e48043ca1d76d0d6b21490bf515c8b' } else { 'bd88084d7a3b95906fa295453399015a1fdd7b90a38baa8f78244bd234303737' }
+          $name = "llvm-mingw-20250910-ucrt-$cpu"
+          $archive = Join-Path $env:RUNNER_TEMP "$name.zip"
+          Invoke-WebRequest "https://github.com/mstorsjo/llvm-mingw/releases/download/20250910/$name.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'LLVM-MinGW checksum mismatch' }
+          Expand-Archive $archive -DestinationPath $env:RUNNER_TEMP
+          $bin = Join-Path $env:RUNNER_TEMP "$name/bin"
+          $bin >> $env:GITHUB_PATH
+          "CC=$bin/$cpu-w64-mingw32-clang.exe" >> $env:GITHUB_ENV
+          "CXX=$bin/$cpu-w64-mingw32-clang++.exe" >> $env:GITHUB_ENV
       - name: Verify Windows PowerShell runtimes
         if: github.event_name == 'pull_request' && fromJSON(needs.version.outputs.scope).unit && matrix.os == 'windows' && matrix.arch == 'amd64' && contains(matrix.kinds, 'desktop')
         shell: powershell
@@ -365,6 +397,7 @@ jobs:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
           path: |
             target/go-build/nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}*
+            target/go-build/ai-runtime/
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
@@ -377,6 +410,7 @@ jobs:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-server
           path: |
             target/go-build/nexterm-server-${{ matrix.os }}-${{ matrix.arch }}*
+            target/go-build/ai-runtime/
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
@@ -522,6 +556,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
+      - name: Install the pinned mobile privacy runtime toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+          if [ "${{ matrix.platform }}" = "android" ]; then
+            rustup target add aarch64-linux-android x86_64-linux-android
+          else
+            rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+          fi
       - name: Prepare Android release signing
         if: matrix.platform == 'android'
         env:

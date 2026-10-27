@@ -122,7 +122,7 @@ func writeBinaryManifest(binary, kind, goos, goarch, cgo, version, commit string
 		return err
 	}
 	digest := sha256.Sum256(binaryBytes)
-	manifest, _ := json.Marshal(map[string]interface{}{
+	value := map[string]interface{}{
 		"schema_version":    1,
 		"kind":              "go-binary",
 		"id":                fmt.Sprintf("%s-%s-%s", kind, goos, goarch),
@@ -136,7 +136,19 @@ func writeBinaryManifest(binary, kind, goos, goarch, cgo, version, commit string
 			"size_bytes": len(binaryBytes),
 			"sha256":     hex.EncodeToString(digest[:]),
 		},
-	})
+	}
+	if kind == "desktop" || kind == "server" {
+		if err := writeStubPrivacyRuntime(binary, goos, goarch); err != nil {
+			return err
+		}
+		raw, err := os.ReadFile(filepath.Join(filepath.Dir(binary), "ai-runtime", "runtime.json"))
+		if err != nil {
+			return err
+		}
+		runtimeDigest := sha256.Sum256(raw)
+		value["privacy_runtime_sha256"] = hex.EncodeToString(runtimeDigest[:])
+	}
+	manifest, _ := json.Marshal(value)
 	return os.WriteFile(binary+".manifest.json", manifest, 0o644)
 }
 
@@ -205,6 +217,9 @@ func runEvidenceChecks(root string) []checkResult {
 		version = wailsConfig.Info.Version
 	}
 	cgo := "1"
+	if err := writeStubPrivacyRuntime(binary, hostGOOS, hostGOARCH); err != nil {
+		fatalf("%v", err)
+	}
 
 	cli := []string{"node", filepath.Join(root, "scripts", "build.mjs"), "report", "--kind=desktop",
 		"--os=" + hostGOOS, "--arch=" + hostGOARCH, "--cgo=" + cgo,
@@ -228,7 +243,7 @@ func runEvidenceChecks(root string) []checkResult {
 	passingCmd.Dir = root
 	passing := runCmd(passingCmd)
 	passedReport, assertions, _ := readArtifactReport(reportPath)
-	expectedAssertions := []string{"binary-format", "binary-architecture", "cgo-boundary", "stripped-release"}
+	expectedAssertions := []string{"binary-format", "binary-architecture", "cgo-boundary", "stripped-release", "privacy-runtime"}
 	allPassed := true
 	for _, name := range expectedAssertions {
 		if assertions[name] != "passed" {
@@ -271,6 +286,41 @@ func runEvidenceChecks(root string) []checkResult {
 	c.results = append(c.results, runProductionDependencyChecks(root)...)
 	c.results = append(c.results, runDesktopDistChecks(root, desktopVersion, hostGOOS, hostGOARCH)...)
 	return c.results
+}
+
+// The evidence fixture validates packaging contracts without loading inference.
+func writeStubPrivacyRuntime(binary, goos, goarch string) error {
+	directory := filepath.Join(filepath.Dir(binary), "ai-runtime")
+	libraries := map[string][]string{
+		"linux":   {"libnexterm_privacy.so", "libonnxruntime.so"},
+		"darwin":  {"libnexterm_privacy.dylib", "libonnxruntime.dylib"},
+		"windows": {"nexterm_privacy.dll", "onnxruntime.dll"},
+	}
+	data, err := os.ReadFile(binary)
+	if err != nil {
+		return err
+	}
+	files := map[string]string{}
+	for _, name := range append(libraries[goos], "licenses/ASTRLINK-LICENSE", "licenses/ONNX-RUNTIME-LICENSE", "licenses/native-dependencies.json") {
+		file := filepath.Join(directory, name)
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			return err
+		}
+		content := data
+		if strings.HasPrefix(name, "licenses/") {
+			content = []byte("fixture license")
+		}
+		if err := os.WriteFile(file, content, 0644); err != nil {
+			return err
+		}
+		digest := sha256.Sum256(content)
+		files[name] = hex.EncodeToString(digest[:])
+	}
+	manifest, err := json.Marshal(map[string]interface{}{"abi": 1, "platform": goos, "arch": goarch, "files": files})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(directory, "runtime.json"), manifest, 0644)
 }
 
 func tail(s string, n int) string {

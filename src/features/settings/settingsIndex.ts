@@ -13,6 +13,7 @@ export type SettingsSectionId =
   | "settings-update"
   | "settings-diagnostics"
   | "settings-ai-model"
+  | "settings-ai-privacy"
   | "settings-ai-rules"
   | "settings-ai-skills"
   | "settings-memory"
@@ -56,6 +57,10 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   "settings-ai-model": {
     description: "AI 模型档案、密钥与连通性测试",
     keywords: ["ai", "model", "api key", "openai", "ollama", "llm", "模型", "密钥", "大模型", "连通性"],
+  },
+  "settings-ai-privacy": {
+    description: "本地模型检测敏感信息、稳定占位符与回复还原",
+    keywords: ["privacy", "guard", "astrlink", "int8", "fp32", "fp16", "脱敏", "隐私", "敏感", "还原", "模型下载"],
   },
   "settings-ai-rules": {
     description: "AI 命中后需要确认或拒绝的危险规则",

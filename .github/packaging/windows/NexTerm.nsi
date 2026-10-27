@@ -6,6 +6,9 @@ SetCompressor /SOLID lzma
 !ifndef NEXTERM_BINARY
   !error "NEXTERM_BINARY is required"
 !endif
+!ifndef NEXTERM_AI_RUNTIME
+  !error "NEXTERM_AI_RUNTIME is required"
+!endif
 !ifndef NEXTERM_VERSION
   !error "NEXTERM_VERSION is required"
 !endif
@@ -88,6 +91,9 @@ Section "NexTerm" SEC01
   File /oname=nexterm-helper-windows-amd64.exe "${NEXTERM_HELPER_WINDOWS_AMD64}"
   File /oname=nexterm-helper-windows-arm64.exe "${NEXTERM_HELPER_WINDOWS_ARM64}"
   File /oname=MicrosoftEdgeWebview2Setup.exe "${NEXTERM_WEBVIEW2}"
+  SetOutPath "$INSTDIR\ai-runtime"
+  File /r "${NEXTERM_AI_RUNTIME}\*"
+  SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\NexTerm" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "DisplayName" "NexTerm"
@@ -135,6 +141,7 @@ Section "Uninstall"
   Delete "$INSTDIR\nexterm-helper-windows-arm64.exe"
   Delete "$INSTDIR\MicrosoftEdgeWebview2Setup.exe"
   Delete "$INSTDIR\Uninstall.exe"
+  RMDir /r "$INSTDIR\ai-runtime"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm"
   DeleteRegKey HKCU "Software\NexTerm"

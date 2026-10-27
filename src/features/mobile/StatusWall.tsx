@@ -8,7 +8,7 @@ import { describeError } from "../../ui/errorText";
 import { IconRefresh, IconServer } from "../../ui/icons";
 import { openInboxTab } from "../inbox/inbox";
 import { takeOverAggregateSession, unknownHostText } from "../terminal/backgroundSessionsAccess";
-import { buildStatusWall, WALL_GROUP_LABELS, WALL_GROUPS, type WallCard, type WallGroup } from "./statusWall";
+import { buildStatusWall, WALL_GROUP_LABELS, WALL_GROUPS, type WallCard, type WallGroup } from "./statusWallModel";
 
 // A downward drag this far from the top of the list refreshes it.
 export const PULL_REFRESH_PX = 64;

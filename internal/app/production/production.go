@@ -6,6 +6,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/ai/takeover"
@@ -53,6 +54,7 @@ type ProductionServices struct {
 	Vault         *vault.Vault
 	Sync          *syncservice.Service
 	Profiles      *profiles.Manager
+	Privacy       *privacy.Manager
 	Database      *db.Service
 	Mount         *mount.Service
 	Sessions      *session.Manager
@@ -261,6 +263,11 @@ func productionModules(services ProductionServices) []Module {
 				return registerAICommands(dispatcher, services.Profiles, services.Store, productionScopeValidator(&services))
 			},
 		})
+	}
+	if services.Privacy != nil {
+		modules = append(modules, Module{Name: "ai-privacy", Component: services.Privacy, RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+			return registerPrivacyCommands(dispatcher, services.Privacy)
+		}})
 	}
 	if services.Database != nil {
 		modules = append(modules, Module{Name: "database", RegisterCommands: services.Database.RegisterCommands, Component: services.Database})

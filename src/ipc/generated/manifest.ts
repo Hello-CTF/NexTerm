@@ -174,6 +174,31 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_privacy_cancel_download": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_privacy_check_updates": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_privacy_configure": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_privacy_download": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_privacy_status": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "ai_roster_attach": {
       scope: "ai-roster",
       nested: false,
@@ -2849,6 +2874,11 @@ export const ipcContractManifest = {
     "ai_model_save",
     "ai_models",
     "ai_presets",
+    "ai_privacy_cancel_download",
+    "ai_privacy_check_updates",
+    "ai_privacy_configure",
+    "ai_privacy_download",
+    "ai_privacy_status",
     "ai_run_events",
     "ai_run_get",
     "ai_run_list",

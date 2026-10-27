@@ -47,11 +47,10 @@ type nativeResult struct {
 
 type nativeFrameHandler func(*schema.Message) error
 
-func (c *Client) runNative(ctx context.Context, input []*schema.Message, options []model.Option, preferStream bool, onFrame nativeFrameHandler) (nativeResult, error) {
+func (c *Client) runNativePlain(ctx context.Context, input []*schema.Message, options []model.Option, preferStream bool, onFrame nativeFrameHandler) (nativeResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nativeResult{}, err
 	}
-	input = ProjectModelMessages(input)
 	primaryModel := c.config.Model
 	if configured := model.GetCommonOptions(nil, options...).Model; configured != nil {
 		primaryModel = strings.TrimSpace(*configured)

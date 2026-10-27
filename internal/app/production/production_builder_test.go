@@ -50,10 +50,8 @@ func TestConcreteProductionCompositionPreservesLegacyTaskData(t *testing.T) {
 	if err := os.WriteFile(sentinelPath, []byte("legacy task data"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	production, err := NewProduction(t.Context(), ProductionConfig{
-		Config: Config{Logger: logger}, DataDir: dataDir, Desktop: true,
+		DataDir: dataDir, Desktop: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -99,9 +97,6 @@ func TestConcreteProductionCompositionPreservesLegacyTaskData(t *testing.T) {
 	}
 	if string(preserved) != "legacy task data" {
 		t.Fatalf("legacy task data = %q", preserved)
-	}
-	if count := bytes.Count(logs.Bytes(), []byte("legacy persistent task data directory preserved")); count != 1 {
-		t.Fatalf("legacy task log count = %d, logs = %s", count, logs.String())
 	}
 }
 

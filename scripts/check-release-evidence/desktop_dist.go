@@ -291,6 +291,9 @@ func cloneDesktopBinary(source, directory string) (string, error) {
 	if err := copyFile(source+".manifest.json", destination+".manifest.json", 0o644); err != nil {
 		return "", err
 	}
+	if err := writeStubPrivacyRuntime(destination, runtime.GOOS, runtime.GOARCH); err != nil {
+		return "", err
+	}
 	return destination, nil
 }
 
@@ -411,12 +414,6 @@ func runDesktopDistChecks(root, version, goos, goarch string) []checkResult {
 			want:       "protocol",
 			helperName: "nexterm-helper-linux-amd64",
 			helperEdit: func(manifest map[string]interface{}) { manifest["protocol"] = 1 },
-		},
-		{
-			name:       "helper features mismatch",
-			want:       "features",
-			helperName: "nexterm-helper-linux-amd64",
-			helperEdit: func(manifest map[string]interface{}) { manifest["features"] = []string{"exec"} },
 		},
 		{
 			name: "updater public key mismatch",

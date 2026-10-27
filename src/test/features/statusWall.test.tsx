@@ -16,7 +16,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { StatusWall, PULL_REFRESH_PX } from "../../features/mobile/StatusWall";
-import { buildStatusWall, WALL_GROUPS } from "../../features/mobile/statusWall";
+import { buildStatusWall, WALL_GROUPS } from "../../features/mobile/statusWallModel";
 import { aggregateRows, applyAggregateList, applyAggregateUpdate, resetSessionAggregateForTest } from "../../app/sessionAggregate";
 import { applyAwareness, resetAwarenessStore, toAwareness, type SessionAwareness } from "../../app/sessionAwarenessStore";
 import { useUi, type AppTab, type Workspace } from "../../app/store";

@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/textclip"
 	"github.com/cloudwego/eino/components/model"
@@ -134,6 +135,7 @@ func (r *Runner) generateConversationTitle(ctx context.Context, factory ModelFac
 	if err != nil || row.Title != AutoTitle(message) {
 		return
 	}
+	ctx = privacy.WithConversation(ctx, conversationID)
 	started := time.Now()
 	title, tokensIn, tokensOut, err := generateTitle(ctx, factory, message)
 	if err != nil || title == "" {
@@ -270,6 +272,7 @@ func (r *Runner) RetitleConversation(ctx context.Context, conversationID string)
 	if err != nil {
 		return "", err
 	}
+	ctx = privacy.WithConversation(ctx, conversationID)
 	prefix, _ := splitTitlePrefix(row.Title)
 	ctx, cancel := context.WithTimeout(ctx, r.config.TitleTimeout)
 	defer cancel()

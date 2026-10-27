@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyRuntime, runtimeLibraries, fileDigest } from "./lib/privacy-runtime.mjs";
 import { resolveMakensis } from "./lib/makensis.mjs";
 import { readHostHelperProtocolMetadata } from "../.github/scripts/helper-metadata.mjs";
 import { commitLabel, dirtyPaths, sourceState } from "./lib/mobile.mjs";
@@ -29,8 +30,8 @@ import {
 
 const HELP_TEXT = `#!/usr/bin/env node
 /**
- * Go/Wails delivery entry point. Rust/Cargo/Tauri are deliberately not part of
- * this path. Artifact versions come from NEXTERM_RELEASE_VERSION (set from the
+ * Go/Wails delivery entry point. Desktop/server privacy inference also requires
+ * Rust 1.95.0 and the target C compiler (no model weights are bundled). Artifact versions come from NEXTERM_RELEASE_VERSION (set from the
  * release tag in CI); the wails.json/package.json versions are 0.0.0 placeholders.
  *
  *   node scripts/build.mjs                         # frontend + host debug desktop
@@ -186,7 +187,7 @@ function assertTarget(kind, goos, goarch) {
 }
 
 function buildEnvironment(goos, goarch, kind) {
-  const cgo = kind === "desktop" && (goos === "darwin" || goos === "linux") ? "1" : "0";
+  const cgo = kind === "desktop" || kind === "server" ? "1" : "0";
   const target = kind === "helper" ? helperTarget(goos, goarch) : null;
   const env = {
     ...process.env,
@@ -491,6 +492,7 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
     commit: COMMIT,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
   });
+  if (kind === "desktop" || kind === "server") manifest.privacy_runtime_sha256 = fileDigest(path.join(privacyRuntimeDirectory(file), "runtime.json"));
   if (kind === "desktop") {
     manifest.source_ref = RELEASE_REF;
     manifest.updater_public_key_sha256 = desktopMinisignPublicKeyDigest();
@@ -587,6 +589,41 @@ function reproduceBinary(args, outputPath, kind, goos, goarch) {
   }
 }
 
+function privacyRuntimeDirectory(binary) {
+  return path.join(path.dirname(binary), "ai-runtime");
+}
+
+function preparePrivacyRuntime(binary, goos, goarch, packageOnly) {
+  const directory = privacyRuntimeDirectory(binary);
+  if (!packageOnly) {
+    fs.rmSync(directory, { recursive: true, force: true });
+    run(process.execPath, ["scripts/ai-privacy-runtime.mjs", `--os=${goos}`, `--arch=${goarch}`, `--output=${directory}`, ...(flag("repro-check") ? ["--repro-check=true"] : [])]);
+  }
+  const expected = packageOnly ? loadManifest(path.resolve(ROOT, option("binary-manifest", `${binary}.manifest.json`))).privacy_runtime_sha256 : undefined;
+  if (packageOnly && !expected) die("producing binary manifest lacks privacy runtime evidence");
+  verifyRuntime(directory, goos, goarch, expected);
+}
+
+function copyPrivacyRuntime(binary, destination, goos, goarch) {
+  const manifest = loadManifest(path.resolve(ROOT, option("binary-manifest", `${binary}.manifest.json`)));
+  if (!manifest.privacy_runtime_sha256) die("producing binary manifest lacks privacy runtime evidence");
+  verifyRuntime(privacyRuntimeDirectory(binary), goos, goarch, manifest.privacy_runtime_sha256);
+  fs.cpSync(privacyRuntimeDirectory(binary), destination, { recursive: true });
+}
+
+function privacyRuntimeAssertions(directory, goos, goarch, libraryDirectory = directory) {
+  try {
+    verifyRuntime(directory, goos, goarch, undefined, libraryDirectory);
+    for (const name of runtimeLibraries(goos)) {
+      const binary = inspectBinary(path.join(libraryDirectory, name));
+      if (binary.architecture !== goarch || binary.format !== ({ darwin: "mach-o", linux: "elf", windows: "pe" })[goos]) throw new Error(`Privacy runtime architecture mismatch: ${name}`);
+    }
+    return [assertion("privacy-runtime", true, "native inference libraries, architecture, SHA256 and third-party licenses verified")];
+  } catch (error) {
+    return [assertion("privacy-runtime", false, error.message)];
+  }
+}
+
 function buildBinary(kind) {
   const goos = targetOS();
   const goarch = targetArch();
@@ -635,6 +672,7 @@ function buildBinary(kind) {
     if (kind === "desktop" && release) fs.rmSync(embeddedRoot, { recursive: true, force: true });
     if (windowsResource) fs.rmSync(windowsResource, { force: true });
   }
+  if (kind === "desktop" || kind === "server") preparePrivacyRuntime(outputPath, goos, goarch, packageOnly);
   if (!fs.existsSync(outputPath)) die(`Go linker did not produce ${outputPath}`);
   if (goos !== "windows") fs.chmodSync(outputPath, 0o755);
   if (!packageOnly) {
@@ -735,7 +773,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
     result.push(assertion("binary-format", inspected.format === ({ windows: "pe", darwin: "mach-o", linux: "elf" })[goos], JSON.stringify(inspected)));
     result.push(assertion("binary-architecture", inspected.architecture === expectedGOARCH, `expected ${goos}/${goarch} (GOARCH=${expectedGOARCH}); actual ${inspected.format}/${inspected.architecture}`));
     if (kind === "desktop" && goos === "windows") result.push(assertion("windows-icon-resource", inspected.resourceRva > 0, inspected.resourceRva > 0 ? `PE resource directory RVA 0x${inspected.resourceRva.toString(16)}` : "PE resource directory is empty; the .syso icon resource was not linked"));
-    if ((kind === "server" || kind === "agent") && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
+    if (kind === "agent" && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
     if (kind === "helper" && goos === "linux") result.push(assertion("static-linux-helper", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
   } catch (error) {
     result.push(assertion("binary-format", false, String(error)));
@@ -757,6 +795,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
       });
     }
   }
+  if (kind === "desktop" || kind === "server") result.push(...privacyRuntimeAssertions(privacyRuntimeDirectory(file), goos, goarch));
   const moduleInfo = output("go", ["version", "-m", file], { allowFailure: true });
   result.push(assertion("cgo-boundary", Boolean(moduleInfo?.includes(`CGO_ENABLED=${cgo}`)), `expected CGO_ENABLED=${cgo} in go version -m`));
   if (target?.goarm) result.push(assertion("goarm", moduleInfo?.includes(`GOARM=${target.goarm}`) === true, `expected GOARM=${target.goarm} in go version -m`));
@@ -890,7 +929,10 @@ function packageAssertions(kind, file, goos, goarch) {
     try {
       const extracted = output(sevenZip, ["x", "-y", `-o${work}`, path.resolve(file)], { allowFailure: true });
       checks.push(assertion("nsis-extract", extracted !== null, "7-Zip must extract the NSIS installer"));
-      if (extracted !== null) checks.push(...packagedHelperAssertions(work, "", false));
+      if (extracted !== null) {
+        checks.push(...packagedHelperAssertions(work, "", false));
+        checks.push(...privacyRuntimeAssertions(path.join(work, "ai-runtime"), goos, goarch));
+      }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
     }
@@ -917,9 +959,12 @@ function packageAssertions(kind, file, goos, goarch) {
       const missingHelpers = missingHelperArchiveMembers(members, "usr/bin/");
       checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && missingHelpers.length === 0 && required.every((member) => members.has(member)), `required members: ${[...required, ...helperArchiveMembers("usr/bin/")].join(", ")}; missing helpers: ${missingHelpers.join(", ") || "none"}`));
       const unpacked = output("tar", ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
-        ...helperArchiveMembers("usr/bin/")], { allowFailure: true });
+        ...helperArchiveMembers("usr/bin/"), "usr/bin/ai-runtime"], { allowFailure: true });
       checks.push(assertion("linux-desktop-deb-helper-extract", unpacked !== null, "all nine helpers must extract from data.tar.gz"));
-      if (unpacked !== null) checks.push(...packagedHelperAssertions(work, "usr/bin", true));
+      if (unpacked !== null) {
+        checks.push(...packagedHelperAssertions(work, "usr/bin", true));
+        checks.push(...privacyRuntimeAssertions(path.join(work, "usr/bin/ai-runtime"), goos, goarch));
+      }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
     }
@@ -943,9 +988,12 @@ function packageAssertions(kind, file, goos, goarch) {
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-assert-"));
     try {
       const extracted = output("tar", ["-xzf", path.resolve(file), "-C", work,
-        ...helperArchiveMembers(`${root}/`)], { allowFailure: true });
+        ...helperArchiveMembers(`${root}/`), `${root}/ai-runtime`], { allowFailure: true });
       checks.push(assertion("server-archive-helper-extract", extracted !== null, "all nine helpers must extract from the server archive"));
-      if (extracted !== null) checks.push(...packagedHelperAssertions(work, root, true));
+      if (extracted !== null) {
+        checks.push(...packagedHelperAssertions(work, root, true));
+        checks.push(...privacyRuntimeAssertions(path.join(work, root, "ai-runtime"), goos, goarch));
+      }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
     }
@@ -964,6 +1012,7 @@ function packageAssertions(kind, file, goos, goarch) {
       if (mounted) {
         checks.push(...packagedHelperAssertions(mountpoint, "NexTerm.app/Contents/Resources/helpers", true));
         checks.push(...packagedDarwinHelperLinkAssertions(mountpoint));
+        checks.push(...privacyRuntimeAssertions(path.join(mountpoint, "NexTerm.app/Contents/Resources/ai-runtime"), goos, goarch, path.join(mountpoint, "NexTerm.app/Contents/Frameworks/ai-runtime")));
       }
     } finally {
       if (mounted) {
@@ -1046,7 +1095,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     schema_version: 2,
     id,
     kind,
-    platform: { os: goos, arch: goarch, cgo: cgo === "1" ? "enabled-only-for-wails-platform-layer" : "disabled", ...(target?.goarm ? { goarm: target.goarm } : {}) },
+    platform: { os: goos, arch: goarch, cgo: cgo === "1" ? "enabled-for-native-platform-and-privacy-inference" : "disabled", ...(target?.goarm ? { goarm: target.goarm } : {}) },
     version: VERSION,
     commit: COMMIT,
     source_commit: SOURCE_COMMIT,
@@ -1137,6 +1186,7 @@ function packageLinuxDesktop(binary, goarch) {
   fs.mkdirSync(assets, { recursive: true });
   fs.copyFileSync(binary, path.join(dataDir, "usr/bin/nexterm-desktop"));
   copyHelpers(path.join(dataDir, "usr/bin"));
+  copyPrivacyRuntime(binary, path.join(dataDir, "usr/bin/ai-runtime"), "linux", goarch);
   fs.copyFileSync(path.join(ROOT, "public/brand/nexterm-mark-256.png"), path.join(dataDir, "usr/share/icons/hicolor/256x256/apps/nexterm.png"));
   fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(dataDir, "usr/share/doc/nexterm/copyright"));
   fs.writeFileSync(path.join(dataDir, LINUX_DESKTOP_ENTRY), `[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop %u\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\nMimeType=x-scheme-handler/nexterm;\nStartupWMClass=${wailsConfig.info.productIdentifier}\n`);
@@ -1175,6 +1225,11 @@ function packageDarwin(binary, goarch) {
   fs.copyFileSync(binary, path.join(app, "Contents/MacOS/NexTerm"));
   fs.chmodSync(path.join(app, "Contents/MacOS/NexTerm"), 0o755);
   copyDarwinHelpers(app);
+  const runtimeDirectory = path.join(app, "Contents/Frameworks/ai-runtime");
+  const runtimeResources = path.join(app, "Contents/Resources/ai-runtime");
+  copyPrivacyRuntime(binary, runtimeResources, "darwin", goarch);
+  fs.mkdirSync(runtimeDirectory, { recursive: true });
+  for (const name of runtimeLibraries("darwin")) fs.renameSync(path.join(runtimeResources, name), path.join(runtimeDirectory, name));
   const icon = path.join(ROOT, "public/brand/icon.icns");
   if (!fs.existsSync(icon)) die("macOS icon.icns asset is missing");
   fs.copyFileSync(icon, path.join(app, "Contents/Resources/icon.icns"));
@@ -1182,8 +1237,15 @@ function packageDarwin(binary, goarch) {
   fs.writeFileSync(path.join(app, "Contents/Info.plist"), plist);
   run("plutil", ["-lint", path.join(app, "Contents/Info.plist")]);
   const signIdentity = process.env.NEXTERM_MACOS_SIGN_IDENTITY || "-";
-  const signArgs = ["--force", "--deep", "--sign", signIdentity];
+  const signArgs = ["--force", "--sign", signIdentity];
   if (signIdentity !== "-") signArgs.push("--options", "runtime", "--timestamp");
+  run("codesign", [...signArgs, "--deep", app]);
+  // Signing changes Mach-O bytes; retain provenance and record the signed hashes.
+  const runtimeManifestPath = path.join(runtimeResources, "runtime.json");
+  const runtimeManifest = loadManifest(runtimeManifestPath);
+  runtimeManifest.unsigned_manifest_sha256 = fileDigest(runtimeManifestPath);
+  for (const name of runtimeLibraries("darwin")) runtimeManifest.files[name] = fileDigest(path.join(runtimeDirectory, name));
+  fs.writeFileSync(runtimeManifestPath, `${JSON.stringify(runtimeManifest, null, 2)}\n`);
   run("codesign", [...signArgs, app]);
   run("codesign", ["--verify", "--deep", "--strict", app]);
   fs.symlinkSync("/Applications", path.join(work, "Applications"));
@@ -1222,6 +1284,7 @@ function packageWindows(binary, goarch) {
   const installer = path.join(assets, `nexterm-desktop_windows_${goarch}_${VERSION}.exe`);
   const defines = [
     `NEXTERM_BINARY=${binary}`,
+    `NEXTERM_AI_RUNTIME=${privacyRuntimeDirectory(binary)}`,
     `NEXTERM_VERSION=${VERSION}`,
     `NEXTERM_NUMERIC_VERSION=${VERSION_INFO.core}.0`,
     `NEXTERM_OUT=${installer}`,

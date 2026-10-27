@@ -46,7 +46,7 @@ func runProductionDependencyChecks(root string) []checkResult {
 	}
 	const wailsModule = "github.com/wailsapp/wails"
 	for _, target := range []struct{ name, goos, goarch, cgo string }{
-		{"nexterm-server", "linux", "amd64", "0"},
+		{"nexterm-server", "linux", "amd64", "1"},
 		{"nexterm-agent", "linux", "amd64", "0"},
 		{"nexterm-helper", "linux", "amd64", "0"},
 	} {

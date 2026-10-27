@@ -198,7 +198,7 @@ func TestInspectHelperRejectsAHelperThatIsNotThePidFileOwner(t *testing.T) {
 func TestConnectHelperReportsAHelperThatExitsDuringStartup(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	started := time.Now()
-	_, err := ConnectHelper(context.Background(), HelperConfig{StateDir: stateDir, Executable: "/bin/false", SpawnTimeout: 30 * time.Second})
+	_, err := ConnectHelper(context.Background(), HelperConfig{StateDir: stateDir, Executable: supervisorTestExecutable(t, "false"), SpawnTimeout: 30 * time.Second})
 	if !errors.Is(err, ErrHelperExited) {
 		t.Fatalf("connect with a crashing helper = %v, want ErrHelperExited", err)
 	}
@@ -229,13 +229,16 @@ func TestConnectHelperEndsAHelperThatNeverServes(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\necho $$ > "+pidFile+"\nexec sleep 300\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ConnectHelper(context.Background(), HelperConfig{StateDir: filepath.Join(dir, "state"), Executable: script, SpawnTimeout: time.Second})
+	// Use the production startup budget so a loaded test host can start the
+	// helper and publish its PID; this test asserts cleanup after that timeout.
+	_, err := ConnectHelper(context.Background(), HelperConfig{StateDir: filepath.Join(dir, "state"), Executable: script})
 	if err == nil || errors.Is(err, ErrHelperExited) {
 		t.Fatalf("connect to a helper that never serves = %v, want a timeout", err)
 	}
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
-		t.Fatal(err)
+		log, _ := os.ReadFile(filepath.Join(dir, "state", "helper.log"))
+		t.Fatalf("helper PID unavailable: %v; helper log: %s", err, log)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
@@ -338,4 +341,13 @@ func silentHelper(t *testing.T, stateDir string) {
 			conns = append(conns, conn)
 		}
 	}()
+}
+
+func supervisorTestExecutable(t *testing.T, name string) string {
+	t.Helper()
+	path, err := exec.LookPath(name)
+	if err != nil {
+		t.Fatalf("required test executable %s: %v", name, err)
+	}
+	return path
 }
