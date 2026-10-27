@@ -48,7 +48,7 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
   const shown = entry.uiTabId !== undefined;
   const reachable = shown || entry.host !== undefined;
   // The seen mark goes through a tab this client holds; a session known only from the listing is marked once opened.
-  const markable = shown || entry.host === undefined;
+  const markable = shown || !entry.listedOnly;
   return (
     <li className="nx-inbox-row flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-neutral-800/60" data-inbox-tab={entry.tabId}>
       <button

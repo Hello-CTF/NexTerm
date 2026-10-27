@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { syncApi, terminalApi, type SessionAttentionState } from "../../ipc/commands";
 import {
+  aggregateBackgroundTabs,
   backgroundTabKey,
   backgroundTargets,
   listBackgroundTabs,
@@ -310,6 +311,8 @@ export function BackgroundSessions({
     ? (hostSession?.name ?? ownerWorkspace?.title ?? hostSessionId)
     : (ownerWorkspace?.title ?? null);
   const [items, setItems] = useState<BackgroundTab[] | null>(null);
+  // What the direct listing covered, so the cross-host listing adds only the rest.
+  const [covered, setCovered] = useState<{ listedSessionIds: Set<string>; coveredTabIds: Set<string> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -359,7 +362,6 @@ export function BackgroundSessions({
         scope,
         targets,
         openTerminalTabIds(showAll ? st.workspaces : ownerWorkspace ? [ownerWorkspace] : []),
-        showAll ? aggregateRows(useSessionAggregate.getState()) : undefined,
       );
       if (generation !== loadGenerationRef.current) return;
       const errors: string[] = [];
@@ -382,6 +384,7 @@ export function BackgroundSessions({
         });
       }
       setItems(list);
+      setCovered({ listedSessionIds: collected.listedSessionIds, coveredTabIds: collected.coveredTabIds });
       setError(errors.length > 0 ? errors.join("; ") : null);
     } catch (e) {
       if (generation === loadGenerationRef.current) setError(describeError(e));
@@ -446,8 +449,17 @@ export function BackgroundSessions({
     return rows;
   }, [showAll, workspaces, ownerWorkspace, sessions, memoryKnown, verifiedQuickSessions]);
 
-  // The all-hosts view also follows the cross-host listing, whose hosts answer one by one.
+  // The all-hosts view adds the cross-host listing, whose hosts answer one by one; its updates only re-derive the rows.
+  const aggregateHosts = useSessionAggregate((s) => (showAll ? s.hosts : null));
   const aggregateSessions = useSessionAggregate((s) => (showAll ? s.sessionsByHost : null));
+  const shownItems = useMemo(() => {
+    if (!scopedItems || !aggregateHosts || !aggregateSessions || !covered) return scopedItems;
+    const extra = aggregateBackgroundTabs(
+      aggregateRows({ hosts: aggregateHosts, sessionsByHost: aggregateSessions }),
+      { ...covered, openTabIds: openTerminalTabIds(workspaces) },
+    );
+    return extra.length > 0 ? [...scopedItems, ...extra] : scopedItems;
+  }, [scopedItems, aggregateHosts, aggregateSessions, covered, workspaces]);
   // A change to a followed session restarts polling, so the list reloads at once.
   useEffect(() => {
     if (!visible || (!hostSessionId && !showAll)) return;
@@ -456,7 +468,7 @@ export function BackgroundSessions({
       stopPoll();
       loadGenerationRef.current += 1;
     };
-  }, [visible, hostSessionId, showAll, load, sessions, aggregateSessions]);
+  }, [visible, hostSessionId, showAll, load, sessions]);
 
   const takeOver = async (info: BackgroundTab) => {
     const ownerGeneration = ownerGenerationRef.current;
@@ -591,7 +603,7 @@ export function BackgroundSessions({
   }
 
   const list = visibleBackgroundTabs(
-    scopedItems ?? [],
+    shownItems ?? [],
     { sessions, workspaces, verified: verifiedQuickSessions },
     { hostSessionId, showAll, blocked: hostIdentityMismatch || (remoteOwner && needsReconnect) },
   );

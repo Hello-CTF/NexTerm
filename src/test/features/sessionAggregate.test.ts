@@ -12,6 +12,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import type { Workspace } from "../../app/store";
 import {
+  AGGREGATE_FOLLOW_UP_MS,
   aggregateRows,
   applyAggregateList,
   applyAggregateUpdate,
@@ -22,7 +23,7 @@ import {
 } from "../../app/sessionAggregate";
 import { applyAwareness, resetAwarenessStore, useAwarenessStore } from "../../app/sessionAwarenessStore";
 import { buildInbox } from "../../features/inbox/inbox";
-import { collectBackgroundTabs, visibleBackgroundTabs } from "../../features/terminal/backgroundSessionsAccess";
+import { aggregateBackgroundTabs, collectBackgroundTabs, visibleBackgroundTabs } from "../../features/terminal/backgroundSessionsAccess";
 import type { SessionInfo } from "../../ipc/commands";
 import type { AggregateHostStatus, AggregateList, AggregateSession, AttentionEvent } from "../../ipc/generated/types";
 
@@ -61,13 +62,49 @@ afterEach(() => {
 });
 
 describe("session aggregate store", () => {
-  it("fills in hosts that answer later and ignores hosts the listing no longer has", () => {
+  it("fills in hosts that answer later, including hosts the listing did not name yet", () => {
     applyAggregateList(listing([host("device:a"), host("device:b", { status: "pending", fetchedAt: undefined })], [item("device:a", "t1")]));
     applyAggregateUpdate({ host: host("device:b"), sessions: [item("device:b", "t2")] });
-    applyAggregateUpdate({ host: host("device:gone"), sessions: [item("device:gone", "t3")] });
+    applyAggregateUpdate({ host: host("device:new"), sessions: [item("device:new", "t3")] });
     const rows = aggregateRows(useSessionAggregate.getState());
-    expect(rows.map((row) => [row.host.key, row.session.tabId])).toEqual([["device:a", "t1"], ["device:b", "t2"]]);
+    expect(rows.map((row) => [row.host.key, row.session.tabId])).toEqual([["device:a", "t1"], ["device:b", "t2"], ["device:new", "t3"]]);
     expect(useSessionAggregate.getState().hosts.get("device:b")?.status).toBe("ok");
+  });
+
+  it("never replaces a host with an older reading", () => {
+    applyAggregateList(listing([host("device:a", { fetchedAt: 20 })], [item("device:a", "fresh")]));
+    applyAggregateUpdate({ host: host("device:a", { fetchedAt: 10 }), sessions: [item("device:a", "old-event")] });
+    applyAggregateList(listing([host("device:a", { fetchedAt: 5 })], [item("device:a", "old-reply")]));
+    expect(aggregateRows(useSessionAggregate.getState()).map((row) => row.session.tabId)).toEqual(["fresh"]);
+  });
+
+  it("applies events that arrive during a reload after its reply", async () => {
+    let answer: (list: AggregateList) => void = () => {};
+    mocks.sessionsAggregate.mockReturnValueOnce(new Promise<AggregateList>((resolve) => { answer = resolve; }));
+    const pending = reloadSessionAggregate();
+    applyAggregateUpdate({ host: host("device:a", { fetchedAt: 30 }), sessions: [item("device:a", "from-event")] });
+    expect(useSessionAggregate.getState().hosts.size).toBe(0);
+    answer(listing([host("device:a", { status: "pending", fetchedAt: undefined })], []));
+    await pending;
+    expect(aggregateRows(useSessionAggregate.getState()).map((row) => row.session.tabId)).toEqual(["from-event"]);
+  });
+
+  it("asks again shortly while hosts are still pending", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.sessionsAggregate
+        .mockResolvedValueOnce(listing([host("device:slow", { status: "pending", fetchedAt: undefined })], []))
+        .mockResolvedValueOnce(listing([host("device:slow")], [item("device:slow", "t1")]));
+      await reloadSessionAggregate();
+      expect(mocks.sessionsAggregate).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(AGGREGATE_FOLLOW_UP_MS);
+      expect(mocks.sessionsAggregate).toHaveBeenCalledTimes(2);
+      expect(aggregateRows(useSessionAggregate.getState()).map((row) => row.session.tabId)).toEqual(["t1"]);
+      await vi.advanceTimersByTimeAsync(AGGREGATE_FOLLOW_UP_MS * 2);
+      expect(mocks.sessionsAggregate).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lists a session reached through two hosts once", () => {
@@ -108,6 +145,18 @@ describe("inbox with the cross-host listing", () => {
     expect(buildInbox(useAwarenessStore.getState().byTabId, [workspace("ws", "web-01", "held")], rows)).toEqual([]);
   });
 
+  it("names the host of a session the awareness store knows but no tab here shows", () => {
+    applyAwareness([attention("elsewhere", { version: 2 })]);
+    const rows = aggregateRows({
+      hosts: new Map([["device:box", host("device:box", { name: "build box", deviceId: "box" })]]),
+      sessionsByHost: new Map([["device:box", [item("device:box", "elsewhere", { title: "deploy" })]]]),
+    });
+    const [entry] = buildInbox(useAwarenessStore.getState().byTabId, [], rows);
+    expect(entry).toMatchObject({ tabId: "elsewhere", title: "deploy", place: "build box" });
+    expect(entry.host?.deviceId).toBe("box");
+    expect(entry.listedOnly).toBeUndefined();
+  });
+
   it("leaves out a state that was seen on another device", () => {
     const rows = aggregateRows({
       hosts: new Map([["device:box", host("device:box")]]),
@@ -132,16 +181,13 @@ describe("background list with the cross-host listing", () => {
       ]),
     });
     const scope = { sessions: [ssh], workspaces: [], verified: {} };
-    const collected = collectBackgroundTabs(scope, {
-      live: [],
-      remote: [{ session: ssh, tabs: [] }],
-      openTabIds: new Set(["opened"]),
-      aggregate: rows,
-    });
-    expect(collected.list.map((tab) => tab.tabId)).toEqual(["far"]);
-    const far = collected.list[0];
+    const openTabIds = new Set(["opened"]);
+    const collected = collectBackgroundTabs(scope, { live: [], remote: [{ session: ssh, tabs: [] }], openTabIds });
+    const extra = aggregateBackgroundTabs(rows, { ...collected, openTabIds });
+    expect(extra.map((tab) => tab.tabId)).toEqual(["far"]);
+    const far = extra[0];
     expect(far).toMatchObject({ sessionId: "", sessionName: "build box", state: "needs_me", attachedElsewhere: true });
     expect(far.aggregateHost?.deviceId).toBe("box");
-    expect(visibleBackgroundTabs(collected.list, scope, { hostSessionId: null, showAll: true, blocked: false })).toHaveLength(1);
+    expect(visibleBackgroundTabs(extra, scope, { hostSessionId: null, showAll: true, blocked: false })).toHaveLength(1);
   });
 });

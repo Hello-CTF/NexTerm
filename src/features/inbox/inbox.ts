@@ -29,8 +29,10 @@ export interface InboxEntry {
   awareness: SessionAwareness;
   badge: AwarenessBadge;
   detail: string;
-  // The host of a session this client knows only from the cross-host listing; it is opened through that host.
+  // The session's host from the cross-host listing; a session no tab here shows is opened through it.
   host?: AggregateHost;
+  // No tab in this app reports on the session; only the cross-host listing knows it.
+  listedOnly?: boolean;
 }
 
 interface TabLocation {
@@ -81,21 +83,25 @@ export function buildInbox(
 ): InboxEntry[] {
   const located = locateTerminalTabs(workspaces);
   const entries: InboxEntry[] = [];
+  // The cross-host listing names the host of a session this client holds no tab for, so it can be opened there.
+  const listed = new Map(aggregate.map((row) => [row.session.tabId, row]));
   for (const [tabId, awareness] of byTabId) {
     if (!needsAttention(awareness)) continue;
     const badge = awarenessBadge(awareness);
     if (!badge) continue;
     const where = located.get(tabId);
     if (where?.tab.exited) continue;
+    const row = listed.get(tabId);
     entries.push({
       tabId,
       uiTabId: where?.tab.id,
       workspaceId: where?.workspace.id,
-      title: where?.tab.title ?? "未在此端打开的终端",
-      place: where?.workspace.title ?? "其他窗口或设备",
+      title: where?.tab.title ?? (row?.session.title || "未在此端打开的终端"),
+      place: where?.workspace.title ?? row?.host.name ?? "其他窗口或设备",
       awareness,
       badge,
       detail: attentionDetail(awareness),
+      ...(row ? { host: row.host } : {}),
     });
   }
   // A session no tab here reports on comes from the cross-host listing; a tab's own state wins whenever it has one.
@@ -118,6 +124,7 @@ export function buildInbox(
       badge,
       detail: attentionDetail(awareness),
       host,
+      listedOnly: true,
     });
   }
   const rank = (entry: InboxEntry) => (entry.awareness.state === "needs_me" ? 0 : 1);

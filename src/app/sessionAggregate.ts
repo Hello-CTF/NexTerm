@@ -13,6 +13,9 @@ import { startPolling } from "./usePolling";
 // The first answer waits this long for slow hosts; the rest arrive as terminal://sessions events.
 export const AGGREGATE_WAIT_MS = 1500;
 export const AGGREGATE_REFRESH_MS = 30_000;
+// An answer with hosts still pending is asked again after this long, for hosts whose result arrives as no event
+// (devices a desktop or phone lists through its server).
+export const AGGREGATE_FOLLOW_UP_MS = 3000;
 
 export interface AggregateRow {
   session: AggregateSession;
@@ -34,24 +37,49 @@ let started = false;
 // epoch discards replies an account reset or a newer reload has overtaken.
 let epoch = 0;
 let inFlight = false;
+// Events that arrive while a reload is in flight are applied after its reply, which may predate them.
+let buffered: TerminalSessionsEvent[] | null = null;
+let followUp: ReturnType<typeof setTimeout> | undefined;
 
-export function applyAggregateList(list: AggregateList): void {
-  const hosts = new Map<string, AggregateHostStatus>();
-  const sessionsByHost = new Map<string, AggregateSession[]>();
-  for (const host of list.hosts) hosts.set(host.key, host);
-  for (const session of list.sessions) {
-    const group = sessionsByHost.get(session.hostKey) ?? [];
-    group.push(session);
-    sessionsByHost.set(session.hostKey, group);
-  }
-  useSessionAggregate.setState({ hosts, sessionsByHost, loaded: true });
+// newer: a host state that was read later than the other one, which then must not replace it.
+function newer(a: AggregateHostStatus | undefined, b: AggregateHostStatus): boolean {
+  return a !== undefined && (a.fetchedAt ?? 0) > (b.fetchedAt ?? 0);
 }
 
-// applyAggregateUpdate replaces what is known of one host. A host the current listing no longer has is ignored:
-// its session or device went away since.
-export function applyAggregateUpdate(update: TerminalSessionsEvent): void {
+// applyAggregateList replaces the listing with a reply. A host whose known listing was read after the reply's keeps
+// it: an event delivered it while the request was in flight.
+export function applyAggregateList(list: AggregateList): void {
   useSessionAggregate.setState((current) => {
-    if (!current.hosts.has(update.host.key)) return current;
+    const hosts = new Map<string, AggregateHostStatus>();
+    const sessionsByHost = new Map<string, readonly AggregateSession[]>();
+    const replied = new Map<string, AggregateSession[]>();
+    for (const session of list.sessions) {
+      const group = replied.get(session.hostKey) ?? [];
+      group.push(session);
+      replied.set(session.hostKey, group);
+    }
+    for (const host of list.hosts) {
+      const known = current.hosts.get(host.key);
+      if (known && newer(known, host)) {
+        hosts.set(host.key, known);
+        sessionsByHost.set(host.key, current.sessionsByHost.get(host.key) ?? []);
+        continue;
+      }
+      hosts.set(host.key, host);
+      sessionsByHost.set(host.key, replied.get(host.key) ?? []);
+    }
+    return { hosts, sessionsByHost, loaded: true };
+  });
+}
+
+// applyAggregateUpdate replaces what is known of one host, unless what is known was read later.
+export function applyAggregateUpdate(update: TerminalSessionsEvent): void {
+  if (buffered) {
+    buffered.push(update);
+    return;
+  }
+  useSessionAggregate.setState((current) => {
+    if (newer(current.hosts.get(update.host.key), update.host)) return current;
     const hosts = new Map(current.hosts);
     hosts.set(update.host.key, update.host);
     const sessionsByHost = new Map(current.sessionsByHost);
@@ -74,17 +102,34 @@ export function aggregateRows(state: Pick<SessionAggregateState, "hosts" | "sess
   return rows;
 }
 
+function clearFollowUp(): void {
+  if (followUp !== undefined) clearTimeout(followUp);
+  followUp = undefined;
+}
+
 export async function reloadSessionAggregate(waitMs = AGGREGATE_WAIT_MS): Promise<void> {
   if (inFlight) return;
   inFlight = true;
+  clearFollowUp();
   const current = epoch;
+  buffered = [];
+  let list: AggregateList | undefined;
   try {
-    const list = await terminalApi.sessionsAggregate(waitMs);
-    if (current === epoch) applyAggregateList(list);
+    list = await terminalApi.sessionsAggregate(waitMs);
   } catch {
     // The listing is a supplement; the inbox keeps what the awareness store knows.
-  } finally {
-    inFlight = false;
+  }
+  if (current !== epoch) return;
+  inFlight = false;
+  const pending = buffered;
+  buffered = null;
+  if (list) applyAggregateList(list);
+  for (const update of pending) applyAggregateUpdate(update);
+  if (list && list.hosts.some((host) => host.status === "pending")) {
+    followUp = setTimeout(() => {
+      followUp = undefined;
+      void reloadSessionAggregate();
+    }, AGGREGATE_FOLLOW_UP_MS);
   }
 }
 
@@ -97,16 +142,20 @@ export function startSessionAggregateTracking(): void {
   startPolling(() => reloadSessionAggregate(), { intervalMs: AGGREGATE_REFRESH_MS });
 }
 
-// resetSessionAggregate drops everything listed for the previous account and lists the current one's.
-export function resetSessionAggregate(): void {
+function resetState(): void {
   epoch += 1;
   inFlight = false;
+  buffered = null;
+  clearFollowUp();
   useSessionAggregate.setState(EMPTY);
+}
+
+// resetSessionAggregate drops everything listed for the previous account and lists the current one's.
+export function resetSessionAggregate(): void {
+  resetState();
   if (started) void reloadSessionAggregate();
 }
 
 export function resetSessionAggregateForTest(): void {
-  epoch += 1;
-  inFlight = false;
-  useSessionAggregate.setState(EMPTY);
+  resetState();
 }
