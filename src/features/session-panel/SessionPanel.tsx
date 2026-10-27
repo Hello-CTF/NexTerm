@@ -1,6 +1,8 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keybindings";
-import { IconClose, IconFolderOpen, IconLock, type IconInfo } from "../../ui/icons";
+import { useUi } from "../../app/store";
+import { IconClose, IconFolderOpen, IconLock, IconServer, type IconInfo } from "../../ui/icons";
+import { openHostDetail } from "../hosts/hostDetail";
 import { trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { useTerminalCwd } from "../files/cwdFollow";
 import { FilesTab, PanelEmpty } from "./FilesTab";
@@ -39,6 +41,12 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
   const tabRefs = useRef(new Map<SessionPanelTabId, HTMLButtonElement>());
   const current = PANEL_TABS.find((tab) => tab.id === activeTab) ?? PANEL_TABS[0];
   const locked = source === "locked";
+  // The host behind the panel's session, when it is a saved asset or a device: the header links to its detail page.
+  const hostAssetId = useUi((s) => {
+    if (!context) return undefined;
+    const workspace = s.workspaces.find((w) => w.id === context.workspaceId);
+    return workspace?.kind === "session" ? workspace.assetId : undefined;
+  });
 
   const currentId = useRef(current.id);
   currentId.current = current.id;
@@ -103,6 +111,17 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
           </span>
         )}
         <div className="nx-spacer" />
+        {hostAssetId && (
+          <button
+            type="button"
+            className="nx-icon-btn nx-icon-btn-sm"
+            aria-label="查看主机详情"
+            title="查看主机详情：会话、容器、数据库和指标"
+            onClick={() => openHostDetail(hostAssetId)}
+          >
+            <IconServer size={13} />
+          </button>
+        )}
         <button
           type="button"
           className={`nx-icon-btn nx-icon-btn-sm ${locked ? "is-active" : ""}`}

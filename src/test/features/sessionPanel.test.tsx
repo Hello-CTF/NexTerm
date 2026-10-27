@@ -467,3 +467,31 @@ describe("session side panel tabs", () => {
     expect(useSessionPanel.getState().open).toBe(false);
   });
 });
+
+describe("session side panel host link", () => {
+  function hostTab(): AppTab | undefined {
+    return useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).find((t) => t.kind === "host");
+  }
+
+  it("opens the detail page of the focused session's host", async () => {
+    useUi.setState({
+      workspaces: [{ ...workspace("ws1", "web-01", "s1", [terminal("t1", "k1", "s1")]), assetId: "a-web", assetKind: "ssh" }],
+      activeWorkspaceId: "ws1",
+      sessions: [{ ...session("s1", "web-01"), assetId: "a-web" }],
+    });
+    mountPanel();
+    await flush();
+    click(button("查看主机详情"));
+    expect(hostTab()?.assetId).toBe("a-web");
+    // Opening the page neither connects nor adds a tab to the host workspace.
+    const hostWorkspace = useUi.getState().workspaces.find((w) => w.id === "ws1");
+    expect(hostWorkspace?.panes.flatMap((p) => p.tabs).map((t) => t.id)).toEqual(["t1"]);
+  });
+
+  it("has no host link for a session without a saved host", async () => {
+    seedTwoHosts();
+    mountPanel();
+    await flush();
+    expect(mounted!.container.querySelector('button[aria-label="查看主机详情"]')).toBeNull();
+  });
+});

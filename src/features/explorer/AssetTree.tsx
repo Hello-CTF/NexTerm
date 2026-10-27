@@ -57,6 +57,7 @@ import { SnippetsPanel } from "./SnippetsPanel";
 import { SshImportDialog } from "./SshImportDialog";
 import { InventoryDialog } from "./InventoryDialog";
 import { DeviceTreeSection } from "../fleet/DeviceTreeSection";
+import { hostDetailLabel, openHostDetail } from "../hosts/hostDetail";
 import { BulkMaintenanceDialog } from "../execbatch/BulkMaintenancePanel";
 import { ProjectSelector } from "./ProjectSelector";
 import { assetInventoryMetadata, inventorySourceLabel, inventoryTargetText, isInventoryOnlyKind } from "./inventory";
@@ -753,9 +754,13 @@ export function AssetTree() {
   const buildRowMenu = (asset: Asset): MenuItem[] => {
     const connectable = !isInventoryOnlyKind(asset.kind);
     const canConnectAs = !WEB && asset.kind === "ssh" && Boolean(asset.host?.trim());
+    const detailLabel = hostDetailLabel(asset.kind);
     const main: MenuItem[] = [
       ...(connectable
         ? [{ kind: "item" as const, label: "连接", icon: <IconPlay size={13} />, onSelect: () => void connectAsset(asset) }]
+        : []),
+      ...(detailLabel
+        ? [{ kind: "item" as const, label: detailLabel, icon: <IconServer size={13} />, onSelect: () => openHostDetail(asset.id) }]
         : []),
       { kind: "item", label: "编辑", icon: <IconEdit size={13} />, onSelect: () => setEditingAsset(asset) },
     ];
