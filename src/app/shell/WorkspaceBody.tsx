@@ -17,6 +17,7 @@ import { workspaceLayoutTree } from "../paneLayout";
 import { focusNeighbor, paneIdsInOrder, type FocusDirection } from "../splitTree";
 import { EmptyState, WorkspaceEmpty } from "../workspace/EmptyStates";
 import { type OverlayDocks } from "./useOverlayDocks";
+import { WorkspaceConnectionBar } from "./WorkspaceConnectionBar";
 
 export interface WorkspaceBodyProps {
   ws: Workspace | null | undefined;
@@ -102,7 +103,7 @@ export function WorkspaceBody({
         </div>
       )}
 
-      <main id="nx-main" tabIndex={-1} className="nx-workspace-main min-w-0 flex-1">
+      <main id="nx-main" tabIndex={-1} className={`nx-workspace-main min-w-0 flex-1${workspaces.length > 0 ? " flex flex-col" : ""}`}>
         {workspaces.length === 0 ? (
           hasSessions ? (
             <WorkspaceEmpty onNew={onNewTerminal} />
@@ -111,69 +112,72 @@ export function WorkspaceBody({
           )
         ) : (
           <>
-            {visibleWorkspaces.length === 0 && (
-              <div role="status" className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
-                当前项目没有打开的工作区。切换项目不会断开其他工作区。
-              </div>
-            )}
-            {workspaces.map((w) => {
-              const wsActive = w.id === ws?.id;
-              const split = w.panes.length > 1;
-              const tree = workspaceLayoutTree(w);
-              const order = tree ? paneIdsInOrder(tree) : w.panes.map((p) => p.id);
-              const cyclePane = (paneId: string, step: 1 | -1) => {
-                const index = order.indexOf(paneId);
-                const next = order[(index + step + order.length) % order.length];
-                if (next) setActivePane(next, w.id);
-              };
-              return (
-                <div
-                  key={w.id}
-                  id={`nx-ws-panel-${w.id}`}
-                  className={wsActive ? "h-full min-h-0" : "hidden"}
-                >
-                  <SplitView
-                    workspace={w}
-                    singlePane={singlePane}
-                    onRatio={(splitId, ratio) => setSplitRatio(splitId, ratio, w.id)}
-                    onActivatePane={(paneId) => setActivePane(paneId, w.id)}
-                    onTabDrop={(tabId, paneId, region) => {
-                      if (region === "center") moveTabToPane(tabId, paneId);
-                      else splitPaneWithTab(tabId, paneId, region, w.id);
-                    }}
-                    renderTab={(p, t, visible) => (
-                      <PaneTabPanel
-                        tab={t}
-                        idPrefix={`${w.id}-${p.id}`}
-                        workspaceId={w.id}
-                        visible={wsActive && visible}
-                      />
-                    )}
-                    renderPane={(p, view, stripRef) => (
-                      <PaneGroup
-                        pane={p}
-                        idPrefix={`${w.id}-${p.id}`}
-                        active={wsActive && view.focused}
-                        stripRef={stripRef}
-                        split={split}
-                        singlePane={singlePane}
-                        paneNumber={order.indexOf(p.id) + 1}
-                        paneCount={order.length}
-                        splitAllowed={splitAllowed}
-                        moveTargets={tree ? paneMoveTargets(tree, p.id) : []}
-                        onSplit={(direction) => splitPane(direction, p.id, w.id)}
-                        onClosePane={() => closePane(p.id, w.id)}
-                        onCyclePane={(step) => cyclePane(p.id, step)}
-                        onActivate={() => setActivePane(p.id, w.id)}
-                        onNewTerminal={onNewTerminal}
-                        leftOpen={leftDockOpen}
-                        onToggleLeft={() => setLeftOpen(!leftDockOpen)}
-                      />
-                    )}
-                  />
+            <WorkspaceConnectionBar ws={ws} activeTab={activeTab} />
+            <div className="min-h-0 flex-1">
+              {visibleWorkspaces.length === 0 && (
+                <div role="status" className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
+                  当前项目没有打开的工作区。切换项目不会断开其他工作区。
                 </div>
-              );
-            })}
+              )}
+              {workspaces.map((w) => {
+                const wsActive = w.id === ws?.id;
+                const split = w.panes.length > 1;
+                const tree = workspaceLayoutTree(w);
+                const order = tree ? paneIdsInOrder(tree) : w.panes.map((p) => p.id);
+                const cyclePane = (paneId: string, step: 1 | -1) => {
+                  const index = order.indexOf(paneId);
+                  const next = order[(index + step + order.length) % order.length];
+                  if (next) setActivePane(next, w.id);
+                };
+                return (
+                  <div
+                    key={w.id}
+                    id={`nx-ws-panel-${w.id}`}
+                    className={wsActive ? "h-full min-h-0" : "hidden"}
+                  >
+                    <SplitView
+                      workspace={w}
+                      singlePane={singlePane}
+                      onRatio={(splitId, ratio) => setSplitRatio(splitId, ratio, w.id)}
+                      onActivatePane={(paneId) => setActivePane(paneId, w.id)}
+                      onTabDrop={(tabId, paneId, region) => {
+                        if (region === "center") moveTabToPane(tabId, paneId);
+                        else splitPaneWithTab(tabId, paneId, region, w.id);
+                      }}
+                      renderTab={(p, t, visible) => (
+                        <PaneTabPanel
+                          tab={t}
+                          idPrefix={`${w.id}-${p.id}`}
+                          workspaceId={w.id}
+                          visible={wsActive && visible}
+                        />
+                      )}
+                      renderPane={(p, view, stripRef) => (
+                        <PaneGroup
+                          pane={p}
+                          idPrefix={`${w.id}-${p.id}`}
+                          active={wsActive && view.focused}
+                          stripRef={stripRef}
+                          split={split}
+                          singlePane={singlePane}
+                          paneNumber={order.indexOf(p.id) + 1}
+                          paneCount={order.length}
+                          splitAllowed={splitAllowed}
+                          moveTargets={tree ? paneMoveTargets(tree, p.id) : []}
+                          onSplit={(direction) => splitPane(direction, p.id, w.id)}
+                          onClosePane={() => closePane(p.id, w.id)}
+                          onCyclePane={(step) => cyclePane(p.id, step)}
+                          onActivate={() => setActivePane(p.id, w.id)}
+                          onNewTerminal={onNewTerminal}
+                          leftOpen={leftDockOpen}
+                          onToggleLeft={() => setLeftOpen(!leftDockOpen)}
+                        />
+                      )}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </>
         )}
       </main>
