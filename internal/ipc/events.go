@@ -14,6 +14,8 @@ const (
 	TopicTerminalExit      Topic = "terminal://exit"
 	TopicTerminalThrottled Topic = "terminal://throttled"
 	TopicTerminalControl   Topic = "terminal://control"
+	// TopicTerminalAttention carries a tab's attention state after each change.
+	TopicTerminalAttention Topic = "terminal://attention"
 	TopicFSProgress        Topic = "fs://progress"
 	TopicDockerStats       Topic = "docker://stats"
 	TopicAIEvent           Topic = "ai://event"

@@ -331,6 +331,7 @@ func (m *Manager) reapRemote(id string, activity time.Time) error {
 	for _, tab := range session.tabs {
 		tabs = append(tabs, tab)
 		delete(m.tabs, tab.ID)
+		m.forgetAttention(tab)
 		delete(m.throttleVersions, tab.ID)
 		delete(m.throttleChannels, tab.ID)
 	}

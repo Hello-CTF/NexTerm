@@ -48,6 +48,7 @@ type Manager struct {
 	throttleVersions       map[string]uint64
 	throttleChannels       map[string]map[string]bool
 	slowKicks              map[string]*time.Timer
+	attention              attentionRegistry
 	closed                 bool
 	started                bool
 	openAccess             bool
@@ -876,6 +877,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 		if tab != nil {
 			if m.tabs[tab.ID] == tab {
 				delete(m.tabs, tab.ID)
+				m.forgetAttention(tab)
 				delete(m.throttleVersions, tab.ID)
 				delete(m.throttleChannels, tab.ID)
 			}
@@ -1132,6 +1134,11 @@ func (m *Manager) emit(ctx context.Context, topic string, payload any) {
 		if event, ok := payload.(ControlEvent); ok {
 			m.queueRecordingControl(ctx, event, force)
 			return
+		}
+	}
+	if topic == TopicTerminalExit {
+		if event, ok := payload.(ExitEvent); ok {
+			m.attentionExited(event)
 		}
 	}
 	ownerID, resourceID, closed := m.eventOwner(topic, payload)

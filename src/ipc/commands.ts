@@ -675,6 +675,10 @@ export const terminalApi = {
     call<void>("terminal_close_tab", { tabId, mode, clientId: clientId(), ...(sessionId === undefined ? {} : { sessionId }) }),
   renameTab: (tabId: string, title: string, at?: number) =>
     call("terminal_rename_tab", { tabId, title, at }) as Promise<AttachedTabInfo>,
+  // The attention state of every terminal tab; tabs whose state cannot be known are "unknown".
+  attentionList: () => call("terminal_attention_list"),
+  // Marks the needs_me or just_finished state that began at since as seen by the user, for every device.
+  attentionSeen: (tabId: string, since: string) => ignoreResult(call("terminal_attention_seen", { tabId, since })),
   createTab: (sessionId: string, options?: { title?: string; command?: string }) =>
     call<AttachedTabInfo>("terminal_create_tab", {
       sessionId,

@@ -144,3 +144,25 @@ func TestMetadataConflictErrorWireRoundTrip(t *testing.T) {
 		t.Fatalf("decoded current metadata = %+v", conflict.Current)
 	}
 }
+
+// Frame numbers are wire values: helpers and clients of different builds
+// must agree on every one. 33 is reserved for frameSetStateRules (B10).
+func TestFrameNumbersArePinned(t *testing.T) {
+	frames := []struct {
+		frame frameType
+		want  byte
+	}{
+		{frameHello, 1}, {frameHelloAck, 2}, {frameError, 3}, {frameCreate, 4}, {frameCreated, 5},
+		{frameList, 6}, {frameListed, 7}, {frameAttach, 8}, {frameAttached, 9}, {frameInput, 10},
+		{frameInputAck, 11}, {frameResize, 12}, {frameOK, 13}, {frameKill, 14}, {frameGetVersions, 15},
+		{frameVersions, 16}, {frameSetVersions, 17}, {frameDetach, 18}, {frameOutput, 19}, {frameExit, 20},
+		{frameFatal, 21}, {frameKillSession, 22}, {frameExecOutput, 23}, {frameRename, 24}, {frameRenamed, 25},
+		{frameReplayGzip, 26}, {frameCredit, 27}, {frameOutputZstd, 28}, {frameHistoryGap, 29},
+		{frameReadHistory, 30}, {frameHistory, 31}, {frameState, 32}, {frameStateSeen, 34},
+	}
+	for _, entry := range frames {
+		if byte(entry.frame) != entry.want {
+			t.Errorf("frame value %d, want %d", entry.frame, entry.want)
+		}
+	}
+}

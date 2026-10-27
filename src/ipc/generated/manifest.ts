@@ -2327,6 +2327,22 @@ export const ipcContractManifest = {
       channel: true,
       stream: "binary",
     },
+    "terminal_attention_list": {
+      scope: "attention",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/session.AttentionEvent", ts: "AttentionEvent[]" },
+    },
+    "terminal_attention_seen": {
+      scope: "attention",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.attentionSeenRequest", ts: "AttentionSeenRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "terminal_broadcast_prepare": {
       scope: "terminal",
       nested: true,
@@ -3936,6 +3952,14 @@ export interface IPCCommandTypeMap {
   "terminal_attach": {
     input: contractTypes.OpenTerminalRequest;
     output: contractTypes.AttachedTabDTO;
+  };
+  "terminal_attention_list": {
+    input: Record<string, never>;
+    output: contractTypes.AttentionEvent[];
+  };
+  "terminal_attention_seen": {
+    input: contractTypes.AttentionSeenRequest;
+    output: unknown;
   };
   "terminal_broadcast_prepare": {
     input: contractTypes.TerminalBroadcastPrepareRequest;

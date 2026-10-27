@@ -212,7 +212,7 @@ func (c *serverConn) serve() {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
-	ack := helloMsg{Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity}
+	ack := helloMsg{Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity, StateSeen: true}
 	if err := c.reply(frameHelloAck, ack); err != nil {
 		return
 	}
@@ -242,6 +242,8 @@ func (c *serverConn) serve() {
 			}
 		case frameResize:
 			c.handleResize(payload)
+		case frameStateSeen:
+			c.handleStateSeen(payload)
 		case frameKill:
 			c.handleKill()
 		case frameGetVersions:
@@ -256,8 +258,9 @@ func (c *serverConn) serve() {
 			_ = c.reply(frameOK, struct{}{})
 			return
 		default:
+			// A frame from a newer client is refused without ending the
+			// connection, so the client keeps its session.
 			c.replyError(frameError, errorMsg{Code: codeProtocol, Message: fmt.Sprintf("unexpected frame type %d", kind)})
-			return
 		}
 	}
 }
@@ -616,6 +619,24 @@ func (c *serverConn) handleResize(payload []byte) {
 		return
 	}
 	if err := attachment.Resize(context.Background(), msg.Cols, msg.Rows); err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		return
+	}
+	_ = c.reply(frameOK, struct{}{})
+}
+
+func (c *serverConn) handleStateSeen(payload []byte) {
+	attachment := c.attached()
+	if attachment == nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "state seen frame without attach"})
+		return
+	}
+	var msg stateSeenMsg
+	if err := unmarshalFrame(payload, &msg); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if err := attachment.MarkStateSeen(msg.Since); err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}

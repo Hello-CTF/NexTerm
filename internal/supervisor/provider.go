@@ -268,6 +268,20 @@ func (a *channelAttachment) CloseWrite() error  { return base.ErrUnsupported }
 func (a *channelAttachment) Generation() uint64 { return 0 }
 func (a *channelAttachment) Info() Info         { return a.session.canonicalInfo() }
 
+func (a *channelAttachment) DurableSessionState() *base.SessionState {
+	state := a.SessionState(^uint64(0))
+	if state != nil {
+		state.Events, state.EventsDropped = nil, false
+	}
+	return state
+}
+
+func (a *channelAttachment) DurableStateUpdates() <-chan struct{} { return a.StateUpdates() }
+
+func (a *channelAttachment) MarkDurableStateSeen(_ context.Context, since time.Time) error {
+	return translateError(a.MarkStateSeen(since))
+}
+
 func (a *channelAttachment) DurableReplay() base.DurableReplay { return durableReplay(a.Replay()) }
 func (a *channelAttachment) DurableOffset() uint64             { return a.NextSeq() }
 
@@ -503,6 +517,20 @@ func (a *streamAttachment) ID() string         { return a.Info().ID }
 func (a *streamAttachment) DurableReplay() base.DurableReplay { return durableReplay(a.Replay()) }
 func (a *streamAttachment) DurableOffset() uint64             { return a.ConsumedOffset() }
 
+func (a *streamAttachment) DurableSessionState() *base.SessionState {
+	state := a.SessionState()
+	if state != nil {
+		state.Events, state.EventsDropped = nil, false
+	}
+	return state
+}
+
+func (a *streamAttachment) DurableStateUpdates() <-chan struct{} { return a.StateUpdates() }
+
+func (a *streamAttachment) MarkDurableStateSeen(ctx context.Context, since time.Time) error {
+	return translateError(a.MarkStateSeen(ctx, since))
+}
+
 func (a *streamAttachment) Read(p []byte) (int, error) {
 	count, err := a.Stream.Read(p)
 	return count, translateError(err)
@@ -567,6 +595,7 @@ var (
 	_ base.DurableHistoryReader    = (*Provider)(nil)
 	_ base.DurableAttachment       = (*channelAttachment)(nil)
 	_ base.DurableReplayReporter   = (*channelAttachment)(nil)
+	_ base.DurableStateReporter    = (*channelAttachment)(nil)
 	_ base.DurableProvider         = (*RemoteProvider)(nil)
 	_ base.DurableDescriptorLister = (*RemoteProvider)(nil)
 	_ base.DurableMetadataProvider = (*RemoteProvider)(nil)
@@ -576,4 +605,5 @@ var (
 	_ base.DurableHistoryReader    = (*RemoteProvider)(nil)
 	_ base.DurableAttachment       = (*streamAttachment)(nil)
 	_ base.DurableReplayReporter   = (*streamAttachment)(nil)
+	_ base.DurableStateReporter    = (*streamAttachment)(nil)
 )

@@ -1,0 +1,93 @@
+/** @vitest-environment jsdom */
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createElement, Fragment } from "react";
+import { mount } from "./reactTestUtils";
+import { TabAttentionBadge, TabStripItem, tabTooltip } from "../../app/workspace/tabStrip";
+import { applyAwareness, resetAwarenessStore } from "../../app/sessionAwarenessStore";
+import type { AppTab } from "../../app/store";
+import type { TerminalAttentionEvent } from "../../ipc/events";
+
+let version = 0;
+
+beforeEach(() => resetAwarenessStore());
+
+afterEach(() => resetAwarenessStore());
+
+function terminal(patch: Partial<AppTab> = {}): AppTab {
+  return { id: "t1", kind: "terminal", title: "终端 1", sessionId: "s1", tabId: "T1", closable: true, ...patch };
+}
+
+function report(patch: Partial<TerminalAttentionEvent>): void {
+  version += 1;
+  applyAwareness([{ tabId: "T1", state: "idle", confidence: "signal", source: "helper", since: "2026-10-27T10:00:00Z", version, ...patch }]);
+}
+
+// renderTab mounts the tab strip pieces the way the pane tab bar does and returns the badge and the tooltip.
+function renderTab(tab: AppTab, active = false): { badge: Element | null; title: string } {
+  let title = "";
+  const view = mount(
+    createElement(TabStripItem, {
+      tab,
+      active,
+      children: (unread: boolean, persistence, attention) => {
+        title = tabTooltip(tab, unread, persistence, attention);
+        return createElement(Fragment, null, createElement(TabAttentionBadge, { badge: attention }));
+      },
+    }),
+  );
+  // Read the result and unmount, so later store updates do not reach a mounted view outside act.
+  const badge = view.container.querySelector('[role="img"]')?.cloneNode(true) as Element | undefined;
+  view.unmount();
+  return { badge: badge ?? null, title };
+}
+
+describe("tab attention badge", () => {
+  it("marks a terminal that needs its user, lighter when the state was inferred", () => {
+    report({ state: "needs_me" });
+    const signalled = renderTab(terminal());
+    expect(signalled.badge?.getAttribute("aria-label")).toBe("需要你处理");
+    expect(signalled.badge?.getAttribute("data-inferred")).toBeNull();
+    expect(signalled.title).toContain("需要你处理");
+
+    report({ state: "needs_me", confidence: "heuristic" });
+    const inferred = renderTab(terminal());
+    expect(inferred.badge?.getAttribute("data-attention")).toBe("needs_me");
+    expect(inferred.badge?.getAttribute("data-inferred")).toBe("true");
+    expect(inferred.badge?.getAttribute("aria-label")).toContain("推测");
+  });
+
+  it("shows a grey question mark instead of an old state when the state is unknown", () => {
+    report({ state: "needs_me" });
+    report({ state: "unknown", confidence: undefined, reason: "disconnected" });
+    const { badge } = renderTab(terminal());
+    expect(badge?.textContent).toBe("?");
+    expect(badge?.getAttribute("aria-label")).toContain("状态未知");
+  });
+
+  it("gives each state its own shape, not only a colour", () => {
+    report({ state: "needs_me" });
+    expect(renderTab(terminal()).badge?.textContent).toBe("!");
+    report({ state: "just_finished", exitCode: 0 });
+    const finished = renderTab(terminal()).badge;
+    expect(finished?.getAttribute("aria-label")).toBe("命令刚结束，成功");
+    expect(finished?.querySelector("svg")).not.toBeNull();
+    expect(finished?.textContent).toBe("");
+  });
+
+  it("clears a state seen on any device and keeps idle tabs unmarked", () => {
+    report({ state: "just_finished", exitCode: 0, seen: true });
+    expect(renderTab(terminal()).badge).toBeNull();
+    report({ state: "idle" });
+    expect(renderTab(terminal()).badge).toBeNull();
+  });
+
+  it("shows running only on tabs the user is not on, and nothing on exited or non-terminal tabs", () => {
+    report({ state: "running" });
+    expect(renderTab(terminal()).badge?.getAttribute("data-attention")).toBe("running");
+    expect(renderTab(terminal(), true).badge).toBeNull();
+    report({ state: "needs_me" });
+    expect(renderTab(terminal({ exited: true })).badge).toBeNull();
+    expect(renderTab({ id: "f1", kind: "files", title: "文件", tabId: "T1", closable: true }).badge).toBeNull();
+  });
+});

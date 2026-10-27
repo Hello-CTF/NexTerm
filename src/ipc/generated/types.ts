@@ -193,6 +193,24 @@ export type AttachedTabDTO = {
   attachmentId?: number;
 };
 
+export type AttentionEvent = {
+  tabId: string;
+  state: string;
+  confidence?: string;
+  source?: string;
+  reason?: string;
+  since?: string;
+  seen?: boolean;
+  notable?: boolean;
+  exitCode?: number | null;
+  version: number;
+};
+
+export type AttentionSeenRequest = {
+  tabId: string;
+  since: string;
+};
+
 export type AuditCountDTO = {
   total: number;
 };

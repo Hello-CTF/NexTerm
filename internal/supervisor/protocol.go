@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 // ProtocolVersion is the only protocol a helper and its clients speak. Version
@@ -70,6 +71,18 @@ const (
 	frameState
 )
 
+// Frames added after frameState carry explicit values so concurrent
+// additions cannot shift each other.
+const (
+	// 33 is reserved for frameSetStateRules (B10).
+
+	// frameStateSeen tells the helper that the attached client showed the
+	// session's needs_me or just_finished state to its user (stateSeenMsg);
+	// the helper answers frameOK and pushes the seen state to every client.
+	// Only sent to a helper whose hello acknowledgement sets StateSeen.
+	frameStateSeen frameType = 34
+)
+
 // Every connection uses windowed input and credited output. The client may keep
 // several frameInput frames in flight; the server acknowledges each one in
 // order with an inputAckMsg that may carry an error, and delays the
@@ -113,6 +126,8 @@ type helloMsg struct {
 	// Runtime is absent only when the helper could not hash its executable.
 	Runtime  *RuntimeMetadata  `json:"runtime,omitempty"`
 	Activity *ActivitySnapshot `json:"activity,omitempty"`
+	// StateSeen is set by a helper that accepts frameStateSeen.
+	StateSeen bool `json:"state_seen,omitempty"`
 }
 
 type createMsg struct {
@@ -188,6 +203,12 @@ type resizeMsg struct {
 type stateMsg struct {
 	ID    string       `json:"id"`
 	State SessionState `json:"state"`
+}
+
+// stateSeenMsg is the payload of frameStateSeen. Since identifies the state
+// the user saw; a state that has changed since is left unseen.
+type stateSeenMsg struct {
+	Since time.Time `json:"since"`
 }
 
 type versionsMsg struct {

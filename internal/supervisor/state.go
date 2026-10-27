@@ -63,6 +63,11 @@ type stateOptions struct {
 	foreground func() (pty.Foreground, error)
 	// appCursor reports DECCKM (application cursor keys); nil means off.
 	appCursor func() bool
+	// screen, when set, reads the screen of a terminal model the caller
+	// already keeps; the tracker then parses output only for signals and
+	// keeps no screen of its own. It is called once per inspection, with
+	// the tracker lock held, and must not call back into the tracker.
+	screen func() terminal.Snapshot
 	// seq numbers events; it is shared by every session of a supervisor
 	// so sequences are monotonic across sessions.
 	seq *atomic.Uint64
@@ -103,7 +108,8 @@ type stateTracker struct {
 
 	mu      sync.Mutex
 	scanner *signals.Scanner
-	emu     *terminal.Emulator
+	// emu is the tracker's own screen; nil when opts.screen supplies it.
+	emu *terminal.Emulator
 
 	state      string
 	confidence string
@@ -112,6 +118,9 @@ type stateTracker struct {
 	exitCode   *int
 	durationMS int64
 	notable    bool
+	// seen is set when a client showed the current needs_me or
+	// just_finished state to its user.
+	seen bool
 
 	// active is set by output or input since the last idle inspection and
 	// lastActivity is when it happened. settling is set when that inspection
@@ -164,10 +173,14 @@ func newStateTracker(opts stateOptions, now time.Time) *stateTracker {
 	if opts.seq == nil {
 		opts.seq = new(atomic.Uint64)
 	}
+	var emu *terminal.Emulator
+	if opts.screen == nil {
+		emu = terminal.NewEmulator(opts.cols, opts.rows)
+	}
 	return &stateTracker{
 		opts:       opts,
 		scanner:    signals.NewScanner(signals.Config{}),
-		emu:        terminal.NewEmulator(opts.cols, opts.rows),
+		emu:        emu,
 		state:      base.SessionIdle,
 		confidence: base.ConfidenceSignal,
 		reason:     "start",
@@ -189,7 +202,9 @@ func (t *stateTracker) output(p []byte, now time.Time) {
 		t.mu.Unlock()
 		return
 	}
-	t.emu.Write(p)
+	if t.emu != nil {
+		t.emu.Write(p)
+	}
 	changed := false
 	for _, event := range t.scanner.Feed(p, now) {
 		if t.signalLocked(event, now) {
@@ -228,7 +243,7 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 			return true
 		}
 		t.addEventLocked(SessionEvent{Kind: base.SessionEventBell, At: event.At})
-		t.signalPending, t.finishedPending = true, false
+		t.signalPending, t.finishedPending, t.seen = true, false, false
 		t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "bell", now)
 	case signals.KindNotify:
 		title, cutTitle := clipText(event.Title)
@@ -237,7 +252,7 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 			Kind: base.SessionEventNotify, At: event.At, Source: event.Source,
 			Title: title, Body: body, TextTruncated: cutTitle || cutBody,
 		})
-		t.signalPending, t.finishedPending = true, false
+		t.signalPending, t.finishedPending, t.seen = true, false, false
 		t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "notify", now)
 	case signals.KindCommandStart:
 		t.signalPending, t.finishedPending = false, false
@@ -419,7 +434,7 @@ func (t *stateTracker) due() (time.Time, bool) {
 // changed.
 func (t *stateTracker) inspectLocked() bool {
 	t.inspections++
-	detected := shape.Detect(t.emu.Snapshot())
+	detected := shape.Detect(t.screenLocked())
 	wasFresh := t.fresh
 	before := t.prompt
 	if (before.Kind == shape.KindNone) != (detected.Kind == shape.KindNone) ||
@@ -430,6 +445,13 @@ func (t *stateTracker) inspectLocked() bool {
 	t.info = t.promptInfoLocked(detected)
 	t.fresh = true
 	return !wasFresh && detected.Kind != shape.KindNone || before.Kind != detected.Kind || before.Fingerprint != detected.Fingerprint
+}
+
+func (t *stateTracker) screenLocked() terminal.Snapshot {
+	if t.emu != nil {
+		return t.emu.Snapshot()
+	}
+	return t.opts.screen()
 }
 
 // currentPrompt inspects the screen now, as a tap validation must, and
@@ -451,7 +473,9 @@ func (t *stateTracker) currentPrompt() *SessionPrompt {
 
 func (t *stateTracker) resize(cols, rows int) {
 	t.mu.Lock()
-	t.emu.Resize(cols, rows)
+	if t.emu != nil {
+		t.emu.Resize(cols, rows)
+	}
 	t.mu.Unlock()
 }
 
@@ -478,6 +502,23 @@ func (t *stateTracker) exit(code *int, now time.Time) {
 	t.changed()
 }
 
+// markSeen records that a client showed the needs_me or just_finished state
+// that began at since to its user. It reports whether anything changed; a
+// state that has moved on since is left alone.
+func (t *stateTracker) markSeen(since time.Time) bool {
+	t.mu.Lock()
+	changed := !t.seen && t.since.Equal(since) &&
+		(t.state == base.SessionNeedsMe || t.state == base.SessionJustFinished)
+	if changed {
+		t.seen = true
+	}
+	t.mu.Unlock()
+	if changed {
+		t.changed()
+	}
+	return changed
+}
+
 func (t *stateTracker) changed() {
 	if t.opts.onChange != nil {
 		t.opts.onChange()
@@ -496,7 +537,7 @@ func (t *stateTracker) setLocked(state, confidence, reason string, now time.Time
 
 func (t *stateTracker) forceLocked(state, confidence, reason string, now time.Time) {
 	t.state, t.confidence, t.reason, t.since = state, confidence, reason, now
-	t.exitCode, t.durationMS, t.notable = nil, 0, false
+	t.exitCode, t.durationMS, t.notable, t.seen = nil, 0, false, false
 	t.heldCheck = time.Time{}
 	t.addEventLocked(SessionEvent{Kind: base.SessionEventState, At: now, State: state, Confidence: confidence, Reason: reason})
 }
@@ -525,6 +566,7 @@ func (t *stateTracker) snapshot(withEvents bool, after uint64) *SessionState {
 		ExitCode:     copyInt(t.exitCode),
 		DurationMS:   t.durationMS,
 		Notable:      t.notable,
+		Seen:         t.seen,
 		PromptEpoch:  t.epoch,
 		Prompt:       t.publishedPromptLocked(),
 		LastEventSeq: t.lastSeq,

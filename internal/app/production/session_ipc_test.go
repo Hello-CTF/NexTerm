@@ -66,6 +66,40 @@ func TestProductionAttachTabLocalTabEndsWithAppRestart(t *testing.T) {
 	}
 }
 
+func TestProductionTerminalAttentionCommands(t *testing.T) {
+	dataDir := durableTestDataDir(t)
+	production := newTerminalTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
+	connected := connectLocalTerminalTest(t, production)
+	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "attention-channel", "client-a")
+	var attached attachedTabDTO
+	requireStoreTestResponse(t, attachResponse, &attached)
+
+	var listed []session.AttentionEvent
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "terminal_attention_list", `{}`, "", "client-a"), &listed)
+	found := false
+	for _, state := range listed {
+		if state.TabID == attached.TabID {
+			found = state.State != ""
+		}
+	}
+	if !found {
+		t.Fatalf("attention list %+v does not report tab %s", listed, attached.TabID)
+	}
+
+	// A state that has moved on is left alone without an error; a malformed
+	// since and an unknown tab are rejected visibly.
+	past := time.Unix(1, 0).UTC().Format(time.RFC3339Nano)
+	if response := dispatchDurableTest(t, production, "terminal_attention_seen", `{"tabId":"`+attached.TabID+`","since":"`+past+`"}`, "", "client-a"); !response.OK {
+		t.Fatalf("seen for an old state = %+v", response)
+	}
+	if response := dispatchDurableTest(t, production, "terminal_attention_seen", `{"tabId":"`+attached.TabID+`","since":"soon"}`, "", "client-a"); response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("seen with a malformed since = %+v, want bad_param", response)
+	}
+	if response := dispatchDurableTest(t, production, "terminal_attention_seen", `{"tabId":"missing","since":"`+past+`"}`, "", "client-a"); response.OK {
+		t.Fatalf("seen for a missing tab = %+v", response)
+	}
+}
+
 func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 	dataDir := durableTestDataDir(t)
 	production := newTerminalTestProduction(t, dataDir, &bridgeTestFactory{}, nil)

@@ -71,7 +71,10 @@ func (m *Manager) transcriptStarted(ctx context.Context, session *Session) {
 	})
 }
 
+// transcriptOutput receives the session's own output, never replay preludes
+// or notices, so it also drives the observed attention state.
 func (m *Manager) transcriptOutput(ctx context.Context, tab *Tab, data []byte) {
+	m.observeAttentionOutput(tab, data)
 	if m.transcripts == nil {
 		return
 	}
@@ -109,7 +112,11 @@ func (m *Manager) transcriptEnded(session *Session) {
 	m.transcripts.SessionEnded(ownerCtx(m.ctx, session.userID), session.ID)
 }
 
+// transcriptInput receives every input written to the session.
 func (m *Manager) transcriptInput(ctx context.Context, tab *Tab, data []byte) {
+	if len(data) > 0 {
+		m.observeAttentionInput(tab)
+	}
 	if m.transcripts == nil || len(data) == 0 {
 		return
 	}

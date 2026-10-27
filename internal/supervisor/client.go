@@ -503,6 +503,7 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		return nil, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
 	}
 	conn.activity = *ack.Activity
+	conn.stateSeen = ack.StateSeen
 	return conn, nil
 }
 
@@ -527,7 +528,9 @@ type clientConn struct {
 	generation      string
 	runtimeMetadata *RuntimeMetadata
 	activity        ActivitySnapshot
-	writeMu         sync.Mutex
+	// stateSeen: the helper accepts frameStateSeen.
+	stateSeen bool
+	writeMu   sync.Mutex
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {
@@ -1181,6 +1184,25 @@ func (s *Stream) Resize(ctx context.Context, cols, rows uint32) error {
 		return err
 	}
 	kind, _, err := s.request(ctx, frameResize, resizeMsg{Cols: cols, Rows: rows, ExpectGeneration: s.identity.Generation, ExpectIncarnation: s.identity.Incarnation})
+	if err != nil {
+		return err
+	}
+	if kind != frameOK {
+		return protocolMismatch(kind)
+	}
+	return nil
+}
+
+// MarkStateSeen tells the helper that the user saw the needs_me or
+// just_finished state that began at since; the helper pushes the seen state
+// to every attached client.
+// A helper that does not advertise the frame is not sent it: the call fails
+// with ErrUnsupported and the seen mark stays with the caller.
+func (s *Stream) MarkStateSeen(ctx context.Context, since time.Time) error {
+	if !s.conn.stateSeen {
+		return fmt.Errorf("%w: helper does not share seen attention states", ErrUnsupported)
+	}
+	kind, _, err := s.request(ctx, frameStateSeen, stateSeenMsg{Since: since})
 	if err != nil {
 		return err
 	}

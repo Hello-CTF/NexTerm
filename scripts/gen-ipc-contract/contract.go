@@ -134,6 +134,7 @@ var contractScopes = []scopeSpec{
 	}},
 	{name: "terminal-stream", commands: []string{"terminal_pause", "terminal_recover", "terminal_resume", "terminal_stream_ack"}},
 	{name: "helper", commands: []string{"session_prepare_durable", "terminal_helper_operation", "terminal_helper_offline"}},
+	{name: "attention", commands: []string{"terminal_attention_list", "terminal_attention_seen"}},
 	{name: "memory-owner", deferred: true},
 	{name: "ai-owner", deferred: true},
 }

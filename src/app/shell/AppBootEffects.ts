@@ -4,6 +4,7 @@ import { useUi, connectAsset } from "../store";
 import { layoutBootstrapped, layoutRestoreStatus, startLayoutSync } from "../layout";
 import { wireAccountSwitchCleanup } from "../accountSwitch";
 import { startUnreadTracking } from "../unread";
+import { startAwarenessTracking } from "../sessionAwareness";
 import { subscribeKeybindings, takeKeybindingMigrationNotice } from "../keybindings";
 import { getUpdateState } from "../useUpdate";
 import { promptUpdateIfNeeded } from "../updatePrompt";
@@ -82,12 +83,13 @@ export function useAppDialogHandlers(): void {
 
 let bootLocalTried = false;
 
-// useAppBootEffects starts the app-lifetime background work: layout sync, unread tracking, update checks,
+// useAppBootEffects starts the app-lifetime background work: layout sync, unread and attention tracking, update checks,
 // session list refreshes, account-switch cleanup and the first-run local terminal.
 export function useAppBootEffects(queryClient: QueryClient): void {
   useEffect(() => {
     startLayoutSync();
     startUnreadTracking();
+    startAwarenessTracking();
   }, []);
 
   // Custom bindings of the replaced split / pane focus shortcuts move to their successors once;

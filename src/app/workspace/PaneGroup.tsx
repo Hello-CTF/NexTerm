@@ -31,7 +31,7 @@ import {
   IconMergeH,
   IconStop,
 } from "../../ui/icons";
-import { TabPersistenceMark, TabProductionBadge, TabStripItem, TabStripTitle, tabIcon, tabTooltip } from "./tabStrip";
+import { TabAttentionBadge, TabPersistenceMark, TabProductionBadge, TabStripItem, TabStripTitle, tabIcon, tabTooltip } from "./tabStrip";
 import { PaneForTab } from "./PaneForTab";
 import { WorkspaceEmpty } from "./EmptyStates";
 import { beginTabDrag, currentTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
@@ -322,8 +322,8 @@ export function PaneGroup({
             const Icon = tabIcon(t);
             const isActive = t.id === activeTabId;
             return (
-              <TabStripItem key={t.id} tab={t}>
-                {(unread, persistence) => (
+              <TabStripItem key={t.id} tab={t} active={isActive}>
+                {(unread, persistence, attention) => (
                   <div
                 role="tab"
                 data-tab-id={t.id}
@@ -399,12 +399,13 @@ export function PaneGroup({
                   e.preventDefault();
                   openTabMenu(t, e.clientX, e.clientY);
                 }}
-                title={tabTooltip(t, unread, persistence)}
+                title={tabTooltip(t, unread, persistence, attention)}
               >
                 <span className="flex shrink-0">
                   <Icon size={13} />
                 </span>
-                <TabPersistenceMark tab={t} />
+                <TabPersistenceMark tab={t} part="icon" />
+                <TabAttentionBadge badge={attention} />
                 <TabStripTitle tab={t} />
                 {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
                 {t.closeError && (
@@ -412,7 +413,8 @@ export function PaneGroup({
                     <IconAlert size={11} />
                   </span>
                 )}
-                {unread && (
+                <TabPersistenceMark tab={t} part="failure" />
+                {unread && (!attention || attention.kind === "unknown") && (
                   <span
                     className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"
                     role="img"
