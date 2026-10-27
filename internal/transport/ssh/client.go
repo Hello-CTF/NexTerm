@@ -354,6 +354,12 @@ func (c *Client) watch(conn gossh.Conn) {
 func (c *Client) keepalive(interval time.Duration, maximum int) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	c.keepaliveLoop(ticker.C, maximum)
+}
+
+// keepaliveLoop runs the keepalive on an injected tick source; it also stops
+// when the tick channel is closed.
+func (c *Client) keepaliveLoop(ticks <-chan time.Time, maximum int) {
 	var pending *heartbeatCall
 	missed := 0
 	inbound := c.InboundBytes()
@@ -372,7 +378,10 @@ func (c *Client) keepalive(interval time.Duration, maximum int) {
 				missed++
 			}
 			pending = nil
-		case <-ticker.C:
+		case _, open := <-ticks:
+			if !open {
+				return
+			}
 			if current := c.InboundBytes(); current != inbound {
 				inbound = current
 				missed = 0

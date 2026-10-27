@@ -18,23 +18,24 @@ import (
 )
 
 type testSSHServer struct {
-	listener     net.Listener
-	config       *gossh.ServerConfig
-	hostKey      gossh.PublicKey
-	root         string
-	blockExec    chan struct{}
-	blockOnce    sync.Once
-	cols         atomic.Uint32
-	rows         atomic.Uint32
-	keepalives   atomic.Uint32
-	stallSFTP    atomic.Bool
-	stallCancel  atomic.Bool
-	rejectCancel atomic.Bool
-	sftpStarted  chan struct{}
-	active       atomic.Int32
-	agentResult  chan error
-	agentKey     gossh.PublicKey
-	envReqs      chan [2]string
+	listener       net.Listener
+	config         *gossh.ServerConfig
+	hostKey        gossh.PublicKey
+	root           string
+	blockExec      chan struct{}
+	blockOnce      sync.Once
+	cols           atomic.Uint32
+	rows           atomic.Uint32
+	keepalives     atomic.Uint32
+	muteKeepalives atomic.Bool
+	stallSFTP      atomic.Bool
+	stallCancel    atomic.Bool
+	rejectCancel   atomic.Bool
+	sftpStarted    chan struct{}
+	active         atomic.Int32
+	agentResult    chan error
+	agentKey       gossh.PublicKey
+	envReqs        chan [2]string
 }
 
 func newTestSSHServer(t *testing.T, authorizedKey gossh.PublicKey) *testSSHServer {
@@ -330,7 +331,9 @@ func (s *testSSHServer) handleGlobalRequests(conn *gossh.ServerConn, requests <-
 		switch request.Type {
 		case "keepalive@openssh.com":
 			s.keepalives.Add(1)
-			request.Reply(true, nil)
+			if !s.muteKeepalives.Load() {
+				request.Reply(true, nil)
+			}
 		case "tcpip-forward":
 			s.handleTCPIPForward(conn, request, forwards)
 		case "cancel-tcpip-forward":
