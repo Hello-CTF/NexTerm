@@ -185,7 +185,7 @@ func TestStateVisibleWithoutClientsAndPushedToAttached(t *testing.T) {
 
 	// Durable descriptors carry the state end to end, local and remote,
 	// without the events polling callers do not read.
-	for name, lister := range map[string]base.DurableDescriptorLister{
+	for name, lister := range map[string]base.DurableProvider{
 		"local":  NewProvider(supervisor),
 		"remote": NewRemoteProvider(client),
 	} {
@@ -370,5 +370,43 @@ func TestStateDetectionCanBeDisabled(t *testing.T) {
 	}
 	if prompt := session.CurrentPrompt(); prompt != nil {
 		t.Fatalf("prompt reported with detection disabled: %+v", prompt)
+	}
+}
+
+// A prompt tap on a helper with state detection disabled reaches the client
+// as unsupported, not as an unavailable helper, both embedded and over the
+// wire.
+func TestPromptTapWithStateDetectionDisabledIsUnsupported(t *testing.T) {
+	supervisor, err := New(Config{StateDir: filepath.Join(t.TempDir(), "state"), CommandTimeout: 5 * time.Second, DisableStateDetection: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = supervisor.Close() })
+	server := testServer(t, supervisor)
+	for name, provider := range map[string]base.DurableProvider{
+		"embedded": NewProvider(supervisor),
+		"remote":   NewRemoteProvider(testClient(t, server)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			attachment, err := provider.Create(ctx, base.DurableCreateOptions{
+				ID: ids.New(), Command: []string{"/bin/sh", "-c", "sleep 30"}, Env: []string{"TERM=xterm-256color", "LC_ALL=C"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = attachment.Kill(context.Background())
+				_ = attachment.Close()
+			})
+			tapper, ok := attachment.(base.DurablePromptTapper)
+			if !ok {
+				t.Fatalf("%T does not tap prompts", attachment)
+			}
+			_, err = tapper.TapDurablePrompt(ctx, base.PromptTap{Generation: supervisor.Generation(), Epoch: 1, Fingerprint: "none", Option: 1})
+			if !errors.Is(err, base.ErrUnsupported) || errors.Is(err, durable.ErrUnavailable) {
+				t.Fatalf("TapDurablePrompt = %v, want unsupported", err)
+			}
+		})
 	}
 }

@@ -73,8 +73,7 @@ func TestLocalTerminalsSurviveTheAppProcessExiting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lister := provider.(base.DurableDescriptorLister)
-	descriptors, err := lister.ListDurableDescriptors(context.Background())
+	descriptors, err := provider.ListDurableDescriptors(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

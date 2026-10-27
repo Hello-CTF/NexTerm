@@ -198,14 +198,10 @@ func (m *Manager) ReadDurableHistoryFor(ctx context.Context, tabID string, befor
 	if err != nil {
 		return DurableHistoryChunk{}, err
 	}
-	reader, ok := provider.(base.DurableHistoryReader)
-	if !ok {
-		return DurableHistoryChunk{}, ErrUnsupported
-	}
 	if identity.Incarnation == "" {
 		return DurableHistoryChunk{}, ErrDurableUnrecoverable
 	}
-	chunk, err := reader.ReadDurableHistory(ctx, tab.ID, identity, base.DurableHistoryRequest{Before: before, MaxBytes: maxBytes})
+	chunk, err := provider.ReadDurableHistory(ctx, tab.ID, identity, base.DurableHistoryRequest{Before: before, MaxBytes: maxBytes})
 	if err != nil {
 		return DurableHistoryChunk{}, err
 	}

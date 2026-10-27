@@ -120,8 +120,8 @@ func (a *identityAttachment) Identity() supervisor.Identity {
 	return supervisor.Identity{CreatedAt: time.Unix(1, 0), Incarnation: a.provider.incarnation}
 }
 
-// unlatchMetadataProvider is a fake durable provider with canonical
-// metadata support and a controllable descriptor title.
+// unlatchMetadataProvider is a fake durable provider with a controllable
+// incarnation and descriptor title.
 type unlatchMetadataProvider struct {
 	*fakeDurableProvider
 	mu          sync.Mutex
@@ -129,10 +129,6 @@ type unlatchMetadataProvider struct {
 	title       string
 	revision    uint64
 	renameErr   error
-}
-
-func (p *unlatchMetadataProvider) DurableMetadataSupported(context.Context) (bool, error) {
-	return true, nil
 }
 
 func (p *unlatchMetadataProvider) Create(ctx context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
@@ -145,6 +141,10 @@ func (p *unlatchMetadataProvider) Create(ctx context.Context, options base.Durab
 
 func (p *unlatchMetadataProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
 	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *unlatchMetadataProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
 }
 
 func (p *unlatchMetadataProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {

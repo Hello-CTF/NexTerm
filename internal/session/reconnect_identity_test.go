@@ -141,6 +141,10 @@ func (p *identityMismatchProvider) AttachWithIdentity(context.Context, string, b
 	return nil, durable.ErrIdentity
 }
 
+func (p *identityMismatchProvider) AttachTailWithIdentity(context.Context, string, base.DurableIdentity, base.DurableTailOptions) (base.DurableAttachment, error) {
+	return nil, durable.ErrIdentity
+}
+
 // selectiveOpaqueProvider hides the supervisor identity of one tab's
 // attachments, modelling a tab that never recorded an incarnation next to
 // tabs that did.

@@ -64,6 +64,26 @@ func (p *continuityDurableProvider) AttachFromWithIdentity(_ context.Context, id
 	return continuityDurableAttachment{channel}, nil
 }
 
+func (p *continuityDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+func (p *continuityDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
+	return nil, base.ErrUnsupported
+}
+
+func (p *continuityDurableProvider) RenameDurable(context.Context, base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	return base.DurableRenameResult{}, base.ErrUnsupported
+}
+
+func (p *continuityDurableProvider) KillWithIdentity(context.Context, string, base.DurableIdentity) error {
+	return base.ErrUnsupported
+}
+
+func (p *continuityDurableProvider) ReadDurableHistory(context.Context, string, base.DurableIdentity, base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	return base.DurableHistoryChunk{}, base.ErrUnsupported
+}
+
 func (p *continuityDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
 	_, _, offsets, _ := p.offsets.snapshot()
 	return offsets[tabID]

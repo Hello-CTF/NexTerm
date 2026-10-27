@@ -21,33 +21,6 @@ type descriptorListingDurableProvider struct {
 	*listingDurableProvider
 }
 
-func (p *descriptorListingDurableProvider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
-	ids, err := p.ListDurable(ctx)
-	if err != nil {
-		return nil, err
-	}
-	descriptors := make([]base.DurableDescriptor, len(ids))
-	for index, id := range ids {
-		descriptors[index].ID = id
-		if identity, ok := p.currentDurableIdentity(id); ok {
-			descriptors[index].Incarnation = identity.Incarnation
-		}
-	}
-	return descriptors, nil
-}
-
-func (p *listingDurableProvider) ListDurable(context.Context) ([]string, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	ids := make([]string, 0, len(p.records))
-	for id, record := range p.records {
-		if record.killed == 0 {
-			ids = append(ids, id)
-		}
-	}
-	return ids, nil
-}
-
 type countingResolver struct {
 	mu       sync.Mutex
 	calls    int
@@ -892,10 +865,6 @@ func TestRecoverRemoteDurableIncludesDeviceSessions(t *testing.T) {
 type failingListDurableProvider struct {
 	*fakeDurableProvider
 	err error
-}
-
-func (p *failingListDurableProvider) ListDurable(context.Context) ([]string, error) {
-	return nil, p.err
 }
 
 func (p *failingListDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {

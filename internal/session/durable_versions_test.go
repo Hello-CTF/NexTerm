@@ -208,6 +208,10 @@ func (p opaqueDurableProvider) AttachWithIdentity(ctx context.Context, id string
 	return p.AttachFromWithIdentity(ctx, id, identity, 0)
 }
 
+func (p opaqueDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
 func (p opaqueDurableProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
 	attachment, err := p.DurableProvider.AttachFromWithIdentity(ctx, id, identity, offset)
 	if attachment == nil {

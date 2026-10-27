@@ -19,14 +19,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-type legacyMetadataDurableProvider struct {
-	base.DurableProvider
-	base.DurableDescriptorLister
-}
-
 type staleDescriptorProvider struct {
 	base.DurableProvider
-	base.DurableDescriptorLister
 	stale []base.DurableDescriptor
 }
 
@@ -34,7 +28,7 @@ func (p *staleDescriptorProvider) ListDurableDescriptors(ctx context.Context) ([
 	if p.stale != nil {
 		return p.stale, nil
 	}
-	return p.DurableDescriptorLister.ListDurableDescriptors(ctx)
+	return p.DurableProvider.ListDurableDescriptors(ctx)
 }
 
 // TestRemoteDurableTwoManagersShareSession proves the multi-client contract at
@@ -243,7 +237,7 @@ func TestRecoverRemoteDurableRejectsChangedIncarnation(t *testing.T) {
 	})
 	providerA := supervisor.NewRemoteProvider(supervisor.NewClient(server.SocketPath(), stateDir))
 	providerB := &staleDescriptorProvider{
-		DurableProvider: providerA, DurableDescriptorLister: providerA,
+		DurableProvider: providerA,
 	}
 	resolver := DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) {
 		return providerB, nil
@@ -418,67 +412,6 @@ func TestRenameDurableRecoversReplacementIncarnation(t *testing.T) {
 	}
 }
 
-func TestRecoverRemoteDurableFallsBackToLocalTitleOnlyWithoutMetadata(t *testing.T) {
-	stateDir := filepath.Join(t.TempDir(), "supervisor")
-	instance, err := supervisor.New(supervisor.Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runDir, err := os.MkdirTemp("/tmp", "nx-session-legacy-title-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
-	server, err := supervisor.NewServer(instance, filepath.Join(runDir, "daemon.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-		_ = instance.Close()
-	})
-	ctx := context.Background()
-	provider := supervisor.NewRemoteProvider(supervisor.NewClient(server.SocketPath(), stateDir))
-	tabID := ids.New()
-	attachment, err := provider.Create(ctx, base.DurableCreateOptions{ID: tabID, Command: []string{"/bin/sh", "-c", "sleep 30"}, Cols: 80, Rows: 24})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = attachment.Close()
-	infos, err := instance.List(ctx)
-	if err != nil || len(infos) != 1 {
-		t.Fatalf("initial infos = %+v, %v", infos, err)
-	}
-	if _, err := provider.RenameDurable(ctx, base.DurableRenameOptions{
-		ID: tabID, Incarnation: infos[0].Incarnation, RequestID: ids.New(), Title: "remote-canonical",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	legacy := &legacyMetadataDurableProvider{DurableProvider: provider, DurableDescriptorLister: provider}
-	localTitles := newFakeDurableProvider()
-	localTitles.PersistDurableTabTitleContext(context.Background(), tabID, "local-fallback")
-	manager := NewManager(Config{
-		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), TabTitles: localTitles,
-		DurableResolver: DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) {
-			return legacy, nil
-		}),
-	})
-	t.Cleanup(func() { _ = manager.Close() })
-	connected, err := manager.Connect(context.Background(), Asset{ID: "ssh-legacy-title", Kind: KindSSH})
-	if err != nil {
-		t.Fatal(err)
-	}
-	recovered, err := manager.RecoverRemoteDurable(context.Background(), tabID, OpenTabOptions{SessionID: connected.ID, ClientID: "client-legacy", ChannelID: "legacy-title-channel", Cols: 80, Rows: 24})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if recovered.Title != "local-fallback" {
-		t.Fatalf("legacy recovery title = %q, want local fallback", recovered.Title)
-	}
-}
-
 func TestRenameConcurrentReconnectRace(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "supervisor")
 	instance, err := supervisor.New(supervisor.Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
@@ -547,39 +480,6 @@ func TestRenameConcurrentReconnectRace(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
-	}
-}
-
-func TestCloseTabSerializeFallbackRename(t *testing.T) {
-	provider := newFakeDurableProvider()
-	manager, _, _, connected := newDurableTestManager(t, provider)
-	ctx := context.Background()
-	for index := 0; index < 50; index++ {
-		info, err := manager.OpenTab(ctx, OpenTabOptions{
-			SessionID: connected.ID, ClientID: "client-a", ChannelID: "fallback-close-race", Cols: 80, Rows: 24,
-			Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		start := make(chan struct{})
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			<-start
-			_, _ = manager.RenameTab(ctx, info.ID, "fallback-title")
-		}()
-		go func() {
-			defer wg.Done()
-			<-start
-			_ = manager.CloseTab(info.ID)
-		}()
-		close(start)
-		wg.Wait()
-		if got := provider.DurableTabTitleContext(context.Background(), info.ID); got != "" {
-			t.Fatalf("fallback title survived close: %q", got)
-		}
 	}
 }
 

@@ -48,8 +48,7 @@ type DurableDescriptor struct {
 	// State is the helper's attention state for the session; nil when the
 	// helper runs with state detection disabled.
 	State *SessionState
-	// Activity is the helper's in-memory activity record; nil when the
-	// helper predates it.
+	// Activity is the helper's in-memory activity record.
 	Activity *DurableActivity
 }
 
@@ -109,22 +108,6 @@ func (e *DurableMetadataConflictError) Unwrap() error {
 	return ErrMetadataConflict
 }
 
-type DurableDescriptorLister interface {
-	ListDurableDescriptors(context.Context) ([]DurableDescriptor, error)
-}
-
-type DurableMetadataProvider interface {
-	DurableMetadataSupported(context.Context) (bool, error)
-	RenameDurable(context.Context, DurableRenameOptions) (DurableRenameResult, error)
-}
-
-// DurableIdentityAttacher attaches only to the durable session whose identity
-// matches; there is no unchecked attach path.
-type DurableIdentityAttacher interface {
-	AttachWithIdentity(context.Context, string, DurableIdentity) (DurableAttachment, error)
-	AttachFromWithIdentity(context.Context, string, DurableIdentity, uint64) (DurableAttachment, error)
-}
-
 // DurableTailOptions selects a fresh-open replay.
 type DurableTailOptions struct {
 	// Tail is how much of the most recent output to display.
@@ -133,12 +116,6 @@ type DurableTailOptions struct {
 	// streamed, such as a transcript catch-up point; bytes before the
 	// displayed tail are streamed but should not be rendered.
 	Retain *uint64
-}
-
-// DurableTailAttacher opens a durable session for a view that has no resume
-// offset, replaying only the recent tail.
-type DurableTailAttacher interface {
-	AttachTailWithIdentity(context.Context, string, DurableIdentity, DurableTailOptions) (DurableAttachment, error)
 }
 
 // DurableReplay reports where a durable attachment started streaming.
@@ -185,18 +162,21 @@ type DurableHistoryChunk struct {
 	Data      []byte
 }
 
-// DurableHistoryReader reads recorded output without attaching.
-type DurableHistoryReader interface {
-	ReadDurableHistory(context.Context, string, DurableIdentity, DurableHistoryRequest) (DurableHistoryChunk, error)
-}
-
-type DurableIdentityKiller interface {
-	KillWithIdentity(context.Context, string, DurableIdentity) error
-}
-
+// DurableProvider creates, lists, attaches to and manages the durable
+// sessions of one helper. Attach, kill and history calls act only on the
+// session whose identity matches; there is no unchecked path.
 type DurableProvider interface {
 	Create(context.Context, DurableCreateOptions) (DurableAttachment, error)
-	DurableIdentityAttacher
+	ListDurableDescriptors(context.Context) ([]DurableDescriptor, error)
+	RenameDurable(context.Context, DurableRenameOptions) (DurableRenameResult, error)
+	AttachWithIdentity(context.Context, string, DurableIdentity) (DurableAttachment, error)
+	AttachFromWithIdentity(context.Context, string, DurableIdentity, uint64) (DurableAttachment, error)
+	// AttachTailWithIdentity opens a session for a view that has no resume
+	// offset, replaying only the recent tail.
+	AttachTailWithIdentity(context.Context, string, DurableIdentity, DurableTailOptions) (DurableAttachment, error)
+	KillWithIdentity(context.Context, string, DurableIdentity) error
+	// ReadDurableHistory reads recorded output without attaching.
+	ReadDurableHistory(context.Context, string, DurableIdentity, DurableHistoryRequest) (DurableHistoryChunk, error)
 }
 
 type DurableAttachment interface {

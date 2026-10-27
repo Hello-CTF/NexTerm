@@ -375,6 +375,27 @@ func (p *transcriptDurableProvider) AttachFromWithIdentity(_ context.Context, id
 	return attachment, nil
 }
 
+func (p *transcriptDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+// The transcript tests never list, rename, kill by identity or page history.
+func (p *transcriptDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
+	return nil, base.ErrUnsupported
+}
+
+func (p *transcriptDurableProvider) RenameDurable(context.Context, base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	return base.DurableRenameResult{}, base.ErrUnsupported
+}
+
+func (p *transcriptDurableProvider) KillWithIdentity(context.Context, string, base.DurableIdentity) error {
+	return base.ErrUnsupported
+}
+
+func (p *transcriptDurableProvider) ReadDurableHistory(context.Context, string, base.DurableIdentity, base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	return base.DurableHistoryChunk{}, base.ErrUnsupported
+}
+
 func (p *transcriptDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()

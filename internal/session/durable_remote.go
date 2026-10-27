@@ -644,11 +644,7 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 	if err != nil {
 		return nil, err
 	}
-	lister, ok := provider.(base.DurableDescriptorLister)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	descriptors, err := lister.ListDurableDescriptors(ctx)
+	descriptors, err := provider.ListDurableDescriptors(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -717,7 +713,6 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 	type match struct {
 		sessionID  string
 		descriptor base.DurableDescriptor
-		canonical  bool
 	}
 	var matches []match
 	for _, info := range infos {
@@ -752,12 +747,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		if !found {
 			continue
 		}
-		canonical, err := durableMetadataSupported(ctx, provider)
-		if err != nil {
-			searchErrs = append(searchErrs, err)
-			continue
-		}
-		matches = append(matches, match{sessionID: session.ID, descriptor: descriptor, canonical: canonical})
+		matches = append(matches, match{sessionID: session.ID, descriptor: descriptor})
 	}
 	if len(matches) > 1 {
 		return TabInfo{}, ErrAmbiguousDurable
@@ -775,7 +765,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 	options.TabID = tabID
 	options.SessionID = selected.sessionID
 	options.Durable = &DurableTabOptions{
-		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision, CanonicalMetadata: selected.canonical,
+		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision, CanonicalMetadata: true,
 		RecoveredExited: selected.descriptor.Dead,
 	}
 	if selected.descriptor.Incarnation != "" {
@@ -847,57 +837,26 @@ func onlyHelperUnavailable(errs []error) bool {
 }
 
 func findDurableDescriptor(ctx context.Context, provider base.DurableProvider, tabID string) (base.DurableDescriptor, bool, error) {
-	if lister, ok := provider.(base.DurableDescriptorLister); ok {
-		descriptors, err := lister.ListDurableDescriptors(ctx)
-		if err != nil {
-			return base.DurableDescriptor{}, false, err
-		}
-		for _, descriptor := range descriptors {
-			if descriptor.ID == tabID {
-				return descriptor, true, nil
-			}
-		}
-		return base.DurableDescriptor{}, false, nil
-	}
-	lister, ok := provider.(DurableLister)
-	if !ok {
-		return base.DurableDescriptor{}, false, nil
-	}
-	ids, err := lister.ListDurable(ctx)
+	descriptors, err := provider.ListDurableDescriptors(ctx)
 	if err != nil {
 		return base.DurableDescriptor{}, false, err
 	}
-	for _, id := range ids {
-		if id == tabID {
-			return base.DurableDescriptor{ID: tabID}, true, nil
+	for _, descriptor := range descriptors {
+		if descriptor.ID == tabID {
+			return descriptor, true, nil
 		}
 	}
 	return base.DurableDescriptor{}, false, nil
 }
 
-func durableMetadataSupported(ctx context.Context, provider base.DurableProvider) (bool, error) {
-	metadata, ok := provider.(base.DurableMetadataProvider)
-	if !ok {
-		return false, nil
-	}
-	supported, err := metadata.DurableMetadataSupported(ctx)
-	if errors.Is(err, base.ErrUnsupported) {
-		return false, nil
-	}
-	return supported, err
-}
-
 // attachRecoveredDurable opens a durable tab this process has no resume
-// offset for. A helper that supports it replays only the recent tail; retain,
-// when set, also streams the output after that offset for the transcript.
+// offset for, replaying only the recent tail; retain, when set, also streams
+// the output after that offset for the transcript.
 func attachRecoveredDurable(ctx context.Context, provider base.DurableProvider, tabID string, identity *base.DurableIdentity, retain *uint64) (base.DurableAttachment, error) {
 	if identity == nil || identity.Incarnation == "" {
 		return nil, ErrDurableUnrecoverable
 	}
-	if tail, ok := provider.(base.DurableTailAttacher); ok {
-		return tail.AttachTailWithIdentity(ctx, tabID, *identity, base.DurableTailOptions{Tail: base.DurableFreshTailBytes, Retain: retain})
-	}
-	return provider.AttachWithIdentity(ctx, tabID, *identity)
+	return provider.AttachTailWithIdentity(ctx, tabID, *identity, base.DurableTailOptions{Tail: base.DurableFreshTailBytes, Retain: retain})
 }
 
 func durableReplayOf(attachment base.DurableAttachment) (base.DurableReplay, bool) {
@@ -949,7 +908,7 @@ func (m *Manager) renameCanonicalTab(ctx context.Context, tab *Tab, provider bas
 	if identity.Incarnation == "" {
 		return TabInfo{}, durable.ErrIdentity
 	}
-	result, err := provider.(base.DurableMetadataProvider).RenameDurable(ctx, base.DurableRenameOptions{
+	result, err := provider.RenameDurable(ctx, base.DurableRenameOptions{
 		ID: tab.ID, Incarnation: identity.Incarnation, RequestID: attempt.requestID, ExpectedMetadataRevision: metadataRevision, Title: title,
 	})
 	return m.finishDurableRename(ctx, tab, provider, attempt, result, err)

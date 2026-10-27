@@ -300,6 +300,7 @@ const (
 	// codeStateSeenUnsupported is only sent for a state_seen request.
 	codeStateSeenUnsupported = "state_seen_unsupported"
 	codeStalePrompt          = "stale_prompt"
+	codeUnsupported          = "unsupported"
 	codeLimit                = "limit"
 )
 
@@ -334,7 +335,7 @@ func errorCode(err error) string {
 	case errors.Is(err, ErrStalePrompt):
 		return codeStalePrompt
 	case errors.Is(err, ErrUnsupported):
-		return codeProtocol
+		return codeUnsupported
 	default:
 		return codeInternal
 	}
@@ -416,6 +417,8 @@ func errorSentinel(code string) error {
 		return ErrStateSeenUnsupported
 	case codeStalePrompt:
 		return ErrStalePrompt
+	case codeUnsupported:
+		return ErrUnsupported
 	case codeLimit:
 		return ErrLimit
 	default:

@@ -99,18 +99,6 @@ var (
 	_ OwnerScopedDurableTabTitleStore         = (*ownerScopedStore)(nil)
 )
 
-// ListDurable lets the fake provider back RecoverRemoteDurable's descriptor
-// search in these tests.
-func (p *fakeDurableProvider) ListDurable(ctx context.Context) ([]string, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	ids := make([]string, 0, len(p.records))
-	for id := range p.records {
-		ids = append(ids, id)
-	}
-	return ids, nil
-}
-
 // ListDurableDescriptors reports each live record with the incarnation a
 // helper listing carries, so recovery can use checked attach.
 func (p *fakeDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
@@ -119,77 +107,12 @@ func (p *fakeDurableProvider) ListDurableDescriptors(context.Context) ([]base.Du
 	descriptors := make([]base.DurableDescriptor, 0, len(p.records))
 	for id, record := range p.records {
 		if record.killed == 0 {
-			descriptors = append(descriptors, base.DurableDescriptor{ID: id, Incarnation: fakeIncarnation(record.identity)})
+			descriptors = append(descriptors, base.DurableDescriptor{
+				ID: id, Incarnation: fakeIncarnation(record.identity), Title: record.title, MetadataRevision: record.revision,
+			})
 		}
 	}
 	return descriptors, nil
-}
-
-func TestDurableTitleWriteAndReadAreOwnerScoped(t *testing.T) {
-	provider := newFakeDurableProvider()
-	store := newOwnerScopedStore()
-	newManager := func() *Manager {
-		manager := NewManager(Config{
-			Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-			DurableResolver:   &countingResolver{provider: provider},
-			TranscriptOffsets: store,
-			TabTitles:         store,
-		})
-		t.Cleanup(func() { _ = manager.Close() })
-		return manager
-	}
-	managerA := newManager()
-	managerB := newManager()
-	sessionA, err := managerA.Connect(requestTestUser("owner-a"), Asset{ID: "shared-asset", Kind: KindSSH})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessionB, err := managerB.Connect(requestTestUser("owner-b"), Asset{ID: "shared-asset", Kind: KindSSH})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	const tabID = "shared-durable-title"
-	if _, err := managerA.OpenTab(requestTestUser("owner-a"), OpenTabOptions{
-		TabID: tabID, SessionID: sessionA.ID, ClientID: "client-a", ChannelID: "a-1", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if got := store.ownerCalls("persist", "owner-a"); got != 1 {
-		t.Fatalf("first offset persist owner-a calls = %d, want 1", got)
-	}
-
-	if _, err := managerA.RenameTab(requestTestUser("owner-a"), tabID, "title-a"); err != nil {
-		t.Fatal(err)
-	}
-	if got := store.ownerCalls("title-write", "owner-a"); got != 1 {
-		t.Fatalf("title write owner-a calls = %d, want 1", got)
-	}
-
-	// owner-b recovers the same durable ID on their own manager: the title
-	// read must carry owner-b and must not see owner-a's title.
-	if _, err := managerB.RecoverRemoteDurable(requestTestUser("owner-b"), tabID, OpenTabOptions{
-		SessionID: sessionB.ID, ClientID: "client-b", ChannelID: "b-1", Cols: 80, Rows: 24,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if got := store.ownerCalls("title", "owner-b"); got == 0 {
-		t.Fatal("recover title read did not carry owner-b")
-	}
-	if title := store.titles["owner-b"][tabID]; title != "" {
-		t.Fatalf("owner-b read owner-a's title %q", title)
-	}
-
-	if _, err := managerB.RenameTab(requestTestUser("owner-b"), tabID, "title-b"); err != nil {
-		t.Fatal(err)
-	}
-	if got := store.ownerCalls("title-write", "owner-b"); got != 1 {
-		t.Fatalf("title write owner-b calls = %d, want 1", got)
-	}
-	if store.titles["owner-a"][tabID] != "title-a" || store.titles["owner-b"][tabID] != "title-b" {
-		t.Fatalf("titles not isolated: a=%q b=%q", store.titles["owner-a"][tabID], store.titles["owner-b"][tabID])
-	}
 }
 
 func TestDurableOffsetCatchUpIsOwnerScoped(t *testing.T) {
@@ -288,9 +211,6 @@ func TestContextDurableStoreWorksWithEmptyOwner(t *testing.T) {
 	if _, err := manager.RenameTab(context.Background(), tabID, "open-title"); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.titles[""][tabID]; got != "open-title" {
-		t.Fatalf("empty-owner title = %q, want open-title", got)
-	}
 	if err := manager.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +229,7 @@ func TestContextDurableStoreWorksWithEmptyOwner(t *testing.T) {
 	if recovered.Title != "open-title" {
 		t.Fatalf("empty-owner recovered title = %q, want open-title", recovered.Title)
 	}
-	if store.ownerCalls("catchup", "") == 0 || store.ownerCalls("title", "") == 0 {
+	if store.ownerCalls("catchup", "") == 0 {
 		t.Fatalf("empty-owner recovery did not use Context reads: %v", store.calls)
 	}
 	if err := recoveredManager.CloseTab(tabID); err != nil {

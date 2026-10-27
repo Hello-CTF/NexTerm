@@ -51,6 +51,26 @@ func (p *unavailableCreateProvider) AttachFromWithIdentity(context.Context, stri
 	return nil, durable.ErrNotFound
 }
 
+func (p *unavailableCreateProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+func (p *unavailableCreateProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
+	return nil, base.ErrUnsupported
+}
+
+func (p *unavailableCreateProvider) RenameDurable(context.Context, base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	return base.DurableRenameResult{}, base.ErrUnsupported
+}
+
+func (p *unavailableCreateProvider) KillWithIdentity(context.Context, string, base.DurableIdentity) error {
+	return base.ErrUnsupported
+}
+
+func (p *unavailableCreateProvider) ReadDurableHistory(context.Context, string, base.DurableIdentity, base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	return base.DurableHistoryChunk{}, base.ErrUnsupported
+}
+
 func (r *recordingDurableResolver) ResolveDurable(_ context.Context, transport base.Transport) (base.DurableProvider, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -482,7 +502,7 @@ type failingListDurableProvider struct {
 	err error
 }
 
-func (p failingListDurableProvider) ListDurable(context.Context) ([]string, error) {
+func (p failingListDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
 	return nil, p.err
 }
 
@@ -1126,18 +1146,12 @@ func TestProductionAttachTabHonorsDiscoveredSessionScope(t *testing.T) {
 
 type flakyMetadataProvider struct {
 	base.DurableProvider
-	base.DurableMetadataProvider
-	base.DurableDescriptorLister
 	calls     []base.DurableRenameOptions
 	failFirst error
 }
 
-func (p *flakyMetadataProvider) DurableMetadataSupported(context.Context) (bool, error) {
-	return true, nil
-}
-
 func (p *flakyMetadataProvider) RenameDurable(ctx context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
-	result, err := p.DurableMetadataProvider.RenameDurable(ctx, options)
+	result, err := p.DurableProvider.RenameDurable(ctx, options)
 	p.calls = append(p.calls, options)
 	if len(p.calls) == 1 && p.failFirst != nil && err == nil {
 		return base.DurableRenameResult{}, p.failFirst
@@ -1157,8 +1171,7 @@ func TestProductionRenameRetriesPreserveRequestAndRevision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newRemoteDaemonFixture(t)
 			provider := &flakyMetadataProvider{
-				DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider,
-				DurableDescriptorLister: fixture.provider, failFirst: tc.failFirst,
+				DurableProvider: fixture.provider, failFirst: tc.failFirst,
 			}
 			resolver := &recordingDurableResolver{provider: provider}
 			production, _ := newRemoteRecoveryHarness(t, resolver)
@@ -1201,8 +1214,7 @@ func TestProductionRenameRetryReconcilesRemoteMetadataChanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newRemoteDaemonFixture(t)
 			provider := &flakyMetadataProvider{
-				DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider,
-				DurableDescriptorLister: fixture.provider, failFirst: tc.failFirst,
+				DurableProvider: fixture.provider, failFirst: tc.failFirst,
 			}
 			resolver := &recordingDurableResolver{provider: provider}
 			production, _ := newRemoteRecoveryHarness(t, resolver)
@@ -1259,7 +1271,7 @@ func TestProductionRenameRetryReconcilesRemoteMetadataChanges(t *testing.T) {
 
 func TestProductionPendingRenameAfterIncarnationChange(t *testing.T) {
 	fixture := newRemoteDaemonFixture(t)
-	provider := &flakyMetadataProvider{DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider, DurableDescriptorLister: fixture.provider, failFirst: base.ErrDisconnected}
+	provider := &flakyMetadataProvider{DurableProvider: fixture.provider, failFirst: base.ErrDisconnected}
 	resolver := &recordingDurableResolver{provider: provider}
 	production, _ := newRemoteRecoveryHarness(t, resolver)
 	connected := connectRemoteSSHAsset(t, production)
