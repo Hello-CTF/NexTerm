@@ -997,8 +997,13 @@ export function XtermView(props: XtermViewProps) {
         // episode ends here, not on the attach RPC response, so replay bytes
         // that arrive before the response is processed are still accepted.
         streamWriter.beginAttachment();
-        // The anchor's spans describe the bytes it delivers from here on.
-        streamClasses = [...(control.classes ?? [])];
+        // The anchor's spans describe the bytes it delivers from here on. A
+        // non-expired anchor keeps the stream's sequence space, so spans
+        // announced earlier for bytes still to come (held by a paused
+        // coalescer) stay valid; an expired one starts a new stream.
+        streamClasses = control.expired
+          ? [...(control.classes ?? [])]
+          : [...streamClasses.filter((span) => span.to > control.streamSeq), ...(control.classes ?? [])];
         if (control.expired) {
           term.clearSelection();
           streamWriter.resetStream();

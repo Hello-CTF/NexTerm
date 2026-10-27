@@ -3482,6 +3482,27 @@ describe("XtermView replayed output", () => {
     expect(onNotification).toHaveBeenCalledWith("live");
   });
 
+  it("keeps announced spans across a recovery anchor for bytes still to come", async () => {
+    harness.emitReplies = true;
+    const onClipboard = vi.fn();
+    await show({ onClipboard });
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0 });
+    feedBytes("abcd");
+    // A replayed tail is announced while the server holds its bytes.
+    const tail = "\x1b[6n\x1b]52;c;b2xk\x07";
+    act(() => {
+      harness.channel?.onClass?.({ type: "nexterm.stream-class", from: 4, to: 4 + enc.encode(tail).length, kind: "replay" });
+    });
+    // A recovery anchor redelivers from sequence 2, then the held bytes.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: 2 });
+    feedBytes("cd" + tail);
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual([]);
+    expect(onClipboard).not.toHaveBeenCalled();
+  });
+
   it("keeps the user-event mark across microtask checkpoints between listeners", async () => {
     harness.emitReplies = true;
     await show();

@@ -305,3 +305,60 @@ func TestSpectatorsDoNotSuppressHeadlessReplies(t *testing.T) {
 	}
 	waitFor(t, func() bool { return bytes.Equal(channel.written(), []byte("\x1b[0n")) })
 }
+
+// A recovery anchor restarts the client's classification, so it must also
+// cover bytes a paused coalescer still holds: their class frames went out
+// before the anchor, the bytes arrive after the replay.
+func TestRecoveryAnchorCoversBytesHeldWhilePaused(t *testing.T) {
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: terminalFactory{}, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "recovery-paused", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.CreateTab(ctx, CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(ctx, info.ID, AttachOptions{ClientID: "client-a", ChannelID: "paused-1"}); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver := bindTestReceiver(t, manager, "paused-1")
+	receiveTestAnchor(t, receiver)
+	receiveClassified(t, receiver, len(replayClear))
+	generation := recoveredTab(t, tab, 0)
+	if err := manager.feedDurable(ctx, tab, generation, []byte("live"), 4); err != nil {
+		t.Fatal(err)
+	}
+	receiveClassified(t, receiver, 4)
+	attachment := attachmentIdFor(t, manager, info.ID, "paused-1")
+	if _, err := manager.PauseChannelFor(ctx, info.ID, "paused-1", "client-a", attachment, 4); err != nil {
+		t.Fatal(err)
+	}
+	// A recovered tail starts while the subscriber is paused: the coalescer
+	// holds its bytes.
+	tab.mu.Lock()
+	tab.replayUntil = 14
+	tab.mu.Unlock()
+	if err := manager.feedDurable(ctx, tab, generation, bytes.Repeat([]byte("t"), 10), 14); err != nil {
+		t.Fatal(err)
+	}
+	// The client accepted only 2 bytes.
+	if _, _, err := manager.RecoverChannelFor(ctx, info.ID, "paused-1", "client-a", attachment, 2); err != nil {
+		t.Fatal(err)
+	}
+	var anchor streamAnchor
+	for anchor.Type != streamAnchorType {
+		frame := receiveTestFrame(t, receiver)
+		if frame.Kind == hub.FrameJSON {
+			_ = json.Unmarshal(frame.Data, &anchor)
+		}
+	}
+	assertSpans(t, "recovery with held bytes", anchor.Classes, span(4, 14, classReplay))
+}
