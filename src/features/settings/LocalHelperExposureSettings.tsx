@@ -14,6 +14,17 @@ const STATE_TEXT: Record<string, string> = {
   failed: "出错",
 };
 
+// What exposure hands over, stated plainly: the confirmation and the hint must not understate it.
+const EXPOSE_CONFIRM = [
+  "开放后，等于把这台电脑当前用户的命令行权限交给同步的服务器账号：该服务器的运维或管理员，以及任何能控制该服务器或该账号的人，都能以当前用户身份在这里执行任意命令，包括通过该账号的 AI 助手（含定时任务）和批量执行。",
+  "「不能分享给其他账号」只表示分享功能不可用，并不限制上述人员。",
+  "从远程打开的终端在关闭开放后仍会继续运行，需在「后台会话」中结束；锁定凭据库不会停止开放。设备还会定期向服务器上报 CPU、内存、磁盘和运行时长。",
+  "仍要开放？",
+].join("\n");
+
+const EXPOSE_HINT =
+  "开放后，服务器的运维或管理员以及能控制该服务器或账号的人（含该账号的 AI 助手、定时任务和批量执行）可以当前用户身份在这台电脑上执行任意命令，并会上报运行指标。关闭开放不会结束远程打开的终端，请在「后台会话」中结束；锁定凭据库不会停止开放。";
+
 // The status changes on its own while exposure is on (connecting, online, revoked), so it is polled while shown.
 const POLL_MS = 5000;
 
@@ -54,10 +65,7 @@ export function LocalHelperExposureSettings() {
     if (busy) return;
     const enabling = !status.enabled;
     if (enabling) {
-      const ok = await ask(
-        "开放后，登录同一服务器账号的浏览器和手机可以查看、接管并新开这台电脑上的本机终端，相当于远程使用这台电脑的命令行。\n只有当前同步账号可以访问，不能分享给其他账号；可随时关闭，或在设备列表中吊销。仍要开放？",
-        { title: "向服务器开放本机终端", kind: "warning" },
-      );
+      const ok = await ask(EXPOSE_CONFIRM, { title: "向服务器开放本机终端", kind: "warning" });
       if (!ok) return;
     }
     setBusy(true);
@@ -83,9 +91,7 @@ export function LocalHelperExposureSettings() {
           向服务器账号开放本机终端
           <span className={badge}>{STATE_TEXT[status.state] ?? status.state}</span>
         </div>
-        <p className="nx-hint mt-1">
-          开放后，同一服务器账号的浏览器和手机可以查看并接管这台电脑的本机持久终端；其他账号无法访问。
-        </p>
+        <p className="nx-hint mt-1">{EXPOSE_HINT}</p>
         {status.reason && <p className="nx-hint mt-1 text-amber-300">{status.reason}</p>}
       </div>
       <input

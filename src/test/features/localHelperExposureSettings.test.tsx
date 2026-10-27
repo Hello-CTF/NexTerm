@@ -55,6 +55,11 @@ describe("local terminal exposure setting", () => {
       await act(async () => checkbox(view.container)!.click());
       await flush();
       expect(mocks.setExposure).not.toHaveBeenCalled();
+      // The confirmation states what is handed over and what turning it off does not undo.
+      const confirmation = String(mocks.ask.mock.calls[0][0]);
+      for (const part of ["任意命令", "管理员", "AI 助手", "批量执行", "只表示分享功能不可用", "后台会话", "锁定凭据库不会停止开放", "上报"]) {
+        expect(confirmation).toContain(part);
+      }
 
       await act(async () => checkbox(view.container)!.click());
       await flush();
