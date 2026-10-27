@@ -14,6 +14,7 @@ import {
 import {
   IconActivity,
   IconBox,
+  IconCheck,
   IconClock,
   IconCommand,
   IconDatabase,
@@ -72,18 +73,19 @@ export function tabTooltip(
 
 // A durable terminal tab carries a small persistence mark before its title; regular tabs carry none. A failure
 // hint the user dismissed while it still applies leaves a red dot that names it and shows the hint again; its hit
-// area extends past the dot without taking layout space.
-export function TabPersistenceMark({ tab }: { tab: AppTab }) {
+// area extends past the dot without taking layout space. The tab bar renders the icon before the title and the
+// dot on the trailing side (part), away from the attention badge; the plain dot is reserved for this mark.
+export function TabPersistenceMark({ tab, part = "all" }: { tab: AppTab; part?: "all" | "icon" | "failure" }) {
   const failure = usePersistenceFailureMark(tab.id);
   if (tab.kind !== "terminal") return null;
   return (
     <>
-      {tab.durable === true && (
+      {part !== "failure" && tab.durable === true && (
         <span className="flex shrink-0 items-center" role="img" aria-label="持久终端">
           <IconPersist size={12} />
         </span>
       )}
-      {failure && (
+      {part !== "icon" && failure && (
         <button
           type="button"
           className="relative h-1.5 w-1.5 shrink-0 rounded-full bg-red-500 p-0 before:absolute before:-inset-2 before:content-['']"
@@ -96,34 +98,52 @@ export function TabPersistenceMark({ tab }: { tab: AppTab }) {
   );
 }
 
-// The attention badge sits with the persistence marks and keeps their scale: a dot for signalled states, a hollow
-// ring for states inferred from the screen shape, and a grey question mark when the state cannot be known. A tab
-// the user is on shows no running badge, and a needs_me or just_finished state seen on any device shows nothing.
+// The attention badge sits before the title at the persistence icon's scale, and each state has its own shape so
+// it never depends on colour: "!" in a disc for needs_me, a check for just_finished, a turning ring while a
+// background tab runs and "?" when the state cannot be known. Inferred states (from the screen shape) are drawn
+// lighter: "!" in an outlined ring, a faded check. A tab the user is on shows no running badge, and a needs_me or
+// just_finished state seen on any device shows nothing.
 export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
   if (!badge) return null;
-  if (badge.kind === "unknown") {
-    return (
-      <span className="shrink-0 text-[10px] font-semibold leading-none text-slate-500" role="img" aria-label={badge.label} title={badge.label}>
-        ?
-      </span>
-    );
+  const common = {
+    role: "img",
+    "aria-label": badge.label,
+    title: badge.label,
+    "data-attention": badge.kind,
+    "data-inferred": badge.inferred ? "true" : undefined,
+  } as const;
+  switch (badge.kind) {
+    case "needs_me":
+      return (
+        <span
+          {...common}
+          className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none ${
+            badge.inferred ? "border border-amber-500/80 text-[var(--nx-fg-warning)]" : "bg-amber-400 text-slate-900"
+          }`}
+        >
+          !
+        </span>
+      );
+    case "just_finished":
+      return (
+        <span {...common} className={`flex shrink-0 items-center text-green-500 ${badge.inferred ? "opacity-60" : ""}`}>
+          <IconCheck size={11} />
+        </span>
+      );
+    case "running":
+      return (
+        <span
+          {...common}
+          className="h-2 w-2 shrink-0 rounded-full border border-slate-400 border-t-transparent motion-safe:animate-spin"
+        />
+      );
+    case "unknown":
+      return (
+        <span {...common} className="shrink-0 text-[10px] font-semibold leading-none text-slate-500">
+          ?
+        </span>
+      );
   }
-  const tone = {
-    needs_me: badge.inferred ? "border border-amber-400/80" : "bg-amber-400 ring-2 ring-amber-400/30",
-    just_finished: badge.inferred ? "border border-emerald-400/80" : "bg-emerald-400",
-    running: "bg-slate-400 motion-safe:animate-pulse",
-  }[badge.kind];
-  const size = badge.kind === "running" ? "h-1.5 w-1.5" : "h-2 w-2";
-  return (
-    <span
-      className={`${size} shrink-0 rounded-full ${tone}`}
-      role="img"
-      aria-label={badge.label}
-      title={badge.label}
-      data-attention={badge.kind}
-      data-inferred={badge.inferred ? "true" : undefined}
-    />
-  );
 }
 
 export function TabStripItem({

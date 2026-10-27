@@ -65,6 +65,16 @@ describe("tab attention badge", () => {
     expect(badge?.getAttribute("aria-label")).toContain("状态未知");
   });
 
+  it("gives each state its own shape, not only a colour", () => {
+    report({ state: "needs_me" });
+    expect(renderTab(terminal()).badge?.textContent).toBe("!");
+    report({ state: "just_finished", exitCode: 0 });
+    const finished = renderTab(terminal()).badge;
+    expect(finished?.getAttribute("aria-label")).toBe("命令刚结束，成功");
+    expect(finished?.querySelector("svg")).not.toBeNull();
+    expect(finished?.textContent).toBe("");
+  });
+
   it("clears a state seen on any device and keeps idle tabs unmarked", () => {
     report({ state: "just_finished", exitCode: 0, seen: true });
     expect(renderTab(terminal()).badge).toBeNull();

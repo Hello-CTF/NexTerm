@@ -12,10 +12,12 @@ vi.mock("../ipc/commands", () => ({
 }));
 
 import {
+  ACTIVE_USER_WINDOW_MS,
   markVisibleAwarenessSeen,
+  noteUserActivity,
   reloadAwareness,
   resetAwarenessForTest,
-  setUserLookingForTest,
+  setAwarenessEnvironmentForTest,
 } from "../app/sessionAwareness";
 import { applyAwareness, awarenessBadge, tabAwareness } from "../app/sessionAwarenessStore";
 import { useUi, type AppTab, type Pane, type Workspace } from "../app/store";
@@ -33,14 +35,17 @@ function event(tabId: string, version: number, patch: Partial<TerminalAttentionE
   return { tabId, state: "needs_me", confidence: "signal", source: "helper", since: `2026-10-27T10:00:0${version}Z`, version, ...patch };
 }
 
-let looking = true;
+let visible = true;
+let now = 1_000_000;
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.attentionSeen.mockResolvedValue(undefined);
   resetAwarenessForTest();
-  looking = true;
-  setUserLookingForTest(() => looking);
+  visible = true;
+  now = 1_000_000;
+  setAwarenessEnvironmentForTest({ visible: () => visible, now: () => now });
+  noteUserActivity();
   useUi.setState({
     workspaces: [
       ws("ws", [{ id: "p", tabs: [terminal("t1", "T1"), terminal("t2", "T2")], activeTabId: "t1" }]),
@@ -101,14 +106,39 @@ describe("seen state", () => {
   });
 
   it("does not report a state nobody looks at, nor one already seen elsewhere", () => {
-    looking = false;
+    visible = false;
     applyAwareness([event("T1", 1)]);
     markVisibleAwarenessSeen();
     expect(mocks.attentionSeen).not.toHaveBeenCalled();
-    looking = true;
+    visible = true;
+    resetAwarenessForTest();
+    noteUserActivity();
     applyAwareness([event("T1", 2, { seen: true })]);
     markVisibleAwarenessSeen();
     expect(mocks.attentionSeen).not.toHaveBeenCalled();
+  });
+
+  it("waits while the user is away and reports once they are active again", () => {
+    now += ACTIVE_USER_WINDOW_MS + 1;
+    applyAwareness([event("T1", 1)]);
+    markVisibleAwarenessSeen();
+    expect(mocks.attentionSeen).not.toHaveBeenCalled();
+    now += 60_000;
+    noteUserActivity();
+    expect(mocks.attentionSeen).toHaveBeenCalledOnce();
+    expect(mocks.attentionSeen).toHaveBeenCalledWith("T1", event("T1", 1).since);
+  });
+
+  it("keeps the mark on this device when the helper cannot share it, without asking again", async () => {
+    mocks.attentionSeen.mockRejectedValue({ code: "unsupported", message: "helper does not share seen attention states" });
+    applyAwareness([event("T1", 1)]);
+    markVisibleAwarenessSeen();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(tabAwareness("T1")?.seen).toBe(true);
+    expect(awarenessBadge(tabAwareness("T1"))).toBeNull();
+    noteUserActivity();
+    markVisibleAwarenessSeen();
+    expect(mocks.attentionSeen).toHaveBeenCalledOnce();
   });
 
   it("reports the next state again and retries a report that failed", async () => {

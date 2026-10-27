@@ -404,7 +404,7 @@ export function PaneGroup({
                 <span className="flex shrink-0">
                   <Icon size={13} />
                 </span>
-                <TabPersistenceMark tab={t} />
+                <TabPersistenceMark tab={t} part="icon" />
                 <TabAttentionBadge badge={attention} />
                 <TabStripTitle tab={t} />
                 {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
@@ -413,6 +413,7 @@ export function PaneGroup({
                     <IconAlert size={11} />
                   </span>
                 )}
+                <TabPersistenceMark tab={t} part="failure" />
                 {unread && (!attention || attention.kind === "unknown") && (
                   <span
                     className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"

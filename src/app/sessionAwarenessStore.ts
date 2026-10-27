@@ -62,6 +62,18 @@ export function applyAwareness(events: readonly TerminalAttentionEvent[]): void 
   });
 }
 
+// markAwarenessSeenLocally marks a state seen on this device only, for a helper that cannot share the mark. The next
+// state the backend reports replaces it.
+export function markAwarenessSeenLocally(tabId: string, since: string): void {
+  useAwarenessStore.setState((current) => {
+    const known = current.byTabId.get(tabId);
+    if (!known || known.seen || known.since !== since) return current;
+    const next = new Map(current.byTabId);
+    next.set(tabId, { ...known, seen: true });
+    return { byTabId: next };
+  });
+}
+
 export function resetAwarenessStore(): void {
   useAwarenessStore.setState((current) => (current.byTabId.size === 0 ? current : { byTabId: new Map() }));
 }
