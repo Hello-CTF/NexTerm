@@ -26,6 +26,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // State is the exposure state shown to the user.
@@ -612,11 +613,12 @@ func (c *Controller) agentExited(err error) {
 
 const serverTooOldReason = "服务器版本过旧，不支持开放桌面本机终端，请升级服务器"
 
-// isUnknownKindError reports a server that predates the enroll kind and
-// rejected the request field.
+// isUnknownKindError reports a bad-parameter rejection of an enroll request
+// that carried the kind field: a server that predates the field refuses the
+// request body as a whole.
 func isUnknownKindError(err error) bool {
-	message := err.Error()
-	return strings.Contains(message, "unknown field") && strings.Contains(message, `"kind"`)
+	var serverErr *agent.ServerError
+	return errors.As(err, &serverErr) && serverErr.Code == string(ipc.CodeBadParam)
 }
 
 // enrollmentStore is the agent config store of a running agent. The agent

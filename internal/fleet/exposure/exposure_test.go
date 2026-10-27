@@ -2,15 +2,18 @@ package exposure
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type fakeHost struct {
@@ -590,12 +593,39 @@ func TestFailedFailClosedRevokeNamesTheDevice(t *testing.T) {
 }
 
 func TestOldServerRejectingTheKindIsNamed(t *testing.T) {
+	// An older server decodes the body strictly into a request without kind.
+	var oldRequest struct {
+		Code string `json:"code"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(`{"code":"c","kind":"local_helper"}`))
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&oldRequest)
+	if decodeErr == nil {
+		t.Fatal("the strict decoder accepted the kind field")
+	}
+	rejection := ipc.BadParam(decodeErr)
 	host := newFakeHost()
-	host.enrollErr = errors.New(`请求体不是合法 JSON: json: unknown field "kind"`)
+	host.enrollErr = &agent.ServerError{Status: http.StatusBadRequest, Code: string(rejection.Code), Message: rejection.Message}
 	runners := &runnerLog{}
 	controller := newTestController(t, host, runners)
 	_, err := controller.SetEnabled(context.Background(), true)
 	if err == nil || err.Error() != serverTooOldReason {
 		t.Fatalf("enable error = %v, want %q", err, serverTooOldReason)
+	}
+}
+
+func TestLogoutStopsExposure(t *testing.T) {
+	host := newFakeHost()
+	runners := &runnerLog{}
+	controller := newTestController(t, host, runners)
+	enable(t, controller)
+	runner := runners.last(t)
+
+	host.set(func(h *fakeHost) { h.accountErr = ErrNoAccount })
+	reconcileNow(t, controller)
+	select {
+	case <-runner.stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent still runs after the account logged out")
 	}
 }

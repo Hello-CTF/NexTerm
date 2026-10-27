@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, deferred, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { clickButton, deferred, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
     compare: vi.fn(),
     linkSet: vi.fn(),
     ask: vi.fn(),
+    getExposure: vi.fn(),
     syncStatusHandlers: [] as Array<(payload: unknown) => void>,
   };
 });
@@ -24,6 +25,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
     ...actual,
+    localHelperApi: { ...actual.localHelperApi, getExposure: mocks.getExposure },
     syncApi: {
       ...actual.syncApi,
       linkGet: mocks.linkGet,
@@ -84,6 +86,7 @@ function fireSyncStatus(): void {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.syncStatusHandlers.length = 0;
+  mocks.getExposure.mockResolvedValue({ enabled: false, state: "off" });
   loggedIn = false;
   lastError = "";
   document.body.replaceChildren();
@@ -157,10 +160,22 @@ describe("Desktop login controls", () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("已登录 alice") === true);
     clickButton(mounted.container, "登出");
-    await flush();
+    await flushUntil(() => mocks.ask.mock.calls.length > 0);
     expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("本机和服务端的数据都会保留"), expect.objectContaining({ kind: "warning" }));
+    expect(mocks.ask.mock.calls[0][0]).not.toContain("开放本机终端");
     expect(mocks.linkSet).not.toHaveBeenCalled();
     expect(mounted.container.textContent).toContain("已登录 alice");
+  });
+
+  it("warns on logout that exposing local terminals stops, only while exposure is on", async () => {
+    loggedIn = true;
+    mocks.ask.mockResolvedValue(false);
+    mocks.getExposure.mockResolvedValue({ enabled: true, state: "online" });
+    mounted = mountCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("已登录 alice") === true);
+    clickButton(mounted.container, "登出");
+    await flushUntil(() => mocks.ask.mock.calls.length > 0);
+    expect(mocks.ask.mock.calls[0][0]).toContain("开放本机终端");
   });
 
   it("clears saved credentials only after confirmation and restores the signed-out login form", async () => {

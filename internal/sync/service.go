@@ -666,7 +666,15 @@ func (s *Service) linkView(secret linkSecret) Link {
 	}
 }
 
+func sameLinkTarget(a, b linkSecret) bool {
+	return a.URL == b.URL && a.Username == b.Username && a.Password == b.Password && a.Insecure == b.Insecure
+}
+
 func (s *Service) saveLinkSecret(ctx context.Context, secret linkSecret) error {
+	return s.saveLinkSecretNotify(ctx, secret, true)
+}
+
+func (s *Service) saveLinkSecretNotify(ctx context.Context, secret linkSecret, notify bool) error {
 	encoded, err := json.Marshal(secret)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "无法编码同步链接设置", err)
@@ -678,7 +686,9 @@ func (s *Service) saveLinkSecret(ctx context.Context, secret linkSecret) error {
 	if err := s.store.SettingSet(ctx, settingLink, protected); err != nil {
 		return err
 	}
-	s.notifyLinkChanged()
+	if notify {
+		s.notifyLinkChanged()
+	}
 	return nil
 }
 
@@ -695,13 +705,16 @@ func (s *Service) recordProbe(ctx context.Context, probeErr error) {
 	if err := json.Unmarshal([]byte(plaintext), &secret); err != nil {
 		return
 	}
+	previous := secret
 	if probeErr != nil {
 		secret.LastError = probeErr.Error()
 	} else {
 		secret.VerifiedAt = ids.NowMS()
 		secret.LastError = ""
 	}
-	if err := s.saveLinkSecret(ctx, secret); err != nil {
+	// A probe only records its outcome; the link itself is unchanged, so
+	// listeners such as the exposure reconcile are not woken.
+	if err := s.saveLinkSecretNotify(ctx, secret, !sameLinkTarget(previous, secret)); err != nil {
 		s.engine.logger.Warn("sync probe result not recorded", "error", err)
 	}
 }
