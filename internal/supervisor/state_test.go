@@ -170,6 +170,34 @@ func TestStateNotifyClipsText(t *testing.T) {
 	}
 }
 
+func TestStateCarriesNotificationText(t *testing.T) {
+	h := newHarness(t)
+	h.out(time.Second, "\x1b]9;build finished\a")
+	got := h.expect(base.SessionNeedsMe, base.ConfidenceSignal)
+	if got.Reason != "notify" || got.Title != "" || got.Body != "build finished" {
+		t.Fatalf("state = reason %q title %q body %q", got.Reason, got.Title, got.Body)
+	}
+	since := got.Since
+	// A second notification of the same needs_me state replaces the text.
+	h.out(time.Second, "\x1b]777;notify;Deploy;done\a")
+	got = h.expect(base.SessionNeedsMe, base.ConfidenceSignal)
+	if !got.Since.Equal(since) || got.Title != "Deploy" || got.Body != "done" {
+		t.Fatalf("state = since %v title %q body %q", got.Since, got.Title, got.Body)
+	}
+	// A bell keeps the state but the text no longer describes it.
+	h.out(5*time.Second, "\a")
+	got = h.expect(base.SessionNeedsMe, base.ConfidenceSignal)
+	if got.Reason != "bell" || got.Title != "" || got.Body != "" {
+		t.Fatalf("after a bell: reason %q title %q body %q", got.Reason, got.Title, got.Body)
+	}
+	h.out(time.Second, "\x1b]9;again\a")
+	h.in(time.Second)
+	got = h.expect(base.SessionIdle, base.ConfidenceSignal)
+	if got.Title != "" || got.Body != "" {
+		t.Fatalf("idle state kept the text: title %q body %q", got.Title, got.Body)
+	}
+}
+
 func TestStateCommandEndJustFinished(t *testing.T) {
 	h := newHarness(t)
 	h.out(time.Second, "\x1b]133;A\a$ \x1b]133;B\a")

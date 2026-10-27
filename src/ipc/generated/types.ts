@@ -203,6 +203,8 @@ export type AttentionEvent = {
   seen?: boolean;
   notable?: boolean;
   exitCode?: number | null;
+  title?: string;
+  body?: string;
   version: number;
 };
 

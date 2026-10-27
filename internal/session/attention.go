@@ -49,6 +49,10 @@ type AttentionEvent struct {
 	Seen     bool `json:"seen,omitempty"`
 	Notable  bool `json:"notable,omitempty"`
 	ExitCode *int `json:"exitCode,omitempty"`
+	// Title and Body are the text of the notification behind a needs_me
+	// state with reason notify.
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
 	// Version increases with every published change of the tab; a client
 	// keeps the highest version it saw per tab. Versions restart with the
 	// process.
@@ -58,7 +62,8 @@ type AttentionEvent struct {
 func (e AttentionEvent) sameAs(other AttentionEvent) bool {
 	sameExit := (e.ExitCode == nil) == (other.ExitCode == nil) && (e.ExitCode == nil || *e.ExitCode == *other.ExitCode)
 	return e.State == other.State && e.Confidence == other.Confidence && e.Source == other.Source &&
-		e.Reason == other.Reason && e.Since == other.Since && e.Seen == other.Seen && e.Notable == other.Notable && sameExit
+		e.Reason == other.Reason && e.Since == other.Since && e.Seen == other.Seen && e.Notable == other.Notable && sameExit &&
+		e.Title == other.Title && e.Body == other.Body
 }
 
 // attentionRegistry holds the attention state of every tab whose output
@@ -321,7 +326,7 @@ func attentionFromState(state *base.SessionState, source string) AttentionEvent 
 	}
 	event := AttentionEvent{
 		State: state.State, Confidence: state.Confidence, Source: source, Reason: state.Reason,
-		Seen: state.Seen, Notable: state.Notable,
+		Seen: state.Seen, Notable: state.Notable, Title: state.Title, Body: state.Body,
 	}
 	if !state.Since.IsZero() {
 		event.Since = state.Since.UTC().Format(time.RFC3339Nano)

@@ -87,6 +87,11 @@ type SessionState struct {
 	// to its user. It is shared by every client of the session and cleared by
 	// the next state change or a new bell or notification.
 	Seen bool `json:"seen,omitempty"`
+	// Title and Body are the text of the notification (OSC 9, 777 or 99)
+	// that made the state needs_me, cut to the helper limit; empty for any
+	// other state or reason.
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
 	// PromptEpoch advances whenever the detected prompt changes or appears
 	// or disappears, and on any input written to the session. Together with
 	// the helper generation it identifies one prompt instance.
