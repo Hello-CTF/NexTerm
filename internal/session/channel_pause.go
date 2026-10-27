@@ -274,11 +274,25 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, clien
 		tab.signalOutputWakeLocked()
 	}
 	tab.mu.Unlock()
+	// Recovery offsets are stream sequences: the refused suffix keeps the
+	// classes it was fed with (replay stays replay). The anchor also covers
+	// bytes the paused coalescer still holds and flushes after the replay:
+	// their class frames went out before this anchor, which restarts the
+	// client's classification. The feed gate is held, so the ring's latest
+	// sequence is the end of everything fed.
+	end := uint64(subscriber.flushedOffset)
+	if core, ok := tab.terminal.(interface{ LatestSeq() uint64 }); ok {
+		end = max(end, core.LatestSeq())
+	}
+	tab.mu.Lock()
+	classes := tab.classes.within(uint64(acceptedBytes), end)
+	tab.mu.Unlock()
 	anchor, err := json.Marshal(streamAnchor{
 		Type:         streamAnchorType,
 		Epoch:        "recovery-" + tabID,
 		StreamSeq:    uint64(acceptedBytes),
 		AttachmentID: subscriber.attachmentId,
+		Classes:      classes,
 	})
 	if err != nil {
 		return 0, 0, err

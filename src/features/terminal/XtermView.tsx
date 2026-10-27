@@ -37,7 +37,9 @@ import {
   type TerminalStreamBacklog,
 } from "./terminalStream";
 import { terminalOutputScheduler, type ScheduledTerminalOutput } from "./outputScheduler";
-import { createTerminalResponseLimiter } from "./terminalResponses";
+import { createTerminalResponseLimiter, isAutomaticTerminalReply } from "./terminalResponses";
+import { createUserInputGate } from "./userInputGate";
+import { pruneSpans, splitByClass, type StreamClassSpan, type StreamMode, type StreamRun } from "./streamClasses";
 import {
   attachLinkLongPress,
   createTerminalLinkController,
@@ -843,11 +845,20 @@ export function XtermView(props: XtermViewProps) {
     // (watermarks, OSC events) still waits for xterm's own write callback.
     const output = terminalOutputScheduler.register(term, { visible: visibleRef.current !== false });
     outputRef.current = output;
+    // The server classifies output (streamClasses.ts). Replayed output only
+    // redraws this view: it never answers queries upstream, writes the
+    // clipboard, prompts, or notifies. Answered output was already answered
+    // by the server, so it gets no automatic replies. OSC 133 marks, titles,
+    // cwd and modes are display state and always apply. parseMode is the
+    // mode of the bytes xterm is parsing right now (set from write callbacks
+    // in parse order); suppressed effects are dropped silently.
+    let parseMode: StreamMode = "live";
     const streamWriter = createTerminalStreamWriter(
       output,
-      (event) => {
-        if (event.kind === "notification") onNotificationRef.current?.(event.body);
-        else if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
+      (event, mode) => {
+        if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
+        else if (mode === "replay") return;
+        else if (event.kind === "notification") onNotificationRef.current?.(event.body);
         else onClipboardRef.current?.(event.payload);
       },
       {
@@ -880,6 +891,9 @@ export function XtermView(props: XtermViewProps) {
         // A hidden pane's backlog drains on the background budget; its
         // desktop notifications need no screen state, so they need not wait.
         dispatchEarly: (event) => event.kind === "notification" && visibleRef.current === false,
+        onReplayChange: (mode) => {
+          parseMode = mode;
+        },
       },
     );
     // Automatic query replies (DA/DSR/CPR reports and friends) are answered
@@ -906,6 +920,32 @@ export function XtermView(props: XtermViewProps) {
     let streamAnchor: { epoch: string; seq: number; control: number } | null = null;
     let streamBytes = 0;
     let skipLeading = 0;
+    // Output-class spans for the current anchored stream, by stream sequence.
+    let streamClasses: StreamClassSpan[] = [];
+    // Docker exec streams have no anchor: a resumed backlog is announced as
+    // the next replayRemaining bytes.
+    let replayRemaining = 0;
+    // Splits accepted bytes at stream index `index` into runs by mode.
+    const classifyRuns = (out: Uint8Array, index: number): StreamRun[] => {
+      if (out.length === 0) return [];
+      if (!streamAnchor) {
+        // replayRemaining shrinks as runs are accepted, not here: refused
+        // bytes come back through the resume.
+        const replayed = Math.min(out.length, replayRemaining);
+        const runs: StreamRun[] = [];
+        if (replayed > 0) runs.push({ offset: 0, length: replayed, mode: "replay" });
+        if (out.length > replayed) runs.push({ offset: replayed, length: out.length - replayed, mode: "live" });
+        return runs;
+      }
+      // The clear-screen control bytes at the head carry no sequence.
+      const control = Math.min(out.length, Math.max(0, streamAnchor.control - index));
+      const runs: StreamRun[] = control > 0 ? [{ offset: 0, length: control, mode: "live" }] : [];
+      const seq = streamAnchor.seq + Math.max(0, index + control - streamAnchor.control);
+      for (const run of splitByClass(seq, out.length - control, streamClasses)) {
+        runs.push({ ...run, offset: run.offset + control });
+      }
+      return runs;
+    };
     let expiredNoticePending = false;
     const writeExpiredNotice = () => {
       streamWriter.writeLocalText("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n");
@@ -925,15 +965,23 @@ export function XtermView(props: XtermViewProps) {
             skipLeading = 0;
           }
         }
-        if (out.length > 0 && !streamWriter.pushBytes(out)) {
-          // Refused bytes are not counted in streamBytes: the resume anchor
-          // must point at the last accepted byte so the replay resends them.
-          // The refusal episode is sticky inside the writer until the next
-          // attachment boundary, keeping the accepted prefix contiguous.
-          streamBytes += skipped;
-          return;
+        // Each run of one output class goes to the writer separately so xterm
+        // parses it with the right mode.
+        let accepted = skipped;
+        for (const run of classifyRuns(out, streamBytes + skipped)) {
+          if (!streamWriter.pushBytes(out.subarray(run.offset, run.offset + run.length), run.mode)) {
+            // Refused bytes are not counted in streamBytes: the resume anchor
+            // must point at the last accepted byte so the replay resends them.
+            // The refusal episode is sticky inside the writer until the next
+            // attachment boundary, keeping the accepted prefix contiguous.
+            streamBytes += accepted;
+            return;
+          }
+          accepted += run.length;
+          if (!streamAnchor && run.mode === "replay") replayRemaining -= run.length;
         }
         streamBytes += bytes.length;
+        if (streamAnchor) streamClasses = pruneSpans(streamClasses, acceptedOffsetNow());
         if (recoverTarget !== null) resumeIfReady();
         // Keep the server's retention floor current with the accepted offset
         // through the ordered write path, without waiting for a pause/recover
@@ -952,6 +1000,12 @@ export function XtermView(props: XtermViewProps) {
         // episode ends here, not on the attach RPC response, so replay bytes
         // that arrive before the response is processed are still accepted.
         streamWriter.beginAttachment();
+        // Every anchor carries the classes of all output from its sequence to
+        // the latest fed byte, including bytes a paused coalescer still holds,
+        // and later spans arrive as class frames: the list is replaced, so
+        // spans from another stream (a fresh attach starts a new sequence
+        // space without being marked expired) never leak into this one.
+        streamClasses = [...(control.classes ?? [])];
         if (control.expired) {
           term.clearSelection();
           streamWriter.resetStream();
@@ -986,6 +1040,12 @@ export function XtermView(props: XtermViewProps) {
         // reports the new attachment even when the attach response has not
         // arrived yet.
         adoptAttachmentId(control.attachmentId);
+      },
+      (replay) => {
+        replayRemaining = Math.max(0, replay.bytes);
+      },
+      (span) => {
+        streamClasses.push(span);
       },
     );
     const applyRemoteDimensions = (cols: number, rows: number) => {
@@ -1172,8 +1232,10 @@ export function XtermView(props: XtermViewProps) {
             // Docker exec replays synchronously inside the attach RPC, before
             // its response: end the refusal episode up front so the replay is
             // accepted. Session tabs end the episode at the anchor frame
-            // instead, which the server sends first.
+            // instead, which the server sends first. The resumed backlog is
+            // announced in-band; nothing before it is replay.
             streamWriter.beginAttachment();
+            replayRemaining = 0;
           }
           const info = resume
             ? await terminalApi.attachTab(id, channel, -1, resume, containerId ? undefined : sessionId)
@@ -1234,9 +1296,16 @@ export function XtermView(props: XtermViewProps) {
       void doAttach();
     }, 0);
 
+    // onData raised while a DOM input event is being dispatched comes from the
+    // user (keys, paste, focus reports, mouse), never from parsing output,
+    // even when it looks like a query reply (modified F3 matches CPR).
+    const userInput = createUserInputGate(hostRef.current);
     const dataDisposable = term.onData((raw) => {
       // A Ctrl/Alt latched on the key bar applies to the next character typed into the focused terminal.
       const data = term.textarea && document.activeElement === term.textarea ? applyStickyModifiersToTyped(raw) : raw;
+      // A reply xterm produced while parsing replayed output answers a query
+      // the live shell is not asking now: drop it.
+      if (parseMode !== "live" && !userInput.active() && isAutomaticTerminalReply(raw)) return;
       // Input in a visible pane switches hidden panes to the conservative drain tier.
       if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
       blocks.feedInput(data);
@@ -1415,6 +1484,7 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("paste", onPasteCapture, true);
       pasteHost.removeEventListener("dragover", onDragOver);
       pasteHost.removeEventListener("drop", onDropCapture, true);
+      userInput.dispose();
       pasteHost.removeEventListener("touchstart", trackTouch, true);
       pasteHost.removeEventListener("touchmove", trackTouch, true);
       pasteHost.removeEventListener("touchstart", onTapStart, true);

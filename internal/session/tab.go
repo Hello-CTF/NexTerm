@@ -34,7 +34,10 @@ var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 const sshFallbackNotice = "持久终端不可用，已切换为普通 SSH 终端；关闭或断开后无法恢复此终端"
 
 type subscriber struct {
-	client   string
+	client string
+	// answers is set for an interactive client whose terminal emulator
+	// answers queries; preview spectators do not.
+	answers  bool
 	producer *hub.Producer
 	co       *outCoalescer
 	paused   bool
@@ -73,15 +76,19 @@ const streamAnchorType = "nexterm.stream-anchor"
 // control bytes at the stream head that do not count toward the sequence (clear-screen escape); expired means the client
 // anchor was not adopted and this attach fell back to a full clear-screen replay. The client computes the consumed
 // sequence as streamSeq + max(0, bytes received - controlBytes) and brings it back via AttachOptions.FromSeq/FromEpoch on reconnect.
+// classes lists the output-class spans (by stream sequence) of the bytes this stream will deliver: replay spans render
+// without side effects, answered spans without automatic query replies; later spans arrive as stream-class frames ahead
+// of their bytes. A full clear-screen replay is one replay span.
 // attachmentId is the incarnation this frame was sent for: the client adopts it as its current attachment identity, so
 // the ordered stream itself carries the incarnation even when the attach RPC response has not arrived yet.
 type streamAnchor struct {
-	Type         string `json:"type"`
-	Epoch        string `json:"epoch"`
-	StreamSeq    uint64 `json:"streamSeq"`
-	ControlBytes int    `json:"controlBytes,omitempty"`
-	Expired      bool   `json:"expired,omitempty"`
-	AttachmentID uint64 `json:"attachmentId,omitempty"`
+	Type         string      `json:"type"`
+	Epoch        string      `json:"epoch"`
+	StreamSeq    uint64      `json:"streamSeq"`
+	ControlBytes int         `json:"controlBytes,omitempty"`
+	Expired      bool        `json:"expired,omitempty"`
+	AttachmentID uint64      `json:"attachmentId,omitempty"`
+	Classes      []classSpan `json:"classes,omitempty"`
 }
 
 type Tab struct {
@@ -172,6 +179,14 @@ type Tab struct {
 	historyFrom      uint64
 	historyBase      uint64
 	historyTruncated bool
+
+	// A recovered durable tab replays its recent history through the pump
+	// before live output. replayUntil is the helper offset where that replay
+	// ends; output before it is rendered without raising events (no query
+	// replies, unread marks or command records).
+	replayUntil int64
+	// classes records how each output range was fed, by stream sequence.
+	classes outputClasses
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -611,6 +626,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			tab.historyFrom = replay.DisplayFrom
 			tab.historyBase = replay.HistoryBase
 			tab.historyTruncated = replay.HistoryBase > 0
+			if replay.HistoryNext > replay.DisplayFrom {
+				tab.replayUntil = int64(replay.HistoryNext)
+			}
 		}
 		if store, ok := durableAttachment.(durableVersionFloor); ok {
 			if eventVersion, gridRevision, err := store.DurableVersions(); err == nil {
@@ -1096,7 +1114,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	m.nextAttachmentId++
 	attachmentId := m.nextAttachmentId
 	tab.subscribers[options.ChannelID] = subscriber{
-		client: client, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
+		client: client, answers: true, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
 	}
 	registeredDetaches = tab.detaches
 	tab.mu.Unlock()
@@ -1106,6 +1124,17 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	anchor, control, replay := m.planAttachReplay(tab, options, clear)
 	if anchor != nil {
 		anchor.AttachmentID = attachmentId
+		// A full clear-screen replay redraws history: all replay. An adopted
+		// resume delivers output this view missed, classified as it was fed.
+		// The feed gate is held, so the classes match the bytes sent.
+		end := anchor.StreamSeq + uint64(len(replay))
+		if options.FromSeq > 0 && !anchor.Expired {
+			tab.mu.Lock()
+			anchor.Classes = tab.classes.within(anchor.StreamSeq, end)
+			tab.mu.Unlock()
+		} else if len(replay) > 0 {
+			anchor.Classes = []classSpan{{From: anchor.StreamSeq, To: end, Kind: classReplay}}
+		}
 		frame, _ := json.Marshal(anchor)
 		if err := producer.SendJSON(attachCtx, frame); err != nil {
 			return TabInfo{}, err
@@ -1208,6 +1237,31 @@ func (m *Manager) releaseChannelReservation(tabID, channelID string, incarnation
 		delete(m.channelIncarnations, channelID)
 	}
 	m.mu.Unlock()
+}
+
+// answeringLocked reports whether the client whose replies reach the shell
+// is attached and taking output now: only the controller's input is written
+// (an observer's replies fail with ErrNotController), so only the
+// controller's answering subscriber counts. A paused subscriber (refusing
+// output) or one whose fanout entry was aborted would answer late or never.
+// Without such a subscriber (no controller, a guest controlling through
+// WriteGuest, a claim without a view) the headless screen answers and the
+// range is announced as answered. B14 replaces the controller model with
+// multi-client input; this rule moves with it. Callers hold t.mu.
+func (t *Tab) answeringLocked() bool {
+	if t.controller == "" {
+		return false
+	}
+	for channelID, subscriber := range t.subscribers {
+		if subscriber.client != t.controller || !subscriber.answers || subscriber.paused {
+			continue
+		}
+		if t.fanout != nil && !t.fanout.Has(channelID) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (t *Tab) releaseOrphanControllerLocked() {
@@ -2042,16 +2096,28 @@ func (m *Manager) disconnectSubscriberOutput(tab *Tab, channelID string, incarna
 }
 
 func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []byte) error {
-	return m.feedWith(ctx, tab, generation, data, true)
+	return m.feedWith(ctx, tab, generation, data, feedOptions{transcript: true})
 }
 
 // feedDisplay renders data without recording it in the transcript: replay
 // preludes and notices that are not session output.
 func (m *Manager) feedDisplay(ctx context.Context, tab *Tab, generation uint64, data []byte) error {
-	return m.feedWith(ctx, tab, generation, data, false)
+	return m.feedWith(ctx, tab, generation, data, feedOptions{})
 }
 
-func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, data []byte, transcript bool) error {
+// feedOptions selects how feedWith treats data.
+type feedOptions struct {
+	// transcript records the data in the session transcript.
+	transcript bool
+	// replay marks history replayed by a recovered durable tab: it renders
+	// and reaches subscribers like any output but raises no events.
+	replay bool
+}
+
+// feedWith renders data and fans it out. Replayed data raises no events — no
+// automatic query replies to the shell, no unread mark and no command records.
+func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, data []byte, options feedOptions) error {
+	replay, transcript := options.replay, options.transcript
 	if len(data) == 0 {
 		return nil
 	}
@@ -2065,13 +2131,50 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		return err
 	}
 	defer tab.unlockFeed()
+	// The feed gate is held: nothing else feeds the ring, so its sequence is
+	// where this data starts.
+	core, sequenced := tab.terminal.(interface{ LatestSeq() uint64 })
+	var from uint64
+	if sequenced {
+		from = core.LatestSeq()
+	}
 	tab.mu.Lock()
 	if tab.closed || tab.generation != generation {
 		tab.mu.Unlock()
 		return ErrStaleGeneration
 	}
+	// An answering client's terminal emulator answers queries itself; the
+	// headless screen answers only while none is attached, so programs never
+	// wait forever. Attach holds the feed gate, so no client can appear
+	// between this decision and the parse; a detach racing it leaves the
+	// range live, so the client answers it if it resumes.
+	clientAnswers := tab.answeringLocked()
+	kind := ""
+	switch {
+	case replay:
+		kind = classReplay
+	case !clientAnswers:
+		kind = classAnswered
+	}
+	var classFrame []byte
+	if sequenced {
+		to := from + uint64(len(data))
+		tab.classes.add(from, to, kind)
+		if to > classRetention {
+			tab.classes.trim(to - classRetention)
+		}
+		if kind != "" {
+			classFrame, _ = json.Marshal(streamClassFrame{Type: streamClassType, classSpan: classSpan{From: from, To: to, Kind: kind}})
+		}
+	}
 	tab.mu.Unlock()
-	tab.terminal.Feed(data)
+	if source, ok := tab.terminal.(interface {
+		FeedWith([]byte, terminal.FeedOptions)
+	}); ok {
+		source.FeedWith(data, terminal.FeedOptions{Replay: replay, Unanswered: clientAnswers})
+	} else {
+		tab.terminal.Feed(data)
+	}
 	if transcript {
 		m.transcriptOutput(feedCtx, tab, data)
 	}
@@ -2100,7 +2203,7 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 			m.emit(withCoalescibleControl(feedCtx), TopicTerminalControl, titleEvent)
 		}
 	}
-	m.observeCommand(tab, data)
+	m.observeCommand(tab, data, replay)
 	type outputTarget struct {
 		channelID  string
 		subscriber subscriber
@@ -2120,6 +2223,12 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		recovery.add(data)
 	}
 	for _, target := range subscribers {
+		// The class frame is keyed by stream sequence, so it only has to
+		// precede the bytes, which the coalescer sends later on the same
+		// ordered fanout queue.
+		if classFrame != nil && target.subscriber.answers {
+			fanout.SendJSONTo(target.channelID, classFrame)
+		}
 		if target.subscriber.paused {
 			target.subscriber.co.addPaused(data)
 			continue

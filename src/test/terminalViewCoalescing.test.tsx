@@ -19,12 +19,21 @@ interface FakeTerminal {
     selection: (() => void) | null;
   };
   drainWrites: (count?: number) => void;
+  host: HTMLElement | null;
 }
 
 const harness = vi.hoisted(() => ({
   terminals: [] as unknown[],
-  channel: null as { onBytes?: (bytes: Uint8Array) => void; onControl?: (control: unknown) => void } | null,
+  channel: null as {
+    onBytes?: (bytes: Uint8Array) => void;
+    onControl?: (control: unknown) => void;
+    onReplay?: (control: unknown) => void;
+    onClass?: (control: unknown) => void;
+  } | null,
   channels: [] as { onBytes?: (bytes: Uint8Array) => void; onControl?: (control: unknown) => void }[],
+  // When set, the fake terminal answers DA1 and DSR 6 queries through onData
+  // at the moment the write that carries them is parsed (its callback runs).
+  emitReplies: false,
   reopenCb: null as (() => void) | null,
   feedInput: vi.fn(),
   feedOSC133: vi.fn(),
@@ -59,11 +68,25 @@ vi.mock("@xterm/xterm", () => ({
       harness.terminals.push(this);
     }
     parser = { registerOscHandler: () => ({ dispose: () => undefined }) };
-    open() {}
+    host: HTMLElement | null = null;
+    open(host: HTMLElement) {
+      this.host = host;
+    }
     loadAddon() {}
     attachCustomKeyEventHandler() {}
     write(data: string | Uint8Array, callback?: () => void) {
       this.writeLog.push(typeof data === "string" ? data : new TextDecoder().decode(data));
+      if (harness.emitReplies) {
+        const text = typeof data === "string" ? data : new TextDecoder().decode(data);
+        this.pendingWrites.push(() => {
+          for (const query of text.match(/\x1b\[(?:c|6n)/g) ?? []) {
+            this.handlers.data?.(query === "\x1b[c" ? "\x1b[?1;2c" : "\x1b[1;1R");
+          }
+          for (const title of text.matchAll(/\x1b\]0;([^\x07]*)\x07/g)) this.handlers.title?.(title[1]);
+          callback?.();
+        });
+        return;
+      }
       if (callback) this.pendingWrites.push(callback);
     }
     drainWrites(count?: number) {
@@ -164,8 +187,10 @@ vi.mock("../ipc/events", () => ({
   createBinaryChannel: (
     onBytes: (bytes: Uint8Array) => void,
     onControl?: (control: unknown) => void,
+    onReplay?: (control: unknown) => void,
+    onClass?: (control: unknown) => void,
   ) => {
-    const entry = { onBytes, onControl };
+    const entry = { onBytes, onControl, onReplay, onClass };
     harness.channel = entry;
     harness.channels.push(entry);
     return {};
@@ -317,6 +342,7 @@ beforeEach(() => {
   harness.channel = null;
   harness.channels.length = 0;
   harness.reopenCb = null;
+  harness.emitReplies = false;
   harness.attach.mockResolvedValue({
     tabId: "kernel-1",
     cols: 80,
@@ -3298,5 +3324,255 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     // deduped on top of the per-frame coalescing.
     expect(onTitle).toHaveBeenCalledTimes(6);
     expect(onTitle).toHaveBeenLastCalledWith("user@host: ~/projects/app5");
+  });
+});
+
+describe("XtermView replayed output", () => {
+  // Replayed: DA1 and DSR 6 queries, an OSC 52 clipboard write, BEL, an OSC 9
+  // notification and an OSC 0 title.
+  const REPLAYED = "old\x1b[c\x1b[6n\x1b]52;c;b2xk\x07\x07\x1b]9;old note\x07\x1b]0;Replayed title\x07";
+  const LIVE = "new\x1b[c\x1b]52;c;bmV3\x07\x1b]9;new note\x07";
+
+  function upstream(): string[] {
+    return harness.write.mock.calls.map(([, bytes]) => new TextDecoder().decode(bytes as Uint8Array));
+  }
+
+  it("renders a session replay without replies, clipboard writes or notifications; live output still acts", async () => {
+    harness.emitReplies = true;
+    const onClipboard = vi.fn();
+    const onNotification = vi.fn();
+    const onTitle = vi.fn();
+    await show({ onClipboard, onNotification, onTitle });
+    await attachOk();
+    const t = term();
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "e1",
+      streamSeq: 0,
+      expired: true,
+      classes: [{ from: 0, to: enc.encode(REPLAYED).length, kind: "replay" }],
+    });
+    // One chunk carries the end of the replay and the first live bytes.
+    feedBytes(REPLAYED + LIVE);
+    act(() => t.drainWrites());
+    act(() => runFrames());
+    expect(t.writeLog.join("")).toContain("old");
+    expect(t.writeLog.join("")).toContain("new");
+    // Only the live DA1 query is answered upstream, through the limiter.
+    expect(upstream()).toEqual(["\x1b[?1;2c"]);
+    expect(onClipboard).toHaveBeenCalledTimes(1);
+    expect(onClipboard).toHaveBeenCalledWith("c;bmV3");
+    expect(onNotification).toHaveBeenCalledTimes(1);
+    expect(onNotification).toHaveBeenCalledWith("new note");
+    // Titles are display state: the replayed title still reaches the tab,
+    // where a custom title keeps precedence (applyRemoteTabTitle).
+    expect(onTitle).toHaveBeenCalledWith("Replayed title");
+
+    // The same bytes arriving live afterwards behave as before.
+    feedBytes(REPLAYED);
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[?1;2c", "\x1b[?1;2c", "\x1b[1;1R"]);
+    expect(onClipboard).toHaveBeenLastCalledWith("c;b2xk");
+    expect(onNotification).toHaveBeenLastCalledWith("old note");
+  });
+
+  it("renders a recovery anchor's refused suffix with its effects: it was never shown", async () => {
+    harness.emitReplies = true;
+    const onNotification = vi.fn();
+    await show({ onNotification });
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: 0 });
+    feedBytes("\x1b[6n\x1b]9;refused\x07");
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[1;1R"]);
+    expect(onNotification).toHaveBeenCalledWith("refused");
+  });
+
+  it("counts replayed bytes across frames", async () => {
+    harness.emitReplies = true;
+    const onNotification = vi.fn();
+    await show({ onNotification });
+    await attachOk();
+    const t = term();
+    const suffix = "\x1b[6n\x1b]9;replayed\x07";
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "e1",
+      streamSeq: 0,
+      classes: [{ from: 0, to: enc.encode(suffix).length, kind: "replay" }],
+    });
+    // The replay arrives split across frames: the count spans them.
+    feedBytes(suffix.slice(0, 6));
+    feedBytes(suffix.slice(6));
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual([]);
+    expect(onNotification).not.toHaveBeenCalled();
+    feedBytes("\x1b[6n");
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[1;1R"]);
+  });
+
+  it("closes the replay once its last byte is parsed, with no live output after it", async () => {
+    harness.emitReplies = true;
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, expired: true, classes: [{ from: 0, to: 4, kind: "replay" }] });
+    feedBytes("\x1b[6n");
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual([]);
+    // Idle shell: nothing live follows. A focus report and a modified F3
+    // (which looks like a cursor report) still reach the shell.
+    act(() => t.handlers.data?.("\x1b[I"));
+    act(() => t.handlers.data?.("\x1b[1;5R"));
+    expect(upstream()).toEqual(["\x1b[I", "\x1b[1;5R"]);
+  });
+
+  it("passes reply-shaped user input while a replay is still being parsed", async () => {
+    harness.emitReplies = true;
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, classes: [{ from: 0, to: 4, kind: "replay" }] });
+    feedBytes("\x1b[6n");
+    // Parse the open marker only: xterm is inside the replayed bytes.
+    act(() => t.drainWrites(1));
+    const textarea = document.createElement("textarea");
+    t.host?.appendChild(textarea);
+    // xterm's own key listener on its textarea raises onData.
+    textarea.addEventListener("keydown", () => t.handlers.data?.("\x1b[1;5R"));
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
+    });
+    // Once the event is over, the same bytes are a reply to replay.
+    act(() => t.handlers.data?.("\x1b[1;1R"));
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[1;5R"]);
+  });
+
+  it("classifies bytes by stream sequence across class frames: replay, answered and live", async () => {
+    harness.emitReplies = true;
+    const onNotification = vi.fn();
+    const onClipboard = vi.fn();
+    await show({ onNotification, onClipboard });
+    await attachOk();
+    const t = term();
+    // A resumed stream at sequence 100: the first 4 bytes were answered by
+    // the server while nobody was attached.
+    feedControl({
+      type: "nexterm.stream-anchor",
+      epoch: "e1",
+      streamSeq: 100,
+      classes: [{ from: 100, to: 104, kind: "answered" }],
+    });
+    feedBytes("\x1b[6n");
+    // A recovered tail continues on the live fanout: its class frame comes
+    // ahead of the bytes.
+    const tail = "\x1b[c\x1b]52;c;b2xk\x07\x1b]9;x\x07";
+    act(() => {
+      harness.channel?.onClass?.({ type: "nexterm.stream-class", from: 104, to: 104 + enc.encode(tail).length, kind: "replay" });
+    });
+    feedBytes(tail + "\x1b[6n\x1b]9;live\x07");
+    act(() => t.drainWrites());
+    // Answered and replayed queries get no reply; the live one does.
+    expect(upstream()).toEqual(["\x1b[1;1R"]);
+    expect(onClipboard).not.toHaveBeenCalled();
+    expect(onNotification).toHaveBeenCalledTimes(1);
+    expect(onNotification).toHaveBeenCalledWith("live");
+  });
+
+  it("classifies held bytes by the recovery anchor's spans", async () => {
+    harness.emitReplies = true;
+    const onClipboard = vi.fn();
+    await show({ onClipboard });
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0 });
+    feedBytes("abcd");
+    // A replayed tail is announced while the server holds its bytes.
+    const tail = "\x1b[6n\x1b]52;c;b2xk\x07";
+    const tailSpan = { from: 4, to: 4 + enc.encode(tail).length, kind: "replay" };
+    act(() => {
+      harness.channel?.onClass?.({ type: "nexterm.stream-class", ...tailSpan });
+    });
+    // A recovery anchor redelivers from sequence 2 and covers everything fed
+    // up to now, including the held bytes.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: 2, classes: [tailSpan] });
+    feedBytes("cd" + tail);
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual([]);
+    expect(onClipboard).not.toHaveBeenCalled();
+  });
+
+  it("does not carry spans into a new stream that is not marked expired", async () => {
+    harness.emitReplies = true;
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, classes: [{ from: 0, to: 64, kind: "replay" }] });
+    feedBytes("old");
+    // A fresh attach (clear-screen control, empty ring) starts another
+    // sequence space at 0; the old replay span must not cover it.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e2", streamSeq: 0, controlBytes: 3 });
+    feedBytes("\x1b[H\x1b[6n");
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[1;1R"]);
+  });
+
+  it("passes a key reply raised by a handler that stops propagation, and nothing after it", async () => {
+    harness.emitReplies = true;
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, classes: [{ from: 0, to: 4, kind: "replay" }] });
+    feedBytes("\x1b[6n");
+    // Parse the open marker only: xterm is inside the replayed bytes.
+    act(() => t.drainWrites(1));
+    const textarea = document.createElement("textarea");
+    t.host?.appendChild(textarea);
+    // Like xterm's _keyDown: stop propagation and raise onData on the spot.
+    textarea.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      t.handlers.data?.("\x1b[1;5R");
+    });
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
+    });
+    // The mark ended with the event, before any timer: a reply-shaped report
+    // parsed now is a reply to replay.
+    act(() => t.handlers.data?.("\x1b[1;1R"));
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[1;5R"]);
+  });
+
+  it("keeps keystrokes typed while a replay is parsed", async () => {
+    harness.emitReplies = true;
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, expired: true, classes: [{ from: 0, to: 4, kind: "replay" }] });
+    feedBytes("\x1b[6n");
+    // Parse the start marker only: xterm is now inside the replayed bytes.
+    act(() => t.drainWrites(1));
+    act(() => t.handlers.data?.("ls\r"));
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["ls\r"]);
+  });
+
+  it("renders a docker exec backlog announced as replay without replies", async () => {
+    harness.emitReplies = true;
+    const onNotification = vi.fn();
+    await show({ containerId: "container-1" });
+    await attachOk();
+    const t = term();
+    const backlog = "\x1b[c\x1b]9;backlog\x07";
+    act(() => {
+      harness.channel?.onReplay?.({ type: "nexterm.stream-replay", bytes: enc.encode(backlog).length });
+    });
+    feedBytes(backlog + "\x1b[c");
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[?1;2c"]);
+    expect(onNotification).not.toHaveBeenCalled();
   });
 });

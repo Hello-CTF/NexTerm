@@ -85,6 +85,13 @@ func TestCoreTerminalRawReplayAndResponseIntegration(t *testing.T) {
 	if !bytes.Contains(frame.Data, raw) {
 		t.Fatalf("production terminal altered raw replay: %v", frame.Data)
 	}
+	// The headless screen answers queries only while no client is attached
+	// (an attached client's emulator answers them itself).
+	for _, channelID := range []string{"a-1", "b-1"} {
+		if err := manager.DetachChannel(channelID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := channel.emit([]byte("\x1b[6n")); err != nil {
 		t.Fatal(err)
 	}

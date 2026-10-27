@@ -67,9 +67,11 @@ const maxCommandWrapRows = 8
 // latest lifecycle snapshot. Callers must hold the tab feed gate: the
 // tracker is not safe for concurrent use. The recording, replay, and
 // subscriber bytes are untouched.
-func (m *Manager) observeCommand(tab *Tab, data []byte) {
+func (m *Manager) observeCommand(tab *Tab, data []byte, replay bool) {
 	reports, state, _ := tab.commandTrack.ObserveReports(data)
-	if len(reports) > 0 {
+	// Replayed history keeps the lifecycle snapshot current but never records
+	// commands: they were recorded when they ran.
+	if len(reports) > 0 && !replay {
 		now := m.now()
 		for _, report := range reports {
 			switch {

@@ -7,6 +7,7 @@ import {
   RESPONSE_REFILL_BYTES_PER_SECOND,
   classifyTerminalResponse,
   createTerminalResponseLimiter,
+  isAutomaticTerminalReply,
   terminalResponseKey,
   type TerminalResponseStats,
 } from "../../features/terminal/terminalResponses";
@@ -298,5 +299,16 @@ describe("terminal automatic responses from a real xterm", () => {
     expect(kinds).toEqual(["da", "da", "dcs", "osc-color", "osc-color", "osc-color", "osc-color", "cpr", "dsr"]);
     expect(sent[7]).toBe("\x1b[5;7R");
     expect(limiter.stats()).toMatchObject({ deferred: 0, coalesced: 0, dropped: 0 });
+  });
+});
+
+describe("automatic reply detection for replayed output", () => {
+  it("covers limiter replies and unsolicited reports but not user input", () => {
+    for (const reply of ["\x1b[?1;2c", "\x1b[3;7R", "\x1b[0n", "\x1b[I", "\x1b[O", "\x1b[?997;1n", "\x1bP>|xterm.js(6)\x1b\\"]) {
+      expect(isAutomaticTerminalReply(reply)).toBe(true);
+    }
+    for (const input of ["ls\r", "\x1b", "\x1b[A", "\x1b[200~text\x1b[201~", "\x03"]) {
+      expect(isAutomaticTerminalReply(input)).toBe(false);
+    }
   });
 });

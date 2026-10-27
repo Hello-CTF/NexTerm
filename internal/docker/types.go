@@ -235,6 +235,15 @@ func (f FrameSinkFunc) Send(ctx context.Context, frame []byte) error {
 	return f(ctx, frame)
 }
 
+// ReplaySink is an optional FrameSink extension: before a resumed exec
+// stream delivers the output buffered while it was detached, the sink is told
+// how many bytes that backlog holds, in order with the frames, so the viewer
+// can render them without replying to queries or raising notifications.
+type ReplaySink interface {
+	FrameSink
+	AnnounceReplay(ctx context.Context, bytes int) error
+}
+
 type LogsAttachRequest struct {
 	SessionID string
 	Container string

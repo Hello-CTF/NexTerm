@@ -181,6 +181,13 @@ func (f *Fanout) Count() int {
 	return len(f.sinks)
 }
 
+// Has reports whether id is attached; an aborted subscriber is removed.
+func (f *Fanout) Has(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sinks[id] != nil
+}
+
 func (f *Fanout) SubscriberStats(id string) (FanoutSubscriberStats, bool) {
 	f.mu.Lock()
 	entry := f.sinks[id]

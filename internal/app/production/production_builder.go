@@ -508,6 +508,13 @@ func (s *channelOwnerBinaryStream) Close() error {
 	return err
 }
 
+// jsonStream returns the underlying channel when it also carries in-band JSON
+// control frames; the wrapper does not claim ipc.JSONStream itself.
+func (s *channelOwnerBinaryStream) jsonStream() (ipc.JSONStream, bool) {
+	stream, ok := s.BinaryStream.(ipc.JSONStream)
+	return stream, ok
+}
+
 func (s *channelOwnerBinaryStream) CloseGracefully() error {
 	stream, ok := s.BinaryStream.(interface{ CloseGracefully() error })
 	if !ok {

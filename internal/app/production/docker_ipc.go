@@ -203,9 +203,42 @@ func (s *terminalCommandService) openDockerSink(ctx context.Context, call *ipc.C
 	if err != nil {
 		return nil, nil, terminalIPCError(err)
 	}
-	return stream, docker.FrameSinkFunc(func(ctx context.Context, frame []byte) error {
-		return stream.SendBinary(ctx, frame)
-	}), nil
+	return stream, dockerExecSink{stream: stream}, nil
+}
+
+// streamReplayType marks the bytes that follow on a terminal channel as
+// replayed output (src/ipc/events.ts StreamReplayControl).
+const streamReplayType = "nexterm.stream-replay"
+
+// dockerExecSink delivers exec output to a terminal channel. A resumed exec
+// announces its detached backlog in-band so the view renders it without
+// replying to queries or raising notifications.
+type dockerExecSink struct {
+	stream ipc.BinaryStream
+}
+
+func (s dockerExecSink) Send(ctx context.Context, frame []byte) error {
+	return s.stream.SendBinary(ctx, frame)
+}
+
+func (s dockerExecSink) AnnounceReplay(ctx context.Context, bytes int) error {
+	frame, err := json.Marshal(struct {
+		Type  string `json:"type"`
+		Bytes int    `json:"bytes"`
+	}{Type: streamReplayType, Bytes: bytes})
+	if err != nil {
+		return err
+	}
+	stream, ok := s.stream.(ipc.JSONStream)
+	if wrapped, isWrapper := s.stream.(interface{ jsonStream() (ipc.JSONStream, bool) }); !ok && isWrapper {
+		stream, ok = wrapped.jsonStream()
+	}
+	if !ok {
+		// Without an in-band control path the backlog is delivered
+		// unmarked, as before.
+		return nil
+	}
+	return stream.SendJSON(ctx, frame)
 }
 
 func (s *terminalCommandService) watchDockerStream(id string, stream ipc.BinaryStream) {

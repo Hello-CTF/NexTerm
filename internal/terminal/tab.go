@@ -541,6 +541,30 @@ func (t *Tab) Close() {
 }
 
 func (t *Tab) Feed(raw []byte) {
+	t.FeedWith(raw, FeedOptions{})
+}
+
+// FeedOptions changes how FeedWith treats output.
+type FeedOptions struct {
+	// Replay marks output replayed from history: it leaves the last-output
+	// time that marks tabs unread alone and never answers queries.
+	Replay bool
+	// Unanswered parses queries without answering them, because an attached
+	// client's own terminal emulator answers them.
+	Unanswered bool
+}
+
+// FeedReplay renders output replayed from history (a durable tail on
+// recovery). It updates the screen, modes and ring like Feed, but it is not
+// new output: it leaves the last-output time that marks tabs unread alone and
+// drops automatic query replies instead of sending them to the live shell.
+func (t *Tab) FeedReplay(raw []byte) {
+	t.FeedWith(raw, FeedOptions{Replay: true})
+}
+
+// FeedWith renders output like Feed, as options select.
+func (t *Tab) FeedWith(raw []byte, options FeedOptions) {
+	replay := options.Replay
 	if len(raw) == 0 || t.closed.Load() {
 		return
 	}
@@ -552,7 +576,9 @@ func (t *Tab) Feed(raw []byte) {
 	t.quietBegin()
 	now := t.now().UnixMilli()
 	t.lastOutput.Store(now)
-	t.lastOutputAt.Store(now)
+	if !replay {
+		t.lastOutputAt.Store(now)
+	}
 	t.ring.Push(raw)
 	decoded := t.tr.Feed(raw)
 	t.modes.Feed(decoded)
@@ -568,7 +594,7 @@ func (t *Tab) Feed(raw []byte) {
 	t.mu.Unlock()
 	// The response handler runs after the quiet write closes so a blocked
 	// callback can never stall quiet readers.
-	if len(responses) > 0 {
+	if len(responses) > 0 && !replay && !options.Unanswered {
 		if h, _ := t.responseHandler.Load().(responseHandler); h.fn != nil {
 			h.fn(responses)
 		}

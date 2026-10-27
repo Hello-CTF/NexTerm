@@ -182,9 +182,52 @@ export interface StreamAnchorControl {
   // it as its current attachment identity, so the ordered stream itself
   // carries the incarnation even before the attach RPC response arrives.
   attachmentId?: number;
+  // Output-class spans (by stream sequence) of the bytes this stream will
+  // deliver; later spans arrive as stream-class frames.
+  classes?: StreamClassControl[];
 }
 
 export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";
+
+// Announces that the next `bytes` stream bytes are replayed output, for
+// streams without anchors (a resumed docker exec delivering its backlog).
+export interface StreamReplayControl {
+  type: string;
+  bytes: number;
+}
+
+export const STREAM_REPLAY_TYPE = "nexterm.stream-replay";
+
+// Classifies the stream sequence range [from, to) ahead of its bytes:
+// "replay" renders without side effects, "answered" without automatic replies.
+export interface StreamClassControl {
+  type?: string;
+  from: number;
+  to: number;
+  kind: string;
+}
+
+export const STREAM_CLASS_TYPE = "nexterm.stream-class";
+
+function isStreamClass(raw: unknown): raw is StreamClassControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === STREAM_CLASS_TYPE &&
+    typeof (raw as { from?: unknown }).from === "number" &&
+    typeof (raw as { to?: unknown }).to === "number" &&
+    typeof (raw as { kind?: unknown }).kind === "string"
+  );
+}
+
+function isStreamReplay(raw: unknown): raw is StreamReplayControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === STREAM_REPLAY_TYPE &&
+    typeof (raw as { bytes?: unknown }).bytes === "number"
+  );
+}
 
 function isStreamAnchor(raw: unknown): raw is StreamAnchorControl {
   return (
@@ -229,12 +272,22 @@ function handleDesktopStreamClosed(channel: unknown, raw: unknown): boolean {
 export function createBinaryChannel(
   onBytes: (data: Uint8Array) => void,
   onControl?: (control: StreamAnchorControl) => void,
+  onReplay?: (control: StreamReplayControl) => void,
+  onClass?: (control: StreamClassControl) => void,
 ): IpcChannel<unknown> {
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = (raw) => {
     if (handleDesktopStreamClosed(channel, raw)) return;
     if (isStreamAnchor(raw)) {
       onControl?.(raw);
+      return;
+    }
+    if (isStreamReplay(raw)) {
+      onReplay?.(raw);
+      return;
+    }
+    if (isStreamClass(raw)) {
+      onClass?.(raw);
       return;
     }
     decodeBytes(raw, onBytes);

@@ -58,10 +58,16 @@ func (m *Manager) startDurableReplay(ctx context.Context, tab *Tab, generation u
 		m.transcriptGap(ctx, tab, gap)
 	}
 	if len(prelude) > 0 {
-		_ = m.feedDisplay(ctx, tab, generation, prelude)
+		// The prelude restores the replayed tail's modes: it is replay too.
+		_ = m.feedWith(ctx, tab, generation, prelude, feedOptions{replay: true})
 	}
 	if banner {
-		_ = m.feedDisplay(ctx, tab, generation, durableHistoryGapBanner)
+		// A reconnect inside the recovered tail renders its notice where the
+		// tail resumes: replay by position.
+		tab.mu.Lock()
+		inReplay := tab.replayUntil > tab.durableFed
+		tab.mu.Unlock()
+		_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, feedOptions{replay: inReplay})
 	}
 }
 
@@ -74,6 +80,7 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 	tab.mu.Lock()
 	fed := tab.durableFed
 	displayFrom := tab.displayFrom
+	replayUntil := tab.replayUntil
 	var control ControlEvent
 	gap := start - fed
 	if gap > 0 {
@@ -85,13 +92,24 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 		m.logger.Warn("durable output dropped by the history limit before it was streamed", "tab", tab.ID, "from", fed, "to", start)
 		m.transcriptGap(ctx, tab, gap)
 		if start >= displayFrom {
-			_ = m.feedDisplay(ctx, tab, generation, durableHistoryGapBanner)
+			_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, feedOptions{replay: start < replayUntil})
 		}
 		m.emit(context.Background(), TopicTerminalControl, control)
 	}
 	if hidden := min(max(displayFrom-start, 0), int64(len(chunk))); hidden > 0 {
 		m.transcriptOutput(ctx, tab, chunk[:hidden])
 		chunk = chunk[hidden:]
+		start += hidden
+	}
+	// The recovered tail before replayUntil is history, not new output. A
+	// sequence straddling replayUntil belongs to the live part: whatever its
+	// final byte completes is new output. Every fed range is classified by
+	// stream sequence, so deliveries stay exact however the tail ends.
+	if replayed := min(max(replayUntil-start, 0), int64(len(chunk))); replayed > 0 {
+		if err := m.feedWith(ctx, tab, generation, chunk[:replayed], feedOptions{transcript: true, replay: true}); err != nil {
+			return err
+		}
+		chunk = chunk[replayed:]
 	}
 	if len(chunk) > 0 {
 		if err := m.feed(ctx, tab, generation, chunk); err != nil {
@@ -101,6 +119,9 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 	tab.mu.Lock()
 	if tab.durable != nil && tab.generation == generation {
 		tab.durableFed = end
+		if replayUntil > 0 && end >= replayUntil {
+			tab.replayUntil = 0
+		}
 	}
 	tab.mu.Unlock()
 	return nil

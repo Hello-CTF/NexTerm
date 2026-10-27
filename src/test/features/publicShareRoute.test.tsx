@@ -9,6 +9,7 @@ const terminalSpies = vi.hoisted(() => ({
     options: { disableStdin?: boolean };
     writes: Uint8Array[];
     disposed: boolean;
+    onDataCallback: ((data: string) => void) | null;
   }>,
 }));
 
@@ -20,6 +21,11 @@ vi.mock("@xterm/xterm", async () => {
   class TrackingTerminal extends m.FakeTerminal {
     readonly writes: Uint8Array[] = [];
     disposed = false;
+    onDataCallback: ((data: string) => void) | null = null;
+    override onData(callback: (data: string) => void) {
+      this.onDataCallback = callback;
+      return { dispose() {} };
+    }
     constructor(options: { disableStdin?: boolean }) {
       super(options);
       terminalSpies.instances.push(this);
@@ -86,5 +92,23 @@ describe("PublicShareTerminal lifecycle", () => {
 
     view.unmount();
     expect(terminal.disposed).toBe(true);
+  });
+
+  it("never answers terminal queries for the host, but passes the guest's own reply-shaped keys", () => {
+    const onInput = vi.fn();
+    const view = mount(createElement(PublicShareTerminal, { onInput, readOnly: false }));
+    const terminal = terminalSpies.instances[0];
+    act(() => terminal.onDataCallback?.("\x1b[?1;2c"));
+    act(() => terminal.onDataCallback?.("\x1b[3;7R"));
+    act(() => terminal.onDataCallback?.("ls\r"));
+    const host = view.container.querySelector("div") as HTMLElement;
+    const textarea = document.createElement("textarea");
+    host.appendChild(textarea);
+    textarea.addEventListener("keydown", () => terminal.onDataCallback?.("\x1b[1;5R"));
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
+    });
+    expect(onInput.mock.calls.map(([data]) => data)).toEqual(["ls\r", "\x1b[1;5R"]);
+    view.unmount();
   });
 });

@@ -59,12 +59,17 @@ func (o *Output) SetVisible(visible bool) {
 }
 
 func (o *Output) Chunk(ctx context.Context, chunk []byte) error {
+	return o.ChunkWith(ctx, chunk, FeedOptions{})
+}
+
+// ChunkWith is Chunk with the screen fed as options select.
+func (o *Output) ChunkWith(ctx context.Context, chunk []byte, options FeedOptions) error {
 	if len(chunk) == 0 {
 		return nil
 	}
 	o.chunkMu.Lock()
 	defer o.chunkMu.Unlock()
-	o.tab.Feed(chunk)
+	o.tab.FeedWith(chunk, options)
 	o.tab.recordChunk(chunk)
 	if o.tab.IsVisible() {
 		o.flushLocked(ctx)

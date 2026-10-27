@@ -24,6 +24,17 @@ func (t *coreTerminal) Feed(raw []byte) {
 	_ = t.output.Chunk(context.Background(), raw)
 }
 
+// FeedWith overrides the embedded Tab's so options reach the screen through
+// the same output path (recording and fanout) as Feed.
+func (t *coreTerminal) FeedWith(raw []byte, options terminal.FeedOptions) {
+	_ = t.output.ChunkWith(context.Background(), raw, options)
+}
+
+// FeedReplay overrides the embedded Tab's for the same reason.
+func (t *coreTerminal) FeedReplay(raw []byte) {
+	t.FeedWith(raw, terminal.FeedOptions{Replay: true})
+}
+
 func (t *coreTerminal) Close() {
 	t.StopRecording()
 	t.output.Close()

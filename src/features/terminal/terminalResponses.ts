@@ -63,6 +63,18 @@ export function classifyTerminalResponse(data: string): TerminalResponseType | n
   return null;
 }
 
+// Reports xterm emits on its own while parsing output but that the limiter
+// passes as input: focus reports after DECSET 1004 and the colour scheme
+// report (CSI ? 997 ; n n).
+const UNSOLICITED_REPORTS = [/^\x1b\[[IO]$/, /^\x1b\[\?\d+;\d+n$/];
+
+// Whether onData carries a reply xterm produced for parsed output rather than
+// user input. Used to drop replies to replayed output, which must never reach
+// the live shell.
+export function isAutomaticTerminalReply(data: string): boolean {
+  return classifyTerminalResponse(data) !== null || UNSOLICITED_REPORTS.some((pattern) => pattern.test(data));
+}
+
 // The key under which a queued reply may be replaced by a newer one.
 export function terminalResponseKey(type: TerminalResponseType, data: string): string {
   switch (type) {
