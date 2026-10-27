@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { click, flush, mountWithClient, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
@@ -146,7 +146,7 @@ describe("terminal link activation settings", () => {
 });
 
 describe("multi-line paste confirmation setting", () => {
-  it("re-enables a prompt the account turned off and saves it to the account", async () => {
+  it("reads a legacy false as never and saves the chosen mode to the account", async () => {
     const put = vi.fn().mockResolvedValue(undefined);
     registerAccountPreferenceStore({
       getView: async () => ({ defaults: {}, overrides: { "terminal.confirmMultilinePaste": false } }),
@@ -155,13 +155,23 @@ describe("multi-line paste confirmation setting", () => {
     });
     mounted = mountWithClient(createElement(SettingsView));
     await flush();
-    const toggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="多行粘贴前确认"]');
-    if (!toggle) throw new Error("multi-line paste toggle not found");
-    await waitFor(() => expect(toggle.checked).toBe(false));
+    const label = [...mounted.container.querySelectorAll("label")].find((node) => node.textContent?.trim() === "多行粘贴确认");
+    const select = label ? mounted.container.querySelector<HTMLSelectElement>(`#${CSS.escape(label.htmlFor)}`) : null;
+    if (!select) throw new Error("multi-line paste select not found");
+    await waitFor(() => expect(select.value).toBe("never"));
+    expect([...select.options].map((option) => option.textContent)).toEqual([
+      "仅在程序未开启括号粘贴时确认",
+      "每次都确认",
+      "从不确认",
+    ]);
+    expect(mounted.container.textContent).toContain("开启括号粘贴的程序（如 bash/zsh）会把多行内容当成一次粘贴，不会逐行执行");
 
-    click(toggle);
-    await waitFor(() => expect(toggle.checked).toBe(true));
-    expect(put).toHaveBeenCalledWith({ "terminal.confirmMultilinePaste": true });
-    expect(getTerminalPrefs().confirmMultilinePaste).toBe(true);
+    act(() => {
+      select.value = "unbracketed";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await waitFor(() => expect(select.value).toBe("unbracketed"));
+    expect(put).toHaveBeenCalledWith({ "terminal.confirmMultilinePaste": "unbracketed" });
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("unbracketed");
   });
 });

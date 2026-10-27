@@ -138,7 +138,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.defaultMode":           `"regular"`,
 		"terminal.gpuAcceleration":       `"off"`,
 		"terminal.linkActivation":        `"click"`,
-		"terminal.confirmMultilinePaste": "false",
+		"terminal.confirmMultilinePaste": `"unbracketed"`,
 		"keybinding.closeTab":            `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":       "null",
 		"keybinding.reclaimTakeover":     `"Mod+Shift+s"`,
@@ -159,6 +159,18 @@ func TestValidatePreferenceValue(t *testing.T) {
 		got, err := validatePreferenceValue("appearance.terminalFontFamily", json.RawMessage(strconv.Quote(value)))
 		if err != nil || got != strconv.Quote(value) {
 			t.Errorf("terminal font %q=(%q,%v)", value, got, err)
+		}
+	}
+	for raw, want := range map[string]string{
+		`"unbracketed"`: `"unbracketed"`,
+		`"always"`:      `"always"`,
+		`"never"`:       `"never"`,
+		"true":          `"always"`,
+		"false":         `"never"`,
+	} {
+		got, err := validatePreferenceValue("terminal.confirmMultilinePaste", json.RawMessage(raw))
+		if err != nil || got != want {
+			t.Errorf("multi-line paste confirmation %s=(%q,%v) want %q", raw, got, err, want)
 		}
 	}
 	for _, value := range []string{"modifier", "click"} {
@@ -186,7 +198,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.defaultMode":           {`"auto"`, `"persistent"`, "1", "null", "true"},
 		"terminal.gpuAcceleration":       {`"webgl"`, `"Auto"`, "1", "null", "true"},
 		"terminal.linkActivation":        {`"ctrl"`, `"Click"`, `"double"`, "1", "null", "true"},
-		"terminal.confirmMultilinePaste": {`"false"`, "0", "null"},
+		"terminal.confirmMultilinePaste": {`"false"`, `"Always"`, `"ask"`, "0", "null"},
 		"keybinding.closeTab":            {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {

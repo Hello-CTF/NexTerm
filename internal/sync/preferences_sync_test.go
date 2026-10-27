@@ -112,8 +112,8 @@ func TestEngineAIPermissionAndPreferencesConverge(t *testing.T) {
 	}
 }
 
-// The multi-line paste prompt preference is turned off on one device and back on on another; each change reaches the
-// other device as the account override the terminal reads.
+// The multi-line paste confirmation mode converges between devices: a boolean saved before the enum existed reaches
+// the other device as the mode it now means, and later enum values sync like any other preference.
 func TestEngineMultilinePastePreferenceConverges(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -132,19 +132,28 @@ func TestEngineMultilinePastePreferenceConverges(t *testing.T) {
 		}
 		return string(values[key])
 	}
-
-	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, "false", 100)
-	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
-	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
-	if got := overrides(deviceB); got != "false" {
-		t.Fatalf("device B override after disabling = %q, want false", got)
+	round := func(from, to *testDevice) {
+		t.Helper()
+		syncDevice(t, from, server, "alice", "alice-pw-123")
+		syncDevice(t, to, server, "alice", "alice-pw-123")
 	}
 
-	putPreferenceSetting(t, deviceB, "prefs.user."+userID+"."+key, "true", 200)
-	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
-	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
-	if got := overrides(deviceA); got != "true" {
-		t.Fatalf("device A override after re-enabling = %q, want true", got)
+	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, "false", 100)
+	round(deviceA, deviceB)
+	if got := overrides(deviceB); got != `"never"` {
+		t.Fatalf("device B mode from a legacy false = %s, want \"never\"", got)
+	}
+
+	putPreferenceSetting(t, deviceB, "prefs.user."+userID+"."+key, `"unbracketed"`, 200)
+	round(deviceB, deviceA)
+	if got := overrides(deviceA); got != `"unbracketed"` {
+		t.Fatalf("device A mode = %s, want \"unbracketed\"", got)
+	}
+
+	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, `"always"`, 300)
+	round(deviceA, deviceB)
+	if got := overrides(deviceB); got != `"always"` {
+		t.Fatalf("device B mode = %s, want \"always\"", got)
 	}
 }
 

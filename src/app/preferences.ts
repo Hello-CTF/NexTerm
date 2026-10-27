@@ -236,14 +236,17 @@ export type TerminalDefaultMode = "durable" | "regular";
 export type TerminalGpuAcceleration = "auto" | "on" | "off";
 // modifier opens terminal links with Ctrl+click (Cmd+click on macOS); click opens them with a plain click.
 export type TerminalLinkActivation = "modifier" | "click";
+// When a multi-line paste is confirmed first: unbracketed asks only when the program in the terminal has not turned on
+// bracketed paste (a bracketed paste reaches the shell as one paste instead of running line by line); always asks for
+// every multi-line paste; never does not ask.
+export type TerminalMultilinePasteConfirm = "unbracketed" | "always" | "never";
 
 export interface TerminalPrefs {
   closeAction: TerminalCloseAction;
   defaultMode: TerminalDefaultMode;
   gpuAcceleration: TerminalGpuAcceleration;
   linkActivation: TerminalLinkActivation;
-  // Ask before a paste of more than one line reaches the terminal.
-  confirmMultilinePaste: boolean;
+  confirmMultilinePaste: TerminalMultilinePasteConfirm;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
@@ -257,8 +260,17 @@ const TERMINAL_DEFAULTS: TerminalPrefs = {
   defaultMode: "durable",
   gpuAcceleration: "auto",
   linkActivation: "modifier",
-  confirmMultilinePaste: true,
+  confirmMultilinePaste: "unbracketed",
 };
+
+// The setting was a boolean before it became a mode: an explicit true kept confirmation on for every paste and an
+// explicit false turned it off. A missing value is the current default.
+export function normalizeMultilinePasteConfirm(value: unknown): TerminalMultilinePasteConfirm {
+  if (value === "unbracketed" || value === "always" || value === "never") return value;
+  if (value === true) return "always";
+  if (value === false) return "never";
+  return TERMINAL_DEFAULTS.confirmMultilinePaste;
+}
 
 function loadTerminal(): TerminalPrefs {
   let local: Partial<TerminalPrefs> = {};
@@ -277,7 +289,7 @@ function loadTerminal(): TerminalPrefs {
   const links = preferenceValue<unknown>(TERMINAL_LINK_ACTIVATION_KEY, local.linkActivation, TERMINAL_DEFAULTS.linkActivation);
   // A signed-in account reads only its own layers (override, then server default): a device value saved without an
   // account, or by another account in this browser, must not decide whether this account is asked before pasting.
-  const confirmPaste = terminalDefaultUsesAccount()
+  const confirmPaste: unknown = terminalDefaultUsesAccount()
     ? accountOverrides[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY] ?? accountDefaults[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]
     : local.confirmMultilinePaste;
   return {
@@ -285,7 +297,7 @@ function loadTerminal(): TerminalPrefs {
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
     gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
-    confirmMultilinePaste: confirmPaste !== false,
+    confirmMultilinePaste: normalizeMultilinePasteConfirm(confirmPaste),
   };
 }
 
@@ -366,7 +378,7 @@ export function setTerminalLinkActivation(value: TerminalLinkActivation): void {
 
 // setTerminalConfirmMultilinePaste writes a signed-in account's choice only as that account's override, which reaches
 // its other devices through preference sync; without an account it is kept on this device only.
-export function setTerminalConfirmMultilinePaste(value: boolean): void {
+export function setTerminalConfirmMultilinePaste(value: TerminalMultilinePasteConfirm): void {
   if (terminalPrefs.confirmMultilinePaste === value) return;
   terminalPrefs = { ...terminalPrefs, confirmMultilinePaste: value };
   const store = terminalDefaultUsesAccount() ? accountStore : null;

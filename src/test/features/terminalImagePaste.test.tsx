@@ -412,11 +412,11 @@ describe("XtermView image paste interception", () => {
 
 describe("XtermView multi-line text paste", () => {
   afterEach(() => {
-    setTerminalConfirmMultilinePaste(true);
+    setTerminalConfirmMultilinePaste("unbracketed");
   });
 
   it("pastes without a prompt once the user turned the multi-line prompt off", async () => {
-    setTerminalConfirmMultilinePaste(false);
+    setTerminalConfirmMultilinePaste("never");
     const onData = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onData });
 
@@ -431,8 +431,24 @@ describe("XtermView multi-line text paste", () => {
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
+  it("sends a multi-line paste bracketed without a prompt when the program turned bracketed paste on", async () => {
+    setTerminalConfirmMultilinePaste("unbracketed");
+    const onData = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onData });
+    const terminal = harness.terminals[0] as unknown as { modes: { bracketedPasteMode: boolean } };
+    terminal.modes.bracketedPasteMode = true;
+
+    await act(async () => {
+      host().dispatchEvent(pasteEvent([], "echo one\necho two"));
+      await flushMacrotask();
+    });
+
+    expect(onData).toHaveBeenCalledWith("\x1b[200~echo one\necho two\x1b[201~");
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
   it("keeps the bracketed paste closed against an embedded end sequence while the prompt is off", async () => {
-    setTerminalConfirmMultilinePaste(false);
+    setTerminalConfirmMultilinePaste("never");
     const onData = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onData });
     const terminal = harness.terminals[0] as unknown as { modes: { bracketedPasteMode: boolean } };

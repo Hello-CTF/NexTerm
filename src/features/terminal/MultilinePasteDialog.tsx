@@ -117,7 +117,7 @@ function MultilinePasteDialog({ prompt }: { prompt: MultilinePastePrompt }) {
               />
               <span>
                 以后都不再提示
-                <span className="nx-hint block">可在 设置 &gt; 终端 &gt; 多行粘贴前确认 中重新开启</span>
+                <span className="nx-hint block">可在 设置 &gt; 终端 &gt; 多行粘贴确认 中重新开启</span>
               </span>
             </label>
           </div>

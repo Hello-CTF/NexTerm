@@ -44,14 +44,17 @@ export const MULTILINE_PASTE_WARNING = "多行内容可能包含多条命令，�
 
 /**
  * Asks before more than one line is pasted into a terminal. tabId is the workspace tab the paste goes to; the
- * prompt then also offers to stop asking in that tab. Single lines, a tab the user exempted, and a user who turned
- * the prompt off in settings paste without asking. This only decides whether to paste: the caller still sends the
- * text through its usual bracketed-paste path.
+ * prompt then also offers to stop asking in that tab. bracketedPaste is the terminal's live bracketed paste mode
+ * (DECSET 2004) at paste time. Single lines, a tab the user exempted, the "never" setting, and, under the default
+ * "unbracketed" setting, a terminal in bracketed paste mode paste without asking: there the text arrives wrapped and
+ * sanitised as one paste rather than running line by line. This only decides whether to paste: the caller still
+ * sends the text through its usual bracketed-paste path.
  */
-export async function confirmMultilinePaste(text: string, tabId?: string): Promise<boolean> {
+export async function confirmMultilinePaste(text: string, tabId?: string, bracketedPaste = false): Promise<boolean> {
   const lines = multilinePasteLines(text);
   if (!lines) return true;
-  if (!getTerminalPrefs().confirmMultilinePaste) return true;
+  const mode = getTerminalPrefs().confirmMultilinePaste;
+  if (mode === "never" || (mode === "unbracketed" && bracketedPaste)) return true;
   if (tabId && multilinePasteSkippedForTab(tabId)) return true;
   const preview = multilinePastePreview(lines);
   if (!multilinePasteHostMounted()) {
@@ -69,7 +72,7 @@ export async function confirmMultilinePaste(text: string, tabId?: string): Promi
     tabId: targetTab,
   });
   if (!decision.paste) return false;
-  if (decision.skipAlways) setTerminalConfirmMultilinePaste(false);
+  if (decision.skipAlways) setTerminalConfirmMultilinePaste("never");
   if (decision.skipTab && tabId) skipMultilinePasteForTab(tabId);
   return true;
 }

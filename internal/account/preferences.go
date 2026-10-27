@@ -72,6 +72,8 @@ type preferenceSpec struct {
 	min     int64
 	max     int64
 	strings []string
+	// legacyBools maps a boolean stored before an enum replaced it to the enum value it now means.
+	legacyBools map[bool]string
 }
 
 // preferenceSpecs is the whitelist of all readable/writable preference keys; DEK, password, credential, and arbitrary keys are never included.
@@ -91,7 +93,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.defaultMode":              {kind: preferenceKindEnumString, strings: []string{"durable", "regular"}},
 	"terminal.gpuAcceleration":          {kind: preferenceKindEnumString, strings: []string{"auto", "on", "off"}},
 	"terminal.linkActivation":           {kind: preferenceKindEnumString, strings: []string{"modifier", "click"}},
-	"terminal.confirmMultilinePaste":    {kind: preferenceKindBool},
+	"terminal.confirmMultilinePaste":    {kind: preferenceKindEnumString, strings: []string{"unbracketed", "always", "never"}, legacyBools: map[bool]string{true: "always", false: "never"}},
 	"terminal.durableHistoryMiB":        {kind: preferenceKindIntRange, min: 1, max: 1024},
 	"terminal.keyBar":                   {kind: preferenceKindKeyBar},
 	"terminal.quickCommands":            {kind: preferenceKindQuickCommands},
@@ -242,7 +244,11 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 	case preferenceKindEnumString:
 		var value string
 		if err := json.Unmarshal(raw, &value); err != nil {
-			return "", invalidPreferenceValue(key)
+			var legacy bool
+			if spec.legacyBools == nil || json.Unmarshal(raw, &legacy) != nil {
+				return "", invalidPreferenceValue(key)
+			}
+			value = spec.legacyBools[legacy]
 		}
 		for _, allowed := range spec.strings {
 			if value == allowed {

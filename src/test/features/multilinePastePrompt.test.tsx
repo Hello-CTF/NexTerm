@@ -83,11 +83,11 @@ function keyUp(target: Element, keyName: string): void {
 }
 
 // paste starts a paste and waits until the dialog shows it, or until the paste settled without one.
-async function paste(text: string, tabId?: string): Promise<{ result: Promise<boolean>; prompted: boolean }> {
+async function paste(text: string, tabId?: string, bracketed = false): Promise<{ result: Promise<boolean>; prompted: boolean }> {
   let settled = false;
   let result: Promise<boolean> = Promise.resolve(false);
   act(() => {
-    result = confirmMultilinePaste(text, tabId).finally(() => {
+    result = confirmMultilinePaste(text, tabId, bracketed).finally(() => {
       settled = true;
     });
   });
@@ -99,7 +99,7 @@ beforeEach(() => {
   document.body.replaceChildren();
   mocks.ask.mockReset();
   registerAccountPreferenceStore(null);
-  setTerminalConfirmMultilinePaste(true);
+  setTerminalConfirmMultilinePaste("unbracketed");
   localStorage.clear();
   resetMultilinePastePromptForTest();
   seedTabs(["t1", "t2"]);
@@ -114,6 +114,45 @@ afterEach(() => {
 });
 
 describe("multi-line paste prompt", () => {
+  it("by default asks only when the terminal has not turned on bracketed paste", async () => {
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("unbracketed");
+    const bracketed = await paste("a\nb", "t1", true);
+    expect(bracketed.prompted).toBe(false);
+    await expect(bracketed.result).resolves.toBe(true);
+
+    const plain = await paste("a\nb", "t1", false);
+    expect(plain.prompted).toBe(true);
+    click(button("取消"));
+    await expect(plain.result).resolves.toBe(false);
+  });
+
+  it("asks for every multi-line paste under always and never under never", async () => {
+    setTerminalConfirmMultilinePaste("always");
+    const always = await paste("a\nb", "t1", true);
+    expect(always.prompted).toBe(true);
+    click(button("取消"));
+    await expect(always.result).resolves.toBe(false);
+
+    setTerminalConfirmMultilinePaste("never");
+    const never = await paste("a\nb", "t1", false);
+    expect(never.prompted).toBe(false);
+    await expect(never.result).resolves.toBe(true);
+  });
+
+  it.each([
+    [true, "always"],
+    [false, "never"],
+    [undefined, "unbracketed"],
+  ] as const)("reads a stored legacy value %s as %s", async (stored, mode) => {
+    registerAccountPreferenceStore(memoryStore(stored === undefined ? {} : { [KEY]: stored }));
+    await flush();
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe(mode);
+    registerAccountPreferenceStore(null);
+    localStorage.setItem("nexterm.terminalClose.v1", JSON.stringify(stored === undefined ? {} : { confirmMultilinePaste: stored }));
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe(mode);
+  });
+
   it("never prompts for a single line", async () => {
     const { result, prompted } = await paste("ls -la\n", "t1");
     expect(prompted).toBe(false);
@@ -230,7 +269,7 @@ describe("multi-line paste prompt", () => {
     });
     click(button("取消"));
     await expect(first.result).resolves.toBe(false);
-    expect(getTerminalPrefs().confirmMultilinePaste).toBe(true);
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("unbracketed");
     expect((await paste("a\nb", "t1")).prompted).toBe(true);
   });
 
@@ -253,15 +292,15 @@ describe("multi-line paste prompt", () => {
     });
     click(button("粘贴"));
     await expect(first.result).resolves.toBe(true);
-    expect(store.puts).toContainEqual({ [KEY]: false });
-    expect(getTerminalPrefs().confirmMultilinePaste).toBe(false);
+    expect(store.puts).toContainEqual({ [KEY]: "never" });
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("never");
 
     const other = await paste("a\nb", "t2");
     expect(other.prompted).toBe(false);
     await expect(other.result).resolves.toBe(true);
 
-    setTerminalConfirmMultilinePaste(true);
-    expect(store.puts).toContainEqual({ [KEY]: true });
+    setTerminalConfirmMultilinePaste("always");
+    expect(store.puts).toContainEqual({ [KEY]: "always" });
     const back = await paste("a\nb", "t2");
     expect(back.prompted).toBe(true);
     click(button("取消"));
@@ -278,14 +317,14 @@ describe("multi-line paste prompt", () => {
     });
     click(button("粘贴"));
     await expect(first.result).resolves.toBe(true);
-    expect(alice.puts).toContainEqual({ [KEY]: false });
-    expect(getTerminalPrefs().confirmMultilinePaste).toBe(false);
+    expect(alice.puts).toContainEqual({ [KEY]: "never" });
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("never");
     expect(localStorage.getItem("nexterm.terminalClose.v1") ?? "").not.toContain("confirmMultilinePaste");
 
     const bob = memoryStore();
     registerAccountPreferenceStore(bob);
     await flush();
-    expect(getTerminalPrefs().confirmMultilinePaste).toBe(true);
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("unbracketed");
     const bobPaste = await paste("a\nb", "t2");
     expect(bobPaste.prompted).toBe(true);
     click(button("取消"));
@@ -294,24 +333,24 @@ describe("multi-line paste prompt", () => {
   });
 
   it("lets the server default decide over a value saved on this device without an account", async () => {
-    setTerminalConfirmMultilinePaste(false);
-    expect(getTerminalPrefs().confirmMultilinePaste).toBe(false);
+    setTerminalConfirmMultilinePaste("never");
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("never");
     const store: AccountPreferenceStore = {
-      getView: async () => ({ defaults: { [KEY]: true }, overrides: {} }),
+      getView: async () => ({ defaults: { [KEY]: "always" }, overrides: {} }),
       putOverrides: async () => undefined,
       deleteOverrides: async () => undefined,
     };
     registerAccountPreferenceStore(store);
     await flush();
-    expect(getTerminalPrefs().confirmMultilinePaste).toBe(true);
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("always");
 
     registerAccountPreferenceStore(null);
-    expect(getTerminalPrefs().confirmMultilinePaste).toBe(false);
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("never");
   });
 
   it("honours the preference synced from another device", async () => {
     registerAccountPreferenceStore(memoryStore({ [KEY]: false }));
-    await vi.waitFor(() => expect(getTerminalPrefs().confirmMultilinePaste).toBe(false));
+    await vi.waitFor(() => expect(getTerminalPrefs().confirmMultilinePaste).toBe("never"));
     const { result, prompted } = await paste("a\nb", "t1");
     expect(prompted).toBe(false);
     await expect(result).resolves.toBe(true);
