@@ -16,14 +16,26 @@ function MultilinePasteDialog({ prompt }: { prompt: MultilinePastePrompt }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const pasteRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const layer = useOverlayFocus(true, modalRef, { initialFocus: () => pasteRef.current });
+  // Cancel takes the initial focus, as the app's other warning dialogs do: a stray keystroke never pastes.
+  const layer = useOverlayFocus(true, modalRef, { initialFocus: () => cancelRef.current });
   const titleId = useId();
   const descriptionId = useId();
   const [skipTab, setSkipTab] = useState(false);
   const [skipAlways, setSkipAlways] = useState(false);
+  // An Enter still held from before the dialog opened must not confirm it: a confirming Enter needs a key
+  // release seen while the dialog is open.
+  const keyUpSeenRef = useRef(false);
 
   const confirm = () => prompt.settle({ paste: true, skipTab: prompt.tabScoped && skipTab, skipAlways });
   const cancel = () => prompt.settle(CANCEL);
+
+  useEffect(() => {
+    const onKeyUp = () => {
+      keyUpSeenRef.current = true;
+    };
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => window.removeEventListener("keyup", onKeyUp, true);
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -40,20 +52,17 @@ function MultilinePasteDialog({ prompt }: { prompt: MultilinePastePrompt }) {
     event.stopPropagation();
     if (!layer.isTopmost()) return;
     trapOverlayTab(event, modalRef.current);
-    // Enter pastes from anywhere in the dialog except the cancel button, which keeps its own meaning.
-    if (
-      event.key === "Enter" &&
-      !event.repeat &&
-      !isImeKeyEvent(event) &&
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.shiftKey &&
-      event.target !== cancelRef.current
-    ) {
+    if (event.key !== "Enter" || isImeKeyEvent(event)) return;
+    // An auto-repeated Enter never activates anything, including the focused button's native activation.
+    if (event.repeat) {
       event.preventDefault();
-      confirm();
+      return;
     }
+    // On the cancel button Enter keeps its native meaning; elsewhere in the dialog it pastes.
+    if (event.target === cancelRef.current) return;
+    event.preventDefault();
+    if (!keyUpSeenRef.current || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    confirm();
   };
 
   const more = prompt.lineCount - prompt.preview.length;

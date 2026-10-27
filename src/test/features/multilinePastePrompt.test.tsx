@@ -68,9 +68,17 @@ function checkbox(label: string): HTMLInputElement {
   return input;
 }
 
-function key(target: Element, keyName: string): void {
+function key(target: Element, keyName: string, repeat = false): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { key: keyName, repeat, bubbles: true, cancelable: true });
   act(() => {
-    target.dispatchEvent(new KeyboardEvent("keydown", { key: keyName, bubbles: true, cancelable: true }));
+    target.dispatchEvent(event);
+  });
+  return event;
+}
+
+function keyUp(target: Element, keyName: string): void {
+  act(() => {
+    target.dispatchEvent(new KeyboardEvent("keyup", { key: keyName, bubbles: true, cancelable: true }));
   });
 }
 
@@ -113,7 +121,7 @@ describe("multi-line paste prompt", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("previews the first lines with the warning and keeps paste as the default action", async () => {
+  it("previews the first lines with the warning", async () => {
     const { result, prompted } = await paste(["l1", "l2", "l3", "l4", "l5", "l6", "l7"].join("\n"), "t1");
     expect(prompted).toBe(true);
     const text = dialog()?.textContent ?? "";
@@ -123,15 +131,47 @@ describe("multi-line paste prompt", () => {
     expect(preview).toContain("l5");
     expect(preview).not.toContain("l6");
     expect(preview).toContain("…（共 7 行）");
-    expect(document.activeElement).toBe(button("粘贴"));
     expect(mocks.ask).not.toHaveBeenCalled();
     click(button("粘贴"));
     await expect(result).resolves.toBe(true);
     expect(dialog()).toBeNull();
   });
 
+  it("puts the initial focus on cancel", async () => {
+    const { result } = await paste("a\nb", "t1");
+    expect(document.activeElement).toBe(button("取消"));
+    click(button("取消"));
+    await expect(result).resolves.toBe(false);
+  });
+
+  it("pastes nothing on an auto-repeated Enter on the focused button", async () => {
+    const { result } = await paste("a\nb", "t1");
+    keyUp(document.body, "Control");
+    for (const target of [button("取消"), button("粘贴")]) {
+      target.focus();
+      expect(key(target, "Enter", true).defaultPrevented).toBe(true);
+    }
+    expect(dialog()).not.toBeNull();
+    click(button("取消"));
+    await expect(result).resolves.toBe(false);
+  });
+
+  it("ignores an Enter on paste until a key has been released in the dialog", async () => {
+    const { result } = await paste("a\nb", "t1");
+    const pasteButton = button("粘贴");
+    pasteButton.focus();
+    expect(key(pasteButton, "Enter").defaultPrevented).toBe(true);
+    expect(dialog()).not.toBeNull();
+
+    keyUp(pasteButton, "Enter");
+    key(pasteButton, "Enter");
+    await expect(result).resolves.toBe(true);
+    expect(dialog()).toBeNull();
+  });
+
   it("pastes on Enter and cancels on Escape", async () => {
     const first = await paste("a\nb", "t1");
+    keyUp(document.body, "Control");
     key(checkbox("本终端不再提示"), "Enter");
     await expect(first.result).resolves.toBe(true);
 
