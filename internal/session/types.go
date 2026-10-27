@@ -160,7 +160,10 @@ type Config struct {
 	Durable   base.DurableProvider
 	// LocalDurable runs local terminals through this machine's helper; it
 	// takes precedence over Durable for local sessions.
-	LocalDurable         LocalDurableSource
+	LocalDurable LocalDurableSource
+	// LocalTerminalMode returns this device's choice for new local terminals
+	// (TerminalModeRegular keeps them in the app); nil means automatic.
+	LocalTerminalMode    func(context.Context) (string, error)
 	DurableResolver      DurableResolver
 	TerminalModeResolver func(context.Context, string) (string, error)
 	// DurableHistoryLimit returns the recorded output limit for new durable

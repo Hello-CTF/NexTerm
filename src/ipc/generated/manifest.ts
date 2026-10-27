@@ -1427,6 +1427,22 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderListRequest", ts: "LocalFolderListRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderListDTO", ts: "LocalFolderListDTO" },
     },
+    "local_helper_mode_get": {
+      scope: "local-helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localTerminalModeDTO", ts: "LocalTerminalModeDTO" },
+    },
+    "local_helper_mode_set": {
+      scope: "local-helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localTerminalModeDTO", ts: "LocalTerminalModeDTO" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localTerminalModeDTO", ts: "LocalTerminalModeDTO" },
+    },
     "local_helper_restart": {
       scope: "local-helper",
       nested: false,
@@ -3462,6 +3478,14 @@ export interface IPCCommandTypeMap {
   "local_folder_list": {
     input: contractTypes.LocalFolderListRequest;
     output: contractTypes.LocalFolderListDTO;
+  };
+  "local_helper_mode_get": {
+    input: Record<string, never>;
+    output: contractTypes.LocalTerminalModeDTO;
+  };
+  "local_helper_mode_set": {
+    input: contractTypes.LocalTerminalModeDTO;
+    output: contractTypes.LocalTerminalModeDTO;
   };
   "local_helper_restart": {
     input: contractTypes.LocalHelperRestartRequest;

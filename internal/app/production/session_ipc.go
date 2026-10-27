@@ -1193,10 +1193,6 @@ func (s *terminalCommandService) connectLocal(ctx context.Context) (*session.Ses
 	if err != nil {
 		return nil, err
 	}
-	if s.localHelper != nil {
-		// Start is idempotent; a server starts its local helper here, on first use.
-		s.localHelper.Start()
-	}
 	return s.sessions.ConnectFor(ctx, asset)
 }
 

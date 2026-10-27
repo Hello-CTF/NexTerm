@@ -10,27 +10,72 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 )
 
 // localHelperStatusDTO is the local helper state shown in settings and used to
 // ask for consent before an outdated helper is restarted.
 type localHelperStatusDTO struct {
-	State          string `json:"state"`
-	Reason         string `json:"reason,omitempty"`
-	ActiveSessions int    `json:"activeSessions,omitempty"`
-	HelperProtocol int    `json:"helperProtocol,omitempty"`
-	HelperVersion  string `json:"helperVersion,omitempty"`
-	ConsentToken   string `json:"consentToken,omitempty"`
-	Warning        string `json:"warning,omitempty"`
+	State           string `json:"state"`
+	Reason          string `json:"reason,omitempty"`
+	UpdateAvailable bool   `json:"updateAvailable,omitempty"`
+	ActiveSessions  int    `json:"activeSessions,omitempty"`
+	ActivityKnown   bool   `json:"activityKnown,omitempty"`
+	HelperProtocol  int    `json:"helperProtocol,omitempty"`
+	HelperVersion   string `json:"helperVersion,omitempty"`
+	ConsentToken    string `json:"consentToken,omitempty"`
+	Warning         string `json:"warning,omitempty"`
 }
 
 type localHelperRestartRequest struct {
 	ConsentToken string `json:"consentToken"`
 }
 
+// localTerminalModeDTO is this device's choice for new local terminals:
+// "durable" runs them in the local helper, "regular" keeps them in the app.
+type localTerminalModeDTO struct {
+	Mode string `json:"mode"`
+}
+
+// LocalTerminalModeSettingKey is a device-level setting read by the backend,
+// so agent, cron and restored local terminals follow it too.
+const LocalTerminalModeSettingKey = "local_helper.terminal_mode"
+
+type localTerminalModeStore interface {
+	SettingGet(ctx context.Context, key string) (string, bool, error)
+	SettingSet(ctx context.Context, key, value string) error
+}
+
+func localTerminalMode(ctx context.Context, database localTerminalModeStore) (string, error) {
+	if database == nil {
+		return "durable", nil
+	}
+	value, found, err := database.SettingGet(ctx, LocalTerminalModeSettingKey)
+	if err != nil {
+		return "", err
+	}
+	if found && value == "regular" {
+		return "regular", nil
+	}
+	return "durable", nil
+}
+
+// newProductionLocalTerminalMode resolves the device setting for the
+// session manager, which keeps local terminals regular when it says so.
+func newProductionLocalTerminalMode(database localTerminalModeStore) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		mode, err := localTerminalMode(ctx, database)
+		if mode == "regular" {
+			return session.TerminalModeRegular, err
+		}
+		return session.TerminalModeAuto, err
+	}
+}
+
 func localHelperStatus(status localhelper.Status) localHelperStatusDTO {
 	return localHelperStatusDTO{
-		State: string(status.State), Reason: status.Reason, ActiveSessions: status.ActiveSessions,
+		State: string(status.State), Reason: status.Reason, UpdateAvailable: status.UpdateAvailable,
+		ActiveSessions: status.ActiveSessions, ActivityKnown: status.ActivityKnown,
 		HelperProtocol: status.HelperProtocol, HelperVersion: status.HelperVersion,
 		ConsentToken: status.ConsentToken, Warning: status.Warning,
 	}
@@ -82,7 +127,7 @@ func localHelperDisabledByEnv(value string) bool {
 	return false
 }
 
-func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelper.Service) error {
+func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelper.Service, database localTerminalModeStore) error {
 	current := func() localHelperStatusDTO {
 		if service == nil {
 			return localHelperStatusDTO{State: string(localhelper.StateDisabled), Reason: "本机终端在此环境中不使用持久组件"}
@@ -109,6 +154,26 @@ func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelpe
 					return localHelperStatusDTO{}, localHelperIPCError(err)
 				}
 				return current(), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "local_helper_mode_get", func(ctx context.Context, _ *ipc.Call, _ struct{}) (localTerminalModeDTO, error) {
+				mode, err := localTerminalMode(ctx, database)
+				return localTerminalModeDTO{Mode: mode}, err
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "local_helper_mode_set", func(ctx context.Context, _ *ipc.Call, input localTerminalModeDTO) (localTerminalModeDTO, error) {
+				if input.Mode != "durable" && input.Mode != "regular" {
+					return localTerminalModeDTO{}, ipc.BadParam(errors.New("本机终端模式无效"))
+				}
+				if database == nil {
+					return localTerminalModeDTO{}, ipc.NewError(ipc.CodeUnsupported, "本机终端模式在此环境中不可设置")
+				}
+				if err := database.SettingSet(ctx, LocalTerminalModeSettingKey, input.Mode); err != nil {
+					return localTerminalModeDTO{}, err
+				}
+				return input, nil
 			})
 		},
 		func() error {

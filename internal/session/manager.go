@@ -56,6 +56,7 @@ type Manager struct {
 	terminals            TerminalFactory
 	durable              base.DurableProvider
 	localDurable         LocalDurableSource
+	localTerminalMode    func(context.Context) (string, error)
 	resolver             DurableResolver
 	terminalModeResolver func(context.Context, string) (string, error)
 	historyLimit         func(context.Context) uint64
@@ -109,6 +110,7 @@ func NewManager(config Config) *Manager {
 		terminals:            config.Terminals,
 		durable:              config.Durable,
 		localDurable:         config.LocalDurable,
+		localTerminalMode:    config.LocalTerminalMode,
 		resolver:             config.DurableResolver,
 		terminalModeResolver: config.TerminalModeResolver,
 		historyLimit:         config.DurableHistoryLimit,
@@ -535,10 +537,19 @@ func (m *Manager) TerminalModeFor(ctx context.Context, sessionID string) (string
 func (m *Manager) terminalModeFor(ctx context.Context, session *Session) (string, error) {
 	asset := session.Asset()
 	if asset.Kind == KindLocal {
-		// A local asset chooses for itself; the account default is about
-		// installing helpers on remote hosts.
+		// The local asset and this device's local terminal setting decide;
+		// the account default is about installing helpers on remote hosts.
 		if asset.TerminalMode == TerminalModeRegular {
 			return TerminalModeRegular, nil
+		}
+		if m.localTerminalMode != nil {
+			mode, err := m.localTerminalMode(ctx)
+			if err != nil {
+				return "", err
+			}
+			if mode == TerminalModeRegular {
+				return TerminalModeRegular, nil
+			}
 		}
 		return TerminalModeAuto, nil
 	}

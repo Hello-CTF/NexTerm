@@ -341,3 +341,58 @@ func BenchmarkLocalFirstOutput(b *testing.B) {
 		})
 	}
 }
+
+func TestLocalTerminalListingWithoutARunningHelperSpawnsNothing(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	killLocalHelper(t, stateDir)
+	service := localhelper.New(localhelper.Config{StateDir: stateDir, Executable: os.Args[0], Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(service.Close)
+	manager, connected := localHelperManager(t, service)
+	if ids := listedIDs(t, manager, connected.ID); len(ids) != 0 {
+		t.Fatalf("terminals without a helper = %v", ids)
+	}
+	if _, err := manager.RecoverRemoteDurable(context.Background(), "0123456789abcdef0123456789abcdef", OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", Detached: true, Cols: 80, Rows: 24,
+	}); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("recover without a helper = %v, want ErrTabNotFound", err)
+	}
+	if state := service.Status().State; state != localhelper.StateIdle {
+		t.Fatalf("listing started a helper: %s", state)
+	}
+	if _, err := supervisor.InspectHelper(context.Background(), stateDir); err == nil {
+		t.Fatal("a helper runs although only existing terminals were listed")
+	}
+}
+
+func TestLocalTerminalModeRegularKeepsAgentTerminalsInTheAppWithoutAHelper(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	killLocalHelper(t, stateDir)
+	service := localhelper.New(localhelper.Config{StateDir: stateDir, Executable: os.Args[0], Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(service.Close)
+	connector := ConnectorFunc(func(_ context.Context, _ Asset, _ uint64) (base.Transport, error) {
+		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+	})
+	manager := NewManager(Config{
+		Connector: connector, LocalDurable: service, OpenAccess: true,
+		LocalTerminalMode: func(context.Context) (string, error) { return TerminalModeRegular, nil },
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "local-device-regular", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Durable || info.FallbackNotice != "" {
+		t.Fatalf("agent tab with regular local terminals = %+v", info)
+	}
+	readiness, err := manager.PrepareDurable(WithOpenAccess(context.Background()), connected.ID)
+	if err != nil || readiness.State != DurableDisabled {
+		t.Fatalf("readiness = %+v, %v; want disabled", readiness, err)
+	}
+	if _, err := supervisor.InspectHelper(context.Background(), stateDir); err == nil {
+		t.Fatal("a helper was spawned although local terminals are regular")
+	}
+}

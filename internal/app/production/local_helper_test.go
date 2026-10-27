@@ -60,7 +60,8 @@ func waitLocalHelperState(t *testing.T, production *Production, want string) loc
 
 func TestProductionLocalTerminalsAreDurableAndCloseToTheBackground(t *testing.T) {
 	production, _ := newLocalHelperProduction(t, true)
-	waitLocalHelperState(t, production, "ready")
+	// No helper is spawned at launch; the first durable local terminal starts one.
+	waitLocalHelperState(t, production, "idle")
 	var local sessionInfoDTO
 	requireStoreTestResponse(t, dispatchDurableTest(t, production, "session_connect_local", `null`, "local-channel", "client-a"), &local)
 
@@ -73,6 +74,7 @@ func TestProductionLocalTerminalsAreDurableAndCloseToTheBackground(t *testing.T)
 	if info := tab.Info(); !info.Durable || info.Ephemeral || !info.Retainable {
 		t.Fatalf("local tab = %+v, want durable and retainable", info)
 	}
+	waitLocalHelperState(t, production, "ready")
 
 	// Closing without a mode sends a durable local terminal to the background.
 	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+attached.TabID+`","clientId":"client-a"}`, "", "client-a"))
@@ -123,5 +125,38 @@ func TestProductionWithoutALocalHelperKeepsLocalTerminalsRegular(t *testing.T) {
 	response := dispatchDurableTest(t, production, "local_helper_restart", `{"consentToken":"3:1:0"}`, "", "client-a")
 	if response.OK {
 		t.Fatal("restart without a local helper succeeded")
+	}
+}
+
+func TestProductionRegularLocalTerminalModeSpawnsNoHelper(t *testing.T) {
+	production, _ := newLocalHelperProduction(t, true)
+	waitLocalHelperState(t, production, "idle")
+	var mode localTerminalModeDTO
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "local_helper_mode_set", `{"mode":"regular"}`, "", "client-a"), &mode)
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "local_helper_mode_get", `null`, "", "client-a"), &mode)
+	if mode.Mode != "regular" {
+		t.Fatalf("local terminal mode = %+v", mode)
+	}
+	var local sessionInfoDTO
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "session_connect_local", `null`, "local-channel", "client-a"), &local)
+	var attached attachedTabDTO
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+local.ID+`","cols":80,"rows":24}`, "local-channel", "client-a"), &attached)
+	tab, err := production.Services.Sessions.Tab(attached.TabID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info := tab.Info(); info.Durable || attached.FallbackNotice != "" {
+		t.Fatalf("local tab with regular mode = %+v (notice %q)", info, attached.FallbackNotice)
+	}
+	var listed []durableDescriptorDTO
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "terminal_list", `{"sessionId":"`+local.ID+`","durable":true}`, "", "client-a"), &listed)
+	if len(listed) != 0 {
+		t.Fatalf("background local terminals = %+v", listed)
+	}
+	if status := waitLocalHelperState(t, production, "idle"); status.State != "idle" {
+		t.Fatalf("status = %+v", status)
+	}
+	if response := dispatchDurableTest(t, production, "local_helper_mode_set", `{"mode":"sometimes"}`, "", "client-a"); response.OK {
+		t.Fatal("an invalid local terminal mode was accepted")
 	}
 }

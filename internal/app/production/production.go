@@ -313,14 +313,19 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{
 			Name: "local-helper",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-				return registerLocalHelperCommands(dispatcher, localHelper)
+				var settings localTerminalModeStore
+				if services.Store != nil {
+					settings = services.Store
+				}
+				return registerLocalHelperCommands(dispatcher, localHelper, settings)
 			},
 			// Shutdown stops watching the helper; the helper and its local
 			// terminals keep running after the app exits.
 			Component: ComponentFuncs{
-				// The desktop starts the helper at launch so the first local
-				// terminal is durable; a server starts it with its first local
-				// session instead of running a helper nobody uses.
+				// The desktop looks for a running helper at launch, so local
+				// terminals of an earlier run are listed; it spawns none until a
+				// durable local terminal needs one. A server starts the lifecycle
+				// with its first local terminal.
 				StartFunc: func(context.Context) error {
 					if localHelper != nil && services.desktop {
 						localHelper.Start()
