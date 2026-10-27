@@ -338,3 +338,68 @@ func TestSubscriberDisconnectIgnoresReplacedAttachment(t *testing.T) {
 		t.Fatalf("stale disconnect affected replacement: incarnation %d/%d subscribers %d", oldIncarnation, currentIncarnation, tab.Info().Subscribers)
 	}
 }
+
+// A subscriber dropped for a full fanout queue gets a resync notice before
+// its channel closes; a healthy subscriber gets none.
+func TestFanoutOverflowEmitsResyncNotice(t *testing.T) {
+	events := make(chan ThrottleEvent, 64)
+	emitter := EmitterFunc(func(_ context.Context, event Event) error {
+		if payload, ok := event.Payload.(ThrottleEvent); ok && event.Topic == TopicTerminalThrottled && payload.Resync {
+			events <- payload
+		}
+		return nil
+	})
+	bus := hub.New(hub.Options{QueueFrames: 2, QueueBytes: 64 << 20})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: terminalFactory{}, Hub: bus, Logger: logger, Emitter: emitter})
+	t.Cleanup(func() {
+		_ = manager.Close()
+		_ = bus.Close()
+	})
+	connected, err := manager.Connect(context.Background(), Asset{ID: "overflow-resync", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(context.Background(), OpenTabOptions{SessionID: connected.ID, Cols: 80, Rows: 24, Detached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab.mu.Lock()
+	tab.fanout.DetachAll()
+	tab.fanout = terminal.NewFanoutWithOptions(terminal.FanoutOptions{QueueFrames: 2, QueueBytes: 4 << 20, Logger: logger})
+	tab.mu.Unlock()
+	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "slow-client", ChannelID: "slow"}); err != nil {
+		t.Fatal(err)
+	}
+	fast, _ := attachSlowSubscriberReceiver(t, manager, tab, "fast")
+	for index := 0; tab.Info().Subscribers > 1; index++ {
+		if index == 64 {
+			t.Fatal("slow subscriber was never dropped")
+		}
+		chunk := bytes.Repeat([]byte{byte('a' + index%26)}, outputCoalesceMax)
+		feedSlowSubscriberFrame(t, manager, tab, chunk)
+		for received := 0; received < len(chunk); {
+			frame := receiveTestFrame(t, fast)
+			if frame.Kind != hub.FrameJSON {
+				received += len(frame.Data)
+			}
+		}
+	}
+	select {
+	case event := <-events:
+		if event.TabID != tab.ID || event.ChannelID != "slow" || event.Recovered {
+			t.Fatalf("resync notice = %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no resync notice for the dropped subscriber")
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected second resync notice %+v", event)
+	default:
+	}
+}

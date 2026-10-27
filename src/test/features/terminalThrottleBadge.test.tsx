@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { flush, mount, type MountedView } from "./reactTestUtils";
-import { THROTTLE_RECOVERED_MS } from "../../features/terminal/terminalThrottle";
+import { THROTTLE_RECOVERED_MS, THROTTLE_RESYNC_MS } from "../../features/terminal/terminalThrottle";
 
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
@@ -84,6 +84,8 @@ vi.mock("../../features/terminal/XtermView", async () => {
       const onAttachRef = useRef(props.onAttach);
       onHandleRef.current = props.onHandle;
       onAttachRef.current = props.onAttach;
+      const onChannelRef = useRef(props.onChannel);
+      onChannelRef.current = props.onChannel;
       useEffect(() => {
         (onHandleRef.current as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
@@ -97,6 +99,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
         (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
+        (onChannelRef.current as ((id: string) => void) | undefined)?.("a-1");
       }, []);
       return <div className="h-full w-full min-h-0" />;
     },
@@ -358,5 +361,39 @@ describe("terminal://throttled badge", () => {
     });
     expect(badge("输出积压")).toBeNull();
     expect(badge("输出已恢复")).toBeNull();
+  });
+
+  it("shows a neutral resync notice when this view's channel is dropped, not when another one is", async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      await flush();
+    });
+    const throttled = harness.handlers.get("terminal://throttled");
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "b-1", inflightBytes: 0, resync: true, version: 1 });
+    });
+    expect(badge("重新同步")).toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 8192, version: 2 });
+    });
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 0, resync: true, version: 4 });
+    });
+    // The detach's own recovery is older and must not replace the notice.
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 0, recovered: true, version: 3 });
+    });
+    const notice = badge("输出过快，正在重新同步");
+    expect(notice).not.toBeNull();
+    expect(notice?.className).not.toContain("amber");
+    expect(badge("输出积压")).toBeNull();
+    expect(badge("输出已恢复")).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(THROTTLE_RESYNC_MS + 100);
+    });
+    expect(badge("重新同步")).toBeNull();
   });
 });

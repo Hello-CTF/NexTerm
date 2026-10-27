@@ -1103,10 +1103,25 @@ func (m *Manager) kickSlowConsumer(channelID string, incarnation uint64) {
 		m.mu.Unlock()
 		return
 	}
-	_, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel)
+	detached, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel)
+	var resync ThrottleEvent
+	if detached != "" {
+		resync = m.resyncEventLocked(detached, channelID)
+	}
 	m.mu.Unlock()
 	m.logger.Warn("slow terminal consumer kicked after backpressure grace", "channel", channelID, "tab", tabID, "grace", m.slowConsumerGrace)
+	if detached != "" {
+		m.emit(context.Background(), TopicTerminalThrottled, resync)
+	}
 	cleanup()
+}
+
+// resyncEventLocked builds the notice for a channel disconnected because it
+// could not keep up. Its version is newer than the tab-level recovery the
+// detach may emit, so clients keep the notice. Callers hold m.mu.
+func (m *Manager) resyncEventLocked(tabID, channelID string) ThrottleEvent {
+	m.throttleVersions[tabID]++
+	return ThrottleEvent{TabID: tabID, ChannelID: channelID, Resync: true, Version: m.throttleVersions[tabID]}
 }
 
 func (m *Manager) onDrain(channelID string, queuedBytes int) {

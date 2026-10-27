@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   THROTTLE_RECOVERED_MS,
+  THROTTLE_RESYNC_MS,
   throttleStateFrom,
   throttleView,
 } from "../../features/terminal/terminalThrottle";
@@ -59,5 +60,22 @@ describe("terminal throttle tracker", () => {
       recovered: false,
       inflightBytes: 8192,
     });
+  });
+
+  it("shows the neutral resync notice only for the view's own dropped channel", () => {
+    const entry = throttleStateFrom(null, { tabId: "t1", channelId: "a-1", inflightBytes: 4096, version: 1 }, 1000);
+    const own = throttleStateFrom(entry, { tabId: "t1", channelId: "a-1", inflightBytes: 0, resync: true, version: 2 }, 1100, true);
+    expect(throttleView(own, 1100)).toEqual({ active: false, recovered: false, resyncing: true, inflightBytes: 0 });
+    expect(throttleView(own, 1100 + THROTTLE_RESYNC_MS + 1)).toBeNull();
+
+    const other = throttleStateFrom(entry, { tabId: "t1", channelId: "a-1", inflightBytes: 0, resync: true, version: 2 }, 1100, false);
+    expect(throttleView(other, 1100)).toBeNull();
+  });
+
+  it("keeps the backlog badge while another channel is still throttled", () => {
+    const a = throttleStateFrom(null, { tabId: "t1", channelId: "a-1", inflightBytes: 4096, version: 1 }, 1000);
+    const b = throttleStateFrom(a, { tabId: "t1", channelId: "b-1", inflightBytes: 8192, version: 2 }, 1000);
+    const dropped = throttleStateFrom(b, { tabId: "t1", channelId: "b-1", inflightBytes: 0, resync: true, version: 3 }, 1100, true);
+    expect(throttleView(dropped, 1100)).toEqual({ active: true, recovered: false, inflightBytes: 4096 });
   });
 });

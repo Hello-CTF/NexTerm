@@ -147,6 +147,9 @@ export interface TerminalThrottledEvent {
   channelId: string;
   inflightBytes: number;
   recovered?: boolean;
+  // The channel was disconnected because it could not keep up; its view
+  // resumes from its accepted offset.
+  resync?: boolean;
   version: number;
 }
 

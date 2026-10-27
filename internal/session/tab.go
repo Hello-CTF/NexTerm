@@ -2118,9 +2118,17 @@ func (m *Manager) disconnectSubscriberOutput(tab *Tab, channelID string, incarna
 		return
 	}
 	detachedTabID, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel, expected)
+	var resync ThrottleEvent
+	overrun := detachedTabID != "" && errors.Is(cause, terminal.ErrFanoutQueueFull)
+	if overrun {
+		resync = m.resyncEventLocked(detachedTabID, channelID)
+	}
 	m.mu.Unlock()
 	if detachedTabID == "" {
 		return
+	}
+	if overrun {
+		m.emit(context.Background(), TopicTerminalThrottled, resync)
 	}
 	m.logger.Warn("terminal subscriber disconnected for replay",
 		"tab", tab.ID, "channel", channelID,
