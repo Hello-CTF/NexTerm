@@ -1021,7 +1021,11 @@ export function XtermView(props: XtermViewProps) {
         // space without being marked expired) never leak into this one.
         streamClasses = [...(control.classes ?? [])];
         // A full replay reports where this view's durable history starts.
-        if (control.historyFrom !== undefined || control.expired) {
+        // A resume is a non-expired anchor without control bytes (the server
+        // sends the clear prelude only with a full replay); any other anchor
+        // without a start leaves this view without durable history.
+        const resumed = !control.expired && (control.controlBytes ?? 0) === 0;
+        if (control.historyFrom !== undefined || control.expired || !resumed) {
           setTerminalHistoryView(viewKeyRef.current, { from: control.historyFrom ?? null });
         }
         if (control.expired) {
