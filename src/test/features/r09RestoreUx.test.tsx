@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
@@ -293,6 +293,16 @@ function restoreMenuItem(): HTMLButtonElement | undefined {
     (item) => item.textContent?.includes("恢复关闭的标签"),
   );
 }
+
+// The file and log panes are React.lazy panels. A cold import transforms the module in real time, which
+// no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([
+    import("../../features/files/FileBrowser"),
+    import("../../features/files/FileEditor"),
+    import("../../features/files/LogViewer"),
+  ]);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

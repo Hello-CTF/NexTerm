@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { deferred, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
@@ -219,6 +219,12 @@ async function logout(): Promise<void> {
     await useAuth.getState().logout();
   });
 }
+
+// The account gate and the asset tree load through dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([import("../features/auth/AuthGate"), import("../features/explorer/AssetTree")]);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
