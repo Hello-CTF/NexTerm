@@ -3438,14 +3438,14 @@ describe("XtermView replayed output", () => {
     feedBytes("\x1b[6n");
     // Parse the open marker only: xterm is inside the replayed bytes.
     act(() => t.drainWrites(1));
+    const textarea = document.createElement("textarea");
+    t.host?.appendChild(textarea);
+    // xterm's own key listener on its textarea raises onData.
+    textarea.addEventListener("keydown", () => t.handlers.data?.("\x1b[1;5R"));
     act(() => {
-      t.host?.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
-      t.handlers.data?.("\x1b[1;5R");
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
     });
-    // Once the event task is over, the same bytes are a reply to replay.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    // Once the event is over, the same bytes are a reply to replay.
     act(() => t.handlers.data?.("\x1b[1;1R"));
     act(() => t.drainWrites());
     expect(upstream()).toEqual(["\x1b[1;5R"]);
@@ -3514,6 +3514,9 @@ describe("XtermView replayed output", () => {
     act(() => t.drainWrites(1));
     const textarea = document.createElement("textarea");
     t.host?.appendChild(textarea);
+    // xterm stops the key event's propagation, so the mark ends on the next
+    // task instead of the bubble phase.
+    textarea.addEventListener("keydown", (event) => event.stopPropagation());
     await act(async () => {
       textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "F3", ctrlKey: true, bubbles: true }));
       // A trusted event reaches xterm's own listener after a microtask
