@@ -547,6 +547,8 @@ export interface HelperUpdateInfo {
   endedSessions?: number;
   /** How exact endedSessions is: every session, at least these terminal sessions, or unknown. */
   endedCount?: "exact" | "atLeast" | "unknown";
+  /** This action ended the older helper; absent when it had already exited or another replacement ended it. */
+  stopped?: boolean;
   /** The older helper ignored the stop request and was killed. */
   forced?: boolean;
 }
