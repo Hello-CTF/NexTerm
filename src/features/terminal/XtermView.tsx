@@ -848,17 +848,13 @@ export function XtermView(props: XtermViewProps) {
     // clipboard, prompts, or notifies. OSC 133 marks, titles, cwd and modes
     // are display state and still apply. replayParsing is true exactly while
     // xterm parses replayed bytes (set and cleared from write callbacks in
-    // parse order); suppressed effects are only counted for diagnostics.
+    // parse order); suppressed effects are dropped silently.
     let replayParsing = false;
-    let replaySuppressed = 0;
-    const noteReplaySuppressed = () => {
-      replaySuppressed += 1;
-    };
     const streamWriter = createTerminalStreamWriter(
       output,
       (event, replay) => {
         if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
-        else if (replay) noteReplaySuppressed();
+        else if (replay) return;
         else if (event.kind === "notification") onNotificationRef.current?.(event.body);
         else onClipboardRef.current?.(event.payload);
       },
@@ -894,10 +890,6 @@ export function XtermView(props: XtermViewProps) {
         dispatchEarly: (event) => event.kind === "notification" && visibleRef.current === false,
         onReplayChange: (replaying) => {
           replayParsing = replaying;
-          if (!replaying && replaySuppressed > 0) {
-            console.debug("[terminal] replayed output side effects suppressed", { count: replaySuppressed });
-            replaySuppressed = 0;
-          }
         },
       },
     );
@@ -1274,13 +1266,10 @@ export function XtermView(props: XtermViewProps) {
     const dataDisposable = term.onData((raw) => {
       // A Ctrl/Alt latched on the key bar applies to the next character typed into the focused terminal.
       const data = term.textarea && document.activeElement === term.textarea ? applyStickyModifiersToTyped(raw) : raw;
-      // Input in a visible pane switches hidden panes to the conservative drain tier.
       // A reply xterm produced while parsing replayed output answers a query
-      // the live shell never asked now: drop it.
-      if (replayParsing && isAutomaticTerminalReply(raw)) {
-        noteReplaySuppressed();
-        return;
-      }
+      // the live shell is not asking now: drop it.
+      if (replayParsing && isAutomaticTerminalReply(raw)) return;
+      // Input in a visible pane switches hidden panes to the conservative drain tier.
       if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
       blocks.feedInput(data);
       responses.submit(data);
