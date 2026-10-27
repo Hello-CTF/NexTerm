@@ -202,12 +202,6 @@ func (f *relayTestFeed) writeAt(index int) relayTestWrite {
 	return f.writes[index]
 }
 
-func hasBinaryContaining(payload string) func(relayTestWrite) bool {
-	return func(write relayTestWrite) bool {
-		return write.typ == websocket.MessageBinary && strings.Contains(string(write.data), payload)
-	}
-}
-
 func isEndFrame(write relayTestWrite) bool {
 	if write.typ != websocket.MessageText {
 		return false
@@ -280,17 +274,17 @@ func TestPreviewRelayLifecycle(t *testing.T) {
 	if err := sessions.Write(context.Background(), tab.ID, "owner", []byte("echo relay-unit-marker\n")); err != nil {
 		t.Fatal(err)
 	}
-	index := feed.waitWrite(t, 0, hasBinaryContaining("relay-unit-marker"))
-	for earlier := 0; earlier < index; earlier++ {
-		if write := feed.writeAt(earlier); write.typ != websocket.MessageBinary {
-			t.Fatalf("write #%d = %+v, snapshot and other JSON frames must not be forwarded", earlier, write)
-		}
-	}
+	feed.waitBinaryStream(t, "relay-unit-marker\r\n")
 
 	if err := sessions.Write(context.Background(), tab.ID, "owner", []byte("exit\n")); err != nil {
 		t.Fatal(err)
 	}
-	feed.waitWrite(t, index+1, isEndFrame)
+	end := feed.waitWrite(t, 0, isEndFrame)
+	for earlier := 0; earlier < end; earlier++ {
+		if write := feed.writeAt(earlier); write.typ != websocket.MessageBinary {
+			t.Fatalf("write #%d = %+v, snapshot and other JSON frames must not be forwarded", earlier, write)
+		}
+	}
 	select {
 	case deleted := <-remote.deleteSig:
 		if deleted != "shell-1" {
