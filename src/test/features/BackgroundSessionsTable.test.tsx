@@ -164,8 +164,6 @@ describe("BackgroundSessions table", () => {
       expect(row(view, "t1").cells).toHaveLength(5);
       expect(view.container.querySelector('[data-testid="background-host-name"]')).toBeNull();
       expect(view.container.querySelector('[data-testid="background-host"]')?.textContent).toBe("主机一");
-      // A regular terminal has nothing to explain.
-      expect(view.container.querySelector('[data-testid="background-old-helper-note"]')).toBeNull();
       expect(view.container.querySelector('[data-testid="background-needs-me-note"]')).toBeNull();
     } finally {
       view.unmount();
@@ -245,8 +243,6 @@ describe("BackgroundSessions table", () => {
       const future = cell(row(view, "future"), "background-status");
       expect(future.textContent).toBe("—");
       expect(future.title).toBe("未知状态");
-      // A newer state is not mistaken for an old component.
-      expect(view.container.querySelector('[data-testid="background-old-helper-note"]')).toBeNull();
       // Amber marks only the needs_me badge, as on a tab; normal states carry none.
       expect([...view.container.querySelectorAll('[class*="amber"]')].map((node) => node.getAttribute("data-attention"))).toEqual(["needs_me"]);
       const badges = (state: string) => row(view, state).querySelector("[data-attention]")?.getAttribute("data-attention") ?? null;
@@ -282,7 +278,7 @@ describe("BackgroundSessions table", () => {
     }
   });
 
-  it("reads remote durable status and times from the helper and marks an old helper's times unknown", async () => {
+  it("reads remote durable status and times from the helper and shows missing activity as a dash", async () => {
     seedHost(s1, "ssh");
     mocks.listDurable.mockResolvedValue([
       descriptor({ id: "current", title: "训练", state: "needs_me",
@@ -298,8 +294,6 @@ describe("BackgroundSessions table", () => {
       expect(cell(current, "background-output").textContent).toBe("5 分钟前有输出");
       expect(cell(current, "background-detached").textContent).toBe("30 分钟前转入后台");
       expect(cell(current, "background-time").title).toContain("创建（主机时间）：2026-10-27 11:00:00");
-      // A helper that reports times without ages: its times are labelled as host time.
-      expect(cell(current, "background-time").title).toContain("最近输出（主机时间）：2026-10-27 11:55:00");
 
       const silent = row(view, "silent");
       expect(cell(silent, "background-output").textContent).toBe("暂无输出");
@@ -307,15 +301,11 @@ describe("BackgroundSessions table", () => {
 
       const old = row(view, "old");
       expect(cell(old, "background-status").textContent).toBe("—");
-      expect(cell(old, "background-status").title).toContain("版本较旧");
+      expect(cell(old, "background-status").title).toContain("未开启状态检测");
       expect(cell(old, "background-output").textContent).toBe("—");
       expect(cell(old, "background-detached").textContent).toBe("—");
-      expect(cell(old, "background-time").title).toContain("版本较旧");
       expect(cell(old, "background-time").title).toContain("创建（主机时间）：2026-10-27 11:00:00");
       expect(view.container.textContent).not.toContain("在主机上运行");
-      // Touch screens get no tooltips: the old component and 需要我 are explained in visible text.
-      expect(cell(view.container, "background-old-helper-note").textContent).toBe(
-        "部分终端所在主机的持久组件版本较旧，无法显示状态和时间；更新组件后即可显示");
       expect(cell(view.container, "background-needs-me-note").textContent).toContain("「需要我」表示程序在等你回应");
     } finally {
       view.unmount();
@@ -355,7 +345,6 @@ describe("BackgroundSessions table", () => {
     try {
       expect(cell(view.container, "background-status").textContent).toBe("—");
       expect(cell(view.container, "background-detached").textContent).toBe("2 分钟前转入后台");
-      expect(view.container.querySelector('[data-testid="background-old-helper-note"]')).toBeNull();
     } finally {
       view.unmount();
     }

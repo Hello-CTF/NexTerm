@@ -6,7 +6,6 @@ import { wireAccountSwitchCleanup } from "../accountSwitch";
 import { startUnreadTracking } from "../unread";
 import { startAwarenessTracking } from "../sessionAwareness";
 import { startInboxNotifications } from "../../features/inbox/inboxNotifications";
-import { subscribeKeybindings, takeKeybindingMigrationNotice } from "../keybindings";
 import { getUpdateState } from "../useUpdate";
 import { promptUpdateIfNeeded } from "../updatePrompt";
 import { assetApi } from "../../ipc/commands";
@@ -92,17 +91,6 @@ export function useAppBootEffects(queryClient: QueryClient): void {
     startUnreadTracking();
     startAwarenessTracking();
     startInboxNotifications();
-  }, []);
-
-  // Custom bindings of the replaced split / pane focus shortcuts move to their successors once;
-  // say so, since the old toggle no longer closes a split.
-  useEffect(() => {
-    const announce = () => {
-      const notice = takeKeybindingMigrationNotice();
-      if (notice) useUi.getState().pushToast("info", notice);
-    };
-    announce();
-    return subscribeKeybindings(announce);
   }, []);
 
   // Check silently at desktop startup and every four hours: no toast; UpdateBanner presents any update.

@@ -126,7 +126,7 @@ describe("command palette keybinding hints", () => {
   it("reads persisted overrides in the storage format on load", async () => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ quickConnect: "Alt+q", newTerminal: "Alt+n", toggleSplit: "Alt+s" }),
+      JSON.stringify({ quickConnect: "Alt+q", newTerminal: "Alt+n", splitDown: "Alt+s" }),
     );
     act(() => loadKeybindings());
     await show();

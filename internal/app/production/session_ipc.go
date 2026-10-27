@@ -153,7 +153,7 @@ type durableDescriptorDTO struct {
 	FinishedAt       *int64 `json:"finishedAt"`
 	// State is the helper's attention state; omitted when it reports none.
 	State string `json:"state,omitempty"`
-	// Activity is omitted when the helper predates activity reporting.
+	// Activity is omitted when the helper reports none.
 	Activity *durableActivityDTO `json:"activity,omitempty"`
 }
 

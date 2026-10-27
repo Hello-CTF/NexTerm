@@ -485,7 +485,7 @@ export interface DurableDescriptor {
   signal?: string;
   finishedAt: number | null;
   state?: SessionAttentionState;
-  // Absent when the host's helper predates activity reporting.
+  // Absent when the host reports no activity.
   activity?: DurableActivity;
 }
 

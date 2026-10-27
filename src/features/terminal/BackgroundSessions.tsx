@@ -94,8 +94,6 @@ function ago(ms: number): string {
   return `${Math.floor(h / 24)} 天前`;
 }
 
-const OLD_HELPER_TIMES = "这台主机上的 NexTerm 组件版本较旧，无法报告输出和转入后台的时间；更新组件后可显示";
-
 const STATE_LABELS: Record<SessionAttentionState, string> = {
   running: "运行中",
   needs_me: "需要我",
@@ -133,7 +131,7 @@ function statusView(tab: BackgroundTab): StatusView {
   return {
     label: "—",
     hint: tab.durable || tab.remote
-      ? "这台主机上的 NexTerm 组件没有报告状态：组件版本较旧，或关闭了状态检测"
+      ? "这台主机上的 NexTerm 组件未开启状态检测"
       : "普通终端不会报告状态",
     tone: "muted",
   };
@@ -207,7 +205,6 @@ function HostGroupHeader({ group }: { group: BackgroundHostGroup }) {
 }
 
 // Hover tooltips do not reach touch screens, so the gaps a tooltip explains are also stated once below the table.
-const OLD_HELPER_NOTE = "部分终端所在主机的持久组件版本较旧，无法显示状态和时间；更新组件后即可显示";
 const NEEDS_ME_NOTE = "「需要我」表示程序在等你回应：响铃、发出通知或显示了需要选择的提示";
 
 const STATUS_TONE_CLASS: Record<StatusView["tone"], string> = {
@@ -263,9 +260,10 @@ function moment(at: number | undefined, msAgo: number | undefined, fetchedAt: nu
 function timeView(tab: BackgroundTab, now: number): TimeView {
   const createdLabel = tab.createdOnHost ? "创建（主机时间）" : "创建";
   const created = tab.createdAt && tab.createdAt > 0 ? `${createdLabel}：${absoluteTime(tab.createdAt)}` : null;
-  if (tab.activityUnknown) {
-    return { output: "—", detached: "—", tooltip: [OLD_HELPER_TIMES, created].filter(Boolean).join("\n") };
-  }
+  const noActivity =
+    tab.lastOutputAt === undefined && tab.lastOutputMsAgo === undefined && !tab.attachedElsewhere &&
+    tab.detachedAt === undefined && tab.detachedMsAgo === undefined;
+  if (noActivity) return { output: "—", detached: "—", tooltip: created ?? "" };
   const fetchedAt = tab.fetchedAt ?? now;
   const clock = tab.hostClock ? "（主机时间）" : "";
   const lines: string[] = [];
@@ -914,10 +912,6 @@ export function BackgroundSessions({
       <div className="shrink-0 border-t border-neutral-800/60 px-3 py-2 text-[11px] leading-relaxed text-[var(--nx-fg-soft)]">
         {list.some((t) => t.state === "needs_me") && (
           <p className="mb-1" data-testid="background-needs-me-note">{NEEDS_ME_NOTE}</p>
-        )}
-        {/* Only a missing activity record means an old component; a current helper may run without state detection. */}
-        {list.some((t) => t.activityUnknown) && (
-          <p className="mb-1" data-testid="background-old-helper-note">{OLD_HELPER_NOTE}</p>
         )}
         <IconTerminal size={11} className="mr-1 inline align-[-1px]" />
         {persistenceFootnote(hostScope)}
