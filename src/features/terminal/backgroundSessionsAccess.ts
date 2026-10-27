@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { terminalApi, type LiveTabInfo, type SessionInfo } from "../../ipc/commands";
-import { useUi, type Workspace } from "../../app/store";
+import { sessionApi, terminalApi, type LiveTabInfo, type SessionInfo } from "../../ipc/commands";
+import { nextTabId, useUi, type Workspace } from "../../app/store";
+import { describeError } from "../../ui/errorText";
 import { getLocalHelperStatus, localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 
 const COUNT_REFRESH_MS = 10_000;
@@ -231,6 +232,96 @@ export function collectBackgroundTabs(
   return { list, knownTabsByHost, incompleteHosts, failedRemote };
 }
 
+export interface BackgroundListing {
+  collected: CollectedBackgroundTabs;
+  // liveFailed is set when this app's own live listing failed; liveError is its reason.
+  liveFailed: boolean;
+  liveError?: unknown;
+}
+
+// listBackgroundTabs fetches the live listing and the durable listing of every target host, then collects the
+// takeable terminals. The page, the activity-bar badge and the jump palette all list through it.
+export async function listBackgroundTabs(
+  scope: BackgroundScope,
+  targets: SessionInfo[],
+  openTabIds: Set<string>,
+): Promise<BackgroundListing> {
+  // Each listing keeps its own arrival time: its ages count from when it answered, not from the slowest one.
+  // Requests start synchronously; one that throws counts as a failed listing.
+  const received = <T,>(request: () => Promise<T>) => {
+    try {
+      return request().then((value) => ({ value, at: Date.now() }));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  };
+  const [live, ...remote] = await Promise.allSettled([
+    received(() => terminalApi.listLive()),
+    ...targets.map((session) => received(() => terminalApi.listDurable(session.id))),
+  ]);
+  const collected = collectBackgroundTabs(scope, {
+    live: live.status === "fulfilled" ? (live.value.value as LiveTabInfo[]) : null,
+    liveFetchedAt: live.status === "fulfilled" ? live.value.at : undefined,
+    remote: targets.map((session, index) => {
+      const result = remote[index];
+      return {
+        session,
+        tabs: result.status === "fulfilled" ? (result.value.value as DurableList) : null,
+        reason: result.status === "rejected" ? result.reason : undefined,
+        fetchedAt: result.status === "fulfilled" ? result.value.at : undefined,
+      };
+    }),
+    openTabIds,
+  });
+  return live.status === "rejected"
+    ? { collected, liveFailed: true, liveError: live.reason }
+    : { collected, liveFailed: false };
+}
+
+export type TakeOverResult =
+  | { ok: true; sessionName: string }
+  | { ok: false; canceled: true }
+  | { ok: false; error: string };
+
+// takeOverBackgroundTab opens a background terminal as a tab of its host workspace. guard may throw to refuse a
+// host that no longer belongs to the caller; isCurrent lets the caller drop a result it no longer wants. A
+// workspace runtime reset during the session refresh always cancels.
+export async function takeOverBackgroundTab(
+  info: BackgroundTab,
+  opts: { guard?: (session: SessionInfo) => void; isCurrent?: () => boolean } = {},
+): Promise<TakeOverResult> {
+  const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const current = () => useUi.getState().workspaceRuntimeEpoch === epoch && (opts.isCurrent?.() ?? true);
+  try {
+    const list = await sessionApi.list();
+    if (!current()) return { ok: false, canceled: true };
+    const session = list.find((item) => item.id === info.sessionId);
+    if (!session || session.status !== "connected") {
+      throw new Error("主机未连接，请先重新连接再接管");
+    }
+    opts.guard?.(session);
+    const st = useUi.getState();
+    st.setSessions(list);
+    st.addTab({
+      id: nextTabId(`term-${info.sessionId}`),
+      kind: "terminal",
+      title: info.title || session.name || info.sessionName,
+      // Only the backend's own decision time may lock the title; a listing without one
+      // (a durable descriptor) leaves it unlocked until the attach reports the time.
+      ...(info.title && info.titleCustom && info.titleChangedAt
+        ? { renamedByUser: true, customTitleAt: info.titleChangedAt }
+        : {}),
+      sessionId: info.sessionId,
+      tabId: info.tabId,
+      closable: true,
+    });
+    return { ok: true, sessionName: session.name };
+  } catch (e) {
+    if (!current()) return { ok: false, canceled: true };
+    return { ok: false, error: describeError(e) };
+  }
+}
+
 // visibleBackgroundTabs narrows collected terminals to the selected host (or, for the all-hosts view, to
 // every reachable host). Local terminals only appear when the local workspace itself is selected.
 export function visibleBackgroundTabs(
@@ -320,21 +411,10 @@ export function useBackgroundSessionCount(workspace: Workspace | null | undefine
         return;
       }
       const targets = backgroundTargets(scope, { showAll: false, hostSessionId: sessionId, owner, remoteOwner: gate.remoteOwner });
-      void Promise.allSettled([
-        Promise.resolve().then(() => terminalApi.listLive()),
-        ...targets.map((session) => Promise.resolve().then(() => terminalApi.listDurable(session.id))),
-      ]).then(([live, ...remote]) => {
+      void listBackgroundTabs(scope, targets, new Set(openTabIds.split("\n").filter(Boolean))).then(({ collected, liveFailed }) => {
         inFlight = false;
-        if (cancelled || (live.status === "rejected" && remote.every((r) => r.status === "rejected") && remote.length > 0)) return;
-        if (live.status === "rejected" && remote.length === 0) return;
-        const collected = collectBackgroundTabs(scope, {
-          live: live.status === "fulfilled" ? live.value : null,
-          remote: targets.map((session, index) => {
-            const result = remote[index];
-            return { session, tabs: result.status === "fulfilled" ? result.value : null, reason: result.status === "rejected" ? result.reason : undefined };
-          }),
-          openTabIds: new Set(openTabIds.split("\n").filter(Boolean)),
-        });
+        // Nothing answered, so the count is unknown rather than zero.
+        if (cancelled || (liveFailed && collected.failedRemote.length === targets.length)) return;
         setCount(visibleBackgroundTabs(collected.list, scope, { hostSessionId: sessionId, showAll: false, blocked: false }).length);
       });
     };
