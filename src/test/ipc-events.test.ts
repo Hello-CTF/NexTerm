@@ -144,6 +144,27 @@ describe("Wails events and channels", () => {
     expect(frames).toEqual([[1]]);
   });
 
+  it("routes input-owner frames to onInputOwner, never to the byte stream", async () => {
+    const { createBinaryChannel, INPUT_OWNER_TYPE } = await import("../ipc/events");
+    const frames: number[][] = [];
+    const owners: unknown[] = [];
+    const channel = createBinaryChannel(
+      (bytes) => frames.push(Array.from(bytes)),
+      undefined,
+      undefined,
+      undefined,
+      (control) => owners.push(control),
+    );
+    await ready(channel);
+    const push = handlerAt();
+
+    push({ data: { type: INPUT_OWNER_TYPE, active: false } });
+    push({ data: [1] });
+
+    expect(owners).toEqual([{ type: INPUT_OWNER_TYPE, active: false }]);
+    expect(frames).toEqual([[1]]);
+  });
+
   it("silently ignores anchor frames when onControl is not registered", async () => {
     const { createBinaryChannel, STREAM_ANCHOR_TYPE } = await import("../ipc/events");
     const frames: number[] = [];

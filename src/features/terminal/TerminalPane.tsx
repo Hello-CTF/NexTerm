@@ -71,6 +71,7 @@ import { createTransferTaskId } from "../files/transferTaskId";
 import { confirmMultilinePaste } from "./terminalPaste";
 import {
   THROTTLE_RECOVERED_MS,
+  THROTTLE_RESYNC_MS,
   throttleStateFrom,
   throttleView,
   type ThrottleState,
@@ -869,13 +870,16 @@ export function TerminalPane({
   }, [applyControl]);
 
   const throttleVersions = useRef(new EventVersionGate());
+  // This view's output channel: a resync notice concerns only its own view.
+  const outputChannelRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
     void listenEvent<TerminalThrottledEvent>(EVENTS.terminalThrottled, (p) => {
       if (p.tabId !== kernelTabIdRef.current) return;
       if (!throttleVersions.current.accept(p.tabId, p.version)) return;
-      setThrottle((current) => throttleStateFrom(current, p, Date.now()));
+      const own = p.channelId === outputChannelRef.current;
+      setThrottle((current) => throttleStateFrom(current, p, Date.now(), own));
     }).then((off) => {
       if (cancelled) off();
       else unlisten = off;
@@ -904,10 +908,10 @@ export function TerminalPane({
   useEffect(() => () => resetTerminalView(storeTabId), [storeTabId]);
 
   useEffect(() => {
-    if (throttle?.recoveredAt == null) return;
+    if (throttle?.recoveredAt == null && throttle?.resyncAt == null) return;
     const clearTimer = window.setTimeout(
       () => setThrottleTick((n) => n + 1),
-      THROTTLE_RECOVERED_MS + 50,
+      Math.max(THROTTLE_RECOVERED_MS, THROTTLE_RESYNC_MS) + 50,
     );
     return () => {
       window.clearTimeout(clearTimer);
@@ -2019,6 +2023,11 @@ export function TerminalPane({
             输出积压
           </span>
         )}
+        {throttleNow?.resyncing && (
+          <span className="nx-badge" role="status" title="这个视图跟不上终端输出，已断开并从断点自动续传，无需手动重连">
+            输出过快，正在重新同步
+          </span>
+        )}
         {throttleNow?.recovered && (
           <span className="nx-badge nx-badge-green" title="终端输出积压已消退，画面恢复实时">
             输出已恢复
@@ -2347,6 +2356,9 @@ export function TerminalPane({
               onTitle={handleOscTitle}
               onClipboard={osc52Handler}
               onStreamBacklog={setStreamBacklog}
+              onChannel={(id) => {
+                outputChannelRef.current = id;
+              }}
               onPasteFiles={(files, skipped) => void handlePasteFiles(files, skipped)}
               onHandle={(h) => {
                 handleRef.current = h;

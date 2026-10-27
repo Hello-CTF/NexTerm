@@ -72,10 +72,8 @@ export interface TerminalStreamWriterOptions {
   onReplayChange?: (mode: StreamMode) => void;
 }
 
-interface UnitEvent {
-  event: OscStreamEvent;
-  mode: StreamMode;
-}
+// An OSC event to dispatch, or a mark callback that runs in stream order.
+type UnitEvent = { event: OscStreamEvent; mode: StreamMode } | { mark: () => void };
 
 interface WriteUnit {
   data: Uint8Array;
@@ -91,6 +89,10 @@ export interface TerminalStreamWriter {
   write: (segments: OscStreamSegment[], mode?: StreamMode) => boolean;
   canAccept: (bytes: number) => boolean;
   writeLocalText: (data: string) => void;
+  // Runs callback in stream order: after the events of every byte accepted
+  // so far, before those of bytes accepted later. It runs even when the
+  // stream moved to a new generation.
+  mark: (callback: () => void) => void;
   beginAttachment: () => void;
   resetStream: () => void;
   nextGeneration: () => number;
@@ -187,10 +189,10 @@ export function createTerminalStreamWriter(
     if (index >= 0) inFlight.splice(index, 1);
     unit.done = true;
     if (lastUnit === unit) lastUnit = null;
-    if (unit.generation === generation) {
-      for (const { event, mode } of unit.events) dispatch(event, mode);
-    } else {
-      suppressedEvents += unit.events.length;
+    for (const item of unit.events) {
+      if ("mark" in item) item.mark();
+      else if (unit.generation === generation) dispatch(item.event, item.mode);
+      else suppressedEvents += 1;
     }
     options.onWritten?.();
     if (paused) {
@@ -281,6 +283,12 @@ export function createTerminalStreamWriter(
     pump();
   };
 
+  const mark = (callback: () => void) => {
+    const tail = lastUnit;
+    if (tail && !tail.done) tail.events.push({ mark: callback });
+    else callback();
+  };
+
   // beginAttachment marks the next attachment's stream boundary: the refusal
   // episode ends here, not on any RPC response, so replay bytes that arrive
   // before the attach response is processed are still accepted.
@@ -304,6 +312,7 @@ export function createTerminalStreamWriter(
     write,
     canAccept,
     writeLocalText,
+    mark,
     beginAttachment,
     resetStream,
     nextGeneration,

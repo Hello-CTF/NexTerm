@@ -331,7 +331,11 @@ type ThrottleEvent struct {
 	ChannelID     string `json:"channelId"`
 	InflightBytes int    `json:"inflightBytes"`
 	Recovered     bool   `json:"recovered,omitempty"`
-	Version       uint64 `json:"version"`
+	// Resync reports that ChannelID was disconnected because it could not
+	// keep up; its client resumes from its accepted offset. It is sent
+	// before the channel closes and replaces the channel's throttle state.
+	Resync  bool   `json:"resync,omitempty"`
+	Version uint64 `json:"version"`
 }
 
 type reconnectCompletion struct {

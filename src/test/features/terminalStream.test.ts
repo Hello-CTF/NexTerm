@@ -96,6 +96,36 @@ describe("terminal stream writer generation isolation (T-01)", () => {
     ]);
   });
 
+  it("runs a mark after the events of earlier bytes and before those of later bytes", () => {
+    const h = setup();
+    const order: string[] = [];
+    const writer = createTerminalStreamWriter(
+      h.term,
+      (event) => order.push(event.kind === "notification" ? event.body : event.kind),
+      { highWaterBytes: 1024, lowWaterBytes: 512 },
+    );
+    writer.write([text("one"), notify("before")]);
+    writer.mark(() => order.push("mark"));
+    writer.write([notify("same-unit"), text("two"), notify("after")]);
+    expect(order).toEqual([]);
+    h.drain();
+    expect(order).toEqual(["before", "mark", "same-unit", "after"]);
+  });
+
+  it("runs a mark at once when nothing is pending, and across a generation bump", () => {
+    const h = setup();
+    const marks: string[] = [];
+    h.writer.mark(() => marks.push("idle"));
+    expect(marks).toEqual(["idle"]);
+    h.writer.write([text("old"), notify("stale")]);
+    h.writer.mark(() => marks.push("queued"));
+    h.writer.nextGeneration();
+    h.drain();
+    expect(marks).toEqual(["idle", "queued"]);
+    expect(h.events).toEqual([]);
+    expect(h.writer.stats().suppressedEvents).toBe(1);
+  });
+
   it("dispatches an event immediately when no write is in flight", () => {
     const h = setup();
     h.writer.write([notify("now")]);

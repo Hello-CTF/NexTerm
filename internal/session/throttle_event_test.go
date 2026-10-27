@@ -529,9 +529,18 @@ func TestSlowConsumerKickedAfterGraceOthersUnaffected(t *testing.T) {
 		t.Fatalf("entry = %+v", entry)
 	}
 
+	// The resync notice comes first and outranks the detach's recovery, so
+	// clients show the notice instead of "recovered".
+	resync := waitThrottleEventMatching(t, events, func(event ThrottleEvent) bool { return event.Resync })
+	if resync.TabID != tab.ID || resync.ChannelID != "a-1" || resync.Recovered {
+		t.Fatalf("kick resync = %+v", resync)
+	}
 	recovery := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
 	if !recovery.Recovered || recovery.TabID != tab.ID || recovery.ChannelID != "a-1" {
 		t.Fatalf("kick recovery = %+v", recovery)
+	}
+	if recovery.Version >= resync.Version {
+		t.Fatalf("recovery version %d not older than resync %d", recovery.Version, resync.Version)
 	}
 	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "" {
 		t.Fatalf("tab info after kick = %+v", info)

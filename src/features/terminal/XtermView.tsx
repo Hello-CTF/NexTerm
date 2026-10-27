@@ -158,6 +158,8 @@ export interface XtermViewProps {
   onTitle?: (title: string) => void;
   onClipboard?: (payload: string) => void;
   onStreamBacklog?: (backlog: TerminalStreamBacklog | null) => void;
+  // Reports the output channel's ID, to match server events about it.
+  onChannel?: (channelId: string | undefined) => void;
   onSelectionCopy?: (text: string, error: unknown | null) => void;
   onPasteFiles?: (files: File[], skipped: string[]) => void;
   onRequestPaste?: () => void;
@@ -212,6 +214,7 @@ export function XtermView(props: XtermViewProps) {
   const onTitleRef = useRef(props.onTitle);
   const onClipboardRef = useRef(props.onClipboard);
   const onStreamBacklogRef = useRef(props.onStreamBacklog);
+  const onChannelRef = useRef(props.onChannel);
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
   const onPasteFilesRef = useRef(props.onPasteFiles);
   const onRequestPasteRef = useRef(props.onRequestPaste);
@@ -235,6 +238,7 @@ export function XtermView(props: XtermViewProps) {
   onTitleRef.current = props.onTitle;
   onClipboardRef.current = props.onClipboard;
   onStreamBacklogRef.current = props.onStreamBacklog;
+  onChannelRef.current = props.onChannel;
   onSelectionCopyRef.current = props.onSelectionCopy;
   onPasteFilesRef.current = props.onPasteFiles;
   onRequestPasteRef.current = props.onRequestPaste;
@@ -864,13 +868,20 @@ export function XtermView(props: XtermViewProps) {
     // mode of the bytes xterm is parsing right now (set from write callbacks
     // in parse order); suppressed effects are dropped silently.
     let parseMode: StreamMode = "live";
+    // With several devices on one tab, live clipboard writes apply only on
+    // the device that most recently typed into it. Every anchor carries
+    // whether this view is that device, and input-owner frames announce
+    // later changes; both are applied through the writer in stream order,
+    // so a clipboard write is judged by the state in effect where its bytes
+    // arrived. Servers that never announce leave it active.
+    let inputOwner = true;
     const streamWriter = createTerminalStreamWriter(
       output,
       (event, mode) => {
         if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
         // OSC 9 is stripped from the screen; the backend reports it as an attention state.
         else if (mode === "replay" || event.kind === "notification") return;
-        else onClipboardRef.current?.(event.payload);
+        else if (inputOwner) onClipboardRef.current?.(event.payload);
       },
       {
         highWaterBytes: STREAM_HIGH_WATER_BYTES,
@@ -1008,6 +1019,9 @@ export function XtermView(props: XtermViewProps) {
         // episode ends here, not on the attach RPC response, so replay bytes
         // that arrive before the response is processed are still accepted.
         streamWriter.beginAttachment();
+        streamWriter.mark(() => {
+          inputOwner = control.inputPassive !== true;
+        });
         // Every anchor carries the classes of all output from its sequence to
         // the latest fed byte, including bytes a paused coalescer still holds,
         // and later spans arrive as class frames: the list is replaced, so
@@ -1063,7 +1077,13 @@ export function XtermView(props: XtermViewProps) {
       (span) => {
         streamClasses.push(span);
       },
+      (owner) => {
+        streamWriter.mark(() => {
+          inputOwner = owner.active;
+        });
+      },
     );
+    onChannelRef.current?.(channelIdOf(channel));
     const applyRemoteDimensions = (cols: number, rows: number) => {
       applyGrid({ cols, rows });
     };
@@ -1522,6 +1542,7 @@ export function XtermView(props: XtermViewProps) {
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
       }
       disposeChannel(channel);
+      onChannelRef.current?.(undefined);
       kernelTabIdRef.current = "";
       unsubscribeGpuPreference();
       webgl.cancel();

@@ -29,6 +29,7 @@ const harness = vi.hoisted(() => ({
     onControl?: (control: unknown) => void;
     onReplay?: (control: unknown) => void;
     onClass?: (control: unknown) => void;
+    onInputOwner?: (control: unknown) => void;
   } | null,
   channels: [] as { onBytes?: (bytes: Uint8Array) => void; onControl?: (control: unknown) => void }[],
   // When set, the fake terminal answers DA1 and DSR 6 queries through onData
@@ -189,8 +190,9 @@ vi.mock("../ipc/events", () => ({
     onControl?: (control: unknown) => void,
     onReplay?: (control: unknown) => void,
     onClass?: (control: unknown) => void,
+    onInputOwner?: (control: unknown) => void,
   ) => {
-    const entry = { onBytes, onControl, onReplay, onClass };
+    const entry = { onBytes, onControl, onReplay, onClass, onInputOwner };
     harness.channel = entry;
     harness.channels.push(entry);
     return {};
@@ -3386,6 +3388,56 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     // deduped on top of the per-frame coalescing.
     expect(onTitle).toHaveBeenCalledTimes(6);
     expect(onTitle).toHaveBeenLastCalledWith("user@host: ~/projects/app5");
+  });
+});
+
+describe("XtermView live clipboard on the last input device", () => {
+  const owner = (active: boolean) =>
+    act(() => {
+      harness.channel?.onInputOwner?.({ type: "nexterm.input-owner", active });
+    });
+
+  it("writes live OSC 52 only while this view is the input owner, judged where the bytes arrived", async () => {
+    const onClipboard = vi.fn();
+    await show({ onClipboard });
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0 });
+    // Bytes that arrived before the announcement still write, even though
+    // xterm parses them after it.
+    feedBytes("\x1b]52;c;YQ==\x07");
+    owner(false);
+    feedBytes("\x1b]52;c;Yg==\x07");
+    act(() => t.drainWrites());
+    expect(onClipboard.mock.calls).toEqual([["c;YQ=="]]);
+
+    owner(true);
+    feedBytes("\x1b]52;c;Yw==\x07");
+    act(() => t.drainWrites());
+    expect(onClipboard.mock.calls).toEqual([["c;YQ=="], ["c;Yw=="]]);
+  });
+
+  it("takes the state from every anchor: redelivered bytes of a passive view write nothing", async () => {
+    const onClipboard = vi.fn();
+    await show({ onClipboard });
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, inputPassive: true });
+    const first = "\x1b]52;c;YQ==\x07";
+    feedBytes(first);
+    // A recovery anchor redelivers the same bytes: still passive.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: 0, inputPassive: true });
+    feedBytes(first + "\x1b]52;c;Yg==\x07");
+    act(() => t.drainWrites());
+    expect(onClipboard).not.toHaveBeenCalled();
+
+    // An anchor without the flag (this view typed last, or an older server)
+    // is active.
+    const seq = enc.encode(first + "\x1b]52;c;Yg==\x07").length;
+    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: seq });
+    feedBytes("\x1b]52;c;Yw==\x07");
+    act(() => t.drainWrites());
+    expect(onClipboard.mock.calls).toEqual([["c;Yw=="]]);
   });
 });
 

@@ -147,6 +147,9 @@ export interface TerminalThrottledEvent {
   channelId: string;
   inflightBytes: number;
   recovered?: boolean;
+  // The channel was disconnected because it could not keep up; its view
+  // resumes from its accepted offset.
+  resync?: boolean;
   version: number;
 }
 
@@ -197,6 +200,9 @@ export interface StreamAnchorControl {
   // Durable tabs, full replays: helper offset of the first helper byte this
   // view renders; earlier output is read with terminal.historyRead.
   historyFrom?: number;
+  // Set when this view is not the device that last typed into the tab: it
+  // must not write live clipboard requests (OSC 52).
+  inputPassive?: boolean;
 }
 
 export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";
@@ -229,6 +235,25 @@ function isStreamClass(raw: unknown): raw is StreamClassControl {
     typeof (raw as { from?: unknown }).from === "number" &&
     typeof (raw as { to?: unknown }).to === "number" &&
     typeof (raw as { kind?: unknown }).kind === "string"
+  );
+}
+
+// Tells this view whether it is the device that most recently typed into the
+// tab: only that device writes live OSC 52 clipboard requests. Anchors carry
+// the state at their position (inputPassive); these frames announce changes.
+export interface InputOwnerControl {
+  type: string;
+  active: boolean;
+}
+
+export const INPUT_OWNER_TYPE = "nexterm.input-owner";
+
+function isInputOwner(raw: unknown): raw is InputOwnerControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === INPUT_OWNER_TYPE &&
+    typeof (raw as { active?: unknown }).active === "boolean"
   );
 }
 
@@ -286,6 +311,7 @@ export function createBinaryChannel(
   onControl?: (control: StreamAnchorControl) => void,
   onReplay?: (control: StreamReplayControl) => void,
   onClass?: (control: StreamClassControl) => void,
+  onInputOwner?: (control: InputOwnerControl) => void,
 ): IpcChannel<unknown> {
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = (raw) => {
@@ -300,6 +326,10 @@ export function createBinaryChannel(
     }
     if (isStreamClass(raw)) {
       onClass?.(raw);
+      return;
+    }
+    if (isInputOwner(raw)) {
+      onInputOwner?.(raw);
       return;
     }
     decodeBytes(raw, onBytes);
