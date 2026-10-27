@@ -425,6 +425,31 @@ export interface LiveTabInfo {
   title?: string;
   titleCustom?: boolean;
   titleChangedAt?: number;
+  // Unix ms; detachedAt is absent while a client is subscribed.
+  createdAt?: number;
+  detachedAt?: number;
+  // Age of detachedAt on the backend's clock when it answered; omitted when zero.
+  detachedMsAgo?: number;
+  // detachedAt is only when this app reopened an existing helper session that no client has left since.
+  detachedSinceOpen?: boolean;
+  durable?: boolean;
+  // The helper's attention state of a durable tab; absent when none is reported.
+  state?: SessionAttentionState;
+}
+
+export type SessionAttentionState = "running" | "needs_me" | "just_finished" | "idle" | "exited";
+
+// Activity of a durable session as its host's helper tracks it in memory (Unix ms, host clock).
+// A null time is one the helper has not seen: no output yet, or a client is attached.
+export interface DurableActivity {
+  lastOutputAt: number | null;
+  detachedAt: number | null;
+  attached: boolean;
+  // Measured on the host's clock at asOf, so they need no comparison with this device's clock.
+  // A helper that reports times without ages leaves them out.
+  asOf?: number;
+  lastOutputMsAgo?: number;
+  detachedMsAgo?: number;
 }
 
 export type RecordingState = "never-started" | "running" | "stopped" | "failed";
@@ -450,6 +475,9 @@ export interface DurableDescriptor {
   exitCode: number | null;
   signal?: string;
   finishedAt: number | null;
+  state?: SessionAttentionState;
+  // Absent when the host's helper predates activity reporting.
+  activity?: DurableActivity;
 }
 
 export interface StreamResumeAnchor {

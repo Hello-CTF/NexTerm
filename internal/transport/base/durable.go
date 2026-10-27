@@ -48,6 +48,30 @@ type DurableDescriptor struct {
 	// State is the helper's attention state for the session; nil when the
 	// helper runs with state detection disabled.
 	State *SessionState
+	// Activity is the helper's in-memory activity record; nil when the
+	// helper predates it.
+	Activity *DurableActivity
+}
+
+// DurableActivity is when a durable session last produced output and when
+// its last attached client left. A helper keeps it in memory only; after a
+// helper restart a recovered session reports neither time.
+type DurableActivity struct {
+	// LastOutputAt is nil when the session has produced no output since the
+	// helper started it.
+	LastOutputAt *time.Time `json:"last_output_at,omitempty"`
+	// DetachedAt is when the attached client count last dropped to zero, or
+	// the creation time when no client ever detached; nil while Attached.
+	DetachedAt *time.Time `json:"detached_at,omitempty"`
+	// Attached reports that at least one client is attached now.
+	Attached bool `json:"attached,omitempty"`
+	// AsOf is the helper's clock when it reported the activity. The ages
+	// are measured on that clock, so a client can show them without
+	// comparing its own clock with the host's; they are set exactly when
+	// the matching time is.
+	AsOf            time.Time `json:"as_of,omitzero"`
+	LastOutputMSAgo *int64    `json:"last_output_ms_ago,omitempty"`
+	DetachedMSAgo   *int64    `json:"detached_ms_ago,omitempty"`
 }
 
 type DurableIdentity struct {

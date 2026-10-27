@@ -337,7 +337,8 @@ describe("BackgroundSessions skeleton", () => {
     expect(mounted!.container.textContent).not.toContain("没有在后台运行的终端");
 
     d.resolve(LIVE_TABS.map((t) => ({ ...t })));
-    await flushUntil(() => mounted!.container.textContent?.includes("web-1") ?? false);
+    // The host name lives in the toolbar; the row itself is the terminal.
+    await flushUntil(() => mounted!.container.querySelector('tbody tr[data-background-row="t1"]') !== null);
     expect(mounted!.container.querySelector('tbody tr[aria-hidden="true"]')).toBeNull();
     expect(mounted!.container.textContent).not.toContain("没有在后台运行的终端");
   });

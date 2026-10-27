@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { sessionApi, syncApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
+import { sessionApi, syncApi, terminalApi, type LiveTabInfo, type SessionAttentionState } from "../../ipc/commands";
 import {
   backgroundTabKey,
   backgroundTargets,
@@ -17,6 +17,7 @@ import {
   nextTabId,
   reconnectDeadHost,
   reconnectWorkspaceSession,
+  sanitizeRemoteTabTitle,
   useSessionList,
   useUi,
   type Workspace,
@@ -28,6 +29,7 @@ import { ask } from "../../ui/dialogs";
 import { startPolling } from "../../app/usePolling";
 import { describeError } from "../../ui/errorText";
 import "../../ui/skeleton.css";
+import "./backgroundSessions.css";
 import { localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 import {
   IconActivity,
@@ -38,6 +40,7 @@ import {
 } from "../../ui/icons";
 
 const POLL_MS = 5000;
+const COLUMN_COUNT = 5;
 const NO_WORKSPACES: Workspace[] = [];
 
 interface PendingTab {
@@ -78,9 +81,140 @@ function ago(ms: number): string {
   return `${Math.floor(h / 24)} 天前`;
 }
 
-function lastOutputLabel(tab: BackgroundTab): string {
-  if (tab.lastOutputAt !== undefined && tab.lastOutputAt <= 0) return "暂无输出";
-  return ago(tab.lastOutputMsAgo ?? 0);
+const OLD_HELPER_TIMES = "这台主机上的 NexTerm 组件版本较旧，无法报告输出和转入后台的时间；更新组件后可显示";
+
+const STATE_LABELS: Record<SessionAttentionState, string> = {
+  running: "运行中",
+  needs_me: "需要我",
+  just_finished: "刚完成",
+  idle: "空闲",
+  exited: "已退出",
+};
+
+const STATE_HINTS: Record<SessionAttentionState, string> = {
+  running: "终端最近一直有输出",
+  needs_me: "程序在等你回应：响铃、发出通知或显示了提示",
+  just_finished: "刚有命令运行结束",
+  idle: "没有新的输出，也没有在等你回应",
+  exited: "终端里的程序已经退出",
+};
+
+interface StatusView {
+  label: string;
+  hint: string;
+  tone: "accent" | "muted" | "normal";
+}
+
+function statusView(tab: BackgroundTab): StatusView {
+  const state = tab.state;
+  if (state && Object.hasOwn(STATE_LABELS, state)) {
+    return {
+      label: STATE_LABELS[state],
+      hint: STATE_HINTS[state],
+      tone: state === "needs_me" ? "accent" : state === "exited" ? "muted" : "normal",
+    };
+  }
+  // A state a newer helper added is reported, just not understood here.
+  if (state) return { label: "—", hint: "未知状态", tone: "muted" };
+  if (tab.exited) return { label: STATE_LABELS.exited, hint: STATE_HINTS.exited, tone: "muted" };
+  return {
+    label: "—",
+    hint: tab.durable || tab.remote
+      ? "这台主机上的 NexTerm 组件没有报告状态：组件版本较旧，或关闭了状态检测"
+      : "普通终端不会报告状态",
+    tone: "muted",
+  };
+}
+
+// Hover tooltips do not reach touch screens, so the gaps a tooltip explains are also stated once below the table.
+const OLD_HELPER_NOTE = "部分终端所在主机的持久组件版本较旧，无法显示状态和时间；更新组件后即可显示";
+const NEEDS_ME_NOTE = "「需要我」表示程序在等你回应：响铃、发出通知或显示了需要选择的提示";
+
+const STATUS_TONE_CLASS: Record<StatusView["tone"], string> = {
+  accent: "font-medium text-blue-300",
+  muted: "text-[var(--nx-fg-soft)]",
+  normal: "text-[var(--nx-fg)]",
+};
+
+// Short, stable fallback name: the tail of a tab ID is its random part.
+function shortTabId(tabId: string): string {
+  const compact = tabId.replace(/[^0-9a-z]/gi, "");
+  return (compact || tabId).slice(-6);
+}
+
+// The tab strip's rule: the backend reports the custom title when there is one, otherwise the
+// program's title; either is sanitized the way the strip shows it.
+export function backgroundTabName(tab: Pick<BackgroundTab, "tabId" | "title">): string {
+  return sanitizeRemoteTabTitle(tab.title ?? "") || `终端 ${shortTabId(tab.tabId)}`;
+}
+
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function absoluteTime(ms: number): string {
+  const at = new Date(ms);
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
+}
+
+interface TimeView {
+  output: string;
+  detached: string;
+  tooltip: string;
+}
+
+interface MomentView {
+  // How long ago, on this device's clock.
+  age: number;
+  // When, on this device's clock unless hostClock.
+  at: number;
+}
+
+// moment prefers the backend's age, measured on the clock that recorded the time, and rebases it
+// to this device's clock; without an age the raw time is used as is.
+function moment(at: number | undefined, msAgo: number | undefined, fetchedAt: number, now: number): MomentView | null {
+  if (msAgo !== undefined && msAgo >= 0) {
+    return { age: msAgo + Math.max(0, now - fetchedAt), at: fetchedAt - msAgo };
+  }
+  if (at !== undefined && at > 0) return { age: now - at, at };
+  return null;
+}
+
+function timeView(tab: BackgroundTab, now: number): TimeView {
+  const createdLabel = tab.createdOnHost ? "创建（主机时间）" : "创建";
+  const created = tab.createdAt && tab.createdAt > 0 ? `${createdLabel}：${absoluteTime(tab.createdAt)}` : null;
+  if (tab.activityUnknown) {
+    return { output: "—", detached: "—", tooltip: [OLD_HELPER_TIMES, created].filter(Boolean).join("\n") };
+  }
+  const fetchedAt = tab.fetchedAt ?? now;
+  const clock = tab.hostClock ? "（主机时间）" : "";
+  const lines: string[] = [];
+  let output: string;
+  if (tab.lastOutputAt !== undefined && tab.lastOutputAt <= 0) {
+    output = "暂无输出";
+    lines.push("最近输出：暂无");
+  } else {
+    const last = moment(tab.lastOutputAt, tab.lastOutputMsAgo, fetchedAt, now);
+    output = `${ago(last?.age ?? 0)}有输出`;
+    if (last) lines.push(`最近输出${clock}：${absoluteTime(last.at)}`);
+  }
+  let detached: string;
+  const left = moment(tab.detachedAt, tab.detachedAt ? tab.detachedMsAgo : undefined, fetchedAt, now);
+  if (tab.attachedElsewhere) {
+    detached = "仍有设备连接着";
+    lines.push("转入后台：仍有设备连接着这个终端");
+  } else if (left && tab.detachedSinceOpen) {
+    detached = `至少 ${ago(left.age)}转入后台`;
+    lines.push(`转入后台：不晚于 ${absoluteTime(left.at)}（自本次打开应用起）`);
+  } else if (left) {
+    detached = `${ago(left.age)}转入后台`;
+    lines.push(`转入后台${clock}：${absoluteTime(left.at)}`);
+  } else {
+    detached = "—";
+    lines.push("转入后台：时间未知");
+  }
+  if (created) lines.push(created);
+  return { output, detached, tooltip: lines.join("\n") };
 }
 
 export function BackgroundSessions({
@@ -219,21 +353,25 @@ export function BackgroundSessions({
         sessions: st.sessions, workspaces: st.workspaces, verified: verifiedQuickSessions, localDurable: localDurableEnabled(localHelper),
       };
       const targets = backgroundTargets(scope, { showAll, hostSessionId, owner: ownerWorkspace, remoteOwner });
+      // Each listing keeps its own arrival time: its ages count from when it answered, not from the slowest one.
+      const received = <T,>(request: Promise<T>) => request.then((value) => ({ value, at: Date.now() }));
       const [live, ...remote] = await Promise.allSettled([
-        terminalApi.listLive(),
-        ...targets.map((session) => terminalApi.listDurable(session.id)),
+        received(terminalApi.listLive()),
+        ...targets.map((session) => received(terminalApi.listDurable(session.id))),
       ]);
       if (generation !== loadGenerationRef.current) return;
       const errors: string[] = [];
       if (live.status === "rejected") errors.push(describeError(live.reason));
       const collected = collectBackgroundTabs(scope, {
-        live: live.status === "fulfilled" ? (live.value as LiveTabInfo[]) : null,
+        live: live.status === "fulfilled" ? (live.value.value as LiveTabInfo[]) : null,
+        liveFetchedAt: live.status === "fulfilled" ? live.value.at : undefined,
         remote: targets.map((session, index) => {
           const result = remote[index];
           return {
             session,
-            tabs: result.status === "fulfilled" ? (result.value as Awaited<ReturnType<typeof terminalApi.listDurable>>) : null,
+            tabs: result.status === "fulfilled" ? (result.value.value as Awaited<ReturnType<typeof terminalApi.listDurable>>) : null,
             reason: result.status === "rejected" ? result.reason : undefined,
+            fetchedAt: result.status === "fulfilled" ? result.value.at : undefined,
           };
         }),
         openTabIds: openTerminalTabIds(showAll ? st.workspaces : ownerWorkspace ? [ownerWorkspace] : []),
@@ -482,6 +620,7 @@ export function BackgroundSessions({
   );
   const count = list.length;
   const hostLabel = showAll ? "全部主机" : (hostName ?? "未知主机");
+  const now = Date.now();
   const hostScope = showAll ? "all" : hostSession?.kind === "local" || (!remoteOwner && ownerWorkspace?.assetKind === "local") ? "local" : "remote";
 
   return (
@@ -508,13 +647,21 @@ export function BackgroundSessions({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="nx-table nx-table-cards">
+        <table className="nx-table nx-table-cards nx-table-fixed nx-bg-sessions" data-testid="background-table">
+          <colgroup>
+            <col />
+            <col style={{ width: 88 }} />
+            <col style={{ width: 92 }} />
+            <col style={{ width: 168 }} />
+            <col style={{ width: 208 }} />
+          </colgroup>
           <thead>
             <tr>
-              <th style={{ width: 190 }}>主机</th>
-              <th style={{ width: 130 }}>终端</th>
-              <th>最近输出</th>
-              <th style={{ width: 208 }} />
+              <th scope="col">名称</th>
+              <th scope="col">状态</th>
+              <th scope="col">大小</th>
+              <th scope="col">时间</th>
+              <th scope="col"><span className="sr-only">操作</span></th>
             </tr>
           </thead>
           <tbody>
@@ -522,11 +669,14 @@ export function BackgroundSessions({
               <>
                 {Array.from({ length: 4 }, (_, i) => (
                   <tr key={`skeleton-${i}`} aria-hidden="true">
-                    <td>
+                    <td className="nx-bg-name">
                       <span className="nx-skeleton w-4/5" />
                     </td>
-                    <td>
+                    <td className="nx-bg-status">
                       <span className="nx-skeleton w-3/5" />
+                    </td>
+                    <td>
+                      <span className="nx-skeleton w-1/2" />
                     </td>
                     <td>
                       <span className="nx-skeleton w-2/3" />
@@ -542,15 +692,31 @@ export function BackgroundSessions({
               const key = backgroundTabKey(t);
               const action = busy[key];
               const rowBusy = action !== undefined;
+              const name = backgroundTabName(t);
+              const status = statusView(t);
+              const time = timeView(t, now);
               return (
-                <tr key={key}>
-                  <td className="truncate font-medium text-neutral-200" title={t.sessionName}>
-                    {t.sessionName}
+                <tr key={key} data-background-row={t.tabId}>
+                  <td className="nx-bg-name">
+                    <span className="block truncate font-medium text-[var(--nx-fg-strong)]" title={name} data-testid="background-name">
+                      {name}
+                    </span>
+                    {showAll && (
+                      <span className="block truncate text-[11px] text-[var(--nx-fg-soft)]" title={t.sessionName} data-testid="background-host-name">
+                        {t.sessionName}
+                      </span>
+                    )}
                   </td>
-                  <td className="nx-mono text-neutral-400" title={t.title}>
-                    {t.title ?? `${t.cols}×${t.rows}`}
+                  <td className={`nx-bg-status ${STATUS_TONE_CLASS[status.tone]}`} title={status.hint} data-testid="background-status" data-state={t.state ?? "none"}>
+                    {status.label}
                   </td>
-                  <td className="text-neutral-400">{t.remote ? "在主机上运行" : lastOutputLabel(t)}</td>
+                  <td className="nx-bg-size font-mono text-[11.5px] text-[var(--nx-fg)]" data-label="大小" data-testid="background-size">
+                    {t.cols}×{t.rows}
+                  </td>
+                  <td className="nx-bg-time" title={time.tooltip} data-testid="background-time">
+                    <span className="block truncate text-[var(--nx-fg)]" data-testid="background-output">{time.output}</span>
+                    <span className="block truncate text-[11px] text-[var(--nx-fg-soft)]" data-testid="background-detached">{time.detached}</span>
+                  </td>
                   <td className="nx-right">
                     <div className="flex items-center justify-end gap-1.5 max-[640px]:justify-stretch">
                       <button
@@ -585,30 +751,42 @@ export function BackgroundSessions({
               );
             })}
             {pendingTabs.map((tab) => (
-              <tr key={`pending-${tab.key}`}>
-                <td className="truncate font-medium text-neutral-200" title={tab.hostName}>{tab.hostName}</td>
-                <td className="nx-mono text-neutral-400" title={tab.title}>{tab.title}</td>
-                <td className="text-amber-300">待核实 · 连接主机后才能确认是否仍在运行</td>
+              <tr key={`pending-${tab.key}`} data-background-pending="">
+                <td className="nx-bg-name">
+                  <span className="block truncate font-medium text-[var(--nx-fg-strong)]" title={tab.title} data-testid="background-name">
+                    {tab.title}
+                  </span>
+                  {showAll && (
+                    <span className="block truncate text-[11px] text-[var(--nx-fg-soft)]" title={tab.hostName} data-testid="background-host-name">
+                      {tab.hostName}
+                    </span>
+                  )}
+                </td>
+                <td className="nx-bg-status text-[var(--nx-fg)]" title="连接主机后才能确认是否仍在运行" data-testid="background-status" data-state="pending">
+                  待核实
+                </td>
+                <td className="nx-bg-size font-mono text-[11.5px] text-[var(--nx-fg-soft)]" data-label="大小">—</td>
+                <td className="nx-bg-time text-[var(--nx-fg-soft)]">连接主机后才能确认是否仍在运行</td>
                 <td className="nx-right">
                   {tab.workspaceId ? (
                     <button className="nx-btn nx-btn-primary nx-btn-xs" disabled={desktopChecking || reconnecting || tab.waitingForConnection} onClick={() => void reconnectHost(tab.workspaceId as string)}>
                       <IconRefresh size={11} className={reconnecting ? "animate-spin" : ""} />
                       {reconnecting || tab.waitingForConnection ? "正在连接…" : "连接并查找"}
                     </button>
-                  ) : <span className="text-[11px] text-neutral-400">请先从资产树打开这台主机</span>}
+                  ) : <span className="text-[11px] text-[var(--nx-fg-soft)]">请先从资产树打开这台主机</span>}
                 </td>
               </tr>
             ))}
             {scopedError && (
               <tr>
-                <td colSpan={4} className="nx-table-empty text-red-300">
+                <td colSpan={COLUMN_COUNT} className="nx-table-empty text-red-300">
                   无法读取后台会话：{scopedError}
                 </td>
               </tr>
             )}
             {!scopedError && scopedItems !== null && list.length === 0 && pendingTabs.length === 0 && (
               <tr>
-                <td colSpan={4} className="nx-table-empty">
+                <td colSpan={COLUMN_COUNT} className="nx-table-empty text-[var(--nx-fg-soft)]">
                   {needsReconnect
                     ? "主机未连接，连接后才能查看后台终端"
                     : showAll
@@ -616,7 +794,7 @@ export function BackgroundSessions({
                       : hostScope === "local"
                         ? "本机没有在后台运行的终端"
                         : "这台主机上没有在后台运行的终端"}
-                  <div className="mt-1.5 text-[11px] text-neutral-500">
+                  <div className="mt-1.5 text-[11px] text-[var(--nx-fg-soft)]">
                     {needsReconnect
                       ? "终端可能仍在主机上运行，连接成功后列表会自动更新"
                       : showAll
@@ -634,7 +812,14 @@ export function BackgroundSessions({
         </table>
       </div>
 
-      <div className="shrink-0 border-t border-neutral-800/60 px-3 py-2 text-[11px] leading-relaxed text-neutral-500">
+      <div className="shrink-0 border-t border-neutral-800/60 px-3 py-2 text-[11px] leading-relaxed text-[var(--nx-fg-soft)]">
+        {list.some((t) => t.state === "needs_me") && (
+          <p className="mb-1" data-testid="background-needs-me-note">{NEEDS_ME_NOTE}</p>
+        )}
+        {/* Only a missing activity record means an old component; a current helper may run without state detection. */}
+        {list.some((t) => t.activityUnknown) && (
+          <p className="mb-1" data-testid="background-old-helper-note">{OLD_HELPER_NOTE}</p>
+        )}
         <IconTerminal size={11} className="mr-1 inline align-[-1px]" />
         {persistenceFootnote(hostScope)}
       </div>

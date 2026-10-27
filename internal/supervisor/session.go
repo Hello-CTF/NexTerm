@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -41,6 +42,11 @@ type Session struct {
 	recErr      error
 	inputErr    error
 	attachments map[*Attachment]struct{}
+	// detachedAt is when attachments last became empty; see activityLocked.
+	detachedAt time.Time
+	// lastOutput is the Unix nanosecond time of the latest recorded output,
+	// zero before any.
+	lastOutput atomic.Int64
 
 	inputQueue    chan []byte
 	inputDone     chan struct{}
@@ -94,6 +100,7 @@ func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySes
 		pty:         ptySession,
 		history:     recording,
 		attachments: make(map[*Attachment]struct{}),
+		detachedAt:  now,
 		inputQueue:  make(chan []byte, inputQueueSlots),
 		inputDone:   make(chan struct{}),
 		deadCh:      make(chan struct{}),
@@ -174,6 +181,7 @@ func (s *Session) infoLocked() Info {
 	}
 	s.historyInfo(&info)
 	info.State = s.stateInfoLocked(false, 0)
+	info.Activity = s.activityLocked()
 	return info
 }
 
@@ -549,7 +557,12 @@ func (s *Session) readHistory(before uint64, maxBytes int) (HistoryChunk, error)
 
 func (s *Session) removeAttachment(attachment *Attachment) {
 	s.mu.Lock()
-	delete(s.attachments, attachment)
+	if _, ok := s.attachments[attachment]; ok {
+		delete(s.attachments, attachment)
+		if len(s.attachments) == 0 {
+			s.detachedAt = time.Now()
+		}
+	}
 	s.mu.Unlock()
 }
 
@@ -641,9 +654,11 @@ func (s *Session) record(chunk []byte) {
 	if err := s.history.append(chunk); err != nil {
 		s.setRecErr(err)
 	}
+	now := time.Now()
+	s.lastOutput.Store(now.UnixNano())
 	s.notifyAll()
 	if s.state != nil {
-		s.state.output(chunk, time.Now())
+		s.state.output(chunk, now)
 	}
 }
 

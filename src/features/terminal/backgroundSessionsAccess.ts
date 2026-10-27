@@ -8,6 +8,17 @@ const COUNT_REFRESH_MS = 10_000;
 export type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   lastOutputMsAgo?: number;
   remote?: boolean;
+  // The host's helper predates activity reporting, so output and detach times are unknown.
+  activityUnknown?: boolean;
+  // A client is attached to the helper session right now, so it has no detach time.
+  attachedElsewhere?: boolean;
+  detachedMsAgo?: number;
+  // When this device received the listing; ages are relative to it.
+  fetchedAt?: number;
+  // The times come from the host's clock without ages, so they are shown as host time.
+  hostClock?: boolean;
+  // createdAt is the helper's creation time, on the host's clock.
+  createdOnHost?: boolean;
 };
 
 export interface KnownDurableTab {
@@ -121,10 +132,15 @@ export function collectBackgroundTabs(
   scope: BackgroundScope,
   input: {
     live: LiveTabInfo[] | null;
-    remote: { session: SessionInfo; tabs: DurableList | null; reason?: unknown }[];
+    // fetchedAt is when that listing arrived on this device's clock; ages in it are relative to it.
+    remote: { session: SessionInfo; tabs: DurableList | null; reason?: unknown; fetchedAt?: number }[];
     openTabIds: Set<string>;
+    // When the live listing arrived on this device's clock; defaults to now.
+    liveFetchedAt?: number;
   },
 ): CollectedBackgroundTabs {
+  const collectedAt = Date.now();
+  const liveFetchedAt = input.liveFetchedAt ?? collectedAt;
   const list: BackgroundTab[] = [];
   const known = new Set<string>();
   const knownTabsByHost = new Map<string, Map<string, KnownDurableTab>>();
@@ -135,14 +151,22 @@ export function collectBackgroundTabs(
     const hostKey = session ? hostKeyForSession(scope, session) : null;
     return hostKey ? JSON.stringify([hostKey, tabId]) : backgroundTabKey({ sessionId, tabId });
   };
+  // A durable tab this app still holds is listed live; the helper's listing adds what only it knows.
+  const liveRows = new Map<string, BackgroundTab>();
   for (const tab of input.live ?? []) {
     if (tab.exited || input.openTabIds.has(tab.tabId)) continue;
     const key = keyForTab(tab.sessionId, tab.tabId);
     if (known.has(key)) continue;
     known.add(key);
-    if (tab.subscribers === 0) list.push(tab);
+    if (tab.subscribers === 0) {
+      const row: BackgroundTab = { ...tab, fetchedAt: liveFetchedAt };
+      // The backend leaves a zero age out; the live listing always sends one with a detach time.
+      if (row.detachedAt) row.detachedMsAgo ??= 0;
+      liveRows.set(key, row);
+      list.push(row);
+    }
   }
-  for (const { session, tabs, reason } of input.remote) {
+  for (const { session, tabs, reason, fetchedAt = collectedAt } of input.remote) {
     const hostKey = hostKeyForSession(scope, session);
     if (tabs === null) {
       if (hostKey) incompleteHosts.add(hostKey);
@@ -159,6 +183,15 @@ export function collectBackgroundTabs(
     for (const tab of tabs) {
       if (tab.dead || input.openTabIds.has(tab.id)) continue;
       const key = hostKey ? JSON.stringify([hostKey, tab.id]) : backgroundTabKey({ sessionId: session.id, tabId: tab.id });
+      const live = liveRows.get(key);
+      if (live) {
+        live.state ??= tab.state;
+        // The helper created the session; this app may only have reattached to it.
+        if (tab.createdAt > 0) {
+          live.createdAt = tab.createdAt;
+          live.createdOnHost = true;
+        }
+      }
       if (known.has(key)) continue;
       known.add(key);
       list.push({
@@ -176,6 +209,22 @@ export function collectBackgroundTabs(
         // A durable descriptor title is the canonical custom title.
         titleCustom: tab.title ? true : undefined,
         remote: true,
+        durable: true,
+        createdAt: tab.createdAt > 0 ? tab.createdAt : undefined,
+        createdOnHost: true,
+        state: tab.state,
+        fetchedAt,
+        ...(tab.activity
+          ? {
+              // Zero means no output yet; a null detach time means a client is attached.
+              lastOutputAt: tab.activity.lastOutputAt ?? 0,
+              lastOutputMsAgo: tab.activity.lastOutputMsAgo,
+              detachedAt: tab.activity.detachedAt ?? undefined,
+              detachedMsAgo: tab.activity.detachedMsAgo,
+              hostClock: tab.activity.asOf === undefined || undefined,
+              attachedElsewhere: tab.activity.attached || undefined,
+            }
+          : { activityUnknown: true }),
       });
     }
   }

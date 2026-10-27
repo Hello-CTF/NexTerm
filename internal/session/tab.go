@@ -61,6 +61,9 @@ type subscriber struct {
 	// belongs to is no longer current, and clearing the floor or unpausing on
 	// its behalf would evict a live episode's retained suffix.
 	episodeGen uint64
+	// spectator marks a read-only preview channel; it never keeps a tab from
+	// counting as detached.
+	spectator bool
 }
 
 const streamAnchorType = "nexterm.stream-anchor"
@@ -186,6 +189,15 @@ type Tab struct {
 	lifecycleMu  sync.Mutex
 	closeMu      sync.Mutex
 	closeRetry   bool
+
+	// createdAt and detachedAt back TabInfo.CreatedAt and DetachedAt; guarded by mu.
+	createdAt  time.Time
+	detachedAt time.Time
+	// detaches counts subscribers removed by dropSubscriberLocked, so a rolled-back
+	// attach can tell whether another subscriber left while it was registered.
+	detaches uint64
+	// reopened marks a durable tab recovered from a helper session this app run did not create.
+	reopened bool
 }
 
 // acquireWrite takes the tab's write gate, giving up early when the caller's
@@ -210,9 +222,14 @@ func (t *Tab) Info() TabInfo {
 
 func (t *Tab) listInfo() TabInfo {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	info := t.infoLocked()
 	info.LastOutputMSAgo = terminalLastOutputMSAgo(t.terminal)
+	if info.DetachedAt != 0 {
+		info.DetachedMSAgo = max(time.Since(t.detachedAt).Milliseconds(), 0)
+	}
+	durable := t.durable
+	t.mu.Unlock()
+	info.State = durableAttentionState(durable)
 	return info
 }
 
@@ -226,6 +243,7 @@ func (t *Tab) infoLocked() TabInfo {
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
 		Exited: t.exited, Retainable: t.retainable || !t.ephemeral && !t.regularRemote, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
 		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
+		CreatedAt: unixMilliOrZero(t.createdAt), DetachedAt: t.detachedAtLocked(), DetachedSinceOpen: t.detachedSinceOpenLocked(),
 	}
 }
 
@@ -543,6 +561,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
 		streamEpoch: ids.New(), outputWake: make(chan struct{}),
+		createdAt: openStart, detachedAt: openStart, reopened: options.Durable != nil && options.Durable.Recover,
 	}
 	if options.Durable == nil {
 		tab.runtimeEpisode = ids.New()
@@ -1002,7 +1021,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	tab.mu.Lock()
 	old, replaced := tab.subscribers[options.ChannelID]
 	if replaced {
-		delete(tab.subscribers, options.ChannelID)
+		tab.dropSubscriberLocked(options.ChannelID)
 		tab.syncRecoveryFloorLocked()
 		tab.releaseOrphanControllerLocked()
 	}
@@ -1016,6 +1035,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	}
 	attached := false
 	registered := false
+	var registeredDetaches uint64
 	var co *outCoalescer
 	defer func() {
 		if !attached {
@@ -1027,7 +1047,14 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 				m.mu.Lock()
 				tab.mu.Lock()
 				if current, ok := tab.subscribers[options.ChannelID]; ok && current.co == co {
+					// A rolled-back attach never counted as attached: the
+					// detach time it hid stays, unless another subscriber
+					// left meanwhile and this one only kept the tab from
+					// counting as detached.
 					delete(tab.subscribers, options.ChannelID)
+					if !tab.hasInteractiveSubscriberLocked() && tab.detaches != registeredDetaches {
+						tab.detachedAt = time.Now()
+					}
 					tab.syncRecoveryFloorLocked()
 					tab.releaseOrphanControllerLocked()
 				}
@@ -1071,6 +1098,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	tab.subscribers[options.ChannelID] = subscriber{
 		client: client, producer: producer, co: co, attachmentId: attachmentId, flushedOffset: flushedOffset, episodeFloor: -1, floorHighWater: -1,
 	}
+	registeredDetaches = tab.detaches
 	tab.mu.Unlock()
 	m.mu.Unlock()
 	registered = true
@@ -1263,7 +1291,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	}
 	delete(m.channelTabs, channelID)
 	delete(m.channelIncarnations, channelID)
-	delete(tab.subscribers, channelID)
+	tab.dropSubscriberLocked(channelID)
 	tab.syncRecoveryFloorLocked()
 	throttleRecovered, throttleVersion := m.clearThrottleChannelLocked(tab.ID, channelID)
 	tab.releaseOrphanControllerLocked()
@@ -1379,7 +1407,7 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background b
 	for channel, subscriber := range tab.subscribers {
 		if match(subscriber.client) {
 			detached = append(detached, detachedOutput{channelID: channel, subscriber: subscriber})
-			delete(tab.subscribers, channel)
+			tab.dropSubscriberLocked(channel)
 			delete(m.channelTabs, channel)
 			delete(m.channelIncarnations, channel)
 			if recovered, version := m.clearThrottleChannelLocked(tab.ID, channel); recovered {

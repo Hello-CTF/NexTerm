@@ -241,6 +241,19 @@ type TabInfo struct {
 	// AttachmentID is the unique incarnation of this attachment, established
 	// at attach time and bound to the ACK and the floor high-water.
 	AttachmentID uint64 `json:"attachmentId,omitempty"`
+	// CreatedAt is when this process opened the tab (Unix ms). DetachedAt is
+	// when its last subscriber left, or CreatedAt when none ever attached;
+	// zero while subscribed. Both are in memory only.
+	CreatedAt  int64 `json:"createdAt,omitempty"`
+	DetachedAt int64 `json:"detachedAt,omitempty"`
+	// DetachedMSAgo is the age of DetachedAt when a listing was taken.
+	DetachedMSAgo int64 `json:"-"`
+	// DetachedSinceOpen reports that DetachedAt is when this app run reopened
+	// an existing helper session that no client has left since.
+	DetachedSinceOpen bool `json:"detachedSinceOpen,omitempty"`
+	// State is the helper's attention state of a durable tab; set only by
+	// listings and empty when the helper reports none.
+	State string `json:"state,omitempty"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {

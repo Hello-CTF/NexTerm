@@ -245,6 +245,7 @@ func durableDescriptors(infos []Info) []base.DurableDescriptor {
 			HistoryNext:      info.HistoryNext,
 			HistoryTruncated: info.HistoryTruncated,
 			State:            info.State,
+			Activity:         info.Activity,
 		}
 		if info.ExitCode != nil {
 			exitCode := *info.ExitCode
