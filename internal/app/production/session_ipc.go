@@ -361,6 +361,7 @@ type liveTabDTO struct {
 	TitleChangedAt  int64   `json:"titleChangedAt,omitempty"`
 	CreatedAt       int64   `json:"createdAt,omitempty"`
 	DetachedAt      int64   `json:"detachedAt,omitempty"`
+	Durable         bool    `json:"durable,omitempty"`
 	State           string  `json:"state,omitempty"`
 }
 
@@ -909,7 +910,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
 						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt,
-						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, State: info.State,
+						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, Durable: info.Durable, State: info.State,
 					})
 				}
 				return result, nil

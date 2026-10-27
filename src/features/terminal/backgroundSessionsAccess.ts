@@ -8,6 +8,10 @@ const COUNT_REFRESH_MS = 10_000;
 export type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   lastOutputMsAgo?: number;
   remote?: boolean;
+  // The host's helper predates activity reporting, so output and detach times are unknown.
+  activityUnknown?: boolean;
+  // A client is attached to the helper session right now, so it has no detach time.
+  attachedElsewhere?: boolean;
 };
 
 export interface KnownDurableTab {
@@ -135,12 +139,18 @@ export function collectBackgroundTabs(
     const hostKey = session ? hostKeyForSession(scope, session) : null;
     return hostKey ? JSON.stringify([hostKey, tabId]) : backgroundTabKey({ sessionId, tabId });
   };
+  // A durable tab this app still holds is listed live; the helper's listing adds what only it knows.
+  const liveRows = new Map<string, BackgroundTab>();
   for (const tab of input.live ?? []) {
     if (tab.exited || input.openTabIds.has(tab.tabId)) continue;
     const key = keyForTab(tab.sessionId, tab.tabId);
     if (known.has(key)) continue;
     known.add(key);
-    if (tab.subscribers === 0) list.push(tab);
+    if (tab.subscribers === 0) {
+      const row: BackgroundTab = { ...tab };
+      liveRows.set(key, row);
+      list.push(row);
+    }
   }
   for (const { session, tabs, reason } of input.remote) {
     const hostKey = hostKeyForSession(scope, session);
@@ -159,6 +169,12 @@ export function collectBackgroundTabs(
     for (const tab of tabs) {
       if (tab.dead || input.openTabIds.has(tab.id)) continue;
       const key = hostKey ? JSON.stringify([hostKey, tab.id]) : backgroundTabKey({ sessionId: session.id, tabId: tab.id });
+      const live = liveRows.get(key);
+      if (live) {
+        live.state ??= tab.state;
+        // The helper created the session; this app may only have reattached to it.
+        if (tab.createdAt > 0) live.createdAt = tab.createdAt;
+      }
       if (known.has(key)) continue;
       known.add(key);
       list.push({
@@ -176,6 +192,17 @@ export function collectBackgroundTabs(
         // A durable descriptor title is the canonical custom title.
         titleCustom: tab.title ? true : undefined,
         remote: true,
+        durable: true,
+        createdAt: tab.createdAt > 0 ? tab.createdAt : undefined,
+        state: tab.state,
+        ...(tab.activity
+          ? {
+              // Zero means no output yet; a null detach time means a client is attached.
+              lastOutputAt: tab.activity.lastOutputAt ?? 0,
+              detachedAt: tab.activity.detachedAt ?? undefined,
+              attachedElsewhere: tab.activity.attached || undefined,
+            }
+          : { activityUnknown: true }),
       });
     }
   }
