@@ -3,7 +3,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, Fragment } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 import { notifyAssetDataChanged } from "../../ipc/assetEvents";
 import type { SshImportPreviewDto } from "../../ipc/types";
 
@@ -410,9 +410,16 @@ async function reconnectAndExpectStaleCleared(): Promise<void> {
     }
     return Promise.resolve(sessionRows(mocks.stale));
   });
+  // The reconnect polls the session list on a real-time interval; fake it so the second poll does not wait on the clock.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   click(button!);
+  await flushUntil(() => engaged);
+  expect(useUi.getState().sessions[0]?.staleConfig).toBe(true);
+  await act(async () => {
+    await vi.runOnlyPendingTimersAsync();
+  });
   // The reconnect settles the session list first; the stale banner follows the store, not the poll.
-  await waitFor(() => expect(useUi.getState().sessions[0]?.staleConfig).toBe(false), 3_000);
+  await flushUntil(() => useUi.getState().sessions[0]?.staleConfig === false);
   expect(document.body.textContent).not.toContain("配置已修改，重连后生效");
   expect(mocks.sessionReconnect).toHaveBeenCalledWith("s1");
 }
