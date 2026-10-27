@@ -23,7 +23,7 @@ export function TerminalPromptBar({ tabId }: { tabId: string | null }) {
       data-terminal-prompt-bar={tabId}
     >
       <div className="min-w-0 flex-1">
-        <ChoiceButtons tabId={tabId} prompt={prompt} compact />
+        <ChoiceButtons tabId={tabId} prompt={prompt} version={awareness?.version ?? 0} allowEnter compact />
       </div>
       <button
         type="button"

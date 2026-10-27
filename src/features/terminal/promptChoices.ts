@@ -17,6 +17,8 @@ const BLOCKED_HINTS: Record<string, string> = {
 
 // promptBlockedHint says why a prompt cannot be answered by tap; the question is still shown.
 export function promptBlockedHint(prompt: AttentionPrompt): string | null {
+  // A tap must name the helper generation; a prompt without one cannot be answered safely.
+  if (!prompt.generation) return "无法确认这个提示的来源，请在终端里回答";
   if (prompt.tappable && (prompt.options?.length ?? 0) > 0) return null;
   return BLOCKED_HINTS[prompt.blocked ?? ""] ?? (prompt.kind === "question" ? BLOCKED_HINTS.question : "请在终端里回答");
 }
@@ -33,7 +35,14 @@ export function separateEnterKey(prompt: AttentionPrompt): string | null {
   return prompt.submit === "separate" && prompt.enterKey ? prompt.enterKey : null;
 }
 
-// Why a session known only from the cross-host listing cannot be answered here. A tap needs this client attached
-// to the terminal; taking the session over just to send a key would answer a security question the user has not
-// seen on the live screen, from a listing that may be out of date.
-export const OPEN_TO_ANSWER = "先打开这个终端，在终端画面里核对后再回答";
+// A session known only from the cross-host listing is answered after opening it: a tap needs this client attached
+// to the terminal, and the user then checks the live screen before answering a question that may be a security
+// decision, instead of trusting a listing that may be out of date.
+export const OPEN_TO_ANSWER_LABEL = "打开并回答";
+export const OPEN_TO_ANSWER_NOTE = "打开终端后在画面里核对，再用按钮回答";
+// A tap is this device's input: the PTY then follows this device's terminal size.
+export const ANSWER_TAKES_SIZE_NOTE = "在这里回答后，终端尺寸改为跟随本设备";
+
+// A button is armed only after its prompt instance and position held still this long, so a list that shifts under
+// a finger cannot turn a tap into an answer to another session's prompt.
+export const CHOICE_ARM_MS = 450;

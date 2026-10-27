@@ -23,10 +23,19 @@ function useLeaveHomeOnConnectFocus(): void {
   }, [focusRevision]);
 }
 
-// A card that needs the user answers its detected prompt in place; one this client holds no tab for is opened first.
-function wallPromptActions(card: WallCard): ReactNode {
+// A card that needs the user answers its detected prompt in place; one this client holds no tab for is opened first,
+// so the prompt is answered from the terminal pane with the live screen in view.
+function wallPromptActions(card: WallCard, controls: { open: () => void; opening: boolean }): ReactNode {
   if (card.state !== "needs_me" || !card.awareness?.prompt) return null;
-  return <SessionPromptChoices tabId={card.tabId} awareness={card.awareness} attachedHere={card.uiTabId !== undefined} />;
+  return (
+    <SessionPromptChoices
+      tabId={card.tabId}
+      awareness={card.awareness}
+      attachedHere={card.uiTabId !== undefined}
+      onOpen={card.host ? controls.open : undefined}
+      opening={controls.opening}
+    />
+  );
 }
 
 // MobileShell serves phones and tablets (the "mobile" mode). It hosts the shared layout with the overlay sidebars and

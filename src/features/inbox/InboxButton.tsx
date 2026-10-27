@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { freezeOrder } from "../../app/jump/jumpRanking";
 import { useUi } from "../../app/store";
 import { wailsNoDragRegionStyle } from "../../app/platform";
 import { TabAttentionBadge } from "../../app/workspace/tabStrip";
@@ -87,7 +88,13 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
       </div>
       {entry.awareness.state === "needs_me" && entry.awareness.prompt && (
         <div className="pl-[18px] pt-1" style={wailsNoDragRegionStyle} data-inbox-actions="">
-          <SessionPromptChoices tabId={entry.tabId} awareness={entry.awareness} attachedHere={shown} />
+          <SessionPromptChoices
+            tabId={entry.tabId}
+            awareness={entry.awareness}
+            attachedHere={shown}
+            onOpen={reachable ? open : undefined}
+            opening={opening}
+          />
         </div>
       )}
     </li>
@@ -97,8 +104,31 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
 // InboxButton is the header bell: the number of sessions that need the user or just finished, across every
 // workspace this client knows, and a list to jump to them or mark them read on every device.
 export function InboxButton() {
-  const entries = useInboxEntries();
+  const listed = useInboxEntries();
   const [open, setOpen] = useState(false);
+  // While the list is open its rows keep their order (new ones join at the end), and while a finger or button is
+  // down they hold still entirely: a row moving under a press would answer another session's prompt.
+  const orderRef = useRef<string[] | null>(null);
+  const ordered = useMemo(() => {
+    if (!open) return listed;
+    const byTabId = new Map(listed.map((entry) => [entry.tabId, entry]));
+    return freezeOrder(orderRef.current, listed.map((entry) => entry.tabId)).map((tabId) => byTabId.get(tabId)!);
+  }, [listed, open]);
+  useLayoutEffect(() => {
+    orderRef.current = open ? ordered.map((entry) => entry.tabId) : null;
+  }, [ordered, open]);
+  const [held, setHeld] = useState<InboxEntry[] | null>(null);
+  useEffect(() => {
+    if (!held) return;
+    const release = () => setHeld(null);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+  }, [held]);
+  const entries = held ?? ordered;
   const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
@@ -190,6 +220,7 @@ export function InboxButton() {
           role="dialog"
           aria-label="收件箱"
           tabIndex={-1}
+          onPointerDownCapture={() => setHeld(ordered)}
           style={wailsNoDragRegionStyle}
           className="nx-inbox-panel fixed inset-x-2 top-[calc(var(--nx-inset-top,0px)+42px)] z-50 max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1.5 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-[30px] sm:w-[360px]"
         >
