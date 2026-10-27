@@ -15,6 +15,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/staterule"
 )
 
 type Supervisor struct {
@@ -32,6 +33,10 @@ type Supervisor struct {
 	// numbers state events across all sessions.
 	stateDetection bool
 	eventSeq       atomic.Uint64
+	// stateRules are the user state rules in force; stateRulesMu orders
+	// their updates.
+	stateRules   atomic.Pointer[staterule.Compiled]
+	stateRulesMu sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -101,6 +106,11 @@ func New(config Config) (*Supervisor, error) {
 	}
 	for _, entry := range entries {
 		supervisor.sessions[entry.ID] = newRecoveredSession(supervisor, entry)
+	}
+	// Rules that cannot be read leave the helper without rules and with an
+	// empty revision, so the next client to connect pushes its rules again.
+	if rules, err := loadStateRules(stateDir); err == nil {
+		supervisor.stateRules.Store(rules)
 	}
 	return supervisor, nil
 }
@@ -211,6 +221,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 				seq:         &s.eventSeq,
 				onChange:    session.notifyState,
 				timers:      true,
+				rules:       s.currentStateRules,
 			}, time.Now())
 		}
 		if err := writeEntry(sessionsRoot(s.stateDir), session.entry); err != nil {

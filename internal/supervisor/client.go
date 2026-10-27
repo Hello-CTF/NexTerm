@@ -30,6 +30,63 @@ type Client struct {
 	// compressOutput asks the helper for compressed replay and live output;
 	// remote clients set it because their bytes cross a network.
 	compressOutput bool
+	// rules, when set, are pushed to the helper after every hello whose
+	// acknowledgement reports another revision.
+	rules StateRuleSource
+}
+
+// WithStateRules returns a copy of the client that keeps the helper on the
+// state rules of source: every connection it opens pushes them after the
+// hello when the helper reports another revision. A push the helper rejects
+// is reported to source and does not fail the connection.
+func (c *Client) WithStateRules(source StateRuleSource) *Client {
+	copied := *c
+	copied.rules = source
+	return &copied
+}
+
+// SyncStateRules connects to the helper once so it takes the current state
+// rules, and returns the push error, including a rejection. It does nothing
+// without a state rule source.
+func (c *Client) SyncStateRules(ctx context.Context) error {
+	if c.rules == nil {
+		return nil
+	}
+	plain := *c
+	plain.rules = nil
+	conn, err := plain.dialConn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if conn.stateRules == nil {
+		err := fmt.Errorf("%w: the helper does not take state rules", ErrUnsupported)
+		c.rules.StateRulesPushed("", err)
+		return err
+	}
+	return c.pushStateRules(ctx, conn)
+}
+
+// pushStateRules sends the source's rules unless the helper already has
+// their revision, and reports the outcome to the source.
+func (c *Client) pushStateRules(ctx context.Context, conn *clientConn) error {
+	set, ok := c.rules.StateRules()
+	if !ok {
+		return nil
+	}
+	if set.Revision == conn.stateRules.Revision {
+		c.rules.StateRulesPushed(set.Revision, nil)
+		return nil
+	}
+	kind, _, err := conn.request(ctx, frameSetStateRules, set)
+	if err == nil && kind != frameOK {
+		err = protocolMismatch(kind)
+	}
+	if err == nil {
+		conn.stateRules = &stateRulesAck{Revision: set.Revision}
+	}
+	c.rules.StateRulesPushed(set.Revision, err)
+	return err
 }
 
 func NewClient(socketPath, stateDir string) *Client {
@@ -504,6 +561,16 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 	}
 	conn.activity = *ack.Activity
 	conn.stateSeen = ack.StateSeen
+	conn.stateRules = ack.StateRules
+	if c.rules != nil && conn.stateRules != nil {
+		// A rejected push keeps the connection usable; a failed exchange
+		// leaves it broken.
+		var remote *wireError
+		if err := c.pushStateRules(ctx, conn); err != nil && !errors.As(err, &remote) {
+			_ = conn.Close()
+			return nil, err
+		}
+	}
 	return conn, nil
 }
 
@@ -530,7 +597,10 @@ type clientConn struct {
 	activity        ActivitySnapshot
 	// stateSeen: the helper accepts frameStateSeen.
 	stateSeen bool
-	writeMu   sync.Mutex
+	// stateRules is the helper's state rule revision; nil when the helper
+	// does not take state rules.
+	stateRules *stateRulesAck
+	writeMu    sync.Mutex
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {

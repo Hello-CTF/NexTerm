@@ -212,7 +212,10 @@ func (c *serverConn) serve() {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
-	ack := helloMsg{Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity, StateSeen: true}
+	ack := helloMsg{
+		Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity,
+		StateSeen: true, StateRules: &stateRulesAck{Revision: c.server.supervisor.StateRulesRevision()},
+	}
 	if err := c.reply(frameHelloAck, ack); err != nil {
 		return
 	}
@@ -254,6 +257,8 @@ func (c *serverConn) serve() {
 			c.handleKillSession(payload)
 		case frameReadHistory:
 			c.handleReadHistory(payload)
+		case frameSetStateRules:
+			c.handleSetStateRules(payload)
 		case frameDetach:
 			_ = c.reply(frameOK, struct{}{})
 			return
@@ -666,6 +671,19 @@ func (c *serverConn) handleKill() {
 	}
 	if err := attachment.Kill(context.Background()); err != nil {
 		c.replyOperationError(err)
+		return
+	}
+	_ = c.reply(frameOK, struct{}{})
+}
+
+func (c *serverConn) handleSetStateRules(payload []byte) {
+	var set StateRuleSet
+	if err := unmarshalFrame(payload, &set); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if err := c.server.supervisor.SetStateRules(set); err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
 	_ = c.reply(frameOK, struct{}{})

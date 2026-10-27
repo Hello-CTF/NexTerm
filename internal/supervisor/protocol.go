@@ -74,8 +74,11 @@ const (
 // Frames added after frameState carry explicit values so concurrent
 // additions cannot shift each other.
 const (
-	// 33 is reserved for frameSetStateRules (B10).
-
+	// frameSetStateRules replaces the helper's user state rules with a
+	// StateRuleSet; the helper persists and applies it and answers frameOK.
+	// It needs no attach. Helpers that take it advertise their revision in
+	// the hello acknowledgement (helloMsg.StateRules).
+	frameSetStateRules frameType = 33
 	// frameStateSeen tells the helper that the attached client showed the
 	// session's needs_me or just_finished state to its user (stateSeenMsg);
 	// the helper answers frameOK and pushes the seen state to every client.
@@ -128,6 +131,9 @@ type helloMsg struct {
 	Activity *ActivitySnapshot `json:"activity,omitempty"`
 	// StateSeen is set by a helper that accepts frameStateSeen.
 	StateSeen bool `json:"state_seen,omitempty"`
+	// StateRules is the revision of the helper's user state rules, sent by
+	// helpers that take frameSetStateRules.
+	StateRules *stateRulesAck `json:"state_rules,omitempty"`
 }
 
 type createMsg struct {

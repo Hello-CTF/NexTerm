@@ -12,6 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shape"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/signals"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/staterule"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -78,6 +79,8 @@ type stateOptions struct {
 	// timers arms a real timer for the idle transition; tests leave it off
 	// and call tick with their own clock.
 	timers bool
+	// rules returns the user state rules in force; nil means none.
+	rules func() *staterule.Compiled
 }
 
 // stateTracker derives a session's attention state from its output and
@@ -100,6 +103,10 @@ type stateOptions struct {
 //     shape makes it needs_me (confidence heuristic) unless OSC 133 puts the
 //     shell at its own prompt; otherwise it is idle at once at the shell
 //     prompt, or after settle of quiet elsewhere;
+//   - a user state rule matching the screen at that inspection decides the
+//     state (confidence rule) ahead of the prompt shape and the shell prompt;
+//     only a pending signal state wins over it. A rule's needs_me is held
+//     through redraws like a detected prompt;
 //   - input clears needs_me and just_finished and inspects again after the
 //     next pause;
 //   - process exit makes it exited.
@@ -121,6 +128,9 @@ type stateTracker struct {
 	// seen is set when a client showed the current needs_me or
 	// just_finished state to its user.
 	seen bool
+	// ruleID and ruleKeys name the state rule that set the state.
+	ruleID   string
+	ruleKeys string
 
 	// active is set by output or input since the last idle inspection and
 	// lastActivity is when it happened. settling is set when that inspection
@@ -136,6 +146,10 @@ type stateTracker struct {
 	// heldCheck is when output that keeps a held prompt busy without a
 	// pause is inspected anyway; zero when not due.
 	heldCheck time.Time
+
+	// rule is the state rule the last inspection matched, when ruled.
+	rule  staterule.Match
+	ruled bool
 
 	// prompt is the result of the last inspection, info its published form.
 	// fresh reports that nothing was written or input since.
@@ -306,7 +320,7 @@ func (t *stateTracker) input(now time.Time) {
 
 // heldLocked reports that a detected prompt holds the session in needs_me.
 func (t *stateTracker) heldLocked() bool {
-	return t.state == base.SessionNeedsMe && t.confidence == base.ConfidenceHeuristic
+	return t.state == base.SessionNeedsMe && (t.confidence == base.ConfidenceHeuristic || t.confidence == base.ConfidenceRule)
 }
 
 // activityLocked starts a new pause. The armed deadline is kept when it is
@@ -356,6 +370,8 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 		t.heldCheck = now.Add(t.opts.settle)
 		switch {
 		case t.signalPending, t.finishedPending:
+		case t.ruled:
+			changed = t.applyRuleLocked(now) || changed
 		case t.prompt.Kind != shape.KindNone && !t.scanner.AtPrompt():
 			if before.Kind != t.prompt.Kind || before.Fingerprint != t.prompt.Fingerprint {
 				t.forceLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now)
@@ -364,6 +380,9 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 			}
 		default:
 			changed = t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) || changed
+		}
+		if t.heldLocked() && t.heldCheck.IsZero() {
+			t.heldCheck = now.Add(t.opts.settle)
 		}
 		wait = t.activeWaitLocked(now, quiet)
 	case t.active && quiet < t.opts.idle:
@@ -375,6 +394,8 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 		held, atPrompt := t.heldLocked(), t.scanner.AtPrompt()
 		switch {
 		case t.signalPending, t.finishedPending:
+		case t.ruled:
+			changed = t.applyRuleLocked(now) || changed
 		case t.prompt.Kind != shape.KindNone && !atPrompt:
 			if held && (before.Kind != t.prompt.Kind || before.Fingerprint != t.prompt.Fingerprint) {
 				// A different prompt replaced the held one.
@@ -434,7 +455,12 @@ func (t *stateTracker) due() (time.Time, bool) {
 // changed.
 func (t *stateTracker) inspectLocked() bool {
 	t.inspections++
-	detected := shape.Detect(t.screenLocked())
+	snap := t.screenLocked()
+	t.rule, t.ruled = staterule.Match{}, false
+	if t.opts.rules != nil {
+		t.rule, t.ruled = t.opts.rules().Match(staterule.Screen{Lines: snap.Lines, CursorRow: snap.CursorRow, Title: snap.Title})
+	}
+	detected := shape.Detect(snap)
 	wasFresh := t.fresh
 	before := t.prompt
 	if (before.Kind == shape.KindNone) != (detected.Kind == shape.KindNone) ||
@@ -469,6 +495,21 @@ func (t *stateTracker) currentPrompt() *SessionPrompt {
 		t.changed()
 	}
 	return prompt
+}
+
+// rulesChanged re-evaluates a quiet session after the state rules changed,
+// as if its output had just paused; a session with output in flight picks
+// the new rules up at its next inspection anyway.
+func (t *stateTracker) rulesChanged(now time.Time) {
+	t.mu.Lock()
+	if t.exited || t.active {
+		t.mu.Unlock()
+		return
+	}
+	t.active = true
+	t.lastActivity = now.Add(-t.opts.idle)
+	t.mu.Unlock()
+	t.tick(now)
 }
 
 func (t *stateTracker) resize(cols, rows int) {
@@ -536,10 +577,25 @@ func (t *stateTracker) setLocked(state, confidence, reason string, now time.Time
 }
 
 func (t *stateTracker) forceLocked(state, confidence, reason string, now time.Time) {
+	t.forceRuleLocked(state, confidence, reason, staterule.Match{}, now)
+}
+
+func (t *stateTracker) forceRuleLocked(state, confidence, reason string, rule staterule.Match, now time.Time) {
 	t.state, t.confidence, t.reason, t.since = state, confidence, reason, now
 	t.exitCode, t.durationMS, t.notable, t.seen = nil, 0, false, false
+	t.ruleID, t.ruleKeys = rule.ID, rule.Keys
 	t.heldCheck = time.Time{}
-	t.addEventLocked(SessionEvent{Kind: base.SessionEventState, At: now, State: state, Confidence: confidence, Reason: reason})
+	t.addEventLocked(SessionEvent{Kind: base.SessionEventState, At: now, State: state, Confidence: confidence, Reason: reason, RuleID: rule.ID})
+}
+
+// applyRuleLocked moves to the state of the rule the last inspection
+// matched unless that rule already set the current state.
+func (t *stateTracker) applyRuleLocked(now time.Time) bool {
+	if t.state == t.rule.State && t.confidence == base.ConfidenceRule && t.ruleID == t.rule.ID && t.ruleKeys == t.rule.Keys {
+		return false
+	}
+	t.forceRuleLocked(t.rule.State, base.ConfidenceRule, "rule", t.rule, now)
+	return true
 }
 
 func (t *stateTracker) addEventLocked(event SessionEvent) {
@@ -563,6 +619,8 @@ func (t *stateTracker) snapshot(withEvents bool, after uint64) *SessionState {
 		Since:        t.since,
 		Confidence:   t.confidence,
 		Reason:       t.reason,
+		RuleID:       t.ruleID,
+		RuleKeys:     t.ruleKeys,
 		ExitCode:     copyInt(t.exitCode),
 		DurationMS:   t.durationMS,
 		Notable:      t.notable,

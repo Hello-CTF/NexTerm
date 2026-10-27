@@ -30,6 +30,8 @@ const (
 	ConfidenceSignal = "signal"
 	// ConfidenceHeuristic: the state was inferred from the screen shape.
 	ConfidenceHeuristic = "heuristic"
+	// ConfidenceRule: a user-defined state rule matched the screen.
+	ConfidenceRule = "rule"
 )
 
 // Session event kinds.
@@ -63,11 +65,16 @@ const (
 type SessionState struct {
 	State string    `json:"state"`
 	Since time.Time `json:"since"`
-	// Confidence is ConfidenceSignal or ConfidenceHeuristic.
+	// Confidence is ConfidenceSignal, ConfidenceHeuristic or ConfidenceRule.
 	Confidence string `json:"confidence"`
 	// Reason names the input that caused the state: bell, notify, prompt,
-	// command_end, command_start, output, input, quiet or exit.
+	// rule, command_end, command_start, output, input, quiet or exit.
 	Reason string `json:"reason,omitempty"`
+	// RuleID is the user state rule that set the state (confidence rule).
+	// RuleKeys is that rule's optional key sequence, offered while it holds
+	// the session in needs_me; the helper never sends it by itself.
+	RuleID   string `json:"rule_id,omitempty"`
+	RuleKeys string `json:"rule_keys,omitempty"`
 	// ExitCode is the command exit code for just_finished (when the shell
 	// reported one) and the process exit code for exited.
 	ExitCode *int `json:"exit_code,omitempty"`
@@ -163,11 +170,12 @@ type SessionEvent struct {
 	ExitCode   *int  `json:"exit_code,omitempty"`
 	DurationMS int64 `json:"duration_ms,omitempty"`
 	Notable    bool  `json:"notable,omitempty"`
-	// State, Confidence and Reason describe a state event. On a bell event
+	// State, Confidence, Reason and RuleID describe a state event. On a bell event
 	// Reason explains why the bell did not ask for attention: after_input
 	// (it answered input within a second) or shell_prompt (the shell's line
 	// editor rang it).
 	State      string `json:"state,omitempty"`
 	Confidence string `json:"confidence,omitempty"`
 	Reason     string `json:"reason,omitempty"`
+	RuleID     string `json:"rule_id,omitempty"`
 }
