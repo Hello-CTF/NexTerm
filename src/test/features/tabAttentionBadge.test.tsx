@@ -75,6 +75,21 @@ describe("tab attention badge", () => {
     expect(finished?.textContent).toBe("");
   });
 
+  it("draws a failed command with a cross instead of the green check", () => {
+    report({ state: "just_finished", exitCode: 2 });
+    const failed = renderTab(terminal()).badge;
+    expect(failed?.getAttribute("data-outcome")).toBe("failed");
+    expect(failed?.getAttribute("aria-label")).toBe("命令刚结束，退出码 2");
+    expect(failed?.className).not.toContain("green");
+    expect(failed?.className).not.toContain("red");
+    report({ state: "just_finished", exitCode: 0 });
+    const ok = renderTab(terminal()).badge;
+    expect(ok?.getAttribute("data-outcome")).toBe("ok");
+    expect(ok?.className).toContain("green");
+    report({ state: "just_finished" });
+    expect(renderTab(terminal()).badge?.getAttribute("data-outcome")).toBe("ok");
+  });
+
   it("clears a state seen on any device and keeps idle tabs unmarked", () => {
     report({ state: "just_finished", exitCode: 0, seen: true });
     expect(renderTab(terminal()).badge).toBeNull();

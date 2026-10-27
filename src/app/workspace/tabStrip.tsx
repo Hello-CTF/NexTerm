@@ -15,6 +15,7 @@ import {
   IconActivity,
   IconBox,
   IconCheck,
+  IconClose,
   IconClock,
   IconCommand,
   IconDatabase,
@@ -99,7 +100,7 @@ export function TabPersistenceMark({ tab, part = "all" }: { tab: AppTab; part?: 
 }
 
 // The attention badge sits before the title at the persistence icon's scale, and each state has its own shape so
-// it never depends on colour: "!" in a disc for needs_me, a check for just_finished, a turning ring while a
+// it never depends on colour: "!" in a disc for needs_me, a check for a just_finished command that succeeded (a slate cross when it failed; red stays for the persistence failure dot), a turning ring while a
 // background tab runs and "?" when the state cannot be known. Inferred states (from the screen shape) are drawn
 // lighter: "!" in an outlined ring, a faded check. A tab the user is on shows no running badge, and a needs_me or
 // just_finished state seen on any device shows nothing.
@@ -126,8 +127,14 @@ export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
       );
     case "just_finished":
       return (
-        <span {...common} className={`flex shrink-0 items-center text-green-500 ${badge.inferred ? "opacity-60" : ""}`}>
-          <IconCheck size={11} />
+        <span
+          {...common}
+          data-outcome={badge.outcome}
+          className={`flex shrink-0 items-center ${badge.outcome === "failed" ? "text-slate-400" : "text-green-500"} ${
+            badge.inferred ? "opacity-60" : ""
+          }`}
+        >
+          {badge.outcome === "failed" ? <IconClose size={11} /> : <IconCheck size={11} />}
         </span>
       );
     case "running":
