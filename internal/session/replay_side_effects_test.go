@@ -79,6 +79,11 @@ func TestRecoveredDurableTailHasNoSideEffects(t *testing.T) {
 	sink := &fakeCommandSink{}
 	manager, tab, channel, _ := openCommandTestTab(t, sink, "")
 	ctx := context.Background()
+	// Nobody is attached while the head of the tail is fed: the headless
+	// screen would answer live queries now, but never replayed ones.
+	if err := manager.DetachChannel("cmd-channel"); err != nil {
+		t.Fatal(err)
+	}
 
 	head := []byte("user@host:~$ old\r\n\x1b]133;B\x1b\\\x1b[c\x1b[6n")
 	rest := []byte("old output\r\n\x1b]133;D;0\x1b\\")
@@ -117,11 +122,17 @@ func TestRecoveredDurableTailHasNoSideEffects(t *testing.T) {
 		t.Fatalf("replayBytes %d does not end at the tail: %q", anchor.ReplayBytes, stream)
 	}
 
-	// Only the live DA1 query is answered into the shell.
-	reply := []byte("\x1b[?62;1;6;22c")
-	waitFor(t, func() bool { return bytes.Contains(channel.written(), reply) })
-	if written := channel.written(); bytes.Count(written, reply) != 1 || bytes.Contains(written, []byte("R")) {
-		t.Fatalf("shell input = %q, want one live DA1 reply and no cursor report", written)
+	// No replayed query was answered into the shell: once detached, a live
+	// DSR is the first and only reply (replies are written in order).
+	if err := manager.DetachChannel("tail-mid"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.feedDurable(ctx, tab, generation, []byte("\x1b[5n"), int64(len(tail)+len(live)+4)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(channel.written()) > 0 })
+	if written := channel.written(); !bytes.Equal(written, []byte("\x1b[0n")) {
+		t.Fatalf("shell input = %q, want only the live DSR reply", written)
 	}
 	// Only the live command is recorded.
 	waitFor(t, func() bool { return len(sink.snapshot()) == 1 })

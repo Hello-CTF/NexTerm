@@ -2127,9 +2127,16 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		tab.replayPending = 0
 		tab.replayUntil = 0
 	}
+	// An interactive client's terminal emulator answers queries itself; the
+	// headless screen answers only for a tab nobody is attached to, so
+	// programs never wait forever and never get two replies. Attach holds the
+	// feed gate, so no client can appear between this decision and the parse.
+	unanswered := tab.controller != "" || len(tab.subscribers) > 0
 	tab.mu.Unlock()
-	if source, ok := tab.terminal.(interface{ FeedReplay([]byte) }); ok && replay {
-		source.FeedReplay(data)
+	if source, ok := tab.terminal.(interface {
+		FeedWith([]byte, terminal.FeedOptions)
+	}); ok {
+		source.FeedWith(data, terminal.FeedOptions{Replay: replay, Unanswered: unanswered})
 	} else {
 		tab.terminal.Feed(data)
 	}
