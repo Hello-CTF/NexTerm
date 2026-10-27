@@ -99,4 +99,25 @@ describe("session liveness", () => {
     await probeForegroundSessions();
     expect(mocks.probeLiveness.mock.calls.map(([id]) => String(id)).sort()).toEqual(["s1", "s2"]);
   });
+
+  it("joins a probe round that is still running instead of stacking another", async () => {
+    useUi.setState({
+      sessions: [session("s1", "connected")],
+      workspaces: [workspace("w1", "s1", [])],
+      activeWorkspaceId: "w1",
+    });
+    let release: () => void = () => undefined;
+    mocks.probeLiveness.mockImplementation(() => new Promise<void>((resolve) => {
+      release = resolve;
+    }));
+    const first = probeForegroundSessions();
+    const second = probeForegroundSessions();
+    expect(second).toBe(first);
+    release();
+    await first;
+    expect(mocks.probeLiveness).toHaveBeenCalledTimes(1);
+    mocks.probeLiveness.mockResolvedValue(undefined);
+    await probeForegroundSessions();
+    expect(mocks.probeLiveness).toHaveBeenCalledTimes(2);
+  });
 });

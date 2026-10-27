@@ -181,8 +181,16 @@ export function foregroundProbeTargets(
 
 // probeForegroundSessions asks the backend to check the visible sessions now. Results arrive as
 // session status events (suspect, reconnecting, connected); a probe that fails is left to the
-// heartbeat, which reports the same states.
-export async function probeForegroundSessions(): Promise<void> {
-  const targets = foregroundProbeTargets(useUi.getState());
-  await Promise.all(targets.map((sessionId) => sessionApi.probeLiveness(sessionId).catch(() => undefined)));
+// heartbeat, which reports the same states. Single-flight: a trigger while a round is still running
+// joins that round instead of stacking another.
+let foregroundProbe: Promise<void> | null = null;
+
+export function probeForegroundSessions(): Promise<void> {
+  foregroundProbe ??= (async () => {
+    const targets = foregroundProbeTargets(useUi.getState());
+    await Promise.all(targets.map((sessionId) => sessionApi.probeLiveness(sessionId).catch(() => undefined)));
+  })().finally(() => {
+    foregroundProbe = null;
+  });
+  return foregroundProbe;
 }

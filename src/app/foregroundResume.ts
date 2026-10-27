@@ -3,8 +3,10 @@
 // - visibilitychange to visible (tab switch, window restore, mobile app resume in the webview);
 // - pageshow from the back/forward cache;
 // - online (the network came back);
-// - a timer gap: page timers stop while the machine sleeps, so a tick that arrives far later than
-//   scheduled means the system just woke up (desktop lid open), even when no page event fires.
+// - a timer gap while visible: page timers stop while the machine sleeps, so a tick that arrives far
+//   later than scheduled means the system just woke up (desktop lid open), even when no page event
+//   fires. The timer only runs while the page is visible, since hidden pages are throttled and a
+//   late tick there proves nothing; becoming visible restarts it from a fresh baseline.
 // Triggers within the coalescing window collapse into one, and nothing fires while the browser
 // reports itself offline; the online event covers that case.
 
@@ -53,6 +55,7 @@ export function installForegroundResume(
   const wakeGapMs = options.wakeGapMs ?? FOREGROUND_WAKE_GAP_MS;
   let lastFired = Number.NEGATIVE_INFINITY;
   let lastTick = env.now();
+  let timer: unknown = null;
 
   const fire = (reason: ForegroundResumeReason) => {
     if (!env.isOnline()) return;
@@ -61,20 +64,36 @@ export function installForegroundResume(
     lastFired = now;
     onResume(reason);
   };
+  const stopTimer = () => {
+    if (timer === null) return;
+    env.clearInterval(timer);
+    timer = null;
+  };
+  const startTimer = () => {
+    stopTimer();
+    lastTick = env.now();
+    timer = env.setInterval(() => {
+      if (env.document.visibilityState !== "visible") return;
+      const now = env.now();
+      const gap = now - lastTick;
+      lastTick = now;
+      if (gap > tickMs + wakeGapMs) fire("wake");
+    }, tickMs);
+  };
   const onVisibility = () => {
-    if (env.document.visibilityState === "visible") fire("visible");
+    if (env.document.visibilityState !== "visible") {
+      stopTimer();
+      return;
+    }
+    startTimer();
+    fire("visible");
   };
   const onPageShow = (event: Event) => {
     if ((event as PageTransitionEvent).persisted) fire("pageshow");
   };
   const onOnline = () => fire("online");
-  const timer = env.setInterval(() => {
-    const now = env.now();
-    const gap = now - lastTick;
-    lastTick = now;
-    if (gap > tickMs + wakeGapMs) fire("wake");
-  }, tickMs);
 
+  if (env.document.visibilityState === "visible") startTimer();
   env.document.addEventListener("visibilitychange", onVisibility);
   env.window.addEventListener("pageshow", onPageShow);
   env.window.addEventListener("online", onOnline);
@@ -82,6 +101,6 @@ export function installForegroundResume(
     env.document.removeEventListener("visibilitychange", onVisibility);
     env.window.removeEventListener("pageshow", onPageShow);
     env.window.removeEventListener("online", onOnline);
-    env.clearInterval(timer);
+    stopTimer();
   };
 }

@@ -20,6 +20,7 @@ function fakeEnvironment() {
     visibility: "visible" as DocumentVisibilityState,
     tick: null as (() => void) | null,
     intervalMs: 0,
+    handle: 0,
     cleared: false,
   };
   const env: ForegroundResumeEnvironment = {
@@ -39,9 +40,11 @@ function fakeEnvironment() {
     setInterval: (callback, ms) => {
       state.tick = callback;
       state.intervalMs = ms;
-      return 1;
+      state.handle += 1;
+      return state.handle;
     },
-    clearInterval: () => {
+    clearInterval: (handle) => {
+      if (handle === state.handle) state.tick = null;
       state.cleared = true;
     },
   };
@@ -129,6 +132,20 @@ describe("installForegroundResume", () => {
     fake.state.now = 34000 + 10 * 60 * 1000;
     fake.state.tick?.();
     expect(reasons).toEqual(["wake"]);
+  });
+
+  it("stops the wake timer while hidden and restarts it from a fresh baseline", () => {
+    const fake = fakeEnvironment();
+    const { reasons } = install(fake);
+    fake.visibility("hidden");
+    expect(fake.state.tick).toBeNull();
+    // Ten minutes in the background, then shown: one visible probe, not a wake from the stale baseline.
+    fake.state.now = 10 * 60 * 1000;
+    fake.visibility("visible");
+    expect(reasons).toEqual(["visible"]);
+    fake.state.now += 5000;
+    fake.state.tick?.();
+    expect(reasons).toEqual(["visible"]);
   });
 
   it("removes its listeners and timer on dispose", () => {
