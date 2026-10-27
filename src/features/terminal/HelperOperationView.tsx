@@ -166,6 +166,11 @@ function versionSummary(version: HelperVersionPresentation): string {
   return parts.join(" · ") || "组件版本";
 }
 
+// NexTerm has no in-app way to replace a running helper that speaks another protocol: the user stops it on the host.
+// The status carries no path or process name for the running helper, so the instruction stays generic.
+const INCOMPATIBLE_REMEDY =
+  "可以在主机上手动结束旧的持久终端组件进程（其中运行的终端会话会随之结束），然后重新连接，NexTerm 会安装新组件。";
+
 function versionCompatibilityText(
   compatibility: HelperCompatibility,
   local: HelperVersionPresentation | null | undefined,
@@ -181,7 +186,7 @@ function versionCompatibilityText(
       const localProtocol = versionValue(local, "protocol");
       const runningProtocol = versionValue(running, "protocol");
       const protocols = localProtocol && runningProtocol ? `（本地 ${localProtocol}，主机 ${runningProtocol}）` : "";
-      return `协议不兼容${protocols}：NexTerm 无法使用主机上正在运行的组件，持久终端不可用；它不会被自动替换，需要中断其中的进程并更新组件。`;
+      return `协议不兼容${protocols}：NexTerm 无法使用主机上正在运行的持久终端组件，也不会自动替换它，持久终端暂不可用。${INCOMPATIBLE_REMEDY}`;
     }
     case "unknown":
       return "无法确认兼容性，不能推断可安全继续。";
@@ -556,7 +561,7 @@ export function HelperOperationView({
             {update.status === "unknown" && (
               <p>
                 {compatibility === "incompatible"
-                  ? "主机上运行的组件版本不兼容，NexTerm 不会自动替换它；可选择中断进程并更新。"
+                  ? `主机上运行的持久终端组件协议不兼容，NexTerm 不会自动替换它。${INCOMPATIBLE_REMEDY}`
                   : "暂时无法确认更新状态。"}
               </p>
             )}

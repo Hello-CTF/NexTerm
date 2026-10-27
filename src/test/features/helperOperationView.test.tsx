@@ -277,8 +277,18 @@ describe("HelperOperationView", () => {
     expect(statusText(view.container)).toBe("vendor_specific_stage");
     expect(differs(sectionByLabel(view.container, "本地携带版本"), "协议")).toBe(true);
     expect(view.container.textContent).toContain("协议不兼容（本地 3，主机 2）");
-    expect(view.container.textContent).toContain("持久终端不可用");
-    expect(view.container.textContent).toContain("不会被自动替换");
+    expect(view.container.textContent).toContain("持久终端暂不可用");
+    expect(view.container.textContent).toContain("不会自动替换");
+    expect(view.container.textContent).toContain("在主机上手动结束旧的持久终端组件进程（其中运行的终端会话会随之结束），然后重新连接");
+    expect(view.container.textContent).not.toContain("中断其中的进程并更新");
+  });
+
+  it("tells the user to stop an incompatible helper by hand when the update state is unknown", () => {
+    const view = renderView({ compatibility: "incompatible", update: { status: "unknown" } });
+    const update = sectionByLabel(view.container, "组件更新");
+    expect(update.textContent).toContain("在主机上手动结束旧的持久终端组件进程");
+    expect(update.textContent).not.toContain("可选择中断进程并更新");
+    expect(update.querySelectorAll("button")).toHaveLength(0);
   });
 
   it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])(
