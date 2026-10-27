@@ -7,12 +7,31 @@
   line-height: 1.35;
 }
 
+/* Host headings of the all-hosts view. */
+.nx-bg-sessions tr.nx-bg-group > th {
+  padding-top: 10px;
+  text-align: left;
+  font-weight: 400;
+}
+
 /* Cards: name and status share the first line; size, the two time lines and the full-width actions follow. */
 @media (max-width: 640px) {
   .nx-bg-sessions.nx-table-cards tr {
     flex-flow: row wrap;
     align-items: baseline;
     column-gap: 10px;
+  }
+
+  .nx-bg-sessions.nx-table-cards tr.nx-bg-group {
+    padding: 4px 2px 0;
+    border: 0;
+  }
+
+  .nx-bg-sessions.nx-table-cards tr.nx-bg-group > th {
+    display: block;
+    flex: 1 1 100%;
+    min-width: 0;
+    padding: 0;
   }
 
   .nx-bg-sessions.nx-table-cards td {

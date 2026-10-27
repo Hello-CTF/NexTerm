@@ -1,21 +1,30 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { syncApi, terminalApi, type SessionAttentionState } from "../../ipc/commands";
 import {
   aggregateBackgroundTabs,
+  aggregateTerminatePath,
   backgroundTabKey,
   backgroundTargets,
+  groupBackgroundTabs,
   listBackgroundTabs,
   openTerminalTabIds,
   resolveHostGate,
   takeOverAggregateSession,
   takeOverBackgroundTab,
+  terminateAggregateSession,
+  unknownHostText,
   visibleBackgroundTabs,
   workspaceHostKey,
   workspaceSessionMatches,
+  type BackgroundHostGroup,
   type BackgroundScope,
   type BackgroundTab,
   type KnownDurableTab,
 } from "./backgroundSessionsAccess";
+import { TabAttentionBadge } from "../../app/workspace/tabStrip";
+import type { AwarenessBadge } from "../../app/sessionAwarenessStore";
+import type { AggregateHostStatus } from "../../ipc/generated/types";
+import type { SessionInfo } from "../../ipc/commands";
 import {
   reconnectDeadHost,
   reconnectWorkspaceSession,
@@ -24,7 +33,7 @@ import {
   useUi,
   type Workspace,
 } from "../../app/store";
-import { aggregateRows, useSessionAggregate } from "../../app/sessionAggregate";
+import { aggregateRows, forgetAggregateSession, useSessionAggregate } from "../../app/sessionAggregate";
 import { apiBase, TRANSPORT } from "../../ipc/env";
 import { listenEvent } from "../../ipc/events";
 import { useAuth } from "../auth/store";
@@ -45,6 +54,7 @@ import {
 const POLL_MS = 5000;
 const COLUMN_COUNT = 5;
 const NO_WORKSPACES: Workspace[] = [];
+const NO_HOSTS: ReadonlyMap<string, AggregateHostStatus> = new Map();
 
 interface PendingTab {
   key: string;
@@ -127,6 +137,73 @@ function statusView(tab: BackgroundTab): StatusView {
       : "普通终端不会报告状态",
     tone: "muted",
   };
+}
+
+// backgroundBadge is the tab strip's badge for a row's state, so a session reads the same in both places. Unlike a
+// tab, a row keeps its needs_me or just_finished badge after the state was seen: the list shows the state itself.
+export function backgroundBadge(tab: Pick<BackgroundTab, "state" | "attentionInferred" | "exitCode">): AwarenessBadge | null {
+  const inferred = tab.attentionInferred === true;
+  switch (tab.state) {
+    case "needs_me":
+      return { kind: "needs_me", inferred, label: inferred ? "可能需要你处理（根据屏幕推测）" : "需要你处理" };
+    case "just_finished": {
+      const code = tab.exitCode;
+      const failed = typeof code === "number" && code !== 0;
+      return { kind: "just_finished", inferred, label: failed ? `命令刚结束，退出码 ${code}` : "命令刚结束", outcome: failed ? "failed" : "ok" };
+    }
+    case "running":
+      return { kind: "running", inferred, label: "运行中" };
+    default:
+      return null;
+  }
+}
+
+// hostStatusText describes a host whose sessions the cross-host listing could not list just now.
+function hostStatusText(status: AggregateHostStatus | undefined): string | null {
+  switch (status?.status) {
+    case "offline":
+    case "failed":
+      return unknownHostText(status);
+    case "pending":
+      return "正在查询…";
+    case "ok":
+      return status.stale ? "列表可能已过时" : null;
+    default:
+      return null;
+  }
+}
+
+function terminateTitle(tab: BackgroundTab, sessions: readonly SessionInfo[]): string {
+  if (!tab.aggregateHost) return tab.sessionId ? "结束这个终端里运行的程序，无法恢复" : "接管后才能在这里结束这个终端";
+  switch (aggregateTerminatePath(tab.aggregateHost, sessions)) {
+    case "direct":
+      return "结束这个终端里运行的程序，无法恢复";
+    case "connect_device":
+      return "先连接这台设备，再结束这个终端里运行的程序，无法恢复";
+    default:
+      return "主机未连接：请先从资产树连接这台主机再结束";
+  }
+}
+
+// HostGroupHeader names a host in the all-hosts view, with its listing status when its sessions are not all known.
+function HostGroupHeader({ group }: { group: BackgroundHostGroup }) {
+  const detail = [group.tabs.length > 0 ? `${group.tabs.length} 个` : null, hostStatusText(group.status)]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <tr className="nx-bg-group" data-background-group={group.key} data-host-status={group.status?.status ?? "listed"}>
+      <th scope="colgroup" colSpan={COLUMN_COUNT}>
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate font-medium text-[var(--nx-fg-strong)]" title={group.name} data-testid="background-host-name">
+            {group.name}
+          </span>
+          <span className="truncate text-[11px] font-normal text-[var(--nx-fg-soft)]" data-testid="background-host-status">
+            {detail}
+          </span>
+        </div>
+      </th>
+    </tr>
+  );
 }
 
 // Hover tooltips do not reach touch screens, so the gaps a tooltip explains are also stated once below the table.
@@ -558,22 +635,43 @@ export function BackgroundSessions({
   const kill = async (info: BackgroundTab) => {
     const ownerGeneration = ownerGenerationRef.current;
     const key = backgroundTabKey(info);
+    // Ending always asks: the process ends, unlike closing a tab, which leaves it running in the background.
+    const path = info.aggregateHost ? aggregateTerminatePath(info.aggregateHost, useUi.getState().sessions) : "direct";
+    if (path === null) return;
+    const connectFirst = path === "connect_device" ? `\n\n需要先连接设备「${info.sessionName}」，然后结束这个终端。` : "";
     const ok = await ask(
-      `结束「${info.sessionName}」上的这个后台终端？\n\n其中运行的程序会被终止，无法恢复`,
+      `结束「${info.sessionName}」上的终端「${backgroundTabName(info)}」？\n\n终端里运行的程序会被终止，进程结束后无法恢复。只想离开时不必结束，它会在后台继续运行。${connectFirst}`,
       { title: "结束进程", kind: "warning" },
     );
     if (!ok || ownerGeneration !== ownerGenerationRef.current) return;
     setBusy((b) => ({ ...b, [key]: "kill" }));
     setItems((prev) => (prev ? prev.filter((t) => backgroundTabKey(t) !== key) : prev));
+    // A row from the cross-host listing is derived from it, so it never left the list.
+    const restore = () => {
+      if (info.aggregateHost) return;
+      setItems((prev) => {
+        if (prev?.some((t) => backgroundTabKey(t) === key)) return prev;
+        return [...(prev ?? []), info];
+      });
+    };
     try {
-      await terminalApi.closeTab(info.tabId, "kill", info.sessionId);
+      if (info.aggregateHost) {
+        const result = await terminateAggregateSession(info.aggregateHost, info.tabId);
+        if (!result.ok) {
+          if (ownerGeneration === ownerGenerationRef.current) {
+            restore();
+            if ("error" in result) pushToast("error", `结束进程失败：${result.error}`);
+          }
+          return;
+        }
+      } else {
+        await terminalApi.closeTab(info.tabId, "kill", info.sessionId);
+      }
+      forgetAggregateSession(info.tabId);
       if (ownerGeneration === ownerGenerationRef.current) pushToast("success", "已结束进程");
     } catch (e) {
       if (ownerGeneration === ownerGenerationRef.current) {
-        setItems((prev) => {
-          if (prev?.some((t) => backgroundTabKey(t) === key)) return prev;
-          return [...(prev ?? []), info];
-        });
+        restore();
         pushToast("error", `结束进程失败：${describeError(e)}`);
       }
     } finally {
@@ -611,6 +709,70 @@ export function BackgroundSessions({
   const hostLabel = showAll ? "全部主机" : (hostName ?? "未知主机");
   const now = Date.now();
   const hostScope = showAll ? "all" : hostSession?.kind === "local" || (!remoteOwner && ownerWorkspace?.assetKind === "local") ? "local" : "remote";
+  // The all-hosts view groups rows by host; hosts the cross-host listing could not list show as unknown.
+  const groups = showAll && scopedItems !== null ? groupBackgroundTabs(list, aggregateHosts ?? NO_HOSTS) : null;
+
+  const renderRow = (t: BackgroundTab) => {
+    const key = backgroundTabKey(t);
+    const action = busy[key];
+    const rowBusy = action !== undefined;
+    const name = backgroundTabName(t);
+    const status = statusView(t);
+    const time = timeView(t, now);
+    const terminable = t.aggregateHost ? aggregateTerminatePath(t.aggregateHost, sessions) !== null : Boolean(t.sessionId);
+    return (
+      <tr key={key} data-background-row={t.tabId}>
+        <td className="nx-bg-name">
+          <span className="block truncate font-medium text-[var(--nx-fg-strong)]" title={name} data-testid="background-name">
+            {name}
+          </span>
+        </td>
+        <td className={`nx-bg-status ${STATUS_TONE_CLASS[status.tone]}`} title={status.hint} data-testid="background-status" data-state={t.state ?? "none"}>
+          <span className="inline-flex items-center gap-1.5">
+            <TabAttentionBadge badge={backgroundBadge(t)} />
+            <span data-testid="background-status-label">{status.label}</span>
+          </span>
+        </td>
+        <td className="nx-bg-size font-mono text-[11.5px] text-[var(--nx-fg)]" data-label="大小" data-testid="background-size">
+          {t.cols}×{t.rows}
+        </td>
+        <td className="nx-bg-time" title={time.tooltip} data-testid="background-time">
+          <span className="block truncate text-[var(--nx-fg)]" data-testid="background-output">{time.output}</span>
+          <span className="block truncate text-[11px] text-[var(--nx-fg-soft)]" data-testid="background-detached">{time.detached}</span>
+        </td>
+        <td className="nx-right">
+          <div className="flex items-center justify-end gap-1.5 max-[640px]:justify-stretch">
+            <button
+              className="nx-btn nx-btn-primary nx-btn-xs"
+              disabled={rowBusy}
+              title="回到这个终端，并补上离开期间的输出"
+              onClick={() => void takeOver(t)}
+            >
+              {action === "takeover" ? (
+                <IconRefresh size={11} className="animate-spin" />
+              ) : (
+                <IconGamepad size={11} />
+              )}
+              接管
+            </button>
+            <button
+              className="nx-btn nx-btn-danger nx-btn-xs"
+              disabled={rowBusy || !terminable}
+              title={terminateTitle(t, sessions)}
+              onClick={() => void kill(t)}
+            >
+              {action === "kill" ? (
+                <IconRefresh size={11} className="animate-spin" />
+              ) : (
+                <IconTrash size={11} />
+              )}
+              结束进程
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div className="nx-pane" data-background-view="local">
@@ -677,68 +839,14 @@ export function BackgroundSessions({
                 ))}
               </>
             )}
-            {list.map((t) => {
-              const key = backgroundTabKey(t);
-              const action = busy[key];
-              const rowBusy = action !== undefined;
-              const name = backgroundTabName(t);
-              const status = statusView(t);
-              const time = timeView(t, now);
-              return (
-                <tr key={key} data-background-row={t.tabId}>
-                  <td className="nx-bg-name">
-                    <span className="block truncate font-medium text-[var(--nx-fg-strong)]" title={name} data-testid="background-name">
-                      {name}
-                    </span>
-                    {showAll && (
-                      <span className="block truncate text-[11px] text-[var(--nx-fg-soft)]" title={t.sessionName} data-testid="background-host-name">
-                        {t.sessionName}
-                      </span>
-                    )}
-                  </td>
-                  <td className={`nx-bg-status ${STATUS_TONE_CLASS[status.tone]}`} title={status.hint} data-testid="background-status" data-state={t.state ?? "none"}>
-                    {status.label}
-                  </td>
-                  <td className="nx-bg-size font-mono text-[11.5px] text-[var(--nx-fg)]" data-label="大小" data-testid="background-size">
-                    {t.cols}×{t.rows}
-                  </td>
-                  <td className="nx-bg-time" title={time.tooltip} data-testid="background-time">
-                    <span className="block truncate text-[var(--nx-fg)]" data-testid="background-output">{time.output}</span>
-                    <span className="block truncate text-[11px] text-[var(--nx-fg-soft)]" data-testid="background-detached">{time.detached}</span>
-                  </td>
-                  <td className="nx-right">
-                    <div className="flex items-center justify-end gap-1.5 max-[640px]:justify-stretch">
-                      <button
-                        className="nx-btn nx-btn-primary nx-btn-xs"
-                        disabled={rowBusy}
-                        title="回到这个终端，并补上离开期间的输出"
-                        onClick={() => void takeOver(t)}
-                      >
-                        {action === "takeover" ? (
-                          <IconRefresh size={11} className="animate-spin" />
-                        ) : (
-                          <IconGamepad size={11} />
-                        )}
-                        接管
-                      </button>
-                      <button
-                        className="nx-btn nx-btn-danger nx-btn-xs"
-                        disabled={rowBusy || !t.sessionId}
-                        title={t.sessionId ? "结束这个终端里运行的程序，无法恢复" : "接管后才能在这里结束这个终端"}
-                        onClick={() => void kill(t)}
-                      >
-                        {action === "kill" ? (
-                          <IconRefresh size={11} className="animate-spin" />
-                        ) : (
-                          <IconTrash size={11} />
-                        )}
-                        结束进程
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+            {groups
+              ? groups.map((group) => (
+                <Fragment key={`group-${group.key}`}>
+                  <HostGroupHeader group={group} />
+                  {group.tabs.map(renderRow)}
+                </Fragment>
+              ))
+              : list.map(renderRow)}
             {pendingTabs.map((tab) => (
               <tr key={`pending-${tab.key}`} data-background-pending="">
                 <td className="nx-bg-name">

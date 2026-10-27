@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { sessionApi, terminalApi, type LiveTabInfo, type SessionAttentionState, type SessionInfo } from "../../ipc/commands";
-import type { AggregateHost } from "../../ipc/generated/types";
+import type { AggregateHost, AggregateHostStatus } from "../../ipc/generated/types";
 import { connectDevice, deviceAssetId, nextTabId, useUi, type Workspace } from "../../app/store";
 import type { AggregateRow } from "../../app/sessionAggregate";
 import { describeError } from "../../ui/errorText";
@@ -25,6 +25,9 @@ export type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   // The row comes from the cross-host listing: its host has no session here that was listed directly, such as a
   // device reached through the server. Taking it over goes through this host.
   aggregateHost?: AggregateHost;
+  // From the cross-host listing: the state was inferred from the screen shape, and the finished command's exit code.
+  attentionInferred?: boolean;
+  exitCode?: number | null;
 };
 
 export interface KnownDurableTab {
@@ -278,6 +281,8 @@ export function aggregateBackgroundTabs(
       hostClock: true,
       attachedElsewhere: item.attached || undefined,
       aggregateHost: host,
+      attentionInferred: item.attention.confidence === "heuristic" || undefined,
+      exitCode: item.attention.exitCode ?? item.exitCode,
     });
   }
   return rows;
@@ -375,22 +380,36 @@ export async function takeOverBackgroundTab(
   }
 }
 
-// takeOverAggregateSession opens a session known from the cross-host listing as a tab: through its host's connected
-// session, or, for a device no workspace here holds, after opening the device's workspace.
-export async function takeOverAggregateSession(host: AggregateHost, tabId: string, title?: string): Promise<TakeOverResult> {
-  const connected = () => {
-    const sessions = useUi.getState().sessions;
-    const byId = host.sessionId ? sessions.find((item) => item.id === host.sessionId) : undefined;
-    if (byId?.status === "connected") return byId;
-    const assetId = host.deviceId ? deviceAssetId(host.deviceId) : undefined;
-    return assetId ? sessions.find((item) => item.assetId === assetId && item.status === "connected") : undefined;
-  };
-  let session = connected();
+// aggregateHostSession finds this client's connected session to a host from the cross-host listing: the session the
+// listing names, the device's session, or for the local helper a connected local session. It never connects.
+export function aggregateHostSession(host: AggregateHost, sessions: readonly SessionInfo[]): SessionInfo | undefined {
+  const byId = host.sessionId ? sessions.find((item) => item.id === host.sessionId) : undefined;
+  if (byId?.status === "connected") return byId;
+  const assetId = host.deviceId ? deviceAssetId(host.deviceId) : undefined;
+  if (assetId) return sessions.find((item) => item.assetId === assetId && item.status === "connected");
+  if (host.kind === "local") return sessions.find((item) => item.kind === "local" && item.status === "connected");
+  return undefined;
+}
+
+// AggregateTerminatePath is how a session known from the cross-host listing can be ended: through a connection this
+// client already holds to its host (the local helper through this device's local session, opened without any network
+// connection), after opening the device's workspace (the confirmation says so), or not until the user connects the
+// host. An SSH host is never dialed for it.
+export type AggregateTerminatePath = "direct" | "connect_device" | null;
+
+export function aggregateTerminatePath(host: AggregateHost, sessions: readonly SessionInfo[]): AggregateTerminatePath {
+  if (aggregateHostSession(host, sessions) || host.kind === "local") return "direct";
+  return host.deviceId ? "connect_device" : null;
+}
+
+type AggregateConnection = { ok: true; session: SessionInfo } | { ok: false; canceled: true } | { ok: false; error: string };
+
+async function aggregateConnection(host: AggregateHost): Promise<AggregateConnection> {
+  let session = aggregateHostSession(host, useUi.getState().sessions);
   if (!session && host.kind === "local") {
-    // The local helper's sessions are taken over through this device's local session.
+    // The local helper's sessions are reached through this device's local session.
     try {
-      const local = useUi.getState().sessions.find((item) => item.kind === "local" && item.status === "connected") ??
-        await sessionApi.connectLocal();
+      const local = await sessionApi.connectLocal();
       const st = useUi.getState();
       st.setSessions([...st.sessions.filter((item) => item.id !== local.id), local]);
       session = local.status === "connected" ? local : undefined;
@@ -401,13 +420,93 @@ export async function takeOverAggregateSession(host: AggregateHost, tabId: strin
   if (!session && host.deviceId) {
     const outcome = await connectDevice({ id: host.deviceId, name: host.name });
     if (!outcome.ok) return outcome.canceled ? { ok: false, canceled: true } : { ok: false, error: outcome.error ?? "无法连接设备" };
-    session = connected();
+    session = aggregateHostSession(host, useUi.getState().sessions);
   }
   if (!session) return { ok: false, error: "主机未连接，请先从资产树打开这台主机" };
+  return { ok: true, session };
+}
+
+// takeOverAggregateSession opens a session known from the cross-host listing as a tab: through its host's connected
+// session, or, for a device no workspace here holds, after opening the device's workspace.
+export async function takeOverAggregateSession(host: AggregateHost, tabId: string, title?: string): Promise<TakeOverResult> {
+  const connection = await aggregateConnection(host);
+  if (!connection.ok) return connection;
+  const { session } = connection;
   return takeOverBackgroundTab({
     tabId, sessionId: session.id, sessionName: session.name, sessionKind: session.kind,
     cols: 0, rows: 0, controller: null, subscribers: 0, viewers: 0, exited: false, title,
   });
+}
+
+export type TerminateResult = { ok: true } | { ok: false; canceled: true } | { ok: false; error: string };
+
+// terminateAggregateSession ends a session known from the cross-host listing through its host's connection, opening
+// the device's workspace first when that is the only way. The caller confirms with the user first. The process ends.
+export async function terminateAggregateSession(host: AggregateHost, tabId: string): Promise<TerminateResult> {
+  try {
+    const connection = await aggregateConnection(host);
+    if (!connection.ok) return connection;
+    await terminalApi.closeTab(tabId, "kill", connection.session.id);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: describeError(error) };
+  }
+}
+
+// unknownHostText says why a host's sessions are unknown right now, for a host the cross-host listing reports offline
+// or failed. A host whose helper is not running is only listed once a terminal there starts it.
+export function unknownHostText(status: Pick<AggregateHostStatus, "status" | "error" | "errorCode">): string {
+  if (status.errorCode === "helper_not_ready") return "会话状态未知：持久终端组件未运行，在这台主机上打开一个终端后即可显示";
+  if (status.status === "offline") return "未连接，会话状态未知";
+  return `无法读取，会话状态未知${status.error ? `：${status.error}` : ""}`;
+}
+
+export interface BackgroundHostGroup {
+  key: string;
+  name: string;
+  // The host's listing status from the cross-host listing, when it lists the host.
+  status?: AggregateHostStatus;
+  tabs: BackgroundTab[];
+}
+
+// backgroundHostKey is the cross-host listing's key for a row's host when the listing names it, otherwise a key of
+// the row's own session.
+function backgroundHostKey(tab: BackgroundTab, hosts: ReadonlyMap<string, AggregateHostStatus>): string {
+  if (tab.aggregateHost) return tab.aggregateHost.key;
+  for (const host of hosts.values()) {
+    if (host.sessionId && host.sessionId === tab.sessionId) return host.key;
+  }
+  if (tab.sessionKind === "local" && hosts.has("local")) return "local";
+  return `session:${tab.sessionId}`;
+}
+
+// groupBackgroundTabs groups the all-hosts list by host, in the cross-host listing's host order and then in the
+// order rows first appear. A host the listing reports offline, failed or still answering gets a group without rows,
+// so the user sees that its sessions are unknown rather than absent.
+export function groupBackgroundTabs(
+  tabs: readonly BackgroundTab[],
+  hosts: ReadonlyMap<string, AggregateHostStatus>,
+): BackgroundHostGroup[] {
+  const groups = new Map<string, BackgroundHostGroup>();
+  for (const [key, status] of hosts) {
+    if (status.status !== "ok") groups.set(key, { key, name: status.name, status, tabs: [] });
+  }
+  for (const tab of tabs) {
+    const key = backgroundHostKey(tab, hosts);
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, name: tab.aggregateHost?.name ?? tab.sessionName, status: hosts.get(key), tabs: [] };
+      groups.set(key, group);
+    }
+    group.tabs.push(tab);
+  }
+  const order = [...hosts.keys()];
+  const rank = (key: string) => {
+    const index = order.indexOf(key);
+    return index < 0 ? order.length : index;
+  };
+  // Array.prototype.sort is stable, so hosts the listing does not name keep their first-seen order.
+  return [...groups.values()].sort((a, b) => rank(a.key) - rank(b.key));
 }
 
 // visibleBackgroundTabs narrows collected terminals to the selected host (or, for the all-hosts view, to
