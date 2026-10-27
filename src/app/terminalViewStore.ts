@@ -8,17 +8,27 @@ import { applyRemoteTabTitle, findTab, hasCustomTitle, sanitizeRemoteTabTitle, u
 // know); linesBelow is keyed by the owning pane's stable view id (the storeTabId TerminalPane
 // passes as viewTabId — never the shared pre-attach "pending" placeholder), so concurrent
 // attaching tabs cannot contaminate each other and the value survives the attach transition.
-// atTop (same key as linesBelow) is set while the normal screen's viewport is at the top
-// of the scrollback, where a durable tab offers its earlier history.
+// history (same key as linesBelow) is the view state a durable tab's earlier-history entry
+// reads: whether the normal screen's viewport is at the top of the scrollback, whether the
+// scrollback is full (lines were trimmed), and the helper offset of the first byte the view
+// rendered.
+export interface TerminalHistoryViewState {
+  atTop: boolean;
+  trimmed: boolean;
+  from: number | null;
+}
+
+const NO_HISTORY_VIEW: TerminalHistoryViewState = { atTop: false, trimmed: false, from: null };
+
 interface TerminalViewState {
   linesBelow: Record<string, number>;
-  atTop: Record<string, boolean>;
+  history: Record<string, TerminalHistoryViewState>;
   titles: Record<string, string>;
 }
 
 export const useTerminalViewStore = create<TerminalViewState>()(() => ({
   linesBelow: {},
-  atTop: {},
+  history: {},
   titles: {},
 }));
 
@@ -26,8 +36,13 @@ export function useTerminalLinesBelow(tabId: string): number {
   return useTerminalViewStore((state) => state.linesBelow[tabId] ?? 0);
 }
 
-export function useTerminalAtTop(tabId: string): boolean {
-  return useTerminalViewStore((state) => state.atTop[tabId] === true);
+// The entry is the stored object, replaced only when a field changes.
+export function useTerminalHistoryView(tabId: string): TerminalHistoryViewState {
+  return useTerminalViewStore((state) => state.history[tabId] ?? NO_HISTORY_VIEW);
+}
+
+export function getTerminalHistoryView(tabId: string): TerminalHistoryViewState {
+  return useTerminalViewStore.getState().history[tabId] ?? NO_HISTORY_VIEW;
 }
 
 export function useTerminalTabTitle(tabId: string): string | undefined {
@@ -49,13 +64,12 @@ export function setTerminalLinesBelow(tabId: string, value: number): void {
   });
 }
 
-export function setTerminalAtTop(tabId: string, value: boolean): void {
+export function setTerminalHistoryView(tabId: string, patch: Partial<TerminalHistoryViewState>): void {
   useTerminalViewStore.setState((state) => {
-    if ((state.atTop[tabId] === true) === value) return state;
-    const atTop = { ...state.atTop };
-    if (value) atTop[tabId] = true;
-    else delete atTop[tabId];
-    return { atTop };
+    const current = state.history[tabId] ?? NO_HISTORY_VIEW;
+    const next = { ...current, ...patch };
+    if (next.atTop === current.atTop && next.trimmed === current.trimmed && next.from === current.from) return state;
+    return { history: { ...state.history, [tabId]: next } };
   });
 }
 
@@ -71,23 +85,23 @@ export function resetTerminalView(tabId?: string): void {
     if (tabId === undefined) {
       if (
         Object.keys(state.linesBelow).length === 0 &&
-        Object.keys(state.atTop).length === 0 &&
+        Object.keys(state.history).length === 0 &&
         Object.keys(state.titles).length === 0
       ) {
         return state;
       }
-      return { linesBelow: {}, atTop: {}, titles: {} };
+      return { linesBelow: {}, history: {}, titles: {} };
     }
-    if (state.linesBelow[tabId] === undefined && state.atTop[tabId] === undefined && state.titles[tabId] === undefined) {
+    if (state.linesBelow[tabId] === undefined && state.history[tabId] === undefined && state.titles[tabId] === undefined) {
       return state;
     }
     const linesBelow = { ...state.linesBelow };
-    const atTop = { ...state.atTop };
+    const history = { ...state.history };
     const titles = { ...state.titles };
     delete linesBelow[tabId];
-    delete atTop[tabId];
+    delete history[tabId];
     delete titles[tabId];
-    return { linesBelow, atTop, titles };
+    return { linesBelow, history, titles };
   });
 }
 
@@ -105,15 +119,16 @@ export function resetTerminalTabTitle(tabId: string): void {
 }
 
 // The narrow reset for the scrollback owner (XtermView): a terminal remount clears only
-// its own scroll position entries, never the tab's OSC title, which outlives the terminal.
+// its own scroll and history view entries, never the tab's OSC title, which outlives the
+// terminal.
 export function resetTerminalLinesBelow(tabId: string): void {
   useTerminalViewStore.setState((state) => {
-    if (state.linesBelow[tabId] === undefined && state.atTop[tabId] === undefined) return state;
+    if (state.linesBelow[tabId] === undefined && state.history[tabId] === undefined) return state;
     const linesBelow = { ...state.linesBelow };
-    const atTop = { ...state.atTop };
+    const history = { ...state.history };
     delete linesBelow[tabId];
-    delete atTop[tabId];
-    return { linesBelow, atTop };
+    delete history[tabId];
+    return { linesBelow, history };
   });
 }
 

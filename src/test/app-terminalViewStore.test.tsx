@@ -124,7 +124,7 @@ import {
   resetTerminalLinesBelow,
   resetTerminalTabTitle,
   resetTerminalView,
-  setTerminalAtTop,
+  setTerminalHistoryView,
   setTerminalLinesBelow,
   setTerminalTabTitle,
   useTerminalLinesBelow,
@@ -463,7 +463,7 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     expect(getTerminalLinesBelow("t1")).toBe(90);
   });
 
-  it("offers earlier history at the top of a durable tab whose replay started after recorded output", async () => {
+  it("offers earlier history at the top of a durable view that started after recorded output", async () => {
     mounted = mount(createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }));
     await flush();
     const entry = () => mounted?.container.querySelector("[data-testid='earlier-history-entry']") ?? null;
@@ -477,26 +477,28 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
       durable: true,
       ...extra,
     });
-    deliverControl(control(1, { historyFrom: 4096, historyBase: 0 }));
+    deliverControl(control(1, {}));
+    // The view's attach anchor reported where it started.
+    act(() => setTerminalHistoryView("t1", { from: 4096 }));
     expect(entry()).toBeNull();
-    act(() => setTerminalAtTop("t1", true));
+    act(() => setTerminalHistoryView("t1", { atTop: true }));
     expect(entry()?.textContent).toContain("加载更早历史");
-    act(() => setTerminalAtTop("t1", false));
+    act(() => setTerminalHistoryView("t1", { atTop: false }));
     expect(entry()).toBeNull();
-    // The history limit dropped everything before the replay start.
-    deliverControl(control(2, { historyFrom: 4096, historyBase: 4096, historyTruncated: true }));
-    act(() => setTerminalAtTop("t1", true));
+    // The history limit dropped everything before the view's start.
+    deliverControl(control(2, { historyBase: 4096, historyTruncated: true }));
+    act(() => setTerminalHistoryView("t1", { atTop: true }));
     expect(entry()?.textContent).toContain("早期历史已截断");
   });
 
   it("narrow scroll resets clear the top-of-scrollback state with the lines below", () => {
     act(() => {
-      setTerminalAtTop("t1", true);
+      setTerminalHistoryView("t1", { atTop: true, from: 10 });
       setTerminalTabTitle("t1", "vim");
     });
-    expect(useTerminalViewStore.getState().atTop.t1).toBe(true);
+    expect(useTerminalViewStore.getState().history.t1).toEqual({ atTop: true, trimmed: false, from: 10 });
     act(() => resetTerminalLinesBelow("t1"));
-    expect(useTerminalViewStore.getState().atTop.t1).toBeUndefined();
+    expect(useTerminalViewStore.getState().history.t1).toBeUndefined();
     expect(getTerminalTabTitle("t1")).toBe("vim");
   });
 

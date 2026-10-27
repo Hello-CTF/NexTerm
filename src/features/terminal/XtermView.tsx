@@ -16,7 +16,7 @@ import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { useUi } from "../../app/store";
 import {
   resetTerminalLinesBelow,
-  setTerminalAtTop,
+  setTerminalHistoryView,
   setTerminalLinesBelow,
   useTerminalLinesBelow,
 } from "../../app/terminalViewStore";
@@ -341,7 +341,10 @@ export function XtermView(props: XtermViewProps) {
     const unsubscribeGpuPreference = subscribeTerminalPrefs(() => {
       const prefs = getTerminalPrefs();
       webgl.setMode(prefs.gpuAcceleration);
-      if (term.options.scrollback !== prefs.scrollback) term.options.scrollback = prefs.scrollback;
+      if (term.options.scrollback !== prefs.scrollback) {
+        term.options.scrollback = prefs.scrollback;
+        scheduleUiFlush();
+      }
     });
     const attachedAssetId = useUi.getState().sessions.find((session) => session.id === sessionId)?.assetId;
     const applyGrid = (grid: TerminalGrid) => resizeTerminalToGridPreservingSelection(term, grid);
@@ -378,7 +381,12 @@ export function XtermView(props: XtermViewProps) {
       // The root view store dedups unchanged values: only a real change notifies
       // the badge's precise selector.
       setTerminalLinesBelow(viewKeyRef.current, below);
-      setTerminalAtTop(viewKeyRef.current, buffer.type === "normal" && buffer.viewportY === 0);
+      const normal = buffer.type === "normal";
+      setTerminalHistoryView(viewKeyRef.current, {
+        atTop: normal && buffer.viewportY === 0,
+        // A full scrollback has trimmed lines after the view's first byte.
+        trimmed: normal && buffer.length >= term.rows + (term.options.scrollback ?? 0),
+      });
     };
     // Scroll and write-completion signals are high-frequency: they only mark
     // the UI dirty, and the buffer read plus store update runs once per
@@ -1012,6 +1020,10 @@ export function XtermView(props: XtermViewProps) {
         // spans from another stream (a fresh attach starts a new sequence
         // space without being marked expired) never leak into this one.
         streamClasses = [...(control.classes ?? [])];
+        // A full replay reports where this view's durable history starts.
+        if (control.historyFrom !== undefined || control.expired) {
+          setTerminalHistoryView(viewKeyRef.current, { from: control.historyFrom ?? null });
+        }
         if (control.expired) {
           term.clearSelection();
           streamWriter.resetStream();

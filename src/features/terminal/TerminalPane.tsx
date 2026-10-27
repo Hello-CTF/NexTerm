@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./XtermView";
-import { EarlierHistory } from "./EarlierHistoryPanel";
+import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
 import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
 import { CommandBlockPanel } from "./CommandBlockPanel";
@@ -794,7 +794,7 @@ export function TerminalPane({
     }
     const history = terminalHistoryInfo(p);
     setHistoryInfo((current) =>
-      current.from === history.from && current.base === history.base && current.truncated === history.truncated
+      current.base === history.base && current.truncated === history.truncated
         ? current
         : history,
     );
@@ -906,6 +906,8 @@ export function TerminalPane({
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || isImeKeyEvent(e)) return;
       if (!matchKeybinding(e, "terminalSearch")) return;
+      // The earlier-history replay is not searchable through the live terminal.
+      if (e.target instanceof Element && e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
       e.preventDefault();
       e.stopPropagation();
       const selected = (handleRef.current?.getSelection() ?? "").trim();
@@ -2322,6 +2324,7 @@ export function TerminalPane({
               tabId={kernelTabId}
               info={historyInfo}
               dimensions={() => handleRef.current?.dimensions()}
+              onClosed={() => handleRef.current?.focus()}
             />
           )}
 
