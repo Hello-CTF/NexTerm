@@ -125,6 +125,24 @@ export function SessionPanel({ overlay, aiDocked = false, onClose }: SessionPane
     selectTab(PANEL_TABS[next].id, true);
   };
 
+  // A native listener: the AI assistant is portalled into this panel, so its key events reach the section in the DOM but
+  // not through React's onKeyDown.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!overlay || !section) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      trapOverlayTab(event as unknown as Parameters<typeof trapOverlayTab>[0], section);
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        event.preventDefault();
+        onCloseRef.current();
+      }
+    };
+    section.addEventListener("keydown", onKeyDown);
+    return () => section.removeEventListener("keydown", onKeyDown);
+  }, [overlay]);
+
   const subtitle = context
     ? [context.hostLabel, cwd].filter(Boolean).join(" · ")
     : locked
@@ -139,13 +157,6 @@ export function SessionPanel({ overlay, aiDocked = false, onClose }: SessionPane
       role={overlay ? "dialog" : undefined}
       aria-modal={overlay ? true : undefined}
       tabIndex={overlay ? -1 : undefined}
-      onKeyDown={(event) => {
-        if (overlay) trapOverlayTab(event, sectionRef.current);
-        if (overlay && event.key === "Escape" && !event.defaultPrevented) {
-          event.preventDefault();
-          onClose();
-        }
-      }}
     >
       <div className="flex h-[38px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2 pl-3">
         <span className="shrink-0 text-[12.5px] font-semibold text-neutral-100">会话</span>
