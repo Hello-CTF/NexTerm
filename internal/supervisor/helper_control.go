@@ -22,6 +22,9 @@ type RunningHelper struct {
 	// peer credentials and checked against the helper's pid file.
 	PID      int
 	Activity ActivitySnapshot
+	// ActivityKnown is false for a protocol 2 helper that did not report its
+	// sessions: an unknown count is not zero sessions.
+	ActivityKnown bool
 	// Runtime is nil when the helper did not report the executable it runs.
 	Runtime *RuntimeMetadata
 }
@@ -76,27 +79,46 @@ func InspectHelper(ctx context.Context, stateDir string) (RunningHelper, error) 
 }
 
 func inspectHelperVersion(ctx context.Context, stateDir string, version int) (RunningHelper, error) {
-	endpoint, err := helperEndpointVersion(stateDir, version)
+	helper, conn, err := inspectHelperConn(ctx, stateDir, version)
 	if err != nil {
 		return RunningHelper{}, err
 	}
+	if version < 3 {
+		_ = writeDetach(conn)
+	}
+	_ = conn.Close()
+	return helper, nil
+}
+
+// inspectHelperConn inspects the helper serving the endpoint of version and
+// returns the verified connection still open: while it is open the peer
+// process is alive, so its pid cannot name another process yet.
+func inspectHelperConn(ctx context.Context, stateDir string, version int) (_ RunningHelper, _ net.Conn, returnErr error) {
+	endpoint, err := helperEndpointVersion(stateDir, version)
+	if err != nil {
+		return RunningHelper{}, nil, err
+	}
 	digest, err := stateDigestFor(stateDir)
 	if err != nil {
-		return RunningHelper{}, err
+		return RunningHelper{}, nil, err
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, helperInspectWait)
 	defer cancel()
 	conn, err := dialSocket(probeCtx, endpoint)
 	if err != nil {
-		return RunningHelper{}, err
+		return RunningHelper{}, nil, err
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if returnErr != nil {
+			_ = conn.Close()
+		}
+	}()
 	pid, err := verifiedHelperPeer(conn)
 	if err != nil {
-		return RunningHelper{}, err
+		return RunningHelper{}, nil, err
 	}
 	if recorded, err := recordedHelperPID(stateDir); err == nil && recorded != pid {
-		return RunningHelper{}, fmt.Errorf("%w: endpoint %s is served by pid %d but the helper pid file names %d", ErrStateMismatch, endpoint, pid, recorded)
+		return RunningHelper{}, nil, fmt.Errorf("%w: endpoint %s is served by pid %d but the helper pid file names %d", ErrStateMismatch, endpoint, pid, recorded)
 	}
 	if deadline, ok := probeCtx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
@@ -109,51 +131,48 @@ func inspectHelperVersion(ctx context.Context, stateDir string, version int) (Ru
 	}
 	payload, err := marshalFrame(frameHello, hello)
 	if err != nil {
-		return RunningHelper{}, err
+		return RunningHelper{}, nil, err
 	}
 	if err := writeFrame(conn, frameHello, payload); err != nil {
-		return RunningHelper{}, err
+		return RunningHelper{}, nil, err
 	}
 	kind, reply, err := readFrame(conn)
 	if err != nil {
-		return RunningHelper{}, err
+		return RunningHelper{}, nil, err
 	}
 	if kind == frameError {
 		var msg errorMsg
 		if err := unmarshalFrame(reply, &msg); err != nil {
-			return RunningHelper{}, err
+			return RunningHelper{}, nil, err
 		}
-		return RunningHelper{}, decodedError(msg)
+		return RunningHelper{}, nil, decodedError(msg)
 	}
 	if kind != frameHelloAck {
-		return RunningHelper{}, protocolMismatch(kind)
+		return RunningHelper{}, nil, protocolMismatch(kind)
 	}
 	var ack probeHelloMsg
 	if err := unmarshalFrame(reply, &ack); err != nil {
-		return RunningHelper{}, err
+		return RunningHelper{}, nil, err
 	}
 	if ack.Version != version {
-		return RunningHelper{}, versionMismatchError(ack.Version, "inspection hello acknowledged with another protocol version")
+		return RunningHelper{}, nil, versionMismatchError(ack.Version, "inspection hello acknowledged with another protocol version")
 	}
 	helper := RunningHelper{Protocol: version, PID: pid}
 	if ack.Activity != nil {
+		helper.ActivityKnown = true
 		if ack.Activity.PTY < 0 || ack.Activity.Exec < 0 {
-			return RunningHelper{}, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
+			return RunningHelper{}, nil, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
 		}
 		helper.Activity = *ack.Activity
 	} else if version >= 3 {
-		return RunningHelper{}, fmt.Errorf("%w: hello acknowledgement lacks daemon activity", ErrProtocol)
+		return RunningHelper{}, nil, fmt.Errorf("%w: hello acknowledgement lacks daemon activity", ErrProtocol)
 	}
 	if ack.Runtime != nil && validateRuntimeMetadata(*ack.Runtime, version) == nil {
 		runtime := *ack.Runtime
 		helper.Runtime = &runtime
 	}
-	if version < 3 {
-		// Protocol 2 offered activity as a feature; a helper without it cannot
-		// report its sessions, which is not the same as having none.
-		_ = writeDetach(conn)
-	}
-	return helper, nil
+	_ = conn.SetDeadline(time.Time{})
+	return helper, conn, nil
 }
 
 func writeDetach(conn net.Conn) error {
@@ -178,39 +197,63 @@ func recordedHelperPID(stateDir string) (int, error) {
 
 // StopHelper ends the helper inspected as expected, and with it every session
 // it runs. Callers must have the user's consent for exactly that helper: a
-// different process or protocol now serving the state directory is refused
-// with ErrHelperChanged. The helper gets a graceful stop first, then a forced
-// one, and StopHelper returns once its state lock is released, so a new
-// helper can start.
+// different process or protocol now serving the state directory, or more
+// sessions than consent covered, is refused with ErrHelperChanged. The
+// process is held by a handle taken while the verified connection is open
+// (a pidfd on Linux, a process handle on Windows), so a reused pid is never
+// signalled; where no such handle exists the helper is verified again before
+// it is forcibly killed, and left alone when that is impossible. StopHelper
+// returns once the state lock is released, so a new helper can start.
 func StopHelper(ctx context.Context, stateDir string, expected RunningHelper) error {
 	absolute, err := filepath.Abs(stateDir)
 	if err != nil {
 		return fmt.Errorf("%w: helper state directory: %v", ErrInvalidInput, err)
 	}
-	current, err := inspectHelperVersion(ctx, absolute, expected.Protocol)
+	current, conn, err := inspectHelperConn(ctx, absolute, expected.Protocol)
 	if err != nil {
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
 		}
 		return fmt.Errorf("%w: %v", ErrHelperChanged, err)
 	}
+	connOpen := true
+	closeConn := func() {
+		if connOpen {
+			_ = conn.Close()
+			connOpen = false
+		}
+	}
+	defer closeConn()
 	if current.PID != expected.PID || expected.PID <= 0 {
 		return fmt.Errorf("%w: pid %d now serves the state directory, consent covered pid %d", ErrHelperChanged, current.PID, expected.PID)
 	}
-	if current.Activity.Total() > expected.Activity.Total() {
+	if expected.ActivityKnown && (!current.ActivityKnown || current.Activity.Total() > expected.Activity.Total()) {
 		return fmt.Errorf("%w: the helper now runs %d sessions, consent covered %d", ErrHelperChanged, current.Activity.Total(), expected.Activity.Total())
 	}
-	if err := stopHelperProcess(current.PID); err != nil {
+	reverify := func(ctx context.Context) (int, net.Conn, error) {
+		helper, conn, err := inspectHelperConn(ctx, absolute, expected.Protocol)
+		if err != nil {
+			return 0, nil, err
+		}
+		return helper.PID, conn, nil
+	}
+	target, err := openHelperTarget(current.PID, reverify)
+	if err != nil {
+		return fmt.Errorf("hold supervisor helper %d: %w", current.PID, err)
+	}
+	defer target.close()
+	if err := target.terminate(); err != nil {
 		return fmt.Errorf("stop supervisor helper %d: %w", current.PID, err)
 	}
-	if !waitHelperExit(ctx, current.PID, helperStopGrace) {
+	closeConn()
+	if !target.wait(ctx, helperStopGrace) {
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
 		}
-		if err := killHelperProcess(current.PID); err != nil {
+		if err := target.kill(ctx); err != nil {
 			return fmt.Errorf("kill supervisor helper %d: %w", current.PID, err)
 		}
-		if !waitHelperExit(ctx, current.PID, helperKillWait) {
+		if !target.wait(ctx, helperKillWait) {
 			if ctx.Err() != nil {
 				return context.Cause(ctx)
 			}
@@ -220,22 +263,22 @@ func StopHelper(ctx context.Context, stateDir string, expected RunningHelper) er
 	return waitHelperUnlocked(ctx, absolute, helperUnlockWait)
 }
 
-func waitHelperExit(ctx context.Context, pid int, limit time.Duration) bool {
-	deadline := time.Now().Add(limit)
-	for {
-		if !processAlive(pid) {
-			return true
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
+// helperTarget is a stoppable handle on one verified helper process.
+type helperTarget interface {
+	// terminate asks the helper to stop; it is called while the verified
+	// connection is open.
+	terminate() error
+	// wait reports whether the helper exited within limit.
+	wait(ctx context.Context, limit time.Duration) bool
+	// kill forces the helper to exit, only when it is provably still the
+	// inspected process.
+	kill(ctx context.Context) error
+	close()
 }
+
+// helperReverify dials the helper endpoint again and returns the pid serving
+// it with the verified connection open.
+type helperReverify func(ctx context.Context) (int, net.Conn, error)
 
 func waitHelperUnlocked(ctx context.Context, stateDir string, limit time.Duration) error {
 	deadline := time.Now().Add(limit)

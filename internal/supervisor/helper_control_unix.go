@@ -3,11 +3,9 @@
 package supervisor
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"os"
-	"syscall"
 )
 
 // verifiedHelperPeer returns the process serving conn after checking that it
@@ -40,24 +38,4 @@ func verifiedHelperPeer(conn net.Conn) (int, error) {
 		return 0, fmt.Errorf("%w: helper peer pid is unknown", ErrUnsupported)
 	}
 	return pid, nil
-}
-
-func processAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
-func stopHelperProcess(pid int) error {
-	return ignoreGone(syscall.Kill(pid, syscall.SIGTERM))
-}
-
-func killHelperProcess(pid int) error {
-	return ignoreGone(syscall.Kill(pid, syscall.SIGKILL))
-}
-
-func ignoreGone(err error) error {
-	if errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	return err
 }

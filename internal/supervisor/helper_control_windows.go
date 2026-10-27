@@ -3,7 +3,6 @@
 package supervisor
 
 import (
-	"errors"
 	"fmt"
 	"net"
 
@@ -47,34 +46,4 @@ func verifiedHelperPeer(conn net.Conn) (int, error) {
 		return 0, fmt.Errorf("%w: helper pipe is served by another user", ErrProtocol)
 	}
 	return int(pid), nil
-}
-
-func processAlive(pid int) bool {
-	process, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
-	if err != nil {
-		// A pid that no longer exists cannot be opened.
-		return !errors.Is(err, windows.ERROR_INVALID_PARAMETER)
-	}
-	defer func() { _ = windows.CloseHandle(process) }()
-	event, err := windows.WaitForSingleObject(process, 0)
-	return err == nil && event == uint32(windows.WAIT_TIMEOUT)
-}
-
-// stopHelperProcess terminates the helper: a Windows helper has no graceful
-// stop request, and terminating it closes its pseudoconsoles, which ends the
-// processes attached to them.
-func stopHelperProcess(pid int) error {
-	return killHelperProcess(pid)
-}
-
-func killHelperProcess(pid int) error {
-	process, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
-	if err != nil {
-		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
-			return nil
-		}
-		return err
-	}
-	defer func() { _ = windows.CloseHandle(process) }()
-	return windows.TerminateProcess(process, 1)
 }

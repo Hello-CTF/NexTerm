@@ -7,8 +7,11 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -100,7 +103,7 @@ func TestStopHelperRequiresTheInspectedHelperAndReleasesTheState(t *testing.T) {
 
 // fakeLegacyHelper serves the protocol 2 endpoint of stateDir the way a
 // protocol 2 helper answered a hello offering the activity feature.
-func fakeLegacyHelper(t *testing.T, stateDir string, activity ActivitySnapshot) {
+func fakeLegacyHelper(t *testing.T, stateDir string, activity *ActivitySnapshot) {
 	t.Helper()
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -142,7 +145,10 @@ func fakeLegacyHelper(t *testing.T, stateDir string, activity ActivitySnapshot) 
 					_ = writeFrame(conn, frameError, reply)
 					return
 				}
-				ack := probeHelloMsg{Version: 2, Features: []string{"activity"}, Activity: &activity}
+				ack := probeHelloMsg{Version: 2, Activity: activity}
+				if activity != nil {
+					ack.Features = []string{"activity"}
+				}
 				reply, _ := marshalFrame(frameHelloAck, ack)
 				_ = writeFrame(conn, frameHelloAck, reply)
 				_, _, _ = readFrame(conn)
@@ -156,12 +162,12 @@ func TestInspectHelperCountsTheSessionsOfAProtocol2Helper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fakeLegacyHelper(t, stateDir, ActivitySnapshot{PTY: 2, Exec: 1})
+	fakeLegacyHelper(t, stateDir, &ActivitySnapshot{PTY: 2, Exec: 1})
 	running, err := InspectHelper(context.Background(), stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if running.Current() || running.Protocol != 2 || running.Activity.Total() != 3 || running.PID != os.Getpid() {
+	if running.Current() || running.Protocol != 2 || !running.ActivityKnown || running.Activity.Total() != 3 || running.PID != os.Getpid() {
 		t.Fatalf("legacy helper = %+v, want protocol 2 with 3 sessions served by pid %d", running, os.Getpid())
 	}
 	// A current client meets the legacy helper as an upgrade error, never by
@@ -176,7 +182,7 @@ func TestInspectHelperRejectsAHelperThatIsNotThePidFileOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fakeLegacyHelper(t, stateDir, ActivitySnapshot{PTY: 1})
+	fakeLegacyHelper(t, stateDir, &ActivitySnapshot{PTY: 1})
 	if err := os.WriteFile(filepath.Join(stateDir, "helper.pid"), []byte(strconv.Itoa(os.Getpid()+1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -194,5 +200,77 @@ func TestConnectHelperReportsAHelperThatExitsDuringStartup(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("a helper that exited at once took %s to report", elapsed)
+	}
+}
+
+func TestInspectHelperKeepsAnUnreportedProtocol2SessionCountUnknown(t *testing.T) {
+	stateDir, err := filepath.Abs(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeLegacyHelper(t, stateDir, nil)
+	running, err := InspectHelper(context.Background(), stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running.ActivityKnown || running.Protocol != 2 {
+		t.Fatalf("legacy helper without activity = %+v, want an unknown session count", running)
+	}
+}
+
+func TestConnectHelperEndsAHelperThatNeverServes(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "pid")
+	script := filepath.Join(dir, "stuck-helper")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho $$ > "+pidFile+"\nexec sleep 300\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ConnectHelper(context.Background(), HelperConfig{StateDir: filepath.Join(dir, "state"), Executable: script, SpawnTimeout: time.Second})
+	if err == nil || errors.Is(err, ErrHelperExited) {
+		t.Fatalf("connect to a helper that never serves = %v, want a timeout", err)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the helper that timed out (pid %d) is still running", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestPidTargetNeverForceKillsAnUnverifiedPid(t *testing.T) {
+	child := exec.Command("/bin/sleep", "300")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	})
+	pid := child.Process.Pid
+	other := &pidTarget{pid: pid, reverify: func(context.Context) (int, net.Conn, error) {
+		client, server := net.Pipe()
+		_ = server.Close()
+		return pid + 1, client, nil
+	}}
+	if err := other.kill(context.Background()); !errors.Is(err, ErrHelperChanged) {
+		t.Fatalf("kill with another pid serving = %v, want ErrHelperChanged", err)
+	}
+	gone := &pidTarget{pid: pid, reverify: func(context.Context) (int, net.Conn, error) {
+		return 0, nil, ErrUnavailable
+	}}
+	if err := gone.kill(context.Background()); err == nil {
+		t.Fatal("kill without a verifiable helper succeeded")
+	}
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("an unverified pid was killed: %v", err)
 	}
 }
