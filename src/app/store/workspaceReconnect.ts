@@ -53,6 +53,25 @@ export function workspaceNeedsReconnect(state: WorkspaceReconnectState | undefin
   return state === "disconnected" || state === "failed";
 }
 
+// workspaceHasOrdinaryTerminals reports whether a reconnect would end running programs: a regular (non-durable)
+// terminal dies with its connection, while a durable one re-attaches. Dead and exited tabs have nothing to lose.
+export function workspaceHasOrdinaryTerminals(workspace: Pick<Workspace, "panes"> | null | undefined): boolean {
+  return (
+    workspace?.panes.some((pane) =>
+      pane.tabs.some((tab) => tab.kind === "terminal" && tab.durable !== true && !tab.dead && !tab.exited && !tab.restorePending),
+    ) ?? false
+  );
+}
+
+// confirmSuspectReconnect asks before reconnecting a connection that may still be alive, because that drops
+// ordinary terminals. Workspaces with only durable terminals reconnect without asking.
+export async function confirmSuspectReconnect(workspaceId: string | undefined): Promise<boolean> {
+  const workspace = workspaceId ? useUi.getState().workspaces.find((item) => item.id === workspaceId) : undefined;
+  if (!workspaceHasOrdinaryTerminals(workspace)) return true;
+  const { confirmDialog } = await import("../../ui/dialogs");
+  return confirmDialog("普通终端会断开，正在运行的程序会结束");
+}
+
 // reconnectWorkspaceConnection reconnects the host session of a workspace from outside any terminal pane: a live
 // session is re-dialed in place, a session the backend no longer has is replaced by a fresh connection to the same
 // target. Failures and cancellations are reported to the user here, so callers just fire it.
