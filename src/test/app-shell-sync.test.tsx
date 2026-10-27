@@ -65,7 +65,8 @@ vi.mock("../ipc/commands", () => ({
   dbApi: {},
 }));
 
-vi.mock("../ipc/events", () => ({
+vi.mock("../ipc/events", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ipc/events")>()),
   listenEvent: vi.fn((topic: string, handler: (payload: unknown) => void) => {
     mocks.syncEventHandlers.push({ topic, handler });
     return Promise.resolve(() => {
