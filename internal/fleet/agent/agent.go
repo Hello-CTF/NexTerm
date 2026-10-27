@@ -39,7 +39,9 @@ const (
 	// detected instead of enrolling an ordinary, shareable device.
 	DeviceKindLocalHelper = "local-helper"
 
-	configVersion = 1
+	// ConfigVersion is the version of the device config an enrollment writes.
+	ConfigVersion = 1
+	configVersion = ConfigVersion
 
 	PathHealth     = "/healthz"
 	PathEnroll     = "/device/enroll"
