@@ -22,6 +22,11 @@
     column-gap: 10px;
   }
 
+  /* Hosts are separate row groups; an empty group takes no room. */
+  .nx-bg-sessions.nx-table-cards tbody:empty {
+    display: none;
+  }
+
   .nx-bg-sessions.nx-table-cards tr.nx-bg-group {
     padding: 4px 2px 0;
     border: 0;

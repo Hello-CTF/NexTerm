@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { syncApi, terminalApi, type SessionAttentionState } from "../../ipc/commands";
 import {
   aggregateBackgroundTabs,
@@ -656,7 +656,7 @@ export function BackgroundSessions({
     };
     try {
       if (info.aggregateHost) {
-        const result = await terminateAggregateSession(info.aggregateHost, info.tabId);
+        const result = await terminateAggregateSession(info.aggregateHost, info.tabId, path);
         if (!result.ok) {
           if (ownerGeneration === ownerGenerationRef.current) {
             restore();
@@ -839,14 +839,16 @@ export function BackgroundSessions({
                 ))}
               </>
             )}
-            {groups
-              ? groups.map((group) => (
-                <Fragment key={`group-${group.key}`}>
-                  <HostGroupHeader group={group} />
-                  {group.tabs.map(renderRow)}
-                </Fragment>
-              ))
-              : list.map(renderRow)}
+            {!groups && list.map(renderRow)}
+          </tbody>
+          {/* Each host is its own row group, headed by the host. */}
+          {groups?.map((group) => (
+            <tbody key={`group-${group.key}`} data-background-group-body={group.key}>
+              <HostGroupHeader group={group} />
+              {group.tabs.map(renderRow)}
+            </tbody>
+          ))}
+          <tbody>
             {pendingTabs.map((tab) => (
               <tr key={`pending-${tab.key}`} data-background-pending="">
                 <td className="nx-bg-name">

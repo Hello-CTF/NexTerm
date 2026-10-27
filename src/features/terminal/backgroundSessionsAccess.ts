@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { sessionApi, terminalApi, type LiveTabInfo, type SessionAttentionState, type SessionInfo } from "../../ipc/commands";
 import type { AggregateHost, AggregateHostStatus } from "../../ipc/generated/types";
-import { connectDevice, deviceAssetId, nextTabId, useUi, type Workspace } from "../../app/store";
+import { connectDevice, deviceAssetId, nextTabId, useUi, type ConnectAssetOptions, type Workspace } from "../../app/store";
 import type { AggregateRow } from "../../app/sessionAggregate";
 import { describeError } from "../../ui/errorText";
 import { getLocalHelperStatus, localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
@@ -404,7 +404,13 @@ export function aggregateTerminatePath(host: AggregateHost, sessions: readonly S
 
 type AggregateConnection = { ok: true; session: SessionInfo } | { ok: false; canceled: true } | { ok: false; error: string };
 
-async function aggregateConnection(host: AggregateHost): Promise<AggregateConnection> {
+// aggregateConnection finds or opens the connection to a listed host. With allowDevice false it never opens a device's
+// workspace; deviceOptions are passed to that open.
+async function aggregateConnection(
+  host: AggregateHost,
+  opts: { allowDevice?: boolean; deviceOptions?: ConnectAssetOptions } = {},
+): Promise<AggregateConnection> {
+  const { allowDevice = true, deviceOptions } = opts;
   let session = aggregateHostSession(host, useUi.getState().sessions);
   if (!session && host.kind === "local") {
     // The local helper's sessions are reached through this device's local session.
@@ -417,8 +423,8 @@ async function aggregateConnection(host: AggregateHost): Promise<AggregateConnec
       return { ok: false, error: describeError(e) };
     }
   }
-  if (!session && host.deviceId) {
-    const outcome = await connectDevice({ id: host.deviceId, name: host.name });
+  if (!session && host.deviceId && allowDevice) {
+    const outcome = await connectDevice({ id: host.deviceId, name: host.name }, deviceOptions);
     if (!outcome.ok) return outcome.canceled ? { ok: false, canceled: true } : { ok: false, error: outcome.error ?? "无法连接设备" };
     session = aggregateHostSession(host, useUi.getState().sessions);
   }
@@ -442,9 +448,18 @@ export type TerminateResult = { ok: true } | { ok: false; canceled: true } | { o
 
 // terminateAggregateSession ends a session known from the cross-host listing through its host's connection, opening
 // the device's workspace first when that is the only way. The caller confirms with the user first. The process ends.
-export async function terminateAggregateSession(host: AggregateHost, tabId: string): Promise<TerminateResult> {
+// confirmed is the path the user agreed to: a "direct" confirmation never opens a device's workspace, so a connection
+// lost in the meantime ends nothing. Opening the device keeps the user where they are and reports failures here only.
+export async function terminateAggregateSession(
+  host: AggregateHost,
+  tabId: string,
+  confirmed: Exclude<AggregateTerminatePath, null>,
+): Promise<TerminateResult> {
   try {
-    const connection = await aggregateConnection(host);
+    const connection = await aggregateConnection(host, {
+      allowDevice: confirmed === "connect_device",
+      deviceOptions: { preserveUserFocus: true, silent: true },
+    });
     if (!connection.ok) return connection;
     await terminalApi.closeTab(tabId, "kill", connection.session.id);
     return { ok: true };

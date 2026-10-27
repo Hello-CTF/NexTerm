@@ -11,12 +11,14 @@ const mocks = vi.hoisted(() => ({
   closeTab: vi.fn(),
   resyncSessions: vi.fn(),
   helperStatus: vi.fn(),
+  connectDevice: vi.fn(),
+  connectLocal: vi.fn(),
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoiceRemember: vi.fn() }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
-    sessionApi: { list: mocks.listSessions },
+    sessionApi: { list: mocks.listSessions, connectDevice: mocks.connectDevice, connectLocal: mocks.connectLocal },
     terminalApi: { listLive: mocks.listLive, listDurable: mocks.listDurable, closeTab: mocks.closeTab },
     localHelperApi: { status: mocks.helperStatus },
   });
@@ -145,6 +147,95 @@ describe("BackgroundSessions across hosts", () => {
       expect(options).toEqual({ title: "结束进程", kind: "warning" });
       expect(mocks.closeTab).toHaveBeenCalledWith("near-tab", "kill", "s-dev");
       expect(aggregateRows(useSessionAggregate.getState()).some((entry) => entry.session.tabId === "near-tab")).toBe(false);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("connects a device the user agreed to connect, then ends the session through it without moving the focus", async () => {
+    seed();
+    mocks.ask.mockResolvedValue(true);
+    const far: SessionInfo = { id: "s-far", assetId: "device/far", name: "far box", kind: "device", status: "connected", tabs: [], createdAt: 0 };
+    mocks.connectDevice.mockResolvedValue(far);
+    const view = await mountAllHosts();
+    try {
+      const before = useUi.getState().activeWorkspaceId;
+      await act(async () => {
+        button(row(view, "far-tab"), "结束进程").click();
+        await flush();
+      });
+      await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("far-tab", "kill", "s-far"));
+      expect(mocks.connectDevice).toHaveBeenCalledWith("far", "far box");
+      expect(useUi.getState().activeWorkspaceId).toBe(before);
+      expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("已结束进程");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("ends a local-helper session through this device's local session", async () => {
+    seed();
+    applyAggregateList({
+      hosts: [host("local", { kind: "local", name: "本机" })],
+      sessions: [item("local", "local-tab", "running")],
+      complete: true,
+    });
+    mocks.ask.mockResolvedValue(true);
+    mocks.connectLocal.mockResolvedValue({ id: "s-local", assetId: null, name: "本机", kind: "local", status: "connected", tabs: [], createdAt: 0 });
+    const view = mount(createElement(BackgroundSessions, {}));
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.querySelector('tr[data-background-row="local-tab"]')).not.toBeNull());
+      await act(async () => {
+        button(row(view, "local-tab"), "结束进程").click();
+        await flush();
+      });
+      await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("local-tab", "kill", "s-local"));
+      expect(mocks.connectLocal).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("keeps the row and reports the error when ending fails", async () => {
+    seed();
+    mocks.ask.mockResolvedValue(true);
+    mocks.closeTab.mockRejectedValue(new Error("helper gone"));
+    const view = await mountAllHosts();
+    try {
+      await act(async () => {
+        button(row(view, "near-tab"), "结束进程").click();
+        await flush();
+      });
+      await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("结束进程失败"))).toBe(true));
+      expect(row(view, "near-tab")).toBeTruthy();
+      expect(view.container.querySelectorAll('tr[data-background-row="near-tab"]')).toHaveLength(1);
+      expect(aggregateRows(useSessionAggregate.getState()).some((entry) => entry.session.tabId === "near-tab")).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("does not open a device when the confirmed connection was lost before ending", async () => {
+    seed();
+    let confirm: (value: boolean) => void = () => {};
+    mocks.ask.mockReturnValue(new Promise<boolean>((resolve) => { confirm = resolve; }));
+    const view = await mountAllHosts();
+    try {
+      await act(async () => {
+        button(row(view, "near-tab"), "结束进程").click();
+        await flush();
+      });
+      // The device connection goes away while the confirmation is open.
+      act(() => useUi.setState({ sessions: [ssh] }));
+      await act(async () => {
+        confirm(true);
+        await flush();
+      });
+      expect(mocks.connectDevice).not.toHaveBeenCalled();
+      expect(mocks.closeTab).not.toHaveBeenCalled();
+      expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("结束进程失败"))).toBe(true);
+      expect(row(view, "near-tab")).toBeTruthy();
     } finally {
       view.unmount();
     }
