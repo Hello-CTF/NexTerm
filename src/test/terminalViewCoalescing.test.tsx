@@ -3141,6 +3141,11 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     // An expired anchor without a start (no durable history) clears it.
     feedControl({ type: "nexterm.stream-anchor", epoch: "e2", streamSeq: 0, controlBytes: 0, expired: true });
     expect(from()).toBeNull();
+    // A full replay (clear prelude) without a start clears it as well.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e2", streamSeq: 0, controlBytes: 0, expired: true, historyFrom: 7000 });
+    expect(from()).toBe(7000);
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e2", streamSeq: 0, controlBytes: 4 });
+    expect(from()).toBeNull();
   });
 
   it("coalesces title changes to the latest one per frame and skips duplicates", async () => {

@@ -179,7 +179,7 @@ func (m *Manager) ReadDurableHistoryFor(ctx context.Context, tabID string, befor
 	durableTab := tab.durable != nil
 	identity := tab.durableIdentity
 	if before == DurableHistoryLatest {
-		before = uint64(max(tab.durableFed, 0))
+		before = tab.latestDurableOffsetLocked()
 	}
 	tab.mu.Unlock()
 	if !durableTab {
@@ -286,6 +286,17 @@ func (t *Tab) durableHistoryFrom(seq uint64) *uint64 {
 		offset = max(next, uint64(max(t.durableFed, t.displayFrom, 0)))
 	}
 	return &offset
+}
+
+// latestDurableOffsetLocked is the helper offset after the newest output this
+// process received. The sequence map records chunks before durableFed
+// advances past them, so its end is used when it is ahead. t.mu must be held.
+func (t *Tab) latestDurableOffsetLocked() uint64 {
+	latest := uint64(max(t.durableFed, 0))
+	if next, ok := t.durableSeqs.next(); ok {
+		latest = max(latest, next)
+	}
+	return latest
 }
 
 // helperFeedOptions are the feed options of the pump's next chunk: durable

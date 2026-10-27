@@ -100,6 +100,27 @@ func TestAttachAnchorOmitsHistoryForRegularTabs(t *testing.T) {
 	}
 }
 
+func TestLatestDurableOffsetUsesTheNewestKnownHelperOffset(t *testing.T) {
+	tab := &Tab{}
+	if got := tab.latestDurableOffsetLocked(); got != 0 {
+		t.Fatalf("empty tab latest = %d, want 0", got)
+	}
+	tab.durableFed = 500
+	if got := tab.latestDurableOffsetLocked(); got != 500 {
+		t.Fatalf("latest without segments = %d, want 500", got)
+	}
+	// Recorded output is ahead of durableFed.
+	tab.durableSeqs.record(0, 500, 40)
+	if got := tab.latestDurableOffsetLocked(); got != 540 {
+		t.Fatalf("latest with recorded output ahead = %d, want 540", got)
+	}
+	// durableFed is ahead of the recorded output.
+	tab.durableFed = 600
+	if got := tab.latestDurableOffsetLocked(); got != 600 {
+		t.Fatalf("latest with durableFed ahead = %d, want 600", got)
+	}
+}
+
 func TestDurableSeqMapStaysBoundedWithoutGaps(t *testing.T) {
 	var seqs durableSeqMap
 	for i := uint64(0); i < maxDurableSeqSegments+10; i++ {
