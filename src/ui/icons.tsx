@@ -584,6 +584,13 @@ export const IconZap = (p: IconProps) => (
   </Svg>
 );
 
+// Marks a durable terminal that keeps running after the client disconnects.
+export const IconPersist = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 12c-1.8-2.3-3.4-3.5-5.2-3.5a3.5 3.5 0 0 0 0 7c1.8 0 3.4-1.2 5.2-3.5s3.4-3.5 5.2-3.5a3.5 3.5 0 0 1 0 7c-1.8 0-3.4-1.2-5.2-3.5z" />
+  </Svg>
+);
+
 export const KIND_ICON_MAP = {
   ssh: IconServer,
   winrm: IconGrid,

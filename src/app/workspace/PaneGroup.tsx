@@ -31,7 +31,7 @@ import {
   IconMergeH,
   IconStop,
 } from "../../ui/icons";
-import { TabProductionBadge, TabStripItem, TabStripTitle, tabIcon, tabTooltip } from "./tabStrip";
+import { TabPersistenceMark, TabProductionBadge, TabStripItem, TabStripTitle, tabIcon, tabTooltip } from "./tabStrip";
 import { PaneForTab } from "./PaneForTab";
 import { WorkspaceEmpty } from "./EmptyStates";
 import { beginTabDrag, currentTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
@@ -323,7 +323,7 @@ export function PaneGroup({
             const isActive = t.id === activeTabId;
             return (
               <TabStripItem key={t.id} tab={t}>
-                {(unread) => (
+                {(unread, persistence) => (
                   <div
                 role="tab"
                 data-tab-id={t.id}
@@ -399,25 +399,12 @@ export function PaneGroup({
                   e.preventDefault();
                   openTabMenu(t, e.clientX, e.clientY);
                 }}
-                title={tabTooltip(t, unread)}
+                title={tabTooltip(t, unread, persistence)}
               >
-                <span className="relative flex shrink-0">
+                <span className="flex shrink-0">
                   <Icon size={13} />
-                  {t.kind === "terminal" && t.durable === true && (
-                    <span
-                      className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-emerald-400"
-                      role="img"
-                      aria-label="持久终端"
-                    />
-                  )}
-                  {t.kind === "terminal" && t.durable !== true && t.regularReason && (
-                    <span
-                      className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
-                      role="img"
-                      aria-label={`普通终端：${t.regularReason}`}
-                    />
-                  )}
                 </span>
+                <TabPersistenceMark tab={t} />
                 <TabStripTitle tab={t} />
                 {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
                 {t.closeError && (

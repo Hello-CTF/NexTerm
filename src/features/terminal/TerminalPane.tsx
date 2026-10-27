@@ -5,8 +5,17 @@ import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
-import { Daemon, type DaemonHelperState } from "./Daemon";
-import { helperStageText } from "./HelperOperationView";
+import { PersistenceHintBar } from "./PersistenceHintBar";
+import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage, persistenceHintNote } from "./persistenceHint";
+import {
+  dismissPersistenceHint,
+  forgetPersistenceHints,
+  prunePersistenceHints,
+  publishPersistenceTab,
+  usePersistenceDismissals,
+} from "./persistenceHintStore";
+import { localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
+import { showSettingsSection } from "../settings/settingsNavigation";
 import { HelperOperationDialog } from "./HelperOperationDialog";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
@@ -36,7 +45,7 @@ import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } f
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, fallbackTerminalReason, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
+import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -342,6 +351,7 @@ export function TerminalPane({
   const wasVisibleRef = useRef(visible !== false);
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
+  const localHelper = useLocalHelperStatus(sessionKind === "local" && !WEB);
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
   const productionClassification = useAssetProductionClassification(sessionAssetId);
@@ -1221,17 +1231,44 @@ export function TerminalPane({
     if (durable) return;
     // This tab started as a regular terminal while the helper deployed; only new tabs become durable.
     setHelperReady(true);
-    pushToast("success", "持久终端已就绪：当前标签仍是普通终端，新建的标签将是持久终端", {
-      label: "新建持久标签",
-      onSelect: () => {
-        const session = useUi.getState().sessions.find((item) => item.id === sessionId);
-        if (session) void openTerminalTab(session, undefined, myPaneId ?? undefined);
-      },
-    });
-  }, [helperOperation?.operationId, helperOperation?.status, storeTabId, durable, pushToast, sessionId, myPaneId]);
+  }, [helperOperation?.operationId, helperOperation?.status, storeTabId, durable]);
+
+  const readiness = useKnownDurableReadiness(sessionId);
+  const hint = persistenceHint({
+    durable,
+    eligible: (sessionKind === "ssh" || sessionKind === "local") && !containerId && !effectiveWinrm,
+    local: sessionKind === "local",
+    operation: helperOperation && { status: helperOperation.status, kind: helperOperation.kind, message: helperOperation.reason?.message },
+    ownedReady: helperReady,
+    readiness,
+    localHelper,
+    regularReason,
+  });
+  const hintKey = hint ? persistenceHintKey(hint) : null;
+  const dismissedHints = usePersistenceDismissals(storeTabId);
+  useEffect(() => {
+    const live = new Set(useUi.getState().workspaces.flatMap((ws) => ws.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id))));
+    prunePersistenceHints(live);
+    return () => {
+      // Dismissals last for the life of the tab; a remount of a live tab keeps them.
+      if (!findStoreTab(useUi.getState().workspaces, storeTabId)) forgetPersistenceHints(storeTabId);
+    };
+  }, [storeTabId]);
+  const hintShown = hint !== null && hintKey !== null && !dismissedHints.has(hintKey);
+  const failureKey = hint && hintKey && !hintShown && persistenceHintFailure(hint) ? hintKey : undefined;
+  const failureMark = hint && failureKey ? persistenceHintMessage(hint, sessionKind === "local") : undefined;
+  const hintNote = hint ? persistenceHintNote(hint) : undefined;
+  useEffect(() => {
+    // The tab strip names the live state; a dismissed failure that still applies leaves a mark on the tab.
+    publishPersistenceTab(storeTabId, { note: hintNote, failureMark, failureKey });
+  }, [storeTabId, hintNote, failureMark, failureKey]);
+  const hintShownRef = useRef(hintShown);
+  hintShownRef.current = hintShown && visible !== false;
 
   useEffect(() => {
     if (helperOperation?.status !== "awaiting_choice") return;
+    // The hint bar already explains a deployment that needs a choice when it is on screen.
+    if (helperOperation.kind !== "reattach" && hintShownRef.current) return;
     // A toast instead of opening the dialog keeps focus with whatever the user is typing.
     pushToast(
       helperOperation.kind === "reattach" ? "error" : "info",
@@ -1240,19 +1277,22 @@ export function TerminalPane({
     );
   }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
 
-  const helperBadge: DaemonHelperState | null = helperOperation?.status === "running"
-    ? { state: "installing", stage: helperStageText(helperOperation.stage) }
-    : helperOperation?.status === "awaiting_choice"
-      ? { state: "attention", message: helperOperation.reason?.message }
-      : helperReady ? { state: "ready" } : null;
-  useEffect(() => {
-    // The header now reports the ready helper; drop the "not durable" reason so the tab strip marker agrees with it.
-    if (helperBadge?.state === "ready" && regularReason) useUi.getState().updateTab(storeTabId, { regularReason: undefined });
-  }, [helperBadge?.state, regularReason, storeTabId]);
+  // A new durable terminal next to this one, in the same folder when it is known; this tab stays open.
+  const openDurableTerminal = () => {
+    const session = useUi.getState().sessions.find((item) => item.id === sessionId);
+    if (session) void openTerminalTab(session, undefined, myPaneId ?? undefined, cwd ? { directory: cwd } : undefined);
+  };
   const openHelper = () => {
     if (helperOperation) setHelperPanelOpen(true);
     else void refreshHelperDetails();
   };
+  const openLocalHelperSettings = () => {
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+    showSettingsSection("settings-terminal");
+  };
+  // Only sessions served by a durable helper can reopen as durable or manage the helper.
+  const durableHelper = sessionKind === "ssh" || (sessionKind === "local" && localDurableEnabled(localHelper));
+  const manageHelper = !durableHelper ? undefined : sessionKind === "local" ? openLocalHelperSettings : openHelper;
 
   const closeHelperPanel = () => setHelperPanelOpen(false);
 
@@ -1948,9 +1988,6 @@ export function TerminalPane({
           </span>
         )}
         <Cwd cwd={cwd} />
-        {(kernelTabId || helperBadge) && (
-          <Daemon durable={durable} sessionKind={sessionKind} helper={helperBadge} regularReason={regularReason} onOpenHelper={openHelper} />
-        )}
         {previewShareEnabled && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
         </div>
         <div className="nx-spacer" />
@@ -2124,6 +2161,16 @@ export function TerminalPane({
             <IconClose size={12} />
           </button>
         </div>
+      )}
+
+      {hintShown && (
+        <PersistenceHintBar
+          hint={hint}
+          local={sessionKind === "local"}
+          onOpenDurable={durableHelper ? openDurableTerminal : undefined}
+          onManageHelper={manageHelper}
+          onDismiss={() => dismissPersistenceHint(storeTabId, hintKey)}
+        />
       )}
 
       <div className="nx-terminal-body relative flex min-h-0 flex-1">

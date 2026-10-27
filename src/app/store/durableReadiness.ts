@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { sessionApi, type DurableReadiness, type SessionInfo } from "../../ipc/commands";
 import type { HelperProgressEvent } from "../../ipc/events";
 import { WEB } from "../../ipc/env";
@@ -19,15 +20,61 @@ function durableKind(kind: string | undefined): boolean {
   return kind === "ssh" || kind === "local";
 }
 
-// The latest readiness known per session, from prepare replies and helper progress events.
+// The latest readiness known per session, from prepare replies and helper progress events. Components read it
+// through useKnownDurableReadiness, which re-renders only when that session's answer changes.
 const knownReadiness = new Map<string, DurableReadiness>();
+// Sessions known to be local; their answers depend on the local helper rather than a remote host.
+const localSessions = new Set<string>();
+const readinessListeners = new Set<() => void>();
+
+function emitReadiness(): void {
+  for (const listener of readinessListeners) listener();
+}
+
+function subscribeReadiness(listener: () => void): () => void {
+  readinessListeners.add(listener);
+  return () => {
+    readinessListeners.delete(listener);
+  };
+}
+
+// setReadiness keeps the stored object when nothing changed, so readers see a stable snapshot.
+function setReadiness(sessionId: string, readiness: DurableReadiness): void {
+  const previous = knownReadiness.get(sessionId);
+  if (previous && previous.state === readiness.state && previous.reason === readiness.reason) return;
+  knownReadiness.set(sessionId, readiness);
+  emitReadiness();
+}
+
+function deleteReadiness(sessionId: string): void {
+  if (knownReadiness.delete(sessionId)) emitReadiness();
+}
+
+function noteKind(sessionId: string, kind: string | undefined): void {
+  if (kind === "local") localSessions.add(sessionId);
+}
 
 export function knownDurableReadiness(sessionId: string): DurableReadiness | undefined {
   return knownReadiness.get(sessionId);
 }
 
+export function useKnownDurableReadiness(sessionId: string): DurableReadiness | undefined {
+  return useSyncExternalStore(subscribeReadiness, () => knownReadiness.get(sessionId));
+}
+
 export function forgetDurableReadiness(): void {
+  localSessions.clear();
+  if (knownReadiness.size === 0) return;
   knownReadiness.clear();
+  emitReadiness();
+}
+
+// forgetLocalDurableReadiness drops only the answers for local sessions, after the local helper changed state or
+// mode; remote hosts' answers stay valid.
+export function forgetLocalDurableReadiness(): void {
+  let changed = false;
+  for (const sessionId of localSessions) changed = knownReadiness.delete(sessionId) || changed;
+  if (changed) emitReadiness();
 }
 
 // noteHelperProgress keeps the readiness cache current while a helper deploys, including deployments that started
@@ -35,19 +82,20 @@ export function forgetDurableReadiness(): void {
 export function noteHelperProgress(progress: HelperProgressEvent | null | undefined): void {
   if (!progress?.sessionId) return;
   if (progress.stage === "ready" && progress.done && !progress.error) {
-    knownReadiness.set(progress.sessionId, { state: "ready" });
+    setReadiness(progress.sessionId, { state: "ready" });
   } else if (progress.stage === "failed") {
     const reason = progress.cause || progress.error;
-    knownReadiness.set(progress.sessionId, reason ? { state: "unavailable", reason } : { state: "unavailable" });
+    setReadiness(progress.sessionId, reason ? { state: "unavailable", reason } : { state: "unavailable" });
   } else if (!progress.done) {
-    knownReadiness.set(progress.sessionId, { state: "preparing" });
+    setReadiness(progress.sessionId, { state: "preparing" });
   }
 }
 
-function queryReadiness(sessionId: string): Promise<DurableReadiness> {
+function queryReadiness(sessionId: string, kind?: string): Promise<DurableReadiness> {
+  noteKind(sessionId, kind);
   return sessionApi.prepareDurable(sessionId).then((readiness) => {
-    knownReadiness.set(sessionId, readiness);
-    return readiness;
+    setReadiness(sessionId, readiness);
+    return knownReadiness.get(sessionId) ?? readiness;
   });
 }
 
@@ -68,10 +116,10 @@ async function regularPreferred(kind?: string): Promise<boolean> {
 export function prepareDurableInBackground(session: ReadinessSession): void {
   if (!durableKind(session.kind)) return;
   // A (re)connected session may sit on a new connection, so an older answer no longer applies.
-  knownReadiness.delete(session.id);
+  deleteReadiness(session.id);
   void (async () => {
     if (await regularPreferred(session.kind)) return;
-    await queryReadiness(session.id);
+    await queryReadiness(session.id, session.kind);
   })().catch(() => undefined);
 }
 
@@ -87,13 +135,13 @@ function reasonFor(readiness: DurableReadiness): string | undefined {
   }
 }
 
-async function readinessWithin(sessionId: string, timeoutMs: number): Promise<DurableReadiness> {
+async function readinessWithin(sessionId: string, timeoutMs: number, kind?: string): Promise<DurableReadiness> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<DurableReadiness>((resolve) => {
     timer = setTimeout(() => resolve(knownReadiness.get(sessionId) ?? { state: "preparing" }), timeoutMs);
   });
   try {
-    return await Promise.race([queryReadiness(sessionId), timeout]);
+    return await Promise.race([queryReadiness(sessionId, kind), timeout]);
   } finally {
     clearTimeout(timer);
   }
@@ -108,11 +156,11 @@ export async function regularTerminalReason(session: ReadinessSession): Promise<
   if (await regularPreferred(session.kind)) return undefined;
   const cached = knownReadiness.get(session.id);
   if (cached && cached.state !== "preparing") {
-    void queryReadiness(session.id).catch(() => undefined);
+    void queryReadiness(session.id, session.kind).catch(() => undefined);
     return reasonFor(cached);
   }
   try {
-    return reasonFor(await readinessWithin(session.id, READINESS_QUERY_TIMEOUT_MS));
+    return reasonFor(await readinessWithin(session.id, READINESS_QUERY_TIMEOUT_MS, session.kind));
   } catch (error) {
     return `${DURABLE_UNAVAILABLE_PREFIX}：${describeError(error)}`;
   }
@@ -131,7 +179,7 @@ export async function fallbackTerminalReason(
   const fallbackNotice = options.fallbackNotice;
   let readiness: DurableReadiness;
   try {
-    readiness = await readinessWithin(sessionId, READINESS_QUERY_TIMEOUT_MS);
+    readiness = await readinessWithin(sessionId, READINESS_QUERY_TIMEOUT_MS, options.kind);
   } catch (error) {
     return `${DURABLE_UNAVAILABLE_PREFIX}：${describeError(error)}`;
   }

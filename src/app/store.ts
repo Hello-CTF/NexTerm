@@ -99,7 +99,14 @@ export {
   useActiveWorkspace,
   useCredentialsTabId,
 } from "./store/tabActions";
-export { READINESS_QUERY_TIMEOUT_MS, fallbackTerminalReason, forgetDurableReadiness, noteHelperProgress } from "./store/durableReadiness";
+export { READINESS_QUERY_TIMEOUT_MS, fallbackTerminalReason, forgetDurableReadiness, forgetLocalDurableReadiness, noteHelperProgress } from "./store/durableReadiness";
+export {
+  DURABLE_FALLBACK_REASON,
+  DURABLE_NOT_READY_AT_OPEN_REASON,
+  DURABLE_PREPARING_REASON,
+  DURABLE_UNAVAILABLE_PREFIX,
+  useKnownDurableReadiness,
+} from "./store/durableReadiness";
 export {
   closeActionHint,
   closeTabHint,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { localHelperApi, type LocalTerminalMode } from "../../ipc/commands";
-import { forgetDurableReadiness, useUi } from "../../app/store";
+import { forgetLocalDurableReadiness, useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { refreshLocalHelperStatus, useLocalHelperStatus } from "../terminal/localHelperStatus";
@@ -51,7 +51,7 @@ export function LocalHelperSettings() {
     setBusy(true);
     try {
       setMode(await localHelperApi.setMode(value));
-      forgetDurableReadiness();
+      forgetLocalDurableReadiness();
     } catch (error) {
       pushToast("error", `保存本机终端模式失败：${describeError(error)}`);
     } finally {

@@ -112,6 +112,11 @@ function badge(text: string): HTMLElement | null {
   );
 }
 
+// The durable mode is reported on the store tab, which the tab strip marks with the persistence icon.
+function durableTab(): boolean {
+  return useUi.getState().workspaces[0]?.panes[0]?.tabs.find((tab) => tab.id === "t1")?.durable === true;
+}
+
 function control(payload: Record<string, unknown>): void {
   const handler = harness.handlers.get("terminal://control");
   expect(handler).toBeDefined();
@@ -200,12 +205,12 @@ describe("TerminalPane early control state", () => {
       durable: true,
     });
     expect(badge("/srv/www/app")).toBeNull();
-    expect(badge("持久终端")).toBeNull();
+    expect(durableTab()).toBe(false);
 
     attach("kernel-9");
     await flush();
     expect(badge("/srv/www/app")).not.toBeNull();
-    expect(badge("持久终端")).not.toBeNull();
+    expect(durableTab()).toBe(true);
   });
 
   it("ignores cached state that belongs to another tab", async () => {
@@ -229,8 +234,24 @@ describe("TerminalPane early control state", () => {
     attach("kernel-9");
     await flush();
     expect(badge("/elsewhere")).toBeNull();
-    expect(badge("持久终端")).toBeNull();
-    expect(badge("普通终端")).not.toBeNull();
+    expect(durableTab()).toBe(false);
+
+    // The attached tab's own state still applies.
+    control({
+      tabId: "kernel-9",
+      version: 1,
+      controller: null,
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+      cwd: "/mine",
+      durable: true,
+    });
+    expect(badge("/mine")).not.toBeNull();
+    expect(durableTab()).toBe(true);
   });
 
   it("prefers the newest cached event per tab", async () => {
@@ -268,6 +289,6 @@ describe("TerminalPane early control state", () => {
     await flush();
     expect(badge("/fresh")).not.toBeNull();
     expect(badge("/stale")).toBeNull();
-    expect(badge("持久终端")).not.toBeNull();
+    expect(durableTab()).toBe(true);
   });
 });
