@@ -53,6 +53,11 @@ type ProductionConfig struct {
 	RestartFunc func(context.Context, string) error
 	// ScreenInsets is injected by the desktop via the wails Screen API; nil on the server.
 	ScreenInsets func(context.Context) (ScreenInsets, error)
+	// LocalHelper runs local terminals through a detached helper process so
+	// they survive the app; it applies to the desktop and to a single-account
+	// server. LocalHelperExecutable overrides the binary started as the helper.
+	LocalHelper           bool
+	LocalHelperExecutable string
 }
 
 func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production, returnErr error) {
@@ -162,12 +167,23 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	} else {
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}
+	localHelper := newProductionLocalHelper(config, config.Desktop || owner.OpenAccess(ctx), config.Config.Logger, config.Config.Events)
+	var localDurable session.LocalDurableSource
+	var localTerminalMode func(context.Context) (string, error)
+	if localHelper != nil {
+		localDurable = localHelper
+		// The setting chooses between the helper and the app; without a
+		// helper there is nothing to choose.
+		localTerminalMode = newProductionLocalTerminalMode(database)
+	}
 	helperService := &productionHelperService{ssh: sshResolver}
 	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events, helpers: helperService}
 	sessionManager = session.NewManager(session.Config{
 		Connector:            connector,
 		Terminals:            config.Terminals,
 		DurableResolver:      durableResolver,
+		LocalDurable:         localDurable,
+		LocalTerminalMode:    localTerminalMode,
 		TerminalModeResolver: newProductionTerminalModeResolver(database),
 		DurableHistoryLimit:  newProductionDurableHistoryLimit(database),
 		TranscriptOffsets:    durableTranscriptOffsets{database: database},
@@ -325,7 +341,8 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	})
 	fsUploads.resumeStaging = forwardRuntime.ResumeUploadStaging
 	services = ProductionServices{
-		Store: database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
+		LocalHelper: localHelper,
+		Store:       database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
 		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
 		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)

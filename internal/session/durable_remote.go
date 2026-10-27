@@ -399,10 +399,12 @@ func (m *Manager) RetryHelperOperation(ctx context.Context, sessionID, operation
 // terminal creation uses automaticDurableProvider to return ordinary SSH first.
 func (m *Manager) durableProviderFor(ctx context.Context, session *Session, transport *transportHandle, kind string, generation uint64, retryFailure bool) (base.DurableProvider, error) {
 	if kind == KindLocal {
-		if m.durable == nil {
-			return nil, ErrUnsupported
+		// retryFailure marks the explicit paths (list, recover, kill) that
+		// work on existing terminals; new tabs pass false.
+		if retryFailure {
+			return m.localDurableProvider(ctx, localRecoverWait, true)
 		}
-		return m.durable, nil
+		return m.localDurableProvider(ctx, localOpenWait, false)
 	}
 	if (kind != KindSSH && kind != KindDevice) || m.resolver == nil || transport == nil {
 		return nil, ErrUnsupported
@@ -603,7 +605,7 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 	}
 	session.mu.Lock()
 	kind := session.asset.Kind
-	if kind != KindSSH && kind != KindDevice {
+	if kind != KindSSH && kind != KindDevice && (kind != KindLocal || !m.localDurableEnabled()) {
 		session.mu.Unlock()
 		return nil, ErrUnsupported
 	}
@@ -634,7 +636,11 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 			return nil, failure
 		}
 	}
-	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, false)
+	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, kind == KindLocal)
+	if localHelperNotRunning(kind, err) {
+		// No local helper runs, so no local terminal of an earlier run is alive.
+		return []base.DurableDescriptor{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -683,7 +689,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 			return TabInfo{}, err
 		}
 		info := selected.Info()
-		if info.Kind != KindSSH && info.Kind != KindDevice {
+		if !m.durableHostKind(info.Kind) {
 			return TabInfo{}, ErrUnsupported
 		}
 		if info.Status != StatusConnected {
@@ -715,7 +721,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 	}
 	var matches []match
 	for _, info := range infos {
-		if (info.Kind != KindSSH && info.Kind != KindDevice) || info.Status != StatusConnected {
+		if !m.durableHostKind(info.Kind) || info.Status != StatusConnected {
 			continue
 		}
 		session, err := m.Session(info.ID)
@@ -730,7 +736,10 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		transport := session.transport
 		generation := session.generation
 		session.mu.Unlock()
-		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, false)
+		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, info.Kind == KindLocal)
+		if localHelperNotRunning(info.Kind, err) {
+			continue
+		}
 		if err != nil {
 			searchErrs = append(searchErrs, err)
 			continue
@@ -788,7 +797,7 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 			continue
 		}
 		info := session.Info()
-		if (info.Kind != KindSSH && info.Kind != KindDevice) || info.Status != StatusConnected {
+		if !m.durableHostKind(info.Kind) || info.Status != StatusConnected {
 			continue
 		}
 		if _, err := m.terminalModeFor(ctx, session); err != nil {
@@ -799,7 +808,10 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 		transport := session.transport
 		generation := session.generation
 		session.mu.Unlock()
-		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, false)
+		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, info.Kind == KindLocal)
+		if localHelperNotRunning(info.Kind, err) {
+			continue
+		}
 		if err != nil {
 			searchErrs = append(searchErrs, err)
 			continue
@@ -817,6 +829,12 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 		return nil, errors.Join(searchErrs...)
 	}
 	return owners, nil
+}
+
+// durableHostKind reports a session kind whose durable terminals live in a
+// helper this manager can list and recover from.
+func (m *Manager) durableHostKind(kind string) bool {
+	return kind == KindSSH || kind == KindDevice || kind == KindLocal && m.localDurableEnabled()
 }
 
 func onlyHelperUnavailable(errs []error) bool {

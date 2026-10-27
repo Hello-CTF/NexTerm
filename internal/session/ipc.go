@@ -7,6 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
@@ -33,9 +34,15 @@ func IPCError(err error) *ipc.Error {
 	if errors.As(err, &hostKeyErr) {
 		return hostKeyIPCError(hostKeyErr)
 	}
+	var localUnavailable *localhelper.UnavailableError
+	if errors.As(err, &localUnavailable) {
+		return ipc.WrapError(ipc.Code("local_helper_unavailable"), localUnavailable.Error(), err)
+	}
 	switch {
 	case errors.Is(err, ErrForbidden):
 		return ipc.WrapError(ipc.CodeForbidden, "无权访问该会话", err)
+	case errors.Is(err, durable.ErrLimit):
+		return ipc.WrapError(ipc.Code("durable_limit"), userMessage(err), err)
 	case errors.Is(err, ErrNotController):
 		return ipc.WrapError(ipc.CodeNotController, userMessage(err), err)
 	case errors.Is(err, ErrSessionNotFound), errors.Is(err, ErrTabNotFound), errors.Is(err, durable.ErrNotFound):
@@ -96,6 +103,8 @@ func userMessage(err error) string {
 		return "主机上的 helper 比当前客户端新，请先升级客户端"
 	case errors.Is(err, ErrDurableDisabled):
 		return "该 SSH 资产已设置为普通终端，不能新建持久终端；已有持久终端可从后台会话恢复"
+	case errors.Is(err, durable.ErrLimit):
+		return "持久终端组件已达到会话数量或创建频率上限，已拒绝新建终端；请结束不用的后台会话后重试（" + err.Error() + "）"
 	case errors.Is(err, ErrAmbiguousDurable):
 		return "多个已连接主机存在同一持久终端，请指定会话后重试"
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):

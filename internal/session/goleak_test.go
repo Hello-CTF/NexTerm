@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"go.uber.org/goleak"
 )
 
@@ -20,6 +21,10 @@ const helperProcessEnv = "NEXTERM_SESSION_TEST_HELPER"
 // manager closes. The gate runs unconditionally on the test path; only a
 // helper-process invocation branches away from it.
 func TestMain(m *testing.M) {
+	// Local helper tests start this binary as the supervisor helper.
+	if len(os.Args) > 1 && os.Args[1] == supervisor.HelperCommand {
+		os.Exit(supervisor.RunHelperCLI(os.Args[2:]))
+	}
 	if os.Getenv(helperProcessEnv) != "" {
 		os.Exit(m.Run())
 	}

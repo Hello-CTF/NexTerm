@@ -16,6 +16,11 @@ ExecStart=/opt/nexterm/nexterm-server
 
 Restart=on-failure
 RestartSec=3
+# KillMode stays at the default (control-group) on purpose. Without accounts
+# (NEXTERM_AUTH=off) the server runs local terminals in a detached local
+# helper; stopping or restarting this service ends that helper and its
+# terminals with the rest of the service's processes. KillMode=process would
+# keep them, but would also leave every other child of the server behind.
 
 Environment=HOME=/var/lib/nexterm
 WorkingDirectory=/var/lib/nexterm

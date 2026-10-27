@@ -1117,6 +1117,36 @@
       "channel": false,
       "stream": "none"
     },
+    "local_helper_mode_get": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_mode_set": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_restart": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_retry": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_status": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "log_tail_cancel": {
       "scope": "log-tail",
       "nested": false,

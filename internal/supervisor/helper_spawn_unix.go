@@ -8,19 +8,17 @@ import (
 	"syscall"
 )
 
-func spawnDetached(executable string, args []string, logPath string) error {
+// spawnDetached starts the helper in its own session, so neither the end of
+// this process nor a terminal hangup reaches it, and sets no parent-death
+// signal.
+func spawnDetached(executable string, args []string, logPath string) (*helperProcess, error) {
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cmd := exec.Command(executable, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		return err
-	}
-	_ = logFile.Close()
-	return cmd.Process.Release()
+	return startHelperProcess(cmd, logFile)
 }

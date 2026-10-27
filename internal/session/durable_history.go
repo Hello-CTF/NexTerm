@@ -159,7 +159,7 @@ func (m *Manager) ReadDurableHistoryFor(ctx context.Context, tabID string, befor
 	if transport == nil {
 		return DurableHistoryChunk{}, ErrSessionClosed
 	}
-	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, false)
+	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, kind == KindLocal)
 	if err != nil {
 		return DurableHistoryChunk{}, err
 	}

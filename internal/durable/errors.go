@@ -14,4 +14,7 @@ var (
 	// ErrGenerationMismatch reports that the helper restarted since the
 	// terminal was last attached; the terminal's process did not survive it.
 	ErrGenerationMismatch = errors.New("durable terminal helper restarted")
+	// ErrLimit reports a create the helper refused at its session-count or
+	// create-rate limit.
+	ErrLimit = errors.New("durable terminal limit reached")
 )

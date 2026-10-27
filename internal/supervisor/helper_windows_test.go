@@ -383,7 +383,7 @@ func TestSpawnDetachedWindows(t *testing.T) {
 	markerFile := filepath.Join(t.TempDir(), "spawned")
 	t.Setenv(windowsSpawnChildFileEnv, markerFile)
 	logPath := filepath.Join(t.TempDir(), "spawn.log")
-	if err := spawnDetached(os.Args[0], []string{"-test.run=^TestSpawnDetachedChildWindows$"}, logPath); err != nil {
+	if _, err := spawnDetached(os.Args[0], []string{"-test.run=^TestSpawnDetachedChildWindows$"}, logPath); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(30 * time.Second)

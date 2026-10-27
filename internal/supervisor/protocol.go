@@ -233,10 +233,14 @@ const (
 	codeLegacyHelper       = "legacy_helper_running"
 	codeStateMismatch      = "state_mismatch"
 	codeGenerationMismatch = "generation_mismatch"
+	// codeLimit is unknown to older clients, which read it as unavailable.
+	codeLimit = "limit"
 )
 
 func errorCode(err error) string {
 	switch {
+	case errors.Is(err, ErrLimit):
+		return codeLimit
 	case errors.Is(err, ErrNotFound):
 		return codeNotFound
 	case errors.Is(err, ErrAlreadyExists):
@@ -335,6 +339,8 @@ func errorSentinel(code string) error {
 		return ErrStateMismatch
 	case codeGenerationMismatch:
 		return ErrGenerationMismatch
+	case codeLimit:
+		return ErrLimit
 	default:
 		return fmt.Errorf("%w: remote error %q", ErrUnavailable, code)
 	}

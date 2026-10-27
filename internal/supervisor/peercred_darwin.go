@@ -11,3 +11,7 @@ func peerUIDFD(fd uintptr) (int, error) {
 	}
 	return int(cred.Uid), nil
 }
+
+func peerPIDFD(fd uintptr) (int, error) {
+	return unix.GetsockoptInt(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERPID)
+}

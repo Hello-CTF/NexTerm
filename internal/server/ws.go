@@ -205,6 +205,10 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			return ok
 		case ipc.TopicAppError, ipc.TopicUpdateProgress:
 			return true
+		case ipc.TopicLocalHelperStatus:
+			// Only a single-account server runs a local helper, and its status
+			// names no account data.
+			return true
 		default:
 			return false
 		}

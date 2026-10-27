@@ -350,20 +350,24 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	var fallbackCause error
 	if options.Durable != nil {
 		var err error
-		if kind == KindSSH && options.DurableFallback && !options.Durable.Recover {
+		switch {
+		case kind == KindSSH && options.DurableFallback && !options.Durable.Recover:
 			provider, err = m.automaticDurableProvider(ctx, session, transport, generation)
-		} else {
+		case kind == KindLocal:
+			// Only an existing terminal may live in a helper that takes no new ones.
+			provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, options.Durable.Recover)
+		default:
 			provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, !options.DurableFallback)
 		}
 		if err == nil && kind == KindSSH && options.DurableFallback && !options.Durable.Recover {
 			err = session.cachedDurableCreateFailure(transport, generation)
 		}
 		if err != nil {
-			if kind != KindSSH || !options.DurableFallback || options.Durable.Recover || !sshHelperUnavailable(err) || ctx.Err() != nil || !transport.Transport.IsAlive() {
+			if !durableFallbackAllowed(ctx, kind, options, transport, err) {
 				return TabInfo{}, err
 			}
 			fallbackCause = err
-			options.Durable = nil
+			options = regularFallbackOptions(kind, options)
 		}
 		if fallbackCause != nil {
 			m.logger.Debug("open tab: durable provider unavailable, using regular PTY",
@@ -416,9 +420,15 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 				env = append(env, key+"="+value)
 			}
 			sort.Strings(env)
+			command, dir := options.Durable.Command, options.Durable.Dir
+			if launch, ok := transport.Transport.(localLaunchSource); ok && kind == KindLocal && len(command) == 0 {
+				var localEnv []string
+				command, dir, localEnv = launch.DurableLaunch()
+				env = append(localEnv, env...)
+			}
 			env = append(env, options.Durable.Env...)
 			opened, err = provider.Create(ctx, base.DurableCreateOptions{
-				ID: tabID, Command: options.Durable.Command, Dir: options.Durable.Dir, Env: env,
+				ID: tabID, Command: command, Dir: dir, Env: env,
 				Cols: options.Cols, Rows: options.Rows, HistoryLimit: m.durableHistoryLimit(ctx),
 			})
 		}
@@ -428,16 +438,18 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 		if err != nil {
 			cleanupErr := cleanup()
-			if cleanupErr == nil && opened == nil && kind == KindSSH && options.DurableFallback && !options.Durable.Recover &&
-				sshHelperUnavailable(err) && ctx.Err() == nil && transport.Transport.IsAlive() {
-				session.cacheDurableCreateFailure(transport, generation, err)
+			if cleanupErr == nil && opened == nil && durableFallbackAllowed(ctx, kind, options, transport, err) {
 				m.logger.Debug("open tab: durable create failed, retrying with regular PTY",
 					"session", session.ID, "tab", tabID, "cause", err.Error(), "elapsed_ms", time.Since(openStart).Milliseconds())
-				options.Durable = nil
-				fallback, fallbackErr := m.OpenTab(ctx, options)
+				fallback, fallbackErr := m.OpenTab(ctx, regularFallbackOptions(kind, options))
 				if fallbackErr != nil {
 					return TabInfo{}, fallbackErr
 				}
+				if kind == KindLocal {
+					fallback.FallbackNotice = m.localFallbackNoticeFor(session, options.Detached, err)
+					return fallback, nil
+				}
+				session.cacheDurableCreateFailure(transport, generation, err)
 				if options.Detached {
 					fallback.FallbackNotice = sshFallbackNotice
 				} else if session.claimDurableFallbackNotice(generation) {
@@ -453,6 +465,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 		if !options.Durable.Recover {
 			session.clearDurableCreateFailure(transport, generation)
+		}
+		if kind == KindLocal {
+			session.clearLocalFallbackNotice()
 		}
 		if options.Durable.Recover {
 			if grid, ok := durableAttachment.(durableGridSource); ok {
@@ -508,7 +523,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 
 	tabCtx, cancel := context.WithCancel(m.ctx)
 	shell := ShellUnknown
-	if kind == KindLocal && options.Durable == nil {
+	if kind == KindLocal {
 		if local, ok := transport.Transport.(interface{ Shell() string }); ok {
 			classified := Shell(local.Shell())
 			switch classified {
@@ -665,7 +680,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if (options.Durable == nil || !options.Durable.Recover) && startupCommand != "" && startupCommandSupported(kind) {
 		_ = writeChannelContext(ctx, channel, []byte(startupCommand+"\n"))
 	}
-	if fallbackCause != nil {
+	if fallbackCause != nil && kind == KindLocal {
+		info.FallbackNotice = m.localFallbackNoticeFor(session, options.Detached, fallbackCause)
+	} else if fallbackCause != nil {
 		if options.Detached {
 			info.FallbackNotice = sshFallbackNotice
 		} else if session.claimDurableFallbackNotice(generation) {
@@ -725,6 +742,11 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 		open.Durable = &DurableTabOptions{}
 		open.DurableFallback = kind == KindSSH
 	}
+	if kind == KindLocal && mode != TerminalModeRegular && m.localDurableEnabled() {
+		open.Ephemeral = false
+		open.Durable = &DurableTabOptions{}
+		open.DurableFallback = true
+	}
 	session.mu.Lock()
 	openGeneration := session.generation
 	session.mu.Unlock()
@@ -756,7 +778,10 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 		}
 	}
 	info.FallbackNotice = ""
-	if fallbackNotice != "" && session.claimDurableFallbackNotice(openGeneration) {
+	if kind == KindLocal {
+		// Every regular local terminal an agent creates reports why.
+		info.FallbackNotice = fallbackNotice
+	} else if fallbackNotice != "" && session.claimDurableFallbackNotice(openGeneration) {
 		m.logger.Warn("SSH durable terminal unavailable; using regular PTY", "session", session.ID)
 		info.FallbackNotice = fallbackNotice
 	}
@@ -823,7 +848,7 @@ func (m *Manager) RenameTabAt(ctx context.Context, tabID, title string, at int64
 		return TabInfo{}, ErrDisconnected
 	}
 	if durable {
-		provider, err := m.durableProviderFor(ctx, tab.session, transport, kind, generation, false)
+		provider, err := m.durableProviderFor(ctx, tab.session, transport, kind, generation, kind == KindLocal)
 		if err != nil {
 			return TabInfo{}, err
 		}

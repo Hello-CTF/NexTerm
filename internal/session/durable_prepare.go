@@ -38,7 +38,7 @@ func (m *Manager) PrepareDurable(ctx context.Context, sessionID string) (Durable
 		return DurableReadiness{State: DurableReady}, nil
 	case KindSSH:
 	case KindLocal:
-		return DurableReadiness{State: DurableUnavailable, Reason: "本机终端暂不支持持久模式"}, nil
+		return m.localDurableReadiness(ctx, connected)
 	default:
 		return DurableReadiness{State: DurableUnavailable, Reason: "此类连接不支持持久终端"}, nil
 	}

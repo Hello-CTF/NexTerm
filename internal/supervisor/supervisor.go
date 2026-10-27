@@ -25,6 +25,8 @@ type Supervisor struct {
 	generation     string
 	commandTimeout time.Duration
 	historyLimit   uint64
+	limits         Limits
+	now            func() time.Time
 	ptyStart       func(context.Context, pty.Config) (*pty.Session, error)
 	// stateDetection enables the per-session attention state; eventSeq
 	// numbers state events across all sessions.
@@ -39,8 +41,10 @@ type Supervisor struct {
 	startingPTY  int
 	startingExec int
 	killed       map[string]string
-	closing      bool
-	finishErrs   []error
+	// recentCreates holds the accept times of creates inside the create window.
+	recentCreates []time.Time
+	closing       bool
+	finishErrs    []error
 
 	killMu  sync.Mutex
 	creates sync.WaitGroup
@@ -63,6 +67,9 @@ func New(config Config) (*Supervisor, error) {
 	if err := validHistoryLimit(config.HistoryLimit); err != nil {
 		return nil, err
 	}
+	if err := config.Limits.validate(); err != nil {
+		return nil, err
+	}
 	stateDir, err := filepath.Abs(config.StateDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: state directory: %v", ErrInvalidInput, err)
@@ -83,6 +90,8 @@ func New(config Config) (*Supervisor, error) {
 		generation:     ids.New(),
 		commandTimeout: config.CommandTimeout,
 		historyLimit:   config.HistoryLimit,
+		limits:         config.Limits.withDefaults(),
+		now:            time.Now,
 		ptyStart:       pty.Start,
 		stateDetection: !config.DisableStateDetection,
 		ctx:            ctx,
@@ -124,6 +133,10 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 	if _, exists := s.sessions[id]; exists {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, id)
+	}
+	if err := s.admitCreateLocked(usePTY); err != nil {
+		s.mu.Unlock()
+		return nil, err
 	}
 	delete(s.killed, id)
 	s.startActivityLocked(usePTY)

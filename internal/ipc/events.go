@@ -25,6 +25,8 @@ const (
 	TopicAINotification    Topic = "ai://notification"
 	TopicAIWatchToolData   Topic = "ai://watch-tool-data"
 	TopicInventoryChanged  Topic = "inventory://changed"
+	// TopicLocalHelperStatus carries the local helper status after each change.
+	TopicLocalHelperStatus Topic = "local://helper-status"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")

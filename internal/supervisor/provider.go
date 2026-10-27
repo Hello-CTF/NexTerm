@@ -31,6 +31,9 @@ func translateError(err error) error {
 		return durable.ErrClosed
 	case errors.Is(err, ErrGenerationMismatch):
 		return durable.ErrGenerationMismatch
+	case errors.Is(err, ErrLimit):
+		// Keep the helper's message: it names the limit that was reached.
+		return fmt.Errorf("%w: %w", durable.ErrLimit, err)
 	case errors.Is(err, ErrHelperUpgradeRequired), errors.Is(err, ErrClientUpgradeRequired):
 		// Keep the readable reason: it names the side that must be upgraded.
 		return fmt.Errorf("%w: %w", durable.ErrUnavailable, err)

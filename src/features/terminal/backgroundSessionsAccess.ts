@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { terminalApi, type LiveTabInfo, type SessionInfo } from "../../ipc/commands";
 import { useUi, type Workspace } from "../../app/store";
+import { getLocalHelperStatus, localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 
 const COUNT_REFRESH_MS = 10_000;
 
@@ -68,9 +69,12 @@ export interface BackgroundScope {
   sessions: SessionInfo[];
   workspaces: Workspace[];
   verified: VerifiedQuickSessions;
+  // localDurable is set when local terminals run in the local helper, so they are listed from it.
+  localDurable?: boolean;
 }
 
-// backgroundTargets lists the connected SSH/device sessions whose durable terminals belong to the selected host.
+// backgroundTargets lists the connected SSH/device sessions (and local sessions when a local helper runs)
+// whose durable terminals belong to the selected host.
 export function backgroundTargets(
   scope: BackgroundScope,
   opts: { showAll: boolean; hostSessionId: string | null; owner?: Workspace; remoteOwner: boolean },
@@ -79,7 +83,7 @@ export function backgroundTargets(
     (opts.showAll || session.id === opts.hostSessionId) &&
     (!opts.remoteOwner || opts.showAll || (opts.owner && workspaceSessionMatches(opts.owner, session, scope.verified))) &&
     session.status === "connected" &&
-    (session.kind === "ssh" || session.kind === "device") &&
+    (session.kind === "ssh" || session.kind === "device" || (scope.localDurable === true && session.kind === "local")) &&
     (Boolean(session.assetId) || scope.workspaces.some((workspace) =>
       workspace.kind === "session" && workspace.sessionId === session.id &&
       workspaceSessionMatches(workspace, session, scope.verified))),
@@ -211,6 +215,7 @@ export function useBackgroundSessionsAccess(workspace: Workspace | null | undefi
   const kind = useUi((state) => state.sessions.find((session) => session.id === workspace?.sessionId)?.kind) ?? workspace?.assetKind;
   const key = `${accountEpoch}:${runtimeEpoch}:${workspace?.sessionId ?? ""}`;
   const observed = useSyncExternalStore(subscribe, () => observedRetainableSessions.has(key));
+  const localHelper = useLocalHelperStatus(kind === "local");
   const tabs = workspace?.panes.flatMap((pane) => pane.tabs) ?? [];
   const retainable = tabs.some((tab) => tab.kind === "terminal" && tab.retainable === true);
 
@@ -224,6 +229,8 @@ export function useBackgroundSessionsAccess(workspace: Workspace | null | undefi
   // Hosts that support durable terminals keep the entry even when every open tab is regular:
   // durable sessions created earlier may still be running there.
   if (kind === "ssh" || kind === "device") return true;
+  // Local terminals of an earlier app run may still be running in the local helper.
+  if (kind === "local" && localDurableEnabled(localHelper)) return true;
   return observed || retainable || tabs.some((tab) => tab.kind === "background");
 }
 
@@ -255,7 +262,9 @@ export function useBackgroundSessionCount(workspace: Workspace | null | undefine
       const st = useUi.getState();
       const owner = workspaceRef.current ?? undefined;
       const hostSession = st.sessions.find((session) => session.id === sessionId);
-      const scope: BackgroundScope = { sessions: st.sessions, workspaces: st.workspaces, verified: {} };
+      const scope: BackgroundScope = {
+        sessions: st.sessions, workspaces: st.workspaces, verified: {}, localDurable: localDurableEnabled(getLocalHelperStatus()),
+      };
       const gate = resolveHostGate(owner, hostSession, scope.verified);
       if (gate.needsReconnect) {
         inFlight = false;

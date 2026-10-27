@@ -112,14 +112,14 @@ describe("clicking a host asset opens its workspace", () => {
     expect(terminalTabs()).toEqual([]);
   });
 
-  it("opens the local device as a workspace without a terminal or durable preparation", async () => {
+  it("opens the local device as a workspace without a terminal and only reads the local helper readiness", async () => {
     mocks.sessionConnect.mockResolvedValue(LOCAL_SESSION);
     expect(await connectAsset({ id: "local", name: "当前设备", kind: "local" })).toEqual({ ok: true });
     await flush();
 
     expect(useUi.getState().workspaces.some((item) => item.sessionId === "local-1")).toBe(true);
     expect(terminalTabs()).toEqual([]);
-    expect(mocks.prepareDurable).not.toHaveBeenCalled();
+    expect(mocks.prepareDurable).toHaveBeenCalledWith("local-1");
   });
 
   it("does not prepare durable terminals when the default terminal mode is regular", async () => {
@@ -197,11 +197,27 @@ describe("explicitly opening a terminal", () => {
     expect(terminalTabs()[0]?.regularReason).toBeUndefined();
   });
 
-  it("marks local terminals as regular because local durable terminals are not available", async () => {
+  it("opens local terminals durable once the local helper is ready", async () => {
+    mocks.prepareDurable.mockResolvedValue({ state: "ready" });
     await openTerminalTab(LOCAL_SESSION);
 
-    expect(mocks.prepareDurable).not.toHaveBeenCalled();
-    expect(terminalTabs()[0]?.regularReason).toBe("持久组件不可用：本机终端暂不支持持久模式");
+    expect(mocks.prepareDurable).toHaveBeenCalledWith("local-1");
+    expect(terminalTabs()[0]?.regularReason).toBeUndefined();
+  });
+
+  it("names why a local terminal opens regular while the local helper is unavailable", async () => {
+    mocks.prepareDurable.mockResolvedValue({ state: "unavailable", reason: "本机持久组件为旧版本（协议 v2），有 2 个会话在运行" });
+    await openTerminalTab(LOCAL_SESSION);
+
+    expect(terminalTabs()[0]?.regularReason).toBe("持久组件不可用：本机持久组件为旧版本（协议 v2），有 2 个会话在运行");
+  });
+
+  it("opens local terminals regular without a reason when this device keeps them regular", async () => {
+    mocks.prepareDurable.mockResolvedValue({ state: "disabled" });
+    await openTerminalTab(LOCAL_SESSION);
+
+    expect(mocks.prepareDurable).toHaveBeenCalledWith("local-1");
+    expect(terminalTabs()[0]?.regularReason).toBeUndefined();
   });
 
   it("names the regular terminal reason in the tab tooltip", async () => {

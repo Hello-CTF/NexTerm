@@ -111,7 +111,7 @@ func TestGeneratedContractMetadata(t *testing.T) {
 		"dockerStats": "docker://stats", "filesDropped": "files://dropped",
 		"fsProgress": "fs://progress", "helperProgress": "session://helper-progress",
 		"layoutChanged": "layout://changed", "sessionStatus": "session://status",
-		"inventoryChanged":  "inventory://changed",
+		"inventoryChanged": "inventory://changed", "localHelperStatus": "local://helper-status",
 		"syncRoundComplete": "sync://round-complete", "syncStatus": "sync://status",
 		"terminalControl": "terminal://control", "terminalExit": "terminal://exit",
 		"terminalThrottled": "terminal://throttled", "updateProgress": "update://progress",

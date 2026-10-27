@@ -2164,13 +2164,14 @@ export function TerminalPane({
                 });
                 if (info.durable !== undefined) setDurable(info.durable);
                 if (
-                  info.durable === false && sessionKind === "ssh" && !forceRegular && !containerId && !effectiveWinrm &&
+                  info.durable === false && (sessionKind === "ssh" || sessionKind === "local") && !forceRegular && !containerId && !effectiveWinrm &&
                   !findStoreTab(useUi.getState().workspaces, storeTabId)?.regularReason
                 ) {
                   // Name why this SSH shell is regular; the backend reports its own fallback only once per connection.
                   void fallbackTerminalReason(sessionId, {
                     fallbackNotice: Boolean(info.fallbackNotice),
                     durableRequested: info.durableRequested,
+                    kind: sessionKind,
                   }).then((reason) => {
                     const tab = findStoreTab(useUi.getState().workspaces, storeTabId);
                     if (reason && tab && tab.durable !== true && !tab.regularReason) {

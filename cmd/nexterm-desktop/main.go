@@ -106,6 +106,7 @@ func run(args []string) int {
 		},
 		DataDir:         paths.DataDir,
 		Desktop:         true,
+		LocalHelper:     true,
 		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
 		RestartFunc: func(_ context.Context, target string) error {
 			if err := update.StartDetached(target, args); err != nil {

@@ -17,6 +17,9 @@ var (
 	ErrStateMismatch  = errors.New("supervisor state mismatch")
 	ErrUnsupported    = errors.New("supervisor capability unsupported")
 	ErrActiveSessions = errors.New("supervisor has active sessions")
+	// ErrLimit reports a create the helper refused because a configured
+	// session-count or create-rate limit was reached.
+	ErrLimit = errors.New("supervisor limit reached")
 	// ErrGenerationMismatch reports a request that expected another helper
 	// generation: the helper restarted since the client last saw it.
 	ErrGenerationMismatch = errors.New("supervisor helper generation changed")
