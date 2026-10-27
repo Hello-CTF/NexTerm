@@ -2,7 +2,9 @@ import { type ReactNode } from "react";
 import {
   sessionStatusText,
   sessionReconnectStatusText,
+  isSessionSuspect,
   useSessionById,
+  useSessionLiveness,
   useSessionStatus,
   type AppTab,
   type Workspace,
@@ -31,13 +33,16 @@ export function workspaceIcon(w: Workspace) {
   return assetIcon(w.assetKind ?? "ssh");
 }
 
-function WorkspaceStatusGlyph({ status }: { status: SessionInfo["status"] | undefined }) {
+function WorkspaceStatusGlyph({ status, liveness }: { status: SessionInfo["status"] | undefined; liveness: string | null | undefined }) {
   if (status === undefined) return null;
+  const suspect = isSessionSuspect(status, liveness);
   const tone =
-    status === "connected" ? "is-ok" : status === "failed" ? "is-bad" : "is-warn";
+    status === "connected" && !suspect ? "is-ok" : status === "failed" ? "is-bad" : "is-warn";
   return (
-    <span className={`nx-ws-status ${tone}`} role="img" aria-label={sessionStatusText(status)}>
-      {status === "connected" ? (
+    <span className={`nx-ws-status ${tone}`} role="img" aria-label={sessionStatusText(status, liveness)}>
+      {suspect ? (
+        <IconInfo size={11} />
+      ) : status === "connected" ? (
         <IconCheckCircle size={11} />
       ) : status === "failed" ? (
         <IconXCircle size={11} />
@@ -98,6 +103,7 @@ export function AppHeader({
 }: AppHeaderProps) {
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
   const wsStatus = useSessionStatus(ws?.sessionId);
+  const wsLiveness = useSessionLiveness(ws?.sessionId);
   return (
     <header
       className={`nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 ${
@@ -124,7 +130,7 @@ export function AppHeader({
           >
             {ActiveWsIcon ? <ActiveWsIcon size={13} /> : null}
             <span className="truncate">{ws.title}</span>
-            <WorkspaceStatusGlyph status={wsStatus} />
+            <WorkspaceStatusGlyph status={wsStatus} liveness={wsLiveness} />
             <IconChevronDown size={12} />
           </button>
           <WorkspaceReconnectStatus sessionId={activeSessionId} />

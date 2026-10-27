@@ -56,6 +56,10 @@ export function useSessionStatus(id: string | null | undefined): SessionRuntimeI
   return useUi((state) => (id ? state.sessions.find((session) => session.id === id)?.status : undefined));
 }
 
+export function useSessionLiveness(id: string | null | undefined): string | null | undefined {
+  return useUi((state) => (id ? state.sessions.find((session) => session.id === id)?.liveness : undefined));
+}
+
 export function useHasSessions(): boolean {
   return useUi((state) => state.sessions.length > 0);
 }

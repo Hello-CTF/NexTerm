@@ -222,6 +222,8 @@ export interface SessionReconnectMetadata {
   errorCode?: string | null;
   attempt?: number;
   nextRetryAt?: string | number | null;
+  // "suspect" while a connected session's heartbeats go unanswered.
+  liveness?: string | null;
   staleConfig?: boolean | null;
 }
 
