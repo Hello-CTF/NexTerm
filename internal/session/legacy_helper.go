@@ -117,16 +117,16 @@ var legacyHelperTerminatedBanner = []byte("\r\n\x1b[31m[NexTerm] 已终止：已
 
 // legacyEndedTabs remembers the tabs of each session that ended with the
 // legacy banner, so a consented replacement can tell them what happened.
-// Its lock is taken without holding a tab lock and before taking one.
+// Its lock is never held while a tab lock is taken.
 type legacyEndedTabs struct {
 	mu   sync.Mutex
 	tabs map[string]map[*Tab]uint64
 }
 
 func (l *legacyEndedTabs) add(sessionID string, tab *Tab, generation uint64) {
+	l.prune()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.pruneLocked()
 	if l.tabs == nil {
 		l.tabs = make(map[string]map[*Tab]uint64)
 	}
@@ -136,16 +136,33 @@ func (l *legacyEndedTabs) add(sessionID string, tab *Tab, generation uint64) {
 	l.tabs[sessionID][tab] = generation
 }
 
-// pruneLocked drops tabs that were closed since they ended.
-func (l *legacyEndedTabs) pruneLocked() {
-	for sessionID, tabs := range l.tabs {
+// prune drops tabs that were closed since they ended. Tab locks are taken
+// only while l.mu is not held, so the two are never nested.
+func (l *legacyEndedTabs) prune() {
+	l.mu.Lock()
+	remembered := make([]*Tab, 0, len(l.tabs))
+	for _, tabs := range l.tabs {
 		for tab := range tabs {
-			tab.mu.Lock()
-			closed := tab.closed
-			tab.mu.Unlock()
-			if closed {
-				delete(tabs, tab)
-			}
+			remembered = append(remembered, tab)
+		}
+	}
+	l.mu.Unlock()
+	var closed []*Tab
+	for _, tab := range remembered {
+		tab.mu.Lock()
+		if tab.closed {
+			closed = append(closed, tab)
+		}
+		tab.mu.Unlock()
+	}
+	if len(closed) == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for sessionID, tabs := range l.tabs {
+		for _, tab := range closed {
+			delete(tabs, tab)
 		}
 		if len(tabs) == 0 {
 			delete(l.tabs, sessionID)
@@ -161,9 +178,9 @@ func (l *legacyEndedTabs) forget(sessionID string) {
 }
 
 func (l *legacyEndedTabs) take(sessionID string) map[*Tab]uint64 {
+	l.prune()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.pruneLocked()
 	tabs := l.tabs[sessionID]
 	delete(l.tabs, sessionID)
 	return tabs
