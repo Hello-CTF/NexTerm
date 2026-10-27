@@ -4,8 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 func TestReplaceTransitionTableEndsEveryPathWithoutLoops(t *testing.T) {
@@ -38,31 +44,42 @@ func TestReplaceTransitionTableEndsEveryPathWithoutLoops(t *testing.T) {
 }
 
 func TestHelperConsentTokenRoundTripsAndCovers(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
 	for _, helper := range []RunningHelper{
-		{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2, Exec: 1}, ActivityKnown: true},
-		{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2}, PTYListed: true},
+		{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2, Exec: 1}, ActivityKnown: true, StartTime: 9001, StateDigest: digest},
+		{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2}, PTYListed: true, StateDigest: digest},
 		{Protocol: 2, PID: 41},
 	} {
 		parsed, ok := ParseHelperConsent(HelperConsentToken(helper))
-		if !ok || !ConsentCovers(parsed, helper) {
+		if !ok || !ConsentCovers(parsed, helper) || parsed.StartTime != helper.StartTime {
 			t.Fatalf("token of %+v = %+v, %v; want it to cover the helper", helper, parsed, ok)
 		}
 	}
-	consent := RunningHelper{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2}, ActivityKnown: true}
+	// A token without start time and digest (platforms that cannot read the
+	// start time, or a four-field token) still parses.
+	if parsed, ok := ParseHelperConsent("2:41:1:1"); !ok || parsed.StartTime != 0 || parsed.StateDigest != "" {
+		t.Fatalf("four-field token = %+v, %v", parsed, ok)
+	}
+	if _, ok := ParseHelperConsent("2:41:1:1::"); !ok {
+		t.Fatal("a token with an empty start time and digest was rejected")
+	}
+	consent := RunningHelper{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2}, ActivityKnown: true, StartTime: 9001, StateDigest: digest[:consentDigestLength]}
 	for name, current := range map[string]RunningHelper{
-		"more sessions":    {Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2, Exec: 1}, ActivityKnown: true},
-		"another pid":      {Protocol: 2, PID: 42, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true},
-		"count now hidden": {Protocol: 2, PID: 41},
-		"another protocol": {Protocol: 3, PID: 41, ActivityKnown: true},
+		"more sessions":    {Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 2, Exec: 1}, ActivityKnown: true, StartTime: 9001, StateDigest: digest},
+		"another pid":      {Protocol: 2, PID: 42, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true, StartTime: 9001, StateDigest: digest},
+		"a reused pid":     {Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true, StartTime: 9002, StateDigest: digest},
+		"another state":    {Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true, StartTime: 9001, StateDigest: strings.Repeat("cd", 32)},
+		"count now hidden": {Protocol: 2, PID: 41, StartTime: 9001, StateDigest: digest},
+		"another protocol": {Protocol: 3, PID: 41, ActivityKnown: true, StartTime: 9001, StateDigest: digest},
 	} {
 		if ConsentCovers(consent, current) {
 			t.Fatalf("%s: consent %+v covered %+v", name, consent, current)
 		}
 	}
-	if !ConsentCovers(consent, RunningHelper{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true}) {
+	if !ConsentCovers(consent, RunningHelper{Protocol: 2, PID: 41, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true, StartTime: 9001, StateDigest: digest}) {
 		t.Fatal("consent did not cover a helper whose sessions dropped since")
 	}
-	for _, token := range []string{"", "2:41:1", "2:41:1:3", "0:41:1:1", "2:0:1:1", "2:41:-1:1", "x:41:1:1"} {
+	for _, token := range []string{"", "2:41:1", "2:41:1:3", "0:41:1:1", "2:0:1:1", "2:41:-1:1", "x:41:1:1", "2:41:1:1:x:", "2:41:1:1:0:", "2:41:1:1:5:XYZ", "2:41:1:1:5"} {
 		if _, ok := ParseHelperConsent(token); ok {
 			t.Fatalf("malformed token %q parsed", token)
 		}
@@ -70,16 +87,16 @@ func TestHelperConsentTokenRoundTripsAndCovers(t *testing.T) {
 }
 
 type replaceOutcome struct {
-	verify     error // nil, ErrHelperNotRunning, a stale helper or another error
+	verify     error // nil, ErrHelperNotRunning or another error
 	stale      bool
 	executable bool
+	forced     bool
 	stop       error
 	start      error
 	restore    error
+	ours       bool
 }
 
-// TestReplaceStepsFollowTheTable runs every combination of step outcomes and
-// checks the stages taken, what was called and the reported result.
 var (
 	inspectErr = errors.New("inspect failed")
 	stopErr    = errors.New("stop failed")
@@ -87,18 +104,24 @@ var (
 	restoreErr = errors.New("restore failed")
 )
 
+// TestReplaceStepsFollowTheTable runs every combination of step outcomes and
+// checks the stages taken, what was called and the reported result.
 func TestReplaceStepsFollowTheTable(t *testing.T) {
 	consent := RunningHelper{Protocol: 2, PID: 7, Activity: ActivitySnapshot{PTY: 1}, ActivityKnown: true}
 	for _, verify := range []error{nil, ErrHelperNotRunning, inspectErr} {
 		for _, stale := range []bool{false, true} {
 			for _, executable := range []bool{false, true} {
-				for _, stop := range []error{nil, stopErr} {
-					for _, start := range []error{nil, startErr, ErrLegacyHelperRunning} {
-						for _, restore := range []error{nil, restoreErr} {
-							outcome := replaceOutcome{verify: verify, stale: stale, executable: executable, stop: stop, start: start, restore: restore}
-							t.Run(fmt.Sprintf("%+v", outcome), func(t *testing.T) {
-								checkReplaceOutcome(t, consent, outcome)
-							})
+				for _, forced := range []bool{false, true} {
+					for _, stop := range []error{nil, stopErr} {
+						for _, start := range []error{nil, startErr, ErrLegacyHelperRunning} {
+							for _, restore := range []error{nil, restoreErr} {
+								for _, ours := range []bool{false, true} {
+									outcome := replaceOutcome{verify: verify, stale: stale, executable: executable, forced: forced, stop: stop, start: start, restore: restore, ours: ours}
+									t.Run(fmt.Sprintf("%+v", outcome), func(t *testing.T) {
+										checkReplaceOutcome(t, consent, outcome)
+									})
+								}
+							}
 						}
 					}
 				}
@@ -121,15 +144,13 @@ func checkReplaceOutcome(t *testing.T, consent RunningHelper, outcome replaceOut
 			}
 			return current, nil
 		},
-		executable: func(int) (string, error) {
-			if outcome.executable {
-				return "/old/helper", nil
-			}
-			return "", ErrUnsupported
-		},
-		stop: func(context.Context, RunningHelper) error {
+		stop: func(context.Context, RunningHelper) (StopResult, error) {
 			calls = append(calls, "stop")
-			return outcome.stop
+			result := StopResult{Forced: outcome.forced}
+			if outcome.executable {
+				result.Executable = "/old/helper"
+			}
+			return result, outcome.stop
 		},
 		start: func(context.Context) (*Helper, error) {
 			calls = append(calls, "start")
@@ -138,15 +159,15 @@ func checkReplaceOutcome(t *testing.T, consent RunningHelper, outcome replaceOut
 			}
 			return &Helper{}, nil
 		},
-		restore: func(_ context.Context, executable string, protocol int) error {
+		restore: func(_ context.Context, executable string, protocol int) (bool, error) {
 			calls = append(calls, "restore")
 			if executable != "/old/helper" || protocol != consent.Protocol {
 				t.Fatalf("restore(%q, %d), want the old helper's executable and protocol", executable, protocol)
 			}
-			return outcome.restore
+			return outcome.ours, outcome.restore
 		},
 	}
-	helper, trace, err := steps.run(context.Background(), consent)
+	helper, result, trace, err := steps.run(context.Background(), consent)
 	for index := 1; index < len(trace); index++ {
 		if !slices.Contains(replaceTransitions[trace[index-1]], trace[index]) {
 			t.Fatalf("trace %v takes %s -> %s outside the table", trace, trace[index-1], trace[index])
@@ -156,8 +177,15 @@ func checkReplaceOutcome(t *testing.T, consent RunningHelper, outcome replaceOut
 	if (last == ReplaceReady) != (err == nil) || (helper != nil) != (err == nil) || last != ReplaceReady && last != ReplaceFailed {
 		t.Fatalf("trace %v ended with helper %v, error %v", trace, helper, err)
 	}
+	stopped := outcome.verify == nil && !outcome.stale && outcome.stop == nil
+	if result.Stopped != stopped || result.Forced != (outcome.verify == nil && !outcome.stale && outcome.forced) {
+		t.Fatalf("result %+v after %v, want stopped %v", result, calls, stopped)
+	}
 	var stale *LegacyHelperError
 	var failed *HelperReplaceError
+	if errors.As(err, &failed) && (failed.Stopped != result.Stopped || failed.Forced != result.Forced) {
+		t.Fatalf("failure %+v does not carry the stop result %+v", failed, result)
+	}
 	switch {
 	case errors.Is(outcome.verify, inspectErr):
 		if !errors.As(err, &failed) || failed.Stage != ReplaceVerify || slices.Contains(calls, "stop") {
@@ -183,12 +211,31 @@ func checkReplaceOutcome(t *testing.T, consent RunningHelper, outcome replaceOut
 		if slices.Contains(calls, "restore") != restoring {
 			t.Fatalf("calls %v, restore expected %v", calls, restoring)
 		}
-		if !errors.As(err, &failed) || failed.Stage != ReplaceStart || !errors.Is(err, ErrHelperReplaceFailed) ||
-			failed.RolledBack != (restoring && outcome.restore == nil) {
-			t.Fatalf("start failure = %#v, want a start failure, rolled back %v", err, restoring && outcome.restore == nil)
+		rolledBack := restoring && outcome.restore == nil && outcome.ours
+		if !errors.As(err, &failed) || failed.Stage != ReplaceStart || !errors.Is(err, ErrHelperReplaceFailed) || failed.RolledBack != rolledBack {
+			t.Fatalf("start failure = %#v, want a start failure, rolled back %v", err, rolledBack)
 		}
 	}
 	if count := len(calls); count > 4 {
 		t.Fatalf("calls %v: a replacement runs each step at most once", calls)
+	}
+}
+
+func TestRegistryKeepsAnOlderHelpersRecordingWithoutItsEntry(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	orphan := filepath.Join(stateDir, sessionsDirName, ids.New())
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, recordingName), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	supervisor, err := New(Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = supervisor.Close() })
+	if data, err := os.ReadFile(filepath.Join(orphan, recordingName)); err != nil || string(data) != "old" {
+		t.Fatalf("older helper's recording after load = %q, %v; want it untouched", data, err)
 	}
 }

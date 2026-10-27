@@ -123,6 +123,13 @@ func (r *Resolver) ensureOnHostWithClient(ctx context.Context, host Host, client
 	}
 	var lastErr error
 	key := r.deploymentKey(host, client)
+	// One consent per user action: every attempt shares it, so it is spent
+	// by the first replacement however the ensure ends.
+	var consent *legacyConsent
+	if options.ReplaceLegacy != "" {
+		consent = &legacyConsent{token: options.ReplaceLegacy}
+		operationCtx = context.WithValue(operationCtx, legacyConsentKey{}, consent)
+	}
 	for attempt := 1; attempt <= maxEnsureAttempts; attempt++ {
 		attemptCtx := context.WithValue(operationCtx, helperOperationKey{}, helperOperationScope{id: operationID, attempt: attempt, deadline: deadline})
 		if attempt == 1 {
@@ -138,7 +145,10 @@ func (r *Resolver) ensureOnHostWithClient(ctx context.Context, host Host, client
 			return daemon, nil
 		}
 		lastErr = cycleErr
-		if operationCtx.Err() != nil || attempt == maxEnsureAttempts || permanentHelperFailure(cycleErr) {
+		// After a replacement was attempted nothing is retried: the next
+		// cycle would only meet its outcome again.
+		spent := consent != nil && consent.spent
+		if operationCtx.Err() != nil || attempt == maxEnsureAttempts || permanentHelperFailure(cycleErr) || spent {
 			r.reportProgress(attemptCtx, HelperProgress{Step: helperProgressSteps, Stage: "failed", Done: true, Cause: cycleErr.Error()})
 			return daemon, lastErr
 		}
@@ -184,9 +194,6 @@ func permanentHelperFailure(err error) bool {
 
 func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transportssh.Client, options EnsureOptions) (*Daemon, error) {
 	ctx = withCycleCache(ctx)
-	if options.ReplaceLegacy != "" {
-		ctx = context.WithValue(ctx, legacyConsentKey{}, &legacyConsent{token: options.ReplaceLegacy})
-	}
 	r.reportProgress(ctx, HelperProgress{Step: 1, Stage: "discover"})
 	target, err := DiscoverTarget(ctx, host)
 	if err != nil {
@@ -619,18 +626,32 @@ func (r *Resolver) probeDaemon(ctx context.Context, daemon *Daemon) error {
 
 type legacyConsentKey struct{}
 
-// legacyConsent is the replacement consent of one ensure; it is spent by the
+// legacyConsent is the replacement consent of one user action; it is spent by the
 // first replacement so a failed one is never repeated.
 type legacyConsent struct {
 	token string
 	spent bool
 	ended int
+	count string
+}
+
+// EndedCountOf says how exact the session count of a consented helper is:
+// "exact", "atLeast" (only PTY sessions were listed) or "unknown".
+func EndedCountOf(helper supervisor.RunningHelper) string {
+	switch {
+	case helper.ActivityKnown:
+		return "exact"
+	case helper.PTYListed:
+		return "atLeast"
+	default:
+		return "unknown"
+	}
 }
 
 // legacyReplacer is the part of *supervisor.Client that replaces an older
 // helper through the target's bridge.
 type legacyReplacer interface {
-	ReplaceLegacyHelper(ctx context.Context, token string) error
+	ReplaceLegacyHelper(ctx context.Context, token string) (supervisor.ReplaceResult, error)
 }
 
 // replaceLegacyHelper handles a probe that met an older-protocol helper. With
@@ -652,9 +673,11 @@ func (r *Resolver) replaceLegacyHelper(ctx context.Context, daemon *Daemon, prob
 	consent.spent = true
 	if expected, ok := supervisor.ParseHelperConsent(consent.token); ok {
 		consent.ended = expected.Activity.Total()
+		consent.count = EndedCountOf(expected)
 	}
 	r.reportProgress(ctx, HelperProgress{Step: 5, Stage: "replace_legacy", Path: daemon.StateDir})
-	if err := replacer.ReplaceLegacyHelper(ctx, consent.token); err != nil {
+	result, err := replacer.ReplaceLegacyHelper(ctx, consent.token)
+	if err != nil {
 		var failed *supervisor.HelperReplaceError
 		if errors.As(err, &failed) && failed.RolledBack {
 			r.reportProgress(ctx, HelperProgress{Step: 6, Stage: "rollback", Cause: err.Error(), Path: daemon.StateDir})
@@ -663,7 +686,14 @@ func (r *Resolver) replaceLegacyHelper(ctx context.Context, daemon *Daemon, prob
 	}
 	daemon.Update.ReplacedLegacy = true
 	daemon.Update.EndedSessions = consent.ended
-	return r.probeDaemon(ctx, daemon)
+	daemon.Update.EndedCount = consent.count
+	daemon.Update.ForcedLegacy = result.Forced
+	if err := r.probeDaemon(ctx, daemon); err != nil {
+		// The older helper is gone but its replacement does not answer: this
+		// is reported, never followed by a start beside it.
+		return &supervisor.HelperReplaceError{Stage: supervisor.ReplaceStart, Stopped: result.Stopped, Forced: result.Forced, Cause: err}
+	}
+	return nil
 }
 
 func daemonRefusal(err error) bool {

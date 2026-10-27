@@ -39,6 +39,14 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.Code("local_helper_unavailable"), localUnavailable.Error(), err)
 	}
 	switch {
+	// A failed replacement wraps whatever stopped it; its stage decides
+	// what the user is told, so it comes first.
+	case errors.Is(err, supervisor.ErrHelperReplaceFailed):
+		detail := HelperReplaceFailureFor(err)
+		if detail == nil {
+			detail = &HelperReplaceFailure{Cause: err.Error()}
+		}
+		return ipc.WrapError(ipc.Code("helper_replace_failed"), helperReplaceMessage(detail), err).WithDetail(detail)
 	case errors.Is(err, ErrForbidden):
 		return ipc.WrapError(ipc.CodeForbidden, "无权访问该会话", err)
 	case errors.Is(err, durable.ErrLimit):

@@ -60,9 +60,13 @@ type HelperUpdateStatus struct {
 	// consent; EndedSessions is how many sessions the user agreed to end.
 	ReplacedLegacy bool
 	EndedSessions  int
-	Reason         string
-	Local          supervisor.RuntimeMetadata
-	Running        supervisor.RuntimeMetadata
+	// EndedCount is how exact EndedSessions is (see EndedCountOf);
+	// ForcedLegacy reports that the older helper had to be killed.
+	EndedCount   string
+	ForcedLegacy bool
+	Reason       string
+	Local        supervisor.RuntimeMetadata
+	Running      supervisor.RuntimeMetadata
 }
 
 // Daemon is a connected handle to a supervisor daemon on an SSH target.

@@ -15,3 +15,9 @@ func openHelperTarget(pid int, reverify helperReverify) (helperTarget, error) {
 func helperProcessExecutable(int) (string, error) {
 	return "", fmt.Errorf("%w: the executable of a helper process is not readable on this platform", ErrUnsupported)
 }
+
+// helperProcessStartTime is not read on these systems; consent then names
+// the helper by pid, protocol and state directory only.
+func helperProcessStartTime(int) (uint64, error) {
+	return 0, fmt.Errorf("%w: process start time is not read on this platform", ErrUnsupported)
+}

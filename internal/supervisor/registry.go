@@ -277,6 +277,11 @@ func loadRegistry(stateDir string) (map[string]registryEntry, error) {
 		}
 		entry, err := readEntry(root, id)
 		if errors.Is(err, os.ErrNotExist) {
+			if legacyRecording(root, id) {
+				// An older helper's recording without its entry is left as
+				// it is: this helper never removes another helper's data.
+				continue
+			}
 			if err := removeRegistryArtifacts(root, id); err != nil {
 				return nil, err
 			}

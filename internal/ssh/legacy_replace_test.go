@@ -19,6 +19,9 @@ type legacyDaemonClient struct {
 	replaced bool
 	calls    []string
 	result   error
+	// afterReplace, when set, is what List returns once replaced.
+	afterReplace error
+	lists        int
 }
 
 var legacyTargetHelper = supervisor.RunningHelper{Protocol: 2, PID: 4242, Activity: supervisor.ActivitySnapshot{PTY: 1, Exec: 1}, ActivityKnown: true}
@@ -27,7 +30,8 @@ func (c *legacyDaemonClient) List(context.Context) ([]supervisor.Info, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.replaced {
-		return nil, nil
+		c.lists++
+		return nil, c.afterReplace
 	}
 	return nil, &supervisor.LegacyHelperError{Helper: legacyTargetHelper, ConsentToken: supervisor.HelperConsentToken(legacyTargetHelper)}
 }
@@ -38,18 +42,18 @@ func (c *legacyDaemonClient) RuntimeMetadata(context.Context) (supervisor.Runtim
 
 func (c *legacyDaemonClient) RequireIdle(context.Context) error { return nil }
 
-func (c *legacyDaemonClient) ReplaceLegacyHelper(_ context.Context, token string) error {
+func (c *legacyDaemonClient) ReplaceLegacyHelper(_ context.Context, token string) (supervisor.ReplaceResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, token)
 	if c.result != nil {
-		return c.result
+		return supervisor.ReplaceResult{}, c.result
 	}
 	if token != supervisor.HelperConsentToken(legacyTargetHelper) {
-		return &supervisor.LegacyHelperError{Helper: legacyTargetHelper, ConsentToken: supervisor.HelperConsentToken(legacyTargetHelper), Stale: true}
+		return supervisor.ReplaceResult{}, &supervisor.LegacyHelperError{Helper: legacyTargetHelper, ConsentToken: supervisor.HelperConsentToken(legacyTargetHelper), Stale: true}
 	}
 	c.replaced = true
-	return nil
+	return supervisor.ReplaceResult{Stopped: true, Forced: true}, nil
 }
 
 func legacyTargetResolver(t *testing.T, client *legacyDaemonClient) (*Resolver, *fakeHost) {
@@ -92,7 +96,8 @@ func TestEnsureDaemonReplacesALegacyHelperWithConsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(client.calls) != 1 || !daemon.Update.ReplacedLegacy || daemon.Update.EndedSessions != 2 {
+	if len(client.calls) != 1 || !daemon.Update.ReplacedLegacy || daemon.Update.EndedSessions != 2 ||
+		daemon.Update.EndedCount != "exact" || !daemon.Update.ForcedLegacy {
 		t.Fatalf("replacement calls %v, update %+v; want one replacement ending 2 sessions", client.calls, daemon.Update)
 	}
 	if host.sawCommand("setsid") {
@@ -136,5 +141,19 @@ func TestEnsureDaemonReportsAFailedReplacementOnce(t *testing.T) {
 				t.Fatalf("replacement calls %v (spawned %v); a failure must not be retried or followed by a start", client.calls, host.sawCommand("setsid"))
 			}
 		})
+	}
+}
+
+func TestEnsureDaemonDoesNotRetryAfterAReplacement(t *testing.T) {
+	client := &legacyDaemonClient{afterReplace: errors.New("transient probe failure")}
+	resolver, _ := legacyTargetResolver(t, client)
+	_, err := resolver.EnsureDaemonWithOptions(t.Context(), nil, EnsureOptions{ReplaceLegacy: supervisor.HelperConsentToken(legacyTargetHelper)})
+	if err == nil {
+		t.Fatal("ensure reported success although the replaced helper does not answer")
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.calls) != 1 || client.lists != 1 {
+		t.Fatalf("replacements %d, probes after it %d; an error after the consent was spent must end the ensure", len(client.calls), client.lists)
 	}
 }

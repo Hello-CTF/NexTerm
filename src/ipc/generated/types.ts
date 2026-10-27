@@ -1318,6 +1318,8 @@ export type HelperUpdateDTO = {
   rolledBack: boolean;
   replacedLegacy?: boolean;
   endedSessions?: number;
+  endedCount?: string;
+  forced?: boolean;
 };
 
 export type HelperVersionDTO = {

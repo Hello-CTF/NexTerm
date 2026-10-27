@@ -4,7 +4,9 @@ package production
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -27,7 +29,7 @@ func buildLegacyFixtureHelper(t *testing.T) string {
 	binary := filepath.Join(t.TempDir(), "v2helper")
 	command := exec.Command("go", "build", "-o", binary, "./internal/supervisor/testdata/v2helper")
 	command.Dir = helperUpdateBuildRoot(t)
-	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=-buildvcs=false")
+	command.Env = append(os.Environ(), "CGO_ENABLED=0", strings.TrimSpace("GOFLAGS="+os.Getenv("GOFLAGS")+" -buildvcs=false"))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build the protocol 2 fixture helper: %v\n%s", err, output)
 	}
@@ -108,7 +110,7 @@ func TestProductionHelperReplacesAProtocol2HelperOnlyWithConsent(t *testing.T) {
 	}
 
 	replaced := dispatchLegacyHelperOperation(t, service, connected.ID, "replace_legacy", status.Legacy.ConsentToken)
-	if replaced.Legacy != nil || replaced.Update == nil || replaced.Update.Status != "replaced" || replaced.Update.EndedSessions != 1 {
+	if replaced.Legacy != nil || replaced.Update == nil || replaced.Update.Status != "replaced" || replaced.Update.EndedSessions != 1 || replaced.Update.EndedCount != "exact" {
 		t.Fatalf("replacement = %+v (update %+v), want the helper replaced after ending one session", replaced, replaced.Update)
 	}
 	select {
@@ -123,10 +125,12 @@ func TestProductionHelperReplacesAProtocol2HelperOnlyWithConsent(t *testing.T) {
 }
 
 // legacyDeviceTransport stands in for a managed device whose agent bridges
-// to the helper state of stateDir, as the agent's direct bridge does.
+// to the helper state of stateDir, as the agent's direct bridge does; dial,
+// when set, replaces that bridge.
 type legacyDeviceTransport struct {
 	stateDir string
 	digest   string
+	dial     func(context.Context) (net.Conn, error)
 }
 
 func (d *legacyDeviceTransport) Kind() string       { return session.KindDevice }
@@ -138,9 +142,11 @@ func (d *legacyDeviceTransport) Ping(context.Context) (time.Duration, error) { r
 func (d *legacyDeviceTransport) IsAlive() bool                               { return true }
 func (d *legacyDeviceTransport) Close() error                                { return nil }
 func (d *legacyDeviceTransport) Provider() *supervisor.RemoteProvider {
-	return supervisor.NewRemoteProvider(supervisor.NewRemoteClient(func(ctx context.Context) (net.Conn, error) {
-		return supervisor.DialHelperBridge(ctx, d.stateDir)
-	}, d.digest))
+	dial := d.dial
+	if dial == nil {
+		dial = func(ctx context.Context) (net.Conn, error) { return supervisor.DialHelperBridge(ctx, d.stateDir) }
+	}
+	return supervisor.NewRemoteProvider(supervisor.NewRemoteClient(dial, d.digest))
 }
 
 // TestProductionDeviceHelperReplacementNeedsTheServerConsent drives the same
@@ -197,7 +203,7 @@ func TestProductionDeviceHelperReplacementNeedsTheServerConsent(t *testing.T) {
 	default:
 	}
 	replaced := dispatchLegacyHelperOperation(t, service, connected.ID, "replace_legacy", status.Legacy.ConsentToken)
-	if replaced.Update == nil || replaced.Update.Status != "replaced" || replaced.Update.EndedSessions != 2 {
+	if replaced.Update == nil || replaced.Update.Status != "replaced" || replaced.Update.EndedSessions != 2 || replaced.Update.EndedCount != "exact" || replaced.Update.Forced {
 		t.Fatalf("device replacement = %+v (update %+v)", replaced, replaced.Update)
 	}
 	select {
@@ -221,5 +227,64 @@ func waitForLegacyPID(t *testing.T, stateDir string) {
 			t.Fatal("protocol 2 helper did not start")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// failedReplacementBridge answers a replace_legacy hello the way a device
+// bridge reports a replacement that ended the old helper but could not
+// start the new one.
+func failedReplacementBridge(context.Context) (net.Conn, error) {
+	client, server := net.Pipe()
+	go func() {
+		defer func() { _ = server.Close() }()
+		header := make([]byte, 5)
+		if _, err := io.ReadFull(server, header); err != nil {
+			return
+		}
+		if _, err := io.CopyN(io.Discard, server, int64(binary.BigEndian.Uint32(header))); err != nil {
+			return
+		}
+		payload := []byte(`{"code":"helper_replace_failed","message":"did not start","stage":"start","stopped":true,"forced":true}`)
+		frame := make([]byte, 5, 5+len(payload))
+		binary.BigEndian.PutUint32(frame, uint32(len(payload)))
+		frame[4] = 3 // frameError
+		_, _ = server.Write(append(frame, payload...))
+	}()
+	return client, nil
+}
+
+func TestProductionHelperReplaceFailureKeepsItsStage(t *testing.T) {
+	device := &legacyDeviceTransport{digest: "digest", dial: failedReplacementBridge}
+	manager := session.NewManager(session.Config{
+		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+			return device, nil
+		}),
+		OpenAccess: true,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "failing-device", Kind: session.KindDevice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &productionHelperService{sessions: manager}
+	terminalService := &terminalCommandService{sessions: manager, helpers: service, desktop: true}
+	dispatcher := ipc.NewDispatcher()
+	if err := terminalService.registerSession(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(helperOperationRequest{SessionID: connected.ID, Action: "replace_legacy", ConsentToken: "2:41:1:1::"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := dispatcher.Dispatch(t.Context(), ipc.Request{Command: "terminal_helper_operation", Args: args, ClientID: "client-a"}, ipc.Environment{ClientID: "client-a"})
+	if response.OK || response.Error == nil || response.Error.Code != ipc.Code("helper_replace_failed") {
+		t.Fatalf("failed replacement = %+v, want helper_replace_failed", response.Error)
+	}
+	detail, ok := response.Error.Detail.(*session.HelperReplaceFailure)
+	if !ok || detail.Stage != "start" || !detail.Stopped || !detail.Forced || detail.RolledBack {
+		t.Fatalf("failure detail = %#v, want the start stage after a forced stop", response.Error.Detail)
+	}
+	if !strings.Contains(response.Error.Message, "会话已终止") || !strings.Contains(response.Error.Message, "强制结束") {
+		t.Fatalf("failure message = %q", response.Error.Message)
 	}
 }

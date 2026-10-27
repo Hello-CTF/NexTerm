@@ -23,6 +23,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
@@ -1500,6 +1501,11 @@ func (s *terminalCommandService) closeDockerSession(ctx context.Context, session
 func terminalIPCError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, supervisor.ErrHelperReplaceFailed) {
+		// A failed replacement also wraps durable.ErrUnavailable; its own
+		// code and stage detail must win.
+		return session.IPCError(err)
 	}
 	var connectErr *ssh.ConnectError
 	if errors.As(err, &connectErr) {

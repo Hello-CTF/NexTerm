@@ -76,3 +76,24 @@ func helperProcessExecutable(pid int) (string, error) {
 	}
 	return path, nil
 }
+
+// helperProcessStartTime reads field 22 of /proc/<pid>/stat: the start time
+// in clock ticks since boot, which tells a reused pid from the original.
+func helperProcessStartTime(pid int) (uint64, error) {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return 0, err
+	}
+	// The command name (field 2) may contain spaces; fields after it follow
+	// the last ')'.
+	end := strings.LastIndexByte(string(data), ')')
+	if end < 0 {
+		return 0, fmt.Errorf("%w: malformed /proc/%d/stat", ErrUnavailable, pid)
+	}
+	fields := strings.Fields(string(data[end+1:]))
+	// fields[0] is field 3, so field 22 is fields[19].
+	if len(fields) < 20 {
+		return 0, fmt.Errorf("%w: short /proc/%d/stat", ErrUnavailable, pid)
+	}
+	return strconv.ParseUint(fields[19], 10, 64)
+}

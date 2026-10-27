@@ -66,3 +66,18 @@ func (t *handleTarget) close() {
 func helperProcessExecutable(int) (string, error) {
 	return "", fmt.Errorf("%w: the executable of a helper process is not read on Windows", ErrUnsupported)
 }
+
+// helperProcessStartTime is the process creation time (a FILETIME), which
+// tells a reused pid from the original.
+func helperProcessStartTime(pid int) (uint64, error) {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = windows.CloseHandle(handle) }()
+	var creation, exit, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err != nil {
+		return 0, err
+	}
+	return uint64(creation.HighDateTime)<<32 | uint64(creation.LowDateTime), nil
+}

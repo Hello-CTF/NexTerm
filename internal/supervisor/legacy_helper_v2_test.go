@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -26,7 +27,7 @@ func buildV2Helper(t *testing.T) string {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "v2helper")
 	command := exec.Command("go", "build", "-o", binary, "./testdata/v2helper")
-	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=-buildvcs=false")
+	command.Env = append(os.Environ(), "CGO_ENABLED=0", strings.TrimSpace("GOFLAGS="+os.Getenv("GOFLAGS")+" -buildvcs=false"))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build the protocol 2 fixture helper: %v\n%s", err, output)
 	}
@@ -201,7 +202,7 @@ func TestProtocol2HelperUpgrade(t *testing.T) {
 		// is signalled, with the fresh count.
 		staleConsent := legacy.Helper
 		staleConsent.Activity = ActivitySnapshot{}
-		err = bridge.ReplaceLegacyHelper(context.Background(), HelperConsentToken(staleConsent))
+		_, err = bridge.ReplaceLegacyHelper(context.Background(), HelperConsentToken(staleConsent))
 		var stale *LegacyHelperError
 		if !errors.As(err, &stale) || !stale.Stale || stale.ConsentToken != legacy.ConsentToken {
 			t.Fatalf("stale consent = %v, want a stale LegacyHelperError naming the current helper", err)
@@ -210,8 +211,12 @@ func TestProtocol2HelperUpgrade(t *testing.T) {
 			t.Fatalf("stale consent stopped the helper: %v", err)
 		}
 
-		if err := bridge.ReplaceLegacyHelper(context.Background(), legacy.ConsentToken); err != nil {
+		result, err := bridge.ReplaceLegacyHelper(context.Background(), legacy.ConsentToken)
+		if err != nil {
 			t.Fatal(err)
+		}
+		if !result.Stopped || result.Forced {
+			t.Fatalf("replacement result = %+v, want the helper stopped by TERM", result)
 		}
 		if !old.exited(t) {
 			t.Fatal("the protocol 2 helper is still running after the consented replacement")
@@ -254,9 +259,12 @@ func TestProtocol2HelperUpgrade(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		helper, err := ReplaceLegacyHelper(context.Background(), HelperConfig{StateDir: stateDir, SpawnTimeout: 30 * time.Second}, HelperConsentToken(running))
+		helper, result, err := ReplaceLegacyHelper(context.Background(), HelperConfig{StateDir: stateDir, SpawnTimeout: 30 * time.Second}, HelperConsentToken(running))
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !result.Stopped || !result.Forced {
+			t.Fatalf("replacement result = %+v, want a forced stop", result)
 		}
 		if !old.exited(t) {
 			t.Fatal("the protocol 2 helper survived KILL")
@@ -280,14 +288,67 @@ func TestProtocol2HelperUpgrade(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = ReplaceLegacyHelper(context.Background(), HelperConfig{StateDir: stateDir, Executable: "/bin/false", SpawnTimeout: 10 * time.Second}, HelperConsentToken(running))
+		_, _, err = ReplaceLegacyHelper(context.Background(), HelperConfig{StateDir: stateDir, Executable: "/bin/false", SpawnTimeout: 10 * time.Second}, HelperConsentToken(running))
 		var failed *HelperReplaceError
-		if !errors.As(err, &failed) || failed.Stage != ReplaceStart || !failed.RolledBack {
-			t.Fatalf("replacement with a helper that cannot start = %v, want a rolled back start failure", err)
+		if !errors.As(err, &failed) || failed.Stage != ReplaceStart || !failed.Stopped {
+			t.Fatalf("replacement with a helper that cannot start = %v, want a start failure after the stop", err)
+		}
+		// Only Linux reads the stopped helper's executable, so only there is
+		// it started again.
+		if rollback := runtime.GOOS == "linux"; failed.RolledBack != rollback {
+			t.Fatalf("rolled back = %v, want %v on %s", failed.RolledBack, rollback, runtime.GOOS)
+		}
+		if !failed.RolledBack {
+			return
 		}
 		restored, err := InspectHelper(context.Background(), stateDir)
 		if err != nil || restored.Protocol != 2 || restored.PID == running.PID {
 			t.Fatalf("after rollback = %+v, %v; want a new protocol 2 helper", restored, err)
+		}
+	})
+
+	t.Run("concurrent consents replace the helper once and both attach", func(t *testing.T) {
+		stateDir := legacyStateDir(t)
+		old := startV2Helper(t, binary, stateDir)
+		v2Create(t, stateDir, true, "/bin/sh", "-c", "sleep 300")
+		running, err := InspectHelper(context.Background(), stateDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		token := HelperConsentToken(running)
+		type outcome struct {
+			helper *Helper
+			result ReplaceResult
+			err    error
+		}
+		outcomes := make(chan outcome, 2)
+		for range 2 {
+			go func() {
+				helper, result, err := ReplaceLegacyHelper(context.Background(), HelperConfig{StateDir: stateDir, SpawnTimeout: 30 * time.Second}, token)
+				outcomes <- outcome{helper, result, err}
+			}()
+		}
+		stopped := 0
+		for range 2 {
+			got := <-outcomes
+			if got.err != nil {
+				t.Fatalf("concurrent replacement = %v, want both to end on this build's helper", got.err)
+			}
+			if got.result.Stopped {
+				stopped++
+			}
+			if _, err := got.helper.Client().List(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if stopped != 1 {
+			t.Fatalf("%d replacements stopped the helper, want exactly 1", stopped)
+		}
+		if !old.exited(t) {
+			t.Fatal("the protocol 2 helper is still running")
+		}
+		if count := helperProcessCount(t, stateDir); count != 1 {
+			t.Fatalf("%d helper processes serve the state directory, want 1", count)
 		}
 	})
 }

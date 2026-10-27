@@ -325,7 +325,7 @@ type RemoteProvider struct {
 
 // ReplaceLegacyHelper asks the helper's host to end the older helper the
 // consent token names; see Client.ReplaceLegacyHelper.
-func (p *RemoteProvider) ReplaceLegacyHelper(ctx context.Context, token string) error {
+func (p *RemoteProvider) ReplaceLegacyHelper(ctx context.Context, token string) (ReplaceResult, error) {
 	return p.client.ReplaceLegacyHelper(ctx, token)
 }
 

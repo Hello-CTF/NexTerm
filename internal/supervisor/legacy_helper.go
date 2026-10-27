@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"path/filepath"
-	"sync"
 	"time"
 )
 
@@ -123,6 +121,11 @@ func decodedLegacyError(msg errorMsg) error {
 		}
 		detail.ConsentToken = wire.ConsentToken
 		detail.Stale = wire.Stale
+		// The token carries the process start time and state digest.
+		if parsed, ok := ParseHelperConsent(wire.ConsentToken); ok {
+			detail.Helper.StartTime = parsed.StartTime
+			detail.Helper.StateDigest = parsed.StateDigest
+		}
 	}
 	return detail
 }
@@ -155,8 +158,9 @@ func (c *Client) legacyHelperError(ctx context.Context) error {
 // the legacy rejection and the older helper's sessions, so the client reports
 // a helper upgrade at once instead of a bare EOF or a timeout. A hello that
 // carries the consent token of that rejection replaces the older helper (see
-// ReplaceLegacyHelper) and, once this build's helper serves, is forwarded to
-// it so the connection continues as an ordinary one. The bridge never stops
+// ReplaceLegacyHelper) and, once this build's helper serves, is answered
+// with frameOK and how the older helper ended; the client then connects as
+// usual. The bridge never stops
 // a helper on its own.
 func legacyBridgeConn(stateDir string, version int) net.Conn {
 	client, server := net.Pipe()
@@ -186,22 +190,15 @@ func serveLegacyBridge(server net.Conn, stateDir string, version int) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), legacyBridgeReplaceTimeout)
 	defer cancel()
-	helper, err := ReplaceLegacyHelper(ctx, HelperConfig{StateDir: stateDir}, hello.ReplaceLegacy)
+	_, result, err := ReplaceLegacyHelper(ctx, HelperConfig{StateDir: stateDir}, hello.ReplaceLegacy)
 	if err != nil {
 		reject(replaceErrorMessage(err))
 		return
 	}
-	upstream, err := dialSocket(ctx, helper.Endpoint())
-	if err != nil {
-		reject(errorMsg{Code: codeUnavailable, Message: "the replacement helper does not answer: " + err.Error()})
-		return
+	if encoded, err := marshalFrame(frameOK, replacedMsg{Stopped: result.Stopped, Forced: result.Forced}); err == nil {
+		_ = writeFrame(server, frameOK, encoded)
 	}
-	if err := writeFrame(upstream, kind, payload); err != nil {
-		_ = upstream.Close()
-		reject(errorMsg{Code: codeUnavailable, Message: "the replacement helper does not answer: " + err.Error()})
-		return
-	}
-	spliceConns(server, upstream)
+	_ = server.Close()
 }
 
 func replaceErrorMessage(err error) errorMsg {
@@ -211,23 +208,11 @@ func replaceErrorMessage(err error) errorMsg {
 	}
 	var failed *HelperReplaceError
 	if errors.As(err, &failed) {
-		return errorMsg{Code: codeReplaceFailed, Message: err.Error(), Stage: string(failed.Stage), RolledBack: failed.RolledBack}
+		message := err.Error()
+		if failed.Cause != nil {
+			message = failed.Cause.Error()
+		}
+		return errorMsg{Code: codeReplaceFailed, Message: message, Stage: string(failed.Stage), Stopped: failed.Stopped, Forced: failed.Forced, RolledBack: failed.RolledBack}
 	}
 	return errorMessage(err)
-}
-
-func spliceConns(a, b net.Conn) {
-	var once sync.Once
-	closeBoth := func() {
-		once.Do(func() {
-			_ = a.Close()
-			_ = b.Close()
-		})
-	}
-	go func() {
-		_, _ = io.Copy(a, b)
-		closeBoth()
-	}()
-	_, _ = io.Copy(b, a)
-	closeBoth()
 }

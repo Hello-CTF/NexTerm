@@ -377,6 +377,17 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 				}
 			}
 			attachment, err := attachDurableReplacement(ctx, provider, tab.ID, durableIdentity, uint64(durableFed))
+			if errors.Is(err, supervisor.ErrLegacyHelperRunning) {
+				// A provider reached through a bridge (a managed device)
+				// meets the older helper only on attach. This is final for
+				// every durable tab of the session, not a reason to retry.
+				if attachment != nil {
+					_ = attachment.Close()
+				}
+				legacyErr = err
+				gone[tab] = err
+				continue
+			}
 			if errors.Is(err, durable.ErrNotFound) || errors.Is(err, durable.ErrIdentity) || errors.Is(err, ErrDurableUnrecoverable) || errors.Is(err, durable.ErrGenerationMismatch) {
 				if attachment != nil {
 					_ = attachment.Close()
@@ -445,6 +456,8 @@ type reconnectNotice struct {
 	tab        *Tab
 	generation uint64
 	banner     []byte
+	// legacy marks a tab ended because an older helper runs its session.
+	legacy bool
 }
 
 type reconnectResize struct {
@@ -542,8 +555,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			case errors.Is(cause, durable.ErrGenerationMismatch):
 				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: durableHelperRestartedBanner})
 			case errors.Is(cause, supervisor.ErrLegacyHelperRunning):
-				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: legacyHelperBanner})
-				m.legacyEnded.add(session.ID, tab, tab.generation)
+				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: legacyHelperBanner, legacy: true})
 			}
 			if tab.durable != nil {
 				retired = append(retired, tab.durable)
@@ -608,6 +620,9 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		m.transcriptResize(reconnectCtx, resize.tab, resize.cols, resize.rows)
 	}
 	for _, notice := range unrecoverable {
+		if notice.legacy {
+			m.legacyEnded.add(session.ID, notice.tab, notice.generation)
+		}
 		_ = m.feed(reconnectCtx, notice.tab, notice.generation, notice.banner)
 	}
 	for _, exit := range exits {

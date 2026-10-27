@@ -336,6 +336,7 @@ func (m *Manager) reapRemote(id string, activity time.Time) error {
 	}
 	session.tabs = make(map[string]*Tab)
 	delete(m.sessions, id)
+	m.legacyEnded.forget(id)
 	if m.byAsset[session.assetOwnerKey()] == session.ID {
 		delete(m.byAsset, session.assetOwnerKey())
 	}

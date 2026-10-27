@@ -218,8 +218,10 @@ type errorMsg struct {
 	Version int `json:"version,omitempty"`
 	// Legacy accompanies codeLegacyHelper: the inspected older helper.
 	Legacy *legacyErrorWire `json:"legacy,omitempty"`
-	// Stage and RolledBack accompany codeReplaceFailed.
+	// Stage, Stopped, Forced and RolledBack accompany codeReplaceFailed.
 	Stage      string `json:"stage,omitempty"`
+	Stopped    bool   `json:"stopped,omitempty"`
+	Forced     bool   `json:"forced,omitempty"`
 	RolledBack bool   `json:"rolled_back,omitempty"`
 }
 
@@ -316,7 +318,7 @@ func decodedError(msg errorMsg) error {
 		return &wireError{decodedLegacyError(msg)}
 	}
 	if msg.Code == codeReplaceFailed {
-		return &wireError{&HelperReplaceError{Stage: ReplaceStage(msg.Stage), RolledBack: msg.RolledBack, Cause: errors.New(msg.Message)}}
+		return &wireError{&HelperReplaceError{Stage: ReplaceStage(msg.Stage), Stopped: msg.Stopped, Forced: msg.Forced, RolledBack: msg.RolledBack, Cause: errors.New(msg.Message)}}
 	}
 	if msg.Code == codeMetadataConflict {
 		return &wireError{&MetadataConflictError{

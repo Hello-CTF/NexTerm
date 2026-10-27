@@ -48,6 +48,62 @@ func LegacyHelperDetailFor(err error) *LegacyHelperDetail {
 	return detail
 }
 
+// HelperReplaceFailure is the detail of a helper_replace_failed error: the
+// stage that failed and what had already happened to the older helper.
+type HelperReplaceFailure struct {
+	Stage      string `json:"stage"`
+	Stopped    bool   `json:"stopped"`
+	Forced     bool   `json:"forced"`
+	RolledBack bool   `json:"rolledBack"`
+	Cause      string `json:"cause,omitempty"`
+}
+
+// HelperReplaceFailureFor returns the failed replacement an error reports,
+// or nil.
+func HelperReplaceFailureFor(err error) *HelperReplaceFailure {
+	var failed *supervisor.HelperReplaceError
+	if !errors.As(err, &failed) {
+		return nil
+	}
+	detail := &HelperReplaceFailure{Stage: string(failed.Stage), Stopped: failed.Stopped, Forced: failed.Forced, RolledBack: failed.RolledBack}
+	if failed.Cause != nil {
+		detail.Cause = failed.Cause.Error()
+	}
+	return detail
+}
+
+// ForcedStopNote is shown wherever a consented replacement had to kill the
+// older helper.
+const ForcedStopNote = "旧版组件未响应退出请求，已被强制结束，部分后台进程可能仍在运行"
+
+func helperReplaceMessage(detail *HelperReplaceFailure) string {
+	var message string
+	switch supervisor.ReplaceStage(detail.Stage) {
+	case supervisor.ReplaceVerify:
+		message = "无法核实主机上的旧版组件，未做任何更改"
+	case supervisor.ReplaceTerminate:
+		message = "未能结束旧版组件，它和其中的会话仍在运行；未启动新版持久终端组件"
+	case supervisor.ReplaceStart:
+		switch {
+		case detail.Stopped && detail.RolledBack:
+			message = "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动；已重新启动旧版组件，原会话不会恢复"
+		case detail.Stopped:
+			message = "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动"
+		default:
+			message = "新版持久终端组件未能启动"
+		}
+	default:
+		message = "升级持久终端组件失败"
+	}
+	if detail.Forced {
+		message += "；" + ForcedStopNote
+	}
+	if detail.Cause != "" {
+		message += "（" + detail.Cause + "）"
+	}
+	return message
+}
+
 // legacyHelperBanner ends a durable tab whose session still runs in an older
 // (protocol 2) helper that this build cannot attach to. The session itself
 // keeps running there until the user agrees to replace that helper.
@@ -61,6 +117,7 @@ var legacyHelperTerminatedBanner = []byte("\r\n\x1b[31m[NexTerm] 已终止：已
 
 // legacyEndedTabs remembers the tabs of each session that ended with the
 // legacy banner, so a consented replacement can tell them what happened.
+// Its lock is taken without holding a tab lock and before taking one.
 type legacyEndedTabs struct {
 	mu   sync.Mutex
 	tabs map[string]map[*Tab]uint64
@@ -69,6 +126,7 @@ type legacyEndedTabs struct {
 func (l *legacyEndedTabs) add(sessionID string, tab *Tab, generation uint64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.pruneLocked()
 	if l.tabs == nil {
 		l.tabs = make(map[string]map[*Tab]uint64)
 	}
@@ -78,9 +136,34 @@ func (l *legacyEndedTabs) add(sessionID string, tab *Tab, generation uint64) {
 	l.tabs[sessionID][tab] = generation
 }
 
+// pruneLocked drops tabs that were closed since they ended.
+func (l *legacyEndedTabs) pruneLocked() {
+	for sessionID, tabs := range l.tabs {
+		for tab := range tabs {
+			tab.mu.Lock()
+			closed := tab.closed
+			tab.mu.Unlock()
+			if closed {
+				delete(tabs, tab)
+			}
+		}
+		if len(tabs) == 0 {
+			delete(l.tabs, sessionID)
+		}
+	}
+}
+
+// forget drops the tabs of a session that was closed.
+func (l *legacyEndedTabs) forget(sessionID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.tabs, sessionID)
+}
+
 func (l *legacyEndedTabs) take(sessionID string) map[*Tab]uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.pruneLocked()
 	tabs := l.tabs[sessionID]
 	delete(l.tabs, sessionID)
 	return tabs

@@ -32,6 +32,11 @@ type RunningHelper struct {
 	PTYListed bool
 	// Runtime is nil when the helper did not report the executable it runs.
 	Runtime *RuntimeMetadata
+	// StartTime identifies the process beside its pid (Linux: start time in
+	// clock ticks since boot; Windows: creation time); zero when unknown.
+	StartTime uint64
+	// StateDigest names the state directory the helper serves.
+	StateDigest string
 }
 
 // Current reports whether the helper speaks this build's protocol.
@@ -191,7 +196,10 @@ func inspectHelperConn(ctx context.Context, stateDir string, version int) (_ Run
 	if ack.Version != version {
 		return RunningHelper{}, nil, versionMismatchError(ack.Version, "inspection hello acknowledged with another protocol version")
 	}
-	helper := RunningHelper{Protocol: version, PID: pid}
+	helper := RunningHelper{Protocol: version, PID: pid, StateDigest: digest}
+	if start, err := helperProcessStartTime(pid); err == nil {
+		helper.StartTime = start
+	}
 	if ack.Activity != nil {
 		helper.ActivityKnown = true
 		if ack.Activity.PTY < 0 || ack.Activity.Exec < 0 {
@@ -278,16 +286,32 @@ func recordedHelperPID(stateDir string) (int, error) {
 // it is forcibly killed, and left alone when that is impossible. StopHelper
 // returns once the state lock is released, so a new helper can start.
 func StopHelper(ctx context.Context, stateDir string, expected RunningHelper) error {
+	_, err := stopHelper(ctx, stateDir, expected)
+	return err
+}
+
+// StopResult is how a stopped helper ended.
+type StopResult struct {
+	// Forced reports that the helper did not exit after TERM and was killed;
+	// processes it started in their own sessions may still run.
+	Forced bool
+	// Executable is the program the helper ran, read while its verified
+	// connection was open; empty when the platform cannot tell.
+	Executable string
+}
+
+func stopHelper(ctx context.Context, stateDir string, expected RunningHelper) (StopResult, error) {
+	var result StopResult
 	absolute, err := filepath.Abs(stateDir)
 	if err != nil {
-		return fmt.Errorf("%w: helper state directory: %v", ErrInvalidInput, err)
+		return result, fmt.Errorf("%w: helper state directory: %v", ErrInvalidInput, err)
 	}
 	current, conn, err := inspectHelperConn(ctx, absolute, expected.Protocol)
 	if err != nil {
 		if ctx.Err() != nil {
-			return context.Cause(ctx)
+			return result, context.Cause(ctx)
 		}
-		return fmt.Errorf("%w: %v", ErrHelperChanged, err)
+		return result, fmt.Errorf("%w: %v", ErrHelperChanged, err)
 	}
 	connOpen := true
 	closeConn := func() {
@@ -297,11 +321,14 @@ func StopHelper(ctx context.Context, stateDir string, expected RunningHelper) er
 		}
 	}
 	defer closeConn()
-	if current.PID != expected.PID || expected.PID <= 0 {
-		return fmt.Errorf("%w: pid %d now serves the state directory, consent covered pid %d", ErrHelperChanged, current.PID, expected.PID)
+	if current.PID != expected.PID || expected.PID <= 0 || !sameProcessStart(expected, current) {
+		return result, fmt.Errorf("%w: pid %d now serves the state directory, consent covered pid %d", ErrHelperChanged, current.PID, expected.PID)
 	}
 	if expected.countKnown() && (!current.countKnown() || current.Activity.Total() > expected.Activity.Total()) {
-		return fmt.Errorf("%w: the helper now runs %d sessions, consent covered %d", ErrHelperChanged, current.Activity.Total(), expected.Activity.Total())
+		return result, fmt.Errorf("%w: the helper now runs %d sessions, consent covered %d", ErrHelperChanged, current.Activity.Total(), expected.Activity.Total())
+	}
+	if path, err := helperProcessExecutable(current.PID); err == nil {
+		result.Executable = path
 	}
 	reverify := func(ctx context.Context) (int, net.Conn, error) {
 		helper, conn, err := inspectHelperConn(ctx, absolute, expected.Protocol)
@@ -312,28 +339,29 @@ func StopHelper(ctx context.Context, stateDir string, expected RunningHelper) er
 	}
 	target, err := openHelperTarget(current.PID, reverify)
 	if err != nil {
-		return fmt.Errorf("hold supervisor helper %d: %w", current.PID, err)
+		return result, fmt.Errorf("hold supervisor helper %d: %w", current.PID, err)
 	}
 	defer target.close()
 	if err := target.terminate(); err != nil {
-		return fmt.Errorf("stop supervisor helper %d: %w", current.PID, err)
+		return result, fmt.Errorf("stop supervisor helper %d: %w", current.PID, err)
 	}
 	closeConn()
 	if !target.wait(ctx, helperStopGrace) {
 		if ctx.Err() != nil {
-			return context.Cause(ctx)
+			return result, context.Cause(ctx)
 		}
 		if err := target.kill(ctx); err != nil {
-			return fmt.Errorf("kill supervisor helper %d: %w", current.PID, err)
+			return result, fmt.Errorf("kill supervisor helper %d: %w", current.PID, err)
 		}
+		result.Forced = true
 		if !target.wait(ctx, helperKillWait) {
 			if ctx.Err() != nil {
-				return context.Cause(ctx)
+				return result, context.Cause(ctx)
 			}
-			return fmt.Errorf("%w: supervisor helper %d did not exit", ErrUnavailable, current.PID)
+			return result, fmt.Errorf("%w: supervisor helper %d did not exit", ErrUnavailable, current.PID)
 		}
 	}
-	return waitHelperUnlocked(ctx, absolute, helperUnlockWait)
+	return result, waitHelperUnlocked(ctx, absolute, helperUnlockWait)
 }
 
 // helperTarget is a stoppable handle on one verified helper process.
