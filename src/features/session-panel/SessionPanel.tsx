@@ -1,34 +1,81 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keybindings";
 import { useUi } from "../../app/store";
-import { IconClose, IconFolderOpen, IconLock, IconServer, type IconInfo } from "../../ui/icons";
+import { IconBox, IconClose, IconFolderOpen, IconList, IconLock, IconNetwork, IconServer, IconSparkles, type IconInfo } from "../../ui/icons";
 import { openHostDetail } from "../hosts/hostDetail";
 import { trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { useTerminalCwd } from "../files/cwdFollow";
-import { FilesTab, PanelEmpty } from "./FilesTab";
+import { FilesTab } from "./FilesTab";
+import { ContainersTab, LogsTab, PortsTab } from "./HostTabs";
+import { AiTab } from "./AiTab";
+import { PanelEmpty } from "./PanelEmpty";
 import { useSessionPanelContext, type SessionPanelContext } from "./sessionContext";
 import { useSessionPanel, type SessionPanelTabId } from "./sessionPanelStore";
+
+interface TabEnv {
+  context: SessionPanelContext | null;
+  aiDocked: boolean;
+}
 
 interface PanelTab {
   id: SessionPanelTabId;
   label: string;
+  // title describes the tab where the short label needs it.
+  title?: string;
   icon: typeof IconInfo;
-  render: (context: SessionPanelContext | null) => ReactNode;
+  // hostBound tabs show the host of the panel context; a lock on a closed terminal replaces them with an unlock hint.
+  hostBound: boolean;
+  render: (env: TabEnv) => ReactNode;
 }
 
-// The panel's tabs, in order. Container, port, log and AI tabs join this list later; each renders from the same context.
+// The panel's tabs, in order. The host tabs render from the same context; the AI tab hosts the app's AI assistant,
+// which follows the active workspace like the right AI dock.
 const PANEL_TABS: readonly PanelTab[] = [
-  { id: "files", label: "文件", icon: IconFolderOpen, render: (context) => <FilesTab context={context} /> },
+  { id: "files", label: "文件", icon: IconFolderOpen, hostBound: true, render: ({ context }) => <FilesTab context={context} /> },
+  {
+    id: "containers",
+    label: "容器",
+    title: "当前主机的 Docker 容器",
+    icon: IconBox,
+    hostBound: true,
+    render: ({ context }) => <ContainersTab context={context} />,
+  },
+  {
+    id: "ports",
+    label: "端口",
+    title: "经由当前主机的端口转发",
+    icon: IconNetwork,
+    hostBound: true,
+    render: ({ context }) => <PortsTab context={context} />,
+  },
+  {
+    id: "logs",
+    label: "日志",
+    title: "跟随当前主机的日志",
+    icon: IconList,
+    hostBound: true,
+    render: ({ context }) => <LogsTab context={context} />,
+  },
+  {
+    id: "ai",
+    label: "AI",
+    title: "AI 助手",
+    icon: IconSparkles,
+    hostBound: false,
+    render: ({ aiDocked }) => <AiTab aiDocked={aiDocked} />,
+  },
 ];
 
 export interface SessionPanelProps {
   // overlay is true when the panel is a full-screen sheet (mobile and compact layouts).
   overlay: boolean;
+  // aiDocked is true while the right AI dock shows the assistant; the AI tab then points there instead.
+  aiDocked?: boolean;
   onClose: () => void;
 }
 
 // SessionPanel is the right-side panel that follows the focused terminal session: its host and working directory.
-export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
+export function SessionPanel({ overlay, aiDocked = false, onClose }: SessionPanelProps) {
   const { context, source, lockedGone } = useSessionPanelContext();
   const activeTab = useSessionPanel((s) => s.tab);
   const setTab = useSessionPanel((s) => s.setTab);
@@ -78,6 +125,24 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
     selectTab(PANEL_TABS[next].id, true);
   };
 
+  // A native listener: the AI assistant is portalled into this panel, so its key events reach the section in the DOM but
+  // not through React's onKeyDown.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!overlay || !section) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      trapOverlayTab(event as unknown as Parameters<typeof trapOverlayTab>[0], section);
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        event.preventDefault();
+        onCloseRef.current();
+      }
+    };
+    section.addEventListener("keydown", onKeyDown);
+    return () => section.removeEventListener("keydown", onKeyDown);
+  }, [overlay]);
+
   const subtitle = context
     ? [context.hostLabel, cwd].filter(Boolean).join(" · ")
     : locked
@@ -92,13 +157,6 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
       role={overlay ? "dialog" : undefined}
       aria-modal={overlay ? true : undefined}
       tabIndex={overlay ? -1 : undefined}
-      onKeyDown={(event) => {
-        if (overlay) trapOverlayTab(event, sectionRef.current);
-        if (overlay && event.key === "Escape" && !event.defaultPrevented) {
-          event.preventDefault();
-          onClose();
-        }
-      }}
     >
       <div className="flex h-[38px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2 pl-3">
         <span className="shrink-0 text-[12.5px] font-semibold text-neutral-100">会话</span>
@@ -151,7 +209,11 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
           <IconClose size={14} />
         </button>
       </div>
-      <div role="tablist" aria-label="会话侧栏页签" className="flex h-[32px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-1.5">
+      <div
+        role="tablist"
+        aria-label="会话侧栏页签"
+        className="flex h-[32px] shrink-0 items-center gap-1 overflow-x-auto border-b border-neutral-800/60 px-1.5"
+      >
         {PANEL_TABS.map((tab, index) => {
           const selected = tab.id === current.id;
           return (
@@ -167,7 +229,8 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
                 if (el) tabRefs.current.set(tab.id, el);
                 else tabRefs.current.delete(tab.id);
               }}
-              className={`nx-tab h-6 gap-1 px-2 text-[11.5px] ${selected ? "is-active" : ""}`}
+              className={`nx-tab h-6 shrink-0 gap-1 px-2 text-[11.5px] ${selected ? "is-active" : ""}`}
+              title={tab.title}
               onClick={() => selectTab(tab.id, false)}
               onKeyDown={(event) => onTabKeyDown(event, index)}
             >
@@ -183,7 +246,7 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
         aria-labelledby={`nx-session-tab-${current.id}`}
         className="min-h-0 flex-1"
       >
-        {lockedGone ? (
+        {lockedGone && current.hostBound ? (
           <PanelEmpty
             icon={IconLock}
             title="锁定的会话已关闭"
@@ -195,7 +258,7 @@ export function SessionPanel({ overlay, onClose }: SessionPanelProps) {
             }
           />
         ) : (
-          current.render(context)
+          current.render({ context, aiDocked })
         )}
       </div>
     </section>

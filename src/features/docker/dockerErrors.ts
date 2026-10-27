@@ -23,6 +23,11 @@ export function isDockerNotInstalled(e: unknown): boolean {
   return dockerErrorCode(e) === "docker_not_installed";
 }
 
+export function isDockerUnavailable(e: unknown): boolean {
+  const code = dockerErrorCode(e);
+  return code === "docker_not_installed" || code === "docker_unavailable";
+}
+
 export function describeDockerError(e: unknown): string {
   if (DOCKER_HOST_CODES.has(dockerErrorCode(e))) {
     const message = (e as { message?: unknown }).message;

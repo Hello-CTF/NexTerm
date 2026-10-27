@@ -19,7 +19,7 @@
   }
 
   .nx-left-dock > :first-child,
-  .nx-right-dock > :last-child {
+  .nx-right-dock .nx-movable-host > aside {
     max-width: calc(100vw - 92px);
   }
 

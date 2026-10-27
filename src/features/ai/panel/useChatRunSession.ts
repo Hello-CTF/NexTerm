@@ -34,7 +34,10 @@ export function useChatRunSession(p: AiChatBase) {
   const requestSnapshotsRef = useRef(
     new Map<number, { message: string; images: string[]; refs: RefChip[]; planMode: boolean }>(),
   );
-  const rightOpen = useUi((s) => s.rightOpen);
+  const dockOpen = useUi((s) => s.rightOpen);
+  const rightOpen = p.visible ?? dockOpen;
+  const rightOpenRef = useRef(rightOpen);
+  rightOpenRef.current = rightOpen;
   const anyAiBusy = useUi((s) => s.aiBusy);
   const takeoverState = useUi((s) => s.takeover);
   const pushToast = useUi((s) => s.pushToast);
@@ -286,7 +289,7 @@ export function useChatRunSession(p: AiChatBase) {
   const onConversationChangeRef = useRef(onConversationChange);
   onConversationChangeRef.current = onConversationChange;
 
-  return { isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, conversationId, pushToast, input, workspaces, activeRunRef, cancelWaitersRef, cancelOperationRef, setActiveRun, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, runSequenceRef, runControl, setConversationError, images, refs, planMode, busyRef, beginRun, requestSnapshotsRef, setInput, setRefs, setImages, aiScope, setPlanMode, busy, submittingCardIdRef, setSubmittingCardId, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, productionConfirmRef, toolHandleVersion, stopRef, takeoverState, anyAiBusy, bindings, reclaimKeyLabel, aiScopeAssetId, activeWorkspace, conversationError, confirmCardRef, productionNames, handleProductionState, productionBlocked, setQuestionInput, syncNotice, activeGeneration, hitlWaiting, aiScopeProduction, setModelPanelOpen, modelPanelOpen, rightOpen };
+  return { isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, conversationId, pushToast, input, workspaces, activeRunRef, cancelWaitersRef, cancelOperationRef, setActiveRun, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, runSequenceRef, runControl, setConversationError, images, refs, planMode, busyRef, beginRun, requestSnapshotsRef, setInput, setRefs, setImages, aiScope, setPlanMode, busy, submittingCardIdRef, setSubmittingCardId, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, productionConfirmRef, toolHandleVersion, stopRef, takeoverState, anyAiBusy, bindings, reclaimKeyLabel, aiScopeAssetId, activeWorkspace, conversationError, confirmCardRef, productionNames, handleProductionState, productionBlocked, setQuestionInput, syncNotice, activeGeneration, hitlWaiting, aiScopeProduction, setModelPanelOpen, modelPanelOpen, rightOpen, rightOpenRef };
 }
 
 export type UseChatRunSessionOut = ReturnType<typeof useChatRunSession>;

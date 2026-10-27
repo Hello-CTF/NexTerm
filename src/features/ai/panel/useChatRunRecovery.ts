@@ -12,7 +12,7 @@ import type { UseChatRunSessionOut } from "./useChatRunSession";
 import type { UseChatPanelStateOut } from "./useChatPanelState";
 
 export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseChatPanelStateOut) {
-  const { isLifecycleActive, activeRunRef, stream, cancelWaitersRef, cancelOperationRef, setActiveRun, pushToast, conversationIdRef, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, tabKey, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, isRestoreActive, setConversationRuns, runSequenceRef, runControl, restoreGenerationRef, updateConversationId, clearMessageHistory, setConversationError, resetMessageHistory, boundConversationId, setConversationId, restoreBindingRef } = p;
+  const { isLifecycleActive, activeRunRef, stream, cancelWaitersRef, cancelOperationRef, setActiveRun, pushToast, conversationIdRef, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, tabKey, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, isRestoreActive, setConversationRuns, runSequenceRef, runControl, restoreGenerationRef, updateConversationId, clearMessageHistory, setConversationError, resetMessageHistory, boundConversationId, setConversationId, restoreBindingRef, rightOpenRef } = p;
 
 
   const replayHitl = useCallback(async (generation: number, jobId: string) => {
@@ -211,7 +211,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       if (!isLifecycleActive()) return;
       const st = useUi.getState();
       const session = st.sessions.find((s) => s.id === terminal.sessionId);
-      const activate = activeRef.current && st.rightOpen;
+      const activate = activeRef.current && rightOpenRef.current;
       const previousActiveWorkspaceId = st.activeWorkspaceId;
       const previousWorkspaces = st.workspaces;
       st.addTab({
@@ -242,7 +242,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
         }),
       }));
     }
-  }, [activeRef, activeRunRef, isLifecycleActive]);
+  }, [activeRef, activeRunRef, isLifecycleActive, rightOpenRef]);
 
   const replayRunEvents = useCallback(async (
     generation: number,
