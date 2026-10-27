@@ -3482,7 +3482,7 @@ describe("XtermView replayed output", () => {
     expect(onNotification).toHaveBeenCalledWith("live");
   });
 
-  it("keeps announced spans across a recovery anchor for bytes still to come", async () => {
+  it("classifies held bytes by the recovery anchor's spans", async () => {
     harness.emitReplies = true;
     const onClipboard = vi.fn();
     await show({ onClipboard });
@@ -3492,15 +3492,32 @@ describe("XtermView replayed output", () => {
     feedBytes("abcd");
     // A replayed tail is announced while the server holds its bytes.
     const tail = "\x1b[6n\x1b]52;c;b2xk\x07";
+    const tailSpan = { from: 4, to: 4 + enc.encode(tail).length, kind: "replay" };
     act(() => {
-      harness.channel?.onClass?.({ type: "nexterm.stream-class", from: 4, to: 4 + enc.encode(tail).length, kind: "replay" });
+      harness.channel?.onClass?.({ type: "nexterm.stream-class", ...tailSpan });
     });
-    // A recovery anchor redelivers from sequence 2, then the held bytes.
-    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: 2 });
+    // A recovery anchor redelivers from sequence 2 and covers everything fed
+    // up to now, including the held bytes.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: 2, classes: [tailSpan] });
     feedBytes("cd" + tail);
     act(() => t.drainWrites());
     expect(upstream()).toEqual([]);
     expect(onClipboard).not.toHaveBeenCalled();
+  });
+
+  it("does not carry spans into a new stream that is not marked expired", async () => {
+    harness.emitReplies = true;
+    await show();
+    await attachOk();
+    const t = term();
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 0, classes: [{ from: 0, to: 64, kind: "replay" }] });
+    feedBytes("old");
+    // A fresh attach (clear-screen control, empty ring) starts another
+    // sequence space at 0; the old replay span must not cover it.
+    feedControl({ type: "nexterm.stream-anchor", epoch: "e2", streamSeq: 0, controlBytes: 3 });
+    feedBytes("\x1b[H\x1b[6n");
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[1;1R"]);
   });
 
   it("passes a key reply raised by a handler that stops propagation, and nothing after it", async () => {
