@@ -315,6 +315,80 @@ func TestAggregatorListsASessionReachedTwiceOnce(t *testing.T) {
 	}
 }
 
+func TestAggregateListingNeverDeploysAnSSHHelper(t *testing.T) {
+	provider := &descriptorListingDurableProvider{listingDurableProvider: &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}}
+	resolver := &countingResolver{provider: provider}
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := WithOpenAccess(context.Background())
+	connected, err := manager.Connect(ctx, Asset{ID: "ssh-quiet", Name: "quiet", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := resolver.callCount()
+	aggregator := NewAggregator(AggregatorConfig{})
+	t.Cleanup(aggregator.Close)
+	targets, err := manager.AggregateTargetsFor(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := aggregator.List(ctx, "", targets, time.Minute)
+	if got := resolver.callCount(); got != before {
+		t.Fatalf("resolver calls %d -> %d; a listing must not resolve or deploy a helper", before, got)
+	}
+	backgroundHelperDeployments.Lock()
+	deployment := backgroundHelperDeployments.entries[mustSession(t, manager, connected.ID)]
+	backgroundHelperDeployments.Unlock()
+	if deployment != nil {
+		t.Fatal("a listing started a helper deployment")
+	}
+	status := hostStatus(t, list, "asset:ssh-quiet")
+	if status.Status != AggregateHostOffline || status.ErrorCode != "helper_not_ready" || len(list.Sessions) != 0 {
+		t.Fatalf("host without a ready helper = %+v (sessions %+v); want offline", status, list.Sessions)
+	}
+}
+
+func TestAggregateListingUsesTheHelperAConnectionResolved(t *testing.T) {
+	provider := &descriptorListingDurableProvider{listingDurableProvider: &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}}
+	resolver := &countingResolver{provider: provider}
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver, OpenAccess: true})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := WithOpenAccess(context.Background())
+	connected, err := manager.Connect(ctx, Asset{ID: "ssh-ready", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client", ChannelID: "durable", Cols: 80, Rows: 24, Durable: &DurableTabOptions{},
+	})
+	if err != nil || !tab.Durable {
+		t.Fatalf("durable tab = %+v, %v", tab, err)
+	}
+	before := resolver.callCount()
+	aggregator := NewAggregator(AggregatorConfig{})
+	t.Cleanup(aggregator.Close)
+	targets, err := manager.AggregateTargetsFor(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := aggregator.List(ctx, "", targets, time.Minute)
+	if got := sessionIDs(list); len(got) != 1 || got[tab.ID] != "asset:ssh-ready" {
+		t.Fatalf("listed sessions = %v; want the durable tab", got)
+	}
+	if resolver.callCount() != before {
+		t.Fatalf("resolver calls %d -> %d; the resolved helper must be reused", before, resolver.callCount())
+	}
+}
+
+func mustSession(t *testing.T, manager *Manager, id string) *Session {
+	t.Helper()
+	session, err := manager.Session(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
 func TestAggregateTargetsListOnlyTheRequestersHosts(t *testing.T) {
 	provider := &descriptorListingDurableProvider{listingDurableProvider: &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}}
 	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: &countingResolver{provider: provider}})

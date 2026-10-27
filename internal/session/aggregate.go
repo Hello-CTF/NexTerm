@@ -114,8 +114,16 @@ type AggregateTarget struct {
 	Offline bool
 	// Failed lists the host as failed with this error.
 	Failed error
-	List   func(context.Context) ([]base.DurableDescriptor, error)
+	// Stale marks a host taken from an earlier listing of hosts (a device
+	// list whose refresh failed); its sessions are reported stale.
+	Stale bool
+	List  func(context.Context) ([]base.DurableDescriptor, error)
 }
+
+// ErrHelperNotReady reports a host whose helper neither runs for its
+// connection nor is being deployed. A listing never deploys one, so the host
+// is reported offline: the state of its sessions is unknown.
+var ErrHelperNotReady = errors.New("the host's helper is not running for this connection")
 
 // AggregatorConfig configures an Aggregator; zero values take the defaults.
 type AggregatorConfig struct {
@@ -146,8 +154,15 @@ type Aggregator struct {
 	wg     sync.WaitGroup
 
 	mu     sync.Mutex
-	owners map[string]*aggregateOwner
+	owners map[aggregateCacheKey]*aggregateOwner
 	closed bool
+}
+
+// aggregateCacheKey separates owners, and the listings of one owner that ask
+// different sets of hosts.
+type aggregateCacheKey struct {
+	owner string
+	scope string
 }
 
 type aggregateOwner struct {
@@ -190,7 +205,7 @@ func NewAggregator(config AggregatorConfig) *Aggregator {
 		slots:  make(chan struct{}, config.Concurrency),
 		ctx:    ctx,
 		cancel: cancel,
-		owners: make(map[string]*aggregateOwner),
+		owners: make(map[aggregateCacheKey]*aggregateOwner),
 	}
 }
 
@@ -201,6 +216,14 @@ func NewAggregator(config AggregatorConfig) *Aggregator {
 // published when it ends. Requests for the same owner share refreshes;
 // owners never share a cache.
 func (a *Aggregator) List(ctx context.Context, owner string, targets []AggregateTarget, wait time.Duration) AggregateList {
+	return a.ListScoped(ctx, owner, "", targets, wait)
+}
+
+// ListScoped is List for one of several sets of hosts an owner lists: each
+// scope keeps its own cache, so listing one set never drops another's hosts.
+// Refreshes are published to owner whatever the scope.
+func (a *Aggregator) ListScoped(ctx context.Context, owner, scope string, targets []AggregateTarget, wait time.Duration) AggregateList {
+	cacheKey := aggregateCacheKey{owner: owner, scope: scope}
 	now := a.config.Now()
 	a.mu.Lock()
 	if a.closed {
@@ -208,10 +231,10 @@ func (a *Aggregator) List(ctx context.Context, owner string, targets []Aggregate
 		return a.snapshotClosed(targets)
 	}
 	a.pruneOwnersLocked(now)
-	cache := a.owners[owner]
+	cache := a.owners[cacheKey]
 	if cache == nil {
 		cache = &aggregateOwner{hosts: make(map[string]*aggregateEntry)}
-		a.owners[owner] = cache
+		a.owners[cacheKey] = cache
 	}
 	cache.usedAt = now
 	wanted := make(map[string]bool, len(targets))
@@ -237,7 +260,7 @@ func (a *Aggregator) List(ctx context.Context, owner string, targets []Aggregate
 		}
 		if entry.inflight == nil && a.dueLocked(entry, now) {
 			entry.inflight = make(chan struct{})
-			a.startRefresh(ctx, owner, cache, entry, target.List)
+			a.startRefresh(ctx, cacheKey, cache, entry, target.List)
 		}
 		if entry.inflight != nil {
 			waits = append(waits, entry.inflight)
@@ -283,7 +306,7 @@ func (a *Aggregator) pruneOwnersLocked(now time.Time) {
 // startRefresh lists one host in the background. It runs detached from the
 // request, which may return before the host answers, but keeps its values
 // (the requester's identity) and is bounded by the per-host timeout.
-func (a *Aggregator) startRefresh(ctx context.Context, owner string, cache *aggregateOwner, entry *aggregateEntry, list func(context.Context) ([]base.DurableDescriptor, error)) {
+func (a *Aggregator) startRefresh(ctx context.Context, key aggregateCacheKey, cache *aggregateOwner, entry *aggregateEntry, list func(context.Context) ([]base.DurableDescriptor, error)) {
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
@@ -303,7 +326,7 @@ func (a *Aggregator) startRefresh(ctx context.Context, owner string, cache *aggr
 		}
 		close(entry.inflight)
 		entry.inflight = nil
-		current := cache.hosts[entry.host.Key] == entry && a.owners[owner] == cache && !a.closed
+		current := cache.hosts[entry.host.Key] == entry && a.owners[key] == cache && !a.closed
 		var update AggregateUpdate
 		if current {
 			update.Host = a.statusLocked(entry, at)
@@ -311,7 +334,7 @@ func (a *Aggregator) startRefresh(ctx context.Context, owner string, cache *aggr
 		}
 		a.mu.Unlock()
 		if current && a.config.Publish != nil {
-			a.config.Publish(owner, update)
+			a.config.Publish(key.owner, update)
 		}
 	}()
 }
@@ -347,6 +370,9 @@ func (a *Aggregator) statusLocked(entry *aggregateEntry, now time.Time) Aggregat
 	status := AggregateHostStatus{AggregateHost: entry.host}
 	fresh := !entry.fetchedAt.IsZero() && now.Sub(entry.fetchedAt) < a.config.Retain
 	switch {
+	case entry.err != nil && !entry.errAt.Before(entry.fetchedAt) && errors.Is(entry.err, ErrHelperNotReady):
+		status.Status = AggregateHostOffline
+		status.ErrorCode, status.Error = "helper_not_ready", "主机上的持久终端组件尚未就绪，状态未知"
 	case entry.err != nil && !entry.errAt.Before(entry.fetchedAt):
 		status.Status = AggregateHostFailed
 		status.ErrorCode, status.Error = a.describe(entry.err)
@@ -396,6 +422,9 @@ func (a *Aggregator) snapshotLocked(cache *aggregateOwner, targets []AggregateTa
 			}
 			status = a.statusLocked(entry, now)
 			sessions = visibleSessions(status, entry)
+			if target.Stale && status.Status == AggregateHostOK {
+				status.Stale = true
+			}
 		}
 		if status.Status == AggregateHostPending || status.Stale {
 			list.Complete = false
@@ -422,12 +451,20 @@ func (a *Aggregator) snapshotClosed(targets []AggregateTarget) AggregateList {
 	return list
 }
 
+// Reset drops every cached listing, for example after the account a client
+// lists through changed. Running refreshes end without publishing.
+func (a *Aggregator) Reset() {
+	a.mu.Lock()
+	a.owners = make(map[aggregateCacheKey]*aggregateOwner)
+	a.mu.Unlock()
+}
+
 // Close stops every refresh and waits for them; later lists report every
 // host offline.
 func (a *Aggregator) Close() {
 	a.mu.Lock()
 	a.closed = true
-	a.owners = make(map[string]*aggregateOwner)
+	a.owners = make(map[aggregateCacheKey]*aggregateOwner)
 	a.mu.Unlock()
 	a.cancel()
 	a.wg.Wait()
@@ -508,8 +545,7 @@ func (m *Manager) AggregateTargetsFor(ctx context.Context) ([]AggregateTarget, e
 			continue
 		}
 		if info.Kind == KindSSH {
-			// Listing an SSH host waits for its helper and deploys one when
-			// none runs; a host set to regular terminals is left alone.
+			// A host set to regular terminals runs no durable sessions here.
 			if mode, err := m.TerminalModeFor(ctx, info.ID); err != nil || mode == TerminalModeRegular {
 				continue
 			}
@@ -523,7 +559,7 @@ func (m *Manager) AggregateTargetsFor(ctx context.Context) ([]AggregateTarget, e
 		if connected {
 			sessionID := info.ID
 			target.List = func(ctx context.Context) ([]base.DurableDescriptor, error) {
-				return m.ListRemoteDurable(ctx, sessionID)
+				return m.listReadyDurable(ctx, sessionID)
 			}
 		}
 		add(target, connected)
@@ -551,6 +587,69 @@ func aggregateHostKey(info SessionInfo) string {
 	default:
 		return aggregateKeySession + info.ID
 	}
+}
+
+// listReadyDurable lists a connected session's durable sessions without ever
+// deploying a helper. An SSH host is listed through the helper this
+// connection already resolved, or the deployment already running for it;
+// otherwise it answers ErrHelperNotReady. Device and local sessions reach
+// their helper without deploying anything and list as usual.
+func (m *Manager) listReadyDurable(ctx context.Context, sessionID string) ([]base.DurableDescriptor, error) {
+	session, err := m.Session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	session.mu.Lock()
+	kind := session.asset.Kind
+	connected := session.status == StatusConnected && session.transport != nil
+	transport, generation := session.transport, session.generation
+	allowed := sessionOwnerAllowed(session, userIDFromContext(ctx))
+	session.mu.Unlock()
+	if kind != KindSSH {
+		return m.ListRemoteDurable(ctx, sessionID)
+	}
+	if !allowed {
+		return nil, ErrForbidden
+	}
+	if !connected {
+		return nil, ErrDisconnected
+	}
+	session.durableMu.Lock()
+	var provider base.DurableProvider
+	if session.durableProvider != nil && session.durableGen == generation && session.durableTransport == transport {
+		provider = session.durableProvider
+	}
+	session.durableMu.Unlock()
+	if provider == nil {
+		entry := matchingBackgroundHelper(session, transport, generation)
+		if entry == nil {
+			return nil, ErrHelperNotReady
+		}
+		select {
+		case <-entry.done:
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+		if entry.err != nil {
+			return nil, entry.err
+		}
+		if entry.provider == nil {
+			return nil, ErrHelperNotReady
+		}
+		provider = entry.provider
+	}
+	lister, ok := provider.(base.DurableDescriptorLister)
+	if !ok {
+		return nil, ErrUnsupported
+	}
+	descriptors, err := lister.ListDurableDescriptors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if descriptors == nil {
+		descriptors = []base.DurableDescriptor{}
+	}
+	return descriptors, nil
 }
 
 // listLocalDurable lists the local helper's sessions without a local
