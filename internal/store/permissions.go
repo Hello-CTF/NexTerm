@@ -1,20 +1,28 @@
 package store
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"runtime"
 )
 
+// prepareDatabaseFile creates a missing database file owner-only and repairs
+// the mode of an existing one. It never opens an existing file: closing any
+// descriptor on it would release the POSIX locks SQLite holds on that file
+// in this process.
 func prepareDatabaseFile(path string) error {
 	if !ownerOnlyPermissionsSupported() {
 		return nil
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return err
-	}
-	if err := file.Close(); err != nil {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	switch {
+	case err == nil:
+		if err := file.Close(); err != nil {
+			return err
+		}
+	case !errors.Is(err, fs.ErrExist):
 		return err
 	}
 	return os.Chmod(path, 0o600)
