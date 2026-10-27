@@ -528,14 +528,29 @@ func (s *Service) run() {
 			}
 			continue
 		}
+		// This start answers every durable request made so far; a stale one
+		// must not restart a helper after it exits.
+		select {
+		case <-s.ensure:
+		default:
+		}
 		s.setStatus(Status{State: StateStarting, Reason: "本机持久组件正在启动"}, nil)
 		executable, err := s.helperExecutable()
 		var helper helperHandle
 		if err == nil {
-			helper, err = s.config.connect(s.ctx, supervisor.HelperConfig{StateDir: s.config.StateDir, Executable: executable, Limits: s.config.Limits})
+			// Without a durable terminal asking for one, this only attaches to
+			// the helper just inspected; it never spawns one.
+			helper, err = s.config.connect(s.ctx, supervisor.HelperConfig{
+				StateDir: s.config.StateDir, Executable: executable, Limits: s.config.Limits, NoSpawn: !s.isWanted(),
+			})
 		}
 		if s.ctx.Err() != nil {
 			return
+		}
+		if errors.Is(err, supervisor.ErrHelperNotRunning) {
+			// The attach found the helper gone; inspect again, which settles
+			// on idle without spawning.
+			continue
 		}
 		if err != nil {
 			s.config.Logger.Warn("local helper did not start", "error", err)

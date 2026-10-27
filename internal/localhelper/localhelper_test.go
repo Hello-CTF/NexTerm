@@ -492,3 +492,15 @@ func TestServiceKeepsServingAHelperThatMissesAnInspection(t *testing.T) {
 	}
 }
 
+func TestStartNeverSpawnsWhenTheHelperVanishesBeforeTheAttach(t *testing.T) {
+	world := newFakeWorld()
+	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, ActivityKnown: true,
+		Runtime: &supervisor.RuntimeMetadata{SHA256: "self"}}
+	world.vanishOnAttach = true
+	service := startService(t, world.config(t))
+	waitState(t, service, StateIdle)
+	if !errors.Is(settled(t, service), ErrNotOutdated) || world.connectCount() != 0 {
+		t.Fatalf("connects = %d; starting must never spawn a helper", world.connectCount())
+	}
+}
+
