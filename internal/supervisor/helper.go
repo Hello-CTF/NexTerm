@@ -158,11 +158,9 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 	for {
 		err = probeHelper(ctx, client)
 		if err == nil {
-			select {
-			case <-process.done:
+			if !process.serves(ctx, endpoint) {
 				// Another helper won the state lock and serves the endpoint.
 				return &Helper{endpoint: endpoint, client: client}, nil
-			default:
 			}
 			return &Helper{endpoint: endpoint, client: client, spawned: true, process: process}, nil
 		}
@@ -176,6 +174,9 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 			if exited == nil {
 				return nil, fmt.Errorf("%w: %v (log: %s): %v", ErrHelperExited, process.exitErr(), logPath, err)
 			}
+			// A helper that never served may still hold the state lock; end
+			// it so the next attempt can start.
+			process.kill()
 			return nil, fmt.Errorf("%w: supervisor helper did not become ready within %s (log: %s): %v", ErrUnavailable, spawnTimeout, logPath, err)
 		}
 		select {
