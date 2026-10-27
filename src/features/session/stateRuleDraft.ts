@@ -12,8 +12,12 @@ export const STATE_RULE_MAX_PATTERN_BYTES = 512;
 export const STATE_RULE_MAX_LINES = 50;
 export const STATE_RULE_DEFAULT_LINES = 5;
 const MAX_LINE_BYTES = 256;
+const MAX_TITLE_BYTES = 1024;
 // The heuristic keeps this many characters of the line it quotes.
 const HEURISTIC_TEXT_CHARS = 120;
+// Rows of the screen bottom the AI draft is built from; mirrors stateRuleDraftRows in the backend.
+export const STATE_RULE_DRAFT_ROWS = 30;
+export const STATE_RULE_REDACTED_NOTE = "已隐去疑似密钥/密码";
 
 export const STATE_RULE_EXPORT_FORMAT = "nexterm.state-rules";
 export const STATE_RULE_EXPORT_VERSION = 1;
@@ -67,9 +71,36 @@ function clipBytes(text: string, limit: number): string {
   return out;
 }
 
+// clipTail keeps the trailing characters of text that fit in limit UTF-8 bytes.
+function clipTail(text: string, limit: number): string {
+  if (byteLength(text) <= limit) return text;
+  let used = 0;
+  const kept: string[] = [];
+  for (const char of Array.from(text).reverse()) {
+    const size = byteLength(char);
+    if (used + size > limit) break;
+    used += size;
+    kept.push(char);
+  }
+  return kept.reverse().join("");
+}
+
 // quoteRe2 escapes the characters RE2 treats specially, as Go's regexp.QuoteMeta does.
 export function quoteRe2(text: string): string {
   return text.replace(/[\\.+*?()|[\]{}^$]/g, "\\$&");
+}
+
+// Mirrors internal/ai/tools.RedactText, which the backend applies before the screen reaches the AI model.
+const REDACT_PATTERNS: readonly [RegExp, string][] = [
+  [/(authorization\s*[:=]\s*(?:bearer\s+)?)([^\s,;]+)/gi, "$1<redacted>"],
+  [/(bearer\s+)([^\s,;]+)/gi, "$1<redacted>"],
+  [/(mysql(?:\.exe)?\s+[^\r\n]*?-p)([^\s]+)/gi, "$1<redacted>"],
+  [/(password|passwd|token|secret|api[_-]?key)(\s*[:=]\s*|\s+)([^\s,;]+)/gi, "$1$2<redacted>"],
+];
+const REDACTED_MARK = "<redacted>";
+
+export function redactSecrets(text: string): string {
+  return REDACT_PATTERNS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
 }
 
 function blank(line: string): boolean {
@@ -85,20 +116,39 @@ function regionEnd(screen: StateRuleScreenDTO): number {
   return end;
 }
 
-// heuristicDraft quotes the last non-empty line of the screen, for use without an AI model. It returns null for a
-// screen without text.
+// draftRegionText is the text an AI draft is built from, as the backend picks it: the bottom rows of the screen and the
+// window title.
+export function draftRegionText(screen: StateRuleScreenDTO): { rows: string; title: string } {
+  const end = regionEnd(screen);
+  if (end < 0) return { rows: "", title: clipTail(screen.title ?? "", MAX_TITLE_BYTES) };
+  const start = Math.max(0, end - STATE_RULE_DRAFT_ROWS + 1);
+  return {
+    rows: screen.lines
+      .slice(start, end + 1)
+      .map((line) => clipBytes(line, MAX_LINE_BYTES))
+      .join("\n"),
+    title: clipTail(screen.title ?? "", MAX_TITLE_BYTES),
+  };
+}
+
+// heuristicDraft quotes the last non-empty line of the screen, for use without an AI model. Suspected secrets in the
+// line are masked, and the draft says so in redacted. It returns null for a screen without text.
 export function heuristicDraft(screen: StateRuleScreenDTO, intent: StateRuleIntent, current: string): StateRuleDraftDTO | null {
   const end = regionEnd(screen);
   for (let row = end; row >= 0; row--) {
     const visible = clipBytes(screen.lines[row] ?? "", MAX_LINE_BYTES).trim();
     if (!visible) continue;
-    const text = Array.from(visible).slice(0, HEURISTIC_TEXT_CHARS).join("").trim();
+    const masked = redactSecrets(visible);
+    const redacted = masked !== visible;
+    const text = Array.from(masked).slice(0, HEURISTIC_TEXT_CHARS).join("").trim();
     return {
       name: Array.from(text).slice(0, 60).join(""),
       region: "bottom",
       lines: Math.min(STATE_RULE_MAX_LINES, Math.max(STATE_RULE_DEFAULT_LINES, end - row + 1)),
-      pattern: quoteRe2(text),
+      // A masked value matches any word, so the rule still recognizes the line.
+      pattern: quoteRe2(text).split(REDACTED_MARK).join("\\S+"),
       state: defaultCorrection(intent, current),
+      ...(redacted ? { redacted } : {}),
     };
   }
   return null;
@@ -120,6 +170,18 @@ export interface StateRuleDraftForm {
   state: StateRuleTarget;
   keys: string;
   enabled: boolean;
+}
+
+// A pattern this short or this open matches almost any screen, so the rule would fire everywhere.
+const MIN_SPECIFIC_PATTERN_CHARS = 4;
+
+// patternWarning is a hint, not an error, for a pattern that is probably too broad. It is null for an empty pattern.
+export function patternWarning(pattern: string): string | null {
+  const trimmed = pattern.trim();
+  if (!trimmed) return null;
+  if (/^\.[*+]$/.test(trimmed)) return "这个模式几乎匹配任何内容，规则会在所有屏幕上生效。";
+  if (Array.from(trimmed).length < MIN_SPECIFIC_PATTERN_CHARS) return "匹配模式很短，可能误匹配其他屏幕，建议写得更具体。";
+  return null;
 }
 
 export function emptyRuleForm(): StateRuleDraftForm {

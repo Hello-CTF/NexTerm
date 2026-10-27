@@ -2522,6 +2522,7 @@ export type StateRuleDraftDTO = {
   pattern: string;
   state: string;
   explanation?: string;
+  redacted?: boolean;
 };
 
 export type StateRuleDraftRequest = {

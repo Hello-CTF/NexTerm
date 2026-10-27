@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { assetApi, terminalApi } from "../../ipc/commands";
+import { assetApi, localFileApi, terminalApi } from "../../ipc/commands";
+import { logTailApi } from "../../ipc/logTailApi";
 import { WEB } from "../../ipc/env";
 import { pickBrowserFile, saveBrowserBlob } from "../../ipc/webFiles";
 import {
@@ -11,8 +12,7 @@ import {
 } from "../../ipc/stateRuleApi";
 import { useUi, useWorkspaceList } from "../../app/store";
 import { getTerminalTabTitle } from "../../app/terminalViewStore";
-import { ask, promptText } from "../../ui/dialogs";
-import { copyText } from "../../ui/clipboard";
+import { ask, pickLocalFile, pickSavePath } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import {
   IconArrowDown,
@@ -36,6 +36,14 @@ import {
   stateLabel,
   type StateRuleDraftForm,
 } from "../session/stateRuleDraft";
+
+// A rules file holds at most 64 short rules; anything larger is not one.
+const IMPORT_MAX_BYTES = 1 << 20;
+
+function decodeBase64Text(base64: string): string {
+  const binary = atob(base64);
+  return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+}
 
 // The built-in local device (store.BuiltinLocalAssetID), which runs the local helper.
 const BUILTIN_LOCAL_ASSET_ID = "01J0NEXTERMLOCALDEVICE0001";
@@ -261,8 +269,10 @@ export function SessionRulesCard() {
         await saveBrowserBlob("nexterm-state-rules.json", new Blob([text], { type: "application/json" }));
         pushToast("success", `已导出 ${file.rules.length} 条状态规则`);
       } else {
-        await copyText(text);
-        pushToast("success", `已复制 ${file.rules.length} 条状态规则的 JSON，可粘贴保存`);
+        const path = await pickSavePath("nexterm-state-rules.json");
+        if (!path) return;
+        const saved = await logTailApi.save(path, text);
+        pushToast("success", `已导出 ${file.rules.length} 条状态规则到 ${saved.path}`);
       }
     } catch (cause) {
       setError(`导出失败：${describeError(cause)}`);
@@ -271,11 +281,17 @@ export function SessionRulesCard() {
 
   const importRules = async () => {
     let text: string | null;
-    if (WEB) {
-      const file = await pickBrowserFile(".json,application/json");
-      text = file ? await file.text() : null;
-    } else {
-      text = await promptText("粘贴导出的状态规则 JSON：", "", { multiLine: true });
+    try {
+      if (WEB) {
+        const file = await pickBrowserFile(".json,application/json");
+        text = file ? await file.text() : null;
+      } else {
+        const path = await pickLocalFile();
+        text = path ? decodeBase64Text((await localFileApi.read(path, IMPORT_MAX_BYTES)).contentBase64) : null;
+      }
+    } catch (cause) {
+      setError(`导入失败：${describeError(cause)}`);
+      return;
     }
     if (!text?.trim()) return;
     let parsed;

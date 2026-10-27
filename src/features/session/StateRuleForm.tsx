@@ -4,6 +4,7 @@ import { describeError } from "../../ui/errorText";
 import {
   STATE_RULE_MAX_LINES,
   STATE_RULE_TARGETS,
+  patternWarning,
   saveRequestFromForm,
   type StateRuleDraftForm,
   type StateRuleTarget,
@@ -65,7 +66,7 @@ interface StateRuleFormProps {
 function FieldError({ id, message }: { id: string; message: string | null }) {
   if (!message) return null;
   return (
-    <div id={id} className="mt-1 text-[11.5px] text-red-400" role="alert">
+    <div id={id} className="mt-1 text-[11.5px] text-red-400">
       {message}
     </div>
   );
@@ -82,6 +83,14 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
   const patternError = fieldError("pattern");
   const scopeError = fieldError("scope");
   const linesError = fieldError("lines", "region");
+  const stateError = fieldError("state");
+  const nameError = fieldError("name");
+  const keysError = fieldError("keys");
+  const warning = patternWarning(form.pattern);
+  const describedBy = (error: string | null, errorId: string, ...extra: string[]) => {
+    const ids = [...(error ? [errorId] : []), ...extra];
+    return ids.length > 0 ? ids.join(" ") : undefined;
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -95,11 +104,16 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
           rows={2}
           spellCheck={false}
           aria-invalid={patternError ? true : undefined}
-          aria-describedby={patternError ? `${id}-pattern-error` : undefined}
+          aria-describedby={describedBy(patternError, `${id}-pattern-error`, ...(warning ? [`${id}-pattern-warning`] : []))}
           value={form.pattern}
           onChange={(event) => set({ pattern: event.target.value })}
         />
         <FieldError id={`${id}-pattern-error`} message={patternError} />
+        {warning && (
+          <div id={`${id}-pattern-warning`} className="mt-1 text-[11.5px] text-amber-400" data-pattern-warning>
+            {warning}
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
@@ -110,6 +124,8 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
             <select
               id={`${id}-region`}
               className="nx-select min-w-0 flex-1"
+              aria-invalid={linesError ? true : undefined}
+              aria-describedby={describedBy(linesError, `${id}-lines-error`)}
               value={form.region}
               onChange={(event) => set({ region: event.target.value === "title" ? "title" : "bottom" })}
             >
@@ -124,6 +140,7 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
                 max={STATE_RULE_MAX_LINES}
                 aria-label="底部行数"
                 aria-invalid={linesError ? true : undefined}
+                aria-describedby={describedBy(linesError, `${id}-lines-error`)}
                 value={form.lines}
                 onChange={(event) => set({ lines: Math.trunc(Number(event.target.value)) || 0 })}
               />
@@ -138,6 +155,8 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
           <select
             id={`${id}-state`}
             className="nx-select w-full"
+            aria-invalid={stateError ? true : undefined}
+            aria-describedby={describedBy(stateError, `${id}-state-error`)}
             value={form.state}
             onChange={(event) => set({ state: event.target.value as StateRuleTarget })}
           >
@@ -147,7 +166,7 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
               </option>
             ))}
           </select>
-          <FieldError id={`${id}-state-error`} message={fieldError("state")} />
+          <FieldError id={`${id}-state-error`} message={stateError} />
         </div>
         <div>
           <label className="nx-setting-label mb-1 block" htmlFor={`${id}-scope`}>
@@ -157,6 +176,7 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
             id={`${id}-scope`}
             className="nx-select w-full"
             aria-invalid={scopeError ? true : undefined}
+            aria-describedby={describedBy(scopeError, `${id}-scope-error`)}
             value={form.scope === "host" ? form.assetId || "host:" : "global"}
             onChange={(event) => {
               const value = event.target.value;
@@ -185,10 +205,12 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
             id={`${id}-name`}
             className="nx-input w-full"
             placeholder="留空时使用匹配模式"
+            aria-invalid={nameError ? true : undefined}
+            aria-describedby={describedBy(nameError, `${id}-name-error`)}
             value={form.name}
             onChange={(event) => set({ name: event.target.value })}
           />
-          <FieldError id={`${id}-name-error`} message={fieldError("name")} />
+          <FieldError id={`${id}-name-error`} message={nameError} />
         </div>
       </div>
       {form.state === "needs_me" && (
@@ -200,18 +222,25 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
             id={`${id}-keys`}
             className="nx-input nx-mono w-full"
             placeholder="例如 y"
+            aria-invalid={keysError ? true : undefined}
+            aria-describedby={describedBy(keysError, `${id}-keys-error`, `${id}-keys-hint`)}
             value={form.keys}
             onChange={(event) => set({ keys: event.target.value })}
           />
-          <p className="nx-hint mt-1">需要我时作为按钮提供，只在点击后发送。</p>
-          <FieldError id={`${id}-keys-error`} message={fieldError("keys")} />
+          <p id={`${id}-keys-hint`} className="nx-hint mt-1">需要我时作为按钮提供，只在点击后发送。</p>
+          <FieldError id={`${id}-keys-error`} message={keysError} />
         </div>
       )}
       <label className="flex items-center gap-2 text-[12.5px] text-neutral-200">
         <input type="checkbox" checked={form.enabled} onChange={(event) => set({ enabled: event.target.checked })} />
         启用
       </label>
-      <RuleCheckStatus validation={validation} generalError={generalError} saveError={saveError ?? null} />
+      <RuleCheckStatus
+        validation={validation}
+        generalError={generalError}
+        saveError={saveError ?? null}
+        fieldMessage={invalid && !generalError ? invalid.error ?? null : null}
+      />
     </div>
   );
 }
@@ -220,14 +249,17 @@ function RuleCheckStatus({
   validation,
   generalError,
   saveError,
+  fieldMessage,
 }: {
   validation: RuleValidation;
   generalError: string | null;
   saveError: string | null;
+  fieldMessage: string | null;
 }) {
   const result = validation.result;
   return (
     <div className="flex flex-col gap-2" aria-live="polite">
+      {fieldMessage && <span className="sr-only">规则有误：{fieldMessage}</span>}
       {generalError && (
         <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
           {generalError}

@@ -2,6 +2,7 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -157,5 +158,77 @@ func TestStateRuleDraftWithoutAModelIsUnsupported(t *testing.T) {
 	response := dispatchStateRule(dispatcher, context.Background(), "state_rule_draft", stateRuleDraftRequest{Intent: stateRuleIntentThisIsIt, Screen: draftScreen})
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
 		t.Fatalf("draft without a model = %+v", response)
+	}
+}
+
+func TestStateRuleDraftRedactsSecretsBeforeThePrompt(t *testing.T) {
+	chat := &draftChatModel{reply: `{"name":"n","region":"bottom","lines":2,"pattern":"Continue","state":"needs_me"}`}
+	dispatcher, _ := newStateRuleCommands(t, chat)
+	screen := stateRuleScreenDTO{
+		Lines:     []string{"$ export TOKEN=abc123secret", "$ mysql -pSecret0 -u root", "Continue? [y/N] "},
+		CursorRow: 2,
+		Title:     "deploy password=hunter2",
+	}
+	draft := decodeFSTransferTest[stateRuleDraftDTO](t, dispatchStateRule(dispatcher, context.Background(), "state_rule_draft", stateRuleDraftRequest{
+		Intent: stateRuleIntentThisIsIt, Current: "running", Screen: screen,
+	}))
+	for _, secret := range []string{"abc123secret", "Secret0", "hunter2"} {
+		if strings.Contains(chat.prompt, secret) {
+			t.Fatalf("prompt leaks %q:\n%s", secret, chat.prompt)
+		}
+	}
+	if !strings.Contains(chat.prompt, "Continue? [y/N]") || !draft.Redacted {
+		t.Fatalf("prompt = %s, draft = %+v", chat.prompt, draft)
+	}
+
+	// A clean screen is not reported as redacted.
+	draft = decodeFSTransferTest[stateRuleDraftDTO](t, dispatchStateRule(dispatcher, context.Background(), "state_rule_draft", stateRuleDraftRequest{
+		Intent: stateRuleIntentThisIsIt, Current: "running", Screen: draftScreen,
+	}))
+	if draft.Redacted {
+		t.Fatalf("clean screen reported as redacted: %+v", draft)
+	}
+}
+
+func TestStateRuleValidateReportsSetCostWithoutAScreen(t *testing.T) {
+	dispatcher, _ := newStateRuleCommands(t, nil)
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		rule stateRuleSaveRequest
+		want string
+	}{
+		"lines": {stateRuleSaveRequest{Scope: store.StateRuleScopeGlobal, Region: "bottom", Lines: 50, Pattern: `[a-z]{400}`, State: "idle"}, "lines"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := store.ValidateStateRuleInput(store.StateRuleInput{Scope: tc.rule.Scope, Region: tc.rule.Region, Lines: tc.rule.Lines, Pattern: tc.rule.Pattern, State: tc.rule.State}); err != nil {
+				t.Fatalf("rule is not valid on its own: %v", err)
+			}
+			result := decodeFSTransferTest[stateRuleValidateResult](t, dispatchStateRule(dispatcher, ctx, "state_rule_validate", stateRuleValidateRequest{Rule: tc.rule}))
+			if result.Valid || result.Field != tc.want || result.Error == "" {
+				t.Fatalf("result = %+v", result)
+			}
+			response := dispatchStateRule(dispatcher, ctx, "state_rule_save", tc.rule)
+			if response.OK {
+				t.Fatal("save accepted a rule that validate rejects")
+			}
+		})
+	}
+}
+
+func TestStateRuleDraftNeverCarriesKeys(t *testing.T) {
+	chat := &draftChatModel{reply: `{"name":"n","region":"bottom","lines":2,"pattern":"Continue","state":"needs_me","keys":"y\n"}`}
+	dispatcher, _ := newStateRuleCommands(t, chat)
+	response := dispatchStateRule(dispatcher, context.Background(), "state_rule_draft", stateRuleDraftRequest{
+		Intent: stateRuleIntentThisIsIt, Current: "running", Screen: draftScreen,
+	})
+	if !response.OK {
+		t.Fatalf("draft = %+v", response)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(response.Data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := fields["keys"]; has || fields["pattern"] != "Continue" {
+		t.Fatalf("draft fields = %v, want a pattern and no keys", fields)
 	}
 }

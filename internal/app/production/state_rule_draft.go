@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/staterule"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -63,6 +64,9 @@ type stateRuleDraftDTO struct {
 	Pattern     string `json:"pattern"`
 	State       string `json:"state"`
 	Explanation string `json:"explanation,omitempty"`
+	// Redacted reports that suspected secrets were masked in the screen text
+	// before it was sent to the model.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // stateRuleDraftTargets are the states a draft for intent may set.
@@ -82,9 +86,13 @@ func stateRuleDraftTargets(intent, current string) ([]string, error) {
 	return nil, ipc.BadParam(fmt.Errorf("未知的标记意图 %q", intent))
 }
 
-func stateRuleDraftPrompt(request stateRuleDraftRequest, targets []string) string {
-	excerpt := staterule.RegionText(request.Screen.screen(), staterule.Rule{Region: staterule.RegionBottom, Lines: stateRuleDraftRows})
-	title := staterule.RegionText(request.Screen.screen(), staterule.Rule{Region: staterule.RegionTitle})
+// stateRuleDraftPrompt builds the prompt and reports whether suspected
+// secrets were masked in the screen text it quotes.
+func stateRuleDraftPrompt(request stateRuleDraftRequest, targets []string) (string, bool) {
+	rawExcerpt := staterule.RegionText(request.Screen.screen(), staterule.Rule{Region: staterule.RegionBottom, Lines: stateRuleDraftRows})
+	rawTitle := staterule.RegionText(request.Screen.screen(), staterule.Rule{Region: staterule.RegionTitle})
+	excerpt, title := tools.RedactText(rawExcerpt), tools.RedactText(rawTitle)
+	redacted := excerpt != rawExcerpt || title != rawTitle
 	var b strings.Builder
 	b.WriteString("You write one state rule for a terminal app. A rule says: when a region of the terminal screen matches a regular expression, the session is in a given state.\n")
 	b.WriteString("States: needs_me (the program waits for the user's answer or input), running (it is working), idle (a shell prompt, nothing to do), just_finished (a task just completed).\n")
@@ -103,7 +111,7 @@ func stateRuleDraftPrompt(request stateRuleDraftRequest, targets []string) strin
 	b.WriteString("\n\nBottom of the screen:\n<<<\n")
 	b.WriteString(excerpt)
 	b.WriteString("\n>>>\n")
-	return b.String()
+	return b.String(), redacted
 }
 
 // parseStateRuleDraft reads the JSON object of a model reply, which may sit
@@ -156,7 +164,8 @@ func (r *stateRulesRuntime) draft(ctx context.Context, request stateRuleDraftReq
 	if err != nil {
 		return stateRuleDraftDTO{}, ipc.WrapError(ipc.CodeUnsupported, "AI 模型不可用: "+err.Error(), err)
 	}
-	response, err := chatModel.Generate(ctx, []*schema.Message{schema.UserMessage(stateRuleDraftPrompt(request, targets))})
+	prompt, redacted := stateRuleDraftPrompt(request, targets)
+	response, err := chatModel.Generate(ctx, []*schema.Message{schema.UserMessage(prompt)})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return stateRuleDraftDTO{}, ipc.WrapError(ipc.CodeTimeout, "AI 起草超时", err)
@@ -170,5 +179,6 @@ func (r *stateRulesRuntime) draft(ctx context.Context, request stateRuleDraftReq
 	if err != nil {
 		return stateRuleDraftDTO{}, ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
 	}
+	draft.Redacted = redacted
 	return draft, nil
 }
