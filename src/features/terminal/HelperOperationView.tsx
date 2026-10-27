@@ -26,6 +26,41 @@ export interface HelperUpdatePresentation {
   interrupted?: boolean;
   rolledBack?: boolean;
   endedSessions?: number;
+  endedCount?: "exact" | "atLeast" | "unknown";
+  forced?: boolean;
+}
+
+/** A consented replacement that failed: where, and what had already happened to the older helper. */
+export interface HelperReplaceFailurePresentation {
+  stage: string;
+  stopped: boolean;
+  forced: boolean;
+  rolledBack: boolean;
+  cause?: string;
+}
+
+const FORCED_STOP_NOTE = "旧版组件未响应退出请求，已被强制结束，部分后台进程可能仍在运行。";
+
+/** "N 个会话", "至少 N 个终端会话" or "全部会话", as exact as the old helper reported. */
+export function endedSessionsText(count: number | undefined, kind: "exact" | "atLeast" | "unknown" | undefined): string {
+  if (kind === "atLeast") return `至少 ${count ?? 0} 个终端会话`;
+  if (kind === "unknown" || count === undefined) return "全部会话";
+  return `${count} 个会话`;
+}
+
+function replaceFailureText(failure: HelperReplaceFailurePresentation): string {
+  switch (failure.stage) {
+    case "verify":
+      return "无法核实主机上的旧版组件，未做任何更改。";
+    case "terminate":
+      return "未能结束旧版组件，它和其中的会话仍在运行；未启动新版持久终端组件。";
+    case "start":
+      if (failure.stopped && failure.rolledBack) return "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动；已重新启动旧版组件，原会话不会恢复。";
+      if (failure.stopped) return "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动。";
+      return "新版持久终端组件未能启动。";
+    default:
+      return "升级持久终端组件失败。";
+  }
 }
 
 /** An older-protocol helper that blocks durable terminals until the user agrees to end it. */
@@ -59,6 +94,7 @@ export interface HelperOperationViewProps {
   offlineTrust?: HelperOfflineTrustPresentation | null;
   update?: HelperUpdatePresentation | null;
   legacy?: LegacyHelperPresentation | null;
+  replaceFailure?: HelperReplaceFailurePresentation | null;
   onRetryPersistent?: () => void;
   onContinueOrdinary?: () => void;
   onCancel?: () => void;
@@ -250,6 +286,7 @@ function legacyConsentLabel(legacy: LegacyHelperPresentation): string {
     const total = legacy.ptySessions + legacy.execSessions;
     return total === 0 ? "我已了解：将终止旧版组件" : `我已了解：将终止这 ${total} 个会话，且无法恢复`;
   }
+  if (legacy.ptyListed) return `我已了解：将终止旧版组件中的全部会话（至少 ${legacy.ptySessions} 个终端会话），且无法恢复`;
   return "我已了解：将终止旧版组件中的全部会话，且无法恢复";
 }
 
@@ -274,7 +311,7 @@ function LegacySection({
   return (
     <section aria-label="旧版组件" className="flex flex-col gap-2 rounded border border-[var(--nx-fg-warning)]/40 p-2">
       <h3 className="font-medium text-neutral-200">旧版组件</h3>
-      <p role="status">
+      <p>
         主机上仍在运行旧版持久终端组件（{identity}），当前版本无法接入其中的终端；不升级时它们继续在旧版组件中运行。
       </p>
       <p>{legacySessionText(legacy)}</p>
@@ -293,6 +330,7 @@ function LegacySection({
               type="checkbox"
               checked={agreed}
               disabled={controlsDisabled}
+              aria-describedby={noteId}
               onChange={(event) => setAgreed(event.currentTarget.checked)}
               onKeyDown={activateFromKeyboard}
             />
@@ -301,7 +339,7 @@ function LegacySection({
           <div>
             <button
               type="button"
-              className="nx-btn nx-btn-ghost nx-btn-sm"
+              className="nx-btn nx-btn-danger nx-btn-sm"
               disabled={controlsDisabled || !agreed}
               aria-describedby={noteId}
               onClick={onReplaceLegacy}
@@ -504,6 +542,7 @@ export function HelperOperationView({
   offlineTrust,
   update,
   legacy,
+  replaceFailure,
   onRetryPersistent,
   onContinueOrdinary,
   onCancel,
@@ -655,6 +694,16 @@ export function HelperOperationView({
         </div>
       )}
 
+      {replaceFailure && (
+        <section aria-label="组件升级失败" className="flex flex-col gap-1 rounded border border-red-500/40 p-2">
+          <h3 className="font-medium text-neutral-200">组件升级失败</h3>
+          <p role="alert" className="text-red-300">{replaceFailureText(replaceFailure)}</p>
+          {replaceFailure.forced && <p className="text-[var(--nx-fg-warning)]">{FORCED_STOP_NOTE}</p>}
+          {replaceFailure.cause && <p className="break-words text-neutral-500">{replaceFailure.cause}</p>}
+          <p className="text-neutral-500">不会自动重试；如需再次升级，请重新检查组件状态并确认。</p>
+        </section>
+      )}
+
       {legacy && (
         <LegacySection
           key={legacy.consentToken ?? "uninspected"}
@@ -714,10 +763,10 @@ export function HelperOperationView({
             {update.status === "rolled_back" && <p>更新失败，已恢复为原版本。</p>}
             {update.status === "replaced" && (
               <p>
-                已终止旧版组件并启用新版持久终端组件
-                {update.endedSessions ? `，结束了 ${update.endedSessions} 个会话` : ""}。
+                已终止旧版组件并启用新版持久终端组件，结束了{endedSessionsText(update.endedSessions, update.endedCount)}。
               </p>
             )}
+            {update.status === "replaced" && update.forced && <p className="text-[var(--nx-fg-warning)]">{FORCED_STOP_NOTE}</p>}
             {update.status === "unknown" && (
               <p>
                 {compatibility === "incompatible"

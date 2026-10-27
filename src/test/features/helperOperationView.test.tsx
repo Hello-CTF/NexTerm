@@ -576,6 +576,8 @@ describe("HelperOperationView", () => {
     const consent = section.querySelector<HTMLInputElement>("input[type=checkbox]");
     if (!consent) throw new Error("consent checkbox missing");
     expect(consent.parentElement?.textContent).toContain("将终止这 3 个会话");
+    const warning = document.getElementById(consent.getAttribute("aria-describedby") ?? "");
+    expect(warning?.textContent).toContain("会被终止且无法恢复");
     click(consent);
     expect(replace.disabled).toBe(false);
     click(replace);
@@ -605,8 +607,35 @@ describe("HelperOperationView", () => {
     expect(blocked.querySelector("button")).toBeNull();
   });
 
-  it("reports a completed replacement with the sessions it ended", () => {
-    const view = renderView({ update: { status: "replaced", endedSessions: 3 } });
-    expect(view.container.textContent).toContain("已终止旧版组件并启用新版持久终端组件，结束了 3 个会话");
+  it("reports a completed replacement with the sessions it ended, as exactly as they were counted", () => {
+    const exact = renderView({ update: { status: "replaced", endedSessions: 3, endedCount: "exact" } });
+    expect(exact.container.textContent).toContain("已终止旧版组件并启用新版持久终端组件，结束了3 个会话");
+    expect(exact.container.textContent).not.toContain("强制结束");
+    exact.unmount();
+    mounted = undefined;
+
+    const listed = renderView({ update: { status: "replaced", endedSessions: 2, endedCount: "atLeast", forced: true } });
+    expect(listed.container.textContent).toContain("至少 2 个终端会话");
+    expect(listed.container.textContent).toContain("强制结束，部分后台进程可能仍在运行");
+    listed.unmount();
+    mounted = undefined;
+
+    const unknown = renderView({ update: { status: "replaced", endedSessions: 0, endedCount: "unknown" } });
+    expect(unknown.container.textContent).toContain("结束了全部会话");
+  });
+
+  it("shows where a consented replacement failed and what it already did", () => {
+    const stopped = renderView({ replaceFailure: { stage: "start", stopped: true, forced: true, rolledBack: true, cause: "did not start" } });
+    const section = sectionByLabel(stopped.container, "组件升级失败");
+    expect(section.querySelector("[role=alert]")?.textContent).toContain("会话已终止");
+    expect(section.textContent).toContain("已重新启动旧版组件，原会话不会恢复");
+    expect(section.textContent).toContain("强制结束");
+    expect(section.textContent).toContain("did not start");
+    expect(section.textContent).toContain("不会自动重试");
+    stopped.unmount();
+    mounted = undefined;
+
+    const refused = renderView({ replaceFailure: { stage: "terminate", stopped: false, forced: false, rolledBack: false } });
+    expect(sectionByLabel(refused.container, "组件升级失败").textContent).toContain("它和其中的会话仍在运行");
   });
 });

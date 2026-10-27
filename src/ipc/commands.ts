@@ -542,6 +542,19 @@ export interface HelperUpdateInfo {
   rolledBack?: boolean;
   replacedLegacy?: boolean;
   endedSessions?: number;
+  /** How exact endedSessions is: every session, at least these terminal sessions, or unknown. */
+  endedCount?: "exact" | "atLeast" | "unknown";
+  /** The older helper ignored the stop request and was killed. */
+  forced?: boolean;
+}
+
+/** Detail of a helper_replace_failed error: the stage that failed and what had happened to the older helper. */
+export interface HelperReplaceFailureInfo {
+  stage: string;
+  stopped: boolean;
+  forced: boolean;
+  rolledBack: boolean;
+  cause?: string;
 }
 
 /** An older-protocol helper that still owns the host's helper state, as inspected on that host. */
@@ -591,7 +604,11 @@ function normalizeHelperUpdateStatus(value: string): HelperUpdateInfo["status"] 
     : "unknown";
 }
 
-type HelperUpdateInfoWire = Omit<HelperUpdateInfo, "status"> & { status: string };
+type HelperUpdateInfoWire = Omit<HelperUpdateInfo, "status" | "endedCount"> & { status: string; endedCount?: string };
+
+function normalizeEndedCount(value: string | undefined): HelperUpdateInfo["endedCount"] {
+  return value === "exact" || value === "atLeast" || value === "unknown" ? value : undefined;
+}
 type HelperOfflineInfoWire = Omit<HelperOfflineInfo, "compatibility"> & { compatibility: string };
 type HelperOperationResultWire = Omit<HelperOperationResult, "compatibility" | "update" | "offline"> & {
   compatibility: string;
@@ -604,7 +621,7 @@ function normalizeHelperOperationResult(result: HelperOperationResultWire): Help
     ...result,
     compatibility: normalizeHelperCompatibility(result.compatibility),
     update: result.update
-      ? { ...result.update, status: normalizeHelperUpdateStatus(result.update.status) }
+      ? { ...result.update, status: normalizeHelperUpdateStatus(result.update.status), endedCount: normalizeEndedCount(result.update.endedCount) }
       : result.update,
     offline: result.offline
       ? { ...result.offline, compatibility: normalizeHelperCompatibility(result.offline.compatibility) }
