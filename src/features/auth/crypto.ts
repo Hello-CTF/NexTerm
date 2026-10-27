@@ -1,8 +1,6 @@
 // Account DEK envelope and sync object encryption/decryption, interoperating with internal/vault (userdek.go) and internal/sync (object.go).
 // DEK plaintext exists only in caller memory: never persisted, never uploaded; the server stores only envelopes and ciphertext.
 
-import { argon2idKey } from "./argon2";
-
 export { bytesToBase64 } from "../../ui/base64";
 
 const DEK_LENGTH = 32;
@@ -138,6 +136,8 @@ async function deriveUserKEK(password: string, salt: Uint8Array, params: KdfPara
   if (salt.length < 16) {
     throw new CryptoError("crypto", "加密失败：盐值长度不足");
   }
+  // The Argon2 implementation is only needed when a password is actually derived, so it stays out of the entry chunk.
+  const { argon2idKey } = await import("./argon2");
   return argon2idKey(utf8Bytes(password), salt, params.t, params.m, params.p, DEK_LENGTH);
 }
 

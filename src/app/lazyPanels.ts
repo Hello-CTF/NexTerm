@@ -51,6 +51,9 @@ export const CredentialsSidebar = lazy(() =>
 );
 const loadJumpPalette = () => import("./JumpPalette");
 export const JumpPalette = lazy(() => loadJumpPalette().then((m) => ({ default: m.JumpPalette })));
+export const StatusWall = lazy(() =>
+  import("../features/mobile/StatusWall").then((m) => ({ default: m.StatusWall })),
+);
 export const AutoSync = lazy(() => import("./AutoSync"));
 
 // The asset tree is on the first screen: start downloading it in parallel with the rest of boot.

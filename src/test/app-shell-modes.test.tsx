@@ -2,7 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flush, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
@@ -201,6 +201,11 @@ afterEach(() => {
   window.matchMedia = realMatchMedia;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: realInnerWidth });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: realInnerHeight });
+});
+
+// The mobile home loads the status wall through React.lazy. Warm it so the awaited flushes only cover mocked work.
+beforeAll(async () => {
+  await import("../features/mobile/StatusWall");
 });
 
 describe("useShell", () => {
