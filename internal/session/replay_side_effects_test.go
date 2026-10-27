@@ -61,8 +61,8 @@ func TestAttachAnchorCountsReplayedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumed := bindTestReceiver(t, manager, "count-resume")
-	if anchor := receiveTestAnchor(t, resumed); anchor.ReplayBytes != 6 {
-		t.Fatalf("resume replayBytes = %d, want the 6-byte gap", anchor.ReplayBytes)
+	if anchor := receiveTestAnchor(t, resumed); anchor.ReplayBytes != 0 {
+		t.Fatalf("resume replayBytes = %d, want 0: the resumed gap is output this view missed", anchor.ReplayBytes)
 	}
 	assertFrameData(t, resumed, []byte(" world"))
 	if err := channel.emit([]byte("!")); err != nil {

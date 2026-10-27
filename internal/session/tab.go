@@ -73,8 +73,9 @@ const streamAnchorType = "nexterm.stream-anchor"
 // control bytes at the stream head that do not count toward the sequence (clear-screen escape); expired means the client
 // anchor was not adopted and this attach fell back to a full clear-screen replay. The client computes the consumed
 // sequence as streamSeq + max(0, bytes received - controlBytes) and brings it back via AttachOptions.FromSeq/FromEpoch on reconnect.
-// replayBytes is how many stream bytes after the anchor (control bytes included) are replayed history rather than new
-// output: clients render them without side effects such as automatic query replies, clipboard writes or notifications.
+// replayBytes is how many stream bytes after the anchor (control bytes included) are replayed history the client already
+// rendered rather than output it has not seen: clients render them without side effects such as automatic query replies,
+// clipboard writes or notifications. Recovery anchors and adopted resumes carry missed output and announce none.
 // attachmentId is the incarnation this frame was sent for: the client adopts it as its current attachment identity, so
 // the ordered stream itself carries the incarnation even when the attach RPC response has not arrived yet.
 type streamAnchor struct {
@@ -1124,11 +1125,18 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	anchor, control, replay := m.planAttachReplay(tab, options, clear)
 	if anchor != nil {
 		anchor.AttachmentID = attachmentId
+		// Only bytes the client already rendered are replay: a full
+		// clear-screen replay, and a recovered durable tail still being fed.
+		// An adopted resume delivers output this view missed, which keeps its
+		// effects (the overlap the client already has is skipped client-side).
 		// The feed gate is held: no feed can run between this read and the
 		// replay send, so the pending replay follows the ring replay exactly.
 		tab.mu.Lock()
-		anchor.ReplayBytes = int64(len(control)+len(replay)) + tab.replayPending
+		pending := tab.replayPending
 		tab.mu.Unlock()
+		if resumed := options.FromSeq > 0 && !anchor.Expired; !resumed || pending > 0 {
+			anchor.ReplayBytes = int64(len(control)+len(replay)) + pending
+		}
 		frame, _ := json.Marshal(anchor)
 		if err := producer.SendJSON(attachCtx, frame); err != nil {
 			return TabInfo{}, err

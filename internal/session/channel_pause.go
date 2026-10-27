@@ -279,7 +279,6 @@ func (m *Manager) RecoverChannelFor(ctx context.Context, tabID, channelID, clien
 		Epoch:        "recovery-" + tabID,
 		StreamSeq:    uint64(acceptedBytes),
 		AttachmentID: subscriber.attachmentId,
-		ReplayBytes:  int64(len(replay)),
 	})
 	if err != nil {
 		return 0, 0, err

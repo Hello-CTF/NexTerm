@@ -3374,16 +3374,29 @@ describe("XtermView replayed output", () => {
     expect(onNotification).toHaveBeenLastCalledWith("old note");
   });
 
-  it("treats a recovery anchor's redelivered suffix as replay", async () => {
+  it("renders a recovery anchor's refused suffix with its effects: it was never shown", async () => {
     harness.emitReplies = true;
     const onNotification = vi.fn();
     await show({ onNotification });
     await attachOk();
     const t = term();
-    const suffix = "\x1b[6n\x1b]9;refused\x07";
+    feedControl({ type: "nexterm.stream-anchor", epoch: "recovery-kernel-1", streamSeq: 0 });
+    feedBytes("\x1b[6n\x1b]9;refused\x07");
+    act(() => t.drainWrites());
+    expect(upstream()).toEqual(["\x1b[1;1R"]);
+    expect(onNotification).toHaveBeenCalledWith("refused");
+  });
+
+  it("counts replayed bytes across frames", async () => {
+    harness.emitReplies = true;
+    const onNotification = vi.fn();
+    await show({ onNotification });
+    await attachOk();
+    const t = term();
+    const suffix = "\x1b[6n\x1b]9;replayed\x07";
     feedControl({
       type: "nexterm.stream-anchor",
-      epoch: "recovery-kernel-1",
+      epoch: "e1",
       streamSeq: 0,
       replayBytes: enc.encode(suffix).length,
     });

@@ -117,6 +117,12 @@ func TestRecoverChannelForRedeliversRefusedSuffix(t *testing.T) {
 	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
 		t.Fatalf("anchor = %q", anchor.Data)
 	}
+	// The refused suffix was never rendered: it is not announced as replay,
+	// so its replies, clipboard writes and notifications still happen.
+	var decoded streamAnchor
+	if err := json.Unmarshal(anchor.Data, &decoded); err != nil || decoded.ReplayBytes != 0 {
+		t.Fatalf("recovery anchor = %+v (err %v), want replayBytes 0", decoded, err)
+	}
 	if got := readFramesUntil(t, receiver, 3); string(got) != "two" {
 		t.Fatalf("recovered frame = %q", got)
 	}
