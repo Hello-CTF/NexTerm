@@ -225,8 +225,9 @@ describe("BackgroundSessions table", () => {
     mocks.listLive.mockResolvedValue([
       ...states.map(([state]) => liveTab({ tabId: state, title: state, durable: true, state })),
       liveTab({ tabId: "regular", title: "普通" }),
+      liveTab({ tabId: "future", title: "新状态", durable: true, state: "thinking" as SessionAttentionState }),
     ]);
-    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(6));
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(7));
     try {
       for (const [state, label] of states) {
         const status = cell(row(view, state), "background-status");
@@ -237,6 +238,11 @@ describe("BackgroundSessions table", () => {
       const regular = cell(row(view, "regular"), "background-status");
       expect(regular.textContent).toBe("—");
       expect(regular.title).toContain("普通终端不会报告状态");
+      const future = cell(row(view, "future"), "background-status");
+      expect(future.textContent).toBe("—");
+      expect(future.title).toBe("未知状态");
+      // A newer state is not mistaken for an old component.
+      expect(view.container.querySelector('[data-testid="background-old-helper-note"]')).toBeNull();
       expect(view.container.querySelector('[class*="amber"]')).toBeNull();
     } finally {
       view.unmount();

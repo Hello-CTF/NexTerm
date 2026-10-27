@@ -114,6 +114,8 @@ function statusView(tab: BackgroundTab): StatusView {
       tone: state === "needs_me" ? "accent" : state === "exited" ? "muted" : "normal",
     };
   }
+  // A state a newer helper added is reported, just not understood here.
+  if (state) return { label: "—", hint: "未知状态", tone: "muted" };
   if (tab.exited) return { label: STATE_LABELS.exited, hint: STATE_HINTS.exited, tone: "muted" };
   return {
     label: "—",
