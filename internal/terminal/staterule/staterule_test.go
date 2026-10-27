@@ -208,3 +208,15 @@ func TestMatchSeesEveryRowOfABoxDrawnRegion(t *testing.T) {
 		t.Fatal("the top row of a box-drawn region was not matched")
 	}
 }
+
+func TestRegionTextIsWhatARuleSees(t *testing.T) {
+	screen := Screen{Lines: []string{"build log", "", "Continue? [y/N]", "", ""}, CursorRow: 2, Title: "✳ agent"}
+	bottom := Normalize(Rule{Region: RegionBottom, Lines: 2})
+	if got := RegionText(screen, bottom); got != "\nContinue? [y/N]" {
+		t.Fatalf("bottom region = %q", got)
+	}
+	title := Normalize(Rule{Region: RegionTitle})
+	if got := RegionText(screen, title); got != "✳ agent" {
+		t.Fatalf("title region = %q", got)
+	}
+}

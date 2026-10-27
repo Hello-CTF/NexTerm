@@ -36,6 +36,7 @@ import { PaneForTab } from "./PaneForTab";
 import { WorkspaceEmpty } from "./EmptyStates";
 import { beginTabDrag, currentTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
 import { isTouchShell } from "../shell/shellMode";
+import { stateMarkItems } from "../../features/session/stateMarkMenu";
 
 function handleTablistKeyDown(
   event: ReactKeyboardEvent<HTMLElement>,
@@ -258,6 +259,10 @@ export function PaneGroup({
           onSelect: () => void splitPaneWithTab(t.id, pane.id, edge),
         });
       }
+    }
+    if (running && t.tabId) {
+      const marks = stateMarkItems(t, t.tabId);
+      if (marks.length > 0) items.push({ kind: "separator" }, ...marks);
     }
     if (running) {
       items.push({ kind: "separator" });

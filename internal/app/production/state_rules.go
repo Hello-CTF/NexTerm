@@ -15,8 +15,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -29,6 +31,7 @@ type stateRuleStore interface {
 	StateRuleList(ctx context.Context) ([]store.StateRuleRow, error)
 	StateRuleSave(ctx context.Context, input store.StateRuleInput) (store.StateRuleRow, error)
 	StateRuleDelete(ctx context.Context, id string) error
+	StateRuleReorder(ctx context.Context, order []string) ([]store.StateRuleRow, error)
 	StateRuleImport(ctx context.Context, inputs []store.StateRuleInput) (store.StateRuleImportResult, error)
 	StateRulesFor(ctx context.Context, assetID string) ([]staterule.Rule, []string, error)
 	StateRuleFingerprint(ctx context.Context) (store.StateRuleFingerprint, error)
@@ -104,6 +107,8 @@ type stateRulesRuntime struct {
 	// multiAccount refuses helpers without an account: one set would
 	// otherwise serve every account.
 	multiAccount bool
+	// draftModel drafts rules from a screen; nil without the AI runtime.
+	draftModel stateRuleModelFactory
 
 	mu      sync.Mutex
 	helpers map[stateRuleHelperKey]*stateRuleHelper
@@ -372,6 +377,92 @@ type stateRuleSaveRequest struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type stateRuleReorderRequest struct {
+	// IDs lists every rule of the owner in the new order.
+	IDs []string `json:"ids"`
+}
+
+type stateRuleValidateRequest struct {
+	Rule stateRuleSaveRequest `json:"rule"`
+	// Screen, when set, is matched against the rule.
+	Screen *stateRuleScreenDTO `json:"screen,omitempty"`
+}
+
+// stateRuleValidateResult says whether a rule would be accepted and, for a
+// screen, whether it matches and what text it sees there.
+type stateRuleValidateResult struct {
+	Valid bool `json:"valid"`
+	// Field names the invalid field: name, scope, region, lines, pattern,
+	// state or keys; empty for an error not about one field.
+	Field string `json:"field,omitempty"`
+	Error string `json:"error,omitempty"`
+	// Lines is the normalized row count of a valid bottom rule.
+	Lines   int32  `json:"lines,omitempty"`
+	Tested  bool   `json:"tested"`
+	Matched bool   `json:"matched"`
+	Region  string `json:"region,omitempty"`
+}
+
+// validateStateRule checks a rule as state_rule_save would, except for the
+// checks against stored data (the host and the owner's limits), and tests
+// it against the screen when one is given.
+func validateStateRule(request stateRuleValidateRequest) stateRuleValidateResult {
+	input := request.Rule
+	normalized, err := store.ValidateStateRuleInput(store.StateRuleInput{
+		ID: input.ID, Name: input.Name, Scope: input.Scope, AssetID: input.AssetID, Region: input.Region,
+		Lines: input.Lines, Pattern: input.Pattern, State: input.State, Keys: input.Keys, Enabled: input.Enabled,
+	})
+	if err != nil {
+		return stateRuleValidateResult{Error: ipc.NormalizeError(err).Message, Field: stateRuleInvalidField(input)}
+	}
+	result := stateRuleValidateResult{Valid: true, Lines: normalized.Lines}
+	if request.Screen == nil {
+		return result
+	}
+	var compiled *staterule.Compiled
+	rule := staterule.Rule{
+		ID: normalized.ID, Region: normalized.Region, Lines: int(normalized.Lines),
+		Pattern: normalized.Pattern, State: normalized.State, Keys: normalized.Keys,
+	}
+	set, err := staterule.NewSet([]staterule.Rule{rule})
+	if err == nil {
+		compiled, err = staterule.Compile(set)
+	}
+	if err != nil {
+		return stateRuleValidateResult{Error: fmt.Sprintf("匹配模式过于复杂或区域行数过多: %v", err), Field: "pattern"}
+	}
+	screen := request.Screen.screen()
+	_, result.Matched = compiled.Match(screen)
+	result.Tested = true
+	result.Region = staterule.RegionText(screen, rule)
+	return result
+}
+
+// stateRuleInvalidField names the field of an invalid rule in the order
+// store.ValidateStateRuleInput checks them.
+func stateRuleInvalidField(input stateRuleSaveRequest) string {
+	if utf8.RuneCountInString(strings.TrimSpace(input.Name)) > store.MaxStateRuleNameRunes {
+		return "name"
+	}
+	switch input.Scope {
+	case store.StateRuleScopeGlobal:
+	case store.StateRuleScopeHost:
+		if strings.TrimSpace(input.AssetID) == "" {
+			return "scope"
+		}
+	default:
+		return "scope"
+	}
+	rule := staterule.Normalize(staterule.Rule{
+		ID: ids.New(), Region: input.Region, Lines: int(input.Lines), Pattern: input.Pattern, State: input.State, Keys: input.Keys,
+	})
+	var typed *staterule.Error
+	if _, err := staterule.Validate(rule); errors.As(err, &typed) {
+		return typed.Field
+	}
+	return ""
+}
+
 type stateRuleDeleteRequest struct {
 	ID string `json:"id"`
 }
@@ -514,6 +605,30 @@ func (r *stateRulesRuntime) registerCommands(dispatcher *ipc.Dispatcher) error {
 					r.changed(ipc.OwnerID(ctx))
 				}
 				return stateRuleImportResultDTO{Created: result.Created, Updated: result.Updated, Unchanged: result.Unchanged}, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "state_rule_reorder", func(ctx context.Context, _ *ipc.Call, input stateRuleReorderRequest) ([]stateRuleDTO, error) {
+				rows, err := r.store.StateRuleReorder(ctx, input.IDs)
+				if err != nil {
+					return nil, err
+				}
+				r.changed(ipc.OwnerID(ctx))
+				result := make([]stateRuleDTO, len(rows))
+				for i, row := range rows {
+					result[i] = stateRuleDTOFromRow(row)
+				}
+				return result, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "state_rule_validate", func(_ context.Context, _ *ipc.Call, input stateRuleValidateRequest) (stateRuleValidateResult, error) {
+				return validateStateRule(input), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "state_rule_draft", func(ctx context.Context, _ *ipc.Call, input stateRuleDraftRequest) (stateRuleDraftDTO, error) {
+				return r.draft(ctx, input)
 			})
 		},
 		func() error {

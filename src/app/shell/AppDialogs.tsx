@@ -5,6 +5,7 @@ import { WEB } from "../../ipc/env";
 import { PromptModal } from "../../ui/PromptModal";
 import { DialogHost } from "../../ui/DialogHost";
 import { MultilinePasteDialogHost } from "../../features/terminal/MultilinePasteDialog";
+import { StateMarkDialogHost } from "../../features/session/StateMarkDialogHost";
 import { Lazy } from "../../ui/LazyBoundary";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { AssetEditor, JumpPalette } from "../lazyPanels";
@@ -83,6 +84,7 @@ export function AppDialogs({
       <PromptModal />
       <DialogHost />
       <MultilinePasteDialogHost />
+      <StateMarkDialogHost />
     </>
   );
 }

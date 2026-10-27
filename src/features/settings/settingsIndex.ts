@@ -8,6 +8,7 @@
 export type SettingsSectionId =
   | "settings-appearance"
   | "settings-terminal"
+  | "settings-state-rules"
   | "settings-shortcuts"
   | "settings-update"
   | "settings-diagnostics"
@@ -35,6 +36,10 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   "settings-terminal": {
     description: "默认终端模式、剪贴板、关闭行为、GPU 加速、快捷命令",
     keywords: ["terminal", "durable", "persistent", "osc52", "clipboard", "tray", "snippet", "持久", "剪贴板", "托盘", "后台", "快捷命令"],
+  },
+  "settings-state-rules": {
+    description: "按屏幕内容纠正会话状态（需要我、运行中、空闲）的规则",
+    keywords: ["state", "rule", "needs me", "attention", "badge", "regex", "pattern", "状态", "规则", "需要我", "徽章", "误报", "正则", "标记", "test", "测试"],
   },
   "settings-shortcuts": {
     description: "自定义快捷键与选中复制",
@@ -120,6 +125,8 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "terminal-link-activation", section: "settings-terminal", label: "链接打开方式", description: "Ctrl/Cmd+单击或单击打开终端中的链接", keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", "链接", "超链接", "单击"] },
   { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: "多行粘贴确认", description: "程序未开启括号粘贴时、每次或从不在粘贴多行文本前确认，随账号同步", keywords: ["paste", "bracketed paste", "括号粘贴", "multiline", "multi-line", "confirm", "clipboard", "粘贴", "多行", "确认", "提示", "剪贴板"] },
   { id: "system-notifications", section: "settings-terminal", label: "系统通知", description: "会话需要你或长命令结束时在此设备弹出系统通知", keywords: ["notification", "notify", "bell", "inbox", "osc9", "通知", "系统通知", "响铃", "铃铛", "收件箱"] },
+  { id: "state-rules-import", section: "settings-state-rules", label: "导入或导出状态规则", keywords: ["import", "export", "json", "导入", "导出"] },
+  { id: "state-rules-status", section: "settings-state-rules", label: "状态规则下发状态", description: "各主机的持久终端组件是否已使用当前规则", keywords: ["push", "helper", "host", "下发", "主机", "组件"] },
   { id: "copy-on-select", section: "settings-shortcuts", label: "选中自动复制", keywords: ["copy", "select", "clipboard", "复制", "剪贴板"], panel: "shortcuts-advanced" },
   { id: "vault-password", section: "settings-vault", label: "用密码保护凭据", keywords: ["password", "credential", "vault", "密码", "凭据"] },
   { id: "vault-auto-lock", section: "settings-vault", label: "闲置自动锁定", keywords: ["lock", "idle", "timeout", "锁定", "凭据"] },

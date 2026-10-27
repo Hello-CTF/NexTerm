@@ -116,6 +116,19 @@ func normalizeStateRuleInput(input StateRuleInput, prefix string) (StateRuleInpu
 	return input, nil
 }
 
+// ValidateStateRuleInput checks a rule as StateRuleSave would, without the
+// checks that need stored data (the host and the owner's limits), and
+// returns it normalized. A rule without an ID is checked under a fresh one.
+func ValidateStateRuleInput(input StateRuleInput) (StateRuleInput, error) {
+	input.ID = strings.TrimSpace(input.ID)
+	if input.ID == "" {
+		input.ID = ids.New()
+	} else if err := EnsureID(input.ID); err != nil {
+		return StateRuleInput{}, err
+	}
+	return normalizeStateRuleInput(input, "")
+}
+
 func clipRunes(text string, limit int) string {
 	if utf8.RuneCountInString(text) <= limit {
 		return text
@@ -321,6 +334,74 @@ func checkStateRuleLimits(ctx context.Context, tx *gorm.DB, changes []StateRuleI
 		return stateRuleError("已保存的规则: ", err)
 	}
 	return nil
+}
+
+// StateRuleReorder puts the owner's rules in the order of ids, which must
+// name each of the owner's rules exactly once, and returns them in that
+// order. Moved rules get a newer UpdatedAt so caches and other devices see
+// the change.
+func (s *Store) StateRuleReorder(ctx context.Context, order []string) ([]StateRuleRow, error) {
+	if len(order) > staterule.MaxRules {
+		return nil, badParam(fmt.Errorf("状态规则最多 %d 条", staterule.MaxRules))
+	}
+	wanted := make(map[string]int, len(order))
+	for i, id := range order {
+		id = strings.TrimSpace(id)
+		if err := EnsureID(id); err != nil {
+			return nil, err
+		}
+		if _, dup := wanted[id]; dup {
+			return nil, badParam(fmt.Errorf("规则 %s 重复出现", id))
+		}
+		wanted[id] = i
+	}
+	now := ids.NowMS()
+	err := retryStateRulePosition(func() error {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			rule := query.Use(tx).StateRuleRow
+			rows, err := rule.WithContext(ctx).
+				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where(ownerConditions(ctx, rule.TableName())...).
+				Find()
+			if err != nil {
+				return err
+			}
+			if len(rows) != len(wanted) {
+				return badParam(errors.New("规则列表已变化，请刷新后重试"))
+			}
+			moved := make([]*StateRuleRow, 0, len(rows))
+			for _, row := range rows {
+				i, ok := wanted[row.ID]
+				if !ok {
+					return badParam(errors.New("规则列表已变化，请刷新后重试"))
+				}
+				if row.Position != int64(i+1) {
+					moved = append(moved, row)
+				}
+			}
+			// Positions are unique per owner: moved rules first step aside to
+			// negative positions, which stored rules never use.
+			for _, row := range moved {
+				if _, err := rule.WithContext(ctx).
+					Where(rule.ID.Eq(row.ID), rule.OwnerID.Eq(row.OwnerID)).
+					UpdateColumns(map[string]any{"position": -int64(wanted[row.ID] + 1)}); err != nil {
+					return err
+				}
+			}
+			for _, row := range moved {
+				if _, err := rule.WithContext(ctx).
+					Where(rule.ID.Eq(row.ID), rule.OwnerID.Eq(row.OwnerID)).
+					UpdateColumns(map[string]any{"position": int64(wanted[row.ID] + 1), "updated_at": max(now, row.UpdatedAt+1)}); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, dbError(err)
+	}
+	return s.StateRuleList(ctx)
 }
 
 // StateRuleDelete removes the owner's rule.
