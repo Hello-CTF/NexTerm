@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -87,6 +88,29 @@ func feedSlowSubscriberFrameResult(manager *Manager, tab *Tab, data []byte) erro
 	}
 }
 
+// assertObserverData reads the next expected bytes from an observer's
+// stream. Once the slow controller is gone nobody answers queries, so the
+// observer also receives "answered" stream-class frames ahead of the bytes;
+// they are checked and skipped, and the bytes must arrive contiguously.
+func assertObserverData(t *testing.T, receiver *hub.Receiver, expected []byte) {
+	t.Helper()
+	var got []byte
+	for len(got) < len(expected) {
+		frame := receiveTestFrame(t, receiver)
+		if frame.Kind == hub.FrameJSON {
+			var class streamClassFrame
+			if err := json.Unmarshal(frame.Data, &class); err != nil || class.Type != streamClassType || class.Kind != classAnswered {
+				t.Fatalf("observer JSON frame = %s, want an answered stream-class frame", frame.Data)
+			}
+			continue
+		}
+		got = append(got, frame.Data...)
+	}
+	if !bytes.Equal(got, expected) {
+		t.Fatalf("observer bytes = %q, want %q", got, expected)
+	}
+}
+
 func TestSlowSubscriberDisconnectReplaysFromLastContinuousSequence(t *testing.T) {
 	manager, tab := newSlowSubscriberFixture(t, 2, 4<<20)
 	slow, initialAnchor := attachSlowSubscriberReceiver(t, manager, tab, "slow")
@@ -95,7 +119,7 @@ func TestSlowSubscriberDisconnectReplaysFromLastContinuousSequence(t *testing.T)
 	prefix := bytes.Repeat([]byte("p"), outputCoalesceMax)
 	feedSlowSubscriberFrame(t, manager, tab, prefix)
 	assertFrameData(t, slow, prefix)
-	assertFrameData(t, fast, prefix)
+	assertObserverData(t, fast, prefix)
 	source := append([]byte(nil), prefix...)
 	oldStream := append([]byte(nil), prefix...)
 
@@ -123,7 +147,7 @@ func TestSlowSubscriberDisconnectReplaysFromLastContinuousSequence(t *testing.T)
 		chunk := bytes.Repeat([]byte{byte('a' + index)}, outputCoalesceMax)
 		source = append(source, chunk...)
 		feedSlowSubscriberFrame(t, manager, tab, chunk)
-		assertFrameData(t, fast, chunk)
+		assertObserverData(t, fast, chunk)
 		select {
 		case <-cleanupStarted:
 			disconnected = true
@@ -144,11 +168,11 @@ func TestSlowSubscriberDisconnectReplaysFromLastContinuousSequence(t *testing.T)
 	afterAbort := bytes.Repeat([]byte("m"), outputCoalesceMax)
 	source = append(source, afterAbort...)
 	feedSlowSubscriberFrame(t, manager, tab, afterAbort)
-	assertFrameData(t, fast, afterAbort)
+	assertObserverData(t, fast, afterAbort)
 	residual := []byte("residual-after-abort")
 	source = append(source, residual...)
 	feedSlowSubscriberFrame(t, manager, tab, residual)
-	assertFrameData(t, fast, residual)
+	assertObserverData(t, fast, residual)
 	releaseOnce.Do(func() { close(releaseCleanup) })
 
 	for {
@@ -215,7 +239,7 @@ func TestSlowSubscriberDisconnectReplaysFromLastContinuousSequence(t *testing.T)
 	tail := bytes.Repeat([]byte("z"), outputCoalesceMax)
 	feedSlowSubscriberFrame(t, manager, tab, tail)
 	assertFrameData(t, resumed, tail)
-	assertFrameData(t, fast, tail)
+	assertObserverData(t, fast, tail)
 	recovered := append(bytes.Clone(oldStream), gotReplay...)
 	recovered = append(recovered, tail...)
 	wantComplete := append(bytes.Clone(source), tail...)
