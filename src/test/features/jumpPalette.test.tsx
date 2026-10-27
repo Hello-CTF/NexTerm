@@ -425,3 +425,85 @@ describe("jump palette attention from the awareness store", () => {
     expect(optionLabels(view).slice(0, 2)).toEqual(["logs", "deploy"]);
   });
 });
+
+describe("jump palette number keys and split", () => {
+  const altDigit = (view: MountedView, digit: number, init: KeyboardEventInit = {}) =>
+    keyDown(combobox(view), String(digit), { altKey: true, code: `Digit${digit}`, ...init });
+
+  it("opens the Nth shown row with Alt+digit", async () => {
+    noteTabActivated("t-logs");
+    noteTabActivated("t-deploy");
+    noteTabActivated("t-build");
+    const onClose = vi.fn();
+    const view = await mountPalette({ onClose });
+    expect(optionLabels(view).slice(0, 2)).toEqual(["deploy", "logs"]);
+    expect(options(view)[1].getAttribute("aria-keyshortcuts")).toBe("Alt+2");
+
+    const event = altDigit(view, 2);
+    expect(event.defaultPrevented).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-b");
+  });
+
+  it("counts the rows as filtered when the box has text", async () => {
+    const onClose = vi.fn();
+    const view = await mountPalette({ onClose });
+    setInputValue(combobox(view), "logs");
+    altDigit(view, 1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-b");
+  });
+
+  it("leaves plain digits as text, ignores missing rows and IME composition", async () => {
+    const onClose = vi.fn();
+    const view = await mountPalette({ onClose });
+    const plain = keyDown(combobox(view), "1", { code: "Digit1" });
+    expect(plain.defaultPrevented).toBe(false);
+    setInputValue(combobox(view), "logs");
+    altDigit(view, 5);
+    altDigit(view, 1, { isComposing: true });
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-a");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("Shift+Enter moves a session of the current workspace into a new pane to the right", async () => {
+    const onClose = vi.fn();
+    const view = await mountPalette({ onClose });
+    setInputValue(combobox(view), "deploy");
+    keyDown(combobox(view), "Enter", { shiftKey: true });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    const ws = useUi.getState().workspaces.find((item) => item.id === "ws-a")!;
+    expect(ws.panes).toHaveLength(2);
+    const created = ws.panes.find((pane) => pane.id !== "ws-a-pane")!;
+    expect(created.tabs.map((tab) => tab.id)).toEqual(["t-deploy"]);
+    expect(ws.activePaneId).toBe(created.id);
+    expect(ws.panes.find((pane) => pane.id === "ws-a-pane")!.tabs.map((tab) => tab.id)).toEqual(["t-build"]);
+  });
+
+  it("Shift+Enter on a session of another workspace opens it normally and says why", async () => {
+    const view = await mountPalette();
+    setInputValue(combobox(view), "logs");
+    keyDown(combobox(view), "Enter", { shiftKey: true });
+
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("已直接打开"));
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-b");
+    expect(useUi.getState().workspaces.find((item) => item.id === "ws-b")!.panes).toHaveLength(1);
+  });
+
+  it("Shift+Enter on the current workspace's own host splits it to the right", async () => {
+    const onClose = vi.fn();
+    const view = await mountPalette({ scope: "hosts", onClose });
+    keyDown(combobox(view), "Enter", { shiftKey: true });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().workspaces.find((item) => item.id === "ws-a")!.panes).toHaveLength(2);
+  });
+
+  it("plain Enter on a session does not split", async () => {
+    const view = await mountPalette();
+    setInputValue(combobox(view), "deploy");
+    keyDown(combobox(view), "Enter");
+    expect(useUi.getState().workspaces.find((item) => item.id === "ws-a")!.panes).toHaveLength(1);
+  });
+});
