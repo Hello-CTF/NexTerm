@@ -48,7 +48,7 @@ type HelloMessage struct {
 	// Purpose echoes the bridge request's purpose, so the server pairs the connection with the right consumer; empty means terminal.
 	Purpose string `json:"purpose,omitempty"`
 	// Capabilities advertises the bridge purposes this agent serves; the server requests a non-terminal
-	// bridge only after the agent advertised it here, so old agents never mis-handle a purpose bridge as terminal.
+	// bridge only after the agent advertised it here.
 	Capabilities []string `json:"capabilities,omitempty"`
 	// StateDigest is the device-side supervisor state directory digest (sha256(identity\x00dir)),
 	// with which the server passes the helper's hello verification for managed attach/create sessions; the digest itself
@@ -70,7 +70,7 @@ type serverMessage struct {
 
 // ProtocolMismatchError is the runtime error form of the version_mismatch control frame:
 // errors.Is(err, ErrProtocolMismatch) is always true, and ServerVersion carries the version reported by the server
-// (empty when an old server does not carry one), for self-upgrade to resolve the target version.
+// (empty when the server does not carry one), for self-upgrade to resolve the target version.
 type ProtocolMismatchError struct {
 	ServerVersion string
 }

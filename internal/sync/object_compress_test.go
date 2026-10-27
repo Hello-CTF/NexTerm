@@ -139,7 +139,6 @@ func rawFrame(t *testing.T, declared uint64, body []byte) []byte {
 }
 
 func TestDecompressRejectsBombsAndBadHeaders(t *testing.T) {
-	dek := vault.GenerateUserDEK()
 	body := bytes.Repeat([]byte("A"), 8<<20)
 	cases := map[string][]byte{
 		"declared smaller than actual": rawFrame(t, 1<<20, body),
@@ -151,20 +150,12 @@ func TestDecompressRejectsBombsAndBadHeaders(t *testing.T) {
 		"header only":                  rawFrame(t, 5, nil)[:compressedHeaderSize],
 	}
 	for name, packed := range cases {
-		blob, err := sealObject(dek, packed, "tr-1", wireKindTranscriptZstd)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := tryOpenObject(dek, blob, "tr-1"); err == nil {
+		if _, err := decompressObjectPlaintext(packed); err == nil {
 			t.Errorf("%s: expected rejection", name)
 		}
 	}
 	// A correct declaration of the same body is accepted, so the rejections above are not collateral.
-	good, err := sealObject(dek, rawFrame(t, uint64(len(body)), body), "tr-1", wireKindTranscriptZstd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, plaintext, err := tryOpenObject(dek, good, "tr-1"); err != nil || len(plaintext) != len(body) {
+	if plaintext, err := decompressObjectPlaintext(rawFrame(t, uint64(len(body)), body)); err != nil || len(plaintext) != len(body) {
 		t.Fatalf("valid frame rejected: %v", err)
 	}
 }

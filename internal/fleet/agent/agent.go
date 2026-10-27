@@ -30,13 +30,13 @@ const (
 	ProtocolVersion = 1
 
 	// PurposeTerminal is the implicit bridge purpose: an empty purpose on the
-	// wire means a terminal bridge, and agents pre-dating purposes serve only it.
+	// wire means a terminal bridge.
 	PurposeTerminal = "terminal"
 
 	// DeviceKindLocalHelper is the enroll kind of a desktop that exposes its
 	// local helper sessions to its own account. The server never shares such
-	// a device and echoes the kind, so a server that does not know it is
-	// detected instead of enrolling an ordinary, shareable device.
+	// a device and echoes the kind, so a mismatch is detected instead of
+	// enrolling an ordinary, shareable device.
 	DeviceKindLocalHelper = "local-helper"
 
 	// ConfigVersion is the version of the device config an enrollment writes.

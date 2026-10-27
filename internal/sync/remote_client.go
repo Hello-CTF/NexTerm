@@ -371,7 +371,7 @@ func (r *IDsResponse) syncProtocol() int    { return r.Protocol }
 func (r *WaitResponse) syncProtocol() int   { return r.Protocol }
 
 // syncPost performs the protocol handshake of one /sync/v2 request: a rejection with CodeUnsupported (the only
-// code these endpoints use for a protocol mismatch, on 1.3.0 and older servers alike) and a success reporting
+// code these endpoints use for a protocol mismatch) and a success reporting
 // another protocol both become a visible incompatibility error instead of a generic remote failure.
 func (c *remoteClient) syncPost(ctx context.Context, path string, payload any, out syncResponse, csrf bool) (int, *ipc.Error, error) {
 	status, header, rpcErr, err := c.postWithHeader(ctx, path, payload, out, csrf)
