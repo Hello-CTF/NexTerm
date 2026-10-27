@@ -100,6 +100,22 @@ function clause(text: string): string {
 
 const REGULAR_TAIL = "本标签是普通终端，断开后进程会结束。";
 
+// persistenceHintNote names the state in a few words for the tab tooltip.
+export function persistenceHintNote(hint: PersistenceHint): string {
+  switch (hint.kind) {
+    case "ready":
+      return "普通终端：持久终端已就绪，新建的终端将是持久终端";
+    case "preparing":
+      return "普通终端：持久组件准备中";
+    case "attention":
+      return hint.message ? `普通终端：持久终端暂时不可用：${clause(hint.message)}` : "普通终端：持久终端暂时不可用";
+    case "restore":
+      return hint.message ? `原持久终端恢复失败：${clause(hint.message)}` : "原持久终端恢复失败";
+    default:
+      return `普通终端：${clause(hint.reason)}`;
+  }
+}
+
 export function persistenceHintMessage(hint: PersistenceHint, local: boolean): string {
   switch (hint.kind) {
     case "ready":

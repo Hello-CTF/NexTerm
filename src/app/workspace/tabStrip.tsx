@@ -4,7 +4,11 @@ import { useTabUnread } from "../unreadStore";
 import { useTerminalTabTitle } from "../terminalViewStore";
 import { fileVisual } from "../../features/files/fileTypes";
 import { useAssetProductionClassification } from "../../features/production/productionSettings";
-import { usePersistenceFailureMark } from "../../features/terminal/persistenceHintStore";
+import {
+  usePersistenceFailureMark,
+  usePersistenceTabNote,
+  type PersistenceTabInfo,
+} from "../../features/terminal/persistenceHintStore";
 import {
   IconActivity,
   IconBox,
@@ -45,9 +49,13 @@ export function tabIcon(t: AppTab) {
   return TAB_ICON[t.kind] ?? IconTerminal;
 }
 
-export function tabTooltip(t: AppTab, unread: boolean): string {
+// tabTooltip prefers what the tab's pane reports about persistence (live) over the reason recorded when the tab
+// opened, which only applies until a pane has reported.
+export function tabTooltip(t: AppTab, unread: boolean, live: PersistenceTabInfo = {}): string {
   const notes: string[] = [];
-  if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
+  const persistence = t.kind === "terminal" ? live.failureMark ?? live.note : undefined;
+  if (persistence) notes.push(persistence);
+  else if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
   else if (t.kind === "terminal" && t.regularReason) notes.push(`普通终端：${t.regularReason}`);
   if (unread) notes.push("有新输出");
   if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
@@ -78,10 +86,12 @@ export function TabStripItem({
   children,
 }: {
   tab: AppTab;
-  children: (unread: boolean) => ReactNode;
+  children: (unread: boolean, persistence: PersistenceTabInfo) => ReactNode;
 }) {
   const unread = useTabUnread(tab.id);
-  return children(unread);
+  const note = usePersistenceTabNote(tab.id);
+  const failureMark = usePersistenceFailureMark(tab.id);
+  return children(unread, { note, failureMark });
 }
 
 // A terminal tab's label prefers the OSC-derived remote title from the per-tab view

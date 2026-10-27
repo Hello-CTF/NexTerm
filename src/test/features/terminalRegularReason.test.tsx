@@ -78,7 +78,8 @@ vi.mock("../../features/terminal/XtermView", () => ({
 import { TerminalPane } from "../../features/terminal/TerminalPane";
 import { createHelperOperationState, helperOperationReducer } from "../../features/terminal/helperOperationState";
 import { fallbackTerminalReason, forgetDurableReadiness, noteHelperProgress, useUi, type AppTab } from "../../app/store";
-import { TabPersistenceMark } from "../../app/workspace/tabStrip";
+import { TabPersistenceMark, TabStripItem, tabTooltip } from "../../app/workspace/tabStrip";
+import type { PersistenceTabInfo } from "../../features/terminal/persistenceHintStore";
 import { setLocalHelperStatusForTest } from "../../features/terminal/localHelperStatus";
 import { setTerminalDefaultMode } from "../../app/preferences";
 
@@ -423,6 +424,24 @@ describe("persistence hint bar", () => {
     helperProgress("failed", true, { error: "目标主机不支持持久终端组件" });
     await waitFor(() => expect(hintBar()?.dataset.tone).toBe("danger"));
     expect(hintBar()?.textContent).toContain("目标主机不支持持久终端组件");
+  });
+
+  it("names the live state in the tab tooltip instead of the reason recorded at open", async () => {
+    seed({ regularReason: "持久组件准备中" });
+    mountPane();
+    await flush();
+    const tooltip = mount(
+      createElement(TabStripItem, {
+        tab: storeTab()!,
+        children: (unread: boolean, persistence: PersistenceTabInfo) => createElement("span", null, tabTooltip(storeTab()!, unread, persistence)),
+      }),
+    );
+    marks.push(tooltip);
+    expect(tooltip.container.textContent).toContain("持久组件准备中");
+
+    helperProgress("ready", true);
+    await waitFor(() => expect(tooltip.container.textContent).toContain("持久终端已就绪"));
+    expect(tooltip.container.textContent).not.toContain("持久组件准备中");
   });
 
   it("updates the hint when a readiness query answers, without any other change", async () => {

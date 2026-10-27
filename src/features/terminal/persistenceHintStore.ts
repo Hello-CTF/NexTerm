@@ -1,9 +1,14 @@
 import { useSyncExternalStore } from "react";
 
-interface TabHintState {
-  dismissed: ReadonlySet<string>;
+export interface PersistenceTabInfo {
+  // The tab's current persistence state in a few words, for the tab tooltip.
+  note?: string;
   // The text of a failure hint the user dismissed while it still applies; the tab strip keeps a mark for it.
   failureMark?: string;
+}
+
+interface TabHintState extends PersistenceTabInfo {
+  dismissed: ReadonlySet<string>;
 }
 
 // Hint state per store tab, kept in memory for the life of the tab, so a pane that remounts the terminal (a split
@@ -29,11 +34,11 @@ export function dismissPersistenceHint(tabId: string, key: string): ReadonlySet<
   return dismissed;
 }
 
-export function setPersistenceFailureMark(tabId: string, text: string | undefined): void {
+// publishPersistenceTab records what the pane showing a tab knows about its persistence, for the tab strip.
+export function publishPersistenceTab(tabId: string, info: PersistenceTabInfo): void {
   const current = tabStates.get(tabId);
-  if (current?.failureMark === text) return;
-  if (!current && text === undefined) return;
-  update(tabId, { dismissed: current?.dismissed ?? NO_DISMISSALS, failureMark: text });
+  if (current?.note === info.note && current?.failureMark === info.failureMark) return;
+  update(tabId, { dismissed: current?.dismissed ?? NO_DISMISSALS, note: info.note, failureMark: info.failureMark });
 }
 
 export function forgetPersistenceHints(tabId: string): void {
@@ -56,4 +61,8 @@ function subscribe(listener: () => void): () => void {
 
 export function usePersistenceFailureMark(tabId: string): string | undefined {
   return useSyncExternalStore(subscribe, () => tabStates.get(tabId)?.failureMark);
+}
+
+export function usePersistenceTabNote(tabId: string): string | undefined {
+  return useSyncExternalStore(subscribe, () => tabStates.get(tabId)?.note);
 }

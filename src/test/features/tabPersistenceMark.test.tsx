@@ -41,4 +41,14 @@ describe("tab persistence mark", () => {
     );
     expect(tabTooltip(terminal({ durable: true }), false)).toContain("持久终端");
   });
+
+  it("prefers the pane's live note and names a dismissed failure", () => {
+    const tab = terminal({ regularReason: "持久组件准备中" });
+    expect(tabTooltip(tab, false, { note: "普通终端：持久终端已就绪，新建的终端将是持久终端" })).toBe(
+      "终端 1（普通终端：持久终端已就绪，新建的终端将是持久终端）",
+    );
+    const failed = tabTooltip(tab, false, { note: "普通终端：持久组件不可用：x", failureMark: "本标签是普通终端（持久组件不可用：x），断开后进程会结束。" });
+    expect(failed).toContain("本标签是普通终端（持久组件不可用：x）");
+    expect(failed).not.toContain("持久组件准备中");
+  });
 });

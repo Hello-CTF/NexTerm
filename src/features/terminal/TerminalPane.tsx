@@ -6,13 +6,13 @@ import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
 import { PersistenceHintBar } from "./PersistenceHintBar";
-import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage } from "./persistenceHint";
+import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage, persistenceHintNote } from "./persistenceHint";
 import {
   dismissPersistenceHint,
   dismissedPersistenceHints,
   forgetPersistenceHints,
   prunePersistenceHints,
-  setPersistenceFailureMark,
+  publishPersistenceTab,
 } from "./persistenceHintStore";
 import { localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 import { showSettingsSection } from "../settings/settingsNavigation";
@@ -1259,10 +1259,11 @@ export function TerminalPane({
   const failureMark = hint && hintKey && !hintShown && persistenceHintFailure(hint)
     ? persistenceHintMessage(hint, sessionKind === "local")
     : undefined;
+  const hintNote = hint ? persistenceHintNote(hint) : undefined;
   useEffect(() => {
-    // A dismissed failure that still applies leaves a mark on the tab.
-    setPersistenceFailureMark(storeTabId, failureMark);
-  }, [storeTabId, failureMark]);
+    // The tab strip names the live state; a dismissed failure that still applies leaves a mark on the tab.
+    publishPersistenceTab(storeTabId, { note: hintNote, failureMark });
+  }, [storeTabId, hintNote, failureMark]);
   const hintShownRef = useRef(hintShown);
   hintShownRef.current = hintShown && visible !== false;
 

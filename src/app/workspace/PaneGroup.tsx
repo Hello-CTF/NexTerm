@@ -323,7 +323,7 @@ export function PaneGroup({
             const isActive = t.id === activeTabId;
             return (
               <TabStripItem key={t.id} tab={t}>
-                {(unread) => (
+                {(unread, persistence) => (
                   <div
                 role="tab"
                 data-tab-id={t.id}
@@ -399,7 +399,7 @@ export function PaneGroup({
                   e.preventDefault();
                   openTabMenu(t, e.clientX, e.clientY);
                 }}
-                title={tabTooltip(t, unread)}
+                title={tabTooltip(t, unread, persistence)}
               >
                 <span className="flex shrink-0">
                   <Icon size={13} />
