@@ -164,6 +164,8 @@ describe("earlier history pages", () => {
     const lines = capEarlierHistoryLines(applyEarlierHistoryPage(initialEarlierHistory(1000), chunk(990, "0123456789")));
     expect(lines.capped).toBe("lines");
     expect(canLoadEarlierHistory(lines)).toBe(false);
+    const atBase = capEarlierHistoryLines(applyEarlierHistoryPage(initialEarlierHistory(10), chunk(0, "0123456789")));
+    expect(atBase).toMatchObject({ exhausted: true, capped: "lines" });
   });
 
   it("refuses a page that does not end where the loaded output starts", () => {
@@ -265,6 +267,16 @@ describe("EarlierHistory", () => {
     expect(read).toHaveBeenCalledTimes(1);
   });
 
+  it("does not claim the session start when the line cap cut the top", async () => {
+    terminals.fullAfterWrites = 1;
+    read.mockResolvedValueOnce(chunk(0, "hello"));
+    act(() => setTerminalHistoryView("pane-1", { from: 5, atTop: true }));
+    show();
+    await openPanel();
+    expect(status()).toContain("达到回放行数上限");
+    expect(status()).not.toContain("已到会话开头");
+  });
+
   it("shows a failed read and retries from the same offset", async () => {
     read.mockRejectedValueOnce(new Error("helper offline")).mockResolvedValueOnce(chunk(0, "hello"));
     act(() => setTerminalHistoryView("pane-1", { from: 5, atTop: true }));
@@ -284,23 +296,41 @@ describe("EarlierHistory", () => {
     act(() => setTerminalHistoryView("pane-1", { from: 5, atTop: true }));
     show();
     const outer = vi.fn();
+    const appKeys = vi.fn();
     document.body.addEventListener("keydown", outer);
     document.body.addEventListener("contextmenu", outer);
+    window.addEventListener("keydown", appKeys);
     await openPanel();
     terminals.instances[0].selection = "hel";
     const target = panel()!;
     const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     act(() => {
-      target.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, shiftKey: true, bubbles: true }));
       target.dispatchEvent(new KeyboardEvent("keydown", { key: "c", ctrlKey: true, bubbles: true }));
       target.dispatchEvent(contextMenu);
     });
     await flush();
     expect(outer).not.toHaveBeenCalled();
+    expect(appKeys).not.toHaveBeenCalled();
     expect(contextMenu.defaultPrevented).toBe(true);
     expect(clipboard.copyText).toHaveBeenCalledWith("hel");
     document.body.removeEventListener("keydown", outer);
     document.body.removeEventListener("contextmenu", outer);
+    window.removeEventListener("keydown", appKeys);
+  });
+
+  it("lets other keys reach the app shortcuts", async () => {
+    read.mockResolvedValue(chunk(0, "hello"));
+    act(() => setTerminalHistoryView("pane-1", { from: 5, atTop: true }));
+    show();
+    const appKeys = vi.fn();
+    window.addEventListener("keydown", appKeys);
+    await openPanel();
+    act(() => {
+      panel()?.dispatchEvent(new KeyboardEvent("keydown", { key: "t", ctrlKey: true, bubbles: true }));
+    });
+    window.removeEventListener("keydown", appKeys);
+    expect(appKeys).toHaveBeenCalledTimes(1);
+    expect(appKeys.mock.calls[0][0]).toMatchObject({ key: "t", ctrlKey: true });
   });
 
   it("closes with Escape, disposes the replay terminal and returns focus", async () => {
