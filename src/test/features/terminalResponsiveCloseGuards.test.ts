@@ -431,6 +431,19 @@ describe("kill danger actions", () => {
     expect(remaining.every((t) => t.exited === true)).toBe(true);
   });
 
+  it("requestKillWorkspaceTerminals reads sessions after the confirmation, not before the dialog", async () => {
+    const tab = terminal("t1");
+    seed([{ id: "p", tabs: [tab], activeTabId: "t1" }], "local");
+    mocks.ask.mockImplementationOnce(async () => {
+      useUi.setState({ sessions: [sessionInfo("ssh")] });
+      return true;
+    });
+
+    await requestKillWorkspaceTerminals("ws");
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
+  });
+
   it("requestKillWorkspaceTerminals keeps failures with closeError and no success toast", async () => {
     const tabs = [terminal("t1"), terminal("t2")];
     seed([{ id: "p", tabs, activeTabId: "t1" }]);
