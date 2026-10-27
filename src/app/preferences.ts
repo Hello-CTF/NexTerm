@@ -278,7 +278,8 @@ function loadTerminal(): TerminalPrefs {
     local = {};
   }
   const value = preferenceValue<unknown>(TERMINAL_CLOSE_ACTION_KEY, local.closeAction, TERMINAL_DEFAULTS.closeAction);
-  // Account defaults must match the server's terminal creation policy; device values only apply without an account.
+  // Account defaults must match the server's terminal creation policy. They apply only once the account view has
+  // loaded; until then (including a re-registration on wake) and without a sync account the device value applies.
   const defaultMode = terminalDefaultUsesAccount()
     ? accountOverrides[TERMINAL_DEFAULT_MODE_KEY] ?? accountDefaults[TERMINAL_DEFAULT_MODE_KEY]
     : local.defaultMode;
@@ -308,12 +309,19 @@ export function getTerminalPrefs(): TerminalPrefs {
 }
 
 export function terminalDefaultUsesAccount(): boolean {
-  return accountStore !== null && !deviceOnlyPreferences;
+  return accountPreferencesReady();
 }
 
+// A choice made while the account view is still loading waits for it, so it lands where it will be read: the account
+// once it turns out to have one, otherwise the device. An account switch in the meantime drops it.
 export async function setTerminalDefaultMode(value: TerminalDefaultMode): Promise<void> {
-  const store = terminalDefaultUsesAccount() ? accountStore : null;
   const generation = registerGeneration;
+  const loading = waitAccountPreferences();
+  if (loading) {
+    await loading;
+    if (generation !== registerGeneration) return;
+  }
+  const store = terminalDefaultUsesAccount() ? accountStore : null;
   if (store) {
     await store.putOverrides({ [TERMINAL_DEFAULT_MODE_KEY]: value });
     if (generation !== registerGeneration || accountStore !== store) return;
