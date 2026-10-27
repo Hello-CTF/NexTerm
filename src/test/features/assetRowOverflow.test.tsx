@@ -218,7 +218,7 @@ describe("asset row actions on fine pointers", () => {
     if (!more) throw new Error("more button not found");
     click(more);
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
   });
 
   it("uses the full overflow menu when the sidebar becomes too narrow for the action strip", async () => {
@@ -232,7 +232,7 @@ describe("asset row actions on fine pointers", () => {
     expect(row.querySelectorAll(".nx-row-actions button")).toHaveLength(1);
     openOverflow(row);
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
 
     act(() => useUi.setState({ leftWidth: 248 }));
     setRowWidths(row, 260, 75);
@@ -261,7 +261,7 @@ describe("asset name priority in narrow sidebars", () => {
       .toEqual(["连接", "编辑", "删除", "更多操作"]);
     click(root.querySelector<HTMLButtonElement>('button[title="更多操作"]')!);
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
   });
 
   it("updates root and grouped asset identities as available row width changes", async () => {
@@ -375,7 +375,7 @@ describe("asset row actions on coarse pointers", () => {
 
     openOverflow(rowByName(mounted!.container, "web-1"));
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
     await waitFor(() => expect(document.activeElement?.textContent).toContain("连接"));
   });
 
@@ -425,7 +425,7 @@ describe("asset row actions on coarse pointers", () => {
 
     openOverflow(rowByName(mounted!.container, "local terminal"));
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制链接", "隐藏"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制链接", "隐藏"]);
   });
 
   it("closes the menu with Escape", async () => {
@@ -456,7 +456,7 @@ describe("asset row actions on coarse pointers", () => {
       );
     });
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
   });
 
   it("collapses group row actions into an overflow menu as well", async () => {
@@ -510,7 +510,7 @@ describe("one menu for right-click, overflow button and keyboard", () => {
     await flush();
     const viaContext = menuSnapshot();
     expect(viaContext.map((item) => item.label)).toEqual(
-      ["连接", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"],
+      ["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"],
     );
     expect(viaContext.find((item) => item.label === "隐藏")?.hint).not.toBe("");
     await closeMenu();

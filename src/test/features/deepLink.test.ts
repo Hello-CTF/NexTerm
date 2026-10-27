@@ -24,8 +24,10 @@ vi.mock("../../app/store", async (importOriginal) => {
 import {
   assetDeepLink,
   copyAssetDeepLink,
+  hostDeepLink,
   openDeepLink,
   parseDeepLinkAssetId,
+  parseHostDeepLinkId,
 } from "../../app/deepLink";
 import { useUi } from "../../app/store";
 import type { Asset } from "../../ipc/commands";
@@ -134,4 +136,49 @@ describe("copyAssetDeepLink", () => {
       expect(mocks.toast).toHaveBeenCalledWith("error", "复制失败，请重试"),
     );
   });
+});
+
+describe("host detail links", () => {
+  function hostTabs() {
+    return useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).filter((t) => t.kind === "host");
+  }
+
+  it("round-trips asset and device ids", () => {
+    expect(hostDeepLink("a-1")).toBe("nexterm://host/a-1");
+    expect(parseHostDeepLinkId(hostDeepLink("a-1"))).toBe("a-1");
+    expect(parseHostDeepLinkId(hostDeepLink("device/d-1"))).toBe("device/d-1");
+    expect(parseHostDeepLinkId("nexterm://host/")).toBeNull();
+    expect(parseHostDeepLinkId("nexterm://host/a/b")).toBeNull();
+    expect(parseHostDeepLinkId("nexterm://connect/a-1")).toBeNull();
+    expect(parseDeepLinkAssetId(hostDeepLink("a-1"))).toBeNull();
+  });
+
+  it("opens the detail page without connecting", async () => {
+    useUi.setState({ workspaces: [], activeWorkspaceId: null });
+    await openDeepLink(hostDeepLink("device/d-1"));
+    expect(hostTabs().map((t) => t.assetId)).toEqual(["device/d-1"]);
+    expect(mocks.connectAsset).not.toHaveBeenCalled();
+    expect(mocks.get).not.toHaveBeenCalled();
+
+    // A second link retargets the one detail tab.
+    await openDeepLink(hostDeepLink("a-2"));
+    expect(hostTabs().map((t) => t.assetId)).toEqual(["a-2"]);
+    expect(useUi.getState().workspaces.every((w) => w.kind === "tools")).toBe(true);
+  });
+
+  it("caps the host id length", () => {
+    expect(parseHostDeepLinkId(hostDeepLink("a".repeat(256)))).toBe("a".repeat(256));
+    expect(parseHostDeepLinkId(hostDeepLink("a".repeat(257)))).toBeNull();
+  });
+
+  it.each([["nexterm://host/"], ["nexterm://host/%ZZ"], [`nexterm://host/${"a".repeat(300)}`]])(
+    "shows a toast and opens no page for %s",
+    async (link) => {
+      useUi.setState({ workspaces: [], activeWorkspaceId: null });
+      await openDeepLink(link);
+      expect(hostTabs()).toEqual([]);
+      expect(mocks.toast).toHaveBeenCalledWith("error", "无效的主机链接");
+      expect(mocks.get).not.toHaveBeenCalled();
+    },
+  );
 });

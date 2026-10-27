@@ -28,6 +28,7 @@ const TOOL_TAB_KINDS = new Set<PaneKind>([
   "devices",
   "history",
   "execBatch",
+  "host",
 ]);
 
 export function isToolTabKind(kind: PaneKind): boolean {

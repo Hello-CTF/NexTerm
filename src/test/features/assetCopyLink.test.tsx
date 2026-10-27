@@ -133,4 +133,25 @@ describe("asset link copying", () => {
       expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已复制")),
     );
   });
+
+  it("opens the host detail page from the row menu without connecting", async () => {
+    useUi.setState({ workspaces: [], activeWorkspaceId: null, sessions: [] });
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() =>
+      expect(
+        [...mounted!.container.querySelectorAll('[role="treeitem"][title]')].some((r) =>
+          (r.getAttribute("title") ?? "").startsWith("web-1"),
+        ),
+      ).toBe(true),
+    );
+
+    openRowMenu(mounted.container, "web-1");
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent?.includes("主机详情"));
+    expect(item).toBeTruthy();
+    click(item!);
+
+    const tabs = useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs));
+    expect(tabs.map((t) => [t.kind, t.assetId])).toEqual([["host", "a1"]]);
+    expect(useUi.getState().workspaces.some((w) => w.kind === "session")).toBe(false);
+  });
 });

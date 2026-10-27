@@ -14,7 +14,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { connectDevice, useUi } from "../../app/store";
+import { connectDevice, deviceAssetId, useUi } from "../../app/store";
+import { openHostDetail } from "../hosts/hostDetail";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
@@ -153,7 +154,10 @@ export function DeviceTreeSection() {
         if (disabledReason === null) void connectDevice(device);
       },
     });
-    items.push({ kind: "item", label: "详情", icon: <IconInfo size={13} />, hint: "在设备页查看", onSelect: openDevicesTab });
+    items.push(
+      { kind: "item", label: "主机详情", icon: <IconInfo size={13} />, hint: "会话、容器和指标", onSelect: () => openHostDetail(deviceAssetId(device.id)) },
+      { kind: "item", label: "设备管理", icon: <IconMonitor size={13} />, hint: "接入、自动启动与撤销", onSelect: openDevicesTab },
+    );
     if (device.revoked_at === 0) items.push(
       { kind: "separator" },
       {
@@ -192,7 +196,7 @@ export function DeviceTreeSection() {
                 x: menu.x,
                 y: menu.y,
                 title: menuDevice.name,
-                items: buildMenu(menuDevice, disabledReasonOf(menuDevice, onlineOf(menuDevice))),
+                items: buildMenu(menuDevice, deviceOpenBlockReason(menuDevice, onlineOf(menuDevice))),
               }
             : null
         }
@@ -202,7 +206,7 @@ export function DeviceTreeSection() {
   );
 }
 
-function disabledReasonOf(device: FleetDevice, online: boolean): string | null {
+export function deviceOpenBlockReason(device: FleetDevice, online: boolean): string | null {
   if (device.revoked_at !== 0) return "设备已吊销，无法打开工作区";
   if (!device.agent) return "该设备尚未接入 Agent";
   if (!online) return "设备离线，无法打开工作区";
@@ -222,7 +226,7 @@ function DeviceTreeRow({
   onMenu: (x: number, y: number) => void;
 }) {
   const agent = device.agent;
-  const disabledReason = disabledReasonOf(device, online);
+  const disabledReason = deviceOpenBlockReason(device, online);
   const connectable = disabledReason === null;
   const status = device.revoked_at !== 0 ? "已吊销" : !agent ? "未接入 Agent" : !online ? "离线" : null;
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

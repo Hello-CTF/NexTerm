@@ -26,6 +26,7 @@ import {
   IconMonitor,
   IconNetwork,
   IconPersist,
+  IconServer,
   IconSettings,
   IconTerminal,
 } from "../../ui/icons";
@@ -45,6 +46,7 @@ const TAB_ICON = {
   background: IconActivity,
   history: IconClock,
   execBatch: IconCommand,
+  host: IconServer,
 } as const;
 
 export function tabIcon(t: AppTab) {

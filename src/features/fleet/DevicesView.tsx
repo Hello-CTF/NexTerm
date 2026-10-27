@@ -12,7 +12,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { type FleetBaseURLEntry, type FleetDevice } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
-import { connectDevice, useUi } from "../../app/store";
+import { connectDevice, deviceAssetId, useUi } from "../../app/store";
+import { openHostDetail } from "../hosts/hostDetail";
 import { WEB } from "../../ipc/env";
 import { fleetClient } from "./clients";
 import { useFleetAccount } from "./useFleetAccount";
@@ -247,6 +248,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   const openMenu = (e: ReactMouseEvent<HTMLButtonElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const items: MenuItem[] = [];
+    items.push({ kind: "item", label: "主机详情", hint: "会话、容器和指标", onSelect: () => openHostDetail(deviceAssetId(device.id)) });
     items.push({ kind: "item", label: "复制设备名称", onSelect: () => copyText(device.name, pushToast, "设备名称") });
     if (agent?.current_url) {
       const url = agent.current_url;

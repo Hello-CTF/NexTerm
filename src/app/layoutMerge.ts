@@ -43,7 +43,7 @@ interface EntityItem<T> {
   parent: number;
 }
 
-const TOOL_TAB_KINDS = new Set(["credentials", "settings", "audit", "devices", "history", "execBatch"]);
+const TOOL_TAB_KINDS = new Set(["credentials", "settings", "audit", "devices", "history", "execBatch", "host"]);
 const GLOBAL_BOARD = "global";
 
 function sameValue(left: unknown, right: unknown): boolean {
