@@ -73,6 +73,8 @@ const streamAnchorType = "nexterm.stream-anchor"
 // control bytes at the stream head that do not count toward the sequence (clear-screen escape); expired means the client
 // anchor was not adopted and this attach fell back to a full clear-screen replay. The client computes the consumed
 // sequence as streamSeq + max(0, bytes received - controlBytes) and brings it back via AttachOptions.FromSeq/FromEpoch on reconnect.
+// replayBytes is how many stream bytes after the anchor (control bytes included) are replayed history rather than new
+// output: clients render them without side effects such as automatic query replies, clipboard writes or notifications.
 // attachmentId is the incarnation this frame was sent for: the client adopts it as its current attachment identity, so
 // the ordered stream itself carries the incarnation even when the attach RPC response has not arrived yet.
 type streamAnchor struct {
@@ -82,6 +84,7 @@ type streamAnchor struct {
 	ControlBytes int    `json:"controlBytes,omitempty"`
 	Expired      bool   `json:"expired,omitempty"`
 	AttachmentID uint64 `json:"attachmentId,omitempty"`
+	ReplayBytes  int64  `json:"replayBytes,omitempty"`
 }
 
 type Tab struct {
@@ -172,6 +175,15 @@ type Tab struct {
 	historyFrom      uint64
 	historyBase      uint64
 	historyTruncated bool
+
+	// A recovered durable tab replays its recent history through the pump
+	// before live output. replayUntil is the helper offset where that replay
+	// ends; output before it is rendered without raising events (no query
+	// replies, unread marks or command records). replayPending is how many
+	// subscriber stream bytes the pump will still feed as replay; attach
+	// announces it in the stream anchor so clients treat them the same way.
+	replayUntil   int64
+	replayPending int64
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -611,6 +623,12 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			tab.historyFrom = replay.DisplayFrom
 			tab.historyBase = replay.HistoryBase
 			tab.historyTruncated = replay.HistoryBase > 0
+			if replay.HistoryNext > replay.DisplayFrom {
+				tab.replayUntil = int64(replay.HistoryNext)
+				tab.replayPending = int64(len(replay.Prelude)) + int64(replay.HistoryNext-replay.DisplayFrom)
+			} else if len(replay.Prelude) > 0 {
+				tab.replayPending = int64(len(replay.Prelude))
+			}
 		}
 		if store, ok := durableAttachment.(durableVersionFloor); ok {
 			if eventVersion, gridRevision, err := store.DurableVersions(); err == nil {
@@ -1106,6 +1124,11 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	anchor, control, replay := m.planAttachReplay(tab, options, clear)
 	if anchor != nil {
 		anchor.AttachmentID = attachmentId
+		// The feed gate is held: no feed can run between this read and the
+		// replay send, so the pending replay follows the ring replay exactly.
+		tab.mu.Lock()
+		anchor.ReplayBytes = int64(len(control)+len(replay)) + tab.replayPending
+		tab.mu.Unlock()
 		frame, _ := json.Marshal(anchor)
 		if err := producer.SendJSON(attachCtx, frame); err != nil {
 			return TabInfo{}, err
@@ -2042,16 +2065,20 @@ func (m *Manager) disconnectSubscriberOutput(tab *Tab, channelID string, incarna
 }
 
 func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []byte) error {
-	return m.feedWith(ctx, tab, generation, data, true)
+	return m.feedWith(ctx, tab, generation, data, true, false)
 }
 
 // feedDisplay renders data without recording it in the transcript: replay
 // preludes and notices that are not session output.
 func (m *Manager) feedDisplay(ctx context.Context, tab *Tab, generation uint64, data []byte) error {
-	return m.feedWith(ctx, tab, generation, data, false)
+	return m.feedWith(ctx, tab, generation, data, false, false)
 }
 
-func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, data []byte, transcript bool) error {
+// feedWith renders data and fans it out. replay marks history replayed by a
+// recovered durable tab: it renders and reaches subscribers like any output,
+// but raises no events — no automatic query replies to the shell, no unread
+// mark and no command records.
+func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, data []byte, transcript, replay bool) error {
 	if len(data) == 0 {
 		return nil
 	}
@@ -2070,8 +2097,15 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 		tab.mu.Unlock()
 		return ErrStaleGeneration
 	}
+	if replay {
+		tab.replayPending = max(0, tab.replayPending-int64(len(data)))
+	}
 	tab.mu.Unlock()
-	tab.terminal.Feed(data)
+	if source, ok := tab.terminal.(interface{ FeedReplay([]byte) }); ok && replay {
+		source.FeedReplay(data)
+	} else {
+		tab.terminal.Feed(data)
+	}
 	if transcript {
 		m.transcriptOutput(feedCtx, tab, data)
 	}
@@ -2100,7 +2134,7 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 			m.emit(withCoalescibleControl(feedCtx), TopicTerminalControl, titleEvent)
 		}
 	}
-	m.observeCommand(tab, data)
+	m.observeCommand(tab, data, replay)
 	type outputTarget struct {
 		channelID  string
 		subscriber subscriber

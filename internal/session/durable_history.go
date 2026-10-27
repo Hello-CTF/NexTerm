@@ -58,7 +58,8 @@ func (m *Manager) startDurableReplay(ctx context.Context, tab *Tab, generation u
 		m.transcriptGap(ctx, tab, gap)
 	}
 	if len(prelude) > 0 {
-		_ = m.feedDisplay(ctx, tab, generation, prelude)
+		// The prelude restores the replayed tail's modes: it is replay too.
+		_ = m.feedWith(ctx, tab, generation, prelude, false, true)
 	}
 	if banner {
 		_ = m.feedDisplay(ctx, tab, generation, durableHistoryGapBanner)
@@ -74,6 +75,7 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 	tab.mu.Lock()
 	fed := tab.durableFed
 	displayFrom := tab.displayFrom
+	replayUntil := tab.replayUntil
 	var control ControlEvent
 	gap := start - fed
 	if gap > 0 {
@@ -85,13 +87,21 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 		m.logger.Warn("durable output dropped by the history limit before it was streamed", "tab", tab.ID, "from", fed, "to", start)
 		m.transcriptGap(ctx, tab, gap)
 		if start >= displayFrom {
-			_ = m.feedDisplay(ctx, tab, generation, durableHistoryGapBanner)
+			_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, false, start < replayUntil)
 		}
 		m.emit(context.Background(), TopicTerminalControl, control)
 	}
 	if hidden := min(max(displayFrom-start, 0), int64(len(chunk))); hidden > 0 {
 		m.transcriptOutput(ctx, tab, chunk[:hidden])
 		chunk = chunk[hidden:]
+		start += hidden
+	}
+	// The recovered tail before replayUntil is history, not new output.
+	if replayed := min(max(replayUntil-start, 0), int64(len(chunk))); replayed > 0 {
+		if err := m.feedWith(ctx, tab, generation, chunk[:replayed], true, true); err != nil {
+			return err
+		}
+		chunk = chunk[replayed:]
 	}
 	if len(chunk) > 0 {
 		if err := m.feed(ctx, tab, generation, chunk); err != nil {

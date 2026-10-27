@@ -508,6 +508,16 @@ func (s *channelOwnerBinaryStream) Close() error {
 	return err
 }
 
+// sendJSON forwards an in-band JSON control frame when the underlying channel
+// carries them; the wrapper does not claim ipc.JSONStream itself.
+func (s *channelOwnerBinaryStream) sendJSON(ctx context.Context, data json.RawMessage) error {
+	stream, ok := s.BinaryStream.(ipc.JSONStream)
+	if !ok {
+		return ipc.ErrStreamsUnavailable
+	}
+	return stream.SendJSON(ctx, data)
+}
+
 func (s *channelOwnerBinaryStream) CloseGracefully() error {
 	stream, ok := s.BinaryStream.(interface{ CloseGracefully() error })
 	if !ok {
