@@ -19,8 +19,15 @@ func TestSSHHeartbeatRoundTripsAndReportsClosedConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	var heartbeater base.Heartbeater = client
+	before := heartbeater.InboundBytes()
+	if before == 0 {
+		t.Fatal("inbound byte count is zero after the handshake")
+	}
 	if err := heartbeater.Heartbeat(context.Background()); err != nil {
 		t.Fatalf("heartbeat on a live connection = %v", err)
+	}
+	if after := heartbeater.InboundBytes(); after <= before {
+		t.Fatalf("inbound byte count after a reply = %d, want more than %d", after, before)
 	}
 	if got := server.keepalives.Load(); got != 1 {
 		t.Fatalf("server keepalive requests = %d, want 1", got)

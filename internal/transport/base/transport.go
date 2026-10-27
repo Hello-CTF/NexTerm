@@ -53,9 +53,12 @@ type Transport interface {
 // Heartbeater is implemented by transports with a cheap protocol-level
 // round trip that proves the connection still carries traffic. Heartbeat
 // returns nil on a reply, the context error when no reply arrived in time,
-// and any other error when the connection is known to be gone.
+// and any other error when the connection is known to be gone. InboundBytes
+// is the running count of bytes received from the peer: growth is proof of
+// life even while a reply is delayed behind other traffic.
 type Heartbeater interface {
 	Heartbeat(context.Context) error
+	InboundBytes() uint64
 }
 
 type PTYTransport interface {
