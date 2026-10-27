@@ -1839,6 +1839,46 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.StartRequest", ts: "StartRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.RunState", ts: "RunState" },
     },
+    "runbook_template_create": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplateInput", ts: "RunbookTemplateInput" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate" },
+    },
+    "runbook_template_delete": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.runbookTemplateRequest", ts: "RunbookTemplateRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "runbook_template_get": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.runbookTemplateRequest", ts: "RunbookTemplateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate" },
+    },
+    "runbook_template_list": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate[]" },
+    },
+    "runbook_template_update": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.runbookTemplateUpdateRequest", ts: "RunbookTemplateUpdateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate" },
+    },
     "services_action": {
       scope: "services",
       nested: false,
@@ -3666,6 +3706,26 @@ export interface IPCCommandTypeMap {
   "runbook_run_start": {
     input: contractTypes.StartRequest;
     output: contractTypes.RunState;
+  };
+  "runbook_template_create": {
+    input: contractTypes.RunbookTemplateInput;
+    output: contractTypes.RunbookTemplate;
+  };
+  "runbook_template_delete": {
+    input: contractTypes.RunbookTemplateRequest;
+    output: unknown;
+  };
+  "runbook_template_get": {
+    input: contractTypes.RunbookTemplateRequest;
+    output: contractTypes.RunbookTemplate;
+  };
+  "runbook_template_list": {
+    input: Record<string, never>;
+    output: contractTypes.RunbookTemplate[];
+  };
+  "runbook_template_update": {
+    input: contractTypes.RunbookTemplateUpdateRequest;
+    output: contractTypes.RunbookTemplate;
   };
   "services_action": {
     input: contractTypes.ActionRequest;

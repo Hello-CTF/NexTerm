@@ -23,7 +23,7 @@ var _ tools.SkillLoader = (*Manager)(nil)
 func (m *Manager) LoadSkillSchema() tools.Schema {
 	return tools.Schema{
 		Name: LoadSkillToolName,
-		Description: "Load one of the user's skills by name and return its Markdown instructions. " +
+		Description: "Load one of the available skills (built-in or the user's own) by name and return its Markdown instructions. " +
 			"The available skills and when to use each are listed under [Available Skills]; load a " +
 			"matching skill before starting the task, then follow it.",
 		Parameters: map[string]any{

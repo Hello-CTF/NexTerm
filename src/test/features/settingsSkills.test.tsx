@@ -330,7 +330,7 @@ describe("SkillsCard", () => {
     mounted = undefined;
   });
 
-  // NexTerm ships no built-in skills: every owner starts empty and writes its own.
+  // The default backend here is empty so rows are custom skills; built-in cases seed EMBEDDED.
   async function ownerWithSkills(backend: ReturnType<typeof createSkillsMockBackend>, owner: string): Promise<SkillsApi> {
     const api = backend.apiFor(owner);
     await api.saveOverride({ name: "alpha-skill", description: "Alpha synthetic skill", body: "alpha body\n" });
@@ -459,6 +459,28 @@ describe("SkillsCard", () => {
     await flushUntil(() => api.deleteOverride.mock.calls.length === 1);
     await expectNoText(mounted!.container, "Alpha synthetic skill");
     expect(toast).toHaveBeenCalledWith("success", "已删除技能 alpha-skill");
+  });
+
+  it("offers no delete for an untouched built-in skill and restores defaults after an override", async () => {
+    const api = spyApi(createSkillsMockBackend(EMBEDDED).apiFor("owner-a"));
+    mounted = mount(createElement(SkillsCard, { api }));
+    await expectText(mounted.container, "alpha-skill");
+    expect(mounted.container.querySelector('[aria-label="删除技能 alpha-skill"]')).toBeNull();
+    expect(mounted.container.querySelector('[aria-label="恢复默认技能 alpha-skill"]')).toBeNull();
+
+    mounted.unmount();
+
+    await api.saveOverride({ name: "alpha-skill", description: "Alpha edited" });
+    mounted = mount(createElement(SkillsCard, { api }));
+    await expectText(mounted.container, "Alpha edited");
+    expect(mounted.container.querySelector('[aria-label="删除技能 alpha-skill"]')).toBeNull();
+    mocks.ask.mockResolvedValueOnce(true);
+    click(await waitForButton(mounted.container, "恢复默认技能 alpha-skill"));
+    await flushUntil(() => api.deleteOverride.mock.calls.length === 1);
+    await expectText(mounted.container, "Alpha synthetic skill");
+    expect(mocks.ask).toHaveBeenLastCalledWith(expect.stringContaining("不会被删除"), expect.objectContaining({ title: "恢复默认" }));
+    expect(toast).toHaveBeenCalledWith("success", "已恢复技能 alpha-skill 的默认内容");
+    expect(mounted.container.querySelector('[aria-label="恢复默认技能 alpha-skill"]')).toBeNull();
   });
 
   it("reports a delete failure and keeps the row", async () => {

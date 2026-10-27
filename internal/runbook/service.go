@@ -75,7 +75,7 @@ func (s *Service) Start(_ context.Context, ownerID string, input StartRequest) (
 	r := &run{
 		ownerID: ownerID, executor: s.executor, timeoutMS: input.TimeoutMS, maxConcurrent: input.MaxConcurrent,
 		state: RunState{
-			RunID: input.RunID, RunbookID: input.RunbookID, RunbookName: input.RunbookName,
+			RunID: input.RunID, RunbookID: input.RunbookID, RunbookVersion: input.RunbookVersion, RunbookName: input.RunbookName,
 			Status: RunAwaitingRender, ConfirmationPolicy: policy, StopOnFailure: stopOnFailure,
 			SessionIDs: append([]string(nil), input.SessionIDs...), CurrentStep: 1,
 			StepCount: int32(len(steps)), Steps: steps,
@@ -507,7 +507,7 @@ func buildRequests(state RunState, commands []RenderedCommand) []execbatch.Reque
 				BatchID: fmt.Sprintf("%s:s%02d:g%02d", state.RunID, state.CurrentStep, index+1),
 				Command: rendered.Command, TimeoutMS: 0, MaxConcurrent: 0,
 				Runbook: &execbatch.RunbookMetadata{
-					RunbookID: state.RunbookID, RunID: state.RunID,
+					RunbookID: state.RunbookID, RunbookVersion: state.RunbookVersion, RunID: state.RunID,
 					StepNumber: state.CurrentStep, StepCount: state.StepCount,
 				},
 			})

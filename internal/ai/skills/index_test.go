@@ -62,7 +62,7 @@ func TestBuildIndexRejectsInvalidDocument(t *testing.T) {
 	}
 }
 
-func TestNoBuiltInSkillsShip(t *testing.T) {
+func TestBuiltInSkillsVisibleToNewOwner(t *testing.T) {
 	manager, err := skills.NewManager(t.Context(), newMemorySettings())
 	if err != nil {
 		t.Fatal(err)
@@ -71,17 +71,78 @@ func TestNoBuiltInSkillsShip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("entries = %+v, want none until the user writes a skill", entries)
+	if len(entries) == 0 {
+		t.Fatal("a fresh owner must see the built-in skills")
+	}
+	for _, entry := range entries {
+		if entry.Source != skills.SourceEmbedded || entry.Disabled || entry.Overridden || entry.Description == "" || entry.Digest == "" {
+			t.Fatalf("built-in entry = %+v", entry)
+		}
+		dispatch, err := manager.Dispatch(t.Context(), entry.Name)
+		if err != nil || dispatch.Body == "" || dispatch.Digest != entry.Digest {
+			t.Fatalf("dispatch %s = %+v, %v", entry.Name, dispatch, err)
+		}
 	}
 	catalog, err := manager.SkillCatalog(t.Context())
-	if err != nil || len(catalog) != 0 {
+	if err != nil || len(catalog) != len(entries) {
 		t.Fatalf("catalog = %+v, %v", catalog, err)
 	}
 }
 
+func TestBuiltInSkillDisableAndOverridePersist(t *testing.T) {
+	settings := newMemorySettings()
+	manager, err := skills.NewManager(t.Context(), settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := manager.List(t.Context())
+	if err != nil || len(entries) < 2 {
+		t.Fatalf("entries = %+v, %v", entries, err)
+	}
+	disabled, overridden := entries[0], entries[1]
+	if _, err := manager.SaveOverride(t.Context(), skills.OverrideInput{Name: disabled.Name, Disabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	body := "custom instructions\n"
+	if _, err := manager.SaveOverride(t.Context(), skills.OverrideInput{Name: overridden.Name, Body: &body}); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := skills.NewManager(t.Context(), settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := reopened.SkillCatalog(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range catalog {
+		if item.Name == disabled.Name {
+			t.Fatalf("disabled built-in still in catalog: %+v", catalog)
+		}
+	}
+	if _, err := reopened.Dispatch(t.Context(), disabled.Name); !errors.Is(err, skills.ErrSkillDisabled) {
+		t.Fatalf("dispatch of disabled built-in = %v", err)
+	}
+	dispatch, err := reopened.Dispatch(t.Context(), overridden.Name)
+	if err != nil || dispatch.Body != body {
+		t.Fatalf("overridden dispatch = %+v, %v", dispatch, err)
+	}
+	if err := reopened.DeleteOverride(t.Context(), overridden.Name); err != nil {
+		t.Fatal(err)
+	}
+	reverted, err := reopened.Dispatch(t.Context(), overridden.Name)
+	if err != nil || reverted.Digest != overridden.Digest {
+		t.Fatalf("reverted dispatch = %+v, %v", reverted, err)
+	}
+}
+
 func TestSkillCatalogListsOnlyEnabledSkills(t *testing.T) {
-	manager, err := skills.NewManager(t.Context(), newMemorySettings())
+	empty, err := skills.BuildIndex(fstest.MapFS{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := skills.NewManager(t.Context(), newMemorySettings(), skills.WithIndex(empty))
 	if err != nil {
 		t.Fatal(err)
 	}

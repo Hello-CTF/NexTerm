@@ -17,9 +17,28 @@ type ExecBatchRow struct {
 	GroupNumber   int32  `gorm:"column:group_number;not null;default:0" json:"groupNumber,omitempty"`
 	GroupCount    int32  `gorm:"column:group_count;not null;default:0" json:"groupCount,omitempty"`
 	SyncOptIn     bool   `gorm:"column:sync_opt_in;not null;default:0" json:"syncOptIn"`
+	// RunbookVersion is the persisted template revision a run started from; 0 for ad-hoc runbooks.
+	RunbookVersion int32 `gorm:"column:runbook_version;not null;default:0" json:"runbookVersion,omitempty"`
 }
 
 func (ExecBatchRow) TableName() string { return "exec_batch" }
+
+// RunbookTemplateRow is a persisted, per-owner runbook definition. Steps holds
+// the JSON-encoded step list with command text snapshotted at save time (the
+// originating snippet id is kept for provenance only). Version increments on
+// every content update so run history can name the exact template revision.
+type RunbookTemplateRow struct {
+	OwnerID     string `gorm:"column:owner_id;size:191;primaryKey;default:'';index:idx_runbook_template_owner_name,priority:1" json:"-"`
+	ID          string `gorm:"column:id;size:128;primaryKey" json:"id"`
+	Name        string `gorm:"column:name;size:512;not null;index:idx_runbook_template_owner_name,priority:2" json:"name"`
+	Description string `gorm:"column:description;not null" json:"description"`
+	Steps       string `gorm:"column:steps;not null" json:"-"`
+	Version     int32  `gorm:"column:version;not null;default:1" json:"version"`
+	CreatedAt   int64  `gorm:"column:created_at;not null" json:"createdAt"`
+	UpdatedAt   int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
+}
+
+func (RunbookTemplateRow) TableName() string { return "runbook_template" }
 
 type ExecBatchResultRow struct {
 	OwnerID     string       `gorm:"column:owner_id;size:191;primaryKey;default:'';index:idx_exec_batch_result_batch,priority:1" json:"-"`

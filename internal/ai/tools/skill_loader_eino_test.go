@@ -95,7 +95,7 @@ func TestExecutionToolsExposeLoadSkillOnlyWhenConfigured(t *testing.T) {
 	}
 }
 
-// seedSkill creates one enabled custom skill for the caller; NexTerm ships no built-in skills.
+// seedSkill creates one enabled custom skill for the caller on top of the built-in skills.
 func seedSkill(t *testing.T, manager *skills.Manager, ctx context.Context, name string) {
 	t.Helper()
 	description := "检查服务状态"

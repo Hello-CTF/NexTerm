@@ -49,8 +49,12 @@ type Step struct {
 }
 
 type StartRequest struct {
-	RunID              string             `json:"runId"`
-	RunbookID          string             `json:"runbookId"`
+	RunID     string `json:"runId"`
+	RunbookID string `json:"runbookId"`
+	// TemplateID starts the run from a persisted template: the server fills runbookId, runbookName and steps from it.
+	TemplateID string `json:"templateId,omitempty"`
+	// RunbookVersion is set by the server from the resolved template, never by the client.
+	RunbookVersion     int32              `json:"-"`
 	RunbookName        string             `json:"runbookName"`
 	Steps              []Step             `json:"steps"`
 	SessionIDs         []string           `json:"sessionIds"`
@@ -95,6 +99,7 @@ type StepState struct {
 type RunState struct {
 	RunID               string                                `json:"runId"`
 	RunbookID           string                                `json:"runbookId"`
+	RunbookVersion      int32                                 `json:"runbookVersion,omitempty"`
 	RunbookName         string                                `json:"runbookName"`
 	Status              RunStatus                             `json:"status"`
 	ConfirmationPolicy  ConfirmationPolicy                    `json:"confirmationPolicy"`

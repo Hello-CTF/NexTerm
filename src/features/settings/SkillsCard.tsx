@@ -226,17 +226,20 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
   const remove = async (entry: SkillEntry) => {
     if (entries === null || entries.api !== api || apiRef.current !== api) return;
     const epoch = epochRef.current;
-    const ok = await ask(`删除技能 ${entry.name}？\n\n删除后 AI 不能再使用它，且无法恢复。`, { title: "删除技能", kind: "warning" });
+    const builtin = entry.source === "embedded";
+    const ok = builtin
+      ? await ask(`恢复内置技能 ${entry.name} 的默认内容？\n\n你对它的修改和停用设置会被丢弃，技能恢复为内置版本并重新启用。内置技能本身不会被删除。`, { title: "恢复默认", kind: "warning" })
+      : await ask(`删除技能 ${entry.name}？\n\n删除后 AI 不能再使用它，且无法恢复。`, { title: "删除技能", kind: "warning" });
     if (!ok || epoch !== epochRef.current || apiRef.current !== api) return;
     setBusyName(entry.name);
     try {
       await api.deleteOverride(entry.name);
       if (epoch !== epochRef.current || apiRef.current !== api) return;
-      pushToast("success", `已删除技能 ${entry.name}`);
+      pushToast("success", builtin ? `已恢复技能 ${entry.name} 的默认内容` : `已删除技能 ${entry.name}`);
       await reload();
     } catch (e) {
       if (epoch !== epochRef.current || apiRef.current !== api) return;
-      pushToast("error", `删除失败：${describeError(e)}`);
+      pushToast("error", `${builtin ? "恢复默认" : "删除"}失败：${describeError(e)}`);
     } finally {
       if (aliveRef.current && epoch === epochRef.current && apiRef.current === api) setBusyName(null);
     }
@@ -380,15 +383,29 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               >
                 <IconEdit size={11} />
               </button>
-              <button
-                className="nx-icon-btn nx-icon-btn-sm is-danger shrink-0"
-                title="删除这个技能"
-                aria-label={`删除技能 ${entry.name}`}
-                disabled={busyName !== null}
-                onClick={() => void remove(entry)}
-              >
-                {busyName === entry.name ? <IconRefresh size={11} className="animate-spin" /> : <IconTrash size={11} />}
-              </button>
+              {entry.source === "embedded" ? (
+                entry.override !== undefined && (
+                  <button
+                    className="nx-icon-btn nx-icon-btn-sm shrink-0"
+                    title="恢复为内置默认内容"
+                    aria-label={`恢复默认技能 ${entry.name}`}
+                    disabled={busyName !== null}
+                    onClick={() => void remove(entry)}
+                  >
+                    <IconRefresh size={11} className={busyName === entry.name ? "animate-spin" : undefined} />
+                  </button>
+                )
+              ) : (
+                <button
+                  className="nx-icon-btn nx-icon-btn-sm is-danger shrink-0"
+                  title="删除这个技能"
+                  aria-label={`删除技能 ${entry.name}`}
+                  disabled={busyName !== null}
+                  onClick={() => void remove(entry)}
+                >
+                  {busyName === entry.name ? <IconRefresh size={11} className="animate-spin" /> : <IconTrash size={11} />}
+                </button>
+              )}
             </div>
           ))}
         </div>
