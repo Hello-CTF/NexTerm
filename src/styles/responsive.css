@@ -426,6 +426,9 @@
 .text-\[9px\] {
   font-size: calc(9px * var(--nx-ui-text-factor));
 }
+.text-\[9\.5px\] {
+  font-size: calc(9.5px * var(--nx-ui-text-factor));
+}
 .text-\[10px\] {
   font-size: calc(10px * var(--nx-ui-text-factor));
 }
