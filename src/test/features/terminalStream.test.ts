@@ -519,3 +519,41 @@ describe("terminal stream writer bounded FIFO (T-03 hard backpressure)", () => {
     term.dispose();
   });
 });
+
+describe("terminal stream writer replayed bytes", () => {
+  it("reports replay parsing exactly around replayed bytes in a real xterm", async () => {
+    const term = new Terminal({ cols: 40, rows: 10, scrollback: 1000, allowProposedApi: true });
+    let replaying = false;
+    const replies: { data: string; replaying: boolean }[] = [];
+    term.onData((data) => replies.push({ data, replaying }));
+    const events: { event: OscStreamEvent; replay: boolean }[] = [];
+    const writer = createTerminalStreamWriter(term, (event, replay) => events.push({ event, replay }), {
+      highWaterBytes: 1 << 20,
+      lowWaterBytes: 1 << 19,
+      onReplayChange: (next) => {
+        replaying = next;
+      },
+    });
+    writer.pushBytes(enc.encode("old\r\n\x1b[c\x1b[6n\x1b]9;old note\x07\x1b]52;c;b2xk\x07"), true);
+    writer.pushBytes(enc.encode("new\r\n\x1b[c\x1b]9;new note\x07"));
+    await drainWriter(writer, term);
+    expect(replaying).toBe(false);
+    // Every reply xterm produced while parsing the replayed bytes is
+    // attributed to the replay; the live query's reply is not.
+    expect(replies.filter((reply) => reply.replaying).map((reply) => reply.data)).toEqual([
+      expect.stringMatching(/^\x1b\[\?[\d;]*c$/),
+      expect.stringMatching(/^\x1b\[\d+;\d+R$/),
+    ]);
+    expect(replies.filter((reply) => !reply.replaying).map((reply) => reply.data)).toEqual([
+      expect.stringMatching(/^\x1b\[\?[\d;]*c$/),
+    ]);
+    expect(events).toEqual([
+      { event: { kind: "notification", body: "old note" }, replay: true },
+      { event: { kind: "clipboard", payload: "c;b2xk" }, replay: true },
+      { event: { kind: "notification", body: "new note" }, replay: false },
+    ]);
+    expect(term.buffer.active.getLine(0)?.translateToString(true)).toBe("old");
+    expect(term.buffer.active.getLine(1)?.translateToString(true)).toBe("new");
+    term.dispose();
+  });
+});

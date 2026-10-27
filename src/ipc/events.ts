@@ -182,9 +182,30 @@ export interface StreamAnchorControl {
   // it as its current attachment identity, so the ordered stream itself
   // carries the incarnation even before the attach RPC response arrives.
   attachmentId?: number;
+  // How many stream bytes after the anchor (control bytes included) are
+  // replayed history rather than new output.
+  replayBytes?: number;
 }
 
 export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";
+
+// Announces that the next `bytes` stream bytes are replayed output, for
+// streams without anchors (a resumed docker exec delivering its backlog).
+export interface StreamReplayControl {
+  type: string;
+  bytes: number;
+}
+
+export const STREAM_REPLAY_TYPE = "nexterm.stream-replay";
+
+function isStreamReplay(raw: unknown): raw is StreamReplayControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === STREAM_REPLAY_TYPE &&
+    typeof (raw as { bytes?: unknown }).bytes === "number"
+  );
+}
 
 function isStreamAnchor(raw: unknown): raw is StreamAnchorControl {
   return (
@@ -229,12 +250,17 @@ function handleDesktopStreamClosed(channel: unknown, raw: unknown): boolean {
 export function createBinaryChannel(
   onBytes: (data: Uint8Array) => void,
   onControl?: (control: StreamAnchorControl) => void,
+  onReplay?: (control: StreamReplayControl) => void,
 ): IpcChannel<unknown> {
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = (raw) => {
     if (handleDesktopStreamClosed(channel, raw)) return;
     if (isStreamAnchor(raw)) {
       onControl?.(raw);
+      return;
+    }
+    if (isStreamReplay(raw)) {
+      onReplay?.(raw);
       return;
     }
     decodeBytes(raw, onBytes);

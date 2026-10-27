@@ -37,7 +37,7 @@ import {
   type TerminalStreamBacklog,
 } from "./terminalStream";
 import { terminalOutputScheduler, type ScheduledTerminalOutput } from "./outputScheduler";
-import { createTerminalResponseLimiter } from "./terminalResponses";
+import { createTerminalResponseLimiter, isAutomaticTerminalReply } from "./terminalResponses";
 import {
   attachLinkLongPress,
   createTerminalLinkController,
@@ -843,11 +843,23 @@ export function XtermView(props: XtermViewProps) {
     // (watermarks, OSC events) still waits for xterm's own write callback.
     const output = terminalOutputScheduler.register(term, { visible: visibleRef.current !== false });
     outputRef.current = output;
+    // Replayed output (history redelivered on attach, reattach or recovery)
+    // only redraws this view: it never answers queries upstream, writes the
+    // clipboard, prompts, or notifies. OSC 133 marks, titles, cwd and modes
+    // are display state and still apply. replayParsing is true exactly while
+    // xterm parses replayed bytes (set and cleared from write callbacks in
+    // parse order); suppressed effects are only counted for diagnostics.
+    let replayParsing = false;
+    let replaySuppressed = 0;
+    const noteReplaySuppressed = () => {
+      replaySuppressed += 1;
+    };
     const streamWriter = createTerminalStreamWriter(
       output,
-      (event) => {
-        if (event.kind === "notification") onNotificationRef.current?.(event.body);
-        else if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
+      (event, replay) => {
+        if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
+        else if (replay) noteReplaySuppressed();
+        else if (event.kind === "notification") onNotificationRef.current?.(event.body);
         else onClipboardRef.current?.(event.payload);
       },
       {
@@ -880,6 +892,13 @@ export function XtermView(props: XtermViewProps) {
         // A hidden pane's backlog drains on the background budget; its
         // desktop notifications need no screen state, so they need not wait.
         dispatchEarly: (event) => event.kind === "notification" && visibleRef.current === false,
+        onReplayChange: (replaying) => {
+          replayParsing = replaying;
+          if (!replaying && replaySuppressed > 0) {
+            console.debug("[terminal] replayed output side effects suppressed", { count: replaySuppressed });
+            replaySuppressed = 0;
+          }
+        },
       },
     );
     // Automatic query replies (DA/DSR/CPR reports and friends) are answered
@@ -906,12 +925,17 @@ export function XtermView(props: XtermViewProps) {
     let streamAnchor: { epoch: string; seq: number; control: number } | null = null;
     let streamBytes = 0;
     let skipLeading = 0;
+    // Stream bytes still to arrive that the server marked as replayed history
+    // (the anchor's replayBytes, or a docker exec backlog announcement).
+    let replayRemaining = 0;
     let expiredNoticePending = false;
     const writeExpiredNotice = () => {
       streamWriter.writeLocalText("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n");
     };
     const channel = createBinaryChannel(
       (bytes) => {
+        const replayed = Math.min(bytes.length, replayRemaining);
+        replayRemaining -= replayed;
         let out = bytes;
         let skipped = 0;
         if (skipLeading > 0) {
@@ -925,12 +949,19 @@ export function XtermView(props: XtermViewProps) {
             skipLeading = 0;
           }
         }
-        if (out.length > 0 && !streamWriter.pushBytes(out)) {
+        // The replayed prefix and the live rest go to the writer separately
+        // so xterm parses each with the right replay state.
+        const replayedOut = Math.min(out.length, Math.max(0, replayed - skipped));
+        let accepted = skipped;
+        if (replayedOut > 0 && streamWriter.pushBytes(out.subarray(0, replayedOut), true)) {
+          accepted += replayedOut;
+        }
+        if (accepted < skipped + replayedOut || (out.length > replayedOut && !streamWriter.pushBytes(out.subarray(replayedOut)))) {
           // Refused bytes are not counted in streamBytes: the resume anchor
           // must point at the last accepted byte so the replay resends them.
           // The refusal episode is sticky inside the writer until the next
           // attachment boundary, keeping the accepted prefix contiguous.
-          streamBytes += skipped;
+          streamBytes += accepted;
           return;
         }
         streamBytes += bytes.length;
@@ -952,6 +983,7 @@ export function XtermView(props: XtermViewProps) {
         // episode ends here, not on the attach RPC response, so replay bytes
         // that arrive before the response is processed are still accepted.
         streamWriter.beginAttachment();
+        replayRemaining = Math.max(0, control.replayBytes ?? 0);
         if (control.expired) {
           term.clearSelection();
           streamWriter.resetStream();
@@ -986,6 +1018,9 @@ export function XtermView(props: XtermViewProps) {
         // reports the new attachment even when the attach response has not
         // arrived yet.
         adoptAttachmentId(control.attachmentId);
+      },
+      (replay) => {
+        replayRemaining = Math.max(0, replay.bytes);
       },
     );
     const applyRemoteDimensions = (cols: number, rows: number) => {
@@ -1172,8 +1207,10 @@ export function XtermView(props: XtermViewProps) {
             // Docker exec replays synchronously inside the attach RPC, before
             // its response: end the refusal episode up front so the replay is
             // accepted. Session tabs end the episode at the anchor frame
-            // instead, which the server sends first.
+            // instead, which the server sends first. The resumed backlog is
+            // announced in-band; nothing before it is replay.
             streamWriter.beginAttachment();
+            replayRemaining = 0;
           }
           const info = resume
             ? await terminalApi.attachTab(id, channel, -1, resume, containerId ? undefined : sessionId)
@@ -1238,6 +1275,12 @@ export function XtermView(props: XtermViewProps) {
       // A Ctrl/Alt latched on the key bar applies to the next character typed into the focused terminal.
       const data = term.textarea && document.activeElement === term.textarea ? applyStickyModifiersToTyped(raw) : raw;
       // Input in a visible pane switches hidden panes to the conservative drain tier.
+      // A reply xterm produced while parsing replayed output answers a query
+      // the live shell never asked now: drop it.
+      if (replayParsing && isAutomaticTerminalReply(raw)) {
+        noteReplaySuppressed();
+        return;
+      }
       if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
       blocks.feedInput(data);
       responses.submit(data);
