@@ -1474,6 +1474,7 @@ func (m *Manager) reapEphemeralTab(tab *Tab, generation uint64) error {
 	tab.mu.Lock()
 	if m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
 		delete(m.tabs, tab.ID)
+		m.forgetAttention(tab)
 		delete(session.tabs, tab.ID)
 		delete(m.throttleVersions, tab.ID)
 		delete(m.throttleChannels, tab.ID)
@@ -1906,6 +1907,7 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		session := tab.session
 		session.mu.Lock()
 		delete(m.tabs, id)
+		m.forgetAttention(tab)
 		delete(session.tabs, id)
 		delete(m.throttleVersions, id)
 		delete(m.throttleChannels, id)

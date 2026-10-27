@@ -8,6 +8,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -48,8 +49,9 @@ type AttentionEvent struct {
 	Seen     bool `json:"seen,omitempty"`
 	Notable  bool `json:"notable,omitempty"`
 	ExitCode *int `json:"exitCode,omitempty"`
-	// Version increases with every published change of any tab of this
-	// process; a client keeps the highest version it saw per tab.
+	// Version increases with every published change of the tab; a client
+	// keeps the highest version it saw per tab. Versions restart with the
+	// process.
 	Version uint64 `json:"version"`
 }
 
@@ -64,9 +66,8 @@ func (e AttentionEvent) sameAs(other AttentionEvent) bool {
 type attentionRegistry struct {
 	mu      sync.Mutex
 	entries map[string]*tabAttention
-	// token identifies each pump's watch; version orders published states.
-	token   uint64
-	version uint64
+	// token identifies each watch of a tab's runtime.
+	token uint64
 }
 
 type tabAttention struct {
@@ -74,12 +75,12 @@ type tabAttention struct {
 	token uint64
 	// reporter is the helper attachment of a durable tab; observed the
 	// tracker of a tab that does not run in a helper. At most one is set.
-	reporter base.DurableStateReporter
-	observed *supervisor.AttentionTracker
-	// cols and rows are the size observed was last told.
-	cols, rows int
-	last       AttentionEvent
-	published  bool
+	reporter  base.DurableStateReporter
+	observed  *supervisor.AttentionTracker
+	last      AttentionEvent
+	published bool
+	// version orders the tab's published states.
+	version uint64
 }
 
 // watchAttention follows the attention state of the tab whose output pump
@@ -89,7 +90,6 @@ type tabAttention struct {
 func (m *Manager) watchAttention(ctx context.Context, tab *Tab, generation uint64) {
 	tab.mu.Lock()
 	durable, lost := tab.durable, tab.durableLost
-	cols, rows := int(tab.cols), int(tab.rows)
 	current := !tab.closed && tab.generation == generation
 	tab.mu.Unlock()
 	if !current {
@@ -104,9 +104,9 @@ func (m *Manager) watchAttention(ctx context.Context, tab *Tab, generation uint6
 	previous := entry.observed
 	entry.token, entry.reporter, entry.observed = token, reporter, nil
 	if durable == nil && !lost {
-		entry.observed = supervisor.NewAttentionTracker(cols, rows, func() { m.refreshAttention(tab, token) })
-		entry.cols, entry.rows = cols, rows
+		entry.observed = supervisor.NewAttentionTracker(func() terminal.Snapshot { return tabScreen(tab) }, func() { m.refreshAttention(tab, token) })
 	}
+	observed := entry.observed
 	r.mu.Unlock()
 	if previous != nil {
 		// No longer current: its final change is not published.
@@ -117,7 +117,7 @@ func (m *Manager) watchAttention(ctx context.Context, tab *Tab, generation uint6
 	if reporter != nil {
 		updates = reporter.DurableStateUpdates()
 	}
-	m.startGoroutine(func() {
+	started := m.startGoroutine(func() {
 		for {
 			select {
 			case <-updates:
@@ -128,6 +128,45 @@ func (m *Manager) watchAttention(ctx context.Context, tab *Tab, generation uint6
 			}
 		}
 	})
+	if !started {
+		// The manager is closing: nothing follows this runtime.
+		r.mu.Lock()
+		if entry := r.currentLocked(tab, token); entry != nil {
+			entry.reporter, entry.observed = nil, nil
+		}
+		r.mu.Unlock()
+		if observed != nil {
+			observed.Exit(nil)
+		}
+	}
+}
+
+// tabScreen is the screen of the tab's own terminal model, which the observed
+// tracker inspects instead of keeping a second one.
+func tabScreen(tab *Tab) terminal.Snapshot {
+	if core, ok := tab.terminal.(interface{ Snapshot() terminal.Snapshot }); ok {
+		return core.Snapshot()
+	}
+	return terminal.Snapshot{}
+}
+
+// forgetAttention drops a removed tab. The caller may hold the manager, tab
+// and session locks: the dropped tracker's last change finds no entry and
+// publishes nothing.
+func (m *Manager) forgetAttention(tab *Tab) {
+	r := &m.attention
+	r.mu.Lock()
+	entry := r.entries[tab.ID]
+	if entry == nil || entry.tab != tab {
+		r.mu.Unlock()
+		return
+	}
+	delete(r.entries, tab.ID)
+	observed := entry.observed
+	r.mu.Unlock()
+	if observed != nil {
+		observed.Exit(nil)
+	}
 }
 
 func (r *attentionRegistry) entryLocked(tab *Tab) *tabAttention {
@@ -136,7 +175,12 @@ func (r *attentionRegistry) entryLocked(tab *Tab) *tabAttention {
 	}
 	entry := r.entries[tab.ID]
 	if entry == nil || entry.tab != tab {
-		entry = &tabAttention{tab: tab}
+		next := &tabAttention{tab: tab}
+		if entry != nil {
+			// Keep the tab ID's versions increasing for clients.
+			next.version = entry.version
+		}
+		entry = next
 		r.entries[tab.ID] = entry
 	}
 	return entry
@@ -187,12 +231,15 @@ func (m *Manager) endAttention(tab *Tab, token uint64) {
 	}
 	observed := entry.observed
 	source := entry.last.Source
-	entry.reporter, entry.observed = nil, nil
+	// The ended watch is no longer current: a late change of its tracker or
+	// helper cannot replace the final state published here.
+	r.token++
+	entry.token, entry.reporter, entry.observed = r.token, nil, nil
 	if closed {
 		delete(r.entries, tab.ID)
 		r.mu.Unlock()
 	} else {
-		event := AttentionEvent{State: AttentionUnknown, Reason: "disconnected"}
+		event := AttentionEvent{State: AttentionUnknown, Source: source, Reason: "disconnected"}
 		if exited {
 			event = AttentionEvent{State: base.SessionExited, Confidence: base.ConfidenceSignal, Source: source, Reason: "exit"}
 			if entry.last.State == base.SessionExited {
@@ -245,8 +292,8 @@ func (m *Manager) publishAttentionLocked(entry *tabAttention, event AttentionEve
 		r.mu.Unlock()
 		return
 	}
-	r.version++
-	event.Version = r.version
+	entry.version++
+	event.Version = entry.version
 	entry.last, entry.published = event, true
 	r.mu.Unlock()
 	m.emitAttention(entry.tab, event)
@@ -289,41 +336,35 @@ func attentionFromState(state *base.SessionState, source string) AttentionEvent 
 // observeAttentionOutput feeds tab output to the observed tracker of a tab
 // that does not run in a helper.
 func (m *Manager) observeAttentionOutput(tab *Tab, data []byte) {
+	if tracker := m.observedTracker(tab); tracker != nil {
+		// The tracker reports changes through refreshAttention, which takes
+		// the registry lock: it is never called with the lock held.
+		tracker.Output(data)
+	}
+}
+
+// observedTracker returns the observed tracker of a tab outside a helper;
+// a durable tab is answered without the registry lock.
+func (m *Manager) observedTracker(tab *Tab) *supervisor.AttentionTracker {
 	tab.mu.Lock()
-	cols, rows := int(tab.cols), int(tab.rows)
+	durable := tab.durable != nil
 	tab.mu.Unlock()
+	if durable {
+		return nil
+	}
 	r := &m.attention
 	r.mu.Lock()
-	entry := r.entries[tab.ID]
-	if entry == nil || entry.tab != tab || entry.observed == nil {
-		r.mu.Unlock()
-		return
+	defer r.mu.Unlock()
+	if entry := r.entries[tab.ID]; entry != nil && entry.tab == tab {
+		return entry.observed
 	}
-	tracker := entry.observed
-	resize := cols > 0 && rows > 0 && (cols != entry.cols || rows != entry.rows)
-	if resize {
-		entry.cols, entry.rows = cols, rows
-	}
-	r.mu.Unlock()
-	// The tracker reports changes through refreshAttention, which takes the
-	// registry lock: it is never called with the lock held.
-	if resize {
-		tracker.Resize(cols, rows)
-	}
-	tracker.Output(data)
+	return nil
 }
 
 // observeAttentionInput records input written to a tab that does not run in
 // a helper; a helper sees the input itself.
 func (m *Manager) observeAttentionInput(tab *Tab) {
-	r := &m.attention
-	r.mu.Lock()
-	var tracker *supervisor.AttentionTracker
-	if entry := r.entries[tab.ID]; entry != nil && entry.tab == tab {
-		tracker = entry.observed
-	}
-	r.mu.Unlock()
-	if tracker != nil {
+	if tracker := m.observedTracker(tab); tracker != nil {
 		tracker.Input()
 	}
 }

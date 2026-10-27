@@ -2,10 +2,13 @@ package session
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -13,6 +16,7 @@ import (
 type attentionRecorder struct {
 	mu     sync.Mutex
 	events []AttentionEvent
+	owners []string
 	wake   chan struct{}
 }
 
@@ -20,12 +24,13 @@ func newAttentionRecorder() *attentionRecorder {
 	return &attentionRecorder{wake: make(chan struct{}, 1)}
 }
 
-func (r *attentionRecorder) EmitSessionEvent(_ context.Context, event Event) error {
+func (r *attentionRecorder) EmitSessionEvent(ctx context.Context, event Event) error {
 	if event.Topic != TopicTerminalAttention {
 		return nil
 	}
 	r.mu.Lock()
 	r.events = append(r.events, event.Payload.(AttentionEvent))
+	r.owners = append(r.owners, ipc.EventOwnerID(ctx))
 	r.mu.Unlock()
 	select {
 	case r.wake <- struct{}{}:
@@ -70,10 +75,40 @@ func attentionIs(state, confidence, source string) func(AttentionEvent) bool {
 	}
 }
 
+// screenTerminal adds a real screen model to the fake terminal, as the tab's
+// own terminal model provides one: the observed tracker inspects it.
+type screenTerminal struct {
+	*fakeTerminal
+	screenMu sync.Mutex
+	screen   *terminal.Emulator
+}
+
+func (s *screenTerminal) Feed(data []byte) {
+	s.fakeTerminal.Feed(data)
+	s.screenMu.Lock()
+	s.screen.Write(data)
+	s.screenMu.Unlock()
+}
+
+func (s *screenTerminal) Snapshot() terminal.Snapshot {
+	s.screenMu.Lock()
+	defer s.screenMu.Unlock()
+	return s.screen.Snapshot()
+}
+
+func screenTerminals() TerminalFactory {
+	return TerminalFactoryFunc(func(config TerminalConfig) (TerminalState, error) {
+		return &screenTerminal{
+			fakeTerminal: &fakeTerminal{cols: int(config.Cols), rows: int(config.Rows)},
+			screen:       terminal.NewEmulator(int(config.Cols), int(config.Rows)),
+		}, nil
+	})
+}
+
 func TestAttentionObservedForTabsOutsideAHelper(t *testing.T) {
 	recorder := newAttentionRecorder()
 	connector := newFakeConnector()
-	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), Emitter: recorder, OpenAccess: true})
+	manager := NewManager(Config{Connector: connector, Terminals: screenTerminals(), Emitter: recorder, OpenAccess: true})
 	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
 	session, err := manager.Connect(ctx, Asset{ID: "docker-1", Kind: KindDocker})
@@ -154,22 +189,68 @@ func TestAttentionUnknownWhileDisconnected(t *testing.T) {
 	if err := connector.transport(0).channel(0).emit([]byte("approve\a")); err != nil {
 		t.Fatal(err)
 	}
-	recorder.wait(t, tab.ID, "bell", attentionIs(base.SessionNeedsMe, base.ConfidenceSignal, AttentionSourceObserved))
+	asked := recorder.wait(t, tab.ID, "bell", attentionIs(base.SessionNeedsMe, base.ConfidenceSignal, AttentionSourceObserved))
 
-	// The connection drops: the earlier state is not kept as if it were live.
+	// The connection drops: the earlier state is not kept as if it were live,
+	// and the ended runtime's tracker cannot publish over the final state.
 	_ = connector.transport(0).Close()
-	gone := recorder.wait(t, tab.ID, "unknown", func(event AttentionEvent) bool { return event.State != base.SessionNeedsMe })
-	if gone.State != AttentionUnknown && gone.State != base.SessionExited {
-		t.Fatalf("state after the connection dropped = %+v", gone)
+	want := AttentionEvent{TabID: tab.ID, State: AttentionUnknown, Source: AttentionSourceObserved, Reason: "disconnected", Version: asked.Version + 1}
+	gone := recorder.wait(t, tab.ID, "unknown", func(event AttentionEvent) bool { return event.Version > asked.Version })
+	if !gone.sameAs(want) || gone.Version != want.Version {
+		t.Fatalf("state after the connection dropped = %+v, want %+v", gone, want)
 	}
 	listed, err := manager.ListAttentionFor(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, event := range listed {
-		if event.TabID == tab.ID && event.State == base.SessionNeedsMe {
-			t.Fatalf("listed the stale state %+v", event)
+	if len(listed) != 1 || !listed[0].sameAs(want) || listed[0].Version != want.Version {
+		t.Fatalf("listed %+v, want %+v", listed, want)
+	}
+}
+
+// One account never lists, marks or receives another account's attention
+// states.
+func TestAttentionIsOwnerScoped(t *testing.T) {
+	recorder := newAttentionRecorder()
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), Emitter: recorder})
+	t.Cleanup(func() { _ = manager.Close() })
+	alice := ipc.WithUserID(context.Background(), "user-a")
+	bob := ipc.WithUserID(context.Background(), "user-b")
+	session, err := manager.Connect(alice, Asset{ID: "docker-owned", Kind: KindDocker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openTestTab(t, manager, session, "alice", "ch-a")
+	if err := connector.transport(0).channel(0).emit([]byte("approve\a")); err != nil {
+		t.Fatal(err)
+	}
+	asked := recorder.wait(t, tab.ID, "bell", attentionIs(base.SessionNeedsMe, base.ConfidenceSignal, AttentionSourceObserved))
+
+	recorder.mu.Lock()
+	for index, owner := range recorder.owners {
+		if owner != "user-a" {
+			t.Errorf("event %+v carried owner %q, want user-a", recorder.events[index], owner)
 		}
+	}
+	recorder.mu.Unlock()
+
+	listed, err := manager.ListAttentionFor(bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("another account listed %+v", listed)
+	}
+	if err := manager.MarkAttentionSeenFor(bob, tab.ID, asked.Since); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("another account marked seen: %v, want ErrForbidden", err)
+	}
+	owned, err := manager.ListAttentionFor(alice)
+	if err != nil || len(owned) != 1 || owned[0].Seen || owned[0].Version != asked.Version {
+		t.Fatalf("owner list after the refused mark = %+v, %v", owned, err)
+	}
+	if _, err := manager.ListAttentionFor(context.Background()); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("anonymous list = %v, want ErrForbidden", err)
 	}
 }
 
