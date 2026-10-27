@@ -1,10 +1,10 @@
 ---
 name: batch-operations
-description: Run the same change across several hosts safely: pick targets, canary first, verify, then widen. Use for fleet-wide or multi-host commands and runbooks.
+description: Run the same change across several hosts safely: pick targets, canary first, verify, then widen. Use for fleet-wide or multi-host commands.
 ---
 # Safe batch operations across hosts
 
-Use this when a task touches more than one host, either with `exec_commands` (using `asset_ids` or `tags`) or by following a saved runbook.
+Use this when a task touches more than one host with `exec_commands` (using `asset_ids` or `tags`).
 
 ## Plan
 
@@ -23,4 +23,3 @@ Use this when a task touches more than one host, either with `exec_commands` (us
 
 - After each group, summarise per-host results: success, non-zero exit, timeout, transport error. Name the hosts that failed and show the relevant output.
 - Do not retry failures automatically on production. Propose the next step and wait.
-- If the sequence will be needed again, offer to save it as a runbook template so the same steps can be re-run and show up in run history.

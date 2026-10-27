@@ -19,7 +19,7 @@ Use this whenever you drive an interactive terminal tab with `send_keys` (editor
 
 ## After sending
 
-1. Use `wait_for` with a pattern that matches the expected next prompt or message. Pass `since_seq` from your earlier `read_screen` so you only match new output. Add `quiet_ms` when the program prints in bursts.
+1. Use `wait_for` with a pattern that matches the expected next prompt or message. Pass `since_seq` set to the `submitted_seq` returned by `send_keys` so you only match output produced after your input (not the typed text itself). Note that `submitted_seq` marks where your output starts and does not prove the program accepted the input. Add `quiet_ms` when the program prints in bursts.
 2. Call `read_screen` again and verify the outcome. Report what the screen actually shows, including errors, rather than assuming success.
 3. If `wait_for` times out, read the screen and report the real state; do not resend the same keys blindly.
 
