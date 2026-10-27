@@ -124,6 +124,15 @@ function statusView(tab: BackgroundTab): StatusView {
   };
 }
 
+// Hover tooltips do not reach touch screens, so the gaps a tooltip explains are also stated once below the table.
+const OLD_HELPER_NOTE = "部分终端所在主机的持久组件版本较旧，无法显示状态和时间；更新组件后即可显示";
+const NEEDS_ME_NOTE = "「需要我」表示程序在等你回应：响铃、发出通知或显示了需要选择的提示";
+
+// helperReportsNothing marks a durable row whose helper sent no state or no activity times.
+function helperReportsNothing(tab: BackgroundTab): boolean {
+  return Boolean(tab.activityUnknown || ((tab.durable || tab.remote) && !tab.state));
+}
+
 const STATUS_TONE_CLASS: Record<StatusView["tone"], string> = {
   accent: "font-medium text-blue-300",
   muted: "text-[var(--nx-fg-soft)]",
@@ -800,6 +809,12 @@ export function BackgroundSessions({
       </div>
 
       <div className="shrink-0 border-t border-neutral-800/60 px-3 py-2 text-[11px] leading-relaxed text-[var(--nx-fg-soft)]">
+        {list.some((t) => t.state === "needs_me") && (
+          <p className="mb-1" data-testid="background-needs-me-note">{NEEDS_ME_NOTE}</p>
+        )}
+        {list.some(helperReportsNothing) && (
+          <p className="mb-1" data-testid="background-old-helper-note">{OLD_HELPER_NOTE}</p>
+        )}
         <IconTerminal size={11} className="mr-1 inline align-[-1px]" />
         {persistenceFootnote(hostScope)}
       </div>

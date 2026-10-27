@@ -163,6 +163,9 @@ describe("BackgroundSessions table", () => {
       expect(row(view, "t1").cells).toHaveLength(5);
       expect(view.container.querySelector('[data-testid="background-host-name"]')).toBeNull();
       expect(view.container.querySelector('[data-testid="background-host"]')?.textContent).toBe("主机一");
+      // A regular terminal has nothing to explain.
+      expect(view.container.querySelector('[data-testid="background-old-helper-note"]')).toBeNull();
+      expect(view.container.querySelector('[data-testid="background-needs-me-note"]')).toBeNull();
     } finally {
       view.unmount();
     }
@@ -297,6 +300,10 @@ describe("BackgroundSessions table", () => {
       expect(cell(old, "background-time").title).toContain("版本较旧");
       expect(cell(old, "background-time").title).toContain("创建（主机时间）：2026-10-27 11:00:00");
       expect(view.container.textContent).not.toContain("在主机上运行");
+      // Touch screens get no tooltips: the old component and 需要我 are explained in visible text.
+      expect(cell(view.container, "background-old-helper-note").textContent).toBe(
+        "部分终端所在主机的持久组件版本较旧，无法显示状态和时间；更新组件后即可显示");
+      expect(cell(view.container, "background-needs-me-note").textContent).toContain("「需要我」表示程序在等你回应");
     } finally {
       view.unmount();
     }
