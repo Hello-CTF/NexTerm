@@ -162,11 +162,11 @@ func TestEnsureDaemonTwoClientsShareSession(t *testing.T) {
 	if _, err := providerB.Create(ctx, base.DurableCreateOptions{ID: tabID, Cols: 80, Rows: 24}); !errors.Is(err, durable.ErrAlreadyExists) {
 		t.Fatalf("second client create = %v; want ErrAlreadyExists without a duplicate session", err)
 	}
-	listed, err := providerB.ListDurable(ctx)
+	listed, err := providerB.ListDurableDescriptors(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || listed[0] != tabID {
+	if len(listed) != 1 || listed[0].ID != tabID {
 		t.Fatalf("second client listed %v; want exactly the shared session", listed)
 	}
 
@@ -197,11 +197,11 @@ func TestEnsureDaemonTwoClientsShareSession(t *testing.T) {
 	if err := attA.Close(); err != nil {
 		t.Fatal(err)
 	}
-	listed, err = providerB.ListDurable(ctx)
+	listed, err = providerB.ListDurableDescriptors(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || listed[0] != tabID {
+	if len(listed) != 1 || listed[0].ID != tabID {
 		t.Fatalf("detach killed the session: %v", listed)
 	}
 	if _, err := attB.Write([]byte("echo after-detach-''x\n")); err != nil {
@@ -235,7 +235,7 @@ func TestEnsureDaemonTwoClientsShareSession(t *testing.T) {
 	if err := attA2.Kill(ctx); err != nil {
 		t.Fatal(err)
 	}
-	listed, err = providerB.ListDurable(ctx)
+	listed, err = providerB.ListDurableDescriptors(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,11 +427,11 @@ func TestEnsureDaemonHelperRestartRecoversSession(t *testing.T) {
 	if host2.sawCommand("setsid") {
 		t.Fatal("the resolver respawned although the replacement daemon was already serving")
 	}
-	listed, err := daemon2.Provider().ListDurable(ctx)
+	listed, err := daemon2.Provider().ListDurableDescriptors(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || listed[0] != tabID {
+	if len(listed) != 1 || listed[0].ID != tabID {
 		t.Fatalf("sessions after the helper restart = %v; want the original session only", listed)
 	}
 	reattached, err := daemon2.Provider().AttachWithIdentity(ctx, tabID, listedIdentity(t, ctx, daemon2.Provider(), tabID))
@@ -482,7 +482,7 @@ func TestEnsureDaemonSecondRemoteUserIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = attachment.Close() }()
-	listedB, err := daemonB.Provider().ListDurable(ctx)
+	listedB, err := daemonB.Provider().ListDurableDescriptors(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

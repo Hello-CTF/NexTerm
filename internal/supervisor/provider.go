@@ -202,18 +202,6 @@ func (p *Provider) RenameDurable(ctx context.Context, options base.DurableRename
 	return renameResult(info), nil
 }
 
-func (p *Provider) ListDurable(ctx context.Context) ([]string, error) {
-	infos, err := p.supervisor.List(ctx)
-	if err != nil {
-		return nil, translateError(err)
-	}
-	ids := make([]string, len(infos))
-	for index, info := range infos {
-		ids[index] = info.ID
-	}
-	return ids, nil
-}
-
 // ListDurableDescriptors carries each session's state without its events,
 // which polling callers do not read.
 func (p *Provider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
@@ -512,18 +500,6 @@ func (p *RemoteProvider) RenameDurable(ctx context.Context, options base.Durable
 		return base.DurableRenameResult{}, translateMetadataError(err)
 	}
 	return renameResult(info), nil
-}
-
-func (p *RemoteProvider) ListDurable(ctx context.Context) ([]string, error) {
-	infos, err := p.client.List(ctx)
-	if err != nil {
-		return nil, translateError(err)
-	}
-	ids := make([]string, len(infos))
-	for index, info := range infos {
-		ids[index] = info.ID
-	}
-	return ids, nil
 }
 
 // ListDurableDescriptors carries each session's state without its events,

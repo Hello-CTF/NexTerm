@@ -100,7 +100,7 @@ func (f stateRuleFixture) awaitRevision(t *testing.T, account string, want func(
 
 func listDurable(t *testing.T, provider base.DurableProvider) {
 	t.Helper()
-	if _, err := provider.(*supervisor.RemoteProvider).ListDurable(context.Background()); err != nil {
+	if _, err := provider.ListDurableDescriptors(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

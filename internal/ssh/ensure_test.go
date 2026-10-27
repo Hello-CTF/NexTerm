@@ -868,9 +868,9 @@ func TestEnsureDaemonConnectsToRunningDaemon(t *testing.T) {
 	if host.sawCommand("setsid") {
 		t.Fatal("spawned a daemon although one was already running")
 	}
-	ids, err := daemon.Provider().ListDurable(context.Background())
-	if err != nil || len(ids) != 0 {
-		t.Fatalf("ListDurable = %v, %v", ids, err)
+	descriptors, err := daemon.Provider().ListDurableDescriptors(context.Background())
+	if err != nil || len(descriptors) != 0 {
+		t.Fatalf("ListDurableDescriptors = %v, %v", descriptors, err)
 	}
 }
 
