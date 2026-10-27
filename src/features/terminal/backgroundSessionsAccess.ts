@@ -135,13 +135,15 @@ export function collectBackgroundTabs(
   scope: BackgroundScope,
   input: {
     live: LiveTabInfo[] | null;
-    remote: { session: SessionInfo; tabs: DurableList | null; reason?: unknown }[];
+    // fetchedAt is when that listing arrived on this device's clock; ages in it are relative to it.
+    remote: { session: SessionInfo; tabs: DurableList | null; reason?: unknown; fetchedAt?: number }[];
     openTabIds: Set<string>;
-    // When the listings arrived on this device's clock; defaults to now.
-    fetchedAt?: number;
+    // When the live listing arrived on this device's clock; defaults to now.
+    liveFetchedAt?: number;
   },
 ): CollectedBackgroundTabs {
-  const fetchedAt = input.fetchedAt ?? Date.now();
+  const collectedAt = Date.now();
+  const liveFetchedAt = input.liveFetchedAt ?? collectedAt;
   const list: BackgroundTab[] = [];
   const known = new Set<string>();
   const knownTabsByHost = new Map<string, Map<string, KnownDurableTab>>();
@@ -160,12 +162,12 @@ export function collectBackgroundTabs(
     if (known.has(key)) continue;
     known.add(key);
     if (tab.subscribers === 0) {
-      const row: BackgroundTab = { ...tab, fetchedAt };
+      const row: BackgroundTab = { ...tab, fetchedAt: liveFetchedAt };
       liveRows.set(key, row);
       list.push(row);
     }
   }
-  for (const { session, tabs, reason } of input.remote) {
+  for (const { session, tabs, reason, fetchedAt = collectedAt } of input.remote) {
     const hostKey = hostKeyForSession(scope, session);
     if (tabs === null) {
       if (hostKey) incompleteHosts.add(hostKey);

@@ -24,6 +24,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { BackgroundSessions } from "../../features/terminal/BackgroundSessions";
+import { collectBackgroundTabs } from "../../features/terminal/backgroundSessionsAccess";
 import { useAuth } from "../../features/auth/store";
 import { setLocalHelperStatusForTest } from "../../features/terminal/localHelperStatus";
 import { useUi, type Workspace } from "../../app/store";
@@ -352,6 +353,21 @@ describe("BackgroundSessions table", () => {
     } finally {
       view.unmount();
     }
+  });
+
+  it("counts each listing's ages from when that listing arrived", () => {
+    const local = { ...s1, id: "local", kind: "local", assetId: null };
+    const collected = collectBackgroundTabs(
+      { sessions: [local, s2], workspaces: [], verified: {} },
+      {
+        live: [liveTab({ tabId: "live", sessionId: "local" })],
+        liveFetchedAt: NOW - 4000,
+        remote: [{ session: s2, tabs: [descriptor({ id: "slow" })], fetchedAt: NOW - 1000 }],
+        openTabIds: new Set(),
+      },
+    );
+    const fetched = Object.fromEntries(collected.list.map((tab) => [tab.tabId, tab.fetchedAt]));
+    expect(fetched).toEqual({ live: NOW - 4000, slow: NOW - 1000 });
   });
 
   it("shows helper ages instead of comparing this device's clock with a skewed host clock", async () => {

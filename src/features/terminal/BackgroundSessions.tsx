@@ -353,21 +353,25 @@ export function BackgroundSessions({
         sessions: st.sessions, workspaces: st.workspaces, verified: verifiedQuickSessions, localDurable: localDurableEnabled(localHelper),
       };
       const targets = backgroundTargets(scope, { showAll, hostSessionId, owner: ownerWorkspace, remoteOwner });
+      // Each listing keeps its own arrival time: its ages count from when it answered, not from the slowest one.
+      const received = <T,>(request: Promise<T>) => request.then((value) => ({ value, at: Date.now() }));
       const [live, ...remote] = await Promise.allSettled([
-        terminalApi.listLive(),
-        ...targets.map((session) => terminalApi.listDurable(session.id)),
+        received(terminalApi.listLive()),
+        ...targets.map((session) => received(terminalApi.listDurable(session.id))),
       ]);
       if (generation !== loadGenerationRef.current) return;
       const errors: string[] = [];
       if (live.status === "rejected") errors.push(describeError(live.reason));
       const collected = collectBackgroundTabs(scope, {
-        live: live.status === "fulfilled" ? (live.value as LiveTabInfo[]) : null,
+        live: live.status === "fulfilled" ? (live.value.value as LiveTabInfo[]) : null,
+        liveFetchedAt: live.status === "fulfilled" ? live.value.at : undefined,
         remote: targets.map((session, index) => {
           const result = remote[index];
           return {
             session,
-            tabs: result.status === "fulfilled" ? (result.value as Awaited<ReturnType<typeof terminalApi.listDurable>>) : null,
+            tabs: result.status === "fulfilled" ? (result.value.value as Awaited<ReturnType<typeof terminalApi.listDurable>>) : null,
             reason: result.status === "rejected" ? result.reason : undefined,
+            fetchedAt: result.status === "fulfilled" ? result.value.at : undefined,
           };
         }),
         openTabIds: openTerminalTabIds(showAll ? st.workspaces : ownerWorkspace ? [ownerWorkspace] : []),
