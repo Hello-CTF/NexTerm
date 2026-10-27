@@ -99,7 +99,10 @@ type sessionInfoDTO struct {
 	ErrorCode   ipc.Code   `json:"errorCode,omitempty"`
 	Attempt     int        `json:"attempt,omitempty"`
 	NextRetryAt *time.Time `json:"nextRetryAt,omitempty"`
-	StaleConfig bool       `json:"staleConfig"`
+	// Liveness is "suspect" while a connected session's heartbeats go
+	// unanswered and is omitted otherwise.
+	Liveness    string `json:"liveness,omitempty"`
+	StaleConfig bool   `json:"staleConfig"`
 }
 
 type openTerminalRequest struct {
@@ -524,6 +527,19 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					s.closeDockerSession(ctx, input.SessionID)
 				}
 				return true, nil
+			})
+		},
+		func() error {
+			// session_liveness_probe checks a session's connection now (the client
+			// returned to the foreground): a dead connection reconnects at once and
+			// a pending reconnect backoff is cut short.
+			return ipc.Register(dispatcher, "session_liveness_probe", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (sessionInfoDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				info, err := s.sessions.ProbeLivenessFor(ctx, input.SessionID)
+				if err != nil {
+					return sessionInfoDTO{}, terminalIPCError(err)
+				}
+				return productionSessionInfo(info), nil
 			})
 		},
 		func() error {
@@ -1434,7 +1450,7 @@ func productionSessionInfo(info session.SessionInfo) sessionInfoDTO {
 	return sessionInfoDTO{
 		ID: info.ID, AssetID: assetID, Name: info.Name, Kind: info.Kind, Status: string(info.Status),
 		Tabs: info.Tabs, CreatedAt: info.CreatedAt.UnixMilli(), Error: info.Error, ErrorCode: info.ErrorCode,
-		Attempt: info.Attempt, NextRetryAt: info.NextRetryAt, StaleConfig: info.StaleConfig,
+		Attempt: info.Attempt, NextRetryAt: info.NextRetryAt, Liveness: string(info.Liveness), StaleConfig: info.StaleConfig,
 	}
 }
 
