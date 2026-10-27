@@ -63,6 +63,24 @@ func TestLivenessTrackerReplyOrTrafficRestartsTheSilenceBudget(t *testing.T) {
 	}
 }
 
+func TestLivenessTrackerIgnoresOlderSmallerInboundSnapshot(t *testing.T) {
+	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0), 0)
+	if got := tracker.observe(livenessAt(60*time.Second), missed(100)); got != LivenessAlive {
+		t.Fatalf("state after inbound traffic = %s, want alive", got)
+	}
+	// A late snapshot taken before the 100-byte one is not traffic.
+	if got := tracker.observe(livenessAt(70*time.Second), missed(50)); got != LivenessSuspect {
+		t.Fatalf("state after a stale smaller snapshot = %s, want suspect", got)
+	}
+	// The maximum was kept, so the same count again is still not traffic.
+	if got := tracker.observe(livenessAt(75*time.Second), missed(100)); got != LivenessSuspect {
+		t.Fatalf("state after re-observing the known maximum = %s, want suspect", got)
+	}
+	if got := tracker.observe(livenessAt(80*time.Second), missed(101)); got != LivenessAlive {
+		t.Fatalf("state after genuinely new bytes = %s, want alive", got)
+	}
+}
+
 func TestLivenessTrackerDeclaresDeadOnLostTransportAtOnce(t *testing.T) {
 	tracker := newLivenessTracker(livenessTestPolicy, livenessAt(0), 0)
 	got := tracker.observe(livenessAt(time.Second), livenessObservation{result: heartbeatLost, probe: true})

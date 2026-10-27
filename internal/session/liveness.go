@@ -41,7 +41,9 @@ type LivenessPolicy struct {
 	// the SSH transport keepalive budget (30s x 3).
 	SilenceBudget time.Duration
 	// SuspendGrace is how long after a detected system suspend or clock jump
-	// silence never declares the connection dead.
+	// silence never declares the connection dead. It only matters when
+	// SilenceBudget is shorter than the grace; otherwise the budget restarted
+	// at the jump already outlasts it.
 	SuspendGrace time.Duration
 }
 
@@ -170,8 +172,9 @@ func (t *livenessTracker) observe(now livenessReading, observation livenessObser
 		t.lastLife = now
 	}
 	t.last = now
-	traffic := observation.inbound != t.inbound
-	t.inbound = observation.inbound
+	// A smaller count is an older snapshot delivered late, not new traffic.
+	traffic := observation.inbound > t.inbound
+	t.inbound = max(t.inbound, observation.inbound)
 	if t.state == LivenessDead {
 		return t.state
 	}
