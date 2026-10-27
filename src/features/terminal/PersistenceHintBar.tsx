@@ -4,21 +4,21 @@ import { persistenceHintFailure, persistenceHintMessage, type PersistenceHint } 
 export function PersistenceHintBar({
   hint,
   local,
-  onReopenDurable,
+  onOpenDurable,
   onManageHelper,
   onDismiss,
 }: {
   hint: PersistenceHint;
   local: boolean;
   // Absent when no durable helper serves this session.
-  onReopenDurable?: () => void;
+  onOpenDurable?: () => void;
   onManageHelper?: () => void;
   onDismiss: () => void;
 }) {
   const tone = hint.kind === "ready" ? "accent" : persistenceHintFailure(hint) ? "danger" : "neutral";
   let action: { label: string; onSelect: () => void; primary?: boolean } | null = null;
   if (hint.kind === "ready") {
-    if (onReopenDurable) action = { label: "在持久终端中重开", onSelect: onReopenDurable, primary: true };
+    if (onOpenDurable) action = { label: "新建持久终端", onSelect: onOpenDurable, primary: true };
   } else if (onManageHelper && (hint.kind === "attention" || hint.kind === "restore")) {
     action = { label: "处理", onSelect: onManageHelper };
   } else if (onManageHelper && (hint.kind !== "preparing" || !local)) {

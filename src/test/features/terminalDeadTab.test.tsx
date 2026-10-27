@@ -852,7 +852,7 @@ describe("terminal dead-tab overlay", () => {
     act(() => useUi.getState().setHelperProgress({ ...progress, stage: "ready", done: true }));
     await flush();
     expect(hint()?.textContent).toContain("这台主机的持久终端已就绪");
-    expect([...(hint()?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).toContain("在持久终端中重开");
+    expect([...(hint()?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).toContain("新建持久终端");
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
     expect(useUi.getState().toasts.some((toast) => toast.text.includes("持久终端已就绪"))).toBe(false);
     expect(mocks.helperOperation).not.toHaveBeenCalled();

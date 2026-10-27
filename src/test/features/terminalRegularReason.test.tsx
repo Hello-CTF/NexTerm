@@ -25,7 +25,8 @@ vi.mock("../../ipc/commands", () => ({
   vaultApi: {},
   sessionApi: {
     prepareDurable: mocks.prepareDurable,
-    list: vi.fn().mockResolvedValue([]),
+    // The backend still knows the seeded sessions, so a resync after attach keeps them.
+    list: vi.fn(async () => useUi.getState().sessions),
   },
   terminalApi: {
     listLive: vi.fn().mockResolvedValue([]),
@@ -39,7 +40,10 @@ vi.mock("../../ipc/commands", () => ({
 }));
 
 vi.mock("../../ipc/events", () => ({
-  listenEvent: vi.fn().mockResolvedValue(() => {}),
+  listenEvent: vi.fn((name: string, handler: (payload: unknown) => void) => {
+    harness.events.set(name, handler);
+    return Promise.resolve(() => {});
+  }),
   EVENTS: { terminalControl: "terminal-control" },
   EventVersionGate: class {
     accept() {
@@ -63,6 +67,7 @@ vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () 
 
 const harness = vi.hoisted(() => ({
   props: null as Record<string, unknown> | null,
+  events: new Map<string, (payload: unknown) => void>(),
   // Counts renders of the pane's view, a probe for renders of the pane itself.
   renders: 0,
 }));
@@ -383,12 +388,32 @@ describe("persistence hint bar", () => {
     succeedHelper();
     await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
 
-    act(() => hintButton("在持久终端中重开")?.click());
+    act(() => hintButton("新建持久终端")?.click());
     await waitFor(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(2));
     const reopened = useUi.getState().workspaces[0]?.panes[0]?.tabs.find((tab) => tab.id !== "t1");
     expect(reopened).toMatchObject({ kind: "terminal", sessionId: "s1" });
     expect(reopened?.regularReason).toBeUndefined();
     expect(useUi.getState().toasts).toHaveLength(0);
+  });
+
+  it("opens the new durable terminal in the folder this one is in, keeping this tab", async () => {
+    mocks.prepareDurable.mockResolvedValue({ state: "ready" });
+    seed({ tabId: "kernel-1", regularReason: "打开时持久组件未就绪" });
+    mountPane();
+    await flush();
+    act(() => (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1"));
+    act(() => harness.events.get("terminal-control")?.({
+      tabId: "kernel-1", version: 1, controller: "me", subscribers: 1, viewers: 1, exited: false,
+      cols: 80, rows: 24, gridRevision: 0, cwd: "/srv/app",
+    }));
+    helperProgress("ready", true);
+    await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
+
+    act(() => hintButton("新建持久终端")?.click());
+    await waitFor(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(2));
+    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+    expect(tabs.map((tab) => tab.id)).toContain("t1");
+    expect(tabs.find((tab) => tab.id !== "t1")?.pendingDirectory).toBe("/srv/app");
   });
 
   it("offers every regular tab on a session the ready helper, including after a remount", async () => {
@@ -406,7 +431,7 @@ describe("persistence hint bar", () => {
 
       helperProgress("ready", true);
       await waitFor(() => expect(hintBar()?.dataset.tone).toBe("accent"));
-      expect(hintButton("在持久终端中重开", other.container)).toBeDefined();
+      expect(hintButton("新建持久终端", other.container)).toBeDefined();
 
       mounted?.unmount();
       mountPane();
@@ -521,7 +546,7 @@ describe("local terminal hints", () => {
 
     expect(hintBar()?.dataset.tone).toBe("accent");
     expect(hintBar()?.textContent).toContain("本机的持久终端已就绪");
-    expect(hintButton("在持久终端中重开")).toBeDefined();
+    expect(hintButton("新建持久终端")).toBeDefined();
   });
 
   it("keeps a starting local helper neutral and a failed one red with its settings", async () => {

@@ -1279,9 +1279,10 @@ export function TerminalPane({
     );
   }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
 
-  const reopenDurable = () => {
+  // A new durable terminal next to this one, in the same folder when it is known; this tab stays open.
+  const openDurableTerminal = () => {
     const session = useUi.getState().sessions.find((item) => item.id === sessionId);
-    if (session) void openTerminalTab(session, undefined, myPaneId ?? undefined);
+    if (session) void openTerminalTab(session, undefined, myPaneId ?? undefined, cwd ? { directory: cwd } : undefined);
   };
   const openHelper = () => {
     if (helperOperation) setHelperPanelOpen(true);
@@ -2168,7 +2169,7 @@ export function TerminalPane({
         <PersistenceHintBar
           hint={hint}
           local={sessionKind === "local"}
-          onReopenDurable={durableHelper ? reopenDurable : undefined}
+          onOpenDurable={durableHelper ? openDurableTerminal : undefined}
           onManageHelper={manageHelper}
           onDismiss={() => setDismissedHints(dismissPersistenceHint(storeTabId, hintKey))}
         />
