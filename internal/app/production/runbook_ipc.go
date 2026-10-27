@@ -211,7 +211,7 @@ func (s *runbookIPCService) resolveTemplate(ctx context.Context, input runbook.S
 		return input, fmt.Errorf("%w: templateId cannot be combined with runbookId, runbookName or steps", runbook.ErrInvalid)
 	}
 	if s.templates == nil {
-		return input, fmt.Errorf("%w: runbook templates unavailable", runbook.ErrInvalid)
+		return input, ipc.NewError(ipc.CodeUnsupported, "Runbook 模板不可用")
 	}
 	tpl, err := s.templates.RunbookTemplateGet(ctx, input.TemplateID)
 	if err != nil {

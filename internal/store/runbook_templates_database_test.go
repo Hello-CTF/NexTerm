@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
@@ -54,6 +55,19 @@ func TestRunbookTemplateCRUDOwnerIsolationAndSnapshotDatabase(t *testing.T) {
 	if _, err := database.RunbookTemplateGet(ctxB, created.ID); !errors.As(err, &appErr) || appErr.Code != ipc.CodeNotFound {
 		t.Fatalf("cross-owner get = %v", err)
 	}
+	if _, err := database.RunbookTemplateUpdate(ctxB, created.ID, store.RunbookTemplateInput{
+		Name: "hijack", Steps: []store.RunbookTemplateStep{{ID: "a", Command: "x"}},
+	}); !errors.As(err, &appErr) || appErr.Code != ipc.CodeNotFound {
+		t.Fatalf("cross-owner update = %v", err)
+	}
+	if _, err := database.RunbookTemplateCreate(ctxB, store.RunbookTemplateInput{
+		Name: "steal", Steps: []store.RunbookTemplateStep{{ID: "a", SnippetID: snippet.ID}},
+	}); !errors.As(err, &appErr) || appErr.Code != ipc.CodeNotFound {
+		t.Fatalf("cross-owner snippet snapshot = %v", err)
+	}
+	if untouched, err := database.RunbookTemplateGet(ctxA, created.ID); err != nil || untouched.Name != "Restart" || untouched.Version != 1 {
+		t.Fatalf("template changed by another owner: %+v, %v", untouched, err)
+	}
 	if err := database.RunbookTemplateDelete(ctxB, created.ID); !errors.As(err, &appErr) || appErr.Code != ipc.CodeNotFound {
 		t.Fatalf("cross-owner delete = %v", err)
 	}
@@ -77,18 +91,23 @@ func TestRunbookTemplateCRUDOwnerIsolationAndSnapshotDatabase(t *testing.T) {
 		t.Fatalf("duplicate step error = %v", err)
 	}
 
+	big := strings.Repeat("x", store.RunbookTemplateMaxCommandBytes)
+	large, err := database.RunbookTemplateCreate(ctxA, store.RunbookTemplateInput{
+		Name: "large", Steps: []store.RunbookTemplateStep{
+			{ID: "a", Command: big}, {ID: "b", SnippetID: "ignored", Command: big},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := database.RunbookTemplateGet(ctxA, large.ID)
+	if err != nil || len(reloaded.Steps) != 2 || len(reloaded.Steps[0].Command) != len(big) || len(reloaded.Steps[1].Command) != len(big) || reloaded.Steps[1].SnippetID != "" {
+		t.Fatalf("near-limit template round trip failed: %v", err)
+	}
+
 	if _, err := database.RunbookTemplateCreate(ctxB, store.RunbookTemplateInput{
 		Name: "b", Steps: []store.RunbookTemplateStep{{ID: "a", Command: "x"}},
 	}); err != nil {
 		t.Fatal(err)
-	}
-	if err := database.RunbookTemplateDeleteOwner(t.Context(), "owner-a"); err != nil {
-		t.Fatal(err)
-	}
-	if list, _ := database.RunbookTemplateList(ctxA); len(list) != 0 {
-		t.Fatalf("owner-a templates after owner delete = %+v", list)
-	}
-	if list, _ := database.RunbookTemplateList(ctxB); len(list) != 1 {
-		t.Fatalf("owner-b templates after owner-a delete = %+v", list)
 	}
 }

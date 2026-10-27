@@ -49,7 +49,7 @@ type RunbookMetadata struct {
 	GroupNumber int32  `json:"groupNumber"`
 	GroupCount  int32  `json:"groupCount"`
 	// RunbookVersion is the persisted template revision the run started from; 0 for ad-hoc runbooks.
-	RunbookVersion int32 `json:"runbookVersion,omitempty"`
+	RunbookVersion int32 `json:"-"`
 }
 
 type Request struct {

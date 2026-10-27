@@ -231,6 +231,9 @@ func validateExecBatchHistory(row ExecBatchRow, results []ExecBatchResultRow) er
 	if row.TargetCount < 1 || row.TargetCount > 64 {
 		return fmt.Errorf("invalid exec batch target count")
 	}
+	if row.RunbookVersion < 0 {
+		return fmt.Errorf("invalid runbook template version")
+	}
 	if row.RunbookID != "" || row.RunID != "" || row.StepNumber != 0 || row.StepCount != 0 || row.GroupNumber != 0 || row.GroupCount != 0 {
 		if row.RunbookID == "" || len(row.RunbookID) > 128 || strings.TrimSpace(row.RunbookID) != row.RunbookID ||
 			row.RunID == "" || len(row.RunID) > 128 || strings.TrimSpace(row.RunID) != row.RunID {

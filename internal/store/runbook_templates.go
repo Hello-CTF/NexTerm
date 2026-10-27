@@ -156,19 +156,6 @@ func (s *Store) RunbookTemplateDelete(ctx context.Context, id string) error {
 	return nil
 }
 
-// RunbookTemplateDeleteOwner removes every template of one owner; account
-// cleanup calls it after the owner is gone.
-func (s *Store) RunbookTemplateDeleteOwner(ctx context.Context, ownerID string) error {
-	if ownerID == "" {
-		return badParam(fmt.Errorf("owner is required"))
-	}
-	t := query.Use(s.db).RunbookTemplateRow
-	if _, err := t.WithContext(ctx).Where(t.OwnerID.Eq(ownerID)).Delete(); err != nil {
-		return dbError(err)
-	}
-	return nil
-}
-
 func runbookTemplateFromRow(row RunbookTemplateRow) (RunbookTemplate, error) {
 	steps := []RunbookTemplateStep{}
 	if err := json.Unmarshal([]byte(row.Steps), &steps); err != nil {
@@ -206,7 +193,10 @@ func (s *Store) normalizeRunbookTemplate(ctx context.Context, input RunbookTempl
 		if len(step.Name) > 512 || len(step.Description) > 4096 || len(step.SnippetID) > 128 {
 			return "", "", nil, badParam(fmt.Errorf("runbook template step metadata is too large"))
 		}
-		if strings.TrimSpace(step.Command) == "" && step.SnippetID != "" {
+		if strings.TrimSpace(step.Command) != "" {
+			// An explicit command is not a snapshot of the snippet, so no provenance is claimed.
+			step.SnippetID = ""
+		} else if step.SnippetID != "" {
 			snippet, err := s.SnippetGet(ctx, step.SnippetID)
 			if err != nil {
 				return "", "", nil, err

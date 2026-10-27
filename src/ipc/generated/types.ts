@@ -2221,7 +2221,6 @@ export type RunbookMetadata = {
   stepCount: number;
   groupNumber: number;
   groupCount: number;
-  runbookVersion?: number;
 };
 
 export type RunbookTemplate = {

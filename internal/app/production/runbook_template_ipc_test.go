@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -75,16 +76,20 @@ func TestRunbookTemplateIPCStartFromTemplateRecordsVersion(t *testing.T) {
 	}
 	// Editing the template afterwards must not alter the already started run.
 	updateInput.Steps[0].Command = "echo v3"
-	dispatchExecBatchTest(dispatcher, owner, "runbook_template_update", updateInput)
+	if resp := dispatchExecBatchTest(dispatcher, owner, "runbook_template_update", updateInput); !resp.OK {
+		t.Fatalf("second update = %+v", resp)
+	}
 	state = decodeExecBatchTest[runbook.RunState](t, dispatchExecBatchTest(dispatcher, owner, "runbook_run_get", runbook.RunRequest{RunID: "run-tpl"}))
 	if state.Steps[0].Step.Command != "echo v2" {
 		t.Fatalf("run steps changed after template edit: %+v", state.Steps)
 	}
 
-	dispatchExecBatchTest(dispatcher, owner, "runbook_run_prepare", runbook.PrepareRequest{
+	if resp := dispatchExecBatchTest(dispatcher, owner, "runbook_run_prepare", runbook.PrepareRequest{
 		RunID: "run-tpl", StepNumber: 1,
 		Commands: []runbook.RenderedCommand{{SessionID: connected.ID, Command: "echo v2"}},
-	})
+	}); !resp.OK {
+		t.Fatalf("prepare = %+v", resp)
+	}
 	state = decodeExecBatchTest[runbook.RunState](t, dispatchExecBatchTest(dispatcher, owner, "runbook_run_advance", runbook.AdvanceRequest{
 		RunID: "run-tpl", StepNumber: 1, Confirmed: true,
 	}))
@@ -94,5 +99,61 @@ func TestRunbookTemplateIPCStartFromTemplateRecordsVersion(t *testing.T) {
 	history := decodeExecBatchTest[store.ExecBatchRunHistory](t, dispatchExecBatchTest(dispatcher, owner, "runbook_run_history_get", runbook.RunRequest{RunID: "run-tpl"}))
 	if history.RunbookID != created.ID || len(history.Batches) != 1 || history.Batches[0].Batch.RunbookVersion != 2 {
 		t.Fatalf("history = %+v", history)
+	}
+}
+
+func TestRunbookTemplateRunIsCanceledByAccountCleanup(t *testing.T) {
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	executor := newRunbookIPCExecutor("run-cleanup:s01:g01")
+	service := newRunbookIPCService(executor, database)
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	created := decodeExecBatchTest[store.RunbookTemplate](t, dispatchExecBatchTest(dispatcher, owner, "runbook_template_create", store.RunbookTemplateInput{
+		Name: "t", Steps: []store.RunbookTemplateStep{{ID: "s1", Command: "true"}},
+	}))
+	decodeExecBatchTest[runbook.RunState](t, dispatchExecBatchTest(dispatcher, owner, "runbook_run_start", runbook.StartRequest{
+		RunID: "run-cleanup", TemplateID: created.ID, SessionIDs: []string{"session-1"},
+	}))
+
+	advance := runbookIPCAdvanceAsync(dispatcher, owner, "run-cleanup")
+	select {
+	case <-executor.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not start executing")
+	}
+	service.CancelOwner(context.WithoutCancel(t.Context()), "owner-a", "logout-all", nil)
+	select {
+	case response := <-advance:
+		if state := decodeExecBatchTest[runbook.RunState](t, response); state.Status != runbook.RunCanceled {
+			t.Fatalf("run state after cleanup = %+v", state)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("account cleanup did not cancel the template run")
+	}
+	// Templates themselves survive logout.
+	if _, err := database.RunbookTemplateGet(owner, created.ID); err != nil {
+		t.Fatalf("template lost after cleanup: %v", err)
+	}
+}
+
+func TestRunbookStartFromTemplateUnsupportedWithoutStore(t *testing.T) {
+	service := newRunbookIPCService(newRunbookIPCExecutor())
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	owner := ipc.WithUserID(t.Context(), "owner-a")
+	resp := dispatchExecBatchTest(dispatcher, owner, "runbook_run_start", runbook.StartRequest{
+		RunID: "run-x", TemplateID: "tpl", SessionIDs: []string{"s"},
+	})
+	if resp.OK || resp.Error == nil || resp.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("response = %+v", resp)
 	}
 }

@@ -31,8 +31,8 @@ type RunbookTemplateRow struct {
 	OwnerID     string `gorm:"column:owner_id;size:191;primaryKey;default:'';index:idx_runbook_template_owner_name,priority:1" json:"-"`
 	ID          string `gorm:"column:id;size:128;primaryKey" json:"id"`
 	Name        string `gorm:"column:name;size:512;not null;index:idx_runbook_template_owner_name,priority:2" json:"name"`
-	Description string `gorm:"column:description;type:text;not null" json:"description"`
-	Steps       string `gorm:"column:steps;type:text;not null" json:"-"`
+	Description string `gorm:"column:description;not null" json:"description"`
+	Steps       string `gorm:"column:steps;not null" json:"-"`
 	Version     int32  `gorm:"column:version;not null;default:1" json:"version"`
 	CreatedAt   int64  `gorm:"column:created_at;not null" json:"createdAt"`
 	UpdatedAt   int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
