@@ -63,29 +63,22 @@ func TestSyncedJobRunsOnlyOnItsDeviceDatabase(t *testing.T) {
 
 	due := job.NextRunAt.Add(time.Second)
 	internal := WithInternalAccess(ctx)
-	if _, err := schedulerB.runOnce(internal, due); err != nil {
+	startedB, err := schedulerB.runOnce(internal, due)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := schedulerA.runOnce(internal, due); err != nil {
+	startedA, err := schedulerA.runOnce(internal, due)
+	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for calls.Load() < 1 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	if startedA != 1 || startedB != 0 {
+		t.Fatalf("started A=%d B=%d, want only the bound device to start the job", startedA, startedB)
 	}
+	// Wait for the started run, including its bookkeeping, before counting executions.
+	schedulerA.wg.Wait()
+	schedulerB.wg.Wait()
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("executions=%d, want exactly one on the bound device", got)
-	}
-	// Let the run finish its bookkeeping before the databases close.
-	for time.Now().Before(deadline) {
-		current, err := deviceA.List(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(current) == 1 && !current[0].Running() {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	stillDue, err := deviceB.ListDueIdle(internal, due.Add(time.Hour), 10)
 	if err != nil || len(stillDue) != 0 {

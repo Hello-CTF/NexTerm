@@ -22,12 +22,20 @@ type SQLStore struct {
 	// device is this database's device: new jobs are bound to it, and only
 	// its jobs (and unbound ones) are scheduled here.
 	device store.LocalDevice
+	// install is the installation fingerprint kept outside the database.
+	install string
 }
 
 type StoreOption func(*SQLStore)
 
 func WithShared(shared bool) StoreOption {
 	return func(store *SQLStore) { store.shared = shared }
+}
+
+// WithInstall names the installation fingerprint kept outside the database:
+// a database copied under another fingerprint gets a new device ID.
+func WithInstall(install string) StoreOption {
+	return func(store *SQLStore) { store.install = install }
 }
 
 var _ Store = (*SQLStore)(nil)
@@ -43,14 +51,15 @@ func NewSQLStore(ctx context.Context, db *gorm.DB, options ...StoreOption) (*SQL
 	if !db.WithContext(ctx).Migrator().HasTable(&store.CronJob{}) {
 		return nil, fmt.Errorf("cron: cron_job table is missing or unreadable")
 	}
-	device, err := store.LoadLocalDevice(ctx, db)
-	if err != nil {
-		return nil, err
-	}
-	sqlStore := &SQLStore{db: db, shared: true, device: device}
+	sqlStore := &SQLStore{db: db, shared: true}
 	for _, apply := range options {
 		apply(sqlStore)
 	}
+	device, err := store.LoadLocalDevice(ctx, db, sqlStore.install)
+	if err != nil {
+		return nil, err
+	}
+	sqlStore.device = device
 	return sqlStore, nil
 }
 

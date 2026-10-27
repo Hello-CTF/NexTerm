@@ -1219,6 +1219,10 @@ export type FinderQuery = {
   value: string;
 };
 
+export type ForeignCronAdoptRequest = {
+  id: string;
+};
+
 export type ForeignCronJob = {
   id: string;
   name: string;

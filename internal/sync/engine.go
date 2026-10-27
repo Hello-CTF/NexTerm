@@ -198,6 +198,12 @@ type Engine struct {
 	// cron is the cron job store bound to this database's device.
 	cronMu sync.Mutex
 	cron   *cron.SQLStore
+	// deviceInstall is the installation fingerprint the cron device ID is checked against.
+	deviceInstall string
+
+	// pendingRounds counts the rounds an object has waited for a dependency.
+	pendingMu     sync.Mutex
+	pendingRounds map[string]int
 }
 
 func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog.Logger) *Engine {

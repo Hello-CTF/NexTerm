@@ -52,6 +52,14 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// WithDeviceInstall names the installation fingerprint kept outside the
+// database, the same one the cron scheduler uses, so both agree on the device ID.
+func WithDeviceInstall(install string) Option {
+	return func(s *Service) {
+		s.deviceInstall = install
+	}
+}
+
 func WithProfilesReload(reload func(context.Context) error) Option {
 	return func(s *Service) {
 		s.profilesReload = reload
@@ -83,6 +91,7 @@ type Service struct {
 	permissionsReload func(context.Context) error
 	grantsReload      func(context.Context) error
 	stateRulesChanged func(context.Context)
+	deviceInstall     string
 	syncPeriod        time.Duration
 	// linkChanged is called after the saved sync link was written.
 	linkChanged atomic.Pointer[func()]
@@ -157,6 +166,7 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 	}
 	s.engine = NewEngine(db, credentialVault, s.logger)
 	s.engine.aiShared = s.desktop
+	s.engine.deviceInstall = s.deviceInstall
 	if credentialVault != nil {
 		// Wake a background sync round immediately after the vault unlocks: a vault locked at startup no longer waits for the next period.
 		credentialVault.AddUnlockListener(s.wake)

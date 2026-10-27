@@ -73,7 +73,7 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     key: "cron",
     summary: "定时任务",
     label: "同步 AI 定时任务",
-    hint: "默认关闭。每个任务只在创建它的设备上运行；其他设备只显示，可在此删除不再需要的任务。",
+    hint: "默认关闭。每个任务只在它绑定的设备上运行；其他设备只显示，可在此改由本机运行或删除。",
   },
 ];
 

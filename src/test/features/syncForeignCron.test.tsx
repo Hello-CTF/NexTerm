@@ -7,11 +7,12 @@ import { click, flush, mount, type MountedView } from "./reactTestUtils";
 const mocks = vi.hoisted(() => ({
   cronForeignList: vi.fn(),
   cronForeignRemove: vi.fn(),
+  cronForeignAdopt: vi.fn(),
   ask: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", () => ({
-  syncApi: { cronForeignList: mocks.cronForeignList, cronForeignRemove: mocks.cronForeignRemove },
+  syncApi: { cronForeignList: mocks.cronForeignList, cronForeignRemove: mocks.cronForeignRemove, cronForeignAdopt: mocks.cronForeignAdopt },
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
@@ -25,6 +26,11 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+function button(label: string): HTMLButtonElement {
+  return [...mounted!.container.querySelectorAll("button")].find((b) => b.textContent === label)!;
+}
+const removeButton = () => button("删除");
+
 const JOB = { id: "job-1", name: "disk report", prompt: "report disk usage", schedule: "0 9 * * *", timezone: "UTC", enabled: true, deviceId: "dev-a", deviceName: "laptop" };
 
 describe("ForeignCronSection", () => {
@@ -37,10 +43,24 @@ describe("ForeignCronSection", () => {
     expect(mounted.container.textContent).toContain("disk report");
     expect(mounted.container.textContent).toContain("运行于 laptop");
 
-    click(mounted.container.querySelector("button")!);
+    click(removeButton());
     await flush();
     await flush();
     expect(mocks.cronForeignRemove).toHaveBeenCalledWith("job-1");
+    expect(mounted.container.textContent).not.toContain("disk report");
+  });
+
+  it("adopts a job to this device after confirmation", async () => {
+    mocks.cronForeignList.mockResolvedValueOnce([JOB]).mockResolvedValueOnce([]);
+    mocks.cronForeignAdopt.mockResolvedValue({});
+    mocks.ask.mockResolvedValue(true);
+    mounted = mount(createElement(ForeignCronSection));
+    await flush();
+    click(button("改由本机运行"));
+    await flush();
+    await flush();
+    expect(mocks.cronForeignAdopt).toHaveBeenCalledWith("job-1");
+    expect(mocks.cronForeignRemove).not.toHaveBeenCalled();
     expect(mounted.container.textContent).not.toContain("disk report");
   });
 
@@ -49,7 +69,7 @@ describe("ForeignCronSection", () => {
     mocks.ask.mockResolvedValue(false);
     mounted = mount(createElement(ForeignCronSection));
     await flush();
-    click(mounted.container.querySelector("button")!);
+    click(removeButton());
     await flush();
     expect(mocks.cronForeignRemove).not.toHaveBeenCalled();
     mounted.unmount();

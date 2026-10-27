@@ -2257,6 +2257,14 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CompareResult", ts: "CompareResult" },
     },
+    "sync_cron_foreign_adopt": {
+      scope: "sync",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ForeignCronAdoptRequest", ts: "ForeignCronAdoptRequest" },
+      output: { go: "struct{}", ts: "Record<string, never>" },
+    },
     "sync_cron_foreign_list": {
       scope: "sync",
       nested: false,
@@ -4072,6 +4080,10 @@ export interface IPCCommandTypeMap {
   "sync_compare": {
     input: Record<string, never>;
     output: contractTypes.CompareResult;
+  };
+  "sync_cron_foreign_adopt": {
+    input: contractTypes.ForeignCronAdoptRequest;
+    output: Record<string, never>;
   };
   "sync_cron_foreign_list": {
     input: Record<string, never>;

@@ -251,6 +251,11 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				return struct{}{}, s.ForeignCronRemove(ctx, input)
 			})
 		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandCronForeignAdopt, func(ctx context.Context, _ *ipc.Call, input ForeignCronAdoptRequest) (struct{}, error) {
+				return struct{}{}, s.ForeignCronAdopt(ctx, input)
+			})
+		},
 		// Sync opt-in read/write: the user identity is injected by the /rpc session (UserIDFromContext); desktop anonymous direct connections
 		// fall back to the engine's logged-in session (kindOptInUserID); with neither identity, get returns all false and set is forbidden.
 		func() error {

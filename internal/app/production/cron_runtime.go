@@ -316,7 +316,7 @@ func composeCronScheduler(ctx context.Context, services *ProductionServices, opt
 	if services.Store == nil {
 		return nil, nil, errors.New("cron runtime requires store and agent services")
 	}
-	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.GORM(), cron.WithShared(services.desktop || owner.OpenAccess(ctx)))
+	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.GORM(), cron.WithShared(services.desktop || owner.OpenAccess(ctx)), cron.WithInstall(services.deviceInstall))
 	if err != nil {
 		return nil, nil, err
 	}

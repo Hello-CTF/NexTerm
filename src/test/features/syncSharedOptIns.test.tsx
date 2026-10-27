@@ -49,7 +49,7 @@ describe("Shared SyncOptInSection toggles", () => {
     expect(rendered[6]).toBe("同步 Runbook 模板默认开启。模板中的命令按保存时的快照同步。");
     expect(rendered[7]).toBe("同步自定义 AI 技能与内置技能的修改默认开启。只同步你的自定义技能、对内置技能的修改和禁用；内置技能本身随应用提供。");
     expect(rendered[8]).toBe("同步 AI 记忆默认关闭。记忆内容端到端加密同步，离开本机前和写入前都会再次脱敏疑似密钥。");
-    expect(rendered[9]).toBe("同步 AI 定时任务默认关闭。每个任务只在创建它的设备上运行；其他设备只显示，可在此删除不再需要的任务。");
+    expect(rendered[9]).toBe("同步 AI 定时任务默认关闭。每个任务只在它绑定的设备上运行；其他设备只显示，可在此改由本机运行或删除。");
     // Rendered output matches the exported constants verbatim: both consoles get this exact same copy
     for (const [i, item] of SYNC_OPT_IN_ITEMS.entries()) {
       expect(rendered[i]).toBe(item.label + item.hint);

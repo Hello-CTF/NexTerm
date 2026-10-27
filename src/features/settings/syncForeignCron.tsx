@@ -3,8 +3,9 @@ import { syncApi } from "../../ipc/commands";
 import type { SyncForeignCronJob } from "../../ipc/types";
 import { describeError } from "../../ui/errorText";
 
-// ForeignCronSection lists synced scheduled jobs bound to other devices. They never run here;
-// removing one deletes it on every device, which is how a job of a retired device is cleaned up.
+// ForeignCronSection lists synced scheduled jobs bound to other devices. They never run here.
+// Adopting one binds it to this device (it then runs here only, for example after replacing that device
+// or opening a copied database); removing one deletes it on every device.
 export function ForeignCronSection() {
   const [jobs, setJobs] = useState<SyncForeignCronJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +41,23 @@ export function ForeignCronSection() {
     }
   };
 
+  const adopt = async (job: SyncForeignCronJob) => {
+    const { ask } = await import("../../ui/dialogs");
+    const label = job.name || job.prompt;
+    if (!(await ask(`改由本机运行定时任务「${label}」？同步后它不再在 ${job.deviceName || job.deviceId} 上运行。`, {
+      title: "改由本机运行定时任务", kind: "warning",
+    }))) return;
+    setBusy(job.id);
+    try {
+      await syncApi.cronForeignAdopt(job.id);
+      await load();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (error) return <p className="nx-hint mb-3 text-[12px]">其他设备的定时任务读取失败：{error}</p>;
   if (!jobs || jobs.length === 0) return null;
   return (
@@ -54,6 +72,9 @@ export function ForeignCronSection() {
                 {job.schedule} · {job.enabled ? "已启用" : "已停用"} · 运行于 {job.deviceName || job.deviceId}
               </span>
             </span>
+            <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => void adopt(job)}>
+              改由本机运行
+            </button>
             <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => void remove(job)}>
               删除
             </button>

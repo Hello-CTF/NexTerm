@@ -13,6 +13,7 @@ import (
 const (
 	CommandCronForeignList   = "sync_cron_foreign_list"
 	CommandCronForeignRemove = "sync_cron_foreign_remove"
+	CommandCronForeignAdopt  = "sync_cron_foreign_adopt"
 )
 
 // cronObject is a scheduled AI job's configuration. DeviceID binds it to
@@ -45,7 +46,7 @@ func (e *Engine) cronJobs(ctx context.Context) (*cron.SQLStore, error) {
 	if e.cron != nil {
 		return e.cron, nil
 	}
-	jobs, err := cron.NewSQLStore(ctx, e.store.GORM(), cron.WithShared(e.aiShared))
+	jobs, err := cron.NewSQLStore(ctx, e.store.GORM(), cron.WithShared(e.aiShared), cron.WithInstall(e.deviceInstall))
 	if err != nil {
 		return nil, err
 	}
@@ -205,6 +206,10 @@ type ForeignCronRemoveRequest struct {
 	ID string `json:"id"`
 }
 
+type ForeignCronAdoptRequest struct {
+	ID string `json:"id"`
+}
+
 // ForeignCronJobs lists the caller's jobs that run on other devices.
 func (s *Service) ForeignCronJobs(ctx context.Context) ([]ForeignCronJob, error) {
 	_, list, err := s.engine.syncableCronJobs(ctx)
@@ -240,6 +245,36 @@ func (s *Service) ForeignCronRemove(ctx context.Context, request ForeignCronRemo
 		}
 		if err := jobs.Delete(ctx, job.SessionID, job.ID, job.Revision); err != nil {
 			if errors.Is(err, cron.ErrConflict) || errors.Is(err, cron.ErrNotFound) {
+				return ipc.WrapError(ipc.CodeBadParam, cron.ErrConflict.Error(), err)
+			}
+			return err
+		}
+		s.wake()
+		return nil
+	}
+	return ipc.NewError(ipc.CodeNotFound, "定时任务不存在")
+}
+
+// ForeignCronAdopt binds a job of another device to this device, for example
+// when this installation replaces that device or runs a copied database. The
+// change syncs, so the job then runs here only.
+func (s *Service) ForeignCronAdopt(ctx context.Context, request ForeignCronAdoptRequest) error {
+	jobs, list, err := s.engine.syncableCronJobs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, job := range list {
+		if job.ID != request.ID {
+			continue
+		}
+		if !job.ForeignDevice {
+			return ipc.NewError(ipc.CodeBadParam, "该定时任务已在本机运行")
+		}
+		if _, err := jobs.Adopt(ctx, job.ID, time.Now()); err != nil {
+			switch {
+			case errors.Is(err, cron.ErrJobRunning):
+				return ipc.WrapError(ipc.CodeBadParam, cron.ErrJobRunning.Error(), err)
+			case errors.Is(err, cron.ErrConflict), errors.Is(err, cron.ErrNotFound):
 				return ipc.WrapError(ipc.CodeBadParam, cron.ErrConflict.Error(), err)
 			}
 			return err

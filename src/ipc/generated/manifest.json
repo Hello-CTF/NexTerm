@@ -1753,6 +1753,12 @@
       "channel": false,
       "stream": "none"
     },
+    "sync_cron_foreign_adopt": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
     "sync_cron_foreign_list": {
       "scope": "sync",
       "nested": false,

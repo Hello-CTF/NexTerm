@@ -61,6 +61,7 @@ var contractScopes = []scopeSpec{
 		"sync_collect_preferences",
 		"sync_collect_tombstones",
 		"sync_compare",
+		"sync_cron_foreign_adopt",
 		"sync_cron_foreign_list",
 		"sync_cron_foreign_remove",
 		"sync_digest",

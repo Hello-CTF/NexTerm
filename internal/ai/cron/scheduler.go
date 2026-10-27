@@ -186,7 +186,7 @@ func (s *Scheduler) SetEnabled(ctx context.Context, sessionID, jobID string, ena
 	}
 	job.Enabled = enabled
 	job.UpdatedAt = now
-	job.ConfigUpdatedAt = now
+	job.ConfigUpdatedAt = laterConfigRevision(job.ConfigUpdatedAt, now)
 	stored, err := s.store.CompareAndSwap(ctx, job, job.Revision)
 	if err != nil {
 		return Job{}, storageError("set enabled", job.ID, err)
@@ -404,7 +404,7 @@ func (s *Scheduler) disableUnexecutable(ctx context.Context, job Job, now time.T
 	job.CircuitOpenUntil = time.Time{}
 	job.UpdatedAt = now
 	// Disabling is a configuration change the owner's other devices should see.
-	job.ConfigUpdatedAt = now
+	job.ConfigUpdatedAt = laterConfigRevision(job.ConfigUpdatedAt, now)
 	if _, err := s.store.CompareAndSwap(ctx, job, job.Revision); err != nil {
 		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
 			return nil

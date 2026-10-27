@@ -335,6 +335,7 @@ func TestSyncVerticalContracts(t *testing.T) {
 		{name: "sync_collect_preferences"},
 		{name: "sync_collect_tombstones", nested: true},
 		{name: "sync_compare"},
+		{name: "sync_cron_foreign_adopt", nested: true},
 		{name: "sync_cron_foreign_list"},
 		{name: "sync_cron_foreign_remove", nested: true},
 		{name: "sync_digest"},

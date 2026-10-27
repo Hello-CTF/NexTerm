@@ -59,6 +59,15 @@ func validateSyncedJob(job SyncedJob) error {
 	return nil
 }
 
+// laterConfigRevision keeps a job's configuration revision strictly
+// increasing at millisecond precision, so a newer change always wins a sync.
+func laterConfigRevision(previous, now time.Time) time.Time {
+	if floor := previous.Truncate(time.Millisecond).Add(time.Millisecond); now.Before(floor) {
+		return floor
+	}
+	return now
+}
+
 // nextRun is the job's next occurrence after now, for the device it is bound to.
 func nextRun(job SyncedJob, now time.Time) (time.Time, error) {
 	schedule, err := loadSchedule(job.Schedule, job.Timezone)
@@ -145,6 +154,57 @@ func (s *SQLStore) PutSynced(ctx context.Context, job SyncedJob, expected *Job, 
 		}
 		return nil
 	})
+}
+
+// Adopt binds a job of another device to this device, for example after
+// moving to a new installation; the job then runs here and, once synced,
+// nowhere else. It is rescheduled from now.
+func (s *SQLStore) Adopt(ctx context.Context, id string, now time.Time) (Job, error) {
+	if err := s.validateAccess(ctx); err != nil {
+		return Job{}, err
+	}
+	var adopted Job
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		cronJob := query.Use(tx).CronJob
+		current, err := cronJob.WithContext(ctx).
+			Where(cronJob.ID.Eq(id)).
+			Where(s.ownerConditions(ctx, cronJob.TableName())...).
+			First()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if current.RunID != "" {
+			return ErrJobRunning
+		}
+		next, err := nextRun(SyncedJob{Schedule: current.Schedule, Timezone: current.Timezone}, now)
+		if err != nil {
+			return err
+		}
+		stamp := max(timeMS(now), current.ConfigUpdatedAt+1, current.UpdatedAt+1)
+		info, err := cronJob.WithContext(ctx).
+			Where(cronJob.ID.Eq(id), cronJob.Revision.Eq(current.Revision), cronJob.RunID.Eq("")).
+			Where(s.ownerConditions(ctx, cronJob.TableName())...).
+			UpdateColumns(map[string]any{
+				"device_id": s.device.ID, "device_name": s.device.Name, "config_updated_at": stamp, "updated_at": stamp,
+				"revision": current.Revision + 1, "next_run_at": timeMS(next), "retry_at": nil, "circuit_open_until": nil,
+			})
+		if err != nil {
+			return err
+		}
+		if info.RowsAffected != 1 {
+			return ErrConflict
+		}
+		current.DeviceID, current.DeviceName, current.ConfigUpdatedAt, current.UpdatedAt = s.device.ID, s.device.Name, stamp, stamp
+		current.Revision++
+		current.NextRunAt = timeMS(next)
+		current.RetryAt, current.CircuitOpenUntil = nil, nil
+		adopted = jobFromModel(current)
+		return nil
+	})
+	return adopted, err
 }
 
 // DeleteSynced applies a synced deletion: the caller's job is removed unless
