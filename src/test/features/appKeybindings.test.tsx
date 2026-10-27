@@ -90,8 +90,7 @@ function activePaneTabId(): string | null {
 // in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
 beforeAll(async () => {
   await Promise.all([
-    import("../../app/CommandPalette"),
-    import("../../app/QuickConnect"),
+    import("../../app/JumpPalette"),
   ]);
 });
 

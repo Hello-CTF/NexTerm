@@ -117,7 +117,7 @@ function openTabKinds(): string[] {
 beforeAll(async () => {
   await Promise.all([
     import("../app/AutoSync"),
-    import("../app/QuickConnect"),
+    import("../app/JumpPalette"),
   ]);
 });
 

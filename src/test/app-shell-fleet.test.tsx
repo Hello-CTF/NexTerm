@@ -100,7 +100,7 @@ function mountApp(): MountedView {
 beforeAll(async () => {
   await Promise.all([
     import("../app/AutoSync"),
-    import("../app/QuickConnect"),
+    import("../app/JumpPalette"),
   ]);
 });
 
