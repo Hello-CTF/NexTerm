@@ -6,7 +6,7 @@ import {
   type ProjectFocus,
   type ProjectInventory,
 } from "./projectFocus";
-import { sessionStatusText, useSessionStatus, type SessionRuntimeInfo, type Workspace } from "./store";
+import { sessionStatusText, useSessionStatus, type Workspace } from "./store";
 import type { AssetGroup } from "../ipc/commands";
 import { IconDatabase, IconLayers, IconSettings, assetIcon } from "../ui/icons";
 
@@ -21,7 +21,6 @@ function workspaceIcon(workspace: Workspace) {
 interface WorkspaceStripTabProps {
   workspace: Workspace;
   selected: boolean;
-  sessions: readonly SessionRuntimeInfo[] | undefined;
   draggable: boolean;
   dropEdge: "before" | "after" | null;
   dragging: boolean;
@@ -37,15 +36,13 @@ interface WorkspaceStripTabProps {
 function WorkspaceStripTab({
   workspace,
   selected,
-  sessions,
   draggable,
   dropEdge,
   dragging,
   ...handlers
 }: WorkspaceStripTabProps) {
   const Icon = workspaceIcon(workspace);
-  const storeStatus = useSessionStatus(sessions ? undefined : workspace.sessionId);
-  const status = sessions ? sessions.find((item) => item.id === workspace.sessionId)?.status : storeStatus;
+  const status = useSessionStatus(workspace.sessionId);
   const tabCount = workspace.panes.flatMap((pane) => pane.tabs).length;
   return (
     <button
@@ -71,7 +68,6 @@ export function ProjectWorkspaceStrip({
   activeProject,
   projectInventory,
   groups,
-  sessions,
   onSelect,
   onReorder,
 }: {
@@ -80,9 +76,6 @@ export function ProjectWorkspaceStrip({
   activeProject: ProjectFocus;
   projectInventory: ProjectInventory | null;
   groups: readonly AssetGroup[];
-  // sessions pins the status shown in tab tooltips to a given list; without it each tab follows its own
-  // workspace session in the store, so other sessions changing does not re-render the strip.
-  sessions?: readonly SessionRuntimeInfo[];
   onSelect: (workspaceId: string) => void;
   onReorder?: (dragId: string, overId: string, before: boolean) => void;
 }) {
@@ -166,7 +159,6 @@ export function ProjectWorkspaceStrip({
                 key={workspace.id}
                 workspace={workspace}
                 selected={workspace.id === activeWorkspaceId}
-                sessions={sessions}
                 draggable={Boolean(onReorder)}
                 dropEdge={dropHint?.id === workspace.id ? dropHint.edge : null}
                 dragging={draggingId === workspace.id}
