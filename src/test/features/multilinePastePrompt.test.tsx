@@ -317,6 +317,37 @@ describe("multi-line paste prompt", () => {
     await expect(result).resolves.toBe(true);
   });
 
+  it("cancels an open prompt when its target tab closes, leaving other prompts open", async () => {
+    const forT1 = await paste("a\nb", "t1");
+    const forT2 = await paste("c\nd", "t2");
+    act(() => {
+      seedTabs(["t2"]);
+    });
+    await expect(forT1.result).resolves.toBe(false);
+    expect(dialog()?.textContent).toContain("即将向终端粘贴 2 行文本");
+    keyUp(document.body, "Control");
+    click(button("粘贴"));
+    await expect(forT2.result).resolves.toBe(true);
+  });
+
+  it("forgets every per-tab skip when the account changes", async () => {
+    const first = await paste("a\nb", "t1");
+    act(() => {
+      checkbox("本终端不再提示").click();
+    });
+    click(button("粘贴"));
+    await expect(first.result).resolves.toBe(true);
+    expect((await paste("a\nb", "t1")).prompted).toBe(false);
+
+    act(() => {
+      useUi.setState((state) => ({ accountEpoch: state.accountEpoch + 1 }));
+    });
+    const after = await paste("a\nb", "t1");
+    expect(after.prompted).toBe(true);
+    click(button("取消"));
+    await expect(after.result).resolves.toBe(false);
+  });
+
   it("cancels an open prompt when the account changes", async () => {
     const { result } = await paste("a\nb", "t1");
     act(() => {

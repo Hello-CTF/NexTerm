@@ -17,6 +17,8 @@ export interface MultilinePastePrompt {
   preview: string[];
   // tabScoped offers 本终端不再提示; a paste without a known tab cannot remember it.
   tabScoped: boolean;
+  // The workspace tab the paste goes to; the prompt is cancelled if that tab closes while it is open.
+  tabId: string | null;
   settle: (decision: MultilinePasteDecision) => void;
 }
 
@@ -71,10 +73,12 @@ export function requestMultilinePastePrompt(
       settle: (decision) => {
         if (!queue.includes(prompt)) return;
         publish(queue.filter((entry) => entry !== prompt));
+        syncTabWatcher();
         resolve(decision);
       },
     };
     publish([...queue, prompt]);
+    syncTabWatcher();
   });
 }
 
@@ -86,12 +90,28 @@ export function cancelMultilinePastePrompts(): void {
 const skippedTabs = new Set<string>();
 let stopWatchingTabs: (() => void) | null = null;
 
-// A skipped tab is forgotten as soon as it leaves every workspace, so a closed tab's choice never outlives it.
-function pruneClosedTabs(): void {
+// A closed tab takes its skip choice and any prompt still asking about it along, and an account switch forgets every
+// skip choice, so no choice outlives the tab or the account it was made in.
+function onTabsChanged(accountChanged: boolean): void {
+  if (accountChanged) skippedTabs.clear();
   for (const tabId of skippedTabs) {
     if (!findTab(tabId)) skippedTabs.delete(tabId);
   }
-  if (skippedTabs.size === 0 && stopWatchingTabs) {
+  for (const prompt of [...queue]) {
+    if (prompt.tabId !== null && !findTab(prompt.tabId)) prompt.settle(CANCELLED);
+  }
+  syncTabWatcher();
+}
+
+// The store is watched only while a skip choice or a tab-bound prompt exists.
+function syncTabWatcher(): void {
+  const needed = skippedTabs.size > 0 || queue.some((prompt) => prompt.tabId !== null);
+  if (needed && !stopWatchingTabs) {
+    stopWatchingTabs = useUi.subscribe((state, previous) => {
+      const accountChanged = state.accountEpoch !== previous.accountEpoch;
+      if (accountChanged || state.workspaces !== previous.workspaces) onTabsChanged(accountChanged);
+    });
+  } else if (!needed && stopWatchingTabs) {
     stopWatchingTabs();
     stopWatchingTabs = null;
   }
@@ -105,11 +125,7 @@ export function multilinePasteTabSkippable(tabId: string | undefined): tabId is 
 export function skipMultilinePasteForTab(tabId: string): void {
   if (!multilinePasteTabSkippable(tabId)) return;
   skippedTabs.add(tabId);
-  if (!stopWatchingTabs) {
-    stopWatchingTabs = useUi.subscribe((state, previous) => {
-      if (state.workspaces !== previous.workspaces) pruneClosedTabs();
-    });
-  }
+  syncTabWatcher();
 }
 
 export function multilinePasteSkippedForTab(tabId: string): boolean {

@@ -61,10 +61,12 @@ export async function confirmMultilinePaste(text: string, tabId?: string): Promi
       kind: "warning",
     });
   }
+  const targetTab = multilinePasteTabSkippable(tabId) ? tabId : null;
   const decision = await requestMultilinePastePrompt({
     lineCount: lines.length,
     preview,
-    tabScoped: multilinePasteTabSkippable(tabId),
+    tabScoped: targetTab !== null,
+    tabId: targetTab,
   });
   if (!decision.paste) return false;
   if (decision.skipAlways) setTerminalConfirmMultilinePaste(false);
