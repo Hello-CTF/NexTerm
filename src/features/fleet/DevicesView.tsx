@@ -337,7 +337,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             </span>
           </>
         ) : (
-          <span>{device.kind === "browser" ? "浏览器设备" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
+          <span>{device.kind === "browser" ? "浏览器设备" : device.kind === "local-helper" ? "桌面本机终端" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
         )}
       </div>
 

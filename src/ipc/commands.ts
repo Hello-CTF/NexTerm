@@ -1054,7 +1054,13 @@ export const localHelperApi = {
   // The device's choice for new local terminals; the backend applies it to every local terminal it creates.
   getMode: () => call("local_helper_mode_get").then((value) => (value as { mode: LocalTerminalMode }).mode),
   setMode: (mode: LocalTerminalMode) => call("local_helper_mode_set", { mode }).then((value) => (value as { mode: LocalTerminalMode }).mode),
+  // Exposure lets the linked server account's browsers and phones reach this desktop's local terminals; it is off
+  // until the user turns it on.
+  getExposure: () => call("local_helper_expose_get") as Promise<LocalHelperExposure>,
+  setExposure: (enabled: boolean) => call("local_helper_expose_set", { enabled }) as Promise<LocalHelperExposure>,
 };
+
+export type LocalHelperExposure = import("./generated/types").LocalHelperExposureDTO;
 
 export type LocalFolderFileDto = import("./generated/types").LocalFolderFileDTO;
 export type LocalFolderListDto = import("./generated/types").LocalFolderListDTO;
