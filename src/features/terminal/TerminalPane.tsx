@@ -45,7 +45,7 @@ import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } f
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectWorkspaceSession, reconnectDeadHost, isSessionReconnectPending, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
+import { openTerminalTab, takePendingDirectory, sessionStatusText, connectProgressText, reconnectLiveSession, reconnectDeadHost, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -1085,34 +1085,26 @@ export function TerminalPane({
   };
 
   const reconnectSession = async () => {
-    const session = useUi.getState().sessions.find((x) => x.id === sessionId);
-    if (!session) {
-      pushToast("error", "会话已在服务端删除，请改用「重新连接这台主机」新建连接");
-      return;
-    }
-    if (isSessionReconnectPending(sessionId)) return;
     const workspace = useUi.getState().workspaces.find((item) =>
       item.panes.some((pane) => pane.tabs.some((tab) => tab.id === storeTabId)),
     );
-    const target = workspace ?? {
-      title: session.name,
-      assetId: session.assetId ?? undefined,
-      assetKind: session.kind,
-    };
     try {
-      const fresh = await reconnectWorkspaceSession(target, session);
-      if (!fresh) {
+      const result = await reconnectLiveSession(sessionId, workspace?.id);
+      if (result.kind === "missing") {
+        pushToast("error", "会话已在服务端删除，请改用「重新连接这台主机」新建连接");
+        return;
+      }
+      if (result.kind === "pending") return;
+      if (result.kind === "canceled") {
         pushToast("info", "已取消重连");
         return;
       }
-      const list = useUi.getState().sessions;
-      useUi.getState().setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
       const current = useUi
         .getState()
         .workspaces.flatMap((w) => w.panes)
         .flatMap((p) => p.tabs)
         .find((t) => t.id === storeTabId);
-      const resumeId = session.kind === "ssh" || session.kind === "device"
+      const resumeId = result.session.kind === "ssh" || result.session.kind === "device"
         ? current?.tabId
         : resumeAttemptedRef.current ? undefined : current?.tabId;
       resumeAttemptedRef.current = resumeId !== undefined;

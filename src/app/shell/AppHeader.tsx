@@ -1,9 +1,13 @@
 import { type ReactNode } from "react";
 import {
+  reconnectWorkspaceConnection,
   sessionStatusText,
   sessionReconnectStatusText,
+  workspaceNeedsReconnect,
   useSessionById,
   useSessionStatus,
+  useUi,
+  workspaceConnectionState,
   type AppTab,
   type Workspace,
 } from "../store";
@@ -19,6 +23,7 @@ import {
   IconLayers,
   IconLoader,
   IconPanelRight,
+  IconRefresh,
   IconSettings,
   IconSparkles,
   IconXCircle,
@@ -36,7 +41,7 @@ function WorkspaceStatusGlyph({ status }: { status: SessionInfo["status"] | unde
   const tone =
     status === "connected" ? "is-ok" : status === "failed" ? "is-bad" : "is-warn";
   return (
-    <span className={`nx-ws-status ${tone}`} role="img" aria-label={sessionStatusText(status)}>
+    <span className={`nx-ws-status ${tone}`} role="img" aria-label={sessionStatusText(status)} title={sessionStatusText(status)}>
       {status === "connected" ? (
         <IconCheckCircle size={11} />
       ) : status === "failed" ? (
@@ -47,6 +52,23 @@ function WorkspaceStatusGlyph({ status }: { status: SessionInfo["status"] | unde
         <IconLoader size={11} className="animate-spin" />
       )}
     </span>
+  );
+}
+
+// The glyph sits inside the workspace switch button, so the reconnect action is its own button beside it.
+function WorkspaceReconnectButton({ ws, status }: { ws: Workspace; status: SessionInfo["status"] | undefined }) {
+  if (!workspaceNeedsReconnect(status)) return null;
+  return (
+    <button
+      type="button"
+      className="nx-icon-btn nx-icon-btn-sm shrink-0"
+      style={wailsNoDragRegionStyle}
+      aria-label={`${sessionStatusText(status)}，重新连接 ${ws.title}`}
+      title={`${sessionStatusText(status)}，点击重新连接`}
+      onClick={() => void reconnectWorkspaceConnection(ws.id)}
+    >
+      <IconRefresh size={12} />
+    </button>
   );
 }
 
@@ -98,6 +120,7 @@ export function AppHeader({
 }: AppHeaderProps) {
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
   const wsStatus = useSessionStatus(ws?.sessionId);
+  const connState = useUi((state) => workspaceConnectionState(ws, state.sessions));
   return (
     <header
       className={`nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 ${
@@ -127,6 +150,7 @@ export function AppHeader({
             <WorkspaceStatusGlyph status={wsStatus} />
             <IconChevronDown size={12} />
           </button>
+          <WorkspaceReconnectButton ws={ws} status={connState} />
           <WorkspaceReconnectStatus sessionId={activeSessionId} />
           <span
             className="nx-header-crumb flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"

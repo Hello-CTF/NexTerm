@@ -138,6 +138,14 @@ export {
   SESSION_RECONNECT_WAIT_MS,
 } from "./store/reconnect";
 export {
+  reconnectLiveSession,
+  reconnectWorkspaceConnection,
+  workspaceConnectionState,
+  workspaceNeedsReconnect,
+  type LiveSessionReconnect,
+  type WorkspaceReconnectState,
+} from "./store/workspaceReconnect";
+export {
   sameData,
   useHasSessions,
   useSessionById,
