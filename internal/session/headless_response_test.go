@@ -35,6 +35,26 @@ func TestHeadlessScreenAnswersOnlyWithoutAttachedClients(t *testing.T) {
 	}
 }
 
+// Control alone answers nothing: a controller that only spectates (or has
+// claimed without a subscriber) leaves the answering to the headless screen.
+func TestHeadlessScreenAnswersForControllerWithoutAnsweringSubscriber(t *testing.T) {
+	manager, tab, channel, _ := openCommandTestTab(t, &fakeCommandSink{}, "")
+	ctx := context.Background()
+	if err := manager.DetachChannel("cmd-channel"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachSpectator(ctx, tab.ID, SpectateOptions{ClientID: "guest", ChannelID: "guest-view"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Claim(tab.ID, "guest"); err != nil {
+		t.Fatal(err)
+	}
+	if err := channel.emit([]byte("\x1b[5n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return bytes.Equal(channel.written(), []byte("\x1b[0n")) })
+}
+
 // A paused subscriber refuses output and would answer late, so the headless
 // screen answers while it is paused.
 func TestHeadlessScreenAnswersForPausedSubscriber(t *testing.T) {

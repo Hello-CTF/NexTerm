@@ -1243,11 +1243,10 @@ func (m *Manager) releaseChannelReservation(tabID, channelID string, incarnation
 // queries is attached and taking output now. A paused subscriber (refusing
 // output) or one whose fanout entry was aborted would answer late or never,
 // so the headless screen answers instead and the range is announced as
-// answered. Callers hold t.mu.
+// answered. Control alone answers nothing: a controller counts only through
+// its attached answering subscriber, never as a claim or a spectator. Callers
+// hold t.mu.
 func (t *Tab) answeringLocked() bool {
-	if t.controller != "" {
-		return true
-	}
 	for channelID, subscriber := range t.subscribers {
 		if !subscriber.answers || subscriber.paused {
 			continue
