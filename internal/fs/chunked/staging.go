@@ -14,17 +14,11 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-// stagingParamsSizeV1 is the on-disk size of the legacy staging params file:
-// the upload total and chunk size as little-endian int64 values, with no
-// version and no owner.
-const stagingParamsSizeV1 = 16
-
-// stagingParamsVersion1 identifies legacy 16-byte params without an owner;
-// stagingParamsVersion2 identifies owner-bound params.
-const (
-	stagingParamsVersion1 = 1
-	stagingParamsVersion2 = 2
-)
+// stagingParamsVersion2 identifies owner-bound params, the only supported
+// format. Any other params file, including the ownerless 16-byte files of
+// older builds, is unreadable: its group never matches and is left for the
+// reaper.
+const stagingParamsVersion2 = 2
 
 // stagingParamsHeaderV2 is the fixed part of a version 2 params file:
 // version byte, total, chunk size, and owner length. A version 2 file is at
@@ -40,15 +34,14 @@ const (
 // destination: the staged parts with their sizes, plus which control files
 // (params, manifest, commit temporary) survived the crash.
 type StagedUpload struct {
-	UploadID      string
-	Parts         map[int64]int64
-	HasManifest   bool
-	HasCommit     bool
-	HasParams     bool
-	ParamsVersion int
-	Owner         string
-	Total         int64
-	ChunkSize     int64
+	UploadID    string
+	Parts       map[int64]int64
+	HasManifest bool
+	HasCommit   bool
+	HasParams   bool
+	Owner       string
+	Total       int64
+	ChunkSize   int64
 }
 
 // StagingDir returns the directory that holds staging files for remotePath.
@@ -99,12 +92,12 @@ func ScanStaging(ctx context.Context, destination base.FileSystem, remotePath st
 			group.HasCommit = true
 		case kind == "params":
 			group.HasParams = true
-			total, chunkSize, owner, version, err := readStagingParams(ctx, destination, entry.Path)
+			total, chunkSize, owner, err := readStagingParams(ctx, destination, entry.Path)
 			if err != nil {
 				group.HasParams = false
 				continue
 			}
-			group.Total, group.ChunkSize, group.Owner, group.ParamsVersion = total, chunkSize, owner, version
+			group.Total, group.ChunkSize, group.Owner = total, chunkSize, owner
 		default:
 			index, err := strconv.ParseInt(strings.TrimPrefix(kind, "part-"), 10, 64)
 			if err != nil {
@@ -143,12 +136,12 @@ func FindStaged(ctx context.Context, destination base.FileSystem, remotePath str
 	return nil, false, nil
 }
 
-// readStagingParams decodes a staging params file written by prepare. Legacy
-// 16-byte files carry no owner and report version 1.
-func readStagingParams(ctx context.Context, destination base.FileSystem, path string) (total, chunkSize int64, owner string, version int, err error) {
+// readStagingParams decodes a version 2 staging params file written by
+// prepare. Any other size or version is rejected.
+func readStagingParams(ctx context.Context, destination base.FileSystem, path string) (total, chunkSize int64, owner string, err error) {
 	reader, err := destination.OpenRead(ctx, path)
 	if err != nil {
-		return 0, 0, "", 0, err
+		return 0, 0, "", err
 	}
 	defer func() {
 		if closeErr := reader.Close(); err == nil && closeErr != nil {
@@ -156,39 +149,26 @@ func readStagingParams(ctx context.Context, destination base.FileSystem, path st
 		}
 	}()
 	size := reader.Size()
-	if size != stagingParamsSizeV1 && (size < stagingParamsHeaderV2 || size > stagingParamsMaxSizeV2) {
-		return 0, 0, "", 0, fmt.Errorf("staging params size %d is invalid", size)
+	if size < stagingParamsHeaderV2 || size > stagingParamsMaxSizeV2 {
+		return 0, 0, "", fmt.Errorf("staging params size %d is invalid", size)
 	}
 	raw := make([]byte, size)
 	if _, err := io.ReadFull(reader, raw); err != nil {
-		return 0, 0, "", 0, err
-	}
-	if size == stagingParamsSizeV1 {
-		total, chunkSize, err = decodeStagingParamsV1(raw)
-		return total, chunkSize, "", stagingParamsVersion1, err
+		return 0, 0, "", err
 	}
 	if raw[0] != stagingParamsVersion2 {
-		return 0, 0, "", 0, fmt.Errorf("staging params version %d is unsupported", raw[0])
+		return 0, 0, "", fmt.Errorf("staging params version %d is unsupported", raw[0])
 	}
 	ownerLen := int(binary.LittleEndian.Uint16(raw[17:19]))
-	if ownerLen < 0 || stagingParamsHeaderV2+ownerLen != len(raw) {
-		return 0, 0, "", 0, fmt.Errorf("staging params owner length %d is invalid", ownerLen)
+	if stagingParamsHeaderV2+ownerLen != len(raw) {
+		return 0, 0, "", fmt.Errorf("staging params owner length %d is invalid", ownerLen)
 	}
 	total = int64(binary.LittleEndian.Uint64(raw[1:9]))
 	chunkSize = int64(binary.LittleEndian.Uint64(raw[9:17]))
 	if total < 0 || chunkSize <= 0 || chunkSize > MaxChunkSize {
-		return 0, 0, "", 0, fmt.Errorf("invalid staging params total=%d chunkSize=%d", total, chunkSize)
+		return 0, 0, "", fmt.Errorf("invalid staging params total=%d chunkSize=%d", total, chunkSize)
 	}
-	return total, chunkSize, string(raw[stagingParamsHeaderV2:]), stagingParamsVersion2, nil
-}
-
-func decodeStagingParamsV1(raw []byte) (total, chunkSize int64, err error) {
-	total = int64(binary.LittleEndian.Uint64(raw[0:8]))
-	chunkSize = int64(binary.LittleEndian.Uint64(raw[8:16]))
-	if total < 0 || chunkSize <= 0 || chunkSize > MaxChunkSize {
-		return 0, 0, fmt.Errorf("invalid staging params total=%d chunkSize=%d", total, chunkSize)
-	}
-	return total, chunkSize, nil
+	return total, chunkSize, string(raw[stagingParamsHeaderV2:]), nil
 }
 
 // writeStagingParams records the upload's owner and parameters next to its
