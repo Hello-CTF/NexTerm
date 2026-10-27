@@ -1,4 +1,4 @@
-import { type ComponentProps, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { type ComponentProps, type CSSProperties, type MouseEvent } from "react";
 import { DeviceSessionBoundary } from "../../features/fleet/DeviceSessionBoundary";
 import { Lazy } from "../../ui/LazyBoundary";
 import { AutoSync, ForwardStartupRecovery } from "../lazyPanels";
@@ -31,9 +31,6 @@ export interface ShellParts {
 
 export interface ShellFrameProps extends ShellParts {
   onDoubleClick?: (event: MouseEvent<HTMLElement>) => void;
-  // home covers the workspace body (the mobile status wall) while it is not null. A shell that has a home always
-  // passes it, null while closed, so the body stays mounted under it and terminals keep their state.
-  home?: ReactNode;
 }
 
 // ShellFrame is the layout both shells share: rail, header, notices, workspace body, status bar and overlays.
@@ -50,7 +47,6 @@ export function ShellFrame({
   statusBar,
   dialogs,
   onDoubleClick,
-  home,
 }: ShellFrameProps) {
   return (
     <div
@@ -82,16 +78,7 @@ export function ShellFrame({
           <AppHeader {...header} />
           <ProjectWorkspaceStrip {...strip} />
           <AppBanners {...banners} />
-          {home === undefined ? (
-            <WorkspaceBody {...body} />
-          ) : (
-            <>
-              {home}
-              <div className={home ? "hidden" : "contents"}>
-                <WorkspaceBody {...body} />
-              </div>
-            </>
-          )}
+          <WorkspaceBody {...body} />
           <StatusBar {...statusBar} />
         </div>
       </div>

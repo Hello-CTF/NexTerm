@@ -81,7 +81,10 @@ vi.mock("../features/settings/useWebAutoSync", () => ({
   useDesktopAutoSync: () => {},
   useWebAutoSync: () => {},
 }));
-vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
+vi.mock("../features/terminal/TerminalPane", () => ({
+  TerminalPane: (props: { resumeTabId?: string; visible?: boolean }) =>
+    createElement("div", { "data-terminal-pane": props.resumeTabId ?? "", "data-visible": String(props.visible) }),
+}));
 vi.mock("../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
 vi.mock("../features/terminal/TranscriptHistoryPanel", () => ({ TranscriptHistoryPanel: () => null }));
 vi.mock("../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
@@ -285,22 +288,75 @@ describe("app shell modes", () => {
     expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("打开本地终端"))).toBe(false);
   });
 
-  it("mobile: launches on the status wall over the workspaces; the home button and the asset drawer leave it", async () => {
+  it("mobile: launches on the status wall in the workspace area; the docks stay usable and the home button toggles it", async () => {
     stubDevice(PHONE);
     mounted = mountApp();
     await flush();
 
     const wall = () => document.querySelector("[data-status-wall]");
+    const area = () => document.querySelector("[data-workspace-area]");
+    const home = () => button("会话状态首页");
     expect(wall()).not.toBeNull();
-    expect(document.querySelector(".nx-workspace-body")?.parentElement?.classList.contains("hidden")).toBe(true);
-    act(() => button("返回工作区")?.click());
-    expect(wall()).toBeNull();
-    expect(document.querySelector(".nx-workspace-body")?.parentElement?.classList.contains("hidden")).toBe(false);
-    act(() => button("会话状态首页")?.click());
-    expect(wall()).not.toBeNull();
+    expect(area()?.classList.contains("hidden")).toBe(true);
+    expect(home()?.getAttribute("aria-pressed")).toBe("true");
+    // The asset drawer opens over the wall without closing it.
     await openAssetsSidebar();
-    expect(wall()).toBeNull();
+    expect(wall()).not.toBeNull();
     expect(document.querySelector('[role="navigation"][aria-label="左栏"]')).not.toBeNull();
+    act(() => home()?.click());
+    expect(wall()).toBeNull();
+    expect(area()?.classList.contains("hidden")).toBe(false);
+    expect(home()?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("mobile: a saved layout with an active terminal keeps the wall open at launch, with the terminal hidden under it", async () => {
+    stubDevice(PHONE);
+    useUi.setState({
+      workspaces: [{
+        id: "ws",
+        kind: "session",
+        title: "web-01",
+        sessionId: "s1",
+        closable: true,
+        panes: [{
+          id: "pane",
+          tabs: [
+            { id: "t1", kind: "terminal", title: "构建", sessionId: "s1", tabId: "T1", closable: true },
+            { id: "t2", kind: "terminal", title: "日志", sessionId: "s1", tabId: "T2", closable: true },
+          ],
+          activeTabId: "t1",
+        }],
+        activePaneId: "pane",
+      }],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+    await flush();
+
+    const wall = () => document.querySelector("[data-status-wall]");
+    const visible = (tabId: string) => document.querySelector(`[data-terminal-pane="${tabId}"]`)?.getAttribute("data-visible");
+    expect(wall()).not.toBeNull();
+    expect(visible("T1")).toBe("false");
+    // A layout restored after launch brings tabs this client never showed and activates one: not the user going somewhere.
+    act(() => useUi.setState((state) => ({
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        panes: workspace.panes.map((pane) => ({
+          ...pane,
+          tabs: [...pane.tabs, { id: "t3", kind: "terminal", title: "同步来的", sessionId: "s1", tabId: "T3", closable: true }],
+          activeTabId: "t3",
+        })),
+      })),
+    })));
+    await flush();
+    expect(wall()).not.toBeNull();
+    expect(visible("T3")).toBe("false");
+    // Opening a session from the wall shows it.
+    act(() => document.querySelector<HTMLButtonElement>('[data-wall-card="T1"] button')?.click());
+    await flush();
+    expect(wall()).toBeNull();
+    expect(visible("T1")).toBe("true");
   });
 
   it("desktop and compact windows have no status wall", async () => {

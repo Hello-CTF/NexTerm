@@ -1,3 +1,4 @@
+import { type ReactNode } from "react";
 import {
   useUi,
   useHasSessions,
@@ -34,6 +35,10 @@ export interface WorkspaceBodyProps {
   onNewTerminal: () => void;
   onLocalTerminal: () => void;
   onOpenPalette: () => void;
+  // home covers the workspace area (the mobile status wall) while it is not null; the docks stay usable beside or
+  // over it. A shell with a home always passes it, null while closed, so the workspaces stay mounted underneath. While
+  // covered, their terminals count as hidden: no backend output, no blinking cursor, and a refit when shown again.
+  home?: ReactNode;
 }
 
 // WorkspaceBody is the row under the header: the left dock, the workspace panes, the session side panel and the right
@@ -52,7 +57,9 @@ export function WorkspaceBody({
   onNewTerminal,
   onLocalTerminal,
   onOpenPalette,
+  home,
 }: WorkspaceBodyProps) {
+  const covered = home !== undefined && home !== null;
   const workspaces = useWorkspaceList();
   const hasSessions = useHasSessions();
   const leftMode = useUi((s) => s.leftMode);
@@ -113,7 +120,9 @@ export function WorkspaceBody({
         </div>
       )}
 
-      <main id="nx-main" tabIndex={-1} className={`nx-workspace-main min-w-0 flex-1${workspaces.length > 0 ? " flex flex-col" : ""}`}>
+      <main id="nx-main" tabIndex={-1} className={`nx-workspace-main min-w-0 flex-1${workspaces.length > 0 || covered ? " flex flex-col" : ""}`}>
+        {home}
+        <WorkspaceArea wrapped={home !== undefined} covered={covered}>
         {workspaces.length === 0 ? (
           hasSessions ? (
             <WorkspaceEmpty onNew={onNewTerminal} />
@@ -159,7 +168,7 @@ export function WorkspaceBody({
                           tab={t}
                           idPrefix={`${w.id}-${p.id}`}
                           workspaceId={w.id}
-                          visible={wsActive && visible}
+                          visible={wsActive && visible && !covered}
                         />
                       )}
                       renderPane={(p, view, stripRef) => (
@@ -190,6 +199,7 @@ export function WorkspaceBody({
             </div>
           </>
         )}
+        </WorkspaceArea>
       </main>
 
       {sessionDockOpen && (
@@ -238,6 +248,13 @@ export function WorkspaceBody({
       </div>
     </div>
   );
+}
+
+// WorkspaceArea keeps the workspaces mounted under a home. Without one (wrapped false) it adds no element, so a shell
+// without a home renders exactly as before; its element type never changes, so the panes never remount.
+function WorkspaceArea({ wrapped, covered, children }: { wrapped: boolean; covered: boolean; children: ReactNode }) {
+  if (!wrapped) return <>{children}</>;
+  return <div className={covered ? "hidden" : "contents"} data-workspace-area="">{children}</div>;
 }
 
 // focusAiComposer puts the caret back in the active conversation's composer after the assistant moved.

@@ -49,6 +49,8 @@ export interface WallCard {
   awareness?: SessionAwareness;
   // The host of a session this client knows only from the cross-host listing; it is opened through that host.
   host?: AggregateHost;
+  // The host's listing is older than the backend's cache allows, so the state may have moved on.
+  stale: boolean;
 }
 
 export interface WallHostNote {
@@ -111,6 +113,7 @@ function card(input: {
   ended?: boolean;
   lastOutputAt?: number;
   host?: AggregateHost;
+  stale?: boolean;
 }): WallCard {
   const { awareness } = input;
   const state: AwarenessState = input.ended ? "exited" : (awareness?.state ?? "unknown");
@@ -128,6 +131,7 @@ function card(input: {
     at: timeOf(awareness, input.lastOutputAt),
     awareness,
     host: input.host,
+    stale: input.stale === true,
   };
 }
 
@@ -165,6 +169,7 @@ export function buildStatusWall(
           awareness: known(tab.tabId),
           ended: tab.exited === true || tab.dead === true || row?.session.dead === true,
           lastOutputAt: row?.session.lastOutputAt,
+          stale: row?.host.stale === true,
         }));
       }
     }
@@ -181,6 +186,7 @@ export function buildStatusWall(
       ended: session.dead === true,
       lastOutputAt: session.lastOutputAt,
       host,
+      stale: host.stale === true,
     }));
   }
 

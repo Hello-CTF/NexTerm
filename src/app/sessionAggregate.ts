@@ -37,6 +37,7 @@ let started = false;
 // epoch discards replies an account reset or a newer reload has overtaken.
 let epoch = 0;
 let inFlight = false;
+let inFlightLoad: Promise<void> | null = null;
 // Events that arrive while a reload is in flight are applied after its reply, which may predate them.
 let buffered: TerminalSessionsEvent[] | null = null;
 let followUp: ReturnType<typeof setTimeout> | undefined;
@@ -133,7 +134,14 @@ function clearFollowUp(): void {
   followUp = undefined;
 }
 
-export async function reloadSessionAggregate(waitMs = AGGREGATE_WAIT_MS): Promise<void> {
+// reloadSessionAggregate lists every host again. A call while a listing is in flight waits for that one instead.
+export function reloadSessionAggregate(waitMs = AGGREGATE_WAIT_MS): Promise<void> {
+  if (inFlight && inFlightLoad) return inFlightLoad;
+  inFlightLoad = runReload(waitMs);
+  return inFlightLoad;
+}
+
+async function runReload(waitMs: number): Promise<void> {
   if (inFlight) return;
   inFlight = true;
   clearFollowUp();

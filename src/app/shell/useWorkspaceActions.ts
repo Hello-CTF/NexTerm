@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   useUi,
   openTerminalTab,
@@ -14,6 +14,7 @@ import { assetApi, sessionApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { showSettingsSection } from "../../features/settings/settingsNavigation";
 import { isMobileShell } from "./shellMode";
+import { hideMobileHome } from "./mobileHome";
 
 function isSessionAlive(status: string): boolean {
   return status === "connected" || status === "connecting" || status === "reconnecting";
@@ -261,22 +262,34 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     }
   }, []);
 
+  // Each command opens something in the workspaces, so on the mobile shell it leaves the home first.
+  const opening = useMemo(() => {
+    const leaving = <A extends unknown[], R>(action: (...args: A) => R) => (...args: A): R => {
+      hideMobileHome();
+      return action(...args);
+    };
+    return {
+      openLocalTerminal: leaving(openLocalTerminal),
+      openFiles: leaving(openFiles),
+      openMount: leaving(openMount),
+      openForward: leaving(openForward),
+      openDocker: leaving(openDocker),
+      openDatabase: leaving(openDatabase),
+      openAudit: leaving(openAudit),
+      openDevices: leaving(openDevices),
+      openSettings: leaving(openSettings),
+      openSyncSettings: leaving(openSyncSettings),
+      openVaultProtection: leaving(openVaultProtection),
+      openBackground: leaving(openBackground),
+      openHistory: leaving(openHistory),
+      openNewTerminal: leaving(openNewTerminal),
+    };
+  }, [openLocalTerminal, openFiles, openMount, openForward, openDocker, openDatabase, openAudit, openDevices,
+    openSettings, openSyncSettings, openVaultProtection, openBackground, openHistory, openNewTerminal]);
+
   return {
     needSession,
-    openLocalTerminal,
-    openFiles,
-    openMount,
-    openForward,
-    openDocker,
-    openDatabase,
-    openAudit,
-    openDevices,
-    openSettings,
-    openSyncSettings,
-    openVaultProtection,
-    openBackground,
-    openHistory,
-    openNewTerminal,
+    ...opening,
     closeAllWorkspaces,
   };
 }

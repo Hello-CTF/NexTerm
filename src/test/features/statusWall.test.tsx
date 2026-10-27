@@ -248,6 +248,65 @@ describe("StatusWall", () => {
     }
   });
 
+  it("keeps the wall open when a takeover is canceled", async () => {
+    applyAggregateList(listing([host("asset:web", { kind: "ssh", name: "web-01", sessionId: "s1" })], [item("asset:web", "far-tab", "needs_me", 2)]));
+    // The workspaces are reset while the takeover looks up the session, which cancels it.
+    mocks.listSessions.mockImplementation(async () => {
+      useUi.setState((state) => ({ workspaceRuntimeEpoch: state.workspaceRuntimeEpoch + 1 }));
+      return [ssh];
+    });
+    const onOpened = vi.fn();
+    const view = mount(createElement(StatusWall, { onOpened }));
+    try {
+      await act(async () => {
+        cardButton(view, "far-tab").click();
+        await flush();
+      });
+      expect(mocks.listSessions).toHaveBeenCalled();
+      expect(onOpened).not.toHaveBeenCalled();
+      expect(useUi.getState().toasts).toEqual([]);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("names a card by title, host and state, describes it by detail, time and a stale listing", () => {
+    applyAggregateList(listing([host("device:box", { name: "build box", stale: true })], [
+      item("device:box", "ask", "needs_me", 3, { attention: attention("ask", "needs_me", 3, { reason: "bell" }) }),
+    ]));
+    const view = mount(createElement(StatusWall, { onOpened: vi.fn() }));
+    try {
+      const button = cardButton(view, "ask");
+      expect(button.hasAttribute("aria-label")).toBe(false);
+      const text = (ids: string | null) => (ids ?? "").split(" ").map((id) => document.getElementById(id)?.textContent).join("|");
+      expect(text(button.getAttribute("aria-labelledby"))).toBe("任务 ask|build box|需要我");
+      expect(text(button.getAttribute("aria-describedby"))).toBe("终端响铃|3 分钟前|这台主机的列表可能已过时");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("waits for a listing in flight when refreshed", async () => {
+    let answer: (list: AggregateList) => void = () => {};
+    mocks.sessionsAggregate.mockReturnValueOnce(new Promise<AggregateList>((resolve) => { answer = resolve; }));
+    const view = mount(createElement(StatusWall, { onOpened: vi.fn() }));
+    try {
+      const refresh = [...view.container.querySelectorAll("button")].find((candidate) => candidate.textContent?.includes("刷新"))!;
+      act(() => refresh.click());
+      expect(view.container.querySelector('[data-testid="wall-progress"]')?.textContent).toBe("正在刷新…");
+      expect(mocks.sessionsAggregate).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        answer(listing([host("device:a")], [item("device:a", "one", "running", 1)]));
+        await flush();
+      });
+      expect(view.container.querySelector('[data-testid="wall-progress"]')?.textContent).toBe("");
+      expect(cards(view, "running")).toEqual(["one"]);
+      expect(mocks.sessionsAggregate).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("guides an empty wall to the assets", async () => {
     applyAggregateList(listing([], []));
     const onOpenAssets = vi.fn();

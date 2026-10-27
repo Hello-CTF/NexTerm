@@ -6,8 +6,8 @@ import { freezeOrder } from "../../app/jump/jumpRanking";
 import { TabAttentionBadge } from "../../app/workspace/tabStrip";
 import { describeError } from "../../ui/errorText";
 import { IconRefresh, IconServer } from "../../ui/icons";
-import { openAggregateEntry, openInboxTab } from "../inbox/inbox";
-import { unknownHostText } from "../terminal/backgroundSessionsAccess";
+import { openInboxTab } from "../inbox/inbox";
+import { takeOverAggregateSession, unknownHostText } from "../terminal/backgroundSessionsAccess";
 import { buildStatusWall, WALL_GROUP_LABELS, WALL_GROUPS, type WallCard, type WallGroup } from "./statusWall";
 
 // A downward drag this far from the top of the list refreshes it.
@@ -40,6 +40,8 @@ const STATE_TONE: Record<WallGroup, string> = {
   unknown: "text-[var(--nx-fg-soft)]",
 };
 
+// A card names its session by title, host and state; the detail, the time and a stale listing describe it. A card
+// this client cannot open is a plain item that says why.
 function WallCardView({
   card,
   now,
@@ -54,31 +56,49 @@ function WallCardView({
   actions?: ReactNode;
 }) {
   const reachable = card.uiTabId !== undefined || card.host !== undefined;
+  const id = `nx-wall-${card.tabId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  const time = ago(card.at, now);
+  const described = [card.detail ? `${id}-detail` : null, time ? `${id}-time` : null, card.stale ? `${id}-stale` : null]
+    .filter(Boolean)
+    .join(" ");
+  const body = (
+    <>
+      <span className="mt-[4px] flex w-3 shrink-0 justify-center">
+        {opening ? <IconRefresh size={11} className="animate-spin" /> : <TabAttentionBadge badge={card.badge} />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-2">
+          <span id={`${id}-title`} className="truncate text-[13.5px] font-medium text-[var(--nx-fg-strong)]" data-testid="wall-title">{card.title}</span>
+          <span id={`${id}-time`} className="ml-auto shrink-0 text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-time">{time}</span>
+        </span>
+        <span className="flex items-baseline gap-2 text-[12px]">
+          <span id={`${id}-host`} className="truncate text-[var(--nx-fg-soft)]" data-testid="wall-host">{card.hostName}</span>
+          <span id={`${id}-state`} className={`shrink-0 ${STATE_TONE[card.group]}`} data-testid="wall-state">{card.stateLabel}</span>
+        </span>
+        {card.detail && <span id={`${id}-detail`} className="block truncate text-[12px] text-[var(--nx-fg)]" data-testid="wall-detail">{card.detail}</span>}
+        {card.stale && <span id={`${id}-stale`} className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-stale">这台主机的列表可能已过时</span>}
+        {!reachable && <span className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-unreachable">此端无法打开这个终端</span>}
+      </span>
+    </>
+  );
   return (
     <li className="nx-wall-card rounded-md border border-[var(--nx-border-strong)]" data-wall-card={card.tabId} data-state={card.state}>
-      <button
-        type="button"
-        className="flex w-full min-w-0 items-start gap-2.5 px-3 py-2.5 text-left disabled:cursor-default"
-        disabled={!reachable || opening}
-        aria-label={`${card.title}，${card.hostName}，${card.stateLabel}`}
-        title={reachable ? (card.uiTabId ? "打开这个终端" : `接管 ${card.hostName} 上的这个终端`) : "此端无法打开这个终端"}
-        onClick={onOpen}
-      >
-        <span className="mt-[4px] flex w-3 shrink-0 justify-center">
-          {opening ? <IconRefresh size={11} className="animate-spin" /> : <TabAttentionBadge badge={card.badge} />}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-baseline gap-2">
-            <span className="truncate text-[13.5px] font-medium text-[var(--nx-fg-strong)]" data-testid="wall-title">{card.title}</span>
-            <span className="ml-auto shrink-0 text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-time">{ago(card.at, now)}</span>
-          </span>
-          <span className="flex items-baseline gap-2 text-[12px]">
-            <span className="truncate text-[var(--nx-fg-soft)]" data-testid="wall-host">{card.hostName}</span>
-            <span className={`shrink-0 ${STATE_TONE[card.group]}`} data-testid="wall-state">{card.stateLabel}</span>
-          </span>
-          {card.detail && <span className="block truncate text-[12px] text-[var(--nx-fg)]" data-testid="wall-detail">{card.detail}</span>}
-        </span>
-      </button>
+      {reachable ? (
+        <button
+          type="button"
+          className="flex w-full min-w-0 items-start gap-2.5 px-3 py-2.5 text-left disabled:cursor-default"
+          disabled={opening}
+          aria-labelledby={`${id}-title ${id}-host ${id}-state`}
+          aria-describedby={described || undefined}
+          onClick={onOpen}
+        >
+          {body}
+        </button>
+      ) : (
+        <div className="flex w-full min-w-0 items-start gap-2.5 px-3 py-2.5" data-wall-static="">
+          {body}
+        </div>
+      )}
       {actions && (
         <div className="px-3 pb-2.5" data-wall-actions="">
           {actions}
@@ -87,6 +107,7 @@ function WallCardView({
     </li>
   );
 }
+
 
 // StatusWall is the mobile home: sessions grouped by needs me, running, finished and unknown. It renders at once from
 // what is already known (this client's tabs and the last cross-host listing) and fills in as hosts answer. Cards keep
@@ -104,6 +125,7 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
   const [opening, setOpening] = useState<string | null>(null);
   const [pull, setPull] = useState(0);
   const pullStart = useRef<number | null>(null);
+  const pullRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const orderRef = useRef<{ token: number; keys: Record<WallGroup, string[]> } | null>(null);
 
@@ -161,27 +183,32 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
     }
     if (!card.host) return;
     setOpening(card.tabId);
-    void openAggregateEntry({ tabId: card.tabId, title: card.title, host: card.host })
-      .then((problem) => {
-        if (problem) useUi.getState().pushToast("error", `无法打开终端：${problem}`);
-        else onOpened();
+    // A canceled takeover (the user dismissed a device connect) leaves the wall as it was.
+    void takeOverAggregateSession(card.host, card.tabId, card.title)
+      .then((result) => {
+        if (result.ok) onOpened();
+        else if ("error" in result) useUi.getState().pushToast("error", `无法打开终端：${result.error}`);
       })
       .catch((error: unknown) => useUi.getState().pushToast("error", `无法打开终端：${describeError(error)}`))
       .finally(() => setOpening(null));
   };
 
+  // The drag distance lives in a ref: touch events of one gesture can arrive before React renders the last one.
   const onTouchStart = (event: TouchEvent) => {
     pullStart.current = (scrollRef.current?.scrollTop ?? 0) <= 0 ? (event.touches[0]?.clientY ?? null) : null;
+    pullRef.current = 0;
   };
   const onTouchMove = (event: TouchEvent) => {
     if (pullStart.current === null) return;
     const y = event.touches[0]?.clientY;
     if (y === undefined) return;
-    setPull(Math.max(0, y - pullStart.current));
+    pullRef.current = Math.max(0, y - pullStart.current);
+    setPull(pullRef.current);
   };
   const onTouchEnd = () => {
-    const pulled = pull;
+    const pulled = pullRef.current;
     pullStart.current = null;
+    pullRef.current = 0;
     setPull(0);
     if (pulled >= PULL_REFRESH_PX && !refreshing) void refresh();
   };
@@ -191,9 +218,9 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
   const unreachable = model.hosts.filter((host) => host.status !== "pending");
 
   return (
-    <section className="nx-status-wall flex min-h-0 flex-1 flex-col bg-neutral-900" aria-label="会话状态" data-status-wall="">
+    <section className="nx-status-wall flex min-h-0 flex-1 flex-col bg-neutral-900" aria-labelledby="nx-wall-heading" data-status-wall="">
       <div className="nx-toolbar">
-        <span className="nx-toolbar-title">会话</span>
+        <h2 id="nx-wall-heading" className="nx-toolbar-title">会话状态</h2>
         <span className="nx-hint" role="status" aria-live="polite" data-testid="wall-progress">
           {refreshing ? "正在刷新…" : pending.length > 0 ? `正在查询 ${pending.length} 台主机…` : !loaded ? "正在读取各主机的会话…" : ""}
         </span>
@@ -209,7 +236,7 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        onTouchCancel={() => { pullStart.current = null; setPull(0); }}
+        onTouchCancel={() => { pullStart.current = null; pullRef.current = 0; setPull(0); }}
       >
         {pull > 0 && (
           <div className="flex items-center justify-center text-[12px] text-[var(--nx-fg-soft)]" style={{ height: Math.min(pull, PULL_REFRESH_PX) }} data-testid="wall-pull">
@@ -218,9 +245,9 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
         )}
         {WALL_GROUPS.map((group) => groups[group].length > 0 && (
           <div key={group} className="pt-3" data-wall-group={group}>
-            <h2 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">
+            <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">
               {WALL_GROUP_LABELS[group]} <span className="font-normal">{groups[group].length}</span>
-            </h2>
+            </h3>
             <ul className="flex flex-col gap-2">
               {groups[group].map((entry) => (
                 <WallCardView
@@ -237,7 +264,7 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
         ))}
         {unreachable.length > 0 && (
           <div className="pt-3" data-wall-group="hosts">
-            <h2 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">无法查看的主机</h2>
+            <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">无法查看的主机</h3>
             <ul className="flex flex-col gap-1">
               {unreachable.map((host) => (
                 <li key={host.key} className="flex items-baseline gap-2 text-[12px]" data-wall-host={host.key} data-host-status={host.status}>

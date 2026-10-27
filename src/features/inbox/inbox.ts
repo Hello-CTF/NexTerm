@@ -13,6 +13,7 @@ import {
 import { isSeenUnsupported } from "../../app/sessionAwareness";
 import { aggregateRows, useSessionAggregate, type AggregateRow } from "../../app/sessionAggregate";
 import { terminalApi } from "../../ipc/commands";
+import { hideMobileHome } from "../../app/shell/mobileHome";
 import type { AggregateHost } from "../../ipc/generated/types";
 
 // An inbox entry is a terminal session whose needs_me or just_finished state nobody has seen yet, on any device. The
@@ -151,6 +152,7 @@ export function uiTabForBackendTab(tabId: string): string | undefined {
 export function openInboxTab(tabId: string): boolean {
   const uiTabId = uiTabForBackendTab(tabId);
   if (!uiTabId) return false;
+  hideMobileHome();
   useUi.getState().setActiveTab(uiTabId);
   return true;
 }

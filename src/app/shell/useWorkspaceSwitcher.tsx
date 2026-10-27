@@ -12,6 +12,7 @@ import { formatBinding, useKeybindings } from "../keybindings";
 import { type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { IconClose, IconHistory } from "../../ui/icons";
 import { workspaceIcon } from "./AppHeader";
+import { hideMobileHome } from "./mobileHome";
 
 // useWorkspaceSwitcher builds the header's workspace switcher menu.
 export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWorkspaces: () => Promise<void>) {
@@ -42,7 +43,10 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
           ]
             .filter(Boolean)
             .join(" · "),
-          onSelect: () => setActiveWorkspace(w.id),
+          onSelect: () => {
+            hideMobileHome();
+            setActiveWorkspace(w.id);
+          },
           trailingAction: {
             label: `关闭工作区 ${w.title}`,
             icon: <IconClose size={12} />,

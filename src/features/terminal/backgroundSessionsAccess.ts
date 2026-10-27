@@ -3,6 +3,7 @@ import { sessionApi, terminalApi, type LiveTabInfo, type SessionAttentionState, 
 import type { AggregateHost, AggregateHostStatus } from "../../ipc/generated/types";
 import { connectDevice, deviceAssetId, nextTabId, useUi, type ConnectAssetOptions, type Workspace } from "../../app/store";
 import type { AggregateRow } from "../../app/sessionAggregate";
+import { hideMobileHome } from "../../app/shell/mobileHome";
 import { describeError } from "../../ui/errorText";
 import { getLocalHelperStatus, localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 
@@ -373,6 +374,7 @@ export async function takeOverBackgroundTab(
       tabId: info.tabId,
       closable: true,
     });
+    hideMobileHome();
     return { ok: true, sessionName: session.name };
   } catch (e) {
     if (!current()) return { ok: false, canceled: true };

@@ -28,6 +28,7 @@ import { isInventoryOnlyKind } from "../features/explorer/inventory";
 import { AssetEditor } from "../features/explorer/AssetTree";
 import { SshImportDialog } from "../features/explorer/SshImportDialog";
 import { useShell } from "./shell";
+import { hideMobileHome } from "./shell/mobileHome";
 import { IconDownload, IconLoader, IconPlus, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
 import {
   formatQuickConnectTarget,
@@ -472,6 +473,7 @@ export function JumpPalette({
       case "session":
         if (closedRef.current) return;
         closeOverlay();
+        hideMobileHome();
         void jumpToSession(row.entry.target);
         return;
       case "command":
