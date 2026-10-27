@@ -13,6 +13,8 @@ import {
 // A state counts as seen only while the user is at the device: they pressed a key, clicked, scrolled or touched
 // within this window. A screen left open on an unattended device does not clear other devices' badges.
 export const ACTIVE_USER_WINDOW_MS = 45_000;
+// Pointer moves and key repeats arrive in bursts; the seen scan runs at most once per interval.
+export const ACTIVITY_SCAN_INTERVAL_MS = 250;
 
 let started = false;
 // reloadEpoch discards a list reply that an account reset or a newer reload has overtaken.
@@ -20,6 +22,8 @@ let reloadEpoch = 0;
 // requestedSeen holds, per backend tab id, the state (by its since) this client already reported as seen.
 const requestedSeen = new Map<string, string>();
 let lastActivityAt = Number.NEGATIVE_INFINITY;
+let lastScanAt = Number.NEGATIVE_INFINITY;
+let scanTimer: ReturnType<typeof setTimeout> | undefined;
 
 interface AwarenessEnvironment {
   // The page is shown and the window has the focus.
@@ -37,10 +41,30 @@ function userLooking(): boolean {
   return environment.visible() && environment.now() - lastActivityAt <= ACTIVE_USER_WINDOW_MS;
 }
 
-// noteUserActivity records input from the user and reports what they now see.
+// noteUserActivity records input from the user and reports what they now see. The activity time is always recorded,
+// but the scan runs at most once per ACTIVITY_SCAN_INTERVAL_MS: the first event scans at once and a trailing call
+// covers the last event of a burst.
 export function noteUserActivity(): void {
-  lastActivityAt = environment.now();
-  markVisibleAwarenessSeen();
+  const now = environment.now();
+  lastActivityAt = now;
+  if (scanTimer !== undefined) return;
+  const wait = ACTIVITY_SCAN_INTERVAL_MS - (now - lastScanAt);
+  if (wait <= 0) {
+    lastScanAt = now;
+    markVisibleAwarenessSeen();
+    return;
+  }
+  scanTimer = setTimeout(() => {
+    scanTimer = undefined;
+    lastScanAt = environment.now();
+    markVisibleAwarenessSeen();
+  }, wait);
+}
+
+function cancelPendingScan(): void {
+  if (scanTimer !== undefined) clearTimeout(scanTimer);
+  scanTimer = undefined;
+  lastScanAt = Number.NEGATIVE_INFINITY;
 }
 
 // reloadAwareness replaces the attention states with the backend's list. Versions restart with the backend process,
@@ -146,5 +170,6 @@ export function resetAwarenessForTest(): void {
   reloadEpoch += 1;
   requestedSeen.clear();
   lastActivityAt = Number.NEGATIVE_INFINITY;
+  cancelPendingScan();
   resetAwarenessStore();
 }
