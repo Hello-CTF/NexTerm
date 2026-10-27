@@ -16,6 +16,7 @@ import {
 import { type SessionInfo } from "../../ipc/commands";
 import { TRANSPORT } from "../../ipc/env";
 import { isMac, wailsDragRegionStyle, wailsNoDragRegionStyle } from "../platform";
+import { InboxButton } from "../../features/inbox/InboxButton";
 import {
   IconCheckCircle,
   IconChevronDown,
@@ -182,6 +183,7 @@ export function AppHeader({
         </span>
       )}
       <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
+      <InboxButton />
       <button
         className={`nx-icon-btn ${sessionPanelOpen ? "is-active" : ""}`} style={wailsNoDragRegionStyle}
         title={`会话侧栏：当前终端所在主机的文件、容器、端口、日志与 AI${sessionPanelLabel ? ` (${sessionPanelLabel})` : ""}`}

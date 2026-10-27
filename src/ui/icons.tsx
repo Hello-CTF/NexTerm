@@ -444,6 +444,13 @@ export const IconHistory = (p: IconProps) => (
   </Svg>
 );
 
+export const IconBell = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6 9a6 6 0 0 1 12 0c0 4.5 1.5 6.5 2.5 7.5h-17C4.5 15.5 6 13.5 6 9Z" />
+    <path d="M10 19.5a2 2 0 0 0 4 0" />
+  </Svg>
+);
+
 export const IconCheck = (p: IconProps) => (
   <Svg {...p}>
     <path d="m5 12.5 4.6 4.6L19 7.5" />

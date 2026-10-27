@@ -159,6 +159,24 @@ func TestAttentionObservedForTabsOutsideAHelper(t *testing.T) {
 		return event.State == base.SessionIdle && !event.Seen && event.Reason == "input"
 	})
 
+	// A notification carries its text to every client.
+	if err := channel.emit([]byte("\x1b]777;notify;Build;finished\a")); err != nil {
+		t.Fatal(err)
+	}
+	notified := recorder.wait(t, tab.ID, "notification", func(event AttentionEvent) bool {
+		return event.State == base.SessionNeedsMe && event.Reason == "notify"
+	})
+	if notified.Title != "Build" || notified.Body != "finished" {
+		t.Fatalf("notification state %+v", notified)
+	}
+	if err := manager.Write(ctx, tab.ID, tab.Info().Controller, []byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	cleared := recorder.wait(t, tab.ID, "answered notification", func(event AttentionEvent) bool { return event.State == base.SessionIdle })
+	if cleared.Title != "" || cleared.Body != "" {
+		t.Fatalf("idle state kept the notification text: %+v", cleared)
+	}
+
 	// A prompt shape after the output pauses is inferred.
 	if err := channel.emit([]byte("Overwrite the file? [y/N] ")); err != nil {
 		t.Fatal(err)

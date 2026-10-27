@@ -885,8 +885,8 @@ describe("XtermView stream anchors", () => {
   });
 
   it("drops incomplete OSC state before expired clear and replay", async () => {
-    const notifications = vi.fn();
-    await show(props({ onNotification: notifications }));
+    const clipboard = vi.fn();
+    await show(props({ onClipboard: clipboard }));
     const channel = harness.channels[0];
     const term = harness.terminals[0];
     const written: number[] = [];
@@ -896,7 +896,7 @@ describe("XtermView stream anchors", () => {
       callback?.();
     };
     act(() => {
-      channel.onBytes(new TextEncoder().encode("old\x1b]9;stale"));
+      channel.onBytes(new TextEncoder().encode("old\x1b]52;c;stale"));
     });
     written.length = 0;
     const replay = "\x1b[2J\x1b[3J\x1b[HREPLAY";
@@ -917,7 +917,7 @@ describe("XtermView stream anchors", () => {
       ...Array.from(new TextEncoder().encode("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n")),
       7,
     ]);
-    expect(notifications).not.toHaveBeenCalled();
+    expect(clipboard).not.toHaveBeenCalled();
   });
 
   it("rebuilds command blocks only once on expired OSC133 replay", async () => {
@@ -940,11 +940,11 @@ describe("XtermView stream anchors", () => {
   });
 
   it("preserves pending OSC state across continuous resume", async () => {
-    const notifications = vi.fn();
-    await show(props({ onNotification: notifications }));
+    const clipboard = vi.fn();
+    await show(props({ onClipboard: clipboard }));
     const channel = harness.channels[0];
     act(() => {
-      channel.onBytes(new TextEncoder().encode("old\x1b]9;contin"));
+      channel.onBytes(new TextEncoder().encode("old\x1b]52;c;contin"));
     });
 
     act(() => {
@@ -952,7 +952,7 @@ describe("XtermView stream anchors", () => {
       channel.onBytes(new TextEncoder().encode("ued\x07"));
     });
 
-    expect(notifications).toHaveBeenCalledWith("continued");
+    expect(clipboard).toHaveBeenCalledWith("c;continued");
     expect(harness.blockClearCount).toBe(0);
   });
 

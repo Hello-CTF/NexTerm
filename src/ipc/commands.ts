@@ -271,6 +271,12 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
 export const systemApi = {
   platform: () => call("app_platform"),
   insets: () => call("system_insets"),
+  // Operating system notifications through the desktop bridge; the server and mobile builds report them unsupported.
+  notificationStatus: () => call("system_notification_status"),
+  requestNotifications: () => call("system_notification_request"),
+  notify: (notification: { id: string; title: string; body?: string; tabId?: string }) =>
+    ignoreResult(call("system_notify", notification)),
+  removeNotification: (id: string) => ignoreResult(call("system_notification_remove", { id })),
 };
 
 export interface DesktopTrayDto {

@@ -55,7 +55,7 @@ import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { modHint } from "../../app/platform";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
-import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
+import { createOsc52Handler } from "./oscHandlers";
 import {
   bytesToBase64,
   displayFileName,
@@ -492,11 +492,6 @@ export function TerminalPane({
           "error",
           `「${sessionNameRef.current}」写入剪贴板失败：${describeError(e)}。剪贴板权限可能被浏览器或系统拒绝。`,
         ),
-    }),
-  ).current;
-  const osc9Notifier = useRef(
-    createOsc9Notifier({
-      notify: (body) => pushToast("info", `「${sessionNameRef.current}」通知：${body}`),
     }),
   ).current;
   const handleOscTitle = useCallback(
@@ -2350,7 +2345,6 @@ export function TerminalPane({
               }}
               onBlocks={blocksSupported ? setBlocks : undefined}
               onTitle={handleOscTitle}
-              onNotification={osc9Notifier}
               onClipboard={osc52Handler}
               onStreamBacklog={setStreamBacklog}
               onPasteFiles={(files, skipped) => void handlePasteFiles(files, skipped)}

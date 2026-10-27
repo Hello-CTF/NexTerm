@@ -72,6 +72,7 @@ type ProductionServices struct {
 	Events           ipc.Emitter
 	Update           *update.Manager
 	ScreenInsets     func(context.Context) (ScreenInsets, error)
+	SystemNotifier   SystemNotifier
 	channelBridge    *terminalBridge
 	previewRelay     *previewRelayManager
 	terminalCommands *terminalCommandService
@@ -395,6 +396,9 @@ func productionModules(services ProductionServices) []Module {
 			}
 			return services.ScreenInsets(ctx)
 		})
+	}})
+	modules = append(modules, Module{Name: "system-notifications", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+		return registerSystemNotificationCommands(dispatcher, services.SystemNotifier)
 	}})
 	if services.aiRelease != nil {
 		modules = append(modules, Module{Name: "ai-session-hooks", Component: aiHooksComponent{release: services.aiRelease}})

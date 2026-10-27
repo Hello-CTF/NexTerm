@@ -18,6 +18,7 @@ import { installLongPressContextMenu } from "./app/longPress";
 import { setMountUnavailableReason } from "./app/capabilities";
 import { forceResolvedTheme } from "./app/theme";
 import { Lazy } from "./ui/LazyBoundary";
+import { notifyAi } from "./features/inbox/inboxNotifications";
 
 // Public share pages carry their own terminal/preview stack; keep it out of the main app's entry chunk.
 const PublicPreviewApp = lazy(() => import("./features/sharing/PublicPreviewApp").then((m) => ({ default: m.PublicPreviewApp })));
@@ -75,6 +76,7 @@ function wireDesktopShell(): void {
 
   void listenEvent<AINotificationEvent>(EVENTS.aiNotification, (p) => {
     useUi.getState().pushToast("info", `AI 通知：${p.text}`);
+    notifyAi(p.text);
   });
 
   if (!WEB) {

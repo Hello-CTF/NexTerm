@@ -139,4 +139,10 @@ Section "Uninstall"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm"
   DeleteRegKey HKCU "Software\NexTerm"
   DeleteRegKey HKCU "Software\Classes\nexterm"
+  ; The toast activator the notification service registered for clicks.
+  ReadRegStr $0 HKCU "Software\Classes\AppUserModelId\NexTerm" "CustomActivator"
+  ${If} $0 != ""
+    DeleteRegKey HKCU "Software\Classes\CLSID\$0"
+  ${EndIf}
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\NexTerm"
 SectionEnd

@@ -1807,6 +1807,30 @@
       "channel": false,
       "stream": "none"
     },
+    "system_notification_remove": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "system_notification_request": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "system_notification_status": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "system_notify": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "target_set_create": {
       "scope": "target-set",
       "nested": false,

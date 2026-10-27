@@ -203,6 +203,8 @@ export type AttentionEvent = {
   seen?: boolean;
   notable?: boolean;
   exitCode?: number | null;
+  title?: string;
+  body?: string;
   version: number;
 };
 
@@ -2645,6 +2647,23 @@ export type SyncDigest = {
   appVersion: string;
   desktop: boolean;
   assets: DigestEntry[];
+};
+
+export type SystemNotification = {
+  id: string;
+  title: string;
+  body?: string;
+  tabId?: string;
+};
+
+export type SystemNotificationIDRequest = {
+  id: string;
+};
+
+export type SystemNotificationStatus = {
+  available: boolean;
+  permission?: string;
+  reason?: string;
 };
 
 export type TableColumn = {

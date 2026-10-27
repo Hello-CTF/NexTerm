@@ -34,6 +34,7 @@ import { isMobileShell, isTouchShell } from "../../app/shell";
 import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { LocalHelperSettings } from "./LocalHelperSettings";
+import { NotificationSettings } from "../inbox/NotificationSettings";
 import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
 import { ProductionSettingsPanel } from "../production/ProductionSettingsPanel";
@@ -920,6 +921,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </p>
             <QuickCommandsEditor />
           </div>
+          <NotificationSettings />
         </section>
 
         <div id="settings-shortcuts" className="scroll-mt-12">

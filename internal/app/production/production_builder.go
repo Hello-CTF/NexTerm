@@ -53,6 +53,9 @@ type ProductionConfig struct {
 	RestartFunc func(context.Context, string) error
 	// ScreenInsets is injected by the desktop via the wails Screen API; nil on the server.
 	ScreenInsets func(context.Context) (ScreenInsets, error)
+	// SystemNotifier is injected by the desktop; nil on the server, whose
+	// browser clients show their own notifications.
+	SystemNotifier SystemNotifier
 	// LocalHelper runs local terminals through a detached helper process so
 	// they survive the app; it applies to the desktop and to a single-account
 	// server. LocalHelperExecutable overrides the binary started as the helper.
@@ -370,6 +373,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	services.channelBridge = newTerminalBridge(sessionManager, streams)
 	services.retryDeferredUpgrade = dataUpgrade.retry
 	services.ScreenInsets = config.ScreenInsets
+	services.SystemNotifier = config.SystemNotifier
 	if executableErr == nil {
 		services.Update = &update.Manager{
 			CurrentVersion: config.Config.Version,

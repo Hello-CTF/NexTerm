@@ -133,6 +133,9 @@ type stateTracker struct {
 	// ruleID and ruleKeys name the state rule that set the state.
 	ruleID   string
 	ruleKeys string
+	// notifyTitle and notifyBody are the text of the notification behind a
+	// needs_me state.
+	notifyTitle, notifyBody string
 
 	// active is set by output or input since the last idle inspection and
 	// lastActivity is when it happened. settling is set when that inspection
@@ -265,6 +268,7 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 		t.addEventLocked(SessionEvent{Kind: base.SessionEventBell, At: event.At})
 		t.signalPending, t.finishedPending, t.seen = true, false, false
 		t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "bell", now)
+		t.reason, t.notifyTitle, t.notifyBody = "bell", "", ""
 	case signals.KindNotify:
 		title, cutTitle := clipText(event.Title)
 		body, cutBody := clipText(event.Body)
@@ -274,6 +278,8 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 		})
 		t.signalPending, t.finishedPending, t.seen = true, false, false
 		t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "notify", now)
+		// A later notification of the same needs_me state replaces the text.
+		t.reason, t.notifyTitle, t.notifyBody = "notify", title, body
 	case signals.KindCommandStart:
 		t.signalPending, t.finishedPending = false, false
 		t.setLocked(base.SessionRunning, base.ConfidenceSignal, "command_start", now)
@@ -643,6 +649,7 @@ func (t *stateTracker) forceRuleLocked(state, confidence, reason string, rule st
 	t.state, t.confidence, t.reason, t.since = state, confidence, reason, now
 	t.exitCode, t.durationMS, t.notable, t.seen = nil, 0, false, false
 	t.ruleID, t.ruleKeys = rule.ID, rule.Keys
+	t.notifyTitle, t.notifyBody = "", ""
 	t.heldCheck = time.Time{}
 	t.addEventLocked(SessionEvent{Kind: base.SessionEventState, At: now, State: state, Confidence: confidence, Reason: reason, RuleID: rule.ID})
 }
@@ -684,6 +691,8 @@ func (t *stateTracker) snapshot(withEvents bool, after uint64) *SessionState {
 		DurationMS:   t.durationMS,
 		Notable:      t.notable,
 		Seen:         t.seen,
+		Title:        t.notifyTitle,
+		Body:         t.notifyBody,
 		PromptEpoch:  t.epoch,
 		Prompt:       t.publishedPromptLocked(),
 		LastEventSeq: t.lastSeq,

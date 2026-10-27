@@ -111,6 +111,7 @@ func TestGeneratedContractMetadata(t *testing.T) {
 		"dockerStats": "docker://stats", "filesDropped": "files://dropped",
 		"fsProgress": "fs://progress", "helperProgress": "session://helper-progress",
 		"layoutChanged": "layout://changed", "sessionStatus": "session://status",
+		"notificationClick": "app://notification-click", "terminalAttention": "terminal://attention",
 		"inventoryChanged": "inventory://changed", "localHelperStatus": "local://helper-status",
 		"syncRoundComplete": "sync://round-complete", "syncStatus": "sync://status",
 		"terminalControl": "terminal://control", "terminalExit": "terminal://exit",
@@ -143,6 +144,10 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 		{name: "desktop_tray_get", scope: "platform", input: "Record<string, never>", output: "DesktopTrayDTO"},
 		{name: "desktop_tray_set", scope: "platform", input: "DesktopTraySetRequest", output: "DesktopTrayDTO"},
 		{name: "system_insets", scope: "platform", input: "Record<string, never>", output: "ScreenInsets"},
+		{name: "system_notification_status", scope: "platform", input: "Record<string, never>", output: "SystemNotificationStatus"},
+		{name: "system_notification_request", scope: "platform", input: "Record<string, never>", output: "SystemNotificationStatus"},
+		{name: "system_notify", scope: "platform", input: "SystemNotification", output: "unknown"},
+		{name: "system_notification_remove", scope: "platform", input: "SystemNotificationIDRequest", output: "unknown"},
 		{name: "app_update_check", scope: "update", input: "Record<string, never>", output: "UpdateStatus"},
 		{name: "app_update_install", scope: "update", input: updateInstallInput, output: "UpdateResult"},
 		{name: "app_restart", scope: "update", input: "Record<string, never>", output: "UpdateResult"},
@@ -182,8 +187,8 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 11 {
-		t.Fatalf("selected platform/update/biometric command count = %d, want 11", len(selected))
+	if len(selected) != 15 {
+		t.Fatalf("selected platform/update/biometric command count = %d, want 15", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "platform" || command.Scope == "update" || command.Scope == "biometric") && !selected[name] {
