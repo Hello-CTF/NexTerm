@@ -18,8 +18,9 @@ type pidfdTarget struct {
 
 func openHelperTarget(pid int, reverify helperReverify) (helperTarget, error) {
 	fd, err := unix.PidfdOpen(pid, 0)
-	if errors.Is(err, unix.ENOSYS) {
-		// Kernels before 5.3 have no pidfd.
+	if errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EPERM) {
+		// Kernels before 5.3 have no pidfd, and a seccomp or container
+		// policy may forbid it.
 		return &pidTarget{pid: pid, reverify: reverify}, nil
 	}
 	if err != nil {
