@@ -268,6 +268,80 @@ describe("default terminal mode preferences", () => {
     expect(getTerminalPrefs().defaultMode).toBe("durable");
   });
 
+  it("keeps the device value for a device-only store, including while a re-registration loads", async () => {
+    registerAccountPreferenceStore(null);
+    await setTerminalDefaultMode("regular");
+    const store = memoryStore({});
+    vi.spyOn(store, "getView").mockResolvedValue({ defaults: {}, overrides: {}, deviceOnly: true });
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+
+    let resolveView: (() => void) | undefined;
+    const waking = memoryStore({});
+    vi.spyOn(waking, "getView").mockImplementation(() => new Promise((resolve) => {
+      resolveView = () => resolve({ defaults: {}, overrides: {}, deviceOnly: true });
+    }));
+    registerAccountPreferenceStore(waking);
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    resolveView?.();
+    await flushMacrotask();
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    expect(waking.puts).toEqual([]);
+  });
+
+  it("reads the device value while the account view loads", async () => {
+    registerAccountPreferenceStore(null);
+    await setTerminalDefaultMode("regular");
+    const store = memoryStore({}, { "terminal.defaultMode": "durable" });
+    let resolveView: (() => void) | undefined;
+    vi.spyOn(store, "getView").mockImplementation(() => new Promise((resolve) => {
+      resolveView = () => resolve({ defaults: {}, overrides: { "terminal.defaultMode": "durable" } });
+    }));
+    registerAccountPreferenceStore(store);
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    resolveView?.();
+    await flushMacrotask();
+    expect(getTerminalPrefs().defaultMode).toBe("durable");
+  });
+
+  it("holds a choice made while the view loads and lands it on the device for a device-only store", async () => {
+    registerAccountPreferenceStore(null);
+    const store = memoryStore({});
+    let resolveView: (() => void) | undefined;
+    vi.spyOn(store, "getView").mockImplementation(() => new Promise((resolve) => {
+      resolveView = () => resolve({ defaults: {}, overrides: {}, deviceOnly: true });
+    }));
+    registerAccountPreferenceStore(store);
+    const saving = setTerminalDefaultMode("regular");
+    await flushMacrotask();
+    expect(store.puts).toEqual([]);
+    resolveView?.();
+    await saving;
+    expect(store.puts).toEqual([]);
+    expect(localStorage.getItem("nexterm.terminalClose.v1")).toContain('"defaultMode":"regular"');
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+  });
+
+  it("holds a choice made while the view loads and sends it to the account once loaded", async () => {
+    registerAccountPreferenceStore(null);
+    const store = memoryStore({ "terminal.defaultMode": "durable" });
+    let resolveView: (() => void) | undefined;
+    vi.spyOn(store, "getView").mockImplementation(() => new Promise((resolve) => {
+      resolveView = () => resolve({ defaults: {}, overrides: { "terminal.defaultMode": "durable" } });
+    }));
+    registerAccountPreferenceStore(store);
+    const saving = setTerminalDefaultMode("regular");
+    await flushMacrotask();
+    expect(store.puts).toEqual([]);
+    resolveView?.();
+    await saving;
+    expect(store.puts).toEqual([{ "terminal.defaultMode": "regular" }]);
+    expect(getAccountOverrides()["terminal.defaultMode"]).toBe("regular");
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    expect(localStorage.getItem("nexterm.terminalClose.v1") ?? "").not.toContain("defaultMode");
+  });
+
   it("does not copy an account terminal mode into device settings when changing the close action", async () => {
     registerAccountPreferenceStore(null);
     await setTerminalDefaultMode("regular");
