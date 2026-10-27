@@ -124,10 +124,12 @@ import {
   resetTerminalLinesBelow,
   resetTerminalTabTitle,
   resetTerminalView,
+  setTerminalAtTop,
   setTerminalLinesBelow,
   setTerminalTabTitle,
   useTerminalLinesBelow,
   useTerminalTabTitle,
+  useTerminalViewStore,
 } from "../app/terminalViewStore";
 import { TerminalPane } from "../features/terminal/TerminalPane";
 import { TabStripTitle } from "../app/workspace/tabStrip";
@@ -459,6 +461,43 @@ describe("TerminalPane attach/control title wiring (real onAttachInfo)", () => {
     expect(applyRemoteTabTitleToView("t1", "osc title")).toBe(false);
     expect(workspaceTitleOf()).toBe("构建机");
     expect(getTerminalLinesBelow("t1")).toBe(90);
+  });
+
+  it("offers earlier history at the top of a durable tab whose replay started after recorded output", async () => {
+    mounted = mount(createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }));
+    await flush();
+    const entry = () => mounted?.container.querySelector("[data-testid='earlier-history-entry']") ?? null;
+    const control = (version: number, extra: Record<string, unknown>) => ({
+      tabId: "kernel-1",
+      version,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      durable: true,
+      ...extra,
+    });
+    deliverControl(control(1, { historyFrom: 4096, historyBase: 0 }));
+    expect(entry()).toBeNull();
+    act(() => setTerminalAtTop("t1", true));
+    expect(entry()?.textContent).toContain("加载更早历史");
+    act(() => setTerminalAtTop("t1", false));
+    expect(entry()).toBeNull();
+    // The history limit dropped everything before the replay start.
+    deliverControl(control(2, { historyFrom: 4096, historyBase: 4096, historyTruncated: true }));
+    act(() => setTerminalAtTop("t1", true));
+    expect(entry()?.textContent).toContain("早期历史已截断");
+  });
+
+  it("narrow scroll resets clear the top-of-scrollback state with the lines below", () => {
+    act(() => {
+      setTerminalAtTop("t1", true);
+      setTerminalTabTitle("t1", "vim");
+    });
+    expect(useTerminalViewStore.getState().atTop.t1).toBe(true);
+    act(() => resetTerminalLinesBelow("t1"));
+    expect(useTerminalViewStore.getState().atTop.t1).toBeUndefined();
+    expect(getTerminalTabTitle("t1")).toBe("vim");
   });
 
   it("same-title control snapshots never clear the badge state", async () => {

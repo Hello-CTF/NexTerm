@@ -242,7 +242,7 @@ vi.mock("../app/preferences", () => ({
 vi.mock("../ui/clipboard", () => ({ copyText: vi.fn().mockResolvedValue(undefined) }));
 
 import { XtermView, type XtermViewProps } from "../features/terminal/XtermView";
-import { getTerminalLinesBelow, resetTerminalView } from "../app/terminalViewStore";
+import { getTerminalLinesBelow, resetTerminalView, useTerminalViewStore } from "../app/terminalViewStore";
 
 const enc = new TextEncoder();
 
@@ -3084,6 +3084,30 @@ describe("XtermView render coalescing (T-09 component portion)", () => {
     expect(commits).toBe(before);
     expect(getTerminalLinesBelow("tab-1")).toBe(90);
     expect(xtermViewRenders.get("tab-1")).toBe(rendersBefore);
+  });
+
+  it("reports the top of the normal screen's scrollback, never of the alternate screen", async () => {
+    await show();
+    await attachOk();
+    const t = term();
+    const active = t.buffer.active as { baseY: number; viewportY: number; type?: string };
+    const atTop = () => useTerminalViewStore.getState().atTop["tab-1"] === true;
+    active.type = "normal";
+    active.baseY = 100;
+    active.viewportY = 0;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(atTop()).toBe(true);
+    active.viewportY = 10;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(atTop()).toBe(false);
+    active.type = "alternate";
+    active.baseY = 0;
+    active.viewportY = 0;
+    act(() => t.handlers.scroll?.());
+    act(() => runFrames());
+    expect(atTop()).toBe(false);
   });
 
   it("coalesces title changes to the latest one per frame and skips duplicates", async () => {

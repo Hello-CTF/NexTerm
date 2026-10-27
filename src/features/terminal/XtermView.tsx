@@ -16,6 +16,7 @@ import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { useUi } from "../../app/store";
 import {
   resetTerminalLinesBelow,
+  setTerminalAtTop,
   setTerminalLinesBelow,
   useTerminalLinesBelow,
 } from "../../app/terminalViewStore";
@@ -373,6 +374,7 @@ export function XtermView(props: XtermViewProps) {
       // The root view store dedups unchanged values: only a real change notifies
       // the badge's precise selector.
       setTerminalLinesBelow(viewKeyRef.current, below);
+      setTerminalAtTop(viewKeyRef.current, buffer.type === "normal" && buffer.viewportY === 0);
     };
     // Scroll and write-completion signals are high-frequency: they only mark
     // the UI dirty, and the buffer read plus store update runs once per
