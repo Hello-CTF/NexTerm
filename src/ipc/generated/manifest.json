@@ -1776,6 +1776,18 @@
       "channel": true,
       "stream": "binary"
     },
+    "terminal_attention_list": {
+      "scope": "attention",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_attention_seen": {
+      "scope": "attention",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_broadcast_prepare": {
       "scope": "terminal",
       "nested": true,

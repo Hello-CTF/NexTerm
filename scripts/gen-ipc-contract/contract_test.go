@@ -623,6 +623,34 @@ func TestHelperOperationContracts(t *testing.T) {
 	}
 }
 
+func TestAttentionContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	registry := newTypeRegistry()
+	for name, want := range map[string]string{
+		"terminal_attention_list": "AttentionEvent[]",
+		"terminal_attention_seen": "unknown",
+	} {
+		command, ok := commands[name]
+		if !ok {
+			t.Fatalf("attention command %q is missing", name)
+		}
+		if command.Scope != "attention" || command.Nested || command.Channel || command.Stream != "none" {
+			t.Fatalf("attention command %q metadata = %+v", name, command)
+		}
+		if command.Input == nil || command.Output == nil {
+			t.Fatalf("attention command %q must have real DTOs", name)
+		}
+		output, err := registry.ref(command.Output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if output.TS != want {
+			t.Fatalf("attention command %q output = %q, want %q", name, output.TS, want)
+		}
+	}
+}
+
 func TestCronAndLogTailVerticalContracts(t *testing.T) {
 	generated := generateForTest(t, nil)
 	commands := commandsByName(generated.commands)

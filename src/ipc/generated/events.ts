@@ -18,6 +18,7 @@ export const ipcEventTopics = {
   "sessionStatus": "session://status",
   "syncRoundComplete": "sync://round-complete",
   "syncStatus": "sync://status",
+  "terminalAttention": "terminal://attention",
   "terminalControl": "terminal://control",
   "terminalExit": "terminal://exit",
   "terminalThrottled": "terminal://throttled",

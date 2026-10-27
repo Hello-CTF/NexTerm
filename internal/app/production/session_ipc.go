@@ -228,6 +228,13 @@ type renameTerminalRequest struct {
 	At int64 `json:"at,omitempty"`
 }
 
+// attentionSeenRequest names the attention state the user saw by the since
+// value of its event.
+type attentionSeenRequest struct {
+	TabID string `json:"tabId"`
+	Since string `json:"since"`
+}
+
 type createTerminalRequest struct {
 	SessionID string `json:"sessionId"`
 	Cols      uint32 `json:"cols"`
@@ -1062,6 +1069,22 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return attachedTabDTO{}, terminalIPCError(err)
 				}
 				return attachedSessionTab(info), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_attention_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]session.AttentionEvent, error) {
+				ctx = productionSessionRequestContext(ctx)
+				states, err := s.sessions.ListAttentionFor(ctx)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				return states, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_attention_seen", func(ctx context.Context, _ *ipc.Call, input attentionSeenRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				return nil, terminalIPCError(s.sessions.MarkAttentionSeenFor(ctx, input.TabID, input.Since))
 			})
 		},
 		func() error {

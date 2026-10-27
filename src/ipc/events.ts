@@ -29,6 +29,7 @@ export const EVENTS = {
   terminalExit: "terminal://exit",
   terminalThrottled: "terminal://throttled",
   terminalControl: "terminal://control",
+  terminalAttention: "terminal://attention",
   fsProgress: "fs://progress",
   updateProgress: "update://progress",
   dockerStats: "docker://stats",
