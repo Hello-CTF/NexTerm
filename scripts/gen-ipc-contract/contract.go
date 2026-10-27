@@ -22,7 +22,8 @@ type scopeSpec struct {
 }
 
 var contractScopes = []scopeSpec{
-	{name: "platform", commands: []string{"app_platform", "desktop_tray_get", "desktop_tray_set", "system_insets"}},
+	{name: "platform", commands: []string{"app_platform", "desktop_tray_get", "desktop_tray_set", "system_insets",
+		"system_notification_status", "system_notification_request", "system_notify", "system_notification_remove"}},
 	{name: "update", commands: []string{"app_update_check", "app_update_install", "app_restart"}},
 	{name: "biometric", commands: []string{"biometric_status", "biometric_unlock", "biometric_enable", "biometric_disable"}},
 	{name: "host-share", prefixes: []string{"host_share_"}},

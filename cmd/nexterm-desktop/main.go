@@ -98,6 +98,15 @@ func run(args []string) int {
 		diagcapture.RecordEvent(string(event.Event), diagcapture.PayloadSize(event.Payload))
 		return nil
 	})
+	notificationBackend, notificationsUnsupported := newNotificationBackend()
+	notifier := newDesktopNotifier(notificationBackend, notificationsUnsupported, func(click notificationClick) {
+		if window != nil {
+			showWindow(window)
+		}
+		if wailsApp != nil {
+			wailsApp.Event.Emit(notificationClickEvent, click)
+		}
+	})
 	production, err := production.NewProduction(context.Background(), production.ProductionConfig{
 		Config: core.Config{
 			Logger:  logger.Logger,
@@ -118,6 +127,7 @@ func run(args []string) int {
 		ScreenInsets: func(context.Context) (production.ScreenInsets, error) {
 			return screenInsets(currentScreen(window)), nil
 		},
+		SystemNotifier: notifier,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))

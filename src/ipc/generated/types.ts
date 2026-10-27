@@ -2648,6 +2648,23 @@ export type SyncDigest = {
   assets: DigestEntry[];
 };
 
+export type SystemNotification = {
+  id: string;
+  title: string;
+  body?: string;
+  tabId?: string;
+};
+
+export type SystemNotificationIDRequest = {
+  id: string;
+};
+
+export type SystemNotificationStatus = {
+  available: boolean;
+  permission?: string;
+  reason?: string;
+};
+
 export type TableColumn = {
   name: string;
   type: string;

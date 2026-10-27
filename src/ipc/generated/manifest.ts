@@ -2329,6 +2329,38 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.ScreenInsets", ts: "ScreenInsets" },
     },
+    "system_notification_remove": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.systemNotificationIDRequest", ts: "SystemNotificationIDRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "system_notification_request": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.SystemNotificationStatus", ts: "SystemNotificationStatus" },
+    },
+    "system_notification_status": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.SystemNotificationStatus", ts: "SystemNotificationStatus" },
+    },
+    "system_notify": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.SystemNotification", ts: "SystemNotification" },
+      output: { go: "any", ts: "unknown" },
+    },
     "target_set_create": {
       scope: "target-set",
       nested: false,
@@ -4012,6 +4044,22 @@ export interface IPCCommandTypeMap {
   "system_insets": {
     input: Record<string, never>;
     output: contractTypes.ScreenInsets;
+  };
+  "system_notification_remove": {
+    input: contractTypes.SystemNotificationIDRequest;
+    output: unknown;
+  };
+  "system_notification_request": {
+    input: Record<string, never>;
+    output: contractTypes.SystemNotificationStatus;
+  };
+  "system_notification_status": {
+    input: Record<string, never>;
+    output: contractTypes.SystemNotificationStatus;
+  };
+  "system_notify": {
+    input: contractTypes.SystemNotification;
+    output: unknown;
   };
   "target_set_create": {
     input: contractTypes.TargetSetCreateRequest;
