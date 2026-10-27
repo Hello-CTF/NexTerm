@@ -78,10 +78,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if config.Config.Logger == nil {
 		config.Config.Logger = slog.Default()
 	}
-	legacyTasksDir := filepath.Join(config.DataDir, "tasks")
-	if _, err := os.Stat(legacyTasksDir); err == nil {
-		config.Config.Logger.Info("legacy persistent task data directory preserved; tasks are no longer loaded", "path", legacyTasksDir)
-	}
 	if config.Config.Version == "" {
 		config.Config.Version = version.Version
 	}

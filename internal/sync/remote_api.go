@@ -52,7 +52,7 @@ type RemoteFleetDevice struct {
 
 type RemoteFleetDevices struct {
 	Devices []RemoteFleetDevice `json:"devices"`
-	// ServerVersion is empty when talking to an older server that does not report it.
+	// ServerVersion is the version the server reports.
 	ServerVersion string `json:"server_version,omitempty"`
 }
 

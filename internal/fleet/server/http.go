@@ -352,7 +352,7 @@ type agentView struct {
 	StateDigest      string       `json:"state_digest,omitempty"`
 }
 
-// deviceListView is the GET /fleet/devices body. ServerVersion is additive: older clients ignore it.
+// deviceListView is the GET /fleet/devices body.
 type deviceListView struct {
 	Devices       []deviceView `json:"devices"`
 	ServerVersion string       `json:"server_version"`
