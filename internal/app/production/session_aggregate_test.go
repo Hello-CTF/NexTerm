@@ -82,6 +82,56 @@ func TestSessionAggregateListsTheAccountsDevicesThroughTheBridge(t *testing.T) {
 	}
 }
 
+func TestSessionAggregateAnswersWithKnownDevicesWhileItRefreshesThem(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	release := make(chan struct{})
+	refreshed := make(chan struct{})
+	config := &DeviceConnectorConfig{
+		Dial: func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("unused") },
+		Devices: func(context.Context, string) ([]AggregateDevice, error) {
+			mu.Lock()
+			calls++
+			call := calls
+			mu.Unlock()
+			if call == 1 {
+				return []AggregateDevice{{ID: "first"}}, nil
+			}
+			<-release
+			defer close(refreshed)
+			return []AggregateDevice{{ID: "second"}}, nil
+		},
+	}
+	now := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
+	service := &sessionAggregateService{devices: make(map[string]aggregateDeviceListing), now: func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return now
+	}}
+	ctx := context.Background()
+	if devices, err := service.accountDevices(ctx, "alice", config); err != nil || len(devices) != 1 || devices[0].ID != "first" {
+		t.Fatalf("first listing = %+v, %v", devices, err)
+	}
+	mu.Lock()
+	now = now.Add(session.DefaultAggregateTTL)
+	mu.Unlock()
+	// The refresh is held, so this answer can only come from the earlier listing.
+	if devices, err := service.accountDevices(ctx, "alice", config); err != nil || len(devices) != 1 || devices[0].ID != "first" {
+		t.Fatalf("expired listing = %+v, %v; want the earlier answer at once", devices, err)
+	}
+	close(release)
+	<-refreshed
+	service.wg.Wait()
+	if devices, _ := service.accountDevices(ctx, "alice", config); len(devices) != 1 || devices[0].ID != "second" {
+		t.Fatalf("refreshed listing = %+v", devices)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("device enumerations = %d, want 2", calls)
+	}
+}
+
 func TestRemoteAggregateDevicesLeavesOutThisDesktopAndRevokedDevices(t *testing.T) {
 	agent := &syncservice.RemoteFleetAgent{Platform: "linux", TerminalEnabled: true, StateDigest: "d"}
 	devices := remoteAggregateDevices([]syncservice.RemoteFleetDevice{

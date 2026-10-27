@@ -57,12 +57,15 @@ type sessionAggregateService struct {
 	mu      sync.Mutex
 	devices map[string]aggregateDeviceListing
 	now     func() time.Time
+	// wg tracks background device enumerations.
+	wg sync.WaitGroup
 }
 
 type aggregateDeviceListing struct {
-	at      time.Time
-	devices []AggregateDevice
-	err     error
+	at         time.Time
+	devices    []AggregateDevice
+	err        error
+	refreshing bool
 }
 
 func newSessionAggregateService(sessions *session.Manager, connector *productionConnector, events ipc.Emitter) *sessionAggregateService {
@@ -168,21 +171,37 @@ func (s *sessionAggregateService) deviceTargets(ctx context.Context, owner strin
 	return targets
 }
 
-// accountDevices enumerates the owner's devices, reusing an answer for the
-// aggregate cache lifetime.
+// accountDevices enumerates the owner's devices. An answer is reused for the
+// aggregate cache lifetime; an older one still answers at once while a
+// background refresh replaces it, so only an owner's first listing waits
+// for the enumeration.
 func (s *sessionAggregateService) accountDevices(ctx context.Context, owner string, config *DeviceConnectorConfig) ([]AggregateDevice, error) {
 	now := s.now()
 	s.mu.Lock()
-	cached, ok := s.devices[owner]
 	for key, listing := range s.devices {
-		if now.Sub(listing.at) >= session.DefaultAggregateRetain {
+		if now.Sub(listing.at) >= session.DefaultAggregateRetain && !listing.refreshing {
 			delete(s.devices, key)
 		}
 	}
-	s.mu.Unlock()
-	if ok && now.Sub(cached.at) < session.DefaultAggregateTTL {
+	cached, ok := s.devices[owner]
+	if ok && !cached.at.IsZero() {
+		if now.Sub(cached.at) >= session.DefaultAggregateTTL && !cached.refreshing {
+			cached.refreshing = true
+			s.devices[owner] = cached
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				s.enumerateDevices(context.WithoutCancel(ctx), owner, config)
+			}()
+		}
+		s.mu.Unlock()
 		return cached.devices, cached.err
 	}
+	s.mu.Unlock()
+	return s.enumerateDevices(ctx, owner, config)
+}
+
+func (s *sessionAggregateService) enumerateDevices(ctx context.Context, owner string, config *DeviceConnectorConfig) ([]AggregateDevice, error) {
 	listCtx, cancel := context.WithTimeout(ctx, sessionAggregateDevicesTimeout)
 	defer cancel()
 	devices, err := config.Devices(listCtx, owner)
@@ -194,6 +213,8 @@ func (s *sessionAggregateService) accountDevices(ctx context.Context, owner stri
 
 func (s *sessionAggregateService) shutdown(context.Context) error {
 	s.aggregator.Close()
+	// An enumeration is bounded by its timeout.
+	s.wg.Wait()
 	return nil
 }
 
