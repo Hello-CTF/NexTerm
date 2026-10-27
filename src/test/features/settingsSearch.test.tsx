@@ -244,7 +244,7 @@ describe("Settings search", () => {
 
   it("moves through results with the arrow keys and opens the active one with Enter", async () => {
     search("rule");
-    expect(resultLabels()).toEqual(["拦截规则"]);
+    expect(resultLabels()).toEqual(["状态规则", "拦截规则"]);
     search("shortcut");
     const before = mounted!.container.querySelectorAll('[role="option"]');
     expect(before[0].getAttribute("aria-selected")).toBe("true");

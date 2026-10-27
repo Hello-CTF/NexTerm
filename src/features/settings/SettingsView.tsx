@@ -38,6 +38,7 @@ import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
 import { ProductionSettingsPanel } from "../production/ProductionSettingsPanel";
 import { ShortcutsCard } from "./ShortcutsCard";
+import { SessionRulesCard } from "./SessionRulesCard";
 import { SkillsCard } from "./SkillsCard";
 import { productionSkillsApi } from "./skillsApi";
 import { SyncCard } from "./SyncCard";
@@ -60,6 +61,7 @@ import {
   IconClose,
   IconCommand,
   IconDownload,
+  IconFlag,
   IconGlobe,
   IconLayers,
   IconLock,
@@ -94,6 +96,7 @@ type SettingsSectionDef = { id: SettingsSectionId; label: string; icon: typeof I
 const ALL_SETTINGS_SECTIONS = [
   { id: "settings-appearance", label: "外观", icon: IconMonitor, group: "general" },
   { id: "settings-terminal", label: "终端", icon: IconTerminal, group: "general" },
+  { id: "settings-state-rules", label: "状态规则", icon: IconFlag, group: "general" },
   { id: "settings-shortcuts", label: "快捷键", icon: IconCommand, group: "general" },
   { id: "settings-update", label: "软件更新", icon: IconDownload, group: "general" },
   { id: "settings-diagnostics", label: "诊断与调试", icon: IconActivity, group: "general" },
@@ -921,6 +924,10 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             <QuickCommandsEditor />
           </div>
         </section>
+
+        <div id="settings-state-rules" className="scroll-mt-12">
+          <SessionRulesCard />
+        </div>
 
         <div id="settings-shortcuts" className="scroll-mt-12">
           <ShortcutsCard reveal={reveal} />
