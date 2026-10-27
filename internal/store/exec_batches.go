@@ -41,22 +41,23 @@ type ExecBatchHistoryQuery struct {
 }
 
 type ExecBatchHistoryItem struct {
-	ID            string `json:"id"`
-	CommandHash   string `json:"commandHash"`
-	TargetSetHash string `json:"targetSetHash"`
-	Status        string `json:"status"`
-	TargetCount   int32  `json:"targetCount"`
-	Production    bool   `json:"production"`
-	StartedAt     int64  `json:"startedAt"`
-	FinishedAt    *int64 `json:"finishedAt"`
-	RunbookID     string `json:"runbookId,omitempty"`
-	RunID         string `json:"runId,omitempty"`
-	StepNumber    int32  `json:"stepNumber,omitempty"`
-	StepCount     int32  `json:"stepCount,omitempty"`
-	GroupNumber   int32  `json:"groupNumber,omitempty"`
-	GroupCount    int32  `json:"groupCount,omitempty"`
-	SyncOptIn     bool   `json:"syncOptIn"`
-	OwnerScope    string `json:"ownerScope"`
+	ID             string `json:"id"`
+	CommandHash    string `json:"commandHash"`
+	TargetSetHash  string `json:"targetSetHash"`
+	Status         string `json:"status"`
+	TargetCount    int32  `json:"targetCount"`
+	Production     bool   `json:"production"`
+	StartedAt      int64  `json:"startedAt"`
+	FinishedAt     *int64 `json:"finishedAt"`
+	RunbookID      string `json:"runbookId,omitempty"`
+	RunID          string `json:"runId,omitempty"`
+	StepNumber     int32  `json:"stepNumber,omitempty"`
+	StepCount      int32  `json:"stepCount,omitempty"`
+	GroupNumber    int32  `json:"groupNumber,omitempty"`
+	GroupCount     int32  `json:"groupCount,omitempty"`
+	RunbookVersion int32  `json:"runbookVersion,omitempty"`
+	SyncOptIn      bool   `json:"syncOptIn"`
+	OwnerScope     string `json:"ownerScope"`
 }
 
 type ExecBatchHistoryPage struct {
@@ -161,7 +162,7 @@ func execBatchHistoryItem(row ExecBatchRow) ExecBatchHistoryItem {
 		Status: row.Status, TargetCount: row.TargetCount, Production: row.Production,
 		StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
 		RunbookID: row.RunbookID, RunID: row.RunID, StepNumber: row.StepNumber, StepCount: row.StepCount,
-		GroupNumber: row.GroupNumber, GroupCount: row.GroupCount,
+		GroupNumber: row.GroupNumber, GroupCount: row.GroupCount, RunbookVersion: row.RunbookVersion,
 		SyncOptIn: row.SyncOptIn, OwnerScope: scope,
 	}
 }

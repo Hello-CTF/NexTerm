@@ -962,6 +962,7 @@ export type ExecBatchHistoryItem = {
   stepCount?: number;
   groupNumber?: number;
   groupCount?: number;
+  runbookVersion?: number;
   syncOptIn: boolean;
   ownerScope: string;
 };
@@ -1064,6 +1065,7 @@ export type ExecBatchRow = {
   groupNumber?: number;
   groupCount?: number;
   syncOptIn: boolean;
+  runbookVersion?: number;
 };
 
 export type ExecBatchRunHistory = {
@@ -2197,6 +2199,7 @@ export type RunRequest = {
 export type RunState = {
   runId: string;
   runbookId: string;
+  runbookVersion?: number;
   runbookName: string;
   status: string;
   confirmationPolicy: string;
@@ -2218,6 +2221,39 @@ export type RunbookMetadata = {
   stepCount: number;
   groupNumber: number;
   groupCount: number;
+  runbookVersion?: number;
+};
+
+export type RunbookTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  steps: RunbookTemplateStep[];
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type RunbookTemplateInput = {
+  name: string;
+  description: string;
+  steps: RunbookTemplateStep[];
+};
+
+export type RunbookTemplateRequest = {
+  id: string;
+};
+
+export type RunbookTemplateStep = {
+  id: string;
+  snippetId?: string;
+  name: string;
+  description?: string;
+  command: string;
+};
+
+export type RunbookTemplateUpdateRequest = RunbookTemplateInput & {
+  id: string;
 };
 
 export type ScreenInsets = {
@@ -2395,6 +2431,7 @@ export type SshImportPreviewRequest = {
 export type StartRequest = {
   runId: string;
   runbookId: string;
+  templateId?: string;
   runbookName: string;
   steps: Step[];
   sessionIds: string[];

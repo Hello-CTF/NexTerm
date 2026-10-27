@@ -1434,6 +1434,36 @@
       "channel": false,
       "stream": "none"
     },
+    "runbook_template_create": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_template_delete": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_template_get": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_template_list": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_template_update": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "services_action": {
       "scope": "services",
       "nested": false,

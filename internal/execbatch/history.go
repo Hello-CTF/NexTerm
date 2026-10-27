@@ -55,6 +55,7 @@ func historyBatchRow(ownerID string, request Request, started time.Time, targets
 		row.StepCount = request.Runbook.StepCount
 		row.GroupNumber = request.Runbook.GroupNumber
 		row.GroupCount = request.Runbook.GroupCount
+		row.RunbookVersion = request.Runbook.RunbookVersion
 	}
 	return row
 }

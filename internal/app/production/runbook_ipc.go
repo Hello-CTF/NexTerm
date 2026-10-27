@@ -27,6 +27,24 @@ type runbookHistoryReader interface {
 	ExecBatchRunHistoryGet(context.Context, string) (store.ExecBatchRunHistory, error)
 }
 
+// runbookTemplateStore is the persistence contract for per-owner runbook templates.
+type runbookTemplateStore interface {
+	RunbookTemplateList(context.Context) ([]store.RunbookTemplate, error)
+	RunbookTemplateGet(context.Context, string) (store.RunbookTemplate, error)
+	RunbookTemplateCreate(context.Context, store.RunbookTemplateInput) (store.RunbookTemplate, error)
+	RunbookTemplateUpdate(context.Context, string, store.RunbookTemplateInput) (store.RunbookTemplate, error)
+	RunbookTemplateDelete(context.Context, string) error
+}
+
+type runbookTemplateRequest struct {
+	ID string `json:"id"`
+}
+
+type runbookTemplateUpdateRequest struct {
+	ID string `json:"id"`
+	store.RunbookTemplateInput
+}
+
 type runbookRunKey struct {
 	ownerID string
 	runID   string
@@ -44,7 +62,9 @@ type runbookRunEntry struct {
 type runbookIPCService struct {
 	executor runbook.Executor
 	history  runbookHistoryReader
-	now      func() time.Time
+	// templates is nil when the history reader does not persist templates.
+	templates runbookTemplateStore
+	now       func() time.Time
 
 	maxActiveRunsPerOwner   int
 	maxRetainedRunsPerOwner int
@@ -59,8 +79,9 @@ func newRunbookIPCService(executor runbook.Executor, history ...runbookHistoryRe
 	if len(history) > 0 {
 		reader = history[0]
 	}
+	templates, _ := reader.(runbookTemplateStore)
 	return &runbookIPCService{
-		executor: executor, history: reader, now: time.Now,
+		executor: executor, history: reader, templates: templates, now: time.Now,
 		maxActiveRunsPerOwner:   defaultRunbookMaxActiveRunsPerOwner,
 		maxRetainedRunsPerOwner: defaultRunbookMaxRetainedRunsPerOwner,
 		retainedRunTTL:          defaultRunbookRetainedRunTTL,
@@ -126,6 +147,9 @@ func (s *runbookIPCService) register(dispatcher *ipc.Dispatcher) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.registerTemplates(dispatcher); err != nil {
+		return err
+	}
 	return ipc.Register(dispatcher, "runbook_run_history_get", func(ctx context.Context, _ *ipc.Call, input runbook.RunRequest) (store.ExecBatchRunHistory, error) {
 		if s.history == nil {
 			return store.ExecBatchRunHistory{}, ipc.NewError(ipc.CodeUnsupported, "Runbook 运行历史不可用")
@@ -134,7 +158,79 @@ func (s *runbookIPCService) register(dispatcher *ipc.Dispatcher) error {
 	})
 }
 
+func (s *runbookIPCService) registerTemplates(dispatcher *ipc.Dispatcher) error {
+	unavailable := func() error { return ipc.NewError(ipc.CodeUnsupported, "Runbook 模板不可用") }
+	if err := ipc.Register(dispatcher, "runbook_template_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]store.RunbookTemplate, error) {
+		if s.templates == nil {
+			return nil, unavailable()
+		}
+		return s.templates.RunbookTemplateList(ctx)
+	}); err != nil {
+		return err
+	}
+	if err := ipc.Register(dispatcher, "runbook_template_get", func(ctx context.Context, _ *ipc.Call, input runbookTemplateRequest) (store.RunbookTemplate, error) {
+		if s.templates == nil {
+			return store.RunbookTemplate{}, unavailable()
+		}
+		return s.templates.RunbookTemplateGet(ctx, input.ID)
+	}); err != nil {
+		return err
+	}
+	if err := ipc.Register(dispatcher, "runbook_template_create", func(ctx context.Context, _ *ipc.Call, input store.RunbookTemplateInput) (store.RunbookTemplate, error) {
+		if s.templates == nil {
+			return store.RunbookTemplate{}, unavailable()
+		}
+		return s.templates.RunbookTemplateCreate(ctx, input)
+	}); err != nil {
+		return err
+	}
+	if err := ipc.Register(dispatcher, "runbook_template_update", func(ctx context.Context, _ *ipc.Call, input runbookTemplateUpdateRequest) (store.RunbookTemplate, error) {
+		if s.templates == nil {
+			return store.RunbookTemplate{}, unavailable()
+		}
+		return s.templates.RunbookTemplateUpdate(ctx, input.ID, input.RunbookTemplateInput)
+	}); err != nil {
+		return err
+	}
+	return ipc.Register(dispatcher, "runbook_template_delete", func(ctx context.Context, _ *ipc.Call, input runbookTemplateRequest) (any, error) {
+		if s.templates == nil {
+			return nil, unavailable()
+		}
+		return nil, s.templates.RunbookTemplateDelete(ctx, input.ID)
+	})
+}
+
+// resolveTemplate fills a templateId start request from the caller's own
+// template. The steps are the commands snapshotted at save time, so later
+// snippet edits never change what a run executes.
+func (s *runbookIPCService) resolveTemplate(ctx context.Context, input runbook.StartRequest) (runbook.StartRequest, error) {
+	if input.TemplateID == "" {
+		return input, nil
+	}
+	if input.RunbookID != "" || input.RunbookName != "" || len(input.Steps) != 0 {
+		return input, fmt.Errorf("%w: templateId cannot be combined with runbookId, runbookName or steps", runbook.ErrInvalid)
+	}
+	if s.templates == nil {
+		return input, fmt.Errorf("%w: runbook templates unavailable", runbook.ErrInvalid)
+	}
+	tpl, err := s.templates.RunbookTemplateGet(ctx, input.TemplateID)
+	if err != nil {
+		return input, err
+	}
+	input.RunbookID, input.RunbookName, input.RunbookVersion = tpl.ID, tpl.Name, tpl.Version
+	input.Steps = make([]runbook.Step, len(tpl.Steps))
+	for i, step := range tpl.Steps {
+		input.Steps[i] = runbook.Step{ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command}
+	}
+	return input, nil
+}
+
 func (s *runbookIPCService) Start(ctx context.Context, ownerID string, input runbook.StartRequest) (runbook.RunState, error) {
+	input.RunbookVersion = 0
+	input, err := s.resolveTemplate(ctx, input)
+	if err != nil {
+		return runbook.RunState{}, err
+	}
 	key := runbookRunKey{ownerID: ownerID, runID: input.RunID}
 	s.mu.Lock()
 	defer s.mu.Unlock()

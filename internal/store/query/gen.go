@@ -56,6 +56,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		RecordingRow:            newRecordingRow(db, opts...),
 		RunEventRow:             newRunEventRow(db, opts...),
 		RunRow:                  newRunRow(db, opts...),
+		RunbookTemplateRow:      newRunbookTemplateRow(db, opts...),
 		Setting:                 newSetting(db, opts...),
 		SharePreviewLink:        newSharePreviewLink(db, opts...),
 		SnippetRow:              newSnippetRow(db, opts...),
@@ -118,6 +119,7 @@ type Query struct {
 	RecordingRow            recordingRow
 	RunEventRow             runEventRow
 	RunRow                  runRow
+	RunbookTemplateRow      runbookTemplateRow
 	Setting                 setting
 	SharePreviewLink        sharePreviewLink
 	SnippetRow              snippetRow
@@ -183,6 +185,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		RecordingRow:            q.RecordingRow.clone(db),
 		RunEventRow:             q.RunEventRow.clone(db),
 		RunRow:                  q.RunRow.clone(db),
+		RunbookTemplateRow:      q.RunbookTemplateRow.clone(db),
 		Setting:                 q.Setting.clone(db),
 		SharePreviewLink:        q.SharePreviewLink.clone(db),
 		SnippetRow:              q.SnippetRow.clone(db),
@@ -253,6 +256,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		RecordingRow:            q.RecordingRow.replaceDB(db),
 		RunEventRow:             q.RunEventRow.replaceDB(db),
 		RunRow:                  q.RunRow.replaceDB(db),
+		RunbookTemplateRow:      q.RunbookTemplateRow.replaceDB(db),
 		Setting:                 q.Setting.replaceDB(db),
 		SharePreviewLink:        q.SharePreviewLink.replaceDB(db),
 		SnippetRow:              q.SnippetRow.replaceDB(db),
@@ -313,6 +317,7 @@ type queryCtx struct {
 	RecordingRow            *recordingRowDo
 	RunEventRow             *runEventRowDo
 	RunRow                  *runRowDo
+	RunbookTemplateRow      *runbookTemplateRowDo
 	Setting                 *settingDo
 	SharePreviewLink        *sharePreviewLinkDo
 	SnippetRow              *snippetRowDo
@@ -373,6 +378,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		RecordingRow:            q.RecordingRow.WithContext(ctx),
 		RunEventRow:             q.RunEventRow.WithContext(ctx),
 		RunRow:                  q.RunRow.WithContext(ctx),
+		RunbookTemplateRow:      q.RunbookTemplateRow.WithContext(ctx),
 		Setting:                 q.Setting.WithContext(ctx),
 		SharePreviewLink:        q.SharePreviewLink.WithContext(ctx),
 		SnippetRow:              q.SnippetRow.WithContext(ctx),

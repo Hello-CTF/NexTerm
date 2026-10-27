@@ -43,6 +43,7 @@ func newExecBatchRow(db *gorm.DB, opts ...gen.DOOption) execBatchRow {
 	_execBatchRow.GroupNumber = field.NewInt32(tableName, "group_number")
 	_execBatchRow.GroupCount = field.NewInt32(tableName, "group_count")
 	_execBatchRow.SyncOptIn = field.NewBool(tableName, "sync_opt_in")
+	_execBatchRow.RunbookVersion = field.NewInt32(tableName, "runbook_version")
 
 	_execBatchRow.fillFieldMap()
 
@@ -52,23 +53,24 @@ func newExecBatchRow(db *gorm.DB, opts ...gen.DOOption) execBatchRow {
 type execBatchRow struct {
 	execBatchRowDo execBatchRowDo
 
-	ALL           field.Asterisk
-	OwnerID       field.String
-	ID            field.String
-	CommandHash   field.String
-	TargetSetHash field.String
-	Status        field.String
-	TargetCount   field.Int32
-	Production    field.Bool
-	StartedAt     field.Int64
-	FinishedAt    field.Int64
-	RunbookID     field.String
-	RunID         field.String
-	StepNumber    field.Int32
-	StepCount     field.Int32
-	GroupNumber   field.Int32
-	GroupCount    field.Int32
-	SyncOptIn     field.Bool
+	ALL            field.Asterisk
+	OwnerID        field.String
+	ID             field.String
+	CommandHash    field.String
+	TargetSetHash  field.String
+	Status         field.String
+	TargetCount    field.Int32
+	Production     field.Bool
+	StartedAt      field.Int64
+	FinishedAt     field.Int64
+	RunbookID      field.String
+	RunID          field.String
+	StepNumber     field.Int32
+	StepCount      field.Int32
+	GroupNumber    field.Int32
+	GroupCount     field.Int32
+	SyncOptIn      field.Bool
+	RunbookVersion field.Int32
 
 	fieldMap map[string]field.Expr
 }
@@ -101,6 +103,7 @@ func (e *execBatchRow) updateTableName(table string) *execBatchRow {
 	e.GroupNumber = field.NewInt32(table, "group_number")
 	e.GroupCount = field.NewInt32(table, "group_count")
 	e.SyncOptIn = field.NewBool(table, "sync_opt_in")
+	e.RunbookVersion = field.NewInt32(table, "runbook_version")
 
 	e.fillFieldMap()
 
@@ -129,7 +132,7 @@ func (e *execBatchRow) GetFieldByName(fieldName string) (field.OrderExpr, bool) 
 }
 
 func (e *execBatchRow) fillFieldMap() {
-	e.fieldMap = make(map[string]field.Expr, 16)
+	e.fieldMap = make(map[string]field.Expr, 17)
 	e.fieldMap["owner_id"] = e.OwnerID
 	e.fieldMap["id"] = e.ID
 	e.fieldMap["command_hash"] = e.CommandHash
@@ -146,6 +149,7 @@ func (e *execBatchRow) fillFieldMap() {
 	e.fieldMap["group_number"] = e.GroupNumber
 	e.fieldMap["group_count"] = e.GroupCount
 	e.fieldMap["sync_opt_in"] = e.SyncOptIn
+	e.fieldMap["runbook_version"] = e.RunbookVersion
 }
 
 func (e execBatchRow) clone(db *gorm.DB) execBatchRow {
