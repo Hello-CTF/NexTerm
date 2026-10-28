@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -220,7 +221,7 @@ func TestPrepareDurableRacingCompletionAndTabsDeploysOnce(t *testing.T) {
 				}
 				if worker == 0 && index < 4 {
 					if _, err := manager.OpenTab(context.Background(), OpenTabOptions{
-						SessionID: connected.ID, ClientID: "client", ChannelID: "race-" + time.Now().String(), Cols: 80, Rows: 24,
+						SessionID: connected.ID, ClientID: "client", ChannelID: "race-" + strconv.Itoa(index), Cols: 80, Rows: 24,
 						Durable: &DurableTabOptions{}, DurableFallback: true,
 					}); err != nil {
 						errs <- err
