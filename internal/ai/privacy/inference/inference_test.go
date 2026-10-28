@@ -158,6 +158,37 @@ func TestAstrLinkGuardRealModel(t *testing.T) {
 	}
 }
 
+// BenchmarkDetectRealModel measures Detect latency on the real model for a
+// short sentence and a multi-window input. It uses the same opt-in paths as
+// TestAstrLinkGuardRealModel.
+func BenchmarkDetectRealModel(b *testing.B) {
+	modelDir, runtimeDir := os.Getenv("NEXTERM_PRIVACY_TEST_MODEL"), os.Getenv("NEXTERM_PRIVACY_TEST_RUNTIME")
+	if modelDir == "" || runtimeDir == "" {
+		b.Skip("real model and runtime paths not configured")
+	}
+	precision := os.Getenv("NEXTERM_PRIVACY_TEST_PRECISION")
+	if precision == "" {
+		precision = "int8"
+	}
+	engine, err := Open(modelDir, runtimeDir, precision)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer engine.Close()
+	for _, input := range []struct{ name, text string }{
+		{"short", "请联系张伟，电话 13812345678，邮箱 zhangwei@example.com，收货地址：北京市海淀区中关村大街 27 号。"},
+		{"long", strings.Repeat("这是一条不包含个人信息的普通说明。", 90) + " Contact Jane Doe at jane.doe@example.org."},
+	} {
+		b.Run(input.name, func(b *testing.B) {
+			for b.Loop() {
+				if _, err := engine.Detect(b.Context(), input.text); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func hasSpan(text string, spans []Span, label, value string) bool {
 	for _, span := range spans {
 		if span.Label == label && text[span.Start:span.End] == value {
