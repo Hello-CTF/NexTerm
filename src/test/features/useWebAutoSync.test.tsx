@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
-// Desktop auto-sync: a sync://status event wakes the backend sync and invalidates every synced view
-// (assets/groups/snippets/credentials/vault-status) so lists show post-sync data without a remount.
+// Desktop auto-sync: a sync://status event that applied remote changes invalidates every synced view
+// (assets/groups/snippets/credentials/vault-status) so lists show post-sync data without a remount; plain status
+// events only refresh the health queries.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
@@ -12,7 +13,8 @@ const mocks = vi.hoisted(() => {
   return {
     wake: vi.fn(),
     listenEvent: vi.fn(),
-    statusHandlers: [] as (() => void)[],
+    statusHandlers: [] as ((payload?: { applied?: boolean }) => void)[],
+    registerStore: vi.fn(),
   };
 });
 
@@ -26,7 +28,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 vi.mock("../../app/preferences", () => ({
   createHttpPreferenceStore: vi.fn(() => ({})),
-  registerAccountPreferenceStore: vi.fn(),
+  registerAccountPreferenceStore: mocks.registerStore,
 }));
 
 function Probe() {
@@ -42,13 +44,13 @@ describe("useDesktopAutoSync cache refresh after sync", () => {
     document.body.replaceChildren();
     mocks.statusHandlers.length = 0;
     mocks.wake.mockResolvedValue(undefined);
-    mocks.listenEvent.mockImplementation((event: string, handler: () => void) => {
+    mocks.listenEvent.mockImplementation((event: string, handler: (payload?: { applied?: boolean }) => void) => {
       if (event === "sync://status") mocks.statusHandlers.push(handler);
       return Promise.resolve(() => {});
     });
   });
 
-  it("invalidates assets/asset-search/groups/snippets/credentials/vault-status after sync://status wakes backend sync", async () => {
+  it("invalidates assets/asset-search/groups/snippets/credentials/vault-status when sync://status reports applied remote changes", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     for (const key of ["assets", "asset-search", "groups", "snippets", "credentials", "vault-status"]) {
       qc.setQueryData([key], []);
@@ -58,13 +60,36 @@ describe("useDesktopAutoSync cache refresh after sync", () => {
 
     const handler = mocks.statusHandlers.at(-1);
     if (!handler) throw new Error("sync://status was not subscribed");
-    handler();
+    handler({ applied: true });
     await flush();
 
-    expect(mocks.wake).toHaveBeenCalledTimes(1);
+    expect(mocks.wake).not.toHaveBeenCalled();
+    expect(mocks.registerStore).toHaveBeenCalledTimes(1);
     for (const key of ["assets", "asset-search", "groups", "snippets", "credentials", "vault-status"]) {
       expect(qc.getQueryState([key])?.isInvalidated).toBe(true);
     }
+    view.unmount();
+    view = undefined;
+  });
+
+  it("only refreshes health on a plain sync://status event", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    for (const key of ["assets", "groups", "sync-status", "sync-link"]) qc.setQueryData([key], []);
+    view = mount(createElement(QueryClientProvider, { client: qc }, createElement(Probe)));
+    await flush();
+
+    const handler = mocks.statusHandlers.at(-1);
+    if (!handler) throw new Error("sync://status was not subscribed");
+    handler({});
+    handler(undefined);
+    await flush();
+
+    expect(mocks.wake).not.toHaveBeenCalled();
+    expect(mocks.registerStore).not.toHaveBeenCalled();
+    expect(qc.getQueryState(["assets"])?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(["groups"])?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(["sync-status"])?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(["sync-link"])?.isInvalidated).toBe(true);
     view.unmount();
     view = undefined;
   });

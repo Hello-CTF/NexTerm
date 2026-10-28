@@ -288,11 +288,22 @@ describe("KnownHostsCard", () => {
     expect(mounted.container.textContent).not.toContain("db.internal:2222");
 
     await act(async () => {
-      for (const handler of mocks.syncStatusHandlers) handler({});
+      for (const handler of mocks.syncStatusHandlers) handler({ applied: true });
     });
     await flush();
     expect(mounted.container.textContent).toContain("db.internal:2222");
     expect(mocks.knownHostList).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores sync status events that applied no remote changes", async () => {
+    mocks.knownHostList.mockResolvedValue([KH1]);
+    mounted = mount(createElement(KnownHostsCard));
+    await flush();
+    await act(async () => {
+      for (const handler of mocks.syncStatusHandlers) handler({});
+    });
+    await flush();
+    expect(mocks.knownHostList).toHaveBeenCalledTimes(1);
   });
 
   it("shows an empty hint when nothing is trusted yet", async () => {
@@ -338,7 +349,7 @@ describe("KnownHostsCard", () => {
     mounted = mount(createElement(KnownHostsCard));
 
     await act(async () => {
-      for (const handler of mocks.syncStatusHandlers) handler({});
+      for (const handler of mocks.syncStatusHandlers) handler({ applied: true });
     });
     await flush();
     expect(mounted.container.textContent).toContain("db.internal:2222");

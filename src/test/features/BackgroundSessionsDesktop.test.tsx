@@ -84,7 +84,6 @@ describe("desktop background durable account scope", () => {
       act(() => {
         for (const handler of [...mocks.syncHandlers]) handler();
       });
-      expect(view.container.textContent).not.toContain("账号 A 的任务");
       await act(async () => {
         pendingStatus.resolve({ loggedIn: true, userId: account, username: account });
         await flush();
@@ -162,8 +161,8 @@ describe("desktop background durable account scope", () => {
 
       account = { id: "b", username: "bob" };
       act(() => { for (const handler of [...mocks.syncHandlers]) handler(); });
-      expect(view.container.textContent).not.toContain("账号 A 的私有任务");
       await flush();
+      expect(view.container.textContent).not.toContain("账号 A 的私有任务");
       expect(view.container.textContent).toContain("尚未查找的终端");
       act(() => useUi.setState({ sessions: [connected] }));
       await flushUntil(() => view.container.textContent?.includes("账号 B 的私有任务") ?? false);
@@ -171,8 +170,8 @@ describe("desktop background durable account scope", () => {
 
       account = null;
       act(() => { for (const handler of [...mocks.syncHandlers]) handler(); });
-      expect(view.container.textContent).not.toContain("账号 B 的私有任务");
       await flush();
+      expect(view.container.textContent).not.toContain("账号 B 的私有任务");
       expect(view.container.textContent).toContain("尚未查找的终端");
       expect([...Array(window.localStorage.length)].some((_, index) =>
         window.localStorage.getItem(window.localStorage.key(index) ?? "")?.includes("私有任务") ?? false)).toBe(false);
@@ -181,7 +180,7 @@ describe("desktop background durable account scope", () => {
     }
   });
 
-  it("restores the current account's in-memory hint after an unchanged status event", async () => {
+  it("keeps the list and does not re-poll hosts when a status event leaves the account unchanged", async () => {
     const status = { loggedIn: true, userId: "account-a", username: "alice" };
     mocks.status.mockResolvedValue(status);
     mocks.linkGet.mockResolvedValue({ url: "https://sync.invalid", username: "alice", insecure: false });
@@ -198,15 +197,40 @@ describe("desktop background durable account scope", () => {
     const view = mount(createElement(BackgroundSessions, { workspaceId: "workspace-a" }));
     try {
       await flushUntil(() => view.container.textContent?.includes("当前账号的任务") ?? false);
-      act(() => useUi.setState({ sessions: [{ ...connected, status: "disconnected" }] }));
+      const listCalls = mocks.listDurable.mock.calls.length;
       const pending = deferred<unknown>();
       mocks.status.mockImplementationOnce(() => pending.promise);
       act(() => { for (const handler of [...mocks.syncHandlers]) handler(); });
-      expect(view.container.textContent).not.toContain("当前账号的任务");
+      expect(view.container.textContent).toContain("当前账号的任务");
       await act(async () => {
         pending.resolve(status);
         await flush();
       });
+      expect(view.container.textContent).toContain("当前账号的任务");
+      expect(mocks.listDurable.mock.calls.length).toBe(listCalls);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("does not reload the list when the owner workspace changes only in title or tabs", async () => {
+    const status = { loggedIn: true, userId: "account-a", username: "alice" };
+    mocks.status.mockResolvedValue(status);
+    mocks.linkGet.mockResolvedValue({ url: "https://sync.invalid", username: "alice", insecure: false });
+    mocks.listDurable.mockResolvedValue([{ id: "known-tab", cols: 80, rows: 24, dead: false, title: "当前账号的任务" }]);
+    const connected = { id: "session-a", assetId: "asset-a", name: "测试主机", kind: "ssh", status: "connected" as const, tabs: [], createdAt: 0 };
+    const workspace = {
+      id: "workspace-a", kind: "session" as const, title: "测试主机", sessionId: "session-a", assetId: "asset-a", assetKind: "ssh" as const,
+      panes: [{ id: "pane-a", tabs: [], activeTabId: null }], activePaneId: "pane-a", closable: true,
+    };
+    useUi.setState({ sessions: [connected], workspaces: [workspace], activeWorkspaceId: "workspace-a" });
+    const view = mount(createElement(BackgroundSessions, { workspaceId: "workspace-a" }));
+    try {
+      await flushUntil(() => view.container.textContent?.includes("当前账号的任务") ?? false);
+      const listCalls = mocks.listDurable.mock.calls.length;
+      act(() => useUi.setState({ workspaces: [{ ...workspace, title: "改名后的主机" }] }));
+      await flush();
+      expect(mocks.listDurable.mock.calls.length).toBe(listCalls);
       expect(view.container.textContent).toContain("当前账号的任务");
     } finally {
       view.unmount();

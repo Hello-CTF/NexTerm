@@ -90,7 +90,7 @@ func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest)
 				s.engine.logger.Warn("reload synced AI grants failed", "error", err)
 			}
 		}
-		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: userID})
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: userID, Applied: true})
 	}
 	return result, nil
 }

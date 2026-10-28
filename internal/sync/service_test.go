@@ -341,8 +341,8 @@ func TestServiceSyncEmitsChangedStatus(t *testing.T) {
 		t.Fatalf("events = %+v, want one sync status event", events)
 	}
 	payload, ok := events[0].Payload.(ipc.SyncStatusEvent)
-	if !ok || payload.OwnerID != "" {
-		t.Fatalf("desktop sync status payload = %+v, want an ownerless local notification", events[0].Payload)
+	if !ok || payload.OwnerID != "" || !payload.Applied {
+		t.Fatalf("desktop sync status payload = %+v, want an ownerless notification flagged applied", events[0].Payload)
 	}
 }
 
