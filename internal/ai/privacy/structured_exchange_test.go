@@ -126,7 +126,7 @@ func TestStructuredNumbersStableAcrossExchangesAndScopeIsolated(t *testing.T) {
 
 func TestStructuredInvalidAndCancelledInputsFailClosed(t *testing.T) {
 	e := exchangeFor(t, "secret")
-	for _, raw := range []string{`{"a":1,"a":2}`, `{"a":`, string([]byte{'"', 0xff, '"'})} {
+	for _, raw := range []string{`{"a":1,"a":2}`, string([]byte{'"', 0xff, '"'})} {
 		if _, err := e.ProtectJSON(t.Context(), raw); err == nil {
 			t.Fatal("invalid JSON accepted")
 		}
@@ -196,5 +196,31 @@ func TestStructuredEscapedSurrogateFindingPreservesCharacter(t *testing.T) {
 	}
 	if got["value"] != "before 😀 after" {
 		t.Fatalf("split surrogate: %s", restored)
+	}
+}
+
+func TestStructuredEmptyAndNonJSONArgumentsPassThroughSafely(t *testing.T) {
+	e := exchangeFor(t, "secret-token")
+	for _, raw := range []string{"", "  \n\t"} {
+		protected, err := e.ProtectJSON(t.Context(), raw)
+		if err != nil || protected != raw {
+			t.Fatalf("empty arguments: %q, %v", protected, err)
+		}
+		restored, err := e.RestoreJSON(raw)
+		if err != nil || restored != raw {
+			t.Fatalf("empty restore: %q, %v", restored, err)
+		}
+	}
+	const raw = `{"cmd": "echo secret-token"`
+	protected, err := e.ProtectJSON(t.Context(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(protected, "secret-token") {
+		t.Fatalf("non-JSON arguments leaked: %q", protected)
+	}
+	restored, err := e.RestoreJSON(protected)
+	if err != nil || restored != raw {
+		t.Fatalf("non-JSON restore: %q, %v", restored, err)
 	}
 }

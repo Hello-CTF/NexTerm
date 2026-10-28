@@ -312,3 +312,86 @@ func FuzzStreamingRestoration(f *testing.F) {
 		}
 	})
 }
+
+func TestKnownValuesPropagateAcrossFields(t *testing.T) {
+	const secret = "hunter22"
+	e, err := NewExchange(detectorFunc(func(_ context.Context, text string) ([]Span, error) {
+		// Only the first mention carries enough context for the detector.
+		const prefix = "my password: "
+		if strings.HasPrefix(text, prefix+secret) {
+			return []Span{{Start: len(prefix), End: len(prefix) + len(secret), Label: string(KindCommonSecret)}}, nil
+		}
+		return nil, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := e.Protect(t.Context(), "my password: "+secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := e.Protect(t.Context(), "run echo "+secret+" now")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := e.ProtectJSON(t.Context(), `{"command":"echo `+secret+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, protected := range []string{first, text, args} {
+		if strings.Contains(protected, secret) {
+			t.Fatalf("known value leaked: %q", protected)
+		}
+	}
+	if e.Restore(text) != "run echo "+secret+" now" {
+		t.Fatalf("restore = %q", e.Restore(text))
+	}
+	restored, err := e.RestoreJSON(args)
+	if err != nil || restored != `{"command":"echo `+secret+`"}` {
+		t.Fatalf("restore JSON = %q, %v", restored, err)
+	}
+}
+
+type identifiedDetector struct {
+	detectorFunc
+	id string
+}
+
+func (d identifiedDetector) detectionIdentity() string { return d.id }
+
+func TestDetectionCacheReusesFindingsWithinScopeOnly(t *testing.T) {
+	calls := 0
+	detector := identifiedDetector{id: t.Name(), detectorFunc: func(_ context.Context, text string) ([]Span, error) {
+		calls++
+		return []Span{{Start: 0, End: 6, Label: string(KindCommonSecret)}}, nil
+	}}
+	run := func(key [32]byte) string {
+		e, err := NewScopedExchange(detector, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		protected, err := e.Protect(t.Context(), "secret text")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.Protect(t.Context(), "secret text"); err != nil {
+			t.Fatal(err)
+		}
+		return protected
+	}
+	first := run([32]byte{9})
+	if second := run([32]byte{9}); second != first || calls != 1 {
+		t.Fatalf("calls = %d, outputs %q / %q", calls, first, second)
+	}
+	run([32]byte{10})
+	if calls != 2 {
+		t.Fatalf("cache crossed scopes: calls = %d", calls)
+	}
+	cache := newDetectionCache(2)
+	for i := range 3 {
+		cache.put([32]byte{byte(i)}, []Span{{End: i + 1}})
+	}
+	if _, ok := cache.get([32]byte{0}); ok || cache.order.Len() != 2 {
+		t.Fatal("detection cache is not bounded")
+	}
+}

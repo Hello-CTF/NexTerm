@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -33,7 +34,17 @@ type Exchange struct {
 	restorer        *TextRestorer
 	numberAllocator *placeholderAllocator
 	numbers         map[string]json.Number
+	// known lists redacted values longest first for literal propagation.
+	known      []string
+	detections map[[32]byte][]Span
+	identity   string
+	shared     bool
 }
+
+// minPropagatedValueBytes keeps literal propagation from rewriting ordinary
+// words that happen to equal a very short finding. Detected spans themselves
+// are always replaced regardless of length.
+const minPropagatedValueBytes = 4
 
 func NewExchange(detector Detector) (*Exchange, error) {
 	if detector == nil {
@@ -55,7 +66,108 @@ func NewScopedExchange(detector Detector, key [32]byte) (*Exchange, error) {
 	if key == ([32]byte{}) {
 		return nil, errors.New("privacy scope key is empty")
 	}
-	return &Exchange{detector: detector, allocator: newPlaceholderAllocator(key), values: make(map[string]string), markers: make(map[string]string)}, nil
+	e := &Exchange{detector: detector, allocator: newPlaceholderAllocator(key), values: make(map[string]string), markers: make(map[string]string), detections: make(map[[32]byte][]Span)}
+	if identified, ok := detector.(detectorIdentity); ok {
+		e.identity = identified.detectionIdentity()
+		e.shared = true
+	}
+	return e, nil
+}
+
+// detect reuses findings for text already inspected by this exchange and, for
+// detectors with a stable identity, by earlier requests in the same scope.
+func (e *Exchange) detect(ctx context.Context, text string) ([]Span, error) {
+	key := detectionKey(e.allocator.key, e.identity, text)
+	if spans, ok := e.detections[key]; ok {
+		return slices.Clone(spans), nil
+	}
+	if e.shared {
+		if spans, ok := sharedDetections.get(key); ok {
+			e.detections[key] = spans
+			return slices.Clone(spans), nil
+		}
+	}
+	spans, err := e.detector.Detect(ctx, text)
+	if err != nil {
+		return nil, fmt.Errorf("privacy detection failed: %w", err)
+	}
+	for _, span := range spans {
+		if span.Start < 0 || span.End <= span.Start || span.End > len(text) || !utf8.RuneStart(text[span.Start]) || (span.End < len(text) && !utf8.RuneStart(text[span.End])) {
+			return nil, errors.New("privacy detector returned invalid offsets")
+		}
+	}
+	spans = slices.Clone(spans)
+	e.detections[key] = spans
+	if e.shared {
+		sharedDetections.put(key, spans)
+	}
+	return slices.Clone(spans), nil
+}
+
+// Redacted reports whether any value has been replaced by a placeholder.
+func (e *Exchange) Redacted() bool { return len(e.values) > 0 }
+
+func (e *Exchange) knownValues() []string {
+	if e.known == nil {
+		e.known = make([]string, 0, len(e.markers))
+		for value := range e.markers {
+			if len(value) >= minPropagatedValueBytes {
+				e.known = append(e.known, value)
+			}
+		}
+		sort.Slice(e.known, func(i, j int) bool {
+			if len(e.known[i]) != len(e.known[j]) {
+				return len(e.known[i]) > len(e.known[j])
+			}
+			return e.known[i] < e.known[j]
+		})
+	}
+	return e.known
+}
+
+// propagate adds every occurrence of a value already known to the exchange
+// that the detector did not report for this text. Longer values win, claimed
+// ranges and existing placeholders are never split.
+func (e *Exchange) propagate(text string, claimed []Span) []Span {
+	known := e.knownValues()
+	if len(known) == 0 {
+		return claimed
+	}
+	covered := make([]bool, len(text))
+	for _, span := range claimed {
+		for i := span.Start; i < span.End; i++ {
+			covered[i] = true
+		}
+	}
+	free := func(start, end int) bool {
+		for i := start; i < end; i++ {
+			if covered[i] {
+				return false
+			}
+		}
+		return true
+	}
+	for _, value := range known {
+		for offset := 0; offset+len(value) <= len(text); {
+			at := strings.Index(text[offset:], value)
+			if at < 0 {
+				break
+			}
+			start, end := offset+at, offset+at+len(value)
+			if free(start, end) && utf8.RuneStart(text[start]) && (end == len(text) || utf8.RuneStart(text[end])) && !isTokenPlaceholderSpan(text, start, end) {
+				marker := e.markers[value]
+				claimed = append(claimed, Span{Start: start, End: end, Label: string(e.allocator.used[marker].kind)})
+				for i := start; i < end; i++ {
+					covered[i] = true
+				}
+				offset = end
+				continue
+			}
+			offset = start + 1
+		}
+	}
+	sort.Slice(claimed, func(i, j int) bool { return claimed[i].Start < claimed[j].Start })
+	return claimed
 }
 
 func (e *Exchange) Protect(ctx context.Context, text string) (string, error) {
@@ -68,14 +180,9 @@ func (e *Exchange) Protect(ctx context.Context, text string) (string, error) {
 	if !utf8.ValidString(text) {
 		return "", errors.New("privacy input is not valid UTF-8")
 	}
-	spans, err := e.detector.Detect(ctx, text)
+	spans, err := e.detect(ctx, text)
 	if err != nil {
-		return "", fmt.Errorf("privacy detection failed: %w", err)
-	}
-	for _, span := range spans {
-		if span.Start < 0 || span.End <= span.Start || span.End > len(text) || !utf8.RuneStart(text[span.Start]) || (span.End < len(text) && !utf8.RuneStart(text[span.End])) {
-			return "", errors.New("privacy detector returned invalid offsets")
-		}
+		return "", err
 	}
 	sort.Slice(spans, func(i, j int) bool {
 		if spans[i].Start == spans[j].Start {
@@ -98,6 +205,13 @@ func (e *Exchange) Protect(ctx context.Context, text string) (string, error) {
 			merged = append(merged, span)
 		}
 	}
+	// Register detected values first so the same text also propagates them.
+	for _, span := range merged {
+		if _, err := e.textMarker(span.Label, text[span.Start:span.End]); err != nil {
+			return "", err
+		}
+	}
+	merged = e.propagate(text, merged)
 	var out strings.Builder
 	previous := 0
 	for _, span := range merged {
@@ -121,7 +235,10 @@ func (e *Exchange) textMarker(label, value string) (string, error) {
 	}
 	if _, exists := e.values[marker]; !exists {
 		e.values[marker] = value
-		e.markers[value] = marker
+		if _, known := e.markers[value]; !known {
+			e.markers[value] = marker
+			e.known = nil
+		}
 		e.restorer = nil
 	}
 	return marker, nil
