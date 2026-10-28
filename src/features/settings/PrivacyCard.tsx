@@ -41,7 +41,8 @@ function PrivacyCardBody() {
   const mounted = useRef(true);
   const autoChecked = useRef(false);
   const autoOpened = useRef(false);
-  const notifiedCompletion = useRef("");
+  // undefined until the first status arrives: a completion already recorded then is stale, not news.
+  const notifiedCompletion = useRef<string | undefined>(undefined);
   const requestGeneration = useRef(0);
   const refresh = useCallback(async () => {
     const generation = ++requestGeneration.current;
@@ -105,7 +106,12 @@ function PrivacyCardBody() {
   const hasLatest = !!status?.latest && status.installed.some((item) => item.revision === status.latest?.revision);
 
   useEffect(() => {
-    if (!status || !completed || !completedKey || notifiedCompletion.current === completedKey) return;
+    if (!status) return;
+    if (notifiedCompletion.current === undefined) {
+      notifiedCompletion.current = completedKey;
+      return;
+    }
+    if (!completed || !completedKey || notifiedCompletion.current === completedKey) return;
     notifiedCompletion.current = completedKey;
     pushToast("success", `模型 ${completed.version} ${status.download.precision.toUpperCase()} 下载完成`);
   }, [completed, completedKey, pushToast, status]);

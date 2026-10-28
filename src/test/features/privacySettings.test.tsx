@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { PrivacyStatus } from "../../ipc/privacy";
+import { useUi } from "../../app/store";
 
 const mocks = vi.hoisted(() => ({ status: vi.fn(), configure: vi.fn(), download: vi.fn(), checkUpdates: vi.fn(), cancelDownload: vi.fn(), remove: vi.fn(), confirm: vi.fn() }));
 vi.mock("../../ipc/commands", () => ({
@@ -208,6 +209,25 @@ describe("AI privacy settings", () => {
     click(button("删除"));
     await waitForRendered(() => expect(mocks.remove).toHaveBeenCalledWith({ revision: installed.revision, precision: "fp32" }));
     await waitForRendered(() => expect(mounted!.container.textContent).not.toContain("已下载 ·"));
+  });
+
+  it("does not announce a download that finished before the settings page opened", async () => {
+    useUi.setState({ toasts: [] });
+    const installed = { version: "v0.1.3", revision: "c".repeat(40), precision: "int8" as const, files: { "model.onnx": { size: 1024, sha256: "a".repeat(64) } } };
+    mocks.status.mockResolvedValue({ ...baseline(), installed: [installed], download: { ...baseline().download, completed: { version: "v0.1.3", revision: installed.revision } } });
+    mounted = mount(createElement(PrivacyCard));
+    await waitForRendered(() => expect(button("管理")).toBeTruthy());
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+
+  it("announces a download that completes while the page is open", async () => {
+    useUi.setState({ toasts: [] });
+    const installed = { version: "v0.1.3", revision: "c".repeat(40), precision: "int8" as const, files: { "model.onnx": { size: 1024, sha256: "a".repeat(64) } } };
+    mocks.status.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true } });
+    mounted = mount(createElement(PrivacyCard));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("正在下载"));
+    mocks.status.mockResolvedValue({ ...baseline(), installed: [installed], download: { ...baseline().download, completed: { version: "v0.1.3", revision: installed.revision } } });
+    await waitForRendered(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["模型 v0.1.3 INT8 下载完成"]), 3000);
   });
 
 });
