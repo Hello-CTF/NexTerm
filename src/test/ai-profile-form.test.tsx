@@ -399,9 +399,9 @@ describe("ModelManager quick-fill presets and optional parameters", () => {
     clickButton(view!.container, "高级参数");
     await flush();
     expect(inputFor("温度").value).toBe("");
-    expect(inputFor("温度").placeholder).toBe("默认不传");
+    expect(inputFor("温度").placeholder).toBe("端点默认（0–2）");
     expect(inputFor("上下文窗口").value).toBe("200000");
-    expect(inputFor("上下文窗口").placeholder).toBe("默认不传");
+    expect(inputFor("上下文窗口").placeholder).toBe("默认（256K tokens）");
 
     clickButton(view!.container, "保存");
     await flush();

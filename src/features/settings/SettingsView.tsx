@@ -24,6 +24,7 @@ import {
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
+import { Select } from "../../ui/Select";
 import { onSettingsSection } from "./settingsNavigation";
 import { SettingsSearch } from "./SettingsSearch";
 import { searchSettings, type SettingsPanelId, type SettingsSearchResult, type SettingsSectionId } from "./settingsIndex";
@@ -812,48 +813,45 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             <label className="nx-setting-label mb-1.5 block" htmlFor={scrollbackSelectId} data-setting="terminal-scrollback">
               终端回滚行数
             </label>
-            <select
+            <Select
               id={scrollbackSelectId}
-              className="nx-select w-full sm:w-auto"
-              value={terminalPrefs.scrollback}
-              onChange={(event) => setTerminalScrollback(normalizeTerminalScrollback(Number(event.target.value)))}
-            >
-              {TERMINAL_SCROLLBACK_OPTIONS.map((lines) => (
-                <option key={lines} value={lines}>
-                  {formatScrollbackLines(lines)}
-                  {lines === 10_000 ? "（默认）" : ""}
-                </option>
-              ))}
-            </select>
+              ariaLabel="终端回滚行数"
+              className="w-full sm:w-auto"
+              value={terminalPrefs.scrollback.toString()}
+              options={TERMINAL_SCROLLBACK_OPTIONS.map((lines) => ({
+                value: lines.toString(),
+                label: `${formatScrollbackLines(lines)}${lines === 10_000 ? "（默认）" : ""}`,
+              }))}
+              onChange={(value) => setTerminalScrollback(normalizeTerminalScrollback(Number(value)))}
+            />
             <p className="nx-hint mt-1.5">
-              每个终端在这台设备上保留的滚动历史，只保存在本机；行数越多占用内存越多，改小会丢弃已超出的最早几行。普通终端只有这些行；持久终端的输出另在主机上按历史上限保留，滚到顶部时可「加载更早历史」，以只读方式查看。
+              历史仅保存在本机；调小后会丢弃最早的行。持久终端的更早输出由下方上限单独控制。
             </p>
           </div>
           <div className="mt-3.5">
             <label className="nx-setting-label mb-1.5 block" htmlFor={durableHistorySelectId} data-setting="terminal-durable-history">
               持久终端历史上限
             </label>
-            <select
-              id={durableHistorySelectId}
-              className="nx-select w-full sm:w-auto"
-              value={terminalPrefs.durableHistoryMiB ?? ""}
-              disabled={durableHistorySaving || !durableHistoryAccount}
-              aria-busy={durableHistorySaving}
-              onChange={(event) => void saveDurableHistory(event.target.value === "" ? null : Number(event.target.value))}
-            >
-              <option value="">默认（{DEFAULT_DURABLE_HISTORY_MIB} MB）</option>
-              {terminalPrefs.durableHistoryMiB !== null && !DURABLE_HISTORY_OPTIONS_MIB.includes(terminalPrefs.durableHistoryMiB) && (
-                <option value={terminalPrefs.durableHistoryMiB}>{terminalPrefs.durableHistoryMiB} MB</option>
-              )}
-              {DURABLE_HISTORY_OPTIONS_MIB.map((mib) => (
-                <option key={mib} value={mib}>
-                  {mib} MB
-                </option>
-              ))}
-            </select>
+            <div aria-busy={durableHistorySaving}>
+              <Select
+                id={durableHistorySelectId}
+                ariaLabel="持久终端历史上限"
+                className="w-full sm:w-auto"
+                value={terminalPrefs.durableHistoryMiB?.toString() ?? ""}
+                disabled={durableHistorySaving || !durableHistoryAccount}
+                options={[
+                  { value: "", label: `默认（${DEFAULT_DURABLE_HISTORY_MIB} MB）` },
+                  ...(terminalPrefs.durableHistoryMiB !== null && !DURABLE_HISTORY_OPTIONS_MIB.includes(terminalPrefs.durableHistoryMiB)
+                    ? [{ value: terminalPrefs.durableHistoryMiB.toString(), label: `${terminalPrefs.durableHistoryMiB} MB` }]
+                    : []),
+                  ...DURABLE_HISTORY_OPTIONS_MIB.map((mib) => ({ value: mib.toString(), label: `${mib} MB` })),
+                ]}
+                onChange={(value) => void saveDurableHistory(value === "" ? null : Number(value))}
+              />
+            </div>
             <p className="nx-hint mt-1.5">
-              主机为每个持久终端保留的输出量，超出时丢弃最早的部分并标记「早期历史已截断」。只影响新开的持久终端，随账号同步。
-              {!durableHistoryAccount && "这项设置保存在账号中；当前没有账号，持久终端使用默认上限。"}
+              超出后丢弃最早的输出，只影响新开的持久终端，随账号同步。
+              {!durableHistoryAccount && "当前没有账号，使用默认上限。"}
             </p>
           </div>
           <div className="mt-3.5">
@@ -873,33 +871,28 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </div>
             <p className="nx-hint mt-1.5">
               {terminalPrefs.linkActivation === "modifier"
-                ? "按住 Ctrl（macOS 为 Cmd）单击终端中的网址或 OSC 8 超链接时打开；直接单击仍可选择文本。触屏设备长按链接可打开或复制。"
-                : "单击终端中的网址或 OSC 8 超链接即打开。"}
-              {" "}http/https 与 mailto 链接用系统程序打开，本会话主机上的 file:// 链接在 NexTerm 中打开，其他协议需要确认，可执行系统操作的协议会被拒绝。终端程序捕获鼠标时（如 tmux、htop、vim mouse=a）需同时按住 Shift。
+                ? "按住 Ctrl（macOS 为 Cmd）单击链接打开；触屏可长按。"
+                : "单击链接即打开。"}
+              终端程序捕获鼠标时需同时按住 Shift。
             </p>
           </div>
           <div className="mt-3.5">
             <label className="nx-setting-label mb-1.5 block" htmlFor={multilinePasteSelectId} data-setting="terminal-confirm-multiline-paste">
               多行粘贴确认
             </label>
-            <select
+            <Select
               id={multilinePasteSelectId}
-              className="nx-select w-full sm:w-auto"
+              ariaLabel="多行粘贴确认"
+              className="w-full sm:w-auto"
               value={terminalPrefs.confirmMultilinePaste}
-              onChange={(event) => setTerminalConfirmMultilinePaste(normalizeMultilinePasteConfirm(event.target.value))}
-            >
-              {MULTILINE_PASTE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              options={MULTILINE_PASTE_OPTIONS}
+              onChange={(value) => setTerminalConfirmMultilinePaste(normalizeMultilinePasteConfirm(value))}
+            />
             <p className="nx-hint mt-1.5">
-              开启括号粘贴的程序（如 bash/zsh）会把多行内容当成一次粘贴，不会逐行执行。
-              {terminalPrefs.confirmMultilinePaste === "unbracketed" && "只有程序未开启括号粘贴、多行内容可能被逐行执行时，才先预览并确认。"}
-              {terminalPrefs.confirmMultilinePaste === "always" && "每次粘贴多行文本前都先预览并确认。"}
+              {terminalPrefs.confirmMultilinePaste === "unbracketed" && "仅在多行内容可能被逐行执行时先确认。"}
+              {terminalPrefs.confirmMultilinePaste === "always" && "每次粘贴多行文本前先预览并确认。"}
               {terminalPrefs.confirmMultilinePaste === "never" && "多行文本直接粘贴，不再确认。"}
-              确认窗口里的「本终端不再提示」在关闭该终端前有效。登录账号后随账号同步到你的其他设备。
+              登录后随账号同步。
             </p>
           </div>
           {showCloseToTray && (
@@ -957,7 +950,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             <span className="nx-badge">OpenAI 兼容协议 · 自带密钥</span>
           </div>
           <p className="nx-hint mb-3.5">
-            可保存多份模型档案，并将其中一份设为当前。密钥加密后保存在当前实例的数据库中；启用「同步 AI 模型档案」并解锁凭据库后，密钥才会随档案端到端加密同步。支持本地 Ollama、LM Studio 和 vLLM。
+            配置 OpenAI 兼容端点，支持云端模型及本地 Ollama、LM Studio、vLLM。密钥加密保存在当前实例；启用档案同步并解锁凭据库后，才会端到端加密同步。
           </p>
 
           <ModelManager />
@@ -1030,7 +1023,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             )}
           </div>
           <p className="nx-hint mb-3.5">
-            命令、文件路径或 SQL 命中规则后，读写与自动执行模式下每次先向你确认，只读与无人值守模式下直接拒绝。按整词匹配、忽略大小写，例如 rm 会命中 rm -rf，但不会命中 format。
+            命中命令、路径或 SQL 时，读写和自动执行模式要求确认，只读和无人值守模式直接拒绝。按整词匹配，不区分大小写。
           </p>
 
           {aiPerm && aiPerm.dangerRules.length > 0 && (

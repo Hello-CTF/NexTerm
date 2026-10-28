@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { DESKTOP } from "../ipc/env";
+import { ProgressBar } from "../ui/DownloadProgress";
 import { IconClose, IconDownload, IconLoader } from "../ui/icons";
 import { useUi } from "./store";
 import { useUpdate } from "./useUpdate";
@@ -28,20 +29,8 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
           {install.phase === "install" ? "正在安装" : "正在下载"}{" "}
           <span className="font-medium text-neutral-100">v{status?.version || ""}</span>
         </span>
-        <div
-          className="nx-progress w-32 shrink-0"
-          role="progressbar"
-          aria-label={install.phase === "install" ? "安装进度" : "下载进度"}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={install.total > 0 ? percent : undefined}
-        >
-          {install.total > 0 ? (
-            <span className="nx-progress-bar" style={{ width: `${percent}%` }} />
-          ) : (
-            <span className="nx-progress-bar w-1/3 animate-pulse motion-reduce:animate-none" />
-          )}
-        </div>
+        <ProgressBar className="w-32 shrink-0" label={install.phase === "install" ? "安装进度" : "下载进度"}
+          transferred={install.transferred} total={install.total} />
         <span className="shrink-0 text-neutral-400">
           {install.total > 0 ? `${percent}%` : "请稍候"}
         </span>

@@ -414,12 +414,11 @@ describe("MemoryCard", () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("浏览器账号模式下，记忆按账号隔离");
-    expect(text).toContain("只有当前账号能读写自己的记忆");
-    expect(text).toContain("不覆盖已有个人记忆");
-    expect(text).toContain("桌面和明确开放部署使用共享记忆");
+    expect(text).toContain("浏览器账号模式按账号隔离");
+    expect(text).toContain("桌面和开放部署使用共享记忆");
+    expect(text).not.toContain("旧全局记忆在升级时");
     expect(text).not.toContain("其他属主无法读取或修改");
     expect(text).not.toContain("开启了的运行");
-    expect(text).toContain("开启后，每次 AI 运行都会将选中的记忆作为临时系统消息加入模型输入");
+    expect(text).toContain("将选中的记忆加入模型输入，不写入会话历史");
   });
 });

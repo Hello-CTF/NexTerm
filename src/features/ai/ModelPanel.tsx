@@ -3,6 +3,7 @@ import { modelApi, type AiUsageSummaryRow, type ModelProfile, type ModelProfiles
 import type { AiCircuitStatusDto } from "../../ipc/types";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
+import { Combobox } from "../../ui/Combobox";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import {
@@ -548,6 +549,7 @@ export function ModelManager({
                 </button>
                 {advancedOpen && (
                   <div id={advancedPanelId} className="mt-2.5 flex flex-col gap-2.5">
+                    <div className="nx-setting-label text-neutral-500">生成与上下文</div>
                     <Field label="回退模型（可选）" htmlFor={`${fieldId}-fallback`}>
                       <input
                         id={`${fieldId}-fallback`}
@@ -556,14 +558,12 @@ export function ModelManager({
                         value={fallbackModelLabel(draft as ModelProfile)}
                         onChange={(e) => patch({ fallbackModel: fallbackModelFromInput(e.target.value) })}
                       />
-                      <div className="nx-hint mt-1 text-[10.5px]">
-                        不修改则保留原设置；清空后保存将移除回退模型。
-                      </div>
+                      {!isNew && <div className="nx-hint mt-1 text-[10.5px]">清空后保存将移除回退模型。</div>}
                     </Field>
 
                     <div className="flex flex-col gap-3 min-[400px]:flex-row">
                       <div className="flex-1">
-                        <Field label="温度（0–2）" htmlFor={`${fieldId}-temperature`}>
+                        <Field label="温度" htmlFor={`${fieldId}-temperature`}>
                           <input
                             id={`${fieldId}-temperature`}
                             className="nx-input font-mono"
@@ -571,63 +571,50 @@ export function ModelManager({
                             min={0}
                             max={2}
                             step={0.1}
-                            placeholder="默认不传"
+                            placeholder="端点默认（0–2）"
                             value={draft.temperature ?? ""}
                             onChange={(e) =>
                               patch({ temperature: e.target.value === "" ? null : Number(e.target.value) })
                             }
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">留空则不传，使用端点默认值。</div>
                         </Field>
                       </div>
                       <div className="flex-1">
-                        <Field label="上下文窗口（tokens）" htmlFor={`${fieldId}-context`}>
-                          <input
+                        <Field label="上下文窗口" htmlFor={`${fieldId}-context`}>
+                          <Combobox
                             id={`${fieldId}-context`}
-                            className="nx-input font-mono"
-                            type="number"
-                            min={1000}
-                            max={2000000}
-                            step={1000}
-                            placeholder="默认不传"
-                            list={`${fieldId}-context-presets`}
-                            value={draft.contextWindow ?? ""}
-                            onChange={(e) =>
-                              patch({ contextWindow: e.target.value === "" ? null : Number(e.target.value) })
-                            }
+                            ariaLabel="上下文窗口"
+                            className="font-mono"
+                            placeholder="默认（256K tokens）"
+                            inputMode="numeric"
+                            value={draft.contextWindow?.toString() ?? ""}
+                            options={CONTEXT_WINDOW_PRESETS.map((value) => ({
+                              value: value.toString(),
+                              label: value === 1048576 ? "1M tokens" : `${value / 1024}K tokens`,
+                            }))}
+                            onChange={(value) => {
+                              if (value === "" || /^\d+$/.test(value)) patch({ contextWindow: value === "" ? null : Number(value) });
+                            }}
                           />
-                          <datalist id={`${fieldId}-context-presets`}>
-                            {CONTEXT_WINDOW_PRESETS.map((value) => (
-                              <option key={value} value={value}>
-                                {value === 1048576 ? "1M" : `${value / 1024}K`}
-                              </option>
-                            ))}
-                          </datalist>
-                          <div className="nx-hint mt-1 text-[10.5px]">留空则不传，按默认值 256K 估算；可选 128K / 256K / 512K / 1M 预设。</div>
+                          <div className="nx-hint mt-1 text-[10.5px]">用于估算上下文用量，也可输入自定义值。</div>
                         </Field>
                       </div>
                     </div>
 
-                    <Field label="思考强度（reasoning effort）" htmlFor={`${fieldId}-reasoning-effort`}>
-                      <input
+                    <Field label="思考强度" htmlFor={`${fieldId}-reasoning-effort`}>
+                      <Combobox
                         id={`${fieldId}-reasoning-effort`}
-                        className="nx-input font-mono"
-                        list={`${fieldId}-reasoning-effort-presets`}
-                        placeholder="默认不传"
+                        ariaLabel="思考强度"
+                        className="font-mono"
+                        placeholder="端点默认"
                         value={draft.reasoningEffort ?? ""}
-                        onChange={(e) => patch({ reasoningEffort: e.target.value })}
+                        options={REASONING_EFFORT_PRESETS.map((value) => ({ value }))}
+                        onChange={(value) => patch({ reasoningEffort: value })}
                       />
-                      <datalist id={`${fieldId}-reasoning-effort-presets`}>
-                        {REASONING_EFFORT_PRESETS.map((value) => (
-                          <option key={value} value={value} />
-                        ))}
-                      </datalist>
-                      <div className="nx-hint mt-1 text-[10.5px]">
-                        仅影响支持 reasoning effort 的 OpenAI 兼容端点；留空则不传，也可填写服务商支持的自定义值。
-                      </div>
+                      <div className="nx-hint mt-1 text-[10.5px]">仅对支持的 OpenAI 兼容端点生效，可输入自定义值。</div>
                     </Field>
 
-                    <Field label="最大输出 tokens" htmlFor={`${fieldId}-max-tokens`}>
+                    <Field label="最大输出" htmlFor={`${fieldId}-max-tokens`}>
                       <input
                         id={`${fieldId}-max-tokens`}
                         className="nx-input font-mono"
@@ -635,18 +622,19 @@ export function ModelManager({
                         min={1}
                         max={MAX_TOKENS_HARD_LIMIT}
                         step={1}
-                        placeholder="默认不传"
+                        placeholder="端点默认（tokens）"
                         value={maxTokensLabel(draft as ModelProfile)}
                         onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
                       />
                       <div className="nx-hint mt-1 text-[10.5px]">
-                        留空则不传，使用端点默认值；填写后，最大输出以上下文窗口的一半为限，且不超过 {MAX_TOKENS_HARD_LIMIT}。
+                        上限为上下文窗口的一半，且不超过 {MAX_TOKENS_HARD_LIMIT} tokens。
                       </div>
                     </Field>
 
+                    <div className="nx-setting-label mt-1 text-neutral-500">网络与容错</div>
                     <div className="flex flex-col gap-3 min-[400px]:flex-row">
                       <div className="flex-1">
-                        <Field label="请求总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
+                        <Field label="请求超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
                           <input
                             id={`${fieldId}-request-timeout`}
                             className="nx-input font-mono"
@@ -658,11 +646,10 @@ export function ModelManager({
                             value={requestTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">同时限制流式与非流式请求的总时长；留空使用端点默认值。</div>
                         </Field>
                       </div>
                       <div className="flex-1">
-                        <Field label="响应空闲超时（秒，0 为关闭）" htmlFor={`${fieldId}-idle-timeout`}>
+                        <Field label="响应空闲超时（秒）" htmlFor={`${fieldId}-idle-timeout`}>
                           <input
                             id={`${fieldId}-idle-timeout`}
                             className="nx-input font-mono"
@@ -670,11 +657,10 @@ export function ModelManager({
                             min={0}
                             max={3600}
                             step={1}
-                            placeholder="端点默认"
+                            placeholder="端点默认；0 为关闭"
                             value={idleTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">限制流式与非流式响应的读取空闲时间；0 表示关闭。</div>
                         </Field>
                       </div>
                     </div>
@@ -711,16 +697,14 @@ export function ModelManager({
                         </Field>
                       </div>
                     </div>
-                    <div className="nx-hint mt-0.5 text-[10.5px]">
-                      留空用默认值；只统计网络与服务端错误，连续失败达到阈值后暂停请求，到时自动恢复。
-                    </div>
+                    <div className="nx-hint mt-0.5 text-[10.5px]">网络或服务端连续失败达到阈值后暂停请求，到时自动恢复。</div>
                     {isNew ? (
                       <div className="nx-hint mt-0.5 text-[10.5px]">保存后可查看暂停状态</div>
                     ) : (
                       <CircuitRuntimeStatus key={draft.id} profileId={draft.id} nonce={circuitNonce} />
                     )}
 
-                    <Field label="代理（留空则跟随系统代理）" htmlFor={`${fieldId}-proxy`}>
+                    <Field label="代理" htmlFor={`${fieldId}-proxy`}>
                       <input
                         id={`${fieldId}-proxy`}
                         className="nx-input font-mono"
@@ -728,6 +712,7 @@ export function ModelManager({
                         value={draft.proxy ?? ""}
                         onChange={(e) => patch({ proxy: e.target.value || null })}
                       />
+                      <div className="nx-hint mt-1 text-[10.5px]">留空跟随系统代理。</div>
                     </Field>
 
                     <label className="flex cursor-pointer items-center gap-2 text-[12px] text-neutral-300">
@@ -737,7 +722,7 @@ export function ModelManager({
                         checked={draft.stream}
                         onChange={(e) => patch({ stream: e.target.checked })}
                       />
-                      流式输出（关闭后一次性返回完整内容）
+                      流式输出
                     </label>
                   </div>
                 )}

@@ -493,7 +493,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
               <div className="mb-3 flex flex-wrap items-end gap-2">
                 <label className="flex min-w-52 flex-1 flex-col gap-1 text-[11px] text-neutral-500">
                   从命令片段添加
-                  <select className="nx-input" aria-label="选择要添加的片段" value={snippetId} onChange={(event) => setSnippetId(event.target.value)}>
+                  <select className="nx-select" aria-label="选择要添加的片段" value={snippetId} onChange={(event) => setSnippetId(event.target.value)}>
                     <option value="">选择片段</option>
                     {snippets.map((snippet) => <option key={snippet.id} value={snippet.id}>{snippet.name}</option>)}
                   </select>
@@ -533,7 +533,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
               <div className="mt-3 flex flex-col gap-2 text-[11px] text-neutral-400">
                 <label className="flex flex-col gap-1">
                   执行前确认
-                  <select className="nx-input" aria-label="执行前确认" value={policy} onChange={(event) => setPolicy(event.target.value as RunbookConfirmationPolicy)}>
+                  <select className="nx-select" aria-label="执行前确认" value={policy} onChange={(event) => setPolicy(event.target.value as RunbookConfirmationPolicy)}>
                     <option value="every_step">每一步都先确认（默认）</option>
                     <option value="production_only">只有生产环境主机先确认</option>
                   </select>

@@ -238,6 +238,78 @@
     background: var(--nx-bg-pane);
     color: var(--nx-fg-strong);
   }
+  .nx-select-root {
+    position: relative;
+    min-width: 0;
+  }
+  .nx-select-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-right: 9px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .nx-select-popup {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    left: 0;
+    z-index: 80;
+    min-width: max(100%, 180px);
+    max-height: min(280px, calc(100dvh - 24px));
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid var(--nx-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--nx-bg-pane);
+    box-shadow: var(--shadow-pop);
+  }
+  .nx-select-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    color: var(--nx-fg);
+    font-size: calc(12px * var(--nx-ui-text-factor));
+    line-height: 1.45;
+    cursor: pointer;
+  }
+  .nx-select-option.is-active {
+    background: var(--nx-bg-hover);
+    color: var(--nx-fg-strong);
+  }
+  .nx-select-option.is-disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .nx-select-check {
+    display: flex;
+    flex: 0 0 14px;
+    justify-content: center;
+    min-height: 17px;
+    color: var(--color-green-300);
+  }
+  .nx-select-description {
+    display: block;
+    margin-top: 1px;
+    color: var(--nx-fg-tertiary);
+    font-size: calc(11px * var(--nx-ui-text-factor));
+  }
+  .nx-combobox-toggle {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    color: var(--nx-fg-tertiary);
+    cursor: pointer;
+  }
   .nx-select-ghost {
     width: auto;
     height: 26px;

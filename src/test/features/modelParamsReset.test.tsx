@@ -129,12 +129,12 @@ describe("ModelManager reset parameters to defaults", () => {
     expect(inputFor("回退模型").value).toBe("");
     expect(inputFor("思考强度").value).toBe("");
     expect(inputFor("最大输出").value).toBe("");
-    expect(inputFor("请求总超时").value).toBe("");
+    expect(inputFor("请求超时").value).toBe("");
     expect(inputFor("响应空闲超时").value).toBe("");
     expect(inputFor("自动暂停阈值").value).toBe("");
     expect(inputFor("自动暂停时长").value).toBe("");
-    expect(view!.container.textContent).toContain("端点默认");
-    expect(view!.container.textContent).toContain("请求总超时");
+    expect(inputFor("思考强度").placeholder).toContain("端点默认");
+    expect(view!.container.textContent).toContain("请求超时");
     expect(view!.container.textContent).toContain("响应空闲超时");
     const stream = view!.container.querySelector('input[type="checkbox"]') as HTMLInputElement;
     expect(stream.checked).toBe(true);

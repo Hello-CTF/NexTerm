@@ -24,6 +24,7 @@ import {
   type TerminalThemePref,
 } from "../../app/preferences";
 import { IconChevronDown, IconChevronRight, IconMinus, IconMonitor, IconPlus, IconRefresh } from "../../ui/icons";
+import { Select } from "../../ui/Select";
 
 const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
   { value: "system", label: "跟随系统" },
@@ -264,16 +265,13 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
 
             <div className="mt-3.5">
               <div className="nx-setting-label mb-1.5" data-setting="terminal-font-family">终端字体</div>
-              <select
-                className="nx-select nx-input-sm w-full"
-                aria-label="终端字体"
+              <Select
+                className="w-full"
+                ariaLabel="终端字体"
                 value={prefs.terminalFontFamily}
-                onChange={(event) => setTerminalFontFamily(event.target.value as TerminalFontFamily)}
-              >
-                {TERMINAL_FONT_FAMILIES.map((family) => (
-                  <option key={family} value={family}>{TERM_FONT_LABELS[family]}</option>
-                ))}
-              </select>
+                options={TERMINAL_FONT_FAMILIES.map((family) => ({ value: family, label: TERM_FONT_LABELS[family] }))}
+                onChange={(value) => setTerminalFontFamily(value as TerminalFontFamily)}
+              />
               <div className="nx-hint mt-1.5">仅使用本机已安装字体；未安装时回退到系统等宽字体，不下载字体。</div>
             </div>
 

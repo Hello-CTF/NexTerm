@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement } from "react";
+import { createElement } from "react";
 import { click, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { PrivacyStatus } from "../../ipc/privacy";
 
@@ -41,6 +41,17 @@ function button(label: string): HTMLButtonElement {
   if (!found) throw new Error(`Missing button: ${label}`);
   return found;
 }
+function control(label: string): HTMLButtonElement {
+  const found = mounted!.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!found) throw new Error(`Missing control: ${label}`);
+  return found;
+}
+function choose(label: string, optionText: string): void {
+  click(control(label));
+  const option = [...mounted!.container.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes(optionText));
+  if (!option) throw new Error(`Missing option: ${optionText}`);
+  click(option);
+}
 
 describe("AI privacy settings", () => {
   it("starts disabled, explains the server location, and downloads the selected precision without enabling", async () => {
@@ -50,19 +61,20 @@ describe("AI privacy settings", () => {
     expect(toggle.checked).toBe(false);
     expect(toggle.disabled).toBe(true);
     expect(mounted.container.textContent).toContain("当前 NexTerm 服务端");
+    click(button("模型与隐私说明"));
     expect(mounted.container.textContent).toContain("模型由管理员在服务端下载，所有账号共用");
     expect(mounted.container.textContent).not.toContain("每台设备需单独下载");
-    const precision = mounted.container.querySelector<HTMLSelectElement>('[aria-label="下载模型精度"]')!;
-    act(() => { precision.value = "fp32"; precision.dispatchEvent(new Event("change", { bubbles: true })); });
+    choose("下载模型精度", "FP32");
     mocks.download.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true, precision: "fp32" } });
-    click(button("下载 FP32（约 1100 MiB）"));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("正在获取模型版本"));
+    click(button("下载"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("正在下载 FP32"));
+    expect(mounted.container.querySelector('[role="progressbar"]')).not.toBeNull();
     expect(mocks.download).toHaveBeenCalledWith("fp32");
     expect(mocks.configure).not.toHaveBeenCalled();
     expect(toggle.checked).toBe(false);
     mocks.cancelDownload.mockResolvedValue(undefined);
-    click(button("取消下载"));
-    await waitForRendered(() => expect(mounted!.container.querySelector("progress")).toBeNull());
+    click(button("取消"));
+    await waitForRendered(() => expect(mounted!.container.querySelector('[role="progressbar"]')).toBeNull());
     expect(mocks.cancelDownload).toHaveBeenCalledOnce();
     expect(mocks.configure).not.toHaveBeenCalled();
   });
@@ -88,12 +100,13 @@ describe("AI privacy settings", () => {
     mocks.status.mockResolvedValue(state);
     mocks.configure.mockResolvedValue({ ...state, config: { ...state.config, ...installed } });
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.querySelector('[aria-label="使用的本地隐私模型"]')).not.toBeNull());
-    const select = mounted.container.querySelector<HTMLSelectElement>('[aria-label="使用的本地隐私模型"]')!;
-    act(() => { select.value = `${installed.revision}:fp32`; select.dispatchEvent(new Event("change", { bubbles: true })); });
-    await waitForRendered(() => expect(select.disabled).toBe(false));
-    expect(mocks.configure).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, precision: "fp32", revision: installed.revision }));
+    await waitForRendered(() => expect(button("管理")).toBeTruthy());
+    click(button("管理"));
+    choose("使用的本地隐私模型", "FP32");
+    await waitForRendered(() => expect(mocks.configure).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, precision: "fp32", revision: installed.revision })));
+    await waitForRendered(() => expect(control("使用的本地隐私模型").disabled).toBe(false));
   });
+
   it("fetches release sizes on first load and reports a newer release without switching models", async () => {
     const initial = baseline();
     delete initial.latest;
@@ -103,9 +116,10 @@ describe("AI privacy settings", () => {
     mocks.status.mockResolvedValueOnce(initial).mockResolvedValue({ ...initial, latest, latestSizes: { int8: 200 * 1024 * 1024 } });
     mocks.checkUpdates.mockResolvedValue(latest);
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("有新版本 v0.2.0，下载后可切换"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("可更新至 v0.2.0"));
     expect(mocks.checkUpdates).toHaveBeenCalledOnce();
-    expect(button("下载 INT8（约 200 MiB）")).toBeTruthy();
+    click(button("管理"));
+    expect(button("下载")).toBeTruthy();
     expect(mocks.configure).not.toHaveBeenCalled();
     expect(mocks.download).not.toHaveBeenCalled();
   });
@@ -113,16 +127,16 @@ describe("AI privacy settings", () => {
   it("tells the user a newer incompatible release needs a NexTerm update", async () => {
     mocks.status.mockResolvedValue({ ...baseline(), newerIncompatible: { version: "v2.0.0", revision: "e".repeat(40) } });
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("有新版本 v2.0.0，需要更新 NexTerm 后才能使用"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("新版本 v2.0.0 需要先更新 NexTerm"));
   });
 
   it("disables downloading and enabling on an unsupported device", async () => {
     mocks.status.mockResolvedValue({ ...baseline(), runtime: { supported: false, reason: "本地 AI 脱敏需要 macOS 13.4 或更新版本" } });
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("此设备无法运行本地脱敏：本地 AI 脱敏需要 macOS 13.4 或更新版本。"));
-    expect(button("下载 INT8（约 300 MiB）").disabled).toBe(true);
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("本地脱敏当前不可用：本地 AI 脱敏需要 macOS 13.4 或更新版本。"));
+    expect(button("下载").disabled).toBe(true);
     expect(mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.disabled).toBe(true);
-    expect(mounted.container.textContent).toContain("需先下载并选择模型");
+    expect(mounted.container.textContent).toContain("尚未下载模型");
     expect(mocks.checkUpdates).not.toHaveBeenCalled();
   });
 
@@ -133,8 +147,7 @@ describe("AI privacy settings", () => {
     mocks.status.mockResolvedValue(state);
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("已启用脱敏，但所选模型不可用：本地隐私模型文件缺失，请重新下载模型。在恢复或关闭前，所有 AI 请求都会被阻止。"));
-    const select = mounted.container.querySelector<HTMLSelectElement>('[aria-label="使用的本地隐私模型"]')!;
-    expect(select.selectedOptions[0]?.textContent).toContain("（文件缺失）");
+    await waitForRendered(() => expect(control("使用的本地隐私模型").textContent).toContain("（文件缺失）"));
     const toggle = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(toggle.disabled).toBe(false);
     mocks.configure.mockResolvedValue({ ...state, config: { ...state.config, enabled: false } });
@@ -178,7 +191,9 @@ describe("AI privacy settings", () => {
     const state = { ...baseline(), installed: [installed], diskUsage: 2 * 1024 * 1024, download: { ...baseline().download, precision: "fp32" as const, completed: { version: "v0.1.3", revision: installed.revision } } };
     mocks.status.mockResolvedValue(state);
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("下载完成：v0.1.3 FP32。"));
+    await waitForRendered(() => expect(button("管理")).toBeTruthy());
+    click(button("管理"));
+    expect(mounted.container.textContent).toContain("已下载 v0.1.3 FP32");
     expect(mounted.container.textContent).toContain("共占用 2.0 MiB");
     mocks.configure.mockResolvedValue({ ...state, config: { ...state.config, ...installed, enabled: false }, download: baseline().download });
     click(button("使用此模型"));
@@ -192,7 +207,7 @@ describe("AI privacy settings", () => {
     mocks.remove.mockResolvedValue({ ...baseline() });
     click(button("删除"));
     await waitForRendered(() => expect(mocks.remove).toHaveBeenCalledWith({ revision: installed.revision, precision: "fp32" }));
-    await waitForRendered(() => expect(mounted!.container.textContent).not.toContain("已下载的模型"));
+    await waitForRendered(() => expect(mounted!.container.textContent).not.toContain("已下载 ·"));
   });
 
 });

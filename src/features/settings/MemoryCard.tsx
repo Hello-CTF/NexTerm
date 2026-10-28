@@ -11,6 +11,7 @@ import { toAppError } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import {
   IconBot,
   IconEdit,
@@ -254,17 +255,13 @@ export function MemoryCard() {
           刷新
         </button>
       </div>
-      <p className="nx-hint mb-3.5">
-        让 AI 跨会话记住长期事实（如「重启安排在 02:00」）。记忆注入和记忆工具默认开启，可分别关闭。
-      </p>
+      <p className="nx-hint mb-3.5">让 AI 跨会话记住长期事实，例如「重启安排在 02:00」。</p>
 
       <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
         <label className="flex cursor-pointer items-start gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-[12.5px] text-neutral-200">在 AI 运行时注入记忆</div>
-            <p className="nx-hint mt-0.5">
-              开启后，每次 AI 运行都会将选中的记忆作为临时系统消息加入模型输入，不写入会话历史。
-            </p>
+            <p className="nx-hint mt-0.5">将选中的记忆加入模型输入，不写入会话历史。</p>
           </div>
           <input
             type="checkbox"
@@ -278,9 +275,7 @@ export function MemoryCard() {
         <label className="flex cursor-pointer items-start gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-[12.5px] text-neutral-200">允许模型使用记忆工具</div>
-            <p className="nx-hint mt-0.5">
-              开启后，模型可保存、查找和删除记忆；计划模式与子代理不可用。
-            </p>
+            <p className="nx-hint mt-0.5">模型可保存、查找和删除记忆；计划模式与子代理不可用。</p>
           </div>
           <input
             type="checkbox"
@@ -339,17 +334,15 @@ export function MemoryCard() {
           />
           <div className="flex flex-wrap items-center gap-2">
             <IconKey size={12} className="text-neutral-500" />
-            <select
-              className="nx-select nx-input-sm"
-              aria-label="密钥处理策略"
+            <Select
+              ariaLabel="密钥处理策略"
               value={draft.secrets}
-              onChange={(e) =>
-                setDraft({ ...draft, secrets: e.target.value as MemorySecretPolicy })
-              }
-            >
-              <option value="reject">疑似密钥时拒绝写入（默认）</option>
-              <option value="redact">疑似密钥时替换为 [REDACTED]</option>
-            </select>
+              options={[
+                { value: "reject", label: "疑似密钥时拒绝写入（默认）" },
+                { value: "redact", label: "疑似密钥时替换为 [REDACTED]" },
+              ]}
+              onChange={(value) => setDraft({ ...draft, secrets: value as MemorySecretPolicy })}
+            />
             <div className="nx-spacer" />
             <button
               className="nx-btn nx-btn-primary nx-btn-sm"
@@ -480,7 +473,7 @@ export function MemoryCard() {
       )}
 
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        记忆保存在当前 NexTerm 实例。浏览器账号模式下，记忆按账号隔离：只有当前账号能读写自己的记忆（含后台任务），其他账号不可见；旧全局记忆在升级时归到首个 active 超管账号，不覆盖已有个人记忆。桌面和明确开放部署使用共享记忆。
+        记忆保存在当前 NexTerm 实例；浏览器账号模式按账号隔离，桌面和开放部署使用共享记忆。
       </p>
     </section>
   );

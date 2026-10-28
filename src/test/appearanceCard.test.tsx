@@ -22,7 +22,7 @@ import {
   setUiFontPreset,
   setUiFontScale,
 } from "../app/preferences";
-import { click, clickButton, mount, setInputValue, setSelectValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const KEY = "nexterm.appearance.v1";
 
@@ -78,16 +78,17 @@ describe("AppearanceCard appearance preferences", () => {
     expect(groupButton(c, "终端与编辑器主题", "深色").getAttribute("aria-pressed")).toBe("true");
     expect(groupButton(c, "终端对比度", "标准").getAttribute("aria-pressed")).toBe("true");
     expect(groupButton(c, "界面主题", "深色").getAttribute("aria-pressed")).toBe("true");
-    const font = c.querySelector<HTMLSelectElement>('select[aria-label="终端字体"]');
-    expect(font?.value).toBe("cascadia");
-    expect([...(font?.options ?? [])].map((option) => option.value)).toEqual([
-      "cascadia",
-      "system",
-      "jetbrains-mono",
-      "fira-code",
-      "source-code-pro",
-      "menlo",
-      "consolas",
+    const font = c.querySelector<HTMLButtonElement>('button[aria-label="终端字体"]')!;
+    expect(font.textContent).toContain("Cascadia（默认）");
+    click(font);
+    expect([...c.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toEqual([
+      "Cascadia（默认）",
+      "系统等宽",
+      "JetBrains Mono",
+      "Fira Code",
+      "Source Code Pro",
+      "Menlo",
+      "Consolas",
     ]);
     expect(c.textContent).toContain("未安装时回退到系统等宽字体");
     expect(c.textContent).toContain("不下载字体");
@@ -99,8 +100,10 @@ describe("AppearanceCard appearance preferences", () => {
     mounted = mount(createElement(AppearanceCard));
     const c = mounted.container;
     ensureAdvancedOpen(c);
-    const font = c.querySelector<HTMLSelectElement>('select[aria-label="终端字体"]')!;
-    setSelectValue(font, "jetbrains-mono");
+    const font = c.querySelector<HTMLButtonElement>('button[aria-label="终端字体"]')!;
+    click(font);
+    const jetbrains = [...c.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent === "JetBrains Mono")!;
+    click(jetbrains);
     click(groupButton(c, "终端对比度", "极高"));
 
     expect(getAppearancePrefs().terminalFontFamily).toBe("jetbrains-mono");
@@ -109,7 +112,7 @@ describe("AppearanceCard appearance preferences", () => {
       terminalFontFamily: "jetbrains-mono",
       terminalContrast: "maximum",
     });
-    expect(font.value).toBe("jetbrains-mono");
+    expect(font.textContent).toContain("JetBrains Mono");
     expect(groupButton(c, "终端对比度", "极高").getAttribute("aria-pressed")).toBe("true");
   });
 

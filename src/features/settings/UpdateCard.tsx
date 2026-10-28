@@ -1,5 +1,6 @@
 import { DESKTOP } from "../../ipc/env";
 import { WEB } from "../../ipc/env";
+import { DownloadProgress } from "../../ui/DownloadProgress";
 import { formatBytes } from "../../ui/format";
 import {
   IconCheckCircle,
@@ -53,8 +54,6 @@ export function UpdateCard() {
       : null;
   const showInstall =
     verdict === "available" && installAllowed && !install.active && !installedVersion;
-  const percent =
-    install.total > 0 ? Math.min(100, Math.round((install.transferred / install.total) * 100)) : 0;
   const failReason = checkError || status?.unavailableReason || "原因未查明";
 
   return (
@@ -119,28 +118,8 @@ export function UpdateCard() {
       </div>
 
       {install.active && (
-        <div className="mt-3">
-          <div
-            className="nx-progress"
-            role="progressbar"
-            aria-label={install.phase === "install" ? "安装进度" : "下载进度"}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={install.total > 0 ? percent : undefined}
-          >
-            {install.total > 0 ? (
-              <span className="nx-progress-bar" style={{ width: `${percent}%` }} />
-            ) : (
-              <span className="nx-progress-bar w-1/3 animate-pulse motion-reduce:animate-none" />
-            )}
-          </div>
-          <p className="nx-hint mt-1">
-            {install.phase === "install" ? "正在安装…" : "正在下载…"}
-            {install.total > 0
-              ? ` ${percent}% · ${formatBytes(install.transferred)} / ${formatBytes(install.total)}`
-              : " 请稍候"}
-          </p>
-        </div>
+        <DownloadProgress className="mt-3" label={install.phase === "install" ? "正在安装…" : "正在下载…"}
+          transferred={install.transferred} total={install.total} />
       )}
 
       {install.error && (

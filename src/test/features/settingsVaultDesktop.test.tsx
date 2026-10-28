@@ -185,10 +185,10 @@ describe("Desktop credential protection disable paths", () => {
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() =>
       (vaultCard()?.textContent ?? "").includes("已开启") &&
-      (mounted!.container.textContent ?? "").includes("密钥加密后保存在当前实例的数据库中"),
+      (mounted!.container.textContent ?? "").includes("密钥加密保存在当前实例"),
     );
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("启用「同步 AI 模型档案」并解锁凭据库后");
+    expect(text).toContain("启用档案同步并解锁凭据库后");
     expect(text).toContain("端到端加密同步");
     expect(text).not.toContain("不会上传");
   });
