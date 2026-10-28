@@ -192,10 +192,11 @@ func protectNativeMessages(ctx context.Context, e *privacy.Exchange, input []*sc
 		if err != nil {
 			return nil, err
 		}
+		// Media parts are sent unchanged; the user is told images are not redacted.
 		copy.MultiContent = slices.Clone(message.MultiContent)
 		for i := range copy.MultiContent {
 			if copy.MultiContent[i].Type != "" && copy.MultiContent[i].Type != schema.ChatMessagePartTypeText {
-				return nil, errors.New("本地脱敏仅支持文本，当前请求包含图片或其他媒体")
+				continue
 			}
 			copy.MultiContent[i].Text, err = protect(copy.MultiContent[i].Text)
 			if err != nil {
@@ -205,15 +206,22 @@ func protectNativeMessages(ctx context.Context, e *privacy.Exchange, input []*sc
 		copy.UserInputMultiContent = slices.Clone(message.UserInputMultiContent)
 		for i := range copy.UserInputMultiContent {
 			if copy.UserInputMultiContent[i].Type != schema.ChatMessagePartTypeText {
-				return nil, errors.New("本地脱敏仅支持文本，当前请求包含图片或其他媒体")
+				continue
 			}
 			copy.UserInputMultiContent[i].Text, err = protect(copy.UserInputMultiContent[i].Text)
 			if err != nil {
 				return nil, err
 			}
 		}
-		if len(copy.AssistantGenMultiContent) > 0 {
-			return nil, errors.New("本地脱敏暂不支持多媒体历史消息")
+		copy.AssistantGenMultiContent = slices.Clone(message.AssistantGenMultiContent)
+		for i := range copy.AssistantGenMultiContent {
+			if copy.AssistantGenMultiContent[i].Type != schema.ChatMessagePartTypeText {
+				continue
+			}
+			copy.AssistantGenMultiContent[i].Text, err = protect(copy.AssistantGenMultiContent[i].Text)
+			if err != nil {
+				return nil, err
+			}
 		}
 		copy.ToolCalls = slices.Clone(message.ToolCalls)
 		for i := range copy.ToolCalls {

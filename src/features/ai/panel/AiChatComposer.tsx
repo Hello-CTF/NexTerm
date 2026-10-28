@@ -7,26 +7,19 @@ import { UsageRing } from "../UsageRing";
 import { modelApi } from "../../../ipc/commands";
 import { ModelPanel } from "../ModelPanel";
 import { PrivacyIndicator, usePrivacyGuard } from "../PrivacyIndicator";
-import { useUi } from "../../../app/store";
-import { clipboardImageFiles } from "./useChatAgentsAndHistory";
+import { acknowledgePrivacyImageNotice, PRIVACY_IMAGE_NOTICE, usePrivacyImageNoticeSeen } from "../privacyImageNotice";
 import { PLAN_MODE_HINT, statusText, MODE_LABEL } from "./aiSidebarShared";
 import type { AiChatCtx } from "./aiChatCtx";
 
-const PRIVACY_IMAGE_NOTICE = "已开启 AI 信息脱敏，暂不支持图片";
-
 export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   const privacyGuard = usePrivacyGuard();
-  const pushToast = useUi((state) => state.pushToast);
+  const imageNoticeSeen = usePrivacyImageNoticeSeen();
   const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, refCandidates, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permOpen, permError, permScope, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen } = ctx;
-  // Images cannot be redacted, so a guarded request must not carry them.
-  const imagesBlocked = privacyGuard.enabled && images.length > 0;
-  const onGuardedPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (privacyGuard.enabled && clipboardImageFiles(event.clipboardData).length > 0) {
-      event.preventDefault();
-      pushToast("info", PRIVACY_IMAGE_NOTICE);
-      return;
-    }
-    onPaste(event);
+  // Images are sent unchanged under the guard; tell the user once per device.
+  const imageNoticeVisible = privacyGuard.enabled && images.length > 0 && !imageNoticeSeen;
+  const sendMessage = () => {
+    if (imageNoticeVisible) acknowledgePrivacyImageNotice();
+    void send();
   };
   return (
     <>
@@ -176,9 +169,13 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           </div>
         )}
 
-        {imagesBlocked && (
-          <div role="status" className="mb-1.5 text-[11px] text-amber-300">
-            {PRIVACY_IMAGE_NOTICE}，请移除图片后发送
+        {imageNoticeVisible && (
+          <div role="status" className="mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-300">
+            <IconAlert size={10} className="shrink-0" />
+            <span className="min-w-0 flex-1">{PRIVACY_IMAGE_NOTICE}</span>
+            <button className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={acknowledgePrivacyImageNotice}>
+              知道了
+            </button>
           </div>
         )}
 
@@ -229,7 +226,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
             busy
               ? "运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到"
               : sessionId
-                ? DESKTOP || privacyGuard.enabled
+                ? DESKTOP
                   ? "向 NexTerm 提问，@ 引用资产或终端标签，/ 命令与技能"
                   : "向 NexTerm 提问，@ 引用资产或终端标签，/ 命令与技能，可直接粘贴图片"
                 : "未连接会话（仍可全局提问）"
@@ -238,7 +235,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           value={input}
           rows={3}
           onChange={(e) => onInputChange(e.target.value)}
-          onPaste={onGuardedPaste}
+          onPaste={onPaste}
           onKeyDown={(e) => {
             if (slashMenuOpen && slashItems.length > 0) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -263,7 +260,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               e.preventDefault();
               if (busy) void steer();
               else if (editing) void submitEditResend();
-              else if (!imagesBlocked) void send();
+              else sendMessage();
             }
           }}
         />
@@ -282,9 +279,8 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           />
           <button
             className="nx-icon-btn nx-icon-btn-sm"
-            title={privacyGuard.enabled ? PRIVACY_IMAGE_NOTICE : DESKTOP ? "添加图片" : "添加图片（也可以直接粘贴）"}
+            title={`${DESKTOP ? "添加图片" : "添加图片（也可以直接粘贴）"}${privacyGuard.enabled ? "，图片不会脱敏" : ""}`}
             aria-label="添加图片"
-            disabled={privacyGuard.enabled}
             onClick={() => imageInputRef.current?.click()}
           >
             <IconImage size={13} />
@@ -343,9 +339,9 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           ) : (
             <button
               className="nx-send-btn"
-              title={imagesBlocked ? PRIVACY_IMAGE_NOTICE : editing ? "编辑并重新发送" : "发送 (Enter)"}
-              disabled={(!input.trim() && images.length === 0) || editSubmitting || imagesBlocked}
-              onClick={() => (editing ? void submitEditResend() : void send())}
+              title={editing ? "编辑并重新发送" : "发送 (Enter)"}
+              disabled={(!input.trim() && images.length === 0) || editSubmitting}
+              onClick={() => (editing ? void submitEditResend() : sendMessage())}
             >
               <IconSendArrow />
             </button>
