@@ -1549,7 +1549,10 @@ export function TerminalPane({
         const message =
           e instanceof PasteUploadCancelled || run.cancelled
             ? `已取消上传${cleanupNote}`
-            : `文件上传到 /tmp 失败：${describeError(e)}${cleanupNote}`;
+            : (e as { code?: unknown } | null)?.code === "not_found"
+              ? // The SFTP view has no /tmp, typically a chrooted SFTP account.
+                `文件上传到 /tmp 失败：这台主机的 SFTP 中没有 /tmp（常见于受限的 chroot SFTP 账号），请改用文件面板上传到可写目录${cleanupNote}`
+              : `文件上传到 /tmp 失败：${describeError(e)}${cleanupNote}`;
         setImagePaste({ phase: "error", message });
       } finally {
         if (pasteUploadRef.current === run) pasteUploadRef.current = null;
@@ -1601,8 +1604,9 @@ export function TerminalPane({
   };
 
   useEffect(() => {
-    if (imagePaste?.phase !== "success") return;
-    const timer = window.setTimeout(() => setImagePaste(null), 4500);
+    // A finished upload's outcome is transient feedback; only an upload in progress stays on screen.
+    if (!imagePaste || imagePaste.phase === "uploading") return;
+    const timer = window.setTimeout(() => setImagePaste(null), imagePaste.phase === "error" ? 8000 : 4500);
     return () => window.clearTimeout(timer);
   }, [imagePaste]);
 
