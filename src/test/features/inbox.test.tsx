@@ -338,6 +338,27 @@ describe("inbox button", () => {
     await flush();
     expect(bell.getAttribute("aria-label")).toContain("没有");
   });
+
+  it("explains disabled rows inline, starts focus on the first row, and closes when focus leaves", () => {
+    vi.useRealTimers();
+    applyAwareness([attention({ tabId: "T2", reason: "notify", body: "approve?" }), attention({ tabId: "GONE" })]);
+    view = mount(createElement(InboxButton));
+    const bell = view.container.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
+    click(bell);
+    const first = view.container.querySelector("[data-inbox-tab] button");
+    expect(document.activeElement).toBe(first);
+    const gone = view.container.querySelector('[data-inbox-tab="GONE"]')!;
+    expect(gone.querySelector("[data-inbox-reason]")?.textContent).toContain("此端没有打开这个终端");
+    expect(view.container.querySelector('[data-inbox-tab="T2"] [data-inbox-reason]')).toBeNull();
+
+    // Focus moving to a terminal elsewhere closes the panel without taking the focus back.
+    const outside = document.createElement("textarea");
+    document.body.append(outside);
+    act(() => outside.focus());
+    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
 });
 
 describe("browser notifications", () => {
