@@ -10,6 +10,7 @@ import { resolveMakensis } from "./lib/makensis.mjs";
 import { readHostHelperProtocolMetadata } from "../.github/scripts/helper-metadata.mjs";
 import { commitLabel, dirtyPaths, sourceState } from "./lib/mobile.mjs";
 import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
+import { resolveTar } from "./lib/tar.mjs";
 import { parseReleaseVersion, parseSemVer } from "./lib/semver.mjs";
 import {
   canExecuteHelperMetadata,
@@ -980,7 +981,7 @@ function agentArchiveBinaryAssertions(kind, file, goos, goarch) {
   const checks = [];
   try {
     const extracted = kind === "agent-archive"
-      ? output("tar", ["-xzf", path.resolve(file), "-C", work, member], { allowFailure: true })
+      ? output(resolveTar(), ["-xzf", path.resolve(file), "-C", work, member], { allowFailure: true })
       : output(archiveTool(), ["extract", path.resolve(file), work], { allowFailure: true });
     checks.push(assertion(`${kind}-binary-extract`, extracted !== null, `extract ${member} from the final archive`));
     if (extracted === null) return checks;
@@ -1035,18 +1036,18 @@ function packageAssertions(kind, file, goos, goarch) {
         checks.push(assertion("linux-desktop-deb-extract", false, "ar extraction failed; the package is not a installable deb"));
         return checks;
       }
-      const control = output("tar", ["-xzOf", path.join(work, "control.tar.gz"), "control"], { allowFailure: true }) ?? "";
+      const control = output(resolveTar(), ["-xzOf", path.join(work, "control.tar.gz"), "control"], { allowFailure: true }) ?? "";
       checks.push(assertion(
           "linux-desktop-deb-control",
           control.includes("Package: nexterm\n") && control.includes(`Version: ${debVersion(VERSION)}\n`) && control.includes(`Architecture: ${goarch}\n`),
           "control file must carry the package name, release version and architecture",
       ));
-      const listing = output("tar", ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
+      const listing = output(resolveTar(), ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
       const members = new Set(listing?.split(/\r?\n/) || []);
       const required = ["usr/bin/nexterm-desktop", LINUX_DESKTOP_ENTRY, "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
       const missingHelpers = missingHelperArchiveMembers(members, "usr/bin/");
       checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && missingHelpers.length === 0 && required.every((member) => members.has(member)), `required members: ${[...required, ...helperArchiveMembers("usr/bin/")].join(", ")}; missing helpers: ${missingHelpers.join(", ") || "none"}`));
-      const unpacked = output("tar", ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
+      const unpacked = output(resolveTar(), ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
         ...helperArchiveMembers("usr/bin/"), "usr/bin/ai-runtime"], { allowFailure: true });
       checks.push(assertion("linux-desktop-deb-helper-extract", unpacked !== null, "all nine helpers must extract from data.tar.gz"));
       if (unpacked !== null) {
@@ -1065,7 +1066,7 @@ function packageAssertions(kind, file, goos, goarch) {
       "nexterm-server", "nexterm-server.service", "nexterm-onlyserver.service",
       "nexterm.env.example", "onlyserver.env.example", "LICENSE", "README.md", "web/index.html",
     ].map((member) => `${root}/${member}`);
-    const listing = output("tar", ["-tzf", file], { allowFailure: true });
+    const listing = output(resolveTar(), ["-tzf", file], { allowFailure: true });
     const members = new Set(listing?.split(/\r?\n/) || []);
     const missingHelpers = missingHelperArchiveMembers(members, `${root}/`);
     checks.push(assertion(
@@ -1075,7 +1076,7 @@ function packageAssertions(kind, file, goos, goarch) {
     ));
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-assert-"));
     try {
-      const extracted = output("tar", ["-xzf", path.resolve(file), "-C", work,
+      const extracted = output(resolveTar(), ["-xzf", path.resolve(file), "-C", work,
         ...helperArchiveMembers(`${root}/`), `${root}/ai-runtime`], { allowFailure: true });
       checks.push(assertion("server-archive-helper-extract", extracted !== null, "all nine helpers must extract from the server archive"));
       if (extracted !== null) {
@@ -1113,7 +1114,7 @@ function packageAssertions(kind, file, goos, goarch) {
   }
   if (kind === "agent-archive") {
     const checks = [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "agent archive is not gzip compressed")];
-    const listing = output("tar", ["-tzf", file], { allowFailure: true });
+    const listing = output(resolveTar(), ["-tzf", file], { allowFailure: true });
     const members = listing?.split(/\r?\n/).filter((name) => name !== "") || [];
     checks.push(assertion(
         "agent-archive-members",

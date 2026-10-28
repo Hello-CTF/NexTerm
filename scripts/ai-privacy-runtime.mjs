@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveTar } from "./lib/tar.mjs";
 import { runtimeLibrary, peImports, isCRTImport, RUNTIME_ABI, RUNTIME_LICENSES } from "./lib/privacy-runtime.mjs";
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -148,7 +149,7 @@ async function download(plan, cache, context = {}) {
 
 async function unpack(archive, directory) {
   await mkdir(directory, { recursive: true });
-  if (archive.endsWith(".tgz") || process.platform === "win32") command("tar", ["-xf", archive, "-C", directory]);
+  if (archive.endsWith(".tgz") || process.platform === "win32") command(resolveTar(), ["-xf", archive, "-C", directory]);
   else command("unzip", ["-oq", archive, "-d", directory]);
 }
 
