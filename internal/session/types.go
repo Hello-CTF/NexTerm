@@ -554,6 +554,17 @@ func reconnectable(kind string) bool {
 	return kind == KindSSH || kind == KindDocker || kind == KindWinRM || kind == KindDevice
 }
 
+// durableTerminalEnv is the terminal baseline for a durable session. A re-used helper
+// or agent keeps the environment of whoever started it (a service has none, a shell may
+// carry TERM=dumb or an unknown terminfo), so the client states TERM and COLORTERM
+// explicitly. It is placed before the asset and caller environment so those still win.
+func durableTerminalEnv(term string) []string {
+	if term == "" {
+		term = "xterm-256color"
+	}
+	return []string{"TERM=" + term, "COLORTERM=truecolor"}
+}
+
 func ptyBacked(kind string) bool {
 	return kind == KindLocal || kind == KindSSH || kind == KindDocker || kind == KindDevice
 }

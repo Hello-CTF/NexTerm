@@ -10,7 +10,12 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/usershell"
 )
+
+// accountShell reports the account's login shell; a variable so tests can pin it.
+var accountShell = usershell.Lookup
 
 const utf8Locale = "C.UTF-8"
 
@@ -58,6 +63,12 @@ func defaultShell(environment []string) (shell string, login bool) {
 		shell = strings.TrimSpace(os.Getenv("SHELL"))
 	}
 	if shell != "" {
+		return shell, true
+	}
+	// launchd and systemd --user services start without SHELL; the account's shell keeps
+	// rc files, PATH and prompt colors identical to a normal terminal (macOS /bin/sh is
+	// bash 3.2 and prints the zsh deprecation banner).
+	if shell = accountShell(); shell != "" {
 		return shell, true
 	}
 	return "/bin/sh", false

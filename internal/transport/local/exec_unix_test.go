@@ -175,7 +175,23 @@ func TestShellArgumentsUsesLoginFlagOnlyForLoginShells(t *testing.T) {
 	}
 }
 
+func pinAccountShell(t *testing.T, shell string) {
+	t.Helper()
+	previous := accountShell
+	accountShell = func() string { return shell }
+	t.Cleanup(func() { accountShell = previous })
+}
+
+func TestDefaultShellUsesAccountShellWithoutSHELL(t *testing.T) {
+	pinAccountShell(t, "/bin/zsh")
+	unsetEnv(t, "SHELL")
+	if shell, login := defaultShell(); shell != "/bin/zsh" || !login {
+		t.Fatalf("defaultShell = (%q, %v), want (/bin/zsh, true)", shell, login)
+	}
+}
+
 func TestDefaultShellFallbackIsNotALoginShell(t *testing.T) {
+	pinAccountShell(t, "")
 	unsetEnv(t, "SHELL")
 	shell, login := defaultShell()
 	if shell != "/bin/sh" || login {

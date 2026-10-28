@@ -630,7 +630,26 @@ func TestSessionEnvRespectsExplicitValues(t *testing.T) {
 	}
 }
 
+func pinAccountShell(t *testing.T, shell string) {
+	t.Helper()
+	previous := accountShell
+	accountShell = func() string { return shell }
+	t.Cleanup(func() { accountShell = previous })
+}
+
+func TestDefaultShellCommandUsesAccountShellWithoutSHELL(t *testing.T) {
+	pinAccountShell(t, "/bin/zsh")
+	t.Setenv("SHELL", "")
+	if err := os.Unsetenv("SHELL"); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultShellCommand([]string{"PATH=/usr/bin"}); !slices.Equal(got, []string{"/bin/zsh", "-l"}) {
+		t.Fatalf("defaultShellCommand = %v, want [/bin/zsh -l]", got)
+	}
+}
+
 func TestDefaultShellCommandFallbackIsNotALoginShell(t *testing.T) {
+	pinAccountShell(t, "")
 	t.Setenv("SHELL", "")
 	if err := os.Unsetenv("SHELL"); err != nil {
 		t.Fatal(err)
@@ -651,6 +670,7 @@ func TestDefaultShellCommandEnvironmentShellKeepsLoginFlag(t *testing.T) {
 }
 
 func TestCreateDefaultCommandSpawnsFallbackShell(t *testing.T) {
+	pinAccountShell(t, "")
 	if testing.Short() {
 		t.Skip("spawns a real shell")
 	}
