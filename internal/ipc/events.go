@@ -56,6 +56,8 @@ type AINotificationEvent struct {
 // notification, but authenticated server subscriptions reject it.
 type SyncStatusEvent struct {
 	OwnerID string `json:"ownerId,omitempty"`
+	// Applied marks a status event that follows remote changes landing locally; plain status changes leave it unset.
+	Applied bool `json:"applied,omitempty"`
 }
 
 type AppErrorEvent struct {

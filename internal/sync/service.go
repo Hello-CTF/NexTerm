@@ -825,7 +825,7 @@ func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error)
 				s.engine.logger.Warn("reload synced AI grants failed", "error", err)
 			}
 		}
-		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx)})
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: ipc.OwnerID(ctx), Applied: true})
 	}
 	s.recordProbe(ctx, syncErr)
 	return report, syncErr
