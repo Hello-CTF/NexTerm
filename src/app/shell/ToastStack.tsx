@@ -1,9 +1,11 @@
 import { useUi } from "../store";
-import { IconCheckCircle, IconInfo, IconXCircle } from "../../ui/icons";
+import { IconCheckCircle, IconClose, IconInfo, IconXCircle } from "../../ui/icons";
 
 export function ToastStack() {
   const toasts = useUi((s) => s.toasts);
   const dismissToast = useUi((s) => s.dismissToast);
+  const holdToast = useUi((s) => s.holdToast);
+  const releaseToast = useUi((s) => s.releaseToast);
   return (
     <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col gap-2">
       {toasts.map((t) => {
@@ -17,13 +19,13 @@ export function ToastStack() {
         return (
           <div
             key={t.id}
+            onMouseEnter={() => holdToast(t.id)}
+            onMouseLeave={() => releaseToast(t.id)}
+            onFocus={() => holdToast(t.id)}
+            onBlur={() => releaseToast(t.id)}
             className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-[var(--shadow-pop)] backdrop-blur ${tone}`}
           >
-            <button
-              type="button"
-              className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
-              onClick={() => dismissToast(t.id)}
-            >
+            <div className="flex min-w-0 flex-1 items-start gap-2.5 text-left">
               <Icon
                 size={14}
                 className={
@@ -34,8 +36,8 @@ export function ToastStack() {
                       : "mt-px shrink-0 text-blue-300"
                 }
               />
-              <span className="min-w-0 flex-1">{t.text}</span>
-            </button>
+              <span className="min-w-0 flex-1 select-text">{t.text}</span>
+            </div>
             {t.action ? (
               <button
                 type="button"
@@ -48,6 +50,15 @@ export function ToastStack() {
                 {t.action.label}
               </button>
             ) : null}
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+              aria-label="关闭通知"
+              title="关闭"
+              onClick={() => dismissToast(t.id)}
+            >
+              <IconClose size={12} />
+            </button>
           </div>
         );
       })}

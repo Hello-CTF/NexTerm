@@ -178,8 +178,11 @@ describe("GrantPanel lists only what matters", () => {
     setInputValue(search, "oirush");
     await flush();
     expect(text()).not.toContain("dev-k1");
+    expect(view!.container.querySelector('[role="option"], [role="listbox"]')).toBeNull();
     clickButton(view!.container, "oirush-beSSH");
     await flush();
+    const cancel = view!.container.querySelector<HTMLButtonElement>('button[aria-label="取消选择 oirush-be"]');
+    expect(cancel).not.toBeNull();
     await toggle("oirush-be：执行命令免确认");
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.grantSet).toHaveBeenCalledWith("asset-5", ["session_exec"]);

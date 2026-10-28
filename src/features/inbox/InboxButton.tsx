@@ -85,6 +85,12 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
           <IconCheck size={14} />
         </button>
       </div>
+      {(!reachable || !markable) && (
+        <div className="pl-[18px] pt-0.5 text-[11px] text-[var(--nx-fg-soft)]" data-inbox-reason="">
+          {!reachable && <p>此端没有打开这个终端，无法转到它。</p>}
+          {!markable && <p>打开这个终端后才能标记为已读。</p>}
+        </div>
+      )}
     </li>
   );
 }
@@ -142,7 +148,12 @@ export function InboxButton() {
     if (!open) return;
     setNow(Date.now());
     const panel = panelRef.current;
-    (panel?.querySelector<HTMLElement>("button:not([disabled])") ?? panel)?.focus();
+    // The first session row comes before the first-run guidance, so the keyboard lands on what needs attention.
+    (
+      panel?.querySelector<HTMLElement>("[data-inbox-tab] button:not([disabled])") ??
+      panel?.querySelector<HTMLElement>("button:not([disabled])") ??
+      panel
+    )?.focus();
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, [open]);
@@ -154,6 +165,8 @@ export function InboxButton() {
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Escape belongs to whatever has focus elsewhere (a terminal running vim); only the panel and bell take it.
+      if (!rootRef.current?.contains(document.activeElement)) return;
       setOpen(false);
       bellRef.current?.focus();
     };
@@ -167,7 +180,16 @@ export function InboxButton() {
 
   const label = count > 0 ? `收件箱：${count} 个会话需要关注` : "收件箱：没有需要关注的会话";
   return (
-    <div className="relative" ref={rootRef} style={wailsNoDragRegionStyle}>
+    <div
+      className="relative"
+      ref={rootRef}
+      style={wailsNoDragRegionStyle}
+      onBlur={(event) => {
+        // Tabbing out of the open panel closes it; a null target (the window losing focus) keeps it.
+        const next = event.relatedTarget as Node | null;
+        if (open && next && !event.currentTarget.contains(next)) setOpen(false);
+      }}
+    >
       <button
         ref={bellRef}
         type="button"
@@ -186,7 +208,7 @@ export function InboxButton() {
         {count > 0 && (
           <span
             className={`absolute -right-0.5 -top-0.5 min-w-[14px] rounded-full px-[3px] text-center text-[9.5px] font-semibold leading-[14px] text-neutral-950 ${
-              needsMe ? "bg-amber-400" : "bg-emerald-400"
+              needsMe ? "bg-amber-400" : "bg-green-400"
             }`}
             data-inbox-count={count}
             style={wailsNoDragRegionStyle}

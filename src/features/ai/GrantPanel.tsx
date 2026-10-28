@@ -401,13 +401,11 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
           />
         </div>
         {matches.length > 0 && !pickedTarget && (
-          <div className="mt-1 flex flex-col" role="listbox" aria-label="匹配的主机">
+          <div className="mt-1 flex flex-col" role="group" aria-label="匹配的主机">
             {matches.map((target) => (
               <button
                 key={target.id}
                 type="button"
-                role="option"
-                aria-selected={false}
                 className="nx-menu-item w-full"
                 onClick={() => setPicked(target.id)}
               >
@@ -423,7 +421,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
             <div className="mb-1 flex items-center gap-1.5">
               <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200">{pickedTarget.name}</span>
               <span className="nx-count">{ASSET_KIND_LABEL[pickedTarget.kind] ?? pickedTarget.kind}</span>
-              <button className="nx-icon-btn nx-icon-btn-sm" title="取消" onClick={() => setPicked(null)}>
+              <button className="nx-icon-btn nx-icon-btn-sm" title="取消" aria-label={`取消选择 ${pickedTarget.name}`} onClick={() => setPicked(null)}>
                 <IconClose size={10} />
               </button>
             </div>

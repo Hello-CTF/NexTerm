@@ -460,6 +460,9 @@ export interface UiState {
   setAiBusy: (v: boolean) => void;
   pushToast: (kind: ToastItem["kind"], text: string, action?: ToastAction) => void;
   dismissToast: (id: number) => void;
+  // Hovering or focusing a toast holds its timer; releasing restarts the remaining time.
+  holdToast: (id: number) => void;
+  releaseToast: (id: number) => void;
 
   connectingAssetIds: string[];
 

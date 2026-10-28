@@ -16,6 +16,8 @@ export interface FollowerSizeBadgeProps {
 // rows and pans the columns (a pinch on the terminal does the same).
 export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom }: FollowerSizeBadgeProps) {
   const id = useId();
+  // A pinch is only suggested where a touch screen is the primary pointer.
+  const touch = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
   const [expanded, setExpanded] = useState(false);
   const percent = scale && scale.ratio < 1 ? Math.round(scale.ratio * 100) : null;
   const zoomable = zoom === "height" || percent !== null;
@@ -65,7 +67,7 @@ export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom }: Follo
       )}
       {small && (
         <span className="rounded bg-neutral-900/85 px-2 py-0.5 text-[11px] text-amber-300" data-follower-small="">
-          {scale?.panY ? "文字已缩到最小，终端仍显示不全：上下滑动查看" : "文字较小：双指张开或点「放大文字」"}
+          {scale?.panY ? "文字已缩到最小，终端仍显示不全：上下滑动查看" : touch ? "文字较小：双指张开或点「放大文字」" : "文字较小：点「放大文字」"}
         </span>
       )}
     </div>

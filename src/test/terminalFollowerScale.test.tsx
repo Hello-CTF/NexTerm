@@ -493,4 +493,26 @@ describe("follower size badge", () => {
       element.remove();
     }
   });
+
+  it("suggests a pinch only on a coarse pointer", () => {
+    const element = document.createElement("div");
+    document.body.append(element);
+    const badgeRoot = createRoot(element);
+    const original = window.matchMedia;
+    const scale: FollowerScale = { ratio: 0.3, zoom: "fit", panX: false, panY: false };
+    const render = () => act(() => badgeRoot.render(createElement(FollowerSizeBadge, { scale, ownedElsewhere: true, zoom: "fit", onZoom: vi.fn() })));
+    try {
+      render();
+      expect(element.querySelector("[data-follower-small]")?.textContent).toBe("文字较小：点「放大文字」");
+      act(() => badgeRoot.unmount());
+      window.matchMedia = ((query: string) => ({ ...original(query), matches: true })) as typeof window.matchMedia;
+      const touchRoot = createRoot(element);
+      act(() => touchRoot.render(createElement(FollowerSizeBadge, { scale, ownedElsewhere: true, zoom: "fit", onZoom: vi.fn() })));
+      expect(element.querySelector("[data-follower-small]")?.textContent).toContain("双指张开");
+      act(() => touchRoot.unmount());
+    } finally {
+      window.matchMedia = original;
+      element.remove();
+    }
+  });
 });

@@ -1474,7 +1474,7 @@ function AssetRow({
       </div>
     )}
     {movingTarget && (
-      <div role="status" className="mx-1 mb-1 rounded bg-sky-500/10 px-2 py-1.5 text-[11.5px] text-sky-300">
+      <div role="status" className="nx-alert nx-alert-info mx-1 mb-1 px-2 py-1.5 text-[11.5px]">
         正在移至「{movingTarget}」…
       </div>
     )}
@@ -1637,7 +1637,7 @@ function GroupNode({
       aria-expanded={open}
       aria-level={level}
       tabIndex={0}
-      className={`mb-0.5 rounded ${over ? "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40" : ""}`}
+      className={`mb-0.5 rounded ${over ? "bg-blue-500/10 ring-1 ring-inset ring-blue-500/40" : ""}`}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
