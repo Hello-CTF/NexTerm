@@ -70,6 +70,12 @@
 }
 
 :root {
+  --nx-host-1: #60a5fa;
+  --nx-host-2: #22d3ee;
+  --nx-host-3: #4ade80;
+  --nx-host-4: #a78bfa;
+  --nx-host-5: #e879f9;
+  --nx-host-6: #fb923c;
   --nx-ui-font-size: 13px;
   --nx-ui-scale: 1;
   --nx-ui-text-factor: 1;
@@ -116,6 +122,12 @@
 }
 
 :root[data-nx-theme="light"] {
+  --nx-host-1: #1e40af;
+  --nx-host-2: #155e75;
+  --nx-host-3: #166534;
+  --nx-host-4: #5b21b6;
+  --nx-host-5: #86198f;
+  --nx-host-6: #9a3412;
   color-scheme: light;
 
   --color-neutral-950: #e7ebf1;
@@ -180,6 +192,12 @@
 }
 
 :root[data-nx-theme="light"] .bg-term {
+  --nx-host-1: #60a5fa;
+  --nx-host-2: #22d3ee;
+  --nx-host-3: #4ade80;
+  --nx-host-4: #a78bfa;
+  --nx-host-5: #e879f9;
+  --nx-host-6: #fb923c;
   --color-neutral-950: #17191e;
   --color-neutral-900: #1d2026;
   --color-neutral-800: #252932;
@@ -239,6 +257,13 @@
 }
 
 :root[data-nx-term-theme="light"] .bg-term {
+  --nx-host-1: #1e40af;
+  --nx-host-2: #155e75;
+  --nx-host-3: #166534;
+  --nx-host-4: #5b21b6;
+  --nx-host-5: #86198f;
+  --nx-host-6: #9a3412;
+  --color-rose-300: #b4234a;
   color-scheme: light;
 
   --color-neutral-950: #e7ebf1;
