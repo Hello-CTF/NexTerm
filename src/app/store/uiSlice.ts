@@ -18,6 +18,26 @@ import type { UiGet, UiSet, UiState } from "./types";
 
 let toastSeq = 1;
 
+const TOAST_LIMIT = 4;
+interface ToastTimer {
+  handle: number | undefined;
+  remaining: number;
+  startedAt: number;
+  onExpire: () => void;
+}
+const toastTimers = new Map<number, ToastTimer>();
+
+function clearToastTimer(id: number): void {
+  const timer = toastTimers.get(id);
+  if (timer?.handle !== undefined) window.clearTimeout(timer.handle);
+  toastTimers.delete(id);
+}
+
+function startToastTimer(id: number, ms: number, onExpire: () => void): void {
+  const handle = window.setTimeout(onExpire, ms);
+  toastTimers.set(id, { handle, remaining: ms, startedAt: Date.now(), onExpire });
+}
+
 export function createUiSlice(set: UiSet, get: UiGet) {
   return {
     leftOpen: true,
@@ -86,11 +106,28 @@ export function createUiSlice(set: UiSet, get: UiGet) {
       const existing = get().toasts.find((t) => t.kind === kind && t.text === text);
       if (existing) get().dismissToast(existing.id);
       const id = toastSeq++;
-      set((st) => ({ toasts: [...st.toasts, { id, kind, text, action }] }));
+      set((st) => ({ toasts: [...st.toasts, { id, kind, text, action }].slice(-TOAST_LIMIT) }));
+      for (const key of [...toastTimers.keys()]) {
+        if (!get().toasts.some((t) => t.id === key)) clearToastTimer(key);
+      }
       // An error or a toast with a button needs time to read or act on.
-      window.setTimeout(() => get().dismissToast(id), kind === "error" || action ? 8000 : 3500);
+      startToastTimer(id, kind === "error" || action ? 8000 : 3500, () => get().dismissToast(id));
     },
-    dismissToast: (id) =>
-      set((st) => ({ toasts: st.toasts.filter((t) => t.id !== id) })),
+    dismissToast: (id) => {
+      clearToastTimer(id);
+      set((st) => ({ toasts: st.toasts.filter((t) => t.id !== id) }));
+    },
+    holdToast: (id) => {
+      const timer = toastTimers.get(id);
+      if (!timer || timer.handle === undefined) return;
+      window.clearTimeout(timer.handle);
+      timer.handle = undefined;
+      timer.remaining = Math.max(1500, timer.remaining - (Date.now() - timer.startedAt));
+    },
+    releaseToast: (id) => {
+      const timer = toastTimers.get(id);
+      if (!timer || timer.handle !== undefined) return;
+      startToastTimer(id, timer.remaining, timer.onExpire);
+    },
   } satisfies Partial<UiState>;
 }
