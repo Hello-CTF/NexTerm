@@ -60,24 +60,24 @@ func requirePayloadFile(t *testing.T, path, body string) {
 }
 
 func TestLinuxPayloadStagesAndRejectsInvalidRuntime(t *testing.T) {
-	valid := []payloadEntry{{"usr/bin/nexterm-desktop", "new", 0}, {"usr/bin/ai-runtime/libnexterm_privacy.so", "native", 0}, {"usr/bin/ai-runtime/libonnxruntime.so", "ort", 0}}
+	valid := []payloadEntry{{"usr/bin/nexterm-desktop", "new", 0}, {"usr/bin/ai-runtime/libonnxruntime.so", "native", 0}, {"usr/bin/ai-runtime/licenses/ONNX-RUNTIME-LICENSE", "license", 0}}
 	for _, test := range []struct {
 		name         string
 		entries      []payloadEntry
 		cancel, fail bool
 	}{
 		{name: "complete", entries: valid}, {name: "legacy", entries: valid[:1]},
-		{name: "incomplete", entries: valid[:2], fail: true},
+		{name: "incomplete", entries: []payloadEntry{valid[0], valid[2]}, fail: true},
 		{name: "duplicate", entries: append(append([]payloadEntry{}, valid...), valid[1]), fail: true},
 		{name: "traversal", entries: append(append([]payloadEntry{}, valid...), payloadEntry{"usr/bin/ai-runtime/../../outside", "bad", 0}), fail: true},
 		{name: "symlink", entries: append(append([]payloadEntry{}, valid...), payloadEntry{"usr/bin/ai-runtime/link", "", tar.TypeSymlink}), fail: true},
-		{name: "directory instead of library", entries: []payloadEntry{valid[0], valid[1], {"usr/bin/ai-runtime/libonnxruntime.so/child", "bad", 0}}, fail: true},
+		{name: "directory instead of library", entries: []payloadEntry{valid[0], valid[2], {"usr/bin/ai-runtime/libonnxruntime.so/child", "bad", 0}}, fail: true},
 		{name: "canceled", entries: valid, cancel: true, fail: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
 			exe := filepath.Join(dir, "nexterm-desktop")
-			runtime := filepath.Join(dir, "ai-runtime/libnexterm_privacy.so")
+			runtime := filepath.Join(dir, "ai-runtime/libonnxruntime.so")
 			writePayloadFile(t, exe, "old")
 			writePayloadFile(t, runtime, "old-native")
 			ctx, cancel := context.WithCancel(context.Background())
@@ -113,9 +113,9 @@ func TestLinuxPayloadRestoresRuntimeWhenExecutableCannotBeReplaced(t *testing.T)
 	if err := os.Mkdir(exe, 0755); err != nil {
 		t.Fatal(err)
 	}
-	library := filepath.Join(dir, "ai-runtime/libnexterm_privacy.so")
+	library := filepath.Join(dir, "ai-runtime/libonnxruntime.so")
 	writePayloadFile(t, library, "old")
-	err := installLinuxPayload(context.Background(), payloadTar(t, payloadEntry{"usr/bin/nexterm-desktop", "new", 0}, payloadEntry{"usr/bin/ai-runtime/libnexterm_privacy.so", "native", 0}, payloadEntry{"usr/bin/ai-runtime/libonnxruntime.so", "ort", 0}), exe)
+	err := installLinuxPayload(context.Background(), payloadTar(t, payloadEntry{"usr/bin/nexterm-desktop", "new", 0}, payloadEntry{"usr/bin/ai-runtime/libonnxruntime.so", "native", 0}), exe)
 	if err == nil {
 		t.Fatal("expected executable replacement failure")
 	}
@@ -127,7 +127,7 @@ func TestWindowsPayloadRollsBackBothImages(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			exe := filepath.Join(dir, "nexterm.exe")
-			native := filepath.Join(dir, "ai-runtime/nexterm_privacy.dll")
+			native := filepath.Join(dir, "ai-runtime/onnxruntime.dll")
 			writePayloadFile(t, exe, "old")
 			if mode != "no old runtime" {
 				writePayloadFile(t, native, "old-native")
@@ -140,12 +140,13 @@ func TestWindowsPayloadRollsBackBothImages(t *testing.T) {
 					t.Fatal("loaded runtime not moved aside")
 				}
 				writePayloadFile(t, exe, "new")
+				if mode == "incomplete runtime" {
+					writePayloadFile(t, filepath.Join(dir, "ai-runtime/licenses/ONNX-RUNTIME-LICENSE"), "license")
+					return nil
+				}
 				writePayloadFile(t, native, "new-native")
 				if mode == "installer error" || mode == "no old runtime" {
 					return errors.New("failed installer")
-				}
-				if mode != "incomplete runtime" {
-					writePayloadFile(t, filepath.Join(dir, "ai-runtime/onnxruntime.dll"), "ort")
 				}
 				return nil
 			})

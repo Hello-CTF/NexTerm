@@ -49,7 +49,7 @@ func installWindowsPayload(executable string, install func() error) error {
 	if err := install(); err != nil {
 		return rollback(err)
 	}
-	for _, name := range []string{executable, filepath.Join(runtimeTarget, "nexterm_privacy.dll"), filepath.Join(runtimeTarget, "onnxruntime.dll")} {
+	for _, name := range []string{executable, filepath.Join(runtimeTarget, "onnxruntime.dll")} {
 		info, err := os.Lstat(name)
 		if err != nil {
 			return rollback(fmt.Errorf("安装完成后文件不可用 %s: %w", name, err))
