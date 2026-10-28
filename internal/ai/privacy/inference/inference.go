@@ -1,11 +1,11 @@
-// Package inference runs AstrLink's privacy engine in-process through its native
-// C ABI. The runtime libraries are packaged separately from downloaded weights.
+// Package inference runs AstrLink's privacy engine in-process: a Go port of the
+// AstrLink privacy worker that calls a bundled ONNX Runtime through its C API.
+// The runtime library is packaged separately from downloaded weights.
 package inference
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -30,9 +30,10 @@ func (e *PlatformError) Error() string { return e.Message }
 var ErrUnavailable = errors.New("本地隐私推理运行时未安装或不兼容")
 var ErrClosed = errors.New("本地隐私推理引擎已关闭")
 var ErrTokenLimit = errors.New("隐私检测文本超过 131072 token 上限")
+var errModelIncompatible = errors.New("隐私模型格式、文件或算子与运行时不兼容")
 
 // DefaultRuntimeDirectory locates libraries shipped with this application.
-// Android's executable is app_process, so its CGO bridge location is used.
+// Android's executable is app_process, so its CGO library location is used.
 func DefaultRuntimeDirectory() string {
 	if runtime.GOOS == "android" {
 		if path := selfLibraryPath(); path != "" {
@@ -53,39 +54,37 @@ func DefaultRuntimeDirectory() string {
 	return filepath.Join(directory, "ai-runtime")
 }
 
-// RuntimeFiles returns paths relative to a runtime directory. iOS libraries are
-// embedded and signed frameworks; Android libraries reside in nativeLibraryDir.
-func RuntimeFiles() (engine, onnx string) {
+// RuntimeFiles returns the ONNX Runtime library path relative to a runtime
+// directory, the only file the directory needs. iOS embeds a signed
+// framework; Android's library resides in nativeLibraryDir.
+func RuntimeFiles() []string {
 	switch runtime.GOOS {
 	case "windows":
-		return "nexterm_privacy.dll", "onnxruntime.dll"
+		return []string{"onnxruntime.dll"}
 	case "darwin":
-		return "libnexterm_privacy.dylib", "libonnxruntime.dylib"
+		return []string{"libonnxruntime.dylib"}
 	case "ios":
-		return "NexTermPrivacy.framework/NexTermPrivacy", "onnxruntime.framework/onnxruntime"
+		return []string{"onnxruntime.framework/onnxruntime"}
 	default:
-		return "libnexterm_privacy.so", "libonnxruntime.so"
+		return []string{"libonnxruntime.so"}
 	}
 }
 
-func runtimePaths(directory string) (string, string, error) {
+// runtimePath returns the absolute ONNX Runtime library path without loading it.
+func runtimePath(directory string) (string, error) {
 	if directory == "" {
-		return "", "", ErrUnavailable
+		return "", ErrUnavailable
 	}
 	directory, err := filepath.Abs(directory)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	engine, onnx := RuntimeFiles()
-	engine = filepath.Join(directory, engine)
-	onnx = filepath.Join(directory, onnx)
-	for _, path := range []string{engine, onnx} {
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
-			return "", "", ErrUnavailable
-		}
+	path := filepath.Join(directory, filepath.FromSlash(RuntimeFiles()[0]))
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", ErrUnavailable
 	}
-	return engine, onnx, nil
+	return path, nil
 }
 
 func validateSpans(ctx context.Context, text string, spans []Span) ([]Span, error) {
@@ -97,9 +96,7 @@ func validateSpans(ctx context.Context, text string, spans []Span) ([]Span, erro
 		if span.Start < 0 || span.End <= span.Start || span.End > len(text) || !utf8.RuneStart(text[span.Start]) || (span.End < len(text) && !utf8.RuneStart(text[span.End])) || math.IsNaN(float64(span.Score)) || math.IsInf(float64(span.Score), 0) || span.Score < 0 || span.Score > 1 {
 			return nil, errors.New("隐私模型返回无效片段")
 		}
-		switch span.Label {
-		case "email", "phone", "account", "payment_card", "ip_address", "url", "common_secret", "private_address", "private_date", "private_person":
-		default:
+		if !canonicalKind(span.Label) {
 			return nil, errors.New("隐私模型返回未知标签")
 		}
 		if span.Score >= MinimumScore {
@@ -107,23 +104,4 @@ func validateSpans(ctx context.Context, text string, spans []Span) ([]Span, erro
 		}
 	}
 	return accepted, nil
-}
-
-func nativeError(code int) error {
-	switch code {
-	case 0:
-		return nil
-	case 1:
-		return errors.New("隐私推理输入无效")
-	case 2:
-		return ErrUnavailable
-	case 3:
-		return errors.New("隐私模型格式、文件或算子与运行时不兼容")
-	case 4:
-		return ErrTokenLimit
-	case 6:
-		return context.Canceled
-	default:
-		return fmt.Errorf("本地隐私推理失败（代码 %d）", code)
-	}
 }
