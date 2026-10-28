@@ -220,7 +220,7 @@ export function InboxButton() {
         {count > 0 && (
           <span
             className={`absolute -right-0.5 -top-0.5 min-w-[14px] rounded-full px-[3px] text-center text-[9.5px] font-semibold leading-[14px] text-neutral-950 ${
-              needsMe ? "bg-amber-400" : "bg-emerald-400"
+              needsMe ? "bg-amber-400" : "bg-green-400"
             }`}
             data-inbox-count={count}
             style={wailsNoDragRegionStyle}
