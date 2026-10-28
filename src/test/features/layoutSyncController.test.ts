@@ -391,11 +391,10 @@ describe("two-client layout controller", () => {
     expect(saved.aiBoards[saved.workspaces[0].id].tabs.map((tab) => tab.id).sort()).toEqual(["ai-a", "ai-b"]);
   });
 
-  it("reads v2, rewrites it as v4, and protects dirty files and SQL drafts from remote close", async () => {
+  it("protects dirty files and SQL drafts from remote close", async () => {
     const files = workspace("files", "asset-files", [pane("files-pane", [file("clean", "/clean.txt"), file("dirty", "/dirty.txt")])]);
     const db = database("db");
     const base = layout([files, db]);
-    base.v = 2;
     server.revision = 1;
     server.data = JSON.stringify(base);
     const a = await openClient();
@@ -403,8 +402,6 @@ describe("two-client layout controller", () => {
     a.editor.setFileEditorDirty("session", "/dirty.txt", true);
     a.store.getState().updateSqlDraft("db", sqlDraft());
     await a.layout.flushLayout();
-    // A legacy document is rewritten in the current format on first read.
-    expect(server.putCalls).toBe(1);
     expect(serverLayout().v).toBe(4);
 
     b.store.setState({ workspaces: [], aiBoards: {} });
@@ -525,41 +522,11 @@ describe("split trees across two clients", () => {
     expect(paneIdsInOrder(tree)).toEqual(["p0", right]);
   });
 
-  it("resets a legacy split layout to one pane per workspace, says so once, and rewrites it as v4", async () => {
-    const legacy = {
-      ...layout([
-        { ...workspace("ws", "asset", [pane("upper", [terminal("t1")]), pane("lower", [terminal("t2")], "t2")]), title: "prod" },
-        { ...workspace("solo", "asset-solo", [pane("only", [terminal("t3")])]), title: "solo" },
-      ]),
-      v: 3,
-    };
-    server.revision = 1;
-    server.data = JSON.stringify(legacy);
-    const a = await openClient();
-    const notice = await import("../../app/layoutResetNotice");
-
-    const ws = a.store.getState().workspaces.find((item) => item.id === "ws")!;
-    expect(ws.panes.map((item) => item.id)).toEqual(["upper"]);
-    expect(ws.panes[0].tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
-    expect(notice.layoutResetNotice()).toEqual(["prod"]);
-
-    await a.layout.flushLayout();
-    expect(serverLayout().v).toBe(4);
-    expect(allTabIds(serverLayout()).sort()).toEqual(["t1", "t2", "t3"]);
-
-    notice.dismissLayoutResetNotice();
-    expect(notice.layoutResetNotice()).toBeNull();
-    const b = await openClient();
-    const freshNotice = await import("../../app/layoutResetNotice");
-    expect(freshNotice.layoutResetNotice()).toBeNull();
-    expect(b.store.getState().workspaces.find((item) => item.id === "ws")?.panes).toHaveLength(1);
-  });
-
   it("neither reads nor overwrites a layout saved in a newer format", async () => {
     server.revision = 4;
     server.data = JSON.stringify({ ...layout([workspace("ws", "asset", [pane("p0", [terminal("future")])])]), v: 5 });
     const a = await openClient();
-    const notice = await import("../../app/layoutResetNotice");
+    const notice = await import("../../app/newerLayoutNotice");
     expect(a.store.getState().workspaces).toEqual([]);
     expect(notice.newerLayoutNotice()).toBe(5);
 

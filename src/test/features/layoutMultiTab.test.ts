@@ -80,7 +80,7 @@ function workspace(id: string, title: string): Workspace {
 
 function layout(leftWidth: number, title: string): PersistedLayout {
   return {
-    v: 2,
+    v: 4,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,

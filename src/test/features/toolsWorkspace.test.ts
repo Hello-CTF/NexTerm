@@ -524,7 +524,7 @@ describe("tool tab routing", () => {
 
   it("restores an active global forward overview to Tools instead of a scoped forward tab", () => {
     const parsed = sanitizeLayout({
-      v: 3,
+      v: 4,
       leftOpen: true,
       leftMode: "assets",
       leftWidth: 280,

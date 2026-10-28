@@ -373,8 +373,7 @@ func renderReplaceScriptUnix(newPath, targetPath string, delaySeconds int, resta
 }
 
 // renderReplaceScriptWindows is the windows counterpart of renderReplaceScriptUnix:
-// powershell deferred replacement, rolling back to the old binary on failure; after a successful replacement, if the NexTermAgent service
-// exists it is started via sc.exe start (service missing or start failure are both silent, forming no loop).
+// powershell deferred replacement, rolling back to the old binary on failure.
 func renderReplaceScriptWindows(newPath, targetPath string, delaySeconds int) string {
 	var b strings.Builder
 	b.WriteString("Start-Sleep -Seconds " + strconv.Itoa(delaySeconds) + "\n")
@@ -385,8 +384,6 @@ func renderReplaceScriptWindows(newPath, targetPath string, delaySeconds int) st
 	b.WriteString("try {\n")
 	b.WriteString("  Move-Item -LiteralPath $nxNew -Destination $nxTarget -Force -ErrorAction Stop\n")
 	b.WriteString("  Remove-Item -LiteralPath $nxBak -Force -ErrorAction SilentlyContinue\n")
-	b.WriteString("  & sc.exe query NexTermAgent *>$null\n")
-	b.WriteString("  if ($LASTEXITCODE -eq 0) { & sc.exe start NexTermAgent *>$null }\n")
 	b.WriteString("} catch {\n")
 	b.WriteString("  try { Move-Item -LiteralPath $nxBak -Destination $nxTarget -Force -ErrorAction Stop } catch {}\n")
 	b.WriteString("}\n")

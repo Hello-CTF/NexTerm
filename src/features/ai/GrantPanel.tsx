@@ -73,10 +73,6 @@ const SEARCH_LIMIT = 6;
 // device/<id> pseudo asset id used by the guard store and device sessions.
 type GrantTarget = { id: string; name: string; kind: string };
 
-function kindText(kinds: string[]): string {
-  return kinds.map((k) => KIND_LABEL[k as AiGrantKind] ?? k).join("、");
-}
-
 function ruleScopeText(rule: AiGrantRule): string {
   const action = RULE_ACTION_LABEL[rule.action as AiGrantRuleAction] ?? rule.action;
   return rule.path ? `${action} ${rule.path}` : action;
@@ -120,10 +116,6 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
   const [devices, setDevices] = useState<FleetDevice[]>([]);
   const [grants, setGrants] = useState<Record<string, AiDeviceGrant>>({});
   const [rules, setRules] = useState<AiGrantRule[]>([]);
-  // Records persisted before 1.3.0 are never migrated: the server lists them as legacy, they authorize nothing,
-  // and the panel keeps them out of the effective view so the user can re-grant and clear them explicitly.
-  const [legacyGrants, setLegacyGrants] = useState<AiDeviceGrant[]>([]);
-  const [legacyRules, setLegacyRules] = useState<AiGrantRule[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -144,17 +136,11 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
         ),
       ]);
       const map: Record<string, AiDeviceGrant> = {};
-      const legacyGrantRows: AiDeviceGrant[] = [];
-      for (const grant of grantRows ?? []) {
-        if (grant.legacy) legacyGrantRows.push(grant);
-        else map[grant.deviceId] = grant;
-      }
+      for (const grant of grantRows ?? []) map[grant.deviceId] = grant;
       setAssets(assetRows ?? []);
       setDevices(deviceRows);
       setGrants(map);
-      setRules((ruleRows ?? []).filter((rule) => !rule.legacy));
-      setLegacyGrants(legacyGrantRows);
-      setLegacyRules((ruleRows ?? []).filter((rule) => rule.legacy));
+      setRules(ruleRows ?? []);
       setLoadError(null);
     } catch (e) {
       setLoadError(describeError(e));
@@ -180,13 +166,8 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     const current = grants[target.id]?.kinds ?? [];
     const next = on ? [...new Set([...current, kind])] : current.filter((k) => k !== kind);
     if (on) {
-      // Granting replaces the whole legacy record for this host; its other kinds are not carried over.
-      const legacy = legacyGrants.find((grant) => grant.deviceId === target.id);
-      const replaces = legacy
-        ? `\n\n这会替换该主机 1.3.0 之前的旧格式授权（${kindText(legacy.kinds)}），只保留新开启的授权；其他种类需要单独重新开启。`
-        : "";
       const confirmed = await ask(
-        `让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问？\n\n即使在只读模式下也会放行；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。${replaces}`,
+        `让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问？\n\n即使在只读模式下也会放行；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。`,
         { title: "开启免确认授权", kind: "warning" },
       );
       if (!confirmed) return;
@@ -203,8 +184,6 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       } else {
         const saved = await grantApi.set(target.id, next as AiGrantKind[]);
         setGrants((prev) => ({ ...prev, [target.id]: saved }));
-        // A new grant replaces the legacy record for the same host on the server.
-        setLegacyGrants((prev) => prev.filter((grant) => grant.deviceId !== target.id));
       }
       pushToast("success", on ? `「${target.name}」${KIND_LABEL[kind]}已免确认` : `「${target.name}」${KIND_LABEL[kind]}恢复为逐次确认`);
     } catch (e) {
@@ -268,30 +247,6 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     } catch (e) {
       pushToast("error", `无法撤销授权：${describeError(e)}`);
       void reload();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const clearLegacy = async (kind: "grant" | "rule", id: string, label: string) => {
-    // Clearing records a normal revocation, which syncs to every device of this account.
-    const confirmed = await ask(
-      `清除「${label}」？\n\n清除会撤销这条授权，并同步到所有已同步的设备：其他设备上仍在生效的同一授权也会被撤销。`,
-      { title: "清除旧格式授权", kind: "warning" },
-    );
-    if (!confirmed) return;
-    setBusy(`legacy:${kind}:${id}`);
-    try {
-      if (kind === "grant") {
-        await grantApi.revoke(id);
-        setLegacyGrants((prev) => prev.filter((grant) => grant.deviceId !== id));
-      } else {
-        await grantApi.ruleRevoke(id);
-        setLegacyRules((prev) => prev.filter((rule) => rule.id !== id));
-      }
-      pushToast("success", "旧格式授权已清除");
-    } catch (e) {
-      pushToast("error", `清除旧格式授权失败：${describeError(e)}`);
     } finally {
       setBusy(null);
     }
@@ -431,42 +386,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
         )}
       </div>
 
-      {(legacyGrants.length > 0 || legacyRules.length > 0) && (
-        <div className="rounded-lg border border-amber-500/40 px-2 py-1.5" role="alert" aria-label="旧格式授权">
-          <div className="mb-1 text-[10.5px] leading-relaxed text-amber-300">
-            以下授权为 1.3.0 之前的旧格式，在这台设备上不生效，也不会从这台设备同步出去；其他设备上的同一授权可能仍然有效。请按需重新开启授权，或清除（清除会在所有已同步设备上撤销）。
-          </div>
-          {legacyGrants.map((grant) => (
-            <LegacyRow
-              key={`grant:${grant.deviceId}`}
-              label={`${targetOf(grant.deviceId).name}：${kindText(grant.kinds)}`}
-              busy={busy === `legacy:grant:${grant.deviceId}`}
-              onClear={() => void clearLegacy("grant", grant.deviceId, `${targetOf(grant.deviceId).name}：${kindText(grant.kinds)}`)}
-            />
-          ))}
-          {legacyRules.map((rule) => (
-            <LegacyRow
-              key={`rule:${rule.id}`}
-              label={`${targetOf(rule.deviceId).name}：${ruleScopeText(rule)}`}
-              busy={busy === `legacy:rule:${rule.id}`}
-              onClear={() => void clearLegacy("rule", rule.id, `${targetOf(rule.deviceId).name}：${ruleScopeText(rule)}`)}
-            />
-          ))}
-        </div>
-      )}
-
       <div className="text-[10px] leading-relaxed text-neutral-500">{scopeNote}</div>
-    </div>
-  );
-}
-
-function LegacyRow({ label, busy, onClear }: { label: string; busy: boolean; onClear: () => void }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-300">{label}</span>
-      <button className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" disabled={busy} onClick={onClear}>
-        {busy ? "处理中…" : "清除"}
-      </button>
     </div>
   );
 }

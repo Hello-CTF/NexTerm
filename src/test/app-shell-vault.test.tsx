@@ -150,7 +150,7 @@ afterEach(() => {
 describe("status bar credential vault state", () => {
   it("bootstraps the server layout on startup and saves local changes back through layoutApi", async () => {
     const remoteLayout = {
-      v: 2,
+      v: 4,
       leftOpen: false,
       leftMode: "assets",
       rightOpen: true,

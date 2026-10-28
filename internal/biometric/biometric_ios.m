@@ -130,8 +130,7 @@ int nx_keychain_state(const char *caccount, char **err_msg) {
 }
 
 // Reading an ACL-protected item makes the system show the face verification itself: pass an unevaluated LAContext,
-// the keychain evaluates on demand and uses localizedReason as the prompt's usage description;
-// legacy items without ACL show no prompt (the caller must run explicit LAContext verification first).
+// the keychain evaluates on demand and uses localizedReason as the prompt's usage description.
 bool nx_keychain_get(const char *caccount, const char *cprompt, char **out_value, char **err_msg) {
     NSString *account = caccount ? [NSString stringWithUTF8String:caccount] : @"";
     NSMutableDictionary *query = nxKeychainQuery(account);

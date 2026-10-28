@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -227,90 +228,57 @@ func TestAuthorizationAdmissionRechecksGenerationAfterTargetValidation(t *testin
 	}
 }
 
-// TestLegacyGrantRecordsAreRejectedNotMigrated pins the 1.3.0 contract: records
-// written before 1.3.0 (no explicit permanence or no generation, including
-// rows rewritten by an older sync peer) are never migrated on read or on
-// evaluation. They stay byte-for-byte in storage, are listed as Legacy so the
-// user sees them, and never authorize a call.
-func TestLegacyGrantRecordsAreRejectedNotMigrated(t *testing.T) {
+// TestOldFormatRecordsArePurgedQuietlyOnLoad pins that persisted records without
+// the current marker (no explicit permanence or no generation), and malformed
+// ones, are dropped when loaded: they authorize nothing, are not listed, the row
+// is rewritten without them and current entries survive byte-compatibly.
+func TestOldFormatRecordsArePurgedQuietlyOnLoad(t *testing.T) {
 	ctx := context.Background()
-	legacyGrants := `{"device-a":{"deviceId":"device-a","kinds":["terminal_write"],"permanent":true,"updatedAt":1},"device-b":{"deviceId":"device-b","kinds":["terminal_write"],"updatedAt":1,"generation":"gen-b"}}`
-	legacyRules := `[{"id":"rule-a","deviceId":"device-a","action":"write_file","path":"/var/log/**"}]`
-	settings := &memorySettings{values: map[string]string{
-		DeviceGrantsSettingKey: legacyGrants,
-		GrantRulesSettingKey:   legacyRules,
-	}}
+	current := `{"deviceId":"device-c","kinds":["terminal_write"],"permanent":true,"updatedAt":3,"generation":"gen-c"}`
+	grants := `{"device-a":{"deviceId":"device-a","kinds":["terminal_write"],"permanent":true,"updatedAt":1},` +
+		`"device-b":{"deviceId":"device-b","kinds":["terminal_write"],"updatedAt":1,"generation":"gen-b"},` +
+		`"device-bad":"not-an-object","device-c":` + current + `}`
+	currentRule := `{"id":"rule-c","deviceId":"device-c","action":"write_file","path":"/tmp/**","createdAt":1,"updatedAt":1,"generation":"gen-r"}`
+	rules := `[{"id":"rule-a","deviceId":"device-a","action":"write_file","path":"/var/log/**"},42,` + currentRule + `]`
+	settings := &memorySettings{values: map[string]string{DeviceGrantsSettingKey: grants, GrantRulesSettingKey: rules}}
 	manager, err := NewGrants(ctx, settings, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, deviceID := range []string{"device-a", "device-b"} {
+	for _, deviceID := range []string{"device-a", "device-b", "device-bad"} {
 		if decision := manager.Evaluate(ctx, Config{Mode: ReadWrite}, Confirm(KindProcess, "write"), nil, deviceID, "send_keys", "run"); decision.Action == ActionAllow {
-			t.Fatalf("legacy grant for %s authorized a call: %+v", deviceID, decision)
-		}
-		if _, ok := mustGrant(t, manager, deviceID); ok {
-			t.Fatalf("legacy grant for %s is reported as effective", deviceID)
+			t.Fatalf("old-format grant for %s authorized a call: %+v", deviceID, decision)
 		}
 	}
 	if decision := manager.EvaluateResource(ctx, Config{Mode: ReadWrite}, Confirm(KindWriteFS, "write"), nil, "device-a", "write_file", "run", Resource{Action: "write_file", Path: "/var/log/app.log"}); decision.Action == ActionAllow {
-		t.Fatalf("legacy rule authorized a call: %+v", decision)
+		t.Fatalf("old-format rule authorized a call: %+v", decision)
 	}
-	if settings.values[DeviceGrantsSettingKey] != legacyGrants || settings.values[GrantRulesSettingKey] != legacyRules {
-		t.Fatalf("evaluation rewrote legacy records: grants=%s rules=%s", settings.values[DeviceGrantsSettingKey], settings.values[GrantRulesSettingKey])
-	}
-
 	listed := mustGrantList(t, manager)
-	if len(listed) != 2 {
-		t.Fatalf("listed grants = %+v, want both legacy records visible", listed)
+	if len(listed) != 1 || listed[0].DeviceID != "device-c" {
+		t.Fatalf("listed grants = %+v, want only the current record", listed)
 	}
-	for _, grant := range listed {
-		if !grant.Legacy {
-			t.Fatalf("legacy grant listed without the legacy marker: %+v", grant)
-		}
-	}
-	rules, err := manager.Rules(ctx)
+	listedRules, err := manager.Rules(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 1 || !rules[0].Legacy || rules[0].ID != "rule-a" {
-		t.Fatalf("listed rules = %+v, want the legacy rule visible", rules)
+	if len(listedRules) != 1 || listedRules[0].ID != "rule-c" {
+		t.Fatalf("listed rules = %+v, want only the current rule", listedRules)
 	}
-
-	// An explicit re-grant replaces the legacy record; other legacy records stay verbatim.
-	granted, err := manager.Grant(ctx, "device-a", []GrantKind{GrantKindTerminalWrite})
-	if err != nil {
+	var storedGrants map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(settings.values[DeviceGrantsSettingKey]), &storedGrants); err != nil {
 		t.Fatal(err)
 	}
-	if granted.Legacy {
-		t.Fatalf("re-granted record is still legacy: %+v", granted)
+	if len(storedGrants) != 1 || !strings.Contains(string(storedGrants["device-c"]), `"generation":"gen-c"`) {
+		t.Fatalf("stored grants = %s", settings.values[DeviceGrantsSettingKey])
 	}
-	if decision := manager.Evaluate(ctx, Config{Mode: ReadWrite}, Confirm(KindProcess, "write"), nil, "device-a", "send_keys", "run"); decision.Action != ActionAllow {
-		t.Fatalf("re-granted device was not authorized: %+v", decision)
-	}
-	var stored map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(settings.values[DeviceGrantsSettingKey]), &stored); err != nil {
+	var storedRules []json.RawMessage
+	if err := json.Unmarshal([]byte(settings.values[GrantRulesSettingKey]), &storedRules); err != nil {
 		t.Fatal(err)
 	}
-	if string(stored["device-b"]) != `{"deviceId":"device-b","kinds":["terminal_write"],"updatedAt":1,"generation":"gen-b"}` {
-		t.Fatalf("bystander legacy record was not preserved verbatim: %s", stored["device-b"])
+	if len(storedRules) != 1 || !strings.Contains(string(storedRules[0]), `"generation":"gen-r"`) {
+		t.Fatalf("stored rules = %s", settings.values[GrantRulesSettingKey])
 	}
-
-	// Revoking a legacy record removes it explicitly.
-	if err := manager.Revoke(ctx, "device-b"); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.RevokeRule(ctx, "rule-a"); err != nil {
-		t.Fatal(err)
-	}
-	fresh, err := NewGrants(ctx, settings, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	listed = mustGrantList(t, fresh)
-	if len(listed) != 1 || listed[0].DeviceID != "device-a" || listed[0].Legacy {
-		t.Fatalf("grants after revoke = %+v", listed)
-	}
-	if rules, err := fresh.Rules(ctx); err != nil || len(rules) != 0 {
-		t.Fatalf("rules after revoke = %+v, %v", rules, err)
+	if _, ok := mustGrant(t, manager, "device-c"); !ok {
+		t.Fatal("current grant was lost")
 	}
 }

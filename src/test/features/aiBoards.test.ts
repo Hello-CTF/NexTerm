@@ -122,7 +122,7 @@ describe("AI board layout persistence", () => {
 
   it("sanitizeLayout discards board groups that do not belong to any workspace and preserves the global group", () => {
     const parsed = sanitizeLayout({
-      v: 2,
+      v: 4,
       workspaces: [workspace("ws-1")],
       activeWorkspaceId: "ws-1",
       aiBoards: {
@@ -145,7 +145,7 @@ describe("AI board layout persistence", () => {
     ).toBeNull();
     expect(
       sanitizeLayout({
-        v: 2,
+        v: 4,
         workspaces: [workspace("ws-1")],
         activeWorkspaceId: "ws-1",
       }),
@@ -154,7 +154,7 @@ describe("AI board layout persistence", () => {
 
   it("board tabs with missing fields are sanitized: entries without an id are dropped, a missing title falls back to the default conversation title, and the active tab points to an existing tab", () => {
     const parsed = sanitizeLayout({
-      v: 2,
+      v: 4,
       workspaces: [workspace("ws-1")],
       activeWorkspaceId: "ws-1",
       aiBoards: {

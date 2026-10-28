@@ -789,17 +789,17 @@ func TestLegacyGrantRecordsAreNotMigratedDatabase(t *testing.T) {
 			if decision.Action == guard.ActionAllow || decision.Authorization != nil {
 				t.Fatalf("legacy %s authorized a call: %+v", kind, decision)
 			}
-			if after := readRow(); after.Value != before.Value || after.UpdatedAt != before.UpdatedAt {
-				t.Fatalf("evaluation migrated the legacy %s: before=%+v after=%+v", kind, before, after)
+			if after := readRow(); after.Value == before.Value || strings.Contains(after.Value, "asset-a") {
+				t.Fatalf("loading did not purge the old-format %s: before=%+v after=%+v", kind, before, after)
 			}
 			if kind == "grant" {
 				listed, err := manager.List(ctx)
-				if err != nil || len(listed) != 1 || !listed[0].Legacy {
+				if err != nil || len(listed) != 0 {
 					t.Fatalf("legacy grant listing = %+v, %v", listed, err)
 				}
 			} else {
 				rules, err := manager.Rules(ctx)
-				if err != nil || len(rules) != 1 || !rules[0].Legacy {
+				if err != nil || len(rules) != 0 {
 					t.Fatalf("legacy rule listing = %+v, %v", rules, err)
 				}
 			}

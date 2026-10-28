@@ -801,20 +801,24 @@ func requireGrantRecordPermanence(t *testing.T, value string, want map[string]bo
 // A synced device grant is a long-term authorization: the apply path must bind the guard's explicit
 // permanence marker and a fresh generation exactly like guard.Grant writes it locally, keeping the durable
 // record permanent across LWW updates, revocations, and re-grants. Whole-row rewrites (apply and tombstone
-// alike) keep current bystanders byte-identical, generation included, and write rejected pre-1.3.0 records
-// back verbatim: they are neither migrated nor dropped, and never become effective.
+// alike) keep current bystanders byte-identical, generation included. Old-format records are dropped when the
+// guard loads the row and never become effective.
 func TestApplyAIGrantDeviceBindsExplicitPermanence(t *testing.T) {
 	device := newTestDevice(t)
 	ctx := context.Background()
 	engine := device.engine
 
-	// Bystanders sharing the row: one pre-1.3.0 record without a permanence marker or generation, and one
+	// Bystanders sharing the row: one old-format record without a permanence marker or generation, and one
 	// current-format explicit non-permanent control. No whole-row rewrite may change either of them.
 	legacyRecord := `{"deviceId":"dev-legacy-a","kinds":["terminal_write"],"updatedAt":50}`
 	currentRecord := `{"deviceId":"dev-explicit-false","kinds":["db_query"],"permanent":false,"updatedAt":70,"generation":"gen-explicit-false"}`
 	putPreferenceSetting(t, device, guard.DeviceGrantsSettingKey, `{"dev-legacy-a":`+legacyRecord+`,"dev-explicit-false":`+currentRecord+`}`, 50)
 	requireBystanders := func() {
 		t.Helper()
+		grants, err := guard.NewGrants(ctx, device.db, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
 		value, _, found := readPreferenceSetting(t, device, guard.DeviceGrantsSettingKey)
 		if !found {
 			t.Fatal("device grants row missing")
@@ -823,8 +827,8 @@ func TestApplyAIGrantDeviceBindsExplicitPermanence(t *testing.T) {
 		if err := json.Unmarshal([]byte(value), &records); err != nil {
 			t.Fatal(err)
 		}
-		if string(records["dev-legacy-a"]) != legacyRecord {
-			t.Fatalf("legacy bystander rewritten: %s", records["dev-legacy-a"])
+		if _, ok := records["dev-legacy-a"]; ok {
+			t.Fatalf("old-format bystander kept: %s", records["dev-legacy-a"])
 		}
 		var current struct {
 			Generation string `json:"generation"`
@@ -833,10 +837,6 @@ func TestApplyAIGrantDeviceBindsExplicitPermanence(t *testing.T) {
 			t.Fatalf("current bystander generation changed: %s", records["dev-explicit-false"])
 		}
 		requireGrantRecordPermanence(t, value, map[string]bool{"dev-explicit-false": false})
-		grants, err := guard.NewGrants(ctx, device.db, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
 		if grant, ok := grantForTest(t, ctx, grants, "dev-explicit-false"); !ok || grant.Permanent || !grant.Covers(guard.GrantKindDBQuery) {
 			t.Fatalf("guard loads current bystander as %+v %v", grant, ok)
 		}
@@ -848,6 +848,9 @@ func TestApplyAIGrantDeviceBindsExplicitPermanence(t *testing.T) {
 		}
 	}
 	requireBystanders()
+	// Loading purged the old-format record and stamped the row; reset the clock so revisions stay predictable.
+	purged, _, _ := readPreferenceSetting(t, device, guard.DeviceGrantsSettingKey)
+	putPreferenceSetting(t, device, guard.DeviceGrantsSettingKey, purged, 50)
 
 	applyGrant := func(updatedAt int64, kinds ...string) {
 		t.Helper()
@@ -901,10 +904,10 @@ func TestApplyAIGrantDeviceBindsExplicitPermanence(t *testing.T) {
 	requireBystanders()
 }
 
-// Pre-1.3.0 device grant records (no permanence marker or generation) are rejected, not migrated: the
-// collector does not push them, the round stays silent about them, the local row stays
-// byte-identical, and other devices never receive them. Current-format records in the same row still sync.
-func TestEngineAIGrantLegacyRecordIsNotPushed(t *testing.T) {
+// Old-format device grant records (no permanence marker or generation) are never pushed: the
+// round stays silent about them and other devices never receive them. Current-format records in the
+// same row still sync.
+func TestEngineAIGrantOldFormatRecordIsNotPushed(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
 	deviceA := newTestDevice(t)
@@ -922,9 +925,6 @@ func TestEngineAIGrantLegacyRecordIsNotPushed(t *testing.T) {
 	}
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	if value, _, found := readPreferenceSetting(t, deviceA, guard.DeviceGrantsSettingKey); !found || value != row {
-		t.Fatalf("legacy records mutated on A: %q %v", value, found)
-	}
 	if serverObjectIDs(t, server)["device/dev-legacy"] {
 		t.Fatal("legacy grant was pushed to the server")
 	}

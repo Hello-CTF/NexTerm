@@ -381,8 +381,6 @@ func TestRenderReplaceScriptWindows(t *testing.T) {
 		"Start-Sleep -Seconds 3",
 		"Move-Item -LiteralPath $nxNew -Destination $nxTarget -Force",
 		"Move-Item -LiteralPath $nxBak -Destination $nxTarget -Force",
-		"sc.exe query NexTermAgent",
-		"sc.exe start NexTermAgent",
 		"Remove-Item -LiteralPath $PSCommandPath",
 	} {
 		if !strings.Contains(script, fragment) {

@@ -677,7 +677,7 @@ describe("QuickConnect ad-hoc connections", () => {
     expect(JSON.stringify(workspace)).not.toContain("secret");
 
     const persisted = sanitizeLayout({
-      v: 3, leftOpen: true, leftMode: "assets", rightOpen: false,
+      v: 4, leftOpen: true, leftMode: "assets", rightOpen: false,
       leftWidth: 300, rightWidth: 400, workspaces: [workspace],
       activeWorkspaceId: workspace.id, aiBoards: {},
     });

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -106,15 +105,12 @@ func TestDatabaseCreateAndCASUseRequestAndDurableOwners(t *testing.T) {
 	}
 }
 
-func TestOwnerlessJobIsDisabledWithVisibleError(t *testing.T) {
+func TestOwnerlessJobIsPurged(t *testing.T) {
 	cronStore := newTestSQLiteStore(t)
 	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	job := fullTestJob("ownerless", "session", now)
 	job.Run = RunState{}
 	job.Lease = Lease{}
-	job.NextRunAt = now
-	job.RetryAt = time.Time{}
-	job.CircuitOpenUntil = time.Time{}
 	if _, err := cronStore.Create(context.Background(), job, 4); err != nil {
 		t.Fatal(err)
 	}
@@ -122,25 +118,12 @@ func TestOwnerlessJobIsDisabledWithVisibleError(t *testing.T) {
 		Updates(map[string]any{"owner_id": "", "owner_kind": ""}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if count, err := cronStore.CountOwnerless(context.Background()); err != nil || count != 1 {
-		t.Fatalf("ownerless job count = %d, err = %v", count, err)
+	if count, err := cronStore.PurgeOwnerless(context.Background()); err != nil || count != 1 {
+		t.Fatalf("purged = %d, err = %v", count, err)
 	}
-	clock := newFakeClock(now)
-	triggers := make(chan Trigger, 1)
-	scheduler := testScheduler(t, cronStore, executorFunc(func(_ context.Context, trigger Trigger) error {
-		triggers <- trigger
-		return nil
-	}), clock)
-	claimed, err := scheduler.runOnce(context.Background(), now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if claimed != 0 || len(triggers) != 0 {
-		t.Fatalf("ownerless execution claimed = %d, triggers = %d", claimed, len(triggers))
-	}
-	stored := loadStoredJob(t, cronStore, job.ID)
-	if stored.Enabled || stored.OwnerID != "" || !strings.Contains(stored.LastError, ErrOwnerless.Error()) {
-		t.Fatalf("blocked ownerless job = %+v", stored)
+	var left int64
+	if err := cronStore.db.Model(&storepkg.CronJob{}).Where("id = ?", job.ID).Count(&left).Error; err != nil || left != 0 {
+		t.Fatalf("remaining = %d, err = %v", left, err)
 	}
 }
 

@@ -95,7 +95,7 @@ function deviceTabs(): AppTab[] {
 
 function persistedLayout(workspaces: Workspace[]): PersistedLayout {
   return {
-    v: 2,
+    v: 4,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,

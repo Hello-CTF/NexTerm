@@ -38,14 +38,12 @@ const (
 )
 
 // DeviceGrant is a long-term device authorization. Permanent and the
-// generation are required in the persisted record; Legacy marks a rejected
-// pre-1.3.0 record that is listed but never authorizes anything.
+// generation are required in the persisted record.
 type DeviceGrant struct {
 	DeviceID   string      `json:"deviceId"`
 	Kinds      []GrantKind `json:"kinds"`
 	Permanent  bool        `json:"permanent"`
 	UpdatedAt  int64       `json:"updatedAt"`
-	Legacy     bool        `json:"legacy,omitempty"`
 	generation string
 }
 
@@ -109,10 +107,8 @@ type GrantAuditEvent struct {
 type GrantAuditor func(context.Context, GrantAuditEvent) error
 
 type grantState struct {
-	grants       map[string]DeviceGrant
-	rules        []GrantRule
-	legacyGrants map[string]LegacyDeviceGrant
-	legacyRules  []LegacyGrantRule
+	grants map[string]DeviceGrant
+	rules  []GrantRule
 }
 
 type deviceGrantRecord struct {
@@ -161,11 +157,12 @@ func NewGrants(ctx context.Context, settings Settings, audit GrantAuditor, opts 
 	return manager, nil
 }
 
-// loadGrants reads only the current persisted format. Records written before
-// 1.3.0 (no explicit permanence or no generation) are not migrated: they are
-// kept verbatim, listed as Legacy, and never authorize a call.
+// loadGrants reads only the current persisted format. Records without the
+// current marker or that are malformed are dropped quietly and the row is
+// rewritten (one atomic setting write per row, current entries untouched).
 func (g *Grants) loadGrants(ctx context.Context) (grantState, error) {
-	raw, _, err := g.settings.SettingGet(ctx, DeviceGrantsSettingKeyForUser(ctx))
+	grantKey, ruleKey := DeviceGrantsSettingKeyForUser(ctx), GrantRulesSettingKeyForUser(ctx)
+	raw, _, err := g.settings.SettingGet(ctx, grantKey)
 	if err != nil {
 		return grantState{}, err
 	}
@@ -173,7 +170,12 @@ func (g *Grants) loadGrants(ctx context.Context) (grantState, error) {
 	if err != nil {
 		return grantState{}, err
 	}
-	raw, _, err = g.settings.SettingGet(ctx, GrantRulesSettingKeyForUser(ctx))
+	if grants.Dropped {
+		if err := g.rewriteRow(ctx, grantKey, grants.Encode); err != nil {
+			return grantState{}, err
+		}
+	}
+	raw, _, err = g.settings.SettingGet(ctx, ruleKey)
 	if err != nil {
 		return grantState{}, err
 	}
@@ -181,7 +183,20 @@ func (g *Grants) loadGrants(ctx context.Context) (grantState, error) {
 	if err != nil {
 		return grantState{}, err
 	}
-	return grantState{grants: grants.Current, legacyGrants: grants.Legacy, rules: rules.Current, legacyRules: rules.Legacy}, nil
+	if rules.Dropped {
+		if err := g.rewriteRow(ctx, ruleKey, rules.Encode); err != nil {
+			return grantState{}, err
+		}
+	}
+	return grantState{grants: grants.Current, rules: rules.Current}, nil
+}
+
+func (g *Grants) rewriteRow(ctx context.Context, key string, encode func() (string, error)) error {
+	encoded, err := encode()
+	if err != nil {
+		return err
+	}
+	return g.settings.SettingSet(ctx, key, encoded)
 }
 
 func (g *Grants) stateFor(ctx context.Context) (*grantState, error) {
@@ -279,13 +294,11 @@ func (g *Grants) Grant(ctx context.Context, deviceID string, kinds []GrantKind) 
 	grant = grant.Renewed()
 	next := entry.grantSet().Clone()
 	next.Current[deviceID] = grant
-	// An explicit grant replaces a rejected legacy record for the same device.
-	delete(next.Legacy, deviceID)
 	if err := g.persistLocked(ctx, next); err != nil {
 		g.mu.Unlock()
 		return DeviceGrant{}, err
 	}
-	entry.grants, entry.legacyGrants = next.Current, next.Legacy
+	entry.grants = next.Current
 	g.mu.Unlock()
 	g.emitAudit(ctx, GrantAuditEvent{Action: "grant", DeviceID: deviceID, Kinds: normalized})
 	return grant, nil
@@ -313,19 +326,17 @@ func (g *Grants) Revoke(ctx context.Context, deviceID string) error {
 		return err
 	}
 	_, current := entry.grants[deviceID]
-	_, legacy := entry.legacyGrants[deviceID]
-	if !current && !legacy {
+	if !current {
 		g.mu.Unlock()
 		return nil
 	}
 	next := entry.grantSet().Clone()
 	delete(next.Current, deviceID)
-	delete(next.Legacy, deviceID)
 	if err := g.persistLocked(ctx, next); err != nil {
 		g.mu.Unlock()
 		return err
 	}
-	entry.grants, entry.legacyGrants = next.Current, next.Legacy
+	entry.grants = next.Current
 	g.mu.Unlock()
 	if err := recordAIGrantTombstone(ctx, g.settings, AIGrantSyncDevicePrefix+deviceID); err != nil {
 		return err
@@ -431,15 +442,6 @@ func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 			break
 		}
 	}
-	for i, legacy := range next.Legacy {
-		if legacy.View.ID == ruleID {
-			if !found {
-				previous, found = legacy.View, true
-			}
-			next.Legacy = append(next.Legacy[:i], next.Legacy[i+1:]...)
-			break
-		}
-	}
 	if !found {
 		g.mu.Unlock()
 		return nil
@@ -452,7 +454,7 @@ func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 		g.mu.Unlock()
 		return err
 	}
-	entry.rules, entry.legacyRules = next.Current, next.Legacy
+	entry.rules = next.Current
 	g.mu.Unlock()
 	if err := recordAIGrantTombstone(ctx, g.settings, AIGrantSyncRulePrefix+ruleID); err != nil {
 		return err
@@ -469,9 +471,6 @@ func (g *Grants) Rules(ctx context.Context) ([]GrantRule, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	result := append([]GrantRule(nil), entry.rules...)
-	for _, legacy := range entry.legacyRules {
-		result = append(result, legacy.View)
-	}
 	return result, nil
 }
 
@@ -499,15 +498,14 @@ func (g *Grants) persistRuleSetLocked(ctx context.Context, set GrantRuleSet) err
 }
 
 func (s *grantState) grantSet() DeviceGrantSet {
-	return DeviceGrantSet{Current: s.grants, Legacy: s.legacyGrants}
+	return DeviceGrantSet{Current: s.grants}
 }
 
 func (s *grantState) ruleSet() GrantRuleSet {
-	return GrantRuleSet{Current: s.rules, Legacy: s.legacyRules}
+	return GrantRuleSet{Current: s.rules}
 }
 
-// Get returns the effective current-format grant; a rejected legacy record is
-// not effective and is only reported by List.
+// Get returns the effective grant for the device.
 func (g *Grants) Get(ctx context.Context, deviceID string) (DeviceGrant, bool, error) {
 	entry, err := g.stateFor(ctx)
 	if err != nil {
@@ -530,14 +528,8 @@ func (g *Grants) List(ctx context.Context) ([]DeviceGrant, error) {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	result := make([]DeviceGrant, 0, len(entry.grants)+len(entry.legacyGrants))
+	result := make([]DeviceGrant, 0, len(entry.grants))
 	for _, grant := range entry.grants {
-		grant.Kinds = append([]GrantKind(nil), grant.Kinds...)
-		result = append(result, grant)
-	}
-	// Rejected legacy records stay visible so the user can re-grant or revoke them.
-	for _, legacy := range entry.legacyGrants {
-		grant := legacy.View
 		grant.Kinds = append([]GrantKind(nil), grant.Kinds...)
 		result = append(result, grant)
 	}

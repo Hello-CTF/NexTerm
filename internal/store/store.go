@@ -203,8 +203,7 @@ func pragmaQuery(memory bool, busyTimeoutMS int64) string {
 	return query
 }
 
-// rejectPreGormSchema refuses databases created before the GORM schema (the
-// schema_migrations marker). It runs on the normal connection before any
+// rejectPreGormSchema refuses a database carrying a schema_migrations table. It runs on the normal connection before any
 // AutoMigrate so the old tables are never altered; it never opens the file
 // with immutable=1, which is unsafe for a database another process may write.
 func (s *Store) rejectPreGormSchema(ctx context.Context) error {
@@ -217,7 +216,7 @@ func (s *Store) rejectPreGormSchema(ctx context.Context) error {
 	if err != nil {
 		return dbError(err)
 	}
-	return ipc.NewError(ipc.CodeUnsupported, "不支持 v1.0.3 之前的 pre-GORM 数据库，数据库表未被迁移；请将该数据库文件移走后重新启动以创建新数据库")
+	return ipc.NewError(ipc.CodeUnsupported, "不支持该数据库（含 schema_migrations 表），数据库表未被改动；请将该数据库文件移走后重新启动以创建新数据库")
 }
 
 func (s *Store) DB() *sql.DB {

@@ -1,7 +1,6 @@
 package production
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -13,7 +12,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -23,7 +21,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 	gossh "golang.org/x/crypto/ssh"
-	"gorm.io/gorm"
 )
 
 type productionHostKeyStore struct {
@@ -33,7 +30,6 @@ type productionHostKeyStore struct {
 	accountDir   string
 	accountFiles map[string]*ssh.FileHostKeyStore
 	shared       bool
-	migration    productionHostKeyMigrationReport
 	mu           sync.Mutex
 }
 
@@ -42,52 +38,12 @@ type productionHostKeyFile struct {
 	Keys    []ssh.HostKey `json:"keys"`
 }
 
-type productionHostKeyMigrationReport struct {
-	BackupCreated bool
-	Copied        int
-	Existing      int
-	Conflicts     int
-	Skipped       int
-	Revoked       int
-}
-
-func (report *productionHostKeyMigrationReport) countResult(result productionHostKeyMigrationResult) {
-	switch result {
-	case productionHostKeyMigrationCopied:
-		report.Copied++
-	case productionHostKeyMigrationExisting:
-		report.Existing++
-	case productionHostKeyMigrationConflict:
-		report.Conflicts++
-	}
-}
-
-func (result productionHostKeyMigrationResult) String() string {
-	switch result {
-	case productionHostKeyMigrationCopied:
-		return "copied"
-	case productionHostKeyMigrationExisting:
-		return "existing"
-	case productionHostKeyMigrationConflict:
-		return "conflict"
-	}
-	return "unknown"
-}
-
 type productionHostKeyIdentity struct {
 	host        string
 	port        int
 	keyType     string
 	fingerprint string
 }
-
-type productionHostKeyMigrationResult int
-
-const (
-	productionHostKeyMigrationCopied productionHostKeyMigrationResult = iota
-	productionHostKeyMigrationExisting
-	productionHostKeyMigrationConflict
-)
 
 func newProductionHostKeyStore(ctx context.Context, path string, database *store.Store, shared bool) (*productionHostKeyStore, error) {
 	files, err := ssh.NewFileHostKeyStore(path)
@@ -102,11 +58,6 @@ func newProductionHostKeyStore(ctx context.Context, path string, database *store
 			return nil, err
 		}
 	}
-	report, err := store.migrateLegacy(ctx)
-	if err != nil {
-		return nil, err
-	}
-	store.migration = report
 	if err := store.reconcileMirrors(ctx); err != nil {
 		return nil, err
 	}
@@ -316,280 +267,6 @@ func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey
 	return nil
 }
 
-type productionHostKeyImportEntry struct {
-	Host          string   `json:"host"`
-	Port          int      `json:"port"`
-	KeyType       string   `json:"keyType"`
-	Fingerprint   string   `json:"fingerprint"`
-	Disposition   string   `json:"disposition"`
-	Owners        []string `json:"owners,omitempty"`
-	State         string   `json:"state"`
-	Result        string   `json:"result,omitempty"`
-	RevokedOwners []string `json:"revokedOwners,omitempty"`
-}
-
-type productionHostKeyImportState struct {
-	Version int                            `json:"version"`
-	Entries []productionHostKeyImportEntry `json:"entries"`
-}
-
-func productionHostKeyImportIdentity(key ssh.HostKey) string {
-	return fmt.Sprintf("%s|%d|%s|%s", key.Host, key.Port, key.KeyType, key.Fingerprint)
-}
-
-func (s *productionHostKeyStore) loadImportState() (map[string]*productionHostKeyImportEntry, error) {
-	entries := make(map[string]*productionHostKeyImportEntry)
-	data, existed, err := readProductionHostKeyFile(s.path + ".owner-import-state.json")
-	if err != nil || !existed {
-		return entries, err
-	}
-	var state productionHostKeyImportState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("decode host key import state: %w", err)
-	}
-	for index := range state.Entries {
-		entry := &state.Entries[index]
-		entries[productionHostKeyImportIdentity(ssh.HostKey{Host: entry.Host, Port: entry.Port, KeyType: entry.KeyType, Fingerprint: entry.Fingerprint})] = entry
-	}
-	return entries, nil
-}
-
-func (s *productionHostKeyStore) storeImportState(entries map[string]*productionHostKeyImportEntry) error {
-	state := productionHostKeyImportState{Version: 1, Entries: make([]productionHostKeyImportEntry, 0, len(entries))}
-	for _, entry := range entries {
-		state.Entries = append(state.Entries, *entry)
-	}
-	sort.Slice(state.Entries, func(i, j int) bool {
-		return productionHostKeyImportIdentity(ssh.HostKey{Host: state.Entries[i].Host, Port: state.Entries[i].Port, KeyType: state.Entries[i].KeyType, Fingerprint: state.Entries[i].Fingerprint}) <
-			productionHostKeyImportIdentity(ssh.HostKey{Host: state.Entries[j].Host, Port: state.Entries[j].Port, KeyType: state.Entries[j].KeyType, Fingerprint: state.Entries[j].Fingerprint})
-	})
-	return atomicfile.Write(s.path+".owner-import-state.json", 0o600, func(writer io.Writer) error {
-		encoder := json.NewEncoder(writer)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(state)
-	})
-}
-
-func (s *productionHostKeyStore) migrateLegacy(ctx context.Context) (productionHostKeyMigrationReport, error) {
-	if s.shared {
-		return s.migrateSharedLegacy(ctx)
-	}
-	var report productionHostKeyMigrationReport
-	// The legacy import is one-time: the marker is written only after the whole batch succeeds, so a crash
-	// mid-import resumes idempotently, and once the import completes, entries revoked since can never be
-	// resurrected from the untouched legacy file on a later startup.
-	markerPath := s.path + ".owner-import-done"
-	if _, err := os.Stat(markerPath); err == nil {
-		return report, nil
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return report, err
-	}
-	data, existed, err := readProductionHostKeyFile(s.path)
-	if err != nil || !existed {
-		return report, err
-	}
-	keys, err := s.files.HostKeySnapshot(ctx)
-	if err != nil {
-		return report, err
-	}
-	entries, err := s.loadImportState()
-	if err != nil {
-		return report, err
-	}
-	// Record every legacy entry's original disposition before any import runs. Resuming batches use
-	// these persisted assignments instead of recomputing ownership from live rows, so an entry whose
-	// mapped owner revoked it while the batch was pending is never re-imported for that owner.
-	for _, key := range keys {
-		identity := productionHostKeyImportIdentity(key)
-		if _, ok := entries[identity]; ok {
-			continue
-		}
-		rows, err := s.database.KnownHostListForMigration(ctx)
-		if err != nil {
-			return report, err
-		}
-		mapped := []string{}
-		for _, row := range rows {
-			if row.OwnerID == "" {
-				continue
-			}
-			if row.Host == key.Host && int(row.Port) == key.Port && row.KeyType == key.KeyType && row.Fingerprint == key.Fingerprint {
-				mapped = append(mapped, row.OwnerID)
-			}
-		}
-		sort.Strings(mapped)
-		entry := &productionHostKeyImportEntry{
-			Host: key.Host, Port: key.Port, KeyType: key.KeyType, Fingerprint: key.Fingerprint,
-			State: "pending",
-		}
-		if len(mapped) > 0 {
-			entry.Disposition = "owners"
-			entry.Owners = mapped
-		} else {
-			entry.Disposition = "fallback"
-		}
-		entries[identity] = entry
-	}
-	// Persist the original dispositions before any import work: an interrupted batch — postponed or
-	// proceeding — always resumes from these assignments plus the per-entry progress below, never from
-	// live-row recomputation.
-	if err := s.storeImportState(entries); err != nil {
-		return report, err
-	}
-	// Preflight: postpone the whole batch while any pending fallback entry has no active superadmin to
-	// receive it. The marker is never written for a postponed batch — a later startup retries once an
-	// administrator appears — and a partially imported batch can never mix with later revocations.
-	fallbackPending := 0
-	for _, entry := range entries {
-		if entry.State == "pending" && entry.Disposition == "fallback" {
-			fallbackPending++
-		}
-	}
-	if fallbackPending > 0 {
-		fallbackOwner, err := s.firstActiveSuperadmin(ctx)
-		if err != nil {
-			return report, err
-		}
-		if fallbackOwner == "" {
-			report.Skipped = fallbackPending
-			return report, nil
-		}
-	}
-	report.BackupCreated, err = backupLegacyProductionHostKeyFile(s.path, data)
-	if err != nil {
-		return report, err
-	}
-	keysByIdentity := make(map[string]ssh.HostKey, len(keys))
-	for _, key := range keys {
-		keysByIdentity[productionHostKeyImportIdentity(key)] = key
-	}
-	for identity, entry := range entries {
-		if entry.State != "pending" {
-			continue
-		}
-		key, ok := keysByIdentity[identity]
-		if !ok {
-			entry.State = "done"
-			if err := s.storeImportState(entries); err != nil {
-				return report, err
-			}
-			continue
-		}
-		if entry.Disposition == "fallback" {
-			fallbackOwner, err := s.firstActiveSuperadmin(ctx)
-			if err != nil {
-				return report, err
-			}
-			if fallbackOwner == "" {
-				continue
-			}
-			result, err := s.importLegacyKey(ctx, fallbackOwner, key)
-			if err != nil {
-				return report, err
-			}
-			report.countResult(result)
-			entry.State = "done"
-			entry.Result = result.String()
-			if err := s.storeImportState(entries); err != nil {
-				return report, err
-			}
-			continue
-		}
-		allRevoked := true
-		for _, ownerID := range entry.Owners {
-			if slices.Contains(entry.RevokedOwners, ownerID) {
-				continue
-			}
-			ownerCtx := ipc.WithUserID(ctx, ownerID)
-			_, found, err := s.database.KnownHostGet(ownerCtx, entry.Host, int32(entry.Port), entry.KeyType)
-			if err != nil {
-				return report, err
-			}
-			if !found {
-				entry.RevokedOwners = append(entry.RevokedOwners, ownerID)
-				report.Revoked++
-				continue
-			}
-			allRevoked = false
-			result, err := s.importLegacyKey(ownerCtx, ownerID, key)
-			if err != nil {
-				return report, err
-			}
-			report.countResult(result)
-			entry.Result = result.String()
-		}
-		if allRevoked {
-			entry.State = "revoked"
-		} else {
-			entry.State = "done"
-		}
-		if err := s.storeImportState(entries); err != nil {
-			return report, err
-		}
-	}
-	remainingPending := 0
-	for _, entry := range entries {
-		if entry.State == "pending" {
-			remainingPending++
-		}
-	}
-	if remainingPending == 0 {
-		if err := atomicfile.Write(markerPath, 0o600, func(writer io.Writer) error { return nil }); err != nil {
-			return report, err
-		}
-	}
-	return report, nil
-}
-
-// migrateSharedLegacy imports the desktop shared trust file into the owner-less ledger so the database, not
-// the file, decides verification. The import is one-time: a marker records that the legacy file has been
-// consumed, so mirror-only leftovers (for example a revocation whose mirror rewrite was interrupted) can
-// never recreate trust on a later startup. The file stays in place as the mirror: no backup is taken and no
-// entry is rewritten, and re-running the import is idempotent. Ledger rows win over conflicting file entries.
-func (s *productionHostKeyStore) migrateSharedLegacy(ctx context.Context) (productionHostKeyMigrationReport, error) {
-	var report productionHostKeyMigrationReport
-	markerPath := s.path + ".shared-import-done"
-	if _, err := os.Stat(markerPath); err == nil {
-		return report, nil
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return report, err
-	}
-	keys, err := s.files.HostKeySnapshot(ctx)
-	if err != nil {
-		return report, err
-	}
-	for _, key := range keys {
-		ledger, ledgerExists, err := s.database.KnownHostGet(ctx, key.Host, int32(key.Port), key.KeyType)
-		if err != nil {
-			return report, err
-		}
-		switch {
-		case ledgerExists && ledger.Fingerprint == key.Fingerprint:
-			if ledger.Key == "" && key.Key != "" {
-				if err := s.database.KnownHostFillKeyMaterial(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
-					return report, err
-				}
-			}
-			report.Existing++
-		case ledgerExists:
-			report.Conflicts++
-		default:
-			if _, err := s.database.KnownHostAcceptWithKey(ctx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
-				return report, err
-			}
-			report.Copied++
-		}
-	}
-	if err := atomicfile.Write(markerPath, 0o600, func(writer io.Writer) error { return nil }); err != nil {
-		return report, err
-	}
-	return report, nil
-}
-
-// reconcileMirrors rewrites every mirror file to match the owner-scoped ledger, healing interrupted writes
-// in the database-wins direction: ledger rows with trusted material missing from a mirror are written, and
-// mirror-only leftovers (for example a revocation whose mirror rewrite was interrupted) are removed. Files
-// whose content already matches the ledger are left byte-identical.
 func (s *productionHostKeyStore) reconcileMirrors(ctx context.Context) error {
 	if s.shared {
 		return s.reconcileMirror(ctx, ctx)
@@ -682,102 +359,6 @@ func (s *productionHostKeyStore) reconcileMirror(ctx context.Context, ownerCtx c
 		return keys[i].KeyType < keys[j].KeyType
 	})
 	return writeProductionHostKeyFile(path, productionHostKeyFile{Version: 1, Keys: keys})
-}
-
-func backupLegacyProductionHostKeyFile(path string, data []byte) (bool, error) {
-	backupPath := path + ".pre-owner-migration.bak"
-	backup, err := os.ReadFile(backupPath)
-	if err == nil {
-		if !bytes.Equal(backup, data) {
-			return false, fmt.Errorf("legacy SSH host key backup conflicts with the original file")
-		}
-		if err := os.Chmod(backupPath, 0o600); err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return false, err
-	}
-	if err := atomicfile.Write(backupPath, 0o600, func(writer io.Writer) error {
-		_, err := writer.Write(data)
-		return err
-	}); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func (s *productionHostKeyStore) firstActiveSuperadmin(ctx context.Context) (string, error) {
-	var user store.AppUser
-	err := s.database.GORM().WithContext(ctx).
-		Select("id").
-		Where("role = ? AND state = ?", "superadmin", "active").
-		Order("created_at").Order("id").
-		First(&user).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return user.ID, nil
-}
-
-func (s *productionHostKeyStore) importLegacyKey(ctx context.Context, ownerID string, key ssh.HostKey) (productionHostKeyMigrationResult, error) {
-	ownerCtx := ipc.WithUserID(ctx, ownerID)
-	ledger, ledgerExists, err := s.database.KnownHostGet(ownerCtx, key.Host, int32(key.Port), key.KeyType)
-	if err != nil {
-		return productionHostKeyMigrationConflict, err
-	}
-	if ledgerExists && ledger.Fingerprint != key.Fingerprint {
-		return productionHostKeyMigrationConflict, nil
-	}
-	if ledgerExists && ledger.Key == "" && key.Key != "" {
-		if err := s.database.KnownHostFillKeyMaterial(ownerCtx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
-			return productionHostKeyMigrationConflict, err
-		}
-	}
-	files, path, err := s.fileFor(ownerCtx)
-	if err != nil {
-		return productionHostKeyMigrationConflict, err
-	}
-	previous, fileExisted, err := readProductionHostKeyFile(path)
-	if err != nil {
-		return productionHostKeyMigrationConflict, err
-	}
-	before, err := files.HostKeySnapshot(ctx)
-	if err != nil {
-		return productionHostKeyMigrationConflict, err
-	}
-	alreadyPresent := false
-	for _, candidate := range before {
-		if candidate == key {
-			alreadyPresent = true
-			break
-		}
-	}
-	if !alreadyPresent {
-		if err := files.PutHostKey(ctx, key, false); errors.Is(err, ssh.ErrHostKeyConflict) {
-			return productionHostKeyMigrationConflict, nil
-		} else if err != nil {
-			return productionHostKeyMigrationConflict, err
-		}
-	}
-	if !ledgerExists {
-		if _, err := s.database.KnownHostAcceptWithKey(ownerCtx, key.Host, int32(key.Port), key.KeyType, key.Fingerprint, key.Key); err != nil {
-			if !alreadyPresent {
-				if rollbackErr := restoreProductionHostKeyFile(path, previous, fileExisted); rollbackErr != nil {
-					return productionHostKeyMigrationConflict, errors.Join(err, fmt.Errorf("restore SSH host key file: %w", rollbackErr))
-				}
-			}
-			return productionHostKeyMigrationConflict, err
-		}
-	}
-	if alreadyPresent {
-		return productionHostKeyMigrationExisting, nil
-	}
-	return productionHostKeyMigrationCopied, nil
 }
 
 func readProductionHostKeyFile(path string) ([]byte, bool, error) {
