@@ -476,6 +476,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 				env = append(env, key+"="+value)
 			}
 			sort.Strings(env)
+			env = append(durableTerminalEnv(options.Term), env...)
 			command, dir := options.Durable.Command, options.Durable.Dir
 			if launch, ok := transport.Transport.(localLaunchSource); ok && kind == KindLocal && len(command) == 0 {
 				var localEnv []string
