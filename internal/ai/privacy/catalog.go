@@ -25,6 +25,18 @@ import (
 const modelRepository = "QuantumNous/astrlink-guard"
 const maxModelFile = 512 << 20
 
+// maxMetadataFile bounds the small metadata files of a release; only the weights may approach maxModelFile.
+func maxMetadataFile(name string) int64 {
+	switch name {
+	case "config.json", "labels.json":
+		return 4 << 20
+	case "tokenizer.json":
+		return 64 << 20
+	default:
+		return maxModelFile
+	}
+}
+
 const (
 	responseHeaderTimeout = 30 * time.Second
 	defaultIdleTimeout    = 60 * time.Second
@@ -282,6 +294,10 @@ func (c *Catalog) checkMetadata(ctx context.Context, installation Installation) 
 	if err != nil {
 		return err
 	}
+	return c.validateMetadata(config, tokenizer)
+}
+
+func (c *Catalog) validateMetadata(config, tokenizer []byte) error {
 	validate := c.validate
 	if validate == nil {
 		validate = inference.ValidateMetadata
@@ -324,7 +340,7 @@ func (c *Catalog) Manifest(ctx context.Context, release ModelRelease, p Precisio
 	}
 	for _, name := range requiredModelFiles(p) {
 		file, ok := installation.Files[name]
-		if !ok || !digestPattern.MatchString(file.SHA256) || file.Size <= 0 || file.Size > maxModelFile {
+		if !ok || !digestPattern.MatchString(file.SHA256) || file.Size <= 0 || file.Size > maxMetadataFile(name) {
 			return installation, fmt.Errorf("%w: %s", errManifestEntry, name)
 		}
 	}
@@ -382,7 +398,7 @@ func (c *Catalog) Download(ctx context.Context, root string, installation Instal
 	var total, downloaded int64
 	for _, name := range requiredModelFiles(installation.Precision) {
 		file := installation.Files[name]
-		if file.Size <= 0 || file.Size > maxModelFile || !digestPattern.MatchString(file.SHA256) {
+		if file.Size <= 0 || file.Size > maxMetadataFile(name) || !digestPattern.MatchString(file.SHA256) {
 			return "", errors.New("invalid installation manifest")
 		}
 		total += file.Size
@@ -416,6 +432,18 @@ func (c *Catalog) Download(ctx context.Context, root string, installation Instal
 		if n != file.Size || hex.EncodeToString(hash.Sum(nil)) != file.SHA256 {
 			return "", fmt.Errorf("%w: %s", ErrIntegrity, name)
 		}
+	}
+	// The bytes about to be published must also be loadable by this runtime, not only match the manifest.
+	config, err := os.ReadFile(filepath.Join(temporary, "config.json"))
+	if err != nil {
+		return "", err
+	}
+	tokenizer, err := os.ReadFile(filepath.Join(temporary, "tokenizer.json"))
+	if err != nil {
+		return "", err
+	}
+	if err := c.validateMetadata(config, tokenizer); err != nil {
+		return "", err
 	}
 	data, err := json.Marshal(installation)
 	if err != nil {
