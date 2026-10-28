@@ -797,6 +797,10 @@ func (s *Service) awaitRetry(ticks <-chan time.Time) bool {
 		case req := <-s.requests:
 			if req.kind == requestRetry {
 				s.setWanted(true)
+				// Leave the failure before answering, so a caller that reads
+				// the status or waits for a terminal after Retry sees the
+				// new attempt rather than the failure it just cleared.
+				s.setStatus(Status{State: StateStarting, Reason: "本机持久组件正在启动"}, nil)
 				req.reply <- nil
 				return true
 			}

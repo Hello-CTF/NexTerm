@@ -211,6 +211,9 @@ func TestServiceStopsRespawningAHelperThatKeepsExitingAtOnce(t *testing.T) {
 	if err := service.Retry(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if status := service.Status(); status.State == StateFailed {
+		t.Fatalf("status right after a retry = %+v; the retry must clear the failure", status)
+	}
 	ready(t, service)
 	if world.connectCount() != 4 {
 		t.Fatalf("connects after retry = %d, want 4", world.connectCount())
