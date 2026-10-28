@@ -131,7 +131,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: "多行粘贴确认", description: "程序未开启括号粘贴时、每次或从不在粘贴多行文本前确认，随账号同步", keywords: ["paste", "bracketed paste", "括号粘贴", "multiline", "multi-line", "confirm", "clipboard", "粘贴", "多行", "确认", "提示", "剪贴板"] },
   { id: "system-notifications", section: "settings-terminal", label: "系统通知", description: "会话需要你或长命令结束时在此设备弹出系统通知", keywords: ["notification", "notify", "bell", "inbox", "osc9", "通知", "系统通知", "响铃", "铃铛", "收件箱"] },
   { id: "state-rules-import", section: "settings-state-rules", label: "导入或导出状态规则", keywords: ["import", "export", "json", "导入", "导出"] },
-  { id: "state-rules-status", section: "settings-state-rules", label: "状态规则下发状态", description: "各主机的持久终端组件是否已使用当前规则", keywords: ["push", "helper", "host", "下发", "主机", "组件"] },
+  { id: "state-rules-status", section: "settings-state-rules", label: "各主机的规则状态", description: "各主机的持久终端是否已应用当前规则", keywords: ["push", "helper", "host", "下发", "主机", "组件", "生效"] },
   { id: "copy-on-select", section: "settings-shortcuts", label: "选中自动复制", keywords: ["copy", "select", "clipboard", "复制", "剪贴板"], panel: "shortcuts-advanced" },
   { id: "vault-password", section: "settings-vault", label: "用密码保护凭据", keywords: ["password", "credential", "vault", "密码", "凭据"] },
   { id: "vault-auto-lock", section: "settings-vault", label: "闲置自动锁定", keywords: ["lock", "idle", "timeout", "锁定", "凭据"] },

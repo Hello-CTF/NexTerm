@@ -342,8 +342,8 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     expect(titles).toContain("账号同步");
     expect(text()).toContain("自动同步");
     expect(text()).toContain("每 60 秒");
-    expect(text()).toContain("关闭上方内容类型开关不会删除服务端已有副本");
-    expect(text()).toContain("关闭单条录像同步会删除其服务端副本，本机记录保留");
+    expect(text()).toContain("关闭内容类型开关不会删除服务端已有副本");
+    expect(text()).toContain("关闭单条终端录像的同步会删除其服务端副本，本机记录保留");
     expect(text()).not.toContain("同步台");
   });
   it("keeps a same-ID local copy out of automatic sync when the cloud object cannot be decrypted", async () => {

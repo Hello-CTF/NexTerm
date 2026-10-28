@@ -51,7 +51,7 @@ function decodeBase64Text(base64: string): string {
 const STATUS_LABELS: Record<string, string> = {
   applied: "已生效",
   pending: "等待连接",
-  failed: "下发失败",
+  failed: "应用失败",
 };
 
 interface TerminalChoice {
@@ -335,7 +335,7 @@ export function SessionRulesCard() {
         </button>
       </div>
       <p className="nx-hint mb-3">
-        屏幕底部或窗口标题匹配规则时，会话按规则显示为需要我、运行中、空闲或刚结束。规则按顺序尝试，第一条匹配的生效，主机规则先于全局规则；规则在持久终端的主机组件里执行。在标签菜单中选择「状态不对」或「这就是需要我」可以从当前屏幕起草规则。
+        屏幕底部或窗口标题匹配规则时，会话按规则显示为需要我、运行中、空闲或刚结束。规则按顺序尝试，第一条匹配的生效，主机规则先于全局规则；规则由持久终端在各主机上执行。在标签菜单选择「状态不对」或「这就是需要我」，可按当前屏幕起草规则。
       </p>
 
       {error && (
@@ -459,11 +459,11 @@ export function SessionRulesCard() {
       {!sortable && rules && rules.length > 1 && <p className="nx-hint mt-2 text-[11.5px]">清空搜索后可调整顺序。</p>}
 
       <div className="mt-4">
-        <div className="nx-setting-label mb-1.5" data-setting="state-rules-status">主机下发状态</div>
+        <div className="nx-setting-label mb-1.5" data-setting="state-rules-status">各主机的规则状态</div>
         {statuses.length === 0 ? (
-          <p className="nx-hint text-[12px]">还没有连接过持久终端的主机组件。</p>
+          <p className="nx-hint text-[12px]">还没有主机使用过持久终端，暂无规则状态。</p>
         ) : (
-          <ul className="flex flex-col gap-1" aria-label="主机下发状态">
+          <ul className="flex flex-col gap-1" aria-label="各主机的规则状态">
             {statuses.map((status) => (
               <li key={status.assetId} className="flex flex-wrap items-baseline gap-x-2 text-[12px]" data-status={status.status}>
                 <span className="text-neutral-200">{hostName(status.assetId)}</span>

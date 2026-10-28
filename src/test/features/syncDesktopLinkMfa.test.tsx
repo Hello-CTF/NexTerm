@@ -181,7 +181,7 @@ describe("Desktop login - reset_required branch", () => {
   async function enterReset() {
     seedForm();
     mocks.linkSet.mockResolvedValue({ ...LINK, connect: "reset_required" });
-    await mountAndLogin(() => document.body.textContent?.includes("必须先设置新密码") ?? false);
+    await mountAndLogin(() => document.body.textContent?.includes("请先设置新密码") ?? false);
   }
 
   it("requires at least eight characters and matching new passwords without making a request", async () => {
@@ -267,7 +267,7 @@ describe("Desktop login - reset_required branch", () => {
     setInputValue(document.querySelector("#sync-new-pass2") as HTMLInputElement, "new-password-1");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("设置新密码")) as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("login session expired; reconnect") ?? false);
-    expect(document.body.textContent).toContain("必须先设置新密码");
+    expect(document.body.textContent).toContain("请先设置新密码");
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("设置新密码")) as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("恢复密钥（仅显示一次）") ?? false);
