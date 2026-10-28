@@ -304,7 +304,7 @@ func TestEnableNeedsAccountAndHelper(t *testing.T) {
 	if _, err := controller.SetEnabled(context.Background(), true); err == nil {
 		t.Fatal("exposure turned on without a linked account")
 	}
-	host.set(func(h *fakeHost) { h.accountErr, h.blocked = nil, "本机终端为普通模式" })
+	host.set(func(h *fakeHost) { h.accountErr, h.blocked = nil, "本机终端为临时终端" })
 	if _, err := controller.SetEnabled(context.Background(), true); err == nil {
 		t.Fatal("exposure turned on while the local helper cannot be exposed")
 	}
@@ -427,7 +427,7 @@ func TestBlockedPausesAndResumesExposure(t *testing.T) {
 	enable(t, controller)
 	runner := runners.last(t)
 
-	host.set(func(h *fakeHost) { h.blocked = "本机终端为普通模式" })
+	host.set(func(h *fakeHost) { h.blocked = "本机终端为临时终端" })
 	if status := reconcileNow(t, controller); status.State != StateUnavailable {
 		t.Fatalf("status = %+v, want unavailable", status)
 	}

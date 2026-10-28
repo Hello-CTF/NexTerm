@@ -660,7 +660,7 @@ func (s *Service) legacyStatus(running supervisor.RunningHelper) Status {
 	} else if running.PTYListed {
 		sessions = fmt.Sprintf("至少 %d 个终端会话（后台命令数未知）", status.ActiveSessions)
 	}
-	status.Reason = fmt.Sprintf("本机持久组件为旧版本（协议 v%d），其中有%s在运行；新开的本机终端暂用普通模式。重启组件会结束这些会话", running.Protocol, sessions)
+	status.Reason = fmt.Sprintf("本机持久组件为旧版本（协议 v%d），其中有%s在运行；新开的本机终端暂用临时终端。重启组件会结束这些会话", running.Protocol, sessions)
 	return status
 }
 

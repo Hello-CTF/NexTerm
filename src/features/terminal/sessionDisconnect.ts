@@ -39,7 +39,7 @@ export async function disconnectSessionWithConfirm(
   const n = await runningTerminalCount(sessionId);
   const ok = await ask(
     n > 0
-      ? `断开「${sessionName}」？\n\n${n} 个终端正在运行。断开后，普通终端的进程将终止且无法恢复；持久终端会保留在「后台会话」，可稍后接管`
+      ? `断开「${sessionName}」？\n\n${n} 个终端正在运行。断开后，临时终端的进程将终止且无法恢复；持久终端会保留在「后台会话」，可稍后接管`
       : `断开「${sessionName}」？`,
     { title: "断开连接", kind: "warning" },
   );

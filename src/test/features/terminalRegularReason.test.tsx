@@ -330,18 +330,18 @@ describe("persistence hint bar", () => {
     await flush();
 
     expect(hintBar()?.dataset.tone).toBe("neutral");
-    expect(hintBar()?.textContent).toContain("本标签是普通终端（打开时持久组件未就绪），断开后进程会结束。");
+    expect(hintBar()?.textContent).toContain("本标签是临时终端（打开时持久组件未就绪），断开后进程会结束。");
     expect(hintButton("持久终端组件…")).toBeDefined();
   });
 
   it("marks a failed durable terminal in red with the full reason and opens the helper dialog", async () => {
     mocks.helperOperation.mockReturnValue(new Promise(() => {}));
-    seed({ regularReason: "持久组件不可用：创建持久终端失败，已改用普通终端" });
+    seed({ regularReason: "持久组件不可用：创建持久终端失败，已改用临时终端" });
     mountPane();
     await flush();
 
     expect(hintBar()?.dataset.tone).toBe("danger");
-    expect(hintBar()?.textContent).toContain("创建持久终端失败，已改用普通终端");
+    expect(hintBar()?.textContent).toContain("创建持久终端失败，已改用临时终端");
     act(() => hintButton("持久终端组件…")?.click());
     expect(mocks.helperOperation).toHaveBeenCalledWith("s1", "", "status");
   });
@@ -366,7 +366,7 @@ describe("persistence hint bar", () => {
     await flush();
     operations(startOp(), failOp("磁盘空间不足"));
 
-    expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("持久终端暂时不可用，当前标签使用普通终端");
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("持久终端暂时不可用，当前标签使用临时终端");
   });
 
   it("names a failed restore of a durable terminal as such", async () => {
@@ -377,7 +377,7 @@ describe("persistence hint bar", () => {
 
     expect(hintBar()?.dataset.tone).toBe("danger");
     expect(hintBar()?.textContent).toContain("原持久终端恢复失败：远端进程已退出");
-    expect(hintBar()?.textContent).not.toContain("本标签是普通终端");
+    expect(hintBar()?.textContent).not.toContain("本标签是临时终端");
     act(() => hintButton("处理")?.click());
     expect(helperDialog()).not.toBeNull();
   });
@@ -515,7 +515,7 @@ describe("persistence hint bar", () => {
   });
 
   it("leaves a named red mark on the tab after a failure hint is dismissed", async () => {
-    seed({ regularReason: "持久组件不可用：创建持久终端失败，已改用普通终端" });
+    seed({ regularReason: "持久组件不可用：创建持久终端失败，已改用临时终端" });
     mountPane();
     await flush();
     expect(tabMark()).toBeNull();
@@ -523,8 +523,8 @@ describe("persistence hint bar", () => {
     act(() => hintButton("关闭提示")?.click());
     expect(hintBar()).toBeNull();
     const mark = tabMark();
-    expect(mark?.getAttribute("aria-label")).toContain("创建持久终端失败，已改用普通终端");
-    expect(mark?.getAttribute("title")).toContain("创建持久终端失败，已改用普通终端");
+    expect(mark?.getAttribute("aria-label")).toContain("创建持久终端失败，已改用临时终端");
+    expect(mark?.getAttribute("title")).toContain("创建持久终端失败，已改用临时终端");
 
     act(() => mark?.click());
     await flush();

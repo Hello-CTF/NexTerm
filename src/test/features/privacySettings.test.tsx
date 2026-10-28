@@ -64,7 +64,7 @@ describe("AI privacy settings", () => {
     expect(mounted.container.textContent).toContain("当前 NexTerm 服务端");
     expect(mounted.container.textContent).toContain("模型从官方渠道下载，不随安装包分发。");
     expect(mounted.container.textContent).not.toContain("Hugging Face");
-    expect(mounted.container.textContent).not.toContain("漏检");
+    expect(mounted.container.textContent).toContain("脱敏可能漏检或误报，不要把它当作唯一的保护。");
     expect(mounted.container.textContent).not.toContain("每台设备需单独下载");
     choose("下载模型精度", "FP32");
     mocks.download.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true, precision: "fp32" } });

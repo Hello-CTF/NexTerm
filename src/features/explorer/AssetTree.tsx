@@ -2831,10 +2831,10 @@ export function AssetEditor({
               >
                 <option value="auto">默认（使用全局设置）</option>
                 <option value="durable">持久终端（断开后可在后台接管）</option>
-                <option value="regular">普通终端（随连接断开结束）</option>
+                <option value="regular">临时终端（随连接断开结束）</option>
               </select>
               <div className="nx-hint mt-1.5">
-                首次连接会自动安装持久终端组件，安装期间先使用普通终端，完成后新建的标签生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
+                首次连接会自动安装持久终端组件，安装期间先使用临时终端，完成后新建的标签生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
               </div>
             </div>
           )}

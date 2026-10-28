@@ -79,7 +79,7 @@ describe("default terminal mode settings", () => {
     mounted = mountWithClient(createElement(SettingsView));
     await flush();
     const group = mounted.container.querySelector('[aria-label="默认终端模式"]');
-    const regular = [...(group?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "普通终端");
+    const regular = [...(group?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "临时终端");
     if (!regular) throw new Error("Regular terminal option not found");
     click(regular);
     await waitForRendered(() => expect(regular.getAttribute("aria-pressed")).toBe("true"));
@@ -95,7 +95,7 @@ describe("default terminal mode settings", () => {
     mounted = mountWithClient(createElement(SettingsView));
     await flush();
     const group = mounted.container.querySelector('[aria-label="默认终端模式"]');
-    const regular = [...(group?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "普通终端");
+    const regular = [...(group?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "临时终端");
     if (!regular) throw new Error("Regular terminal option not found");
     click(regular);
     await waitForRendered(() => expect(toast).toHaveBeenCalledWith("error", "保存默认终端模式失败：保存失败"));

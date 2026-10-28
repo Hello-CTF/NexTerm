@@ -388,6 +388,6 @@ describe("pane tab strip persistence marks", () => {
     expect(tabByText(list, "未知的终端").querySelector('[role="img"]')).toBeNull();
     expect(tabByText(list, "临时的终端").querySelector('[role="img"][aria-label^="临时终端"]')).not.toBeNull();
     expect(tabByText(list, "普通的终端").querySelector('[role="img"]')).toBeNull();
-    expect(tabByText(list, "普通的终端").getAttribute("title")).toContain("普通终端：打开时持久组件未就绪");
+    expect(tabByText(list, "普通的终端").getAttribute("title")).toContain("临时终端：打开时持久组件未就绪");
   });
 });

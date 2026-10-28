@@ -393,7 +393,7 @@ describe("HelperOperationView", () => {
     expect(view.container.textContent).toContain("无法转到后台");
     expect(view.container.textContent).toContain("保留当前连接");
     click(buttonByText(view.container, "重试持久终端"));
-    click(buttonByText(view.container, "继续使用普通终端"));
+    click(buttonByText(view.container, "继续使用临时终端"));
     click(buttonByText(view.container, "取消后台操作"));
 
     expect(onRetryPersistent).toHaveBeenCalledTimes(1);
@@ -422,7 +422,7 @@ describe("HelperOperationView", () => {
     expect(onRetryPersistent).toHaveBeenCalledTimes(1);
     expect(onContinueOrdinary).not.toHaveBeenCalled();
 
-    const ordinary = buttonByText(view.container, "继续使用普通终端");
+    const ordinary = buttonByText(view.container, "继续使用临时终端");
     ordinary.focus();
     expect(document.activeElement).toBe(ordinary);
     expect(keyDown(ordinary, " ").defaultPrevented).toBe(true);
@@ -451,13 +451,13 @@ describe("HelperOperationView", () => {
     });
     const before = view.container.textContent;
 
-    expect(buttonByText(view.container, "新建普通终端")).toBeDefined();
-    expect(view.container.textContent).toContain("新的普通终端");
+    expect(buttonByText(view.container, "新建临时终端")).toBeDefined();
+    expect(view.container.textContent).toContain("新的临时终端");
     expect(view.container.textContent).toContain("原会话不会被恢复");
     expect(view.container.textContent).not.toContain("已恢复原会话");
     expect(view.container.textContent).not.toContain("远端已终止");
 
-    click(buttonByText(view.container, "新建普通终端"));
+    click(buttonByText(view.container, "新建临时终端"));
     expect(onContinueOrdinary).toHaveBeenCalledTimes(1);
     expect(view.container.textContent).toBe(before);
   });

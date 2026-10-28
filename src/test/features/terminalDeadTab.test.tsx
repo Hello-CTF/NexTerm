@@ -330,7 +330,7 @@ describe("terminal dead-tab overlay", () => {
     const notice = useUi.getState().toasts.find((toast) => toast.text.includes("恢复失败"));
     expect(notice?.action?.label).toBe("查看选项");
     act(() => notice?.action?.onSelect());
-    clickButton(mounted.container, "新建普通终端");
+    clickButton(mounted.container, "新建临时终端");
 
     await waitFor(() => expect(harness.props?.forceRegular).toBe(true));
     expect(harness.props?.resumeTabId).toBeUndefined();

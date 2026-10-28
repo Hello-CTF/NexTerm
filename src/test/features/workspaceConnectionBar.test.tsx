@@ -153,7 +153,7 @@ describe("WorkspaceConnectionBar", () => {
       setup([durableTerm, ordinaryTerm]);
       clickButton(mounted!.container, "立即重连");
       await flush();
-      expect(mocks.confirm).toHaveBeenCalledWith("普通终端会断开，正在运行的程序会结束");
+      expect(mocks.confirm).toHaveBeenCalledWith("临时终端会断开，正在运行的程序会结束");
       expect(mocks.reconnect).toHaveBeenCalledWith("ws1");
     });
 

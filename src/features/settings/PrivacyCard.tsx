@@ -260,6 +260,7 @@ function PrivacyCardBody() {
             </div>
           )}
           <p className="nx-hint text-[11px]">模型从官方渠道下载，不随安装包分发。</p>
+          <p className="nx-hint text-[11px]">脱敏可能漏检或误报，不要把它当作唯一的保护。</p>
         </div>
       )}
     </section>
