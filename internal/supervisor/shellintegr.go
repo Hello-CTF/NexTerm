@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 )
@@ -78,7 +77,7 @@ func preserveLoginMode(shell shellintegr.Shell, launch *shellintegr.Launch, wrap
 			return err
 		}
 		composite := filepath.Join(filepath.Dir(wrapperPath), "login-rc")
-		if err := os.WriteFile(composite, []byte(bashLoginChain(wrapperPath)), 0o600); err != nil {
+		if err := os.WriteFile(composite, []byte(bashLoginChain(filepath.Join(filepath.Dir(wrapperPath), shellintegr.BashIntegrationFile))), 0o600); err != nil {
 			return err
 		}
 		wrapped.command = []string{launch.Path, "--rcfile", composite, "-i"}
@@ -95,9 +94,11 @@ func rcfilePath(args []string) (string, error) {
 	return "", fmt.Errorf("wrapped bash launch carries no --rcfile")
 }
 
-func bashLoginChain(wrapperPath string) string {
-	quoted := "'" + strings.ReplaceAll(wrapperPath, "'", `'"'"'`) + "'"
-	return `[[ -r /etc/profile ]] && source /etc/profile
+// bashLoginChain reproduces `bash -l` startup (/etc/profile, then the first
+// of ~/.bash_profile, ~/.bash_login, ~/.profile) and then loads only the hooks:
+// ~/.bashrc is sourced by the user's profile if they want it, never here.
+func bashLoginChain(integrationPath string) string {
+	return shellintegr.BashSourceQuote(integrationPath, `[[ -r /etc/profile ]] && source /etc/profile
 if [[ -r $HOME/.bash_profile ]]; then
     source $HOME/.bash_profile
 elif [[ -r $HOME/.bash_login ]]; then
@@ -105,5 +106,5 @@ elif [[ -r $HOME/.bash_login ]]; then
 elif [[ -r $HOME/.profile ]]; then
     source $HOME/.profile
 fi
-source ` + quoted + "\n"
+`)
 }
