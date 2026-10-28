@@ -41,7 +41,7 @@ function loadCheck(runtimeDir, binary = loader, manifestDir = runtimeDir) {
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(manifestDir, "runtime.json"), "utf8"));
     if (manifest.unavailable) {
-      console.log(`runtime declared unavailable for ${goos}/${goarch} (${manifest.unavailable}); load check skipped`);
+      console.warn(`runtime declared unavailable for ${goos}/${goarch} (${manifest.unavailable}); load check skipped`);
       return;
     }
   } catch {
@@ -50,7 +50,7 @@ function loadCheck(runtimeDir, binary = loader, manifestDir = runtimeDir) {
   const result = run(binary, [runtimeDir]);
   const text = `${result.stdout}${result.stderr}`.trim();
   if (result.status !== 0 || !/^OK \S+/m.test(result.stdout)) throw new Error(`runtime did not load from ${runtimeDir}: ${text}`);
-  console.log(`runtime loaded from ${runtimeDir}: ${result.stdout.trim()}`);
+  console.warn(`runtime loaded from ${runtimeDir}: ${result.stdout.trim()}`);
 }
 
 function sevenZip() {
@@ -105,7 +105,7 @@ function darwin(work) {
   if (hardened && !entitlements.includes("com.apple.security.cs.disable-library-validation")) {
     throw new Error("hardened runtime is on but com.apple.security.cs.disable-library-validation is missing from the app signature");
   }
-  console.log(`app signature: hardened runtime ${hardened ? "on" : "off"}, library-validation entitlement ${entitlements.includes("disable-library-validation") ? "present" : "absent"}`);
+  console.warn(`app signature: hardened runtime ${hardened ? "on" : "off"}, library-validation entitlement ${entitlements.includes("disable-library-validation") ? "present" : "absent"}`);
   // Re-sign the loader like the app (same identity, flags and entitlements) so
   // dyld/AMFI apply the same library validation to the bundled dylib.
   const identity = process.env.NEXTERM_MACOS_SIGN_IDENTITY || "-";
