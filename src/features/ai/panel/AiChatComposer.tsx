@@ -2,6 +2,7 @@ import { IconList, IconEdit, IconAlert, IconLoader, IconClose, IconImage, IconSh
 import { ProductionWriteRiskNotice } from "../../production/ProductionWarning";
 import { DESKTOP } from "../../../ipc/env";
 import { isImeKeyEvent } from "../../../ui/DialogHost";
+import { ComposerMoreMenu, type ComposerMoreItem } from "./ComposerMoreMenu";
 import { ModelSelector } from "../ModelSelector";
 import { UsageRing } from "../UsageRing";
 import { modelApi } from "../../../ipc/commands";
@@ -21,6 +22,30 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
     if (imageNoticeVisible) acknowledgePrivacyImageNotice();
     void send();
   };
+  const sendDisabled = (!input.trim() && images.length === 0) || editSubmitting;
+  const permTitle = permError
+    ? "AI 权限读取失败（点击查看并重试）"
+    : perm
+      ? `AI 权限与模式：${MODE_LABEL[perm.mode]}（${permScope ? "这台主机" : "全局默认"}），含计划模式和免确认授权`
+      : "AI 权限与模式：读取中（点击设置）";
+  // Rarely used or experimental actions live here; with no terminal tab the
+  // takeover entry is omitted instead of shown disabled.
+  const moreItems: ComposerMoreItem[] = tabId
+    ? [
+        {
+          key: "takeover",
+          label: "终端接管",
+          badge: "实验性",
+          icon: <IconMonitor size={12} />,
+          title: bindings.reclaimTakeover
+            ? `终端接管（实验性功能）：AI 直接接手当前终端，随时按 ${reclaimKeyLabel} 收回控制权`
+            : "终端接管（实验性功能）：AI 直接接手当前终端",
+          disabled: busy,
+          disabledReason: "AI 运行中，结束后可用",
+          run: () => void runTakeover(),
+        },
+      ]
+    : [];
   return (
     <>
       <div className="shrink-0 border-t border-neutral-800/60 p-2.5 [padding-bottom:calc(0.625rem+var(--nx-kb-inset,0px))]">
@@ -227,8 +252,8 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               ? "运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到"
               : sessionId
                 ? DESKTOP
-                  ? "向 NexTerm 提问，@ 引用资产或终端标签，/ 命令与技能"
-                  : "向 NexTerm 提问，@ 引用资产或终端标签，/ 命令与技能，可直接粘贴图片"
+                  ? "向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能"
+                  : "向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能，可粘贴图片"
                 : "未连接会话（仍可全局提问）"
           }
           aria-label="消息输入"
@@ -265,87 +290,77 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           }}
         />
 
-        <div className="nx-ai-composer-actions mt-1.5 flex flex-wrap items-center gap-1">
-          <ModelSelector onManage={() => setModelPanelOpen(true)} />
-          <input
-            ref={imageInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            aria-hidden="true"
-            tabIndex={-1}
-            onChange={onPickImages}
-          />
-          <button
-            className="nx-icon-btn nx-icon-btn-sm"
-            title={`${DESKTOP ? "添加图片" : "添加图片（也可以直接粘贴）"}${privacyGuard.enabled ? "，图片不会脱敏" : ""}`}
-            aria-label="添加图片"
-            onClick={() => imageInputRef.current?.click()}
-          >
-            <IconImage size={13} />
-          </button>
-          <PrivacyIndicator guard={privacyGuard} />
-          <div className="nx-spacer" />
-          <UsageRing
-            usage={conv.usage}
-            runs={conversationRuns}
-            loadSummary={() => modelApi.usageSummary()}
-          />
-          <button
-            className={`nx-icon-btn nx-icon-btn-sm ${
-              perm?.mode === "silent" ? "is-active" : ""
-            } ${permOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
-            title={
-              permError
-                ? "AI 权限读取失败（点击查看并重试）"
-                : perm
-                  ? `AI 权限与模式：${MODE_LABEL[perm.mode]}（${permScope ? "这台主机" : "全局默认"}），含计划模式和免确认授权`
-                  : "AI 权限与模式：读取中（点击设置）"
-            }
-            onClick={() => setPermOpen((v) => !v)}
-          >
-            <IconShield size={13} />
-          </button>
-          <button
-            className="nx-icon-btn nx-icon-btn-sm text-red-400 hover:text-red-300"
-            title={
-              tabId
-                ? bindings.reclaimTakeover
-                  ? `终端接管（实验性功能）：AI 直接接手当前终端，随时按 ${reclaimKeyLabel} 收回控制权`
-                  : "终端接管（实验性功能）：AI 直接接手当前终端"
-                : "终端接管需要先打开一个终端标签"
-            }
-            disabled={!tabId || busy}
-            onClick={() => void runTakeover()}
-          >
-            <IconMonitor size={13} />
-          </button>
-          {busy ? (
+        <div className="nx-ai-composer-actions mt-1.5 flex items-center gap-1">
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <ModelSelector onManage={() => setModelPanelOpen(true)} />
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              aria-hidden="true"
+              tabIndex={-1}
+              onChange={onPickImages}
+            />
             <button
-              className="nx-send-btn nx-send-btn-stop"
-              title={
-                activeRun?.cancellation === "cancelling"
-                  ? "停止当前任务：已受理，等待终态"
-                  : activeRun?.cancellation === "unconfirmed"
-                    ? "停止当前任务：停止未确认，点击重试"
-                    : "停止当前任务（保留已完成的输出）"
-              }
-              disabled={activeRun?.cancellation === "cancelling"}
-              onClick={() => void stop()}
+              type="button"
+              className="nx-cbar-icon"
+              title={`${DESKTOP ? "添加图片" : "添加图片（也可以直接粘贴）"}${privacyGuard.enabled ? "，图片不会脱敏" : ""}`}
+              aria-label="添加图片"
+              onClick={() => imageInputRef.current?.click()}
             >
-              <IconStopSquare />
+              <IconImage size={14} />
             </button>
-          ) : (
+            <PrivacyIndicator guard={privacyGuard} />
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
             <button
-              className="nx-send-btn"
-              title={editing ? "编辑并重新发送" : "发送 (Enter)"}
-              disabled={(!input.trim() && images.length === 0) || editSubmitting}
-              onClick={() => (editing ? void submitEditResend() : sendMessage())}
+              type="button"
+              className={`nx-cbar-btn ${permError ? "is-error" : ""} ${perm?.mode === "silent" ? "is-attention" : ""} ${permOpen ? "is-open" : ""}`}
+              title={permTitle}
+              aria-label={permTitle}
+              aria-expanded={permOpen}
+              onClick={() => setPermOpen((v) => !v)}
             >
-              <IconSendArrow />
+              {permError ? <IconAlert size={13} /> : <IconShield size={13} />}
+              <span className="nx-cbar-label">{permError ? "权限异常" : perm ? MODE_LABEL[perm.mode] : "权限"}</span>
             </button>
-          )}
+            <UsageRing
+              usage={conv.usage}
+              runs={conversationRuns}
+              loadSummary={() => modelApi.usageSummary()}
+            />
+            <ComposerMoreMenu items={moreItems} />
+            {busy ? (
+              <button
+                className="nx-send-btn nx-send-btn-stop"
+                aria-label="停止"
+                title={
+                  activeRun?.cancellation === "cancelling"
+                    ? "停止当前任务：已受理，等待终态"
+                    : activeRun?.cancellation === "unconfirmed"
+                      ? "停止当前任务：停止未确认，点击重试"
+                      : "停止当前任务（保留已完成的输出）"
+                }
+                disabled={activeRun?.cancellation === "cancelling"}
+                onClick={() => void stop()}
+              >
+                {activeRun?.cancellation === "cancelling" ? <IconLoader size={14} className="animate-spin" /> : <IconStopSquare />}
+              </button>
+            ) : (
+              <button
+                className="nx-send-btn"
+                aria-label={editing ? "编辑并重新发送" : "发送"}
+                aria-keyshortcuts="Enter"
+                title={editing ? "编辑并重新发送" : "发送 (Enter)"}
+                disabled={sendDisabled}
+                onClick={() => (editing ? void submitEditResend() : sendMessage())}
+              >
+                <IconSendArrow />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

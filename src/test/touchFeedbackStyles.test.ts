@@ -115,8 +115,8 @@ describe("coarse pointer form controls", () => {
     expect(base(".nx-tab", "height")).toBe("28px");
     expect(base(".nx-ws-switch", "height")).toBe("26px");
     expect(base(".nx-segment-item", "height")).toBe("24px");
-    expect(base(".nx-send-btn", "width")).toBe("30px");
-    expect(base(".nx-send-btn", "height")).toBe("30px");
+    expect(base(".nx-send-btn", "width")).toBe("28px");
+    expect(base(".nx-send-btn", "height")).toBe("28px");
     expect(base(".nx-check", "width")).toBe("14px");
     expect(base(".nx-tree-caret", "width")).toBe("14px");
   });

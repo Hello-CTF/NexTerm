@@ -277,6 +277,7 @@ describe("AiSidebar database workspace scope", () => {
   it("keeps terminal takeover payloads unchanged", async () => {
     installWorkspaces([{ kind: "session", title: "Host", sessionId: "session-1" }]);
     await mountSidebar({ sessionId: "session-1", tabId: "tab-1" });
+    click(view!.container.querySelector('button[aria-label="更多"]')!);
     const takeoverButton = [...view!.container.querySelectorAll("button")].find((button) =>
       button.title.startsWith("终端接管（实验性功能）"),
     );

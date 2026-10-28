@@ -168,6 +168,7 @@ describe("AiSidebar takeover controls", () => {
   }
 
   async function startTakeover() {
+    click(view!.container.querySelector('button[aria-label="更多"]')!);
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）"]')!);
     await flush();
     return mocks.channels.at(-1)!;
