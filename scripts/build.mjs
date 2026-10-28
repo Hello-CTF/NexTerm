@@ -1348,7 +1348,8 @@ function packageDarwin(binary, goarch) {
   run("plutil", ["-lint", path.join(app, "Contents/Info.plist")]);
   const signIdentity = process.env.NEXTERM_MACOS_SIGN_IDENTITY || "-";
   const signArgs = ["--force", "--sign", signIdentity];
-  if (signIdentity !== "-") signArgs.push("--options", "runtime", "--timestamp");
+  // The hardened runtime enforces library validation; the entitlement lets the app dlopen its bundled ONNX Runtime.
+  if (signIdentity !== "-") signArgs.push("--options", "runtime", "--timestamp", "--entitlements", path.join(ROOT, "build/darwin/entitlements.plist"));
   run("codesign", [...signArgs, "--deep", app]);
   // Signing changes Mach-O bytes; retain provenance and record the signed hashes.
   const runtimeManifestPath = path.join(runtimeResources, "runtime.json");

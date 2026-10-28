@@ -214,3 +214,11 @@ func describeSpans(text string, spans []Span) string {
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }
+
+func TestRuntimePathReportsMissingFile(t *testing.T) {
+	_, err := runtimePath(t.TempDir())
+	var runtimeErr *RuntimeError
+	if !errors.As(err, &runtimeErr) || !runtimeErr.Missing || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("got %v", err)
+	}
+}

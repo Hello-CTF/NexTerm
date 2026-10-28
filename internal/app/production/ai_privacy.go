@@ -97,7 +97,7 @@ func privacyCommandResult[T any](value T, err error) (T, error) {
 		return value, ipc.WrapError(ipc.CodeUnsupported, platformError.Message, err)
 	}
 	if errors.Is(err, inference.ErrUnavailable) {
-		return value, ipc.WrapError(ipc.CodeUnsupported, privacy.RuntimeUnavailableMessage(), err)
+		return value, ipc.WrapError(ipc.CodeUnsupported, privacy.UnavailableMessage(err), err)
 	}
 	return value, err
 }

@@ -92,9 +92,9 @@ func initializeRuntime(path string) error {
 	}
 	if err := loadRuntime(path); err != nil {
 		if message := strings.TrimSpace(err.Error()); message != "" {
-			return fmt.Errorf("%w: %s", ErrUnavailable, message)
+			return &RuntimeError{Path: path, Err: errors.New(message)}
 		}
-		return ErrUnavailable
+		return &RuntimeError{Path: path, Err: ErrUnavailable}
 	}
 	onnxRuntime.path = path
 	return nil

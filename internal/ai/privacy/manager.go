@@ -227,10 +227,19 @@ func RuntimeUnavailableMessage() string {
 	return message
 }
 
+// UnavailableMessage explains an inference.ErrUnavailable failure, naming a
+// missing file or a system load refusal when the error carries that cause.
+func UnavailableMessage(err error) string { return safeMessage(err, RuntimeUnavailableMessage()) }
+
 func safeMessage(err error, fallback string) string {
 	var safe *UserError
 	var platform *inference.PlatformError
+	var runtimeErr *inference.RuntimeError
 	switch {
+	case errors.As(err, &runtimeErr) && runtimeErr.Missing:
+		return "本地推理运行时文件不存在: " + runtimeErr.Path + "。" + RuntimeUnavailableMessage()
+	case errors.As(err, &runtimeErr):
+		return "系统拒绝加载本地推理运行时（可能是签名、权限或隔离属性限制）: " + runtimeErr.Error()
 	case errors.As(err, &safe):
 		return safe.Message
 	case errors.As(err, &platform):
