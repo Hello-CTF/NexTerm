@@ -1,9 +1,6 @@
 import { dbApi, sessionApi, vaultApi, type SessionInfo, type VaultStatus } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
-import { workspaceViewport } from "../../features/terminal/workspaceLayout";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
-import { openSessionPanelOnConnect, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
-import { sessionPanelFits } from "../../features/session-panel/sessionPanelFit";
 import { connectWithHostKeyConfirm } from "../hostKeys";
 import { formatQuickConnectTarget, type QuickConnectTarget } from "../quickConnectTarget";
 import { DB_KIND_LABEL, dbKindOf, makePane, nextTabId, rebindWorkspaceSession } from "./model";
@@ -70,26 +67,6 @@ export async function ensureVaultReadyFor(asset: { name: string; credId?: string
   return ensureVaultUnlocked(`连接「${asset.name}」需要使用凭据，请先输入保护密码：`, epoch);
 }
 
-function sidebarsOverlayWorkspace(): boolean {
-  if (typeof window === "undefined") return false;
-  return workspaceViewport(window.innerWidth, false).overlaySidebars;
-}
-
-// Connecting a host used to open the left file tree. The files now live in the session side panel, which opens when it
-// fits beside the open docks and the user has not closed it; overlay layouts keep the terminal in front.
-function showConnectedFiles(): void {
-  if (sidebarsOverlayWorkspace()) return;
-  const ui = useUi.getState();
-  openSessionPanelOnConnect(sessionPanelFits({
-    viewportWidth: window.innerWidth,
-    leftOpen: ui.leftOpen,
-    leftWidth: ui.leftWidth,
-    rightOpen: ui.rightOpen,
-    rightWidth: ui.rightWidth,
-    panelWidth: useSessionPanel.getState().width,
-  }));
-}
-
 export async function openConnectedAssetSession(
   info: SessionInfo,
   asset: { id: string; name: string; kind: string },
@@ -134,7 +111,6 @@ export async function openConnectedAssetSession(
     activeWorkspaceId: workspace.id,
     connectFocusRevision: state.connectFocusRevision + 1,
   }));
-  showConnectedFiles();
   // A quick connection (typing user@host) still opens a terminal right away, unlike opening a saved host.
   if ((quickTarget || options?.openTerminal) && asset.kind !== "docker" && asset.kind !== "device") {
     await openTerminalTab(info, undefined, pane.id);
@@ -518,7 +494,6 @@ function activateDeviceWorkspace(workspaceId: string, options?: ConnectAssetOpti
     activeWorkspaceId: workspaceId,
     connectFocusRevision: state.connectFocusRevision + 1,
   }));
-  showConnectedFiles();
 }
 
 async function runConnectDevice(

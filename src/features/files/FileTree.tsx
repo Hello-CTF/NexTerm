@@ -351,7 +351,7 @@ export interface FileTreeProps {
   sessionId: string;
   // follow hands the terminal-directory follow to an owner instead of the device-wide preference.
   follow?: CwdFollowControl;
-  // embedded fills its container (the session side panel) instead of sizing itself as the left dock.
+  // embedded fills its container instead of sizing itself as the left dock.
   embedded?: boolean;
 }
 

@@ -9,8 +9,10 @@ import {
   IconClock,
   IconDatabase,
   IconDrive,
+  IconFolderOpen,
   IconHistory,
   IconKey,
+  IconList,
   IconMonitor,
   IconNetwork,
   IconServer,
@@ -44,7 +46,7 @@ export function AppRail({
   const backgroundCount = useBackgroundSessionCount(workspace, backgroundAvailable);
   const leftMode = useUi((s) => s.leftMode);
   const setLeftMode = useUi((s) => s.setLeftMode);
-  const { openBackground, openHistory, openDocker, openDatabase, openMount, openForward } = actions;
+  const { openBackground, openHistory, openFiles, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
 
   const railPanels: {
     key: string;
@@ -104,6 +106,13 @@ export function AppRail({
       onClick: openHistory,
     },
     {
+      key: "files",
+      label: "文件",
+      hint: "浏览当前主机的文件：从终端所在目录打开，双击文件进入编辑器",
+      icon: IconFolderOpen,
+      onClick: openFiles,
+    },
+    {
       key: "docker",
       label: "容器",
       hint: "打开 Docker 面板：查看容器状态与日志，进入容器终端",
@@ -136,6 +145,13 @@ export function AppRail({
       hint: "把远程端口转发到本地：本地端口映射或 SOCKS5 代理",
       icon: IconNetwork,
       onClick: openForward,
+    },
+    {
+      key: "logs",
+      label: "日志",
+      hint: "跟随日志文件、journalctl 或容器日志：默认选中当前主机，可合并多台主机（仅 SSH 与非 Windows 受管设备）",
+      icon: IconList,
+      onClick: openLogs,
     },
   ];
 

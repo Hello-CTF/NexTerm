@@ -19,7 +19,7 @@ export function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
           <IconPlus size={14} />
           新建终端
         </button>
-        <div className="nx-hint">在会话侧栏的文件页签中双击文件，可打开编辑器标签。</div>
+        <div className="nx-hint">在左侧栏「文件」中双击文件，可打开编辑器标签。</div>
       </div>
     </div>
   );
@@ -71,7 +71,6 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
             ["quickConnect", "快速连接"],
             ["commandPalette", "跳转面板"],
             ["toggleSidebar", "左栏"],
-            ["toggleSessionPanel", "会话侧栏"],
             ["toggleAiSidebar", "AI 侧栏"],
           ] as const
         ).map(([id, label]) => (
@@ -82,7 +81,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
         ))}
       </div>
       <div className="nx-hint max-w-md text-center">
-        双击左栏资产打开它的工作区（「当前设备」即本机），会话侧栏显示它的文件；主机工作区不会自动新建终端，点「新建终端」打开。容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
+        双击左栏资产打开它的工作区（「当前设备」即本机），左侧栏的文件、容器、端口转发和日志按钮作用于当前主机；主机工作区不会自动新建终端，点「新建终端」打开。容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
       </div>
     </div>
   );

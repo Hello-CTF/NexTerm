@@ -106,6 +106,14 @@ describe("DockerPanel query states", () => {
     expect(text()).toContain("未安装 Docker");
   });
 
+  it("explains a host whose Docker daemon is not running", async () => {
+    mocks.dockerPs.mockRejectedValue({ code: "docker_unavailable", message: "Docker 未运行" });
+    mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
+    await flushUntil(() => text().includes("这台主机未运行 Docker，启动后点击重试。"));
+    expect(text()).not.toContain("加载失败");
+    expect(text()).toContain("未运行 Docker");
+  });
+
   it("retry recovers into the true empty state", async () => {
     mocks.dockerPs.mockRejectedValueOnce(new Error("daemon unavailable"));
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));

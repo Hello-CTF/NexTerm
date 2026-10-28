@@ -17,7 +17,6 @@ export type KeybindingActionId =
   | "focusPaneDown"
   | "toggleSidebar"
   | "toggleAiSidebar"
-  | "toggleSessionPanel"
   | "closeTab"
   | "splitRight"
   | "splitDown"
@@ -52,9 +51,6 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "focusPaneDown", label: "聚焦下方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
   { id: "toggleSidebar", label: "收起 / 展开左栏", defaultBinding: "Mod+b" },
   { id: "toggleAiSidebar", label: "收起 / 展开 AI 侧栏", defaultBinding: "Mod+j" },
-  // Ctrl+Shift+letter chords send nothing to the terminal, so the desktop toggle withholds no shell input. Browsers keep
-  // Ctrl+Shift+E (Firefox's network monitor), so the web build uses Ctrl+Alt+E, as closePane does.
-  { id: "toggleSessionPanel", label: "收起 / 展开会话侧栏", defaultBinding: WEB ? "Ctrl+Alt+e" : "Mod+Shift+e" },
   { id: "closeTab", label: "关闭当前标签", defaultBinding: "Mod+w" },
   { id: "splitDown", label: "向下分屏", defaultBinding: "Mod+\\" },
   { id: "splitRight", label: "向右分屏", defaultBinding: "Mod+Shift+\\" },
@@ -82,7 +78,6 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "focusPaneDown",
   "toggleSidebar",
   "toggleAiSidebar",
-  "toggleSessionPanel",
   "closeTab",
   "splitRight",
   "splitDown",

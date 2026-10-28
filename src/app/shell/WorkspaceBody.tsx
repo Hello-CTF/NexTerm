@@ -10,10 +10,7 @@ import {
 } from "../store";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { Lazy } from "../../ui/LazyBoundary";
-import { AiSidebar, AssetTree, CredentialsSidebar, SessionPanel } from "../lazyPanels";
-import { SESSION_PANEL_WIDTH, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
-import { useAiPanelSlot } from "../../features/session-panel/aiSlot";
-import { MovableHost } from "./MovableHost";
+import { AiSidebar, AssetTree, CredentialsSidebar } from "../lazyPanels";
 import { PaneGroup, PaneTabPanel, type PaneMoveTarget } from "../workspace/PaneGroup";
 import { SplitView } from "../workspace/SplitView";
 import { workspaceLayoutTree } from "../paneLayout";
@@ -41,10 +38,8 @@ export interface WorkspaceBodyProps {
   home?: ReactNode;
 }
 
-// WorkspaceBody is the row under the header: the left dock, the workspace panes, the session side panel and the right
-// (AI) dock. The session panel sits left of the AI sidebar so both can stay open. In overlay layouts the docks float
-// above the panes behind a tap-to-close backdrop, and the session panel is a full-screen sheet. The AI sidebar is
-// mounted once: it shows in the right dock, or in the session panel's AI tab while that tab is open and the dock is not.
+// WorkspaceBody is the row under the header: the left dock, the workspace panes and the right (AI) dock. In overlay
+// layouts the docks float above the panes behind a tap-to-close backdrop.
 export function WorkspaceBody({
   ws,
   visibleWorkspaces,
@@ -67,8 +62,6 @@ export function WorkspaceBody({
   const setLeftWidth = useUi((s) => s.setLeftWidth);
   const rightWidth = useUi((s) => s.rightWidth);
   const setRightWidth = useUi((s) => s.setRightWidth);
-  const sessionWidth = useSessionPanel((s) => s.width);
-  const setSessionWidth = useSessionPanel((s) => s.setWidth);
   const accountEpoch = useUi((s) => s.accountEpoch);
   const aiAccountEpoch = useUi((s) => s.aiAccountEpoch);
   const splitPane = useUi((s) => s.splitPane);
@@ -77,22 +70,11 @@ export function WorkspaceBody({
   const splitPaneWithTab = useUi((s) => s.splitPaneWithTab);
   const setActivePane = useUi((s) => s.setActivePane);
   const setSplitRatio = useUi((s) => s.setSplitRatio);
-  const { leftDockOpen, rightDockOpen, sessionDockOpen, sessionSheet, setLeftOpen, setOverlayDock, setSessionOpen } = docks;
-  const aiPanelSlot = useAiPanelSlot();
-  // Placement comes from store state, not from the slot element: the slot is published one render after the dock closes,
-  // and a dock placement in between would hide (and remount) the chat view.
-  const sessionPanelTab = useSessionPanel((s) => s.tab);
-  const aiTabShown = sessionDockOpen && sessionPanelTab === "ai";
-  const aiInPanel = aiTabShown && !rightDockOpen;
-  const aiVisible = rightDockOpen || aiTabShown;
+  const { leftDockOpen, rightDockOpen, setLeftOpen, setOverlayDock } = docks;
 
   return (
-    <div
-      className={`nx-workspace-body flex min-h-0 flex-1 bg-neutral-900 ${
-        sessionDockOpen && !sessionSheet ? "has-session-dock" : ""
-      }`}
-    >
-      {((overlaySidebars && (leftDockOpen || rightDockOpen)) || (sessionSheet && sessionDockOpen)) && (
+    <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
+      {overlaySidebars && (leftDockOpen || rightDockOpen) && (
         <button
           type="button"
           className="nx-dock-backdrop"
@@ -202,27 +184,6 @@ export function WorkspaceBody({
         </WorkspaceArea>
       </main>
 
-      {sessionDockOpen && (
-        <div className={`nx-session-dock ${sessionSheet ? "is-overlay" : ""}`}>
-          {!sessionSheet && (
-            <ResizeHandle
-              side="right"
-              label="调整会话侧栏宽度"
-              width={sessionWidth}
-              min={SESSION_PANEL_WIDTH.min}
-              max={SESSION_PANEL_WIDTH.max}
-              defaultWidth={SESSION_PANEL_WIDTH.default}
-              onChange={setSessionWidth}
-            />
-          )}
-          <div className="nx-session-dock-body" style={sessionSheet ? undefined : { width: sessionWidth }}>
-            <Lazy>
-              <SessionPanel overlay={sessionSheet} aiDocked={rightDockOpen} onClose={() => setSessionOpen(false)} />
-            </Lazy>
-          </div>
-        </div>
-      )}
-
       <div className={`nx-right-dock ${rightDockOpen ? "" : "is-hidden"}`}>
         {rightDockOpen && (
           <ResizeHandle
@@ -234,17 +195,13 @@ export function WorkspaceBody({
             onChange={setRightWidth}
           />
         )}
-        <MovableHost target={aiInPanel ? aiPanelSlot : null} onMoved={focusAiComposer}>
-          <Lazy>
-            <AiSidebar
-              key={aiAccountEpoch}
-              sessionId={activeSessionId}
-              tabId={activeTab?.kind === "terminal" ? activeTab.tabId : undefined}
-              placement={aiInPanel ? "panel" : "dock"}
-              visible={aiVisible}
-            />
-          </Lazy>
-        </MovableHost>
+        <Lazy>
+          <AiSidebar
+            key={aiAccountEpoch}
+            sessionId={activeSessionId}
+            tabId={activeTab?.kind === "terminal" ? activeTab.tabId : undefined}
+          />
+        </Lazy>
       </div>
     </div>
   );
@@ -255,12 +212,6 @@ export function WorkspaceBody({
 function WorkspaceArea({ wrapped, covered, children }: { wrapped: boolean; covered: boolean; children: ReactNode }) {
   if (!wrapped) return <>{children}</>;
   return <div className={covered ? "hidden" : "contents"} data-workspace-area="">{children}</div>;
-}
-
-// focusAiComposer puts the caret back in the active conversation's composer after the assistant moved.
-function focusAiComposer(node: HTMLElement): void {
-  const fields = Array.from(node.querySelectorAll<HTMLTextAreaElement>("textarea"));
-  fields.find((field) => !field.closest(".hidden"))?.focus();
 }
 
 const MOVE_DIRECTIONS: { direction: FocusDirection; label: string }[] = [

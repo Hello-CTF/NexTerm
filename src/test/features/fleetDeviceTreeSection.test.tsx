@@ -68,7 +68,6 @@ import { AssetTree } from "../../features/explorer/AssetTree";
 import { DevicesView } from "../../features/fleet/DevicesView";
 import { useAuth } from "../../features/auth/store";
 import { useUi } from "../../app/store";
-import { resetSessionPanelForTest, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
 
 const NOW = Date.now();
 
@@ -307,7 +306,6 @@ function keydown(element: HTMLElement, key: string): void {
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
-  resetSessionPanelForTest();
   useUi.setState({ rightOpen: false });
   stubFinePointer();
   mocks.assetList.mockResolvedValue([LOCAL_ASSET, WEB_ASSET]);
@@ -477,7 +475,6 @@ describe("Asset tree device rows - row behavior", () => {
     expect(deviceWorkspace()?.assetKind).toBe("device");
     expect(deviceWorkspace()?.sessionId).toBe("s-dev-1");
     expect(useUi.getState().activeWorkspaceId).toBe(deviceWorkspace()?.id);
-    expect(useSessionPanel.getState().open).toBe(true);
     expect(deviceTerminalTabs()).toHaveLength(0);
 
     // Enter on the same device again focuses the existing workspace, no new session is created.

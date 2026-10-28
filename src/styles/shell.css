@@ -87,36 +87,6 @@
   display: none;
 }
 
-/* The session side panel docks left of the AI sidebar; overlay layouts show it as a full-screen sheet. */
-.nx-session-dock {
-  display: flex;
-  height: 100%;
-  min-width: 0;
-  flex: 0 0 auto;
-}
-
-.nx-session-dock-body {
-  display: flex;
-  height: 100%;
-  min-width: 0;
-}
-
-/* A docked session panel only shows when the workspace keeps this width (see sessionPanelFits). */
-.nx-workspace-body.has-session-dock .nx-workspace-main {
-  min-width: 360px;
-}
-
-.nx-session-dock.is-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 46;
-  width: 100%;
-}
-
-.nx-session-dock.is-overlay .nx-session-dock-body {
-  width: 100%;
-}
-
 .nx-dock-backdrop {
   display: none;
 }

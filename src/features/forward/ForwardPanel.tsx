@@ -66,18 +66,15 @@ function useForwardPanelVisible(sessionId?: string): boolean {
   });
 }
 
-// visible overrides the tab-based visibility for hosts outside a forward tab (the session side panel), which are shown
-// whenever they are mounted.
-export function ForwardPanel({ sessionId, visible }: { sessionId?: string; visible?: boolean }) {
-  return <ForwardPanelInner sessionId={sessionId} visible={visible} />;
+export function ForwardPanel({ sessionId }: { sessionId?: string }) {
+  return <ForwardPanelInner sessionId={sessionId} />;
 }
 
-function ForwardPanelInner({ sessionId, visible: visibleOverride }: { sessionId?: string; visible?: boolean }) {
+function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
   const sessions = useSessionList();
-  const tabVisible = useForwardPanelVisible(sessionId);
-  const visible = visibleOverride ?? tabVisible;
+  const visible = useForwardPanelVisible(sessionId);
   const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
   const localMachine = WEB ? "NexTerm 所在机器" : "本机";
   const remoteTarget = WEB ? "NexTerm 所在机器" : "本地";

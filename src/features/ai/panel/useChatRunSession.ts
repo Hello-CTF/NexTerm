@@ -34,8 +34,7 @@ export function useChatRunSession(p: AiChatBase) {
   const requestSnapshotsRef = useRef(
     new Map<number, { message: string; images: string[]; refs: RefChip[]; planMode: boolean }>(),
   );
-  const dockOpen = useUi((s) => s.rightOpen);
-  const rightOpen = p.visible ?? dockOpen;
+  const rightOpen = useUi((s) => s.rightOpen);
   const rightOpenRef = useRef(rightOpen);
   rightOpenRef.current = rightOpen;
   const anyAiBusy = useUi((s) => s.aiBusy);

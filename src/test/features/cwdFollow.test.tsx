@@ -34,8 +34,10 @@ import { FileTree } from "../../features/files/FileTree";
 import { FileBrowser } from "../../features/files/FileBrowser";
 import {
   cwdFollowMapSizeForTest,
+  focusedTerminalCwd,
   normalizeFollowTarget,
   resetCwdFollowForTest,
+  startCwdTracking,
 } from "../../features/files/cwdFollow";
 import { useUi, type AppTab } from "../../app/store";
 
@@ -388,5 +390,19 @@ describe("cwd record lifecycle", () => {
     await waitFor(() => expect(listCalls()).toContain("/second"));
     await flush();
     expect(cwdFollowMapSizeForTest()).toBe(2);
+  });
+});
+
+describe("focusedTerminalCwd", () => {
+  it("records directories once tracking starts, before any file view subscribes", async () => {
+    seedWorkspace();
+    startCwdTracking();
+    await flush();
+    expect(focusedTerminalCwd(useUi.getState().workspaces, SID)).toBeNull();
+
+    emitControl({ tabId: "k1", version: 1, cwd: "/srv/www" });
+
+    expect(focusedTerminalCwd(useUi.getState().workspaces, SID)).toBe("/srv/www");
+    expect(focusedTerminalCwd(useUi.getState().workspaces, "other")).toBeNull();
   });
 });

@@ -23,9 +23,13 @@ export function isDockerNotInstalled(e: unknown): boolean {
   return dockerErrorCode(e) === "docker_not_installed";
 }
 
-export function isDockerUnavailable(e: unknown): boolean {
+// dockerHostUnavailableText explains a host without a usable Docker (not installed or the daemon not running), or
+// returns null for any other error.
+export function dockerHostUnavailableText(e: unknown): string | null {
   const code = dockerErrorCode(e);
-  return code === "docker_not_installed" || code === "docker_unavailable";
+  if (code === "docker_not_installed") return "这台主机没有安装 Docker，安装后点击重试。";
+  if (code === "docker_unavailable") return "这台主机未运行 Docker，启动后点击重试。";
+  return null;
 }
 
 export function describeDockerError(e: unknown): string {

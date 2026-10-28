@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   KEYBINDING_ACTIONS,
+  applyAccountKeybindingLayers,
   bindingConflicts,
   bindingsConflict,
   captureBinding,
@@ -242,6 +243,23 @@ describe("persistence", () => {
       commandPalette: null,
       toggleSidebar: "Shift+Mod+B",
     });
+  });
+});
+
+describe("retired actions", () => {
+  it("ignores a stored binding for the removed session panel toggle", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ toggleSessionPanel: "Mod+Shift+e", toggleSidebar: "Mod+Shift+b" }));
+    loadKeybindings();
+    applyAccountKeybindingLayers({}, { "keybinding.toggleSessionPanel": "Mod+Shift+e" });
+    try {
+      expect(KEYBINDING_ACTIONS.some((action) => (action.id as string) === "toggleSessionPanel")).toBe(false);
+      expect(getKeybinding("toggleSidebar")).toBe("Mod+Shift+b");
+      expect(bindingConflicts()).toEqual([]);
+      const hit = matchAppKeybinding({ key: "e", code: "KeyE", ctrlKey: true, metaKey: false, shiftKey: true, altKey: false });
+      expect(hit).toBeNull();
+    } finally {
+      applyAccountKeybindingLayers({}, {});
+    }
   });
 });
 

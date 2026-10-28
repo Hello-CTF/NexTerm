@@ -25,7 +25,7 @@ export type PaneKind =
   | "execBatch"
   | "host";
 
-// The file tree moved from the left dock to the session side panel; a stored "files" mode reads as "assets".
+// The left dock no longer has a file tree mode; a stored "files" mode reads as "assets".
 export type LeftMode = "assets" | "credentials";
 
 export type DbKind = "mysql" | "postgres" | "redis";
