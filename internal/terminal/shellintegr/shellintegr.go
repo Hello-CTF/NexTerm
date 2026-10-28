@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 )
@@ -70,7 +71,14 @@ func Wrap(shell Shell, path string) (*Launch, error) {
 	}
 	switch shell {
 	case ShellBash:
-		if err := write("bashrc", bashWrapper); err != nil {
+		// integration.bash holds only the hooks. bashrc is the non-login entry
+		// point (plain `bash -i` semantics: ~/.bashrc once, no /etc/profile);
+		// login launches chain to integration.bash directly so ~/.bashrc is
+		// left to the user's own profile, as in `bash -l`.
+		if err := write(BashIntegrationFile, bashIntegration); err != nil {
+			return fail(err)
+		}
+		if err := write("bashrc", BashSourceQuote(filepath.Join(dir, BashIntegrationFile), bashRCPreamble)); err != nil {
 			return fail(err)
 		}
 		launch.Args = []string{"--rcfile", filepath.Join(dir, "bashrc"), "-i"}
@@ -103,8 +111,19 @@ func zshPassthrough(name string) string {
 	return "# nexterm shell integration\n[[ -r $HOME/" + name + " ]] && source $HOME/" + name + "\n"
 }
 
-const bashWrapper = `# nexterm shell integration
-[[ -r $HOME/.bashrc ]] && source $HOME/.bashrc
+// BashIntegrationFile is the hooks-only bash file written next to the
+// wrapper rcfile.
+const BashIntegrationFile = "integration.bash"
+
+// bashRCPreamble mirrors what an interactive non-login bash does on startup.
+const bashRCPreamble = "# nexterm shell integration\n[[ -r $HOME/.bashrc ]] && source $HOME/.bashrc\n"
+
+// BashSourceQuote returns preamble followed by a line sourcing path.
+func BashSourceQuote(path, preamble string) string {
+	return preamble + "source '" + strings.ReplaceAll(path, "'", `'"'"'`) + "'\n"
+}
+
+const bashIntegration = `# nexterm shell integration
 __nexterm_host=${HOSTNAME:-$(hostname)}
 __nexterm_osc7() {
     local out=$PWD
