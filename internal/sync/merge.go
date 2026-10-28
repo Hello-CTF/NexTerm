@@ -437,7 +437,7 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 
 // quarantineObject records the blob hash of an undecryptable object to avoid re-pulling it every round and prevent an automatic local push from overwriting it.
 func (e *Engine) quarantineObject(ctx context.Context, userID, objectID string, blobHash [32]byte) error {
-	payloadHash := quarantinedPayloadHash
+	payloadHash := quarantineMarker()
 	if err := e.syncStatePut(ctx, userID, objectID, &payloadHash, blobHash); err != nil {
 		e.logger.Warn("sync quarantine record failed", "error", err)
 		return err

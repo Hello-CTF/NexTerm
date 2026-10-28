@@ -110,7 +110,18 @@ func (t *LoginThrottle) sweep(now time.Time) {
 	}
 }
 
+// evictOne drops the least recently used guard that is not serving a lockout,
+// so flooding the table with unrelated keys cannot clear an active backoff.
+// Only when every inspected guard is locked out does the oldest one go.
 func (t *LoginThrottle) evictOne() {
+	now := t.now()
+	checked := 0
+	for element := t.lru.Back(); element != nil && checked < loginGuardSweepBatch; element, checked = element.Prev(), checked+1 {
+		if !now.Before(element.Value.(*loginGuard).blockedUntil) {
+			t.removeElement(element)
+			return
+		}
+	}
 	if back := t.lru.Back(); back != nil {
 		t.removeElement(back)
 	}
