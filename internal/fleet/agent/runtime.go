@@ -69,13 +69,16 @@ type Runtime struct {
 	manager      ServiceManager
 	collector    Collector
 	ensureHelper func(ctx context.Context) error
-	bridge       BridgeSpawner
-	upgrader     *Upgrader
-	onChannel    func(connected bool)
-	stateDir     string
-	executable   string
-	logger       *slog.Logger
-	now          func() time.Time
+	// checkBuild replaces a helper of an older build that runs no session; nil when the helper is
+	// managed elsewhere (a desktop's local helper has its own lifecycle).
+	checkBuild func(ctx context.Context) (supervisor.HelperBuild, error)
+	bridge     BridgeSpawner
+	upgrader   *Upgrader
+	onChannel  func(connected bool)
+	stateDir   string
+	executable string
+	logger     *slog.Logger
+	now        func() time.Time
 	// jitter returns a uniform value in [0,1) used to spread reconnect delays; tests inject a fixed source.
 	jitter func() float64
 	// sleep waits between owner_unavailable retries; tests inject a fake that records the delay.
@@ -149,8 +152,12 @@ func New(options Options) (*Runtime, error) {
 	if collector == nil {
 		collector = NewCollector(options.DataDir, now)
 	}
+	var checkBuild func(ctx context.Context) (supervisor.HelperBuild, error)
 	ensureHelper := options.EnsureHelper
 	if ensureHelper == nil {
+		checkBuild = func(ctx context.Context) (supervisor.HelperBuild, error) {
+			return supervisor.EnsureHelperBuild(ctx, supervisor.HelperConfig{StateDir: stateDir, Executable: executable})
+		}
 		ensureHelper = func(ctx context.Context) error {
 			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: stateDir, Executable: executable})
 			return err
@@ -173,6 +180,7 @@ func New(options Options) (*Runtime, error) {
 		manager:         options.Manager,
 		collector:       collector,
 		ensureHelper:    ensureHelper,
+		checkBuild:      checkBuild,
 		bridge:          bridge,
 		upgrader:        upgrader,
 		onChannel:       options.OnChannel,
@@ -237,7 +245,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.reconcileService(runCtx)
 	if r.desiredSnapshot().TerminalEnabled {
 		r.ensureHelperOnce(runCtx)
+		r.checkHelperBuild(runCtx)
 	}
+	r.loopWg.Add(1)
+	go func() {
+		defer r.loopWg.Done()
+		r.helperBuildLoop(runCtx)
+	}()
 
 	r.loopWg.Add(1)
 	go func() {
@@ -539,6 +553,47 @@ func (r *Runtime) ensureHelperOnce(ctx context.Context) {
 	defer cancel()
 	if err := r.ensureHelper(ensureCtx); err != nil {
 		r.logger.Warn("supervisor helper unavailable; terminal bridging disabled until it recovers", "error", err)
+	}
+}
+
+// helperBuildInterval is how often a stale helper that still runs terminals is re-checked, so it is
+// replaced once the last of them has ended.
+var helperBuildInterval = 5 * time.Minute
+
+func (r *Runtime) helperBuildLoop(ctx context.Context) {
+	if r.checkBuild == nil {
+		return
+	}
+	ticker := time.NewTicker(helperBuildInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if r.desiredSnapshot().TerminalEnabled {
+				r.checkHelperBuild(ctx)
+			}
+		}
+	}
+}
+
+// checkHelperBuild replaces a helper of an older build only while it runs no session. One that still
+// runs terminals is left alone and only reported; ending it needs the user's consent.
+func (r *Runtime) checkHelperBuild(ctx context.Context) {
+	if r.checkBuild == nil {
+		return
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 2*helperEnsureTimeout)
+	defer cancel()
+	build, err := r.checkBuild(checkCtx)
+	switch {
+	case err != nil:
+		r.logger.Warn("supervisor helper build check failed", "error", err)
+	case build.Replaced:
+		r.logger.Info("replaced the older supervisor helper that ran no terminals", "from", build.Helper.Runtime.Version, "to", build.Local.Version)
+	case build.Notice() != "":
+		r.logger.Warn(build.Notice())
 	}
 }
 

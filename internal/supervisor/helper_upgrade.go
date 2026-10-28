@@ -184,6 +184,10 @@ type replaceSteps struct {
 	// restore starts executable again as the helper of the old protocol and
 	// reports whether the process it started is the one that now serves.
 	restore func(ctx context.Context, executable string, protocol int) (bool, error)
+	// sameProtocol is set when the helper to replace speaks this build's protocol and differs only in its
+	// build: the verified helper must still be that older build for the consent to apply.
+	sameProtocol bool
+	stillOlder   func(RunningHelper) bool
 }
 
 // replaceRun walks the transition table once.
@@ -219,7 +223,7 @@ func (s replaceSteps) run(ctx context.Context, consent RunningHelper) (*Helper, 
 		// starts or is attached.
 	case err != nil:
 		return fail(ReplaceVerify, false, err)
-	case current.Protocol >= ProtocolVersion || !ConsentCovers(consent, current):
+	case s.staleMismatch(current) || !ConsentCovers(consent, current):
 		run.enter(ReplaceFailed)
 		return nil, result, run.trace, &LegacyHelperError{
 			Helper: current, ConsentToken: HelperConsentToken(current), Stale: true,
@@ -265,6 +269,15 @@ func (s replaceSteps) run(ctx context.Context, consent RunningHelper) (*Helper, 
 		return fail(ReplaceStart, false, fmt.Errorf("%w; an older helper started by another client serves the state directory", startErr))
 	}
 	return fail(ReplaceStart, true, startErr)
+}
+
+// staleMismatch reports a verified helper that the replacement in progress does not apply to: a
+// same-protocol replacement needs a helper still running an older build, any other needs an older protocol.
+func (s replaceSteps) staleMismatch(current RunningHelper) bool {
+	if s.sameProtocol {
+		return current.Protocol != ProtocolVersion || s.stillOlder == nil || !s.stillOlder(current)
+	}
+	return current.Protocol >= ProtocolVersion
 }
 
 // helperReplaceWait bounds how long a replacement waits for another
