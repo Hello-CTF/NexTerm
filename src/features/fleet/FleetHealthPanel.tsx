@@ -248,7 +248,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
             onChange={(event) => updateSettings({ intervalMs: Number(event.target.value) * 60_000 })}
           />
         </label>
-        <span className="nx-hint">仅在概览 tab 当前可见时运行；切走即停止</span>
+        <span className="nx-hint">只在本页打开时自动刷新，切换到其他页面后停止</span>
         {lastRefreshed !== null && <span className="nx-hint">上次刷新 {new Date(lastRefreshed).toLocaleTimeString()}</span>}
       </div>
 
@@ -256,11 +256,11 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
         {(assetsQuery.isPending || groupsQuery.isPending) && <div className="nx-hint">正在读取项目主机…</div>}
         {(assetsQuery.isError || groupsQuery.isError) && (
           <div role="alert" className="mb-2 text-[11px] text-red-300">
-            项目主机读取失败：{describeError(assetsQuery.error ?? groupsQuery.error)}
+            无法读取项目里的主机：{describeError(assetsQuery.error ?? groupsQuery.error)}
           </div>
         )}
-        {error && <div role="alert" className="mb-2 text-[11px] text-red-300">健康刷新失败：{error}</div>}
-        {historyError && <div role="alert" className="mb-2 text-[11px] text-red-300">最近批量执行历史读取失败：{historyError}</div>}
+        {error && <div role="alert" className="mb-2 text-[11px] text-red-300">刷新失败：{error}</div>}
+        {historyError && <div role="alert" className="mb-2 text-[11px] text-red-300">无法读取最近的批量执行记录：{historyError}</div>}
         {overflow.size > 0 && (
           <div role="status" className="mb-2 text-[11px] text-amber-300">
             单批最多探测 {MAX_TARGETS} 台；超出的 {overflow.size} 台保留在网格中并标记为未探测。
@@ -345,7 +345,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
         )}
       </div>
       <div className="border-t border-neutral-800/70 px-3 py-1.5 text-[10px] text-neutral-500">
-        完整指标需要已连接 SSH；未连接主机仅做 reachability 探测。uptime / load / disk / memory / docker df 共用一次只读执行。
+        完整指标需要已连接 SSH；未连接的主机只检查能否连通。运行时长、负载、磁盘、内存和 Docker 占用在一次只读命令中读取。
       </div>
     </section>
   );

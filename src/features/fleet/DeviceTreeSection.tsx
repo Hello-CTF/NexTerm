@@ -121,20 +121,20 @@ export function DeviceTreeSection() {
 
   const revoke = async (device: FleetDevice) => {
     if (device.revoked_at !== 0 || busyId === device.id) return;
-    const first = await ask(`吊销设备「${device.name}」？\n\n吊销后设备凭证立即失效、控制通道断开。`, {
-      title: "吊销设备",
+    const first = await ask(`撤销设备「${device.name}」的接入？\n\n撤销后，这台设备的登录凭据立即失效、远程连接会断开。`, {
+      title: "撤销接入",
       kind: "warning",
     });
     if (!first) return;
     const second = await ask(
-      `再次确认吊销「${device.name}」？\n\n吊销后设备凭证立即失效，设备仍显示为已吊销但无法连接，凭证不可恢复。`,
-      { title: "确认吊销", kind: "warning" },
+      `再次确认撤销「${device.name}」的接入？\n\n撤销后无法恢复；要再次使用，需要重新生成接入码并重新接入。`,
+      { title: "确认撤销", kind: "warning" },
     );
     if (!second) return;
     setBusyId(device.id);
     try {
       await fleetClient().revoke(device.id);
-      pushToast("success", `已吊销「${device.name}」`);
+      pushToast("success", `已撤销接入「${device.name}」`);
       markRevoked(device.id);
     } catch (e) {
       pushToast("error", describeError(e));
@@ -163,11 +163,11 @@ export function DeviceTreeSection() {
       { kind: "separator" },
       {
         kind: "item",
-        label: "吊销",
+        label: "撤销接入…",
         icon: <IconTrash size={13} />,
         danger: true,
         disabled: busyId === device.id,
-        hint: "凭证立即失效",
+        hint: "登录凭据立即失效",
         onSelect: () => void revoke(device),
       },
     );
@@ -209,8 +209,8 @@ export function DeviceTreeSection() {
 }
 
 export function deviceOpenBlockReason(device: FleetDevice, online: boolean): string | null {
-  if (device.revoked_at !== 0) return "设备已吊销，无法打开工作区";
-  if (!device.agent) return "该设备尚未接入 Agent";
+  if (device.revoked_at !== 0) return "设备已撤销接入，无法打开工作区";
+  if (!device.agent) return "该设备未安装设备代理";
   if (!online) return "设备离线，无法打开工作区";
   if (!device.agent.terminal_enabled) return "该设备已关闭远程终端";
   return null;
@@ -230,7 +230,7 @@ function DeviceTreeRow({
   const agent = device.agent;
   const disabledReason = deviceOpenBlockReason(device, online);
   const connectable = disabledReason === null;
-  const status = device.revoked_at !== 0 ? "已吊销" : !agent ? "未接入 Agent" : !online ? "离线" : null;
+  const status = device.revoked_at !== 0 ? "已撤销接入" : !agent ? "未安装设备代理" : !online ? "离线" : null;
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStart = useRef<{ x: number; y: number } | null>(null);
   const suppressClick = useRef(false);

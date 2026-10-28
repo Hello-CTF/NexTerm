@@ -139,6 +139,16 @@ function releaseVersion(raw: string | undefined | null): string | null {
   return v;
 }
 
+// olderRelease reports whether release version a is older than b (numeric x.y.z comparison).
+function olderRelease(a: string, b: string): boolean {
+  const pa = a.split(/[.+-]/).slice(0, 3).map((n) => Number.parseInt(n, 10) || 0);
+  const pb = b.split(/[.+-]/).slice(0, 3).map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] < pb[i];
+  }
+  return false;
+}
+
 interface DeviceCardProps {
   device: FleetDevice;
   serverVersion: string | null;
@@ -185,7 +195,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     const desired = !agent.desired_autostart;
     if (!online) {
       const ok = await ask(
-        `设备「${device.name}」当前离线。\n\n此次修改仅保存为期望状态，设备下次连接服务器后生效。`,
+        `设备「${device.name}」当前离线。\n\n设置已保存，设备下次连接服务器后生效。`,
         { title: "设备离线", kind: "info" },
       );
       if (!ok) return;
@@ -230,11 +240,11 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     }
   };
 
-  // The agent only self-upgrades when the control protocol is incompatible (version_mismatch), not on every version
-  // difference, so this note stays informational and makes no promise about upgrading.
+  // The agent only self-upgrades when the control protocol is incompatible (version_mismatch), so an agent that is
+  // older than the server gets a hint to update it by hand; a newer agent needs no action.
   const agentRelease = releaseVersion(agent?.app_version);
   const serverRelease = releaseVersion(listServerVersion);
-  const versionBehind = Boolean(!revoked && agent && online && agentRelease && serverRelease && agentRelease !== serverRelease);
+  const versionBehind = Boolean(!revoked && agent && online && agentRelease && serverRelease && olderRelease(agentRelease, serverRelease));
 
   // reconcile semantics (internal/fleet/agent/runtime.go): desired=true aligns with installed&&enabled,
   // active is only whether the process is running right now, shown separately and not part of drift judgment.
@@ -266,7 +276,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   const statusTitle = !agent || revoked
     ? undefined
     : online
-      ? heartbeatOnline ? "最近 3 分钟内有心跳" : "控制通道实时在线"
+      ? heartbeatOnline ? "最近 3 分钟内联系过服务器" : "与服务器保持连接"
       : `最近一次上报：${lastSeenAt ? formatTime(lastSeenAt) : "从未"}`;
 
   const lastSeenText = lastSeenAt ? (
@@ -345,7 +355,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
       {versionBehind && (
         <div className="nx-hint mt-1 text-[11px]" role="note">
-          代理版本 {agentRelease}，服务端 {serverRelease}。版本不同不影响使用；仅当控制通道协议不兼容时，代理才会自动升级，否则需要在设备上手动更新。
+          agent 版本过旧（代理版本 {agentRelease}，服务端 {serverRelease}）。请重新安装，或在设备上运行 nexterm-agent update（1.2.x 需用安装脚本重装一次）。
         </div>
       )}
 
@@ -379,7 +389,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
       )}
       {!revoked && serviceError && (
         <div className="mt-1 min-w-0 break-all text-[12px] text-red-300" title={serviceError}>
-          后台服务报错：{serviceError}
+          后台服务出错：{serviceError}
         </div>
       )}
 
@@ -456,7 +466,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
                 · 当前{hasServiceReport ? (autostartActual ? "已生效" : "未生效") : "未上报"}
               </span>
             </label>
-            {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：修改只会保存为期望状态，上线后生效</div>}
+            {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：设置已保存，设备上线后生效</div>}
           </DetailRow>}
           <DetailRow label="后台服务">{runningText}</DetailRow>
         </dl>
@@ -734,7 +744,7 @@ export function DevicesView() {
         <div className="nx-toolbar flex-wrap">
           <IconMonitor size={14} className="text-neutral-500" />
           <span className="nx-toolbar-title">设备管理</span>
-          <span className="nx-hint">账号状态读取中…</span>
+          <span className="nx-hint">正在读取账号状态…</span>
         </div>
       </div>
     );
@@ -855,7 +865,7 @@ export function DevicesView() {
         <IconMonitor size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设备管理</span>
         <span className="nx-hint">
-          {error && devices === null ? "设备列表加载失败" : devices === null ? "加载中…" : `共 ${devices.length} 台`}
+          {error && devices === null ? "无法加载设备列表" : devices === null ? "正在加载…" : `共 ${devices.length} 台`}
         </span>
         {error && devices !== null && <span className="nx-hint text-red-300">刷新失败 · {error}</span>}
         <div className="nx-spacer" />
@@ -940,11 +950,11 @@ export function DevicesView() {
                     disabled={issuing || baseUrlsStatus !== "ready"}
                     onClick={() => void issueEnrollCode()}
                   >
-                    {issuing ? "生成中…" : "生成接入码"}
+                    {issuing ? "正在生成…" : "生成接入码"}
                   </button>
                   {baseUrlsStatus !== "ready" && (
                     <span className="nx-hint text-[11px]">
-                      {baseUrlsStatus === "loading" ? "接入地址读取中，读取成功后才能生成接入码。" : "接入地址读取失败，请在下方重试后再生成接入码。"}
+                      {baseUrlsStatus === "loading" ? "正在读取接入地址，读取完成后才能生成接入码。" : "无法读取接入地址，请在下方重试后再生成接入码。"}
                     </span>
                   )}
                 </div>
@@ -954,7 +964,7 @@ export function DevicesView() {
                 <div className="flex items-start gap-2">
                   <IconInfo size={14} className="mt-0.5 shrink-0" />
                   <div className="min-w-0">
-                    接入码只能使用一次，有效期至 {formatTime(issued.expiresAt)}；完成后不再显示。设备凭证原文仅保存在设备本地，服务端只保存散列。
+                    接入码只能使用一次，有效期至 {formatTime(issued.expiresAt)}；完成后不再显示。设备凭证只保存在设备上，服务器只保存校验信息。
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -999,7 +1009,7 @@ export function DevicesView() {
                       ) : (
                         <>
                           <div className="text-[12px] text-neutral-200">
-                            在设备上用<b>普通用户</b>依次执行两条命令：第一条兑换设备凭证，第二条安装后台服务。
+                            在设备上用<b>普通用户</b>依次执行两条命令：第一条领取设备凭证，第二条安装后台服务。
                           </div>
                           {enrollRows?.[0]}
                           {installRow}
@@ -1051,7 +1061,7 @@ export function DevicesView() {
         {error && devices === null && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
-            <span className="min-w-0 flex-1 break-words">设备列表加载失败 · {error}</span>
+            <span className="min-w-0 flex-1 break-words">无法加载设备列表 · {error}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={load} disabled={loading}>
               <IconRefresh size={12} />
               重试

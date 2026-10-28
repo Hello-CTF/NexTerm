@@ -334,7 +334,7 @@ function DeviceHostDetail({
   const lastSeenAt = agent?.last_seen_at || device.last_seen_at;
   const online = !revoked && Boolean(agent) && isOnline(lastSeenAt, now);
   const blockReason = deviceOpenBlockReason(device, online);
-  const status = revoked ? "已吊销" : !agent ? "未接入 Agent" : online ? "在线" : "离线";
+  const status = revoked ? "已撤销接入" : !agent ? "未安装设备代理" : online ? "在线" : "离线";
   const statusTone = revoked ? "text-red-300" : online ? "text-green-300" : "text-neutral-400";
   const subtitleParts: { key: string; text: string; className?: string; title?: string }[] = [];
   if (agent?.platform) subtitleParts.push({ key: "platform", text: PLATFORM_LABELS[agent.platform.toLowerCase()] ?? agent.platform });
@@ -398,7 +398,7 @@ function DeviceHostDetail({
         <ContainersSection workspace={workspace} visible={visible} />
         <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
           {revoked ? (
-            <SectionHint>设备已吊销，不再上报指标。</SectionHint>
+            <SectionHint>设备已撤销接入，不再上报指标。</SectionHint>
           ) : visible ? (
             <MetricsPanel deviceId={device.id} online={online} />
           ) : null}

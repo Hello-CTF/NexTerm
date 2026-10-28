@@ -286,6 +286,22 @@ describe("inbox button", () => {
     view = undefined;
   });
 
+  it("marks every listed session read from one button, shown only for two or more", async () => {
+    vi.useRealTimers();
+    applyAwareness([attention({ tabId: "T1" })]);
+    view = mount(createElement(InboxButton));
+    const bell = view.container.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
+    click(bell);
+    expect([...view.container.querySelectorAll("button")].some((b) => b.textContent === "全部标记已读")).toBe(false);
+    act(() => applyAwareness([attention({ tabId: "T2", since: "2026-10-27T10:05:00Z" })]));
+    const all = [...view.container.querySelectorAll("button")].find((b) => b.textContent === "全部标记已读") as HTMLButtonElement;
+    expect(all).toBeTruthy();
+    click(all);
+    await flush();
+    expect(mocks.attentionSeen).toHaveBeenCalledWith("T1", "2026-10-27T10:00:00Z");
+    expect(mocks.attentionSeen).toHaveBeenCalledWith("T2", "2026-10-27T10:05:00Z");
+  });
+
   it("counts the sessions, jumps to one and marks one read on every device", async () => {
     vi.useRealTimers();
     applyAwareness([

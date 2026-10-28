@@ -90,15 +90,15 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       const created = await cloneAsset(asset);
       if (!created) return;
       await qc.invalidateQueries({ queryKey: ["assets"] });
-      pushToast("success", `已克隆为「${created.name}」`);
+      pushToast("success", `已复制为「${created.name}」`);
     } catch (e) {
-      pushToast("error", `克隆失败：${describeError(e)}`);
+      pushToast("error", `复制失败：${describeError(e)}`);
     }
   }, [qc, pushToast]);
 
   const hideAsset = useCallback((asset: Asset) => {
     useAssetVisibility.getState().hide(asset.id);
-    pushToast("info", `已隐藏「${asset.name}」— 资产树眼睛按钮可找回`);
+    pushToast("info", `已隐藏「${asset.name}」，可点资产树里的眼睛按钮找回`);
   }, [pushToast]);
 
   const unhideAsset = useCallback((asset: Asset) => {
@@ -277,7 +277,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       {
         id: FLEET_HEALTH_TAB_ID,
         label: "主机概览",
-        hint: "当前项目 · 只读健康网格 · 默认手动刷新",
+        hint: "当前项目的主机状态 · 只读 · 手动刷新",
         icon: IconActivity,
         run: () => addTab({ id: createFleetHealthTabId(), kind: "log", title: "主机概览", closable: true }),
       },
@@ -330,7 +330,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       {
         id: "devices",
         label: "打开设备管理",
-        hint: "已安装 agent 的设备",
+        hint: "已安装设备代理的设备",
         icon: IconMonitor,
         run: () => addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true }),
       },
@@ -350,7 +350,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       {
         id: "audit",
         label: "查看审计日志",
-        hint: "用户与 AI 的动作记录",
+        hint: "用户和 AI 的操作记录",
         icon: IconHistory,
         run: () => addTab({ id: "audit", kind: "audit", title: "审计日志", closable: true }),
       },
@@ -388,9 +388,9 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       });
       list.push({
         id: `clone-${asset.id}`,
-        label: `克隆资产 ${asset.name}`,
+        label: `复制资产 ${asset.name}`,
         section: "资产操作",
-        hint: "共享凭据引用",
+        hint: "与原资产共用凭据",
         icon: IconCopy,
         run: () => void runClone(asset),
       });
