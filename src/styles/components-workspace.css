@@ -197,13 +197,9 @@
     border-radius: 50%;
     background: currentColor;
   }
+  /* Static: infinite pulsing on a terminal toolbar reads as flicker. */
   .nx-dot-pulse {
-    animation: nx-pulse 1.6s ease-in-out infinite;
-  }
-  @keyframes nx-pulse {
-    50% {
-      opacity: 0.35;
-    }
+    opacity: 1;
   }
 
   .nx-table {
