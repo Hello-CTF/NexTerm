@@ -143,14 +143,12 @@ func TestPrivacyDisabledAndFailuresBeforeNetwork(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		option    Option
-		image     bool
 		wantError bool
 	}{
 		{name: "disabled"},
 		{name: "resolver-disabled", option: WithPrivacy(func(context.Context) (*privacy.Exchange, error) { return nil, nil })},
 		{name: "unavailable", option: WithPrivacy(func(context.Context) (*privacy.Exchange, error) { return nil, errors.New("model missing") }), wantError: true},
 		{name: "detector-error", option: privacyOption(privacyDetectorFunc(func(context.Context, string) ([]privacy.Span, error) { return nil, errors.New("inference failed") })), wantError: true},
-		{name: "media", option: privacyOption(privateValues("secret")), image: true, wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -165,11 +163,7 @@ func TestPrivacyDisabledAndFailuresBeforeNetwork(t *testing.T) {
 				received = string(data)
 				writePrivacyBlock(w, "ok", nil)
 			}, opts...)
-			message := UserMessage("secret")
-			if test.image {
-				message.Content = []map[string]any{{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,AAAA"}}}
-			}
-			_, err := client.ChatBlock(t.Context(), ChatRequest{Messages: []ChatMessage{message}})
+			_, err := client.ChatBlock(t.Context(), ChatRequest{Messages: []ChatMessage{UserMessage("secret")}})
 			if (err != nil) != test.wantError {
 				t.Fatalf("err = %v", err)
 			}
@@ -181,6 +175,63 @@ func TestPrivacyDisabledAndFailuresBeforeNetwork(t *testing.T) {
 				t.Fatal("disabled behavior changed")
 			}
 		})
+	}
+}
+
+func TestPrivacySendsImagesUnchangedAndRedactsAdjacentText(t *testing.T) {
+	const image = "data:image/png;base64,c2VjcmV0LXBpeGVscw=="
+	var received string
+	client := privacyClient(t, func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		received = string(data)
+		writePrivacyBlock(w, "ok", nil)
+	}, privacyOption(privateValues("token-123")))
+	message := UserMessage("")
+	message.Content = []map[string]any{
+		{"type": "text", "text": "check token-123"},
+		{"type": "image_url", "image_url": map[string]any{"url": image}},
+	}
+	if _, err := client.ChatBlock(t.Context(), ChatRequest{Messages: []ChatMessage{message}}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(received, "token-123") {
+		t.Fatal("text part beside the image was not redacted")
+	}
+	if !strings.Contains(received, image) {
+		t.Fatalf("image part changed: %s", received)
+	}
+}
+
+func TestProtectNativeMessagesPassesMediaParts(t *testing.T) {
+	exchange, err := privacy.NewScopedExchange(privateValues("token-123"), [32]byte{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := "https://example.org/token-123.png"
+	input := []*schema.Message{{
+		Role: schema.User,
+		MultiContent: []schema.ChatMessagePart{
+			{Type: schema.ChatMessagePartTypeText, Text: "a token-123"},
+			{Type: schema.ChatMessagePartTypeImageURL, ImageURL: &schema.ChatMessageImageURL{URL: url}},
+		},
+		UserInputMultiContent: []schema.MessageInputPart{
+			{Type: schema.ChatMessagePartTypeText, Text: "b token-123"},
+			{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{URL: &url}}},
+		},
+	}}
+	output, err := protectNativeMessages(t.Context(), exchange, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := output[0]
+	if strings.Contains(got.MultiContent[0].Text, "token-123") || strings.Contains(got.UserInputMultiContent[0].Text, "token-123") {
+		t.Fatal("text parts were not redacted")
+	}
+	if got.MultiContent[1].ImageURL.URL != url || *got.UserInputMultiContent[1].Image.URL != url {
+		t.Fatal("image parts changed")
+	}
+	if input[0].MultiContent[0].Text != "a token-123" {
+		t.Fatal("caller message mutated")
 	}
 }
 
