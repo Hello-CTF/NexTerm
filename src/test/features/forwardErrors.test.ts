@@ -5,11 +5,11 @@ import { regexErrorNotice } from "../../features/logs/mergedLog";
 describe("describeForwardError", () => {
   it("explains an occupied port and keeps the original text", () => {
     const text = describeForwardError(new Error("listen tcp 127.0.0.1:8080: bind: address already in use"), 8080);
-    expect(text).toContain("端口 8080已被其他程序占用，请换一个端口");
+    expect(text).toContain("端口 8080 已被其他程序占用，请更换端口");
     expect(text).toContain("address already in use");
   });
   it("explains a permission problem", () => {
-    expect(describeForwardError(new Error("bind: permission denied"), 80)).toContain("没有权限使用端口 80");
+    expect(describeForwardError(new Error("bind: permission denied"), 80)).toContain("无权使用端口 80");
   });
   it("passes other errors through", () => {
     expect(describeForwardError(new Error("boom"), 1)).toBe("boom");

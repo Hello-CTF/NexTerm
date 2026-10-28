@@ -167,7 +167,7 @@ describe("BackgroundSessions across hosts", () => {
       await waitForRendered(() => expect(mocks.closeTab).toHaveBeenCalledWith("far-tab", "kill", "s-far"));
       expect(mocks.connectDevice).toHaveBeenCalledWith("far", "far box");
       expect(useUi.getState().activeWorkspaceId).toBe(before);
-      expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("已结束终端里的程序");
+      expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("已结束终端中的程序");
     } finally {
       view.unmount();
     }
@@ -207,7 +207,7 @@ describe("BackgroundSessions across hosts", () => {
         button(row(view, "near-tab"), "结束进程").click();
         await flush();
       });
-      await waitForRendered(() => expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("无法结束终端里的程序"))).toBe(true));
+      await waitForRendered(() => expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("无法结束终端中的程序"))).toBe(true));
       expect(row(view, "near-tab")).toBeTruthy();
       expect(view.container.querySelectorAll('tr[data-background-row="near-tab"]')).toHaveLength(1);
       expect(aggregateRows(useSessionAggregate.getState()).some((entry) => entry.session.tabId === "near-tab")).toBe(true);
@@ -234,7 +234,7 @@ describe("BackgroundSessions across hosts", () => {
       });
       expect(mocks.connectDevice).not.toHaveBeenCalled();
       expect(mocks.closeTab).not.toHaveBeenCalled();
-      expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("无法结束终端里的程序"))).toBe(true);
+      expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("无法结束终端中的程序"))).toBe(true);
       expect(row(view, "near-tab")).toBeTruthy();
     } finally {
       view.unmount();

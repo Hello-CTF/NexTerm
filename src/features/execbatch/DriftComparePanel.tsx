@@ -234,7 +234,7 @@ export function DriftComparePanel({
           )}
         </div>
         <div className="text-[11px] text-neutral-500">
-          文件内容只读读取；命令请只输入不会修改主机的操作。输出相同的主机会归为一组，错误输出和失败的主机单独显示。
+          文件内容以只读方式读取；请仅输入不会修改主机的命令。输出相同的主机会归为一组，错误输出和失败的主机单独显示。
         </div>
         {error && <div role="alert" className="text-[11px] text-red-300">{error}</div>}
         {running && <div role="status" className="text-[11px] text-blue-300">正在读取并分组实时输出…</div>}

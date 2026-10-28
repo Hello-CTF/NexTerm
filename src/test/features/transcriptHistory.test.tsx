@@ -682,7 +682,7 @@ describe("TranscriptHistoryPanel", () => {
     await flush();
 
     expect(mocks.transcriptRead).not.toHaveBeenCalled();
-    expect(mounted.container.textContent).toContain("仅保留元数据");
+    expect(mounted.container.textContent).toContain("仅保留记录信息，没有输出内容");
     expect(mounted.container.textContent).not.toContain("这条记录没有任何输出");
     expect(
       mounted.container.querySelector<HTMLInputElement>('input[aria-label="搜索终端记录"]')?.disabled,
@@ -698,7 +698,7 @@ describe("TranscriptHistoryPanel", () => {
     click(replay!);
     await flush();
     expect(mocks.transcriptRead).not.toHaveBeenCalled();
-    expect(mounted.container.textContent).toContain("仅保留元数据");
+    expect(mounted.container.textContent).toContain("仅保留记录信息，没有输出内容");
     expect(mounted.container.textContent).not.toContain("没有任何可回放的内容");
   });
 });

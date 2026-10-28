@@ -60,7 +60,7 @@ function mountPanel() {
   mounted = mount(createElement(QueryClientProvider, { client }, createElement(DockerPanel, { sessionId: "s1" })));
 }
 
-const deleteButtons = () => mounted!.container.querySelectorAll<HTMLButtonElement>('button[title="删除"]');
+const deleteButtons = () => mounted!.container.querySelectorAll<HTMLButtonElement>('button[aria-label$="更多操作"]');
 
 describe("removing containers", () => {
   it("offers deletion only for containers that are not running", async () => {

@@ -819,21 +819,31 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     return button as HTMLButtonElement;
   }
 
+  async function removeFromRowMenu(container: HTMLElement) {
+    click(container.querySelector('button[aria-label$="更多操作"]')!);
+    await waitFor(() => expect(document.body.querySelector('[role="menuitem"]')).not.toBeNull());
+    const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (el) => el.textContent?.includes("删除容器"),
+    );
+    if (!item) throw new Error("delete menu item not found");
+    click(item);
+  }
+
   it("container remove renders an alertdialog, cancel aborts", async () => {
     const m = (mounted = mountPanelWithDialogHost());
-    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector('button[aria-label$="更多操作"]')).not.toBeNull());
 
-    click(m.container.querySelector('button[title="删除"]')!);
+    await removeFromRowMenu(m.container);
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
     // Only the stopped container (worker) offers deletion; the running one (web) must be stopped first.
-    expect(m.container.querySelectorAll('button[title="删除"]').length).toBe(1);
-    expect(modal.textContent).toContain("删除容器 worker");
+    expect(m.container.querySelectorAll('button[aria-label$="更多操作"]').length).toBe(1);
+    expect(modal.textContent).toContain("删除容器 worker（已停止，其数据卷不会删除）");
     expect(modal.textContent).toContain("挂载卷和主机目录不会被删除");
     await closeModal(modal, "取消");
     expect(mocks.action).not.toHaveBeenCalled();
 
-    click(m.container.querySelector('button[title="删除"]')!);
+    await removeFromRowMenu(m.container);
     const modal2 = await openModal();
     expect(modal2.getAttribute("role")).toBe("alertdialog");
     await closeModal(modal2, "确定");
@@ -842,7 +852,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
 
   it("image remove renders an alertdialog, cancel aborts", async () => {
     const m = (mounted = mountPanelWithDialogHost());
-    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector('button[aria-label$="更多操作"]')).not.toBeNull());
     click(segmentItem(m.container, "镜像"));
     await waitFor(() => expect(m.container.querySelector('button[title="删除镜像"]')).not.toBeNull());
 
@@ -863,7 +873,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
   it("untagged image remove explains the image itself is deleted", async () => {
     mocks.images.mockResolvedValue([imageA, imageUntagged]);
     const m = (mounted = mountPanelWithDialogHost());
-    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector('button[aria-label$="更多操作"]')).not.toBeNull());
     click(segmentItem(m.container, "镜像"));
     await waitFor(() => expect(m.container.querySelectorAll('button[title="删除镜像"]').length).toBe(2));
 
@@ -884,7 +894,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
 
   it("image remove explains the last-tag deletes the image itself", async () => {
     const m = (mounted = mountPanelWithDialogHost());
-    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector('button[aria-label$="更多操作"]')).not.toBeNull());
     click(segmentItem(m.container, "镜像"));
     await waitFor(() => expect(m.container.querySelector('button[title="删除镜像"]')).not.toBeNull());
 
@@ -900,7 +910,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
 
   it("bulk image remove for tagged-only selection explains the last-tag consequence", async () => {
     const m = (mounted = mountPanelWithDialogHost());
-    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector('button[aria-label$="更多操作"]')).not.toBeNull());
     click(segmentItem(m.container, "镜像"));
     await waitFor(() => expect(m.container.querySelector('button[title="删除镜像"]')).not.toBeNull());
 
@@ -921,7 +931,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
   it("prunes picked images and bulk counts after the list shrinks", async () => {
     mocks.images.mockResolvedValue([imageA, imageUntagged]);
     const m = (mounted = mountPanelWithDialogHost());
-    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector('button[aria-label$="更多操作"]')).not.toBeNull());
     click(segmentItem(m.container, "镜像"));
     await waitFor(() =>
       expect(m.container.querySelectorAll('button[title="删除镜像"]').length).toBe(2),
@@ -974,7 +984,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
 
   it("bulk remove skips running containers, says so, and only removes the stopped ones", async () => {
     const m = (mounted = mountPanelWithDialogHost());
-    await waitFor(() => expect(m.container.querySelectorAll('button[title="删除"]').length).toBe(1));
+    await waitFor(() => expect(m.container.querySelectorAll('button[aria-label$="更多操作"]').length).toBe(1));
 
     const pickA = m.container.querySelector<HTMLInputElement>('input[aria-label="选择 web"]');
     const pickB = m.container.querySelector<HTMLInputElement>('input[aria-label="选择 worker"]');
@@ -1015,7 +1025,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
   it("bulk image remove with mixed tagged and untagged covers both consequences", async () => {
     mocks.images.mockResolvedValue([imageA, imageUntagged]);
     const m = (mounted = mountPanelWithDialogHost());
-    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector('button[aria-label$="更多操作"]')).not.toBeNull());
     click(segmentItem(m.container, "镜像"));
     await waitFor(() => expect(m.container.querySelectorAll('button[title="删除镜像"]').length).toBe(2));
 

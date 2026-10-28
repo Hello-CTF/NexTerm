@@ -425,7 +425,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       <div className="nx-toolbar nx-wrap-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
         <h2 className="nx-toolbar-title">多主机工具</h2>
-        <span className="nx-hint">只能对当前已连接的 SSH 主机和受管设备执行。受管设备没有环境标记，执行前会请你确认。</span>
+        <span className="nx-hint">只能对当前已连接的 SSH 主机和受管设备执行。受管设备没有环境标记，执行前需要确认。</span>
         <span className="nx-spacer" />
         <div className="nx-toolbar-views contents">
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "execute"} disabled={running || prompting} onClick={() => setView("execute")}>批量执行</button>

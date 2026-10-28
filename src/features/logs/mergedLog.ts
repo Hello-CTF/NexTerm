@@ -160,7 +160,7 @@ export function exportMergedLines(lines: readonly MergedLogLine[]): string {
 
 export const LOG_STATUS_LABELS: Record<LogTailSourceStatus | "idle", string> = {
   idle: "未启动",
-  queued: "等待并发槽",
+  queued: "排队等待",
   starting: "启动中",
   running: "跟随中",
   exited: "已退出",

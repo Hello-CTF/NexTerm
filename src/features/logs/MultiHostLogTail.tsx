@@ -508,7 +508,7 @@ export function MultiHostLogTail({
               type="button"
               className="nx-btn nx-btn-primary"
               disabled={targets.length === 0}
-              title={targets.length === 0 ? "没有已连接的 SSH 或受管设备会话，请先连接主机" : undefined}
+              title={targets.length === 0 ? "当前没有已连接的 SSH 或受管设备会话，请先连接主机" : undefined}
               onClick={start}
             >
               <IconPlay size={13} />

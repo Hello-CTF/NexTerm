@@ -7,8 +7,8 @@ const PERMISSION_DENIED = /permission denied|EACCES|access is denied/i;
 // brackets so nothing is hidden from the user.
 export function describeForwardError(error: unknown, port?: number | string): string {
   const raw = describeError(error);
-  const label = port ? `端口 ${port}` : "这个端口";
-  if (ADDRESS_IN_USE.test(raw)) return `${label}已被其他程序占用，请换一个端口。（${raw}）`;
-  if (PERMISSION_DENIED.test(raw)) return `没有权限使用${label}，请换一个大于 1024 的端口。（${raw}）`;
+  const label = port ? `端口 ${port}` : "该端口";
+  if (ADDRESS_IN_USE.test(raw)) return `${label} 已被其他程序占用，请更换端口。（${raw}）`;
+  if (PERMISSION_DENIED.test(raw)) return `无权使用${label}，请更换为大于 1024 的端口。（${raw}）`;
   return raw;
 }
