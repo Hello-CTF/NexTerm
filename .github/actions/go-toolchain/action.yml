@@ -1,0 +1,57 @@
+name: Go toolchain with shared caches
+description: >-
+  Installs the pinned Go toolchain and restores two separate caches. The module
+  cache depends only on go.sum and the runner OS, so every job on that OS shares
+  one entry whatever its architecture or purpose. The build cache is optional and
+  keyed by OS, architecture and a named profile, so jobs that compile different
+  package sets or tags do not overwrite each other's entry. Both paths are set
+  explicitly through GOMODCACHE and GOCACHE so the cached paths always match
+  what go uses.
+inputs:
+  go-version:
+    description: Go toolchain version
+    required: false
+    default: 1.27.3
+  build-cache:
+    description: Build cache profile name; empty restores no build cache
+    required: false
+    default: ""
+  save-build-cache:
+    description: Save the build cache profile on a miss ("false" only restores it)
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: false
+    - name: Point Go at the cached module and build directories
+      shell: bash
+      env:
+        MOD_DIR: ${{ runner.temp }}/go-mod
+        BUILD_DIR: ${{ runner.temp }}/go-build
+      run: |
+        echo "GOMODCACHE=$MOD_DIR" >> "$GITHUB_ENV"
+        echo "GOCACHE=$BUILD_DIR" >> "$GITHUB_ENV"
+    - name: Restore the Go module cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/go-mod
+        key: go-mod-${{ runner.os }}-${{ hashFiles('go.sum') }}
+        restore-keys: go-mod-${{ runner.os }}-
+    - name: Restore and save the Go build cache profile
+      if: inputs.build-cache != '' && inputs.save-build-cache != 'false'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/go-build
+        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-${{ hashFiles('go.sum') }}
+        restore-keys: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-
+    - name: Restore the Go build cache profile
+      if: inputs.build-cache != '' && inputs.save-build-cache == 'false'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/go-build
+        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-${{ hashFiles('go.sum') }}
+        restore-keys: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-

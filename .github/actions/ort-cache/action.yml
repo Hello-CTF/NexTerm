@@ -1,0 +1,27 @@
+name: ONNX Runtime download cache
+description: >-
+  Points NEXTERM_ORT_CACHE at a fixed directory and restores the ONNX Runtime
+  archives the privacy runtime tool downloaded there for this version, runner
+  and staging target. The privacy runtime tool owns the directory layout and
+  verifies archives against their published digests.
+inputs:
+  version:
+    description: Resolved ONNX Runtime version (needs.version.outputs.ort-version)
+    required: true
+  target:
+    description: Runtime target(s) the job stages, for example linux-amd64 or android-arm64
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Export the ONNX Runtime download cache directory
+      shell: bash
+      env:
+        ORT_CACHE: ${{ runner.temp }}/nexterm-ort
+      run: echo "NEXTERM_ORT_CACHE=$ORT_CACHE" >> "$GITHUB_ENV"
+    - name: Restore ONNX Runtime downloads
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/nexterm-ort
+        key: nexterm-ort-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}
+        restore-keys: nexterm-ort-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-
