@@ -207,9 +207,13 @@ async function windowsCRTDirectory(env = process.env) {
 function verifyAuthenticode(file) {
   if (process.platform !== "win32") return "skipped";
   // -Command joins trailing arguments into the script text, so the path travels in the environment instead.
+  // A PSModulePath inherited from PowerShell 7 (GitHub's default shell) stops Windows PowerShell from
+  // loading its own Microsoft.PowerShell.Security module, so drop it and let powershell.exe use its default.
+  const env = { ...process.env, NEXTERM_AUTHENTICODE_FILE: file };
+  for (const key of Object.keys(env)) if (key.toLowerCase() === "psmodulepath") delete env[key];
   const result = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", "(Get-AuthenticodeSignature -LiteralPath $env:NEXTERM_AUTHENTICODE_FILE).Status"], {
     encoding: "utf8",
-    env: { ...process.env, NEXTERM_AUTHENTICODE_FILE: file },
+    env,
   });
   const status = result.stdout?.trim();
   if (result.status !== 0 || status !== "Valid") throw new Error(`Authenticode signature of ${path.basename(file)} is not valid (${status || result.stderr?.trim() || "unknown"})`);
