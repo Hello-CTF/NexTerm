@@ -64,6 +64,8 @@ type SyncReport struct {
 	// (a credential while the vault is locked, or a missing dependency), so the
 	// next round must list every server ID again instead of trusting the head.
 	leftPending bool
+	// futureSkipped counts remote objects skipped for a revision beyond remoteClockTolerance this round.
+	futureSkipped int
 	// changedKinds names the kinds whose local copy this round changed,
 	// including the target kinds of applied tombstones.
 	changedKinds map[string]bool
@@ -664,6 +666,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 // the budget rule that the first object must be returned in full guarantees each page digests at least one object, so the loop always converges.
 // Returning completed=false means stall (reconciliation incomplete); the caller must not collect/push this round.
 func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cursor *syncCursor, unreconciled []string, report *SyncReport, optIn kindOptIn) (bool, error) {
+	defer report.flushClockSkewWarning()
 	remaining := make(map[string]bool, len(unreconciled))
 	for _, id := range unreconciled {
 		remaining[id] = true

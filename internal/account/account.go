@@ -24,6 +24,9 @@ type Accounts struct {
 	// the TOTP/DEK/MFA generation checks all serialize on it, so an epoch bump
 	// cannot land inside another boundary's check-to-commit window.
 	revocationMu sync.Mutex
+	// blockedMu guards blockedListeners, called after an account is disabled or reset so dependents can drop live channels.
+	blockedMu        sync.Mutex
+	blockedListeners []func(userID string)
 }
 
 // userTable centralizes the account table name for future storage backend changes.
@@ -42,6 +45,26 @@ func WithNow(now func() int64) Option {
 func WithActiveSuperadminListener(listener func(context.Context)) Option {
 	return func(a *Accounts) {
 		a.activeSuperadminListener = listener
+	}
+}
+
+// OnUserBlocked registers a callback fired after a user is disabled or marked reset-required,
+// so services holding long-lived channels for that user (device control channels) can close them.
+func (a *Accounts) OnUserBlocked(listener func(userID string)) {
+	if listener == nil {
+		return
+	}
+	a.blockedMu.Lock()
+	a.blockedListeners = append(a.blockedListeners, listener)
+	a.blockedMu.Unlock()
+}
+
+func (a *Accounts) notifyUserBlocked(userID string) {
+	a.blockedMu.Lock()
+	listeners := append([]func(string){}, a.blockedListeners...)
+	a.blockedMu.Unlock()
+	for _, listener := range listeners {
+		listener(userID)
 	}
 }
 

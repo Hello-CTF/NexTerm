@@ -80,6 +80,7 @@ func (a *Accounts) SetUserDisabled(ctx context.Context, userID string, disabled 
 	}
 	if disabled {
 		a.epochs.bump(userID)
+		a.notifyUserBlocked(userID)
 	}
 	a.notifyActiveSuperadmin(ctx, reenabled)
 	return nil

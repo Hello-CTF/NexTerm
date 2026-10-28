@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -71,6 +72,20 @@ func remoteWins(remoteRevision, localRevision int64, remotePlaintext, localPlain
 		return remoteRevision > localRevision
 	}
 	return bytes.Compare([]byte(objectPayloadHash(remotePlaintext)), []byte(objectPayloadHash(localPlaintext))) > 0
+}
+
+// remoteClockTolerance bounds how far ahead of the local clock a remote revision or tombstone time may be
+// (grant objects use the stricter aiGrantFutureTolerance).
+const remoteClockTolerance = 24 * time.Hour
+
+// flushClockSkewWarning turns the count of objects skipped for clock skew into one visible warning.
+// The wire format carries no originating device, so the warning cannot name it.
+func (report *SyncReport) flushClockSkewWarning() {
+	if report.futureSkipped == 0 {
+		return
+	}
+	report.warnf("有 %d 项来自其他设备的更改，其时间比当前时间快超过 24 小时，已跳过。请校准相关设备的时间。", report.futureSkipped)
+	report.futureSkipped = 0
 }
 
 func (report *SyncReport) warnf(format string, args ...any) {

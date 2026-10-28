@@ -161,6 +161,13 @@ func (r *Registry) KickDevice(deviceID string) {
 			delete(r.bridges, bridgeID)
 		}
 	}
+	// Fail pending bridge requests of the device now instead of leaving the waiters to time out.
+	for _, request := range r.pending {
+		if request.deviceID == deviceID && !request.delivered && !request.abandoned {
+			request.abandoned = true
+			request.result <- bridgeResult{err: errDeviceOffline}
+		}
+	}
 	r.mu.Unlock()
 	if control != nil {
 		writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
