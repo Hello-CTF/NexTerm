@@ -171,10 +171,33 @@ func (m *Manager) forgetAttention(tab *Tab) {
 	}
 	delete(r.entries, tab.ID)
 	observed := entry.observed
+	retracted, retract := retractLocked(entry)
 	r.mu.Unlock()
+	if retract {
+		m.emitRetracted(tab, retracted)
+	}
 	if observed != nil {
 		observed.Exit(nil)
 	}
+}
+
+// retractLocked returns the final exited state of a removed tab, so clients
+// drop an attention entry that would otherwise linger for a tab that is gone.
+func retractLocked(entry *tabAttention) (AttentionEvent, bool) {
+	if !entry.published || entry.last.State == base.SessionExited {
+		return AttentionEvent{}, false
+	}
+	entry.version++
+	return AttentionEvent{
+		TabID: entry.tab.ID, State: base.SessionExited, Confidence: base.ConfidenceSignal,
+		Source: entry.last.Source, Reason: "exit", Version: entry.version,
+	}, true
+}
+
+// emitRetracted publishes off the caller's goroutine: callers of
+// forgetAttention may hold manager, tab and session locks.
+func (m *Manager) emitRetracted(tab *Tab, event AttentionEvent) {
+	go m.emitAttention(tab, event)
 }
 
 func (r *attentionRegistry) entryLocked(tab *Tab) *tabAttention {
@@ -245,7 +268,11 @@ func (m *Manager) endAttention(tab *Tab, token uint64) {
 	entry.token, entry.reporter, entry.observed = r.token, nil, nil
 	if closed {
 		delete(r.entries, tab.ID)
+		retracted, retract := retractLocked(entry)
 		r.mu.Unlock()
+		if retract {
+			m.emitRetracted(tab, retracted)
+		}
 	} else {
 		event := AttentionEvent{State: AttentionUnknown, Source: source, Reason: "disconnected"}
 		if exited {
@@ -324,10 +351,37 @@ func (m *Manager) emitAttention(tab *Tab, event AttentionEvent) {
 	_ = m.emitter.EmitSessionEvent(ctx, Event{Topic: TopicTerminalAttention, Payload: event})
 }
 
+// explicitStateOnly is the one boundary where a helper-reported state becomes
+// attention. A helper started before screen-shape guessing was removed still
+// reports needs_me with reason prompt or confidence heuristic; such a guess,
+// and any needs_me or just_finished not backed by an explicit signal or a
+// user rule, is shown as running so no client treats it as attention.
+func explicitStateOnly(state *base.SessionState) *base.SessionState {
+	if state.State != base.SessionNeedsMe && state.State != base.SessionJustFinished {
+		return state
+	}
+	explicit := state.Confidence == base.ConfidenceSignal || state.Confidence == base.ConfidenceRule
+	if state.State == base.SessionNeedsMe {
+		switch state.Reason {
+		case "bell", "notify", "rule":
+		default:
+			explicit = false
+		}
+	}
+	if explicit {
+		return state
+	}
+	downgraded := *state
+	downgraded.State, downgraded.Confidence, downgraded.Reason = base.SessionRunning, base.ConfidenceSignal, "output"
+	downgraded.Seen, downgraded.Notable, downgraded.Title, downgraded.Body, downgraded.ExitCode = true, false, "", "", nil
+	return &downgraded
+}
+
 func attentionFromState(state *base.SessionState, source string) AttentionEvent {
 	if state == nil {
 		return AttentionEvent{State: AttentionUnknown, Source: source, Reason: "unavailable"}
 	}
+	state = explicitStateOnly(state)
 	event := AttentionEvent{
 		State: state.State, Confidence: state.Confidence, Source: source, Reason: state.Reason,
 		Seen: state.Seen, Notable: state.Notable, Title: state.Title, Body: state.Body,

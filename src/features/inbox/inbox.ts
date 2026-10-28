@@ -56,7 +56,6 @@ function locateTerminalTabs(workspaces: readonly Workspace[]): Map<string, TabLo
 const NEEDS_ME_REASON: Record<string, string> = {
   bell: "终端响铃",
   notify: "程序发出通知",
-  prompt: "可能在等待输入",
 };
 
 // attentionDetail describes why the session is in the inbox, with the program's own notification text when it sent one.
