@@ -139,8 +139,8 @@ export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
         </span>
       );
     case "running":
-      // Running flips with every output burst and asks nothing of the user: it never changes the UI.
-      return null;
+      // Static: only list views (never the tab strip, see useCalmAttention) draw it, and it never animates.
+      return <span {...common} className="h-2 w-2 shrink-0 rounded-full border border-slate-400" />;
     case "unknown":
       return (
         <span {...common} className="shrink-0 text-[10px] font-semibold leading-none text-slate-500">
