@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"strings"
-	"syscall"
 	"time"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
@@ -116,9 +115,9 @@ func DescribeTestFailure(err error, service, endpoint string) (kind, message str
 	switch {
 	case errors.As(err, &dnsErr):
 		return TestKindDNS, "无法解析 " + target + " 的主机名，请检查地址是否拼写正确"
-	case errors.Is(err, syscall.ECONNREFUSED):
+	case isConnRefused(err):
 		return TestKindRefused, target + " 拒绝了连接，请确认服务已启动且端口正确"
-	case errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EHOSTUNREACH):
+	case isUnreachable(err):
 		return TestKindUnreachable, "无法连到 " + target + "，请检查网络、VPN 和防火墙"
 	case errors.As(err, &netErr) && netErr.Timeout():
 		return TestKindTimeout, "连接 " + target + " 超时，请检查网络、防火墙和服务是否在运行"
