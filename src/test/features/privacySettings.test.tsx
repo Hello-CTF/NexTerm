@@ -62,8 +62,9 @@ describe("AI privacy settings", () => {
     expect(toggle.checked).toBe(false);
     expect(toggle.disabled).toBe(true);
     expect(mounted.container.textContent).toContain("当前 NexTerm 服务端");
-    click(button("模型与隐私说明"));
-    expect(mounted.container.textContent).toContain("模型由管理员在服务端下载，所有账号共用");
+    expect(mounted.container.textContent).toContain("模型从官方渠道下载，不随安装包分发。");
+    expect(mounted.container.textContent).not.toContain("Hugging Face");
+    expect(mounted.container.textContent).not.toContain("漏检");
     expect(mounted.container.textContent).not.toContain("每台设备需单独下载");
     choose("下载模型精度", "FP32");
     mocks.download.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true, precision: "fp32" } });
@@ -194,15 +195,16 @@ describe("AI privacy settings", () => {
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(button("管理")).toBeTruthy());
     click(button("管理"));
-    expect(mounted.container.textContent).toContain("已下载 v0.1.3 FP32");
+    expect(mounted.container.textContent).toContain("已下载 AstrLink Guard v0.1.3 FP32");
     expect(mounted.container.textContent).toContain("共占用 2.0 MiB");
+    expect(mounted.container.textContent).toContain("AstrLink Guard · FP32 · v0.1.3 · 2.0 MiB");
     mocks.configure.mockResolvedValue({ ...state, config: { ...state.config, ...installed, enabled: false }, download: baseline().download });
     click(button("使用此模型"));
     await waitForRendered(() => expect(mocks.configure).toHaveBeenCalledWith({ enabled: false, precision: "fp32", revision: installed.revision }));
     await waitForRendered(() => expect(button("删除").disabled).toBe(false));
     mocks.confirm.mockResolvedValue(false);
     click(button("删除"));
-    await waitForRendered(() => expect(mocks.confirm).toHaveBeenCalledWith("删除模型 v0.1.3 FP32（2.0 MiB）？"));
+    await waitForRendered(() => expect(mocks.confirm).toHaveBeenCalledWith("删除模型 AstrLink Guard v0.1.3 FP32（2.0 MiB）？"));
     expect(mocks.remove).not.toHaveBeenCalled();
     mocks.confirm.mockResolvedValue(true);
     mocks.remove.mockResolvedValue({ ...baseline() });
@@ -227,7 +229,7 @@ describe("AI privacy settings", () => {
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("正在下载"));
     mocks.status.mockResolvedValue({ ...baseline(), installed: [installed], download: { ...baseline().download, completed: { version: "v0.1.3", revision: installed.revision } } });
-    await waitForRendered(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["模型 v0.1.3 INT8 下载完成"]), 3000);
+    await waitForRendered(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["模型 AstrLink Guard v0.1.3 INT8 下载完成"]), 3000);
   });
 
 });

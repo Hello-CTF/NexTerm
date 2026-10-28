@@ -9,6 +9,7 @@ import { describeError } from "../../ui/errorText";
 import { formatBytes } from "../../ui/format";
 import { IconChevronDown, IconChevronRight, IconRefresh, IconShield } from "../../ui/icons";
 import { useAuth } from "../auth/store";
+import { modelDisplayName } from "./privacyModel";
 
 const precisionNames: Record<PrivacyPrecision, string> = {
   int8: "INT8",
@@ -37,7 +38,6 @@ function PrivacyCardBody() {
   const [checkError, setCheckError] = useState("");
   const [precision, setPrecision] = useState<PrivacyPrecision>("int8");
   const [managerOpen, setManagerOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const mounted = useRef(true);
   const autoChecked = useRef(false);
   const autoOpened = useRef(false);
@@ -89,7 +89,7 @@ function PrivacyCardBody() {
     if (mounted.current) setStatus(next);
   };
   const remove = async (item: PrivacyInstallation) => {
-    if (!(await confirmDialog(`删除模型 ${item.version} ${item.precision.toUpperCase()}（${formatBytes(installationSize(item))}）？`))) return;
+    if (!(await confirmDialog(`删除模型 ${modelDisplayName(item)} ${item.version} ${item.precision.toUpperCase()}（${formatBytes(installationSize(item))}）？`))) return;
     await run(async () => { const next = await privacyApi.remove(item.revision, item.precision); if (mounted.current) setStatus(next); });
   };
 
@@ -113,7 +113,7 @@ function PrivacyCardBody() {
     }
     if (!completed || !completedKey || notifiedCompletion.current === completedKey) return;
     notifiedCompletion.current = completedKey;
-    pushToast("success", `模型 ${completed.version} ${status.download.precision.toUpperCase()} 下载完成`);
+    pushToast("success", `模型 ${modelDisplayName(completed)} ${completed.version} ${status.download.precision.toUpperCase()} 下载完成`);
   }, [completed, completedKey, pushToast, status]);
 
   return (
@@ -158,7 +158,7 @@ function PrivacyCardBody() {
               <div className="text-[12.5px] text-neutral-200">本地模型</div>
               <p className="nx-hint mt-0.5 truncate">
                 {currentInstallation
-                  ? `${currentInstallation.precision.toUpperCase()} · ${currentInstallation.version} · ${formatBytes(installationSize(currentInstallation))}`
+                  ? `${modelDisplayName(currentInstallation)} · ${currentInstallation.precision.toUpperCase()} · ${currentInstallation.version} · ${formatBytes(installationSize(currentInstallation))}`
                   : noModelHint}
               </p>
             </div>
@@ -178,10 +178,10 @@ function PrivacyCardBody() {
                   当前模型
                   <Select ariaLabel="使用的本地隐私模型" value={selected} disabled={busy}
                     options={[
-                      ...(missingSelection ? [{ value: selected, label: `${config.version || config.revision.slice(0, 7)} · ${config.precision.toUpperCase()}（文件缺失）`, disabled: true }] : []),
+                      ...(missingSelection ? [{ value: selected, label: `${modelDisplayName(config)} · ${config.precision.toUpperCase()} · ${config.version || config.revision.slice(0, 7)}（文件缺失）`, disabled: true }] : []),
                       ...status.installed.map((item) => ({
                         value: keyOf(item),
-                        label: `${item.precision.toUpperCase()} · ${item.version}`,
+                        label: `${modelDisplayName(item)} · ${item.precision.toUpperCase()} · ${item.version}`,
                         description: formatBytes(installationSize(item)),
                       })),
                     ]}
@@ -228,7 +228,7 @@ function PrivacyCardBody() {
               )}
               {!status.download.running && completed && selected !== completedKey && (
                 <div role="status" className="flex flex-wrap items-center gap-2 text-[12px] text-green-300">
-                  <span>已下载 {completed.version} {status.download.precision.toUpperCase()}</span>
+                  <span>已下载 {modelDisplayName(completed)} {completed.version} {status.download.precision.toUpperCase()}</span>
                   <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" disabled={busy}
                     onClick={() => void run(() => configure({ ...config, ...completed, precision: status.download.precision }))}>使用此模型</button>
                 </div>
@@ -247,7 +247,7 @@ function PrivacyCardBody() {
                   <div className="text-xs text-neutral-400">已下载 · 共占用 {formatBytes(status.diskUsage)}</div>
                   {status.installed.map((item) => (
                     <div key={keyOf(item)} className="flex items-center justify-between gap-2 text-[11.5px]">
-                      <span>{item.precision.toUpperCase()} · {item.version} · {formatBytes(installationSize(item))}{keyOf(item) === selected ? " · 当前" : ""}</span>
+                      <span>{modelDisplayName(item)} · {item.precision.toUpperCase()} · {item.version} · {formatBytes(installationSize(item))}{keyOf(item) === selected ? " · 当前" : ""}</span>
                       {status.canManage && (
                         <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy || status.download.running || (config.enabled && keyOf(item) === selected)}
                           title={config.enabled && keyOf(item) === selected ? "正在使用，请先关闭脱敏或切换到其他模型" : undefined}
@@ -259,22 +259,7 @@ function PrivacyCardBody() {
               )}
             </div>
           )}
-          <div>
-            <button type="button" className="flex items-center gap-1 text-[11.5px] text-neutral-500 hover:text-neutral-300"
-              aria-expanded={detailsOpen} aria-controls="privacy-details" onClick={() => setDetailsOpen((current) => !current)}>
-              {detailsOpen ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />}模型与隐私说明
-            </button>
-            {detailsOpen && (
-              <div id="privacy-details" className="mt-1.5 flex flex-col gap-1.5">
-                <p className="nx-hint text-[11px]">
-                  适用于{WEB ? "当前账号" : "这台设备"}的对话、定时任务、上下文压缩、子代理和工具输出。{WEB ? "设置不参与同步；模型由管理员在服务端下载，所有账号共用。" : "设置和模型仅保存在本机，不参与同步。"}
-                </p>
-                <p className="nx-hint text-[11px]">
-                  模型来自 Hugging Face / QuantumNous/astrlink-guard，不包含在安装包中。INT8 适合日常使用；FP16 兼顾体积与精度；FP32 更侧重代码和凭证检测。模型可能漏检或误报。
-                </p>
-              </div>
-            )}
-          </div>
+          <p className="nx-hint text-[11px]">模型从官方渠道下载，不随安装包分发。</p>
         </div>
       )}
     </section>
