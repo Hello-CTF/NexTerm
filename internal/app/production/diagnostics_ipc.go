@@ -154,17 +154,19 @@ func (r diagnosticsFrontendReport) encode() ([]byte, error) {
 }
 
 type diagnosticsService struct {
-	paths     platform.Paths
-	desktop   bool
-	openPath  func(string) error
-	activeDir func() string
+	paths      platform.Paths
+	desktop    bool
+	openPath   func(string) error
+	revealPath func(string) error
+	activeDir  func() string
 }
 
 func newDiagnosticsService(dataDir string, desktop bool) *diagnosticsService {
 	return &diagnosticsService{
-		paths:    platform.NewPaths(dataDir),
-		desktop:  desktop,
-		openPath: diagcapture.OpenFolder,
+		paths:      platform.NewPaths(dataDir),
+		desktop:    desktop,
+		openPath:   diagcapture.OpenFolder,
+		revealPath: diagcapture.RevealFile,
 		activeDir: func() string {
 			if session := diagcapture.Active(); session != nil {
 				return session.Dir()
@@ -264,6 +266,24 @@ func registerDiagnosticsCommands(dispatcher *ipc.Dispatcher, s *diagnosticsServi
 				}
 				if err := s.openPath(target); err != nil {
 					return nil, ipc.WrapError(ipc.CodeIO, "无法打开文件夹："+err.Error(), err)
+				}
+				return nil, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "diagnostics_reveal_archive", func(ctx context.Context, _ *ipc.Call, input diagnosticsPathRequest) (any, error) {
+				if err := s.authorize(ctx); err != nil {
+					return nil, err
+				}
+				if !s.desktop {
+					return nil, ipc.NewError(ipc.CodeUnsupported, "网页模式无法在服务器上打开文件夹")
+				}
+				archive, err := diagcapture.ResolveArchive(s.paths, input.Path)
+				if err != nil {
+					return nil, diagnosticsIPCError(err)
+				}
+				if err := s.revealPath(archive); err != nil {
+					return nil, ipc.WrapError(ipc.CodeIO, "无法在文件夹中显示压缩包："+err.Error(), err)
 				}
 				return nil, nil
 			})

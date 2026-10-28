@@ -16,6 +16,7 @@ describe("diagnosticsApi", () => {
     await diagnosticsApi.arm(true);
     await diagnosticsApi.openFolder();
     await diagnosticsApi.openFolder("/captures/a");
+    await diagnosticsApi.revealArchive("/captures/a.zip");
     await diagnosticsApi.pack("/captures/a");
     await diagnosticsApi.remove("/captures/a");
     await diagnosticsApi.clear();
@@ -26,6 +27,7 @@ describe("diagnosticsApi", () => {
       ["diagnostics_arm", { armed: true }],
       ["diagnostics_open_folder", { path: "" }],
       ["diagnostics_open_folder", { path: "/captures/a" }],
+      ["diagnostics_reveal_archive", { path: "/captures/a.zip" }],
       ["diagnostics_pack", { path: "/captures/a" }],
       ["diagnostics_delete", { path: "/captures/a" }],
       ["diagnostics_clear"],

@@ -12,11 +12,14 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   clear: vi.fn(),
   ask: vi.fn(),
+  revealArchive: vi.fn(),
+  copyText: vi.fn(),
 }));
 
 vi.mock("../../ipc/diagnosticsApi", () => ({
   diagnosticsApi: mocks,
 }));
+vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText }));
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
   return { ...actual, ask: mocks.ask };
@@ -190,5 +193,59 @@ describe("DiagnosticsCard", () => {
     mocks.status.mockRejectedValue({ code: "internal", message: "boom" });
     mounted = mount(createElement(DiagnosticsCard));
     await flushUntil(() => text().includes("boom"));
+  });
+
+  it("opens the capture root from the top-level button", async () => {
+    mocks.status.mockResolvedValue(idle);
+    mocks.openFolder.mockResolvedValue(null);
+    mounted = mount(createElement(DiagnosticsCard));
+    await flushUntil(() => hasButton("打开记录目录"));
+    clickButton(mounted.container, "打开记录目录");
+    await flush();
+    expect(mocks.openFolder).toHaveBeenCalledWith("");
+  });
+
+  it("hides the capture root button when the host cannot open folders", async () => {
+    mocks.status.mockResolvedValue({ ...idle, canOpenFolder: false });
+    mounted = mount(createElement(DiagnosticsCard));
+    await flushUntil(() => hasButton("开启下次启动的调试模式") && !button("开启下次启动的调试模式").disabled);
+    expect(hasButton("打开记录目录")).toBe(false);
+  });
+
+  it("reveals and copies the path of an existing archive, and offers neither without one", async () => {
+    const dir = "/logs/debug-capture/a";
+    mocks.status.mockResolvedValue({
+      ...idle,
+      captures: [
+        { name: "a", path: dir, sizeBytes: 1, timeMs: 0, archive: `${dir}.zip` },
+        { name: "b", path: "/logs/debug-capture/b", sizeBytes: 1, timeMs: 0 },
+      ],
+    });
+    mocks.revealArchive.mockResolvedValue(null);
+    mocks.copyText.mockResolvedValue(undefined);
+    mounted = mount(createElement(DiagnosticsCard));
+    await flushUntil(() => hasButton("在文件夹中显示"));
+    expect(mounted.container.querySelectorAll('[aria-label^="在文件夹中显示"]').length).toBe(1);
+
+    await act(async () => {
+      button("在文件夹中显示").click();
+    });
+    expect(mocks.revealArchive).toHaveBeenCalledWith(`${dir}.zip`);
+    await act(async () => {
+      button("复制路径").click();
+    });
+    expect(mocks.copyText).toHaveBeenCalledWith(`${dir}.zip`);
+  });
+
+  it("hides reveal but keeps copy-path when the host cannot open folders", async () => {
+    const dir = "/logs/debug-capture/a";
+    mocks.status.mockResolvedValue({
+      ...idle,
+      canOpenFolder: false,
+      captures: [{ name: "a", path: dir, sizeBytes: 1, timeMs: 0, archive: `${dir}.zip` }],
+    });
+    mounted = mount(createElement(DiagnosticsCard));
+    await flushUntil(() => hasButton("复制路径"));
+    expect(hasButton("在文件夹中显示")).toBe(false);
   });
 });

@@ -53,6 +53,7 @@ export const diagnosticsApi = {
   status: () => call("diagnostics_status") as Promise<DiagnosticsStatus>,
   arm: (armed: boolean) => call("diagnostics_arm", { armed }) as Promise<DiagnosticsStatus>,
   openFolder: (path = "") => call("diagnostics_open_folder", { path }) as Promise<unknown>,
+  revealArchive: (path: string) => call("diagnostics_reveal_archive", { path }) as Promise<unknown>,
   pack: (path: string) => call("diagnostics_pack", { path }) as Promise<{ path: string }>,
   remove: (path: string) => call("diagnostics_delete", { path }) as Promise<DiagnosticsStatus>,
   clear: () => call("diagnostics_clear") as Promise<DiagnosticsStatus>,

@@ -3,6 +3,7 @@ package diagcapture
 import (
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 )
 
@@ -17,15 +18,38 @@ func CanOpenFolder() bool {
 
 // OpenFolder asks the desktop shell to show dir in the file manager.
 func OpenFolder(dir string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
+	return startDetached(shellCommand(runtime.GOOS, dir, false))
+}
+
+// RevealFile shows file selected in the file manager; platforms that cannot select fall back to its folder.
+func RevealFile(file string) error {
+	return startDetached(shellCommand(runtime.GOOS, file, true))
+}
+
+// shellCommand builds the file manager invocation for goos, or nil when the platform has none.
+func shellCommand(goos, target string, reveal bool) *exec.Cmd {
+	switch goos {
 	case "darwin":
-		cmd = exec.Command("open", dir)
+		if reveal {
+			return exec.Command("open", "-R", target)
+		}
+		return exec.Command("open", target)
 	case "windows":
-		cmd = exec.Command("explorer", dir)
+		if reveal {
+			return exec.Command("explorer", "/select,"+target)
+		}
+		return exec.Command("explorer", target)
 	case "linux", "freebsd", "openbsd", "netbsd":
-		cmd = exec.Command("xdg-open", dir)
-	default:
+		if reveal {
+			target = filepath.Dir(target)
+		}
+		return exec.Command("xdg-open", target)
+	}
+	return nil
+}
+
+func startDetached(cmd *exec.Cmd) error {
+	if cmd == nil {
 		return errors.New("opening folders is not supported on this platform")
 	}
 	if err := cmd.Start(); err != nil {

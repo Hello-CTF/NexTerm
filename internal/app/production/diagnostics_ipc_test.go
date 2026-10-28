@@ -191,3 +191,45 @@ func TestDiagnosticsFrontendReportIsValidatedAndOnlyAcceptedDuringACapture(t *te
 		t.Fatalf("list length = %d, want the cap %d", len(bounded.IPC), diagnosticsMaxItems)
 	}
 }
+
+func TestDiagnosticsRevealArchiveValidatesAndRespectsMode(t *testing.T) {
+	dispatcher, service := newDiagnosticsTestDispatcher(t, true)
+	var revealed []string
+	service.revealPath = func(path string) error { revealed = append(revealed, path); return nil }
+	ctx := context.Background()
+	root := diagcapture.Root(service.paths)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(root, "a.zip")
+	if err := os.WriteFile(archive, []byte("zip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if response := dispatchDiagnostics(ctx, dispatcher, "diagnostics_reveal_archive", `{"path":`+quote(archive)+`}`); !response.OK {
+		t.Fatalf("reveal: %+v", response.Error)
+	}
+	if len(revealed) != 1 || revealed[0] != archive {
+		t.Fatalf("revealed %v", revealed)
+	}
+	outside := filepath.Join(t.TempDir(), "x.zip")
+	if err := os.WriteFile(outside, []byte("zip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if response := dispatchDiagnostics(ctx, dispatcher, "diagnostics_reveal_archive", `{"path":`+quote(outside)+`}`); response.OK {
+		t.Fatal("reveal must reject archives outside the capture root")
+	}
+	if len(revealed) != 1 {
+		t.Fatalf("rejected path must not reach the shell: %v", revealed)
+	}
+
+	server, serverService := newDiagnosticsTestDispatcher(t, false)
+	serverService.revealPath = func(string) error { t.Fatal("server mode must not reveal"); return nil }
+	member := ipc.WithRole(ipc.WithUserID(context.Background(), "u1"), "member")
+	if response := dispatchDiagnostics(member, server, "diagnostics_reveal_archive", `{"path":"a.zip"}`); response.OK || response.Error.Code != ipc.CodeForbidden {
+		t.Fatalf("non-admin must be forbidden: %+v", response)
+	}
+	admin := ipc.WithRole(ipc.WithUserID(context.Background(), "u2"), "superadmin")
+	if response := dispatchDiagnostics(admin, server, "diagnostics_reveal_archive", `{"path":"a.zip"}`); response.OK || response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("server mode must be unsupported: %+v", response)
+	}
+}
