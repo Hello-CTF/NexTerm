@@ -365,7 +365,7 @@ func (m *hostShareIPC) finish(proxy *hostShareProxy, conn hostShareConn, readErr
 		var remoteClose websocket.CloseError
 		if errors.Is(cause, errHostShareAccount) {
 			_ = proxy.sendJSON(context.Background(), mustHostShareJSON(hostShareErrorFrame{
-				Type: "error", Code: "forbidden", Message: "账号或服务器已切换，或已登出，共享终端已关闭",
+				Type: "error", Code: "forbidden", Message: "账号或服务器已切换，或已退出登录，共享终端已关闭",
 			}))
 		} else if !errors.As(readErr, &remoteClose) {
 			_ = proxy.sendJSON(context.Background(), mustHostShareJSON(hostShareErrorFrame{
