@@ -18,14 +18,12 @@ import (
 	"time"
 
 	"golang.org/x/mod/semver"
+
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy/inference"
 )
 
 const modelRepository = "QuantumNous/astrlink-guard"
 const maxModelFile = 512 << 20
-
-// supportedModelMajor is the release line this runtime can load; a later
-// major version may change inputs or labels and is never selected.
-const supportedModelMajor = "v0"
 
 const (
 	responseHeaderTimeout = 30 * time.Second
@@ -82,6 +80,9 @@ type Catalog struct {
 	baseURL string
 	// idleTimeout aborts a response body that delivers no bytes for this long.
 	idleTimeout time.Duration
+	// validate decides from a release's metadata files whether this runtime can
+	// load it; nil uses the inference package's load-time checks.
+	validate func(config, tokenizer []byte) error
 }
 
 // NewCatalog bounds the wait for response headers and for each stretch without
@@ -167,9 +168,24 @@ func (c *Catalog) readJSON(ctx context.Context, path string, value any) error {
 	return json.Unmarshal(data, value)
 }
 
-// Latest resolves a released version to an immutable commit before fetching any
-// files. Moving tags or main updates cannot mix weights from different releases.
+// Resolution is the outcome of looking for the newest usable release.
+type Resolution struct {
+	// Release is the newest release this app version can load.
+	Release ModelRelease
+	// NewerIncompatible is a newer stable release that cannot be loaded, if any.
+	NewerIncompatible *ModelRelease
+}
+
+// Latest returns the newest compatible release.
 func (c *Catalog) Latest(ctx context.Context) (ModelRelease, error) {
+	resolution, err := c.Resolve(ctx)
+	return resolution.Release, err
+}
+
+// Resolve picks the highest stable semver tag whose content this runtime can
+// load, resolved to an immutable commit before any weights are fetched. Only
+// content decides compatibility, never the version number.
+func (c *Catalog) Resolve(ctx context.Context) (Resolution, error) {
 	var refs struct {
 		Tags []struct {
 			Name   string `json:"name"`
@@ -177,21 +193,103 @@ func (c *Catalog) Latest(ctx context.Context) (ModelRelease, error) {
 		} `json:"tags"`
 	}
 	if err := c.readJSON(ctx, "/api/models/"+modelRepository+"/refs", &refs); err != nil {
-		return ModelRelease{}, err
+		return Resolution{}, err
 	}
-	var release ModelRelease
+	var releases []ModelRelease
 	for _, tag := range refs.Tags {
-		if !semver.IsValid(tag.Name) || semver.Prerelease(tag.Name) != "" || semver.Major(tag.Name) != supportedModelMajor || !revisionPattern.MatchString(tag.Commit) {
-			continue
-		}
-		if release.Version == "" || semver.Compare(tag.Name, release.Version) > 0 {
-			release = ModelRelease{Version: tag.Name, Revision: tag.Commit}
+		if semver.IsValid(tag.Name) && semver.Prerelease(tag.Name) == "" && revisionPattern.MatchString(tag.Commit) {
+			releases = append(releases, ModelRelease{Version: tag.Name, Revision: tag.Commit})
 		}
 	}
-	if release.Version == "" {
-		return release, errors.New("no supported model release is available")
+	slices.SortFunc(releases, func(a, b ModelRelease) int { return semver.Compare(b.Version, a.Version) })
+	var resolution Resolution
+	for _, release := range releases {
+		ok, err := c.compatible(ctx, release)
+		if err != nil {
+			return Resolution{}, err
+		}
+		if ok {
+			resolution.Release = release
+			return resolution, nil
+		}
+		if resolution.NewerIncompatible == nil {
+			skipped := release
+			resolution.NewerIncompatible = &skipped
+		}
 	}
-	return release, nil
+	return Resolution{NewerIncompatible: resolution.NewerIncompatible}, errors.New("no supported model release is available")
+}
+
+// compatible reports whether any precision of release passes the metadata
+// checks. Only transport failures are returned as errors; content or layout
+// the runtime cannot use makes the release incompatible.
+func (c *Catalog) compatible(ctx context.Context, release ModelRelease) (bool, error) {
+	for _, precision := range []Precision{INT8, FP32, FP16} {
+		manifest, err := c.Manifest(ctx, release, precision)
+		if err == nil {
+			err = c.checkMetadata(ctx, manifest)
+		}
+		if err == nil {
+			return true, nil
+		}
+		if ctx.Err() != nil || !isContentError(err) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+var errIncompatibleRelease = errors.New("incompatible model release")
+
+// errManifestEntry marks a manifest that lacks or malforms a required file.
+var errManifestEntry = errors.New("invalid model manifest entry")
+
+func isContentError(err error) bool {
+	var status *HTTPStatusError
+	var syntax *json.SyntaxError
+	var typed *json.UnmarshalTypeError
+	if errors.As(err, &status) {
+		return status.Code >= 400 && status.Code < 500
+	}
+	return errors.As(err, &syntax) || errors.As(err, &typed) || errors.Is(err, errIncompatibleRelease) || errors.Is(err, errManifestEntry)
+}
+
+// checkMetadata fetches config.json and tokenizer.json of the pinned revision,
+// confirms they match the manifest and runs the runtime's load-time checks.
+func (c *Catalog) checkMetadata(ctx context.Context, installation Installation) error {
+	fetch := func(name string, limit int64) ([]byte, error) {
+		body, err := c.get(ctx, "/"+modelRepository+"/resolve/"+installation.Revision+"/"+string(installation.Precision)+"/"+name)
+		if err != nil {
+			return nil, err
+		}
+		defer body.Close()
+		data, err := io.ReadAll(io.LimitReader(body, limit+1))
+		if err != nil {
+			return nil, err
+		}
+		entry := installation.Files[name]
+		sum := sha256.Sum256(data)
+		if int64(len(data)) > limit || int64(len(data)) != entry.Size || hex.EncodeToString(sum[:]) != entry.SHA256 {
+			return nil, errIncompatibleRelease
+		}
+		return data, nil
+	}
+	config, err := fetch("config.json", 4<<20)
+	if err != nil {
+		return err
+	}
+	tokenizer, err := fetch("tokenizer.json", 64<<20)
+	if err != nil {
+		return err
+	}
+	validate := c.validate
+	if validate == nil {
+		validate = inference.ValidateMetadata
+	}
+	if err := validate(config, tokenizer); err != nil {
+		return fmt.Errorf("%w: %w", errIncompatibleRelease, err)
+	}
+	return nil
 }
 
 func modelFileName(p Precision) string {
@@ -227,7 +325,7 @@ func (c *Catalog) Manifest(ctx context.Context, release ModelRelease, p Precisio
 	for _, name := range requiredModelFiles(p) {
 		file, ok := installation.Files[name]
 		if !ok || !digestPattern.MatchString(file.SHA256) || file.Size <= 0 || file.Size > maxModelFile {
-			return installation, fmt.Errorf("invalid model manifest entry: %s", name)
+			return installation, fmt.Errorf("%w: %s", errManifestEntry, name)
 		}
 	}
 	// Only known files are downloaded; remote names never become local paths.
