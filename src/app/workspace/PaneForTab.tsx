@@ -75,9 +75,9 @@ function RestoredTabPlaceholder({ tab, workspaceId }: { tab: AppTab; workspaceId
       <span>
         {tab.kind === "terminal"
           ? durableHost
-            ? "原终端未连接。重新连接会新开一个 shell；若原终端是持久终端，可在「后台会话」接管。"
-            : "原终端进程已结束，重新连接会新开一个 shell。"
-          : "连接后重新打开此标签。"}
+            ? "这个终端还没有连接。点「新开终端」会打开一个新终端；如果原来是持久终端，可在「后台会话」里接管。"
+            : "原终端已经结束。点「新开终端」会打开一个新终端。"
+          : "连接主机后才能打开这个标签。"}
       </span>
       <div className="flex flex-wrap items-center justify-center gap-2">
         <button type="button" className="nx-btn nx-btn-outline" onClick={reopen}>
@@ -112,11 +112,11 @@ function RestoredWorkspacePlaceholder({ workspaceId }: { workspaceId: string }) 
       <span>
         {workspace.deletedTarget
           ? `「${workspace.title}」的资产已删除，无法重新连接。`
-          : `「${workspace.title}」尚未连接。连接后可新建终端${durableHost ? "；之前的持久终端可在「后台会话」接管" : ""}。`}
+          : `「${workspace.title}」还没有连接。连接后可以新建终端${durableHost ? "，之前的持久终端可在「后台会话」里接管" : ""}。`}
       </span>
       {!workspace.deletedTarget && (
         <button type="button" className="nx-btn nx-btn-outline" disabled={connecting} onClick={connect}>
-          {connecting ? "连接中…" : "连接"}
+          {connecting ? "正在连接…" : "连接"}
         </button>
       )}
     </div>
@@ -175,7 +175,7 @@ export const PaneForTab = memo(function PaneForTab({
   if (tab.kind === "terminal" && tab.containerId && tab.restorePending) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
-        <span>容器终端不会自动重新执行，请从容器列表重新打开。</span>
+        <span>容器终端不会自动重新打开，请从容器列表重新进入。</span>
         <button type="button" className="nx-btn nx-btn-outline" onClick={close}>关闭标签</button>
       </div>
     );

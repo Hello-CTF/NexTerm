@@ -92,7 +92,12 @@ export function WorkspaceConnectionBar({
         ) : (
           <>
             与 {ws.title} 的连接已断开
-            {reason ? <span className="text-[var(--nx-fg-tertiary)]">：{reason}</span> : null}
+            {reason ? (
+              <details className="text-[var(--nx-fg-tertiary)]">
+                <summary className="cursor-pointer">查看详情</summary>
+                <span className="break-all">{reason}</span>
+              </details>
+            ) : null}
           </>
         )}
       </span>

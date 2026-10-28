@@ -385,7 +385,7 @@ describe("terminal://throttled badge", () => {
     act(() => {
       throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 0, recovered: true, version: 3 });
     });
-    const notice = badge("输出过快，正在重新同步");
+    const notice = badge("正在补齐输出");
     expect(notice).not.toBeNull();
     expect(notice?.className).not.toContain("amber");
     expect(badge("输出积压")).toBeNull();

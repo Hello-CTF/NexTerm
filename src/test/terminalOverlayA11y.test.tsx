@@ -494,12 +494,12 @@ describe("terminal overlay accessibility", () => {
           }),
         );
       });
-      expect(status("正在切换终端窗口…")).not.toBeNull();
+      expect(status("正在切换终端…")).not.toBeNull();
 
       act(() => {
         vi.advanceTimersByTime(650);
       });
-      expect(status("正在切换终端窗口…")).toBeNull();
+      expect(status("正在切换终端…")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -530,6 +530,6 @@ describe("terminal overlay accessibility", () => {
       );
     });
 
-    expect(status("正在切换终端窗口…")).toBeNull();
+    expect(status("正在切换终端…")).toBeNull();
   });
 });

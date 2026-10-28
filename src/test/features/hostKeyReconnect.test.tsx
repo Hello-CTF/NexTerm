@@ -179,7 +179,7 @@ async function clickTerminalMenuItem(label: string): Promise<void> {
     item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   await waitForRendered(() => {
-    expect(toastTexts()).toMatch(/已重新连接|已取消重连|会话已在服务端删除|重连失败/);
+    expect(toastTexts()).toMatch(/已重新连接|已取消重连|原连接已不存在|重新连接失败/);
   });
 }
 
@@ -367,7 +367,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     mocks.ask.mockResolvedValue(false);
     await flush();
 
-    await clickTerminalMenuItem("重连会话");
+    await clickTerminalMenuItem("重新连接（保留当前终端）");
     await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("首次连接 10.0.0.8:22");
     await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
@@ -389,7 +389,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     mocks.reconnect.mockResolvedValue(true);
     await flush();
 
-    await clickTerminalMenuItem("重连会话");
+    await clickTerminalMenuItem("重新连接（保留当前终端）");
     await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
@@ -416,7 +416,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     mocks.reconnect.mockResolvedValue(true);
     await flush();
 
-    await clickTerminalMenuItem("重连会话");
+    await clickTerminalMenuItem("重新连接（保留当前终端）");
     await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
@@ -437,7 +437,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     mocks.ask.mockResolvedValue(false);
     await flush();
 
-    await clickTerminalMenuItem("重连会话");
+    await clickTerminalMenuItem("重新连接（保留当前终端）");
     await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("首次连接 jump.example:22");
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("SHA256:jumpfp");
@@ -464,7 +464,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     mocks.reconnect.mockResolvedValue(true);
     await flush();
 
-    await clickTerminalMenuItem("重连会话");
+    await clickTerminalMenuItem("重新连接（保留当前终端）");
     await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
@@ -485,7 +485,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     mocks.reconnect.mockResolvedValue(true);
     await flush();
 
-    await clickTerminalMenuItem("重连会话");
+    await clickTerminalMenuItem("重新连接（保留当前终端）");
     await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.ask).not.toHaveBeenCalled();
   });
@@ -504,12 +504,12 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     });
     await flush();
 
-    await clickTerminalMenuItem("重连会话");
+    await clickTerminalMenuItem("重新连接（保留当前终端）");
     await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
-    await waitForRendered(() => expect(toastTexts()).toContain("会话已在服务端删除"));
+    await waitForRendered(() => expect(toastTexts()).toContain("原连接已不存在"));
     expect(toastTexts()).not.toContain("请刷新后重试");
     expect(
-      useUi.getState().toasts.some((t) => t.kind === "error" && t.text.includes("会话已在服务端删除")),
+      useUi.getState().toasts.some((t) => t.kind === "error" && t.text.includes("原连接已不存在")),
     ).toBe(true);
   });
 });

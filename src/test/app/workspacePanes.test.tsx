@@ -254,7 +254,7 @@ describe("PaneForTab", () => {
       useUi.setState({ workspaces: [workspace({ restorePending: true })] });
       render(tab({ kind: "terminal", sessionId: "s1" }));
       expect(view!.container.querySelector('[data-panel="terminal"]')).toBeNull();
-      expect(view!.container.textContent).toContain("「prod」尚未连接");
+      expect(view!.container.textContent).toContain("「prod」还没有连接");
       expect(view!.container.textContent).toContain("后台会话");
       click(button("连接"));
       await flushUntil(() => mocks.reconnectWorkspace.mock.calls.length === 1);
@@ -291,9 +291,9 @@ describe("PaneForTab", () => {
     it("uses the plain message for restored non-durable terminals and file tabs", () => {
       useUi.setState({ workspaces: [workspace({ assetKind: "local" })] });
       render(tab({ kind: "terminal", restorePending: true }));
-      expect(view!.container.textContent).toContain("原终端进程已结束");
+      expect(view!.container.textContent).toContain("原终端已经结束");
       remount(tab({ kind: "files", sessionId: "s1", restorePending: true }));
-      expect(view!.container.textContent).toContain("连接后重新打开此标签");
+      expect(view!.container.textContent).toContain("连接主机后才能打开这个标签");
       expect(button("连接并打开")).toBeDefined();
     });
 
@@ -310,7 +310,7 @@ describe("PaneForTab", () => {
     it("tells container terminals to be reopened from the container list and closes the tab", () => {
       const onClose = vi.fn().mockResolvedValue(undefined);
       render(tab({ kind: "terminal", id: "ct", containerId: "c1", restorePending: true }), { onClose });
-      expect(view!.container.textContent).toContain("容器终端不会自动重新执行");
+      expect(view!.container.textContent).toContain("容器终端不会自动重新打开");
       click(button("关闭标签"));
       expect(onClose).toHaveBeenCalledWith("ct");
     });

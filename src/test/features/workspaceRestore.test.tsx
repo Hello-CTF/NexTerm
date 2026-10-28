@@ -385,7 +385,7 @@ describe("workspace restore queue", () => {
     expect(results.empty).toMatchObject({ status: "skipped", detail: "空工作区无需重新连接" });
     expect(results.database).toMatchObject({ status: "skipped" });
     expect(results.deleted).toMatchObject({ status: "skipped", detail: "原资产已删除" });
-    expect(results.exec).toMatchObject({ status: "skipped", detail: "容器 exec 不会自动重新执行" });
+    expect(results.exec).toMatchObject({ status: "skipped", detail: "容器内命令不会自动重新打开" });
     expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
     expect(mocks.sessionConnect).toHaveBeenCalledWith("asset-normal");
     expect(mocks.dbConnect).not.toHaveBeenCalled();

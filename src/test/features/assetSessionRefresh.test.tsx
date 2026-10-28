@@ -392,12 +392,12 @@ async function saveAndExpectStale(): Promise<void> {
   const before = mocks.sessionList.mock.calls.length;
   clickButton(document.body, "保存");
   await flushUntil(() =>
-    mocks.sessionList.mock.calls.length > before && (document.body.textContent?.includes("配置已修改，重连后生效") ?? false),
+    mocks.sessionList.mock.calls.length > before && (document.body.textContent?.includes("资产配置已修改，重新连接后生效") ?? false),
   );
 }
 
 async function reconnectAndExpectStaleCleared(): Promise<void> {
-  const button = document.querySelector<HTMLButtonElement>('button[title="使用当前资产配置重连"]');
+  const button = document.querySelector<HTMLButtonElement>('button[title="用新的资产配置重新连接，当前终端保留"]');
   expect(button).not.toBeNull();
   mocks.stale = false;
   // The manual reconnect must observe the session engage before the connected frame counts as fresh.
@@ -419,7 +419,7 @@ async function reconnectAndExpectStaleCleared(): Promise<void> {
   });
   // The reconnect settles the session list first; the stale banner follows the store, not the poll.
   await flushUntil(() => useUi.getState().sessions[0]?.staleConfig === false);
-  expect(document.body.textContent).not.toContain("配置已修改，重连后生效");
+  expect(document.body.textContent).not.toContain("资产配置已修改，重新连接后生效");
   expect(mocks.sessionReconnect).toHaveBeenCalledWith("s1");
 }
 
@@ -434,10 +434,10 @@ describe("persistent asset session refresh", () => {
       expect(mocks.assetUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: "a1", port: 2202 }));
       expect(useUi.getState().leftOpen).toBe(leftOpen);
       expect(useUi.getState().sessions[0]?.staleConfig).toBe(true);
-      expect(document.body.textContent).toContain("配置已修改，重连后生效");
+      expect(document.body.textContent).toContain("资产配置已修改，重新连接后生效");
       await reconnectAndExpectStaleCleared();
       expect(useUi.getState().sessions[0]?.staleConfig).toBe(false);
-      expect(document.body.textContent).not.toContain("配置已修改，重连后生效");
+      expect(document.body.textContent).not.toContain("资产配置已修改，重新连接后生效");
     });
 
     it(`executes the real conflict overwrite flow with leftOpen=${leftOpen}`, async () => {
@@ -454,7 +454,7 @@ describe("persistent asset session refresh", () => {
       clickButton(document.body, "导入选中项");
       await flushUntil(() =>
         mocks.sshApply.mock.calls.length === 1 && mocks.sessionList.mock.calls.length > before &&
-        (document.body.textContent?.includes("配置已修改，重连后生效") ?? false),
+        (document.body.textContent?.includes("资产配置已修改，重新连接后生效") ?? false),
       );
 
       expect(mocks.sshApply).toHaveBeenCalledWith(expect.objectContaining({
@@ -463,7 +463,7 @@ describe("persistent asset session refresh", () => {
       }));
       expect(useUi.getState().leftOpen).toBe(leftOpen);
       expect(useUi.getState().sessions[0]?.staleConfig).toBe(true);
-      expect(document.body.textContent).toContain("配置已修改，重连后生效");
+      expect(document.body.textContent).toContain("资产配置已修改，重新连接后生效");
     });
   }
 
@@ -492,7 +492,7 @@ describe("persistent asset session refresh", () => {
     first.resolve(sessionRows(true));
     await flushUntil(() => eventCalls === 2);
     second.resolve(sessionRows(false));
-    await flushUntil(() => !(document.body.textContent?.includes("配置已修改，重连后生效") ?? false));
+    await flushUntil(() => !(document.body.textContent?.includes("资产配置已修改，重新连接后生效") ?? false));
     expect(eventCalls).toBe(2);
     expect(useUi.getState().workspaces[0]?.panes).toHaveLength(2);
   });

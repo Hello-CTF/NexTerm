@@ -327,7 +327,7 @@ describe("terminal dead-tab overlay", () => {
     await waitFor(() => expect(overlay()).not.toBeNull());
 
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
-    const notice = useUi.getState().toasts.find((toast) => toast.text.includes("恢复失败"));
+    const notice = useUi.getState().toasts.find((toast) => toast.text.includes("没能恢复原持久终端"));
     expect(notice?.action?.label).toBe("查看选项");
     act(() => notice?.action?.onSelect());
     clickButton(mounted.container, "新建临时终端");
@@ -592,7 +592,7 @@ describe("terminal dead-tab overlay", () => {
 
     failAttach("not_found");
 
-    await waitFor(() => expect(mounted?.container.textContent).toContain("容器 exec 已中断"));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("容器里的命令已中断"));
     expect(storeTab()?.dead).not.toBe(true);
     expect(storeTab()?.exited).toBe(true);
     expect(storeTab()?.tabId).toBe("kernel-1");
@@ -1047,7 +1047,7 @@ describe("terminal dead-tab context menu reconnect", () => {
 
     await openTerminalMenu();
     expect(menuLabels().some((t) => t.includes("重新连接这台主机"))).toBe(true);
-    expect(menuLabels().some((t) => t.includes("重连会话"))).toBe(false);
+    expect(menuLabels().some((t) => t.includes("重新连接（保留当前终端）"))).toBe(false);
 
     await clickMenuItem("重新连接这台主机");
 
@@ -1081,8 +1081,8 @@ describe("terminal dead-tab context menu reconnect", () => {
     await flush();
 
     await openTerminalMenu();
-    expect(menuLabels().some((t) => t.includes("重连会话"))).toBe(true);
-    await clickMenuItem("重连会话");
+    expect(menuLabels().some((t) => t.includes("重新连接（保留当前终端）"))).toBe(true);
+    await clickMenuItem("重新连接（保留当前终端）");
 
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-1"));
@@ -1105,8 +1105,8 @@ describe("terminal dead-tab context menu reconnect", () => {
     await flush();
 
     await openTerminalMenu();
-    await clickMenuItem("重连会话");
-    await waitFor(() => expect(toastTexts()).toContain("重连失败：重连未能启动"));
+    await clickMenuItem("重新连接（保留当前终端）");
+    await waitFor(() => expect(toastTexts()).toContain("重新连接失败：重连未能启动"));
     expect(useUi.getState().workspaceRuntime.ws1?.problems?.[0]).toMatchObject({
       connectionKey: assetConnectionProblemKey("asset-1"),
       summary: "重连未能启动",
@@ -1124,7 +1124,7 @@ describe("terminal dead-tab context menu reconnect", () => {
       },
     ]);
     await openTerminalMenu();
-    await clickMenuItem("重连会话");
+    await clickMenuItem("重新连接（保留当前终端）");
     await waitFor(() => expect(toastTexts()).toContain("已重新连接"));
     expect(useUi.getState().workspaceRuntime.ws1?.problems ?? []).toEqual([]);
   });
@@ -1197,7 +1197,7 @@ describe("terminal dead-tab context menu reconnect", () => {
 
     await openTerminalMenu();
     expect(menuLabels().some((t) => t.includes("重新连接这台主机"))).toBe(true);
-    expect(menuLabels().some((t) => t.includes("重连会话"))).toBe(false);
+    expect(menuLabels().some((t) => t.includes("重新连接（保留当前终端）"))).toBe(false);
 
     await clickMenuItem("重新连接这台主机");
 
@@ -1220,7 +1220,7 @@ describe("terminal dead-tab context menu reconnect", () => {
     act(() => {
       useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "reconnecting" as const })) }));
     });
-    await waitFor(() => expect(mounted?.container.textContent).toContain("容器 exec 已中断"));
+    await waitFor(() => expect(mounted?.container.textContent).toContain("容器里的命令已中断"));
     expect(storeTab()?.exited).toBe(true);
     expect(mocks.closeTab).toHaveBeenCalledWith("exec-1", "kill", "s1");
     act(() => {
@@ -1231,9 +1231,9 @@ describe("terminal dead-tab context menu reconnect", () => {
     act(() => {
       useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, status: "connected" as const })) }));
     });
-    expect(mounted.container.textContent).toContain("原进程和输入不能恢复");
+    expect(mounted.container.textContent).toContain("原进程和输入无法恢复");
     expect(storeTab()?.tabId).toBe("exec-1");
-    clickButton(mounted.container, "重新打开 exec");
+    clickButton(mounted.container, "重新打开");
     await waitFor(() => expect(storeTab()?.exited).toBeUndefined());
     expect(storeTab()?.tabId).toBeUndefined();
   });
@@ -1248,7 +1248,7 @@ describe("terminal dead-tab context menu reconnect", () => {
       useUi.setState((state) => ({ sessions: state.sessions.map((session) => ({ ...session, assetId: "asset-2" })) }));
     });
     await waitFor(() => expect(mounted?.container.textContent).toContain("原主机已改变"));
-    const retry = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent?.includes("重新打开 exec"));
+    const retry = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent?.includes("重新打开"));
     expect(retry?.disabled).toBe(true);
   });
 });
