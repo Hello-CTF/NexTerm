@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func requireFileTokenAbsent(t *testing.T, path, token string) {
@@ -80,7 +81,10 @@ func TestScrubFreeSpaceOnMemoryStore(t *testing.T) {
 func TestScrubFreeSpaceBusyWithHeldReader(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "data.db")
-	database, err := Open(ctx, path)
+	// The held transaction keeps the write lock, so the busy write and the
+	// busy scrub each wait out busy_timeout; a short timeout keeps the
+	// assertions while the production default stays 30s.
+	database, err := OpenWithOptions(ctx, path, OpenOptions{BusyTimeout: 500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
