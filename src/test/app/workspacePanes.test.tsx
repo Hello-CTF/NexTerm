@@ -147,9 +147,9 @@ describe("PaneForTab", () => {
     expect((await panel("forward")).dataset.sessionid).toBe("s2");
   });
 
-  it("opens the file browser without a path and the editor with one, which closes its tab", async () => {
+  it("opens the editor for a files tab with a path, which closes its tab; a legacy pathless tab is empty", async () => {
     render(tab({ kind: "files", sessionId: "s1" }));
-    expect((await panel("browser")).dataset.sessionid).toBe("s1");
+    expect(isEmpty()).toBe(true);
 
     const onClose = vi.fn().mockResolvedValue(undefined);
     remount(tab({ kind: "files", id: "f1", sessionId: "s1", path: "/etc/hosts" }), { onClose });

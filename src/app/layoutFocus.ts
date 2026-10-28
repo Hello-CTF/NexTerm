@@ -58,9 +58,9 @@ export interface DeviceLayoutSource {
   aiBoards: Record<string, AiBoard>;
 }
 
-// normalizeLeftMode reads a stored left dock mode; anything unknown falls back to the asset tree.
+// normalizeLeftMode reads a stored left dock mode; the legacy "files" value and anything unknown fall back to the asset tree.
 export function normalizeLeftMode(raw: unknown): LeftMode {
-  return raw === "credentials" || raw === "files" ? raw : "assets";
+  return raw === "credentials" ? raw : "assets";
 }
 
 function reference(id: string, key: string): FocusReference {
@@ -130,7 +130,8 @@ function isNullableReference(value: unknown): value is FocusReference | null {
 
 function validDeviceLayout(value: unknown): value is DeviceLayoutState {
   if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Partial<DeviceLayoutState>;
+  // A device layout saved by an older build may hold the retired "files" mode; normalizeLeftMode maps it.
+  const candidate = value as Omit<Partial<DeviceLayoutState>, "leftMode"> & { leftMode?: string };
   return (
     candidate.v === 1 &&
     typeof candidate.leftOpen === "boolean" &&

@@ -1,4 +1,5 @@
-import { useUi, openCredentialsSidebar, type Workspace } from "../store";
+import { useUi, isHostWorkspace, showLeftPanel, type Workspace } from "../store";
+import { resolveLeftView } from "./leftView";
 import { useBackgroundSessionCount } from "../../features/terminal/backgroundSessionsAccess";
 import { TRANSPORT } from "../../ipc/env";
 import { isMac } from "../platform";
@@ -9,7 +10,6 @@ import {
   IconClock,
   IconDatabase,
   IconDrive,
-  IconFolderOpen,
   IconHistory,
   IconKey,
   IconList,
@@ -26,6 +26,7 @@ export interface AppRailProps {
   overlaySidebars: boolean;
   setOverlayDock: (dock: OverlayDock) => void;
   setLeftOpen: (open: boolean) => void;
+  leftDockOpen: boolean;
   backgroundAvailable: boolean;
   // workspace is the active workspace; the rail counts its background terminals itself, so a host status
   // change re-renders the rail rather than the whole app shell.
@@ -38,6 +39,7 @@ export function AppRail({
   overlaySidebars,
   setOverlayDock,
   setLeftOpen,
+  leftDockOpen,
   backgroundAvailable,
   workspace,
   hasDbAssets,
@@ -45,9 +47,11 @@ export function AppRail({
 }: AppRailProps) {
   const backgroundCount = useBackgroundSessionCount(workspace, backgroundAvailable);
   const leftMode = useUi((s) => s.leftMode);
-  const setLeftMode = useUi((s) => s.setLeftMode);
+  const leftOverride = useUi((s) => s.leftOverride);
   // Host tools act on the active workspace's session; without one they cannot run, so they are not offered.
-  const hasHost = workspace?.kind === "session" && Boolean(workspace.sessionId);
+  const hasHost = isHostWorkspace(workspace);
+  // The sidebar shows the file tree in a host workspace, so neither panel button is highlighted there.
+  const railActive = resolveLeftView(workspace, leftMode, leftOverride);
   const { openBackground, openHistory, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
 
   const railPanels: {
@@ -60,11 +64,12 @@ export function AppRail({
     {
       key: "assets",
       label: "资产",
-      hint: "打开资产树：管理主机和数据库，双击资产直接连接；双击本按钮收起侧栏",
+      hint: hasHost
+        ? "临时切换到资产树，双击资产连接后自动回到文件树；再点一次回到文件树；双击本按钮收起侧栏"
+        : "打开资产树：管理主机和数据库，双击资产直接连接；双击本按钮收起侧栏",
       icon: IconServer,
       onClick: () => {
-        setLeftMode("assets");
-        setLeftOpen(true);
+        if (showLeftPanel("assets", leftDockOpen)) setLeftOpen(true);
       },
     },
     {
@@ -73,28 +78,10 @@ export function AppRail({
       hint: "打开凭据侧栏：集中保存密码和私钥，连接资产时引用；双击本按钮收起侧栏",
       icon: IconKey,
       onClick: () => {
-        openCredentialsSidebar();
-        setLeftOpen(true);
+        if (showLeftPanel("credentials", leftDockOpen)) setLeftOpen(true);
       },
     },
-    ...(hasHost
-      ? [
-          {
-            key: "files",
-            label: "文件树",
-            hint: "打开当前连接的文件树：浏览远程目录，双击文件直接编辑；双击本按钮收起侧栏",
-            icon: IconFolderOpen,
-            onClick: () => {
-              setLeftMode("files");
-              setLeftOpen(true);
-            },
-          },
-        ]
-      : []),
   ];
-
-  // Saved "files" mode without a session shows the asset tree, so the asset button is the active one.
-  const railActive = leftMode === "files" && !hasHost ? "assets" : leftMode;
 
   const railItems: {
     key: string;

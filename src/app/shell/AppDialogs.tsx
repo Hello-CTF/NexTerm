@@ -33,7 +33,6 @@ function LazyAuthGate() {
 export interface AppDialogsProps {
   jumpScope: JumpScope | null;
   setJumpScope: (scope: JumpScope | null) => void;
-  onOpenFiles: () => void;
   editingAsset: Asset | null;
   setEditingAsset: (asset: Asset | null) => void;
   workspaceMenu: ContextMenuState | null;
@@ -45,7 +44,6 @@ export interface AppDialogsProps {
 export function AppDialogs({
   jumpScope,
   setJumpScope,
-  onOpenFiles,
   editingAsset,
   setEditingAsset,
   workspaceMenu,
@@ -60,7 +58,6 @@ export function AppDialogs({
             key={jumpScope}
             scope={jumpScope}
             onClose={() => setJumpScope(null)}
-            onOpenFiles={onOpenFiles}
             onEditAsset={(asset) => setEditingAsset(asset)}
             attentionOf={jumpAttentionOf}
           />

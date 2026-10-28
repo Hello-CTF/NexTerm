@@ -14,7 +14,7 @@ import { assetApi, sessionApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { showSettingsSection } from "../../features/settings/settingsNavigation";
 import { createMultiHostLogTabId } from "../../features/logs/logTailTab";
-import { focusedTerminalCwd, startCwdTracking } from "../../features/files/cwdFollow";
+import { startCwdTracking } from "../../features/files/cwdFollow";
 import { isMobileShell } from "./shellMode";
 import { hideMobileHome } from "./mobileHome";
 
@@ -57,21 +57,6 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
   }, [pushToast, setSessions]);
 
   useEffect(() => startCwdTracking(), []);
-
-  // openFiles browses the active workspace's host, starting at the directory its terminal last reported (OSC 7).
-  const openFiles = useCallback(() => {
-    const sessionId = ws?.sessionId;
-    if (!sessionId) return needSession();
-    const directory = focusedTerminalCwd(useUi.getState().workspaces, sessionId) ?? undefined;
-    useUi.getState().addTab({
-      id: nextTabId(`files-${sessionId}`),
-      kind: "files",
-      title: "文件",
-      sessionId,
-      ...(directory ? { directory } : {}),
-      closable: true,
-    });
-  }, [ws?.sessionId, needSession]);
 
   // openLogs opens a log follow tab; in a host workspace that host starts selected.
   const openLogs = useCallback(() => {
@@ -282,7 +267,6 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     };
     return {
       openLocalTerminal: leaving(openLocalTerminal),
-      openFiles: leaving(openFiles),
       openLogs: leaving(openLogs),
       openMount: leaving(openMount),
       openForward: leaving(openForward),
@@ -297,7 +281,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       openHistory: leaving(openHistory),
       openNewTerminal: leaving(openNewTerminal),
     };
-  }, [openLocalTerminal, openFiles, openLogs, openMount, openForward, openDocker, openDatabase, openAudit, openDevices,
+  }, [openLocalTerminal, openLogs, openMount, openForward, openDocker, openDatabase, openAudit, openDevices,
     openSettings, openSyncSettings, openVaultProtection, openBackground, openHistory, openNewTerminal]);
 
   return {

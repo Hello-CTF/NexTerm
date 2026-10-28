@@ -1,4 +1,4 @@
-import { openDirectoryTab, openFileTab, useUi } from "../../app/store";
+import { openFileTab, useUi } from "../../app/store";
 import { fsApi, sessionApi } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { openExternalURL } from "../../ipc/wails";
@@ -56,7 +56,8 @@ export function terminalLinkDeps(
     listDirectory: (id, dir) => fsApi.list(id, dir),
     isEditableFile,
     openFile: openFileTab,
-    openDirectory: openDirectoryTab,
+    // Directories are browsed in the host workspace's file tree sidebar; there is no file browser tab to open.
+    openDirectory: (_id, path) => useUi.getState().pushToast("info", `「${path}」是目录，可在左侧文件树中浏览`),
     describeError,
   };
 }

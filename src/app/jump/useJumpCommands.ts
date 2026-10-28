@@ -23,7 +23,6 @@ import {
   IconEdit,
   IconEye,
   IconEyeOff,
-  IconFolderOpen,
   IconHistory,
   IconMergeH,
   IconMonitor,
@@ -62,14 +61,13 @@ function workspaceIcon(workspace: Workspace) {
 export interface JumpCommandOptions {
   assets: Asset[];
   snippets: SnippetDto[];
-  onOpenFiles?: () => void;
   onEditAsset?: (asset: Asset) => void;
   onShowHosts: () => void;
 }
 
 // useJumpCommands lists the jump palette's commands: app actions, open workspaces, asset management and
 // snippets. Connecting to an asset is a host row, not a command.
-export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, onShowHosts }: JumpCommandOptions): JumpCommand[] {
+export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: JumpCommandOptions): JumpCommand[] {
   const qc = useQueryClient();
   const sessions = useSessionList();
   const setSessions = useUi((s) => s.setSessions);
@@ -225,13 +223,6 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
           current.splitPaneWithTab(tabId, pane.id, edge, workspace.id);
         },
       })),
-      {
-        id: "wide-files",
-        label: "打开文件浏览器",
-        hint: "显示文件大小和修改时间列",
-        icon: IconFolderOpen,
-        run: () => onOpenFiles?.(),
-      },
       {
         id: "port-forward",
         label: "打开端口转发",
@@ -433,7 +424,6 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
     setSessions,
     addTab,
     pushToast,
-    onOpenFiles,
     onEditAsset,
     onShowHosts,
     themeMode,
