@@ -598,10 +598,10 @@ export const IconZap = (p: IconProps) => (
   </Svg>
 );
 
-// Marks a durable terminal that keeps running after the client disconnects.
-export const IconPersist = (p: IconProps) => (
+// Marks a temporary terminal whose process ends with the tab or connection (dashed ring, drawn in currentColor).
+export const IconEphemeral = (p: IconProps) => (
   <Svg {...p}>
-    <path d="M12 12c-1.8-2.3-3.4-3.5-5.2-3.5a3.5 3.5 0 0 0 0 7c1.8 0 3.4-1.2 5.2-3.5s3.4-3.5 5.2-3.5a3.5 3.5 0 0 1 0 7c-1.8 0-3.4-1.2-5.2-3.5z" />
+    <circle cx="12" cy="12" r="8.5" strokeDasharray="3 3.2" />
   </Svg>
 );
 

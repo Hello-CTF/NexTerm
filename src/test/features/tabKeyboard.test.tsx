@@ -359,7 +359,7 @@ describe("rail and toast accessibility", () => {
 });
 
 describe("pane tab strip persistence marks", () => {
-  it("marks only the durable terminal tab with the persistence icon", async () => {
+  it("marks only the explicitly non-durable terminal tab", async () => {
     useUi.setState((state) => ({
       workspaces: state.workspaces.map((ws) =>
         ws.id !== "ws1"
@@ -372,6 +372,8 @@ describe("pane tab strip persistence marks", () => {
                   ...pane.tabs,
                   { id: "t4", kind: "terminal", title: "持久的终端", sessionId: "s1", durable: true, closable: true },
                   { id: "t5", kind: "terminal", title: "普通的终端", sessionId: "s1", regularReason: "打开时持久组件未就绪", closable: true },
+                  { id: "t6", kind: "terminal", title: "临时的终端", sessionId: "s1", durable: false, closable: true },
+                  { id: "t7", kind: "terminal", title: "未知的终端", sessionId: "s1", closable: true },
                 ],
               })),
             },
@@ -381,7 +383,10 @@ describe("pane tab strip persistence marks", () => {
     await flush();
 
     const list = tablist(mounted.container, "标签页");
-    expect(tabByText(list, "持久的终端").querySelector('[role="img"][aria-label="持久终端"]')).not.toBeNull();
+    expect(tabByText(list, "持久的终端").querySelector('[role="img"]')).toBeNull();
+    expect(tabByText(list, "持久的终端").getAttribute("title")).toContain("持久终端");
+    expect(tabByText(list, "未知的终端").querySelector('[role="img"]')).toBeNull();
+    expect(tabByText(list, "临时的终端").querySelector('[role="img"][aria-label^="临时终端"]')).not.toBeNull();
     expect(tabByText(list, "普通的终端").querySelector('[role="img"]')).toBeNull();
     expect(tabByText(list, "普通的终端").getAttribute("title")).toContain("普通终端：打开时持久组件未就绪");
   });

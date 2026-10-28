@@ -26,7 +26,7 @@ import {
   IconList,
   IconMonitor,
   IconNetwork,
-  IconPersist,
+  IconEphemeral,
   IconServer,
   IconSettings,
   IconTerminal,
@@ -69,12 +69,17 @@ export function tabTooltip(
   if (persistence) notes.push(persistence);
   else if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
   else if (t.kind === "terminal" && t.regularReason) notes.push(`普通终端：${t.regularReason}`);
+  else if (t.kind === "terminal" && t.durable === false) notes.push(EPHEMERAL_NOTE);
   if (unread) notes.push("有新输出");
   if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
 }
 
-// A durable terminal tab carries a small persistence mark before its title; regular tabs carry none. A failure
+const EPHEMERAL_NOTE = "临时终端：关闭标签或断开连接后进程会结束";
+
+// Durable terminals (the common case) show no mark, only a tooltip note. A terminal known to be non-durable
+// (durable === false, still alive) carries a small dashed-ring mark before its title; unknown durability, a tab
+// that is still connecting and non-terminal tabs carry none. A failure
 // hint the user dismissed while it still applies leaves a red dot that names it and shows the hint again; its hit
 // area extends past the dot without taking layout space. The tab bar renders the icon before the title and the
 // dot on the trailing side (part), away from the attention badge; the plain dot is reserved for this mark.
@@ -83,9 +88,9 @@ export function TabPersistenceMark({ tab, part = "all" }: { tab: AppTab; part?: 
   if (tab.kind !== "terminal") return null;
   return (
     <>
-      {part !== "failure" && tab.durable === true && (
-        <span className="flex shrink-0 items-center" role="img" aria-label="持久终端">
-          <IconPersist size={12} />
+      {part !== "failure" && tab.durable === false && !tab.dead && !tab.exited && (
+        <span className="flex shrink-0 items-center text-[var(--nx-fg-tertiary)]" role="img" aria-label={EPHEMERAL_NOTE} title={EPHEMERAL_NOTE}>
+          <IconEphemeral size={12} />
         </span>
       )}
       {part !== "icon" && failure && (
