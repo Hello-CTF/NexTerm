@@ -24,9 +24,16 @@ func loadRuntimeDLL(t *testing.T, dir string) (string, []byte, *syscall.DLL) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(filepath.Dir(library), filepath.Join(dir, "renamed-runtime")); err == nil {
+	// Whether Windows also refuses to rename the containing directory varies by
+	// release, so the test models only what the update relies on: the mapped
+	// image can be neither deleted nor overwritten in place.
+	if err := os.Remove(library); err == nil {
 		_ = dll.Release()
-		t.Fatal("Windows renamed a directory that holds a loaded DLL; this test no longer models the update constraint")
+		t.Fatal("Windows deleted a loaded DLL; this test no longer models the update constraint")
+	}
+	if err := os.WriteFile(library, []byte("overwrite"), 0o755); err == nil {
+		_ = dll.Release()
+		t.Fatal("Windows overwrote a loaded DLL; this test no longer models the update constraint")
 	}
 	return library, data, dll
 }
