@@ -75,7 +75,7 @@ function asMember<Value extends string>(value: string, allowed: readonly Value[]
   if ((allowed as readonly string[]).includes(value)) {
     return value as Value;
   }
-  throw new Error(`watch ${what} 来自后端的值无法识别: ${value}`);
+  throw new Error(`watch ${what} 包含无法识别的后端取值：${value}`);
 }
 
 function toWatchSummaryView(summary: WatchSummary): WatchSummaryView {

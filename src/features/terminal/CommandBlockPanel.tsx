@@ -132,7 +132,7 @@ export function CommandBlockPanel({
                       <div className="truncate font-mono text-[11.5px] text-neutral-200" title={b.command}>
                         {b.command}
                         {!b.reliable && (
-                          <span className="ml-1 text-amber-300" title="命令含控制字符，识别出的文本可能不准确">
+                          <span className="ml-1 text-amber-300" title="命令包含控制字符，识别的文本可能不准确">
                             ?
                           </span>
                         )}

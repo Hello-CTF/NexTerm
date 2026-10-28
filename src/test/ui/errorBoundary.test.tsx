@@ -46,7 +46,7 @@ describe("ErrorBoundary", () => {
     expect(alert?.textContent).toContain("boom");
 
     const buttons = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="alert"] button')];
-    expect(buttons.map((b) => b.textContent)).toEqual(["重试", "关闭标签"]);
+    expect(buttons.map((b) => b.textContent)).toEqual(["重试", "关闭标签页"]);
 
     click(buttons[1]);
     expect(onClose).toHaveBeenCalledOnce();

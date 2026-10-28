@@ -160,7 +160,7 @@ export function AppRail({
   ];
 
   const railBottom = [
-    { key: "devices", label: "设备管理", hint: "打开设备管理：查看已安装 agent 的设备并远程打开终端", icon: IconMonitor, onClick: actions.openDevices },
+    { key: "devices", label: "设备管理", hint: "打开设备管理：查看已安装设备代理的设备并远程打开终端", icon: IconMonitor, onClick: actions.openDevices },
     { key: "audit", label: "审计日志", hint: "查看用户和 AI 的操作记录", icon: IconHistory, onClick: actions.openAudit },
     { key: "settings", label: "设置", hint: "打开设置：外观、快捷键、AI、凭据库与账号同步", icon: IconSettings, onClick: actions.openSettings },
   ];

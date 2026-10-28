@@ -521,14 +521,14 @@ describe("tab context menu move", () => {
 
     const list = tablist(mounted.container);
     openMenu(tabByText(list, "设置"));
-    expect(menuButton("左移标签").disabled).toBe(true);
-    expect(menuButton("右移标签").disabled).toBe(false);
+    expect(menuButton("左移标签页").disabled).toBe(true);
+    expect(menuButton("右移标签页").disabled).toBe(false);
     keyDown(document.activeElement as HTMLElement, "Escape");
     await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
 
     openMenu(tabByText(list, "凭据"));
-    expect(menuButton("左移标签").disabled).toBe(false);
-    expect(menuButton("右移标签").disabled).toBe(true);
+    expect(menuButton("左移标签页").disabled).toBe(false);
+    expect(menuButton("右移标签页").disabled).toBe(true);
   });
 
   it("preserves activeTabId after moving a tab right", async () => {
@@ -537,7 +537,7 @@ describe("tab context menu move", () => {
 
     const list = tablist(mounted.container);
     openMenu(tabByText(list, "设置"));
-    click(menuButton("右移标签"));
+    click(menuButton("右移标签页"));
     await waitForRendered(() => expect(tabOrder()).toEqual(["t2", "t1", "t3"]));
     expect(activeTabId()).toBe("t1");
     expect(tabByText(list, "设置").getAttribute("aria-selected")).toBe("true");
@@ -549,7 +549,7 @@ describe("tab context menu move", () => {
 
     const list = tablist(mounted.container);
     openMenu(tabByText(list, "凭据"));
-    click(menuButton("左移标签"));
+    click(menuButton("左移标签页"));
     await waitForRendered(() => expect(tabOrder()).toEqual(["t1", "t3", "t2"]));
     expect(activeTabId()).toBe("t1");
   });

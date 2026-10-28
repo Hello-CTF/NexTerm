@@ -425,7 +425,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       <div className="nx-toolbar nx-wrap-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
         <h2 className="nx-toolbar-title">多主机工具</h2>
-        <span className="nx-hint">只能对当前已连接的 SSH 主机和受管设备执行。受管设备没有环境标记，执行前需要确认。</span>
+        <span className="nx-hint">只能对当前已连接的 SSH 主机和受管设备执行。受管设备无环境标记，执行前需要确认。</span>
         <span className="nx-spacer" />
         <div className="nx-toolbar-views contents">
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "execute"} disabled={running || prompting} onClick={() => setView("execute")}>批量执行</button>
@@ -439,18 +439,18 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
         <ServicesPanel
           targets={targets}
           sessions={sessions}
-          metadataError={assetsQuery.isError ? `资产详情加载失败：${describeError(assetsQuery.error)}` : null}
+          metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
         />
       ) : view === "finder" ? (
         <ProcessFinderPanel
           targets={targets}
           sessions={sessions}
-          metadataError={assetsQuery.isError ? `资产详情加载失败：${describeError(assetsQuery.error)}` : null}
+          metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
         />
       ) : view === "drift" ? (
         <DriftComparePanel
           targets={targets}
-          metadataError={assetsQuery.isError ? `资产详情加载失败：${describeError(assetsQuery.error)}` : null}
+          metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
         />
       ) : (
         <>
@@ -527,7 +527,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
           {running ? (
             <button type="button" className="nx-btn nx-btn-danger" disabled={canceling} onClick={() => void cancel()}>
               <IconStop size={13} />
-              {canceling ? "取消中…" : "取消本批次"}
+              {canceling ? "正在取消…" : "取消本批次"}
             </button>
           ) : (
             <button type="submit" className="nx-btn nx-btn-primary" disabled={targets.length === 0}>

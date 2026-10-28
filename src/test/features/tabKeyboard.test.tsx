@@ -227,7 +227,7 @@ describe("pane tab strip keyboard support", () => {
     expect(useUi.getState().workspaces[0]?.panes[0]?.activeTabId).toBe("t2");
     expect(document.activeElement).toBe(tabByText(list, "审计"));
 
-    const close = list.querySelector<HTMLButtonElement>('button[aria-label="关闭标签 审计"]');
+    const close = list.querySelector<HTMLButtonElement>('button[aria-label="关闭标签页 审计"]');
     expect(close).not.toBeNull();
     click(close as HTMLButtonElement);
     await waitForRendered(() =>
@@ -248,7 +248,7 @@ describe("pane tab strip keyboard support", () => {
     const menu = document.querySelector<HTMLElement>('[role="menu"]');
     expect(menu).not.toBeNull();
     expect(menu?.getAttribute("aria-label")).toBe("设置");
-    expect(menu?.textContent).toContain("关闭标签");
+    expect(menu?.textContent).toContain("关闭标签页");
 
     keyDown(document.activeElement as HTMLElement, "Escape");
     await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
@@ -260,7 +260,7 @@ describe("pane tab strip keyboard support", () => {
     await flush();
 
     const list = tablist(mounted.container, "标签页");
-    const close = list.querySelector<HTMLButtonElement>('button[aria-label="关闭标签 设置"]');
+    const close = list.querySelector<HTMLButtonElement>('button[aria-label="关闭标签页 设置"]');
     if (!close) throw new Error("close button not found");
     act(() => close.focus());
 
@@ -293,15 +293,15 @@ describe("pane tab context menu bulk close", () => {
 
     const list = tablist(mounted.container, "标签页");
     expect(openMenu(tabByText(list, "设置"))).not.toBeNull();
-    expect(menuButton("关闭标签").disabled).toBe(false);
-    expect(menuButton("关闭左侧全部标签").disabled).toBe(true);
-    expect(menuButton("关闭右侧全部标签").disabled).toBe(false);
+    expect(menuButton("关闭标签页").disabled).toBe(false);
+    expect(menuButton("关闭左侧全部标签页").disabled).toBe(true);
+    expect(menuButton("关闭右侧全部标签页").disabled).toBe(false);
     keyDown(document.activeElement as HTMLElement, "Escape");
     await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
 
     expect(openMenu(tabByText(list, "审计"))).not.toBeNull();
-    expect(menuButton("关闭左侧全部标签").disabled).toBe(false);
-    expect(menuButton("关闭右侧全部标签").disabled).toBe(true);
+    expect(menuButton("关闭左侧全部标签页").disabled).toBe(false);
+    expect(menuButton("关闭右侧全部标签页").disabled).toBe(true);
   });
 
   it("closes only the tabs to the left", async () => {
@@ -310,7 +310,7 @@ describe("pane tab context menu bulk close", () => {
 
     const list = tablist(mounted.container, "标签页");
     openMenu(tabByText(list, "审计"));
-    click(menuButton("关闭左侧全部标签"));
+    click(menuButton("关闭左侧全部标签页"));
     await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.map((t) => t.id)).toEqual(["t2"]),
     );
@@ -322,7 +322,7 @@ describe("pane tab context menu bulk close", () => {
 
     const list = tablist(mounted.container, "标签页");
     openMenu(tabByText(list, "设置"));
-    click(menuButton("关闭右侧全部标签"));
+    click(menuButton("关闭右侧全部标签页"));
     await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.map((t) => t.id)).toEqual(["t1"]),
     );

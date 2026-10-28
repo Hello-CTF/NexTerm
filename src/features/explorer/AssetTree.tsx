@@ -565,7 +565,7 @@ export function AssetTree() {
     const host = a.host?.trim();
     if (!host) return;
     const epoch = useUi.getState().accountEpoch;
-    const username = (await promptText(`用其他用户名连接「${a.name}」`, a.username ?? ""))?.trim();
+    const username = (await promptText(`使用其他用户名连接「${a.name}」`, a.username ?? ""))?.trim();
     if (!username || useUi.getState().accountEpoch !== epoch) return;
     void connectQuickTarget({ host, port: a.port ?? 22, username });
   };
@@ -853,7 +853,7 @@ export function AssetTree() {
       ...(canConnectAs
         ? [{
             kind: "item" as const,
-            label: "用其他用户名连接",
+            label: "使用其他用户名连接",
             icon: <IconPlug size={13} />,
             hint: "临时输入，不会保存",
             onSelect: () => void onConnectAsUser(asset),
@@ -1078,7 +1078,7 @@ export function AssetTree() {
         {assets.isPending ? (
           <AssetTreeSkeleton />
         ) : listError ? (
-          <LoadError title={query.trim() ? "搜索失败" : "资产列表加载失败"} error={listError} onRetry={retryList} />
+          <LoadError title={query.trim() ? "搜索失败" : "未能加载资产列表"} error={listError} onRetry={retryList} />
         ) : (
           <>
             {treeVirtualized ? (
@@ -1379,7 +1379,7 @@ function AssetRow({
           }}
           onDoubleClick={(event) => event.stopPropagation()}
         >
-          连接失败 · 重试
+          连接失败，重试
         </button>
       )}
       {compactActions ? (
@@ -1942,7 +1942,7 @@ function GroupRenameDialog({
             disabled={saving || !name.trim()}
             onClick={() => void save()}
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "正在保存…" : "保存"}
           </button>
         </div>
       </div>
@@ -2613,7 +2613,7 @@ export function AssetEditor({
               </select>
               {initial?.builtin && (
                 <div className="nx-hint mt-1">
-                  ↳ 内置的「当前设备」，始终指向本机，类型不可更改（名字可以改）
+                  ↳ 内置的「当前设备」，始终指向本机，类型不可更改，名称可以修改
                 </div>
               )}
             </div>
@@ -2805,7 +2805,7 @@ export function AssetEditor({
                 <option value="regular">临时终端（随连接断开结束）</option>
               </select>
               <div className="nx-hint mt-1.5">
-                首次连接会自动安装持久终端组件，安装期间先使用临时终端，完成后新建的标签生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
+                首次连接会自动安装持久终端组件，安装期间先使用临时终端，完成后新建的标签页生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
               </div>
             </div>
           )}
@@ -2904,16 +2904,16 @@ export function AssetEditor({
 
               {isDb && (
                 <div className="nx-form-row">
-                  <label className="nx-label">通过SSH资产连接</label>
+                  <label className="nx-label">通过 SSH 资产连接</label>
                   <select
                     className="nx-select"
-                    aria-label="通过SSH资产连接"
+                    aria-label="通过 SSH 资产连接"
                     value={viaAssetId}
                     onChange={(e) => setViaAssetId(e.target.value)}
                   >
                     <option value="">（直连，不通过SSH）</option>
                     {viaAssetId && !viaCandidates.some((a) => a.id === viaAssetId) && (
-                      <option value={viaAssetId}>当前配置的SSH资产（不在可选列表）</option>
+                      <option value={viaAssetId}>当前配置的 SSH 资产（不在可选列表）</option>
                     )}
                     {viaCandidates.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -2987,7 +2987,7 @@ export function AssetEditor({
                         onChange={(e) => setVaultMode(e.target.value as "new" | "existing")}
                       >
                         <option value="new">新建凭据</option>
-                        <option value="existing">选已有私钥凭据</option>
+                        <option value="existing">选择已有私钥凭据</option>
                       </select>
 
                       {vaultMode === "new" ? (
@@ -3068,11 +3068,11 @@ export function AssetEditor({
                           </select>
                           {privateKeys.length === 0 && (
                             <div className="nx-hint mt-1.5">
-                              ↳ 凭据库里还没有私钥：改成「新建凭据」，或先去左栏「凭据」里建一条。
+                              ↳ 凭据库里暂无私钥：改成「新建凭据」，或先在左栏「凭据」中新建。
                             </div>
                           )}
                           {vaultCredId && (
-                            <div className="nx-hint mt-1.5">↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。</div>
+                            <div className="nx-hint mt-1.5">↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。</div>
                           )}
                         </>
                       )}
@@ -3142,11 +3142,11 @@ export function AssetEditor({
                         aria-label="凭据密码"
                       />
                       <div className="nx-hint mt-1">
-                        ↳ 保存后存入凭据库，可改名，其他资产也能选它。
+                        ↳ 保存后存入凭据库，可重命名，其他资产也可选用。
                       </div>
                     </>
                   ) : credChoice !== "none" ? (
-                    <div className="nx-hint mt-1">↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。</div>
+                    <div className="nx-hint mt-1">↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。</div>
                   ) : null}
                 </div>
               )}
@@ -3206,7 +3206,7 @@ export function AssetEditor({
                       <div className="nx-form-row">
                         <label className="flex cursor-pointer items-start gap-3">
                           <div className="min-w-0 flex-1">
-                            <div className="text-[12.5px] text-neutral-200">Agent 转发</div>
+                            <div className="text-[12.5px] text-neutral-200">ssh-agent 转发</div>
                             <p className="nx-hint mt-0.5">
                               默认关闭；开启后，远端进程可请求本机 ssh-agent 签名并继续连接其他主机，私钥不会离开本机。仅对可信主机开启。
                             </p>
@@ -3214,7 +3214,7 @@ export function AssetEditor({
                           <input
                             type="checkbox"
                             className="mt-0.5 h-4 w-4 shrink-0"
-                            aria-label="Agent 转发"
+                            aria-label="ssh-agent 转发"
                             checked={forwardAgent}
                             onChange={(e) => setForwardAgent(e.target.checked)}
                           />
@@ -3389,7 +3389,7 @@ export function AssetEditor({
             }
             onClick={() => void save()}
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "正在保存…" : "保存"}
           </button>
         </div>
       </div>

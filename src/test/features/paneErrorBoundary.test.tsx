@@ -140,7 +140,7 @@ describe("panel-level error boundary", () => {
     expect(tablist?.textContent).toContain("Audit");
 
     const close = panel?.querySelector<HTMLButtonElement>('[role="alert"] button:last-child');
-    expect(close?.textContent).toBe("关闭标签");
+    expect(close?.textContent).toBe("关闭标签页");
     if (!close) throw new Error("close button missing");
     click(close);
     await waitForRendered(() =>

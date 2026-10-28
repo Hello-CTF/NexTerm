@@ -397,7 +397,7 @@ async function saveAndExpectStale(): Promise<void> {
 }
 
 async function reconnectAndExpectStaleCleared(): Promise<void> {
-  const button = document.querySelector<HTMLButtonElement>('button[title="用新的资产配置重新连接，当前终端保留"]');
+  const button = document.querySelector<HTMLButtonElement>('button[title="使用新的资产配置重新连接，保留当前终端"]');
   expect(button).not.toBeNull();
   mocks.stale = false;
   // The manual reconnect must observe the session engage before the connected frame counts as fresh.

@@ -126,8 +126,8 @@ describe("ForwardPanel remote forwarding (-R)", () => {
     setInputValue(bindPort, "70000");
     setInputValue(targetPort, "0");
     clickButton(mounted!.container, "创建");
-    expect(fieldError(bindPort)?.textContent).toBe("远端端口要填 1–65535 之间的整数");
-    expect(fieldError(targetPort)?.textContent).toBe("目标端口要填 1–65535 之间的整数");
+    expect(fieldError(bindPort)?.textContent).toBe("远端端口须为 1-65535 之间的整数");
+    expect(fieldError(targetPort)?.textContent).toBe("目标端口须为 1-65535 之间的整数");
     expect(mocks.forwardCreateRemote).not.toHaveBeenCalled();
   });
 
@@ -161,7 +161,7 @@ describe("ForwardPanel remote forwarding (-R)", () => {
     expect(mounted!.container.querySelector('[role="alert"]')).toBeNull();
     expect(mocks.toast).toHaveBeenCalledWith(
       "success",
-      "远程转发已就绪 → 远端 0.0.0.0:18080 → NexTerm 所在机器 127.0.0.1:3306",
+      "远程转发已就绪 → 远端 0.0.0.0:18080 → NexTerm 所在主机 127.0.0.1:3306",
     );
   });
 
@@ -188,7 +188,7 @@ describe("ForwardPanel remote forwarding (-R)", () => {
     expect(mocks.forwardCreateRemote).toHaveBeenLastCalledWith("s", "0.0.0.0", 18080, "127.0.0.1", 3306, true);
     expect(mocks.toast).toHaveBeenCalledWith(
       "success",
-      "远程转发已就绪 → 远端 0.0.0.0:18080 → NexTerm 所在机器 127.0.0.1:3306",
+      "远程转发已就绪 → 远端 0.0.0.0:18080 → NexTerm 所在主机 127.0.0.1:3306",
     );
   });
 
@@ -235,7 +235,7 @@ describe("ForwardPanel remote forwarding (-R)", () => {
     const row = mounted!.container.querySelector("tbody tr");
     expect(row?.textContent).toContain("远程转发");
     expect(row?.textContent).toContain("127.0.0.1:18080");
-    expect(row?.textContent).toContain("NexTerm 所在机器");
+    expect(row?.textContent).toContain("NexTerm 所在主机");
     expect(mounted!.container.textContent).toContain("0 条静态转发 · 1 条远程转发 · 0 条 SOCKS5 代理");
   });
 

@@ -46,8 +46,8 @@ function MountUnavailable({ reason }: { reason: string }) {
           <div className="text-[13px] font-semibold text-neutral-200">本平台暂不支持磁盘挂载</div>
           <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">{reason}</p>
           <p className="mt-2.5 text-[12px] leading-relaxed text-neutral-500">
-            远程文件读写请用左侧栏的<span className="text-neutral-300">「文件」</span>按钮
-            （不需要任何本机依赖）。
+            远程文件读写请使用左栏的<span className="text-neutral-300">「文件」</span>按钮
+            （无需任何本机依赖）。
           </p>
         </div>
       </div>
@@ -271,13 +271,13 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             ) : mounts.isPending ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
-                  挂载列表加载中…
+                  正在加载挂载列表…
                 </td>
               </tr>
             ) : mountsFailed ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
-                  <span className="text-red-300">挂载列表加载失败 · {describeError(mounts.error)}</span>
+                  <span className="text-red-300">未能加载挂载列表：{describeError(mounts.error)}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void mounts.refetch()}
@@ -415,7 +415,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             "当前是「当前设备」会话，不能建立 SSH 挂载；请先连接 SSH 资产。"
           ) : (
             <>
-              目标默认为当前资产{asset.data?.name ? `「${asset.data.name}」` : ""}的主机；用户名和密码仅用于本次挂载，不会保存。未填写时，Linux 使用本机密钥或 SSH agent，Windows 使用当前登录凭据
+              目标默认为当前资产{asset.data?.name ? `「${asset.data.name}」` : ""}的主机；用户名和密码仅用于本次挂载，不会保存。未填写时，Linux 使用本机密钥或 SSH 代理（ssh-agent），Windows 使用当前登录凭据
             </>
           )}
         </div>

@@ -238,7 +238,7 @@ describe("StatusWall", () => {
       const offline = view.container.querySelector('[data-wall-host="device:off"]');
       expect(offline?.textContent).toContain("laptop");
       expect(offline?.textContent).toContain("会话状态未知");
-      expect(view.container.querySelector('[data-wall-host="asset:db"]')?.textContent).toContain("在这台主机上打开一个终端");
+      expect(view.container.querySelector('[data-wall-host="asset:db"]')?.textContent).toContain("在该主机上打开终端");
     } finally {
       view.unmount();
     }

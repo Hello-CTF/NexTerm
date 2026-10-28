@@ -359,7 +359,7 @@ describe("AuthGate login", () => {
     await flush();
     clickButton(mounted.container, "登录");
 
-    await flushUntil(() => mounted!.container.textContent?.includes("登录中…"));
+    await flushUntil(() => mounted!.container.textContent?.includes("正在登录…"));
     expect(mounted.container.textContent).not.toContain("解锁");
     expect(mounted.container.textContent).not.toContain("解密");
     resolveLogin({ user: ADMIN, csrf_token: "csrf-1" });

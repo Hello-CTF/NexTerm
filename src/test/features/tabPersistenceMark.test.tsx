@@ -25,7 +25,7 @@ function mark(tab: AppTab): Element | null {
 describe("tab persistence mark", () => {
   it("marks only a live terminal that is explicitly not durable", () => {
     const icon = mark(terminal({ durable: false }));
-    expect(icon?.getAttribute("aria-label")).toBe("临时终端：关闭标签或断开连接后进程会结束");
+    expect(icon?.getAttribute("aria-label")).toBe("临时终端：关闭标签页或断开连接后进程会结束");
     expect(icon?.querySelector("svg")?.getAttribute("width")).toBe("12");
     expect(mark(terminal({ durable: false, exited: true }))).toBeNull();
     expect(mark(terminal({ durable: false, dead: true }))).toBeNull();
@@ -52,8 +52,8 @@ describe("tab persistence mark", () => {
     expect(tabTooltip(tab, false, { note: "临时终端：持久终端已就绪，新建的终端将是持久终端" })).toBe(
       "终端 1（临时终端：持久终端已就绪，新建的终端将是持久终端）",
     );
-    const failed = tabTooltip(tab, false, { note: "临时终端：持久组件不可用：x", failureMark: "本标签是临时终端（持久组件不可用：x），断开后进程会结束。" });
-    expect(failed).toContain("本标签是临时终端（持久组件不可用：x）");
+    const failed = tabTooltip(tab, false, { note: "临时终端：持久组件不可用：x", failureMark: "本标签页是临时终端（持久组件不可用：x），断开后进程会结束。" });
+    expect(failed).toContain("本标签页是临时终端（持久组件不可用：x）");
     expect(failed).not.toContain("持久组件准备中");
   });
 });

@@ -158,7 +158,7 @@ function logoutFailure(cleanupFailures: DeviceSessionCleanupFailure[], revocatio
   if (cleanupMessage) {
     return {
       code: "cleanup_failed",
-      message: `已退出登录；${cleanupMessage}。服务端已收到退出请求，并按原会话触发补充清理。`,
+      message: `已退出登录；${cleanupMessage}。服务端已收到退出请求，并将按原会话补充清理。`,
     };
   }
   return null;

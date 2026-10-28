@@ -432,7 +432,7 @@ async function aggregateConnection(
     if (!outcome.ok) return outcome.canceled ? { ok: false, canceled: true } : { ok: false, error: outcome.error ?? "无法连接设备" };
     session = aggregateHostSession(host, useUi.getState().sessions);
   }
-  if (!session) return { ok: false, error: "主机未连接，请先从资产树打开这台主机" };
+  if (!session) return { ok: false, error: "主机未连接，请先从资产树打开该主机" };
   return { ok: true, session };
 }
 
@@ -475,7 +475,7 @@ export async function terminateAggregateSession(
 // unknownHostText says why a host's sessions are unknown right now, for a host the cross-host listing reports offline
 // or failed. A host whose helper is not running is only listed once a terminal there starts it.
 export function unknownHostText(status: Pick<AggregateHostStatus, "status" | "error" | "errorCode">): string {
-  if (status.errorCode === "helper_not_ready") return "会话状态未知：持久终端组件未运行，在这台主机上打开一个终端后即可显示";
+  if (status.errorCode === "helper_not_ready") return "会话状态未知：持久终端组件未运行，在该主机上打开终端后即可显示";
   if (status.status === "offline") return "未连接，会话状态未知";
   return `无法读取，会话状态未知${status.error ? `：${status.error}` : ""}`;
 }

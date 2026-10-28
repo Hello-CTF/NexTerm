@@ -11,8 +11,8 @@ import { useVaultInitGate } from "./useVaultInitGate";
 type Algorithm = "ed25519" | "rsa";
 
 const ALGORITHMS: { key: Algorithm; label: string; hint: string }[] = [
-  { key: "ed25519", label: "Ed25519", hint: "推荐：更快更安全，OpenSSH 6.5+ 可用" },
-  { key: "rsa", label: "RSA 4096", hint: "兼容老设备；生成更慢" },
+  { key: "ed25519", label: "Ed25519", hint: "推荐：速度更快、安全性更高，需 OpenSSH 6.5 及以上版本" },
+  { key: "rsa", label: "RSA 4096", hint: "兼容旧版设备；生成较慢" },
 ];
 
 export function GenerateKeyModal({
@@ -154,10 +154,10 @@ export function GenerateKeyModal({
                   value={passphrase}
                   autoComplete="off"
                   onChange={(e) => setPassphrase(e.target.value)}
-                  placeholder="没有就留空"
+                  placeholder="没有则留空"
                 />
                 <div className="nx-hint mt-1.5">
-                  ↳ 选填。给私钥加一道口令，连接时自动使用。
+                  ↳ 选填。为私钥设置口令，连接时自动使用。
                 </div>
               </div>
             </>
@@ -193,7 +193,7 @@ export function GenerateKeyModal({
                   </button>
                 </div>
                 <div className="nx-hint mt-1.5">
-                  ↳ 把它追加到目标主机的 ~/.ssh/authorized_keys。私钥已加密入库，可在凭据详情里查看。
+                  ↳ 把它追加到目标主机的 ~/.ssh/authorized_keys。私钥已加密入库，可在凭据详情中查看。
                 </div>
               </div>
             </div>
@@ -209,7 +209,7 @@ export function GenerateKeyModal({
               disabled={!ready}
               onClick={() => void generate()}
             >
-              {generating ? "生成中…" : "生成并入库"}
+              {generating ? "正在生成…" : "生成并入库"}
             </button>
           )}
         </div>

@@ -163,7 +163,7 @@ describe("AssetEditor SSH startup options", () => {
     fillName("startup-01");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(createdPayload().options).toEqual({
       startupCommand: "echo hello && cd /var/log",
       encoding: "gbk",
@@ -178,7 +178,7 @@ describe("AssetEditor SSH startup options", () => {
     fillName("plain-01");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(createdPayload().options).toEqual({});
   });
 
@@ -232,7 +232,7 @@ describe("AssetEditor SSH startup options", () => {
     setInputValue(findInput("连接成功后在该终端自动执行"), "");
     setInputValue(envTextarea(), "");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(updatedPayload().options).toEqual({});
   });
 
@@ -245,7 +245,7 @@ describe("AssetEditor SSH startup options", () => {
     fillName("chroot-01");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(createdPayload().options).toEqual({ pasteUploadDir: "/", pasteTerminalDir: "/tmp" });
   });
 
@@ -261,7 +261,7 @@ describe("AssetEditor SSH startup options", () => {
     expect(findInput("与上传目录相同").value).toBe("/home/jail/upload");
     setInputValue(findInput("与上传目录相同"), "/upload/");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(updatedPayload().options).toEqual({ pasteUploadDir: "/upload" });
   });
 
@@ -271,7 +271,7 @@ describe("AssetEditor SSH startup options", () => {
     expandAdvanced();
     setInputValue(findInput("/tmp"), "");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(updatedPayload().options).toEqual({});
   });
 

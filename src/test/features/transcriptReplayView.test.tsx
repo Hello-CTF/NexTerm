@@ -261,7 +261,7 @@ describe("TranscriptReplayView", () => {
     mocks.transcriptRead.mockRejectedValue(new Error("boom"));
     mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
     await flush();
-    expect(mounted.container.textContent).toContain("加载回放数据失败");
+    expect(mounted.container.textContent).toContain("未能加载回放数据");
   });
 
   it("advances playback using real elapsed time instead of fixed ticks", async () => {

@@ -256,7 +256,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 {watching && watchQuery.data?.path && <span className="nx-badge nx-badge-green">正在跟随 {watchQuery.data.path}</span>}
               </div>
               <div className="nx-hint mt-1.5">
-                开启后每 2 秒检查一次文件，有改动就同步。文件写错暂时读不出来时保留上次结果；文件被删除时，会移除从它同步来的主机。
+                开启后每 2 秒检查一次文件，有改动即同步。文件暂时无法读取时保留上次结果；文件被删除时，将移除由其同步的主机。
               </div>
               {watchQuery.data?.lastError && <div className="mt-2 text-[12px] text-red-300" role="alert">后台同步失败：{watchQuery.data.lastError}</div>}
             </div>
@@ -289,7 +289,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 )}
               </div>
               {items.length === 0 ? (
-                <div className="nx-empty"><IconServer size={18} /><span className="text-[12px] text-neutral-400">来源里没有找到主机；现在同步会移除之前从这个来源同步来的主机。</span></div>
+                <div className="nx-empty"><IconServer size={18} /><span className="text-[12px] text-neutral-400">来源中未找到主机；立即同步将移除此前从该来源同步的主机。</span></div>
               ) : (
                 <div className="flex max-h-[320px] flex-col gap-1.5 overflow-y-auto">
                   {items.map((item) => {
@@ -376,10 +376,10 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
           <button type="button" className="nx-btn nx-btn-ghost" disabled={busy !== null} onClick={onClose}>关闭</button>
           <div className="nx-spacer" />
           <button type="button" className="nx-btn nx-btn-outline" disabled={busy !== null} onClick={() => void runDiscover()}>
-            {busy === "discover" ? "读取中…" : discovery ? "重新读取" : "预览"}
+            {busy === "discover" ? "正在读取…" : discovery ? "重新读取" : "预览"}
           </button>
           <button type="button" className="nx-btn nx-btn-primary" disabled={busy !== null || !discovery} onClick={() => void runSync()}>
-            {busy === "sync" ? "同步中…" : source === "ssh-config" ? "同步全部" : "同步选中的主机"}
+            {busy === "sync" ? "正在同步…" : source === "ssh-config" ? "同步全部" : "同步选中的主机"}
           </button>
         </div>
       </div>

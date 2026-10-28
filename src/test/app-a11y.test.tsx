@@ -159,7 +159,7 @@ describe("main navigation tooltips", () => {
     await flush();
 
     expect(document.querySelector('.nx-rail button[aria-label="新建终端"]')).toBeNull();
-    expect(document.querySelector('button[aria-label="新建终端标签"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="新建终端标签页"]')).not.toBeNull();
   });
 });
 
@@ -331,7 +331,7 @@ describe("workspace reconnect status", () => {
     await flush();
 
     const status = document.querySelector(".nx-app-header [role='status']");
-    expect(status?.textContent).toContain("重连尝试 2 次");
-    expect(status?.textContent).toContain("下次重连");
+    expect(status?.textContent).toContain("重新连接尝试 2 次");
+    expect(status?.textContent).toContain("下次重新连接");
   });
 });

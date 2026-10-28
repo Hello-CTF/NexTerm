@@ -140,7 +140,7 @@ describe("session list resynchronization after closeTab", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("bt1", "detach", "s1");
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
     expect(useUi.getState().toasts.map((toast) => toast.text)).toContain(
-      "本地标签已关闭；远端持久终端可能仍在运行，可在后台会话中查看",
+      "本地标签页已关闭；远端持久终端可能仍在运行，可在后台会话中查看",
     );
   });
 

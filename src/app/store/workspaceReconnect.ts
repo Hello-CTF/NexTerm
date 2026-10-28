@@ -85,7 +85,7 @@ export async function reconnectWorkspaceConnection(workspaceId: string): Promise
       const result = await reconnectLiveSession(workspace.sessionId, workspaceId);
       if (result.kind === "pending") return false;
       if (result.kind === "canceled") {
-        pushToast("info", "已取消重连");
+        pushToast("info", "已取消重新连接");
         return false;
       }
       if (result.kind === "reconnected") return true;
@@ -95,7 +95,7 @@ export async function reconnectWorkspaceConnection(workspaceId: string): Promise
     if (outcome.ok) return true;
     pushToast(
       outcome.canceled ? "info" : "error",
-      outcome.canceled ? "已取消重连" : `重新连接失败：${outcome.error ?? "未知错误"}`,
+      outcome.canceled ? "已取消重新连接" : `重新连接失败：${outcome.error ?? "未知错误"}`,
     );
     return false;
   } catch (error) {

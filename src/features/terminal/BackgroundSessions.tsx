@@ -64,7 +64,7 @@ interface PendingTab {
   waitingForConnection?: boolean;
 }
 
-const TAKEOVER_HELP = "「接管」会回到原来的终端，并补上你离开期间的输出，不会新开终端。";
+const TAKEOVER_HELP = "「接管」会回到原来的终端，并补上离开期间的输出，不会新开终端。";
 
 function persistenceFootnote(scope: "remote" | "local" | "all"): string {
   if (scope === "local") {
@@ -104,9 +104,9 @@ const STATE_LABELS: Record<SessionAttentionState, string> = {
 
 const STATE_HINTS: Record<SessionAttentionState, string> = {
   running: "终端最近一直有输出",
-  needs_me: "程序在等你回应：响铃、发出通知或显示了提示",
+  needs_me: "程序正在等待回应：响铃、发出通知或显示了提示",
   just_finished: "刚有命令运行结束",
-  idle: "没有新的输出，也没有在等你回应",
+  idle: "没有新的输出，也未在等待回应",
   exited: "终端里的程序已经退出",
 };
 
@@ -131,7 +131,7 @@ function statusView(tab: BackgroundTab): StatusView {
   return {
     label: "—",
     hint: tab.durable || tab.remote
-      ? "这台主机上的 NexTerm 组件未开启状态检测"
+      ? "该主机上的 NexTerm 组件未开启状态检测"
       : "临时终端不会报告状态",
     tone: "muted",
   };
@@ -171,14 +171,14 @@ function hostStatusText(status: AggregateHostStatus | undefined): string | null 
 }
 
 function terminateTitle(tab: BackgroundTab, sessions: readonly SessionInfo[]): string {
-  if (!tab.aggregateHost) return tab.sessionId ? "结束这个终端里运行的程序，无法恢复" : "接管后才能在这里结束这个终端";
+  if (!tab.aggregateHost) return tab.sessionId ? "结束该终端里运行的程序，无法恢复" : "接管后才能在这里结束该终端";
   switch (aggregateTerminatePath(tab.aggregateHost, sessions)) {
     case "direct":
-      return "结束这个终端里运行的程序，无法恢复";
+      return "结束该终端里运行的程序，无法恢复";
     case "connect_device":
-      return "先连接这台设备，再结束这个终端里运行的程序，无法恢复";
+      return "先连接该设备，再结束该终端里运行的程序，无法恢复";
     default:
-      return "主机未连接：请先从资产树连接这台主机再结束";
+      return "主机未连接：请先从资产树连接该主机再结束";
   }
 }
 
@@ -204,7 +204,7 @@ function HostGroupHeader({ group }: { group: BackgroundHostGroup }) {
 }
 
 // Hover tooltips do not reach touch screens, so the gaps a tooltip explains are also stated once below the table.
-const NEEDS_ME_NOTE = "「需要我」表示程序在等你回应：响铃、发出通知或显示了需要选择的提示";
+const NEEDS_ME_NOTE = "「需要我」表示程序正在等待回应：响铃、发出通知或显示了需要选择的提示";
 
 const STATUS_TONE_CLASS: Record<StatusView["tone"], string> = {
   accent: "font-medium text-blue-300",
@@ -278,8 +278,8 @@ function timeView(tab: BackgroundTab, now: number): TimeView {
   let detached: string;
   const left = moment(tab.detachedAt, tab.detachedAt ? tab.detachedMsAgo : undefined, fetchedAt, now);
   if (tab.attachedElsewhere) {
-    detached = "仍有设备连接着";
-    lines.push("转入后台：仍有设备连接着这个终端");
+    detached = "仍有设备已连接";
+    lines.push("转入后台：仍有设备已连接该终端");
   } else if (left && tab.detachedSinceOpen) {
     detached = `至少 ${ago(left.age)}转入后台`;
     lines.push(`转入后台：不晚于 ${absoluteTime(left.at)}（自本应用重新打开此终端起）`);
@@ -570,7 +570,7 @@ export function BackgroundSessions({
           isCurrent: () => ownerGeneration === ownerGenerationRef.current,
           guard: (session) => {
             if (remoteOwner && (!ownerWorkspace || !workspaceSessionMatches(ownerWorkspace, session, verifiedQuickSessions))) {
-              throw new Error("这个终端不属于当前主机，请重新连接后再接管");
+              throw new Error("该终端不属于当前主机，请重新连接后再接管");
             }
           },
         });
@@ -610,7 +610,7 @@ export function BackgroundSessions({
         : await reconnectDeadHost(target, { isCurrent });
       if (!isCurrent()) return;
       if (!fresh) {
-        pushToast("info", "已取消重连");
+        pushToast("info", "已取消重新连接");
         return;
       }
       const currentTarget = useUi.getState().workspaces.find((workspace) => workspace.id === workspaceIdToReconnect);
@@ -649,7 +649,7 @@ export function BackgroundSessions({
     // Ending always asks: the process ends, unlike closing a tab, which leaves it running in the background.
     const path = info.aggregateHost ? aggregateTerminatePath(info.aggregateHost, useUi.getState().sessions) : "direct";
     if (path === null) return;
-    const connectFirst = path === "connect_device" ? `\n\n需要先连接设备「${info.sessionName}」，然后结束这个终端。` : "";
+    const connectFirst = path === "connect_device" ? `\n\n需要先连接设备「${info.sessionName}」，然后结束该终端。` : "";
     const ok = await ask(
       `结束「${info.sessionName}」上的终端「${backgroundTabName(info)}」？\n\n终端里运行的程序会被终止，进程结束后无法恢复。只想离开时不必结束，它会在后台继续运行。${connectFirst}`,
       { title: "结束进程", kind: "warning" },
@@ -705,7 +705,7 @@ export function BackgroundSessions({
           <span className="nx-toolbar-title">后台会话</span>
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-neutral-500">
-          不知道该查看哪台主机，请从目标主机重新打开后台会话
+          无法确定要查看的主机，请从目标主机重新打开后台会话
         </div>
       </div>
     );
@@ -756,7 +756,7 @@ export function BackgroundSessions({
             <button
               className="nx-btn nx-btn-primary nx-btn-xs"
               disabled={rowBusy}
-              title="回到这个终端，并补上离开期间的输出"
+              title="回到该终端，并补上离开期间的输出"
               onClick={() => void takeOver(t)}
             >
               {action === "takeover" ? (
@@ -794,7 +794,7 @@ export function BackgroundSessions({
           {hostLabel}
         </span>
         <span className="nx-hint" data-testid="background-count">
-          {scopedItems === null && pendingTabs.length === 0 ? (scopedError ? "读取失败" : "加载中…") : summaryCopy(count)}
+          {scopedItems === null && pendingTabs.length === 0 ? (scopedError ? "未能读取" : "正在加载…") : summaryCopy(count)}
         </span>
         <div className="nx-spacer" />
         {needsReconnect && ownerWorkspace && (
@@ -883,7 +883,7 @@ export function BackgroundSessions({
                       <IconRefresh size={11} className={reconnecting ? "animate-spin" : ""} />
                       {reconnecting || tab.waitingForConnection ? "正在连接…" : "连接并查找"}
                     </button>
-                  ) : <span className="text-[11px] text-[var(--nx-fg-soft)]">请先从资产树打开这台主机</span>}
+                  ) : <span className="text-[11px] text-[var(--nx-fg-soft)]">请先从资产树打开该主机</span>}
                 </td>
               </tr>
             ))}
@@ -903,17 +903,17 @@ export function BackgroundSessions({
                       ? "没有可恢复的后台终端"
                       : hostScope === "local"
                         ? "本机没有在后台运行的终端"
-                        : "这台主机上没有在后台运行的终端"}
+                        : "该主机上没有在后台运行的终端"}
                   <div className="mt-1.5 text-[11px] text-[var(--nx-fg-soft)]">
                     {needsReconnect
                       ? "终端可能仍在主机上运行，连接成功后列表会自动更新"
                       : showAll
                         ? "请先从资产树打开目标主机，才能查看它上面的后台终端"
                         : hostScope === "local"
-                          ? "关闭标签时选择「转到后台运行」，或由 AI 在后台创建的本机终端，会列在这里；退出应用后它们会结束"
+                          ? "关闭标签页时选择「转到后台运行」，或由 AI 在后台创建的本机终端，会列在这里；退出应用后它们会结束"
                           : ownerWorkspace?.assetKind === "ssh"
-                            ? "持久终端关闭标签后会继续在主机上运行并出现在这里；临时终端关闭后会结束"
-                            : "关闭标签时选择「转到后台运行」，终端会继续在主机上运行并出现在这里"}
+                            ? "持久终端关闭标签页后会继续在主机上运行并出现在这里；临时终端关闭后会结束"
+                            : "关闭标签页时选择「转到后台运行」，终端会继续在主机上运行并出现在这里"}
                   </div>
                 </td>
               </tr>

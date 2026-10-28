@@ -221,7 +221,7 @@ describe("regular SSH terminals always say why", () => {
     await flush();
     succeedHelper();
 
-    await waitForRendered(() => expect(hintBar()?.textContent).toContain("这台主机的持久终端已就绪"));
+    await waitForRendered(() => expect(hintBar()?.textContent).toContain("该主机的持久终端已就绪"));
     expect(storeTab()?.regularReason).toBe("持久组件准备中");
   });
 });
@@ -330,7 +330,7 @@ describe("persistence hint bar", () => {
     await flush();
 
     expect(hintBar()?.dataset.tone).toBe("neutral");
-    expect(hintBar()?.textContent).toContain("本标签是临时终端（打开时持久组件未就绪），断开后进程会结束。");
+    expect(hintBar()?.textContent).toContain("本标签页是临时终端（打开时持久组件未就绪），断开后进程会结束。");
     expect(hintButton("持久终端组件…")).toBeDefined();
   });
 
@@ -377,7 +377,7 @@ describe("persistence hint bar", () => {
 
     expect(hintBar()?.dataset.tone).toBe("danger");
     expect(hintBar()?.textContent).toContain("原持久终端恢复失败：远端进程已退出");
-    expect(hintBar()?.textContent).not.toContain("本标签是临时终端");
+    expect(hintBar()?.textContent).not.toContain("本标签页是临时终端");
     act(() => hintButton("处理")?.click());
     expect(helperDialog()).not.toBeNull();
   });
@@ -585,7 +585,7 @@ describe("local terminal hints", () => {
       await flush();
       expect(hintBar()?.dataset.tone).toBe("accent");
     }
-    expect(hintBar()?.textContent).toContain("这台主机的持久终端已就绪");
+    expect(hintBar()?.textContent).toContain("该主机的持久终端已就绪");
   });
 
   it("shows nothing when this device keeps local terminals regular", async () => {

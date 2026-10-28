@@ -223,7 +223,7 @@ describe("terminal overlay accessibility", () => {
     });
 
     expect(alert()?.textContent).toContain("终端进程已结束");
-    const close = alertButton("关闭标签");
+    const close = alertButton("关闭标签页");
     expect(close).toBeDefined();
     expect(document.activeElement).toBe(close);
   });
@@ -258,10 +258,10 @@ describe("terminal overlay accessibility", () => {
       rows: 24,
       gridRevision: 0,
     });
-    expect(alertButton("关闭标签")).toBeDefined();
+    expect(alertButton("关闭标签页")).toBeDefined();
     harness.listLive.mockResolvedValue([currentLiveTab(true)]);
 
-    clickButton(mounted.container, "关闭标签");
+    clickButton(mounted.container, "关闭标签页");
 
     await waitForRendered(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", undefined, "s1"));
     expect(harness.closeTab).not.toHaveBeenCalledWith("kernel-1", "kill", "s1");
@@ -285,11 +285,11 @@ describe("terminal overlay accessibility", () => {
       rows: 24,
       gridRevision: 0,
     });
-    expect(alertButton("关闭标签")).toBeDefined();
+    expect(alertButton("关闭标签页")).toBeDefined();
     harness.listLive.mockResolvedValue([currentLiveTab(false)]);
     act(() => useUi.getState().updateTab("t1", { retainable: true }));
 
-    clickButton(mounted.container, "关闭标签");
+    clickButton(mounted.container, "关闭标签页");
 
     await waitForRendered(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", "detach", "s1"));
     expect(harness.closeTab).not.toHaveBeenCalledWith("kernel-1", "kill", "s1");
@@ -415,7 +415,7 @@ describe("terminal overlay accessibility", () => {
     });
 
     expect(alert()?.textContent).toContain("终端进程已结束");
-    expect(document.activeElement).not.toBe(alertButton("关闭标签"));
+    expect(document.activeElement).not.toBe(alertButton("关闭标签页"));
 
     act(() => {
       mounted!.root.render(
@@ -428,7 +428,7 @@ describe("terminal overlay accessibility", () => {
       );
     });
 
-    expect(document.activeElement).toBe(alertButton("关闭标签"));
+    expect(document.activeElement).toBe(alertButton("关闭标签页"));
   });
 
   it("does not re-steal focus on repeated control renders", async () => {
@@ -447,7 +447,7 @@ describe("terminal overlay accessibility", () => {
       rows: 24,
       gridRevision: 0,
     });
-    expect(document.activeElement).toBe(alertButton("关闭标签"));
+    expect(document.activeElement).toBe(alertButton("关闭标签页"));
 
     const input = document.createElement("input");
     document.body.append(input);

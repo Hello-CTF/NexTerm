@@ -259,7 +259,7 @@ describe("BulkMaintenancePanel", () => {
       c: { reachable: false, kind: "auth", error: "账号或凭据被拒绝" },
       d: { reachable: false, kind: "vault", error: "请先解锁密码库" },
       e: { reachable: false, kind: "config", error: "资产配置不完整或无效" },
-      f: { reachable: false, kind: "host_key_pending", error: "主机指纹还没有被信任（指纹 SHA256:pending）" },
+      f: { reachable: false, kind: "host_key_pending", error: "主机指纹暂无被信任（指纹 SHA256:pending）" },
     });
     await mountPanel();
     for (const id of ["a", "b", "c", "d", "e", "f"]) click(loginTarget(id));
@@ -272,7 +272,7 @@ describe("BulkMaintenancePanel", () => {
     expect(row("b")?.textContent).toContain("指纹变了");
     expect(row("b")?.getAttribute("data-tone")).toBe("warn");
     expect(row("c")?.textContent).toContain("登录被拒绝");
-    expect(row("d")?.textContent).toContain("密码库未解锁");
+    expect(row("d")?.textContent).toContain("凭据库未解锁");
     expect(row("d")?.textContent).toContain("请先解锁密码库");
     expect(row("e")?.textContent).toContain("配置有误");
     expect(row("f")?.textContent).toContain("需确认指纹");
@@ -303,9 +303,9 @@ describe("BulkMaintenancePanel", () => {
     const verified = describeLoginResult({ assetId: "c", reachable: true, durationMs: 3 }, "redis", "r", true);
     expect(verified.tone).toBe("ok");
     expect(verified.status).toBe("已登录数据库");
-    expect(verified.detail).toContain("已用资产绑定的凭据登录数据库");
+    expect(verified.detail).toContain("已使用资产绑定的凭据登录数据库");
     const anonymous = describeLoginResult({ assetId: "c", reachable: true, durationMs: 3 }, "redis", "r", false);
-    expect(anonymous.detail).toContain("没有绑定凭据");
+    expect(anonymous.detail).toContain("未绑定凭据");
     expect(anonymous.detail).not.toContain("已用资产绑定的凭据");
   });
 
@@ -357,7 +357,7 @@ describe("BulkMaintenancePanel", () => {
     await flushUntil(() => mocks.testLogin.mock.calls.length === 2 && (loginRows()?.textContent.includes("共 2 个") ?? false));
     expect(loginRow("m")?.textContent).toContain("TLS 校验失败");
     expect(loginRow("r")?.textContent).toContain("已登录数据库");
-    expect(loginRow("r")?.textContent).toContain("没有绑定凭据");
+    expect(loginRow("r")?.textContent).toContain("未绑定凭据");
     expect(loginRow("r")?.textContent).not.toContain("仅端口通");
   });
 
@@ -383,9 +383,9 @@ describe("BulkMaintenancePanel", () => {
     expect(mocks.testLogin.mock.calls.length).toBe(calledBeforeLate);
     expect(loginRow("a")?.textContent).toContain("登录被拒绝");
     expect(loginRow("b")?.getAttribute("data-tone")).toBe("canceled");
-    expect(loginRow("b")?.textContent).toContain("结果不采用");
+    expect(loginRow("b")?.textContent).toContain("结果不予采用");
     expect(loginRow("j")?.getAttribute("data-tone")).toBe("canceled");
-    expect(loginRow("j")?.textContent).toContain("还没有开始测试");
+    expect(loginRow("j")?.textContent).toContain("尚未开始测试");
     expect(loginRows()?.textContent).toContain("失败 1 · 已取消 9");
     // Canceled items are not failures: retry-failed counts only the real failure.
     expect(mounted!.container.textContent).toContain("重试未通过项（1）");

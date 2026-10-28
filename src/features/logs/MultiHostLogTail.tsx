@@ -426,7 +426,7 @@ export function MultiHostLogTail({
           onChange={setSelected}
           disabled={running}
           maxTargets={MAX_TARGETS}
-          metadataError={assetsQuery.isError ? `资产详情加载失败：${describeError(assetsQuery.error)}` : null}
+          metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
         />
         {selectedIds.length > 0 && (
           <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
@@ -565,7 +565,7 @@ export function MultiHostLogTail({
           onClick={() => void save()}
         >
           <IconDownload size={13} />
-          {saving ? "保存中…" : "保存日志"}
+          {saving ? "正在保存…" : "保存日志"}
         </button>
         <span className="nx-spacer" />
         <span className="nx-hint" role="status">
@@ -581,7 +581,7 @@ export function MultiHostLogTail({
       {saveMessage && <div role="status" className="px-3 py-1.5 text-[11px] text-green-300">{saveMessage}</div>}
       {paused && (
         <div role="status" className="border-b border-neutral-800/70 px-3 py-1 text-[11px] text-amber-300">
-          显示已暂停；后台仍在有界接收，恢复后展示最新保留内容。
+          显示已暂停；后台仍在接收（保留数量有上限），恢复后将显示最新内容。
         </div>
       )}
 

@@ -91,16 +91,16 @@ describe("DockerPanel query states", () => {
   it("shows the real error with retry instead of the empty state when docker ps fails", async () => {
     mocks.dockerPs.mockRejectedValue(new Error("daemon unavailable"));
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("容器列表加载失败 · daemon unavailable"));
-    expect(text()).not.toContain("这台主机上还没有容器");
-    expect(text()).toContain("容器状态加载失败");
-    expect(text()).not.toContain("容器状态加载中");
+    await flushUntil(() => text().includes("未能加载容器列表：daemon unavailable"));
+    expect(text()).not.toContain("该主机上暂无容器");
+    expect(text()).toContain("未能加载容器状态");
+    expect(text()).not.toContain("正在加载容器状态");
   });
 
   it("shows a neutral state instead of an error when the host has no Docker", async () => {
-    mocks.dockerPs.mockRejectedValue({ code: "docker_not_installed", message: "这台主机没有安装 Docker" });
+    mocks.dockerPs.mockRejectedValue({ code: "docker_not_installed", message: "该主机没有安装 Docker" });
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("这台主机没有安装 Docker，安装后点击重试。"));
+    await flushUntil(() => text().includes("该主机没有安装 Docker，安装后请重试。"));
     expect(text()).not.toContain("加载失败");
     expect(text()).not.toContain("内部错误");
     expect(text()).toContain("未安装 Docker");
@@ -109,7 +109,7 @@ describe("DockerPanel query states", () => {
   it("explains a host whose Docker daemon is not running", async () => {
     mocks.dockerPs.mockRejectedValue({ code: "docker_unavailable", message: "Docker 未运行" });
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("这台主机未运行 Docker，启动后点击重试。"));
+    await flushUntil(() => text().includes("该主机未运行 Docker，启动后请重试。"));
     expect(text()).not.toContain("加载失败");
     expect(text()).toContain("未运行 Docker");
   });
@@ -117,9 +117,9 @@ describe("DockerPanel query states", () => {
   it("retry recovers into the true empty state", async () => {
     mocks.dockerPs.mockRejectedValueOnce(new Error("daemon unavailable"));
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("容器列表加载失败"));
+    await flushUntil(() => text().includes("未能加载容器列表"));
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("这台主机上还没有容器"));
+    await flushUntil(() => text().includes("该主机上暂无容器"));
     expect(mocks.dockerPs).toHaveBeenCalledTimes(2);
   });
 
@@ -129,9 +129,9 @@ describe("DockerPanel query states", () => {
       () => new Promise<unknown[]>((resolve) => (resolvePs = resolve)),
     );
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("加载中…"));
+    await flushUntil(() => text().includes("正在加载…"));
     resolvePs([]);
-    await flushUntil(() => text().includes("这台主机上还没有容器"));
+    await flushUntil(() => text().includes("该主机上暂无容器"));
   });
 
   it("images tab gets the same error/retry treatment", async () => {
@@ -152,17 +152,17 @@ describe("ForwardPanel query states", () => {
   it("shows error plus retry instead of the empty state when the list query fails", async () => {
     mocks.forwardList.mockRejectedValue(new Error("forward service offline"));
     mounted = withClient(createElement(ForwardPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("转发列表加载失败 · forward service offline"));
-    expect(text()).not.toContain("还没有任何转发");
-    expect(text()).not.toContain("转发列表加载中");
+    await flushUntil(() => text().includes("未能加载转发列表：forward service offline"));
+    expect(text()).not.toContain("暂无任何转发");
+    expect(text()).not.toContain("正在加载转发列表");
   });
 
   it("retry recovers into the true empty state", async () => {
     mocks.forwardList.mockRejectedValueOnce(new Error("forward service offline"));
     mounted = withClient(createElement(ForwardPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("转发列表加载失败"));
+    await flushUntil(() => text().includes("未能加载转发列表"));
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("还没有任何转发"));
+    await flushUntil(() => text().includes("暂无任何转发"));
   });
 
   it("associates the listen-port label with its input", async () => {
@@ -212,14 +212,14 @@ describe("MountPanel query states", () => {
   it("shows error plus retry instead of the empty state when the list query fails", async () => {
     mocks.mountList.mockRejectedValue(new Error("mount service failure"));
     mounted = withClient(createElement(MountPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("挂载列表加载失败 · mount service failure"));
+    await flushUntil(() => text().includes("未能加载挂载列表：mount service failure"));
     expect(text()).not.toContain("当前会话没有挂载点");
   });
 
   it("retry recovers into the true empty state", async () => {
     mocks.mountList.mockRejectedValueOnce(new Error("mount service failure"));
     mounted = withClient(createElement(MountPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("挂载列表加载失败"));
+    await flushUntil(() => text().includes("未能加载挂载列表"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("当前会话没有挂载点"));
     expect(text()).toContain("新建挂载");

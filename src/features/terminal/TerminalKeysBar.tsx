@@ -305,7 +305,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
         <div className="mb-3 flex max-h-[180px] flex-col gap-1 overflow-y-auto">
           {keys.map((key, index) => renderConfigRow(key, index))}
           {keys.length === 0 && (
-            <div className="nx-hint px-1 py-2">没有已启用的按键，从下方勾选即可添加。</div>
+            <div className="nx-hint px-1 py-2">暂无已启用的按键，可在下方勾选添加。</div>
           )}
         </div>
         <div role="group" aria-label="未启用按键" className="mb-1 text-[11px] text-neutral-400">
@@ -335,7 +335,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
       {quickOpen === "manage" ? (
         <QuickCommandsEditor />
       ) : quickCommands.length === 0 ? (
-        <p className="nx-hint">还没有快捷命令。点击「管理快捷命令」添加，桌面和手机登录同一账号后共享。</p>
+        <p className="nx-hint">暂无快捷命令。选择「管理快捷命令」添加；使用同一账号登录的桌面端和手机端共享。</p>
       ) : (
         <div className="flex flex-col gap-1" role="list" aria-label="发送快捷命令">
           {quickCommands.map((command, index) => (
@@ -385,7 +385,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           <button
             type="button"
             className="nx-terminal-key"
-            title="发送这一行，不追加回车"
+            title="发送该行，不追加回车"
             aria-label="发送但不回车"
             onPointerDown={keepFocus}
             onClick={() => submitLine(false)}
@@ -395,7 +395,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           <button
             type="button"
             className="nx-terminal-key is-active"
-            title="发送这一行并回车"
+            title="发送该行并回车"
             aria-label="发送并回车"
             onPointerDown={keepFocus}
             onClick={() => submitLine(true)}
@@ -484,7 +484,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           <button
             type="button"
             className={`nx-terminal-key nx-terminal-keyboard ${buffered ? "is-active" : ""}`}
-            title={buffered ? "缓冲输入已开启：点击改回直接输入" : "缓冲输入：先编辑整行再发送，适合听写和自动更正"}
+            title={buffered ? "缓冲输入已开启：单击可改回直接输入" : "缓冲输入：编辑整行后再发送，适用于听写和自动更正"}
             aria-label="缓冲输入"
             aria-pressed={buffered}
             onPointerDown={keepFocus}

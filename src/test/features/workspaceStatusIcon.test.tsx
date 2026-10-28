@@ -119,7 +119,7 @@ describe("workspace status non-color distinctions", () => {
     { status: "connected", label: "已连接", tone: "is-ok" },
     { status: "failed", label: "连接失败", tone: "is-bad" },
     { status: "connecting", label: "连接中", tone: "is-warn" },
-    { status: "reconnecting", label: "重连中", tone: "is-warn" },
+    { status: "reconnecting", label: "重新连接中", tone: "is-warn" },
     { status: "disconnected", label: "已断开", tone: "is-warn" },
   ];
 

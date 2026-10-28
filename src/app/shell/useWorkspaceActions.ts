@@ -200,19 +200,19 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     const s = sid ? useUi.getState().sessions.find((x) => x.id === sid) : undefined;
     if (s && ws) {
       if (isSessionReconnectPending(s.id)) {
-        pushToast("info", "正在重连，连接成功后自动新建终端");
+        pushToast("info", "正在重新连接，连接成功后自动新建终端");
         return;
       }
       if (isSessionAlive(s.status)) {
         void openTerminalTab(s);
         return;
       }
-      pushToast("info", "正在重连，连接成功后自动新建终端");
+      pushToast("info", "正在重新连接，连接成功后自动新建终端");
       try {
         const fresh = await reconnectWorkspaceSession(ws, s, { isCurrent });
         if (!isCurrent()) return;
         if (!fresh) {
-          pushToast("info", "已取消重连");
+          pushToast("info", "已取消重新连接");
           return;
         }
         const list = useUi.getState().sessions;
@@ -228,7 +228,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
         const fresh = await reconnectDeadHost(ws, { isCurrent });
         if (!isCurrent()) return;
         if (!fresh) {
-          pushToast("info", "已取消重连");
+          pushToast("info", "已取消重新连接");
           return;
         }
         const list = useUi.getState().sessions;

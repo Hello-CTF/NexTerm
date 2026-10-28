@@ -162,7 +162,7 @@ describe("BatchProgressPanel", () => {
         .mockResolvedValueOnce(snapshot()),
     });
     mounted = mount(progressElement(api));
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
     expect(api.progress).toHaveBeenCalledTimes(2);
     await flush();
     expect(api.progress).toHaveBeenCalledTimes(2);
@@ -209,8 +209,8 @@ describe("BatchProgressPanel", () => {
     const api = fakeApi();
     const onRerunStart = vi.fn();
     mounted = mount(progressElement(api, { onRerunStart }));
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
     await flush();
     expect(api.rerun).toHaveBeenCalledTimes(1);
 
@@ -233,8 +233,8 @@ describe("BatchProgressPanel", () => {
     const api = fakeApi({ rerun: vi.fn(() => rerunCall.promise) });
     const onRerunStart = vi.fn();
     mounted = mount(progressElement(api, { onRerunStart }));
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
     await flush();
 
     // The new batch identity is announced while the rerun is still pending.
@@ -276,8 +276,8 @@ describe("BatchProgressPanel", () => {
       rerun: vi.fn(() => rerunCall.promise),
     });
     mounted = mount(progressElement(api));
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
 
     // The first batch-2 poll sees the startup not_found; polling must
     // continue and render the running snapshot once the tracker publishes.
@@ -300,8 +300,8 @@ describe("BatchProgressPanel", () => {
     const rerunCall = deferred<Awaited<ReturnType<BatchProgressApi["rerun"]>>>();
     const api = fakeApi({ rerun: vi.fn(() => rerunCall.promise) });
     mounted = mount(progressElement(api));
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
     await flush();
     await flushUntil(() =>
       (api.progress as ReturnType<typeof vi.fn>).mock.calls.some((call) => call[0] === "batch-2"),
@@ -336,8 +336,8 @@ describe("BatchProgressPanel", () => {
     const apiA = fakeApi({ rerun: vi.fn(() => rerunCall.promise) });
     const apiB = fakeApi();
     mounted = mount(progressElement(apiA));
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
     await flush();
     await flushUntil(() =>
       (apiA.progress as ReturnType<typeof vi.fn>).mock.calls.some((call) => call[0] === "batch-2"),
@@ -470,8 +470,8 @@ describe("BatchProgressPanel", () => {
     const apiA = fakeApi();
     const apiB = fakeApi();
     mounted = mount(progressElement(apiA));
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
     await flushUntil(() => mounted?.container.textContent?.includes("fixed") ?? false);
     expect(mounted.container.textContent).toContain("批次 batch-2 已结束");
 
@@ -496,8 +496,8 @@ describe("BatchProgressPanel", () => {
     mounted = mount(
       createElement(LayoutProbe, null, progressElement(api)),
     );
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
     await flushUntil(() => mounted?.container.textContent?.includes("fixed") ?? false);
     expect(mounted.container.textContent).toContain("批次 batch-2 已结束");
 
@@ -533,8 +533,8 @@ describe("BatchProgressPanel", () => {
     mounted = mount(
       createElement(StrictMode, null, createElement(LayoutProbe, null, progressElement(api))),
     );
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
     await flushUntil(() => mounted?.container.textContent?.includes("fixed") ?? false);
     expect(mounted.container.textContent).toContain("批次 batch-2 已结束");
 
@@ -579,7 +579,7 @@ describe("BatchProgressPanel", () => {
   it("renders a fast-completing batch without further polls", async () => {
     const api = fakeApi();
     mounted = mount(progressElement(api));
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
     await flush();
     expect(api.progress).toHaveBeenCalledTimes(1);
     expect(mounted.container.textContent).toContain("session-bad");
@@ -592,8 +592,8 @@ describe("BatchProgressPanel", () => {
     });
     const onConfirmationRequired = vi.fn();
     mounted = mount(progressElement(api, { onConfirmationRequired }));
-    await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(mounted.container, "重跑失败目标");
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
     await flush();
     expect(onConfirmationRequired).toHaveBeenCalledTimes(1);
     expect(onConfirmationRequired.mock.calls[0][0]).toEqual(detail);
@@ -609,7 +609,7 @@ describe("BatchProgressPanel", () => {
     });
     mounted = mount(progressElement(api));
     await flushUntil(() => mounted?.container.textContent?.includes("session-ok") ?? false);
-    expect(mounted.container.textContent).not.toContain("重跑失败目标");
+    expect(mounted.container.textContent).not.toContain("重新执行失败目标");
 
     mounted.unmount();
     const running = fakeApi({
@@ -617,7 +617,7 @@ describe("BatchProgressPanel", () => {
     });
     mounted = mount(progressElement(running));
     await flushUntil(() => mounted?.container.textContent?.includes("取消执行") ?? false);
-    expect(mounted.container.textContent).not.toContain("重跑失败目标");
+    expect(mounted.container.textContent).not.toContain("重新执行失败目标");
   });
 });
 
@@ -625,14 +625,14 @@ it("releases busy when an external batch replaces a pending rerun", async () => 
   const pending = deferred<Awaited<ReturnType<BatchProgressApi["rerun"]>>>();
   const api = fakeApi({ rerun: vi.fn(() => pending.promise) });
   mounted = mount(progressElement(api));
-  await flushUntil(() => mounted?.container.textContent?.includes("重跑失败目标") ?? false);
-  clickButton(mounted.container, "重跑失败目标");
+  await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+  clickButton(mounted.container, "重新执行失败目标");
   await flush();
   await act(async () => { mounted!.root.render(progressElement(api, { batchId: "batch-3" })); });
   await flush();
   await act(async () => { pending.resolve({batchId:"batch-2", command:"deploy", startedAt:1, finishedAt:2,results:[]}); });
   await flush();
-  const button = [...mounted.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "重跑失败目标");
+  const button = [...mounted.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "重新执行失败目标");
   expect(button).toBeDefined();
   expect(button!.disabled).toBe(false);
 });

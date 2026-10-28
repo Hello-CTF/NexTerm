@@ -229,7 +229,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       for (const tab of closePlan.runningAiTabs) {
         const cancelAndConfirm = aiTabRunControls.get(tab.id);
         if (!cancelAndConfirm) {
-          get().pushToast("error", "未能确认是否已停止，标签已保留，请稍后重试");
+          get().pushToast("error", "未能确认是否已停止，标签页已保留，请稍后重试");
           return false;
         }
         if (!(await confirmAiRunCancellation(cancelAndConfirm))) return false;
@@ -284,7 +284,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       if (hasNewContent) {
         get().pushToast(
           "info",
-          `「${target.title}」保持打开：关闭期间新增了未保存内容或其它标签，请处理后再次关闭`,
+          `「${target.title}」保持打开：关闭期间新增了未保存内容或其它标签页，请处理后再次关闭`,
         );
       }
 
@@ -378,12 +378,12 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         workspaceId !== undefined &&
         (!explicitWorkspace || !explicitWorkspaceMatchesTab(tab, explicitWorkspace))
       ) {
-        get().pushToast("info", "该标签不属于当前工作区，未执行操作");
+        get().pushToast("info", "该标签页不属于当前工作区，未执行操作");
         return;
       }
       const id = resolveWorkspaceId(tab, st, workspaceId);
       if (workspaceId !== undefined && id !== workspaceId) {
-        get().pushToast("info", "该标签不属于当前工作区，未执行操作");
+        get().pushToast("info", "该标签页不属于当前工作区，未执行操作");
         return;
       }
       const w = get().workspaces.find((x) => x.id === id);
@@ -499,7 +499,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       const tree = workspaceLayoutTree(w);
       if (!tree || !w.panes.some((pane) => pane.id === paneId)) return null;
       if (hit.pane.id === paneId && hit.pane.tabs.length < 2) {
-        get().pushToast("info", "窗格只有这一个标签，无需移到新窗格");
+        get().pushToast("info", "窗格中只有一个标签页，无需移到新窗格");
         return null;
       }
       const split = edgeSplit(edge);

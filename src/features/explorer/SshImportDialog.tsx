@@ -326,7 +326,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                     onChange={(e) => setTags(e.target.value)}
                     placeholder="可选，用逗号分隔"
                   />
-                  <div className="nx-hint mt-1.5">只给本次导入的主机添加统一标签；不读取来源分组信息。</div>
+                  <div className="nx-hint mt-1.5">仅为本次导入的主机添加统一标签；不读取来源分组信息。</div>
                 </div>
 
                 {source === "ssh-config" && (
@@ -346,8 +346,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                     />
                     <span className="nx-hint mt-1.5 block">
                       {WEB
-                        ? "留空使用服务器上的 ~/.ssh/config。点击「预览」时读取服务器文件，不做后台扫描，也不会读取浏览器所在电脑的文件；导入时会重新读取并校验。"
-                        : "留空使用默认路径。点击「预览」时读取，不做后台扫描；导入时会重新读取并校验。"}
+                        ? "留空使用服务器上的 ~/.ssh/config。选择「预览」时读取服务器文件，不做后台扫描，也不会读取浏览器所在电脑的文件；导入时会重新读取并校验。"
+                        : "留空使用默认路径。选择「预览」时读取，不做后台扫描；导入时会重新读取并校验。"}
                     </span>
                   </div>
                 )}
@@ -374,7 +374,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                         onChange={(e) => setConfirmed(e.target.checked)}
                       />
                       <span>
-                        我确认允许 NexTerm 在本次导入流程中读取本机 Termius 数据（先展示预览；点击导入前不会写入资产或凭据）
+                        我确认允许 NexTerm 在本次导入流程中读取本机 Termius 数据（先展示预览；选择导入前不会写入资产或凭据）
                       </span>
                     </label>
                     <span className="nx-hint mt-1.5 block">
@@ -640,7 +640,7 @@ function HostRow({
         )}
         {host.authMethod && (
           <span className="nx-badge shrink-0">
-            {host.authMethod === "key" ? "密钥" : host.authMethod === "password" ? "密码" : "Agent"}
+            {host.authMethod === "key" ? "密钥" : host.authMethod === "password" ? "密码" : "ssh-agent"}
           </span>
         )}
         <ActionBadge action={host.action} />

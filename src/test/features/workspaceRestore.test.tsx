@@ -199,7 +199,7 @@ describe("workspace restore readiness and banner", () => {
       seed([hostWorkspace("ws")]);
       const view = mountBanner();
       const banner = () => view.container.querySelector('section[aria-label="工作区恢复"]');
-      clickButton(view.container, "全部重连");
+      clickButton(view.container, "全部重新连接");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
@@ -221,7 +221,7 @@ describe("workspace restore readiness and banner", () => {
       return connectedSession(`${assetId}-session`, assetId);
     });
     const view = mountBanner();
-    clickButton(view.container, "全部重连");
+    clickButton(view.container, "全部重新连接");
     await flushUntil(() => (view.container.textContent ?? "").includes("1 个主机工作区连接失败"));
     expect(view.container.textContent).toContain("refused");
     expect(view.container.querySelector('input[aria-label="选择 ws-bad"]')).not.toBeNull();
@@ -334,7 +334,7 @@ describe("workspace restore queue", () => {
       return connectedSession(`${assetId}-session`, assetId);
     });
     const view = mountBanner();
-    clickButton(view.container, "全部重连");
+    clickButton(view.container, "全部重新连接");
 
     await waitForRendered(() => {
       expect(useUi.getState().workspaceRestoreResults["ws-a"]?.status).toBe("success");
@@ -378,7 +378,7 @@ describe("workspace restore queue", () => {
     });
     seed([hostWorkspace("normal"), empty, database, deleted, exec]);
     const view = mountBanner();
-    clickButton(view.container, "全部重连");
+    clickButton(view.container, "全部重新连接");
 
     await waitForRendered(() => expect(useUi.getState().workspaceRestoreResults.normal?.status).toBe("success"));
     const results = useUi.getState().workspaceRestoreResults;

@@ -86,7 +86,7 @@ function applyRestoredClosedTab(tab: AppTab, target: Workspace | undefined): voi
 export async function reconnectRestoredTab(tabId: string): Promise<ConnectOutcome> {
   const st = useUi.getState();
   const hit = findTabLocation(st.workspaces, st.activeWorkspaceId, tabId);
-  if (!hit) return { ok: false, error: "标签不存在" };
+  if (!hit) return { ok: false, error: "标签页不存在" };
   const workspace = hit.workspace;
   if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
   const session = st.sessions.find((s) => s.id === workspace.sessionId);

@@ -70,7 +70,7 @@ export function QuickCommandsEditor() {
   return (
     <div className="flex flex-col gap-2" aria-busy={saving}>
       {commands.length === 0 && !draft && (
-        <p className="nx-hint">还没有快捷命令。添加常用命令后，可在终端按键条的「命令」中一键发送。</p>
+        <p className="nx-hint">暂无快捷命令。添加常用命令后，可在终端按键条的「命令」中直接发送。</p>
       )}
       {commands.length > 0 && (
         <ul className="flex flex-col gap-1" aria-label="快捷命令列表">

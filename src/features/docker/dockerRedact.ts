@@ -28,7 +28,7 @@ const SENSITIVE_SUBSTRINGS = ["password", "passwd", "passphrase", "passcode", "s
 const SENSITIVE_FILE =
  /(^\.env)|(\.(pem|key|p12|pfx|jks|keystore|kubeconfig)$)|(^(id_rsa|id_dsa|id_ecdsa|id_ed25519)(\.|$))|(credential|secret|token|password|passwd)/i;
 
-export const REDACTED_MARK = "•••（已遮蔽）";
+export const REDACTED_MARK = "•••（已脱敏）";
 
 function nameWords(name: string): string[] {
   return name

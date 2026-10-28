@@ -185,7 +185,7 @@ const TreeRow = memo(function TreeRow({
         <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
           <div className="break-words">
             {error.gone
-              ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在此继续浏览"
+              ? "会话已在服务端删除，重试不会恢复；重新连接该主机后在此继续浏览"
               : error.message}
           </div>
           <div className="flex gap-2">
@@ -200,7 +200,7 @@ const TreeRow = memo(function TreeRow({
                 disabled={reconnecting}
                 onClick={() => actions.reconnect()}
               >
-                {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                {reconnecting ? "正在重新连接…" : "重新连接该主机"}
               </button>
             )}
           </div>
@@ -514,20 +514,20 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
 
   const sessionGone =
     rootsSessionGone || results.some((result) => fsErrorResource(result.error) === "session");
-  const goneHint = "会话已在服务端删除，请重新连接这台主机";
+  const goneHint = "会话已在服务端删除，请重新连接该主机";
   const [reconnecting, setReconnecting] = useState(false);
 
   const reconnectHost = useCallback(async () => {
     const ws = useUi.getState().workspaces.find((w) => w.sessionId === sessionId);
     if (!ws) {
-      pushToast("error", "找不到这个工作区的主机信息，请到左侧资产树里手动连接");
+      pushToast("error", "找不到该工作区的主机信息，请在左侧资产树中手动连接");
       return;
     }
     setReconnecting(true);
     try {
       const s = await reconnectDeadHost(ws);
       if (!s) {
-        pushToast("info", "已取消重连");
+        pushToast("info", "已取消重新连接");
         return;
       }
       const list = useUi.getState().sessions;
@@ -985,7 +985,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         kind: "item",
         label: "在新终端打开",
         icon: <IconTerminal size={13} />,
-        hint: "新标签",
+        hint: "新标签页",
         onSelect: () => openTerminalAt(dir),
       },
       { kind: "separator" },
@@ -1385,7 +1385,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
             title={
               follow.enabled
                 ? "跟随终端目录：开。终端切换目录时，文件树自动跟随"
-                : "跟随终端目录：关。点击开启自动跟随"
+                : "跟随终端目录：关。单击可开启自动跟随"
             }
             aria-label="跟随终端目录"
             aria-pressed={follow.enabled}
@@ -1472,7 +1472,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
             onClick={(e) => {
               if (e.target === e.currentTarget) beginEdit();
             }}
-            title="点空白处可直接输入路径"
+            title="单击空白处可直接输入路径"
           >
             {computer ? (
               <span className="nx-path-crumb is-current" aria-current="location">
@@ -1548,7 +1548,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
             <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
               <div className="break-words">
                 {rootsSessionGone
-                  ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在此继续浏览"
+                  ? "会话已在服务端删除，重试不会恢复；重新连接该主机后在此继续浏览"
                   : `无法读取磁盘根信息：${describeError(rootsQuery.error)}`}
               </div>
               <div className="flex gap-2">
@@ -1566,7 +1566,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
                     disabled={reconnecting}
                     onClick={() => void reconnectHost()}
                   >
-                    {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                    {reconnecting ? "正在重新连接…" : "重新连接该主机"}
                   </button>
                 )}
               </div>
@@ -1607,11 +1607,11 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
                 <span className="nx-skeleton min-w-0 flex-1" />
               </div>
             ))}
-            <span className="nx-sr-only">加载中…</span>
+            <span className="nx-sr-only">正在加载…</span>
           </div>
         )}
         {!loading && rows.length === 0 && dirErrors.size === 0 && !rootsQuery.isError && (
-          <div className="nx-hint px-2 py-6 text-center">{computer ? "没有可用磁盘" : "这个目录是空的"}</div>
+          <div className="nx-hint px-2 py-6 text-center">{computer ? "没有可用磁盘" : "该目录是空的"}</div>
         )}
       </div>
 

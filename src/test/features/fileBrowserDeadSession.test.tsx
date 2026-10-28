@@ -310,7 +310,7 @@ describe("FileBrowser deleted sessions", () => {
 
     await waitForRendered(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
     expect(panel()?.textContent).not.toContain("请刷新后重试");
-    expect(buttonTexts()).toContain("重新连接这台主机");
+    expect(buttonTexts()).toContain("重新连接该主机");
     expect(buttonTexts()).not.toContain("重试");
     await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     expect(mocks.connect).toHaveBeenCalledWith("asset-1");
@@ -437,7 +437,7 @@ describe("FileBrowser deleted sessions", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     expect(storeTabSessionId()).toBe("s2");
     expect(panel()?.textContent).toContain("会话已在服务端删除");
-    expect(buttonTexts()).toContain("重新连接这台主机");
+    expect(buttonTexts()).toContain("重新连接该主机");
   });
 
   it("shows a busy reconnecting state and disables the button during automatic reconnection, then restores the manual action after failure", async () => {
@@ -454,7 +454,7 @@ describe("FileBrowser deleted sessions", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(1);
 
     pending.reject(new Error("dial tcp: connection refused"));
-    await flushUntil(() => buttonTexts().includes("重新连接这台主机"));
+    await flushUntil(() => buttonTexts().includes("重新连接该主机"));
     expect(toastTexts()).toContain("重新连接失败");
     expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
@@ -490,11 +490,11 @@ describe("FileBrowser deleted sessions", () => {
     for (const label of ["上传", "文件夹", "新建"] as const) {
       const btn = toolbarButton(label);
       expect(btn?.disabled).toBe(true);
-      expect(btn?.title).toBe("会话已在服务端删除，请重新连接这台主机");
+      expect(btn?.title).toBe("会话已在服务端删除，请重新连接该主机");
     }
     const goneTitled = [
       ...mounted.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button"),
-    ].filter((b) => b.title === "会话已在服务端删除，请重新连接这台主机");
+    ].filter((b) => b.title === "会话已在服务端删除，请重新连接该主机");
     expect(goneTitled.every((b) => b.disabled)).toBe(true);
     expect(goneTitled.some((b) => b.textContent?.trim() === "")).toBe(true);
 
@@ -529,13 +529,13 @@ describe("FileBrowser deleted sessions", () => {
 
     await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机 127.0.0.1:22 的密钥已变更");
-    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重新连接"));
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(storeTabSessionId()).toBe(SID);
     expect(panel()?.textContent).toContain("会话已在服务端删除");
 
-    clickButton(mounted.container, "重新连接这台主机");
+    clickButton(mounted.container, "重新连接该主机");
 
     await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(2));
     await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
@@ -571,16 +571,16 @@ describe("FileBrowser deleted sessions", () => {
     expect(panel()?.textContent).toContain("会话已在服务端删除");
     expect(mocks.connect).toHaveBeenCalledTimes(1);
 
-    clickButton(mounted.container, "重新连接这台主机");
+    clickButton(mounted.container, "重新连接该主机");
 
     await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
-    await waitForRendered(() => expect(buttonTexts()).toContain("重新连接这台主机"));
+    await waitForRendered(() => expect(buttonTexts()).toContain("重新连接该主机"));
 
     mocks.connect.mockResolvedValue(NEW_SESSION);
     mocks.list.mockImplementation((sid: string) =>
       sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
     );
-    clickButton(mounted.container, "重新连接这台主机");
+    clickButton(mounted.container, "重新连接该主机");
 
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connect).toHaveBeenCalledTimes(3);
@@ -636,13 +636,13 @@ describe("FileBrowser deleted sessions", () => {
   it("reports the precise reason when the file tab is missing and does not connect blindly or retry in a loop", async () => {
     mounted = mountStandalone();
 
-    await waitForRendered(() => expect(toastTexts()).toContain("找不到这个文件标签的主机信息"));
+    await waitForRendered(() => expect(toastTexts()).toContain("找不到该文件标签页的主机信息"));
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.connectLocal).not.toHaveBeenCalled();
     expect(useUi.getState().toasts).toHaveLength(1);
     const firstToastId = useUi.getState().toasts[0]?.id;
 
-    clickButton(mounted.container, "重新连接这台主机");
+    clickButton(mounted.container, "重新连接该主机");
 
     await waitForRendered(() => expect(useUi.getState().toasts[0]?.id).not.toBe(firstToastId));
     expect(useUi.getState().toasts).toHaveLength(1);
@@ -662,7 +662,7 @@ describe("FileBrowser transient file errors", () => {
     await waitForRendered(() => expect(panel()?.textContent).toContain("连接被对端重置"));
     expect(mocks.list).toHaveBeenCalledTimes(2);
     expect(buttonTexts()).toContain("重试");
-    expect(buttonTexts()).not.toContain("重新连接这台主机");
+    expect(buttonTexts()).not.toContain("重新连接该主机");
     expect(toolbarButton("上传")?.disabled).toBe(false);
     expect(toolbarButton("新建")?.disabled).toBe(false);
 
@@ -836,7 +836,7 @@ describe("FileBrowser Windows roots and navigation", () => {
     await flush();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(buttonTexts()).toContain("重试");
-    expect(buttonTexts()).not.toContain("重新连接这台主机");
+    expect(buttonTexts()).not.toContain("重新连接该主机");
     expect(toolbarButton("上传")?.disabled).toBe(false);
     expect(toolbarButton("新建")?.disabled).toBe(false);
 
@@ -876,7 +876,7 @@ describe("FileBrowser Windows roots and navigation", () => {
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(panel()?.textContent).not.toContain("会话已在服务端删除");
     expect(buttonTexts()).toContain("重试");
-    expect(buttonTexts()).not.toContain("重新连接这台主机");
+    expect(buttonTexts()).not.toContain("重新连接该主机");
     expect(toolbarButton("上传")?.disabled).toBe(false);
   });
 
@@ -889,7 +889,7 @@ describe("FileBrowser Windows roots and navigation", () => {
     await flush();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(buttonTexts()).toContain("重试");
-    expect(buttonTexts()).not.toContain("重新连接这台主机");
+    expect(buttonTexts()).not.toContain("重新连接该主机");
     expect(toolbarButton("上传")?.disabled).toBe(false);
     expect(toolbarButton("新建")?.disabled).toBe(false);
   });
@@ -974,7 +974,7 @@ describe("FileBrowser roots errors", () => {
 
     await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     await waitForRendered(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
-    expect(buttonTexts()).toContain("重新连接这台主机");
+    expect(buttonTexts()).toContain("重新连接该主机");
   });
 
   it("loads Windows roots after the initial roots request fails and manual retry succeeds", async () => {

@@ -229,7 +229,7 @@ export function NewCredentialModal({
                     <div className="nx-hint mt-1.5">
                       {webFiles
                         ? "↳ Web 模式只能填写服务器上的私钥路径；要引用浏览器侧的私钥文件，请改用「存入凭据库」。"
-                        : "↳ 只记路径，私钥正文不复制进库。文件被挪走或删掉后，用它的资产就连不上了。"}
+                        : "↳ 仅保存路径，不复制私钥内容。文件被移动或删除后，使用该凭据的资产将无法连接。"}
                     </div>
                   </>
                 ) : (
@@ -298,10 +298,10 @@ export function NewCredentialModal({
                   value={passphrase}
                   autoComplete="off"
                   onChange={(e) => setPassphrase(e.target.value)}
-                  placeholder="没有就留空"
+                  placeholder="没有则留空"
                 />
                 <div className="nx-hint mt-1.5">
-                  ↳ 选填。私钥本身带口令才需要填，连接时自动使用。
+                  ↳ 选填。仅当私钥本身设有口令时填写，连接时自动使用。
                 </div>
               </div>
             </>
@@ -317,7 +317,7 @@ export function NewCredentialModal({
                 onChange={(e) => setValue(e.target.value)}
               />
               <div className="nx-hint mt-1.5">
-                ↳ 把密码或 API 密钥原样填进来，保存后加密存入凭据库。
+                ↳ 填写密码或 API 密钥，保存后将加密存入凭据库。
               </div>
             </div>
           )}
@@ -331,7 +331,7 @@ export function NewCredentialModal({
             disabled={!ready || saving}
             onClick={() => void save()}
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "正在保存…" : "保存"}
           </button>
         </div>
       </div>

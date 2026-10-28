@@ -470,7 +470,7 @@ describe("keyboard equivalents in the tab menu", () => {
     render(true);
     await flush();
     expect(menuItem("t1", "移到右侧新窗格")).toBeNull();
-    expect(menuItem("t1", "关闭标签")).not.toBeNull();
+    expect(menuItem("t1", "关闭标签页")).not.toBeNull();
   });
 
   it("closes a closable tab with the middle button and ignores other buttons", async () => {

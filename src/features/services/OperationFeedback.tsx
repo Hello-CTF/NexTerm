@@ -25,7 +25,7 @@ export function OperationFeedback({
         <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-blue-300" role="status">
           <span>正在执行批次 {runningId}，逐目标结果会在返回后保留。</span>
           <button type="button" className="nx-btn nx-btn-danger nx-btn-xs" disabled={canceling} onClick={onCancel}>
-            <IconStop size={11} />{canceling ? "取消中…" : "取消"}
+            <IconStop size={11} />{canceling ? "正在取消…" : "取消"}
           </button>
         </div>
       )}

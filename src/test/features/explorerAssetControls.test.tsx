@@ -721,7 +721,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("生产密码"), "c1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
+    expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
   });
 
   it("does not imply that an unused password credential is already shared by multiple assets", async () => {
@@ -731,7 +731,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("生产密码"), "c1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
+    expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
     expect(mounted!.container.textContent).not.toContain("被多个资产共用");
   });
 
@@ -743,12 +743,12 @@ describe("asset editor shared credential hint", () => {
     await flush();
     clickButton(mounted!.container, "存入凭据库");
     await flush();
-    setSelectValue(selectByOptionText("选已有私钥凭据"), "existing");
+    setSelectValue(selectByOptionText("选择已有私钥凭据"), "existing");
     await waitFor(() => expect(mounted!.container.textContent).toContain("部署密钥"));
 
     setSelectValue(selectByOptionText("部署密钥"), "k1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
+    expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
   });
 });
 
@@ -775,7 +775,7 @@ describe("snippets panel", () => {
       .mockResolvedValueOnce(SNIPPETS.map((s) => ({ ...s })));
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("db locked"));
-    expect(mounted!.container.textContent).toContain("片段加载失败");
+    expect(mounted!.container.textContent).toContain("未能加载片段");
     clickButton(mounted!.container, "重试");
     await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
     expect(mocks.snippetList).toHaveBeenCalledTimes(2);
@@ -1340,7 +1340,7 @@ describe("asset editor save across an account switch", () => {
     mocks.setCredential.mockResolvedValue({ id: "cred-a" });
     mocks.createAsset.mockResolvedValue({ id: "a-new" });
     await fillAndSave();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("保存中"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("正在保存"));
 
     // Account switch while the vault status fetch is still in flight.
     act(() => {

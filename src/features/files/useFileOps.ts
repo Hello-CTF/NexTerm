@@ -99,7 +99,7 @@ export function useFileOps(sessionId: string) {
 
   const begin = (op: FileOpKind, path: string): number | null => {
     if (busyRef.current) {
-      pushToast("info", `上一个文件操作（${OP_LABEL[busyRef.current.op]}）还在进行，请等它完成`);
+      pushToast("info", `上一个文件操作（${OP_LABEL[busyRef.current.op]}）仍在进行，请等待其完成`);
       return null;
     }
     busyRef.current = { op, path };
@@ -135,7 +135,7 @@ export function useFileOps(sessionId: string) {
           {
             key: "renamed",
             label: "重命名已发生",
-            hint: "确认服务端已完成重命名，迁移匹配的标签和草稿，不重复执行重命名",
+            hint: "确认服务端已完成重命名，迁移匹配的标签页和草稿，不重复执行重命名",
           },
         ],
       },
@@ -149,7 +149,7 @@ export function useFileOps(sessionId: string) {
         useUi.getState().setActiveTab(target.id);
         pushToast(
           "error",
-          `无法确认重命名已发生：目标 ${current.to} 已有打开的编辑器，请先处理该标签，未迁移或合并草稿。`,
+          `无法确认重命名已发生：目标 ${current.to} 已有打开的编辑器，请先处理该标签页，未迁移或合并草稿。`,
         );
         return null;
       }
@@ -205,7 +205,7 @@ export function useFileOps(sessionId: string) {
         );
         if (!target) return false;
         useUi.getState().setActiveTab(target.id);
-        pushToast("error", `无法重命名：目标 ${to} 已有打开的编辑器，请先处理该标签，未执行覆盖或合并。`);
+        pushToast("error", `无法重命名：目标 ${to} 已有打开的编辑器，请先处理该标签页，未执行覆盖或合并。`);
         return true;
       };
       if (rejectOpenTarget()) return;
@@ -261,7 +261,7 @@ export function useFileOps(sessionId: string) {
         if (alive(seq)) {
           pushToast(
             "error",
-            "重命名结果未知：请重连后确认远端旧路径和新路径；确认前已禁止向旧路径保存，不会自动重试。",
+            "重命名结果未知：请重新连接后确认远端旧路径和新路径；确认前已禁止向旧路径保存，不会自动重试。",
           );
         }
         const resolved = await confirmUnknownRename(unknownToken, entry.path);

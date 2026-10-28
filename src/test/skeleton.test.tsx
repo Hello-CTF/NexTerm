@@ -170,21 +170,21 @@ describe("FileBrowser skeleton", () => {
 
     await flushUntil(() => mounted!.container.querySelectorAll(".nx-skeleton-row").length > 0);
     expect(mounted!.container.querySelectorAll(".nx-skeleton-row").length).toBeGreaterThan(0);
-    expect(mounted!.container.textContent).not.toContain("这个目录是空的");
+    expect(mounted!.container.textContent).not.toContain("该目录是空的");
     const status = mounted!.container.querySelector('[role="status"]');
-    expect(status?.querySelector(".nx-sr-only")?.textContent).toContain("加载中");
+    expect(status?.querySelector(".nx-sr-only")?.textContent).toContain("正在加载");
 
     d.resolve(HOME_ENTRIES.map((e) => ({ ...e })));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
     expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
-    expect(mounted!.container.textContent).not.toContain("这个目录是空的");
+    expect(mounted!.container.textContent).not.toContain("该目录是空的");
   });
 
   it("shows the empty state instead of skeleton rows after a genuinely empty directory arrives", async () => {
     mocks.fsList.mockResolvedValue([]);
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
     await waitForRendered(() =>
-      expect(mounted!.container.textContent).toContain("这个目录是空的"),
+      expect(mounted!.container.textContent).toContain("该目录是空的"),
     );
     expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
   });
@@ -209,7 +209,7 @@ describe("FileBrowser skeleton", () => {
 
       d.resolve([]);
       await waitForRendered(() =>
-        expect(mounted!.container.textContent).toContain("这个目录是空的"),
+        expect(mounted!.container.textContent).toContain("该目录是空的"),
       );
       mounted.unmount();
       mounted = undefined;
@@ -225,12 +225,12 @@ describe("FileTree skeleton", () => {
 
     await flushUntil(() => mounted!.container.querySelectorAll(".nx-skeleton-row").length > 0);
     expect(mounted!.container.querySelectorAll(".nx-skeleton-row").length).toBeGreaterThan(0);
-    expect(mounted!.container.textContent).not.toContain("这个目录是空的");
+    expect(mounted!.container.textContent).not.toContain("该目录是空的");
 
     d.resolve(HOME_ENTRIES.map((e) => ({ ...e })));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
     expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
-    expect(mounted!.container.textContent).not.toContain("这个目录是空的");
+    expect(mounted!.container.textContent).not.toContain("该目录是空的");
   });
 
   it("makes skeleton name bars responsive at 320 and 390 widths", async () => {
@@ -249,7 +249,7 @@ describe("FileTree skeleton", () => {
 
       d.resolve([]);
       await waitForRendered(() =>
-        expect(mounted!.container.textContent).toContain("这个目录是空的"),
+        expect(mounted!.container.textContent).toContain("该目录是空的"),
       );
       mounted.unmount();
       mounted = undefined;
@@ -269,12 +269,12 @@ describe("DockerPanel skeleton", () => {
     );
     expect(mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length).toBeGreaterThan(0);
     expect(mounted!.container.querySelector(".nx-table-empty")).toBeNull();
-    expect(mounted!.container.textContent).not.toContain("这台主机上还没有容器");
+    expect(mounted!.container.textContent).not.toContain("该主机上暂无容器");
 
     ps.resolve(CONTAINERS.map((c) => ({ ...c })));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("web"));
     expect(mounted!.container.querySelector('tbody tr[aria-hidden="true"]')).toBeNull();
-    expect(mounted!.container.textContent).not.toContain("这台主机上还没有容器");
+    expect(mounted!.container.textContent).not.toContain("该主机上暂无容器");
   });
 
   it("shows skeleton rows while the images tab is pending and replaces them when data arrives", async () => {
@@ -294,12 +294,12 @@ describe("DockerPanel skeleton", () => {
       () => mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length > 0,
     );
     expect(mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length).toBeGreaterThan(0);
-    expect(mounted!.container.textContent).not.toContain("这台主机上还没有镜像");
+    expect(mounted!.container.textContent).not.toContain("该主机上暂无镜像");
 
     images.resolve(IMAGES.map((i) => ({ ...i })));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("nginx"));
     expect(mounted!.container.querySelector('tbody tr[aria-hidden="true"]')).toBeNull();
-    expect(mounted!.container.textContent).not.toContain("这台主机上还没有镜像");
+    expect(mounted!.container.textContent).not.toContain("该主机上暂无镜像");
   });
 
   it("uses only percentage or automatic widths at 320 and 390 without fixed minimum widths", async () => {

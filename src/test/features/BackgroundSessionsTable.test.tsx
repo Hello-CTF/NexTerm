@@ -297,7 +297,7 @@ describe("BackgroundSessions table", () => {
 
       const silent = row(view, "silent");
       expect(cell(silent, "background-output").textContent).toBe("暂无输出");
-      expect(cell(silent, "background-detached").textContent).toBe("仍有设备连接着");
+      expect(cell(silent, "background-detached").textContent).toBe("仍有设备已连接");
 
       const old = row(view, "old");
       expect(cell(old, "background-status").textContent).toBe("—");
@@ -306,7 +306,7 @@ describe("BackgroundSessions table", () => {
       expect(cell(old, "background-detached").textContent).toBe("—");
       expect(cell(old, "background-time").title).toContain("创建（主机时间）：2026-10-27 11:00:00");
       expect(view.container.textContent).not.toContain("在主机上运行");
-      expect(cell(view.container, "background-needs-me-note").textContent).toContain("「需要我」表示程序在等你回应");
+      expect(cell(view.container, "background-needs-me-note").textContent).toContain("「需要我」表示程序正在等待回应");
     } finally {
       view.unmount();
     }
@@ -460,8 +460,8 @@ describe("BackgroundSessions table", () => {
     const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(2));
     try {
       for (const current of rows(view)) {
-        expect(button(current, "接管").title).toBe("回到这个终端，并补上离开期间的输出");
-        expect(button(current, "结束进程").title).toBe("结束这个终端里运行的程序，无法恢复");
+        expect(button(current, "接管").title).toBe("回到该终端，并补上离开期间的输出");
+        expect(button(current, "结束进程").title).toBe("结束该终端里运行的程序，无法恢复");
       }
       await act(async () => {
         button(row(view, "kill"), "结束进程").click();

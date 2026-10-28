@@ -192,7 +192,7 @@ function TypedEnvironmentConfirmationDialog({
           <div className="mb-1 text-[11px] text-neutral-500">{variant === "broadcast" ? "待广播输入" : "待执行命令"}</div>
           <pre className="nx-pre mb-3 max-h-28 overflow-auto whitespace-pre-wrap break-all text-[11px]">{command}</pre>
           <div className="mb-3 text-[10px] text-neutral-500" title={`目标集合 ${challenge.targetSetHash}；${contentLabel} ${contentHash}`}>
-            确认将绑定当前目标集合与{contentLabel}哈希；任一变化都需要重新确认。本会话不会记住授权。
+            确认将绑定当前目标集合与{contentLabel}摘要；任一变化都需要重新确认。本会话不会记住授权。
           </div>
         </div>
         <div className="nx-modal-footer">

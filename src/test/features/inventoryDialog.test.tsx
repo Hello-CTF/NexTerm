@@ -340,7 +340,7 @@ describe("dynamic inventory dialog", () => {
     mocks.call.mockImplementation(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveExec = resolve; }));
     clickButton(mounted!.container, "执行");
     await flush();
-    expect(mounted!.container.textContent).toContain("执行中");
+    expect(mounted!.container.textContent).toContain("正在执行");
 
     // Account switch: the tracked operation stays bound to user-a with the
     // switch-back note, and its late settle never renders on user-b's page.

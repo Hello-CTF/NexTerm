@@ -244,7 +244,7 @@ describe("broadcastInput", () => {
     expect(outcome.skipped).toEqual([
       { title: "t3", reason: "终端已失效" },
       { title: "t4", reason: "终端尚未连接" },
-      { title: "gone", reason: "标签已关闭" },
+      { title: "gone", reason: "标签页已关闭" },
     ]);
   });
 
@@ -353,7 +353,7 @@ describe("BroadcastInputQueue", () => {
     const [firstOutcome, secondOutcome] = await Promise.all([first, second]);
     expect(firstOutcome?.sent).toBe(1);
     expect(secondOutcome?.results).toEqual([
-      { targetId: "t1", title: "t1", status: "skipped", reason: "标签已关闭" },
+      { targetId: "t1", title: "t1", status: "skipped", reason: "标签页已关闭" },
     ]);
     expect(calls).toEqual(["a"]);
   });
@@ -697,7 +697,7 @@ describe("broadcast store cleanup", () => {
     expect(gated.calls).toEqual(["k-t4:a"]);
     expect(secondOutcome?.results.find((result) => result.targetId === "t4")).toMatchObject({
       status: "skipped",
-      reason: "标签已关闭",
+      reason: "标签页已关闭",
     });
   });
 

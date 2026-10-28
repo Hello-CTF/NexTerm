@@ -231,7 +231,7 @@ describe("IME guards for Enter submission", () => {
     mounted = mount(withQueryClient(createElement(ForwardPanel, { sessionId: "s" })));
     await settle();
     await flushUntil(() =>
-      mounted!.container.textContent?.includes("还没有任何转发") === true &&
+      mounted!.container.textContent?.includes("暂无任何转发") === true &&
       [...mounted!.container.querySelectorAll("button")].some(
         (button) => button.textContent?.trim() === "创建" && !button.disabled,
       ),

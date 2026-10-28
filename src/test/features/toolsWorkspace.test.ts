@@ -319,7 +319,7 @@ describe("tool tab routing", () => {
     expect(allTabs().some((t) => t.kind === "background")).toBe(false);
     expect(state.workspaces).toHaveLength(1);
     expect(state.activeWorkspaceId).toBe("ws-host");
-    expect(state.toasts.some((toast) => toast.text === "请先打开这台主机的工作区，再查看它的后台会话")).toBe(true);
+    expect(state.toasts.some((toast) => toast.text === "请先打开该主机的工作区，再查看它的后台会话")).toBe(true);
   });
 
   it("preserves history filters on ordinary opens and updates them only for an explicit source", () => {

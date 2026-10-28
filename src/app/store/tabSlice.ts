@@ -56,11 +56,11 @@ export function createTabSlice(set: UiSet, get: UiGet) {
         ? get().workspaces.find((w) => w.panes.some((p) => p.id === paneId))
         : undefined;
       if (paneId && (!paneWorkspace || !explicitWorkspaceMatchesTab(tab, paneWorkspace))) {
-        get().pushToast("info", "该标签不属于当前工作区，未执行操作");
+        get().pushToast("info", "该标签页不属于当前工作区，未执行操作");
         return;
       }
       if (tab.kind === "background" && !tab.sessionId && paneWorkspace?.kind !== "session") {
-        get().pushToast("info", "请先打开这台主机的工作区，再查看它的后台会话");
+        get().pushToast("info", "请先打开该主机的工作区，再查看它的后台会话");
         return;
       }
 
@@ -76,7 +76,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
       if (tab.kind === "background") {
         const sessionId = tab.sessionId ?? paneWorkspace?.sessionId;
         if (w.kind !== "session" || !sessionId || w.sessionId !== sessionId) {
-          get().pushToast("info", "请先打开这台主机的工作区，再查看它的后台会话");
+          get().pushToast("info", "请先打开该主机的工作区，再查看它的后台会话");
           return;
         }
         scopedTab = {
@@ -92,7 +92,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
         ? panes.find((p) => p.id === paneId)
         : pickPaneForTab(panes, w.activePaneId, scopedTab);
       if (!target) {
-        get().pushToast("info", "该标签不属于当前工作区，未执行操作");
+        get().pushToast("info", "该标签页不属于当前工作区，未执行操作");
         return;
       }
 
@@ -257,7 +257,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
           );
         }
       } else if (remoteCloseUnknown && !suppressErrorToast) {
-        get().pushToast("info", "本地标签已关闭；远端持久终端可能仍在运行，可在后台会话中查看");
+        get().pushToast("info", "本地标签页已关闭；远端持久终端可能仍在运行，可在后台会话中查看");
       }
       void get().resyncSessions({ silent: true });
       return true;

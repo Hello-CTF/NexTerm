@@ -313,7 +313,7 @@ describe("terminal dead-tab overlay", () => {
     failAttach("not_found");
     await waitFor(() => expect(overlay()).not.toBeNull());
 
-    clickButton(mounted.container, "关闭标签");
+    clickButton(mounted.container, "关闭标签页");
 
     await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith(...expected));
     expect(storeTab()).toBeUndefined();
@@ -353,7 +353,7 @@ describe("terminal dead-tab overlay", () => {
     failAttach("not_found");
     await waitFor(() => expect(overlay()).not.toBeNull());
 
-    clickButton(mounted.container, "关闭标签");
+    clickButton(mounted.container, "关闭标签页");
 
     await waitFor(() => expect(storeTab()).toBeUndefined());
     expect(toastTexts()).toContain("远端持久终端可能仍在运行");
@@ -367,7 +367,7 @@ describe("terminal dead-tab overlay", () => {
     failAttach("not_found");
     await waitFor(() => expect(overlay()).not.toBeNull());
 
-    clickButton(mounted.container, "关闭标签");
+    clickButton(mounted.container, "关闭标签页");
 
     await waitFor(() => expect(storeTab()).toBeUndefined());
     expect(toastTexts()).toContain("远端持久终端可能仍在运行");
@@ -620,7 +620,7 @@ describe("terminal dead-tab overlay", () => {
 
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("首次连接 127.0.0.1:22");
-    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitFor(() => expect(toastTexts()).toContain("已取消重新连接"));
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
 
@@ -851,7 +851,7 @@ describe("terminal dead-tab overlay", () => {
     expect(mounted.container.textContent).not.toContain("尝试次数");
     act(() => useUi.getState().setHelperProgress({ ...progress, stage: "ready", done: true }));
     await flush();
-    expect(hint()?.textContent).toContain("这台主机的持久终端已就绪");
+    expect(hint()?.textContent).toContain("该主机的持久终端已就绪");
     expect([...(hint()?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).toContain("新建持久终端");
     expect(mounted.container.querySelector('[role="dialog"]')).toBeNull();
     expect(useUi.getState().toasts.some((toast) => toast.text.includes("持久终端已就绪"))).toBe(false);
@@ -1105,10 +1105,10 @@ describe("terminal dead-tab context menu reconnect", () => {
 
     await openTerminalMenu();
     await clickMenuItem("重新连接");
-    await waitFor(() => expect(toastTexts()).toContain("重新连接失败：重连未能启动"));
+    await waitFor(() => expect(toastTexts()).toContain("重新连接失败：重新连接未能启动"));
     expect(useUi.getState().workspaceRuntime.ws1?.problems?.[0]).toMatchObject({
       connectionKey: assetConnectionProblemKey("asset-1"),
-      summary: "重连未能启动",
+      summary: "重新连接未能启动",
     });
 
     mocks.listSessions.mockResolvedValue([
@@ -1142,7 +1142,7 @@ describe("terminal dead-tab context menu reconnect", () => {
 
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机 127.0.0.1:22 的密钥已变更");
-    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitFor(() => expect(toastTexts()).toContain("已取消重新连接"));
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(storeTab()?.dead).toBe(true);

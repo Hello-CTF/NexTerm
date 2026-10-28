@@ -358,9 +358,9 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
             {snapshot.batch.phase === "finished" && snapshot.batch.failed > 0 && !rerunDisabled && (
               <>
                 <button type="button" className="nx-link" disabled={busy} onClick={rerun}>
-                  重跑失败目标
+                  重新执行失败目标
                 </button>
-                <span className="nx-hint">{snapshot.batch.failed} 个失败目标将按原顺序重跑，生产目标需要重新确认</span>
+                <span className="nx-hint">{snapshot.batch.failed} 个失败目标将按原顺序重新执行，生产目标需要重新确认</span>
               </>
             )}
           </div>

@@ -186,7 +186,7 @@ export async function confirmWorkspaceClose(
     lines.push("· 此工作区仍有未保存的 SQL 草稿，关闭后将丢失");
   }
   if (summary.runningAiTabs.length > 0) {
-    lines.push(`· ${summary.runningAiTabs.length} 个 AI 标签仍在运行：${summary.runningAiTabs.map((tab) => tab.title).join("、")}`);
+    lines.push(`· ${summary.runningAiTabs.length} 个 AI 标签页仍在运行：${summary.runningAiTabs.map((tab) => tab.title).join("、")}`);
   }
   if (confirmBlocked) {
     lines.push(`· ${summary.blocked.length} 个${summary.blockedKinds}终端不支持转入后台，将结束进程`);
@@ -253,17 +253,17 @@ export function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOu
     parts.push(
       `${outcome.killUnreachable} 个终端所在主机已断开或无法访问，远端进程未能结束，仍在「后台会话」中，重新连接后可接管或结束`,
     );
-    pushToast("error", `${deleted ? `已关闭「${title}」` : `已关闭部分标签「${title}」`}：${parts.join("，")}`);
+    pushToast("error", `${deleted ? `已关闭「${title}」` : `已关闭部分标签页「${title}」`}：${parts.join("，")}`);
     return;
   }
   if (parts.length === 0) return;
-  pushToast("info", `${deleted ? `已关闭「${title}」` : `已关闭部分标签「${title}」`}：${parts.join("，")}`);
+  pushToast("info", `${deleted ? `已关闭「${title}」` : `已关闭部分标签页「${title}」`}：${parts.join("，")}`);
 }
 
 export function closeActionHint(t: AppTab): string | undefined {
   if (t.kind !== "terminal" || !t.tabId || t.dead || t.exited) return undefined;
   const block = detachBlockOf(t, useUi.getState().sessions, assetKindForTab(t));
-  if (block === "exec") return "结束容器 exec 进程";
+  if (block === "exec") return "结束容器内命令进程";
   if (block === "winrm") return "结束 WinRM 非交互进程";
   if (block === "local") return "结束本地进程";
   if (block === "regular" || block === "unknown") return "结束进程";
@@ -274,10 +274,10 @@ export function closeActionHint(t: AppTab): string | undefined {
 }
 
 export function closeTabHint(t: AppTab): string {
-  if (t.kind !== "terminal" || !t.tabId || t.dead) return "关闭标签";
-  if (t.exited) return "关闭标签（进程已结束）";
+  if (t.kind !== "terminal" || !t.tabId || t.dead) return "关闭标签页";
+  if (t.exited) return "关闭标签页（进程已结束）";
   const action = closeActionHint(t);
-  return action ? `关闭标签（${action}）` : "关闭标签";
+  return action ? `关闭标签页（${action}）` : "关闭标签页";
 }
 
 const CLOSE_CHOICE_OPTIONS: ChoiceOption[] = [
@@ -442,7 +442,7 @@ export async function requestCloseTabs(ids: string[]): Promise<void> {
       const { askChoiceRemember } = await import("../../ui/dialogs");
       const result = await askChoiceRemember(
         `${pending.length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。`,
-        { title: "关闭终端标签", choices: CLOSE_CHOICE_OPTIONS },
+        { title: "关闭终端标签页", choices: CLOSE_CHOICE_OPTIONS },
       );
       decided = result ? (result.key === "kill" ? "kill" : "detach") : null;
     }
@@ -452,7 +452,7 @@ export async function requestCloseTabs(ids: string[]): Promise<void> {
   }
   const failed = ids.filter((id) => findTab(id)?.tab.closeError).length;
   if (failed > 0) {
-    useUi.getState().pushToast("error", `${failed} 个标签未能关闭，已保留并在标签上标出原因`);
+    useUi.getState().pushToast("error", `${failed} 个标签页未能关闭，已保留并在标签页上标出原因`);
   }
 }
 
@@ -483,7 +483,7 @@ export async function requestKillWorkspaceTerminals(workspaceId: string): Promis
   const st = useUi.getState();
   const live = before.panes.flatMap((p) => p.tabs).filter(isRunningTerminal);
   if (live.length === 0) {
-    st.pushToast("info", "这个工作区里没有正在运行的终端");
+    st.pushToast("info", "该工作区里没有正在运行的终端");
     return;
   }
   const { ask } = await import("../../ui/dialogs");
