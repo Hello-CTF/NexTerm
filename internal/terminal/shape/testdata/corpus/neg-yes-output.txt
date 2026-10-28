@@ -1,7 +1,0 @@
-# kind: none
----
-y
-y
-y
-y
-y

@@ -50,8 +50,7 @@ type Session struct {
 
 	inputQueue chan []byte
 	// inputMu orders input: a write records its input with the state
-	// tracker and queues its bytes as one step, so a prompt tap validated
-	// against the epoch is queued before any input that advances it.
+	// tracker and queues its bytes as one step.
 	inputMu       sync.Mutex
 	inputDone     chan struct{}
 	inputDoneOnce sync.Once
@@ -202,11 +201,10 @@ func (s *Session) stateInfoLocked(withEvents bool, after uint64) *SessionState {
 		return nil
 	}
 	state := &SessionState{
-		State:       base.SessionExited,
-		Confidence:  base.ConfidenceSignal,
-		Reason:      "exit",
-		ExitCode:    copyInt(s.entry.ExitCode),
-		PromptEpoch: 1,
+		State:      base.SessionExited,
+		Confidence: base.ConfidenceSignal,
+		Reason:     "exit",
+		ExitCode:   copyInt(s.entry.ExitCode),
 	}
 	if s.entry.FinishedAt != nil {
 		state.Since = *s.entry.FinishedAt
@@ -224,15 +222,6 @@ func (s *Session) notifyState() {
 		default:
 		}
 	}
-}
-
-// CurrentPrompt inspects the screen now and returns the detected prompt
-// with its epoch, or nil when there is none or state detection is off.
-func (s *Session) CurrentPrompt() *SessionPrompt {
-	if s.state == nil {
-		return nil
-	}
-	return s.state.currentPrompt()
 }
 
 // historyInfo fills the recorded output bounds of info.

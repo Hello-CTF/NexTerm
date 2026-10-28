@@ -121,7 +121,7 @@ function deliver(tabId: string): void {
   const prefs = getNotificationPrefs();
   const wanted =
     awareness.state === "needs_me"
-      ? prefs.needsMe && (!awareness.inferred || prefs.inferred)
+      ? prefs.needsMe
       : prefs.finished && awareness.notable;
   if (!wanted) return;
   // The user sees the tab: its badge is enough.

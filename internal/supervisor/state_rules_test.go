@@ -53,7 +53,7 @@ func TestStateRuleDecidesAtTheIdleInspection(t *testing.T) {
 	if last.Kind != base.SessionEventState || last.RuleID != waiting.ID {
 		t.Fatalf("state event = %+v", last)
 	}
-	// A redraw holds the rule's needs_me like a detected prompt.
+	// A redraw holds the rule's needs_me.
 	h.out(time.Second, "\r\x1b[KAgent: Waiting for your review")
 	h.expect(base.SessionNeedsMe, base.ConfidenceRule)
 	// Input clears it and drops the rule.
@@ -64,20 +64,17 @@ func TestStateRuleDecidesAtTheIdleInspection(t *testing.T) {
 	}
 }
 
-func TestStateRuleOverridesAPromptShape(t *testing.T) {
+func TestStateRuleSetsIdleOverAScreenMatch(t *testing.T) {
 	h := newHarness(t)
 	h.withRules(testRuleSet(t, bottomRule(`Overwrite config\.yaml\?`, base.SessionIdle)))
 	h.out(time.Second, "Overwrite config.yaml? [y/N] ")
 	h.idle()
-	got := h.expect(base.SessionIdle, base.ConfidenceRule)
-	if got.Prompt == nil || got.Prompt.Kind != "yesno" {
-		t.Fatalf("the detected prompt should stay published for taps: %+v", got.Prompt)
-	}
-	// Without the rule the same screen needs the user.
+	h.expect(base.SessionIdle, base.ConfidenceRule)
+	// Without the rule the same screen is just idle output.
 	other := newHarness(t)
 	other.out(time.Second, "Overwrite config.yaml? [y/N] ")
 	other.idle()
-	other.expect(base.SessionNeedsMe, base.ConfidenceHeuristic)
+	other.expect(base.SessionIdle, base.ConfidenceSignal)
 }
 
 func TestStateRuleKeepsAQuietSessionRunning(t *testing.T) {

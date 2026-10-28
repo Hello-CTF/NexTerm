@@ -254,8 +254,6 @@ func (c *serverConn) serve() {
 			c.handleResize(payload)
 		case frameStateSeen:
 			c.handleStateSeen(payload)
-		case frameTapPrompt:
-			c.handleTapPrompt(payload)
 		case frameKill:
 			c.handleKill()
 		case frameGetVersions:
@@ -660,32 +658,6 @@ func (c *serverConn) handleStateSeen(payload []byte) {
 		return
 	}
 	_ = c.reply(frameOK, struct{}{})
-}
-
-// handleTapPrompt answers the attached session's prompt. It runs on the
-// frame loop: the client sends it only after its earlier input frames were
-// acknowledged, so the keys follow that input.
-func (c *serverConn) handleTapPrompt(payload []byte) {
-	attachment := c.attached()
-	if attachment == nil {
-		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "tap frame without attach"})
-		return
-	}
-	var msg tapPromptMsg
-	if err := unmarshalFrame(payload, &msg); err != nil {
-		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
-		return
-	}
-	if err := checkAttached(c.server.supervisor, attachment, msg.ExpectGeneration, msg.ExpectIncarnation); err != nil {
-		c.replyError(frameError, errorMessage(err))
-		return
-	}
-	sent, err := attachment.TapPrompt(msg.Epoch, msg.Fingerprint, msg.Option)
-	if err != nil {
-		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
-		return
-	}
-	_ = c.reply(frameOK, tapPromptReply{Sent: sent})
 }
 
 func (c *serverConn) handleKill() {

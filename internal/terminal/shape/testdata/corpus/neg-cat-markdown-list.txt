@@ -1,8 +1,0 @@
-# kind: none
----
-dev@build:~/notes$ cat todo.md
-Things to check:
-1. Rotate the logs
-2. Renew the certificate
-3. Update the base image
-dev@build:~/notes$ 

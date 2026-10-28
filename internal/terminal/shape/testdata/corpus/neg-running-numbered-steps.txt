@@ -1,6 +1,0 @@
-# kind: none
----
-Provisioning:
-1. Fetching sources
-2. Building
-

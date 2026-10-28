@@ -31,27 +31,28 @@ describe("device notification preferences", () => {
 
   it("restores booleans and defaults each invalid or missing field independently", () => {
     localStorage.setItem(key, JSON.stringify({ system: false, needsMe: "false", inferred: true, finished: 0 }));
-    expect(getNotificationPrefs()).toEqual({ system: false, needsMe: true, inferred: true, finished: true, ai: true });
-    localStorage.setItem(key, JSON.stringify({ system: true, needsMe: false, inferred: false, finished: false, ai: false }));
+    // A key an earlier version stored is ignored.
+    expect(getNotificationPrefs()).toEqual({ system: false, needsMe: true, finished: true, ai: true });
+    localStorage.setItem(key, JSON.stringify({ system: true, needsMe: false, finished: false, ai: false }));
     resetNotificationPrefsForTest();
-    expect(getNotificationPrefs()).toEqual({ system: true, needsMe: false, inferred: false, finished: false, ai: false });
+    expect(getNotificationPrefs()).toEqual({ system: true, needsMe: false, finished: false, ai: false });
   });
 
   it("persists a merged choice and notifies only current subscribers", () => {
     const changed = vi.fn();
     const stop = subscribeNotificationPrefs(changed);
     try {
-      setNotificationPrefs({ system: false, inferred: true });
+      setNotificationPrefs({ system: false, ai: false });
       expect(changed).toHaveBeenCalledOnce();
-      expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ ...DEFAULT_NOTIFICATION_PREFS, system: false, inferred: true });
+      expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ ...DEFAULT_NOTIFICATION_PREFS, system: false, ai: false });
       resetNotificationPrefsForTest();
       expect(getNotificationPrefs().system).toBe(false);
     } finally {
       stop();
     }
-    setNotificationPrefs({ ai: false });
+    setNotificationPrefs({ finished: false });
     expect(changed).toHaveBeenCalledOnce();
-    expect(getNotificationPrefs()).toMatchObject({ system: false, inferred: true, ai: false });
+    expect(getNotificationPrefs()).toMatchObject({ system: false, ai: false, finished: false });
   });
 
   it("applies the current device choice even when persistence is unavailable", () => {

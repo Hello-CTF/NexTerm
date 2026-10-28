@@ -24,8 +24,7 @@ export type BackgroundTab = Omit<LiveTabInfo, "lastOutputMsAgo"> & {
   // The row comes from the cross-host listing: its host has no session here that was listed directly, such as a
   // device reached through the server. Taking it over goes through this host.
   aggregateHost?: AggregateHost;
-  // From the cross-host listing: the state was inferred from the screen shape, and the finished command's exit code.
-  attentionInferred?: boolean;
+  // From the cross-host listing: the finished command's exit code.
   exitCode?: number | null;
 };
 
@@ -279,7 +278,6 @@ export function aggregateBackgroundTabs(
       hostClock: true,
       attachedElsewhere: item.attached || undefined,
       aggregateHost: host,
-      attentionInferred: item.attention.confidence === "heuristic" || undefined,
       exitCode: item.attention.exitCode ?? item.exitCode,
     });
   }

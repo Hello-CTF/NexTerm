@@ -90,10 +90,10 @@ function wallBadge(awareness: SessionAwareness | undefined, state: AwarenessStat
     const code = awareness?.exitCode;
     if (typeof code !== "number") return null;
     return code === 0
-      ? { kind: "just_finished", inferred: false, label: "已退出，成功", outcome: "ok" }
-      : { kind: "just_finished", inferred: false, label: `已退出，退出码 ${code}`, outcome: "failed" };
+      ? { kind: "just_finished", label: "已退出，成功", outcome: "ok" }
+      : { kind: "just_finished", label: `已退出，退出码 ${code}`, outcome: "failed" };
   }
-  if (!awareness) return state === "unknown" ? awarenessBadge({ state, inferred: false, seen: false, notable: false, version: 0 }) : null;
+  if (!awareness) return state === "unknown" ? awarenessBadge({ state, seen: false, notable: false, version: 0 }) : null;
   return awarenessBadge({ ...awareness, state, seen: false });
 }
 

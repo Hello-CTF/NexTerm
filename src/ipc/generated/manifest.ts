@@ -2611,14 +2611,6 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalPauseRequest", ts: "TerminalPauseRequest" },
       output: { go: "any", ts: "unknown" },
     },
-    "terminal_prompt_tap": {
-      scope: "attention",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.promptTapRequest", ts: "PromptTapRequest" },
-      output: { go: "any", ts: "unknown" },
-    },
     "terminal_record_start": {
       nested: false,
       channel: false,
@@ -4271,10 +4263,6 @@ export interface IPCCommandTypeMap {
   };
   "terminal_pause": {
     input: contractTypes.TerminalPauseRequest;
-    output: unknown;
-  };
-  "terminal_prompt_tap": {
-    input: contractTypes.PromptTapRequest;
     output: unknown;
   };
   "terminal_recover": {

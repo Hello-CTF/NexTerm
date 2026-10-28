@@ -1,9 +1,0 @@
-# kind: choice
-# options: Cheese | Olives | Onion
-# cursor-index: 0
-# cursor: 0,43
----
-? Select toppings (Press <space> to select)
-❯◯ Cheese
- ◉ Olives
- ◯ Onion

@@ -1,6 +1,0 @@
-# kind: none
----
-dev@build:~/notes$ cat quote.md
-> Simplicity is prerequisite for reliability.
-  -- someone
-dev@build:~/notes$ 

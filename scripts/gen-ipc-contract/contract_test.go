@@ -639,7 +639,6 @@ func TestAttentionContracts(t *testing.T) {
 	for name, want := range map[string]string{
 		"terminal_attention_list":     "AttentionEvent[]",
 		"terminal_attention_seen":     "unknown",
-		"terminal_prompt_tap":         "unknown",
 		"terminal_sessions_aggregate": "AggregateList",
 	} {
 		command, ok := commands[name]

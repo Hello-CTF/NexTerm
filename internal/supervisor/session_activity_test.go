@@ -226,7 +226,7 @@ func TestListFromHelperWithoutActivityDecodesAsUnknown(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	// A protocol 3 helper that predates activity reporting.
 	listed := []byte(`[{"id":"old","created_at":"2026-01-02T03:04:05Z","incarnation":"inc","cols":80,"rows":24,"dead":false,` +
-		`"history_base":0,"history_next":12,"state":{"state":"needs_me","since":"2026-01-02T03:05:00Z","confidence":"signal","prompt_epoch":1}}]`)
+		`"history_base":0,"history_next":12,"state":{"state":"needs_me","since":"2026-01-02T03:05:00Z","confidence":"signal"}}]`)
 	client := NewClient(fakeListServer(t, stateDir, listed), stateDir)
 	descriptors, err := NewRemoteProvider(client).ListDurableDescriptors(context.Background())
 	if err != nil {

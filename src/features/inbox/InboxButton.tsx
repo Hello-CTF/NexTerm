@@ -5,7 +5,6 @@ import { wailsNoDragRegionStyle } from "../../app/platform";
 import { TabAttentionBadge } from "../../app/workspace/tabStrip";
 import { describeError } from "../../ui/errorText";
 import { IconBell, IconCheck } from "../../ui/icons";
-import { SessionPromptChoices } from "../terminal/ChoiceButtons";
 import { InboxGuidance } from "./InboxGuidance";
 import { isInboxGuidanceDismissed, useInboxGuidanceDismissed } from "./firstRunGuidance";
 import { markInboxEntrySeen, openAggregateEntry, openInboxTab, useInboxEntries, type InboxEntry } from "./inbox";
@@ -86,17 +85,6 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
           <IconCheck size={14} />
         </button>
       </div>
-      {entry.awareness.state === "needs_me" && entry.awareness.prompt && (
-        <div className="pl-[18px] pt-1" style={wailsNoDragRegionStyle} data-inbox-actions="">
-          <SessionPromptChoices
-            tabId={entry.tabId}
-            awareness={entry.awareness}
-            attachedHere={shown}
-            onOpen={reachable ? open : undefined}
-            opening={opening}
-          />
-        </div>
-      )}
     </li>
   );
 }

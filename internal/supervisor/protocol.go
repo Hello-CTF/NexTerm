@@ -82,12 +82,6 @@ const (
 	// session's needs_me or just_finished state to its user (stateSeenMsg);
 	// the helper answers frameOK and pushes the seen state to every client.
 	frameStateSeen frameType = 34
-
-	// frameTapPrompt answers the attached session's detected prompt by one
-	// of its options (tapPromptMsg); the helper validates the prompt epoch
-	// and fingerprint against a fresh inspection, writes the option's keys
-	// and answers frameOK with tapPromptReply.
-	frameTapPrompt frameType = 35
 )
 
 // Every connection uses windowed input and credited output. The client may keep
@@ -229,22 +223,6 @@ type stateSeenMsg struct {
 	Since time.Time `json:"since"`
 }
 
-// tapPromptMsg is the payload of frameTapPrompt: the helper generation and
-// session incarnation, the prompt epoch and fingerprint the client showed,
-// and the index of the chosen option.
-type tapPromptMsg struct {
-	ExpectGeneration  string `json:"expect_generation"`
-	ExpectIncarnation string `json:"expect_incarnation"`
-	Epoch             uint64 `json:"epoch"`
-	Fingerprint       string `json:"fingerprint"`
-	Option            int    `json:"option"`
-}
-
-// tapPromptReply is the frameOK payload of a tap: the bytes written.
-type tapPromptReply struct {
-	Sent string `json:"sent"`
-}
-
 type versionsMsg struct {
 	Event uint64 `json:"event"`
 	Grid  uint64 `json:"grid"`
@@ -299,7 +277,6 @@ const (
 	codeGenerationMismatch = "generation_mismatch"
 	// codeStateSeenUnsupported is only sent for a state_seen request.
 	codeStateSeenUnsupported = "state_seen_unsupported"
-	codeStalePrompt          = "stale_prompt"
 	codeUnsupported          = "unsupported"
 	codeLimit                = "limit"
 )
@@ -332,8 +309,6 @@ func errorCode(err error) string {
 		return codeGenerationMismatch
 	case errors.Is(err, ErrStateSeenUnsupported):
 		return codeStateSeenUnsupported
-	case errors.Is(err, ErrStalePrompt):
-		return codeStalePrompt
 	case errors.Is(err, ErrUnsupported):
 		return codeUnsupported
 	default:
@@ -415,8 +390,6 @@ func errorSentinel(code string) error {
 		return ErrGenerationMismatch
 	case codeStateSeenUnsupported:
 		return ErrStateSeenUnsupported
-	case codeStalePrompt:
-		return ErrStalePrompt
 	case codeUnsupported:
 		return ErrUnsupported
 	case codeLimit:

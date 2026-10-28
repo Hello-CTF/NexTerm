@@ -78,9 +78,8 @@ describe("session awareness store", () => {
     expect(tabAwareness("T3")?.state).toBe("unknown");
   });
 
-  it("shows inferred states lighter, hides seen and quiet states, and never guesses an unknown state", () => {
-    expect(awarenessBadge(tabFrom(event("T", 1)))).toMatchObject({ kind: "needs_me", inferred: false });
-    expect(awarenessBadge(tabFrom(event("T", 1, { confidence: "heuristic" })))).toMatchObject({ kind: "needs_me", inferred: true });
+  it("hides seen and quiet states, and never guesses an unknown state", () => {
+    expect(awarenessBadge(tabFrom(event("T", 1)))).toMatchObject({ kind: "needs_me" });
     expect(awarenessBadge(tabFrom(event("T", 1, { seen: true })))).toBeNull();
     expect(awarenessBadge(tabFrom(event("T", 1, { state: "just_finished", exitCode: 2 })))?.label).toContain("退出码 2");
     expect(awarenessBadge(tabFrom(event("T", 1, { state: "idle" })))).toBeNull();

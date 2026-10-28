@@ -11,7 +11,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
-	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
@@ -39,7 +38,6 @@ func TestIPCErrorPreservesControlAndLifecycleCodes(t *testing.T) {
 		code ipc.Code
 	}{
 		{err: ErrSessionNotFound, code: ipc.CodeNotFound},
-		{err: fmt.Errorf("tap: %w", base.ErrStalePrompt), code: ipc.Code("stale_prompt")},
 		{err: ErrTabNotFound, code: ipc.CodeNotFound},
 		{err: durable.ErrNotFound, code: ipc.CodeNotFound},
 		{err: ErrDisconnected, code: ipc.CodeDisconnected},

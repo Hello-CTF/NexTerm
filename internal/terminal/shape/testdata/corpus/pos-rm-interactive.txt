@@ -1,4 +1,0 @@
-# kind: question
----
-dev@build:~/tmp$ rm -i notes.txt
-rm: remove regular file 'notes.txt'? 

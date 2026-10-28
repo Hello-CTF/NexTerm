@@ -3,12 +3,8 @@ package supervisor
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sort"
-	"strings"
 	"time"
-
-	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 )
 
 // listOptions selects the events a list reply carries.
@@ -79,7 +75,7 @@ func (a *Attachment) SessionState(after uint64) *SessionState {
 	return s.stateInfoLocked(true, after)
 }
 
-// StateUpdates is signalled when the session's attention state, prompt or
+// StateUpdates is signalled when the session's attention state or
 // events change. Signals coalesce; read SessionState after each one.
 func (a *Attachment) StateUpdates() <-chan struct{} {
 	return a.stateNotify
@@ -99,60 +95,4 @@ func (a *Attachment) MarkStateSeen(since time.Time) error {
 	}
 	tracker.markSeen(since)
 	return nil
-}
-
-// interactiveShell reports whether command starts an interactive shell,
-// whose own process group in the terminal foreground means the shell reads
-// the input itself.
-func interactiveShell(command []string) bool {
-	if len(command) == 0 || !interactiveShellArgs(command[1:]) {
-		return false
-	}
-	if _, err := shellintegr.Detect(command[0]); err == nil {
-		return true
-	}
-	name := strings.TrimSuffix(strings.ToLower(filepath.Base(command[0])), ".exe")
-	switch strings.TrimPrefix(name, "-") {
-	case "sh", "ash", "dash", "ksh", "mksh", "csh", "tcsh", "pwsh", "powershell", "nu", "elvish", "xonsh":
-		return true
-	}
-	return false
-}
-
-// appCursor reports DECCKM (application cursor keys) at the end of the
-// recorded output.
-func (h *history) appCursor() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.modes.AppCursor
-}
-
-// TapPrompt answers the session's detected prompt with option when the
-// prompt shown to the user, identified by epoch and fingerprint, is still
-// on screen and tappable, and returns the bytes written. Any mismatch fails
-// with ErrStalePrompt and writes nothing; a valid tap consumes the epoch.
-// It fails with ErrUnsupported when state detection is disabled.
-func (a *Attachment) TapPrompt(epoch uint64, fingerprint string, option int) (string, error) {
-	if a.closed() {
-		return "", ErrClosed
-	}
-	s := a.session
-	s.mu.RLock()
-	tracker := s.state
-	s.mu.RUnlock()
-	if tracker == nil {
-		return "", fmt.Errorf("%w: session state detection is disabled", ErrUnsupported)
-	}
-	// Validation, the epoch it consumes and the queued keys are one step
-	// under the input lock: no other input can be queued between them.
-	s.inputMu.Lock()
-	defer s.inputMu.Unlock()
-	send, err := tracker.tap(epoch, fingerprint, option)
-	if err != nil {
-		return "", err
-	}
-	if _, err := s.enqueueInputLocked(a.ctx, []byte(send), true); err != nil {
-		return "", err
-	}
-	return send, nil
 }

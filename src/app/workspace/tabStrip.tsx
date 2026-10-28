@@ -103,8 +103,7 @@ export function TabPersistenceMark({ tab, part = "all" }: { tab: AppTab; part?: 
 
 // The attention badge sits before the title at the persistence icon's scale, and each state has its own shape so
 // it never depends on colour: "!" in a disc for needs_me, a check for a just_finished command that succeeded (a slate cross when it failed; red stays for the persistence failure dot), a turning ring while a
-// background tab runs and "?" when the state cannot be known. Inferred states (from the screen shape) are drawn
-// lighter: "!" in an outlined ring, a faded check. A tab the user is on shows no running badge, and a needs_me or
+// background tab runs and "?" when the state cannot be known. A tab the user is on shows no running badge, and a needs_me or
 // just_finished state seen on any device shows nothing.
 export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
   if (!badge) return null;
@@ -113,16 +112,13 @@ export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
     "aria-label": badge.label,
     title: badge.label,
     "data-attention": badge.kind,
-    "data-inferred": badge.inferred ? "true" : undefined,
   } as const;
   switch (badge.kind) {
     case "needs_me":
       return (
         <span
           {...common}
-          className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none ${
-            badge.inferred ? "border border-amber-500/80 text-[var(--nx-fg-warning)]" : "bg-amber-400 text-slate-900"
-          }`}
+          className="flex h-3 w-3 shrink-0 items-center justify-center rounded-full bg-amber-400 text-[9px] font-bold leading-none text-slate-900"
         >
           !
         </span>
@@ -132,9 +128,7 @@ export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
         <span
           {...common}
           data-outcome={badge.outcome}
-          className={`flex shrink-0 items-center ${badge.outcome === "failed" ? "text-slate-400" : "text-green-500"} ${
-            badge.inferred ? "opacity-60" : ""
-          }`}
+          className={`flex shrink-0 items-center ${badge.outcome === "failed" ? "text-slate-400" : "text-green-500"}`}
         >
           {badge.outcome === "failed" ? <IconClose size={11} /> : <IconCheck size={11} />}
         </span>

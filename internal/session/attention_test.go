@@ -181,15 +181,6 @@ func TestAttentionObservedForTabsOutsideAHelper(t *testing.T) {
 		t.Fatalf("idle state kept the notification text: %+v", cleared)
 	}
 
-	// A prompt shape after the output pauses is inferred.
-	if err := channel.emit([]byte("Overwrite the file? [y/N] ")); err != nil {
-		t.Fatal(err)
-	}
-	inferred := recorder.wait(t, tab.ID, "inferred prompt", attentionIs(base.SessionNeedsMe, base.ConfidenceHeuristic, AttentionSourceObserved))
-	if inferred.Reason != "prompt" {
-		t.Fatalf("inferred state %+v", inferred)
-	}
-
 	// The process exit ends the observed state.
 	_ = channel.Close()
 	recorder.wait(t, tab.ID, "exit", func(event AttentionEvent) bool { return event.State == base.SessionExited })

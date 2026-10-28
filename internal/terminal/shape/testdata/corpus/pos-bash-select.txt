@@ -1,9 +1,0 @@
-# kind: choice
-# options: build | test | deploy
-# keys: 1 | 2 | 3
----
-dev@build:~/app$ ./run.sh
-1) build
-2) test
-3) deploy
-#? 

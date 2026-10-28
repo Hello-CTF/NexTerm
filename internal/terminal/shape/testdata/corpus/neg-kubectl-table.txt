@@ -1,7 +1,0 @@
-# kind: none
----
-dev@build:~$ kubectl get pods
-NAME                      READY   STATUS    RESTARTS   AGE
-api-7d9f8c6b5-abcde       1/1     Running   0          3d
-worker-5c4b3a2d1-fghij    1/1     Running   2          3d
-dev@build:~$ 

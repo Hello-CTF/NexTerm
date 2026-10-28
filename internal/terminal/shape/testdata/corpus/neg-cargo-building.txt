@@ -1,6 +1,0 @@
-# kind: none
----
-   Compiling serde v1.0.200
-   Compiling tokio v1.37.0
-   Compiling app v0.1.0 (/home/dev/app)
-    Building [=============>           ] 118/203: tokio

@@ -23,7 +23,7 @@ describe("notification prefs", () => {
 
   it("reads stored values and falls back per field for invalid ones", () => {
     localStorage.setItem(KEY, JSON.stringify({ system: false, needsMe: "yes", inferred: true, finished: null }));
-    expect(getNotificationPrefs()).toEqual({ system: false, needsMe: true, inferred: true, finished: true, ai: true });
+    expect(getNotificationPrefs()).toEqual({ system: false, needsMe: true, finished: true, ai: true });
   });
 
   it("falls back to defaults for corrupt JSON", () => {
@@ -38,7 +38,7 @@ describe("notification prefs", () => {
     expect(getNotificationPrefs()).toEqual(DEFAULT_NOTIFICATION_PREFS);
   });
 
-  it.each(["system", "needsMe", "inferred", "finished", "ai"] as const)("toggles %s alone and persists it", (key) => {
+  it.each(["system", "needsMe", "finished", "ai"] as const)("toggles %s alone and persists it", (key) => {
     const next = !DEFAULT_NOTIFICATION_PREFS[key];
     setNotificationPrefs({ [key]: next });
     expect(getNotificationPrefs()).toEqual({ ...DEFAULT_NOTIFICATION_PREFS, [key]: next });

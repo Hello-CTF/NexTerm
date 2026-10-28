@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
-	"github.com/Hello-CTF/NexTerm/internal/terminal/shape"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/signals"
 )
 
@@ -32,8 +31,8 @@ func benchTUIRedraw() []byte {
 }
 
 // BenchmarkStateOutput is the per-chunk cost detection adds to the helper's
-// output path: the signal scanner and the screen model. The prompt detector
-// does not run here; it runs once per pause (BenchmarkStateInspect).
+// output path: the signal scanner and the screen model. The state rules
+// do not run here; they run once per pause (BenchmarkStateInspect).
 func BenchmarkStateOutput(b *testing.B) {
 	for name, chunk := range map[string][]byte{"build-log": benchBuildLog(), "tui-redraw": benchTUIRedraw()} {
 		b.Run(name, func(b *testing.B) {
@@ -101,7 +100,7 @@ func BenchmarkHistoryAppend(b *testing.B) {
 	}
 }
 
-// BenchmarkStateInspect is one idle transition: snapshot plus detector.
+// BenchmarkStateInspect is one idle transition: snapshot plus rule match.
 func BenchmarkStateInspect(b *testing.B) {
 	for _, size := range [][2]int{{80, 24}, {200, 60}} {
 		b.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(b *testing.B) {
@@ -113,9 +112,6 @@ func BenchmarkStateInspect(b *testing.B) {
 				tracker.mu.Lock()
 				tracker.inspectLocked(nil)
 				tracker.mu.Unlock()
-			}
-			if tracker.prompt.Kind != shape.KindChoice {
-				b.Fatalf("detected %s", tracker.prompt.Kind)
 			}
 		})
 	}

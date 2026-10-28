@@ -1,4 +1,0 @@
-# kind: none
----
-dev@build:~/app$ npm install
-[##########........] \ reify:typescript: timing reifyNode:node_modules/typescript

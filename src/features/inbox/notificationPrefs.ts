@@ -5,17 +5,15 @@ import { useSyncExternalStore } from "react";
 export interface NotificationPrefs {
   // system lets this device show operating system notifications at all.
   system: boolean;
-  // needsMe: a session rang the bell, sent a notification or waits at a prompt.
+  // needsMe: a session rang the bell, sent a notification or matched a state rule that asks for the user.
   needsMe: boolean;
-  // inferred: also for a prompt guessed from the screen shape, which can be wrong.
-  inferred: boolean;
   // finished: a long command (the helper's notable threshold) finished.
   finished: boolean;
   // ai: the AI assistant's notify tool.
   ai: boolean;
 }
 
-export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { system: true, needsMe: true, inferred: false, finished: true, ai: true };
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { system: true, needsMe: true, finished: true, ai: true };
 
 const STORAGE_KEY = "nexterm.notifications.v1";
 
@@ -32,7 +30,6 @@ function read(): NotificationPrefs {
     return {
       system: pick("system"),
       needsMe: pick("needsMe"),
-      inferred: pick("inferred"),
       finished: pick("finished"),
       ai: pick("ai"),
     };
