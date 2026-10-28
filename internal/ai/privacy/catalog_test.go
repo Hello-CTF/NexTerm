@@ -64,7 +64,7 @@ func newCatalogFixture(t *testing.T, installation Installation, files map[string
 		fixture.paths = append(fixture.paths, r.URL.Path)
 		fixture.mu.Unlock()
 		if r.URL.Path == "/api/models/"+modelRepository+"/refs" {
-			fmt.Fprintf(w, `{"tags":[{"name":"v0.1.2","targetCommit":%q},{"name":%q,"targetCommit":%q},{"name":"v2.0.0-rc.1","targetCommit":%q},{"name":"not-semver","targetCommit":%q}]}`, strings.Repeat("b", 40), installation.Version, installation.Revision, strings.Repeat("c", 40), strings.Repeat("d", 40))
+			fmt.Fprintf(w, `{"tags":[{"name":"v0.1.2","targetCommit":%q},{"name":%q,"targetCommit":%q},{"name":"v1.0.0","targetCommit":%q},{"name":"v2.0.0-rc.1","targetCommit":%q},{"name":"not-semver","targetCommit":%q}]}`, strings.Repeat("b", 40), installation.Version, installation.Revision, strings.Repeat("e", 40), strings.Repeat("c", 40), strings.Repeat("d", 40))
 			return
 		}
 		prefix := "/" + modelRepository + "/resolve/" + installation.Revision + "/" + string(installation.Precision) + "/"
@@ -104,7 +104,7 @@ func TestCatalogUsesLatestStableImmutableRevisionAndChecksums(t *testing.T) {
 		t.Fatal(err)
 	}
 	var progress DownloadProgress
-	directory, err := fixture.catalog.Download(t.Context(), t.TempDir(), manifest, func(next DownloadProgress) { progress = next })
+	directory, err := fixture.catalog.Download(t.Context(), t.TempDir(), manifest, func(next DownloadProgress) { progress = next }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestCatalogRejectsCorruptDownloadsAndCleansPartialFiles(t *testing.T) {
 	files[modelFileName(FP16)] = []byte("corrupted")
 	fixture := newCatalogFixture(t, installation, files)
 	root := t.TempDir()
-	if _, err := fixture.catalog.Download(t.Context(), root, installation, nil); err == nil {
+	if _, err := fixture.catalog.Download(t.Context(), root, installation, nil, nil); err == nil {
 		t.Fatal("corrupt model accepted")
 	}
 	entries, err := os.ReadDir(root)
@@ -147,7 +147,7 @@ func TestCatalogCancellationDoesNotPublish(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	root := t.TempDir()
-	_, err := fixture.catalog.Download(ctx, root, installation, func(DownloadProgress) { cancel() })
+	_, err := fixture.catalog.Download(ctx, root, installation, func(DownloadProgress) { cancel() }, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error=%v", err)
 	}
@@ -168,7 +168,7 @@ func TestCatalogRedownloadRepairsCorruptExistingInstallation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, modelFileName(INT8)), []byte("damaged"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	repaired, err := fixture.catalog.Download(t.Context(), root, installation, nil)
+	repaired, err := fixture.catalog.Download(t.Context(), root, installation, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,10 +6,12 @@ import { ModelSelector } from "../ModelSelector";
 import { UsageRing } from "../UsageRing";
 import { modelApi } from "../../../ipc/commands";
 import { ModelPanel } from "../ModelPanel";
+import { PrivacyIndicator, usePrivacyGuard } from "../PrivacyIndicator";
 import { PLAN_MODE_HINT, statusText, MODE_LABEL } from "./aiSidebarShared";
 import type { AiChatCtx } from "./aiChatCtx";
 
 export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
+  const privacyGuard = usePrivacyGuard();
   const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, refCandidates, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permOpen, permError, permScope, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen } = ctx;
   return (
     <>
@@ -259,12 +261,14 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           />
           <button
             className="nx-icon-btn nx-icon-btn-sm"
-            title={DESKTOP ? "添加图片" : "添加图片（也可以直接粘贴）"}
+            title={privacyGuard.enabled ? "已开启 AI 信息脱敏，暂不支持图片" : DESKTOP ? "添加图片" : "添加图片（也可以直接粘贴）"}
             aria-label="添加图片"
+            disabled={privacyGuard.enabled}
             onClick={() => imageInputRef.current?.click()}
           >
             <IconImage size={13} />
           </button>
+          <PrivacyIndicator guard={privacyGuard} />
           <div className="nx-spacer" />
           <UsageRing
             usage={conv.usage}
