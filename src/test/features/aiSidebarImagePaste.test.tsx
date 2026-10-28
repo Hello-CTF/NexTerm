@@ -301,13 +301,13 @@ describe("AiSidebar image paste and attachment", () => {
     await flush();
     const placeholder = () =>
       view!.container.querySelector("textarea")?.getAttribute("placeholder") ?? "";
-    expect(placeholder()).toContain("可直接粘贴图片");
+    expect(placeholder()).toContain("可粘贴图片");
 
     view?.unmount();
     mocks.desktop = true;
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
     await flush();
-    expect(placeholder()).not.toContain("可直接粘贴图片");
+    expect(placeholder()).not.toContain("可粘贴图片");
     expect(placeholder()).toContain("向 NexTerm 提问");
   });
 });

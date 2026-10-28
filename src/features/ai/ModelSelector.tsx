@@ -35,7 +35,10 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
       if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        chipRef.current?.focus();
+      }
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -74,11 +77,13 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
   const active = view?.profiles.find((p) => p.id === view.activeId) ?? null;
 
   return (
-    <div className="relative min-w-0" ref={boxRef}>
+    <div className="relative flex min-w-0 max-w-[220px]" ref={boxRef}>
       <button
         ref={chipRef}
-        className="nx-chip pointer-coarse:min-h-6 max-w-[180px] min-w-0"
+        className="nx-chip pointer-coarse:min-h-6 max-w-full min-w-0"
         title="模型配置（可保存多份模型档案）"
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={toggle}
       >
         {busy ? (

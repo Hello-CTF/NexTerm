@@ -196,6 +196,7 @@ describe("AiSidebar shortcut hints follow keybindings", () => {
   });
 
   it("shows the reclaim hint on the takeover launch button and follows rebinds", () => {
+    click(mounted!.container.querySelector('button[aria-label="更多"]')!);
     const launch = [...(mounted?.container.querySelectorAll("button") ?? [])].find((b) =>
       b.getAttribute("title")?.startsWith("终端接管（实验性功能）"),
     );

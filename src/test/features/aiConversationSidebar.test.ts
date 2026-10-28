@@ -604,6 +604,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("takeover streams narration and closes with a persistent outcome", async () => {
+    click(view!.container.querySelector('button[aria-label="更多"]')!);
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
     await flush();
     await flush();
@@ -622,6 +623,7 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("does not start takeover when the three-choice prompt is aborted", async () => {
     mocks.askChoice.mockResolvedValueOnce("abort");
+    click(view!.container.querySelector('button[aria-label="更多"]')!);
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
     await flush();
     await flush();
@@ -635,6 +637,7 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("starts takeover with allowWrite=false when read-only is selected", async () => {
     mocks.askChoice.mockResolvedValueOnce("readonly");
+    click(view!.container.querySelector('button[aria-label="更多"]')!);
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
     await flush();
     await flush();
@@ -965,6 +968,8 @@ describe("AiSidebar conversation stream UX", () => {
     expect(mocks.reopens.has(chatChannel)).toBe(false);
     expect(mocks.hitlEvents).not.toHaveBeenCalled();
     expect(mocks.hitlSnapshot).not.toHaveBeenCalled();
+
+    click(view!.container.querySelector('button[aria-label="更多"]')!);
 
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
     await flush();

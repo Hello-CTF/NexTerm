@@ -172,44 +172,143 @@
     border-bottom: 0;
   }
 
-  .nx-send-btn {
+  /* Composer toolbar: every control shares one 28px height, 8px radius, 11px
+     text and focus ring. The send button is the only filled accent control. */
+  .nx-ai-composer-actions {
+    --nx-cbar-h: 28px;
+    container-type: inline-size;
+  }
+
+  /* Narrow panel: status chips keep their icon; the full text stays in the tooltip. */
+  @container (max-width: 400px) {
+    .nx-ai-composer-actions .nx-chip-status .nx-chip-text {
+      display: none;
+    }
+    .nx-ai-composer-actions .nx-chip-status {
+      width: var(--nx-cbar-h);
+      padding: 0;
+      justify-content: center;
+    }
+  }
+
+  .nx-cbar-icon,
+  .nx-cbar-btn,
+  .nx-ai-composer-actions .nx-chip {
+    position: relative;
     display: inline-flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    flex: 0 0 auto;
-    width: 30px;
-    height: 30px;
-    border-radius: 9999px;
-    border: 1px solid color-mix(in srgb, var(--color-neutral-700) 70%, transparent);
-    background: color-mix(in srgb, var(--color-neutral-800) 80%, transparent);
-    color: var(--nx-fg);
+    gap: 5px;
+    height: var(--nx-cbar-h);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--nx-fg-soft);
+    font-size: calc(11px * var(--nx-ui-text-factor));
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
     transition:
       background-color 120ms ease,
       border-color 120ms ease,
       color 120ms ease;
   }
+  .nx-cbar-icon {
+    width: var(--nx-cbar-h);
+    padding: 0;
+  }
+  .nx-cbar-btn,
+  .nx-ai-composer-actions .nx-chip {
+    padding: 0 8px;
+    border-color: color-mix(in srgb, var(--nx-border-strong) 70%, transparent);
+  }
+  .nx-ai-composer-actions .nx-chip {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .nx-cbar-icon:hover:not(:disabled),
+  .nx-cbar-btn:hover:not(:disabled),
+  button.nx-chip:hover:not(:disabled) {
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
+  }
+  .nx-cbar-icon:active:not(:disabled),
+  .nx-cbar-btn:active:not(:disabled),
+  button.nx-chip:active:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 22%, var(--nx-bg-raised));
+  }
+  .nx-cbar-icon.is-open,
+  .nx-cbar-btn.is-open {
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
+  }
+  .nx-cbar-btn.is-attention {
+    color: var(--nx-fg-warning);
+  }
+  .nx-cbar-btn.is-error,
+  .nx-chip-status.is-error {
+    color: var(--color-red-400);
+    border-color: color-mix(in srgb, var(--color-red-400) 45%, transparent);
+  }
+  .nx-chip-status {
+    cursor: default;
+  }
+  button.nx-chip-status {
+    cursor: pointer;
+  }
+  .nx-cbar-icon:disabled,
+  .nx-cbar-btn:disabled {
+    opacity: 0.4;
+  }
+  .nx-cbar-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .nx-send-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    background: var(--color-accent);
+    color: #fff;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease,
+      opacity 120ms ease;
+  }
 
   .nx-send-btn:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--color-blue-400) 60%, transparent);
-    background: color-mix(in srgb, var(--color-blue-500) 35%, transparent);
-    color: var(--color-neutral-50);
+    background: color-mix(in srgb, var(--color-accent) 85%, white);
+  }
+
+  .nx-send-btn:active:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 80%, black);
   }
 
   .nx-send-btn:disabled {
-    opacity: 0.45;
+    opacity: 0.4;
     cursor: not-allowed;
   }
 
   .nx-send-btn-stop {
-    border-color: color-mix(in srgb, var(--color-red-400) 55%, transparent);
-    background: color-mix(in srgb, var(--color-red-500) 22%, transparent);
-    color: var(--color-red-200);
+    background: color-mix(in srgb, var(--color-red-500) 80%, transparent);
+    color: #fff;
   }
 
   .nx-send-btn-stop:hover:not(:disabled) {
-    border-color: var(--color-red-400);
-    background: color-mix(in srgb, var(--color-red-500) 40%, transparent);
-    color: var(--color-red-100);
+    background: var(--color-red-500);
+  }
+
+  .nx-send-btn-stop:active:not(:disabled) {
+    background: color-mix(in srgb, var(--color-red-500) 80%, black);
   }
 
   .nx-chip-x {
