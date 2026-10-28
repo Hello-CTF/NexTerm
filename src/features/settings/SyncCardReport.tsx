@@ -18,7 +18,7 @@ function SkippedNewerLine({ entry, labels }: { entry: SkippedNewerEntry; labels:
       {entry.name || entry.id}
       <span className="nx-hint">（{KIND_LABELS[entry.kind] ?? entry.kind}）</span>
       {entry.equalRevision
-        ? ` — ${labels.local}与${labels.remote}修订号相同（${entry.localRevision}），按 Origin 字典序裁决`
+        ? ` — ${labels.local}与${labels.remote}修订号相同（${entry.localRevision}），按设备标识排序决定`
         : ` — ${labels.local}修订 ${entry.localRevision} 较${labels.remote}修订 ${entry.remoteRevision} 新，未覆盖`}
     </li>
   );

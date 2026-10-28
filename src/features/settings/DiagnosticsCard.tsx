@@ -181,7 +181,7 @@ export function DiagnosticsCard() {
       )}
 
       <p className="nx-hint">
-        只对下一次启动生效，最长 30 分钟、约 200 MB，期间会略慢。会记录性能数据、调试日志、系统信息和界面性能统计，不含终端输入输出；已对密码、令牌、私钥脱敏，发送前请自行检查主机名、路径等信息。
+        仅对下次启动生效，最长 30 分钟、约 200 MB，期间运行会略慢。记录性能数据、调试日志和系统信息，不含终端输入输出；密码、令牌、私钥已脱敏，发送前请自行检查主机名、路径等信息。
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {status?.armed ? (

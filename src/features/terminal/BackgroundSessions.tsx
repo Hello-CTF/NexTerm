@@ -717,7 +717,7 @@ export function BackgroundSessions({
     { hostSessionId, showAll, blocked: hostIdentityMismatch || (remoteOwner && needsReconnect) },
   );
   const count = list.length;
-  const hostLabel = showAll ? "全部主机" : (hostName ?? "未知主机");
+  const hostLabel = showAll ? "全部主机" : (hostName ?? "当前主机");
   const now = Date.now();
   const hostScope = showAll ? "all" : hostSession?.kind === "local" || (!remoteOwner && ownerWorkspace?.assetKind === "local") ? "local" : "remote";
   // The all-hosts view groups rows by host; hosts the cross-host listing could not list show as unknown.

@@ -284,7 +284,7 @@ describe("Desktop account sync console", () => {
     await waitForConsole();
 
     expect(document.body.textContent).toContain(
-      "关闭上方内容类型开关不会删除服务端已有副本；在「终端历史」关闭单条录像同步会删除其服务端副本，本机记录保留。",
+      "关闭内容类型开关不会删除服务端已有副本；关闭单条终端录像的同步会删除其服务端副本，本机记录保留。",
     );
   });
 });

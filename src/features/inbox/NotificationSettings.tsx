@@ -56,7 +56,7 @@ export function NotificationSettings() {
         <div className="min-w-0 flex-1">
           <div className="text-[12.5px] text-neutral-200">在此设备弹出系统通知</div>
           <p className="nx-hint mt-0.5">
-            另一个工作区或主机的会话需要你时弹出系统通知，点击回到该终端；正在看的终端不弹出。关闭或系统不支持时改为应用内提示。顶栏铃铛始终列出这些会话。只影响本设备。
+            其他工作区或主机的会话需要你时弹出系统通知，点击回到该终端；正在查看的终端不弹出。关闭或系统不支持时改为应用内提示，顶栏铃铛始终列出这些会话。仅影响本设备。
           </p>
           <p className="nx-hint mt-0.5" role="status">
             {statusText(status)}
