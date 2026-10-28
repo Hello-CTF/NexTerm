@@ -434,4 +434,13 @@ describe("host detail page for a device", () => {
     clickButton(mounted!.container, "打开工作区");
     expect(mocks.connectDevice).toHaveBeenCalledWith(expect.objectContaining({ id: "d-1" }));
   });
+
+  it("does not start the device subtitle with a separator", async () => {
+    routeFleet([{ ...ONLINE_DEVICE, agent: undefined }]);
+    mountView("device/d-1");
+    await flushUntil(() => text().includes("nas-01"));
+    const subtitle = mounted!.container.querySelector("header")?.children[1]?.textContent ?? "";
+    expect(subtitle.length).toBeGreaterThan(0);
+    expect(subtitle.startsWith("·")).toBe(false);
+  });
 });

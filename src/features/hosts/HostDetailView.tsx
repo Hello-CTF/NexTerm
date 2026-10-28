@@ -42,7 +42,7 @@ const ASSET_KIND_LABEL: Record<string, string> = {
   device: "受管设备",
 };
 
-const SECTION_GRID = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,22rem),1fr))] items-start gap-3";
+const SECTION_GRID = "grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3";
 
 function Page({ children }: { children: ReactNode }) {
   return (
@@ -62,8 +62,8 @@ function Notice({ title, hint, action }: { title: string; hint?: string; action?
         <div className="nx-empty-icon">
           <IconServer size={18} />
         </div>
-        <div className="text-[13.5px] font-semibold text-neutral-100">{title}</div>
-        {hint && <div className="max-w-[420px] text-[12px] leading-relaxed text-neutral-500">{hint}</div>}
+        <div className="max-w-full text-[13.5px] font-semibold text-neutral-100 [overflow-wrap:anywhere]">{title}</div>
+        {hint && <div className="max-w-[420px] text-[12px] leading-relaxed text-neutral-500 [overflow-wrap:anywhere]">{hint}</div>}
         {action}
       </div>
     </Page>
@@ -87,7 +87,7 @@ function Header({
     <header className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="shrink-0 text-neutral-400">{icon}</span>
-        <h2 className="m-0 min-w-0 break-all text-[15px] font-semibold text-neutral-100" data-testid="host-detail-name">
+        <h2 className="m-0 min-w-0 text-[15px] [overflow-wrap:anywhere] font-semibold text-neutral-100" data-testid="host-detail-name">
           {name}
         </h2>
         {badges}
@@ -183,8 +183,8 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
         }
         subtitle={
           <>
-            {address && <span className="min-w-0 break-all font-mono">{address}</span>}
-            {asset.note && <span className="min-w-0 break-words">{asset.note}</span>}
+            {address && <span className="min-w-0 font-mono [overflow-wrap:anywhere]">{address}</span>}
+            {asset.note && <span className="min-w-0 [overflow-wrap:anywhere]">{asset.note}</span>}
           </>
         }
         actions={
@@ -336,6 +336,19 @@ function DeviceHostDetail({
   const blockReason = deviceOpenBlockReason(device, online);
   const status = revoked ? "已吊销" : !agent ? "未接入 Agent" : online ? "在线" : "离线";
   const statusTone = revoked ? "text-red-300" : online ? "text-green-300" : "text-neutral-400";
+  const subtitleParts: { key: string; text: string; className?: string; title?: string }[] = [];
+  if (agent?.platform) subtitleParts.push({ key: "platform", text: PLATFORM_LABELS[agent.platform.toLowerCase()] ?? agent.platform });
+  if (agent?.app_version) subtitleParts.push({ key: "version", text: `v${agent.app_version.replace(/^v/i, "")}` });
+  if (revoked) subtitleParts.push({ key: "seen", text: `撤销于 ${formatTime(device.revoked_at)}`, className: "text-red-300" });
+  else if (lastSeenAt) subtitleParts.push({ key: "seen", text: `${relativeTime(lastSeenAt, now)}上报`, title: formatTime(lastSeenAt) });
+  else subtitleParts.push({ key: "seen", text: "尚未上报" });
+  if (agent) {
+    subtitleParts.push({
+      key: "terminal",
+      text: `远程终端${agent.terminal_enabled ? "已开启" : "已关闭"}`,
+      className: agent.terminal_enabled ? undefined : "text-amber-300",
+    });
+  }
   return (
     <Page>
       <Header
@@ -348,26 +361,16 @@ function DeviceHostDetail({
               <span className="nx-dot" aria-hidden="true" />
               {status}
             </span>
-            {isAdmin && device.owner && <span className="nx-badge nx-badge-blue shrink-0">{device.owner.username}</span>}
+            {isAdmin && device.owner && <span className="nx-badge nx-badge-blue min-w-0 max-w-full truncate" title={device.owner.username}>{device.owner.username}</span>}
           </>
         }
         subtitle={
-          <>
-            {agent?.platform && <span>{PLATFORM_LABELS[agent.platform.toLowerCase()] ?? agent.platform}</span>}
-            {agent?.app_version && <span>· v{agent.app_version.replace(/^v/i, "")}</span>}
-            {revoked ? (
-              <span className="text-red-300">· 撤销于 {formatTime(device.revoked_at)}</span>
-            ) : lastSeenAt ? (
-              <span title={formatTime(lastSeenAt)}>· {relativeTime(lastSeenAt, now)}上报</span>
-            ) : (
-              <span>· 尚未上报</span>
-            )}
-            {agent && (
-              <span className={agent.terminal_enabled ? "" : "text-amber-300"}>
-                · 远程终端{agent.terminal_enabled ? "已开启" : "已关闭"}
-              </span>
-            )}
-          </>
+          subtitleParts.map((part, index) => (
+            <span key={part.key} className={part.className} title={part.title}>
+              {index > 0 && "· "}
+              {part.text}
+            </span>
+          ))
         }
         actions={
           <>

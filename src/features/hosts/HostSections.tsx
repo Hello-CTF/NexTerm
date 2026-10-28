@@ -103,8 +103,13 @@ export function SessionsSection({ workspace }: { workspace: Workspace | undefine
         <SectionHint>尚未打开这台主机的工作区。</SectionHint>
       ) : (
         <>
-          <div className="text-[12px] text-neutral-400">
-            工作区「{workspace.title}」 · <span data-testid="host-session-status">{status}</span>
+          <div className="flex min-w-0 items-baseline gap-1 text-[12px] text-neutral-400">
+            <span className="min-w-0 truncate" title={workspace.title}>
+              工作区「{workspace.title}」
+            </span>
+            <span className="shrink-0">
+              · <span data-testid="host-session-status">{status}</span>
+            </span>
           </div>
           {tabs.length === 0 ? (
             <SectionHint>工作区里还没有标签。</SectionHint>
@@ -115,6 +120,7 @@ export function SessionsSection({ workspace }: { workspace: Workspace | undefine
                   <button
                     type="button"
                     className="nx-row nx-row-oneline w-full text-left"
+                    title={tab.title}
                     onClick={() => setActiveTab(tab.id)}
                   >
                     <span className="nx-row-name min-w-0 flex-auto truncate">{tab.title}</span>
@@ -223,7 +229,7 @@ function SchemaList({ connId, visible }: { connId: string; visible: boolean }) {
   return (
     <div className="flex flex-wrap gap-1" aria-label="库列表">
       {schemas.slice(0, MAX_SCHEMAS).map((schema) => (
-        <span key={schema} className="nx-badge max-w-full truncate">
+        <span key={schema} className="nx-badge max-w-full truncate" title={schema}>
           {schema}
         </span>
       ))}
@@ -240,9 +246,9 @@ function DatabaseRow({ database, relation, visible }: { database: Asset; relatio
   return (
     <li className="flex min-w-0 flex-col gap-1 border-t border-neutral-800/60 pt-1.5 first:border-t-0 first:pt-0">
       <div className="flex min-w-0 flex-wrap items-center gap-2 text-[12px]">
-        <span className="min-w-0 truncate font-medium text-neutral-100">{database.name}</span>
+        <span className="min-w-0 max-w-full truncate font-medium text-neutral-100" title={database.name}>{database.name}</span>
         {dbKind && <span className="nx-badge shrink-0">{DB_KIND_LABEL[dbKind]}</span>}
-        {address && <span className="nx-hint min-w-0 truncate text-[11px]">{address}</span>}
+        {address && <span className="nx-hint min-w-0 max-w-full truncate text-[11px]" title={address}>{address}</span>}
         {relation && <span className="nx-badge shrink-0">{relation}</span>}
         <span className="nx-spacer" />
         <span className={`shrink-0 text-[11px] ${open ? "text-green-300" : "text-neutral-500"}`}>{open ? "已连接" : "未连接"}</span>
@@ -376,7 +382,7 @@ export function SshHealthSection({
           <SectionHint>
             {sessionId
               ? "通过当前会话读取负载、内存、磁盘和运行时长。"
-              : "未连接时只检查可达性；打开工作区后可读取负载、内存、磁盘和运行时长"}
+              : "未连接时只检查可达性；打开工作区后可读取负载、内存、磁盘和运行时长。"}
           </SectionHint>
           {viaJump && !sessionId && <SectionHint>这台主机经跳板机连接，检查时会登录跳板机。</SectionHint>}
         </>
@@ -389,11 +395,11 @@ export function SshHealthSection({
         </div>
       ) : (
         <>
-          <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-1 text-[12px] sm:grid-cols-4">
+          <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12px]">
             {rows.map((row) => (
               <div key={row.label} className="min-w-0">
                 <dt className="nx-hint text-[11px]">{row.label}</dt>
-                <dd className="m-0 font-mono text-neutral-100">{row.value}</dd>
+                <dd className="m-0 break-words font-mono text-neutral-100">{row.value}</dd>
               </div>
             ))}
           </dl>
