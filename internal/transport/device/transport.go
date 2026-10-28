@@ -64,6 +64,9 @@ func (t *Transport) Platform() string { return t.platform }
 // process was killed by a signal, mirroring the SSH exec convention). Output beyond the supervisor's cap comes
 // back as partial buffers marked Truncated.
 func (t *Transport) Exec(ctx context.Context, command string, options base.ExecOptions) (base.ExecResult, error) {
+	if err := t.checkExec(options); err != nil {
+		return base.ExecResult{}, err
+	}
 	if options.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, options.Timeout)
