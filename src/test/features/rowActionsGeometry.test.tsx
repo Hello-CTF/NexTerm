@@ -240,8 +240,6 @@ describe("persistent row action bar DOM contract", () => {
     expect(row.className).toContain("nx-row-reserve-actions");
     expect(actionLabels(row)).toEqual([
       "连接 web-1",
-      "编辑 web-1",
-      "删除 web-1",
       "更多操作 web-1",
     ]);
   });
@@ -258,8 +256,7 @@ describe("persistent row action bar DOM contract", () => {
     expect(header.className).toContain("nx-row-reserve-actions");
     expect(actionLabels(header)).toEqual([
       "在分组「production」内新建资产",
-      "重命名分组「production」",
-      "删除分组「production」",
+      "更多操作 production",
     ]);
   });
 

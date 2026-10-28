@@ -110,7 +110,33 @@ function mountWithClient(node: ReactNode): MountedView {
   return mount(createElement(QueryClientProvider, { client }, node));
 }
 
+// Actions that moved into the header or row menus are reached by opening the owning menu first.
+const MENU_ROUTES: Record<string, { opener: "group" | "asset" | "view"; item: string }> = {
+  重命名分组: { opener: "group", item: "重命名分组" },
+  删除分组: { opener: "group", item: "删除分组…" },
+  删除: { opener: "asset", item: "删除资产…" },
+  批量维护: { opener: "view", item: "批量维护" },
+  紧凑显示资产: { opener: "view", item: "紧凑显示" },
+  显示资产主机身份: { opener: "view", item: "显示主机地址" },
+};
+
 function buttonByTitle(container: ParentNode, title: string): HTMLButtonElement {
+  const route = MENU_ROUTES[title];
+  if (route) {
+    const opener =
+      route.opener === "view"
+        ? container.querySelector<HTMLButtonElement>('button[aria-label="视图"]')
+        : route.opener === "group"
+          ? container.querySelector<HTMLButtonElement>('[role="treeitem"][aria-expanded] button[aria-label^="更多操作 "]')
+          : container.querySelector<HTMLButtonElement>('[role="treeitem"]:not([aria-expanded]) button[aria-label^="更多操作 "]');
+    if (!opener) throw new Error(`Menu opener not found for: ${title}`);
+    click(opener);
+    const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) =>
+      b.textContent?.includes(route.item),
+    );
+    if (!item) throw new Error(`Menu item not found: ${route.item}`);
+    return item;
+  }
   const button = [...container.querySelectorAll("button")].find(
     (candidate) => candidate.title === title,
   );
@@ -361,14 +387,17 @@ describe("asset form field accessible names and group placeholder (M205 finding 
     expect(mounted.container.querySelector('input[placeholder="web-01"]')).toBeNull();
   });
 
-  it("matches the SSH import button aria-label to the dialog title and covers hosts and keys", async () => {
+  it("offers SSH import and external host sync from the single 新建 menu", async () => {
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() =>
-      expect(
-        mounted!.container.querySelector('button[aria-label="导入 SSH 主机与密钥"]'),
-      ).not.toBeNull(),
-    );
+    await waitFor(() => expect(mounted!.container.textContent).toContain("production"));
+    const create = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "新建") as HTMLButtonElement;
+    click(create);
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent ?? "");
+    expect(labels.some((t) => t.includes("导入 SSH 配置"))).toBe(true);
+    expect(labels.some((t) => t.includes("同步外部主机"))).toBe(true);
+    expect(labels.some((t) => t.includes("新建分组"))).toBe(true);
   });
+
 });
 
 describe("asset list load failure", () => {
@@ -378,7 +407,7 @@ describe("asset list load failure", () => {
       .mockResolvedValueOnce([{ ...WEB }]);
     mounted = mountWithClient(createElement(AssetTree));
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("加载失败：内部错误：db locked"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("资产列表加载失败"));
     const alert = mounted!.container.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("db locked");
     expect(mounted!.container.textContent).not.toContain("还没有资产");
@@ -399,13 +428,13 @@ describe("asset list load failure", () => {
     await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const searchInput = mounted!.container.querySelector<HTMLInputElement>(
-      'input[placeholder="搜索资产 / 主机 / 用户"]',
+      'input[placeholder="搜索资产名称、地址或用户"]',
     );
     if (!searchInput) throw new Error("Search input not found");
     setInputValue(searchInput, "web");
 
     await waitFor(() =>
-      expect(mounted!.container.textContent).toContain("加载失败：内部错误：search down"),
+      expect(mounted!.container.textContent).toContain("搜索失败"),
     );
     expect(mounted!.container.textContent).not.toContain("没有匹配的资产");
     expect(searchInput.value).toBe("web");
@@ -425,11 +454,11 @@ describe("asset list load failure", () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mocks.list).toHaveBeenCalled());
     await flush();
-    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产 / 主机 / 用户"]')!;
+    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产名称、地址或用户"]')!;
     setInputValue(input, "bulk");
-    await waitFor(() => expect(mounted!.container.textContent).toContain("共 101 条匹配"));
-    expect(mounted.container.textContent).toContain("结果已截断");
-    expect(mounted.container.textContent).toContain("仅返回前 100 条");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("找到 101 个匹配"));
+    expect(mounted.container.textContent).toContain("请输入更具体的关键字");
+    expect(mounted.container.textContent).toContain("仅显示前 100 个");
   });
 
   it("uses authoritative search metadata without running a second client matcher", async () => {
@@ -438,10 +467,10 @@ describe("asset list load failure", () => {
     mocks.groupList.mockResolvedValue([]);
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mocks.list).toHaveBeenCalled());
-    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产 / 主机 / 用户"]')!;
+    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产名称、地址或用户"]')!;
     setInputValue(input, "__");
-    await waitFor(() => expect(mounted!.container.textContent).toContain("共 101 条匹配"));
-    expect(mounted.container.textContent).toContain("仅返回前 1 条");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("找到 101 个匹配"));
+    expect(mounted.container.textContent).toContain("仅显示前 1 个");
     expect(mocks.search).not.toHaveBeenCalled();
   });
 
@@ -453,15 +482,15 @@ describe("asset list load failure", () => {
       .mockResolvedValueOnce({ assets: [], total: 100, truncated: false });
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
-    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产 / 主机 / 用户"]')!;
+    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产名称、地址或用户"]')!;
     setInputValue(input, "web");
     await waitFor(() => expect(mocks.searchMeta).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("共 101 条匹配"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("找到 101 个匹配"));
     click(buttonByTitle(mounted!.container, "删除"));
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(mocks.searchMeta).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("共 100 条匹配"));
-    expect(mounted.container.textContent).not.toContain("结果已截断");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("找到 100 个匹配"));
+    expect(mounted.container.textContent).not.toContain("请输入更具体的关键字");
   });
 
   it("refreshes active search after renaming and deleting a group", async () => {
@@ -469,7 +498,7 @@ describe("asset list load failure", () => {
     mocks.searchMeta.mockResolvedValue({ assets: [{ ...WEB, groupId: "g1" }], total: 1, truncated: false });
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("production"));
-    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产 / 主机 / 用户"]')!;
+    const input = mounted.container.querySelector<HTMLInputElement>('input[placeholder="搜索资产名称、地址或用户"]')!;
     setInputValue(input, "production");
     await waitFor(() => expect(mocks.searchMeta).toHaveBeenCalledTimes(1));
 
@@ -504,14 +533,14 @@ describe("asset delete failure", () => {
     );
     await flush();
     expect(mounted!.container.textContent).toContain("删除失败：内部错误：disk on fire");
-    expect(mocks.toast).not.toHaveBeenCalledWith("info", "已删除");
+    expect(mocks.toast).not.toHaveBeenCalledWith("info", "已删除资产「web-1」");
 
     clickButton(mounted!.container, "重试");
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledTimes(2));
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     await flush();
     expect(mounted!.container.textContent).not.toContain("disk on fire");
-    expect(mocks.toast).toHaveBeenCalledWith("info", "已删除");
+    expect(mocks.toast).toHaveBeenCalledWith("info", "已删除资产「web-1」");
   });
 
   it("shows the failure inline for an asset inside a group", async () => {
@@ -558,7 +587,7 @@ describe("asset deletion with an open workspace", () => {
     click(buttonByTitle(mounted!.container, "删除"));
     await waitFor(() => expect(mocks.choice).toHaveBeenCalledOnce());
     expect(mocks.choice).toHaveBeenCalledWith(
-      expect.stringContaining("当前有 1 个工作区"),
+      expect.stringContaining("有 1 个工作区正在使用"),
       expect.objectContaining({
         level: "warning",
         choices: expect.arrayContaining([
@@ -595,7 +624,7 @@ describe("asset deletion with an open workspace", () => {
     click(buttonByTitle(mounted!.container, "删除"));
     await waitFor(() => expect(mocks.sessionDisconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.choice).toHaveBeenCalledWith(
-      expect.stringContaining("当前有 1 个活动会话"),
+      expect.stringContaining("有 1 个后台会话正在使用"),
       expect.objectContaining({
         choices: expect.arrayContaining([
           expect.objectContaining({ key: "disconnect" }),
@@ -631,7 +660,7 @@ describe("asset deletion with an open workspace", () => {
     click(buttonByTitle(mounted!.container, "删除"));
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledTimes(1));
     await flush();
-    expect(mounted!.container.textContent).toContain("已关闭的工作区可从资产列表重新打开");
+    expect(mounted!.container.textContent).toContain("已关闭的工作区可在资产列表中重新打开");
     clickButton(mounted!.container, "重试");
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledTimes(2));
     expect(mocks.choice).toHaveBeenCalledTimes(1);
@@ -643,7 +672,7 @@ describe("theme-aware hover feedback", () => {
   it("footer entries use a theme-aware hover class, not white 5%", async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await flush();
-    for (const title of ["命令片段（插入当前终端）"]) {
+    for (const title of ["打开命令片段：保存常用命令，插入或在当前终端执行"]) {
       const button = buttonByTitle(mounted!.container, title);
       expect(button.className).toContain("hover:bg-neutral-800/70");
       expect(button.className).not.toContain("hover:bg-white/[.05]");

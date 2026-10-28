@@ -20,6 +20,7 @@ import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogH
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
+import { LoadError } from "../../ui/LoadError";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyStaging";
 import { useVaultInitGate } from "../credentials/useVaultInitGate";
 import { cloneAsset } from "./assetClone";
@@ -37,6 +38,7 @@ import {
   IconClose,
   IconCommand,
   IconCopy,
+  IconCheck,
   IconDownload,
   IconEdit,
   IconEye,
@@ -338,6 +340,7 @@ export function AssetTree() {
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset } | null>(null);
   const [treeMenu, setTreeMenu] = useState<{ x: number; y: number } | null>(null);
+  const [headerMenu, setHeaderMenu] = useState<{ kind: "new" | "view"; x: number; y: number } | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const assetRowElementsRef = useRef(new Map<string, HTMLDivElement>());
   const focusedAssetIdRef = useRef<string | null>(null);
@@ -534,13 +537,13 @@ export function AssetTree() {
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
       pushToast("success", `已克隆为「${created.name}」`);
     } catch (e) {
-      pushToast("error", `克隆失败：${describeError(e)}`);
+      pushToast("error", `无法克隆资产：${describeError(e)}`);
     }
   };
 
   const onHide = (a: Asset) => {
     hide(a.id);
-    pushToast("info", `已隐藏「${a.name}」— 点右上角眼睛按钮可找回`);
+    pushToast("info", `已隐藏「${a.name}」。可在「视图」菜单中选择「显示已隐藏的资产」恢复`);
   };
 
   const onUnhide = (a: Asset) => {
@@ -554,7 +557,7 @@ export function AssetTree() {
       await copyText(command);
       pushToast("success", `已复制 SSH 命令：${command}`);
     } catch (e) {
-      pushToast("error", `复制失败：${describeError(e)}`);
+      pushToast("error", `无法复制：${describeError(e)}`);
     }
   };
 
@@ -603,11 +606,11 @@ export function AssetTree() {
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
-      pushToast("info", "已删除");
+      pushToast("info", `已删除资产「${a.name}」`);
     } catch (e) {
       if (stale()) return;
       const detail = closedWorkspaceCount > 0
-        ? `${describeError(e)}；已关闭的工作区可从资产列表重新打开`
+        ? `${describeError(e)}。已关闭的工作区可在资产列表中重新打开`
         : describeError(e);
       setAssetError({ id: a.id, message: detail, mode });
     }
@@ -621,17 +624,17 @@ export function AssetTree() {
       s.assetId === a.id && s.status !== "disconnected" && s.status !== "failed",
     );
     if (workspaces.length > 0 || liveSessions.length > 0) {
-      const workspaceNotice = workspaces.length > 0 ? `当前有 ${workspaces.length} 个工作区使用此资产。` : "";
-      const sessionNotice = liveSessions.length > 0 ? `当前有 ${liveSessions.length} 个活动会话使用此资产。` : "";
+      const workspaceNotice = workspaces.length > 0 ? `有 ${workspaces.length} 个工作区正在使用此资产。` : "";
+      const sessionNotice = liveSessions.length > 0 ? `有 ${liveSessions.length} 个后台会话正在使用此资产。` : "";
       const action = await askChoice(
-        `删除资产「${a.name}」？\n\n${workspaceNotice}${sessionNotice}资产会从列表移除；关联的凭据会保留，已产生的终端历史仍可查看。`,
+        `删除资产「${a.name}」？\n\n${workspaceNotice}${sessionNotice}资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。`,
         {
-          title: "删除资产及打开的工作区",
+          title: "删除资产",
           level: "warning",
           choices: [
-            { key: "keep", label: workspaces.length > 0 ? "保留工作区并删除资产" : "保留会话并删除资产", hint: "工作区会显示目标已删除，可继续查看或关闭。", primary: true },
-            ...(liveSessions.length > 0 ? [{ key: "disconnect", label: "断开会话并删除资产", hint: "显式断开会话并停止其端口转发；工作区保留。", danger: true }] : []),
-            ...(workspaces.length > 0 ? [{ key: "close", label: "关闭工作区并删除资产", hint: "先关闭关联工作区，再删除资产；取消关闭时不会删除。", danger: true }] : []),
+            { key: "keep", label: workspaces.length > 0 ? "保留工作区并删除资产" : "保留会话并删除资产", hint: "工作区会提示资产已删除，仍可查看或关闭。", primary: true },
+            ...(liveSessions.length > 0 ? [{ key: "disconnect", label: "断开会话并删除资产", hint: "断开会话并停止端口转发，工作区保留。", danger: true }] : []),
+            ...(workspaces.length > 0 ? [{ key: "close", label: "关闭工作区并删除资产", hint: "先关闭相关工作区再删除；中途取消则不会删除。", danger: true }] : []),
           ],
         },
       );
@@ -640,7 +643,7 @@ export function AssetTree() {
       await runDeleteAsset(a, epoch, action);
       return;
     }
-    const ok = await ask(`删除资产「${a.name}」？\n\n资产会从列表移除；关联的凭据会保留，已产生的终端历史仍可查看。`, { kind: "warning" });
+    const ok = await ask(`删除资产「${a.name}」？\n\n资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。`, { kind: "warning" });
     if (ok && useUi.getState().accountEpoch === epoch) await runDeleteAsset(a, epoch);
   };
 
@@ -648,7 +651,7 @@ export function AssetTree() {
     if (pendingMovesRef.current.has(assetId)) return;
     const asset = (assets.data ?? []).find((item) => item.id === assetId) ?? filtered.find((item) => item.id === assetId);
     if (!asset) {
-      pushToast("error", "移动失败：资产已不在当前列表，请刷新后重试");
+      pushToast("error", "无法移动：资产已不在列表中，请刷新后重试");
       return;
     }
     const groupName = (id: string | null) =>
@@ -667,7 +670,7 @@ export function AssetTree() {
       qc.setQueryData<Asset[]>(["assets"], updateCachedGroup);
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
-      pushToast("info", groupId ? "已移入分组" : "已移出分组");
+      pushToast("info", groupId ? `已将「${asset.name}」移入分组` : `已将「${asset.name}」移出分组`);
     } catch (e) {
       const message = describeError(e);
       setMoveErrors((prev) => ({
@@ -682,7 +685,7 @@ export function AssetTree() {
       if (asset.groupId && useGroupCollapse.getState().collapsedIds.includes(asset.groupId)) {
         useGroupCollapse.getState().toggle(asset.groupId);
       }
-      pushToast("error", `移动失败：${message}；「${asset.name}」仍在原位置，可在资产行重试`);
+      pushToast("error", `无法移动「${asset.name}」，仍在原位置。可选择该资产下方的「重试移动」。原因：${message}`);
     } finally {
       pendingMovesRef.current.delete(assetId);
       setMovingTargets((prev) => {
@@ -711,7 +714,7 @@ export function AssetTree() {
       void qc.invalidateQueries({ queryKey: ["groups"] });
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
-      pushToast("info", "已删除分组");
+      pushToast("info", `已删除分组「${g.name}」`);
     } catch (e) {
       if (stale()) return;
       setGroupError({ id: g.id, message: describeError(e), action: "删除" });
@@ -751,6 +754,71 @@ export function AssetTree() {
     }
   };
 
+  const toggleDetailedIdentity = () => {
+    const next = !detailedIdentity;
+    setDetailedIdentity(next);
+    try {
+      localStorage.setItem(ASSET_IDENTITY_KEY, next ? "detailed" : "compact");
+    } catch {
+      // Keep the current display choice for this session when storage is unavailable.
+    }
+  };
+  const headerMenuItems = (kind: "new" | "view"): MenuItem[] =>
+    kind === "new"
+      ? [
+          {
+            kind: "item",
+            label: "新建资产",
+            icon: <IconPlus size={13} />,
+            onSelect: () => {
+              setPresetGroup(null);
+              setEditing("asset");
+            },
+          },
+          { kind: "item", label: "新建分组", icon: <IconFolder size={13} />, onSelect: () => setEditing("group") },
+          { kind: "separator" },
+          {
+            kind: "item",
+            label: "导入 SSH 配置",
+            icon: <IconDownload size={13} />,
+            hint: "从 ~/.ssh/config 或 Termius 导入主机与密钥",
+            onSelect: () => setImporting(true),
+          },
+          {
+            kind: "item",
+            label: "同步外部主机",
+            icon: <IconGlobe size={13} />,
+            hint: "SSH 配置文件、Docker contexts、Kubernetes",
+            onSelect: () => setInventoryOpen(true),
+          },
+        ]
+      : [
+          { kind: "group", label: "显示" },
+          {
+            kind: "item",
+            label: detailedIdentity ? "紧凑显示（隐藏主机地址）" : "显示主机地址",
+            icon: detailedIdentity ? <IconCheck size={13} /> : <IconList size={13} />,
+            onSelect: toggleDetailedIdentity,
+          },
+          ...(hiddenIds.length > 0
+            ? [{
+                kind: "item" as const,
+                label: showHidden ? "收起已隐藏的资产" : `显示已隐藏的资产（${hiddenIds.length}）`,
+                icon: showHidden ? <IconEyeOff size={13} /> : <IconEye size={13} />,
+                onSelect: () => setShowHidden(!showHidden),
+              }]
+            : []),
+          { kind: "separator" },
+          { kind: "group", label: "维护" },
+          {
+            kind: "item",
+            label: "批量维护",
+            icon: <IconServer size={13} />,
+            hint: "对多台主机批量执行维护操作",
+            onSelect: () => setBulkMaintenanceOpen(true),
+          },
+        ];
+
   // Single menu definition shared by right-click, the "..." button and the keyboard menu key.
   const buildRowMenu = (asset: Asset): MenuItem[] => {
     const connectable = !isInventoryOnlyKind(asset.kind);
@@ -770,7 +838,7 @@ export function AssetTree() {
         kind: "item",
         label: "克隆",
         icon: <IconCopy size={13} />,
-        hint: "共用原资产的登录凭据",
+        hint: "新资产与原资产共用同一份登录凭据",
         onSelect: () => void onClone(asset),
       },
       ...(sshCommandCopyable(asset)
@@ -793,9 +861,9 @@ export function AssetTree() {
         : []),
       {
         kind: "item",
-        label: "复制链接",
+        label: "复制资产链接",
         icon: <IconGlobe size={13} />,
-        hint: "用 NexTerm 打开此资产",
+        hint: "复制后在浏览器或其他应用中可用 NexTerm 打开此资产",
         onSelect: () => copyAssetDeepLink(asset.id),
       },
     ];
@@ -804,17 +872,18 @@ export function AssetTree() {
         ? { kind: "item", label: "取消隐藏", icon: <IconEye size={13} />, onSelect: () => onUnhide(asset) }
         : {
             kind: "item",
-            label: "隐藏",
+            label: "在列表中隐藏",
             icon: <IconEyeOff size={13} />,
-            hint: "只在列表隐藏，不会删除",
+            hint: "仅从列表隐藏，不会删除资产",
             onSelect: () => onHide(asset),
           },
       ...(asset.builtin
         ? []
         : [{
             kind: "item" as const,
-            label: "删除",
+            label: "删除资产…",
             icon: <IconClose size={13} />,
+            hint: "从列表移除，凭据库里的凭据保留",
             danger: true,
             onSelect: () => void onDelete(asset),
           }]),
@@ -837,8 +906,6 @@ export function AssetTree() {
       onFocus={() => onAssetFocus(asset)}
       hidden={isHidden(asset.id)}
       showIdentity={detailedIdentity || duplicateNames.has(asset.name.trim())}
-      onDelete={() => void onDelete(asset)}
-      onEdit={() => setEditingAsset(asset)}
       onMore={(x, y) => setRowMenu({ x, y, asset })}
       error={assetError?.id === asset.id ? assetError.message : null}
       onRetry={() => void runDeleteAsset(asset, useUi.getState().accountEpoch, assetError?.mode)}
@@ -877,8 +944,6 @@ export function AssetTree() {
         hiddenIds={hiddenIds}
         duplicateNames={duplicateNames}
         detailedIdentity={detailedIdentity}
-        onDelete={(asset) => void onDelete(asset)}
-        onEdit={(asset) => setEditingAsset(asset)}
         onMore={(asset, x, y) => setRowMenu({ x, y, asset })}
         onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
         onCreateIn={() => {
@@ -915,7 +980,7 @@ export function AssetTree() {
       <div>
         {renderAssetRow(item.asset, 1)}
         <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300">
-          <span className="min-w-0 flex-1">所属分组不存在，已暂列根目录。</span>
+          <span className="min-w-0 flex-1">所属分组已不存在，已临时放入根目录。</span>
           <button className="nx-link shrink-0" onClick={() => void moveAsset(item.asset.id, null)}>移到根目录</button>
         </div>
       </div>
@@ -934,75 +999,31 @@ export function AssetTree() {
       <div className="nx-panel-head flex min-h-[34px] shrink-0 flex-wrap items-center gap-1 px-2.5">
         <span className="shrink-0 whitespace-nowrap text-xs font-semibold tracking-wide text-neutral-200">资产</span>
         <div className="nx-spacer" />
-        {hiddenIds.length > 0 && (
-          <button
-            className={`nx-icon-btn nx-icon-btn-sm ${showHidden ? "is-active" : ""}`}
-            title={showHidden ? "收起已隐藏的资产" : `显示已隐藏的资产（${hiddenIds.length}）`}
-            aria-label={showHidden ? "收起已隐藏的资产" : "显示已隐藏的资产"}
-            onClick={() => setShowHidden(!showHidden)}
-          >
-            {showHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-          </button>
-        )}
         <button
-          className={`nx-icon-btn nx-icon-btn-sm ${detailedIdentity ? "is-active" : ""}`}
-          title={detailedIdentity ? "紧凑显示资产" : "显示资产主机身份"}
-          aria-label={detailedIdentity ? "紧凑显示资产" : "显示资产主机身份"}
-          aria-pressed={detailedIdentity}
-          onClick={() => {
-            const next = !detailedIdentity;
-            setDetailedIdentity(next);
-            try {
-              localStorage.setItem(ASSET_IDENTITY_KEY, next ? "detailed" : "compact");
-            } catch {
-              // Keep the current display choice for this session when storage is unavailable.
-            }
+          type="button"
+          className="nx-btn nx-btn-sm nx-btn-primary"
+          aria-haspopup="menu"
+          title="新建资产、分组，或导入已有主机"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setHeaderMenu({ kind: "new", x: r.left, y: r.bottom });
+          }}
+        >
+          <IconPlus size={12} />
+          新建
+        </button>
+        <button
+          type="button"
+          className={`nx-icon-btn nx-icon-btn-sm ${detailedIdentity || showHidden ? "is-active" : ""}`}
+          aria-haspopup="menu"
+          title="视图：显示方式与批量维护"
+          aria-label="视图"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setHeaderMenu({ kind: "view", x: r.left, y: r.bottom });
           }}
         >
           <IconList size={14} />
-        </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title="新建资产"
-          aria-label="新建资产"
-          onClick={() => {
-            setPresetGroup(null);
-            setEditing("asset");
-          }}
-        >
-          <IconPlus size={14} />
-        </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title="新建分组"
-          aria-label="新建分组"
-          onClick={() => setEditing("group")}
-        >
-          <IconFolder size={14} />
-        </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title="批量维护"
-          aria-label="批量维护"
-          onClick={() => setBulkMaintenanceOpen(true)}
-        >
-          <IconServer size={14} />
-        </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title="从 SSH 配置或 Termius 导入"
-          aria-label="导入 SSH 主机与密钥"
-          onClick={() => setImporting(true)}
-        >
-          <IconDownload size={14} />
-        </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title="同步外部主机列表：SSH 配置文件、Docker contexts、Kubernetes"
-          aria-label="同步外部主机列表"
-          onClick={() => setInventoryOpen(true)}
-        >
-          <IconGlobe size={14} />
         </button>
       </div>
 
@@ -1015,8 +1036,8 @@ export function AssetTree() {
           </span>
           <input
             className="nx-input nx-input-sm"
-            placeholder="搜索资产 / 主机 / 用户"
-            aria-label="搜索资产 / 主机 / 用户"
+            placeholder="搜索资产名称、地址或用户"
+            aria-label="搜索资产名称、地址或用户"
             value={query}
             onChange={(e) => {
               const next = e.target.value;
@@ -1031,8 +1052,8 @@ export function AssetTree() {
 
       {searchSummary && !listError && (
         <div className="px-2 pb-1 text-[11px] text-neutral-500" role="status">
-          共 {searchSummary.total} 条匹配
-          {searchSummary.truncated ? `，仅返回前 ${searchSummary.returned} 条（结果已截断）` : ""}
+          找到 {searchSummary.total} 个匹配
+          {searchSummary.truncated ? `，仅显示前 ${searchSummary.returned} 个。请输入更具体的关键字` : ""}
         </div>
       )}
 
@@ -1057,17 +1078,7 @@ export function AssetTree() {
         {assets.isPending ? (
           <AssetTreeSkeleton />
         ) : listError ? (
-          <div role="alert" className="px-2 py-8 text-center">
-            <div className="flex items-center justify-center gap-1.5 text-[12px] text-red-400">
-              <IconXCircle size={13} /> 加载失败：{describeError(listError)}
-            </div>
-            <button
-              className="nx-btn nx-btn-outline nx-btn-sm mt-3"
-              onClick={retryList}
-            >
-              重试
-            </button>
-          </div>
+          <LoadError title={query.trim() ? "搜索失败" : "资产列表加载失败"} error={listError} onRetry={retryList} />
         ) : (
           <>
             {treeVirtualized ? (
@@ -1092,10 +1103,10 @@ export function AssetTree() {
                 {query
                   ? "没有匹配的资产"
                   : activeProject !== ALL_PROJECTS
-                    ? "当前筛选没有可见资产"
+                    ? "当前项目下没有可见的资产"
                     : (assets.data?.length ?? 0) > 0
-                      ? "资产都隐藏了 — 点右上角眼睛按钮显示"
-                      : "还没有资产 — 点右上角的 + 新建一个"}
+                      ? "全部资产已隐藏。在「视图」菜单中选择「显示已隐藏的资产」查看"
+                      : "暂无资产。选择上方的「新建」添加资产"}
               </div>
             )}
           </>
@@ -1104,7 +1115,7 @@ export function AssetTree() {
 
       <button
         className="mx-1.5 mb-1 mt-auto flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-neutral-800/70 hover:text-neutral-100"
-        title="命令片段（插入当前终端）"
+        title="打开命令片段：保存常用命令，插入或在当前终端执行"
         onClick={() => setSnippetsOpen(true)}
       >
         <IconCommand size={14} className="shrink-0 text-neutral-500" />
@@ -1174,6 +1185,10 @@ export function AssetTree() {
         onClose={() => setRowMenu(null)}
       />
       <ContextMenu
+        state={headerMenu ? { x: headerMenu.x, y: headerMenu.y, items: headerMenuItems(headerMenu.kind) } : null}
+        onClose={() => setHeaderMenu(null)}
+      />
+      <ContextMenu
         state={
           treeMenu
             ? {
@@ -1218,8 +1233,6 @@ function AssetRow({
   onFocus,
   hidden,
   showIdentity,
-  onDelete,
-  onEdit,
   onMore,
   error,
   onRetry,
@@ -1235,8 +1248,6 @@ function AssetRow({
   onFocus?: () => void;
   hidden?: boolean;
   showIdentity?: boolean;
-  onDelete: () => void;
-  onEdit: () => void;
   onMore: (x: number, y: number) => void;
   error?: string | null;
   onRetry?: () => void;
@@ -1262,7 +1273,7 @@ function AssetRow({
   const nameMeasureRef = useRef<HTMLSpanElement>(null);
   const actionsRef = useRef<HTMLSpanElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
-  const actionCount = (inventoryOnly ? 0 : 1) + 1 + (asset.builtin ? 0 : 1);
+  const actionCount = inventoryOnly ? 0 : 1;
   const [inlineCount, setInlineCount] = useState(actionCount);
   const [identitySpace, setIdentitySpace] = useState(true);
   useLayoutEffect(() => {
@@ -1292,11 +1303,11 @@ function AssetRow({
   const tip = [
     asset.name,
     target || targetSummary || (asset.builtin ? "本机" : ""),
-    managed ? `由 ${inventorySourceLabel(managed.source)} 同步 · 名称和连接信息随来源更新` : "",
-    asset.builtin ? "内置资产 · 不可删除" : "",
+    managed ? `来自「${inventorySourceLabel(managed.source)}」同步 · 名称和连接信息随来源更新` : "",
+    asset.builtin ? "本机资产 · 不能删除" : "",
     hidden ? "已隐藏" : "",
     connectionProblem ? `连接失败：${connectionProblem.summary}` : "",
-    inventoryOnly ? "仅清单记录 · 终端接入未实现" : "双击连接 · 可拖入分组",
+    inventoryOnly ? "仅作清单记录 · 暂不能打开终端" : "双击连接 · 可拖入分组",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1352,15 +1363,15 @@ function AssetRow({
       <span aria-hidden="true" className="nx-asset-row-measures pointer-events-none invisible whitespace-nowrap" style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}>
         <span ref={nameMeasureRef} className="nx-asset-row-name-measure inline-block whitespace-nowrap">{label}</span>
       </span>
-      {managed && <span className="nx-badge nx-badge-blue shrink-0" title={`由 ${inventorySourceLabel(managed.source)} 同步；名称和连接信息随来源更新，不能在这里修改`}>{inventorySourceLabel(managed.source)}</span>}
-      {envCount > 0 && <span className="nx-badge nx-badge-amber" title={`${envCount} 个环境变量`}>env {envCount}</span>}
+      {managed && <span className="nx-badge nx-badge-blue shrink-0" title={`来自「${inventorySourceLabel(managed.source)}」同步；名称和连接信息随来源更新，不能在这里修改`}>{inventorySourceLabel(managed.source)}</span>}
+      {envCount > 0 && <span className="nx-badge nx-badge-amber" title={`已设置 ${envCount} 个环境变量`}>env {envCount}</span>}
       {hidden && <span className="nx-badge">已隐藏</span>}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
       {connectionProblem && !inventoryOnly && (
         <button
           type="button"
           className="nx-badge nx-badge-red shrink-0 cursor-pointer"
-          title={`连接失败：${connectionProblem.summary}；点击重试`}
+          title={`连接失败：${connectionProblem.summary}。选择可重试`}
           aria-label={`重试连接 ${asset.name}`}
           onClick={(event) => {
             event.stopPropagation();
@@ -1391,8 +1402,8 @@ function AssetRow({
           {!inventoryOnly && inlineCount > 0 && (connecting ? (
             <span
               className="nx-icon-btn nx-icon-btn-sm"
-              title="连接中…"
-              aria-label={`${asset.name} 连接中`}
+              title="正在连接…"
+              aria-label={`正在连接 ${asset.name}`}
             >
               <IconLoader size={12} className="animate-spin" />
             </span>
@@ -1409,30 +1420,6 @@ function AssetRow({
               <IconPlay size={12} />
             </button>
           ))}
-          {inlineCount > (inventoryOnly ? 0 : 1) && <button
-            className="nx-icon-btn nx-icon-btn-sm"
-            title="编辑"
-            aria-label={`编辑 ${asset.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit();
-            }}
-          >
-            <IconEdit size={12} />
-          </button>}
-          {!asset.builtin && inlineCount > (inventoryOnly ? 1 : 2) && (
-            <button
-              className="nx-icon-btn nx-icon-btn-sm is-danger"
-              title="删除"
-              aria-label={`删除 ${asset.name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
-              <IconClose size={12} />
-            </button>
-          )}
           <button
             ref={moreRef}
             className={`nx-icon-btn nx-icon-btn-sm ${inlineCount === 0 ? "nx-row-more" : ""}`}
@@ -1467,7 +1454,7 @@ function AssetRow({
       <div role="alert" className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
         <IconXCircle size={12} className="shrink-0" />
         <span className="min-w-0 flex-1" title={moveError.message}>
-          移动失败：{moveError.message}。仍在「{moveError.sourceName}」，目标「{moveError.targetName}」。
+          未能移动，仍在「{moveError.sourceName}」（目标：「{moveError.targetName}」）。原因：{moveError.message}
         </span>
         <button className="nx-link shrink-0" onClick={onRetryMove}>重试移动</button>
         <button className="nx-link shrink-0" onClick={onCancelMove}>取消移动</button>
@@ -1475,7 +1462,7 @@ function AssetRow({
     )}
     {movingTarget && (
       <div role="status" className="nx-alert nx-alert-info mx-1 mb-1 px-2 py-1.5 text-[11.5px]">
-        正在移至「{movingTarget}」…
+        正在移动到「{movingTarget}」…
       </div>
     )}
     </>
@@ -1502,8 +1489,6 @@ function GroupNode({
   hiddenIds,
   duplicateNames,
   detailedIdentity,
-  onDelete,
-  onEdit,
   onMore,
   onMoveAsset,
   onCreateIn,
@@ -1543,8 +1528,6 @@ function GroupNode({
   hiddenIds: string[];
   duplicateNames: Set<string>;
   detailedIdentity: boolean;
-  onDelete: (a: Asset) => void;
-  onEdit: (a: Asset) => void;
   onMore: (a: Asset, x: number, y: number) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
   onCreateIn: () => void;
@@ -1619,8 +1602,6 @@ function GroupNode({
       }}
       hidden={hiddenIds.includes(a.id)}
       showIdentity={detailedIdentity || duplicateNames.has(a.name.trim())}
-      onDelete={() => onDelete(a)}
-      onEdit={() => onEdit(a)}
       onMore={(x, y) => onMore(a, x, y)}
       error={assetError?.id === a.id ? assetError.message : null}
       onRetry={() => onRetryAssetDelete(a)}
@@ -1718,7 +1699,7 @@ function GroupNode({
           <span className="nx-row-actions">
             <button
               className="nx-icon-btn nx-icon-btn-sm"
-              title="在分组内新建资产"
+              title="在此分组内新建资产"
               aria-label={`在分组「${group.name}」内新建资产`}
               disabled={busy}
               onClick={(e) => {
@@ -1730,27 +1711,16 @@ function GroupNode({
             </button>
             <button
               className="nx-icon-btn nx-icon-btn-sm"
-              title="重命名分组"
-              aria-label={`重命名分组「${group.name}」`}
+              title="更多操作"
+              aria-label={`更多操作 ${group.name}`}
               disabled={busy}
               onClick={(e) => {
                 e.stopPropagation();
-                onRename();
+                const r = e.currentTarget.getBoundingClientRect();
+                setMenu({ x: r.left, y: r.bottom });
               }}
             >
-              <IconEdit size={12} />
-            </button>
-            <button
-              className="nx-icon-btn nx-icon-btn-sm is-danger"
-              title="删除分组"
-              aria-label={`删除分组「${group.name}」`}
-              disabled={busy}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteGroup();
-              }}
-            >
-              {busy ? <IconLoader size={12} className="animate-spin" /> : <IconTrash size={12} />}
+              {busy ? <IconLoader size={12} className="animate-spin" /> : "⋯"}
             </button>
           </span>
         )}
@@ -1758,7 +1728,7 @@ function GroupNode({
       {issue && (
         <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300">
           <IconXCircle size={12} className="shrink-0" />
-          <span className="min-w-0 flex-1">{issue === "cycle" ? "分组父子关系形成循环，已暂列根目录。" : "父分组不存在，已暂列根目录。"}</span>
+          <span className="min-w-0 flex-1">{issue === "cycle" ? "分组的上下级关系出现循环，已临时放入根目录。" : "上级分组已不存在，已临时放入根目录。"}</span>
           <button className="nx-link shrink-0" disabled={busy} onClick={onRepair}>移到根目录</button>
         </div>
       )}
@@ -1798,7 +1768,7 @@ function GroupNode({
         <div>
           {assets.map(renderGroupAsset)}
           {assets.length === 0 && children.length === 0 && (
-            <div className="px-2 py-1.5 text-[11px] text-neutral-500">（空分组 · 可拖资产进来）</div>
+            <div className="px-2 py-1.5 text-[11px] text-neutral-500">分组为空。可将资产拖入，或选择 + 新建资产。</div>
           )}
         </div>
       )}{children.map(renderChildGroup)}</div>}
@@ -1812,7 +1782,7 @@ function GroupNode({
                 items: [
                   {
                     kind: "item",
-                    label: "在分组内新建资产",
+                    label: "在此分组内新建资产",
                     icon: <IconPlus size={13} />,
                     disabled: busy,
                     onSelect: onCreateIn,
@@ -1833,8 +1803,9 @@ function GroupNode({
                   },
                   {
                     kind: "item",
-                    label: "删除分组",
+                    label: "删除分组…",
                     icon: <IconTrash size={13} />,
+                    hint: "组内资产移到「未分组」",
                     danger: true,
                     disabled: busy,
                     onSelect: onDeleteGroup,
@@ -2141,7 +2112,7 @@ export function AssetEditor({
     const h = host.trim();
     const p = Number(port);
     if (!h || !Number.isFinite(p) || p <= 0 || p > 65535) {
-      pushToast("error", "先填写有效的主机和端口");
+      pushToast("error", "请先填写有效的主机地址和端口");
       return;
     }
     if (probe.status === "pending") return;
@@ -2157,7 +2128,7 @@ export function AssetEditor({
         setProbe({ status: "idle" });
         return;
       }
-      setProbe(res.open ? { status: "ok" } : { status: "fail", error: res.error || "端口不可达" });
+      setProbe(res.open ? { status: "ok" } : { status: "fail", error: res.error || "端口无法连通" });
     } catch (e) {
       if (seq !== probeSeq.current) return;
       setProbe({ status: "fail", error: describeError(e) });
@@ -2199,7 +2170,7 @@ export function AssetEditor({
       await qc.invalidateQueries({ queryKey: ["groups"] });
       setGroupId(group.id);
     } catch (e) {
-      pushToast("error", `新建分组失败：${describeError(e)}`);
+      pushToast("error", `无法新建分组：${describeError(e)}`);
     }
   };
 
@@ -2389,7 +2360,7 @@ export function AssetEditor({
         if (keyOrigin === "ref") {
           const path = keyPath.trim();
           if (!path && !initial) {
-            pushToast("error", "请选择私钥文件，或改用「存入凭据库」");
+            pushToast("error", "请选择私钥文件，或改选「存入凭据库」");
             return;
           }
           if (passphrase || boundIsRefKey) {
@@ -2564,7 +2535,7 @@ export function AssetEditor({
   const deleteTemplate = () => {
     useConnectTemplates.getState().remove(templateId);
     setTemplateId("");
-    pushToast("info", "已删除模板");
+    pushToast("info", "已删除该模板");
   };
 
   const requestClose = async () => {
@@ -2789,7 +2760,7 @@ export function AssetEditor({
               <span className="nx-label">来源目标</span>
               <div className="rounded-md border border-neutral-800/70 bg-neutral-950/40 px-3 py-2 text-[12px] text-neutral-400">
                 <div className="break-all">{initial?.host || inventoryTargetText(initial?.options) || "仅清单记录"}</div>
-                <div className="nx-hint mt-1">此类型只用于动态清单展示，终端接入未实现；来源目标由同步更新。</div>
+                <div className="nx-hint mt-1">此类型仅作清单展示，暂不能打开终端；连接信息随同步来源更新。</div>
               </div>
             </div>
           )}
@@ -2951,7 +2922,7 @@ export function AssetEditor({
                     ))}
                   </select>
                   <div className="nx-hint mt-1.5">
-                    ↳ 默认直连；选择后使用该资产已建立的 SSH 连接，不会自动连接 SSH。资产归属、类型和连接状态仍由后端校验。
+                    ↳ 默认直连；选择后使用该资产已建立的 SSH 连接，不会自动连接 SSH。保存时会检查所选资产是否可用。
                   </div>
                 </div>
               )}
@@ -3369,7 +3340,7 @@ export function AssetEditor({
                   onChange={(e) => setTags(e.target.value)}
                   placeholder="用逗号分隔，如 production, 欧洲"
                 />
-                <div className="nx-hint mt-1.5">保存时会去除首尾空格并合并重复标签；已有标签内容不会被后台改写。</div>
+                <div className="nx-hint mt-1.5">保存时会去掉首尾空格并合并重复标签。</div>
               </div>
               <div className="nx-form-row">
                 <label className="nx-label">备注</label>

@@ -327,8 +327,6 @@ describe("AssetTree keyboard navigation", () => {
     const actions = [...asset.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")];
     expect(actions.map((b) => b.getAttribute("aria-label"))).toEqual([
       "连接 web-1",
-      "编辑 web-1",
-      "删除 web-1",
       "更多操作 web-1",
     ]);
     const headerButtons = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-icon-btn")];
@@ -355,7 +353,7 @@ describe("AssetTree keyboard navigation", () => {
     await waitFor(() => expect(mounted!.container.textContent).toContain("db-1"));
 
     const search = mounted!.container.querySelector<HTMLInputElement>(
-      'input[placeholder="搜索资产 / 主机 / 用户"]',
+      'input[placeholder="搜索资产名称、地址或用户"]',
     );
     if (!search) throw new Error("Search input not found");
     setInputValue(search, "db-1");
@@ -394,7 +392,7 @@ describe("AssetTree keyboard navigation", () => {
     expect(treeitems(mounted!.container).length).toBeLessThan(groups.length);
 
     const search = mounted!.container.querySelector<HTMLInputElement>(
-      'input[placeholder="搜索资产 / 主机 / 用户"]',
+      'input[placeholder="搜索资产名称、地址或用户"]',
     );
     if (!search) throw new Error("Search input not found");
     setInputValue(search, "needle-59");
@@ -411,7 +409,7 @@ describe("AssetTree keyboard navigation", () => {
       [...target.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")].map((button) =>
         button.getAttribute("aria-label"),
       ),
-    ).toEqual(["连接 needle-59", "编辑 needle-59", "删除 needle-59", "更多操作 needle-59"]);
+    ).toEqual(["连接 needle-59", "更多操作 needle-59"]);
   });
 
   it("windows assets inside one large group while preserving search and hierarchy", async () => {
@@ -433,7 +431,7 @@ describe("AssetTree keyboard navigation", () => {
     expect(assetRows().length).toBeLessThan(assets.length);
 
     const search = mounted!.container.querySelector<HTMLInputElement>(
-      'input[placeholder="搜索资产 / 主机 / 用户"]',
+      'input[placeholder="搜索资产名称、地址或用户"]',
     );
     if (!search) throw new Error("Search input not found");
     setInputValue(search, "needle-99");
@@ -446,7 +444,7 @@ describe("AssetTree keyboard navigation", () => {
     expect(target.querySelector(".nx-asset-row-name")?.textContent).toBe(targetName);
     expect(target.querySelector(".nx-asset-row-name")?.className).not.toContain("truncate");
     expect(target.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
-    expect(target.querySelectorAll(".nx-row-actions button")).toHaveLength(4);
+    expect(target.querySelectorAll(".nx-row-actions button")).toHaveLength(2);
   });
 
   it.each([

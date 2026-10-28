@@ -178,7 +178,7 @@ describe("AssetEditor database SSH tunnel", () => {
 
     expect(mocks.listAssets).toHaveBeenCalled();
     expect([...viaSelect().options].map((option) => option.value)).toEqual(["", "ssh-a", "ssh-b"]);
-    expect(mounted!.container.textContent).toContain("后端校验");
+    expect(mounted!.container.textContent).toContain("保存时会检查所选资产是否可用");
     setSelectValue(viaSelect(), "ssh-b");
     fillRequiredFields();
     await save();

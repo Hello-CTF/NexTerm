@@ -154,7 +154,7 @@ describe("snippet variable prompt integration", () => {
     click(actionButton("执行"));
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
 
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("未知变量"));
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("未识别的变量"));
     expect(document.body.textContent).not.toContain("填写片段变量");
     expect(mocks.write).not.toHaveBeenCalled();
   });

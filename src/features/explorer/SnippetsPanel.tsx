@@ -4,7 +4,8 @@ import { ask } from "../../ui/dialogs";
 import { assetApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
-import { insertSnippet, executeSnippet, type Snippet } from "./snippetInsert";
+import { insertSnippet, executeSnippet, terminalTarget, type Snippet } from "./snippetInsert";
+import { LoadError } from "../../ui/LoadError";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { useSnippetVariablePrompt } from "./SnippetVariablePrompt";
 import { RunbookPanel } from "./RunbookPanel";
@@ -45,6 +46,12 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const layer = useOverlayFocus(true, modalRef);
+  // Insert/execute act on the active terminal; without one they are disabled with the reason instead of failing on click.
+  const blockedReason = useUi((s) => {
+    void s.workspaces; void s.activeWorkspaceId;
+    const target = terminalTarget();
+    return "blocked" in target ? target.blocked : null;
+  });
 
   const snippets = useQuery({
     queryKey: ["snippets"],
@@ -59,7 +66,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
       const analysis = analyzeSnippetTemplate(s.body);
       if (!analysis.hasVariables) return s.body;
       if (analysis.unknownVariables.length > 0) {
-        pushToast("error", `未知变量：${analysis.unknownVariables.map((name) => `「${name}」`).join("、")}`);
+        pushToast("error", `片段包含未识别的变量：${analysis.unknownVariables.map((name) => `「${name}」`).join("、")}`);
         return null;
       }
       let asset: SnippetAsset | undefined;
@@ -68,7 +75,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
         try {
           asset = await assetApi.get(assetId);
         } catch (cause) {
-          pushToast("error", `资产信息加载失败：${describeError(cause)}`);
+          pushToast("error", `无法读取资产信息：${describeError(cause)}`);
           return null;
         }
       }
@@ -76,7 +83,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
       if (values === null) return null;
       return renderSnippetTemplate(s.body, values, asset);
     } catch (cause) {
-      pushToast("error", `变量解析失败：${describeError(cause)}`);
+      pushToast("error", `无法解析片段变量：${describeError(cause)}`);
       return null;
     }
   };
@@ -99,15 +106,15 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
     // The confirmation is account-scoped: a late resolve after an account switch must not
     // delete the snippet under the new account.
     const epoch = useUi.getState().accountEpoch;
-    const ok = await ask(`删除片段「${s.name}」？此操作不可恢复。`, { kind: "warning" });
+    const ok = await ask(`删除片段「${s.name}」？删除后无法恢复。`, { kind: "warning" });
     if (!ok || useUi.getState().accountEpoch !== epoch) return;
     setDeletingId(s.id);
     try {
       await assetApi.snippetDelete(s.id);
-      pushToast("info", "已删除");
+      pushToast("info", `已删除片段「${s.name}」`);
       refresh();
     } catch (e) {
-      pushToast("error", `删除失败：${describeError(e)}`);
+      pushToast("error", `无法删除片段：${describeError(e)}`);
     } finally {
       setDeletingId(null);
     }
@@ -161,7 +168,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             className="nx-btn nx-btn-sm"
-            title="按顺序在多台主机上执行多个片段或命令"
+            title="按顺序在多台主机上运行多个片段或命令"
             onClick={() => setRunbookOpen(true)}
           >
             <IconPlay size={12} />
@@ -170,8 +177,11 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
         </div>
         <div className="nx-modal-body flex min-h-[320px] flex-1 flex-col overflow-y-auto">
           <p className="nx-hint mb-2.5">
-            「插入」只把命令写进终端输入行，不按回车；「执行」写入后按回车。内容包含换行或控制字符时会先让你确认。
+            「插入」将命令写入当前终端的输入行，不按回车；「执行」写入后立即回车运行。片段含换行或控制字符时，将先请求确认。
           </p>
+          {blockedReason && (snippets.data?.length ?? 0) > 0 && (
+            <p className="nx-hint mb-2.5" role="status">{blockedReason}，才能插入或执行片段。仍可新建、编辑或删除片段。</p>
+          )}
           {(snippets.data?.length ?? 0) > 6 && (
             <input
               className="nx-input mb-2"
@@ -187,21 +197,14 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
             </div>
           )}
           {snippets.isError && (
-            <div className="px-1 py-5 text-center">
-              <div className="flex items-center justify-center gap-1.5 text-[12px] text-red-400">
-                <IconXCircle size={13} /> 加载失败：{describeError(snippets.error)}
-              </div>
-              <button className="nx-btn nx-btn-outline nx-btn-sm mt-3" onClick={() => void snippets.refetch()}>
-                重试
-              </button>
-            </div>
+            <LoadError title="片段加载失败" error={snippets.error} onRetry={() => void snippets.refetch()} />
           )}
           {snippets.data && snippets.data.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
               <span className="nx-empty-icon">
                 <IconCommand size={18} />
               </span>
-              <div className="nx-hint">把常用命令存成片段，以后一键插入或执行。</div>
+              <div className="nx-hint">暂无命令片段。可将常用命令保存为片段，之后一键插入或执行。</div>
               <button type="button" className="nx-btn nx-btn-sm" onClick={() => setEditing("new")}>
                 <IconPlus size={12} />
                 新建第一个片段
@@ -228,9 +231,9 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
                   </div>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
-                    title="插入到当前终端"
+                    title={blockedReason ?? "插入到当前终端"}
                     aria-label={insertLabel}
-                    disabled={deletingId === s.id}
+                    disabled={deletingId === s.id || blockedReason !== null}
                     onClick={() => void insert(s)}
                   >
                     <IconInsert size={11} />
@@ -238,9 +241,9 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
                   </button>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
-                    title="在当前终端执行"
+                    title={blockedReason ?? "在当前终端执行"}
                     aria-label={executeLabel}
-                    disabled={deletingId === s.id}
+                    disabled={deletingId === s.id || blockedReason !== null}
                     onClick={() => void execute(s)}
                   >
                     <IconPlay size={11} />
@@ -346,7 +349,7 @@ function SnippetEditor({
       } else {
         await assetApi.snippetCreate(n, body);
       }
-      pushToast("success", initial ? "已保存" : "已创建");
+      pushToast("success", initial ? "已保存片段" : "已创建片段");
       onSaved();
     } catch (e) {
       setError(describeError(e));

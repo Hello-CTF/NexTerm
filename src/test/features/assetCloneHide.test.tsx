@@ -151,6 +151,16 @@ function clickMenuItem(container: ParentNode, label: string): void {
   click(item);
 }
 
+// The show-hidden toggle lives in the "视图" menu; opening it returns the matching item if present.
+function viewMenuItem(container: ParentNode, label: string): HTMLButtonElement | undefined {
+  const opener = container.querySelector<HTMLButtonElement>('button[aria-label="视图"]');
+  if (!opener) throw new Error("View menu button not found");
+  click(opener);
+  return [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) =>
+    b.textContent?.includes(label),
+  );
+}
+
 let mounted: MountedView | undefined;
 
 beforeEach(() => {
@@ -236,13 +246,9 @@ describe("asset hiding and unhiding", () => {
 
   it("hiding only affects visibility: removes the row, preserves data, and allows recovery", async () => {
     openRowMenu(mounted!.container, "web-1");
-    clickMenuItem(mounted!.container, "隐藏");
-    let eye: HTMLButtonElement | undefined;
+    clickMenuItem(mounted!.container, "在列表中隐藏");
     await waitForRendered(() => {
-      eye = [...mounted!.container.querySelectorAll("button")].find((b) =>
-        (b.getAttribute("aria-label") ?? "").startsWith("显示已隐藏的资产"),
-      ) as HTMLButtonElement | undefined;
-      if (!eye) throw new Error("Show-hidden toggle not found yet");
+      if (!viewMenuItem(mounted!.container, "显示已隐藏的资产")) throw new Error("Show-hidden toggle not found yet");
     });
     expect(
       [...mounted!.container.querySelectorAll('[role="treeitem"]')].some((r) =>
@@ -253,7 +259,7 @@ describe("asset hiding and unhiding", () => {
     expect(mocks.update).not.toHaveBeenCalled();
     expect(JSON.parse(localStorage.getItem("nexterm.hiddenAssets.v1") ?? "[]")).toContain("a1");
 
-    click(eye as HTMLButtonElement);
+    click(viewMenuItem(mounted!.container, "显示已隐藏的资产")!);
     let row: HTMLElement | undefined;
     await waitForRendered(() => {
       row = rowByText(mounted!.container, "web-1");
@@ -266,11 +272,7 @@ describe("asset hiding and unhiding", () => {
     await waitForRendered(() =>
       expect(rowByText(mounted!.container, "web-1").textContent).not.toContain("已隐藏"),
     );
-    expect(
-      [...mounted!.container.querySelectorAll("button")].some((b) =>
-        (b.getAttribute("aria-label") ?? "").startsWith("显示已隐藏的资产"),
-      ),
-    ).toBe(false);
+    expect(viewMenuItem(mounted!.container, "已隐藏的资产")).toBeUndefined();
     expect(JSON.parse(localStorage.getItem("nexterm.hiddenAssets.v1") ?? "[]")).not.toContain("a1");
   });
 
@@ -299,25 +301,14 @@ describe("asset hiding and unhiding", () => {
     mounted?.unmount();
     mounted = mountWithClient(createElement(AssetTree));
     await waitForRendered(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
-    expect(
-      [...mounted!.container.querySelectorAll("button")].some((b) =>
-        (b.getAttribute("aria-label") ?? "").includes("已隐藏的资产"),
-      ),
-    ).toBe(true);
+    expect(viewMenuItem(mounted!.container, "已隐藏的资产")).toBeTruthy();
 
-    const del = [...mounted!.container.querySelectorAll("button")].find(
-      (b) => b.getAttribute("aria-label") === "删除 web-1",
-    );
-    if (!del) throw new Error("Delete button not found: web-1");
-    click(del);
+    openRowMenu(mounted!.container, "web-1");
+    clickMenuItem(mounted!.container, "删除资产…");
     await waitForRendered(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
 
     expect(useAssetVisibility.getState().hiddenIds).not.toContain("a1");
     expect(JSON.parse(localStorage.getItem("nexterm.hiddenAssets.v1") ?? "[]")).not.toContain("a1");
-    expect(
-      [...mounted!.container.querySelectorAll("button")].some((b) =>
-        (b.getAttribute("aria-label") ?? "").includes("已隐藏的资产"),
-      ),
-    ).toBe(false);
+    expect(viewMenuItem(mounted!.container, "已隐藏的资产")).toBeUndefined();
   });
 });

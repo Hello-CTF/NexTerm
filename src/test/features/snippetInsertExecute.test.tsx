@@ -128,6 +128,7 @@ afterEach(() => {
 
 describe("snippet insert and execute actions", () => {
   it("renders per-snippet insert and execute buttons with matching titles and aria labels", async () => {
+    seedTerminalTab();
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
@@ -231,35 +232,33 @@ describe("snippet insert and execute actions", () => {
     expect(writtenText()).toBe("docker ps\t\r");
   });
 
-  it("hints at opening a terminal first when no writable terminal exists", async () => {
+  it("disables insert with the reason when no writable terminal exists", async () => {
     const onClosed = vi.fn();
     mounted = mountPanel(createElement(SnippetsHost, { onClosed }));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
-    click(buttonByLabel(mounted.container, "插入片段「check container status」"));
+    const button = buttonByLabel(mounted.container, "插入片段「check container status」");
+    expect(button.disabled).toBe(true);
+    expect(button.title).toContain("请先打开一个终端");
+    click(button);
     await flush();
 
     expect(mocks.write).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith(
-      "info",
-      expect.stringContaining("请先在当前工作区打开一个终端"),
-    );
     expect(onClosed).not.toHaveBeenCalled();
   });
 
-  it("hints that the terminal has ended when the active tab exited", async () => {
+  it("disables execute with the reason when the active terminal has ended", async () => {
     seedTerminalTab({ exited: true });
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("check container status"));
 
-    click(buttonByLabel(mounted.container, "执行片段「check container status」"));
+    const button = buttonByLabel(mounted.container, "执行片段「check container status」");
+    expect(button.disabled).toBe(true);
+    expect(button.title).toContain("当前终端已断开或已结束");
+    click(button);
     await flush();
 
     expect(mocks.write).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith(
-      "info",
-      expect.stringContaining("当前终端已失效或已结束"),
-    );
   });
 
   it("reports the write error when the write is rejected", async () => {

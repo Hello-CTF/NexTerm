@@ -212,7 +212,7 @@ describe("copy SSH command", () => {
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "复制 SSH 命令");
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("复制失败")),
+      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("无法复制")),
     );
   });
 });
