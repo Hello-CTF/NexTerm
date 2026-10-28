@@ -1,5 +1,5 @@
 // Production wiring between the reviewed agent UI contracts and the real
-// generated IPC surface (ai_roster_*, ai_run_history, ai_run_recovery_summary).
+// generated IPC surface (ai_roster_*).
 // Every value crossing the seam is validated instead of cast; what the
 // backend cannot evidence stays unknown instead of being invented. Rename is
 // the M131 alias-only command under the exact durable identity CAS — the
@@ -10,7 +10,6 @@ import { assetApi, call, type AppError } from "../../ipc/commands";
 import type {
   RosterEntry,
   RosterListEntry,
-  RunHistoryEntry,
 } from "../../ipc/generated/types";
 import { assetEnvironment } from "../production/assetEnvironment";
 import {
@@ -19,19 +18,12 @@ import {
 } from "../production/productionSettings";
 import type {
   AgentRosterApi,
-  AgentRunHistoryApi,
-  AgentRunHistoryScope,
 } from "./agentApi";
 import type {
   AgentApprovalDecision,
   AgentEvidence,
   AgentPresence,
-  AgentRecoverySummary,
   AgentRosterEntry,
-  AgentRunHistoryEntry as AgentRunHistoryView,
-  AgentRunHistoryPage as AgentRunHistoryViewPage,
-  AgentRunState,
-  AgentRunStatusFilter,
 } from "./agentTypes";
 
 export interface AgentProductionIdentity {
@@ -254,93 +246,6 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
 
     resolveApproval(requestId: string, decision: AgentApprovalDecision): Promise<void> {
       return deps.resolveApproval(requestId, decision);
-    },
-  };
-}
-
-const RUN_STATES: ReadonlySet<string> = new Set<AgentRunState>([
-  "queued",
-  "running",
-  "idle",
-  "done",
-  "error",
-  "canceled",
-]);
-
-const EVIDENCE_KINDS: ReadonlySet<string> = new Set<AgentEvidence["kind"]>([
-  "output",
-  "exit",
-  "attach",
-  "release",
-  "reconcile",
-  "watch",
-  "approval",
-]);
-
-function contractViolation(what: string, value: string): AppError {
-  return { code: "internal", message: `后端返回了无法识别的${what}：${value}` };
-}
-
-function toRunHistoryView(entry: RunHistoryEntry): AgentRunHistoryView {
-  if (!RUN_STATES.has(entry.state)) {
-    throw contractViolation(" run 状态", entry.state);
-  }
-  let evidence: AgentEvidence | null = null;
-  if (entry.evidence !== null) {
-    if (!EVIDENCE_KINDS.has(entry.evidence.kind)) {
-      throw contractViolation(" run 证据类型", entry.evidence.kind);
-    }
-    evidence = {
-      kind: entry.evidence.kind as AgentEvidence["kind"],
-      observedAt: entry.evidence.observedAt,
-      summary: entry.evidence.summary,
-    };
-  }
-  return {
-    runId: entry.runId,
-    state: entry.state as AgentRunState,
-    evidence,
-    startedAt: entry.startedAt,
-    finishedAt: entry.finishedAt,
-    summary: entry.summary,
-  };
-}
-
-// createAgentRunHistoryApi is the AI-05 production consumer: paging, status
-// filtering and the recovery summary stay backend-owned — the opaque cursor
-// is passed back verbatim and the UI never slices pages in memory.
-export function createAgentRunHistoryApi(): AgentRunHistoryApi {
-  return {
-    async listRuns(
-      scope: AgentRunHistoryScope,
-      filter: AgentRunStatusFilter,
-      cursor: string | null,
-      limit: number,
-    ): Promise<AgentRunHistoryViewPage> {
-      const page = await call("ai_run_history", {
-        conversationId: scope.conversationId,
-        filter,
-        cursor: cursor ?? "",
-        limit,
-      });
-      return {
-        entries: page.entries.map(toRunHistoryView),
-        nextCursor: page.nextCursor,
-      };
-    },
-
-    async recoverySummary(scope: AgentRunHistoryScope): Promise<AgentRecoverySummary | null> {
-      const summary = await call("ai_run_recovery_summary", {
-        conversationId: scope.conversationId,
-      });
-      if (summary === null) return null;
-      return {
-        conversationId: summary.conversationId,
-        restoredRuns: summary.restoredRuns,
-        resumableRunId: summary.resumableRunId,
-        interruptedRunIds: summary.interruptedRunIds,
-        truncated: summary.truncated,
-      };
     },
   };
 }

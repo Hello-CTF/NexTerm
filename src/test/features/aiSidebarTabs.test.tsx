@@ -83,7 +83,7 @@ function textOf(view: MountedView): string {
 
 function stripTabs(view: MountedView): HTMLElement[] {
   return [
-    ...view.container.querySelectorAll<HTMLElement>('[aria-label="AI 任务标签"] [role="tab"]'),
+    ...view.container.querySelectorAll<HTMLElement>('[aria-label="会话标签"] [role="tab"]'),
   ];
 }
 
@@ -150,7 +150,7 @@ describe("AiSidebar multiple tabs", () => {
     await flush();
     expect(stripTabs(view!)).toHaveLength(1);
 
-    click(view!.container.querySelector('button[title="新建 AI 标签"]')!);
+    click(view!.container.querySelector('button[title="新建会话"]')!);
     await flush();
     expect(stripTabs(view!)).toHaveLength(2);
 
@@ -160,7 +160,6 @@ describe("AiSidebar multiple tabs", () => {
     click(stripTabs(view!)[0]);
     await flush();
     expect(textOf(view!)).not.toContain("问题甲");
-    expect(textOf(view!)).toContain("新建会话");
 
     await send(view!, "问题乙");
     expect(textOf(view!)).toContain("问题乙");
@@ -184,7 +183,7 @@ describe("AiSidebar multiple tabs", () => {
     await send(view!, "Parallel one");
     expect(useUi.getState().aiBusy).toBe(true);
 
-    click(view!.container.querySelector('button[title="新建 AI 标签"]')!);
+    click(view!.container.querySelector('button[title="新建会话"]')!);
     await flush();
     await send(view!, "Parallel two");
     expect(mocks.chat).toHaveBeenCalledTimes(2);

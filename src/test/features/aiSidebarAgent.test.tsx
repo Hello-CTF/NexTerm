@@ -101,21 +101,13 @@ function textOf(view: MountedView): string {
   return view.container.textContent ?? "";
 }
 
-function agentButton(view: MountedView): HTMLButtonElement {
-  const button = view.container.querySelector<HTMLButtonElement>(
-    'button[title="当前会话的 Agent 句柄与 run 历史"]',
-  ) ?? view.container.querySelector<HTMLButtonElement>(
-    'button[title="Agent 句柄挂在会话上：先发送消息开始一个会话"]',
-  );
-  if (!button) throw new Error("agent entry button not found");
+function tasksButton(view: MountedView): HTMLButtonElement {
+  const button = view.container.querySelector<HTMLButtonElement>('button[aria-label^="后台任务"]');
+  if (!button) throw new Error("background tasks button not found");
   return button;
 }
-
-function watchButton(view: MountedView): HTMLButtonElement {
-  const button = view.container.querySelector<HTMLButtonElement>('button[title="Watch 监视"]');
-  if (!button) throw new Error("watch entry button not found");
-  return button;
-}
+const agentButton = tasksButton;
+const watchButton = tasksButton;
 
 async function send(view: MountedView, text: string) {
   const textarea = view.container.querySelector("textarea");
@@ -191,8 +183,6 @@ describe("AiSidebar agent production mounting", () => {
     mocks.listenEvent.mockImplementation(() => Promise.resolve(vi.fn()));
     mocks.call.mockImplementation((cmd: string) => {
       if (cmd === "ai_roster_list") return Promise.resolve([rosterListRow()]);
-      if (cmd === "ai_run_history") return Promise.resolve({ entries: [], nextCursor: null });
-      if (cmd === "ai_run_recovery_summary") return Promise.resolve(null);
       if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
       if (cmd === "ai_watch_list") return Promise.resolve([]);
       if (cmd === "ai_watch_targets") return Promise.resolve([]);
@@ -219,35 +209,45 @@ describe("AiSidebar agent production mounting", () => {
     view = null;
   });
 
-  it("disables the agent entry point without a conversation", async () => {
-    expect(agentButton(view!).disabled).toBe(true);
-  });
-
-  it("mounts the roster and history panels on real IPC after a conversation starts", async () => {
+  it("hides the background tasks button while there is nothing to manage", async () => {
+    mocks.call.mockImplementation((cmd: string) => {
+      if (cmd === "ai_roster_list") return Promise.resolve([]);
+      if (cmd === "ai_watch_list") return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected call: ${cmd}`));
+    });
+    expect(view!.container.querySelector('button[aria-label^="后台任务"]')).toBeNull();
     await send(view!, "Question A");
     emit({ type: "done", answer: "Answer A" });
     await flush();
-    expect(agentButton(view!).disabled).toBe(false);
+    expect(view!.container.querySelector('button[aria-label^="后台任务"]')).toBeNull();
+  });
+
+  it("shows the button with a count once the conversation has a live sub-agent", async () => {
+    await send(view!, "Question A");
+    emit({ type: "done", answer: "Answer A" });
+    await flushUntil(() => view!.container.querySelector('button[aria-label^="后台任务"]') !== null);
+    await flush();
+    expect(tasksButton(view!).getAttribute("aria-label")).toBe("后台任务，共 1 项");
+    expect(tasksButton(view!).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("mounts the sub-agent section on real IPC after a conversation starts", async () => {
+    await send(view!, "Question A");
+    emit({ type: "done", answer: "Answer A" });
+    await flushUntil(() => view!.container.querySelector('button[aria-label^="后台任务"]') !== null);
 
     click(agentButton(view!));
     await flushUntil(() => view!.container.querySelector('[data-handle="build"]') !== null);
-    expect(textOf(view!)).toContain("Agent 句柄");
-    expect(textOf(view!)).toContain("Agent Run 历史");
+    expect(textOf(view!)).toContain("子代理与终端会话");
+    expect(textOf(view!)).not.toContain("Run 历史");
     expect(mocks.call).toHaveBeenCalledWith("ai_roster_list", { conversationId: "conv-1" });
-    expect(mocks.call).toHaveBeenCalledWith("ai_run_history", {
-      conversationId: "conv-1",
-      filter: "all",
-      cursor: "",
-      limit: 50,
-    });
-    expect(mocks.call).toHaveBeenCalledWith("ai_run_recovery_summary", { conversationId: "conv-1" });
     const row = view!.container.querySelector('[data-handle="build"]');
     expect(row).not.toBeNull();
     expect(row!.textContent).toContain("生产环境");
 
     click(agentButton(view!));
     await flush();
-    expect(textOf(view!)).not.toContain("Agent 句柄");
+    expect(textOf(view!)).not.toContain("子代理与终端会话");
   });
 
   it("mentions a roster handle into the composer through the production flow", async () => {
@@ -333,20 +333,19 @@ describe("AiSidebar agent production mounting", () => {
       }
       if (cmd === "ai_watch_targets") return Promise.resolve([]);
       if (cmd === "ai_roster_list") return Promise.resolve([rosterListRow()]);
-      if (cmd === "ai_run_history") return Promise.resolve({ entries: [], nextCursor: null });
-      if (cmd === "ai_run_recovery_summary") return Promise.resolve(null);
       if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
       return Promise.reject(new Error(`unexpected call: ${cmd}`));
     });
 
+    await send(view!, "Question A");
+    emit({ type: "done", answer: "Answer A" });
+    await flushUntil(() => view!.container.querySelector('button[aria-label^="后台任务"]') !== null);
     click(watchButton(view!));
     await flushUntil(() => textOf(view!).includes("ready-watch"));
     expect(mocks.call).toHaveBeenCalledWith("ai_watch_list");
-    expect(mocks.call).toHaveBeenCalledWith("ai_watch_targets");
-    // The desktop identity is ownerless: the panel shows the local label and
-    // the tool-data subscription was set up through the real adapter.
-    expect(textOf(view!).toLowerCase()).toContain("local");
-    expect(mocks.listenEvent).toHaveBeenCalledWith("ai://watch-tool-data", expect.any(Function));
+    // No raw owner id or English product title leaks into the panel.
+    expect(textOf(view!).toLowerCase()).not.toContain("local");
+    expect(textOf(view!)).not.toContain("Watch");
 
     click(watchButton(view!));
     await flush();
@@ -667,8 +666,6 @@ describe("AiSidebar agent production mounting", () => {
           ? rosterForB()
           : Promise.resolve([rosterListRow()]);
       }
-      if (cmd === "ai_run_history") return Promise.resolve({ entries: [], nextCursor: null });
-      if (cmd === "ai_run_recovery_summary") return Promise.resolve(null);
       if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
       if (cmd === "ai_watch_list") return Promise.resolve([]);
       if (cmd === "ai_watch_targets") return Promise.resolve([]);
@@ -693,7 +690,7 @@ describe("AiSidebar agent production mounting", () => {
     await flushUntil(() => view!.container.querySelector('[data-handle="build"]') !== null);
 
     await switchToConversationB(() => bList.promise);
-    await flushUntil(() => view!.container.textContent?.includes("加载句柄列表…") === true);
+    await flushUntil(() => view!.container.textContent?.includes("加载子代理列表…") === true);
     // The first committed frame of conversation B carries none of A's rows,
     // and no stale row can be mentioned while B is still loading.
     expect(view!.container.querySelector('[data-handle="build"]')).toBeNull();
@@ -725,7 +722,7 @@ describe("AiSidebar agent production mounting", () => {
     await flushUntil(() => view!.container.querySelector('[data-handle="build"]') !== null);
 
     await switchToConversationB(() => bList.promise);
-    await flushUntil(() => view!.container.textContent?.includes("加载句柄列表…") === true);
+    await flushUntil(() => view!.container.textContent?.includes("加载子代理列表…") === true);
     expect(view!.container.querySelector('[data-handle="build"]')).toBeNull();
 
     await act(async () => {

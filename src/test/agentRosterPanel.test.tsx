@@ -264,7 +264,7 @@ describe("AgentRosterPanel", () => {
     clickButton(view.container, "重试");
     await flush();
     expect(api.list).toHaveBeenCalledTimes(2);
-    expect(view.container.textContent).toContain("暂无句柄");
+    expect(view.container.textContent).toContain("暂无子代理");
   });
 
   describe("evidence-less terminal presence", () => {
@@ -311,15 +311,15 @@ describe("AgentRosterPanel", () => {
     view = mount(createElement(AgentRosterPanel, { api }));
     await flush();
     const refresh = view.container.querySelector(
-      'button[aria-label="刷新句柄列表"]',
+      'button[aria-label="刷新子代理列表"]',
     ) as HTMLButtonElement;
     click(refresh);
     await flush();
-    expect(view.container.textContent).toContain("暂无句柄");
+    expect(view.container.textContent).toContain("暂无子代理");
     stale.resolve([entry()]);
     await flush();
     expect(view.container.querySelector('[data-handle="build"]')).toBeNull();
-    expect(view.container.textContent).toContain("暂无句柄");
+    expect(view.container.textContent).toContain("暂无子代理");
   });
 
   it("an older list response cannot clear a submitted release-pending state", async () => {
@@ -329,7 +329,7 @@ describe("AgentRosterPanel", () => {
     await flush();
     api.list.mockReturnValueOnce(stale.promise);
     const refresh = view.container.querySelector(
-      'button[aria-label="刷新句柄列表"]',
+      'button[aria-label="刷新子代理列表"]',
     ) as HTMLButtonElement;
     click(refresh);
     clickButton(rowFor("build"), "释放");

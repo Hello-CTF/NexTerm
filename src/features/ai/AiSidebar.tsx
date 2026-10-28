@@ -198,7 +198,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       <div className="nx-ai-tabstrip flex h-[34px] shrink-0 items-center gap-1 border-b border-neutral-800/60 pl-1.5 pr-1 [@media(max-height:480px)]:h-7">
         <div
           role="tablist"
-          aria-label="AI 任务标签"
+          aria-label="会话标签"
           className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
         >
           {tabs.map((t) => {
@@ -327,8 +327,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
         <button
           className="nx-icon-btn nx-icon-btn-sm shrink-0"
-          title="新建 AI 标签"
-          aria-label="新建 AI 标签"
+          title="新建会话"
+          aria-label="新建会话"
           onClick={() => addAiTab(boardKey)}
         >
           <IconPlus size={13} />

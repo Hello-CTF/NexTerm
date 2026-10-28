@@ -47,9 +47,9 @@ const DEAD_PRESENCES: ReadonlySet<AgentPresence> = new Set<AgentPresence>([
 function deadReason(presence: AgentPresence): string {
   switch (presence) {
     case "gone":
-      return "句柄已消失，无法打开";
+      return "子代理已消失，无法打开";
     case "replaced":
-      return "句柄已被新化身替换，无法打开";
+      return "子代理已被新会话替换，无法打开";
     default:
       return "终端已退出，无法打开";
   }
@@ -68,19 +68,24 @@ export function AgentRosterPanel({
   api,
   onMention,
   onOpened,
+  onChanged,
 }: {
   api: AgentRosterApi;
+  onChanged?: () => void;
   onMention?: (token: string, entry: AgentRosterEntry) => void;
   onOpened?: (tabId: string, entry: AgentRosterEntry) => void;
 }) {
   const pushToast = useUi((s) => s.pushToast);
   const [entries, setEntries] = useState<AgentRosterEntry[] | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
 
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
   const aliveRef = useRef(true);
   const loadGenRef = useRef(0);
   const invalidatePendingLoads = useCallback(() => {
@@ -97,14 +102,18 @@ export function AgentRosterPanel({
   // state such as a submitted release-pending flag.
   const reload = useCallback(async () => {
     const gen = ++loadGenRef.current;
+    setRefreshing(true);
     try {
       const rows = await api.list();
       if (!aliveRef.current || gen !== loadGenRef.current) return;
       setEntries(rows);
       setLoadError(null);
+      onChangedRef.current?.();
     } catch (e) {
       if (!aliveRef.current || gen !== loadGenRef.current) return;
       setLoadError(describeError(e));
+    } finally {
+      if (aliveRef.current && gen === loadGenRef.current) setRefreshing(false);
     }
   }, [api]);
 
@@ -127,7 +136,7 @@ export function AgentRosterPanel({
         const { tabId } = await api.open(entry.handle);
         onOpened?.(tabId, entry);
       } catch (e) {
-        pushToast("error", `打开句柄失败：${describeError(e)}`);
+        pushToast("error", `打开子代理失败：${describeError(e)}`);
       }
     });
 
@@ -137,7 +146,7 @@ export function AgentRosterPanel({
         const { tabId } = await api.attach(entry.handle);
         onOpened?.(tabId, entry);
       } catch (e) {
-        pushToast("error", `附加句柄失败：${describeError(e)}`);
+        pushToast("error", `附加子代理失败：${describeError(e)}`);
       }
     });
 
@@ -175,7 +184,7 @@ export function AgentRosterPanel({
           (prev ?? []).map((row) => (row.handle === entry.handle ? updated : row)),
         );
         setRenaming(null);
-        pushToast("success", `句柄 ${entry.handle} 的别名已更新为 ${updated.alias}`);
+        pushToast("success", `子代理 ${entry.handle} 的别名已更新为 ${updated.alias}`);
       } catch (e) {
         pushToast("error", `重命名失败：${describeError(e)}`);
       }
@@ -188,7 +197,7 @@ export function AgentRosterPanel({
         ? "\n\n目标位于生产环境：释放会影响生产会话，请确认已评估影响。"
         : "";
       const confirmed = await ask(
-        `释放句柄「${handleAtHostCwd(entry)}」？\n\n释放后句柄将被回收，关联终端状态可能丢失。${productionNote}`,
+        `释放子代理「${handleAtHostCwd(entry)}」？\n\n释放后子代理将被回收，关联终端状态可能丢失。${productionNote}`,
         { kind: "warning" },
       );
       if (!confirmed) return;
@@ -205,7 +214,8 @@ export function AgentRosterPanel({
             row.handle === entry.handle ? { ...row, releasePending: true } : row,
           ),
         );
-        pushToast("success", `句柄 ${entry.handle} 释放已提交`);
+        onChangedRef.current?.();
+        pushToast("success", `子代理 ${entry.handle} 释放已提交`);
       } catch (e) {
         pushToast("error", `释放失败：${describeError(e)}`);
       }
@@ -215,16 +225,17 @@ export function AgentRosterPanel({
     <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
       <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
         <IconTerminal size={12} />
-        Agent 句柄
+        子代理与终端会话
         <span className="nx-count">{entries ? `${entries.length} 个` : "加载中"}</span>
         <span className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="刷新句柄列表"
-          aria-label="刷新句柄列表"
+          title="刷新子代理列表"
+          aria-label="刷新子代理列表"
+          aria-busy={refreshing}
           onClick={() => void reload()}
         >
-          <IconRefresh size={11} />
+          {refreshing ? <IconLoader size={11} className="animate-spin" /> : <IconRefresh size={11} />}
         </button>
       </div>
 
@@ -240,7 +251,7 @@ export function AgentRosterPanel({
       {!loadError && entries === null && (
         <div className="flex items-center gap-1.5 py-1 text-[11px] text-neutral-500">
           <IconLoader size={12} className="animate-spin" />
-          加载句柄列表…
+          加载子代理列表…
         </div>
       )}
 
@@ -284,7 +295,7 @@ export function AgentRosterPanel({
 
             <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10.5px]">
               {entry.alias !== entry.handle && (
-                <span className="nx-count" title={`句柄 ${entry.handle} 永久不变，此处仅显示别名`}>
+                <span className="nx-count" title={`子代理 ${entry.handle} 永久不变，此处仅显示别名`}>
                   别名 {entry.alias}
                 </span>
               )}
@@ -333,7 +344,7 @@ export function AgentRosterPanel({
                   </button>
                 </div>
                 <div className="mt-0.5 text-[10.5px] text-neutral-500">
-                  仅修改显示别名，句柄 {entry.handle} 永久不变
+                  仅修改显示别名，子代理 {entry.handle} 永久不变
                 </div>
               </div>
             ) : (
@@ -345,7 +356,7 @@ export function AgentRosterPanel({
                     confirmedDead
                       ? deadReason(entry.presence)
                       : unknownTerminal
-                        ? "句柄状态未知，无法确认是否仍可打开"
+                        ? "子代理状态未知，无法确认是否仍可打开"
                         : "在终端标签页中打开"
                   }
                   onClick={() => void openEntry(entry)}
@@ -359,7 +370,7 @@ export function AgentRosterPanel({
                     confirmedDead
                       ? deadReason(entry.presence)
                       : unknownTerminal
-                        ? "句柄状态未知，无法确认是否仍可附加"
+                        ? "子代理状态未知，无法确认是否仍可附加"
                         : entry.releasePending
                           ? "释放待确认，无法附加"
                           : "附加到现有会话"
@@ -371,14 +382,14 @@ export function AgentRosterPanel({
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
                   disabled={pending || !entry.isMine || entry.releasePending}
-                  title={entry.isMine ? "重命名句柄" : "仅所有者可重命名"}
+                  title={entry.isMine ? "重命名子代理" : "仅所有者可重命名"}
                   onClick={() => startRename(entry)}
                 >
                   重命名
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
-                  title="在对话中提及该句柄"
+                  title="在对话中提及该子代理"
                   onClick={() => onMention?.(mentionToken(entry), entry)}
                 >
                   提及
@@ -386,7 +397,7 @@ export function AgentRosterPanel({
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
                   disabled={pending || !entry.isMine || entry.releasePending}
-                  title={entry.isMine ? "释放句柄" : "仅所有者可释放"}
+                  title={entry.isMine ? "释放子代理" : "仅所有者可释放"}
                   onClick={() => void releaseEntry(entry)}
                 >
                   {pending ? "操作中…" : "释放"}
@@ -402,7 +413,7 @@ export function AgentRosterPanel({
       })}
 
       {!loadError && entries !== null && entries.length === 0 && (
-        <div className="py-1 text-[11px] text-neutral-500">暂无句柄</div>
+        <div className="py-1 text-[11px] text-neutral-500">暂无子代理</div>
       )}
     </div>
   );
