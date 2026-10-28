@@ -61,7 +61,7 @@ NexTerm 把远程运维放进一个窗口：通过 SSH、WinRM 或设备 agent �
 | --- | --- |
 | Windows 10/11（amd64 / arm64） | `nexterm-desktop_windows_<架构>_x.y.z.exe` |
 | macOS（arm64 / amd64） | `nexterm-desktop_macos_<架构>_x.y.z.dmg` |
-| Linux 桌面（amd64 / arm64） | `nexterm-desktop_linux_<架构>_x.y.z.deb`，用 `apt install ./<包名>.deb` 安装 |
+| Linux 桌面（amd64 / arm64） | `nexterm-desktop_linux_<架构>_x.y.z.deb`，用 `apt install ./<包名>.deb` 安装；在 Debian 13 上构建，需要 GTK 4.14+ 与 WebKitGTK 6.0（例如 Debian 13、Ubuntu 24.04 或更新版本），`.deb` 声明了所需的最低 glibc |
 | Linux 服务器 | 见[部署服务端](#部署服务端) |
 | Android（预览，arm64） | `nexterm-desktop_android_arm64_x.y.z.apk` |
 | iOS / iPadOS（预览） | [加入 TestFlight 测试](https://testflight.apple.com/join/ds62pzPz)，Release 不提供 IPA |
@@ -95,7 +95,7 @@ curl -fsSL https://nexterm.work/install.sh | sudo bash
 
 ## 开发
 
-工具链：Go 1.27、Node 24+、pnpm；Linux 服务端为 `CGO_ENABLED=0` 构建（通过 purego 加载 ONNX Runtime，动态链接 glibc 但无版本要求），可在任意主机上构建；Windows 桌面端同样无需 C 编译器。
+工具链：Go 1.27、Node 24+、pnpm；Linux 服务端为 `CGO_ENABLED=0` 构建（通过 purego 加载 ONNX Runtime，动态链接 glibc 但无版本要求），可在任意主机上构建；Windows 桌面端同样无需 C 编译器。CI 与发布中所有 Linux 构建和测试都运行在 `debian:trixie`（Debian 13）容器中；本地构建 Linux 桌面端需要 GTK 4.14+ 与 WebKitGTK 6.0 开发包（Debian 13 的 `libgtk-4-dev`、`libwebkitgtk-6.0-dev`）。
 
 ```bash
 pnpm install && pnpm build && go build ./...

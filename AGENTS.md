@@ -17,7 +17,7 @@ Reply in the user's language. Keep this file limited to rules that prevent regre
 - `scripts`, `.github/scripts`, `.github/workflows`, `Taskfile.yml`: builds, tests, CI, and releases.
 - `website`: GitHub Pages site. `lazycat`: Lazycat package. `build`: native build configuration and mobile projects. `deploy/systemd`: server units.
 
-Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-portable dynamic binary (purego loads ONNX Runtime; agent and helpers stay fully static), and the privacy runtime uses the latest ONNX Runtime 1.x (>= 1.23) resolved by `scripts/ai-privacy-runtime.mjs`; `NEXTERM_ORT_VERSION` pins a version. Exact versions and commands live in `go.mod`, `package.json`, and the workflows.
+Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-portable dynamic binary (purego loads ONNX Runtime; agent and helpers stay fully static), and the privacy runtime uses the latest ONNX Runtime 1.x (>= 1.23) resolved by `scripts/ai-privacy-runtime.mjs`; `NEXTERM_ORT_VERSION` pins a version. Every Linux CI and release build or test job runs in a `debian:trixie` container (packages in `.github/actions/debian-setup`); the Linux desktop needs GTK >= 4.14 to compile and run. Exact versions and commands live in `go.mod`, `package.json`, and the workflows.
 
 ## Working Rules
 

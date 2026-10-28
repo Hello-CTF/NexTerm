@@ -61,7 +61,7 @@ Get the latest build from [Releases](https://github.com/Hello-CTF/NexTerm/releas
 | --- | --- |
 | Windows 10/11 (amd64 / arm64) | `nexterm-desktop_windows_<arch>_x.y.z.exe` |
 | macOS (arm64 / amd64) | `nexterm-desktop_macos_<arch>_x.y.z.dmg` |
-| Linux desktop (amd64 / arm64) | `nexterm-desktop_linux_<arch>_x.y.z.deb`, install with `apt install ./<package>.deb` |
+| Linux desktop (amd64 / arm64) | `nexterm-desktop_linux_<arch>_x.y.z.deb`, install with `apt install ./<package>.deb`; built on Debian 13 and needs GTK 4.14+ and WebKitGTK 6.0 (for example Debian 13, Ubuntu 24.04 or newer); the `.deb` declares its minimum glibc |
 | Linux server | See [Deploy the server](#deploy-the-server) |
 | Android (preview, arm64) | `nexterm-desktop_android_arm64_x.y.z.apk` |
 | iOS / iPadOS (preview) | [Join the TestFlight beta](https://testflight.apple.com/join/ds62pzPz); releases do not ship an IPA |
@@ -95,7 +95,7 @@ The script downloads the latest server archive, verifies it against `SHA256SUMS`
 
 ## Development
 
-Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` build (ONNX Runtime is loaded through purego; it links glibc dynamically with no version requirement) that can be produced on any host, and the Windows desktop needs no C compiler either.
+Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` build (ONNX Runtime is loaded through purego; it links glibc dynamically with no version requirement) that can be produced on any host, and the Windows desktop needs no C compiler either. Every Linux build and test in CI and releases runs in a `debian:trixie` (Debian 13) container; building the Linux desktop locally needs the GTK 4.14+ and WebKitGTK 6.0 development packages (`libgtk-4-dev` and `libwebkitgtk-6.0-dev` on Debian 13).
 
 ```bash
 pnpm install && pnpm build && go build ./...

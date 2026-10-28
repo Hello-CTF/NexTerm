@@ -1048,9 +1048,11 @@ function packageAssertions(kind, file, goos, goarch) {
       const missingHelpers = missingHelperArchiveMembers(members, "usr/bin/");
       checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && missingHelpers.length === 0 && required.every((member) => members.has(member)), `required members: ${[...required, ...helperArchiveMembers("usr/bin/")].join(", ")}; missing helpers: ${missingHelpers.join(", ") || "none"}`));
       const unpacked = output(resolveTar(), ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
-        ...helperArchiveMembers("usr/bin/"), "usr/bin/ai-runtime"], { allowFailure: true });
+        ...helperArchiveMembers("usr/bin/"), "usr/bin/ai-runtime", "usr/bin/nexterm-desktop"], { allowFailure: true });
       checks.push(assertion("linux-desktop-deb-helper-extract", unpacked !== null, "all nine helpers must extract from data.tar.gz"));
       if (unpacked !== null) {
+        const depends = linuxDesktopDepends(path.join(work, "usr/bin/nexterm-desktop"));
+        checks.push(assertion("linux-desktop-deb-depends", control.includes(`\nDepends: ${depends}\n`), `control Depends must match the packaged binary: ${depends}`));
         checks.push(...packagedHelperAssertions(work, "usr/bin", true));
         checks.push(...privacyRuntimeAssertions(path.join(work, "usr/bin/ai-runtime"), goos, goarch));
       }
@@ -1261,6 +1263,22 @@ function debVersion(version) {
   return version.replace("-", "~");
 }
 
+// The cgo desktop links the glibc of its Debian 13 build host, so the package
+// declares the newest GLIBC_ symbol version the binary requires and dpkg rejects
+// older systems. GTK has no symbol versions; Wails calls GTK 4.14 API
+// (gdk_monitor_get_scale), so that floor is declared explicitly.
+function linuxDesktopDepends(binary) {
+  let floor = null;
+  for (const { version } of inspectBinary(binary).versionRequirements ?? []) {
+    const match = /^GLIBC_(\d+)\.(\d+)(?:\.(\d+))?$/.exec(version);
+    if (!match) continue;
+    const parts = match.slice(1).map((part) => Number(part ?? 0));
+    if (!floor || (parts[0] - floor[0] || parts[1] - floor[1] || parts[2] - floor[2]) > 0) floor = parts;
+  }
+  const libc = floor ? `libc6 (>= ${(floor[2] ? floor : floor.slice(0, 2)).join(".")})` : null;
+  return [libc, "libgtk-4-1 (>= 4.14)", "libwebkitgtk-6.0-4t64 | libwebkitgtk-6.0-4"].filter(Boolean).join(", ");
+}
+
 function packageLinuxDesktop(binary, goarch) {
   const assets = path.resolve(ROOT, option("assets-dir", "target/release-assets"));
   const name = `nexterm-desktop_linux_${goarch}_${VERSION}`;
@@ -1279,7 +1297,7 @@ function packageLinuxDesktop(binary, goarch) {
   fs.copyFileSync(path.join(ROOT, "public/brand/nexterm-mark-256.png"), path.join(dataDir, "usr/share/icons/hicolor/256x256/apps/nexterm.png"));
   fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(dataDir, "usr/share/doc/nexterm/copyright"));
   fs.writeFileSync(path.join(dataDir, LINUX_DESKTOP_ENTRY), `[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop %u\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\nMimeType=x-scheme-handler/nexterm;\nStartupWMClass=${wailsConfig.info.productIdentifier}\n`);
-  fs.writeFileSync(path.join(work, "control", "control"), `Package: nexterm\nVersion: ${debVersion(VERSION)}\nSection: net\nPriority: optional\nArchitecture: ${goarch}\nMaintainer: Probius <https://github.com/Hello-CTF/NexTerm>\nHomepage: https://github.com/Hello-CTF/NexTerm\nDepends: libgtk-4-1, libwebkitgtk-6.0-4t64 | libwebkitgtk-6.0-4\nRecommends: fonts-noto-color-emoji\nDescription: Browser-based SSH / SFTP / Docker / database operations terminal\n Terminal processes, sessions and workspace layout stay on your own server;\n credentials are encrypted with a vault key you control.\n`);
+  fs.writeFileSync(path.join(work, "control", "control"), `Package: nexterm\nVersion: ${debVersion(VERSION)}\nSection: net\nPriority: optional\nArchitecture: ${goarch}\nMaintainer: Probius <https://github.com/Hello-CTF/NexTerm>\nHomepage: https://github.com/Hello-CTF/NexTerm\nDepends: ${linuxDesktopDepends(binary)}\nRecommends: fonts-noto-color-emoji\nDescription: Browser-based SSH / SFTP / Docker / database operations terminal\n Terminal processes, sessions and workspace layout stay on your own server;\n credentials are encrypted with a vault key you control.\n`);
   const normalizeModes = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const target = path.join(directory, entry.name);
