@@ -38,6 +38,15 @@ tasks:
     cmds:
       - go vet ./...
 
+  vet:cross:
+    summary: Vet Windows platform and test code, matching the CI cross-GOOS step
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+      GOOS: windows
+      CGO_ENABLED: '0'
+    cmds:
+      - go vet ./...
+
   test:
     summary: Run all Go tests without updating dependency pins
     env:
@@ -127,6 +136,7 @@ tasks:
       - go mod verify
       - go run ./scripts/verify-manifest-injects
       - task: vet
+      - task: vet:cross
       - task: test
 
   check:frontend:
