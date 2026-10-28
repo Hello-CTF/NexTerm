@@ -833,7 +833,7 @@ describe("App empty states", () => {
     mounted = mountApp();
     await flush();
     expect(mounted.container.querySelector("header")?.textContent).toContain(
-      "还没有工作区，双击左侧资产连接一台主机",
+      "暂无工作区，双击左侧资产连接主机",
     );
   });
 

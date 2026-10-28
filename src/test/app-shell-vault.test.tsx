@@ -208,7 +208,7 @@ describe("status bar credential vault state", () => {
     const control = vaultStatusControl();
     expect(control?.tagName).toBe("BUTTON");
     expect(control?.textContent).toContain("凭据库未初始化");
-    expect(control?.textContent).toContain("去开启保护");
+    expect(control?.textContent).toContain("开启保护");
     expect(control?.getAttribute("title")).toContain("凭据保护");
   });
 
@@ -345,7 +345,7 @@ describe("status bar credential vault state", () => {
     expect(control?.tagName).toBe("BUTTON");
     expect(control?.textContent).toContain("凭据库已锁定");
     expect(control?.textContent).toContain("解锁");
-    expect(control?.textContent).not.toContain("去开启保护");
+    expect(control?.textContent).not.toContain("开启保护");
   });
 
   it("shows nothing for an unlocked vault", async () => {

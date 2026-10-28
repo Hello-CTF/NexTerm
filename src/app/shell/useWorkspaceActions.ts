@@ -36,7 +36,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
   const activeSessionId = ws?.kind === "session" ? ws.sessionId : undefined;
 
   const needSession = useCallback(() => {
-    pushToast("info", "先连接一台主机（双击左侧资产）");
+    pushToast("info", "请先连接主机（双击左侧资产）");
   }, [pushToast]);
 
   const openLocalTerminal = useCallback(async () => {
@@ -102,7 +102,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       const assets = (await assetApi.list()).filter((asset) => dbKindOf(asset.kind) !== null);
       if (useUi.getState().workspaceRuntimeEpoch !== epoch) return;
       if (assets.length === 0) {
-        pushToast("info", "还没有数据库资产，先在资产树里新建一个");
+        pushToast("info", "暂无数据库资产，请先在资产树中新建");
         return;
       }
       if (assets.length === 1) {

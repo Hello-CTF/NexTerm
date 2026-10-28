@@ -285,12 +285,12 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
               ) : null}
               {hasMainTokens ? (
                 <span className="block">
-                  主调用 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
+                  对话请求 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
                 </span>
               ) : null}
               {hasSummary ? (
                 <span className="block">
-                  摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
+                  上下文上下文摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
                 </span>
               ) : null}
             </>
@@ -334,17 +334,17 @@ function UsageDetails({
       <span className="mb-0.5 block font-medium text-neutral-100">用量明细</span>
       {hasMainTokens ? (
         <span className="block text-neutral-300">
-          主调用 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
+          对话请求 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
         </span>
       ) : null}
       {hasSummary ? (
         <span className="block text-neutral-300">
-          摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
+          上下文上下文摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
         </span>
       ) : null}
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">
-          本会话 {errorStats.runs} 轮 · 可重试错误 {errorStats.retries}（{percentText(errorStats.retryRate)}）
+          本会话 {errorStats.runs} 次回答 · 可重试错误 {errorStats.retries}（{percentText(errorStats.retryRate)}）
           · 失败 {errorStats.failures}（{percentText(errorStats.failureRate)}）
         </span>
       ) : null}
@@ -374,7 +374,7 @@ function UsageDetails({
       ) : null}
       {summaryFailed ? (
         <span className="flex items-center gap-1.5">
-          <span className="text-red-300">用量汇总加载失败</span>
+          <span className="text-red-300">未能加载用量汇总</span>
           <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" onClick={onRetrySummary}>
             重试
           </button>

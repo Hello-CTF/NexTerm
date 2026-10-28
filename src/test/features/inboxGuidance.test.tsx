@@ -74,7 +74,7 @@ describe("inbox first-run guidance", () => {
 
     act(() => applyAwareness([attention("T1")]));
     expect(view.container.querySelector("[data-inbox-cue]")).not.toBeNull();
-    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("新");
+    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("需要关注");
     expect(view.container.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(input);
 

@@ -136,7 +136,7 @@ export function AgentRosterPanel({
         const { tabId } = await api.open(entry.handle);
         onOpened?.(tabId, entry);
       } catch (e) {
-        pushToast("error", `无法打开子代理：${describeError(e)}`);
+        pushToast("error", `未能打开子代理：${describeError(e)}`);
       }
     });
 
@@ -146,7 +146,7 @@ export function AgentRosterPanel({
         const { tabId } = await api.attach(entry.handle);
         onOpened?.(tabId, entry);
       } catch (e) {
-        pushToast("error", `无法附加子代理：${describeError(e)}`);
+        pushToast("error", `未能附加子代理：${describeError(e)}`);
       }
     });
 
@@ -186,7 +186,7 @@ export function AgentRosterPanel({
         setRenaming(null);
         pushToast("success", `子代理 ${entry.handle} 的别名已更新为 ${updated.alias}`);
       } catch (e) {
-        pushToast("error", `无法重命名：${describeError(e)}`);
+        pushToast("error", `未能重命名：${describeError(e)}`);
       }
     });
   };
@@ -197,7 +197,7 @@ export function AgentRosterPanel({
         ? "\n\n该子代理位于生产环境，释放会影响正在运行的生产会话，请确认后再继续。"
         : "";
       const confirmed = await ask(
-        `释放子代理「${handleAtHostCwd(entry)}」？\n\n释放后将回收该子代理，它所在终端中未保存的状态可能丢失。${productionNote}`,
+        `确定要释放子代理「${handleAtHostCwd(entry)}」吗？\n\n释放后将回收该子代理，它所在终端中未保存的状态可能丢失。${productionNote}`,
         { kind: "warning" },
       );
       if (!confirmed) return;
@@ -217,7 +217,7 @@ export function AgentRosterPanel({
         onChangedRef.current?.();
         pushToast("success", `已提交释放子代理 ${entry.handle}`);
       } catch (e) {
-        pushToast("error", `无法释放：${describeError(e)}`);
+        pushToast("error", `未能释放：${describeError(e)}`);
       }
     });
 
@@ -241,7 +241,7 @@ export function AgentRosterPanel({
 
       {loadError && (
         <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-red-400">
-          <span className="min-w-0 flex-1 truncate">加载失败：{loadError}</span>
+          <span className="min-w-0 flex-1 truncate">未能加载子代理列表：{loadError}</span>
           <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
             重试
           </button>

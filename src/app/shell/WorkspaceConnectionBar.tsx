@@ -119,7 +119,7 @@ export function WorkspaceConnectionBar({
           onClick={() => void reconnect()}
         >
           <IconRefresh size={13} className={busy ? "animate-spin" : undefined} />
-          {suspect ? "立即重连" : "重新连接"}
+          {suspect ? "立即重新连接" : "重新连接"}
         </button>
       )}
     </div>

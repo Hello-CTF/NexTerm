@@ -115,7 +115,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
             closable: true,
           });
         } catch (e) {
-          pushToast("error", `无法打开终端：${describeError(e)}`);
+          pushToast("error", `未能打开终端：${describeError(e)}`);
         }
       })();
     },
@@ -197,7 +197,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
 
   const openConversation = async (id: string, title?: string) => {
     if (busy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", "AI 正在回答，请先停止后再切换会话");
+      pushToast("info", "AI 正在回答，请先停止当前回答再切换会话");
       return;
     }
     const restoreGeneration = ++restoreGenerationRef.current;
@@ -225,14 +225,14 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       void restoreConversationRuns(id, restoreGeneration, runs);
     } catch (e) {
       if (isRestoreActive(restoreGeneration)) {
-        pushToast("error", `无法打开会话：${describeError(e)}`);
+        pushToast("error", `未能打开会话：${describeError(e)}`);
       }
     }
   };
 
   const newConversation = () => {
     if (busy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", "AI 正在回答，请先停止后再新建会话");
+      pushToast("info", "AI 正在回答，请先停止当前回答再新建会话");
       return;
     }
     restoreGenerationRef.current += 1;
@@ -249,7 +249,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     const blocksReset = (id: string) =>
       id === conversationIdRef.current && aiRunBlocksStart(activeRunRef.current);
     if (blocksReset(c.id)) {
-      pushToast("info", "AI 正在回答，请先停止后再删除当前会话");
+      pushToast("info", "AI 正在回答，请先停止当前回答再删除当前会话");
       return;
     }
     try {
@@ -266,18 +266,18 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       }
     } catch {
     }
-    const ok = await ask(`删除会话「${c.title || "（未命名会话）"}」？消息记录、运行记录和定时任务将一并清除，不可恢复。`, {
+    const ok = await ask(`确定要删除会话「${c.title || "（未命名会话）"}」吗？消息记录、运行记录和定时任务将一并清除，不可恢复。`, {
       kind: "warning",
     });
     if (!ok) return;
     if (blocksReset(c.id)) {
-      pushToast("info", "AI 正在回答，请先停止后再删除当前会话");
+      pushToast("info", "AI 正在回答，请先停止当前回答再删除当前会话");
       return;
     }
     try {
       await aiApi.conversationDelete(c.id);
     } catch (e) {
-      pushToast("error", `无法删除会话：${describeError(e)}`);
+      pushToast("error", `未能删除会话：${describeError(e)}`);
       return;
     }
     setConversations((prev) => prev.filter((it) => it.id !== c.id));
@@ -316,7 +316,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
   const compactConversation = async () => {
     const id = conversationIdRef.current;
     if (!id) {
-      pushToast("info", "当前没有对话内容，无需压缩");
+      pushToast("info", "当前无对话内容，无需压缩");
       return;
     }
     if (busy) {
@@ -329,7 +329,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       pushToast("success", `已将 ${result.messages} 条消息压缩为摘要，后续回答将基于该摘要`);
       await restoreConversation(id);
     } catch (e) {
-      pushToast("error", `无法压缩对话：${describeError(e)}`);
+      pushToast("error", `未能压缩对话：${describeError(e)}`);
     } finally {
       setCompacting(false);
     }
@@ -342,7 +342,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       useUi.getState().bumpModelProfilesRevision();
       pushToast("success", `已切换模型：${profile.name}`);
     } catch (e) {
-      pushToast("error", `无法切换模型：${describeError(e)}`);
+      pushToast("error", `未能切换模型：${describeError(e)}`);
     }
   };
 
@@ -351,7 +351,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     {
       key: "plan",
       label: "/plan",
-      hint: planMode ? "关闭计划模式" : "开启计划模式：先给方案，确认后再执行",
+      hint: planMode ? "关闭计划模式" : "开启计划模式：先提供方案，确认后再执行",
       run: () => {
         setInput("");
         setPlanMode((value) => !value);
@@ -395,8 +395,8 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
         ? "正在读取模型…"
         : modelOptions.length === 0
           ? "尚未配置模型"
-          : "没有匹配的模型"
-      : "没有匹配的命令或技能";
+          : "无匹配的模型"
+      : "无匹配的命令或技能";
 
   const pickRef = (ref: RefChip) => {
     setRefs((prev) => (prev.some((r) => r.id === ref.id) ? prev : [...prev, ref]));
@@ -559,7 +559,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
 
   const runTakeover = async () => {
     if (!tabId) {
-      pushToast("error", "终端接管需要先打开一个终端标签");
+      pushToast("error", "终端接管需要先打开一个终端标签页");
       return;
     }
     const instruction = await promptText(
@@ -568,7 +568,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       { multiLine: true },
     );
     if (!instruction || !isLifecycleActive()) return;
-    const choice = await askChoice("是否允许 AI 直接操作此终端？", {
+    const choice = await askChoice("确定要允许 AI 直接操作此终端吗？", {
       title: "终端接管（实验性功能）",
       level: "warning",
       choices: [
@@ -581,7 +581,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     const allowWrite = choice === "allow";
 
     if (anyAiBusy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", "AI 正在回答，请先停止后再接管终端");
+      pushToast("info", "AI 正在回答，请先停止当前回答再接管终端");
       return;
     }
     takeoverPausedRef.current = false;

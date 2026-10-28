@@ -34,10 +34,10 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
     setOpening(true);
     void openAggregateEntry(entry)
       .then((problem) => {
-        if (problem) useUi.getState().pushToast("error", `无法打开终端：${problem}`);
+        if (problem) useUi.getState().pushToast("error", `未能打开终端：${problem}`);
         else onOpen();
       })
-      .catch((error: unknown) => useUi.getState().pushToast("error", `无法打开终端：${describeError(error)}`))
+      .catch((error: unknown) => useUi.getState().pushToast("error", `未能打开终端：${describeError(error)}`))
       .finally(() => setOpening(false));
   };
   const markSeen = () => {
@@ -59,7 +59,7 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
           className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:cursor-default"
           style={wailsNoDragRegionStyle}
           disabled={!reachable || opening}
-          title={shown ? "转到该终端" : reachable ? `在此端打开（${entry.place}）` : "此端没有打开这个终端"}
+          title={shown ? "转到该终端" : reachable ? `在此端打开（${entry.place}）` : "此端未打开该终端"}
           onClick={open}
         >
           <span className="mt-[5px] flex w-2.5 shrink-0 justify-center">
@@ -79,7 +79,7 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
           className="nx-icon-btn shrink-0"
           style={wailsNoDragRegionStyle}
           aria-label={`标记 ${entry.title} 为已读`}
-          title={markable ? "标记为已读（所有设备）" : "打开这个终端后才能标记为已读"}
+          title={markable ? "标记为已读（所有设备）" : "打开该终端后方可标记为已读"}
           disabled={marking || !markable}
           onClick={markSeen}
         >
@@ -88,8 +88,8 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
       </div>
       {(!reachable || !markable) && (
         <div className="pl-[18px] pt-0.5 text-[11px] text-[var(--nx-fg-soft)]" data-inbox-reason="">
-          {!reachable && <p>此端没有打开这个终端，无法转到它。</p>}
-          {!markable && <p>打开这个终端后才能标记为已读。</p>}
+          {!reachable && <p>此端未打开该终端，无法跳转。</p>}
+          {!markable && <p>打开该终端后方可标记为已读。</p>}
         </div>
       )}
     </li>
@@ -201,7 +201,7 @@ export function InboxButton() {
       .finally(() => setMarkingAll(false));
   };
 
-  const label = count > 0 ? `收件箱：${count} 个会话需要关注` : "收件箱：没有需要关注的会话";
+  const label = count > 0 ? `收件箱：${count} 个会话需要关注` : "收件箱：暂无需要关注的会话";
   return (
     <div
       className="relative"
@@ -245,7 +245,7 @@ export function InboxButton() {
             ? "pointer-events-none absolute right-0 top-[30px] z-40 whitespace-nowrap rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11.5px] text-neutral-300 shadow-lg"
             : "sr-only"
         } data-inbox-cue={cue && !open ? "" : undefined}>
-        {cue && !open ? "新：有会话需要关注，点铃铛查看" : ""}
+        {cue && !open ? "有会话需要关注，选择铃铛图标查看" : ""}
       </span>
       {open && (
         <div
@@ -265,7 +265,7 @@ export function InboxButton() {
                 type="button"
                 className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
                 disabled={markingAll}
-                title="把列表里的会话都标记为已读（所有设备）"
+                title="将列表中的会话全部标记为已读（所有设备）"
                 onClick={markAll}
               >
                 全部标记已读
@@ -273,7 +273,7 @@ export function InboxButton() {
             )}
           </div>
           {count === 0 ? (
-            <p className="px-2 py-3 text-[12px] text-neutral-500">没有需要你处理或刚结束的会话。</p>
+            <p className="px-2 py-3 text-[12px] text-neutral-500">暂无需要处理或刚结束的会话。</p>
           ) : (
             <ul className="flex flex-col">
               {entries.map((entry) => (

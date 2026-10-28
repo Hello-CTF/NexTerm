@@ -173,7 +173,7 @@ describe("slash command menu", () => {
     press("Enter");
     await flush();
     expect(mocks.compact).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("info", "当前没有对话内容，无需压缩");
+    expect(mocks.toast).toHaveBeenCalledWith("info", "当前无对话内容，无需压缩");
   });
 
   it("does not open for a slash inside the message", async () => {

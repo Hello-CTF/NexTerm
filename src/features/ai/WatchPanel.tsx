@@ -72,7 +72,7 @@ function WatchPanelContent({
       onChangedRef.current?.();
     } catch (err) {
       if (!aliveRef.current || gen !== loadGenRef.current) return;
-      setError(`无法读取监视：${String(err)}`);
+      setError(`未能读取监视：${String(err)}`);
     } finally {
       if (aliveRef.current && gen === loadGenRef.current) setLoading(false);
     }
@@ -112,7 +112,7 @@ function WatchPanelContent({
         if (!aliveRef.current) return;
         setNotice({
           tone: "error",
-          text: `无法取消监视：${err instanceof Error ? err.message : String(err)}`,
+          text: `未能取消监视：${err instanceof Error ? err.message : String(err)}`,
         });
       } finally {
         if (aliveRef.current) {
@@ -199,13 +199,13 @@ function WatchPanelContent({
           {notice.text}
           {notice.tone === "error" && (
             <button type="button" className="ml-1.5 underline" onClick={() => setNotice(null)}>
-              知道了
+              确定
             </button>
           )}
         </div>
       )}
       {watches !== null && active.length === 0 && !error && (
-        <div className="py-1 text-[11px] text-neutral-500">当前没有进行中的监视</div>
+        <div className="py-1 text-[11px] text-neutral-500">暂无进行中的监视</div>
       )}
       {active.map((w) => row(w, true))}
       {ended.length > 0 && (

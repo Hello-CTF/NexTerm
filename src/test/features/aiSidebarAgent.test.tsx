@@ -512,7 +512,7 @@ describe("AiSidebar agent production mounting", () => {
     await act(async () => {
       await expect(api.resolveApproval("req-9", "approve_once")).rejects.toMatchObject({ code: "internal" });
     });
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("无法提交选择"));
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("未能提交选择"));
     // The failure replays the HITL state instead of resolving the card away.
     await flushUntil(
       () => mocks.hitlEvents.mock.calls.length + mocks.hitlSnapshot.mock.calls.length > hitlCallsBefore,
@@ -728,7 +728,7 @@ describe("AiSidebar agent production mounting", () => {
     await act(async () => {
       bList.reject(new Error("backend down"));
     });
-    await flushUntil(() => view!.container.textContent?.includes("加载失败") === true);
+    await flushUntil(() => view!.container.textContent?.includes("未能加载子代理列表") === true);
     expect(view!.container.querySelector('[data-handle="build"]')).toBeNull();
     expect(view!.container.querySelector('[data-handle="deploy"]')).toBeNull();
     expect(

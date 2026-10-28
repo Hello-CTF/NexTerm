@@ -19,7 +19,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
         {(backgroundTaskTotal > 0 || tasksOpen) && (
           <button
             className={`nx-btn nx-btn-ghost nx-btn-xs ${tasksOpen ? "is-active" : ""}`}
-            title="AI 留下的后台任务：定时任务、监视、子代理，可在这里查看和停止"
+            title="AI 创建的后台任务（定时任务、监视、子代理），可在此查看和停止"
             aria-label={`后台任务，共 ${backgroundTaskTotal} 项`}
             aria-expanded={tasksOpen}
             onClick={() => setTasksOpen((v) => !v)}
@@ -101,7 +101,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
             <div className="nx-hint px-2 py-3 text-center text-[11.5px]">正在加载历史会话…</div>
           ) : historyStatus === "error" ? (
             <div className="px-2 py-3 text-center">
-              <div className="nx-hint text-red-300">无法加载历史会话：{historyError}</div>
+              <div className="nx-hint text-red-300">未能加载历史会话：{historyError}</div>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                 onClick={() => void loadConversations()}

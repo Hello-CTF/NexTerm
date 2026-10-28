@@ -233,15 +233,15 @@ describe("BaseUrlsSection empty-list guidance", () => {
     await flushUntil(() => document.body.textContent?.includes("未配置") ?? false);
     expect(document.body.textContent).toContain("新设备无法接入");
     await expandSection();
-    await flushUntil(() => document.body.textContent?.includes("还没有配置接入地址") ?? false);
-    expect(document.body.textContent).toContain("请在下方添加设备能访问到的服务器地址");
+    await flushUntil(() => document.body.textContent?.includes("尚未配置接入地址") ?? false);
+    expect(document.body.textContent).toContain("请在下方添加设备可访问的服务器地址");
     mounted.unmount();
 
     mounted = mount(createElement(BaseUrlsSection, { entries: [], isAdmin: false, onSaved: () => undefined }));
     await flushUntil(() => document.body.textContent?.includes("请联系超级管理员") ?? false);
     expect(document.body.textContent).toContain("新设备无法接入");
     await expandSection("展开");
-    await flushUntil(() => document.body.textContent?.includes("还没有配置接入地址") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("尚未配置接入地址") ?? false);
   });
 });
 

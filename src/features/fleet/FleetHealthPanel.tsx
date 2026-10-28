@@ -248,7 +248,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
             onChange={(event) => updateSettings({ intervalMs: Number(event.target.value) * 60_000 })}
           />
         </label>
-        <span className="nx-hint">只在本页打开时自动刷新，切换到其他页面后停止</span>
+        <span className="nx-hint">仅在本页打开时自动刷新，切换到其他页面后停止</span>
         {lastRefreshed !== null && <span className="nx-hint">上次刷新 {new Date(lastRefreshed).toLocaleTimeString()}</span>}
       </div>
 
@@ -256,11 +256,11 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
         {(assetsQuery.isPending || groupsQuery.isPending) && <div className="nx-hint">正在读取项目主机…</div>}
         {(assetsQuery.isError || groupsQuery.isError) && (
           <div role="alert" className="mb-2 text-[11px] text-red-300">
-            无法读取项目里的主机：{describeError(assetsQuery.error ?? groupsQuery.error)}
+            未能读取项目中的主机：{describeError(assetsQuery.error ?? groupsQuery.error)}
           </div>
         )}
-        {error && <div role="alert" className="mb-2 text-[11px] text-red-300">刷新失败：{error}</div>}
-        {historyError && <div role="alert" className="mb-2 text-[11px] text-red-300">无法读取最近的批量执行记录：{historyError}</div>}
+        {error && <div role="alert" className="mb-2 text-[11px] text-red-300">未能刷新：{error}</div>}
+        {historyError && <div role="alert" className="mb-2 text-[11px] text-red-300">未能读取最近的批量执行记录：{historyError}</div>}
         {overflow.size > 0 && (
           <div role="status" className="mb-2 text-[11px] text-amber-300">
             单批最多探测 {MAX_TARGETS} 台；超出的 {overflow.size} 台保留在网格中并标记为未探测。
@@ -268,7 +268,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
         )}
         {!assetsQuery.isPending && hosts.length === 0 && (
           <div className="rounded border border-dashed border-neutral-800 px-3 py-6 text-center text-[11px] text-neutral-500">
-            当前项目没有 SSH 主机
+            当前项目暂无 SSH 主机
           </div>
         )}
         {hosts.length > 0 && (

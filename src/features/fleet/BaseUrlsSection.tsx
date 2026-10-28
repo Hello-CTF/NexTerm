@@ -103,7 +103,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
           {status === "loading"
             ? "正在读取…"
             : status === "error"
-              ? "无法读取"
+              ? "未能读取"
               : draft.length === 0
                 ? isAdmin
                   ? "未配置：新设备无法接入，展开以添加"
@@ -132,7 +132,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
       {open && status === "error" && (
         <div className="nx-alert nx-alert-danger mt-2 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">接入地址无法读取 · {loadError}</span>
+          <span className="min-w-0 flex-1 break-words">未能读取接入地址：{loadError}</span>
         </div>
       )}
       {open && status === "ready" && (
@@ -144,7 +144,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
 
           {draft.length === 0 && (
             <div className="nx-hint py-1 text-[12px]">
-              {isAdmin ? "还没有配置接入地址：新设备无法接入。请在下方添加设备能访问到的服务器地址。" : "还没有配置接入地址：新设备无法接入，请联系超级管理员配置。"}
+              {isAdmin ? "尚未配置接入地址，新设备无法接入。请在下方添加设备可访问的服务器地址。" : "尚未配置接入地址，新设备无法接入。请联系超级管理员配置。"}
             </div>
           )}
 
@@ -255,7 +255,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
               {saveError && (
                 <div className="nx-alert nx-alert-danger flex items-start gap-2">
                   <IconXCircle size={13} className="mt-0.5 shrink-0" />
-                  <span className="min-w-0 flex-1 break-words">保存失败 · {saveError}</span>
+                  <span className="min-w-0 flex-1 break-words">未能保存接入地址：{saveError}</span>
                 </div>
               )}
               <div className="flex items-center gap-2">

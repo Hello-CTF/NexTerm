@@ -174,14 +174,14 @@ export function CronPanel({
     !!editingJob && actionBusy === `${editingJob.sessionId}/${editingJob.id}`;
   const profilesState = profilesError ? "error" : profilesView ? "ready" : "loading";
   const followActiveLabel = () => {
-    if (profilesState === "error") return "跟随当前档案（读取失败）";
+    if (profilesState === "error") return "跟随当前档案（未能读取）";
     if (profilesState === "loading") return "跟随当前档案（正在读取…）";
     return activeProfile
       ? `跟随当前档案「${activeProfile.name}」`
       : "跟随当前档案（当前未设置）";
   };
   const unresolvedProfileLabel = (id: string) => {
-    if (profilesState === "error") return `已存档案（读取失败）· ${id}`;
+    if (profilesState === "error") return `已存档案（未能读取）· ${id}`;
     if (profilesState === "loading") return `已存档案（正在读取…）· ${id}`;
     return `未知档案（可能已删除）· ${id}`;
   };
@@ -198,7 +198,7 @@ export function CronPanel({
 
   const guardDraft = async (action: string): Promise<boolean> => {
     if (!draftDirty) return true;
-    return ask(`当前修改还没保存，${action}会丢掉这些改动，继续？`, {
+    return ask(`存在未保存的修改，${action}将丢弃这些修改。确定要继续吗？`, {
       title: "放弃未保存的修改",
       kind: "warning",
     });
@@ -251,7 +251,7 @@ export function CronPanel({
       open();
       return;
     }
-    void guardDraft("改为编辑其它任务").then((ok) => {
+    void guardDraft("编辑其他任务").then((ok) => {
       if (ok) open();
     });
   };
@@ -296,7 +296,7 @@ export function CronPanel({
     }
     const timeoutSec = draft.timeoutSec.trim() === "" ? null : Number(draft.timeoutSec);
     if (timeoutSec !== null && (!Number.isFinite(timeoutSec) || timeoutSec <= 0)) {
-      setRegisterError("超时时间要大于 0 秒");
+      setRegisterError("超时时间必须大于 0 秒");
       return;
     }
     const modelProfileId = draft.modelProfileId.trim();
@@ -343,7 +343,7 @@ export function CronPanel({
         try {
           await cronApi.unregister(created.sessionId, created.id);
           setRegisterError(
-            `无法保存：未能删除原任务（${describeError(e)}）。原任务保持不变，请重试。`,
+            `未能保存任务：无法删除原任务（${describeError(e)}）。原任务保持不变，请重试`,
           );
         } catch (rollbackError) {
           applyReplaceConflict({
@@ -364,7 +364,7 @@ export function CronPanel({
         try {
           await cronApi.setEnabled(created.sessionId, created.id, true);
         } catch (e) {
-          pushToast("error", `任务已保存，但未能启用：${describeError(e)}。任务目前为停用状态，请手动启用。`);
+          pushToast("error", `任务已保存，但未能启用：${describeError(e)}。任务目前为停用状态，请手动启用`);
           setRegisterOpen(false);
           setDraft(null);
           setEditingJob(null);
@@ -399,7 +399,7 @@ export function CronPanel({
       );
       pushToast("success", updated.enabled ? "任务已启用" : "任务已停用");
     } catch (e) {
-      pushToast("error", `无法${job.enabled ? "停用" : "启用"}任务：${describeError(e)}`);
+      pushToast("error", `未能${job.enabled ? "停用" : "启用"}任务：${describeError(e)}`);
       if (aliveRef.current) await reload();
     } finally {
       if (aliveRef.current) setActionBusy(null);
@@ -409,7 +409,7 @@ export function CronPanel({
   const unregister = async (job: CronJob) => {
     const display = job.name?.trim() || clipText(job.prompt, 40);
     const ok = await ask(
-      `删除定时任务「${display}」？\n表达式：${job.schedule}（${job.timezone}）\n\n删除后将不再执行，且无法恢复。`,
+      `确定要删除定时任务「${display}」吗？\n表达式：${job.schedule}（${job.timezone}）\n\n删除后将不再执行，且无法恢复。`,
       { title: "删除定时任务", kind: "warning" },
     );
     if (!ok) return;
@@ -420,7 +420,7 @@ export function CronPanel({
       pushToast("success", "定时任务已删除");
       await reload();
     } catch (e) {
-      pushToast("error", `无法删除任务：${describeError(e)}`);
+      pushToast("error", `未能删除任务：${describeError(e)}`);
     } finally {
       if (aliveRef.current) setActionBusy(null);
     }
@@ -503,7 +503,7 @@ export function CronPanel({
           </div>
           {profilesError && (
             <div className="nx-hint text-[11px] text-red-300" role="alert">
-              无法读取模型列表：{profilesError}。列表可能不完整，「跟随当前档案」不受影响。
+              未能读取模型列表：{profilesError}。列表可能不完整，「跟随当前档案」不受影响。
             </div>
           )}
           {editingJob &&
@@ -512,8 +512,8 @@ export function CronPanel({
             profilesState !== "loading" && (
               <div className="nx-hint text-[11px] text-amber-300">
                 {profilesState === "error"
-                  ? "无法确认该任务所用的模型，请刷新重试，或改选其它模型。"
-                  : "该任务所用的模型已被删除，请选择其它模型，或改回「跟随当前档案」。"}
+                  ? "无法确认该任务所用的模型，请刷新重试，或改选其他模型。"
+                  : "该任务所用的模型已被删除，请选择其他模型，或改回「跟随当前档案」。"}
               </div>
             )}
           <div className="flex flex-wrap items-center gap-2">
@@ -613,7 +613,7 @@ export function CronPanel({
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="break-words">
-              「{replaceConflict.label}」未保存成功：原任务仍在，新建的副本（已停用）也未能自动删除（
+              「{replaceConflict.label}」未保存成功：原任务仍然保留，新建的副本（已停用）也未能自动删除（
               {replaceConflict.error}）。两个任务不会同时运行，请手动删除其中一个。
             </div>
             <div className="mt-1 break-words font-mono text-[11px]">
@@ -635,7 +635,7 @@ export function CronPanel({
           <div className="nx-alert nx-alert-danger flex items-start gap-2" role="alert">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="break-words">无法读取定时任务：{error}</div>
+              <div className="break-words">未能读取定时任务：{error}</div>
               <button className="nx-btn nx-btn-outline nx-btn-sm mt-2" onClick={() => void reload()}>
                 <IconRefresh size={11} />
                 重试
@@ -650,7 +650,7 @@ export function CronPanel({
       ) : (
         <div className="flex flex-col gap-1.5">
           {jobs.length === 0 ? (
-            <div className="nx-hint py-2 text-[12px]">这个会话还没有定时任务。</div>
+            <div className="nx-hint py-2 text-[12px]">此会话暂无定时任务。</div>
           ) : (
             jobs.map((job) => {
               const status = jobStatus(job);
@@ -724,7 +724,7 @@ export function CronPanel({
                         job.run.id
                           ? "任务正在执行，暂时不能编辑"
                           : conflicted
-                            ? "有任务没保存成功，请先按上方提示处理"
+                            ? "存在未保存成功的任务，请先按上方提示处理"
                             : editingThis && registerOpen
                               ? "正在编辑"
                               : "编辑定时任务"

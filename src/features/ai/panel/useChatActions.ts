@@ -143,21 +143,21 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     if (!message) return;
     const run = activeRunRef.current;
     if (!run || run.settled) {
-      pushToast("info", "任务已结束，请把这条内容作为新消息发送。");
+      pushToast("info", "任务已结束，请将此内容作为新消息发送");
       return;
     }
     if (run.spawnPending) {
-      pushToast("info", "任务正在启动，请稍后再试。");
+      pushToast("info", "任务正在启动，请稍后再试");
       return;
     }
     if (images.length > 0) {
-      pushToast("info", "回答过程中追加的指令不能带图片，请先移除图片");
+      pushToast("info", "回答过程中追加的指令不支持附带图片，请先移除图片");
       return;
     }
     const target = run;
     const jobId = run.jobId;
     if (run.kind !== "chat" || !jobId) {
-      pushToast("info", "接管终端时不能追加指令");
+      pushToast("info", "终端接管期间不支持追加指令");
       return;
     }
     if (permOpen) setPermOpen(false);
@@ -188,7 +188,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
   const retryRun = (item: ChatItem) => {
     if (item.role !== "outcome" || item.outcome !== "error" || !item.retryable) return;
     if (busy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", "AI 正在回答，请先停止后再重试");
+      pushToast("info", "AI 正在回答，请先停止当前回答再重试");
       return;
     }
     const source = [...conv.items]
@@ -198,11 +198,11 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
           candidate.attempt === item.attempt && candidate.role === "user" && candidate.steer === undefined,
       );
     if (!source) {
-      pushToast("info", "找不到原消息内容，请手动重新发送");
+      pushToast("info", "未找到原消息内容，请手动重新发送");
       return;
     }
     if (source.text.trim() === PLAN_EXECUTE_MESSAGE) {
-      pushToast("info", "该计划已执行，不能通过重试再次执行；需要调整时请让 AI 重新生成方案");
+      pushToast("info", "该计划已执行，无法通过重试再次执行；需要调整时请让 AI 重新生成方案");
       return;
     }
     const snapshot = item.attempt === null ? undefined : requestSnapshotsRef.current.get(item.attempt);
@@ -250,7 +250,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     } catch (e) {
       editSubmittingRef.current = false;
       setEditSubmitting(false);
-      pushToast("error", `无法编辑并重新发送：${describeError(e)}`);
+      pushToast("error", `未能编辑并重新发送：${describeError(e)}`);
       return;
     }
     try {
@@ -286,7 +286,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       const run = activeRunRef.current;
       const id = run?.jobId;
       if (!run || !id) {
-        pushToast("info", "任务正在启动，请稍后再试。");
+        pushToast("info", "任务正在启动，请稍后再试");
         return false;
       }
       if (submittingCardIdRef.current) return false;
@@ -306,7 +306,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
           await aiApi.confirm(input);
         }
       } catch (e) {
-        pushToast("error", `无法提交选择：${describeError(e)}`);
+        pushToast("error", `未能提交选择：${describeError(e)}`);
         if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
           void replayHitl(run.generation, id);
         }
@@ -328,7 +328,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     const card = confirmCard;
     const id = run?.jobId;
     if (!run || !id || !card) {
-      pushToast("info", "任务正在启动，请稍后再试。");
+      pushToast("info", "任务正在启动，请稍后再试");
       return;
     }
     if (submittingCardId) return;
@@ -351,11 +351,11 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     const id = run?.jobId;
     const text = option ?? questionInput;
     if (!run || !id || !card) {
-      pushToast("info", "任务正在启动，请稍后再试。");
+      pushToast("info", "任务正在启动，请稍后再试");
       return;
     }
     if (!text.trim()) {
-      pushToast("info", "请输入回答或选择选项。");
+      pushToast("info", "请输入回答或选择选项");
       return;
     }
     if (submittingCardId) return;
@@ -369,7 +369,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
         await aiApi.answer(input);
       }
     } catch (e) {
-      pushToast("error", `无法提交回答：${describeError(e)}`);
+      pushToast("error", `未能提交回答：${describeError(e)}`);
       if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
         void replayHitl(run.generation, id);
       }
@@ -488,7 +488,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
   const submitAgentApproval = useCallback(
     (requestId: string, decision: AgentApprovalDecision) => {
       void resolveAgentApproval(requestId, decision).catch((error: unknown) => {
-        pushToast("error", `无法提交审批：${describeError(error)}`);
+        pushToast("error", `未能提交审批：${describeError(error)}`);
       });
     },
     [resolveAgentApproval, pushToast],

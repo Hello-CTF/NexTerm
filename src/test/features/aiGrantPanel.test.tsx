@@ -156,14 +156,14 @@ describe("GrantPanel lists only what matters", () => {
     mocks.grantList.mockResolvedValue(null);
     mocks.ruleList.mockResolvedValue(null);
     await mountPanel("asset-1");
-    expect(text()).toContain("这台主机");
+    expect(text()).toContain("当前主机");
     expect(text()).not.toContain("读取授权失败");
   });
 
   it("shows the current host and authorized hosts, never every asset", async () => {
     mocks.grantList.mockResolvedValue([{ deviceId: "asset-4", kinds: ["session_exec"], updatedAt: 1 }]);
     await mountPanel("asset-1");
-    expect(text()).toContain("这台主机");
+    expect(text()).toContain("当前主机");
     expect(text()).toContain("生产 Web");
     expect(text()).toContain("dev-m4");
     expect(text()).toContain("执行命令");
@@ -173,7 +173,7 @@ describe("GrantPanel lists only what matters", () => {
 
   it("finds another host through search and grants it", async () => {
     await mountPanel();
-    expect(text()).toContain("没有其他主机开启免确认授权");
+    expect(text()).toContain("暂无其他主机开启免确认授权");
     const search = view!.container.querySelector<HTMLInputElement>('input[aria-label="搜索要授权的主机"]')!;
     setInputValue(search, "oirush");
     await flush();
@@ -212,7 +212,7 @@ describe("GrantPanel switches", () => {
     mocks.ask.mockResolvedValueOnce(false);
     await mountPanel("asset-1");
     await toggle("生产 Web：执行命令免确认");
-    expect(mocks.ask.mock.calls[0][0]).toContain("即使在只读模式下也会放行");
+    expect(mocks.ask.mock.calls[0][0]).toContain("只读模式下同样生效");
     expect(mocks.grantSet).not.toHaveBeenCalled();
   });
 
@@ -301,7 +301,7 @@ describe("GrantPanel rules", () => {
     await mountPanel("asset-1");
     clickButton(view!.container, "添加路径规则");
     await flush();
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>('select[aria-label="规则动作"]')!, "exec_commands");
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>('select[aria-label="规则操作"]')!, "exec_commands");
     await flush();
     expect(view!.container.querySelector('input[aria-label="规则路径范围"]')).toBeNull();
     click([...view!.container.querySelectorAll("button")].find((b) => b.textContent === "添加")!);
@@ -333,7 +333,7 @@ describe("GrantPanel rules", () => {
 describe("GrantPanel scope and loading", () => {
   it("states the instance-wide scope without an account and the account scope with one", async () => {
     await mountPanel();
-    expect(text()).toContain("对这个 NexTerm 实例的所有会话生效");
+    expect(text()).toContain("对当前 NexTerm 实例的所有会话生效");
     view!.unmount();
     useAuth.setState({ user: accountOf("user") });
     await mountPanel();
@@ -343,7 +343,7 @@ describe("GrantPanel scope and loading", () => {
   it("shows load errors and retries", async () => {
     mocks.grantList.mockRejectedValueOnce(new Error("network down"));
     await mountPanel();
-    expect(text()).toContain("无法读取授权：network down");
+    expect(text()).toContain("未能读取授权：network down");
     clickButton(view!.container, "重试");
     await flushUntil(() => text().includes("已授权主机"));
   });

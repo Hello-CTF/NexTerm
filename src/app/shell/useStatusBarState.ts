@@ -195,12 +195,12 @@ export function useSyncStatusSummary(vaultLocked: boolean): SyncStatusSummary {
     (lastSuccessAt === null || lastAttemptAt === null || lastAttemptAt >= lastSuccessAt);
   const text = WEB
     ? pauseReason
-      ? `同步已暂停：${pauseReason === "locked" ? "凭据库锁定" : "凭据库未初始化"}`
+      ? `同步已暂停：${pauseReason === "locked" ? "凭据库已锁定" : "凭据库未初始化"}`
       : syncFailed
         ? "同步失败"
         : "服务端：浏览器模式"
     : pauseReason && syncConfigured
-      ? `同步已暂停：${pauseReason === "locked" ? "凭据库锁定" : "凭据库未初始化"}`
+      ? `同步已暂停：${pauseReason === "locked" ? "凭据库已锁定" : "凭据库未初始化"}`
       : syncFailed
         ? "同步失败"
         : syncLink.isError && !syncStatus.data

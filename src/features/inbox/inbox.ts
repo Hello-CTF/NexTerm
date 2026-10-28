@@ -160,7 +160,7 @@ export function openInboxTab(tabId: string): boolean {
 // connected session, or, for a device no workspace here holds, by opening the device first. It resolves to null once
 // the tab is open, or to the reason it could not be.
 export async function openAggregateEntry(entry: Pick<InboxEntry, "tabId" | "title" | "host">): Promise<string | null> {
-  if (!entry.host) return "此端没有打开这个终端";
+  if (!entry.host) return "此端未打开该终端";
   const result = await takeOverAggregateSession(entry.host, entry.tabId, entry.title);
   if (result.ok) return null;
   return "canceled" in result ? null : result.error;

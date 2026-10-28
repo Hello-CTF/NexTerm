@@ -149,7 +149,7 @@ export async function jumpToSession(target: JumpSessionTarget): Promise<void> {
   }
   const result = await takeOverBackgroundTab(target.tab, {
     guard: (session) => {
-      if (!ownedByApp(session)) throw new Error("这个终端的主机已不在工作区中，请重新连接后再接管");
+      if (!ownedByApp(session)) throw new Error("该终端所属主机已不在工作区中，请重新连接后再接管");
     },
   });
   const { pushToast } = useUi.getState();

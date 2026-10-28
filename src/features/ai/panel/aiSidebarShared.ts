@@ -17,8 +17,8 @@ export interface RefChip {
 
 export const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
   { value: "read_only", label: "只读", hint: "AI 只能查看，修改一律拒绝；已开启免确认授权的操作除外" },
-  { value: "read_write", label: "读写", hint: "查看直接执行，修改前先问你；选「本会话允许」后，本次对话内同类操作不再询问" },
-  { value: "silent", label: "自动执行", hint: "普通修改直接执行，高危和无法判断的操作仍会问你" },
+  { value: "read_write", label: "读写", hint: "查看操作直接执行，修改前需要你确认；选择「本会话允许」后，本次对话内同类操作不再询问" },
+  { value: "silent", label: "自动执行", hint: "普通修改直接执行，高危和无法判断的操作仍需要你确认" },
 ];
 
 export const MODE_LABEL: Record<AiPermissionMode, string> = {
@@ -78,7 +78,7 @@ export const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "allow_persi
 export type SlashItem = { key: string; label: string; hint: string; run: () => void };
 
 export const CONFIRM_HELP =
-  "「允许一次」只放行这一次；「本会话允许」在本次对话中不再询问同类操作；「永久允许」写入授权管理，可随时撤销。高危、无法判断和生产环境的操作每次都会询问。想让某类操作每次都先确认，可在「设置 → AI 拦截规则」中添加。";
+  "「允许一次」仅对本次操作生效；「本会话允许」在本次对话中不再询问同类操作；「永久允许」写入授权管理，可随时撤销。高危、无法判断和生产环境的操作每次都会询问。如需某类操作每次先确认，可在「设置 → AI 拦截规则」中添加。";
 
 export function confirmTitle(risk: string | undefined): string {
   if (risk === "danger") return "高危操作，需要你确认";

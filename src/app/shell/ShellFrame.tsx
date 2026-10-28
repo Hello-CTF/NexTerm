@@ -61,7 +61,7 @@ export function ShellFrame({
         href="#nx-main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[100] focus:rounded focus:bg-neutral-800 focus:px-3 focus:py-2 focus:text-xs focus:text-neutral-100"
       >
-        跳到主内容
+        跳转到主内容
       </a>
       <DeviceSessionBoundary />
       <Lazy fallback="none" silent>

@@ -107,7 +107,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const title = await aiApi.conversationRetitle(tab.conversationId);
       updateAiTab(boardKey, tab.id, { title }, aiAccountEpoch);
     } catch (e) {
-      pushToast("error", `无法重新生成标题：${describeError(e)}`);
+      pushToast("error", `未能重新生成标题：${describeError(e)}`);
     } finally {
       setRetitlingTabId(null);
     }
@@ -119,15 +119,15 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (existing) return existing;
     const request = (async () => {
       if (aiTabBusyIds.has(tab.id)) {
-        const ok = await ask("AI 正在回答，关闭标签将停止本次回答。确定关闭？", {
-          title: "关闭 AI 标签",
+        const ok = await ask("AI 正在回答，关闭标签页将停止本次回答。确定要关闭吗？", {
+          title: "关闭 AI 标签页",
           kind: "warning",
         });
         if (!ok) return false;
         if (aiTabBusyIds.has(tab.id)) {
           const cancelAndConfirm = aiTabRunControls.get(tab.id);
           if (!cancelAndConfirm) {
-            pushToast("error", "未能确认 AI 已停止，标签已保留。请稍后重试");
+            pushToast("error", "未能确认 AI 已停止，标签页已保留。请稍后重试");
             return false;
           }
           if (!(await cancelAndConfirm())) return false;
@@ -215,7 +215,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       <div className="nx-ai-tabstrip flex h-[34px] shrink-0 items-center gap-1 border-b border-neutral-800/60 pl-1.5 pr-1 [@media(max-height:480px)]:h-7">
         <div
           role="tablist"
-          aria-label="会话标签"
+          aria-label="会话标签页"
           className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
         >
           {tabs.map((t) => {
@@ -295,13 +295,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                       },
                       {
                         kind: "item",
-                        label: "左移标签",
+                        label: "左移标签页",
                         disabled: tabIndex <= 0,
                         onSelect: () => moveAiTab(boardKey, tabIndex, tabIndex - 1),
                       },
                       {
                         kind: "item",
-                        label: "右移标签",
+                        label: "右移标签页",
                         disabled: tabIndex < 0 || tabIndex >= tabs.length - 1,
                         onSelect: () => moveAiTab(boardKey, tabIndex, tabIndex + 1),
                       },
@@ -309,13 +309,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                       { kind: "item", label: "关闭", onSelect: () => requestCloseTab(t) },
                       {
                         kind: "item",
-                        label: "关闭左侧全部标签",
+                        label: "关闭左侧全部标签页",
                         disabled: tabIndex <= 0,
                         onSelect: () => closeTabsInOrder(tabs.slice(0, tabIndex)),
                       },
                       {
                         kind: "item",
-                        label: "关闭右侧全部标签",
+                        label: "关闭右侧全部标签页",
                         disabled: tabIndex < 0 || tabIndex >= tabs.length - 1,
                         onSelect: () => closeTabsInOrder(tabs.slice(tabIndex + 1)),
                       },
@@ -330,8 +330,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 <button
                   type="button"
                   className="nx-tab-close"
-                  aria-label={`关闭标签 ${t.title}`}
-                  title="关闭标签"
+                  aria-label={`关闭标签页 ${t.title}`}
+                  title="关闭标签页"
                   onClick={(e) => {
                     e.stopPropagation();
                     requestCloseTab(t);

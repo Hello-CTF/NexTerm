@@ -274,7 +274,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
           onClick={() => {
             void copyText(code).then(
               () => pushToast("success", "已复制到剪贴板"),
-              () => pushToast("error", "无法复制：剪贴板不可用，请手动选中代码复制"),
+              () => pushToast("error", "未能复制：剪贴板不可用，请手动选中代码复制"),
             );
           }}
         >

@@ -90,7 +90,7 @@ export const ChatBubble = memo(function ChatBubble({
     return (
       <details className="rounded-lg border border-dashed border-neutral-800 px-2.5 py-1.5 text-[11px] text-neutral-500">
         <summary className="cursor-pointer select-none">
-          已压缩上下文{item.messages > 0 ? `（${item.messages} 条消息）` : ""}，之后的回答基于下面的摘要
+          已压缩上下文{item.messages > 0 ? `（${item.messages} 条消息）` : ""}，之后的回答基于下方摘要
         </summary>
         <div className="mt-1.5 whitespace-pre-wrap text-[11.5px] leading-relaxed text-neutral-400">{item.text}</div>
       </details>
@@ -111,7 +111,7 @@ export const ChatBubble = memo(function ChatBubble({
           {item.retryable ? (
             <button
               className="nx-btn nx-btn-outline nx-btn-xs ml-auto shrink-0"
-              title="用同一条消息重新回答"
+              title="使用同一条消息重新回答"
               onClick={() => onRetry(item)}
             >
               <IconRefresh size={11} />
@@ -196,7 +196,7 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
   const preview = item.summary ?? "";
   const blocked = !running && !item.ok && !item.panic ? blockedOutcome(full || preview) : null;
   const expandable = !blocked && full.length > preview.length;
-  const body = blocked ? (blocked.by === "policy" ? `拦截原因：${blocked.reason}` : "你拒绝了这次操作，未执行。") : open ? full : preview;
+  const body = blocked ? (blocked.by === "policy" ? `拦截原因：${blocked.reason}` : "已拒绝本次操作，未执行。") : open ? full : preview;
   return (
     <div
       className="rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]"
@@ -334,7 +334,7 @@ function PlanBubble({
       <div className="mb-1.5 flex items-center gap-1.5">
         <IconList size={12} className="shrink-0 text-blue-300" />
         <span className="font-medium text-[var(--nx-fg-on-tint)]">方案已提交</span>
-        <span className="text-neutral-500">{approved ? "已批准" : "还没有执行任何操作"}</span>
+        <span className="text-neutral-500">{approved ? "已批准" : "尚未执行任何操作"}</span>
       </div>
       <div className="max-h-72 overflow-y-auto">
         <Markdown text={item.text} className="text-neutral-300" />
@@ -511,7 +511,7 @@ function DiffLines({ before, after }: { before: string; after: string }) {
   if (!hasVisibleChange(lines)) {
     return (
       <div className="text-neutral-500">
-        {before === after ? "（内容没有变化）" : "（仅文件末尾换行不同）"}
+        {before === after ? "（内容无变化）" : "（仅文件末尾换行不同）"}
       </div>
     );
   }

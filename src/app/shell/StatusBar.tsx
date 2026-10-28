@@ -39,7 +39,7 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
         {vaultStatus.attention === "uninitialized" ? (
           <button type="button" className={ITEM} title="在「设置 → 凭据保护」中开启密码保护" onClick={onOpenVaultProtection}>
             <IconLock size={11} />
-            凭据库未初始化 · 去开启保护
+            凭据库未初始化 · 开启保护
           </button>
         ) : vaultStatus.attention === "locked" ? (
           <button type="button" className={ITEM} title="输入保护密码后才能使用已保存的凭据" onClick={onOpenVaultProtection}>

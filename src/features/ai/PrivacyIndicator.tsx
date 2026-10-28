@@ -32,7 +32,7 @@ export function PrivacyIndicator({ guard }: { guard: PrivacyGuardState }) {
       type="button"
       className="nx-chip nx-chip-status is-error shrink-0"
       aria-label="脱敏不可用"
-      title="本地脱敏模型不可用，AI 请求会被阻止。点击前往设置"
+      title="本地脱敏模型不可用，AI 请求会被阻止。选择前往设置"
       onClick={() => {
         useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
         showSettingsSection("settings-ai-privacy");

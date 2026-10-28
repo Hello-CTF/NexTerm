@@ -110,7 +110,7 @@ function CopyLinkButton({ assetId }: { assetId: string }) {
 }
 
 export function HostDetailView({ assetId, visible }: { assetId: string | undefined; visible: boolean }) {
-  if (!assetId) return <Notice title="没有选择主机" hint="在资产树中右键主机，选择「主机详情」。" />;
+  if (!assetId) return <Notice title="未选择主机" hint="在资产树中右键主机，选择「主机详情」。" />;
   const deviceId = deviceIdOfHost(assetId);
   return deviceId ? (
     <DeviceDetail key={assetId} assetId={assetId} deviceId={deviceId} visible={visible} />
@@ -127,7 +127,7 @@ function AssetDetail({ assetId, visible }: { assetId: string; visible: boolean }
     if (assetsQuery.isError) {
       return (
         <Notice
-          title="主机信息加载失败"
+          title="未能加载主机信息"
           hint={describeError(assetsQuery.error)}
           action={
             <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void assetsQuery.refetch()}>
@@ -139,7 +139,7 @@ function AssetDetail({ assetId, visible }: { assetId: string; visible: boolean }
     }
     return <Notice title="正在加载主机信息…" />;
   }
-  if (!asset) return <Notice title="资产不存在或已删除" hint="它可能已被删除、未同步到这台设备，或你没有访问权限。" />;
+  if (!asset) return <Notice title="资产不存在或已删除" hint="该资产可能已被删除、尚未同步到本机，或当前账号无访问权限。" />;
   if (dbKindOf(asset.kind)) return <DatabaseAssetDetail asset={asset} assets={assets} visible={visible} />;
   return <HostAssetDetail asset={asset} assets={assets} visible={visible} />;
 }
@@ -206,13 +206,13 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
           databases={databases}
           relations={relations}
           visible={visible}
-          emptyHint="没有经由这台主机或指向它的地址的数据库资产。"
+          emptyHint="无经由该主机或指向其地址的数据库资产。"
         />
         {asset.kind === "ssh" ? (
           <SshHealthSection assetId={asset.id} workspace={workspace} viaJump={hasJump(asset)} />
         ) : (
           <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
-            <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "这类主机不采集指标。"}</SectionHint>
+            <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "此类主机不采集指标。"}</SectionHint>
           </HostSection>
         )}
       </div>
@@ -285,10 +285,10 @@ function DeviceDetail({ assetId, deviceId, visible }: { assetId: string; deviceI
     return (
       <Notice
         title="登录服务端账号后可查看设备"
-        hint="受管设备属于服务端账号。在「设置 → 账号同步」登录后即可查看这台设备。"
+        hint="受管设备属于服务端账号。在「设置 → 账号同步」登录后即可查看该设备。"
         action={
           <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={openAccountSyncSettings}>
-            去设置 → 账号同步登录
+            前往「设置 → 账号同步」登录
           </button>
         }
       />
@@ -297,7 +297,7 @@ function DeviceDetail({ assetId, deviceId, visible }: { assetId: string; deviceI
   if (devicesQuery.isError && !devicesQuery.data) {
     return (
       <Notice
-        title="设备信息加载失败"
+        title="未能加载设备信息"
         hint={describeError(devicesQuery.error)}
         action={
           <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void devicesQuery.refetch()}>
@@ -310,7 +310,7 @@ function DeviceDetail({ assetId, deviceId, visible }: { assetId: string; deviceI
   if (!devicesQuery.data) return <Notice title="正在加载设备信息…" />;
   const device = devicesQuery.data.devices.find((item) => item.id === deviceId);
   if (!device) {
-    return <Notice title="无法查看这台设备" hint="设备不存在，或它不属于当前账号。只有设备的所有者和超级管理员可以查看。" />;
+    return <Notice title="无法查看该设备" hint="设备不存在，或不属于当前账号。仅设备所有者和超级管理员可查看。" />;
   }
   return <DeviceHostDetail assetId={assetId} device={device} isAdmin={account.isAdmin} visible={visible} />;
 }

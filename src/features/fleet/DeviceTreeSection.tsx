@@ -121,13 +121,13 @@ export function DeviceTreeSection() {
 
   const revoke = async (device: FleetDevice) => {
     if (device.revoked_at !== 0 || busyId === device.id) return;
-    const first = await ask(`撤销设备「${device.name}」的接入？\n\n撤销后，这台设备的登录凭据立即失效、远程连接会断开。`, {
+    const first = await ask(`确定要撤销设备「${device.name}」的接入吗？\n\n撤销后，该设备的登录凭据将立即失效，远程连接将断开。`, {
       title: "撤销接入",
       kind: "warning",
     });
     if (!first) return;
     const second = await ask(
-      `再次确认撤销「${device.name}」的接入？\n\n撤销后无法恢复；要再次使用，需要重新生成接入码并重新接入。`,
+      `再次确认：确定要撤销「${device.name}」的接入吗？\n\n撤销后无法恢复；要再次使用，需要重新生成接入码并重新接入。`,
       { title: "确认撤销", kind: "warning" },
     );
     if (!second) return;

@@ -164,7 +164,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
       if (permScope) setPermDeviceOverride(true);
     } catch (e) {
       setPerm(prev);
-      pushToast("error", `无法保存权限设置：${describeError(e)}`);
+      pushToast("error", `未能保存权限设置：${describeError(e)}`);
     }
   };
 
@@ -185,7 +185,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
         await loadPermission();
       } catch (e) {
         setPerm(prev);
-        pushToast("error", `无法保存权限设置：${describeError(e)}`);
+        pushToast("error", `未能保存权限设置：${describeError(e)}`);
       }
     })();
   };

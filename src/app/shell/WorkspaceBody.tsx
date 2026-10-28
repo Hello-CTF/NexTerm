@@ -100,7 +100,7 @@ export function WorkspaceBody({
         />
       )}
       {leftDockOpen && (
-        <div className="nx-left-dock" role="navigation" aria-label="左栏">
+        <div className="nx-left-dock" role="navigation" aria-label="左侧栏">
           {leftView === "credentials" ? (
             <Lazy><CredentialsSidebar /></Lazy>
           ) : leftView === "files" && ws?.sessionId ? (
@@ -136,7 +136,7 @@ export function WorkspaceBody({
             <div className="min-h-0 flex-1">
               {visibleWorkspaces.length === 0 && (
                 <div role="status" className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
-                  当前项目没有打开的工作区。切换项目不会断开其他工作区。
+                  当前项目暂无打开的工作区。切换项目不会断开其他工作区。
                 </div>
               )}
               {workspaces.map((w) => {

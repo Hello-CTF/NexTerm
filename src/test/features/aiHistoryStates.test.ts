@@ -96,14 +96,14 @@ describe("AiSidebar history conversation states", () => {
   it("shows an error and retry instead of the empty-history message when loading fails", async () => {
     mocks.conversationList.mockRejectedValueOnce(new Error("Conversation store unavailable"));
     await openHistory();
-    await flushUntil(() => text().includes("无法加载历史会话：Conversation store unavailable"));
+    await flushUntil(() => text().includes("未能加载历史会话：Conversation store unavailable"));
     expect(text()).not.toContain("尚无历史会话");
   });
 
   it("shows the empty-history message only after a successful retry with no conversations", async () => {
     mocks.conversationList.mockRejectedValueOnce(new Error("Conversation store unavailable"));
     await openHistory();
-    await flushUntil(() => text().includes("无法加载历史会话"));
+    await flushUntil(() => text().includes("未能加载历史会话"));
     const retry = [...mounted!.container.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "重试",
     );
