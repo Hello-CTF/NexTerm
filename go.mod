@@ -14,6 +14,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/docker/go-units v0.5.0
+	github.com/ebitengine/purego v0.11.2
 	github.com/eino-contrib/jsonschema v1.0.3
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/glebarez/sqlite v1.11.0

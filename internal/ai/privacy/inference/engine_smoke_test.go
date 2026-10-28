@@ -1,4 +1,4 @@
-//go:build cgo
+//go:build (linux || darwin || windows) && (amd64 || arm64) && (cgo || !(android || ios))
 
 package inference
 
@@ -38,7 +38,7 @@ func TestRuntimeLoaderErrorIsReported(t *testing.T) {
 	}
 }
 
-// TestRuntimeSmoke loads a staged ONNX Runtime through the cgo shim and runs
+// TestRuntimeSmoke loads a staged ONNX Runtime through purego and runs
 // a generated token-classification model end to end, so a wrong OrtApi slot
 // or ABI mismatch fails here instead of crashing users. Set
 // NEXTERM_PRIVACY_TEST_RUNTIME to the staged ai-runtime directory.
