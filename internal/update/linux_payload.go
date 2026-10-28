@@ -97,8 +97,9 @@ func installLinuxPayload(ctx context.Context, reader *tar.Reader, executable str
 		return errors.New("更新包中没有 nexterm-desktop")
 	}
 	if hasRuntime {
-		if info, err := os.Stat(filepath.Join(runtimeStage, "libonnxruntime.so")); err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("更新包缺少 AI 运行时 %s", "libonnxruntime.so")
+		const name = "libonnxruntime.so"
+		if info, err := os.Stat(filepath.Join(runtimeStage, name)); err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("更新包缺少 AI 运行时 %s", name)
 		}
 	}
 	if err := ctx.Err(); err != nil {
