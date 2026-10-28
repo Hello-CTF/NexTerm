@@ -28,7 +28,7 @@ Windows 安装器不含 Authenticode 签名，首次运行可能显示未知发�
 |---|---|
 | LinuxServer（自建机器 / 内网 VPS，含完整浏览器界面） | `nexterm-server_linux_amd64_*.tar.gz` / `nexterm-server_linux_arm64_*.tar.gz` |
 
-服务端每个架构只发布一个 full 包，里面有 Go 静态二进制、前端、systemd unit、env 示例与 `install.sh`。一键安装或升级：`curl -fsSL https://nexterm.work/install.sh | sudo bash`，详见 [README 的「部署服务端」](https://github.com/Hello-CTF/NexTerm#部署服务端)。
+服务端每个架构只发布一个 full 包，里面有 Go 服务端二进制（动态链接 glibc，无最低版本要求，不支持 musl/Alpine）、前端、systemd unit、env 示例与 `install.sh`。一键安装或升级：`curl -fsSL https://nexterm.work/install.sh | sudo bash`，详见 [README 的「部署服务端」](https://github.com/Hello-CTF/NexTerm#部署服务端)。
 
 **设备被控端（agent）**
 
