@@ -102,7 +102,6 @@ Section "NexTerm" SEC01
   File /oname=nexterm-helper-windows-amd64.exe "${NEXTERM_HELPER_WINDOWS_AMD64}"
   File /oname=nexterm-helper-windows-arm64.exe "${NEXTERM_HELPER_WINDOWS_ARM64}"
   File /oname=MicrosoftEdgeWebview2Setup.exe "${NEXTERM_WEBVIEW2}"
-  !insertmacro NEXTERM_SWEEP_UPDATE_BACKUPS
   RMDir /r "$INSTDIR\ai-runtime"
   SetOutPath "$INSTDIR\ai-runtime"
   File /r "${NEXTERM_AI_RUNTIME}\*"
@@ -135,6 +134,8 @@ Section "NexTerm" SEC01
     ${EndIf}
   ${EndIf}
   Delete "$INSTDIR\MicrosoftEdgeWebview2Setup.exe"
+  ; Sweep update backups only after every file is written and the runtime is installed.
+  !insertmacro NEXTERM_SWEEP_UPDATE_BACKUPS
 SectionEnd
 
 Section "Uninstall"

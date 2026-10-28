@@ -65,7 +65,7 @@
   <p>Face ID / 指纹仅用于在本机解锁凭据库，验证结果不会离开设备，我们也不会收集任何生物特征数据。</p>
 
   <h2>4. AI 助手功能</h2>
-  <p>AI 功能使用你配置的 OpenAI 兼容接口，可以是本地模型或第三方端点。请求由运行 AI 功能的 NexTerm 实例发送：桌面端由本机发送，浏览器模式由你部署的服务端发送。发送给模型的对话、终端或文件内容受该端点的隐私规则约束；AI 对话和运行记录也会保存在相应 NexTerm 实例的数据存储中。</p>
+  <p>AI 功能使用你配置的 OpenAI 兼容接口，可以是本地模型或第三方端点。请求由运行 AI 功能的 NexTerm 实例发送：桌面端由本机发送，浏览器模式由你部署的服务端发送。发送给模型的对话、终端或文件内容受该端点的隐私规则约束；AI 对话和运行记录也会保存在相应 NexTerm 实例的数据存储中。若你启用可选的 AI 信息脱敏，应用会在你主动下载时从 Hugging Face 获取本地检测模型，该请求由 Hugging Face 按其隐私政策处理；检测本身在本地运行，模型权重不随应用分发。</p>
 
   <h2>5. 分享链接</h2>
   <p>你可以主动为已有终端会话创建限时公开预览链接。链接默认只读，浏览器模式可显式授权写入，桌面中继创建的预览目前只读，均可随时吊销。获得链接的人在有效期内无需登录即可访问，请仅授予可信对象。</p>
@@ -105,7 +105,7 @@
     <p>Face ID / Touch ID is used solely to unlock the local credential vault. Biometric data never leaves your device, and we collect none.</p>
 
     <h2>4. AI Assistant</h2>
-    <p>AI features use an OpenAI-compatible endpoint you configure, whether a local model or a third-party endpoint. Requests are sent by the NexTerm instance running AI: your device in desktop mode, or your deployed server in browser mode. Conversations, terminal output, and file content sent to a model are subject to that endpoint's privacy rules. AI conversations and run records are also stored by the corresponding NexTerm instance.</p>
+    <p>AI features use an OpenAI-compatible endpoint you configure, whether a local model or a third-party endpoint. Requests are sent by the NexTerm instance running AI: your device in desktop mode, or your deployed server in browser mode. Conversations, terminal output, and file content sent to a model are subject to that endpoint's privacy rules. AI conversations and run records are also stored by the corresponding NexTerm instance. If you use the optional AI privacy guard, the app downloads its local detection model from Hugging Face when you choose to download it; that request is handled under Hugging Face's privacy policy. Detection itself runs locally, and model weights are not bundled with the app.</p>
 
     <h2>5. Sharing Links</h2>
     <p>You may create time-limited public preview links to existing live terminal sessions. Links are read-only by default; browser mode allows explicit write grants, while previews created through the desktop relay are currently read-only. Links can be revoked at any time. Anyone with the link can access it within its validity period without signing in — share only with trusted parties.</p>

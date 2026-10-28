@@ -44,9 +44,10 @@ if (process.platform === "linux") {
   // Linux desktop builds link gtk4/webkitgtk-6.0 via cgo; CI installs the same
   // pkg-config modules as libgtk-4-dev/libwebkitgtk-6.0-dev.
   report("gtk4 (pkg-config)", versionOutput("pkg-config", ["--modversion", "gtk4"]), (version) => /^\d+\.\d+/.test(version), "libgtk-4-dev (pkg-config gtk4)");
-  report(`zig (Linux server glibc ${LINUX_SERVER_GLIBC_FLOOR} linker)`, versionOutput(process.env.NEXTERM_ZIG || "zig", ["version"]), (version) => version === ZIG_VERSION, `zig ${ZIG_VERSION}; run node scripts/install-zig.mjs ~/.cache/nexterm-zig and set NEXTERM_ZIG`);
   report("webkitgtk-6.0 (pkg-config)", versionOutput("pkg-config", ["--modversion", "webkitgtk-6.0"]), (version) => /^\d+\.\d+/.test(version), "libwebkitgtk-6.0-dev (pkg-config webkitgtk-6.0)");
 }
+// Linux server builds link CGO against an old glibc through zig on Linux and macOS hosts.
+report(`zig (Linux server glibc ${LINUX_SERVER_GLIBC_FLOOR} linker)`, versionOutput(process.env.NEXTERM_ZIG || "zig", ["version"]), (version) => version === ZIG_VERSION, `zig ${ZIG_VERSION}; run node scripts/install-zig.mjs ~/.cache/nexterm-zig and set NEXTERM_ZIG`);
 report("docker", versionOutput("docker", ["--version"]), (version) => Number(version.split(".")[0]) > 0, "Docker CLI");
 report("docker compose", versionOutput("docker", ["compose", "version"]), (version) => Number(version.replace(/^v/, "").split(".")[0]) >= 2, "Docker Compose v2");
 
