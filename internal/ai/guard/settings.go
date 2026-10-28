@@ -177,6 +177,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	defer m.mu.Unlock()
 	entry, err := loadPermission(ctx, m.settings)
 	if err != nil {
+		delete(m.states, ownerID)
 		return err
 	}
 	m.states[ownerID] = &entry
