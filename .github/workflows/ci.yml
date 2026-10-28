@@ -221,15 +221,25 @@ jobs:
         with:
           go-version: 1.27.3
           cache: true
+      # The container runs as root, which permission tests skip; run the suite as an ordinary user like a hosted runner.
+      - name: Prepare an unprivileged test user
+        run: |
+          useradd --create-home tester
+          GOCACHE="$(go env GOCACHE)"; GOMODCACHE="$(go env GOMODCACHE)"
+          mkdir -p "$GOCACHE" "$GOMODCACHE"
+          chown -R tester "$GITHUB_WORKSPACE" "$GOCACHE" "$GOMODCACHE"
+          chmod a+x "$HOME"
+          echo "GOCACHE=$GOCACHE" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$GOMODCACHE" >> "$GITHUB_ENV"
       - name: Run all Go tests
         if: ${{ !fromJSON(needs.version.outputs.scope).race }}
-        run: go test -count=1 ./...
+        run: runuser -u tester -- go test -count=1 ./...
       - name: Run all Go tests with the race detector (full-ci)
         if: fromJSON(needs.version.outputs.scope).race
-        run: go test -race -count=1 -timeout=25m -p=${RACE_PACKAGE_PARALLELISM} ./...
+        run: runuser -u tester -- go test -race -count=1 -timeout=25m -p=${RACE_PACKAGE_PARALLELISM} ./...
       - name: Run terminal workloads that intentionally skip race instrumentation
         if: fromJSON(needs.version.outputs.scope).race
-        run: go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'
+        run: runuser -u tester -- go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'
 
   database:
     needs: version

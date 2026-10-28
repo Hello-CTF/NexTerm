@@ -157,7 +157,7 @@ func TestQualityStaysStaticAndRequiredUnitOwnsGoTests(t *testing.T) {
 	if got := expression(unit.If); got != "fromJSON(needs.version.outputs.scope).unit" {
 		t.Fatalf("unit job must run on PRs rather than repeat for release tags, got condition %q", got)
 	}
-	plain := requireRun(t, unit, "go test -count=1 ./...")
+	plain := requireRun(t, unit, "runuser -u tester -- go test -count=1 ./...")
 	if got := expression(plain.If); got != "!fromJSON(needs.version.outputs.scope).race" {
 		t.Fatalf("plain Go tests must run unless full-ci selects the race suite, got %q", got)
 	}
@@ -257,7 +257,7 @@ func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 	if got := ciRace.Env["RACE_PACKAGE_PARALLELISM"]; got != "4" {
 		t.Fatalf("CI race package parallelism = %q, want the evidenced default 4", got)
 	}
-	raceStep := requireRun(t, ciRace, "go test -race -count=1 -timeout=25m -p=${RACE_PACKAGE_PARALLELISM} ./...")
+	raceStep := requireRun(t, ciRace, "runuser -u tester -- go test -race -count=1 -timeout=25m -p=${RACE_PACKAGE_PARALLELISM} ./...")
 	if got := expression(raceStep.If); got != "fromJSON(needs.version.outputs.scope).race" {
 		t.Fatalf("the race suite must be opt-in through full-ci, got %q", got)
 	}
