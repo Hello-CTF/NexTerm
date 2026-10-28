@@ -109,7 +109,8 @@ export async function runtimePlan({ os, arch, iosPlatform = "device" }, context 
   if (!release) throw new Error(`microsoft/onnxruntime has no release v${resolved}`);
   const archive = hostArchives[`${os}-${arch}`](resolved);
   const asset = release.assets?.find((item) => item.name === archive);
-  if (!asset) throw new Error(`ONNX Runtime ${resolved} publishes no ${archive} for ${os}/${arch}`);
+  // A platform the release no longer publishes builds without the privacy runtime; the guard reports unsupported at run time.
+  if (!asset) return { ...common, version: resolved, unavailable: `ONNX Runtime ${resolved} publishes no ${archive} for ${os}/${arch}` };
   const digest = parseDigest(asset.digest);
   if (!digest) throw new Error(`GitHub publishes no digest for ${archive}; refusing to use an unverified download`);
   return { ...common, version: resolved, ...(os === "darwin" ? { minimumOS: "13.4" } : {}), archive, digest, url: asset.browser_download_url };
@@ -274,6 +275,13 @@ export async function buildRuntime(options) {
   const context = { env: options.env, fetchImpl: options.fetchImpl };
   const plan = options.plan ?? await runtimePlan(options, context);
   const output = path.resolve(options.output);
+  if (plan.unavailable) {
+    console.warn(`warning: ${plan.unavailable}; building without the privacy runtime`);
+    await mkdir(output, { recursive: true });
+    const manifest = { abi: RUNTIME_ABI, platform: plan.os, arch: plan.arch, onnxRuntime: plan.version, unavailable: plan.unavailable, files: {} };
+    await writeFile(path.join(output, "runtime.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    return manifest;
+  }
   const cache = path.join(repository, ".tmp/ai-privacy-runtime");
   await mkdir(cache, { recursive: true });
   await mkdir(output, { recursive: true });

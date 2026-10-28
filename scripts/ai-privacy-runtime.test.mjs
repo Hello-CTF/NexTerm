@@ -44,8 +44,22 @@ test("version policy: prereleases, majors, old minors and missing digests are re
   assert.equal(await resolveVersion({ env: { NEXTERM_ORT_VERSION: "1.24.0" } }), "1.24.0");
   const noDigest = fakeFetch({ assets: [{ name, browser_download_url: "https://example.test/x" }] });
   await assert.rejects(runtimePlan({ os: "linux", arch: "amd64" }, { env: { NEXTERM_ORT_VERSION: "1.24.0" }, fetchImpl: noDigest.impl }), /no digest/);
+});
+
+test("a target the release no longer publishes builds without the privacy runtime", async (t) => {
   const missing = fakeFetch({ assets: [] });
-  await assert.rejects(runtimePlan({ os: "darwin", arch: "amd64" }, { env: { NEXTERM_ORT_VERSION: "1.24.0" }, fetchImpl: missing.impl }), /publishes no/);
+  const context = { env: { NEXTERM_ORT_VERSION: "1.24.0" }, fetchImpl: missing.impl };
+  const plan = await runtimePlan({ os: "darwin", arch: "amd64" }, context);
+  assert.match(plan.unavailable, /publishes no .* for darwin\/amd64/);
+  const root = await mkdtemp(path.join(tmpdir(), "nexterm-ort-unavailable-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const output = path.join(root, "out");
+  const manifest = await buildRuntime({ os: "darwin", arch: "amd64", output, ...context });
+  assert.equal(manifest.unavailable, plan.unavailable);
+  const verified = verifyRuntime(output, "darwin", "amd64");
+  assert.equal(verified.unavailable, plan.unavailable);
+  await writeFile(path.join(output, "libonnxruntime.dylib"), "x");
+  assert.throws(() => verifyRuntime(output, "darwin", "amd64"), /unexpected files/);
 });
 
 test("Android and iOS resolve from Maven and CocoaPods with one version", async () => {

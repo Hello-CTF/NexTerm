@@ -71,7 +71,7 @@ NexTerm 把远程运维放进一个窗口：通过 SSH、WinRM 或设备 agent �
 
 **快速开始**：新建 SSH 或 WinRM 资产（也可用内置的「当前设备」）→ 在「设置 → 凭据保护」初始化凭据库后保存密码或私钥 →（可选）在「设置 → AI 模型」接入模型 →（可选）在「设置 → 账号同步」登录服务端，多设备同步。保护密码只用于本机解锁，忘记后已保存的凭据无法恢复。
 
-**AI 信息脱敏**：默认关闭，在「设置 → 信息脱敏」下载最新发布的 `QuantumNous/astrlink-guard` 模型，选择 INT8、FP32 或 FP16 后启用。模型权重不随应用分发。模型从 Hugging Face 下载。本地推理运行库目前要求 Linux（可选的 ONNX Runtime 库需要 glibc 2.27 或更新并带 libstdc++，不支持 musl）、Windows（安装包已随附 VC++ 运行库）、macOS 13.4+、iOS/iPadOS 15.1+ 或 Android 7.0+；未改变应用本身的最低系统版本。检测在运行 AI 的设备执行，浏览器模式在服务端执行；同一会话的占位符跨轮次保持稳定，回复和工具参数会还原。启用后模型或运行时不可用会阻止请求，不会退回明文发送；图片等非文本内容不会脱敏，会原样发送给 AI 服务，首次在启用状态下添加图片时会提示。识别可能遗漏敏感信息。实现复用 [AstrLink](https://github.com/Calcium-Ion/AstrLink)，来源版本和许可证见 [声明](internal/ai/privacy/third_party/ASTRLINK_NOTICE.md)。
+**AI 信息脱敏**：默认关闭，在「设置 → 信息脱敏」下载最新发布的 `QuantumNous/astrlink-guard` 模型，选择 INT8、FP32 或 FP16 后启用。模型权重不随应用分发。模型从 Hugging Face 下载。本地推理运行库目前要求 Linux（可选的 ONNX Runtime 库需要 glibc 2.27 或更新并带 libstdc++，不支持 musl）、Windows（安装包已随附 VC++ 运行库）、macOS 13.4+、iOS/iPadOS 15.1+ 或 Android 7.0+；ONNX Runtime 官方不再发布的平台（目前为 Intel Mac）上脱敏不可用，应用其余功能不受影响。未改变应用本身的最低系统版本。检测在运行 AI 的设备执行，浏览器模式在服务端执行；同一会话的占位符跨轮次保持稳定，回复和工具参数会还原。启用后模型或运行时不可用会阻止请求，不会退回明文发送；图片等非文本内容不会脱敏，会原样发送给 AI 服务，首次在启用状态下添加图片时会提示。识别可能遗漏敏感信息。实现复用 [AstrLink](https://github.com/Calcium-Ion/AstrLink)，来源版本和许可证见 [声明](internal/ai/privacy/third_party/ASTRLINK_NOTICE.md)。
 
 ## 部署服务端
 

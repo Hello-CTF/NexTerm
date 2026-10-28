@@ -619,7 +619,8 @@ function copyPrivacyRuntime(binary, destination, goos, goarch) {
 
 function privacyRuntimeAssertions(directory, goos, goarch, libraryDirectory = directory) {
   try {
-    const { manifest, library, sizeBytes } = verifyRuntime(directory, goos, goarch, undefined, libraryDirectory);
+    const { manifest, library, sizeBytes, unavailable } = verifyRuntime(directory, goos, goarch, undefined, libraryDirectory);
+    if (unavailable) return [{ ...assertion("privacy-runtime", true, `privacy runtime unavailable for ${goos}/${goarch}: ${unavailable}`), evidence: { unavailable, onnx_runtime: manifest.onnxRuntime ?? null } }];
     const file = path.join(libraryDirectory, library);
     const binary = inspectBinary(file);
     if (binary.architecture !== goarch || binary.format !== ({ darwin: "mach-o", linux: "elf", windows: "pe" })[goos]) throw new Error(`Privacy runtime architecture mismatch: ${library}`);
@@ -1243,8 +1244,11 @@ function packageDarwin(binary, goarch) {
   const runtimeDirectory = path.join(app, "Contents/Frameworks/ai-runtime");
   const runtimeResources = path.join(app, "Contents/Resources/ai-runtime");
   copyPrivacyRuntime(binary, runtimeResources, "darwin", goarch);
-  fs.mkdirSync(runtimeDirectory, { recursive: true });
-  fs.renameSync(path.join(runtimeResources, runtimeLibrary("darwin")), path.join(runtimeDirectory, runtimeLibrary("darwin")));
+  const runtimeAvailable = fs.existsSync(path.join(runtimeResources, runtimeLibrary("darwin")));
+  if (runtimeAvailable) {
+    fs.mkdirSync(runtimeDirectory, { recursive: true });
+    fs.renameSync(path.join(runtimeResources, runtimeLibrary("darwin")), path.join(runtimeDirectory, runtimeLibrary("darwin")));
+  }
   const icon = path.join(ROOT, "public/brand/icon.icns");
   if (!fs.existsSync(icon)) die("macOS icon.icns asset is missing");
   fs.copyFileSync(icon, path.join(app, "Contents/Resources/icon.icns"));
@@ -1259,7 +1263,7 @@ function packageDarwin(binary, goarch) {
   const runtimeManifestPath = path.join(runtimeResources, "runtime.json");
   const runtimeManifest = loadManifest(runtimeManifestPath);
   runtimeManifest.unsigned_manifest_sha256 = fileDigest(runtimeManifestPath);
-  runtimeManifest.files[runtimeLibrary("darwin")] = fileDigest(path.join(runtimeDirectory, runtimeLibrary("darwin")));
+  if (runtimeAvailable) runtimeManifest.files[runtimeLibrary("darwin")] = fileDigest(path.join(runtimeDirectory, runtimeLibrary("darwin")));
   fs.writeFileSync(runtimeManifestPath, `${JSON.stringify(runtimeManifest, null, 2)}\n`);
   run("codesign", [...signArgs, app]);
   run("codesign", ["--verify", "--deep", "--strict", app]);

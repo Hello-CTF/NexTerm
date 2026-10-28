@@ -74,6 +74,16 @@ export function verifyRuntime(directory, os, arch, expectedDigest, libraryDirect
   if (manifest.abi !== RUNTIME_ABI || manifest.platform !== os || manifest.arch !== arch) throw new Error(`Privacy runtime target mismatch: expected ${os}/${arch} (abi ${RUNTIME_ABI})`);
   if (!manifest.files || typeof manifest.files !== "object" || Array.isArray(manifest.files)) throw new Error("Privacy runtime file manifest is missing");
   const library = runtimeLibrary(os);
+  if (manifest.unavailable !== undefined) {
+    // A target whose ONNX Runtime release publishes no library ships only this manifest.
+    if (typeof manifest.unavailable !== "string" || !manifest.unavailable) throw new Error("Privacy runtime unavailable reason is missing");
+    if (Object.keys(manifest.files).length) throw new Error("Unavailable privacy runtime must not list files");
+    for (const root of new Set([directory, libraryDirectory])) {
+      const extra = fs.existsSync(root) ? fs.readdirSync(root).filter((name) => name !== "runtime.json") : [];
+      if (extra.length) throw new Error(`Unavailable privacy runtime contains unexpected files: ${extra.join(", ")}`);
+    }
+    return { manifest, digest, library: null, sizeBytes: 0, unavailable: manifest.unavailable };
+  }
   if (os === "windows" && (!manifest.crt || typeof manifest.crt.files !== "object")) throw new Error("Privacy runtime manifest is missing the Visual C++ runtime section");
   const binaries = runtimeFiles(os, os === "windows" ? Object.keys(manifest.crt.files) : []);
   for (const name of [...binaries, ...RUNTIME_LICENSES]) {

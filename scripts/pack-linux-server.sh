@@ -122,11 +122,14 @@ package_full() {
   chmod 0644 "$OUT/$name.tar.gz"
 
   local archive_members
+  # Targets whose ONNX Runtime release has no library ship only the unavailable manifest.
+  local RUNTIME_LIBRARY_MEMBER=ai-runtime/libonnxruntime.so
+  if grep -q '"unavailable"' "$RUNTIME_DIR/runtime.json"; then RUNTIME_LIBRARY_MEMBER=ai-runtime/runtime.json; fi
   archive_members="$(tar -tzf "$OUT/$name.tar.gz")"
   for member in \
     nexterm-server \
     ai-runtime/runtime.json \
-    ai-runtime/libonnxruntime.so \
+    ${RUNTIME_LIBRARY_MEMBER} \
     nexterm-server.service \
     nexterm-onlyserver.service \
     install.sh \
