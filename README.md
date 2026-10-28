@@ -75,7 +75,7 @@ NexTerm 把远程运维放进一个窗口：通过 SSH、WinRM 或设备 agent �
 
 ## 部署服务端
 
-在带 systemd 的 Linux（amd64 / arm64，服务端为静态二进制，不依赖特定 glibc；可选的本地 AI 脱敏运行库需要 glibc 2.27 或更新并带 libstdc++，不支持 musl）上以 root 运行：
+在带 systemd 的 Linux（amd64 / arm64，服务端可在任意基于 glibc 的 Linux 上运行（对 glibc 版本无最低要求），不支持 musl（如 Alpine）；可选的本地 AI 脱敏运行库需要 glibc 2.27 或更新并带 libstdc++，不支持 musl）上以 root 运行：
 
 ```bash
 curl -fsSL https://nexterm.work/install.sh | sudo bash
@@ -95,7 +95,7 @@ curl -fsSL https://nexterm.work/install.sh | sudo bash
 
 ## 开发
 
-工具链：Go 1.27、Node 24+、pnpm；Linux 服务端为静态 `CGO_ENABLED=0` 构建，可在任意主机上构建。
+工具链：Go 1.27、Node 24+、pnpm；Linux 服务端为 `CGO_ENABLED=0` 构建（通过 purego 加载 ONNX Runtime，动态链接 glibc 但无版本要求），可在任意主机上构建；Windows 桌面端同样无需 C 编译器。
 
 ```bash
 pnpm install && pnpm build && go build ./...

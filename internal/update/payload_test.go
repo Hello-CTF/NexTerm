@@ -68,6 +68,8 @@ func TestLinuxPayloadStagesAndRejectsInvalidRuntime(t *testing.T) {
 	}{
 		{name: "complete", entries: valid}, {name: "legacy", entries: valid[:1]},
 		{name: "incomplete", entries: valid[:2], fail: true},
+		{name: "unavailable runtime manifest", entries: []payloadEntry{valid[0], {"usr/bin/ai-runtime/runtime.json", `{"unavailable":"no library for this target"}`, 0}}},
+		{name: "empty unavailable reason", entries: []payloadEntry{valid[0], {"usr/bin/ai-runtime/runtime.json", `{"unavailable":""}`, 0}}, fail: true},
 		{name: "duplicate", entries: append(append([]payloadEntry{}, valid...), valid[1]), fail: true},
 		{name: "traversal", entries: append(append([]payloadEntry{}, valid...), payloadEntry{"usr/bin/ai-runtime/../../outside", "bad", 0}), fail: true},
 		{name: "symlink", entries: append(append([]payloadEntry{}, valid...), payloadEntry{"usr/bin/ai-runtime/link", "", tar.TypeSymlink}), fail: true},
@@ -97,7 +99,12 @@ func TestLinuxPayloadStagesAndRejectsInvalidRuntime(t *testing.T) {
 					t.Fatal(err)
 				}
 				requirePayloadFile(t, exe, "new")
-				if len(test.entries) > 1 {
+				if test.name == "unavailable runtime manifest" {
+					requirePayloadFile(t, filepath.Join(dir, "ai-runtime/runtime.json"), test.entries[1].body)
+					if _, err := os.Stat(runtime); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("stale library survived an unavailable runtime: %v", err)
+					}
+				} else if len(test.entries) > 1 {
 					requirePayloadFile(t, runtime, "native")
 				} else {
 					requirePayloadFile(t, runtime, "old-native")
@@ -198,5 +205,33 @@ func requireNoWindowsBackups(t *testing.T, dir string) {
 	matches, err := filepath.Glob(filepath.Join(dir, windowsBackupPrefix+"*"))
 	if err != nil || len(matches) != 0 {
 		t.Fatalf("stale update backups remain: %v %v", matches, err)
+	}
+}
+
+func TestWindowsPayloadAcceptsUnavailableRuntime(t *testing.T) {
+	for _, unavailable := range []bool{true, false} {
+		dir := t.TempDir()
+		exe := filepath.Join(dir, "nexterm.exe")
+		writePayloadFile(t, exe, "old")
+		err := installWindowsPayload(exe, func() error {
+			writePayloadFile(t, exe, "new")
+			if unavailable {
+				writePayloadFile(t, filepath.Join(dir, "ai-runtime/runtime.json"), `{"unavailable":"no library for this target"}`)
+			} else {
+				writePayloadFile(t, filepath.Join(dir, "ai-runtime/runtime.json"), `{"files":{}}`)
+			}
+			return nil
+		})
+		if unavailable {
+			if err != nil {
+				t.Fatalf("unavailable runtime rejected: %v", err)
+			}
+			requirePayloadFile(t, exe, "new")
+		} else {
+			if err == nil {
+				t.Fatal("available runtime without its library accepted")
+			}
+			requirePayloadFile(t, exe, "old")
+		}
 	}
 }

@@ -26,8 +26,10 @@ while [ $# -gt 0 ]; do
       cat <<'PACK_HELP_EOF'
 Usage: scripts/pack-linux-server.sh [options]
 
-Package one full static CGO_ENABLED=0 Go server tar.gz with both runtime units and
-all nine SSH target helpers. scripts/build.mjs owns compilation/versioning;
+Package one full glibc-portable CGO_ENABLED=0 Go server tar.gz with both runtime units and
+all nine SSH target helpers. The server binary may be dynamically linked only
+against glibc (libc, libdl, libpthread; the purego ONNX Runtime loader) with no
+GLIBC_ symbol version above 2.17, so it runs on any glibc Linux but not musl. scripts/build.mjs owns compilation/versioning;
 scripts/e2e-harness retains --sync-only acceptance.
 
 Options:
@@ -71,7 +73,24 @@ case "$ARCH:$FILE_INFO" in
 esac
 GO_INFO="$(go version -m "$BIN")"
 printf '%s' "$GO_INFO" | grep -q 'CGO_ENABLED=0' || { echo "server was not built with CGO_ENABLED=0" >&2; exit 1; }
-case "$FILE_INFO" in *statically\ linked*|*static-pie\ linked*) ;; *) echo "server is not a static ELF binary: $FILE_INFO" >&2; exit 1 ;; esac
+case "$FILE_INFO" in
+  *statically\ linked*|*static-pie\ linked*) ;;
+  *)
+    command -v readelf >/dev/null || { echo "readelf is required to verify the dynamic server binary" >&2; exit 1; }
+    case "$ARCH" in amd64) WANT_INTERP=/lib64/ld-linux-x86-64.so.2 ;; arm64) WANT_INTERP=/lib/ld-linux-aarch64.so.1 ;; esac
+    ELF_INTERP="$(readelf -lW "$BIN" | sed -n 's/.*Requesting program interpreter: \(.*\)\]/\1/p')"
+    [ "$ELF_INTERP" = "$WANT_INTERP" ] || { echo "server interpreter is not the glibc loader $WANT_INTERP: ${ELF_INTERP:-none}" >&2; exit 1; }
+    while read -r needed; do
+      case "$needed" in libc.so.6|libdl.so.2|libpthread.so.0) ;; *) echo "server needs a non-glibc-portable library: $needed" >&2; exit 1 ;; esac
+    done < <(readelf -dW "$BIN" | sed -n 's/.*(NEEDED).*Shared library: \[\(.*\)\]/\1/p')
+    while read -r version; do
+      case "$version" in
+        GLIBC_2.[0-9]|GLIBC_2.1[0-7]|GLIBC_2.[0-9].*|GLIBC_2.1[0-7].*) ;;
+        *) echo "server requires symbol version $version, newer than GLIBC_2.17" >&2; exit 1 ;;
+      esac
+    done < <(readelf -VW "$BIN" | sed -n 's/.*Name: \([^ ]*\).*/\1/p')
+    ;;
+esac
 export NEXTERM_RELEASE_VERSION="$VERSION"
 node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$BIN" "server-linux-$ARCH" linux "$ARCH" 0
 RUNTIME_DIR="$(dirname "$BIN")/ai-runtime-linux-$ARCH"

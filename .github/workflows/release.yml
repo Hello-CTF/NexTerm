@@ -342,11 +342,11 @@ jobs:
             chmod +x "target/go-build/$helper"
           done < <(node .github/scripts/helper-matrix.mjs --shell)
       - name: Verify the reused production server binary against its manifest
-        run: node .github/scripts/verify-reused-binary.mjs "target/go-build/nexterm-server-linux-${{ matrix.arch }}" "server-linux-${{ matrix.arch }}" linux "${{ matrix.arch }}" 1
+        run: node .github/scripts/verify-reused-binary.mjs "target/go-build/nexterm-server-linux-${{ matrix.arch }}" "server-linux-${{ matrix.arch }}" linux "${{ matrix.arch }}" 0
       - name: Restore the verified frontend for packaging
         run: node scripts/build.mjs frontend --consume-dist=target/release-work/verified-dist/dist --dist-manifest=target/release-work/verified-dist/target/dist-manifest.json
       - name: Re-assert the reused binary evidence
-        run: node scripts/build.mjs report --kind=server --cgo=1 --os=linux --arch=${{ matrix.arch }} --file=target/go-build/nexterm-server-linux-${{ matrix.arch }}
+        run: node scripts/build.mjs report --kind=server --cgo=0 --os=linux --arch=${{ matrix.arch }} --file=target/go-build/nexterm-server-linux-${{ matrix.arch }}
       - name: Stage and verify the CI e2e report
         run: node .github/scripts/stage-server-evidence.mjs target/release-work/reused-native target/go-build/nexterm-server-linux-${{ matrix.arch }}
       - name: Produce and validate the full archive with final evidence gates

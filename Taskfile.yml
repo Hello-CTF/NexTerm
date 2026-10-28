@@ -238,7 +238,7 @@ tasks:
       - node scripts/build.mjs desktop --release --repro-check
 
   windows:desktop:
-    summary: Build the CGO Windows amd64/arm64 Wails desktop with the ONNX Runtime privacy runtime; needs a Windows host or CC set to a MinGW-w64 cross compiler for the target
+    summary: Build the Windows amd64/arm64 Wails desktop (CGO_ENABLED=0) with the ONNX Runtime privacy runtime
     cmds:
       - node scripts/build.mjs desktop --release --repro-check --os=windows --arch={{.GOARCH | default "amd64"}}
 
