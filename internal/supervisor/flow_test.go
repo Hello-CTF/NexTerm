@@ -389,37 +389,64 @@ func waitBuffered(t *testing.T, stream *Stream, atLeast int) {
 	}
 }
 
+// drainFlood reads the flood to its end marker. It fails when the stream makes
+// no progress for testReadTimeout, never on total wall time: how fast a PTY
+// flood moves depends on the host load and -race, not on the flow control
+// under test.
 func drainFlood(t *testing.T, stream *Stream, total int) {
 	t.Helper()
-	got := 0
-	tail := make([]byte, 0, 16)
-	buf := make([]byte, 64<<10)
-	deadline := time.Now().Add(2 * testReadTimeout)
-	for !bytes.Contains(tail, []byte("FLOOD-END")) {
-		if time.Now().After(deadline) {
-			t.Fatalf("flood not finished: %d bytes", got)
+	var got atomic.Int64
+	done := make(chan error, 1)
+	go func() {
+		tail := make([]byte, 0, 16)
+		buf := make([]byte, 64<<10)
+		for !bytes.Contains(tail, []byte("FLOOD-END")) {
+			n, err := stream.Read(buf)
+			if err != nil {
+				done <- err
+				return
+			}
+			got.Add(int64(n))
+			tail = append(tail, buf[:n]...)
+			if len(tail) > 12 {
+				tail = tail[len(tail)-12:]
+			}
 		}
-		n, err := stream.Read(buf)
-		if err != nil {
-			t.Fatalf("flood read failed after %d bytes: %v", got, err)
+		done <- nil
+	}()
+	stall := time.NewTicker(testReadTimeout)
+	defer stall.Stop()
+	last := int64(-1)
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("flood read failed after %d bytes: %v", got.Load(), err)
+			}
+			if want := total + len("FLOOD-END\r\n"); int(got.Load()) < want-2 || int(got.Load()) > want {
+				t.Fatalf("read %d bytes, want %d", got.Load(), want)
+			}
+			return
+		case <-stall.C:
+			now := got.Load()
+			if now == last {
+				// Unblock the reader before failing.
+				_ = stream.Close()
+				<-done
+				t.Fatalf("flood stalled at %d bytes for %s", now, testReadTimeout)
+			}
+			last = now
 		}
-		got += n
-		tail = append(tail, buf[:n]...)
-		if len(tail) > 12 {
-			tail = tail[len(tail)-12:]
-		}
-	}
-	if want := total + len("FLOOD-END\r\n"); got < want-2 || got > want {
-		t.Fatalf("read %d bytes, want %d", got, want)
 	}
 }
 
 // TestOutputCreditSlowConsumerSurvivesWithBoundedBuffer lets the consumer fall
-// behind an output flood far larger than the client's 64 MiB failure limit's
-// share: the session must survive, requests must stay responsive, and the
-// client backlog must stay within the credit window.
+// behind an output flood several times the client's overflow limit (the credit
+// window plus two replay chunks): the session must survive, requests must stay
+// responsive, every byte must arrive, and the client backlog must stay within
+// the credit window while credit is returned dozens of times.
 func TestOutputCreditSlowConsumerSurvivesWithBoundedBuffer(t *testing.T) {
-	const total = 80 << 20
+	const total = 4 * outputCreditWindow
 	_, client, _ := flowEnv(t)
 	stream := floodSession(t, client, total)
 	waitBuffered(t, stream, outputCreditWindow)
