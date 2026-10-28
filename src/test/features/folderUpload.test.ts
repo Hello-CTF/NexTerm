@@ -247,7 +247,7 @@ describe("desktop native folder picker", () => {
     h.listError = { code: "internal", message: "permission denied" };
     await pickFolderUpload({ sessionId: "s1", dir: "/data", knownSiblings: [] });
     expect(h.toasts).toEqual([
-      { level: "error", text: expect.stringContaining("permission denied") },
+      { level: "error", text: expect.stringContaining("应用内部出现错误，请稍后重试") },
     ]);
     expect(h.calls).toEqual(["listFolder:/local/pics"]);
   });

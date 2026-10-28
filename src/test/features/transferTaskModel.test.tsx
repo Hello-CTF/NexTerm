@@ -720,7 +720,7 @@ describe("transfer resume eligibility", () => {
       await waitFor(() => expect(mocks.download).toHaveBeenCalledTimes(2));
       if (eventOrder === "before") emitProgress(task.id, 0, 0, true);
       second.reject({ code: "not_found", message: "remote missing", detail: { resource: "path" } });
-      await waitFor(() => expect(useTransferStore.getState().tasks[0].error).toContain("remote missing"));
+      await waitFor(() => expect(useTransferStore.getState().tasks[0].error).toContain("未找到对应内容，可能已被删除"));
       if (eventOrder === "after") emitProgress(task.id, 0, 0, true);
       expect(useTransferStore.getState().tasks[0].transferred).toBe(40);
       expect(useTransferStore.getState().tasks[0].total).toBe(100);
@@ -748,7 +748,7 @@ describe("transfer resume eligibility", () => {
     clickResume(task.id);
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
     second.reject({ code: "not_found", message: "remote missing", detail: { resource: "path" } });
-    await waitFor(() => expect(useTransferStore.getState().tasks[0].error).toContain("remote missing"));
+    await waitFor(() => expect(useTransferStore.getState().tasks[0].error).toContain("未找到对应内容，可能已被删除"));
     expect(useTransferStore.getState().tasks[0].resumeIssue).toBeUndefined();
     expect(mocks.discardStaged).not.toHaveBeenCalledWith("/staged/remote-error");
     expect(hasButton(mounted!.container, "续传这个传输任务")).toBe(true);

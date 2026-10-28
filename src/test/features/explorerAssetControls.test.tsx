@@ -333,7 +333,7 @@ describe("asset group controls", () => {
     clickButton(mounted!.container, "保存");
     await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalledTimes(1));
     await flush();
-    expect(mounted!.container.textContent).toContain("boom");
+    expect(mounted!.container.textContent).toContain("应用内部出现错误，请稍后重试");
     expect(mounted!.container.querySelector(".nx-modal input.nx-input")).not.toBeNull();
 
     clickButton(mounted!.container, "保存");
@@ -372,14 +372,14 @@ describe("asset group controls", () => {
     await waitFor(() => expect(mocks.groupDelete).toHaveBeenCalledTimes(1));
     await flush();
     expect(mounted!.container.textContent).toContain("删除失败：");
-    expect(mounted!.container.textContent).toContain("disk on fire");
+    expect(mounted!.container.textContent).toContain("应用内部出现错误，请稍后重试");
     expect(mocks.ask).toHaveBeenCalledTimes(1);
 
     clickButton(mounted!.container, "重试");
     await waitFor(() => expect(mocks.groupDelete).toHaveBeenCalledTimes(2));
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     await flush();
-    expect(mounted!.container.textContent).not.toContain("disk on fire");
+    expect(mounted!.container.textContent).not.toContain("应用内部出现错误，请稍后重试");
   });
 
   it("moves an asset out of a group with a clear toast", async () => {
@@ -475,7 +475,7 @@ describe("asset group controls", () => {
     if (!tree) throw new Error("Tree not found");
     dropAsset(tree);
     await flush();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("原因：内部错误：disk on fire"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("原因：应用内部出现错误，请稍后重试"));
     expect(mounted!.container.textContent).toContain("仍在「生产」（目标：「根目录」）");
     expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.textContent).toContain("web-1");
     expect(mocks.toast).not.toHaveBeenCalledWith("info", "已将「web-1」移出分组");
@@ -483,7 +483,7 @@ describe("asset group controls", () => {
     clickButton(mounted!.container, "重试移动");
     await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2));
     expect(mocks.update).toHaveBeenNthCalledWith(2, { id: "a1", groupId: null });
-    await waitFor(() => expect(mounted!.container.textContent).not.toContain("disk on fire"));
+    await waitFor(() => expect(mounted!.container.textContent).not.toContain("应用内部出现错误，请稍后重试"));
     expect(mocks.toast).toHaveBeenCalledWith("info", "已将「web-1」移出分组");
     await waitFor(() => expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.textContent).not.toContain("web-1"));
     expect(mounted!.container.textContent).toContain("web-1");
@@ -499,12 +499,12 @@ describe("asset group controls", () => {
     if (!group) throw new Error("Group not found");
     dropAsset(group);
     await flush();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("原因：内部错误：group unavailable"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("原因：应用内部出现错误，请稍后重试"));
     expect(mounted!.container.textContent).toContain("仍在「根目录」（目标：「生产」）");
     expect(group.textContent).not.toContain("web-1");
     clickButton(mounted!.container, "取消移动");
     await flush();
-    expect(mounted!.container.textContent).not.toContain("group unavailable");
+    expect(mounted!.container.textContent).not.toContain("应用内部出现错误，请稍后重试");
     expect(mocks.update).toHaveBeenCalledTimes(1);
     expect(mounted!.container.textContent).toContain("web-1");
   });
@@ -530,7 +530,7 @@ describe("asset group controls", () => {
       pending.reject({ code: "internal", message: "network down" });
       await pending.promise.catch(() => undefined);
     });
-    await waitFor(() => expect(mounted!.container.textContent).toContain("原因：内部错误：network down"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("原因：应用内部出现错误，请稍后重试"));
     expect(mounted!.container.textContent).not.toContain("正在移动到");
     expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.getAttribute("aria-expanded")).toBe("true");
   });
@@ -774,7 +774,7 @@ describe("snippets panel", () => {
       .mockRejectedValueOnce({ code: "internal", message: "db locked" })
       .mockResolvedValueOnce(SNIPPETS.map((s) => ({ ...s })));
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("db locked"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("应用内部出现错误，请稍后重试"));
     expect(mounted!.container.textContent).toContain("未能加载片段");
     clickButton(mounted!.container, "重试");
     await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));

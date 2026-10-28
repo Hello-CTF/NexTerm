@@ -522,8 +522,8 @@ export function PaneGroup({
         )}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={leftOpen ? `收起左栏 (${kbLabel("toggleSidebar")})` : `展开左栏 (${kbLabel("toggleSidebar")})`}
-          aria-label={leftOpen ? "收起左栏" : "展开左栏"}
+          title={leftOpen ? `收起左侧栏 (${kbLabel("toggleSidebar")})` : `展开左侧栏 (${kbLabel("toggleSidebar")})`}
+          aria-label={leftOpen ? "收起左侧栏" : "展开左侧栏"}
           onClick={onToggleLeft}
         >
           <IconChevronLeft size={15} className={leftOpen ? "" : "rotate-180"} />

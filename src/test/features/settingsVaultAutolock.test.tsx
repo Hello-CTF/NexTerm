@@ -143,7 +143,7 @@ describe("SettingsView vault idle auto-lock", () => {
       clickButton(mounted!.container, "保存");
     });
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
-    expect(mocks.toast).toHaveBeenCalledWith("error", "参数错误：auto-lock minutes must be between 0 (disabled) and 1440。凭据没有改动，请检查后重试。");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "输入内容不正确，请检查后重试。凭据未改动，请检查后重试。");
     expect(autoLockInput()!.value).toBe("1440");
   });
 

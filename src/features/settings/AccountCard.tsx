@@ -337,7 +337,7 @@ export function AccountCard() {
             checked={registrationDraft}
             onChange={(e) => setRegistrationDraft(e.target.checked)}
           />
-          <span className="text-[12.5px] text-neutral-200">要求两步验证（MFA）</span>
+          <span className="text-[12.5px] text-neutral-200">要求两步验证</span>
           <input
             type="checkbox"
             className="h-4 w-4"
@@ -367,7 +367,7 @@ export function AccountCard() {
 
       {DESKTOP && (
         <div className="mt-3 border-t border-neutral-800/60 pt-3">
-          <p className="nx-hint">开放注册与两步验证（MFA）策略在服务端 Web 界面管理。</p>
+          <p className="nx-hint">开放注册与两步验证策略在服务端 Web 界面管理。</p>
           <ServerSecurityLink />
         </div>
       )}

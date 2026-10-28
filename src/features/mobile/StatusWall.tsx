@@ -72,7 +72,7 @@ function WallCardView({
         </span>
         {card.detail && <span id={`${id}-detail`} className="block truncate text-[12px] text-[var(--nx-fg)]" data-testid="wall-detail">{card.detail}</span>}
         {card.stale && <span id={`${id}-stale`} className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-stale">该主机的会话列表可能已过时</span>}
-        {!reachable && <span className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-unreachable">此端无法打开该终端</span>}
+        {!reachable && <span className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-unreachable">当前客户端无法打开该终端</span>}
       </span>
     </>
   );

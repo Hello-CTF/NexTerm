@@ -442,7 +442,7 @@ describe("CronPanel", () => {
     await flush();
 
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("invalid cron schedule");
+    expect(text).toContain("输入内容不正确，请检查后重试");
     expect(mounted.container.querySelector('textarea[aria-label="任务提示词"]')).not.toBeNull();
     expect(mocks.list).toHaveBeenCalledTimes(1);
   });

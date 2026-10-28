@@ -385,10 +385,15 @@ describe("IME guards for single-line Enter-to-submit forms", () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
 
-    const rename = [...mounted!.container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (b) => b.getAttribute("aria-label") === "重命名分组「生产」",
+    const opener = mounted!.container.querySelector<HTMLButtonElement>(
+      '[role="treeitem"][aria-expanded] button[aria-label^="更多操作 "]',
     );
-    if (!rename) throw new Error("group rename button not found");
+    if (!opener) throw new Error("group overflow button not found");
+    click(opener);
+    const rename = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) =>
+      b.textContent?.includes("重命名分组"),
+    );
+    if (!rename) throw new Error("group rename menu item not found");
     click(rename);
     await waitFor(() =>
       expect(mounted!.container.querySelector(".nx-modal input")).not.toBeNull(),

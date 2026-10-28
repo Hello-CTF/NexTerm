@@ -47,7 +47,7 @@ function WorkspaceStatusGlyph({ status, liveness }: { status: SessionInfo["statu
       ) : status === "disconnected" ? (
         <IconInfo size={11} />
       ) : (
-        <IconLoader size={11} />
+        <IconLoader size={11} className="animate-spin" />
       )}
     </span>
   );

@@ -339,7 +339,7 @@ describe("QuickConnect database entry scope", () => {
   it("shows a database-specific empty state and no SSH actions when there are no database assets", async () => {
     mocks.list.mockResolvedValue([{ ...WEB }, { ...LOCAL }]);
     const view = mountOverlay({ onClose: vi.fn(), kindFilter: "database" });
-    await waitFor(() => expect(view.container.textContent).toContain("还没有数据库资产"));
+    await waitFor(() => expect(view.container.textContent).toContain("暂无数据库资产"));
     expect(options(view.container)).toHaveLength(0);
     expect(view.container.textContent).not.toContain("导入 SSH 配置");
     expect(view.container.textContent).not.toContain("打开本机终端");
@@ -489,7 +489,7 @@ describe("QuickConnect connection failures and retries", () => {
     mocks.list.mockRejectedValueOnce({ code: "io", message: "list boom" });
     const view = await mountSettled({ onClose: vi.fn() });
     const alert = await waitForAlert(view.container);
-    expect(alert.textContent).toContain("list boom");
+    expect(alert.textContent).toContain("读写文件失败");
     const retry = [...alert.querySelectorAll("button")].find((b) => b.textContent === "重试");
     click(retry as HTMLButtonElement);
     await waitFor(() => expect(options(view.container).length).toBeGreaterThan(0));
@@ -558,7 +558,7 @@ describe("QuickConnect reachability indicators", () => {
     mocks.probeBatch.mockRejectedValueOnce({ code: "io", message: "probe down" });
     const view = await mountSettled({ onClose: vi.fn() });
     const alert = await waitForAlert(view.container);
-    expect(alert.textContent).toContain("probe down");
+    expect(alert.textContent).toContain("读写文件失败");
     const retry = [...alert.querySelectorAll("button")].find((b) => b.textContent === "重试");
     click(retry as HTMLButtonElement);
     await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(2));
@@ -599,7 +599,7 @@ describe("QuickConnect Retry keyboard activation is not hijacked by the Enter sh
     mocks.probeBatch.mockRejectedValueOnce({ code: "io", message: "probe down" });
     const view = await mountSettled({ onClose: vi.fn() });
     const alert = await waitForAlert(view.container);
-    expect(alert.textContent).toContain("probe down");
+    expect(alert.textContent).toContain("读写文件失败");
     expect(mocks.probeBatch).toHaveBeenCalledTimes(1);
 
     const retry = [...alert.querySelectorAll("button")].find(
@@ -714,7 +714,7 @@ describe("QuickConnect ad-hoc connections", () => {
     );
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(mocks.promptText).toHaveBeenCalledWith(
-      "输入 deploy@example.com:2222 的登录密码（留空则使用 SSH agent）",
+      "输入 deploy@example.com:2222 的登录密码（留空则使用 ssh-agent）",
       "",
       { secret: true },
     );

@@ -951,11 +951,11 @@ export function DevicesView() {
 
         {devices !== null && devices.length === 0 && !error && (
           <div className="flex flex-col items-center gap-2 py-4 text-center">
-            <div className="nx-hint text-[12px]">还没有接入设备。生成接入码后，在目标机器上执行一条命令即可接入。</div>
+            <div className="nx-hint text-[12px]">暂无已接入的设备。选择「接入新设备」开始接入。</div>
             {!enrollOpen && (
               <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => setEnrollOpen(true)}>
                 <IconPlus size={12} />
-                开始接入
+                接入新设备
               </button>
             )}
           </div>

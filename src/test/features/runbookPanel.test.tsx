@@ -261,7 +261,7 @@ describe("RunbookPanel", () => {
     );
     if (!prompt) throw new Error("variable prompt not found");
     clickButton(prompt, "继续");
-    await flushUntil(() => text().includes("确认下面要执行的命令"));
+    await flushUntil(() => text().includes("请确认下列命令"));
 
     expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({
       stepNumber: 1,

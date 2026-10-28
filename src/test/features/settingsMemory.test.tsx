@@ -191,7 +191,7 @@ describe("MemoryCard", () => {
     expect(mocks.index).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the form and shows the kernel message when a secret-like write is rejected", async () => {
+  it("keeps the form and shows the plain-language rejection when a secret-like write is rejected", async () => {
     mocks.create.mockRejectedValue({
       code: "bad_param",
       message: "semantic memory contains a possible secret",
@@ -209,7 +209,7 @@ describe("MemoryCard", () => {
     await flush();
 
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("possible secret");
+    expect(text).toContain("输入内容不正确，请检查后重试");
     expect(inputByLabel(mounted.container, "记忆主题").value).toBe("ops");
     expect(mocks.index).toHaveBeenCalledTimes(1);
     expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());

@@ -139,7 +139,7 @@ describe("remote layout preserves exited terminal state", () => {
 
     await notifyBackgroundedTerminals(removed);
 
-    expect(toastText()).toContain("标签已被其他设备关闭");
+    expect(toastText()).toContain("标签页已被其他设备关闭");
     expect(toastText().includes("可在「后台会话」里接管")).toBe(retainable === true);
   });
 

@@ -219,7 +219,7 @@ describe("BackgroundSessions table", () => {
     seedHost({ ...s1, kind: "local", assetId: null }, "local");
     const states: [SessionAttentionState, string][] = [
       ["running", "运行中"],
-      ["needs_me", "需要我"],
+      ["needs_me", "需要处理"],
       ["just_finished", "刚完成"],
       ["idle", "空闲"],
       ["exited", "已退出"],
@@ -289,7 +289,7 @@ describe("BackgroundSessions table", () => {
     const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(3));
     try {
       const current = row(view, "current");
-      expect(cell(current, "background-status-label").textContent).toBe("需要我");
+      expect(cell(current, "background-status-label").textContent).toBe("需要处理");
       expect(cell(current, "background-size").textContent).toBe("120×40");
       expect(cell(current, "background-output").textContent).toBe("5 分钟前有输出");
       expect(cell(current, "background-detached").textContent).toBe("30 分钟前转入后台");
@@ -306,7 +306,7 @@ describe("BackgroundSessions table", () => {
       expect(cell(old, "background-detached").textContent).toBe("—");
       expect(cell(old, "background-time").title).toContain("创建（主机时间）：2026-10-27 11:00:00");
       expect(view.container.textContent).not.toContain("在主机上运行");
-      expect(cell(view.container, "background-needs-me-note").textContent).toContain("「需要我」表示程序正在等待回应");
+      expect(cell(view.container, "background-needs-me-note").textContent).toContain("「需要处理」表示程序正在等待回应");
     } finally {
       view.unmount();
     }

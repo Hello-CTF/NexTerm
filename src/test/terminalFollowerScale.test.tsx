@@ -503,7 +503,7 @@ describe("follower size badge", () => {
     const render = () => act(() => badgeRoot.render(createElement(FollowerSizeBadge, { scale, ownedElsewhere: true, zoom: "fit", onZoom: vi.fn() })));
     try {
       render();
-      expect(element.querySelector("[data-follower-small]")?.textContent).toBe("文字较小：点「放大文字」");
+      expect(element.querySelector("[data-follower-small]")?.textContent).toBe("文字较小：选择「放大文字」");
       act(() => badgeRoot.unmount());
       window.matchMedia = ((query: string) => ({ ...original(query), matches: true })) as typeof window.matchMedia;
       const touchRoot = createRoot(element);

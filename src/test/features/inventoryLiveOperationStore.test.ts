@@ -18,7 +18,7 @@ describe("live operation store", () => {
   it("rejects a second unsettled operation for the same owner and identity", () => {
     expect(liveOperationStore.store(op("owner-a", "op-1", "id-x"))).toBeNull();
     const error = liveOperationStore.store(op("owner-a", "op-2", "id-x"));
-    expect(error?.message).toContain("该目标已有在途操作");
+    expect(error?.message).toContain("该目标已有进行中的操作");
     expect(liveOperationStore.getUnsettled("owner-a", "id-x")?.snapshot.operationId).toBe("op-1");
   });
 

@@ -383,7 +383,7 @@ describe("Asset tree device rows - rows only", () => {
     expect(deviceRow("web-01").getAttribute("role")).toBe("treeitem");
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
     expect(document.querySelector('button[aria-label="刷新设备列表"]')).toBeNull();
-    for (const hint of ["设备列表加载中", "设备列表加载失败", "还没有接入设备", "设备都不在线"]) {
+    for (const hint of ["设备列表加载中", "设备列表加载失败", "暂无已接入的设备", "设备都不在线"]) {
       expect(tree().textContent ?? "").not.toContain(hint);
     }
   });
@@ -435,7 +435,7 @@ describe("Asset tree device rows - rows only", () => {
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices" && c.method === "GET"));
     await flush();
 
-    expect(tree().textContent ?? "").not.toContain("还没有接入设备");
+    expect(tree().textContent ?? "").not.toContain("暂无已接入的设备");
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
   });
 

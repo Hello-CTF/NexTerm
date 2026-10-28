@@ -225,7 +225,7 @@ describe("Device management - desktop logged in", () => {
     );
     await flushUntil(() => document.body.textContent?.includes("共 0 台") ?? false);
     await flushUntil(() => mocks.devices.mock.calls.length >= 2);
-    await flushUntil(() => document.querySelector('[role="tree"]')?.textContent?.includes("还没有资产") ?? false);
+    await flushUntil(() => document.querySelector('[role="tree"]')?.textContent?.includes("暂无资产") ?? false);
     await flush();
     expect(document.querySelector('[role="tree"]')?.textContent ?? "").not.toContain("web-01");
 

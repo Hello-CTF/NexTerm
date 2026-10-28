@@ -330,8 +330,9 @@ describe("workspace reconnect status", () => {
     mounted = mountApp();
     await flush();
 
-    const status = document.querySelector(".nx-app-header [role='status']");
-    expect(status?.textContent).toContain("重新连接尝试 2 次");
-    expect(status?.textContent).toContain("下次重新连接");
+    const status = document.querySelector("[data-testid='workspace-connection-bar']");
+    expect(status?.getAttribute("role")).toBe("status");
+    expect(status?.textContent).toContain("正在重新连接（第 2 次");
+    expect(status?.textContent).toContain("秒后重试");
   });
 });

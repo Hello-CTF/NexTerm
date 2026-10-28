@@ -39,8 +39,8 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     keywords: ["terminal", "durable", "persistent", "osc52", "clipboard", "tray", "snippet", "持久", "剪贴板", "托盘", "后台", "快捷命令"],
   },
   "settings-state-rules": {
-    description: "按屏幕内容纠正会话状态（需要我、运行中、空闲）的规则",
-    keywords: ["state", "rule", "needs me", "attention", "badge", "regex", "pattern", "状态", "规则", "需要我", "徽章", "误报", "正则", "标记", "test", "测试"],
+    description: "按屏幕内容纠正会话状态（需要处理、运行中、空闲）的规则",
+    keywords: ["state", "rule", "needs attention", "attention", "badge", "regex", "pattern", "状态", "规则", "需要处理", "徽章", "误报", "正则", "标记", "test", "测试"],
   },
   "settings-shortcuts": {
     description: "自定义快捷键与选中复制",
