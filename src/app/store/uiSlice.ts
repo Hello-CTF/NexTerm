@@ -14,6 +14,7 @@ import {
   RIGHT_MIN,
   saveTerminalPrefs,
 } from "./persistence";
+import { detailForText } from "../../ui/errorText";
 import type { UiGet, UiSet, UiState } from "./types";
 
 let toastSeq = 1;
@@ -108,7 +109,7 @@ export function createUiSlice(set: UiSet, get: UiGet) {
       const existing = get().toasts.find((t) => t.kind === kind && t.text === text);
       if (existing) get().dismissToast(existing.id);
       const id = toastSeq++;
-      set((st) => ({ toasts: [...st.toasts, { id, kind, text, action }].slice(-TOAST_LIMIT) }));
+      set((st) => ({ toasts: [...st.toasts, { id, kind, text, action, detail: kind === "error" ? detailForText(text) ?? undefined : undefined }].slice(-TOAST_LIMIT) }));
       for (const key of [...toastTimers.keys()]) {
         if (!get().toasts.some((t) => t.id === key)) clearToastTimer(key);
       }

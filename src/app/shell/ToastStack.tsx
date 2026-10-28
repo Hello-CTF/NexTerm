@@ -36,7 +36,15 @@ export function ToastStack() {
                       : "mt-px shrink-0 text-blue-300"
                 }
               />
-              <span className="min-w-0 flex-1 select-text">{t.text}</span>
+              <div className="min-w-0 flex-1 select-text">
+                <span>{t.text}</span>
+                {t.detail ? (
+                  <details className="mt-1" onToggle={(event) => (event.currentTarget.open ? holdToast(t.id) : releaseToast(t.id))}>
+                    <summary className="cursor-pointer text-[11px] opacity-80">详情</summary>
+                    <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px] opacity-80">{t.detail}</pre>
+                  </details>
+                ) : null}
+              </div>
             </div>
             {t.action ? (
               <button

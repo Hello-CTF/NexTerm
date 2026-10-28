@@ -3,6 +3,7 @@ package ipc
 import (
 	"errors"
 	"log/slog"
+	"strings"
 )
 
 type Code string
@@ -45,6 +46,10 @@ func (e *Error) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
+	// A raw string detail stays in the Go error text (logs, wrapped errors) although the UI message is plain.
+	if raw, ok := e.Detail.(string); ok && raw != "" {
+		return e.Message + ": " + raw
+	}
 	return e.Message
 }
 
@@ -59,7 +64,24 @@ func NewError(code Code, message string) *Error {
 	return &Error{Code: code, Message: message}
 }
 
+// rawPrefixes are legacy "<label>: <raw error>" messages. WrapError keeps the code, shows a plain sentence and moves the
+// raw text into Detail so the UI can offer it under a details disclosure.
+var rawPrefixes = []struct {
+	code    Code
+	prefix  string
+	message string
+}{
+	{CodeDB, "数据库错误: ", "读写本地数据失败，请重试；仍然失败请重启应用并查看详情"},
+	{CodeDBMigrate, "数据库迁移错误: ", "升级本地数据失败，请重启应用后重试；仍然失败请查看详情"},
+}
+
 func WrapError(code Code, message string, cause error) *Error {
+	for _, rule := range rawPrefixes {
+		if code == rule.code && strings.HasPrefix(message, rule.prefix) {
+			raw := strings.TrimPrefix(message, rule.prefix)
+			return &Error{Code: code, Message: rule.message, Detail: raw, cause: cause}
+		}
+	}
 	return &Error{Code: code, Message: message, cause: cause}
 }
 

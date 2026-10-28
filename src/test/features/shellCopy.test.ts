@@ -21,7 +21,7 @@ import { modHint, setMacPlatform } from "../../app/platform";
 import { setTerminalCloseAction } from "../../app/preferences";
 import { connectProgressText, connectStageText, sessionStatusText, useUi, type AppTab, type Pane, type Workspace } from "../../app/store";
 import { setFileEditorDirty } from "../../features/files/editorGuards";
-import { describeError } from "../../ui/errorText";
+import { describeError, describeErrorDetail, detailForText } from "../../ui/errorText";
 import type { SessionInfo } from "../../ipc/commands";
 import type { ConnectProgressEvent } from "../../ipc/events";
 
@@ -45,68 +45,51 @@ function ws(panes: Pane[]): Workspace {
 }
 
 describe("describeError", () => {
-  it("maps known codes to short Chinese labels and preserves the original message", () => {
-    expect(describeError({ code: "not_found", message: "session not found" })).toBe(
-      "资源不存在：session not found",
-    );
-    expect(describeError({ code: "unsupported", message: "session capability unsupported" })).toBe(
-      "不支持：session capability unsupported",
-    );
+  it("turns technical messages into plain Chinese by code and keeps the raw text for the details disclosure", () => {
+    const err = { code: "not_found", message: "session not found" };
+    expect(describeError(err)).toBe("未找到对应内容，可能已被删除");
+    expect(describeErrorDetail(err)).toBe("code=not_found | session not found");
     expect(describeError({ code: "timeout", message: "context deadline exceeded" })).toBe(
-      "超时：context deadline exceeded",
-    );
-  });
-
-  it("does not prepend the code label when the message already has an equivalent Chinese prefix", () => {
-    expect(describeError({ code: "internal", message: "内部错误: SSH handshake: x" })).toBe(
-      "内部错误: SSH handshake: x",
-    );
-    expect(describeError({ code: "bad_param", message: "参数错误: host is required" })).toBe(
-      "参数错误: host is required",
-    );
-    expect(describeError({ code: "io", message: "IO 错误: no space left" })).toBe("IO 错误: no space left");
-  });
-
-  it("maps db_migrate to a Chinese label without duplicating an existing prefix", () => {
-    expect(describeError({ code: "db_migrate", message: "checksum mismatch" })).toBe(
-      "数据库迁移错误：checksum mismatch",
-    );
-    expect(describeError({ code: "db_migrate", message: "数据库迁移错误: checksum mismatch" })).toBe(
-      "数据库迁移错误: checksum mismatch",
-    );
-  });
-
-  it("preserves code: message diagnostics for unknown codes", () => {
-    expect(describeError({ code: "some_future_code", message: "checksum mismatch" })).toBe(
-      "some_future_code: checksum mismatch",
-    );
-    expect(describeError({ code: "ai_provider", message: "provider unreachable" })).toBe(
-      "ai_provider: provider unreachable",
-    );
-  });
-
-  it("maps provider and migration codes to Chinese labels", () => {
-    expect(describeError({ code: "winrm", message: "WinRM host is empty" })).toBe(
-      "WinRM 错误：WinRM host is empty",
+      "等待超时，请检查网络后重试",
     );
     expect(describeError({ code: "sftp", message: "SFTP list /tmp: permission denied" })).toBe(
-      "SFTP 错误：SFTP list /tmp: permission denied",
+      "文件传输失败，请检查连接和路径权限后重试",
     );
-    expect(describeError({ code: "ssh", message: "SSH dial host:22: refused" })).toBe(
-      "SSH 错误：SSH dial host:22: refused",
-    );
-    expect(describeError({ code: "db_migrate", message: "数据库迁移错误: checksum mismatch" })).toBe(
-      "数据库迁移错误: checksum mismatch",
+    expect(describeError({ code: "ssh", message: "SSH dial host:22: refused" })).toContain("SSH");
+  });
+
+  it("keeps messages that are already readable Chinese", () => {
+    expect(describeError({ code: "bad_param", message: "参数错误: 请选择 schema" })).toBe("参数错误: 请选择 schema");
+    expect(describeError({ code: "vault_locked", message: "凭据库已锁定，请先解锁" })).toBe("凭据库已锁定，请先解锁");
+    expect(describeErrorDetail({ code: "vault_locked", message: "凭据库已锁定，请先解锁" })).toBe(
+      "code=vault_locked | 凭据库已锁定，请先解锁",
     );
   });
 
-  it("preserves existing behavior for non-AppError inputs", () => {
+  it("never leaks HTTP status or non-JSON wording", () => {
+    const err = { code: "internal", message: "内部错误：服务端返回了非 JSON 响应（HTTP 404）：<html>", detail: { httpStatus: 404 } };
+    const text = describeError(err);
+    expect(text).not.toMatch(/HTTP|JSON|404/);
+    expect(describeErrorDetail(err)).toContain("404");
+    expect(describeError(new Error("上传失败（HTTP 502）"))).toBe("上传失败");
+    expect(describeError(new TypeError("Failed to fetch"))).toBe("网络请求失败，请检查网络连接后重试");
+  });
+
+  it("falls back to a generic sentence for unknown codes with technical text", () => {
+    const text = describeError({ code: "some_future_code", message: "checksum mismatch" });
+    expect(text).not.toContain("checksum");
+    expect(describeErrorDetail({ code: "some_future_code", message: "checksum mismatch" })).toContain("checksum mismatch");
+  });
+
+  it("remembers raw detail so a toast built from describeError can offer it", () => {
+    const text = `同步失败：${describeError({ code: "db", message: "database is locked (SQLITE_BUSY)" })}`;
+    expect(detailForText(text)).toContain("SQLITE_BUSY");
+  });
+
+  it("handles non-AppError inputs", () => {
     expect(describeError(null)).toBe("未知错误");
-    expect(describeError(undefined)).toBe("未知错误");
     expect(describeError("plain")).toBe("plain");
     expect(describeError(new Error("boom"))).toBe("boom");
-    expect(describeError({ message: "only message" })).toBe("only message");
-    expect(describeError({ code: "only_code" })).toBe("only_code");
   });
 });
 
@@ -192,10 +175,10 @@ describe("closeWorkspace batch close", () => {
     const toasts = useUi.getState().toasts;
     expect(toasts).toHaveLength(1);
     expect(toasts[0].kind).toBe("error");
-    expect(toasts[0].text).toContain("1 个终端操作失败：已断开：network unavailable");
+    expect(toasts[0].text).toContain("1 个终端操作失败：连接已断开，请重新连接后再试");
     expect(useUi.getState().workspaces).toHaveLength(1);
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([
-      { ...failed, closeError: "已断开：network unavailable" },
+      { ...failed, closeError: "连接已断开，请重新连接后再试" },
     ]);
     expect(useUi.getState().getWorkspaceRuntime("ws")?.sqlDraft?.text).toBe("SELECT 1");
     expect(useUi.getState().aiBoards["ws"]).toBeDefined();

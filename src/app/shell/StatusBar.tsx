@@ -7,9 +7,13 @@ export interface StatusBarProps {
   sync: SyncStatusSummary;
   onOpenVaultProtection: () => void;
   onOpenSyncSettings: () => void;
+  onRetryVaultStatus?: () => void;
 }
 
-export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSyncSettings }: StatusBarProps) {
+const ITEM = "nx-statusbar-truncate flex items-center gap-1.5 text-amber-300 hover:text-[var(--nx-fg-warning)]";
+
+// The status bar only shows what the user can act on: a healthy vault and a normal sync state render nothing.
+export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSyncSettings, onRetryVaultStatus }: StatusBarProps) {
   const { total: sessionCount, connected: connectedSessions, idle: idleSessions } = useSessionSummary();
   return (
     <footer className="nx-statusbar flex h-[25px] shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950 px-3 text-[11px] text-neutral-500">
@@ -32,29 +36,35 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
             ) : null}
           </span>
         </span>
-        <span className="text-neutral-700">|</span>
-        {vaultStatus.uninitialized ? (
-          <button
-            type="button"
-            className="nx-statusbar-truncate flex items-center gap-1.5 text-amber-300 hover:text-[var(--nx-fg-warning)]"
-            title="在「设置 → 凭据保护」中开启密码保护"
-            onClick={onOpenVaultProtection}
-          >
+        {vaultStatus.attention === "uninitialized" ? (
+          <button type="button" className={ITEM} title="在「设置 → 凭据保护」中开启密码保护" onClick={onOpenVaultProtection}>
             <IconLock size={11} />
             凭据库未初始化 · 去开启保护
           </button>
-        ) : (
-          <span className="nx-statusbar-truncate flex items-center gap-1.5" title={vaultStatus.text}>
+        ) : vaultStatus.attention === "locked" ? (
+          <button type="button" className={ITEM} title="输入保护密码后才能使用已保存的凭据" onClick={onOpenVaultProtection}>
             <IconLock size={11} />
-            {vaultStatus.text}
-          </span>
-        )}
+            凭据库已锁定 · 解锁
+          </button>
+        ) : vaultStatus.attention === "unknown" && onRetryVaultStatus ? (
+          <button type="button" className={ITEM} title="未能读取凭据库状态，选择后重试" onClick={onRetryVaultStatus}>
+            <IconLock size={11} />
+            凭据库状态未知 · 重试
+          </button>
+        ) : null}
       </div>
       <div className="nx-statusbar-side">
-        <span className={`nx-statusbar-truncate flex items-center gap-1.5 ${sync.className}`} title={sync.title}>
-          <IconNetwork size={11} />
-          {sync.text}
-        </span>
+        {sync.failed ? (
+          <button
+            type="button"
+            className="nx-statusbar-truncate flex items-center gap-1.5 text-red-300 hover:text-red-200"
+            title={sync.title}
+            onClick={onOpenSyncSettings}
+          >
+            <IconNetwork size={11} />
+            同步失败 · 查看
+          </button>
+        ) : null}
         {sync.showWarnings && (
           <button
             type="button"

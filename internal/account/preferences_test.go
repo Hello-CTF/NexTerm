@@ -72,6 +72,8 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"keybinding.terminalSearch",
 		"keybinding.reclaimTakeover",
 		"keybinding.lockVault",
+		"keybinding.openSettings",
+		"keybinding.focusAiInput",
 	} {
 		if !declared[key] {
 			t.Errorf("required preference key %q is not declared", key)

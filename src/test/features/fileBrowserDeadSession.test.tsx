@@ -565,7 +565,7 @@ describe("FileBrowser deleted sessions", () => {
     mounted = mountFromStore();
 
     await waitForRendered(() => expect(toastTexts()).toContain("重新连接失败"));
-    expect(toastTexts()).toContain("connection refused");
+    expect(toastTexts()).toContain("无法连接到目标主机");
     expect(storeTabSessionId()).toBe(SID);
     expect(useUi.getState().sessions.map((s) => s.id)).toEqual([SID]);
     expect(panel()?.textContent).toContain("会话已在服务端删除");
@@ -625,7 +625,7 @@ describe("FileBrowser deleted sessions", () => {
     mounted = mountFromStore();
 
     await waitForRendered(() => expect(toastTexts()).toContain("重新连接失败"));
-    expect(toastTexts()).toContain("资源不存在：资产不存在");
+    expect(toastTexts()).toContain("重新连接失败：资产不存在");
     expect(mocks.connect).toHaveBeenCalledWith("asset-gone");
     await flush();
     expect(mocks.connect).toHaveBeenCalledTimes(1);

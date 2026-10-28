@@ -1214,7 +1214,7 @@ describe("App terminal rename", () => {
     await submitRenameDraft("draft-title");
     await flush();
     const modal = mounted?.container.querySelector(".nx-modal");
-    expect(modal?.textContent).toContain("metadata changed");
+    expect(modal?.textContent).toContain("名称已在别处被修改");
     const input = modal?.querySelector<HTMLInputElement>("input");
     expect(input?.value).toBe("draft-title");
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];

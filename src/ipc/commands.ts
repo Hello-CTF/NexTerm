@@ -259,11 +259,12 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
   } catch {
     throw {
       code: "internal",
-      message: `服务端返回了非 JSON 响应（HTTP ${res.status}）：${text.slice(0, 120)}`,
+      message: "服务未返回有效结果，请稍后重试；若持续出现，请检查服务版本或网络代理",
+      detail: { httpStatus: res.status, body: text.slice(0, 200) },
     } satisfies AppError;
   }
   if (!body || body.ok !== true) {
-    throw (body?.error ?? { code: "internal", message: `HTTP ${res.status}` }) as AppError;
+    throw (body?.error ?? { code: "internal", message: "服务未返回有效结果，请稍后重试", detail: { httpStatus: res.status } }) as AppError;
   }
   return body.data as T;
 }
