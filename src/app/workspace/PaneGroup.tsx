@@ -154,7 +154,7 @@ export function PaneGroup({
     let draft = title;
     let failure = "";
     for (;;) {
-      const next = await promptText(failure || "重命名标签（留空恢复自动标题）：", draft);
+      const next = await promptText(failure || "重命名标签页（留空恢复自动标题）：", draft);
       if (next === null) return;
       const trimmed = sanitizeRemoteTabTitle(next);
       const current = pane.tabs.find((t) => t.id === id);
@@ -195,7 +195,7 @@ export function PaneGroup({
     const running = t.kind === "terminal" && Boolean(t.tabId) && !t.dead && !t.exited;
     items.push({
       kind: "item",
-      label: "关闭标签",
+      label: "关闭标签页",
       icon: <IconClose size={12} />,
       hint: closeActionHint(t),
       disabled: !t.closable,
@@ -204,7 +204,7 @@ export function PaneGroup({
     const tabIndex = pane.tabs.findIndex((candidate) => candidate.id === t.id);
     items.push({
       kind: "item",
-      label: "左移标签",
+      label: "左移标签页",
       icon: <IconChevronLeft size={12} />,
       accel: "Ctrl+Shift+←",
       disabled: tabIndex <= 0,
@@ -212,7 +212,7 @@ export function PaneGroup({
     });
     items.push({
       kind: "item",
-      label: "右移标签",
+      label: "右移标签页",
       icon: <IconChevronRight size={12} />,
       accel: "Ctrl+Shift+→",
       disabled: tabIndex < 0 || tabIndex >= pane.tabs.length - 1,
@@ -222,14 +222,14 @@ export function PaneGroup({
     const closableRight = pane.tabs.slice(tabIndex + 1).filter((candidate) => candidate.closable);
     items.push({
       kind: "item",
-      label: "关闭左侧全部标签",
+      label: "关闭左侧全部标签页",
       icon: <IconClose size={12} />,
       disabled: closableLeft.length === 0,
       onSelect: () => void requestCloseTabs(closableLeft.map((candidate) => candidate.id)),
     });
     items.push({
       kind: "item",
-      label: "关闭右侧全部标签",
+      label: "关闭右侧全部标签页",
       icon: <IconClose size={12} />,
       disabled: closableRight.length === 0,
       onSelect: () => void requestCloseTabs(closableRight.map((candidate) => candidate.id)),
@@ -254,7 +254,7 @@ export function PaneGroup({
           kind: "item",
           label,
           icon: <Icon size={12} />,
-          hint: alone ? "窗格只有这一个标签" : undefined,
+          hint: alone ? "窗格中只有一个标签页" : undefined,
           disabled: alone,
           onSelect: () => void splitPaneWithTab(t.id, pane.id, edge),
         });
@@ -320,7 +320,7 @@ export function PaneGroup({
           }}
         >
         {pane.tabs.length === 0 && (
-          <span className="px-1 text-xs text-neutral-500">这个面板还没有标签</span>
+          <span className="px-1 text-xs text-neutral-500">该窗格暂无标签页</span>
         )}
         <div role="tablist" aria-label="标签页" className="flex items-center gap-[3px]">
           {pane.tabs.map((t) => {
@@ -435,7 +435,7 @@ export function PaneGroup({
                   <button
                     type="button"
                     className="nx-tab-close"
-                    aria-label={`关闭标签 ${t.title}`}
+                    aria-label={`关闭标签页 ${t.title}`}
                     title={closeTabHint(t)}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -454,8 +454,8 @@ export function PaneGroup({
         </div>
         <button
           className="nx-tab-new"
-          title={`新建终端标签 (${kbLabel("newTerminal")})`}
-          aria-label="新建终端标签"
+          title={`新建终端标签页 (${kbLabel("newTerminal")})`}
+          aria-label="新建终端标签页"
           onClick={onNewTerminal}
         >
           <IconPlus size={13} />

@@ -304,7 +304,7 @@ const MAX_ZSTD_WINDOW_BYTES = 64 << 20;
 const PACK_SLOT = utf8Bytes(`"data":"`);
 const QUOTE = 0x22;
 
-const badCompressed = () => new CryptoError("decrypt", "同步对象压缩数据不合法");
+const badCompressed = () => new CryptoError("decrypt", "同步数据的压缩内容无效");
 
 function compressedDeclaredSize(packed: Uint8Array, maxDecoded: number): number {
   if (packed.length <= COMPRESSED_HEADER_BYTES) throw badCompressed();
@@ -321,7 +321,7 @@ export async function inflateTranscriptPlaintext(packed: Uint8Array, maxDecoded 
   const bad = badCompressed;
   const declared = compressedDeclaredSize(packed, maxDecoded);
   if (typeof DecompressionStream === "undefined") {
-    throw new CryptoError("crypto", "当前浏览器不支持解压同步对象");
+    throw new CryptoError("crypto", "当前浏览器不支持解压同步数据");
   }
   const inflater = new DecompressionStream("gzip");
   const writer = inflater.writable.getWriter();
@@ -492,7 +492,7 @@ const COMPRESS_MIN_BYTES = 1 << 10;
 
 async function gzipTranscriptPlaintext(plaintext: Uint8Array): Promise<Uint8Array | null> {
   if (typeof CompressionStream === "undefined") {
-    throw new CryptoError("crypto", "当前浏览器不支持压缩同步对象");
+    throw new CryptoError("crypto", "当前浏览器不支持压缩同步数据");
   }
   const deflater = new CompressionStream("gzip");
   const writer = deflater.writable.getWriter();

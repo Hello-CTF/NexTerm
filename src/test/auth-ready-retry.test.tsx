@@ -301,7 +301,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
     // Before login: asset tree sits in the 401 error state, status bar vault unavailable
-    await flushUntil(() => text().includes("资产列表加载失败"));
+    await flushUntil(() => text().includes("未能加载资产列表"));
     expect(text()).toContain("访问令牌无效或缺失");
     expect(vaultStatusText()).toContain("凭据库状态未知");
     expect(text()).not.toContain("web-01");
@@ -373,7 +373,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     await logout();
     expect(useAuth.getState().gate).toBe("login");
     // Account-switch direction: no asset/session/vault/SQL state of the old account may linger
-    await flushUntil(() => text().includes("资产列表加载失败"));
+    await flushUntil(() => text().includes("未能加载资产列表"));
     expect(text()).not.toContain("web-01");
     expect(useUi.getState().sessions).toEqual([]);
     expect(vaultStatusText()).not.toContain("凭据库已锁定");

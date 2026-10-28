@@ -189,8 +189,8 @@ export function PublicPreviewApp({ token }: { token: string }) {
       {phase.kind === "live" && writable && controlState !== "guest" && (
         <div className="border-b border-amber-900/50 bg-amber-950/70 px-3 py-1.5 text-xs text-amber-200">
           {controlState === "owner"
-            ? "分享者正在控制终端，控制权归还前你只能观看"
-            : "另一位访客正在控制终端，控制权归还前你只能观看"}
+            ? "分享者正在控制终端，控制权归还前仅可观看"
+            : "另一位访客正在控制终端，控制权归还前仅可观看"}
         </div>
       )}
       <main className="relative min-h-0 flex-1">

@@ -260,7 +260,7 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).toContain("com.docker.compose.project");
     expect(mockedText()).toContain("shop");
     expect(mockedText()).toContain("/home/alice/app");
-    expect(mockedText()).toContain("已根据变量名和连接字符串中的凭据自动遮蔽敏感值");
+    expect(mockedText()).toContain("已根据变量名和连接字符串中的凭据自动脱敏敏感值");
     expect(mockedText()).not.toContain("显示敏感值");
 
     const rowOf = (needle: string) =>
@@ -470,7 +470,7 @@ describe("Docker insight controls (M61)", () => {
       r.textContent?.includes(REDACTED_MARK),
     );
     if (!passwdRow) throw new Error("masked passwd row not found");
-    expect(passwdRow.getAttribute("title")).toBe("已遮蔽");
+    expect(passwdRow.getAttribute("title")).toBe("已脱敏");
     expect(passwdRow.textContent).toContain("文件");
     click(passwdRow);
     await flush();
@@ -532,7 +532,7 @@ describe("Docker insight controls (M61)", () => {
       (r) => r.textContent?.includes("敏感") && r.textContent?.includes("目录"),
     );
     if (!secretsRow) throw new Error("masked secrets row not found");
-    expect(secretsRow.getAttribute("title")).toBe("已遮蔽");
+    expect(secretsRow.getAttribute("title")).toBe("已脱敏");
     click(secretsRow);
     await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets"));
     expect(mockedText()).toContain(REDACTED_MARK);
@@ -633,7 +633,7 @@ describe("Docker insight controls (M61)", () => {
     const m = (mounted = mountPanel());
     await openInsight(m, 0);
     clickButton(m.container, "文件");
-    await waitFor(() => expect(mockedText()).toContain("这个目录是空的"));
+    await waitFor(() => expect(mockedText()).toContain("该目录是空的"));
   });
 
   it("toolbar summary shows the loading state only while pending and the failure state after an error", async () => {
@@ -653,17 +653,17 @@ describe("Docker insight controls (M61)", () => {
     );
     mounted = mountPanel();
 
-    await waitFor(() => expect(mockedText()).toContain("容器状态加载失败"));
+    await waitFor(() => expect(mockedText()).toContain("未能加载容器状态"));
     expect(mockedText()).not.toContain("容器状态加载中");
-    expect(mockedText()).toContain("无法连接这台主机上的 Docker 服务，请确认 Docker 已安装并正在运行");
+    expect(mockedText()).toContain("无法连接该主机上的 Docker 服务，请确认 Docker 已安装并正在运行");
   });
 
   it("missing docker binary maps to an actionable not-installed hint", async () => {
     mocks.ps.mockRejectedValueOnce(new Error("bash: docker: command not found"));
     mounted = mountPanel();
 
-    await waitFor(() => expect(mockedText()).toContain("容器列表加载失败"));
-    expect(mockedText()).toContain("这台主机没有安装 Docker");
+    await waitFor(() => expect(mockedText()).toContain("未能加载容器列表"));
+    expect(mockedText()).toContain("该主机没有安装 Docker");
   });
 
   it("prunes picked containers and bulk counts after the list shrinks", async () => {
@@ -692,18 +692,18 @@ describe("Docker insight controls (M61)", () => {
 
     click(m.container.querySelector('button[title="查看日志"]')!);
     await flush();
-    await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签或返回即停止"));
+    await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签页或返回即停止"));
 
     act(() => mocks.reopenCbs[mocks.reopenCbs.length - 1]());
     await flush();
     await waitFor(() => expect(mockedText()).toContain("跟随中断"));
     expect(mockedText()).toContain("ssh: session down");
-    expect(mockedText()).not.toContain("跟随中 · 关闭此标签或返回即停止");
+    expect(mockedText()).not.toContain("跟随中 · 关闭此标签页或返回即停止");
 
     mocks.logsAttach.mockResolvedValueOnce("tab-2");
     clickButton(m.container, "重新跟随");
     await flush();
-    await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签或返回即停止"));
+    await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签页或返回即停止"));
     expect(mockedText()).not.toContain("跟随中断");
   });
 
@@ -714,7 +714,7 @@ describe("Docker insight controls (M61)", () => {
 
     click(m.container.querySelectorAll('button[title="查看日志"]')[1]);
     await flush();
-    await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签或返回即停止"));
+    await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签页或返回即停止"));
 
     act(() => mocks.reopenCbs[mocks.reopenCbs.length - 1]());
     await flush();
@@ -997,7 +997,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("删除选中的 1 个容器");
-    expect(modal.textContent).toContain("另有 1 个容器还没有停止，不会被删除");
+    expect(modal.textContent).toContain("另有 1 个容器尚未停止，不会被删除");
     expect(modal.textContent).toContain("挂载卷和主机目录不会被删除");
     await closeModal(modal, "取消");
     expect(mocks.action).not.toHaveBeenCalled();

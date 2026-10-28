@@ -23,7 +23,7 @@ export function Cwd({ cwd }: { cwd: string | null }) {
   return (
     <button
       className="nx-badge max-w-[220px] truncate font-mono text-neutral-400 hover:text-neutral-100"
-      title={`工作目录：${cwd}\n点击复制完整路径`}
+      title={`工作目录：${cwd}\n单击复制完整路径`}
       onClick={copy}
     >
       {shortenCwd(cwd)}

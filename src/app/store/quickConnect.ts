@@ -21,7 +21,7 @@ const inflightQuickConnects = new Map<string, Promise<ConnectOutcome>>();
 
 export async function promptQuickConnectPassword(display: string): Promise<string | null> {
   const { promptText } = await import("../../ui/dialogs");
-  return promptText(`输入 ${display} 的登录密码（留空则使用 SSH agent）`, "", {
+  return promptText(`输入 ${display} 的登录密码（留空则使用 ssh-agent）`, "", {
     secret: true,
   });
 }

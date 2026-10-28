@@ -122,7 +122,7 @@ export function PasswordChangeForm({ requireCurrent, submitLabel, allowEmpty = f
       )}
       <div className="flex gap-1.5">
         <button type="submit" className={`nx-btn nx-btn-sm ${removing ? "nx-btn-danger" : "nx-btn-primary"}`} disabled={!valid || busy}>
-          {busy ? "处理中…" : removing ? (emptyLabel ?? "移除密码") : submitLabel}
+          {busy ? "正在处理…" : removing ? (emptyLabel ?? "移除密码") : submitLabel}
         </button>
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy} onClick={onCancel}>
           取消

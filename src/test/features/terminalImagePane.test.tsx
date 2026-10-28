@@ -381,7 +381,7 @@ describe("TerminalPane image paste orchestration", () => {
 
     await pasteFromMenu();
 
-    expect(useUi.getState().toasts.at(-1)?.text).toContain("读取剪贴板图片失败：read failed");
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("未能读取剪贴板图片：read failed");
     expect(mocks.fsWrite).not.toHaveBeenCalled();
   });
 });
@@ -422,7 +422,7 @@ describe("TerminalPane file paste orchestration", () => {
       expect.any(String),
       expect.any(String),
     );
-    expect(statusText()).toContain("已上传 1 个文件到这台主机的 /tmp 并插入链接");
+    expect(statusText()).toContain("已上传 1 个文件到该主机的 /tmp 并插入链接");
   });
 
   it("handles mixed images and files, sanitising names and avoiding collisions", async () => {
@@ -562,7 +562,7 @@ describe("TerminalPane file paste orchestration", () => {
     expect(dir).toMatch(/^\/nexterm-paste-[0-9a-f-]{36}$/);
     expect(mocks.fsWrite).toHaveBeenCalledWith("s1", `${dir}/shot.png`, "iVBORw==", false, expect.any(String), expect.any(String));
     expect(mocks.paste).toHaveBeenCalledWith(`[shot.png](/tmp${dir}/shot.png)`);
-    expect(statusText()).toContain("这台主机的 /tmp 并插入链接");
+    expect(statusText()).toContain("该主机的 /tmp 并插入链接");
   });
 
   it("names the configured directory when it is missing over SFTP and cleans nothing it did not create", async () => {

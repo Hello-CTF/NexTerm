@@ -173,10 +173,10 @@ describe("state marking dialog", () => {
     mocks.draft.mockResolvedValue({ name: "n", region: "bottom", lines: 3, pattern: "Overwrite", state: "needs_me", redacted: true });
     await open();
     expect(mounted!.container.querySelector("[data-ai-sent-rows]")?.textContent).toBe("$ export TOKEN=abc123secret\nOverwrite app.js? [y/N] ");
-    expect(mounted!.container.textContent).not.toContain("发送前已隐去疑似密钥/密码");
+    expect(mounted!.container.textContent).not.toContain("发送前已对疑似密钥或密码脱敏");
     clickButton(mounted!.container, "AI 起草");
     await flush();
-    expect(mounted!.container.textContent).toContain("已隐去疑似密钥/密码");
+    expect(mounted!.container.textContent).toContain("已对疑似密钥或密码脱敏");
   });
 
   it("warns when the heuristic draft had to mask a secret", async () => {
@@ -192,7 +192,7 @@ describe("state marking dialog", () => {
     });
     await open();
     expect(patternInput().value).not.toContain("abc123secret");
-    expect(mounted!.container.textContent).toContain("已隐去疑似密钥/密码");
+    expect(mounted!.container.textContent).toContain("已对疑似密钥或密码脱敏");
   });
 
   it("keeps the chosen scope and typed keys when the AI drafts", async () => {

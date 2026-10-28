@@ -5,8 +5,8 @@ import { IconFlag } from "../../ui/icons";
 import { requestStateMark, stateMarkIntents } from "./stateMarkRequests";
 
 const STATE_MARK_LABELS = {
-  not_this: { label: "状态不对…", hint: "起草一条规则，纠正这类屏幕的状态" },
-  this_is_it: { label: "这就是需要我…", hint: "起草一条规则，把这类屏幕视为需要我" },
+  not_this: { label: "状态有误…", hint: "起草一条规则，纠正这类屏幕的状态" },
+  this_is_it: { label: "标记为需要处理…", hint: "起草一条规则，将这类屏幕标记为需要处理" },
 } as const;
 
 // stateMarkItems offers to correct the attention state a terminal tab shows. State rules run in the durable helper,

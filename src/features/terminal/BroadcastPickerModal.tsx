@@ -195,7 +195,7 @@ export function BroadcastPickerModal(props: {
               </section>
             ))}
             {candidates.length === 0 && (
-              <div className="nx-hint px-1 py-2">所有已打开工作区中还没有终端标签。</div>
+              <div className="nx-hint px-1 py-2">所有已打开工作区中暂无终端标签页。</div>
             )}
           </div>
           {mix.mixed && (

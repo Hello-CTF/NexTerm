@@ -67,7 +67,7 @@ export async function callDesktop<T>(cmd: string, args?: Record<string, unknown>
   const { Call } = await bindings();
   const response = (await Call(request(cmd, args))) as WailsResponse | null;
   if (!response || response.ok !== true) {
-    throw response?.error ?? { code: "internal", message: "Wails 返回了无效响应" };
+    throw response?.error ?? { code: "internal", message: "应用返回了无效响应" };
   }
   return response.data as T;
 }

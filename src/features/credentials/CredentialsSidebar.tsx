@@ -159,15 +159,15 @@ export function CredentialsSidebar() {
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
         {credentials.isLoading ? (
           <div className="nx-hint px-2 py-6 text-center" role="status">
-            加载中…
+            正在加载…
           </div>
         ) : credentials.isError && !credentials.data ? (
-          <LoadError title="凭据列表加载失败" error={credentials.error} onRetry={() => void credentials.refetch()} />
+          <LoadError title="未能加载凭据列表" error={credentials.error} onRetry={() => void credentials.refetch()} />
         ) : list.length === 0 ? (
           <div className="nx-hint px-2 py-8 text-center">
             {all.length === 0 ? (
               <>
-                还没有任何凭据
+                暂无任何凭据
                 <br />
                 新建资产时填写的密码会自动保存到凭据库，
                 也可以直接新建。

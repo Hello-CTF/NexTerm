@@ -304,14 +304,14 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    expect(m.container.textContent).toContain("执行中");
+    expect(m.container.textContent).toContain("正在执行");
 
     clickButton(m.container, "忽略结果");
     await flush();
     const note = m.container.querySelector('[role="note"]');
     expect(note?.textContent).toContain("命令仍在目标上执行");
     expect(note?.textContent).toContain("不代表命令已停止");
-    expect(m.container.textContent).not.toContain("执行中");
+    expect(m.container.textContent).not.toContain("正在执行");
 
     await act(async () => { resolveExec({ output: "ignored secret\n", exitCode: 0 }); });
     await flush();
@@ -412,7 +412,7 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    expect(m.container.textContent).toContain("执行中");
+    expect(m.container.textContent).toContain("正在执行");
 
     clickButton(m.container, "取消执行");
     await flush();
@@ -500,7 +500,7 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    expect(m.container.textContent).toContain("执行中");
+    expect(m.container.textContent).toContain("正在执行");
 
     // Switch target while A is in flight: the operation is retained with
     // its cancel control (same owner), and B cannot start until it settles.
@@ -508,7 +508,7 @@ describe("inventory target actions", () => {
     act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: otherTarget, ownerKey: "owner-a" })));
     await flush();
     expect(m.container.textContent).toContain("context/other");
-    expect(m.container.textContent).toContain("执行中");
+    expect(m.container.textContent).toContain("正在执行");
     expect(mocks.call).toHaveBeenCalledTimes(1);
     const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
     expect(execButton()?.disabled).toBe(true);
@@ -684,7 +684,7 @@ describe("inventory target actions", () => {
     mocks.call.mockImplementationOnce(() => new Promise((resolve) => { resolveCancel = resolve; }));
     clickButton(m.container, "取消执行");
     await flush();
-    expect(m.container.textContent).toContain("取消中");
+    expect(m.container.textContent).toContain("正在取消");
     const execButton = () => [...m.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
     expect(execButton()?.disabled).toBe(true);
 
@@ -776,7 +776,7 @@ describe("inventory target actions", () => {
     setSelectValue(m.container.querySelector('select[aria-label="受管会话"]')!, "sess-1");
     clickButton(m.container, "执行");
     await flush();
-    expect(m.container.textContent).toContain("执行中");
+    expect(m.container.textContent).toContain("正在执行");
 
     const otherTarget = { type: "context", name: "other", dockerEndpoint: "ssh://ops@other.example" };
     act(() => m.root.render(createElement(InventoryTargetActions, {
@@ -804,7 +804,7 @@ describe("inventory target actions", () => {
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
     clickButton(m.container, "执行");
     await flush();
-    expect(m.container.textContent).toContain("执行中");
+    expect(m.container.textContent).toContain("正在执行");
 
     act(() => m.root.render(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-b" })));
     await act(async () => { resolveExec({ output: "stale secret\n", exitCode: 0 }); });
@@ -815,7 +815,7 @@ describe("inventory target actions", () => {
 
   it("marks non-executable targets without offering exec", () => {
     const m = (mounted = render({ kind: "kubernetes", target: { type: "context", name: "staging" } }));
-    expect(m.container.textContent).toContain("该目标不支持 exec");
+    expect(m.container.textContent).toContain("该目标不支持执行命令");
     expect(m.container.querySelector('input[aria-label="命令"]')).toBeNull();
   });
 
@@ -832,7 +832,7 @@ describe("inventory target actions", () => {
     const m0 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-0" }));
     mounted = m0;
     await flush();
-    expect(m0.container.textContent).toContain("执行中");
+    expect(m0.container.textContent).toContain("正在执行");
     const cancelButton = () => [...m0.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "取消执行");
     expect(cancelButton()).not.toBeUndefined();
     expect(cancelButton()?.disabled).toBe(false);
@@ -886,7 +886,7 @@ describe("inventory target actions", () => {
     const m3 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: otherTarget, ownerKey: "owner-a" }));
     mounted = m3;
     await flush();
-    expect(m3.container.textContent).toContain("执行中");
+    expect(m3.container.textContent).toContain("正在执行");
   });
 
   it("restores the running notice and cancel/ignore entries on remount", async () => {
@@ -903,7 +903,7 @@ describe("inventory target actions", () => {
     await flush();
     // The plain running operation is restored with its running notice and
     // both cancel and ignore entries.
-    expect(m2.container.textContent).toContain("执行中");
+    expect(m2.container.textContent).toContain("正在执行");
     const cancelButton = () => [...m2.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "取消执行");
     const ignoreButton = () => [...m2.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "忽略结果");
     expect(cancelButton()).not.toBeUndefined();
@@ -988,7 +988,7 @@ describe("inventory target actions", () => {
     mocks.call.mockImplementationOnce(() => new Promise(() => {}));
     clickButton(m.container, "取消执行");
     await flush();
-    expect(m.container.textContent).toContain("取消中");
+    expect(m.container.textContent).toContain("正在取消");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
     await flush();
     expect(m.container.textContent).toContain("取消失败");
@@ -1095,7 +1095,7 @@ describe("inventory target actions", () => {
     const m2 = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
     mounted = m2;
     await flush();
-    expect(m2.container.textContent).toContain("取消中");
+    expect(m2.container.textContent).toContain("正在取消");
     await flushUntil(() => (m2.container.textContent ?? "").includes("取消失败"), 400);
     expect(m2.container.textContent).toContain("取消失败");
     const retryButton = () => [...m2.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "重试取消");
@@ -1108,7 +1108,7 @@ describe("inventory target actions", () => {
     await flush();
     await act(async () => { rejectCancel(new Error("late cancel reject")); });
     await flush();
-    expect(m2.container.textContent).toContain("取消中");
+    expect(m2.container.textContent).toContain("正在取消");
     expect(m2.container.textContent).not.toContain("取消失败");
 
     // The original exec settles as cancelled.
@@ -1198,7 +1198,7 @@ describe("inventory target actions", () => {
     mounted = m2;
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(1);
-    expect(m2.container.textContent).toContain("执行中");
+    expect(m2.container.textContent).toContain("正在执行");
     const cancelButton = () => [...m2.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "取消执行");
     expect(cancelButton()).not.toBeUndefined();
     expect(cancelButton()?.disabled).toBe(false);
@@ -1334,7 +1334,7 @@ describe("inventory target actions", () => {
     // B was mounted before the launch: it adopts the same operation with
     // the running notice, and its execute entry is blocked — the second
     // exec never reaches the store's pre-IPC rejection.
-    expect(viewB.container.textContent).toContain("执行中");
+    expect(viewB.container.textContent).toContain("正在执行");
     const execButton = () => [...viewB.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
     expect(execButton()?.disabled).toBe(true);
     setInputValue(viewB.container.querySelector('input[aria-label="命令"]')!, "false");
@@ -1342,7 +1342,7 @@ describe("inventory target actions", () => {
     clickButton(viewB.container, "执行");
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(1);
-    expect(viewA.container.textContent).toContain("执行中");
+    expect(viewA.container.textContent).toContain("正在执行");
   });
 
   it("tracks two operations on different targets through out-of-order settle and unmount", async () => {
@@ -1484,8 +1484,8 @@ describe("inventory target actions", () => {
     const viewB = mount(createElement(InventoryTargetActions, { kind: "docker-context", target: dockerTarget, ownerKey: "owner-a" }));
     mounted = viewB;
     await flush();
-    expect(viewA.container.textContent).toContain("执行中");
-    expect(viewB.container.textContent).toContain("执行中");
+    expect(viewA.container.textContent).toContain("正在执行");
+    expect(viewB.container.textContent).toContain("正在执行");
 
     // Ignore is operation-level: both views show the ignored state and the
     // ignore entry is gone from both.
@@ -1549,7 +1549,7 @@ describe("inventory target actions", () => {
       mocks.call.mockImplementationOnce(() => new Promise(() => {}));
       clickButton(m.container, "取消执行");
       await flush();
-      expect(m.container.textContent).toContain("取消中");
+      expect(m.container.textContent).toContain("正在取消");
 
       // The command completes naturally before the cancel settles; the late
       // cancel timeout must not disturb the ignored outcome.
@@ -1646,7 +1646,7 @@ describe("inventory target actions", () => {
     clickButton(viewA.container, "执行");
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(1);
-    expect(viewB.container.textContent).toContain("执行中");
+    expect(viewB.container.textContent).toContain("正在执行");
     const cancelButton = (container: HTMLElement) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "取消执行");
     const ignoreButton = (container: HTMLElement) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "忽略结果");
     const execButton = () => [...viewB.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "执行");
@@ -1658,7 +1658,7 @@ describe("inventory target actions", () => {
     // the frozen snapshot.
     act(() => viewA.unmount());
     await flush();
-    expect(viewB.container.textContent).toContain("执行中");
+    expect(viewB.container.textContent).toContain("正在执行");
     clickButton(viewB.container, "取消执行");
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(2);
@@ -1687,7 +1687,7 @@ describe("inventory target actions", () => {
     mocks.call.mockImplementationOnce(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveB = resolve; }));
     clickButton(m.container, "执行");
     await flush();
-    expect(m.container.textContent).toContain("执行中");
+    expect(m.container.textContent).toContain("正在执行");
     expect(m.container.querySelector('[role="status"]')).toBeNull();
     expect(m.container.textContent).not.toContain("A-RESULT");
 

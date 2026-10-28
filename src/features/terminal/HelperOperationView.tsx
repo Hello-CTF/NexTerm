@@ -232,7 +232,7 @@ function versionSummary(version: HelperVersionPresentation): string {
 // An older helper that was inspected is replaced in the app after explicit consent (the 旧版组件 section). Any other
 // incompatible helper reports no process or session count, so the only way past it is to stop it on the host.
 const INCOMPATIBLE_REMEDY =
-  "可以在主机上手动结束旧的持久终端组件进程（其中运行的终端会话会随之结束），然后重新连接，NexTerm 会安装新组件。";
+  "可在主机上手动结束旧的持久终端组件进程（其中运行的终端会话会随之结束），然后重新连接，NexTerm 会安装新组件。";
 const LEGACY_REMEDY = "可在下方「旧版组件」中查看其中的会话并确认升级。";
 
 function versionCompatibilityText(
@@ -648,7 +648,7 @@ export function HelperOperationView({
         <div className="flex flex-col gap-2 border-t border-neutral-800/60 pt-2">
           {onRetryPersistent && (
             <p id={retryNoteId} className="text-neutral-500">
-              可以重新尝试安装持久终端。
+              可重新尝试安装持久终端。
             </p>
           )}
           {onContinueOrdinary && (
@@ -660,7 +660,7 @@ export function HelperOperationView({
           )}
           {onCancel && (
             <p id={cancelNoteId} className="text-neutral-500">
-              停止本次安装，保留当前连接。
+              停止本次安装并保留当前连接。
             </p>
           )}
           <div className="flex flex-wrap gap-2">

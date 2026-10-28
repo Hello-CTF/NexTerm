@@ -244,7 +244,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
 
   const sessionGone =
     rootsSessionGone || (entries.isError && fsErrorResource(entries.error) === "session");
-  const goneHint = "会话已在服务端删除，请重新连接这台主机";
+  const goneHint = "会话已在服务端删除，请重新连接该主机";
   const [reconnecting, setReconnecting] = useState(false);
 
   const reconnectHost = useCallback(async () => {
@@ -260,7 +260,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
       }
     }
     if (!target) {
-      pushToast("error", "找不到这个文件标签的主机信息，请到左侧资产树里手动连接");
+      pushToast("error", "找不到该文件标签页的主机信息，请在左侧资产树中手动连接");
       return;
     }
     let pending = fileBrowserReconnects.get(sessionId);
@@ -272,7 +272,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
     try {
       const s = await pending;
       if (!s) {
-        pushToast("info", "已取消重连");
+        pushToast("info", "已取消重新连接");
         return;
       }
       const latest = useUi.getState();
@@ -595,7 +595,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
         kind: "item",
         label: "在新终端打开",
         icon: <IconTerminal size={13} />,
-        hint: "新标签",
+        hint: "新标签页",
         onSelect: () => openTerminalAt(dir),
       },
       { kind: "separator" },
@@ -805,7 +805,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
         kind: "item",
         label: "在新终端打开",
         icon: <IconTerminal size={13} />,
-        hint: "新标签",
+        hint: "新标签页",
         onSelect: () => openTerminalAt(path),
       },
     );
@@ -897,7 +897,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
             title={
               follow.enabled
                 ? "跟随终端目录：开。终端切换目录时，文件列表自动跟随"
-                : "跟随终端目录：关。点击开启自动跟随"
+                : "跟随终端目录：关。单击可开启自动跟随"
             }
             aria-label="跟随终端目录"
             aria-pressed={follow.enabled}
@@ -1012,7 +1012,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
             <div className="min-w-0 flex-1">
               <div className="break-words">
                 {rootsSessionGone
-                  ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在本标签继续浏览"
+                  ? "会话已在服务端删除，重试不会恢复；重新连接该主机后在本标签页继续浏览"
                   : `无法读取磁盘根信息：${describeError(rootsQuery.error)}`}
               </div>
               <div className="flex gap-2">
@@ -1030,7 +1030,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
                     disabled={reconnecting}
                     onClick={() => void reconnectHost()}
                   >
-                    {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                    {reconnecting ? "正在重新连接…" : "重新连接该主机"}
                   </button>
                 )}
               </div>
@@ -1047,7 +1047,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
                 <span className="nx-skeleton w-40 max-[560px]:hidden" />
               </div>
             ))}
-            <span className="nx-sr-only">加载中…</span>
+            <span className="nx-sr-only">正在加载…</span>
           </div>
         ) : entries.isError ? (
           <div className="nx-alert nx-alert-danger m-3 flex items-start gap-2">
@@ -1055,7 +1055,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
             <div className="min-w-0 flex-1">
               <div className="break-words">
                 {sessionGone
-                  ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在本标签继续浏览"
+                  ? "会话已在服务端删除，重试不会恢复；重新连接该主机后在本标签页继续浏览"
                   : describeError(entries.error)}
               </div>
               <div className="flex gap-2">
@@ -1070,14 +1070,14 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
                     disabled={reconnecting}
                     onClick={() => void reconnectHost()}
                   >
-                    {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                    {reconnecting ? "正在重新连接…" : "重新连接该主机"}
                   </button>
                 )}
               </div>
             </div>
           </div>
         ) : list.length === 0 ? (
-          <div className="nx-empty">{computer ? "没有可用磁盘" : "这个目录是空的"}</div>
+          <div className="nx-empty">{computer ? "没有可用磁盘" : "该目录是空的"}</div>
         ) : (
           <div className="relative" style={{ height: virtualizer.getTotalSize() }} role="tree" aria-label="文件">
             {virtualizer.getVirtualItems().map((vi) => {

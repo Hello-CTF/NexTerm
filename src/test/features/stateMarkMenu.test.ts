@@ -18,7 +18,7 @@ describe("state marking menu items", () => {
   it("opens the marking dialog for a helper tab with the shown state", () => {
     applyAwareness([attention("running", "helper")]);
     const items = stateMarkItems(tab, "backend-1");
-    expect(items.map((item) => (item.kind === "item" ? item.label : ""))).toEqual(["状态不对…", "这就是需要我…"]);
+    expect(items.map((item) => (item.kind === "item" ? item.label : ""))).toEqual(["状态有误…", "标记为需要处理…"]);
     const listener = vi.fn();
     const off = onStateMarkRequest(listener);
     const thisIsIt = items[1];
@@ -31,7 +31,7 @@ describe("state marking menu items", () => {
     applyAwareness([attention("needs_me", "observed")]);
     const items = stateMarkItems(tab, "backend-1");
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "item", label: "状态不对…", disabled: true, hint: "状态规则只作用于持久终端" });
+    expect(items[0]).toMatchObject({ kind: "item", label: "状态有误…", disabled: true, hint: "状态规则只作用于持久终端" });
   });
 
   it("offers nothing for unknown states", () => {

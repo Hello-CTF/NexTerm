@@ -7,7 +7,7 @@ const REGION_LABEL: Record<DropRegion, string> = {
   right: "放下以在右侧新建窗格",
   top: "放下以在上方新建窗格",
   bottom: "放下以在下方新建窗格",
-  center: "放下以移到这个窗格",
+  center: "放下以移到该窗格",
 };
 
 function percent(value: number): string {

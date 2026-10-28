@@ -105,7 +105,7 @@ describe("ExecBatchHistory", () => {
     expect(text()).toContain("生产");
 
     clickButton(mounted!.container, "查看矩阵");
-    await flushUntil(() => text().includes("历史结果矩阵"));
+    await flushUntil(() => text().includes("历史结果汇总"));
     expect(mocks.historyGet).toHaveBeenCalledWith("history-batch", "self");
     expect(text()).toContain("生产主机");
     expect(text()).toContain("远端非零退出");
@@ -114,7 +114,7 @@ describe("ExecBatchHistory", () => {
     clickButton(mounted!.container, "下一页");
     await flushUntil(() => text().includes("暂无批量执行历史"));
     expect(mocks.historyList).toHaveBeenLastCalledWith({ limit: 20, offset: 20 });
-    expect(text()).not.toContain("历史结果矩阵");
+    expect(text()).not.toContain("历史结果汇总");
   });
 
   it("selects self and ownerless rows independently when batch IDs match", async () => {
@@ -166,7 +166,7 @@ describe("ExecBatchHistory", () => {
       client.getQueryData(listKey) === undefined &&
       client.getQueryData(detailKey) === undefined,
     );
-    expect(text()).not.toContain("历史结果矩阵");
+    expect(text()).not.toContain("历史结果汇总");
     expect(mocks.historyGet).toHaveBeenCalledTimes(1);
     expect(mocks.historyList).toHaveBeenCalledTimes(2);
     await act(async () => {
@@ -185,9 +185,9 @@ describe("ExecBatchHistory", () => {
 
     mocks.historyList.mockRejectedValue(new Error("account-b-unavailable"));
     act(() => useAuth.setState({ user: accountB }));
-    await flushUntil(() => text().includes("历史加载失败"));
+    await flushUntil(() => text().includes("未能加载历史"));
     expect(text()).not.toContain("account-a-target");
-    expect(text()).not.toContain("历史结果矩阵");
+    expect(text()).not.toContain("历史结果汇总");
     expect(client.getQueryData(listKey)).toBeUndefined();
     expect(client.getQueryData(detailKey)).toBeUndefined();
     expect(client.getQueryData(["exec-batch-history", "account-b", 0])).toBeUndefined();
@@ -221,7 +221,7 @@ describe("ExecBatchHistory", () => {
 
     await openHistory();
     clickButton(mounted!.container, "查看矩阵");
-    await flushUntil(() => text().includes("历史结果矩阵"));
+    await flushUntil(() => text().includes("历史结果汇总"));
 
     const rows = [...mounted!.container.querySelectorAll('[data-testid="exec-batch-history-matrix"] tbody tr')];
     expect(rows).toHaveLength(2);
@@ -242,9 +242,9 @@ describe("ExecBatchHistory", () => {
     mocks.historyGet.mockRejectedValue(new Error("detail-refresh-failed"));
 
     clickButton(mounted!.container, "刷新");
-    await flushUntil(() => text().includes("历史加载失败") && text().includes("结果矩阵加载失败"));
+    await flushUntil(() => text().includes("未能加载历史") && text().includes("未能加载结果汇总"));
     expect(text()).not.toContain("共 21 批");
     expect(text()).not.toContain("account-a-target");
-    expect(text()).not.toContain("历史结果矩阵");
+    expect(text()).not.toContain("历史结果汇总");
   });
 });

@@ -75,7 +75,7 @@ class LiveOperationStore {
     }
     for (const existing of ownerOps.values()) {
       if (!existing.settled && existing.identity === op.identity) {
-        return new Error("该目标已有在途操作，请等待其结束");
+        return new Error("该目标已有进行中的操作，请等待其结束");
       }
     }
     let currentOutcome: LiveOperation | null = null;
@@ -87,7 +87,7 @@ class LiveOperationStore {
     }
     const effectiveSize = ownerOps.size - (currentOutcome === null ? 0 : 1);
     if (effectiveSize >= LIVE_REGISTRY_LIMIT && !ownerOps.has(op.snapshot.operationId)) {
-      return new Error("该所有者的操作记录已达上限，请清除已完成的结果");
+      return new Error("该账号的操作记录已达上限，请清除已完成的结果");
     }
     if (currentOutcome !== null) {
       ownerOps.delete(currentOutcome.snapshot.operationId);

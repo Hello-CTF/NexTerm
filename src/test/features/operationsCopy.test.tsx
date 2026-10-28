@@ -212,7 +212,7 @@ describe("DockerPanel copy", () => {
       b.textContent?.includes("镜像"),
     );
     click(segment!);
-    await flushUntil(() => text().includes("这台主机上还没有镜像"));
+    await flushUntil(() => text().includes("该主机上暂无镜像"));
     expect(text()).not.toContain("本机没有镜像");
   });
 
@@ -242,7 +242,7 @@ describe("DockerPanel copy", () => {
     await flushUntil(() => text().includes("web"));
     click(mounted.container.querySelector('button[title="查看日志"]')!);
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "读取日志失败：daemon unavailable"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "未能读取日志：daemon unavailable"),
     );
   });
 });
@@ -265,7 +265,7 @@ describe("DbPanel copy", () => {
 
   it("describes actual Redis console behavior without internal section references", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => !text().includes("键列表加载中…"));
+    await flushUntil(() => !text().includes("正在键列表加载…"));
     const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("控制台"),
     );

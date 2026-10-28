@@ -146,7 +146,7 @@ export function ServicesPanel({
           </button>
         </div>
         <div className="text-[11px] leading-relaxed text-neutral-500">
-          sudo 仅非交互执行；需要密码或不可用时会显示在对应主机结果中。status 与 journal 为只读，写操作通过 execbatch 生产保护。
+          sudo 仅非交互执行；需要密码或不可用时会显示在对应主机结果中。status 与 journal 为只读，写操作受批量执行的生产环境保护。
         </div>
         {selectionError && <div className="text-[11px] text-amber-300" role="status">{selectionError}</div>}
       </div>
@@ -175,7 +175,7 @@ export function ServicesPanel({
       ) : (
         <div className="min-h-0 flex-1 overflow-auto">
           {!listBatch ? (
-            <div className="px-3 py-8 text-center text-[11px] text-neutral-500">选择主机并加载 systemd services；无 systemd 的主机会明确标记为 unsupported。</div>
+            <div className="px-3 py-8 text-center text-[11px] text-neutral-500">选择主机并加载 systemd services；未使用 systemd 的主机将标记为「不支持」。</div>
           ) : listBatch.hosts.map((host) => {
             const units = filterServiceUnits(host.units, filter, stateFilter);
             const hostName = host.result.sessionName || host.result.sessionId;

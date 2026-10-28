@@ -248,8 +248,8 @@ describe("ExecBatchPanel progress and rerun wiring", () => {
       { sessionId: "s1", status: "success" },
       { sessionId: "s2", status: "exit_error" },
     ]);
-    await flushUntil(() => view.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(view.container, "重跑失败目标");
+    await flushUntil(() => view.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(view.container, "重新执行失败目标");
     await flush();
     expect(mocks.call).toHaveBeenCalledWith("exec_batch_rerun", {
       batchId: "batch-2",
@@ -296,8 +296,8 @@ describe("ExecBatchPanel progress and rerun wiring", () => {
       { sessionId: "s1", status: "success" },
       { sessionId: "s2", status: "exit_error" },
     ]);
-    await flushUntil(() => view.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(view.container, "重跑失败目标");
+    await flushUntil(() => view.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(view.container, "重新执行失败目标");
     await flushUntil(() => document.body.querySelector("[role='dialog']") !== null);
 
     const envInput = document.body.querySelector<HTMLInputElement>("input[aria-label='输入环境名 api.production.example']");
@@ -392,8 +392,8 @@ describe("ExecBatchPanel progress and rerun wiring", () => {
       { sessionId: "s1", status: "success" },
       { sessionId: "s2", status: "exit_error" },
     ]);
-    await flushUntil(() => view.container.textContent?.includes("重跑失败目标") ?? false);
-    clickButton(view.container, "重跑失败目标");
+    await flushUntil(() => view.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(view.container, "重新执行失败目标");
     await flushUntil(() => document.body.querySelector("[role='dialog']") !== null);
 
     const envInput = document.body.querySelector<HTMLInputElement>("input[aria-label='输入环境名 api.production.example']");

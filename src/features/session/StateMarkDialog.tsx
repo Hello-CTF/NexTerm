@@ -131,11 +131,11 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
     onClose();
   };
 
-  const heading = request.intent === "this_is_it" ? "这就是需要我" : "状态不对";
+  const heading = request.intent === "this_is_it" ? "标记为需要处理" : "状态有误";
   const explanation =
     request.intent === "this_is_it"
-      ? `「${request.title}」显示为「${stateLabel(request.current)}」，但这块屏幕在等你。保存一条规则，以后同样的屏幕显示为「需要我」。`
-      : `「${request.title}」显示为「${stateLabel(request.current)}」，但这不对。保存一条规则，以后同样的屏幕按所选状态显示。`;
+      ? `「${request.title}」显示为「${stateLabel(request.current)}」，但该屏幕正在等待回应。保存一条规则，以后同样的屏幕显示为「需要处理」。`
+      : `「${request.title}」显示为「${stateLabel(request.current)}」，但该状态有误。保存一条规则，以后同样的屏幕按所选状态显示。`;
   const canSave = Boolean(validation.result?.valid) && !validation.pending && !saving;
 
   return (
@@ -195,7 +195,7 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
               {aiState.busy ? <IconRefresh size={11} className="animate-spin" /> : <IconSparkles size={11} />}
               AI 起草
             </button>
-            <span className="nx-hint text-[11.5px]">会把上面的内容发送给当前 AI 模型，疑似密钥/密码会先隐去。</span>
+            <span className="nx-hint text-[11.5px]">会把上面的内容发送给当前 AI 模型，疑似密钥或密码会先脱敏。</span>
           </div>
           {aiState.error && (
             <div className="nx-alert nx-alert-danger text-[12px]" role="alert" data-ai-draft-error>
@@ -222,7 +222,7 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
             取消
           </button>
           <button type="button" className="nx-btn nx-btn-primary" disabled={!canSave} onClick={() => void save()}>
-            {saving ? "保存中…" : "保存规则"}
+            {saving ? "正在保存…" : "保存规则"}
           </button>
         </div>
       </div>

@@ -36,7 +36,7 @@ describe("Lazy", () => {
     const Broken = lazy(() => Promise.reject(new TypeError("Failed to fetch dynamically imported module: /assets/x.js")));
     mounted = mount(createElement(Lazy, null, createElement(Broken)));
     await flushUntil(() => mounted!.container.querySelector('[role="alert"]') !== null);
-    expect(mounted.container.textContent).toContain("界面模块加载失败");
+    expect(mounted.container.textContent).toContain("未能加载界面模块");
     const button = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "重新加载");
     expect(button).toBeDefined();
     click(button!);
@@ -48,7 +48,7 @@ describe("Lazy", () => {
     const Crashing = lazy(() => Promise.resolve({ default: () => { throw new Error("render crashed"); } }));
     mounted = mount(createElement(ErrorBoundary, null, createElement(Lazy, null, createElement(Crashing))));
     await flushUntil(() => mounted!.container.textContent?.includes("面板发生错误") === true);
-    expect(mounted.container.textContent).not.toContain("界面模块加载失败");
+    expect(mounted.container.textContent).not.toContain("未能加载界面模块");
   });
 
   it("renders nothing for a failed background chunk when silent", async () => {

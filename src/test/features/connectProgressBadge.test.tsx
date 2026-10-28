@@ -144,7 +144,7 @@ describe("session://connect-progress badge", () => {
     await act(async () => {
       await flush();
     });
-    expect(badge("重连中")?.textContent).toBe("重连中");
+    expect(badge("重新连接中")?.textContent).toBe("重新连接中");
 
     act(() => {
       useUi.getState().setConnectProgress("a1", {
@@ -156,8 +156,8 @@ describe("session://connect-progress badge", () => {
         port: 22,
       });
     });
-    const jumpBadge = badge("重连中");
-    expect(jumpBadge?.textContent).toBe("重连中 · 跳板 1/2 · SSH 握手认证");
+    const jumpBadge = badge("重新连接中");
+    expect(jumpBadge?.textContent).toBe("重新连接中 · 跳板 1/2 · SSH 握手认证");
     expect(jumpBadge?.title).toBe("10.0.0.8:22");
 
     act(() => {
@@ -170,7 +170,7 @@ describe("session://connect-progress badge", () => {
         port: 2222,
       });
     });
-    expect(badge("重连中")?.textContent).toBe("重连中 · 目标主机 · 经跳板打开通道");
+    expect(badge("重新连接中")?.textContent).toBe("重新连接中 · 目标主机 · 经跳板打开通道");
   });
 
   it("shows the target-host stage while connecting", async () => {
@@ -207,12 +207,12 @@ describe("session://connect-progress badge", () => {
         port: 22,
       });
     });
-    expect(badge("重连中")?.textContent).toBe("重连中 · 跳板 2/2 · SSH 握手认证");
+    expect(badge("重新连接中")?.textContent).toBe("重新连接中 · 跳板 2/2 · SSH 握手认证");
 
     act(() => {
       useUi.getState().setConnectProgress("a1", null);
     });
-    expect(badge("重连中")?.textContent).toBe("重连中");
+    expect(badge("重新连接中")?.textContent).toBe("重新连接中");
 
     act(() => {
       useUi.getState().setConnectProgress("a1", {
@@ -242,6 +242,6 @@ describe("session://connect-progress badge", () => {
         port: 22,
       });
     });
-    expect(badge("重连中")?.textContent).toBe("重连中");
+    expect(badge("重新连接中")?.textContent).toBe("重新连接中");
   });
 });

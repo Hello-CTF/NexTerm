@@ -357,7 +357,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
         目标 <span className="nx-badge nx-badge-purple">{targetText(kind, target)}</span>
       </div>
       {!executable && (
-        <div className="text-[11px] text-amber-300">该目标不支持 exec</div>
+        <div className="text-[11px] text-amber-300">该目标不支持执行命令</div>
       )}
       {executable && (
         <>
@@ -435,7 +435,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
               </button>
             )}
           </div>
-          {(isCancelPending || isCancelFailed || (isRunning && !isIgnored)) && <div className="text-[11px] text-neutral-400">执行中…</div>}
+          {(isCancelPending || isCancelFailed || (isRunning && !isIgnored)) && <div className="text-[11px] text-neutral-400">正在执行…</div>}
           {liveOp !== null && liveOp.ownerKey !== ownerKey && (
             <div role="note" className="text-[11px] text-amber-300">
               操作仍在目标上执行；切换回发起该操作的账号后才能取消
@@ -453,7 +453,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           )}
           {isCancelPending && (
             <div role="note" className="text-[11px] text-amber-300">
-              命令仍在目标上执行<span>取消中…</span>
+              命令仍在目标上执行<span>正在取消…</span>
             </div>
           )}
           {cancelled && (

@@ -55,7 +55,7 @@ describe("session liveness", () => {
   it("shows a connected session with unanswered heartbeats as unstable", () => {
     expect(sessionStatusText("connected")).toBe("已连接");
     expect(sessionStatusText("connected", "suspect")).toBe("连接不稳定");
-    expect(sessionStatusText("reconnecting", "suspect")).toBe("重连中");
+    expect(sessionStatusText("reconnecting", "suspect")).toBe("重新连接中");
   });
 
   it("sets and clears liveness from status events", () => {

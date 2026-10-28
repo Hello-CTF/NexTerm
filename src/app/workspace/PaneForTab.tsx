@@ -187,7 +187,7 @@ export const PaneForTab = memo(function PaneForTab({
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
         <span>容器终端不会自动重新打开，请从容器列表重新进入。</span>
-        <button type="button" className="nx-btn nx-btn-outline" onClick={close}>关闭标签</button>
+        <button type="button" className="nx-btn nx-btn-outline" onClick={close}>关闭标签页</button>
       </div>
     );
   }

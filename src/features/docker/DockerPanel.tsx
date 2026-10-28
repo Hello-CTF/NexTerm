@@ -99,7 +99,7 @@ function TableQueryBody({
         {skeleton}
         <tr>
           <td colSpan={colSpan} className="nx-sr-only">
-            加载中…
+            正在加载…
           </td>
         </tr>
       </>
@@ -123,7 +123,7 @@ function TableQueryBody({
       <tr>
         <td colSpan={colSpan} className="nx-table-empty">
           <span className="text-red-300">
-            {errorPrefix}加载失败 · {describeDockerError(error)}
+            未能加载{errorPrefix}：{describeDockerError(error)}
           </span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
             <IconRefresh size={12} />
@@ -190,7 +190,7 @@ function CompactNotice({
             <span className="nx-skeleton w-2/3" />
           </div>
         ))}
-        <span className="nx-sr-only">加载中…</span>
+        <span className="nx-sr-only">正在加载…</span>
       </div>
     );
   }
@@ -198,7 +198,7 @@ function CompactNotice({
     return (
       <div className="nx-table-empty">
         {dockerHostUnavailableText(error) ?? (
-          <span className="text-red-300">{errorPrefix}加载失败 · {describeDockerError(error)}</span>
+          <span className="text-red-300">未能加载{errorPrefix}：{describeDockerError(error)}</span>
         )}
         <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
           <IconRefresh size={12} />
@@ -296,7 +296,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       if (reattach) {
         setLogsIssue({ text: `重新跟随失败：${describeError(e)}` });
       } else {
-        pushToast("error", `读取日志失败：${describeError(e)}`);
+        pushToast("error", `未能读取日志：${describeError(e)}`);
       }
     } finally {
       if (attachInFlight.current === attachId) attachInFlight.current = null;
@@ -535,7 +535,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const removableContainers = isContainer ? cRows.filter((c) => picked.has(c.id) && canRemoveContainer(c)) : [];
     const skippedContainers = isContainer ? keys.length - removableContainers.length : 0;
     if (isContainer && removableContainers.length === 0) {
-      pushToast("info", "选中的容器还没有停止，请先停止后再删除");
+      pushToast("info", "所选容器尚未停止，请先停止后再删除");
       return;
     }
     const imageTargets = isContainer ? [] : iRows.filter((i) => picked.has(imageKey(i)));
@@ -551,7 +551,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       consequence = "无标签镜像的本体将被删除；其余镜像只删除对应标签，但如果删除的是最后一个标签，镜像本体也会被删除";
     }
     const count = isContainer ? removableContainers.length : keys.length;
-    const skippedNote = skippedContainers > 0 ? `\n\n另有 ${skippedContainers} 个容器还没有停止，不会被删除；请先停止它们。` : "";
+    const skippedNote = skippedContainers > 0 ? `\n\n另有 ${skippedContainers} 个容器尚未停止，不会被删除；请先停止这些容器。` : "";
     if (!(await ask(`删除选中的 ${count} 个${label}？\n\n${consequence}${skippedNote}`, { kind: "warning" })))
       return;
 
@@ -638,7 +638,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           )}
           <div className="nx-spacer" />
           {!logsIssue && (
-            <span className="nx-hint">跟随中 · 关闭此标签或返回即停止</span>
+            <span className="nx-hint">跟随中 · 关闭此标签页或返回即停止</span>
           )}
         </div>
         {logsIssue && (
@@ -709,7 +709,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         error={containers.isError && !containers.data ? containers.error : null}
         errorPrefix="容器列表"
         onRetry={() => void containers.refetch()}
-        emptyText="这台主机上还没有容器"
+        emptyText="该主机上暂无容器"
         isEmpty={cRows.length === 0}
       >
         <label className="flex items-center gap-2 border-b border-neutral-800/45 px-2.5 py-1.5 text-[11px] text-neutral-500">
@@ -796,7 +796,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         error={images.isError && !images.data ? images.error : null}
         errorPrefix="镜像列表"
         onRetry={() => void images.refetch()}
-        emptyText="这台主机上还没有镜像"
+        emptyText="该主机上暂无镜像"
         isEmpty={iRows.length === 0}
       >
         <label className="flex items-center gap-2 border-b border-neutral-800/45 px-2.5 py-1.5 text-[11px] text-neutral-500">
@@ -883,7 +883,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 ? "未安装 Docker"
                 : dockerHostUnavailableText(containers.error)
                   ? "未运行 Docker"
-                  : "容器状态加载失败"
+                  : "未能加载容器状态"
               : "容器状态加载中"}
         </span>
         <div className="nx-spacer" />
@@ -972,7 +972,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 error={containers.isError && !containers.data ? containers.error : null}
                 errorPrefix="容器列表"
                 onRetry={() => void containers.refetch()}
-                emptyText="这台主机上还没有容器"
+                emptyText="该主机上暂无容器"
                 isEmpty={cRows.length === 0}
                 skeleton={
                   <>
@@ -1163,7 +1163,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 error={images.isError && !images.data ? images.error : null}
                 errorPrefix="镜像列表"
                 onRetry={() => void images.refetch()}
-                emptyText="这台主机上还没有镜像"
+                emptyText="该主机上暂无镜像"
                 isEmpty={iRows.length === 0}
                 skeleton={
                   <>
@@ -1288,7 +1288,7 @@ function PullBar({ sessionId, compact }: { sessionId: string; compact: boolean }
       </div>
       <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={!image.trim() || pulling} onClick={() => void pull()}>
         {pulling ? <IconRefresh size={13} className="animate-spin" /> : <IconDownload size={13} />}
-        {pulling ? "拉取中…" : "拉取"}
+        {pulling ? "正在拉取…" : "拉取"}
       </button>
       {compact && !pulling && (
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setOpen(false)}>收起</button>

@@ -37,7 +37,7 @@ async function askConflictPolicy(
     title: "上传冲突",
     level: "warning",
     choices: [
-      { key: "skip", label: "跳过", hint: "保留远端现有内容，不上传这个文件", primary: true },
+      { key: "skip", label: "跳过", hint: "保留远端现有内容，不上传该文件", primary: true },
       { key: "overwrite", label: "覆盖", hint: "用本地文件替换远端现有内容", danger: true },
       { key: "keepBoth", label: "保留两者", hint: "远端自动重命名（如 a (1).txt）后上传" },
       ...(moreComing
@@ -145,7 +145,7 @@ export async function localPathsFromFiles(files: File[]): Promise<string[] | nul
       return staged;
     } catch (e) {
       for (const p of staged) await dropStaged(p).catch(() => undefined);
-      pushToast("error", `读取拖入文件失败：${describeError(e)}`);
+      pushToast("error", `未能读取拖入文件：${describeError(e)}`);
       return null;
     }
   }

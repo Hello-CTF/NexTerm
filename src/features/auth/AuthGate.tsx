@@ -159,7 +159,7 @@ function SetupForm() {
         <span className="nx-card-title">初始化 NexTerm</span>
       </div>
       <p className="nx-hint">
-        这台服务器还没有任何账号。输入服务器控制台打印的一次性初始化码，创建超级管理员。
+        该服务器暂无任何账号。输入服务器控制台打印的一次性初始化码，创建超级管理员。
         初始化码只能使用一次，成功后即失效。
       </p>
       <Field label="初始化码" value={code} onChange={setCode} mono placeholder="控制台输出的初始化码" autoComplete="off" />
@@ -169,7 +169,7 @@ function SetupForm() {
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !code.trim() || !username.trim()}>
-        {busy ? "创建中…" : "创建超级管理员"}
+        {busy ? "正在创建…" : "创建超级管理员"}
       </button>
       {status?.auth === "loopback" && (
         <button
@@ -224,7 +224,7 @@ function LoginForm({ onNavigate, registrationOpen }: { onNavigate: (s: Screen) =
       <Field label="密码" value={password} onChange={setPassword} type="password" autoComplete="current-password" />
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !password}>
-        {busy ? "登录中…" : "登录"}
+        {busy ? "正在登录…" : "登录"}
       </button>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[12px]">
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => onNavigate("recovery")}>
@@ -273,7 +273,7 @@ function TotpChallengeForm() {
       <Field label="动态码 / 恢复码" value={code} onChange={setCode} mono placeholder="6 位数字或恢复码" autoComplete="one-time-code" />
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !code.trim()}>
-        {busy ? "验证中…" : "验证并登录"}
+        {busy ? "正在验证…" : "验证并登录"}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={cancelMfa}>
         返回登录
@@ -373,7 +373,7 @@ function MfaEnrollForm() {
           <span className="nx-card-title">保存恢复码</span>
         </div>
         <p className="nx-hint">
-          恢复码可在无法使用认证器时代替动态码，每个只能使用一次。服务端只保存散列，关闭后无法再次查看，请妥善保存。
+          恢复码可在无法使用认证器时代替动态码，每个只能使用一次。服务端不保存明文，关闭后无法再次查看，请妥善保存。
         </p>
         <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
@@ -412,7 +412,7 @@ function MfaEnrollForm() {
         <p className="nx-hint">管理员已要求所有账号启用 TOTP 两步验证，完成绑定前无法使用其他功能。</p>
         {error && <GateError error={{ code: "internal", message: error }} />}
         <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy} onClick={() => void startSetup()}>
-          {busy ? "生成中…" : "重试"}
+          {busy ? "正在生成…" : "重试"}
         </button>
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={() => void logout()}>
           退出登录
@@ -458,7 +458,7 @@ function MfaEnrollForm() {
       <Field label="动态码" value={code} onChange={setCode} mono placeholder="输入 6 位动态码完成绑定" autoComplete="one-time-code" />
       <GateError error={error ? { code: "internal", message: error } : null} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || code.trim().length === 0}>
-        {busy ? "确认中…" : "确认绑定"}
+        {busy ? "正在确认…" : "确认绑定"}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={() => void logout()}>
         退出登录
@@ -514,7 +514,7 @@ function RegisterForm({ onBack }: { onBack: () => void }) {
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim()}>
-        {busy ? "注册中…" : "注册并登录"}
+        {busy ? "正在注册…" : "注册并登录"}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={onBack}>
         返回登录
@@ -570,7 +570,7 @@ function ResetRequiredForm() {
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !tempPassword || !newPassword}>
-        {busy ? "设置中…" : "设置新密码"}
+        {busy ? "正在设置…" : "设置新密码"}
       </button>
     </form>
   );
@@ -625,7 +625,7 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !recoveryKey.trim() || !newPassword}>
-        {busy ? "重置中…" : "重置密码并登录"}
+        {busy ? "正在重置…" : "重置密码并登录"}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={onBack}>
         返回登录
@@ -661,7 +661,7 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
         <span className="nx-card-title">恢复密钥（仅显示一次）</span>
       </div>
       <p className="nx-hint">
-        这是自行找回账号的唯一凭证，服务端只保存散列，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
+        这是找回账号的唯一凭据，服务端不保存明文，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
       </p>
       <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
         <code className="nx-code break-all font-mono text-[13px]">{revealed ? issue.formatted : "•".repeat(39)}</code>

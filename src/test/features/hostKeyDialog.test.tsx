@@ -138,7 +138,7 @@ function dialog(): HTMLElement | null {
 
 function clickWorkspaceNewTerminal(): void {
   const button = document.querySelector<HTMLButtonElement>(
-    'button[aria-label="新建终端标签"]',
+    'button[aria-label="新建终端标签页"]',
   );
   if (!button) throw new Error("Workspace new terminal button not found");
   click(button);
@@ -194,7 +194,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     await waitFor(() => expect(dialog()).toBeNull());
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.reconnect).not.toHaveBeenCalled();
-    expect(toastTexts()).toContain("已取消重连");
+    expect(toastTexts()).toContain("已取消重新连接");
   });
 
   it("shows the changed-key warning with old and new fingerprints, then records the key and reconnects after acceptance", async () => {
@@ -313,7 +313,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     await waitFor(() => expect(dialog()).toBeNull());
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.reconnect).not.toHaveBeenCalled();
-    expect(toastTexts()).toContain("已取消重连");
+    expect(toastTexts()).toContain("已取消重新连接");
   });
 
   it("shows old and new fingerprints when probe reports changed, then records the key and reconnects after acceptance", async () => {
@@ -445,7 +445,7 @@ describe("Host key confirmation when creating a terminal (App openNewTerminal)",
     await waitFor(() => expect(dialog()).toBeNull());
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
-    expect(toastTexts()).toContain("已取消重连");
+    expect(toastTexts()).toContain("已取消重新连接");
 
     clickWorkspaceNewTerminal();
     await flush();
@@ -554,7 +554,7 @@ describe("Host key confirmation dialog deduplication", () => {
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.reconnect).not.toHaveBeenCalled();
-    expect(toastTexts()).toContain("已取消重连");
+    expect(toastTexts()).toContain("已取消重新连接");
     expect(toastTexts()).toContain("已取消连接");
   });
 });

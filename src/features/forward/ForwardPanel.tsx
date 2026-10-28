@@ -41,7 +41,7 @@ function isValidPort(value: string): boolean {
 
 function validatePort(label: string, value: string): string | null {
   if (isValidPort(value)) return null;
-  return `${label}要填 1–65535 之间的整数`;
+  return `${label}须为 1-65535 之间的整数`;
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -77,9 +77,9 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const sessions = useSessionList();
   const visible = useForwardPanelVisible(sessionId);
   const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
-  const localMachine = WEB ? "NexTerm 所在机器" : "本机";
-  const remoteTarget = WEB ? "NexTerm 所在机器" : "本地";
-  const remoteService = WEB ? "NexTerm 所在机器上的服务" : "本地服务";
+  const localMachine = WEB ? "NexTerm 所在主机" : "本机";
+  const remoteTarget = WEB ? "NexTerm 所在主机" : "本地";
+  const remoteService = WEB ? "NexTerm 所在主机上的服务" : "本地服务";
   const [kind, setKind] = useState<Kind>("local");
   const [listenPort, setListenPort] = useState(DEFAULT_PORT.local);
   const [bindHost, setBindHost] = useState("127.0.0.1");
@@ -228,13 +228,13 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       return;
     }
     if (!sessionId) {
-      pushToast("info", "请先连接一台主机。端口转发需要通过主机的 SSH 连接建立。");
+      pushToast("info", "请先连接一台主机。端口转发须通过主机的 SSH 连接建立。");
       return;
     }
     if (localSession) {
       pushToast(
         "info",
-        "当前是「当前设备」会话，本机就是目标机器，不需要转发；要访问内网其他主机，请先连接一台 SSH 资产",
+        "当前是「当前设备」会话，本机即为目标主机，无需转发；如需访问内网其他主机，请先连接一台 SSH 资产",
       );
       return;
     }
@@ -291,8 +291,8 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         const remote = kind === "remote";
         const ok = await ask(
           remote
-            ? `远端监听 ${confirmedHost}:${port} 会把${remoteService} ${targetHost.trim()}:${targetPort.trim()} 暴露给远端网络。\n\n远程转发本身没有认证，能连上该地址的任何人都能访问该目标服务。请确认你理解并愿意承担这个风险。`
-            : `监听 ${confirmedHost}:${port} 将创建一个无认证的开放 SOCKS5 代理。\n\n能连上这个端口的任何人都能借当前 SSH 会话访问远端网络。请确认你理解并愿意承担这个风险。`,
+            ? `远端监听 ${confirmedHost}:${port} 会把${remoteService} ${targetHost.trim()}:${targetPort.trim()} 暴露给远端网络。\n\n远程转发本身没有认证，任何能连接该地址的人都可访问该目标服务。请确认已了解并愿意承担该风险。`
+            : `监听 ${confirmedHost}:${port} 将创建一个无认证的开放 SOCKS5 代理。\n\n任何能连接该端口的人都可借助当前 SSH 会话访问远端网络。请确认已了解并愿意承担该风险。`,
           { title: remote ? "确认远程转发风险" : "确认开放代理风险", kind: "warning" },
         );
         if (ok) {
@@ -400,7 +400,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
 
   const statusText = (f: ForwardSpec) => (
     <span className={`shrink-0 ${f.status === "failed" ? "text-red-300" : f.status === "reconnecting" ? "text-amber-300" : "text-green-300"}`}>
-      {f.status === "failed" ? "失败" : f.status === "reconnecting" ? "重连中" : "运行中"}
+      {f.status === "failed" ? "失败" : f.status === "reconnecting" ? "重新连接中" : "运行中"}
     </span>
   );
 
@@ -451,7 +451,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           {forwards.data
             ? `${localCount} 条静态转发 · ${remoteCount} 条远程转发 · ${socksCount} 条 SOCKS5 代理 · 5s 自动刷新`
             : forwardsFailed
-              ? "转发列表加载失败"
+              ? "未能加载转发列表"
               : "转发列表加载中"}
         </span>
         <div className="nx-spacer" />
@@ -459,7 +459,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           <button
             className="nx-btn nx-btn-ghost nx-btn-sm"
             aria-pressed={!showAll}
-            title={showAll ? "当前显示全部会话的转发，点击只看当前会话" : "当前只显示当前会话的转发，点击切换到全部"}
+            title={showAll ? "当前显示全部会话的转发，单击仅查看当前会话" : "当前只显示当前会话的转发，单击可切换为全部"}
             onClick={() => setShowAll((v) => !v)}
           >
             {showAll ? "全部会话" : "仅当前会话"}
@@ -474,7 +474,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       <div className="min-h-0 flex-1 overflow-auto">
         {forwardsRefreshFailed && (
           <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2 text-[11px] text-amber-300" role="status">
-            <span>转发列表刷新失败 · {describeError(forwards.error)}；已保留上次成功结果。</span>
+            <span>未能刷新转发列表：{describeError(forwards.error)}；已保留上次成功结果。</span>
             <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void forwards.refetch()}>
               <IconRefresh size={12} />
               重试
@@ -484,17 +484,17 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         {compact ? (
           <div>
             {forwards.isPending ? (
-              <div className="nx-table-empty">转发列表加载中…</div>
+              <div className="nx-table-empty">正在加载转发列表…</div>
             ) : forwardsFailed ? (
               <div className="nx-table-empty">
-                <span className="text-red-300">转发列表加载失败 · {describeError(forwards.error)}</span>
+                <span className="text-red-300">未能加载转发列表：{describeError(forwards.error)}</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={() => void forwards.refetch()}>
                   <IconRefresh size={12} />
                   重试
                 </button>
               </div>
             ) : list.length === 0 ? (
-              <div className="nx-table-empty">{scoped && all.length > 0 ? "当前会话还没有转发" : "还没有任何转发"}</div>
+              <div className="nx-table-empty">{scoped && all.length > 0 ? "当前会话暂无转发" : "暂无任何转发"}</div>
             ) : (
               list.map(compactCard)
             )}
@@ -515,13 +515,13 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             {forwards.isPending ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  转发列表加载中…
+                  正在加载转发列表…
                 </td>
               </tr>
             ) : forwardsFailed ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  <span className="text-red-300">转发列表加载失败 · {describeError(forwards.error)}</span>
+                  <span className="text-red-300">未能加载转发列表：{describeError(forwards.error)}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void forwards.refetch()}
@@ -534,7 +534,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             ) : list.length === 0 ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  {scoped && all.length > 0 ? "当前会话还没有转发" : "还没有任何转发"}
+                  {scoped && all.length > 0 ? "当前会话暂无转发" : "暂无任何转发"}
                 </td>
               </tr>
             ) : (
@@ -585,7 +585,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                   </td>
                   <td>
                     <span className={f.status === "failed" ? "text-red-300" : f.status === "reconnecting" ? "text-amber-300" : "text-green-300"}>
-                      {f.status === "failed" ? "失败" : f.status === "reconnecting" ? "重连中" : "运行中"}
+                      {f.status === "failed" ? "失败" : f.status === "reconnecting" ? "重新连接中" : "运行中"}
                     </span>
                     {f.error && <div className="max-w-56 break-words text-[11px] text-red-300" role="alert">{f.error}</div>}
                   </td>
@@ -634,12 +634,12 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           <>
             {env.isPending && (
               <div className="mb-2 text-[11px] text-neutral-500" role="status">
-                转发环境检查中…
+                正在检查转发环境…
               </div>
             )}
             {envFailed && (
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-red-300" role="alert">
-                <span>转发环境检查失败 · {describeError(env.error)}</span>
+                <span>未能检查转发环境：{describeError(env.error)}</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
                   <IconRefresh size={12} />
                   重试
@@ -648,7 +648,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             )}
             {envRefreshFailed && (
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-amber-300" role="status">
-                <span>转发环境刷新失败 · {describeError(env.error)}；已保留上次成功结果。</span>
+                <span>未能刷新转发环境：{describeError(env.error)}；已保留上次成功结果。</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
                   <IconRefresh size={12} />
                   重试
@@ -680,13 +680,13 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               <span className="ml-1 text-[11px] text-neutral-500">
                 {kind === "local"
                   ? exposed
-                    ? "把远端某个固定端口映射到服务端（连 MySQL / Redis 用这个）"
-                    : `把远端某个固定端口映射到${localMachine}（连 MySQL / Redis 用这个）`
+                    ? "把远端某个固定端口映射到服务端（适用于连接 MySQL / Redis）"
+                    : `把远端某个固定端口映射到${localMachine}（适用于连接 MySQL / Redis）`
                   : kind === "remote"
-                    ? `在远端机器上监听一个端口，把连入的流量转回${remoteTarget}（让远端访问${WEB ? remoteService : "你本机的服务"}）`
+                    ? `在远端主机上监听一个端口，把连入的流量转回${remoteTarget}（让远端访问${WEB ? remoteService : "本机服务"}）`
                     : exposed
-                      ? "在服务端开一个 SOCKS5 代理，目标由客户端当场指定（浏览器 / curl / proxychains 用这个）"
-                      : `在${localMachine}开一个 SOCKS5 代理，目标由客户端当场指定（浏览器 / curl / proxychains 用这个）`}
+                      ? "在服务端开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）"
+                      : `在${localMachine}开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）`}
               </span>
             </div>
 
@@ -738,7 +738,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                 />
                 {listenPortInvalid && (
                   <p id={listenPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
-                    {listenPortLabel}要填 1–65535 之间的整数
+                    {listenPortLabel}须为 1-65535 之间的整数
                   </p>
                 )}
               </div>
@@ -755,9 +755,9 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       placeholder={
                         kind === "remote"
                           ? WEB
-                            ? "服务主机（在 NexTerm 所在机器解析，如 127.0.0.1）"
+                            ? "服务主机（在 NexTerm 所在主机解析，如 127.0.0.1）"
                             : "本地服务主机（在本机解析，如 127.0.0.1）"
-                          : "目标主机（在远端机器上解析，如 172.17.0.5 / db.internal）"
+                          : "目标主机（在远端主机上解析，如 172.17.0.5 / db.internal）"
                       }
                       aria-label="目标主机"
                       autoComplete="off"
@@ -812,8 +812,8 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             <div className="nx-hint mt-2">
               {localSession ? (
                 <>
-                  当前工作区是内置的「当前设备」：出口必须是另一台机器的 SSH 连接。
-                  要访问内网服务（数据库 / 后台面板），先新建一台 SSH 资产并连上，再来建转发。
+                  当前工作区是内置的「当前设备」：出口必须是另一台主机的 SSH 连接。
+                  要访问内网服务（数据库 / 后台面板），请先新建并连接一台 SSH 资产，再新建转发。
                 </>
               ) : sessionId && !env.data ? (
                 "转发环境检查成功后才会显示监听地址并允许创建。"
@@ -824,13 +824,13 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                     <span className="nx-code">
                       {bindHost}:{listenPort}
                     </span>{" "}
-                    （绑定在远端机器上
+                    （绑定在远端主机上
                     {isLoopbackHost(bindHost)
                       ? "，只有远端本机能连，不对远端网络暴露"
                       : WEB
-                        ? "，这个端口对远端网络开放，能连上它的任何人都会到达 NexTerm 所在机器上的目标服务。请确认目标服务自身有鉴权，不需要时及时停止"
+                        ? "，这个端口对远端网络开放，能连上它的任何人都会到达 NexTerm 所在主机上的目标服务。请确认目标服务自身有鉴权，不需要时及时停止"
                         : "，这个端口对远端网络开放，能连上它的任何人都会到达本地目标服务。请确认目标服务自身有鉴权，不需要时及时停止"}
-                    ）。远程转发绑定在当前 SSH 连接上，重连后会自动尝试恢复；失败时可在列表中重试。
+                    ）。远程转发绑定在当前 SSH 连接上，重新连接后会自动尝试恢复；失败时可在列表中重试。
                   </>
                 ) : (
                 <>
@@ -845,13 +845,13 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                   {exposed && kind === "socks" && (
                     <>
                       <br />
-                      SOCKS5 代理本身没有认证，暴露在服务端上等于一个开放代理：能连上这个端口的人都能借这条 SSH 会话访问远端网络。
+                      SOCKS5 代理本身没有认证，暴露在服务端上等同于开放代理：任何能连接该端口的人都可借助该 SSH 会话访问远端网络。
                     </>
                   )}
                 </>
                 )
               ) : (
-                "当前没有可用的 SSH 会话，先连一台机器再来建转发。"
+                "当前没有可用的 SSH 会话，请先连接一台主机，再新建转发。"
               )}
             </div>
           </>

@@ -284,7 +284,7 @@ describe("Host key confirmation when reconnecting a dead terminal (reconnectNow)
     expect(question).toContain("SHA256:newfp");
     expect(options).toMatchObject({ title: "确认主机指纹", kind: "warning" });
 
-    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重新连接"));
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
@@ -370,7 +370,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     await clickTerminalMenuItem("重新连接");
     await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("首次连接 10.0.0.8:22");
-    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重新连接"));
     expect(mocks.reconnect).not.toHaveBeenCalled();
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
@@ -441,7 +441,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("首次连接 jump.example:22");
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("SHA256:jumpfp");
-    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重新连接"));
     expect(mocks.reconnect).not.toHaveBeenCalled();
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });

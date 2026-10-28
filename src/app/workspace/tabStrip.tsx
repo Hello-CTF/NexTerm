@@ -75,7 +75,7 @@ export function tabTooltip(
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
 }
 
-const EPHEMERAL_NOTE = "临时终端：关闭标签或断开连接后进程会结束";
+const EPHEMERAL_NOTE = "临时终端：关闭标签页或断开连接后进程会结束";
 
 // Durable terminals (the common case) show no mark, only a tooltip note. A terminal known to be non-durable
 // (durable === false, still alive) carries a small dashed-ring mark before its title; unknown durability, a tab

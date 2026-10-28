@@ -209,7 +209,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
               disabled={creating}
               onClick={() => void create()}
             >
-              {creating ? "创建中…" : "创建链接"}
+              {creating ? "正在创建…" : "创建链接"}
             </button>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">

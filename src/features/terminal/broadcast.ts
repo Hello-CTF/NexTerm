@@ -157,7 +157,7 @@ export function localRemoteMix(candidates: readonly BroadcastCandidate[]): Local
 
 export function broadcastRiskMessage(count: number, mix: LocalRemoteMix): string {
   const base = [
-    `命令广播会把你在广播来源终端里的每一次输入（含回车、粘贴与控制键）同时发送到 ${count} 个终端。`,
+    `命令广播会将广播来源终端中的每一次输入（含回车、粘贴与控制键）同时发送到 ${count} 个终端。`,
     "在多台主机上同时执行同一条命令可能造成数据损坏或服务中断，请确认目标后再开启",
   ];
   if (mix.mixed) {
@@ -213,7 +213,7 @@ function unavailableTarget(
   target: BroadcastCandidate | undefined,
   targetId: string,
 ): BroadcastTargetResult | null {
-  if (!target) return skipped(targetId, targetId, "标签已关闭");
+  if (!target) return skipped(targetId, targetId, "标签页已关闭");
   if (!target.eligible) {
     return skipped(targetId, target.title, target.ineligibleReason ?? "不可广播");
   }
@@ -374,7 +374,7 @@ export class BroadcastInputQueue {
       args.onProgress?.(unavailable);
       return Promise.resolve(unavailable);
     }
-    if (!target) return Promise.resolve(skipped(targetId, targetId, "标签已关闭"));
+    if (!target) return Promise.resolve(skipped(targetId, targetId, "标签页已关闭"));
 
     let chain = this.chains.get(targetId);
     if (!chain) {

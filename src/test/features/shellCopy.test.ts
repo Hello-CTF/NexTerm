@@ -97,7 +97,7 @@ describe("sessionStatusText", () => {
   it("maps session states to Chinese labels", () => {
     expect(sessionStatusText("connected")).toBe("已连接");
     expect(sessionStatusText("connecting")).toBe("连接中");
-    expect(sessionStatusText("reconnecting")).toBe("重连中");
+    expect(sessionStatusText("reconnecting")).toBe("重新连接中");
     expect(sessionStatusText("failed")).toBe("连接失败");
     expect(sessionStatusText("disconnected")).toBe("已断开");
     expect(sessionStatusText(undefined)).toBe("已断开");

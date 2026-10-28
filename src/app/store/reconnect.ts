@@ -113,7 +113,7 @@ async function runReconnectAndWait(
     throw error;
   }
   if (!isCurrent()) return null;
-  if (!started) throw new Error("重连未能启动");
+  if (!started) throw new Error("重新连接未能启动");
   const deadline = Date.now() + timeoutMs;
   // session_reconnect returns first and the backend goroutine sets reconnecting afterwards, so the first list may read the pre-start
   // stale disconnected/failed; only a terminal state seen after connecting/reconnecting counts as failure.
@@ -143,7 +143,7 @@ async function runReconnectAndWait(
     } else if (current && current.status !== "connecting" && current.status !== "reconnecting" && enteredReconnect) {
       throw reconnectPollingError(current);
     }
-    if (Date.now() >= deadline) throw new Error("重连超时，请检查网络后重试");
+    if (Date.now() >= deadline) throw new Error("重新连接超时，请检查网络后重试");
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     if (!isCurrent()) return null;
   }

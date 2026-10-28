@@ -100,7 +100,7 @@ describe("AssetEditor duplicate-save prevention", () => {
     ) as HTMLButtonElement;
     expect(saveBtn.disabled).toBe(false);
     click(saveBtn);
-    await flushUntil(() => text().includes("保存中…"));
+    await flushUntil(() => text().includes("正在保存…"));
     expect(saveBtn.disabled).toBe(true);
     const cancelBtn = [...mounted!.container.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "取消",

@@ -231,7 +231,7 @@ describe("Unlock and empty-reference copy", () => {
     mounted = mountPanel();
     await waitFor(() => expect(mounted!.container.textContent).toContain("使用它的资产"));
 
-    expect(mounted!.container.textContent).toContain("没有资产在用它。");
+    expect(mounted!.container.textContent).toContain("暂无资产使用该凭据。");
     expect(mounted!.container.textContent).not.toContain("改完值可以在这里确认");
   });
 });

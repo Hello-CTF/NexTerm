@@ -114,7 +114,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
 
       {credentials.isLoading ? (
         <div className="nx-empty" role="status">
-          凭据加载中…
+          正在加载凭据…
         </div>
       ) : credentials.isError && !credentials.data ? (
         <div className="nx-empty">
@@ -122,7 +122,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
             <IconXCircle size={18} />
           </div>
           <div className="text-[12.5px] text-red-300">
-            凭据列表加载失败 · {describeError(credentials.error)}
+            未能加载凭据列表：{describeError(credentials.error)}
           </div>
           <button
             className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -329,7 +329,7 @@ function CredentialDetail({
               spellCheck={false}
               aria-label="凭据名称"
               onChange={(e) => setName(e.target.value)}
-              title={locked ? "解锁后可改名" : "点击可改名"}
+              title={locked ? "解锁后可重命名" : "单击可重命名"}
             />
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-neutral-500">
               <span className="nx-badge">{meta.label}</span>
@@ -406,7 +406,7 @@ function CredentialDetail({
                       onChange={(e) => setNewSecret(e.target.value)}
                     />
                     <div className="nx-hint mt-1.5">
-                      ↳ 只记路径，库里不保存私钥正文。文件被挪走就失效，来这里改路径。
+                      ↳ 仅保存路径，凭据库不保存私钥内容。文件被移动后将失效，请在此更新路径。
                     </div>
                   </>
                 ) : (
@@ -421,7 +421,7 @@ function CredentialDetail({
                 )}
                 {newSecret.length > 0 && cred.usedBy.length > 0 && (
                   <div className="nx-hint mt-1.5">
-                    保存后，使用它的 {cred.usedBy.length} 个资产下次连接时生效，不用逐个去改。
+                    保存后，使用它的 {cred.usedBy.length} 个资产下次连接时生效，无需逐个修改。
                   </div>
                 )}
               </div>
@@ -469,7 +469,7 @@ function CredentialDetail({
                 />
                 <div className="mt-1.5 flex items-center gap-2">
                   <span className="nx-hint flex-1">
-                    选填。私钥本身带口令才需要填；改口令不用重填私钥。
+                    选填。仅当私钥本身设有口令时填写；修改口令无需重新填写私钥。
                   </span>
                   {cred.hasPassphrase && newPassphrase.length === 0 && (
                     <button
@@ -494,7 +494,7 @@ function CredentialDetail({
                   <button
                     key={u.id}
                     className="nx-chip nx-chip-accent"
-                    title="点击连接该资产"
+                    title="单击可连接该资产"
                     onClick={() => void connectAsset({ id: u.id, name: u.name, kind: u.kind })}
                   >
                     <Icon size={12} />
@@ -505,7 +505,7 @@ function CredentialDetail({
             </div>
           ) : (
             <div className="nx-hint">
-              没有资产在用它。
+              暂无资产使用该凭据。
             </div>
           )}
         </Section>
@@ -521,7 +521,7 @@ function CredentialDetail({
             disabled={!dirty || saving || locked}
             onClick={() => void save()}
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "正在保存…" : "保存"}
           </button>
           {dirty && (
             <button
@@ -572,10 +572,10 @@ function EmptyDetail({ hasAny, onNew }: { hasAny: boolean; onNew: () => void }) 
         <IconFile size={18} />
       </div>
       <div className="text-[12.5px] text-neutral-400">
-        {hasAny ? "在左侧选择一条凭据" : "还没有任何凭据"}
+        {hasAny ? "在左侧选择一条凭据" : "暂无任何凭据"}
       </div>
       <div className="text-[11.5px] text-neutral-500">
-        {hasAny ? "名称 · 值 · 引用它的资产 · 最后修改时间" : "新建资产时填的密码会自动存进来"}
+        {hasAny ? "名称 · 值 · 引用它的资产 · 最后修改时间" : "新建资产时填写的密码会自动保存到此处"}
       </div>
       <div className="mt-1 flex gap-2">
         <button className="nx-btn nx-btn-sm" onClick={openCredentialsSidebar}>

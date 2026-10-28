@@ -58,7 +58,7 @@ export class ChunkLoadBoundary extends Component<ChunkBoundaryProps, ChunkBounda
     if (this.props.silent) return null;
     const alert = (
       <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <div className="text-[13px] font-semibold text-neutral-100">界面模块加载失败</div>
+        <div className="text-[13px] font-semibold text-neutral-100">未能加载界面模块</div>
         <div className="max-w-md text-xs leading-relaxed text-neutral-500">
           网络中断或应用已更新，无法下载该模块。请重新加载页面后重试。
         </div>

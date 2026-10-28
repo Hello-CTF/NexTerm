@@ -84,7 +84,7 @@ describe("partial failures during batch close", () => {
     expect(tabById("t2")?.closeError).toBe("连接已断开，请重新连接后再试");
     const texts = useUi.getState().toasts.map((t) => t.text);
     expect(texts.some((t) => t.includes("终端操作失败：连接已断开，请重新连接后再试"))).toBe(true);
-    expect(texts).toContain("1 个标签未能关闭，已保留并在标签上标出原因");
+    expect(texts).toContain("1 个标签页未能关闭，已保留并在标签页上标出原因");
   });
 
   it("does not count canceled confirmations as failures or include them in the summary", async () => {
@@ -101,7 +101,7 @@ describe("partial failures during batch close", () => {
     expect(tabById("t1")).toBeUndefined();
     expect(tabById("t2")?.closeError).toBeUndefined();
     expect(useUi.getState().toasts.map((t) => t.text)).not.toContain(
-      "1 个标签未能关闭，已保留并在标签上标出原因",
+      "1 个标签页未能关闭，已保留并在标签页上标出原因",
     );
   });
 
@@ -119,7 +119,7 @@ describe("partial failures during batch close", () => {
     expect(tabById("t1")).toBeUndefined();
     expect(tabById("t2")?.closeError).toBeUndefined();
     expect(useUi.getState().toasts.map((t) => t.text)).not.toContain(
-      "1 个标签未能关闭，已保留并在标签上标出原因",
+      "1 个标签页未能关闭，已保留并在标签页上标出原因",
     );
   });
 
@@ -134,7 +134,7 @@ describe("partial failures during batch close", () => {
 
     expect(tabById("t1")?.closeError).toBe("boom");
     expect(useUi.getState().toasts.map((t) => t.text)).not.toContain(
-      "1 个标签未能关闭，已保留并在标签上标出原因",
+      "1 个标签页未能关闭，已保留并在标签页上标出原因",
     );
 
     mocks.closeTab.mockResolvedValueOnce(undefined);
@@ -156,7 +156,7 @@ describe("partial failures during batch close", () => {
     expect(tabById("t1")).toBeUndefined();
     expect(tabById("db1")?.closeError).toBe("读写文件失败，请检查磁盘空间和文件权限后重试");
     expect(useUi.getState().toasts.map((t) => t.text)).toContain(
-      "1 个标签未能关闭，已保留并在标签上标出原因",
+      "1 个标签页未能关闭，已保留并在标签页上标出原因",
     );
   });
 
@@ -175,7 +175,7 @@ describe("partial failures during batch close", () => {
     expect(tabById("t1")).toBeUndefined();
     expect(tabById("t2")).toBeUndefined();
     expect(useUi.getState().toasts.map((t) => t.text)).not.toContain(
-      "2 个标签未能关闭，已保留并在标签上标出原因",
+      "2 个标签页未能关闭，已保留并在标签页上标出原因",
     );
   });
 });

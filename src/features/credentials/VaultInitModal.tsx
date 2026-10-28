@@ -79,7 +79,7 @@ export function VaultInitModal({
             />
             <div className="nx-hint mt-1.5">
               保存密码或私钥前，需要先初始化凭据库。保护密码只在本机使用，不会上传；
-              留空则不设置密码，凭据仍可正常保存与使用，但任何拿到数据目录的人都能解密。设置后忘记无法找回，已保存的凭据将永远无法解密。
+              留空则不设置密码，凭据仍可正常保存与使用，但任何获得数据目录的人均可解密。设置后若遗忘将无法找回，已保存的凭据将无法解密。
             </div>
           </div>
         </div>
@@ -92,7 +92,7 @@ export function VaultInitModal({
             disabled={(password.length > 0 && password.length < 8) || submitting}
             onClick={() => void submit()}
           >
-            {submitting ? "启用中…" : "启用保护"}
+            {submitting ? "正在启用…" : "启用保护"}
           </button>
         </div>
       </div>

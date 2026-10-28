@@ -180,7 +180,7 @@ export function SavedTargetSets({
       </div>
       {sets === null ? (
         <div className="rounded border border-dashed border-neutral-800 px-3 py-3 text-[11px] text-neutral-500" role="status">
-          加载中…
+          正在加载…
         </div>
       ) : sets.length === 0 ? (
         <div className="rounded border border-dashed border-neutral-800 px-3 py-3 text-[11px] text-neutral-500">

@@ -94,7 +94,7 @@ import { useUi, type AppTab } from "../../app/store";
 import type { FileEntryDto } from "../../ipc/types";
 
 const SID = "s1";
-const GONE_HINT = "会话已在服务端删除，请重新连接这台主机";
+const GONE_HINT = "会话已在服务端删除，请重新连接该主机";
 
 const NOT_FOUND = {
   code: "not_found",
@@ -288,7 +288,7 @@ describe("FileTree deleted session", () => {
 
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("会话已在服务端删除"));
     expect(mounted.container.textContent).not.toContain("请刷新后重试");
-    expect(button("重新连接这台主机")).toBeDefined();
+    expect(button("重新连接该主机")).toBeDefined();
     expect(button("重试")).toBeUndefined();
     for (const ariaLabel of ["新建文件", "新建目录", "刷新文件列表", "上传到当前目录"]) {
       const btn = toolbarButton(ariaLabel);
@@ -332,7 +332,7 @@ describe("FileTree deleted session", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     expect(workspaceSessionId()).toBe("s2");
     expect(mounted!.container.textContent).toContain("会话已在服务端删除");
-    expect(button("重新连接这台主机")).toBeDefined();
+    expect(button("重新连接该主机")).toBeDefined();
   });
 
   it("shows a reconnecting state and disables the button during automatic reconnect, then restores the manual button after failure", async () => {
@@ -346,7 +346,7 @@ describe("FileTree deleted session", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(1);
 
     pending.reject(new Error("dial tcp: connection refused"));
-    await flushUntil(() => button("重新连接这台主机") !== undefined);
+    await flushUntil(() => button("重新连接该主机") !== undefined);
     expect(toastTexts()).toContain("重新连接失败");
     expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
@@ -358,13 +358,13 @@ describe("FileTree deleted session", () => {
 
     await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机 127.0.0.1:22 的密钥已变更");
-    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重新连接"));
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(workspaceSessionId()).toBe(SID);
     expect(mounted.container.textContent).toContain("会话已在服务端删除");
 
-    clickButton(mounted.container, "重新连接这台主机");
+    clickButton(mounted.container, "重新连接该主机");
 
     await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(2));
     await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
@@ -381,16 +381,16 @@ describe("FileTree deleted session", () => {
     expect(mounted.container.textContent).toContain("会话已在服务端删除");
     expect(mocks.connect).toHaveBeenCalledTimes(1);
 
-    clickButton(mounted.container, "重新连接这台主机");
+    clickButton(mounted.container, "重新连接该主机");
 
     await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
-    await waitForRendered(() => expect(button("重新连接这台主机")).toBeDefined());
+    await waitForRendered(() => expect(button("重新连接该主机")).toBeDefined());
 
     mocks.connect.mockResolvedValue(NEW_SESSION);
     mocks.list.mockImplementation((sid: string) =>
       sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
     );
-    clickButton(mounted.container, "重新连接这台主机");
+    clickButton(mounted.container, "重新连接该主机");
 
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connect).toHaveBeenCalledTimes(3);
@@ -452,7 +452,7 @@ describe("FileTree transient file errors", () => {
 
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("连接被对端重置"));
     expect(button("重试")).toBeDefined();
-    expect(button("重新连接这台主机")).toBeUndefined();
+    expect(button("重新连接该主机")).toBeUndefined();
     for (const ariaLabel of ["新建文件", "新建目录", "刷新文件列表", "上传到当前目录"]) {
       expect(toolbarButton(ariaLabel)?.disabled, ariaLabel).toBe(false);
     }
@@ -551,7 +551,7 @@ describe("FileTree Windows roots and navigation", () => {
     expect(treeItem("D:/")).toBeDefined();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(toolbarButton("刷新文件列表")?.disabled).toBe(false);
-    expect(button("重新连接这台主机")).toBeUndefined();
+    expect(button("重新连接该主机")).toBeUndefined();
     expect(button("重试")).toBeDefined();
 
     mocks.list.mockImplementation((_sid: string, path: string) => {
@@ -597,7 +597,7 @@ describe("FileTree Windows roots and navigation", () => {
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mounted.container.textContent).not.toContain("会话已在服务端删除");
     expect(button("重试")).toBeDefined();
-    expect(button("重新连接这台主机")).toBeUndefined();
+    expect(button("重新连接该主机")).toBeUndefined();
     expect(toolbarButton("刷新文件列表")?.disabled).toBe(false);
   });
 
@@ -610,7 +610,7 @@ describe("FileTree Windows roots and navigation", () => {
     await flush();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(button("重试")).toBeDefined();
-    expect(button("重新连接这台主机")).toBeUndefined();
+    expect(button("重新连接该主机")).toBeUndefined();
     expect(toolbarButton("刷新文件列表")?.disabled).toBe(false);
   });
 
@@ -699,7 +699,7 @@ describe("FileTree roots errors", () => {
 
     await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("会话已在服务端删除"));
-    expect(button("重新连接这台主机")).toBeDefined();
+    expect(button("重新连接该主机")).toBeDefined();
   });
 
   it("loads Windows roots after the initial roots request fails and manual retry succeeds", async () => {

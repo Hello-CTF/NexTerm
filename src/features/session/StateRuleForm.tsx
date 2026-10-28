@@ -232,7 +232,7 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
             value={form.keys}
             onChange={(event) => set({ keys: event.target.value })}
           />
-          <p id={`${id}-keys-hint`} className="nx-hint mt-1">需要我时作为按钮提供，只在点击后发送。</p>
+          <p id={`${id}-keys-hint`} className="nx-hint mt-1">状态为「需要处理」时显示为按钮，仅在单击后发送。</p>
           <FieldError id={`${id}-keys-error`} message={keysError} />
         </div>
       )}
@@ -288,7 +288,7 @@ function RuleCheckStatus({
           )}
         </div>
       )}
-      {validation.pending && <div className="nx-hint text-[11.5px]">检查中…</div>}
+      {validation.pending && <div className="nx-hint text-[11.5px]">正在检查…</div>}
     </div>
   );
 }

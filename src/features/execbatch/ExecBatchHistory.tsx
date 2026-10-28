@@ -51,9 +51,9 @@ function HistoryMatrix({ batch, results }: { batch: ExecBatchRow; results: ExecB
   return (
     <div className="mt-3 border-t border-neutral-800/70 pt-3" data-testid="exec-batch-history-matrix">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
-        <span className="font-medium text-neutral-300">历史结果矩阵</span>
+        <span className="font-medium text-neutral-300">历史结果汇总</span>
         <span className="nx-hint" title={batch.id}>批次 {batch.id.slice(0, 8)}</span>
-        <span className="nx-hint">命令哈希 {batch.commandHash.slice(0, 12)}…</span>
+        <span className="nx-hint">命令摘要 {batch.commandHash.slice(0, 12)}…</span>
       </div>
       <div className="overflow-x-auto">
         <table className="nx-table nx-table-cards nx-table-fixed min-w-[720px]">
@@ -161,14 +161,14 @@ export function ExecBatchHistory() {
         <div className="mt-3">
           {listQuery.isPending && <div className="text-[11px] text-neutral-500">正在加载历史…</div>}
           {listQuery.isError && (
-            <div role="alert" className="text-[11px] text-red-300">历史加载失败：{describeError(listQuery.error)}</div>
+            <div role="alert" className="text-[11px] text-red-300">未能加载历史：{describeError(listQuery.error)}</div>
           )}
           {page && (
             <>
               <div className="overflow-x-auto">
                 <table className="nx-table nx-table-cards min-w-[640px]">
                   <thead>
-                    <tr><th>开始时间</th><th>状态</th><th>目标数</th><th>命令哈希</th><th>结果</th></tr>
+                    <tr><th>开始时间</th><th>状态</th><th>目标数</th><th>命令摘要</th><th>结果</th></tr>
                   </thead>
                   <tbody>
                     {page.items.map((batch) => (
@@ -215,9 +215,9 @@ export function ExecBatchHistory() {
               </div>
             </>
           )}
-          {detailQuery.isPending && <div className="mt-2 text-[11px] text-neutral-500">正在加载结果矩阵…</div>}
+          {detailQuery.isPending && <div className="mt-2 text-[11px] text-neutral-500">正在加载结果汇总…</div>}
           {detailQuery.isError && (
-            <div role="alert" className="mt-2 text-[11px] text-red-300">结果矩阵加载失败：{describeError(detailQuery.error)}</div>
+            <div role="alert" className="mt-2 text-[11px] text-red-300">未能加载结果汇总：{describeError(detailQuery.error)}</div>
           )}
           {detail && <HistoryMatrix batch={detail.batch} results={detail.results} />}
         </div>

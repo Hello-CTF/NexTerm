@@ -3,11 +3,11 @@ import { describeError } from "../../ui/errorText";
 const DOCKER_UNAVAILABLE_HINTS: { pattern: RegExp; hint: string }[] = [
   {
     pattern: /Cannot connect to the Docker daemon|error during connect|Is the docker daemon running/i,
-    hint: "无法连接这台主机上的 Docker 服务，请确认 Docker 已安装并正在运行",
+    hint: "无法连接该主机上的 Docker 服务，请确认 Docker 已安装并正在运行",
   },
   {
     pattern: /command not found|executable file not found|exit status 127/i,
-    hint: "这台主机没有安装 Docker（或不在 PATH 中）",
+    hint: "该主机没有安装 Docker（或不在 PATH 中）",
   },
 ];
 
@@ -27,8 +27,8 @@ export function isDockerNotInstalled(e: unknown): boolean {
 // returns null for any other error.
 export function dockerHostUnavailableText(e: unknown): string | null {
   const code = dockerErrorCode(e);
-  if (code === "docker_not_installed") return "这台主机没有安装 Docker，安装后点击重试。";
-  if (code === "docker_unavailable") return "这台主机未运行 Docker，启动后点击重试。";
+  if (code === "docker_not_installed") return "该主机没有安装 Docker，安装后请重试。";
+  if (code === "docker_unavailable") return "该主机未运行 Docker，启动后请重试。";
   return null;
 }
 

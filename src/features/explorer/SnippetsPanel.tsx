@@ -197,14 +197,14 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
             </div>
           )}
           {snippets.isError && (
-            <LoadError title="片段加载失败" error={snippets.error} onRetry={() => void snippets.refetch()} />
+            <LoadError title="未能加载片段" error={snippets.error} onRetry={() => void snippets.refetch()} />
           )}
           {snippets.data && snippets.data.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
               <span className="nx-empty-icon">
                 <IconCommand size={18} />
               </span>
-              <div className="nx-hint">暂无命令片段。可将常用命令保存为片段，之后一键插入或执行。</div>
+              <div className="nx-hint">暂无命令片段。可将常用命令保存为片段，之后可直接插入或执行。</div>
               <button type="button" className="nx-btn nx-btn-sm" onClick={() => setEditing("new")}>
                 <IconPlus size={12} />
                 新建第一个片段
@@ -324,7 +324,7 @@ function SnippetEditor({
     if (saving) return;
     if (
       dirty &&
-      !(await ask("当前修改还没保存，关闭编辑器会丢掉这些改动，继续？", {
+      !(await ask("当前修改尚未保存，关闭编辑器将丢弃这些改动。确定要继续？", {
         title: "放弃未保存的修改",
         kind: "warning",
       }))
@@ -417,7 +417,7 @@ function SnippetEditor({
             />
             <div id={hintId} className="nx-hint mt-1.5 leading-relaxed">
               <div>
-                可以用变量，运行时会让你填写：<code>{"{{service}}"}</code> 必填，<code>{"{{service=nginx}}"}</code> 带默认值，<code>{"{{service|multiline}}"}</code> 多行输入。
+                支持使用变量，运行时需填写：<code>{"{{service}}"}</code> 必填，<code>{"{{service=nginx}}"}</code> 带默认值，<code>{"{{service|multiline}}"}</code> 多行输入。
               </div>
               <div className="mt-1">
                 自动填入当前主机信息：<code>{"{{asset.name}}"}</code> 名称、<code>{"{{asset.host}}"}</code> 地址、<code>{"{{asset.tags}}"}</code> 标签。
@@ -439,7 +439,7 @@ function SnippetEditor({
             disabled={saving || !name.trim() || !body.trim()}
             onClick={() => void save()}
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "正在保存…" : "保存"}
           </button>
         </div>
       </div>

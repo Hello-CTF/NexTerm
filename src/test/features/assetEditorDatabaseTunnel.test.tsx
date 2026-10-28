@@ -122,13 +122,13 @@ function findSelect(optionText: string): HTMLSelectElement {
 }
 
 function viaSelect(): HTMLSelectElement {
-  const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过SSH资产连接"]');
+  const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过 SSH 资产连接"]');
   if (!select) throw new Error("via asset select not found");
   return select;
 }
 
 function queryViaSelect(): HTMLSelectElement | null {
-  return mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过SSH资产连接"]');
+  return mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过 SSH 资产连接"]');
 }
 
 function fillRequiredFields(name = "orders-db"): void {

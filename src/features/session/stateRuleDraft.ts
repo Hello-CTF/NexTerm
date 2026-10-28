@@ -17,7 +17,7 @@ const MAX_TITLE_BYTES = 1024;
 const HEURISTIC_TEXT_CHARS = 120;
 // Rows of the screen bottom the AI draft is built from; mirrors stateRuleDraftRows in the backend.
 export const STATE_RULE_DRAFT_ROWS = 30;
-export const STATE_RULE_REDACTED_NOTE = "已隐去疑似密钥/密码";
+export const STATE_RULE_REDACTED_NOTE = "已对疑似密钥或密码脱敏";
 
 export const STATE_RULE_EXPORT_FORMAT = "nexterm.state-rules";
 export const STATE_RULE_EXPORT_VERSION = 1;

@@ -667,7 +667,7 @@ async function restoreSummary(layout: PersistedLayout): Promise<{ text: string; 
   }
   const lines = layout.workspaces.slice(0, 12).map((workspace) => {
     let status = "工具标签";
-    if (workspace.quickTarget) status = "临时 SSH 目标，重连时需要重新提供凭据";
+    if (workspace.quickTarget) status = "临时 SSH 目标，重新连接时需要重新提供凭据";
     else if (workspace.assetId?.startsWith("device/")) status = "受管设备，使用前需确认在线状态";
     else if (workspace.assetId && assets === null) status = "资产状态未核实";
     else if (workspace.assetId && !assets?.has(workspace.assetId)) status = "原资产已不存在，旧连接将跳过";
@@ -677,7 +677,7 @@ async function restoreSummary(layout: PersistedLayout): Promise<{ text: string; 
   });
   if (layout.workspaces.length > lines.length) lines.push(`• 另有 ${layout.workspaces.length - lines.length} 个工作区`);
   return {
-    text: `账号中有 ${layout.workspaces.length} 个工作区。恢复前请核对目标：\n\n${lines.join("\n")}\n\n恢复保留工作区与标签，但不会启动旧连接。请在每个工作区确认目标后手动重新连接。`,
+    text: `账号中有 ${layout.workspaces.length} 个工作区。恢复前请核对目标：\n\n${lines.join("\n")}\n\n恢复保留工作区与标签页，但不会启动旧连接。请在每个工作区确认目标后手动重新连接。`,
     assets,
   };
 }
@@ -724,7 +724,7 @@ export async function reviewPendingLayoutRestore(): Promise<void> {
       title: "恢复账号工作区",
       choices: [
         { key: "restore", label: "恢复并预览", primary: true },
-        { key: "later", label: "稍后再说", hint: "服务端布局保留，本设备暂不写入账号布局" },
+        { key: "later", label: "稍后处理", hint: "服务端布局保留，本设备暂不写入账号布局" },
       ],
     });
     if (epoch !== accountEpoch || pendingRestore !== candidate) return;
@@ -1361,10 +1361,10 @@ export async function notifyBackgroundedTerminals(
     const hit = live.find((t) => t.tabId === r.tabId);
     if (!hit || hit.exited) continue;
     const text = r.retainable !== true
-      ? `终端「${r.title}」的标签已被其他设备关闭`
+      ? `终端「${r.title}」的标签页已被其他设备关闭`
       : hit.viewers > 1
-        ? `终端「${r.title}」的标签已被其他设备关闭，进程仍在运行，且仍有其他设备正在观看，可在「后台会话」里接管`
-        : `终端「${r.title}」的标签已被其他设备关闭，进程仍在后台运行，可在「后台会话」里接管`;
+        ? `终端「${r.title}」的标签页已被其他设备关闭，进程仍在运行，且仍有其他设备正在观看，可在「后台会话」里接管`
+        : `终端「${r.title}」的标签页已被其他设备关闭，进程仍在后台运行，可在「后台会话」里接管`;
     useUi.getState().pushToast("info", text);
   }
 }

@@ -314,7 +314,7 @@ describe("PaneForTab", () => {
       const onClose = vi.fn().mockResolvedValue(undefined);
       render(tab({ kind: "terminal", id: "ct", containerId: "c1", restorePending: true }), { onClose });
       expect(view!.container.textContent).toContain("容器终端不会自动重新打开");
-      click(button("关闭标签"));
+      click(button("关闭标签页"));
       expect(onClose).toHaveBeenCalledWith("ct");
     });
   });

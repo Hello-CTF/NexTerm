@@ -103,7 +103,7 @@ const LOGIN_FAILURE_KINDS: Record<string, { status: string; tone: LoginTone; ret
   host_key_changed: { status: "指纹变了", tone: "warn", retryable: true },
   auth: { status: "登录被拒绝", tone: "fail", retryable: true },
   credential: { status: "凭据不可用", tone: "fail", retryable: true },
-  vault: { status: "密码库未解锁", tone: "fail", retryable: true },
+  vault: { status: "凭据库未解锁", tone: "fail", retryable: true },
   refused: { status: "端口不通", tone: "fail", retryable: true },
   timeout: { status: "连接超时", tone: "fail", retryable: true },
   dns: { status: "域名解析失败", tone: "fail", retryable: true },
@@ -135,8 +135,8 @@ function canceledLoginResult(assetId: string, label: string, inFlight: boolean):
   return {
     assetId, label, tone: "canceled", status: "已取消", retryable: false,
     detail: inFlight
-      ? "已取消。这台的检测请求已经发出，结果不采用，可以稍后单独重测"
-      : "已取消，这台还没有开始测试",
+      ? "已取消。该主机的检测请求已发出，结果不予采用，可稍后单独重新测试"
+      : "已取消，该主机尚未开始测试",
   };
 }
 
@@ -162,13 +162,13 @@ export function describeLoginResult(
       return {
         ...base, tone: "ok", status: "已登录数据库", retryable: false,
         detail: hasCredential
-          ? `已用资产绑定的凭据登录数据库并通过连通检查，没有执行任何 SQL（${result.durationMs} ms）`
-          : `已连上并通过连通检查，但这条资产没有绑定凭据，是按无密码方式登录的，没有执行任何 SQL（${result.durationMs} ms）`,
+          ? `已使用资产绑定的凭据登录数据库并通过连通检查，未执行任何 SQL（${result.durationMs} ms）`
+          : `已连接并通过连通检查；该资产未绑定凭据，已按无密码方式登录，未执行任何 SQL（${result.durationMs} ms）`,
       };
     }
     return {
       ...base, tone: "ok", status: "已验证登录", retryable: false,
-      detail: `能连上，主机指纹和登录凭据都验证通过（${result.durationMs} ms）`,
+      detail: `连接成功，主机指纹和登录凭据均验证通过（${result.durationMs} ms）`,
     };
   }
   const known = result.kind ? LOGIN_FAILURE_KINDS[result.kind] : undefined;
@@ -177,7 +177,7 @@ export function describeLoginResult(
     tone: known?.tone ?? "fail",
     status: known?.status ?? "连接失败",
     retryable: known?.retryable ?? true,
-    detail: result.error || "没有拿到失败原因，请重试",
+    detail: result.error || "未获取到失败原因，请重试",
   };
 }
 
@@ -635,7 +635,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
               </span>
             </label>
           </div>
-          <div className="mt-2 text-[10px] text-neutral-500">仅显示凭据名称、类型和 ID，不返回或记录明文内容；CAS 冲突目标可刷新后单独重试。</div>
+          <div className="mt-2 text-[10px] text-neutral-500">仅显示凭据名称、类型和 ID，不返回或记录明文内容；发生并发修改冲突的目标可刷新后单独重试。</div>
           <button type="button" className="nx-btn nx-btn-primary mt-3" disabled={busy !== null} onClick={() => void applyBulkEdit()}>
             {busy === "edit" ? "正在编辑…" : "应用批量编辑"}
           </button>
@@ -662,9 +662,9 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
         <details className="rounded border border-neutral-800/70 p-2.5">
           <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconPlug size={12} className="mr-1 inline" />连接测试</summary>
           <div className="mt-2 text-[10px] text-neutral-500">
-            SSH 主机：核对主机指纹和账号凭据，不打开终端、不执行命令。遇到没信任过的主机指纹时不会自动信任，请先到终端里核对并确认，再回来重新测试。
+            SSH 主机：核对主机指纹和账号凭据，不打开终端、不执行命令。遇到尚未信任的主机指纹时不会自动信任，请先在终端中核对并确认，再重新测试。
             MySQL、PostgreSQL、Redis：用资产绑定的凭据连接并做一次连通检查，不执行任何 SQL，也不保存连接；TLS 证书校验按资产设置进行，不会自动信任。
-            其他类型只确认端口能连通，会标为“仅端口通”，说明账号密码还没有验证。
+            其他类型只确认端口能连通，会标记为「仅端口连通」，表示尚未验证账号和密码。
           </div>
           <div className="mt-2" data-testid="login-test-targets">
             <TargetSetPicker

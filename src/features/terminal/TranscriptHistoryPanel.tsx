@@ -386,7 +386,7 @@ export function TranscriptHistoryPanel({
   const toggleTranscriptSync = async (summary: TranscriptSummary) => {
     if (summary.syncOptIn) {
       const ok = await ask(
-        "关闭这条记录的账号同步？\n\n其他设备上的同步副本将被删除，本机记录保留。",
+        "关闭该记录的账号同步？\n\n其他设备上的同步副本将被删除，本机记录保留。",
         { title: "关闭账号同步", kind: "warning" },
       );
       if (!ok) return;
@@ -395,7 +395,7 @@ export function TranscriptHistoryPanel({
     try {
       await transcriptApi.syncOptIn(summary.id, optIn);
       setSyncToggleError(null);
-      pushToast("success", optIn ? "已开启这条记录的同步" : "已关闭这条记录的同步");
+      pushToast("success", optIn ? "已开启该记录的同步" : "已关闭该记录的同步");
       await loadSessions();
     } catch (error) {
       setSyncToggleError(describeError(error));
@@ -450,7 +450,7 @@ export function TranscriptHistoryPanel({
       {hostsError && (
         <div className="flex items-center gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-2 text-[12px] text-red-300">
           <IconAlert size={13} />
-          读取主机列表失败：{hostsError}
+          未能读取主机列表：{hostsError}
           <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void loadHosts()}>
             重试
           </button>
@@ -509,7 +509,7 @@ export function TranscriptHistoryPanel({
                                 ? "此记录已开启账号同步。关闭后，其他设备上的同步副本将被删除，本机记录保留"
                                 : "通过账号将此记录同步到其他设备（端到端加密）"
                             }
-                            aria-label={summary.syncOptIn ? "关闭这条记录的同步" : "开启这条记录的同步"}
+                            aria-label={summary.syncOptIn ? "关闭该记录的同步" : "开启该记录的同步"}
                             onClick={(event) => {
                               event.stopPropagation();
                               void toggleTranscriptSync(summary);
@@ -524,7 +524,7 @@ export function TranscriptHistoryPanel({
                             title={
                               summary.active
                                 ? "进行中的记录在结束后才能开启同步"
-                                : "这条记录没有结束时间，不能开启同步"
+                                : "该记录没有结束时间，不能开启同步"
                             }
                             aria-label="同步不可用"
                           >
@@ -537,8 +537,8 @@ export function TranscriptHistoryPanel({
                         </span>
                         <button
                           className="nx-btn nx-btn-ghost nx-btn-xs"
-                          title="删除这条记录"
-                          aria-label="删除这条记录"
+                          title="删除该记录"
+                          aria-label="删除该记录"
                           onClick={(event) => {
                             event.stopPropagation();
                             void removeTranscript(summary);
@@ -553,16 +553,16 @@ export function TranscriptHistoryPanel({
                 {sessionsError && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty text-red-300">
-                      读取终端历史失败：{sessionsError}
+                      未能读取终端历史：{sessionsError}
                     </td>
                   </tr>
                 )}
                 {!sessionsError && sessions !== null && sessionList.length === 0 && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty">
-                      该主机还没有终端历史
+                      该主机暂无终端历史
                       <div className="mt-1.5 text-[11px] text-neutral-500">
-                        连接这台主机并产生终端输出后，记录会自动保存在这里。
+                        连接该主机并产生终端输出后，记录会自动保存在这里。
                       </div>
                     </td>
                   </tr>
@@ -570,18 +570,18 @@ export function TranscriptHistoryPanel({
                 {!sessionsError && sessions === null && assetId && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty">
-                      加载中…
+                      正在加载…
                     </td>
                   </tr>
                 )}
                 {!sessionsError && !assetId && hosts !== null && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty">
-                      {hostOptions.length === 0 ? "还没有可查看的主机" : "请选择主机查看终端历史"}
+                      {hostOptions.length === 0 ? "暂无可查看的主机" : "请选择主机查看终端历史"}
                       <div className="mt-1.5 text-[11px] text-neutral-500">
                         {hostOptions.length === 0
-                          ? "先在资产里添加一台主机并连接终端。"
-                          : "从上方列表选择要查看的主机，避免误看其他主机的记录。"}
+                          ? "请先添加主机并连接终端。"
+                          : "请从上方列表选择要查看的主机，以免查看到其他主机的记录。"}
                       </div>
                     </td>
                   </tr>
@@ -696,13 +696,13 @@ export function TranscriptHistoryPanel({
             )}
             {readerLoading && (
               <div className="flex h-full items-center justify-center text-[12px] text-neutral-500">
-                加载中…
+                正在加载…
               </div>
             )}
             {readerError && (
               <div className="flex h-full items-center justify-center gap-2 text-[12px] text-red-300">
                 <IconAlert size={13} />
-                读取终端记录失败：{readerError}
+                未能读取终端记录：{readerError}
               </div>
             )}
             {selected?.contentOmitted && !readerLoading && !readerError && (
@@ -717,7 +717,7 @@ export function TranscriptHistoryPanel({
                     {chunk.text}
                   </span>
                 ))}
-                {chunks.length === 0 && done && "（这条记录没有任何输出）"}
+                {chunks.length === 0 && done && "（该记录没有任何输出）"}
               </pre>
             )}
           </div>
