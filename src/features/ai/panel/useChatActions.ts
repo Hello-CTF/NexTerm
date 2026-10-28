@@ -68,7 +68,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       maybeOpenAiCreatedTerminal(run.generation, ev, result);
       if (!result.terminal) return;
       settleRestoredRun(run.generation);
-      if (type === "error" && result.accepted) pushToast("error", `AI: ${ev.message as string}`);
+      if (type === "error" && result.accepted) pushToast("error", `AI 回答出错：${ev.message as string}`);
     });
 
     const offHitlReopen = onChannelReopen(channel, () => {
@@ -143,21 +143,21 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     if (!message) return;
     const run = activeRunRef.current;
     if (!run || run.settled) {
-      pushToast("info", "当前任务已结束，请将补充指令作为新消息发送。");
+      pushToast("info", "任务已结束，请把这条内容作为新消息发送。");
       return;
     }
     if (run.spawnPending) {
-      pushToast("info", "当前任务正在启动，请稍后重试。");
+      pushToast("info", "任务正在启动，请稍后再试。");
       return;
     }
     if (images.length > 0) {
-      pushToast("info", "运行中的补充指令暂不支持图片，请先移除图片");
+      pushToast("info", "回答过程中追加的指令不能带图片，请先移除图片");
       return;
     }
     const target = run;
     const jobId = run.jobId;
     if (run.kind !== "chat" || !jobId) {
-      pushToast("info", "终端接管这一轮不支持补充指令");
+      pushToast("info", "接管终端时不能追加指令");
       return;
     }
     if (permOpen) setPermOpen(false);
@@ -169,7 +169,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     } catch (e) {
       stream.resolveSteer(target.generation, itemId, "dropped");
       setInput((prev) => (prev ? `${message}\n${prev}` : message));
-      pushToast("error", `补充指令未送达：${describeError(e)}`);
+      pushToast("error", `追加的指令未送达：${describeError(e)}`);
     }
   };
 
@@ -188,7 +188,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
   const retryRun = (item: ChatItem) => {
     if (item.role !== "outcome" || item.outcome !== "error" || !item.retryable) return;
     if (busy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", "另一轮仍在运行，请先停止再重试");
+      pushToast("info", "AI 正在回答，请先停止后再重试");
       return;
     }
     const source = [...conv.items]
@@ -198,7 +198,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
           candidate.attempt === item.attempt && candidate.role === "user" && candidate.steer === undefined,
       );
     if (!source) {
-      pushToast("info", "找不到这一轮的消息原文，请手动重新发送");
+      pushToast("info", "找不到原消息内容，请手动重新发送");
       return;
     }
     if (source.text.trim() === PLAN_EXECUTE_MESSAGE) {
@@ -250,7 +250,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     } catch (e) {
       editSubmittingRef.current = false;
       setEditSubmitting(false);
-      pushToast("error", `编辑并重新发送失败：${describeError(e)}`);
+      pushToast("error", `无法编辑并重新发送：${describeError(e)}`);
       return;
     }
     try {
@@ -286,7 +286,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       const run = activeRunRef.current;
       const id = run?.jobId;
       if (!run || !id) {
-        pushToast("info", "当前任务正在启动，请稍后重试。");
+        pushToast("info", "任务正在启动，请稍后再试。");
         return false;
       }
       if (submittingCardIdRef.current) return false;
@@ -306,7 +306,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
           await aiApi.confirm(input);
         }
       } catch (e) {
-        pushToast("error", `确认失败：${describeError(e)}`);
+        pushToast("error", `无法提交选择：${describeError(e)}`);
         if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
           void replayHitl(run.generation, id);
         }
@@ -328,7 +328,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     const card = confirmCard;
     const id = run?.jobId;
     if (!run || !id || !card) {
-      pushToast("info", "当前任务正在启动，请稍后重试。");
+      pushToast("info", "任务正在启动，请稍后再试。");
       return;
     }
     if (submittingCardId) return;
@@ -351,7 +351,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     const id = run?.jobId;
     const text = option ?? questionInput;
     if (!run || !id || !card) {
-      pushToast("info", "当前任务正在启动，请稍后重试。");
+      pushToast("info", "任务正在启动，请稍后再试。");
       return;
     }
     if (!text.trim()) {
@@ -369,7 +369,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
         await aiApi.answer(input);
       }
     } catch (e) {
-      pushToast("error", `回答失败：${describeError(e)}`);
+      pushToast("error", `无法提交回答：${describeError(e)}`);
       if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
         void replayHitl(run.generation, id);
       }
@@ -488,7 +488,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
   const submitAgentApproval = useCallback(
     (requestId: string, decision: AgentApprovalDecision) => {
       void resolveAgentApproval(requestId, decision).catch((error: unknown) => {
-        pushToast("error", `审批失败：${describeError(error)}`);
+        pushToast("error", `无法提交审批：${describeError(error)}`);
       });
     },
     [resolveAgentApproval, pushToast],

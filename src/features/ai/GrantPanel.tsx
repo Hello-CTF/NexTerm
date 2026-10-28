@@ -208,7 +208,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       }
       pushToast("success", on ? `「${target.name}」${KIND_LABEL[kind]}已免确认` : `「${target.name}」${KIND_LABEL[kind]}恢复为逐次确认`);
     } catch (e) {
-      pushToast("error", `${on ? "开启" : "关闭"}授权失败：${describeError(e)}`);
+      pushToast("error", `无法${on ? "开启" : "关闭"}授权：${describeError(e)}`);
     } finally {
       setBusy(null);
     }
@@ -232,7 +232,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       pushToast("success", `已添加规则：${target.name} ${scope}`);
       return true;
     } catch (e) {
-      pushToast("error", `添加规则失败：${describeError(e)}`);
+      pushToast("error", `无法添加规则：${describeError(e)}`);
       return false;
     } finally {
       setBusy(null);
@@ -246,7 +246,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       setRules((prev) => prev.filter((r) => r.id !== rule.id));
       pushToast("success", `已撤销规则：${ruleScopeText(rule)}`);
     } catch (e) {
-      pushToast("error", `撤销规则失败：${describeError(e)}`);
+      pushToast("error", `无法撤销规则：${describeError(e)}`);
     } finally {
       setBusy(null);
     }
@@ -266,7 +266,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       setRules((prev) => prev.filter((r) => r.deviceId !== target.id));
       pushToast("success", `已撤销「${target.name}」的全部授权`);
     } catch (e) {
-      pushToast("error", `撤销授权失败：${describeError(e)}`);
+      pushToast("error", `无法撤销授权：${describeError(e)}`);
       void reload();
     } finally {
       setBusy(null);
@@ -302,7 +302,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
   if (loadError) {
     return (
       <div className="flex items-center gap-1.5 text-[11px] text-red-400">
-        <span className="min-w-0 flex-1 truncate">授权加载失败：{loadError}</span>
+        <span className="min-w-0 flex-1">无法读取授权：{loadError}。请检查网络后重试。</span>
         <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
           重试
         </button>
@@ -313,7 +313,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     return (
       <div className="flex items-center gap-1.5 py-1 text-[11px] text-neutral-500">
         <IconLoader size={12} />
-        读取授权…
+        正在读取授权…
       </div>
     );
   }
@@ -370,7 +370,8 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
                   disabled={busy === target.id}
-                  title="撤销这台主机的全部授权和规则"
+                  title="撤销这台主机的全部免确认授权和规则"
+                  aria-label={`撤销「${target.name}」的全部免确认授权和规则`}
                   onClick={() => void revokeAll(target)}
                 >
                   {busy === target.id ? "处理中…" : "撤销"}

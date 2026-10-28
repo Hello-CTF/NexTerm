@@ -318,7 +318,7 @@ describe("AiSidebar board lifecycle", () => {
     await flush();
 
     expect(view!.container.textContent).not.toContain("OLD-RESTORE");
-    expect(view!.container.textContent).toContain("新建会话");
+    expect(view!.container.textContent).toContain("开始新的对话");
     expect(useUi.getState().aiBoards[boardB].tabs[0].conversationId).toBeUndefined();
     expect(mocks.hitlSnapshot).not.toHaveBeenCalled();
     expect(mocks.runEvents).toHaveBeenCalledTimes(1);
@@ -395,7 +395,7 @@ describe("AiSidebar board lifecycle", () => {
     const text = view!.container.textContent ?? "";
     expect(text).toContain("NEW-LIVE");
     expect(text).not.toContain("OLD-TAIL");
-    expect(view!.container.querySelector('span[role="img"]')?.getAttribute("aria-label")).toBe(
+    expect(view!.container.querySelector('span[role="img"]:not([aria-label="AI 正在回答"])')?.getAttribute("aria-label")).toBe(
       "上下文占用 10%（100 / 1.0k），缓存命中 0%",
     );
     expect(mocks.channels).toHaveLength(1);
@@ -441,7 +441,7 @@ describe("AiSidebar board lifecycle", () => {
     const text = view!.container.textContent ?? "";
     expect(text).toContain("NEW-OPEN");
     expect(text).not.toContain("OLD-OPEN-TAIL");
-    expect(view!.container.querySelector('span[role="img"]')?.getAttribute("aria-label")).toBe(
+    expect(view!.container.querySelector('span[role="img"]:not([aria-label="AI 正在回答"])')?.getAttribute("aria-label")).toBe(
       "上下文占用 10%（100 / 1.0k），缓存命中 0%",
     );
     expect(mocks.channels).toHaveLength(1);

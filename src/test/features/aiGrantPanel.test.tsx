@@ -343,7 +343,7 @@ describe("GrantPanel scope and loading", () => {
   it("shows load errors and retries", async () => {
     mocks.grantList.mockRejectedValueOnce(new Error("network down"));
     await mountPanel();
-    expect(text()).toContain("授权加载失败：network down");
+    expect(text()).toContain("无法读取授权：network down");
     clickButton(view!.container, "重试");
     await flushUntil(() => text().includes("已授权主机"));
   });

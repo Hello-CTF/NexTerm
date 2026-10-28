@@ -216,7 +216,7 @@ describe("AiSidebar session restore", () => {
     expect(mocks.messages).toHaveBeenCalledWith("conv-1");
     expect(textOf(view!)).toContain("旧问题");
     expect(textOf(view!)).toContain("旧回答");
-    expect(textOf(view!)).not.toContain("新建会话");
+    expect(textOf(view!)).not.toContain("开始新的对话");
   });
 
   it("continues the restored conversation instead of creating a blank replacement", async () => {
@@ -236,7 +236,7 @@ describe("AiSidebar session restore", () => {
     mountSidebar();
     await flushReplay();
 
-    expect(textOf(view!)).toContain("新建会话");
+    expect(textOf(view!)).toContain("开始新的对话");
     await send("New question");
     expect(mocks.chat).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: undefined }),
@@ -249,8 +249,8 @@ describe("AiSidebar session restore", () => {
     mountSidebar();
     await flushReplay();
 
-    expect(textOf(view!)).toContain("会话加载失败 · 会话库不可用");
-    expect(textOf(view!)).not.toContain("新建会话");
+    expect(textOf(view!)).toContain("无法打开此会话：会话库不可用");
+    expect(textOf(view!)).not.toContain("开始新的对话");
 
     clickButton(view!.container, "重试");
     await flushReplay();
@@ -263,7 +263,7 @@ describe("AiSidebar session restore", () => {
     mocks.messages.mockRejectedValueOnce(new Error("会话库不可用"));
     mountSidebar();
     await flushReplay();
-    expect(textOf(view!)).toContain("会话加载失败 · 会话库不可用");
+    expect(textOf(view!)).toContain("无法打开此会话：会话库不可用");
 
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
@@ -273,7 +273,7 @@ describe("AiSidebar session restore", () => {
 
     expect(mocks.conversationDelete).toHaveBeenCalledWith("conv-1");
     expect(textOf(view!)).not.toContain("会话加载失败");
-    expect(textOf(view!)).toContain("新建会话");
+    expect(textOf(view!)).toContain("开始新的对话");
   });
 
   it("replays an interrupted run with a pending question into the restored session", async () => {
@@ -343,7 +343,7 @@ describe("AiSidebar session restore", () => {
       items: [{ content: "Collect data", status: "in_progress" }],
     });
     await flush();
-    const ring = () => view!.container.querySelector('span[role="img"]');
+    const ring = () => view!.container.querySelector('span[role="img"]:not([aria-label="AI 正在回答"])');
     expect(ring()?.getAttribute("aria-label")).toContain("上下文占用");
     expect(textOf(view!)).toContain("任务清单");
 
@@ -448,10 +448,10 @@ describe("AiSidebar session restore", () => {
     );
     mountSidebar();
     await flushUntil(() => {
-      const ring = view!.container.querySelector('span[role="img"]');
+      const ring = view!.container.querySelector('span[role="img"]:not([aria-label="AI 正在回答"])');
       return ring?.getAttribute("aria-label")?.includes("上下文占用") === true;
     });
-    expect(view!.container.querySelector('span[role="img"]')?.getAttribute("aria-label")).toBe(
+    expect(view!.container.querySelector('span[role="img"]:not([aria-label="AI 正在回答"])')?.getAttribute("aria-label")).toBe(
       "上下文占用 50%（5.0k / 10.0k），缓存命中 50%",
     );
     expect(mocks.runEvents).toHaveBeenCalledTimes(1);

@@ -268,7 +268,7 @@ describe("AiSidebar conversation stream UX", () => {
 
     emit({ type: "done", answer: "流式回答" });
     await flush();
-    expect(textOf(view!)).toContain("本轮已完成");
+    expect(textOf(view!)).toContain("回答已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
 
     const bubblesBefore = textOf(view!);
@@ -356,7 +356,7 @@ describe("AiSidebar conversation stream UX", () => {
     const alert = view!.container.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("网络断开");
     expect(textOf(view!)).toContain("失败前的输出");
-    expect(mocks.toast).toHaveBeenCalledWith("error", "AI: 网络断开");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "AI 回答出错：网络断开");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
 
     emit({ type: "done", answer: "迟到答案" });
@@ -388,19 +388,19 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
     expect(textOf(view!)).toContain("正在停止");
-    expect(textOf(view!)).not.toContain("已停止本轮");
+    expect(textOf(view!)).not.toContain("已停止");
     expect(textOf(view!)).toContain("已流出的部分");
     expect(useUi.getState().aiBusy).toBe(true);
 
-    emit({ type: "canceled", message: "已停止本轮" });
+    emit({ type: "canceled", message: "已停止" });
     await flush();
-    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).toContain("已停止");
     expect(useUi.getState().aiBusy).toBe(false);
 
     emit({ type: "done", answer: "迟到的完整答案" });
     await flush();
     expect(textOf(view!)).not.toContain("迟到的完整答案");
-    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).toContain("已停止");
     await send("Next message");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
   });
@@ -430,7 +430,7 @@ describe("AiSidebar conversation stream UX", () => {
     click(view!.container.querySelector('button[title="新建会话"]')!);
     await flush();
     expect(textOf(view!)).not.toContain("旧问题");
-    expect(textOf(view!)).toContain("新建会话");
+    expect(textOf(view!)).toContain("开始新的对话");
   });
 
   it("deletes a history conversation only after explicit confirmation", async () => {
@@ -473,7 +473,7 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(mocks.conversationDelete).toHaveBeenCalledWith("c-9");
     expect(textOf(view!)).not.toContain("旧问题");
-    expect(textOf(view!)).toContain("新建会话");
+    expect(textOf(view!)).toContain("开始新的对话");
     mocks.chat.mockResolvedValueOnce({ jobId: "job-2", conversationId: "conv-2" });
     await send("继续");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
@@ -498,7 +498,7 @@ describe("AiSidebar conversation stream UX", () => {
 
     emit({ type: "done", answer: "Running answer" });
     await flush();
-    expect(textOf(view!)).toContain("本轮已完成");
+    expect(textOf(view!)).toContain("回答已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
   });
 
@@ -524,7 +524,7 @@ describe("AiSidebar conversation stream UX", () => {
 
     emit({ type: "done", answer: "第二轮回答" });
     await flush();
-    expect(textOf(view!)).toContain("本轮已完成");
+    expect(textOf(view!)).toContain("回答已完成");
   });
 
   it("keeps the run settleable when it starts while the delete RPC is in flight", async () => {
@@ -548,14 +548,14 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).not.toContain("当前会话");
     expect(textOf(view!)).toContain("第一轮回答");
-    expect(textOf(view!)).not.toContain("新建会话");
+    expect(textOf(view!)).not.toContain("开始新的对话");
     emit({ type: "delta", text: "第二轮输出" });
     act(runFrames);
     expect(textOf(view!)).toContain("第二轮输出");
 
     emit({ type: "done", answer: "第二轮回答" });
     await flush();
-    expect(textOf(view!)).toContain("本轮已完成");
+    expect(textOf(view!)).toContain("回答已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
     await send("Third round");
     expect(mocks.chat).toHaveBeenLastCalledWith(
@@ -595,7 +595,7 @@ describe("AiSidebar conversation stream UX", () => {
     expect(textOf(view!)).toContain("第二轮输出");
     emit({ type: "done", answer: "第二轮回答" });
     await flush();
-    expect(textOf(view!)).toContain("本轮已完成");
+    expect(textOf(view!)).toContain("回答已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
     await send("Third round");
     expect(mocks.chat).toHaveBeenLastCalledWith(
@@ -714,7 +714,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({ type: "done", answer: "abcdefghij XYZ" });
     await flush();
     expect(textOf(view!).match(/abcdefghij XYZ/g)).toHaveLength(1);
-    expect(textOf(view!)).toContain("本轮已完成");
+    expect(textOf(view!)).toContain("回答已完成");
   });
 
   it("keeps genuinely new identical reasoning after reconnect, end to end", async () => {
@@ -875,7 +875,7 @@ describe("AiSidebar conversation stream UX", () => {
     reconnect();
     await flushReplay();
     expect(textOf(view!)).not.toContain("需要你确认");
-    expect(textOf(view!)).toContain("本轮已结束，无需再处理");
+    expect(textOf(view!)).toContain("本次回答已结束，无需再处理");
   });
 
   it("settles a rejected confirmation from the server snapshot instead of hanging", async () => {
@@ -1088,7 +1088,7 @@ describe("AiSidebar conversation stream UX", () => {
 
     expect(useUi.getState().aiBusy).toBe(false);
     expect(mocks.dispose).toHaveBeenCalledWith(restoredChannel);
-    expect(textOf(view!)).toContain("本轮已完成");
+    expect(textOf(view!)).toContain("回答已完成");
   });
 
   it("clears busy and disposes the restored channel when the bound run expired and the answer fails", async () => {

@@ -512,7 +512,7 @@ describe("AiSidebar agent production mounting", () => {
     await act(async () => {
       await expect(api.resolveApproval("req-9", "approve_once")).rejects.toMatchObject({ code: "internal" });
     });
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("确认失败"));
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("无法提交选择"));
     // The failure replays the HITL state instead of resolving the card away.
     await flushUntil(
       () => mocks.hitlEvents.mock.calls.length + mocks.hitlSnapshot.mock.calls.length > hitlCallsBefore,
@@ -655,7 +655,7 @@ describe("AiSidebar agent production mounting", () => {
     );
     expect(openedAgentTab()).toBeUndefined();
     const message = String(mocks.toast.mock.calls.find((call) => String(call[1]).includes("搜索失败"))?.[1]);
-    expect(message).toContain("未命中");
+    expect(message).toContain("无匹配");
   });
 
   function switchToConversationB(rosterForB: () => Promise<unknown>) {

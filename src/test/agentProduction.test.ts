@@ -218,7 +218,7 @@ describe("agent production roster adapter", () => {
     expect(rows[0].evidence).toEqual({
       kind: "reconcile",
       observedAt: 1_760_000_300_000,
-      summary: expect.stringContaining("持久状态"),
+      summary: expect.stringContaining("已记录"),
     });
   });
 
@@ -269,12 +269,12 @@ describe("agent production roster adapter", () => {
     const api = createAgentRosterApi(deps());
     await api.list();
     for (const [resolution, text] of [
-      ["gone", "已消失"],
-      ["replaced", "已被新化身替换"],
+      ["gone", "已不存在"],
+      ["replaced", "已被新会话替换"],
       ["exited", "已退出"],
       ["disconnected", "已断开"],
-      ["unverifiable", "无法验证"],
-      ["nonpersistent", "不是持久 roster 目标"],
+      ["unverifiable", "无法确认"],
+      ["nonpersistent", "不在持久终端中"],
     ] as const) {
       mocks.call.mockImplementation((cmd: string) => {
         if (cmd === "ai_roster_attach") {

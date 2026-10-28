@@ -47,7 +47,7 @@ const DEAD_PRESENCES: ReadonlySet<AgentPresence> = new Set<AgentPresence>([
 function deadReason(presence: AgentPresence): string {
   switch (presence) {
     case "gone":
-      return "子代理已消失，无法打开";
+      return "子代理已不存在，无法打开";
     case "replaced":
       return "子代理已被新会话替换，无法打开";
     default:
@@ -136,7 +136,7 @@ export function AgentRosterPanel({
         const { tabId } = await api.open(entry.handle);
         onOpened?.(tabId, entry);
       } catch (e) {
-        pushToast("error", `打开子代理失败：${describeError(e)}`);
+        pushToast("error", `无法打开子代理：${describeError(e)}`);
       }
     });
 
@@ -146,7 +146,7 @@ export function AgentRosterPanel({
         const { tabId } = await api.attach(entry.handle);
         onOpened?.(tabId, entry);
       } catch (e) {
-        pushToast("error", `附加子代理失败：${describeError(e)}`);
+        pushToast("error", `无法附加子代理：${describeError(e)}`);
       }
     });
 
@@ -167,11 +167,11 @@ export function AgentRosterPanel({
       return;
     }
     if (next === "") {
-      setRenameError("别名不能为空");
+      setRenameError("请输入别名");
       return;
     }
     if ([...next].length > MAX_ALIAS_RUNES) {
-      setRenameError(`别名不能超过 ${MAX_ALIAS_RUNES} 字`);
+      setRenameError(`别名最多 ${MAX_ALIAS_RUNES} 个字`);
       return;
     }
     void withBusy(entry.handle, async () => {
@@ -186,7 +186,7 @@ export function AgentRosterPanel({
         setRenaming(null);
         pushToast("success", `子代理 ${entry.handle} 的别名已更新为 ${updated.alias}`);
       } catch (e) {
-        pushToast("error", `重命名失败：${describeError(e)}`);
+        pushToast("error", `无法重命名：${describeError(e)}`);
       }
     });
   };
@@ -194,10 +194,10 @@ export function AgentRosterPanel({
   const releaseEntry = (entry: AgentRosterEntry) =>
     withBusy(entry.handle, async () => {
       const productionNote = entry.production
-        ? "\n\n目标位于生产环境：释放会影响生产会话，请确认已评估影响。"
+        ? "\n\n该子代理位于生产环境，释放会影响正在运行的生产会话，请确认后再继续。"
         : "";
       const confirmed = await ask(
-        `释放子代理「${handleAtHostCwd(entry)}」？\n\n释放后子代理将被回收，关联终端状态可能丢失。${productionNote}`,
+        `释放子代理「${handleAtHostCwd(entry)}」？\n\n释放后将回收该子代理，它所在终端中未保存的状态可能丢失。${productionNote}`,
         { kind: "warning" },
       );
       if (!confirmed) return;
@@ -215,9 +215,9 @@ export function AgentRosterPanel({
           ),
         );
         onChangedRef.current?.();
-        pushToast("success", `子代理 ${entry.handle} 释放已提交`);
+        pushToast("success", `已提交释放子代理 ${entry.handle}`);
       } catch (e) {
-        pushToast("error", `释放失败：${describeError(e)}`);
+        pushToast("error", `无法释放：${describeError(e)}`);
       }
     });
 
@@ -279,14 +279,14 @@ export function AgentRosterPanel({
               </span>
               <span
                 className={`shrink-0 ${TONE_BADGE[presence.tone]}`}
-                title={presence.evidence ? formatEvidence(presence.evidence) : "无证据"}
+                title={presence.evidence ? formatEvidence(presence.evidence) : "暂无依据"}
               >
                 {presence.label}
               </span>
               {run ? (
                 <span
                   className={`shrink-0 ${TONE_BADGE[run.tone]}`}
-                  title={run.evidence ? formatEvidence(run.evidence) : "无证据"}
+                  title={run.evidence ? formatEvidence(run.evidence) : "暂无依据"}
                 >
                   {run.label}
                 </span>
@@ -295,12 +295,12 @@ export function AgentRosterPanel({
 
             <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10.5px]">
               {entry.alias !== entry.handle && (
-                <span className="nx-count" title={`子代理 ${entry.handle} 永久不变，此处仅显示别名`}>
+                <span className="nx-count" title={`子代理编号 ${entry.handle} 不会改变，此处仅显示别名`}>
                   别名 {entry.alias}
                 </span>
               )}
               {!entry.isMine && (
-                <span className="nx-badge nx-badge-amber" title="仅所有者可执行重命名和释放">
+                <span className="nx-badge nx-badge-amber" title="仅所有者可重命名和释放">
                   所有者：{entry.ownerName}
                 </span>
               )}
@@ -344,7 +344,7 @@ export function AgentRosterPanel({
                   </button>
                 </div>
                 <div className="mt-0.5 text-[10.5px] text-neutral-500">
-                  仅修改显示别名，子代理 {entry.handle} 永久不变
+                  仅修改显示别名，子代理编号 {entry.handle} 不会改变
                 </div>
               </div>
             ) : (
@@ -356,7 +356,7 @@ export function AgentRosterPanel({
                     confirmedDead
                       ? deadReason(entry.presence)
                       : unknownTerminal
-                        ? "子代理状态未知，无法确认是否仍可打开"
+                        ? "子代理状态未知，暂时不能打开"
                         : "在终端标签页中打开"
                   }
                   onClick={() => void openEntry(entry)}
@@ -370,10 +370,10 @@ export function AgentRosterPanel({
                     confirmedDead
                       ? deadReason(entry.presence)
                       : unknownTerminal
-                        ? "子代理状态未知，无法确认是否仍可附加"
+                        ? "子代理状态未知，暂时不能附加"
                         : entry.releasePending
-                          ? "释放待确认，无法附加"
-                          : "附加到现有会话"
+                          ? "正在释放，无法附加"
+                          : "附加到现有终端会话"
                   }
                   onClick={() => void attachEntry(entry)}
                 >
@@ -389,7 +389,7 @@ export function AgentRosterPanel({
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
-                  title="在对话中提及该子代理"
+                  title="在对话中 @ 该子代理"
                   onClick={() => onMention?.(mentionToken(entry), entry)}
                 >
                   提及
@@ -400,7 +400,7 @@ export function AgentRosterPanel({
                   title={entry.isMine ? "释放子代理" : "仅所有者可释放"}
                   onClick={() => void releaseEntry(entry)}
                 >
-                  {pending ? "操作中…" : "释放"}
+                  {pending ? "处理中…" : "释放"}
                 </button>
               </div>
             )}
@@ -413,7 +413,7 @@ export function AgentRosterPanel({
       })}
 
       {!loadError && entries !== null && entries.length === 0 && (
-        <div className="py-1 text-[11px] text-neutral-500">暂无子代理</div>
+        <div className="py-1 text-[11px] text-neutral-500">尚无子代理。AI 创建子代理后将显示在此处。</div>
       )}
     </div>
   );

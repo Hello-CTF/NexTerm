@@ -70,8 +70,8 @@ describe("WatchPanel", () => {
     api.watches = [watch({ id: "w-1", name: "等待构建" })];
     view = mount(createElement(WatchPanel, { api, owner }));
     await flushUntil(() => text().includes("等待构建"));
-    expect(text()).toContain("监视：AI 盯着某个终端");
-    expect(text()).toContain("终端 dev-1出现「ready」时叫醒 AI");
+    expect(text()).toContain("监视：AI 持续观察指定终端");
+    expect(text()).toContain("终端 dev-1出现「ready」时通知 AI");
     expect(text()).toContain("等待中");
     expect(text()).not.toContain("Watch");
     expect(text()).not.toContain(owner);
@@ -81,7 +81,7 @@ describe("WatchPanel", () => {
   it("shows an empty state when nothing is armed", async () => {
     const api = new SyntheticApi();
     view = mount(createElement(WatchPanel, { api, owner }));
-    await flushUntil(() => text().includes("现在没有进行中的监视"));
+    await flushUntil(() => text().includes("当前没有进行中的监视"));
   });
 
   it("shows a spinner on refresh and ignores the response of a superseded load", async () => {
@@ -113,7 +113,7 @@ describe("WatchPanel", () => {
     await flush();
     const pending = button("取消监视「等待构建」");
     expect(pending.disabled).toBe(true);
-    expect(pending.textContent).toContain("取消中");
+    expect(pending.textContent).toContain("正在取消");
     click(pending);
     await flush();
     expect(api.cancelCalls).toEqual([{ watchId: "w-1", expectedRevision: 7 }]);
@@ -124,7 +124,7 @@ describe("WatchPanel", () => {
     });
     await flush();
     expect(text()).toContain("已取消监视「等待构建」");
-    expect(text()).toContain("现在没有进行中的监视");
+    expect(text()).toContain("当前没有进行中的监视");
     const ended = view!.container.querySelector("details");
     expect(ended).not.toBeNull();
     expect(ended!.open).toBe(false);
@@ -139,7 +139,7 @@ describe("WatchPanel", () => {
     view = mount(createElement(WatchPanel, { api, owner }));
     await flushUntil(() => text().includes("等待构建"));
     click(button("取消监视「等待构建」"));
-    await flushUntil(() => text().includes("取消失败：后端不可用"));
+    await flushUntil(() => text().includes("无法取消监视：后端不可用"));
     expect(button("取消监视「等待构建」").disabled).toBe(false);
     expect(view!.container.querySelector("details")).toBeNull();
   });

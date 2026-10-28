@@ -17,7 +17,8 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
             <span className="nx-spacer" />
             <button
               className="nx-icon-btn nx-icon-btn-sm"
-              title="关闭"
+              title="关闭 AI 权限面板"
+              aria-label="关闭 AI 权限面板"
               onClick={() => setPermOpen(false)}
             >
               <IconClose size={11} />
@@ -26,14 +27,14 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
 
           {permError ? (
             <div className="px-2 py-3 text-center" role="alert">
-              <div className="nx-hint text-red-300">权限读取失败 · {permError}</div>
+              <div className="nx-hint text-red-300">无法读取权限设置：{permError}</div>
               <button className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={() => void loadPermission()}>
                 <IconRefresh size={11} />
                 重试
               </button>
             </div>
           ) : !perm ? (
-            <div className="nx-hint px-2 py-3 text-center text-[11px]">权限读取中…</div>
+            <div className="nx-hint px-2 py-3 text-center text-[11px]">正在读取权限设置…</div>
           ) : (
             <>
               <div className="mb-1 flex items-center gap-1.5 text-[11px] text-neutral-300">

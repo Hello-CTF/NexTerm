@@ -198,7 +198,7 @@ describe("AiSidebar cron entry point", () => {
     await flushUntil(() => textOf(view!).includes("每日巡检"));
     expect(mocks.cronList).toHaveBeenCalledWith("conv-1");
     expect(textOf(view!)).toContain("定时任务");
-    expect(textOf(view!)).toContain("绑定主机：prod-host");
+    expect(textOf(view!)).toContain("所属主机：prod-host");
     expect(cronButton(view!).getAttribute("aria-expanded")).toBe("true");
 
     click(view!.container.querySelector('button[title="关闭"]')!);

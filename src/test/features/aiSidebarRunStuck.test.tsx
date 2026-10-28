@@ -221,7 +221,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     await flushReplay();
 
     expect(mocks.run).toHaveBeenCalledWith("job-1");
-    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).toContain("已停止");
     expect(textOf(view!)).not.toContain("停止未确认");
     expect(useUi.getState().aiBusy).toBe(false);
   });
@@ -280,7 +280,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     clickButton(view!.container, "重新补齐");
     await flushReplay();
 
-    expect(textOf(view!)).toContain("本轮已完成");
+    expect(textOf(view!)).toContain("回答已完成");
     expect(textOf(view!)).toContain("完整答案");
     expect(textOf(view!)).not.toContain("补齐失败");
   });
@@ -442,7 +442,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     clickButton(view!.container, "重试");
     await flush();
     expect(mocks.cancel).toHaveBeenCalledTimes(2);
-    emit({ type: "canceled", message: "已停止本轮" });
+    emit({ type: "canceled", message: "已停止" });
     await flush();
     expect(useUi.getState().aiBusy).toBe(false);
   });
@@ -545,7 +545,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     expect(mocks.cancel).toHaveBeenCalledWith("job-old");
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe("tab-bound");
 
-    emit({ type: "canceled", message: "已停止本轮" });
+    emit({ type: "canceled", message: "已停止" });
     await flush();
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).not.toBe("tab-bound");
     expect(useUi.getState().aiBusy).toBe(false);
@@ -578,12 +578,12 @@ describe("AiSidebar stuck busy-state fixes", () => {
     await flush();
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
     expect(textOf(view!)).toContain("正在停止");
-    expect(textOf(view!)).not.toContain("已停止本轮");
+    expect(textOf(view!)).not.toContain("已停止");
     expect(useUi.getState().aiBusy).toBe(true);
 
-    emit({ type: "canceled", message: "已停止本轮" });
+    emit({ type: "canceled", message: "已停止" });
     await flush();
-    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).toContain("已停止");
     expect(useUi.getState().aiBusy).toBe(false);
 
     await send(view!, "Next message");
@@ -615,16 +615,16 @@ describe("AiSidebar stuck busy-state fixes", () => {
     await flushUntil(() => mocks.runEvents.mock.calls.length > 0);
     expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 0, 200);
 
-    events.resolve([{ type: "canceled", message: "已停止本轮", seq: 1 }]);
+    events.resolve([{ type: "canceled", message: "已停止", seq: 1 }]);
     await flushReplay();
-    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).toContain("已停止");
     expect(textOf(view!)).toContain("未送达");
     expect(useUi.getState().aiBusy).toBe(false);
 
     emit({ type: "done", answer: "late answer must not replace canceled" });
     await flush();
     expect(textOf(view!)).not.toContain("late answer must not replace canceled");
-    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).toContain("已停止");
 
     await send(view!, "Next message");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
@@ -633,8 +633,8 @@ describe("AiSidebar stuck busy-state fixes", () => {
   it.each([
     {
       status: "canceled",
-      event: { type: "canceled", message: "已停止本轮", seq: 1 },
-      expected: "已停止本轮",
+      event: { type: "canceled", message: "已停止", seq: 1 },
+      expected: "已停止",
     },
     {
       status: "completed",
@@ -743,7 +743,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
 
     expect(mocks.cancel).toHaveBeenCalledTimes(1);
     expect(useUi.getState().aiBusy).toBe(false);
-    events.resolve([{ type: "canceled", message: "已停止本轮", seq: 1 }]);
+    events.resolve([{ type: "canceled", message: "已停止", seq: 1 }]);
     await flushReplay();
   });
 
@@ -772,7 +772,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
 
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
     expect(useUi.getState().aiBoards[boardKey].tabs.some((tab) => tab.id === tabId)).toBe(true);
-    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    emit({ type: "canceled", message: "已停止" }, 0);
     await flush();
     expect(useUi.getState().aiBoards[boardKey].tabs.some((tab) => tab.id === tabId)).toBe(true);
     mocks.runs.mockResolvedValue([
@@ -805,7 +805,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
 
     expect(textOf(view!)).toContain("补齐失败");
     expect(useUi.getState().aiBusy).toBe(true);
-    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    emit({ type: "canceled", message: "已停止" }, 0);
     await flush();
     expect(useUi.getState().aiBusy).toBe(false);
   });
@@ -871,7 +871,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     }
 
     expect(useUi.getState().aiBusy).toBe(true);
-    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    emit({ type: "canceled", message: "已停止" }, 0);
     await flush();
     expect(useUi.getState().aiBusy).toBe(false);
   });

@@ -270,10 +270,11 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="复制代码"
+          aria-label="复制代码"
           onClick={() => {
             void copyText(code).then(
               () => pushToast("success", "已复制到剪贴板"),
-              () => pushToast("error", "复制失败：剪贴板不可用"),
+              () => pushToast("error", "无法复制：剪贴板不可用，请手动选中代码复制"),
             );
           }}
         >

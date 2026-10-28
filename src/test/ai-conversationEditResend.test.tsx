@@ -333,7 +333,7 @@ describe("AiSidebar edit and resend", () => {
 
     expect(mocks.toast).toHaveBeenCalledWith(
       "error",
-      expect.stringContaining("编辑并重新发送失败"),
+      expect.stringContaining("无法编辑并重新发送"),
     );
     expect(mocks.chat).not.toHaveBeenCalled();
     expect(text()).toContain("第一答");

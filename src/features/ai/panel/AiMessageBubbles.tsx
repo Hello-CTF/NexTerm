@@ -36,7 +36,7 @@ export const ChatBubble = memo(function ChatBubble({
         {item.messageId ? (
           <button
             type="button"
-            className="absolute right-1.5 top-1.5 rounded p-0.5 text-[var(--nx-fg-soft)] opacity-0 transition-opacity hover:text-neutral-100 focus:opacity-100 group-hover/user:opacity-100"
+            className="absolute right-1.5 top-1.5 rounded p-0.5 text-[var(--nx-fg-soft)] opacity-0 transition-opacity hover:text-neutral-100 focus:opacity-100 group-hover/user:opacity-100 pointer-coarse:opacity-100"
             title="编辑并重新发送"
             aria-label="编辑并重新发送"
             onClick={() => onEdit(item)}
@@ -105,13 +105,13 @@ export const ChatBubble = memo(function ChatBubble({
         >
           <IconAlert size={12} className="mt-0.5 shrink-0 text-red-300" />
           {item.maxIterations ? (
-            <span className="nx-badge nx-badge-amber shrink-0">达到步数上限</span>
+            <span className="nx-badge nx-badge-amber shrink-0">已达到最大步数</span>
           ) : null}
-          <span className="whitespace-pre-wrap">本轮出错：{item.text}</span>
+          <span className="whitespace-pre-wrap">本次回答失败：{item.text}</span>
           {item.retryable ? (
             <button
               className="nx-btn nx-btn-outline nx-btn-xs ml-auto shrink-0"
-              title="在同一会话里按原消息重新发起一轮"
+              title="用同一条消息重新回答"
               onClick={() => onRetry(item)}
             >
               <IconRefresh size={11} />

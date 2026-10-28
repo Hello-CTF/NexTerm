@@ -180,13 +180,13 @@ describe("AgentRosterPanel", () => {
     clickButton(row, "保存");
     await flush();
     expect(api.rename).not.toHaveBeenCalled();
-    expect(row.textContent).toContain("别名不能为空");
+    expect(row.textContent).toContain("请输入别名");
 
     setInputValue(input, "x".repeat(192));
     clickButton(row, "保存");
     await flush();
     expect(api.rename).not.toHaveBeenCalled();
-    expect(row.textContent).toContain("别名不能超过 191 字");
+    expect(row.textContent).toContain("别名最多 191 个字");
   });
 
   it("renders the alias chip only when the alias differs from the handle", async () => {
@@ -264,7 +264,7 @@ describe("AgentRosterPanel", () => {
     clickButton(view.container, "重试");
     await flush();
     expect(api.list).toHaveBeenCalledTimes(2);
-    expect(view.container.textContent).toContain("暂无子代理");
+    expect(view.container.textContent).toContain("尚无子代理");
   });
 
   describe("evidence-less terminal presence", () => {
@@ -315,11 +315,11 @@ describe("AgentRosterPanel", () => {
     ) as HTMLButtonElement;
     click(refresh);
     await flush();
-    expect(view.container.textContent).toContain("暂无子代理");
+    expect(view.container.textContent).toContain("尚无子代理");
     stale.resolve([entry()]);
     await flush();
     expect(view.container.querySelector('[data-handle="build"]')).toBeNull();
-    expect(view.container.textContent).toContain("暂无子代理");
+    expect(view.container.textContent).toContain("尚无子代理");
   });
 
   it("an older list response cannot clear a submitted release-pending state", async () => {

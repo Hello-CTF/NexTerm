@@ -98,10 +98,10 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
       {historyOpen && (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-1.5">
           {historyStatus === "loading" ? (
-            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">历史会话加载中…</div>
+            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">正在加载历史会话…</div>
           ) : historyStatus === "error" ? (
             <div className="px-2 py-3 text-center">
-              <div className="nx-hint text-red-300">历史会话加载失败 · {historyError}</div>
+              <div className="nx-hint text-red-300">无法加载历史会话：{historyError}</div>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                 onClick={() => void loadConversations()}
@@ -111,7 +111,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
               </button>
             </div>
           ) : conversations.length === 0 ? (
-            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">还没有历史会话</div>
+            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">尚无历史会话</div>
           ) : (
             conversations.map((c) => (
               <div key={c.id} className="flex items-center gap-0.5">
@@ -128,7 +128,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
                 {runStatusByConv[c.id] && (
                   <span
                     className={`nx-badge shrink-0 ${runStatusByConv[c.id] === "running" ? "nx-badge-amber" : "nx-badge-purple"}`}
-                    title={runStatusByConv[c.id] === "running" ? "这个会话有正在运行的 AI 任务" : "这个会话有中断待恢复的 AI 任务"}
+                    title={runStatusByConv[c.id] === "running" ? "此会话有正在运行的 AI 任务" : "此会话有被中断、待恢复的 AI 任务"}
                   >
                     {runStatusByConv[c.id] === "running" ? "运行中" : "待恢复"}
                   </span>
