@@ -154,7 +154,6 @@ function AppShell() {
     },
     header: {
       ws,
-      activeSessionId,
       activeTab: active,
       rightDockOpen,
       commandPaletteLabel: formatBinding(bindings.commandPalette),

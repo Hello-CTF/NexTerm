@@ -1,15 +1,9 @@
 import { type ReactNode } from "react";
 import {
-  reconnectWorkspaceConnection,
   sessionStatusText,
-  sessionReconnectStatusText,
   isSessionSuspect,
-  workspaceNeedsReconnect,
-  useSessionById,
   useSessionLiveness,
   useSessionStatus,
-  useUi,
-  workspaceConnectionState,
   type AppTab,
   type Workspace,
 } from "../store";
@@ -25,7 +19,6 @@ import {
   IconInfo,
   IconLayers,
   IconLoader,
-  IconRefresh,
   IconSettings,
   IconSparkles,
   IconXCircle,
@@ -54,48 +47,14 @@ function WorkspaceStatusGlyph({ status, liveness }: { status: SessionInfo["statu
       ) : status === "disconnected" ? (
         <IconInfo size={11} />
       ) : (
-        <IconLoader size={11} className="animate-spin" />
+        <IconLoader size={11} />
       )}
-    </span>
-  );
-}
-
-// The glyph sits inside the workspace switch button, so the reconnect action is its own button beside it.
-function WorkspaceReconnectButton({ ws, status }: { ws: Workspace; status: SessionInfo["status"] | undefined }) {
-  if (!workspaceNeedsReconnect(status)) return null;
-  return (
-    <button
-      type="button"
-      className="nx-icon-btn nx-icon-btn-sm shrink-0"
-      style={wailsNoDragRegionStyle}
-      aria-label={`${sessionStatusText(status)}，重新连接 ${ws.title}`}
-      title={`${sessionStatusText(status)}，点击重新连接`}
-      onClick={() => void reconnectWorkspaceConnection(ws.id)}
-    >
-      <IconRefresh size={12} />
-    </button>
-  );
-}
-
-function WorkspaceReconnectStatus({ sessionId }: { sessionId: string | undefined }) {
-  const session = useSessionById(sessionId);
-  const text = sessionReconnectStatusText(session);
-  if (!text) return null;
-  return (
-    <span
-      role="status"
-      className="shrink-0 text-[11px] text-amber-300"
-      title={session?.error ?? undefined}
-    >
-      {text}
     </span>
   );
 }
 
 export interface AppHeaderProps {
   ws: Workspace | null | undefined;
-  // activeSessionId is the session of the active host workspace; the header follows only that session.
-  activeSessionId: string | undefined;
   activeTab: AppTab | null;
   rightDockOpen: boolean;
   commandPaletteLabel: string;
@@ -110,7 +69,6 @@ export interface AppHeaderProps {
 
 export function AppHeader({
   ws,
-  activeSessionId,
   activeTab,
   rightDockOpen,
   commandPaletteLabel,
@@ -122,7 +80,6 @@ export function AppHeader({
 }: AppHeaderProps) {
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
   const wsStatus = useSessionStatus(ws?.sessionId);
-  const connState = useUi((state) => workspaceConnectionState(ws, state.sessions));
   const wsLiveness = useSessionLiveness(ws?.sessionId);
   return (
     <header
@@ -154,8 +111,6 @@ export function AppHeader({
             <WorkspaceStatusGlyph status={wsStatus} liveness={wsLiveness} />
             <IconChevronDown size={12} />
           </button>
-          <WorkspaceReconnectButton ws={ws} status={connState} />
-          <WorkspaceReconnectStatus sessionId={activeSessionId} />
           <span
             className="nx-header-crumb flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"
             data-wails-drag-region style={wailsDragRegionStyle}

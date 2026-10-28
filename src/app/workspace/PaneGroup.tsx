@@ -400,6 +400,11 @@ export function PaneGroup({
                     moveTab,
                   );
                 }}
+                onAuxClick={(e) => {
+                  if (e.button !== 1) return;
+                  e.preventDefault();
+                  if (t.closable) void requestCloseTab(t.id);
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   openTabMenu(t, e.clientX, e.clientY);

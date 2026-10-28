@@ -324,8 +324,8 @@ describe("terminal overlay accessibility", () => {
       await flush();
     });
 
-    expect(alert()?.textContent).toContain("这个终端已失效");
-    const reconnect = alertButton("重新连接这台主机");
+    expect(alert()?.textContent).toContain("该终端已失效");
+    const reconnect = alertButton("重新连接");
     expect(reconnect).toBeDefined();
     expect(document.activeElement).toBe(reconnect);
   });
@@ -386,7 +386,7 @@ describe("terminal overlay accessibility", () => {
       await flush();
     });
 
-    expect(alert()?.textContent).toContain("这个终端已失效");
+    expect(alert()?.textContent).toContain("该终端已失效");
     expect(document.activeElement).toBe(input);
   });
 
@@ -494,12 +494,12 @@ describe("terminal overlay accessibility", () => {
           }),
         );
       });
-      expect(status("正在切换终端窗口…")).not.toBeNull();
+      expect(status("正在切换终端…")).not.toBeNull();
 
       act(() => {
         vi.advanceTimersByTime(650);
       });
-      expect(status("正在切换终端窗口…")).toBeNull();
+      expect(status("正在切换终端…")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -530,6 +530,6 @@ describe("terminal overlay accessibility", () => {
       );
     });
 
-    expect(status("正在切换终端窗口…")).toBeNull();
+    expect(status("正在切换终端…")).toBeNull();
   });
 });

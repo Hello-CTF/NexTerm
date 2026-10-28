@@ -506,7 +506,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([new File(["x"], "a.txt")]);
 
-    expect(useUi.getState().toasts.at(-1)?.text).toContain("不支持");
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("不支持粘贴上传文件");
     expect(mocks.fsWrite).not.toHaveBeenCalled();
     expect(mocks.uploadChunked).not.toHaveBeenCalled();
     expect(mocks.paste).not.toHaveBeenCalled();
@@ -632,7 +632,7 @@ describe("TerminalPane file paste orchestration", () => {
 
     await pasteImages([new File(["x"], "a.txt")]);
 
-    expect(useUi.getState().toasts.at(-1)?.text).toContain("不支持");
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("不支持粘贴上传文件");
     expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
   });
 
