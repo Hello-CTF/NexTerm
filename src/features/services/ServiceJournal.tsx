@@ -14,7 +14,9 @@ import {
   filterMergedLines,
   highlightSegments,
   hostColor,
+  LOG_STATUS_LABELS,
   MergedLogBuffer,
+  regexErrorNotice,
 } from "../logs/mergedLog";
 
 const JOURNAL_CAPACITY = 5000;
@@ -104,17 +106,16 @@ export function ServiceJournal({
     <section className="flex min-h-[320px] flex-1 flex-col border-t border-neutral-800/70" aria-label={`服务 journal ${unit}`}>
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
         <strong className="text-[12px] text-neutral-200">journal：{unit}</strong>
-        <span className={`text-[11px] ${status === "failed" ? "text-red-300" : "text-neutral-500"}`}>{status}</span>
-        <span className="nx-hint">复用多主机日志流与 mergedLog 缓冲</span>
+        <span className={`text-[11px] ${status === "failed" ? "text-red-300" : "text-neutral-500"}`}>{LOG_STATUS_LABELS[status]}</span>
         <span className="nx-spacer" />
-        <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label="关闭 journal" onClick={onClose}>
+        <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label="关闭 journal" title="关闭 journal" onClick={onClose}>
           <IconClose size={12} />
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
-        <input className="nx-input nx-input-sm w-52 font-mono" value={include} placeholder="包含 regex" aria-label="journal 包含正则" onChange={(event) => setInclude(event.target.value)} />
-        <input className="nx-input nx-input-sm w-44 font-mono" value={exclude} placeholder="排除 regex" aria-label="journal 排除正则" onChange={(event) => setExclude(event.target.value)} />
-        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => {
+        <input className="nx-input nx-input-sm w-52 font-mono" value={include} placeholder="只显示匹配的行（正则表达式）" aria-label="journal 包含正则" onChange={(event) => setInclude(event.target.value)} />
+        <input className="nx-input nx-input-sm w-44 font-mono" value={exclude} placeholder="隐藏匹配的行（正则表达式）" aria-label="journal 排除正则" onChange={(event) => setExclude(event.target.value)} />
+        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" aria-pressed={paused} onClick={() => {
           const next = !paused;
           bufferRef.current.setPaused(next);
           setPaused(next);
@@ -122,7 +123,7 @@ export function ServiceJournal({
         }}>{paused ? "继续显示" : "暂停显示"}</button>
         <span className="nx-hint">保留 {bufferRef.current.retainedLines().length} / {JOURNAL_CAPACITY} · 丢弃 {bufferRef.current.droppedCount}</span>
       </div>
-      {filters.error && <div role="alert" className="px-3 py-1 text-[11px] text-amber-300">正则无效：{filters.error}</div>}
+      {filters.error && <div role="alert" className="px-3 py-1 text-[11px] text-amber-300">{regexErrorNotice(filters.error)}</div>}
       {error && <div role="alert" className="px-3 py-1.5 text-[11px] text-red-300">{error}</div>}
       <div role="log" aria-label="服务 journal 内容" className="min-h-0 flex-1 overflow-auto bg-term px-2 py-2 font-mono text-[12px] leading-[1.55]">
         {lines.length === 0 ? (

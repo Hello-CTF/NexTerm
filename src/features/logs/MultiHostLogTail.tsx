@@ -24,7 +24,9 @@ import {
   filterMergedLines,
   highlightSegments,
   hostColor,
+  LOG_STATUS_LABELS as STATUS_LABELS,
   MergedLogBuffer,
+  regexErrorNotice,
 } from "./mergedLog";
 
 const MAX_TARGETS = 64;
@@ -88,16 +90,6 @@ const SOURCE_PLACEHOLDERS: Record<LogTailSourceKind, string> = {
   file: "/var/log/app.log",
   journal: "nginx.service",
   docker: "container-name",
-};
-
-const STATUS_LABELS: Record<LogTailSourceStatus | "idle", string> = {
-  idle: "未启动",
-  queued: "等待并发槽",
-  starting: "启动中",
-  running: "跟随中",
-  exited: "已退出",
-  failed: "失败",
-  canceled: "已取消",
 };
 
 function workspaceIncludesSession(workspace: Workspace, sessionId: string): boolean {
@@ -421,8 +413,8 @@ export function MultiHostLogTail({
       <div className="nx-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
         <h2 className="nx-toolbar-title">多主机日志</h2>
-        <span className="nx-badge nx-badge-amber" title="只执行只读日志命令，无需生产确认">
-          只读 · 无 PTY
+        <span className="nx-badge nx-badge-amber" title="只执行只读的日志命令，不会修改主机，无需生产确认">
+          只读
         </span>
         <span className="nx-hint">仅当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不自动连接</span>
       </div>
@@ -512,7 +504,13 @@ export function MultiHostLogTail({
               {stopping ? "正在取消…" : "停止全部"}
             </button>
           ) : (
-            <button type="button" className="nx-btn nx-btn-primary" disabled={targets.length === 0} onClick={start}>
+            <button
+              type="button"
+              className="nx-btn nx-btn-primary"
+              disabled={targets.length === 0}
+              title={targets.length === 0 ? "没有已连接的 SSH 或受管设备会话，请先连接主机" : undefined}
+              onClick={start}
+            >
               <IconPlay size={13} />
               开始跟随
             </button>
@@ -524,20 +522,21 @@ export function MultiHostLogTail({
         <input
           className="nx-input nx-input-sm min-w-0 flex-1 basis-36 font-mono sm:w-48 sm:flex-none"
           value={include}
-          placeholder="包含 regex，例如 ERROR|WARN"
+          placeholder="只显示匹配的行（正则表达式），例如 ERROR|WARN"
           aria-label="包含正则"
           onChange={(event) => setInclude(event.target.value)}
         />
         <input
           className="nx-input nx-input-sm min-w-0 flex-1 basis-36 font-mono sm:w-44 sm:flex-none"
           value={exclude}
-          placeholder="排除 regex"
+          placeholder="隐藏匹配的行（正则表达式）"
           aria-label="排除正则"
           onChange={(event) => setExclude(event.target.value)}
         />
         <button
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-sm"
+          aria-pressed={paused}
           onClick={() => {
             const next = !paused;
             bufferRef.current.setPaused(next);
@@ -575,7 +574,7 @@ export function MultiHostLogTail({
       </div>
       {filters.error && (
         <div role="alert" className="border-b border-amber-900/50 bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-300">
-          正则无效，当前显示未过滤日志：{filters.error}
+          {regexErrorNotice(filters.error)}
         </div>
       )}
       {runError && <div role="alert" className="px-3 py-1.5 text-[11px] text-red-300">{runError}</div>}

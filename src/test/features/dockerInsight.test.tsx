@@ -655,7 +655,7 @@ describe("Docker insight controls (M61)", () => {
 
     await waitFor(() => expect(mockedText()).toContain("容器状态加载失败"));
     expect(mockedText()).not.toContain("容器状态加载中");
-    expect(mockedText()).toContain("无法连接这台主机上的 Docker 守护进程，请确认 Docker 已安装并运行");
+    expect(mockedText()).toContain("无法连接这台主机上的 Docker 服务，请确认 Docker 已安装并正在运行");
   });
 
   it("missing docker binary maps to an actionable not-installed hint", async () => {

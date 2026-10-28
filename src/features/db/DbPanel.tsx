@@ -564,7 +564,7 @@ function SqlView({
         </select>
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
         <span className="nx-hint hidden min-[560px]:inline">
-          {dialect === "postgres" ? "个对象" : "张表"}
+          {dialect === "postgres" ? "张表和视图" : "张表"}
         </span>
         <div className="nx-spacer" />
         {(workspaceProblems?.length ?? 0) > 0 && (
