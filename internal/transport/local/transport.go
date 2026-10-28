@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -26,6 +27,8 @@ type Config struct {
 type Transport struct {
 	shell         string
 	loginShell    bool
+	shellSource   string
+	shellNote     string
 	cwd           string
 	env           map[string]string
 	generation    uint64
@@ -43,9 +46,11 @@ type Transport struct {
 func NewWithConfig(config Config) *Transport {
 	shell := strings.TrimSpace(config.Shell)
 	loginShell := true
+	shellSource, shellNote := "asset option", ""
 	if shell == "" {
-		shell, loginShell = defaultShell()
+		shell, loginShell, shellSource, shellNote = defaultShellChoice()
 	}
+	slog.Info("local terminal shell chosen", "shell", shell, "source", shellSource, "note", shellNote)
 	cwd := strings.TrimSpace(config.CWD)
 	if cwd == "" {
 		cwd, _ = os.UserHomeDir()
@@ -55,15 +60,23 @@ func NewWithConfig(config Config) *Transport {
 		env[key] = value
 	}
 	return &Transport{
-		shell:      shell,
-		loginShell: loginShell,
-		cwd:        cwd,
-		env:        env,
-		generation: nextGeneration.Add(1),
-		filesystem: fslocal.New(),
-		done:       make(chan struct{}),
-		channels:   make(map[string]io.Closer),
+		shell:       shell,
+		loginShell:  loginShell,
+		shellSource: shellSource,
+		shellNote:   shellNote,
+		cwd:         cwd,
+		env:         env,
+		generation:  nextGeneration.Add(1),
+		filesystem:  fslocal.New(),
+		done:        make(chan struct{}),
+		channels:    make(map[string]io.Closer),
 	}
+}
+
+// ShellInfo reports the executable this transport runs and where the choice came from: "asset option"
+// (the local asset's default shell field), "explicit" (NEXTERM_SHELL), "account", "env" or "fallback".
+func (t *Transport) ShellInfo() (path, source, note string) {
+	return t.shell, t.shellSource, t.shellNote
 }
 
 func (t *Transport) Kind() string {
