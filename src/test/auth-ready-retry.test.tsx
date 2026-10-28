@@ -301,7 +301,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
     // Before login: asset tree sits in the 401 error state, status bar vault unavailable
-    await flushUntil(() => text().includes("加载失败："));
+    await flushUntil(() => text().includes("资产列表加载失败"));
     expect(text()).toContain("访问令牌无效或缺失");
     expect(vaultStatusText()).toContain("凭据库不可用");
     expect(text()).not.toContain("web-01");
@@ -322,7 +322,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     await flushUntil(() => text().includes("web-01"));
     expect(text()).toContain("生产");
     expect(assetTreeFooterCount("凭据库（左栏查看）")).toBe("");
-    expect(assetTreeFooterCount("命令片段（插入当前终端）")).toContain("1");
+    expect(assetTreeFooterCount("打开命令片段：保存常用命令，插入或在当前终端执行")).toContain("1");
     expect(vaultStatusText()).toContain("凭据库已解锁");
     expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");
 
@@ -373,7 +373,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     await logout();
     expect(useAuth.getState().gate).toBe("login");
     // Account-switch direction: no asset/session/vault/SQL state of the old account may linger
-    await flushUntil(() => text().includes("加载失败："));
+    await flushUntil(() => text().includes("资产列表加载失败"));
     expect(text()).not.toContain("web-01");
     expect(useUi.getState().sessions).toEqual([]);
     expect(vaultStatusText()).not.toContain("凭据库已解锁");

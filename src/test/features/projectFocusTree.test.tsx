@@ -151,7 +151,7 @@ describe("AssetTree project focus", () => {
     expect(mounted.container.querySelector("[role='tree']")?.textContent).not.toContain("设备区");
     expect(useUi.getState().activeProject).toBe(projectOne);
 
-    const search = mounted.container.querySelector<HTMLInputElement>('input[aria-label="搜索资产 / 主机 / 用户"]');
+    const search = mounted.container.querySelector<HTMLInputElement>('input[aria-label="搜索资产名称、地址或用户"]');
     if (!search) throw new Error("Asset search not found");
     setInputValue(search, "asset");
     await waitForRendered(() => expect(mocks.assetSearch).toHaveBeenCalledWith("asset"));
