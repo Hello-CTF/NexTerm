@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { sessionApi, terminalApi, type LiveTabInfo, type SessionAttentionState, type SessionInfo } from "../../ipc/commands";
-import type { AggregateHost, AggregateHostStatus } from "../../ipc/generated/types";
+import type { AggregateHost, AggregateHostStatus, AttentionEvent } from "../../ipc/generated/types";
+import { toAwareness } from "../../app/sessionAwarenessStore";
 import { connectDevice, deviceAssetId, nextTabId, useUi, type ConnectAssetOptions, type Workspace } from "../../app/store";
 import type { AggregateRow } from "../../app/sessionAggregate";
 import { hideMobileHome } from "../../app/shell/mobileHome";
@@ -271,7 +272,7 @@ export function aggregateBackgroundTabs(
       durable: true,
       createdAt: item.createdAt || undefined,
       createdOnHost: true,
-      state: ATTENTION_STATES.has(item.attention.state) ? (item.attention.state as SessionAttentionState) : undefined,
+      state: attentionStateOf(item.attention),
       fetchedAt: host.fetchedAt || Date.now(),
       lastOutputAt: item.lastOutputAt ?? 0,
       detachedAt: item.detachedAt || undefined,
@@ -285,6 +286,12 @@ export function aggregateBackgroundTabs(
 }
 
 const ATTENTION_STATES: ReadonlySet<string> = new Set(["running", "needs_me", "just_finished", "idle", "exited"]);
+
+// attentionStateOf reads a listed session's state through the awareness boundary, so a guessed state is never kept.
+function attentionStateOf(attention: AttentionEvent): SessionAttentionState | undefined {
+  const state = toAwareness(attention).state;
+  return ATTENTION_STATES.has(state) ? (state as SessionAttentionState) : undefined;
+}
 
 export interface BackgroundListing {
   collected: CollectedBackgroundTabs;
