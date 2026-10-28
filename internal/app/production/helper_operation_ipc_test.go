@@ -811,6 +811,10 @@ func TestProductionHelperRollbackReturnsStructuredResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.ssh.HelperExecutable = failingPath
+	// The failing candidate never serves, so each start attempt waits out
+	// the whole start budget before the rollback; a short budget keeps that
+	// wait bounded while the restored helper still has seconds to start.
+	service.ssh.StartTimeout = 5 * time.Second
 	response := dispatchHelperOperation(t, service, sessionID, "update")
 	if response.OK || response.Error == nil {
 		t.Fatalf("rollback unexpectedly succeeded: %+v", response)
