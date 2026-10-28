@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../ipc/commands", () => ({
   call: (command: string) => {
+    if (command === "ai_roster_list") return Promise.resolve([]);
     if (command !== "ai_privacy_status" || !mocks.privacyEnabled) return Promise.reject(new Error("unavailable"));
     return Promise.resolve({
       config: { enabled: true, precision: "int8", revision: "a".repeat(40), version: "v0.1.3" },
