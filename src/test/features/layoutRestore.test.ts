@@ -35,7 +35,7 @@ vi.mock("../../features/auth/store", () => ({
 
 function remoteLayout(assetId: string) {
   return {
-    v: 3,
+    v: 4,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: false,
@@ -65,7 +65,6 @@ function remoteLayout(assetId: string) {
         activeTabId: "remote-terminal",
       }],
       activePaneId: "remote-pane",
-      splitRatio: 0.5,
       closable: true,
     }],
   };

@@ -89,6 +89,8 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		runtimeEpisode: ids.New(),
 	}
+	tab.createdAt = time.Now()
+	tab.detachedAt = tab.createdAt
 	tab.feedGate <- struct{}{}
 	// The shell has no transport, so the terminal model's responses to query sequences (e.g. DA) have nowhere to go and are dropped;
 	// the feeder's local terminal already answered them on its own side.
@@ -329,11 +331,13 @@ func (m *Manager) reapRemote(id string, activity time.Time) error {
 	for _, tab := range session.tabs {
 		tabs = append(tabs, tab)
 		delete(m.tabs, tab.ID)
+		m.forgetAttention(tab)
 		delete(m.throttleVersions, tab.ID)
 		delete(m.throttleChannels, tab.ID)
 	}
 	session.tabs = make(map[string]*Tab)
 	delete(m.sessions, id)
+	m.legacyEnded.forget(id)
 	if m.byAsset[session.assetOwnerKey()] == session.ID {
 		delete(m.byAsset, session.assetOwnerKey())
 	}

@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/hub"
@@ -48,6 +50,8 @@ type Manager struct {
 	throttleVersions       map[string]uint64
 	throttleChannels       map[string]map[string]bool
 	slowKicks              map[string]*time.Timer
+	attention              attentionRegistry
+	legacyEnded            legacyEndedTabs
 	closed                 bool
 	started                bool
 	openAccess             bool
@@ -55,10 +59,12 @@ type Manager struct {
 	connector            Connector
 	terminals            TerminalFactory
 	durable              base.DurableProvider
+	localDurable         LocalDurableSource
+	localTerminalMode    func(context.Context) (string, error)
 	resolver             DurableResolver
 	terminalModeResolver func(context.Context, string) (string, error)
+	historyLimit         func(context.Context) uint64
 	offsets              OwnerScopedDurableTranscriptOffsetStore
-	titles               OwnerScopedDurableTabTitleStore
 	bus                  *hub.Hub
 	ownsBus              bool
 	emitter              Emitter
@@ -72,10 +78,15 @@ type Manager struct {
 	hookMu        sync.RWMutex
 	userInputHook func(string)
 
-	idleTimeout       time.Duration
-	sweepInterval     time.Duration
-	reconnectMax      int
-	reconnectBackoff  []time.Duration
+	idleTimeout      time.Duration
+	sweepInterval    time.Duration
+	reconnectMax     int
+	reconnectBackoff []time.Duration
+	// jitter returns a uniform sample in [0, 1) for reconnect backoff.
+	jitter            func() float64
+	livenessPolicy    LivenessPolicy
+	livenessClock     livenessClock
+	livenessStale     atomic.Uint64
 	defaultReplay     int
 	slowConsumerGrace time.Duration
 
@@ -106,8 +117,11 @@ func NewManager(config Config) *Manager {
 		connector:            config.Connector,
 		terminals:            config.Terminals,
 		durable:              config.Durable,
+		localDurable:         config.LocalDurable,
+		localTerminalMode:    config.LocalTerminalMode,
 		resolver:             config.DurableResolver,
 		terminalModeResolver: config.TerminalModeResolver,
+		historyLimit:         config.DurableHistoryLimit,
 		emitter:              config.Emitter,
 		transcripts:          config.Transcripts,
 		commands:             config.Commands,
@@ -123,6 +137,9 @@ func NewManager(config Config) *Manager {
 		sweepInterval:    config.SweepInterval,
 		reconnectMax:     config.ReconnectMax,
 		reconnectBackoff: append([]time.Duration(nil), config.ReconnectBackoff...),
+		jitter:           mathrand.Float64,
+		livenessPolicy:   config.Liveness.withDefaults(),
+		livenessClock:    systemLivenessClock{},
 		defaultReplay:    config.DefaultReplay,
 		openAccess:       config.OpenAccess,
 		ctx:              ctx,
@@ -165,7 +182,6 @@ func NewManager(config Config) *Manager {
 		manager.bus = config.Hub
 	}
 	manager.offsets = config.TranscriptOffsets
-	manager.titles = config.TabTitles
 	manager.logger = config.Logger
 	if manager.logger == nil {
 		manager.logger = slog.Default()
@@ -482,9 +498,11 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	session.status = StatusConnected
 	session.idleSince = m.now()
 	session.finishConnectLocked(nil)
+	liveness := m.armLivenessLocked(session)
 	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
+	m.startLiveness(session, liveness)
 	m.emit(ctx, TopicSessionStatus, connectedEvent)
 	m.transcriptStarted(ctx, session)
 	return session, nil
@@ -504,6 +522,7 @@ func (s *Session) finishReconnectLocked(err error) {
 		return
 	}
 	s.reconnecting = false
+	s.reconnectWake = nil
 	s.reconnectCompletion.err = err
 	close(s.reconnectCompletion.done)
 }
@@ -530,6 +549,23 @@ func (m *Manager) TerminalModeFor(ctx context.Context, sessionID string) (string
 
 func (m *Manager) terminalModeFor(ctx context.Context, session *Session) (string, error) {
 	asset := session.Asset()
+	if asset.Kind == KindLocal {
+		// The local asset and this device's local terminal setting decide;
+		// the account default is about installing helpers on remote hosts.
+		if asset.TerminalMode == TerminalModeRegular {
+			return TerminalModeRegular, nil
+		}
+		if m.localTerminalMode != nil {
+			mode, err := m.localTerminalMode(ctx)
+			if err != nil {
+				return "", err
+			}
+			if mode == TerminalModeRegular {
+				return TerminalModeRegular, nil
+			}
+		}
+		return TerminalModeAuto, nil
+	}
 	if asset.Kind != KindSSH {
 		return TerminalModeAuto, nil
 	}
@@ -853,6 +889,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 		if tab != nil {
 			if m.tabs[tab.ID] == tab {
 				delete(m.tabs, tab.ID)
+				m.forgetAttention(tab)
 				delete(m.throttleVersions, tab.ID)
 				delete(m.throttleChannels, tab.ID)
 			}
@@ -863,6 +900,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 			session.transport = nil
 			session.reapRetry = false
 			delete(m.sessions, id)
+			m.legacyEnded.forget(id)
 			if m.byAsset[session.assetOwnerKey()] == session.ID {
 				delete(m.byAsset, session.assetOwnerKey())
 			}
@@ -1063,10 +1101,25 @@ func (m *Manager) kickSlowConsumer(channelID string, incarnation uint64) {
 		m.mu.Unlock()
 		return
 	}
-	_, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel)
+	detached, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel)
+	var resync ThrottleEvent
+	if detached != "" {
+		resync = m.resyncEventLocked(detached, channelID)
+	}
 	m.mu.Unlock()
 	m.logger.Warn("slow terminal consumer kicked after backpressure grace", "channel", channelID, "tab", tabID, "grace", m.slowConsumerGrace)
+	if detached != "" {
+		m.emit(context.Background(), TopicTerminalThrottled, resync)
+	}
 	cleanup()
+}
+
+// resyncEventLocked builds the notice for a channel disconnected because it
+// could not keep up. Its version is newer than the tab-level recovery the
+// detach may emit, so clients keep the notice. Callers hold m.mu.
+func (m *Manager) resyncEventLocked(tabID, channelID string) ThrottleEvent {
+	m.throttleVersions[tabID]++
+	return ThrottleEvent{TabID: tabID, ChannelID: channelID, Resync: true, Version: m.throttleVersions[tabID]}
 }
 
 func (m *Manager) onDrain(channelID string, queuedBytes int) {
@@ -1109,6 +1162,11 @@ func (m *Manager) emit(ctx context.Context, topic string, payload any) {
 		if event, ok := payload.(ControlEvent); ok {
 			m.queueRecordingControl(ctx, event, force)
 			return
+		}
+	}
+	if topic == TopicTerminalExit {
+		if event, ok := payload.(ExitEvent); ok {
+			m.attentionExited(event)
 		}
 	}
 	ownerID, resourceID, closed := m.eventOwner(topic, payload)

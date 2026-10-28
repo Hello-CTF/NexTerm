@@ -34,7 +34,6 @@ function ws(panes: Pane[]): Workspace {
     title: "workspace",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -53,7 +52,7 @@ function liveTab(tabId: string, sessionId: string, exited = false): LiveTabInfo 
     sessionKind: "ssh",
     cols: 80,
     rows: 24,
-    controller: null,
+    sizeOwner: null,
     subscribers: 1,
     viewers: 1,
     exited,

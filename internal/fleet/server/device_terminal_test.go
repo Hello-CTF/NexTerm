@@ -13,6 +13,41 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
+func TestTerminalDevicesListsOnlyTheAccountsLiveDevices(t *testing.T) {
+	fixture := newServiceFixture(t)
+	alice := fixture.createUser(t, "agg-alice")
+	bob := fixture.createUser(t, "agg-bob")
+	kept := fixture.enrollAgent(t, alice, "alice-box")
+	revoked := fixture.enrollAgent(t, alice, "alice-old")
+	others := fixture.enrollAgent(t, bob, "bob-box")
+	ctx := context.Background()
+	if err := fixture.service.RevokeDevice(ctx, fixture.identity(alice), revoked.DeviceID); err != nil {
+		t.Fatal(err)
+	}
+	audits := len(fixture.auditRows(t, auditKindDeviceTerminal))
+
+	devices, err := fixture.service.TerminalDevices(ctx, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || devices[0].ID != kept.DeviceID || devices[0].Name != "alice-box" {
+		t.Fatalf("alice's devices = %+v; want only her live device", devices)
+	}
+	if devices[0].Digest != "" {
+		t.Fatalf("offline device digest = %q; want none", devices[0].Digest)
+	}
+	bobs, err := fixture.service.TerminalDevices(ctx, bob.ID)
+	if err != nil || len(bobs) != 1 || bobs[0].ID != others.DeviceID {
+		t.Fatalf("bob's devices = %+v, %v", bobs, err)
+	}
+	if none, err := fixture.service.TerminalDevices(ctx, ""); err != nil || len(none) != 0 {
+		t.Fatalf("anonymous devices = %+v, %v; want none", none, err)
+	}
+	if got := len(fixture.auditRows(t, auditKindDeviceTerminal)); got != audits {
+		t.Fatalf("terminal audits %d -> %d; a read-only listing writes none", audits, got)
+	}
+}
+
 func TestAuthorizeDeviceTerminal(t *testing.T) {
 	fixture := newServiceFixture(t)
 	owner := fixture.createUser(t, "dev-term-owner")

@@ -35,7 +35,6 @@ function workspace(id: string, panes: Pane[]): Workspace {
     title: id,
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }

@@ -40,7 +40,7 @@ vi.mock("../../ipc/commands", () => ({
       lastError: null,
     }),
     status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
-    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false }),
     wake: vi.fn().mockResolvedValue(undefined),
   },
   terminalApi: {},
@@ -62,7 +62,7 @@ vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
-vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
+vi.mock("../../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../../app/App";
@@ -121,7 +121,6 @@ function seedWorkspace(withSession: boolean): void {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",

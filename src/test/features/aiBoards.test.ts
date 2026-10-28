@@ -21,7 +21,6 @@ function workspace(id: string): Workspace {
     sessionId: `s-${id}`,
     panes: [{ id: `pane-${id}`, tabs: [], activeTabId: null }],
     activePaneId: `pane-${id}`,
-    splitRatio: 0.5,
     closable: true,
   };
 }

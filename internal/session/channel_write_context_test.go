@@ -38,7 +38,7 @@ func TestManagerWriteContextCancelsInFlightWrite(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- manager.Write(ctx, tab.ID, tab.Info().Controller, []byte("stalled"))
+		done <- manager.Write(ctx, tab.ID, tab.Info().SizeOwner, []byte("stalled"))
 	}()
 	select {
 	case <-started:
@@ -74,7 +74,7 @@ func TestManagerWriteWithoutContextCapabilityKeepsBlockingBehavior(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- manager.Write(ctx, tab.ID, tab.Info().Controller, []byte("data"))
+		done <- manager.Write(ctx, tab.ID, tab.Info().SizeOwner, []byte("data"))
 	}()
 	select {
 	case <-started:
@@ -118,7 +118,7 @@ func TestManagerWriteConvertsChannelErrors(t *testing.T) {
 				}}
 			}
 			tab := openTestTab(t, manager, session, "client-a", "a-1")
-			err := manager.Write(context.Background(), tab.ID, tab.Info().Controller, []byte("x"))
+			err := manager.Write(context.Background(), tab.ID, tab.Info().SizeOwner, []byte("x"))
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("Write = %v, want %v", err, testCase.want)
 			}

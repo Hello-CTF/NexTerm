@@ -46,18 +46,24 @@ type ownerState struct {
 }
 
 type Manager struct {
-	settings  Settings
-	protector store.SecretProtector
-	shared    bool
-	mu        sync.RWMutex
-	states    map[string]*ownerState
+	clientOptions []provider.Option
+	settings      Settings
+	protector     store.SecretProtector
+	shared        bool
+	mu            sync.RWMutex
+	states        map[string]*ownerState
 }
 
 type options struct {
-	shared bool
+	shared        bool
+	clientOptions []provider.Option
 }
 
 type Option func(*options)
+
+func WithClientOptions(clientOptions ...provider.Option) Option {
+	return func(options *options) { options.clientOptions = append(options.clientOptions, clientOptions...) }
+}
 
 // WithShared selects the legacy shared state for desktop and explicit open deployments.
 func WithShared(shared bool) Option {
@@ -95,7 +101,7 @@ func NewManager(ctx context.Context, settings Settings, opts ...Option) (*Manage
 	if source, ok := settings.(protectorSource); ok {
 		protector = source.SecretProtector()
 	}
-	manager := &Manager{settings: settings, protector: protector, shared: configuration.shared, states: map[string]*ownerState{}}
+	manager := &Manager{settings: settings, protector: protector, shared: configuration.shared, states: map[string]*ownerState{}, clientOptions: configuration.clientOptions}
 	if _, err := owner.ID(ctx, manager.shared); err == nil {
 		if err := manager.Reload(ctx); err != nil {
 			return nil, err
@@ -217,6 +223,7 @@ func (m *Manager) ActiveClient(ctx context.Context, options ...provider.Option) 
 	}
 	config.APIKey = key
 	clientOptions := append(profile.ClientOptions(), m.circuitOption(ownerID, profile))
+	clientOptions = append(clientOptions, m.clientOptions...)
 	return provider.NewClient(config, append(clientOptions, options...)...)
 }
 
@@ -317,6 +324,7 @@ func (m *Manager) ClientFor(ctx context.Context, id string, options ...provider.
 	}
 	config.APIKey = key
 	clientOptions := append(profile.ClientOptions(), m.circuitOption(ownerID, profile))
+	clientOptions = append(clientOptions, m.clientOptions...)
 	return provider.NewClient(config, append(clientOptions, options...)...)
 }
 

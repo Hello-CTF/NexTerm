@@ -62,7 +62,7 @@ describe("channel socket terminal input", () => {
     const { newBinaryChannel, sendChannelInput } = await import("../ipc/webTransport");
     const ch = newBinaryChannel();
     const ws = FakeWebSocket.instances[0];
-    expect(ws.protocols).toEqual(["nexterm.input", "nexterm"]);
+    expect(ws.protocols).toEqual(["nexterm.input"]);
     expect(ws.url).toContain("?client=");
     ws.open("nexterm.input");
     const http = vi.fn().mockResolvedValue(undefined);
@@ -75,11 +75,10 @@ describe("channel socket terminal input", () => {
     expect(Array.from(ws.sent[0])).toEqual([1, 3, ...new TextEncoder().encode("tab"), 1, 2, 3]);
   });
 
-  it("falls back to HTTP when the server did not negotiate input", async () => {
+  it("sends input over HTTP while the socket is not open", async () => {
     const { newBinaryChannel, sendChannelInput } = await import("../ipc/webTransport");
     const ch = newBinaryChannel();
     const ws = FakeWebSocket.instances[0];
-    ws.open("nexterm");
     const http = vi.fn().mockResolvedValue(undefined);
     sendChannelInput(ch.id, "tab", bytes(7), http);
     await Promise.resolve();

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/ai/takeover"
@@ -13,9 +14,11 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
+	"github.com/Hello-CTF/NexTerm/internal/fleet/exposure"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/mount"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -45,44 +48,56 @@ type ScreenInsets struct {
 }
 
 type ProductionServices struct {
-	Store       *store.Store
-	Vault       *vault.Vault
-	Sync        *syncservice.Service
-	Profiles    *profiles.Manager
-	Database    *db.Service
-	Mount       *mount.Service
-	Sessions    *session.Manager
-	ExecBatches *execbatch.Service
-	Runbook     *runbookIPCService
-	Forward     *forward.Service
-	Docker      *docker.Service
-	Retention   *RetentionRunner
-	Guard       *guard.Manager
-	Agent       *agent.Runner
-	Takeover    *takeover.Manager
+	// deviceInstall is the installation fingerprint the cron device ID is checked against.
+	deviceInstall string
+	Store         *store.Store
+	Vault         *vault.Vault
+	Sync          *syncservice.Service
+	Profiles      *profiles.Manager
+	Privacy       *privacy.Manager
+	Database      *db.Service
+	Mount         *mount.Service
+	Sessions      *session.Manager
+	ExecBatches   *execbatch.Service
+	Runbook       *runbookIPCService
+	Forward       *forward.Service
+	Docker        *docker.Service
+	Retention     *RetentionRunner
+	Guard         *guard.Manager
+	Agent         *agent.Runner
+	Takeover      *takeover.Manager
 	// Skills is the single skills manager instance shared by the ai-skills
 	// IPC surface and the agent tools registry (load_skill), so per-owner
 	// caches and overrides never split across two managers.
-	Skills           *skills.Manager
-	Events           ipc.Emitter
-	Update           *update.Manager
-	ScreenInsets     func(context.Context) (ScreenInsets, error)
-	channelBridge    *terminalBridge
-	previewRelay     *previewRelayManager
-	terminalCommands *terminalCommandService
-	fsUploads        *fsChunkUploadRegistry
-	hostKeys         *productionHostKeyStore
-	sshConnector     *productionConnector
-	stagedBlobs      StagedBlobResolver
-	dataDir          string
-	desktop          bool
-	hostKeysShared   bool
-	aiRelease        func()
-	cron             *cronRuntime
-	watches          *watchService
-	Transcripts      *transcriptWriter
-	aiRetention      *aiRetentionComponent
-	inventory        *inventoryService
+	Skills *skills.Manager
+	// LocalHelper runs local terminals in a detached helper; nil keeps them
+	// in this process.
+	LocalHelper *localhelper.Service
+	// LocalHelperExposure exposes the local terminals of a desktop to its
+	// server account when the user turns it on; nil elsewhere.
+	LocalHelperExposure *exposure.Controller
+	stateRules          *stateRulesRuntime
+	Events              ipc.Emitter
+	Update              *update.Manager
+	ScreenInsets        func(context.Context) (ScreenInsets, error)
+	SystemNotifier      SystemNotifier
+	channelBridge       *terminalBridge
+	previewRelay        *previewRelayManager
+	terminalCommands    *terminalCommandService
+	fsUploads           *fsChunkUploadRegistry
+	hostKeys            *productionHostKeyStore
+	sshConnector        *productionConnector
+	stagedBlobs         StagedBlobResolver
+	dataDir             string
+	desktop             bool
+	hostKeysShared      bool
+	aiRelease           func()
+	cron                *cronRuntime
+	watches             *watchService
+	Transcripts         *transcriptWriter
+	aiRetention         *aiRetentionComponent
+	inventory           *inventoryService
+	sessionAggregate    *sessionAggregateService
 
 	retryDeferredUpgrade func(context.Context)
 }
@@ -127,11 +142,15 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector, services.Events, services.stagedBlobs, services.desktop)
 	}
 	services.terminalCommands.fsUploads = services.fsUploads
+	services.terminalCommands.localHelper = services.LocalHelper
 	if services.Database != nil {
 		services.terminalCommands.databases = services.Database
 	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status
+	}
+	if services.sessionAggregate == nil && services.Sessions != nil {
+		services.sessionAggregate = newSessionAggregateService(services.Sessions, services.sshConnector, services.Events)
 	}
 	if services.inventory == nil && services.Store != nil {
 		services.inventory = newInventoryService(services.Store, services.Events, services.desktop, services.dataDir,
@@ -245,6 +264,11 @@ func productionModules(services ProductionServices) []Module {
 			},
 		})
 	}
+	if services.Privacy != nil {
+		modules = append(modules, Module{Name: "ai-privacy", Component: services.Privacy, RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+			return registerPrivacyCommands(dispatcher, services.Privacy)
+		}})
+	}
 	if services.Database != nil {
 		modules = append(modules, Module{Name: "database", RegisterCommands: services.Database.RegisterCommands, Component: services.Database})
 	}
@@ -300,8 +324,71 @@ func productionModules(services ProductionServices) []Module {
 			Component:        ComponentFuncs{ShutdownFunc: logTails.Shutdown},
 		})
 	}
+	if services.Sessions != nil {
+		aggregate := services.sessionAggregate
+		modules = append(modules, Module{
+			Name:             "session-aggregate",
+			RegisterCommands: aggregate.register,
+			Component:        ComponentFuncs{ShutdownFunc: aggregate.shutdown},
+		})
+	}
 	if services.fsUploads != nil {
 		modules = append(modules, Module{Name: "fs-chunk-uploads", Component: services.fsUploads})
+	}
+	if services.stateRules != nil {
+		if services.Profiles != nil {
+			services.stateRules.draftModel = stateRuleModelFactory(aiModelFactory(services.Profiles))
+		}
+		modules = append(modules, Module{Name: "state-rules", RegisterCommands: services.stateRules.registerCommands})
+	}
+	if services.Sessions != nil {
+		localHelper := services.LocalHelper
+		exposureController := services.LocalHelperExposure
+		modules = append(modules, Module{
+			Name: "local-helper",
+			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+				var settings localTerminalModeStore
+				if services.Store != nil {
+					settings = services.Store
+				}
+				onModeChange := func() {}
+				if exposureController != nil {
+					onModeChange = exposureController.Reconcile
+				}
+				if err := registerLocalHelperCommands(dispatcher, localHelper, settings, onModeChange); err != nil {
+					return err
+				}
+				return registerLocalHelperExposureCommands(dispatcher, exposureController)
+			},
+			// Shutdown stops watching the helper; the helper and its local
+			// terminals keep running after the app exits.
+			Component: ComponentFuncs{
+				// The desktop looks for a running helper at launch, so local
+				// terminals of an earlier run are listed; it spawns none until a
+				// durable local terminal needs one. A server starts the lifecycle
+				// with its first local terminal.
+				StartFunc: func(context.Context) error {
+					if localHelper != nil && services.desktop {
+						localHelper.Start()
+					}
+					if exposureController != nil {
+						exposureController.Start()
+					}
+					return nil
+				},
+				ShutdownFunc: func(context.Context) error {
+					// The exposed agent stops first: its bridges end, while the
+					// helper and its terminals keep running.
+					if exposureController != nil {
+						exposureController.Close()
+					}
+					if localHelper != nil {
+						localHelper.Close()
+					}
+					return nil
+				},
+			},
+		})
 	}
 	if services.channelBridge != nil {
 		modules = append(modules, Module{Name: "terminal-channel-bridge", Component: services.channelBridge})
@@ -353,6 +440,9 @@ func productionModules(services ProductionServices) []Module {
 			}
 			return services.ScreenInsets(ctx)
 		})
+	}})
+	modules = append(modules, Module{Name: "system-notifications", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+		return registerSystemNotificationCommands(dispatcher, services.SystemNotifier)
 	}})
 	if services.aiRelease != nil {
 		modules = append(modules, Module{Name: "ai-session-hooks", Component: aiHooksComponent{release: services.aiRelease}})

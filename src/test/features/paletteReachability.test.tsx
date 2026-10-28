@@ -8,7 +8,7 @@ import {
   flush,
   mount,
   setInputValue,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -34,7 +34,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   };
 });
 
-import { CommandPalette } from "../../app/CommandPalette";
+import { JumpPalette } from "../../app/JumpPalette";
 import { useUi } from "../../app/store";
 import { useAssetReachability } from "../../features/explorer/assetReachability";
 import type { Asset } from "../../ipc/commands";
@@ -85,14 +85,11 @@ function searchInput(container: HTMLElement): HTMLInputElement {
 
 const mountedViews: MountedView[] = [];
 
-async function mountPalette(props: {
-  onClose: () => void;
-  onQuickConnect?: () => void;
-}): Promise<MountedView> {
-  const view = mountWithClient(createElement(CommandPalette, props));
+async function mountPalette(props: { onClose: () => void }): Promise<MountedView> {
+  const view = mountWithClient(createElement(JumpPalette, props));
   mountedViews.push(view);
-  await waitFor(() => {
-    expect(optionByText(view.container, "连接 web-01")).toBeTruthy();
+  await waitForRendered(() => {
+    expect(optionByText(view.container, "web-01")).toBeTruthy();
     expect(mocks.probeBatch).toHaveBeenCalledTimes(1);
     expect(Object.values(useAssetReachability.getState().entries).every((entry) => entry.state !== "checking")).toBe(true);
   });
@@ -124,13 +121,13 @@ afterEach(() => {
 describe("Command palette reachability and quick connect", () => {
   it("probes assets with hosts in a bounded batch on open", async () => {
     await mountPalette({ onClose: vi.fn() });
-    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
     const [ids, timeoutMs, maxConcurrent] = mocks.probeBatch.mock.calls[0] as [
       string[],
       number,
       number,
     ];
-    expect(ids).toEqual(["a-web", "a-db"]);
+    expect([...ids].sort()).toEqual(["a-db", "a-web"]);
     expect(timeoutMs).toBe(2500);
     expect(maxConcurrent).toBe(8);
   });
@@ -143,33 +140,35 @@ describe("Command palette reachability and quick connect", () => {
       ],
     });
     const view = await mountPalette({ onClose: vi.fn() });
-    await waitFor(() => {
-      const webRow = optionByText(view.container, "连接 web-01");
+    await waitForRendered(() => {
+      const webRow = optionByText(view.container, "web-01");
       expect(webRow.querySelector('[aria-label="可达"]')).toBeTruthy();
-      const dbRow = optionByText(view.container, "连接 db-01");
+      const dbRow = optionByText(view.container, "db-01");
       expect(dbRow.querySelector('[aria-label="不可达"]')).toBeTruthy();
     });
   });
 
   it("does not duplicate the manual probe action in asset actions", async () => {
     const view = await mountPalette({ onClose: vi.fn() });
-    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
     setInputValue(searchInput(view.container), "probe web-01");
     expect(view.container.textContent).not.toContain("probe web-01");
   });
 
-  it("delegates the quick connect action to the caller to open the overlay", async () => {
-    const onQuickConnect = vi.fn();
-    const view = await mountPalette({ onClose: vi.fn(), onQuickConnect });
+  it("switches to the hosts scope in place from the quick connect action", async () => {
+    const onClose = vi.fn();
+    const view = await mountPalette({ onClose });
     setInputValue(searchInput(view.container), "快速连接");
     click(optionByText(view.container, "快速连接"));
-    expect(onQuickConnect).toHaveBeenCalledTimes(1);
+    await flush();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(view.container.querySelector('[role="listbox"]')?.getAttribute("aria-label")).toBe("资产连接");
   });
 
   it("shows a connecting state on entries while a connection is in flight", async () => {
     const view = await mountPalette({ onClose: vi.fn() });
     act(() => useUi.setState({ connectingAssetIds: ["a-web"] }));
     await flush();
-    expect(optionByText(view.container, "连接 web-01").textContent).toContain("连接中…");
+    expect(optionByText(view.container, "web-01").textContent).toContain("连接中…");
   });
 });

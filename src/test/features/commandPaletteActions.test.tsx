@@ -8,7 +8,7 @@ import {
   flush,
   mount,
   setInputValue,
-  waitFor,
+  waitForRendered,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -46,7 +46,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   };
 });
 
-import { CommandPalette } from "../../app/CommandPalette";
+import { JumpPalette } from "../../app/JumpPalette";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { Asset } from "../../ipc/commands";
@@ -96,6 +96,12 @@ function optionByText(container: HTMLElement, text: string): HTMLButtonElement {
   return option;
 }
 
+function hostOption(container: HTMLElement, name: string): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(
+    (o) => o.querySelector("span span")?.textContent === name,
+  );
+}
+
 function setTerminalWorkspace(tabId: string | null) {
   useUi.setState({
     workspaces: tabId
@@ -121,7 +127,6 @@ function setTerminalWorkspace(tabId: string | null) {
               },
             ],
             activePaneId: "p1",
-            splitRatio: 0.5,
           },
         ]
       : [],
@@ -147,7 +152,6 @@ function workspaceOf(id: string, kind: Workspace["kind"], sessionId?: string): W
     connId: kind === "db" ? "db-conn" : undefined,
     panes: [{ id: paneId, tabs: [], activeTabId: null }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -191,7 +195,7 @@ afterEach(() => {
 });
 
 async function mountPalette(props: { onClose: () => void; onEditAsset?: (a: Asset) => void }) {
-  mounted = mountWithClient(createElement(CommandPalette, props));
+  mounted = mountWithClient(createElement(JumpPalette, props));
   await flush();
   await flush();
 }
@@ -205,7 +209,7 @@ describe("command palette snippet entries", () => {
 
     setInputValue(searchInput(mounted!.container), "disk");
     click(optionByText(mounted!.container, "插入片段 disk usage"));
-    await waitFor(() => expect(mocks.write).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.write).toHaveBeenCalled());
     expect(mocks.write).toHaveBeenCalledWith("kernel-1", new TextEncoder().encode("df -h && du -sh /data/*"));
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已插入「disk usage」"));
@@ -218,7 +222,7 @@ describe("command palette snippet entries", () => {
 
     setInputValue(searchInput(mounted!.container), "disk");
     click(optionByText(mounted!.container, "插入片段 disk usage"));
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("终端")));
+    await waitForRendered(() => expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("终端")));
     expect(mocks.write).not.toHaveBeenCalled();
   });
 
@@ -230,7 +234,7 @@ describe("command palette snippet entries", () => {
     setInputValue(searchInput(mounted!.container), "multi-line");
     mocks.ask.mockResolvedValueOnce(false);
     click(optionByText(mounted!.container, "插入片段 multi-line restart"));
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalled());
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("回车或换行"),
       expect.objectContaining({ kind: "warning" }),
@@ -246,7 +250,7 @@ describe("command palette snippet entries", () => {
     setInputValue(searchInput(mounted!.container), "multi-line");
     mocks.ask.mockResolvedValueOnce(true);
     click(optionByText(mounted!.container, "插入片段 multi-line restart"));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.write).toHaveBeenCalledWith(
         "kernel-1",
         new TextEncoder().encode("systemctl restart app\nsystemctl status app"),
@@ -256,12 +260,13 @@ describe("command palette snippet entries", () => {
 });
 
 describe("command palette asset secondary actions", () => {
-  it("provides connect, edit, clone, and hide entries for every visible asset", async () => {
+  it("provides a host row plus edit, clone, and hide entries for every visible asset", async () => {
     await mountPalette({ onClose: vi.fn() });
-    expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
 
     setInputValue(searchInput(mounted!.container), "web-01");
-    for (const label of ["连接 web-01", "编辑资产 web-01", "克隆资产 web-01", "隐藏资产 web-01"]) {
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
+    for (const label of ["编辑资产 web-01", "克隆资产 web-01", "隐藏资产 web-01"]) {
       expect(optionByText(mounted!.container, label)).toBeTruthy();
     }
   });
@@ -274,12 +279,12 @@ describe("command palette asset secondary actions", () => {
     ]);
     await mountPalette({ onClose: vi.fn() });
     const options = [...mounted!.container.querySelectorAll('[role="option"]')].map((option) => option.textContent ?? "");
-    expect(options.some((text) => text.includes("连接 web-01"))).toBe(true);
-    expect(options.some((text) => text.includes("连接 docker-prod"))).toBe(false);
-    expect(options.some((text) => text.includes("连接 ops/api-0"))).toBe(false);
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "docker-prod")).toBeUndefined();
+    expect(hostOption(mounted!.container, "ops/api-0")).toBeUndefined();
     expect(options.some((text) => text.includes("编辑资产 docker-prod"))).toBe(true);
     expect(options.some((text) => text.includes("编辑资产 ops/api-0"))).toBe(true);
-    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
     expect(mocks.probeBatch.mock.calls[0]![0]).toEqual(["a1"]);
     expect(mocks.connect).not.toHaveBeenCalled();
   });
@@ -292,13 +297,13 @@ describe("command palette asset secondary actions", () => {
 
     const options = [...mounted!.container.querySelectorAll('[role="option"]')];
     expect(options.some((option) => option.textContent?.includes("打开数据库工作台"))).toBe(false);
-    expect(optionByText(mounted!.container, "连接 db-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "db-01")).toBeTruthy();
   });
 
   it("passes the asset to the existing editor flow from the edit entry", async () => {
     const onEditAsset = vi.fn();
     await mountPalette({ onClose: vi.fn(), onEditAsset });
-    expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
 
     setInputValue(searchInput(mounted!.container), "编辑资产 web-01");
     click(optionByText(mounted!.container, "编辑资产 web-01"));
@@ -307,11 +312,11 @@ describe("command palette asset secondary actions", () => {
 
   it("cloning reuses the existing creation flow and shares credential references", async () => {
     await mountPalette({ onClose: vi.fn() });
-    expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
 
     setInputValue(searchInput(mounted!.container), "克隆资产 web-01");
     click(optionByText(mounted!.container, "克隆资产 web-01"));
-    await waitFor(() => expect(mocks.create).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.create).toHaveBeenCalled());
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: "web-01 副本", credId: "cred-1", keyPath: null }),
     );
@@ -320,7 +325,7 @@ describe("command palette asset secondary actions", () => {
 
   it("hiding removes the asset from the palette without modifying data", async () => {
     await mountPalette({ onClose: vi.fn() });
-    expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
+    expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
 
     setInputValue(searchInput(mounted!.container), "隐藏资产 web-01");
     click(optionByText(mounted!.container, "隐藏资产 web-01"));
@@ -360,7 +365,6 @@ describe("command palette workspace actions", () => {
     await mountPalette({ onClose });
 
     const firstOption = mounted!.container.querySelector('[role="option"]');
-    expect(firstOption?.textContent).toContain("快速连接…");
     expect(firstOption?.getAttribute("aria-selected")).toBe("true");
     expect(mounted!.container.querySelectorAll('[data-command-section="已打开的工作区"]')).toHaveLength(1);
     expect(optionByText(mounted!.container, "alpha-workspace").textContent).toContain("当前");
@@ -531,5 +535,52 @@ describe("command palette workspace actions", () => {
     await expect(useUi.getState().closeTab(firstID!)).resolves.toBe(true);
     expect(useUi.getState().workspaces.find((workspace) => workspace.id === first.id)?.panes[0].tabs).toHaveLength(0);
     expect(useUi.getState().workspaces.find((workspace) => workspace.id === second.id)?.panes[0].tabs.map((tab) => tab.id)).toEqual([secondID]);
+  });
+});
+
+describe("command palette tab-to-new-pane actions", () => {
+  function fileTab(id: string): AppTab {
+    return { id, kind: "files", title: id, sessionId: "s1", path: `/${id}`, closable: true };
+  }
+
+  function setPaneTabs(tabs: AppTab[], activeTabId: string | null): void {
+    const workspace = { ...workspaceOf("ws-a", "session", "s1"), panes: [{ id: "p1", tabs, activeTabId }], activePaneId: "p1" };
+    useUi.setState({ workspaces: [workspace], activeWorkspaceId: workspace.id });
+  }
+
+  function panes() {
+    return useUi.getState().workspaces[0].panes;
+  }
+
+  it("moves the current tab to a new pane on the right or below", async () => {
+    setPaneTabs([fileTab("a"), fileTab("b"), fileTab("c")], "b");
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "移到右侧新窗格"));
+    expect(panes()).toHaveLength(2);
+    const right = useUi.getState().workspaces[0].activePaneId;
+    expect(panes().find((pane) => pane.id === right)?.tabs.map((tab) => tab.id)).toEqual(["b"]);
+    expect(useUi.getState().workspaces[0].layoutTree).toMatchObject({ type: "split", dir: "row" });
+    mounted?.unmount();
+
+    useUi.getState().setActivePane("p1", "ws-a");
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "移到下方新窗格"));
+    expect(panes()).toHaveLength(3);
+    expect(panes().find((pane) => pane.id === "p1")?.tabs).toHaveLength(1);
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("explains why nothing moved when the pane has one tab or none", async () => {
+    setPaneTabs([fileTab("a")], "a");
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "移到右侧新窗格"));
+    expect(panes()).toHaveLength(1);
+    expect(mocks.toast).toHaveBeenLastCalledWith("info", expect.stringContaining("只有这一个标签"));
+    mounted?.unmount();
+
+    setPaneTabs([], null);
+    await mountPalette({ onClose: vi.fn() });
+    click(optionByText(mounted!.container, "移到下方新窗格"));
+    expect(mocks.toast).toHaveBeenLastCalledWith("info", "当前窗格没有标签");
   });
 });

@@ -17,6 +17,21 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
+// unknownDurableIdentity is a well-formed identity that no session carries.
+func unknownDurableIdentity() base.DurableIdentity {
+	return base.DurableIdentity{CreatedAt: time.Now(), Incarnation: ids.New()}
+}
+
+func attachmentIdentity(t *testing.T, attachment base.DurableAttachment) base.DurableIdentity {
+	t.Helper()
+	source, ok := attachment.(interface{ Identity() Identity })
+	if !ok {
+		t.Fatalf("%T does not expose its identity", attachment)
+	}
+	identity := source.Identity()
+	return base.DurableIdentity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation}
+}
+
 func TestIPCKillDuringBlockedInput(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
@@ -96,7 +111,7 @@ func TestIPCRecordingErrorTerminatesStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.recording.Close(); err != nil {
+	if err := closeRecordingWriter(session); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,7 +179,7 @@ func TestIPCRecordingErrorUsesFatalFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.recording.Close(); err != nil {
+	if err := closeRecordingWriter(session); err != nil {
 		t.Fatal(err)
 	}
 
@@ -266,7 +281,7 @@ func TestProviderErrorTranslation(t *testing.T) {
 	}
 	for name, provider := range providers {
 		t.Run(name, func(t *testing.T) {
-			if _, err := provider.Attach(ctx, ids.New()); !errors.Is(err, durable.ErrNotFound) || errors.Is(err, ErrNotFound) {
+			if _, err := provider.AttachWithIdentity(ctx, ids.New(), unknownDurableIdentity()); !errors.Is(err, durable.ErrNotFound) || errors.Is(err, ErrNotFound) {
 				t.Fatalf("Attach unknown = %v, want durable.ErrNotFound only", err)
 			}
 			if _, err := provider.Create(ctx, base.DurableCreateOptions{Cols: 5000, Rows: 24}); !errors.Is(err, durable.ErrInvalidInput) {
@@ -385,15 +400,6 @@ func TestClientKillSessionControl(t *testing.T) {
 	}
 }
 
-func requireDurableDescriptorLister(t *testing.T, provider base.DurableProvider) base.DurableDescriptorLister {
-	t.Helper()
-	lister, ok := provider.(base.DurableDescriptorLister)
-	if !ok {
-		t.Fatalf("%T does not expose durable descriptors", provider)
-	}
-	return lister
-}
-
 func requireDurableDescriptorMatchesInfo(t *testing.T, got base.DurableDescriptor, want Info) {
 	t.Helper()
 	if got.ID != want.ID || got.Incarnation != want.Incarnation || !got.CreatedAt.Equal(want.CreatedAt) {
@@ -420,12 +426,12 @@ func TestDurableDescriptorProvidersEmptyAndAttachDoesNotCreate(t *testing.T) {
 	for name, provider := range providers {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			lister := requireDurableDescriptorLister(t, provider)
+			lister := provider
 			descriptors, err := lister.ListDurableDescriptors(ctx)
 			if err != nil || len(descriptors) != 0 {
 				t.Fatalf("ListDurableDescriptors empty = %+v, %v", descriptors, err)
 			}
-			if _, err := provider.Attach(ctx, ids.New()); !errors.Is(err, durable.ErrNotFound) {
+			if _, err := provider.AttachWithIdentity(ctx, ids.New(), unknownDurableIdentity()); !errors.Is(err, durable.ErrNotFound) {
 				t.Fatalf("Attach unknown = %v, want durable.ErrNotFound", err)
 			}
 			descriptors, err = lister.ListDurableDescriptors(ctx)
@@ -445,8 +451,6 @@ func TestRemoteProviderDescriptorsSharedAcrossClients(t *testing.T) {
 	server := testServer(t, supervisor)
 	providerA := NewRemoteProvider(testClient(t, server))
 	providerB := NewRemoteProvider(testClient(t, server))
-	listerA := requireDurableDescriptorLister(t, providerA)
-	listerB := requireDurableDescriptorLister(t, providerB)
 	ctx := context.Background()
 	id := ids.New()
 	attachment, err := providerA.Create(ctx, base.DurableCreateOptions{
@@ -471,25 +475,16 @@ func TestRemoteProviderDescriptorsSharedAcrossClients(t *testing.T) {
 	if err != nil || len(infos) != 1 {
 		t.Fatalf("supervisor inventory = %+v, %v", infos, err)
 	}
-	for name, fixture := range map[string]struct {
-		provider base.DurableProvider
-		lister   base.DurableDescriptorLister
-	}{
-		"creator":     {provider: providerA, lister: listerA},
-		"independent": {provider: providerB, lister: listerB},
+	for name, provider := range map[string]*RemoteProvider{
+		"creator":     providerA,
+		"independent": providerB,
 	} {
 		t.Run(name, func(t *testing.T) {
-			descriptors, err := fixture.lister.ListDurableDescriptors(ctx)
+			descriptors, err := provider.ListDurableDescriptors(ctx)
 			if err != nil || len(descriptors) != 1 {
 				t.Fatalf("ListDurableDescriptors with active attachment = %+v, %v", descriptors, err)
 			}
 			requireDurableDescriptorMatchesInfo(t, descriptors[0], infos[0])
-			legacyIDs, err := fixture.provider.(interface {
-				ListDurable(context.Context) ([]string, error)
-			}).ListDurable(ctx)
-			if err != nil || len(legacyIDs) != 1 || legacyIDs[0] != id {
-				t.Fatalf("ListDurable compatibility = %v, %v", legacyIDs, err)
-			}
 		})
 	}
 	after, err := supervisor.List(ctx)
@@ -509,7 +504,7 @@ func TestDurableDescriptorProvidersReportExitAndExcludeExec(t *testing.T) {
 			} else {
 				provider = NewRemoteProvider(testClient(t, server))
 			}
-			lister := requireDurableDescriptorLister(t, provider)
+			lister := provider
 			ctx := context.Background()
 			id := ids.New()
 			attachment, err := provider.Create(ctx, base.DurableCreateOptions{
@@ -661,7 +656,7 @@ func TestDurableDescriptorProvidersReportSignal(t *testing.T) {
 			if err != nil || len(infos) != 1 || infos[0].Signal == "" {
 				t.Fatalf("authoritative signal Info = %+v, %v", infos, err)
 			}
-			descriptors, err := requireDurableDescriptorLister(t, provider).ListDurableDescriptors(context.Background())
+			descriptors, err := provider.ListDurableDescriptors(context.Background())
 			if err != nil || len(descriptors) != 1 {
 				t.Fatalf("ListDurableDescriptors after signal = %+v, %v", descriptors, err)
 			}
@@ -677,7 +672,7 @@ func TestDurableDescriptorProvidersPropagateListErrors(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	embedded := NewProvider(testSupervisor(t))
-	descriptors, err := requireDurableDescriptorLister(t, embedded).ListDurableDescriptors(ctx)
+	descriptors, err := embedded.ListDurableDescriptors(ctx)
 	if descriptors != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled embedded ListDurableDescriptors = %+v, %v", descriptors, err)
 	}
@@ -686,23 +681,10 @@ func TestDurableDescriptorProvidersPropagateListErrors(t *testing.T) {
 	remote := NewRemoteProvider(NewRemoteClient(func(context.Context) (net.Conn, error) {
 		return nil, dialErr
 	}, "test"))
-	descriptors, err = requireDurableDescriptorLister(t, remote).ListDurableDescriptors(context.Background())
+	descriptors, err = remote.ListDurableDescriptors(context.Background())
 	if descriptors != nil || !errors.Is(err, durable.ErrUnavailable) {
 		t.Fatalf("failed remote ListDurableDescriptors = %+v, %v", descriptors, err)
 	}
-	legacyIDs, legacyErr := remote.ListDurable(context.Background())
-	if legacyIDs != nil || !errors.Is(legacyErr, durable.ErrUnavailable) {
-		t.Fatalf("failed legacy ListDurable = %v, %v", legacyIDs, legacyErr)
-	}
-}
-
-func requireDurableMetadataProvider(t *testing.T, provider base.DurableProvider) base.DurableMetadataProvider {
-	t.Helper()
-	metadata, ok := provider.(base.DurableMetadataProvider)
-	if !ok {
-		t.Fatalf("%T does not expose durable metadata", provider)
-	}
-	return metadata
 }
 
 func TestEmbeddedProviderCreateRechecksIdentityBeforeAttach(t *testing.T) {
@@ -773,12 +755,7 @@ func TestDurableMetadataProvidersRenameConflictAndRetry(t *testing.T) {
 				_ = supervisor.Kill(context.Background(), id)
 			})
 
-			metadata := requireDurableMetadataProvider(t, provider)
-			supported, err := metadata.DurableMetadataSupported(ctx)
-			if err != nil || !supported {
-				t.Fatalf("DurableMetadataSupported = %v, %v", supported, err)
-			}
-			descriptors, err := requireDurableDescriptorLister(t, provider).ListDurableDescriptors(ctx)
+			descriptors, err := provider.ListDurableDescriptors(ctx)
 			if err != nil || len(descriptors) != 1 {
 				t.Fatalf("initial descriptors = %+v, %v", descriptors, err)
 			}
@@ -789,11 +766,11 @@ func TestDurableMetadataProvidersRenameConflictAndRetry(t *testing.T) {
 				ExpectedMetadataRevision: descriptors[0].MetadataRevision,
 				Title:                    "builder",
 			}
-			result, err := metadata.RenameDurable(ctx, request)
+			result, err := provider.RenameDurable(ctx, request)
 			if err != nil || result.Title != "builder" || result.MetadataRevision != 1 {
 				t.Fatalf("RenameDurable = %+v, %v", result, err)
 			}
-			retry, err := metadata.RenameDurable(ctx, request)
+			retry, err := provider.RenameDurable(ctx, request)
 			if err != nil || retry != result {
 				t.Fatalf("same request retry = %+v, %v, want %+v", retry, err, result)
 			}
@@ -805,7 +782,7 @@ func TestDurableMetadataProvidersRenameConflictAndRetry(t *testing.T) {
 				ExpectedMetadataRevision: 0,
 				Title:                    "stale-draft",
 			}
-			_, err = metadata.RenameDurable(ctx, conflictRequest)
+			_, err = provider.RenameDurable(ctx, conflictRequest)
 			var conflict *base.DurableMetadataConflictError
 			if !errors.As(err, &conflict) || !errors.Is(err, base.ErrMetadataConflict) {
 				t.Fatalf("stale rename = %v, want metadata conflict", err)
@@ -813,22 +790,22 @@ func TestDurableMetadataProvidersRenameConflictAndRetry(t *testing.T) {
 			if conflict.CurrentTitle != "builder" || conflict.CurrentMetadataRevision != 1 {
 				t.Fatalf("conflict current metadata = %+v", conflict)
 			}
-			_, err = metadata.RenameDurable(ctx, conflictRequest)
+			_, err = provider.RenameDurable(ctx, conflictRequest)
 			var conflictRetry *base.DurableMetadataConflictError
 			if !errors.As(err, &conflictRetry) || conflictRetry.CurrentTitle != conflict.CurrentTitle || conflictRetry.CurrentMetadataRevision != conflict.CurrentMetadataRevision {
 				t.Fatalf("same conflict request retry = %+v, %v", conflictRetry, err)
 			}
-			descriptors, err = requireDurableDescriptorLister(t, provider).ListDurableDescriptors(ctx)
+			descriptors, err = provider.ListDurableDescriptors(ctx)
 			if err != nil || len(descriptors) != 1 || descriptors[0].Title != "builder" || descriptors[0].MetadataRevision != 1 {
 				t.Fatalf("conflict changed canonical metadata = %+v, %v", descriptors, err)
 			}
 
 			mismatchedRetry := request
 			mismatchedRetry.Title = "different-request"
-			if _, err := metadata.RenameDurable(ctx, mismatchedRetry); !errors.Is(err, durable.ErrInvalidInput) {
+			if _, err := provider.RenameDurable(ctx, mismatchedRetry); !errors.Is(err, durable.ErrInvalidInput) {
 				t.Fatalf("request ID reuse with another title = %v, want invalid input", err)
 			}
-			result, err = metadata.RenameDurable(ctx, base.DurableRenameOptions{
+			result, err = provider.RenameDurable(ctx, base.DurableRenameOptions{
 				ID:                       id,
 				Incarnation:              request.Incarnation,
 				RequestID:                ids.New(),
@@ -850,10 +827,10 @@ func TestDurableMetadataProvidersRenameConflictAndRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := metadata.RenameDurable(ctx, request); !errors.Is(err, durable.ErrIdentity) {
+			if _, err := provider.RenameDurable(ctx, request); !errors.Is(err, durable.ErrIdentity) {
 				t.Fatalf("old request renamed replacement incarnation = %v, want identity changed", err)
 			}
-			descriptors, err = requireDurableDescriptorLister(t, provider).ListDurableDescriptors(ctx)
+			descriptors, err = provider.ListDurableDescriptors(ctx)
 			if err != nil || len(descriptors) != 1 || descriptors[0].Incarnation != replacement.Identity().Incarnation || descriptors[0].Title != "" || descriptors[0].MetadataRevision != 0 {
 				t.Fatalf("old request changed replacement metadata = %+v, %v", descriptors, err)
 			}
@@ -883,7 +860,7 @@ func TestRemoteProviderConcurrentRenameHasOneWinner(t *testing.T) {
 		{ID: id, Incarnation: info.Incarnation, RequestID: ids.New(), Title: "from-A"},
 		{ID: id, Incarnation: info.Incarnation, RequestID: ids.New(), Title: "from-B"},
 	}
-	providers := []base.DurableMetadataProvider{providerA, providerB}
+	providers := []base.DurableProvider{providerA, providerB}
 	start := make(chan struct{})
 	type outcome struct {
 		result base.DurableRenameResult
@@ -986,10 +963,6 @@ func TestDurableKillRetriesValidateKilledIncarnation(t *testing.T) {
 			} else {
 				provider = NewRemoteProvider(testClient(t, server))
 			}
-			killer, ok := provider.(base.DurableIdentityKiller)
-			if !ok {
-				t.Fatalf("%T does not expose checked kill", provider)
-			}
 			ctx := context.Background()
 			id := ids.New()
 			options := CreateOptions{ID: id, Command: []string{"/bin/sh", "-c", "sleep 30"}, Env: []string{"TERM=xterm-256color", "LC_ALL=C"}}
@@ -1000,14 +973,14 @@ func TestDurableKillRetriesValidateKilledIncarnation(t *testing.T) {
 				t.Fatal(err)
 			}
 			identityA := base.DurableIdentity{CreatedAt: original.Info().CreatedAt, Incarnation: original.Identity().Incarnation}
-			if err := killer.KillWithIdentity(ctx, id, identityA); err != nil {
+			if err := provider.KillWithIdentity(ctx, id, identityA); err != nil {
 				t.Fatalf("kill A = %v", err)
 			}
 			wrong := base.DurableIdentity{CreatedAt: identityA.CreatedAt, Incarnation: ids.New()}
-			if err := killer.KillWithIdentity(ctx, id, wrong); !errors.Is(err, durable.ErrIdentity) {
+			if err := provider.KillWithIdentity(ctx, id, wrong); !errors.Is(err, durable.ErrIdentity) {
 				t.Fatalf("retry kill A as B = %v, want identity changed", err)
 			}
-			if err := killer.KillWithIdentity(ctx, id, identityA); err != nil {
+			if err := provider.KillWithIdentity(ctx, id, identityA); err != nil {
 				t.Fatalf("idempotent retry kill A = %v", err)
 			}
 			if name == "embedded" {
@@ -1024,13 +997,13 @@ func TestDurableKillRetriesValidateKilledIncarnation(t *testing.T) {
 				t.Fatal(err)
 			}
 			identityB := base.DurableIdentity{CreatedAt: replacement.Info().CreatedAt, Incarnation: replacement.Identity().Incarnation}
-			if err := killer.KillWithIdentity(ctx, id, identityB); err != nil {
+			if err := provider.KillWithIdentity(ctx, id, identityB); err != nil {
 				t.Fatalf("kill B = %v", err)
 			}
-			if err := killer.KillWithIdentity(ctx, id, identityB); err != nil {
+			if err := provider.KillWithIdentity(ctx, id, identityB); err != nil {
 				t.Fatalf("idempotent retry kill B = %v", err)
 			}
-			if err := killer.KillWithIdentity(ctx, id, identityA); !errors.Is(err, durable.ErrIdentity) {
+			if err := provider.KillWithIdentity(ctx, id, identityA); !errors.Is(err, durable.ErrIdentity) {
 				t.Fatalf("retry kill B as A = %v, want identity changed", err)
 			}
 		})
@@ -1066,76 +1039,29 @@ func TestDurableIdentityProvidersRejectStaleIncarnation(t *testing.T) {
 			current := base.DurableIdentity{CreatedAt: replacement.Info().CreatedAt, Incarnation: replacement.Identity().Incarnation}
 			t.Cleanup(func() { _ = supervisor.Kill(context.Background(), id) })
 
-			attacher, ok := provider.(base.DurableIdentityAttacher)
-			if !ok {
-				t.Fatalf("%T does not expose checked attach", provider)
-			}
-			killer, ok := provider.(base.DurableIdentityKiller)
-			if !ok {
-				t.Fatalf("%T does not expose checked kill", provider)
-			}
-			if attachment, err := attacher.AttachWithIdentity(ctx, id, stale); attachment != nil || !errors.Is(err, durable.ErrIdentity) {
+			if attachment, err := provider.AttachWithIdentity(ctx, id, stale); attachment != nil || !errors.Is(err, durable.ErrIdentity) {
 				t.Fatalf("stale AttachWithIdentity = %v, %v", attachment, err)
 			}
-			if err := killer.KillWithIdentity(ctx, id, stale); !errors.Is(err, durable.ErrIdentity) {
+			if err := provider.KillWithIdentity(ctx, id, stale); !errors.Is(err, durable.ErrIdentity) {
 				t.Fatalf("stale KillWithIdentity = %v, want identity changed", err)
 			}
-			if attachment, err := attacher.AttachWithIdentity(ctx, id, base.DurableIdentity{}); attachment != nil || !errors.Is(err, durable.ErrInvalidInput) {
+			if attachment, err := provider.AttachWithIdentity(ctx, id, base.DurableIdentity{}); attachment != nil || !errors.Is(err, durable.ErrInvalidInput) {
 				t.Fatalf("attach without incarnation = %v, %v, want invalid input", attachment, err)
 			}
 
-			legacy, err := provider.Attach(ctx, id)
-			if err != nil {
-				t.Fatalf("legacy Attach compatibility = %v", err)
-			}
-			_ = legacy.Close()
-			attachment, err := attacher.AttachFromWithIdentity(ctx, id, current, 0)
+			attachment, err := provider.AttachFromWithIdentity(ctx, id, current, 0)
 			if err != nil {
 				t.Fatalf("current AttachFromWithIdentity = %v", err)
 			}
 			_ = attachment.Close()
-			if err := killer.KillWithIdentity(ctx, id, current); err != nil {
+			if err := provider.KillWithIdentity(ctx, id, current); err != nil {
 				t.Fatalf("current KillWithIdentity = %v", err)
 			}
-			if err := killer.KillWithIdentity(ctx, id, current); err != nil {
+			if err := provider.KillWithIdentity(ctx, id, current); err != nil {
 				t.Fatalf("repeated KillWithIdentity = %v", err)
 			}
 		})
 	}
-}
-
-func TestRemoteProviderMetadataUnsupportedByOldHelper(t *testing.T) {
-	t.Run("capability", func(t *testing.T) {
-		stateDir := filepath.Join(t.TempDir(), "state")
-		received := make(chan frameType, 1)
-		path := fakeExecUnawareServer(t, stateDir, received)
-		provider := NewRemoteProvider(NewClient(path, stateDir))
-		supported, err := provider.DurableMetadataSupported(context.Background())
-		if err != nil || supported {
-			t.Fatalf("old helper metadata capability = %v, %v", supported, err)
-		}
-		if ProtocolVersion != 2 {
-			t.Fatalf("protocol version = %d, want 2", ProtocolVersion)
-		}
-	})
-	t.Run("rename", func(t *testing.T) {
-		stateDir := filepath.Join(t.TempDir(), "state")
-		received := make(chan frameType, 1)
-		path := fakeExecUnawareServer(t, stateDir, received)
-		provider := NewRemoteProvider(NewClient(path, stateDir))
-		_, err := provider.RenameDurable(context.Background(), base.DurableRenameOptions{ID: ids.New(), Incarnation: ids.New(), RequestID: ids.New(), Title: "local-only"})
-		if !errors.Is(err, base.ErrUnsupported) {
-			t.Fatalf("old helper rename = %v, want unsupported", err)
-		}
-		select {
-		case kind := <-received:
-			if kind != 0 {
-				t.Fatalf("client sent frame %d to old helper", kind)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("old helper saw neither a frame nor idle timeout")
-		}
-	})
 }
 
 func dialServer(t *testing.T, socketPath string) net.Conn {
@@ -1159,7 +1085,8 @@ func awaitFrame(t *testing.T, conn net.Conn, kind frameType) []byte {
 		if got == kind {
 			return payload
 		}
-		if got != frameOutput {
+		// Output and attention-state frames are pushed asynchronously while attached.
+		if got != frameOutput && got != frameState {
 			t.Fatalf("await frame %d: got unexpected frame %d", kind, got)
 		}
 	}

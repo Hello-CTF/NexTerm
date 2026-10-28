@@ -1,0 +1,18 @@
+# kind: choice
+# options: Keep both | Replace | Skip
+# keys: 1 | 2 | 3
+# cursor-index: 0
+# alt: true
+# cursor: 8,4
+---
+
+ A file named report.csv already exists.
+
+ > 1. Keep both
+   2. Replace
+   3. Skip
+
+ ┌───────────────────────────────────────┐
+ │ >                                     │
+ └───────────────────────────────────────┘
+

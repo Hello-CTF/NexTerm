@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   listLive: vi.fn(),
@@ -118,7 +118,6 @@ function seedTab() {
         assetKind: "ssh",
         panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ],
@@ -188,7 +187,7 @@ describe("TerminalPane truthful command-input send feedback", () => {
     await flush();
 
     await clickMenuItem("命令输入");
-    await waitFor(() => expect(toastTexts()).toContain("success:命令已发送"));
+    await waitForRendered(() => expect(toastTexts()).toContain("success:命令已发送"));
 
     expect(mocks.write).toHaveBeenCalledTimes(1);
     const [tabId, data] = mocks.write.mock.calls[0] as [string, Uint8Array];
@@ -196,7 +195,7 @@ describe("TerminalPane truthful command-input send feedback", () => {
     expect(new TextDecoder().decode(data)).toBe("echo hi\n");
   });
 
-  it("shows only the takeover notice for observer sends, not command-sent", async () => {
+  it("sends commands from a view whose size another device owns", async () => {
     seedTab();
     mocks.listLive.mockResolvedValue([
       {
@@ -206,7 +205,7 @@ describe("TerminalPane truthful command-input send feedback", () => {
         sessionKind: "ssh",
         cols: 80,
         rows: 24,
-        controller: "other-device",
+        sizeOwner: "other-device",
         subscribers: 2,
         viewers: 2,
         exited: false,
@@ -224,12 +223,9 @@ describe("TerminalPane truthful command-input send feedback", () => {
     await flush();
 
     await clickMenuItem("命令输入");
-    await waitFor(() =>
-      expect(toastTexts().some((t) => t.includes("终端正由其他设备操作"))).toBe(true),
-    );
+    await waitForRendered(() => expect(toastTexts()).toContain("success:命令已发送"));
 
-    expect(mocks.write).not.toHaveBeenCalled();
-    expect(toastTexts()).not.toContain("success:命令已发送");
+    expect(mocks.write).toHaveBeenCalledTimes(1);
   });
 
   it("shows the real error when the write fails and does not show command-sent", async () => {
@@ -246,7 +242,7 @@ describe("TerminalPane truthful command-input send feedback", () => {
     await flush();
 
     await clickMenuItem("命令输入");
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(toastTexts().some((t) => t.startsWith("error:写入终端失败："))).toBe(true),
     );
 

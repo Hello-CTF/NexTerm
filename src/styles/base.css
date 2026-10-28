@@ -1,0 +1,100 @@
+/* Colour emoji alias placed first in the UI font stacks (not the xterm stacks, where TUIs
+   lay out text-default symbols as one-cell glyphs). The range holds only
+   emoji code points: ASCII, digits, #, *, the keycap mark U+20E3, the plain arrows
+   U+2190-2193, box drawing and block elements stay in the primary font. Fonts without a
+   glyph for a code point in the range fall through to the next family. */
+@font-face {
+  font-family: "NexTerm Emoji";
+  src:
+    local("Apple Color Emoji"), local("AppleColorEmoji"), local("Segoe UI Emoji"),
+    local("SegoeUIEmoji"), local("Noto Color Emoji"), local("NotoColorEmoji");
+  unicode-range:
+    U+200D, U+2194-2199, U+21A9-21AA, U+231A-231B, U+2328, U+23CF, U+23E9-23F3,
+    U+23F8-23FA, U+24C2, U+25AA-25AB, U+25B6, U+25C0, U+25FB-25FE, U+2600-27BF,
+    U+2934-2935, U+2B05-2B07, U+2B1B-2B1C, U+2B50, U+2B55, U+3030, U+303D, U+3297, U+3299,
+    U+FE0F, U+1F000-1FAFF, U+E0020-E007F;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--nx-bg-canvas);
+    color: var(--nx-fg);
+    font-family: var(--font-sans);
+    font-size: calc(13px * var(--nx-ui-text-factor));
+    line-height: 1.55;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  select,
+  textarea,
+  a,
+  [role="button"],
+  [role="tab"] {
+    transition:
+      background-color 0.14s ease,
+      color 0.14s ease,
+      border-color 0.14s ease,
+      box-shadow 0.14s ease,
+      opacity 0.14s ease,
+      transform 0.14s ease;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-accent) 72%, transparent);
+    outline-offset: 1px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 34%, transparent);
+    color: var(--nx-fg-strong);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--nx-border-strong) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: transparent;
+    border: 3px solid transparent;
+    border-radius: 8px;
+    background-clip: padding-box;
+  }
+  *:hover::-webkit-scrollbar-thumb,
+  *:focus-within::-webkit-scrollbar-thumb {
+    background: var(--nx-bg-hover);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-neutral-600);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}

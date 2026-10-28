@@ -66,6 +66,40 @@ func TestProductionAttachTabLocalTabEndsWithAppRestart(t *testing.T) {
 	}
 }
 
+func TestProductionTerminalAttentionCommands(t *testing.T) {
+	dataDir := durableTestDataDir(t)
+	production := newTerminalTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
+	connected := connectLocalTerminalTest(t, production)
+	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "attention-channel", "client-a")
+	var attached attachedTabDTO
+	requireStoreTestResponse(t, attachResponse, &attached)
+
+	var listed []session.AttentionEvent
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "terminal_attention_list", `{}`, "", "client-a"), &listed)
+	found := false
+	for _, state := range listed {
+		if state.TabID == attached.TabID {
+			found = state.State != ""
+		}
+	}
+	if !found {
+		t.Fatalf("attention list %+v does not report tab %s", listed, attached.TabID)
+	}
+
+	// A state that has moved on is left alone without an error; a malformed
+	// since and an unknown tab are rejected visibly.
+	past := time.Unix(1, 0).UTC().Format(time.RFC3339Nano)
+	if response := dispatchDurableTest(t, production, "terminal_attention_seen", `{"tabId":"`+attached.TabID+`","since":"`+past+`"}`, "", "client-a"); !response.OK {
+		t.Fatalf("seen for an old state = %+v", response)
+	}
+	if response := dispatchDurableTest(t, production, "terminal_attention_seen", `{"tabId":"`+attached.TabID+`","since":"soon"}`, "", "client-a"); response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("seen with a malformed since = %+v, want bad_param", response)
+	}
+	if response := dispatchDurableTest(t, production, "terminal_attention_seen", `{"tabId":"missing","since":"`+past+`"}`, "", "client-a"); response.OK {
+		t.Fatalf("seen for a missing tab = %+v", response)
+	}
+}
+
 func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 	dataDir := durableTestDataDir(t)
 	production := newTerminalTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
@@ -78,10 +112,10 @@ func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 		t.Fatalf("created = %+v", created)
 	}
 
-	renameResponse := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"部署终端"}`, "", "client-a")
+	renameResponse := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"部署终端","at":1000}`, "", "client-a")
 	var renamed attachedTabDTO
 	requireStoreTestResponse(t, renameResponse, &renamed)
-	if renamed.TabID != created.TabID || renamed.Title != "部署终端" {
+	if renamed.TabID != created.TabID || renamed.Title != "部署终端" || !renamed.TitleCustom || renamed.TitleChangedAt != 1000 {
 		t.Fatalf("renamed = %+v", renamed)
 	}
 
@@ -92,7 +126,7 @@ func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 	for _, tab := range live {
 		if tab.TabID == created.TabID {
 			found = true
-			if tab.Title != "部署终端" {
+			if tab.Title != "部署终端" || !tab.TitleCustom {
 				t.Fatalf("listed tab = %+v", tab)
 			}
 		}
@@ -101,9 +135,16 @@ func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 		t.Fatalf("created tab missing from terminal_list: %+v", live)
 	}
 
-	badTitle := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"  "}`, "", "client-a")
+	badTitle := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"bad\ttitle"}`, "", "client-a")
 	if badTitle.OK || badTitle.Error == nil || badTitle.Error.Code != ipc.CodeBadParam {
-		t.Fatalf("blank title rename = %+v, want bad_param", badTitle)
+		t.Fatalf("control character title rename = %+v, want bad_param", badTitle)
+	}
+	// A blank title clears the custom title and hands the tab back to OSC titles.
+	clearResponse := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"  "}`, "", "client-a")
+	var cleared attachedTabDTO
+	requireStoreTestResponse(t, clearResponse, &cleared)
+	if cleared.TitleCustom {
+		t.Fatalf("cleared = %+v", cleared)
 	}
 	missing := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"missing","title":"x"}`, "", "client-a")
 	if missing.OK || missing.Error == nil || missing.Error.Code != ipc.CodeNotFound {

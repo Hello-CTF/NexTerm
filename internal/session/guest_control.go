@@ -4,24 +4,25 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
 )
 
 var (
-	// ErrGuestControlOwner rejects a guest write: the tab controller is held by someone else (the owner or another guest).
+	// ErrGuestControlOwner rejects a guest write: an owner client is attached, or another guest holds input control.
 	ErrGuestControlOwner = errors.New("guest control: owner active")
 	// ErrGuestControlBusy rejects a guest write: another guest's lease is still valid (within the disconnect grace window).
 	ErrGuestControlBusy = errors.New("guest control: another guest lease active")
 )
 
-// WriteGuest writes to the terminal as a preview guest and arbitrates control by lease: the decision and the takeover complete atomically
-// inside tab.mu (lock order matches Write: write gate -> mu -> session.mu after unlocking); on success the guest becomes the controller and
-// holds a leaseTTL lease, renewed on each call from the same guest. An active owner (controller held by someone else) returns
-// ErrGuestControlOwner; another guest's unexpired lease returns ErrGuestControlBusy, and expired leases are lazily cleared during the check.
-// The guest's clientID is the same as its read-only subscription ("preview-<shareID>"), so the existing orphan cleanup removes the controller
-// when the subscription drops, while the lease is kept until expiry: the same guest can resume immediately after reconnecting, and other guests
-// must wait for lease expiry or an explicit ReleaseGuest. KindRemote/non-ptyBacked tabs do not support guest control (ErrUnsupported).
+// WriteGuest writes to the terminal as a preview guest and arbitrates input control by lease: the decision and the takeover complete
+// atomically inside tab.mu (lock order matches Write: write gate -> mu -> session.mu after unlocking). A guest may take input control
+// only while no owner client is attached interactively and no other guest holds control; on success it holds a leaseTTL lease,
+// renewed on each call from the same guest. Owner input ends guest control and its lease (input_clients.go), so an attached owner
+// returns ErrGuestControlOwner until it detaches; another guest's unexpired lease returns ErrGuestControlBusy, and expired leases
+// are lazily cleared during the check. The guest's clientID is the same as its read-only subscription ("preview-<shareID>"), so the
+// cleanup on detach removes guest control when the subscription drops, while the lease is kept until expiry: the same guest can
+// resume immediately after reconnecting, and other guests must wait for lease expiry or an explicit ReleaseGuest. Guest input is
+// not owner input: it neither answers queries nor sizes the PTY. KindRemote/non-ptyBacked tabs do not support guest control
+// (ErrUnsupported).
 func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []byte, leaseTTL time.Duration) error {
 	m.notifyUserInput(tabID)
 	tab, err := m.Tab(tabID)
@@ -47,7 +48,8 @@ func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []by
 	if tab.guestLease != "" && tab.guestLease != guestID && !now.Before(tab.guestLeaseUntil) {
 		tab.clearGuestLeaseLocked()
 	}
-	if tab.controller != "" && tab.controller != guestID {
+	takeOver := tab.guestControl != guestID
+	if takeOver && (tab.guestControl != "" || tab.hasInteractiveSubscriberLocked()) {
 		tab.mu.Unlock()
 		return ErrGuestControlOwner
 	}
@@ -55,17 +57,9 @@ func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []by
 		tab.mu.Unlock()
 		return ErrGuestControlBusy
 	}
-	takeOver := tab.controller != guestID
 	var event ControlEvent
 	if takeOver {
-		if tab.grid != nil {
-			if err := tab.grid.Claim(); err != nil {
-				tab.mu.Unlock()
-				return mapGridError(err)
-			}
-		}
-		tab.controller = guestID
-		tab.controlled = true
+		tab.guestControl = guestID
 	}
 	tab.guestLease = guestID
 	tab.guestLeaseUntil = now.Add(leaseTTL)
@@ -98,9 +92,9 @@ func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []by
 	return nil
 }
 
-// ReleaseGuest releases the guest's control and lease, with grid semantics matching Release (hand back to observer
-// mode) and emits a control event; it is idempotent - calling it when the guest no longer holds control is a no-op.
-// The lease expires with the release, and other guests can take over immediately.
+// ReleaseGuest releases the guest's control and lease and emits a control event; it is idempotent - calling it when
+// the guest no longer holds control is a no-op. The lease expires with the release, and other guests can take over
+// immediately.
 func (m *Manager) ReleaseGuest(tabID, guest string) error {
 	tab, err := m.Tab(tabID)
 	if err != nil {
@@ -108,15 +102,9 @@ func (m *Manager) ReleaseGuest(tabID, guest string) error {
 	}
 	guestID := clientID(guest)
 	tab.mu.Lock()
-	released := tab.controller == guestID
-	if released && tab.grid != nil && !tab.hidden {
-		if err := tab.grid.SetMode(terminalgrid.ModeObserver); err != nil {
-			tab.mu.Unlock()
-			return mapGridError(err)
-		}
-	}
+	released := tab.guestControl == guestID
 	if released {
-		tab.controller = ""
+		tab.guestControl = ""
 	}
 	if tab.guestLease == guestID {
 		tab.clearGuestLeaseLocked()

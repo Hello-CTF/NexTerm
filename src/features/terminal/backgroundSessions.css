@@ -1,0 +1,61 @@
+/* Unlayered, like the other terminal feature sheets, so these overrides beat the base card rules. */
+.nx-bg-sessions td.nx-bg-name {
+  min-width: 0;
+}
+
+.nx-bg-sessions td.nx-bg-time {
+  line-height: 1.35;
+}
+
+/* Host headings of the all-hosts view. */
+.nx-bg-sessions tr.nx-bg-group > th {
+  padding-top: 10px;
+  text-align: left;
+  font-weight: 400;
+}
+
+/* Cards: name and status share the first line; size, the two time lines and the full-width actions follow. */
+@media (max-width: 640px) {
+  .nx-bg-sessions.nx-table-cards tr {
+    flex-flow: row wrap;
+    align-items: baseline;
+    column-gap: 10px;
+  }
+
+  /* Hosts are separate row groups; an empty group takes no room. */
+  .nx-bg-sessions.nx-table-cards tbody:empty {
+    display: none;
+  }
+
+  .nx-bg-sessions.nx-table-cards tr.nx-bg-group {
+    padding: 4px 2px 0;
+    border: 0;
+  }
+
+  .nx-bg-sessions.nx-table-cards tr.nx-bg-group > th {
+    display: block;
+    flex: 1 1 100%;
+    min-width: 0;
+    padding: 0;
+  }
+
+  .nx-bg-sessions.nx-table-cards td {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .nx-bg-sessions.nx-table-cards td.nx-bg-name {
+    flex: 1 1 0;
+  }
+
+  .nx-bg-sessions.nx-table-cards td.nx-bg-status {
+    flex: 0 0 auto;
+    max-width: 40%;
+    text-align: right;
+  }
+
+  .nx-bg-sessions.nx-table-cards td.nx-right > div,
+  .nx-bg-sessions.nx-table-cards td.nx-right > .nx-btn {
+    width: 100%;
+  }
+}

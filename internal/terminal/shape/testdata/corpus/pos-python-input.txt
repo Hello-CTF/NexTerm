@@ -1,0 +1,4 @@
+# kind: question
+---
+$ python3 greet.py
+Enter your name: 

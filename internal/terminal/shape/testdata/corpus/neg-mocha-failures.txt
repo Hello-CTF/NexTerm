@@ -1,0 +1,14 @@
+# kind: none
+---
+  12 passing (1s)
+  2 failing
+
+  1) api
+       returns 200:
+     AssertionError: expected 500 to equal 200
+
+  2) api
+       handles errors:
+     Error: timeout of 2000ms exceeded
+
+dev@build:~/app$ 

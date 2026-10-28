@@ -7,6 +7,6 @@ import (
 	"path/filepath"
 )
 
-func lockHelperState(stateDir string) (func(), error) {
-	return nil, fmt.Errorf("%w: helper state lock on %s", ErrUnsupported, filepath.Join(stateDir, "helper.lock"))
+func lockStateFile(stateDir, name string) (func(), error) {
+	return nil, fmt.Errorf("%w: helper state lock on %s", ErrUnsupported, filepath.Join(stateDir, name))
 }

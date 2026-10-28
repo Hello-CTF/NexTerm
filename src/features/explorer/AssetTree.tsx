@@ -11,10 +11,11 @@ import {
   connectAsset,
   connectQuickTarget,
   useConnectionProblem,
+  useSessionList,
   useUi,
 } from "../../app/store";
 import { copyAssetDeepLink } from "../../app/deepLink";
-import { isMobile, useCoarsePointer } from "../../app/platform";
+import { isMobileShell, useCoarsePointer } from "../../app/shell";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import { copyText } from "../../ui/clipboard";
@@ -27,6 +28,7 @@ import { useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
 import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
 import { useGroupCollapse } from "./groupCollapse";
 import { normalizeAssetTags } from "./assetSearch";
+import { PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
 import {
   ASSET_ICON_NAMES,
   assetIcon,
@@ -56,6 +58,7 @@ import { SnippetsPanel } from "./SnippetsPanel";
 import { SshImportDialog } from "./SshImportDialog";
 import { InventoryDialog } from "./InventoryDialog";
 import { DeviceTreeSection } from "../fleet/DeviceTreeSection";
+import { hostDetailLabel, openHostDetail } from "../hosts/hostDetail";
 import { BulkMaintenanceDialog } from "../execbatch/BulkMaintenancePanel";
 import { ProjectSelector } from "./ProjectSelector";
 import { assetInventoryMetadata, inventorySourceLabel, inventoryTargetText, isInventoryOnlyKind } from "./inventory";
@@ -305,13 +308,18 @@ type AssetMoveError = {
   message: string;
 };
 
+// The bulk maintenance dialog lists sessions; it subscribes on its own so the tree does not follow them.
+function BulkMaintenance({ onClose }: { onClose: () => void }) {
+  const sessions = useSessionList();
+  return <BulkMaintenanceDialog sessions={sessions} onClose={onClose} />;
+}
+
 export function AssetTree() {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
   const leftOpen = useUi((s) => s.leftOpen);
   const leftWidth = useUi((s) => s.leftWidth);
   const activeProject = useUi((s) => s.activeProject);
-  const sessions = useUi((state) => state.sessions);
   const [bulkMaintenanceOpen, setBulkMaintenanceOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [detailedIdentity, setDetailedIdentity] = useState(loadDetailedAssetIdentity);
@@ -747,9 +755,13 @@ export function AssetTree() {
   const buildRowMenu = (asset: Asset): MenuItem[] => {
     const connectable = !isInventoryOnlyKind(asset.kind);
     const canConnectAs = !WEB && asset.kind === "ssh" && Boolean(asset.host?.trim());
+    const detailLabel = hostDetailLabel(asset.kind);
     const main: MenuItem[] = [
       ...(connectable
         ? [{ kind: "item" as const, label: "连接", icon: <IconPlay size={13} />, onSelect: () => void connectAsset(asset) }]
+        : []),
+      ...(detailLabel
+        ? [{ kind: "item" as const, label: detailLabel, icon: <IconServer size={13} />, onSelect: () => openHostDetail(asset.id) }]
         : []),
       { kind: "item", label: "编辑", icon: <IconEdit size={13} />, onSelect: () => setEditingAsset(asset) },
     ];
@@ -1147,7 +1159,7 @@ export function AssetTree() {
       {snippetsOpen && <SnippetsPanel onClose={() => setSnippetsOpen(false)} />}
       {importing && <SshImportDialog onClose={() => setImporting(false)} />}
       {inventoryOpen && <InventoryDialog onClose={() => setInventoryOpen(false)} />}
-      {bulkMaintenanceOpen && <BulkMaintenanceDialog sessions={sessions} onClose={() => setBulkMaintenanceOpen(false)} />}
+      {bulkMaintenanceOpen && <BulkMaintenance onClose={() => setBulkMaintenanceOpen(false)} />}
       <ContextMenu
         state={
           rowMenu
@@ -2030,6 +2042,12 @@ export function AssetEditor({
   const [startupCommand, setStartupCommand] = useState(
     typeof initial?.options?.startupCommand === "string" ? (initial.options.startupCommand as string) : "",
   );
+  const [pasteUploadDir, setPasteUploadDir] = useState(
+    typeof initial?.options?.[PASTE_UPLOAD_DIR_KEY] === "string" ? (initial.options[PASTE_UPLOAD_DIR_KEY] as string) : "",
+  );
+  const [pasteTerminalDir, setPasteTerminalDir] = useState(
+    typeof initial?.options?.[PASTE_TERMINAL_DIR_KEY] === "string" ? (initial.options[PASTE_TERMINAL_DIR_KEY] as string) : "",
+  );
   const [terminalMode, setTerminalMode] = useState<"auto" | "durable" | "regular">(
     initial?.options?.terminalMode === "regular" || initial?.options?.terminalMode === "durable"
       ? initial.options.terminalMode
@@ -2067,6 +2085,8 @@ export function AssetEditor({
   }, [host, port, groupKind]);
 
   const advancedPanelId = useId();
+  const pasteUploadDirId = useId();
+  const pasteTerminalDirId = useId();
   const terminalModeId = useId();
   const IconPreview = assetIcon(groupKind, icon);
   const hostInputId = useId();
@@ -2298,6 +2318,16 @@ export function AssetEditor({
     else delete options.env;
     if (forwardAgent) options.forwardAgent = true;
     else delete options.forwardAgent;
+    const pasteDirs = validatePasteDirOptions(pasteUploadDir, pasteTerminalDir);
+    if (groupKind === "ssh" && pasteDirs.ok && pasteDirs.uploadDir) {
+      options[PASTE_UPLOAD_DIR_KEY] = pasteDirs.uploadDir;
+      if (pasteDirs.terminalDir && pasteDirs.terminalDir !== pasteDirs.uploadDir) {
+        options[PASTE_TERMINAL_DIR_KEY] = pasteDirs.terminalDir;
+      } else delete options[PASTE_TERMINAL_DIR_KEY];
+    } else {
+      delete options[PASTE_UPLOAD_DIR_KEY];
+      delete options[PASTE_TERMINAL_DIR_KEY];
+    }
     return options;
   };
 
@@ -2319,6 +2349,14 @@ export function AssetEditor({
       const parsedEnv = parseEnvText(envText);
       if (!parsedEnv.ok) {
         setSaveError(parsedEnv.error);
+        return;
+      }
+    }
+    if (kind === "asset" && groupKind === "ssh") {
+      const pasteDirs = validatePasteDirOptions(pasteUploadDir, pasteTerminalDir);
+      if (!pasteDirs.ok) {
+        setAdvancedOpen(true);
+        setSaveError(pasteDirs.error);
         return;
       }
     }
@@ -2595,7 +2633,7 @@ export function AssetEditor({
                 }}
               >
                 {Object.entries(KIND_LABEL)
-                  .filter(([k]) => (k !== "local" || !isMobile() || initial?.builtin === true) && (!isInventoryOnlyKind(k) || initial?.kind === k))
+                  .filter(([k]) => (k !== "local" || !isMobileShell() || initial?.builtin === true) && (!isInventoryOnlyKind(k) || initial?.kind === k))
                   .map(([k, label]) => (
                     <option key={k} value={k}>
                       {label}
@@ -3282,6 +3320,39 @@ export function AssetEditor({
                           </div>
                         </div>
                       </div>
+
+                      {groupKind === "ssh" && (
+                        <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
+                          <div className="nx-form-row">
+                            <label className="nx-label" htmlFor={pasteUploadDirId}>
+                              粘贴上传目录
+                            </label>
+                            <input
+                              id={pasteUploadDirId}
+                              className="nx-input font-mono text-[12px]"
+                              value={pasteUploadDir}
+                              onChange={(e) => setPasteUploadDir(e.target.value)}
+                              placeholder="/tmp"
+                            />
+                          </div>
+                          <div className="nx-form-row">
+                            <label className="nx-label" htmlFor={pasteTerminalDirId}>
+                              终端中的对应路径
+                            </label>
+                            <input
+                              id={pasteTerminalDirId}
+                              className="nx-input font-mono text-[12px]"
+                              value={pasteTerminalDir}
+                              onChange={(e) => setPasteTerminalDir(e.target.value)}
+                              placeholder="与上传目录相同"
+                            />
+                            <div className="nx-hint mt-1.5">
+                              ↳ 选填。粘贴或拖入终端的文件经 SFTP 上传到该目录，插入终端的链接改用对应路径；适用于 chroot 的
+                              SFTP 账号（如上传目录填 /，终端中的对应路径填 /tmp）。填写对应路径时必须同时填写上传目录。
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

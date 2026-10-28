@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -18,7 +21,6 @@ var errFakeDurableIdentity = errors.New("fake durable identity changed")
 type fakeDurableProvider struct {
 	mu            sync.Mutex
 	records       map[string]*fakeDurableRecord
-	titles        map[string]string
 	createOptions []base.DurableCreateOptions
 	createCalls   int
 	attachCalls   int
@@ -38,6 +40,8 @@ type fakeDurableRecord struct {
 	rows        uint32
 	floorEvent  uint64
 	floorGrid   uint64
+	title       string
+	revision    uint64
 }
 
 type fakeDurableAttachment struct {
@@ -48,7 +52,7 @@ type fakeDurableAttachment struct {
 }
 
 func newFakeDurableProvider() *fakeDurableProvider {
-	return &fakeDurableProvider{records: make(map[string]*fakeDurableRecord), titles: make(map[string]string)}
+	return &fakeDurableProvider{records: make(map[string]*fakeDurableRecord)}
 }
 
 func (p *fakeDurableProvider) Create(_ context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
@@ -73,22 +77,114 @@ func (p *fakeDurableProvider) Create(_ context.Context, options base.DurableCrea
 	return p.newAttachmentLocked(options.ID, record), nil
 }
 
-func (p *fakeDurableProvider) Attach(_ context.Context, id string) (base.DurableAttachment, error) {
+func fakeIncarnation(identity int) string {
+	return fmt.Sprintf("fake-incarnation-%d", identity)
+}
+
+func (p *fakeDurableProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *fakeDurableProvider) AttachFromWithIdentity(_ context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.attachCalls++
 	if p.attachErr != nil {
 		return nil, p.attachErr
 	}
+	if identity.Incarnation == "" {
+		return nil, durable.ErrInvalidInput
+	}
 	record := p.records[id]
 	if record == nil || record.killed > 0 {
 		return nil, durable.ErrNotFound
 	}
+	if identity.Incarnation != fakeIncarnation(record.identity) {
+		return nil, durable.ErrIdentity
+	}
 	attachment := p.newAttachmentLocked(id, record)
-	if len(record.output) > 0 {
-		attachment.reads <- append([]byte(nil), record.output...)
+	if offset < uint64(len(record.output)) {
+		attachment.reads <- append([]byte(nil), record.output[offset:]...)
 	}
 	return attachment, nil
+}
+
+// AttachTailWithIdentity replays the whole recorded output: the fake keeps
+// no history limit worth trimming.
+func (p *fakeDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+func (p *fakeDurableProvider) liveRecordLocked(id string, identity base.DurableIdentity) (*fakeDurableRecord, error) {
+	if identity.Incarnation == "" {
+		return nil, durable.ErrInvalidInput
+	}
+	record := p.records[id]
+	if record == nil || record.killed > 0 {
+		return nil, durable.ErrNotFound
+	}
+	if identity.Incarnation != fakeIncarnation(record.identity) {
+		return nil, durable.ErrIdentity
+	}
+	return record, nil
+}
+
+func (p *fakeDurableProvider) KillWithIdentity(_ context.Context, id string, identity base.DurableIdentity) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.killErr != nil {
+		return p.killErr
+	}
+	record, err := p.liveRecordLocked(id, identity)
+	if err != nil {
+		return err
+	}
+	record.killed++
+	return nil
+}
+
+func (p *fakeDurableProvider) ReadDurableHistory(_ context.Context, id string, identity base.DurableIdentity, request base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record, err := p.liveRecordLocked(id, identity)
+	if err != nil {
+		return base.DurableHistoryChunk{}, err
+	}
+	next := uint64(len(record.output))
+	end := min(request.Before, next)
+	start := end - min(end, uint64(max(request.MaxBytes, 0)))
+	return base.DurableHistoryChunk{
+		Start: start, End: end, HistoryNext: next,
+		Data: append([]byte(nil), record.output[start:end]...),
+	}, nil
+}
+
+// RenameDurable stores the canonical title the way a helper does, rejecting
+// a stale expected revision.
+func (p *fakeDurableProvider) RenameDurable(_ context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record, err := p.liveRecordLocked(options.ID, base.DurableIdentity{Incarnation: options.Incarnation})
+	if err != nil {
+		return base.DurableRenameResult{}, err
+	}
+	if options.ExpectedMetadataRevision != record.revision {
+		return base.DurableRenameResult{}, &base.DurableMetadataConflictError{CurrentTitle: record.title, CurrentMetadataRevision: record.revision}
+	}
+	record.title = options.Title
+	record.revision++
+	return base.DurableRenameResult{Title: record.title, MetadataRevision: record.revision}, nil
+}
+
+// currentDurableIdentity is the identity a descriptor listing would report.
+func (p *fakeDurableProvider) currentDurableIdentity(id string) (base.DurableIdentity, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record := p.records[id]
+	if record == nil {
+		return base.DurableIdentity{}, false
+	}
+	return base.DurableIdentity{Incarnation: fakeIncarnation(record.identity)}, true
 }
 
 func (p *fakeDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
@@ -117,30 +213,16 @@ func (p *fakeDurableProvider) DeleteDurableTranscriptOffsetContext(_ context.Con
 	}
 }
 
-func (p *fakeDurableProvider) DurableTabTitleContext(_ context.Context, tabID string) string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.titles[tabID]
-}
-
-func (p *fakeDurableProvider) PersistDurableTabTitleContext(_ context.Context, tabID, title string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.titles[tabID] = title
-}
-
-func (p *fakeDurableProvider) DeleteDurableTabTitleContext(_ context.Context, tabID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.titles, tabID)
-}
-
 func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurableRecord) *fakeDurableAttachment {
 	channel := newFakeChannel(0)
 	channel.id = id
 	attachment := &fakeDurableAttachment{fakeChannel: channel, provider: p, tabID: id, identity: record.identity}
 	record.attachments = append(record.attachments, attachment)
 	return attachment
+}
+
+func (a *fakeDurableAttachment) Identity() supervisor.Identity {
+	return supervisor.Identity{Incarnation: fakeIncarnation(a.identity)}
 }
 
 func (a *fakeDurableAttachment) Kill(context.Context) error {
@@ -274,9 +356,6 @@ func newDurableTestManager(t *testing.T, provider base.DurableProvider) (*Manage
 	if store, ok := provider.(OwnerScopedDurableTranscriptOffsetStore); ok {
 		config.TranscriptOffsets = store
 	}
-	if store, ok := provider.(OwnerScopedDurableTabTitleStore); ok {
-		config.TabTitles = store
-	}
 	manager := NewManager(config)
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(context.Background(), Asset{ID: ids.New(), Kind: KindLocal})
@@ -288,14 +367,84 @@ func newDurableTestManager(t *testing.T, provider base.DurableProvider) (*Manage
 
 func openDurableTestTab(t *testing.T, manager *Manager, connected *Session, id, channel string, recover bool) TabInfo {
 	t.Helper()
+	options := &DurableTabOptions{Command: []string{"/bin/sh", "-c", "exit 99"}, Recover: recover}
+	if recover {
+		options.Identity = recoveryIdentity(manager, id)
+	}
 	info, err := manager.OpenTab(context.Background(), OpenTabOptions{
 		TabID: id, SessionID: connected.ID, ClientID: "client-a", ChannelID: channel, Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Command: []string{"/bin/sh", "-c", "exit 99"}, Recover: recover},
+		Durable: options,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return info
+}
+
+// recoverCanonicalDurableTestTab recovers a durable tab the way
+// RecoverRemoteDurable does, with the title and revision of the helper's
+// descriptor.
+func recoverCanonicalDurableTestTab(t *testing.T, manager *Manager, connected *Session, id, channel string) TabInfo {
+	t.Helper()
+	descriptors, err := manager.durable.ListDurableDescriptors(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, descriptor := range descriptors {
+		if descriptor.ID != id {
+			continue
+		}
+		identity := base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
+		info, err := manager.OpenTab(context.Background(), OpenTabOptions{
+			TabID: id, SessionID: connected.ID, ClientID: "client-a", ChannelID: channel, Cols: 80, Rows: 24,
+			Durable: &DurableTabOptions{
+				Recover: true, Identity: &identity,
+				Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	t.Fatalf("no descriptor for %s", id)
+	return TabInfo{}
+}
+
+func fakeDescriptorTitle(t *testing.T, provider *fakeDurableProvider, id string) string {
+	t.Helper()
+	descriptors, err := provider.ListDurableDescriptors(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, descriptor := range descriptors {
+		if descriptor.ID == id {
+			return descriptor.Title
+		}
+	}
+	return ""
+}
+
+// recoveryIdentity returns the identity production recovery reads from the
+// provider's descriptor listing, or nil when the provider cannot report one.
+func recoveryIdentity(manager *Manager, id string) *base.DurableIdentity {
+	if source, ok := manager.durable.(interface {
+		currentDurableIdentity(string) (base.DurableIdentity, bool)
+	}); ok {
+		identity, found := source.currentDurableIdentity(id)
+		if !found {
+			return nil
+		}
+		return &identity
+	}
+	if manager.durable == nil {
+		return nil
+	}
+	descriptor, found, err := findDurableDescriptor(context.Background(), manager.durable, id)
+	if err != nil || !found || descriptor.Incarnation == "" {
+		return nil
+	}
+	return &base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
 }
 
 func TestDurableStableIDAndRPCAttachReplayDedup(t *testing.T) {
@@ -396,7 +545,7 @@ func TestDurableManagerRestartRecoveryDetachSurvivalAndExplicitKill(t *testing.T
 	if create, attach, killed := provider.counts(); create != 1 || attach != 2 || killed != 1 {
 		t.Fatalf("explicit close counts: create=%d attach=%d killed=%d", create, attach, killed)
 	}
-	if _, err := provider.Attach(context.Background(), info.ID); !errors.Is(err, durable.ErrNotFound) {
+	if _, err := provider.AttachWithIdentity(context.Background(), info.ID, base.DurableIdentity{Incarnation: fakeIncarnation(1)}); !errors.Is(err, durable.ErrNotFound) {
 		t.Fatalf("killed durable tab attach error = %v", err)
 	}
 }
@@ -412,15 +561,15 @@ func TestDurableTabTitleSurvivesRestartAndDiesWithTab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renamed.Title != "构建机" || provider.DurableTabTitleContext(context.Background(), info.ID) != "构建机" {
-		t.Fatalf("rename info = %+v, persisted = %q", renamed, provider.DurableTabTitleContext(context.Background(), info.ID))
+	if renamed.Title != "构建机" || fakeDescriptorTitle(t, provider, info.ID) != "构建机" {
+		t.Fatalf("rename info = %+v, helper title = %q", renamed, fakeDescriptorTitle(t, provider, info.ID))
 	}
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	second, _, _, secondSession := newDurableTestManager(t, provider)
-	recovered := openDurableTestTab(t, second, secondSession, info.ID, "b-1", true)
+	recovered := recoverCanonicalDurableTestTab(t, second, secondSession, info.ID, "b-1")
 	if recovered.Title != "构建机" {
 		t.Fatalf("recovered title = %q", recovered.Title)
 	}
@@ -434,8 +583,8 @@ func TestDurableTabTitleSurvivesRestartAndDiesWithTab(t *testing.T) {
 	if err := second.CloseTab(info.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.DurableTabTitleContext(context.Background(), info.ID); got != "" {
-		t.Fatalf("title after kill = %q", got)
+	if descriptors, err := provider.ListDurableDescriptors(context.Background()); err != nil || len(descriptors) != 0 {
+		t.Fatalf("descriptors after kill = %+v, %v", descriptors, err)
 	}
 }
 
@@ -461,9 +610,13 @@ func TestDurableOpenErrorsNeverFallBackToVolatilePTY(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			manager, connector, _, connected := newDurableTestManager(t, test.provider)
+			options := &DurableTabOptions{Recover: test.recover}
+			if test.recover {
+				options.Identity = &base.DurableIdentity{Incarnation: fakeIncarnation(1)}
+			}
 			_, err := manager.OpenTab(context.Background(), OpenTabOptions{
 				TabID: "error-tab", SessionID: connected.ID, ChannelID: "a-1", Cols: 80, Rows: 24,
-				Durable: &DurableTabOptions{Recover: test.recover},
+				Durable: options,
 			})
 			if !errors.Is(err, test.wantError) || connector.transport(0).channelCount() != 0 {
 				t.Fatalf("error=%v volatile channels=%d", err, connector.transport(0).channelCount())
@@ -514,6 +667,73 @@ func TestDurableCloseRemoteAlreadyEndedStillRemovesLocalTab(t *testing.T) {
 	}
 }
 
+// An unreachable helper must not turn a close into "unsupported": the kill
+// fails as a disconnect with the tab kept, and detaching it needs no remote
+// call, so the client can still drop its attachment and leave the process
+// running for a later takeover.
+func TestDurableCloseUnreachableKeepsTabAndDetachStillSucceeds(t *testing.T) {
+	provider := newFakeDurableProvider()
+	manager, _, _, connected := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, manager, connected, "unreachable", "a-1", false)
+	provider.mu.Lock()
+	provider.killErr = durable.ErrUnavailable
+	provider.mu.Unlock()
+
+	err := manager.CloseTab(info.ID)
+	if !errors.Is(err, durable.ErrUnavailable) {
+		t.Fatalf("kill on an unreachable helper = %v, want durable.ErrUnavailable", err)
+	}
+	if got := IPCError(err); got.Code != ipc.CodeDisconnected || !strings.Contains(got.Message, "无法访问") {
+		t.Fatalf("kill error = %s %q, want a disconnected code with the unreachable reason", got.Code, got.Message)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatalf("failed kill unregistered the tab: %v", err)
+	}
+	if tab.Info().Exited {
+		t.Fatal("failed kill marked the durable tab exited")
+	}
+
+	if err := manager.BackgroundTab(context.Background(), info.ID, "client-a"); err != nil {
+		t.Fatalf("detach while the helper is unreachable = %v, want nil", err)
+	}
+	if subscribers := tab.Info().Subscribers; subscribers != 0 {
+		t.Fatalf("detached tab keeps %d subscribers", subscribers)
+	}
+	if _, _, killed := provider.counts(); killed != 0 {
+		t.Fatalf("detach killed %d processes", killed)
+	}
+	if _, err := manager.Tab(info.ID); err != nil {
+		t.Fatalf("detach on a connected session dropped the background tab: %v", err)
+	}
+}
+
+// Once a session has stopped reconnecting, detaching its last viewer drops
+// the local record without any remote call, so the process stays on the host
+// and a later connection can recover the same ID instead of hitting the stale
+// record.
+func TestDurableDetachOnFailedSessionReleasesLocalRecord(t *testing.T) {
+	provider := newFakeDurableProvider()
+	manager, _, _, connected := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, manager, connected, "stale-record", "a-1", false)
+	provider.mu.Lock()
+	provider.killErr = durable.ErrUnavailable
+	provider.mu.Unlock()
+	connected.mu.Lock()
+	connected.status = StatusFailed
+	connected.mu.Unlock()
+
+	if err := manager.BackgroundTab(context.Background(), info.ID, "client-a"); err != nil {
+		t.Fatalf("detach on a failed session = %v, want nil", err)
+	}
+	if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("stale durable record remains after detach: %v", err)
+	}
+	if _, _, killed := provider.counts(); killed != 0 {
+		t.Fatalf("releasing the local record killed %d processes", killed)
+	}
+}
+
 func infoExited(manager *Manager, id string) bool {
 	tab, err := manager.Tab(id)
 	return err == nil && tab.Info().Exited
@@ -551,7 +771,7 @@ func TestDurableGeneratedIDAndConcurrentRecoveryAndClose(t *testing.T) {
 			<-start
 			_, err := manager.OpenTab(context.Background(), OpenTabOptions{
 				TabID: info.ID, SessionID: connected.ID, ClientID: "client", ChannelID: fmt.Sprintf("recover-%d", index),
-				Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+				Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true, Identity: recoveryIdentity(manager, info.ID)},
 			})
 			results <- err
 		}(index)

@@ -1,0 +1,400 @@
+@layer components {
+  .nx-rail {
+    display: flex;
+    width: 48px;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 9px 0;
+    overflow-y: clip;
+    min-height: 0;
+    border-right: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
+    background: var(--nx-bg-canvas);
+  }
+
+  .nx-rail > * {
+    flex-shrink: 0;
+  }
+
+  .nx-rail-sep {
+    width: 24px;
+    height: 1px;
+    margin: 6px 0;
+    flex-shrink: 0;
+    background: var(--nx-border-strong);
+  }
+
+  .nx-rail-btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--nx-fg-tertiary);
+    cursor: pointer;
+  }
+  .nx-rail-btn:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 80%, transparent);
+    color: var(--nx-fg-emphasis);
+  }
+  .nx-rail-btn.is-active {
+    background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+    color: var(--color-blue-300);
+  }
+  .nx-rail-btn.is-active::before {
+    content: "";
+    position: absolute;
+    left: -7px;
+    top: 50%;
+    width: 3px;
+    height: 16px;
+    transform: translateY(-50%);
+    border-radius: 0 3px 3px 0;
+    background: var(--color-accent);
+  }
+  .nx-rail-btn.is-unavailable {
+    color: var(--color-neutral-700);
+  }
+  .nx-rail-btn.is-unavailable:hover {
+    color: var(--nx-fg-tertiary);
+  }
+  .nx-rail-off {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 5px;
+    height: 5px;
+    border-radius: 9999px;
+    background: var(--color-amber-400);
+  }
+  .nx-rail-count {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 9999px;
+    background: var(--color-green-600);
+    color: white;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 14px;
+    text-align: center;
+  }
+
+  .nx-menu {
+    position: fixed;
+    z-index: 80;
+    min-width: 188px;
+    max-width: min(340px, calc(100vw - 16px));
+    padding: 4px;
+    border: 1px solid var(--nx-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--nx-bg-pane);
+    box-shadow: var(--shadow-pop);
+    user-select: none;
+  }
+
+  .nx-menu-title {
+    margin-bottom: 3px;
+    padding: 6px 10px 5px;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    color: var(--nx-fg-tertiary);
+    font-size: calc(10.5px * var(--nx-ui-text-factor));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nx-menu-item {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 6px 10px;
+    border: none;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--nx-fg-emphasis);
+    font-size: calc(12.5px * var(--nx-ui-text-factor));
+    text-align: left;
+    cursor: default;
+  }
+
+  .nx-menu-item:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--nx-fg-strong);
+  }
+
+  .nx-menu-item.is-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-red-500) 20%, transparent);
+    color: var(--color-red-300);
+  }
+
+  .nx-menu-item:disabled {
+    color: var(--color-neutral-600);
+  }
+
+  .nx-menu-icon {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    color: var(--nx-fg-tertiary);
+  }
+
+  .nx-menu-item:hover:not(:disabled) .nx-menu-icon {
+    color: var(--color-blue-300);
+  }
+
+  .nx-menu-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nx-menu-hint {
+    flex-shrink: 0;
+    color: var(--nx-fg-tertiary);
+    font-family: var(--font-mono);
+    font-size: calc(10.5px * var(--nx-ui-text-factor));
+  }
+
+  .nx-menu-sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: color-mix(in srgb, var(--color-neutral-800) 80%, transparent);
+  }
+
+  .nx-menu-group {
+    padding: 6px 10px 3px;
+    color: var(--nx-fg-tertiary);
+    font-size: calc(10.5px * var(--nx-ui-text-factor));
+  }
+
+  .nx-menu-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .nx-menu-trailing {
+    display: flex;
+    flex: 0 0 30px;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    margin-right: 2px;
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--nx-fg-tertiary);
+    cursor: default;
+  }
+
+  .nx-menu-trailing:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-red-500) 20%, transparent);
+    color: var(--color-red-300);
+  }
+
+  .nx-menu-trailing:disabled {
+    color: var(--color-neutral-600);
+  }
+
+  .nx-menu-accel {
+    flex-shrink: 0;
+    margin-left: auto;
+    padding-left: 14px;
+    color: var(--nx-fg-tertiary);
+    font-family: var(--font-mono);
+    font-size: calc(10.5px * var(--nx-ui-text-factor));
+  }
+
+  .nx-menu-arrow {
+    flex-shrink: 0;
+    color: var(--nx-fg-tertiary);
+    font-size: calc(14px * var(--nx-ui-text-factor));
+    line-height: 1;
+  }
+
+  .nx-submenu {
+    position: absolute;
+    top: -5px;
+    left: 100%;
+    z-index: 1;
+    min-width: 176px;
+    max-width: 340px;
+    margin-left: 2px;
+    padding: 4px;
+    border: 1px solid var(--nx-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--nx-bg-pane);
+    box-shadow: var(--shadow-pop);
+  }
+
+  .nx-submenu.is-flip {
+    right: 100%;
+    left: auto;
+    margin-right: 2px;
+    margin-left: 0;
+  }
+
+  .nx-menu,
+  .nx-submenu {
+    max-height: calc(100dvh - 16px - var(--nx-safe-bottom));
+    overflow-y: auto;
+  }
+
+  .nx-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--nx-scrim);
+    backdrop-filter: blur(2px);
+  }
+
+  .nx-modal {
+    display: flex;
+    width: 100%;
+    max-height: 100%;
+    flex-direction: column;
+    overflow: auto;
+    border: 1px solid var(--nx-border-strong);
+    border-radius: var(--radius-xl);
+    background: var(--nx-bg-pane);
+    box-shadow: var(--shadow-pop);
+  }
+
+  /* Three standard dialog sizes: small for confirmations and short forms,
+     medium for lists and longer forms, large for multi-step workflows. The
+     large size keeps a minimum height so a workflow does not jump in size as
+     it fills in. */
+  .nx-modal-sm {
+    max-width: 440px;
+  }
+
+  .nx-modal-md {
+    max-width: 640px;
+  }
+
+  .nx-modal-lg {
+    max-width: 960px;
+    min-height: min(640px, 100%);
+  }
+
+  .nx-modal-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 18px;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+  }
+
+  .nx-modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 16px 18px;
+    overflow-y: auto;
+  }
+
+  .nx-modal-footer {
+    display: flex;
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    background: color-mix(in srgb, var(--color-neutral-950) 30%, transparent);
+  }
+
+  .nx-command-input {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    background: transparent;
+    padding: 15px 18px;
+    color: var(--nx-fg-strong);
+    font-size: calc(13.5px * var(--nx-ui-text-factor));
+    outline: none;
+  }
+  .nx-command-input::placeholder {
+    color: var(--nx-fg-tertiary);
+  }
+
+  .nx-command-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 10px;
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    color: var(--nx-fg);
+    font-size: calc(12.5px * var(--nx-ui-text-factor));
+    text-align: left;
+    cursor: pointer;
+  }
+  .nx-command-item:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
+  }
+  .nx-command-item.is-active {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--nx-fg-strong);
+  }
+
+  .nx-command-modal {
+    max-height: min(100%, calc(100dvh - 132px - var(--nx-kb-inset, 0px)));
+  }
+
+  .nx-command-modal [role="listbox"] {
+    flex: 1 1 auto;
+    min-height: 72px;
+  }
+
+  .nx-segment {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-neutral-950) 55%, transparent);
+  }
+  .nx-segment-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: var(--radius-sm);
+    color: var(--nx-fg-soft);
+    font-size: calc(11.5px * var(--nx-ui-text-factor));
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .nx-segment-item:hover {
+    color: var(--nx-fg-emphasis);
+  }
+  .nx-segment-item.is-active {
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
+  }
+}

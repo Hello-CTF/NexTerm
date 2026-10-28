@@ -163,7 +163,6 @@ beforeEach(async () => {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -201,7 +200,7 @@ describe("terminal stream parse-backlog badge", () => {
     act(() => {
       (harness.xtermProps?.onAttachInfo as ((info: unknown) => void) | undefined)?.({
         tabId: "kernel-1",
-        controller: "me",
+        sizeOwner: "me",
         subscribers: 1,
         viewers: 1,
         exited: false,

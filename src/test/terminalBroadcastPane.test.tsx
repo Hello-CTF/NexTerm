@@ -153,7 +153,6 @@ function seedWorkspace(): void {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -181,7 +180,6 @@ function addSecondWorkspace(): void {
           },
         ],
         activePaneId: "p4",
-        splitRatio: 0.5,
       },
     ],
   });
@@ -380,7 +378,7 @@ describe("terminal command broadcast", () => {
     expect(writtenTabIds()).toEqual(["kernel-1"]);
   });
 
-  it("does not broadcast from a terminal controlled by another device", async () => {
+  it("broadcasts from a terminal whose size another device owns", async () => {
     enableBroadcast(["t1", "t2"]);
     mounted = mountPane();
     await flush();
@@ -390,7 +388,7 @@ describe("terminal command broadcast", () => {
       handler?.({
         tabId: "kernel-1",
         version: 2,
-        controller: "other",
+        sizeOwner: "other",
         subscribers: 2,
         viewers: 2,
         exited: false,
@@ -400,8 +398,8 @@ describe("terminal command broadcast", () => {
       });
     });
     sendInput("ls\n");
-    await flush();
-    expect(harness.write).not.toHaveBeenCalled();
+    await flushUntil(() => harness.write.mock.calls.length === 2);
+    expect(harness.write).toHaveBeenCalledTimes(2);
   });
 
   it("shows backend production targets and retries preflight and writes with the confirmed hashes", async () => {
@@ -584,7 +582,6 @@ describe("broadcast enable flow", () => {
             },
           ],
           activePaneId: "p1",
-          splitRatio: 0.5,
         },
       ],
     });

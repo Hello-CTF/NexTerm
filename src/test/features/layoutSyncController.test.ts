@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { paneIdsInOrder } from "../../app/splitTree";
 import { sharedLayoutKey, type PersistedLayout } from "../../app/layoutMerge";
 import type { AiBoard, AppTab, Pane, SqlDraft, Workspace } from "../../app/store";
 import { resetUnreadTabs, setTabUnread } from "../../app/unreadStore";
@@ -78,7 +79,6 @@ function workspace(id: string, assetId: string, panes: Pane[]): Workspace {
     assetId,
     panes,
     activePaneId: panes[0]?.id ?? id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -93,14 +93,13 @@ function database(id: string): Workspace {
     assetId: `asset-${id}`,
     panes: [pane(`${id}-pane`, [])],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
   };
 }
 
 function layout(workspaces: Workspace[], aiBoards: Record<string, AiBoard> = {}): PersistedLayout {
   return {
-    v: 3,
+    v: 4,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,
@@ -222,7 +221,7 @@ describe("two-client layout controller", () => {
     a.store.getState().setActivePane("pane-a", "ws-a");
     a.store.setState((state) => ({
       leftOpen: false,
-      leftMode: "files",
+      leftMode: "credentials",
       rightOpen: false,
       leftWidth: 400,
       rightWidth: 600,
@@ -246,7 +245,7 @@ describe("two-client layout controller", () => {
     expect(a.store.getState().workspaces[0].panes[0].activeTabId).toBe("a2");
     expect(a.store.getState()).toMatchObject({
       leftOpen: false,
-      leftMode: "files",
+      leftMode: "credentials",
       rightOpen: false,
       leftWidth: 400,
       rightWidth: 600,
@@ -356,7 +355,7 @@ describe("two-client layout controller", () => {
     expect(a.store.getState().broadcast?.generation ?? 0).toBeGreaterThan(generation);
   });
 
-  it("maps identical assets with different random IDs and never creates a third pane", async () => {
+  it("maps identical assets with different random IDs into one workspace without losing a pane", async () => {
     const a = await openClient();
     const b = await openClient();
     const local = workspace("ws-a", "asset", [
@@ -381,13 +380,18 @@ describe("two-client layout controller", () => {
     await Promise.all([a.layout.flushLayout(), b.layout.flushLayout()]);
     const saved = serverLayout();
     expect(saved.workspaces).toHaveLength(1);
-    expect(saved.workspaces[0].panes).toHaveLength(2);
+    // The first panes are the same pane opened twice and merge; the second panes are different
+    // splits from each device and both stay in the tree.
+    expect(saved.workspaces[0].panes).toHaveLength(3);
+    expect(paneIdsInOrder(saved.workspaces[0].layoutTree!).sort()).toEqual(
+      saved.workspaces[0].panes.map((item) => item.id).sort(),
+    );
     expect(allTabIds(saved).sort()).toEqual(["a1", "a2", "b1", "b2"]);
     expect(Object.keys(saved.aiBoards)).toEqual([saved.workspaces[0].id]);
     expect(saved.aiBoards[saved.workspaces[0].id].tabs.map((tab) => tab.id).sort()).toEqual(["ai-a", "ai-b"]);
   });
 
-  it("reads v2, writes v3, and protects dirty files and SQL drafts from remote close", async () => {
+  it("reads v2, rewrites it as v4, and protects dirty files and SQL drafts from remote close", async () => {
     const files = workspace("files", "asset-files", [pane("files-pane", [file("clean", "/clean.txt"), file("dirty", "/dirty.txt")])]);
     const db = database("db");
     const base = layout([files, db]);
@@ -399,11 +403,13 @@ describe("two-client layout controller", () => {
     a.editor.setFileEditorDirty("session", "/dirty.txt", true);
     a.store.getState().updateSqlDraft("db", sqlDraft());
     await a.layout.flushLayout();
-    expect(server.putCalls).toBe(0);
+    // A legacy document is rewritten in the current format on first read.
+    expect(server.putCalls).toBe(1);
+    expect(serverLayout().v).toBe(4);
 
     b.store.setState({ workspaces: [], aiBoards: {} });
     await b.layout.flushLayout();
-    expect(serverLayout().v).toBe(3);
+    expect(serverLayout().v).toBe(4);
     a.layout.onRemoteChange({ revision: server.revision });
     await vi.waitFor(() => expect(a.store.getState().workspaces.map((item) => item.id).sort()).toEqual(["db", "files"]));
 
@@ -458,5 +464,114 @@ describe("two-client layout controller", () => {
     await a.layout.flushLayout();
     expect(server.putCalls).toBe(0);
     resetUnreadTabs();
+  });
+});
+
+describe("split trees across two clients", () => {
+  function treeOf(client: Client, workspaceId = "ws") {
+    const serialized = client.layout.serializeLayout(client.store.getState()) as PersistedLayout;
+    return serialized.workspaces.find((item) => item.id === workspaceId)?.layoutTree;
+  }
+
+  async function pull(client: Client): Promise<void> {
+    const before = server.getCalls;
+    client.layout.onRemoteChange({ revision: server.revision });
+    await vi.waitFor(() => expect(server.getCalls).toBeGreaterThan(before));
+    await vi.waitFor(() => expect(sharedLayoutKey(client.layout.serializeLayout(client.store.getState()))).toBe(sharedLayoutKey(serverLayout())));
+  }
+
+  it("converges concurrent splits of different panes into one tree holding every pane", async () => {
+    const base = layout([workspace("ws", "asset", [pane("p0", [terminal("base")])])]);
+    server.revision = 1;
+    server.data = JSON.stringify(base);
+    const a = await openClient();
+    const b = await openClient();
+
+    const right = a.store.getState().splitPane("right", "p0", "ws")!;
+    a.store.getState().addTab(terminal("from-a"), right);
+    const down = b.store.getState().splitPane("down", "p0", "ws")!;
+    b.store.getState().addTab(terminal("from-b"), down);
+
+    await a.layout.flushLayout();
+    await b.layout.flushLayout();
+    await pull(a);
+
+    const saved = serverLayout();
+    const tree = saved.workspaces[0].layoutTree!;
+    expect(paneIdsInOrder(tree).sort()).toEqual(["p0", down, right].sort());
+    expect(allTabIds(saved).sort()).toEqual(["base", "from-a", "from-b"]);
+    expect(treeOf(a)).toEqual(treeOf(b));
+    expect(treeOf(a)).toEqual(tree);
+  });
+
+  it("carries a divider moved on one client to the other without reshaping", async () => {
+    const base = layout([workspace("ws", "asset", [pane("p0", [terminal("base")])])]);
+    server.revision = 1;
+    server.data = JSON.stringify(base);
+    const a = await openClient();
+    const b = await openClient();
+    const right = a.store.getState().splitPane("right", "p0", "ws")!;
+    a.store.getState().addTab(terminal("side"), right);
+    await a.layout.flushLayout();
+    await pull(b);
+
+    const splitId = treeOf(b)!.id;
+    b.store.getState().setSplitRatio(splitId, 0.3, "ws");
+    await b.layout.flushLayout();
+    await pull(a);
+
+    const tree = treeOf(a)!;
+    expect(tree.type === "split" && tree.ratio).toBe(0.3);
+    expect(paneIdsInOrder(tree)).toEqual(["p0", right]);
+  });
+
+  it("resets a legacy split layout to one pane per workspace, says so once, and rewrites it as v4", async () => {
+    const legacy = {
+      ...layout([
+        { ...workspace("ws", "asset", [pane("upper", [terminal("t1")]), pane("lower", [terminal("t2")], "t2")]), title: "prod" },
+        { ...workspace("solo", "asset-solo", [pane("only", [terminal("t3")])]), title: "solo" },
+      ]),
+      v: 3,
+    };
+    server.revision = 1;
+    server.data = JSON.stringify(legacy);
+    const a = await openClient();
+    const notice = await import("../../app/layoutResetNotice");
+
+    const ws = a.store.getState().workspaces.find((item) => item.id === "ws")!;
+    expect(ws.panes.map((item) => item.id)).toEqual(["upper"]);
+    expect(ws.panes[0].tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+    expect(notice.layoutResetNotice()).toEqual(["prod"]);
+
+    await a.layout.flushLayout();
+    expect(serverLayout().v).toBe(4);
+    expect(allTabIds(serverLayout()).sort()).toEqual(["t1", "t2", "t3"]);
+
+    notice.dismissLayoutResetNotice();
+    expect(notice.layoutResetNotice()).toBeNull();
+    const b = await openClient();
+    const freshNotice = await import("../../app/layoutResetNotice");
+    expect(freshNotice.layoutResetNotice()).toBeNull();
+    expect(b.store.getState().workspaces.find((item) => item.id === "ws")?.panes).toHaveLength(1);
+  });
+
+  it("neither reads nor overwrites a layout saved in a newer format", async () => {
+    server.revision = 4;
+    server.data = JSON.stringify({ ...layout([workspace("ws", "asset", [pane("p0", [terminal("future")])])]), v: 5 });
+    const a = await openClient();
+    const notice = await import("../../app/layoutResetNotice");
+    expect(a.store.getState().workspaces).toEqual([]);
+    expect(notice.newerLayoutNotice()).toBe(5);
+
+    a.store.setState({ workspaces: [workspace("local", "asset-local", [pane("lp", [terminal("mine")])])] });
+    await a.layout.flushLayout();
+    expect(server.putCalls).toBe(0);
+    expect(serverLayout().v).toBe(5);
+
+    // Once the account layout is readable again, sync resumes and the notice clears.
+    server.revision = 5;
+    server.data = JSON.stringify(layout([workspace("ws", "asset", [pane("p0", [terminal("now")])])]));
+    a.layout.onRemoteChange({ revision: 5 });
+    await vi.waitFor(() => expect(notice.newerLayoutNotice()).toBeNull());
   });
 });

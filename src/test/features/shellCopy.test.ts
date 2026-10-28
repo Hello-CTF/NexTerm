@@ -40,7 +40,6 @@ function ws(panes: Pane[]): Workspace {
     title: "workspace",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }

@@ -1,0 +1,7 @@
+# kind: question
+---
+This utility will walk you through creating a package.json file.
+It only covers the most common items, and tries to guess sensible defaults.
+
+Press ^C at any time to quit.
+package name: (demo) 

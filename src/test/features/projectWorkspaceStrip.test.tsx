@@ -11,7 +11,7 @@ import {
   type ProjectFocus,
   type ProjectInventory,
 } from "../../app/projectFocus";
-import type { SessionRuntimeInfo, Workspace } from "../../app/store";
+import { useUi, type SessionRuntimeInfo, type Workspace } from "../../app/store";
 import type { Asset, AssetGroup } from "../../ipc/commands";
 
 function group(id: string, parentId: string | null = null): AssetGroup {
@@ -52,7 +52,6 @@ function workspace(id: string, assetId?: string): Workspace {
     assetKind: "ssh",
     panes: [{ id: `${id}-pane`, tabs: [tab], activeTabId: tab.id }],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -87,7 +86,6 @@ function renderStrip(activeProject: ProjectFocus, onSelect = vi.fn(), onReorder?
     activeProject,
     projectInventory: inventory,
     groups: inventory.groups,
-    sessions,
     onSelect,
     onReorder,
   }));
@@ -101,6 +99,7 @@ function stripWorkspaceIds(): string[] {
 
 beforeEach(() => {
   document.body.replaceChildren();
+  useUi.setState({ sessions });
 });
 
 afterEach(() => {

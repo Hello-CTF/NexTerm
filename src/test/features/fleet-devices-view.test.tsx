@@ -4,7 +4,7 @@
 // device://status online/offline events flip the online state in real time.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, setSelectValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 async function flushUntil(predicate: () => boolean): Promise<void> {
   if (predicate()) {
@@ -1152,7 +1152,7 @@ describe("Device management view - enrollment code issuance", () => {
 
     const doneButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成");
     click(doneButton as HTMLButtonElement);
-    await waitFor(() => {
+    await waitForRendered(() => {
       expect(document.body.textContent).not.toContain("fleet-code-1");
     });
   });
@@ -1170,7 +1170,7 @@ describe("Device management view - enrollment code issuance", () => {
     await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成") as HTMLButtonElement);
-    await waitFor(() => {
+    await waitForRendered(() => {
       expect(document.body.textContent).not.toContain("fleet-code-1");
     });
 
@@ -1329,6 +1329,22 @@ describe("Device management view - revocation and autostart", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
     const autostartCall = calls.find((c) => c.url === "/fleet/devices/d-1/autostart");
     expect(autostartCall?.body).toEqual({ desired: false });
+  });
+
+  it("offers no autostart for a desktop exposing its local terminals", async () => {
+    const desk = {
+      ...AGENT_DEVICE, id: "d-desk", name: "desk-01", kind: "local-helper",
+      agent: { ...AGENT_DEVICE.agent, desired_autostart: false, service_state: { installed: false, enabled: false, active: false, last_reconcile_at: NOW - 60_000 } },
+    };
+    route(fleetHandler({ devices: { devices: [desk] } }));
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("desk-01") ?? false);
+
+    const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("desk-01"));
+    expandDetails(card);
+    expect(card?.textContent).toContain("后台服务");
+    expect(card?.querySelector('input[aria-label="随登录自动启动"]')).toBeNull();
   });
 
   it("confirms that offline autostart changes only save desired state", async () => {

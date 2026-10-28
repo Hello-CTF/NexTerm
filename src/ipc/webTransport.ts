@@ -151,10 +151,9 @@ function connect(entry: ChannelEntry) {
   if (entry.disposed) return;
   let ws: WebSocket;
   try {
-    // Servers that do not know the input subprotocol select "nexterm", and input then stays on the HTTP path.
     ws = new WebSocket(
       wsUrl(`/ws/channel/${encodeURIComponent(entry.ch.id)}?client=${encodeURIComponent(clientId())}`),
-      [INPUT_SUBPROTOCOL, "nexterm"],
+      [INPUT_SUBPROTOCOL],
     );
   } catch {
     scheduleReconnect(entry);
@@ -185,9 +184,9 @@ function connect(entry: ChannelEntry) {
 
 /**
  * Sends terminal input for the tab bound to this channel. Writes made in the same task are merged into one frame and
- * flushed in a microtask, so a lone keystroke is not delayed. While the socket is open and has negotiated input it
- * carries every byte, in order; when the socket buffer is full the rest waits in the queue (it never overtakes the
- * buffered frames over HTTP). Only when the socket is not open or not negotiated does `http` carry the bytes, one
+ * flushed in a microtask, so a lone keystroke is not delayed. While the socket is open it carries every byte, in
+ * order; when the socket buffer is full the rest waits in the queue (it never overtakes the buffered frames over
+ * HTTP). Only when the socket is not open does `http` carry the bytes, one
  * request in flight per channel, and later writes wait for it so the two paths never reorder. Frames already handed to a
  * socket that then drops are not resent: the server may have applied them and keystrokes must not be double-applied
  * (accepted trade-off: such in-flight frames can be lost). Queued input beyond 4 MiB is dropped with a warning.
@@ -223,9 +222,9 @@ export function sendChannelInput(
   });
 }
 
-function negotiatedSocket(entry: ChannelEntry): WebSocket | null {
+function openSocket(entry: ChannelEntry): WebSocket | null {
   const ws = entry.ws;
-  return ws && ws.readyState === 1 && ws.protocol === INPUT_SUBPROTOCOL ? ws : null;
+  return ws && ws.readyState === 1 ? ws : null;
 }
 
 function mergeChunks(chunks: Uint8Array[]): Uint8Array {
@@ -253,7 +252,7 @@ function flushInput(entry: ChannelEntry) {
       input.batches.shift();
       continue;
     }
-    const ws = negotiatedSocket(entry);
+    const ws = openSocket(entry);
     const tab = new TextEncoder().encode(batch.tabId);
     if (ws && tab.length > 0 && tab.length < 256) {
       let socketFailed = false;

@@ -717,222 +717,91 @@ func TestAuthorizationGenerationNeverReusedAcrossRestartAndSyncRewrite(t *testin
 	}
 }
 
-func TestAuthorizationGenerationMigrationPreservesSettingTimestamp(t *testing.T) {
-	database := dbtest.NewFixture(t).OpenStore(t)
-	ctx := ipc.WithUserID(context.Background(), "owner-generation-migration")
-	manager, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindSessionExec}); err != nil {
-		t.Fatal(err)
-	}
-	key := guard.DeviceGrantsSettingKeyForUser(ctx)
-	raw, found, err := database.SettingGet(ctx, key)
-	if err != nil || !found {
-		t.Fatalf("grant setting = %t, %v", found, err)
-	}
-	var records map[string]guard.DeviceGrant
-	if err := json.Unmarshal([]byte(raw), &records); err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(records)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := database.SettingSet(ctx, key, string(encoded)); err != nil {
-		t.Fatal(err)
-	}
-	readTimestamp := func() int64 {
-		var row store.Setting
-		if err := database.GORM().WithContext(ctx).Where(store.Setting{Key: key}).First(&row).Error; err != nil {
-			t.Fatal(err)
-		}
-		return row.UpdatedAt
-	}
-	before := readTimestamp()
-	manager, err = guard.NewGrants(ctx, database, nil, guard.WithShared(false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	permission := guard.Config{Mode: guard.ReadWrite}
-	call := p1Call("call-generation-migration", "exec_commands", `{"commands":["touch /tmp/generation-migration"]}`)
-	ruling := guard.ClassifyTool(call.Name, call.Args, permission)
-	decision := manager.EvaluateResource(ctx, permission, ruling, nil, "asset-a", call.Name, "job-generation-migration", resourceForCall(call))
-	if decision.Authorization == nil || decision.Authorization.Generation == "" {
-		t.Fatalf("migration did not bind a generation: %+v", decision.Authorization)
-	}
-	if after := readTimestamp(); after != before {
-		t.Fatalf("generation migration changed LWW timestamp: before=%d after=%d", before, after)
-	}
-	other, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := other.RevalidateAuthorization(ctx, decision.Authorization); err != nil {
-		t.Fatalf("migrated generation was not shared across managers: %v", err)
-	}
-}
-
-func TestAuthorizationGenerationGORMFailureRetryUsesPersistedState(t *testing.T) {
-	for _, failure := range []string{"update_error", "missing_row"} {
-		t.Run(failure, func(t *testing.T) {
-			database := dbtest.NewFixture(t).OpenStore(t)
-			ctx := ipc.WithUserID(context.Background(), "owner-generation-retry-"+failure)
-			manager, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := manager.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindTerminalWrite}); err != nil {
-				t.Fatal(err)
-			}
-			key := guard.DeviceGrantsSettingKeyForUser(ctx)
-			raw, found, err := database.SettingGet(ctx, key)
-			if err != nil || !found {
-				t.Fatalf("grant setting = %t, %v", found, err)
-			}
-			var records map[string]guard.DeviceGrant
-			if err := json.Unmarshal([]byte(raw), &records); err != nil {
-				t.Fatal(err)
-			}
-			encoded, err := json.Marshal(records)
-			if err != nil {
-				t.Fatal(err)
-			}
-			raw = string(encoded)
-			if err := database.SettingSet(ctx, key, raw); err != nil {
-				t.Fatal(err)
-			}
-			manager, err = guard.NewGrants(ctx, database, nil, guard.WithShared(false))
-			if err != nil {
-				t.Fatal(err)
-			}
-			evaluate := func(evalCtx context.Context) guard.Decision {
-				return manager.Evaluate(evalCtx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "write"), nil, "asset-a", "send_keys", "run-generation-retry")
-			}
-			var decision guard.Decision
-			switch failure {
-			case "update_error":
-				canceled, cancel := context.WithCancel(ctx)
-				cancel()
-				decision = evaluate(canceled)
-			case "missing_row":
-				result := database.GORM().WithContext(ctx).Where(store.Setting{Key: key}).Delete(&store.Setting{})
-				if result.Error != nil || result.RowsAffected != 1 {
-					t.Fatalf("delete setting: rows=%d err=%v", result.RowsAffected, result.Error)
-				}
-				decision = evaluate(ctx)
-				if err := database.SettingSet(ctx, key, raw); err != nil {
-					t.Fatal(err)
-				}
-				if err := manager.Reload(ctx); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if failure == "update_error" && decision.Action != guard.ActionDeny {
-				t.Fatalf("failed generation write decision = %+v", decision)
-			}
-			if failure == "missing_row" && decision.Action == guard.ActionAllow {
-				t.Fatalf("missing setting row admitted stale generation: %+v", decision)
-			}
-
-			decision = evaluate(ctx)
-			if decision.Action != guard.ActionAllow || decision.Authorization == nil {
-				t.Fatalf("generation write retry = %+v", decision)
-			}
-			fresh, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := fresh.RevalidateAuthorization(ctx, decision.Authorization); err != nil {
-				t.Fatalf("retry used a generation absent from persistent storage: %v", err)
-			}
-		})
-	}
-}
-
-func TestAuthorizationGenerationMigrationConflictDoesNotReviveGORMRecords(t *testing.T) {
+// TestLegacyGrantRecordsAreNotMigratedDatabase pins the 1.3.0 contract on a real
+// store: grant and rule records without a generation (the pre-1.3.0 format) are
+// not migrated on evaluation, never authorize a call, keep their row and LWW
+// timestamp untouched, and stay listed as legacy.
+func TestLegacyGrantRecordsAreNotMigratedDatabase(t *testing.T) {
 	for _, kind := range []string{"grant", "rule"} {
 		t.Run(kind, func(t *testing.T) {
 			database := dbtest.NewFixture(t).OpenStore(t)
-			ctx := ipc.WithUserID(context.Background(), "owner-generation-conflict-"+kind)
+			ctx := ipc.WithUserID(context.Background(), "owner-legacy-"+kind)
 			manager, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
 			if err != nil {
 				t.Fatal(err)
 			}
-			var key, legacy, revoked string
+			var key string
 			switch kind {
 			case "grant":
 				if _, err := manager.Grant(ctx, "asset-a", []guard.GrantKind{guard.GrantKindTerminalWrite}); err != nil {
 					t.Fatal(err)
 				}
 				key = guard.DeviceGrantsSettingKeyForUser(ctx)
-				raw, found, err := database.SettingGet(ctx, key)
-				if err != nil || !found {
-					t.Fatalf("grant setting = %t, %v", found, err)
-				}
-				var records map[string]guard.DeviceGrant
-				if err := json.Unmarshal([]byte(raw), &records); err != nil {
-					t.Fatal(err)
-				}
-				encoded, err := json.Marshal(records)
-				if err != nil {
-					t.Fatal(err)
-				}
-				legacy = string(encoded)
-				revoked = `{}`
 			case "rule":
 				if _, err := manager.AddRule(ctx, "asset-a", "write_file", "/var/log/**", time.Time{}); err != nil {
 					t.Fatal(err)
 				}
 				key = guard.GrantRulesSettingKeyForUser(ctx)
-				raw, found, err := database.SettingGet(ctx, key)
-				if err != nil || !found {
-					t.Fatalf("rule setting = %t, %v", found, err)
+			}
+			raw, found, err := database.SettingGet(ctx, key)
+			if err != nil || !found {
+				t.Fatalf("%s setting = %t, %v", kind, found, err)
+			}
+			// Re-encoding through the exported shape drops the generation, producing the pre-1.3.0 format.
+			var legacy []byte
+			if kind == "grant" {
+				var records map[string]guard.DeviceGrant
+				if err := json.Unmarshal([]byte(raw), &records); err != nil {
+					t.Fatal(err)
 				}
+				legacy, err = json.Marshal(records)
+			} else {
 				var records []guard.GrantRule
 				if err := json.Unmarshal([]byte(raw), &records); err != nil {
 					t.Fatal(err)
 				}
-				encoded, err := json.Marshal(records)
-				if err != nil {
-					t.Fatal(err)
-				}
-				legacy = string(encoded)
-				revoked = `[]`
+				legacy, err = json.Marshal(records)
 			}
-			if err := database.SettingSet(ctx, key, legacy); err != nil {
+			if err != nil {
 				t.Fatal(err)
 			}
+			if err := database.SettingSet(ctx, key, string(legacy)); err != nil {
+				t.Fatal(err)
+			}
+			readRow := func() store.Setting {
+				var row store.Setting
+				if err := database.GORM().WithContext(ctx).Where(store.Setting{Key: key}).First(&row).Error; err != nil {
+					t.Fatal(err)
+				}
+				return row
+			}
+			before := readRow()
 			manager, err = guard.NewGrants(ctx, database, nil, guard.WithShared(false))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := database.SettingSet(ctx, key, revoked); err != nil {
-				t.Fatal(err)
+			var decision guard.Decision
+			if kind == "grant" {
+				decision = manager.Evaluate(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "write"), nil, "asset-a", "send_keys", "run-legacy")
+			} else {
+				decision = manager.EvaluateResource(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindWriteFS, "write"), nil, "asset-a", "write_file", "run-legacy", guard.Resource{Action: "write_file", Path: "/var/log/app.log"})
 			}
-			evaluate := func(candidate *guard.Grants) guard.Decision {
-				if kind == "grant" {
-					return candidate.Evaluate(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "write"), nil, "asset-a", "send_keys", "run-generation-conflict")
+			if decision.Action == guard.ActionAllow || decision.Authorization != nil {
+				t.Fatalf("legacy %s authorized a call: %+v", kind, decision)
+			}
+			if after := readRow(); after.Value != before.Value || after.UpdatedAt != before.UpdatedAt {
+				t.Fatalf("evaluation migrated the legacy %s: before=%+v after=%+v", kind, before, after)
+			}
+			if kind == "grant" {
+				listed, err := manager.List(ctx)
+				if err != nil || len(listed) != 1 || !listed[0].Legacy {
+					t.Fatalf("legacy grant listing = %+v, %v", listed, err)
 				}
-				return candidate.EvaluateResource(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindWriteFS, "write"), nil, "asset-a", "write_file", "run-generation-conflict", guard.Resource{Action: "write_file", Path: "/var/log/app.log"})
-			}
-			if decision := evaluate(manager); decision.Action == guard.ActionAllow {
-				t.Fatalf("stale %s was admitted after revocation: %+v", kind, decision)
-			}
-			if err := manager.Reload(ctx); err != nil {
-				t.Fatal(err)
-			}
-			raw, found, err := database.SettingGet(ctx, key)
-			if err != nil || !found || raw != revoked {
-				t.Fatalf("persisted %s after conflict = %q, %t, %v", kind, raw, found, err)
-			}
-			fresh, err := guard.NewGrants(ctx, database, nil, guard.WithShared(false))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if decision := evaluate(fresh); decision.Action == guard.ActionAllow {
-				t.Fatalf("fresh manager admitted revoked %s: %+v", kind, decision)
+			} else {
+				rules, err := manager.Rules(ctx)
+				if err != nil || len(rules) != 1 || !rules[0].Legacy {
+					t.Fatalf("legacy rule listing = %+v, %v", rules, err)
+				}
 			}
 		})
 	}

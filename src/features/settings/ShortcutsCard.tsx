@@ -1,7 +1,8 @@
-import { useId, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   KEYBINDING_ACTIONS,
   bindingConflicts,
+  defaultBindingFor,
   captureBindingForAction,
   formatBinding,
   resetAllKeybindings,
@@ -13,17 +14,32 @@ import {
   type KeybindingActionId,
 } from "../../app/keybindings";
 import { setSelectionAutoCopy, useInputPrefs } from "../../app/preferences";
+import type { SettingsPanelId } from "./settingsIndex";
+import { isMac } from "../../app/platform";
+import { WEB } from "../../ipc/env";
+import { formatKeySequence } from "../terminal/terminalKeys";
+import { terminalShortcutConflicts, type TerminalShortcutConflict } from "../terminal/terminalInput/shortcutConflicts";
 import { IconChevronDown, IconChevronRight, IconClose, IconCommand, IconEdit, IconRefresh } from "../../ui/icons";
 
-export function ShortcutsCard() {
+function describeWithheldInput(conflict: TerminalShortcutConflict): string {
+  if (conflict.bytes === null) return conflict.meaning ?? "无（终端默认不发送）";
+  const bytes = formatKeySequence(conflict.bytes);
+  return conflict.meaning ? `${bytes}（${conflict.meaning}）` : bytes;
+}
+
+export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n: number } | null }) {
   const bindings = useKeybindings();
   const prefs = useInputPrefs();
   const [captureFor, setCaptureFor] = useState<KeybindingActionId | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const advancedPanelId = useId();
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  useEffect(() => {
+    if (reveal?.panel === "shortcuts-advanced") setAdvancedOpen(true);
+  }, [reveal]);
 
   const conflicts = bindingConflicts(bindings);
+  const terminalConflicts = terminalShortcutConflicts(bindings, isMac(), WEB);
   const conflictPeers = new Map<string, string>();
   for (const conflict of conflicts) {
     const [first, second] = conflict.actions;
@@ -124,7 +140,7 @@ export function ShortcutsCard() {
             <IconClose size={11} />
           </button>
         )}
-        {bindings[action.id] !== action.defaultBinding && (
+        {bindings[action.id] !== defaultBindingFor(action) && (
           <button
             type="button"
             className="nx-icon-btn nx-icon-btn-sm shrink-0"
@@ -169,6 +185,34 @@ export function ShortcutsCard() {
           。使用相同快捷键时，排在前面的动作生效。
         </p>
       )}
+      {terminalConflicts.length > 0 && (
+        <div className="mt-4 border-t border-neutral-800/60 pt-3.5" data-testid="terminal-shortcut-conflicts">
+          <div className="text-[12.5px] text-neutral-200">与终端按键的冲突</div>
+          <p className="nx-hint mt-0.5 mb-2">
+            终端获得焦点时，下列组合键交给应用处理，终端里运行的程序收不到它们；需要把按键留给终端程序时，清除或改绑对应快捷键。
+          </p>
+          <div className="overflow-x-auto">
+            <table className="nx-table text-[11.5px]" aria-label="与终端按键的冲突">
+              <thead>
+                <tr>
+                  <th scope="col">按键</th>
+                  <th scope="col">应用动作</th>
+                  <th scope="col">终端程序原本收到</th>
+                </tr>
+              </thead>
+              <tbody>
+                {terminalConflicts.map((conflict) => (
+                  <tr key={conflict.chord} data-terminal-conflict={conflict.action.id}>
+                    <td className="whitespace-nowrap font-mono">{conflict.chord}</td>
+                    <td>{conflict.action.label}</td>
+                    <td>{describeWithheldInput(conflict)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
         <button
           type="button"
@@ -188,7 +232,7 @@ export function ShortcutsCard() {
           <div id={advancedPanelId} className="mt-2">
             <label className="flex cursor-pointer items-start gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-[12.5px] text-neutral-200">选中自动复制</div>
+                <div className="text-[12.5px] text-neutral-200" data-setting="copy-on-select">选中自动复制</div>
                 <p className="nx-hint mt-0.5">
                   在终端里选中文字后立即复制到剪贴板，成功或失败都会弹出提示；默认关闭。
                   浏览器可能要求剪贴板权限，被拒绝时会如实提示。

@@ -15,7 +15,9 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
@@ -53,6 +55,14 @@ type ProductionConfig struct {
 	RestartFunc func(context.Context, string) error
 	// ScreenInsets is injected by the desktop via the wails Screen API; nil on the server.
 	ScreenInsets func(context.Context) (ScreenInsets, error)
+	// SystemNotifier is injected by the desktop; nil on the server, whose
+	// browser clients show their own notifications.
+	SystemNotifier SystemNotifier
+	// LocalHelper runs local terminals through a detached helper process so
+	// they survive the app; it applies to the desktop and to a single-account
+	// server. LocalHelperExecutable overrides the binary started as the helper.
+	LocalHelper           bool
+	LocalHelperExecutable string
 }
 
 func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production, returnErr error) {
@@ -69,10 +79,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	if config.Config.Logger == nil {
 		config.Config.Logger = slog.Default()
-	}
-	legacyTasksDir := filepath.Join(config.DataDir, "tasks")
-	if _, err := os.Stat(legacyTasksDir); err == nil {
-		config.Config.Logger.Info("legacy persistent task data directory preserved; tasks are no longer loaded", "path", legacyTasksDir)
 	}
 	if config.Config.Version == "" {
 		config.Config.Version = version.Version
@@ -117,7 +123,8 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		}
 		config.Config.Logger.Info("credential vault was not initialized; completed passwordless initialization automatically")
 	}
-	profileManager, err := profiles.NewManager(ctx, database, profiles.WithShared(config.Desktop))
+	privacyManager := privacy.NewManager(database, filepath.Join(config.DataDir, "ai-privacy", "models"), config.Desktop, loadPrivacyEngine)
+	profileManager, err := profiles.NewManager(ctx, database, profiles.WithShared(config.Desktop), profiles.WithClientOptions(provider.WithPrivacy(privacyManager.Exchange)))
 	if err != nil {
 		return nil, err
 	}
@@ -162,15 +169,30 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	} else {
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}
+	stateRules := newStateRulesRuntime(database, config.Config.Logger, loadStateRulesIdentity(config.DataDir, config.Config.Logger), !shared)
+	localHelper := newProductionLocalHelper(config, config.Desktop || owner.OpenAccess(ctx), config.Config.Logger, config.Config.Events, stateRules.localSource())
+	if localHelper != nil {
+		stateRules.bindLocal(localHelper.SyncStateRules)
+	}
+	var localDurable session.LocalDurableSource
+	var localTerminalMode func(context.Context) (string, error)
+	if localHelper != nil {
+		localDurable = localHelper
+		// The setting chooses between the helper and the app; without a
+		// helper there is nothing to choose.
+		localTerminalMode = newProductionLocalTerminalMode(database)
+	}
 	helperService := &productionHelperService{ssh: sshResolver}
-	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events, helpers: helperService}
+	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events, helpers: helperService, rules: stateRules}
 	sessionManager = session.NewManager(session.Config{
 		Connector:            connector,
 		Terminals:            config.Terminals,
 		DurableResolver:      durableResolver,
+		LocalDurable:         localDurable,
+		LocalTerminalMode:    localTerminalMode,
 		TerminalModeResolver: newProductionTerminalModeResolver(database),
+		DurableHistoryLimit:  newProductionDurableHistoryLimit(database),
 		TranscriptOffsets:    durableTranscriptOffsets{database: database},
-		TabTitles:            durableTabTitles{database: database},
 		Transcripts:          transcriptWriter,
 		Commands:             commandLogSink{database: database, logger: config.Config.Logger},
 		Logger:               config.Config.Logger,
@@ -222,7 +244,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if dockerService == nil {
 		dockerService = newProductionDockerService(sessionManager, database)
 	}
-	syncService := syncservice.New(database, credentialVault, syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithGatewayAuthKey(os.Getenv("NEXTERM_GATEWAY_AUTH")), syncservice.WithEvents(config.Config.Events), syncservice.WithProfilesReload(profileManager.Reload), syncservice.WithLogger(config.Config.Logger))
+	deviceInstall := loadDeviceInstall(config.DataDir, config.Config.Logger)
+	syncService := syncservice.New(database, credentialVault, syncservice.WithDeviceInstall(deviceInstall), syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithGatewayAuthKey(os.Getenv("NEXTERM_GATEWAY_AUTH")), syncservice.WithEvents(config.Config.Events), syncservice.WithProfilesReload(profileManager.Reload), syncservice.WithLogger(config.Config.Logger))
+	syncService.SetStateRulesChanged(func(ctx context.Context) { stateRules.changed(ipc.OwnerID(ctx)) })
 	if config.Desktop && sshConnector != nil {
 		sshConnector.device.Store(&DeviceConnectorConfig{
 			Dial: syncService.Remote().DialDeviceBridge,
@@ -253,6 +277,31 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 					return listed.Agent.StateDigest, nil
 				}
 				return "", ipc.NewError(ipc.CodeNotFound, "设备不存在或已吊销")
+			},
+			RemoteSessions: func(ctx context.Context, waitMS int) (session.AggregateList, error) {
+				// The linked account decides which devices this desktop sees;
+				// the server lists only that account's devices, in one request.
+				link, err := syncService.LinkGet(ctx)
+				if err != nil {
+					return session.AggregateList{}, err
+				}
+				if !link.IsConfigured() {
+					return session.AggregateList{Hosts: []session.AggregateHostStatus{}, Sessions: []session.AggregateSession{}, Complete: true}, nil
+				}
+				raw, err := syncService.Remote().ListSessions(ctx, waitMS)
+				if err != nil {
+					return session.AggregateList{}, err
+				}
+				var list session.AggregateList
+				if err := json.Unmarshal(raw, &list); err != nil {
+					return session.AggregateList{}, ipc.WrapError(ipc.CodeInternal, "服务器返回的会话列表无法解析", err)
+				}
+				self := ""
+				if services.LocalHelperExposure != nil {
+					// This desktop's own local terminals are listed locally.
+					self = services.LocalHelperExposure.Status().DeviceID
+				}
+				return withoutDevice(list, self), nil
 			},
 		})
 	}
@@ -324,7 +373,10 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	})
 	fsUploads.resumeStaging = forwardRuntime.ResumeUploadStaging
 	services = ProductionServices{
-		Store: database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
+		LocalHelper:   localHelper,
+		stateRules:    stateRules,
+		deviceInstall: deviceInstall,
+		Store:         database, Vault: credentialVault, Sync: syncService, Profiles: profileManager, Privacy: privacyManager,
 		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
 		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
@@ -344,9 +396,11 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		aiRetention:    newAIRetentionComponent(database, config.RetentionInterval),
 		Events:         config.Config.Events,
 	}
+	services.LocalHelperExposure = newProductionLocalHelperExposure(config.Desktop, config.DataDir, config.Config.Version, localHelper, database, credentialVault, syncService, config.Config.Logger)
 	services.channelBridge = newTerminalBridge(sessionManager, streams)
 	services.retryDeferredUpgrade = dataUpgrade.retry
 	services.ScreenInsets = config.ScreenInsets
+	services.SystemNotifier = config.SystemNotifier
 	if executableErr == nil {
 		services.Update = &update.Manager{
 			CurrentVersion: config.Config.Version,
@@ -369,6 +423,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		return nil, err
 	}
 	services.Skills = skillsManager
+	syncService.SetSkills(skillsManager)
 	if err := composeAIRuntime(ctx, &services); err != nil {
 		services.closeAIRuntime()
 		return nil, err
@@ -386,6 +441,13 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		return nil, err
 	}
 	production.Services.terminalCommands.helpers = helperService
+	if config.Desktop {
+		var reconcileExposure func()
+		if services.LocalHelperExposure != nil {
+			reconcileExposure = services.LocalHelperExposure.Reconcile
+		}
+		syncService.SetLinkChanged(onSyncLinkChanged(reconcileExposure, production.Services.sessionAggregate))
+	}
 	return production, nil
 }
 
@@ -436,18 +498,17 @@ func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrad
 		"layout_existing", report.Layout.Existing,
 		"layout_conflicts", report.Layout.Conflicts,
 		"cron_assigned", report.AI.CronJobsAssigned,
-		"cron_quarantined", report.AI.CronJobsQuarantined,
+		"cron_disabled", report.AI.CronJobsDisabled,
 		"runs_assigned", report.AI.RunsAssigned,
 		"messages_assigned", report.AI.MessagesAssigned,
 		"run_events_assigned", report.AI.RunEventsAssigned,
 		"hitl_runs_assigned", report.AI.HitlRunsAssigned,
 		"checkpoints_assigned", report.AI.CheckpointsAssigned,
-		"unattributed", report.AI.Unattributed,
+		"ai_unattributed", report.AI.Unattributed,
 		"ai_settings_migrated", aiSettings.Migrated,
 		"ai_settings_existing", aiSettings.Existing,
 		"ai_settings_conflicts", aiSettings.Conflicts,
 		"ai_settings_tombstoned", aiSettings.Tombstoned,
-		"ai_settings_ledger_entries", report.AISettings.LedgerEntries,
 	}
 	if report.DeferredNoActiveSuperadmin {
 		c.logger.Warn("data upgrade deferred until an active superadmin is created", values...)
@@ -455,12 +516,14 @@ func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrad
 		return
 	}
 	conflicts := report.Ownership.Conflicts + report.Layout.Conflicts + aiSettings.Conflicts
-	if conflicts > 0 || report.AI.CronJobsQuarantined > 0 || report.AI.Unattributed > 0 || aiSettings.Tombstoned > 0 {
+	// Only what this run found is surfaced as a warning; rows already left
+	// ownerless by an earlier run (ai_unattributed) are logged as a count.
+	if conflicts > 0 || report.AI.CronJobsDisabled > 0 || aiSettings.Tombstoned > 0 {
 		c.logger.Warn("data upgrade completed with preserved or unattended entries", values...)
 		c.emit(ctx, "数据升级存在未自动处理的冲突或孤立记录；原始记录已保留，请查看服务器日志")
 		return
 	}
-	changed := report.Ownership.Assigned+report.Layout.Copied+aiSettings.Migrated+aiSettings.Tombstoned+report.AISettings.LedgerEntries > 0 || report.AI.Changed()
+	changed := report.Ownership.Assigned+report.Layout.Copied+aiSettings.Migrated > 0 || report.AI.Changed()
 	if changed {
 		c.logger.Info("completed data upgrade", values...)
 	}
@@ -487,6 +550,13 @@ func (s *channelOwnerBinaryStream) Close() error {
 	err := s.BinaryStream.Close()
 	s.sessions.UnregisterChannelOwner(s.channelID, s.generation)
 	return err
+}
+
+// jsonStream returns the underlying channel when it also carries in-band JSON
+// control frames; the wrapper does not claim ipc.JSONStream itself.
+func (s *channelOwnerBinaryStream) jsonStream() (ipc.JSONStream, bool) {
+	stream, ok := s.BinaryStream.(ipc.JSONStream)
+	return stream, ok
 }
 
 func (s *channelOwnerBinaryStream) CloseGracefully() error {

@@ -7,6 +7,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/localhelper"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
@@ -32,21 +34,47 @@ func IPCError(err error) *ipc.Error {
 	if errors.As(err, &hostKeyErr) {
 		return hostKeyIPCError(hostKeyErr)
 	}
+	var localUnavailable *localhelper.UnavailableError
+	if errors.As(err, &localUnavailable) {
+		return ipc.WrapError(ipc.Code("local_helper_unavailable"), localUnavailable.Error(), err)
+	}
 	switch {
+	// A failed replacement wraps whatever stopped it; its stage decides
+	// what the user is told, so it comes first.
+	case errors.Is(err, supervisor.ErrHelperReplaceFailed):
+		detail := HelperReplaceFailureFor(err)
+		if detail == nil {
+			detail = &HelperReplaceFailure{Cause: err.Error()}
+		}
+		return ipc.WrapError(ipc.Code("helper_replace_failed"), helperReplaceMessage(detail), err).WithDetail(detail)
 	case errors.Is(err, ErrForbidden):
 		return ipc.WrapError(ipc.CodeForbidden, "无权访问该会话", err)
-	case errors.Is(err, ErrNotController):
-		return ipc.WrapError(ipc.CodeNotController, userMessage(err), err)
+	case errors.Is(err, base.ErrStalePrompt):
+		return ipc.WrapError(ipc.Code("stale_prompt"), userMessage(err), err)
+	case errors.Is(err, durable.ErrLimit):
+		return ipc.WrapError(ipc.Code("durable_limit"), userMessage(err), err)
 	case errors.Is(err, ErrSessionNotFound), errors.Is(err, ErrTabNotFound), errors.Is(err, durable.ErrNotFound):
 		return ipc.WrapError(ipc.CodeNotFound, userMessage(err), err)
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected), errors.Is(err, ErrSessionClosed), errors.Is(err, ErrTabClosed):
 		return ipc.WrapError(ipc.CodeDisconnected, userMessage(err), err)
 	case errors.Is(err, ErrDurableDisabled):
 		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
+	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
+		wrapped := ipc.WrapError(ipc.Code("helper_upgrade_required"), userMessage(err), err)
+		if detail := LegacyHelperDetailFor(err); detail != nil {
+			return wrapped.WithDetail(detail)
+		}
+		return wrapped
+	case errors.Is(err, supervisor.ErrClientUpgradeRequired):
+		return ipc.WrapError(ipc.Code("client_upgrade_required"), userMessage(err), err)
 	case errors.Is(err, ErrAmbiguousDurable):
 		return ipc.WrapError(ipc.CodeBadParam, userMessage(err), err)
-	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
+	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported):
 		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
+	// durable.ErrUnavailable is transient: the host or its helper cannot be
+	// reached right now, which is a disconnect, not a missing capability.
+	case errors.Is(err, durable.ErrUnavailable):
+		return ipc.WrapError(ipc.CodeDisconnected, userMessage(err), err)
 	case errors.Is(err, ErrInvalidSize), errors.Is(err, ErrHidden), errors.Is(err, ErrInvalidOptions), errors.Is(err, ErrInvalidTitle), errors.Is(err, ErrTabExists), errors.Is(err, durable.ErrInvalidInput), errors.Is(err, durable.ErrAlreadyExists), errors.Is(err, hub.ErrInvalidChannel):
 		return ipc.WrapError(ipc.CodeBadParam, "参数错误: "+userMessage(err), err)
 	case errors.Is(err, context.DeadlineExceeded):
@@ -55,6 +83,10 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.CodeInternal, userMessage(err), err)
 	case errors.Is(err, ErrRecoveryOverrun):
 		return ipc.WrapError(ipc.Code("recovery_overrun"), userMessage(err), err)
+	case errors.Is(err, ErrDurableUnrecoverable):
+		return ipc.WrapError(ipc.Code("durable_unrecoverable"), userMessage(err), err)
+	case errors.Is(err, durable.ErrGenerationMismatch):
+		return ipc.WrapError(ipc.Code("durable_helper_restarted"), userMessage(err), err)
 	default:
 		return ipc.NormalizeError(err)
 	}
@@ -66,8 +98,8 @@ func userMessage(err error) string {
 		return connectErr.UserMessage()
 	}
 	switch {
-	case errors.Is(err, ErrNotController):
-		return "当前没有该终端的控制权，请先获取控制权"
+	case errors.Is(err, base.ErrStalePrompt):
+		return "屏幕上的提问已变化，选项未发送"
 	case errors.Is(err, ErrSessionNotFound):
 		return "会话不存在或已关闭，请刷新后重试"
 	case errors.Is(err, ErrTabNotFound):
@@ -78,12 +110,27 @@ func userMessage(err error) string {
 		return "终端标签页已关闭，请重新打开"
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected):
 		return "会话已断开，请重新连接"
+	case errors.Is(err, supervisor.ErrLegacyHelperRunning):
+		return "主机上仍在运行旧版持久终端组件，当前版本无法接入其中的持久终端。它们会继续在旧版组件中运行，不会被自动结束或迁移；" +
+			"可在持久终端组件窗口查看其中的会话数并确认升级，升级会结束这些会话"
+	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
+		return "主机上的 helper 或 nexterm-agent 版本过旧，需要升级后才能使用持久终端；其中已有的会话不会被结束"
+	case errors.Is(err, supervisor.ErrClientUpgradeRequired):
+		return "主机上的 helper 比当前客户端新，请先升级客户端"
 	case errors.Is(err, ErrDurableDisabled):
 		return "该 SSH 资产已设置为普通终端，不能新建持久终端；已有持久终端可从后台会话恢复"
+	case errors.Is(err, durable.ErrLimit):
+		return "持久终端组件已达到会话数量或创建频率上限，已拒绝新建终端；请结束不用的后台会话后重试（" + err.Error() + "）"
 	case errors.Is(err, ErrAmbiguousDurable):
 		return "多个已连接主机存在同一持久终端，请指定会话后重试"
-	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
+	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported):
 		return "当前会话不支持此操作"
+	case errors.Is(err, durable.ErrUnavailable):
+		message := "持久终端组件暂时无法访问：主机连接可能已断开或不可达，或 helper 暂时不可用；请重新连接后重试"
+		if detail := err.Error(); detail != durable.ErrUnavailable.Error() {
+			message += "（" + detail + "）"
+		}
+		return message
 	case errors.Is(err, ErrInvalidSize):
 		return "终端尺寸无效"
 	case errors.Is(err, ErrHidden):
@@ -98,6 +145,10 @@ func userMessage(err error) string {
 		return "该资产已有活动会话，请先断开现有会话"
 	case errors.Is(err, ErrRecoveryOverrun):
 		return "终端输出积压过长，早期输出已无法恢复"
+	case errors.Is(err, ErrDurableUnrecoverable):
+		return "该持久终端没有记录会话标识，无法恢复；请关闭后新建终端"
+	case errors.Is(err, durable.ErrGenerationMismatch):
+		return "主机上的 helper 已重启，该持久终端的进程已结束；请关闭后新建终端"
 	case errors.Is(err, durable.ErrNotFound):
 		return "资源不存在或已删除"
 	case errors.Is(err, context.DeadlineExceeded):

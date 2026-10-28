@@ -164,6 +164,7 @@ var consumerCommandRequestProjections = map[string][]consumerRequestField{
 	"fs_extract":                      {{name: "SessionID"}, {name: "Path"}},
 	"fs_list":                         {{name: "SessionID"}, {name: "Path"}},
 	"fs_mkdir":                        {{name: "SessionID"}, {name: "Path"}},
+	"fs_mkdir_private":                {{name: "SessionID"}, {name: "Path"}},
 	"fs_pack_download":                {{name: "SessionID"}, {name: "RemotePath"}, {name: "LocalPath"}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}},
 	"fs_read":                         {{name: "SessionID"}, {name: "Path"}, {name: "MaxBytes", optional: true}},
 	"fs_read_range":                   {{name: "SessionID"}, {name: "Path"}, {name: "Offset"}, {name: "MaxBytes", optional: true}},

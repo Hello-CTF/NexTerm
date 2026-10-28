@@ -15,6 +15,7 @@ import {
   type PersistedLayout,
 } from "../../app/layoutMerge";
 import type { AiBoard, AppTab, Pane, Workspace } from "../../app/store";
+import { paneIdsInOrder, type SplitNode } from "../../app/splitTree";
 
 function terminal(id: string, tabId = `kernel-${id}`): AppTab {
   return { id, kind: "terminal", title: id, sessionId: "session", tabId, closable: true };
@@ -33,14 +34,13 @@ function workspace(id: string, assetId: string, panes: Pane[]): Workspace {
     assetId,
     panes,
     activePaneId: panes[0]?.id ?? id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
 
 function layout(workspaces: Workspace[], aiBoards: Record<string, AiBoard> = {}): PersistedLayout {
   return {
-    v: 3,
+    v: 4,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,
@@ -77,7 +77,66 @@ describe("three-way shared layout merge", () => {
     expect(sharedLayoutKey(fromA)).toBe(sharedLayoutKey(fromB));
   });
 
-  it("merges concurrent splits into one second pane and folds legacy overflow", () => {
+  function titled(title: string, extra: Partial<AppTab> = {}): PersistedLayout {
+    return layout([workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title, ...extra }])])]);
+  }
+
+  function mergedTab(base: PersistedLayout | null, local: PersistedLayout, remote: PersistedLayout): AppTab {
+    return mergeLayout(base, local, remote).workspaces[0].panes[0].tabs[0];
+  }
+
+  it("keeps a rename from one device over a concurrent OSC title from the other", () => {
+    const base = titled("终端 1");
+    const renamed = titled("deploy", { renamedByUser: true, customTitleAt: 1_000 });
+    const osc = titled("bash: ~");
+    for (const tab of [mergedTab(base, renamed, osc), mergedTab(base, osc, renamed)]) {
+      expect(tab).toMatchObject({ title: "deploy", renamedByUser: true, customTitleAt: 1_000 });
+    }
+  });
+
+  it("lets a cleared custom title return to the clearing device's title", () => {
+    const base = titled("deploy", { renamedByUser: true, customTitleAt: 1_000 });
+    const cleared = titled("vim", { customTitleAt: 2_000 });
+    const tab = mergedTab(base, base, cleared);
+    expect(tab.title).toBe("vim");
+    expect(tab.renamedByUser).toBeUndefined();
+    expect(tab.customTitleAt).toBe(2_000);
+  });
+
+  it("settles a clear against a concurrent rename on the newer decision, title and flag together", () => {
+    const base = titled("deploy", { renamedByUser: true, customTitleAt: 1_000 });
+    const cleared = titled("vim", { customTitleAt: 2_000 });
+    const renamed = titled("db", { renamedByUser: true, customTitleAt: 3_000 });
+    for (const tab of [mergedTab(base, cleared, renamed), mergedTab(base, renamed, cleared)]) {
+      expect(tab).toMatchObject({ title: "db", renamedByUser: true, customTitleAt: 3_000 });
+    }
+    const laterClear = titled("vim", { customTitleAt: 4_000 });
+    for (const tab of [mergedTab(base, laterClear, renamed), mergedTab(base, renamed, laterClear)]) {
+      expect(tab.title).toBe("vim");
+      expect(tab.renamedByUser).toBeUndefined();
+      expect(tab.customTitleAt).toBe(4_000);
+    }
+  });
+
+  it("does not let a stale rename resurrect a title another device cleared", () => {
+    const stale = titled("deploy", { renamedByUser: true, customTitleAt: 1_000 });
+    const cleared = titled("vim", { customTitleAt: 2_000 });
+    for (const tab of [mergedTab(stale, stale, cleared), mergedTab(null, stale, cleared), mergedTab(null, cleared, stale)]) {
+      expect(tab.title).toBe("vim");
+      expect(tab.renamedByUser).toBeUndefined();
+    }
+  });
+
+  it("settles two concurrent renames on the newest", () => {
+    const base = titled("终端 1");
+    const first = titled("api", { renamedByUser: true, customTitleAt: 1_000 });
+    const second = titled("db", { renamedByUser: true, customTitleAt: 2_000 });
+    for (const tab of [mergedTab(base, first, second), mergedTab(base, second, first)]) {
+      expect(tab).toMatchObject({ title: "db", renamedByUser: true, customTitleAt: 2_000 });
+    }
+  });
+
+  it("keeps both panes of concurrent splits and converges from both perspectives", () => {
     const base = layout([workspace("ws", "asset", [pane("pane-0", [terminal("base")])])]);
     const local = layout([
       workspace("ws", "asset", [pane("pane-0", [terminal("base")]), pane("pane-a", [terminal("tab-a")])]),
@@ -87,10 +146,13 @@ describe("three-way shared layout merge", () => {
     ]);
 
     const merged = mergeLayout(base, local, remote);
-    expect(merged.workspaces[0].panes).toHaveLength(2);
-    expect(merged.workspaces[0].panes[1].tabs.map((tab) => tab.id)).toEqual(["tab-a", "tab-b"]);
-    expect(sharedLayoutKey(merged)).toBe(sharedLayoutKey(mergeLayout(base, remote, local)));
+    const mirrored = mergeLayout(base, remote, local);
+    expect(merged.workspaces[0].panes.map((item) => item.id).sort()).toEqual(["pane-0", "pane-a", "pane-b"]);
+    expect(merged.workspaces[0].panes.flatMap((item) => item.tabs.map((tab) => tab.id)).sort()).toEqual(["base", "tab-a", "tab-b"]);
+    expect(paneIdsInOrder(merged.workspaces[0].layoutTree!).sort()).toEqual(["pane-0", "pane-a", "pane-b"]);
+    expect(sharedLayoutKey(merged)).toBe(sharedLayoutKey(mirrored));
 
+    // Workspaces without a stored tree keep every pane; nothing is capped any more.
     const legacy = layout([
       workspace("ws", "asset", [
         pane("p1", [terminal("t1")]),
@@ -98,9 +160,32 @@ describe("three-way shared layout merge", () => {
         pane("p3", [terminal("t3")]),
       ]),
     ]);
-    const capped = mergeLayout(null, legacy, legacy);
-    expect(capped.workspaces[0].panes).toHaveLength(2);
-    expect(capped.workspaces[0].panes[1].tabs.map((tab) => tab.id)).toEqual(["t2", "t3"]);
+    const kept = mergeLayout(null, legacy, legacy);
+    expect(kept.workspaces[0].panes.map((item) => item.id)).toEqual(["p1", "p2", "p3"]);
+    expect(paneIdsInOrder(kept.workspaces[0].layoutTree!)).toEqual(["p1", "p2", "p3"]);
+  });
+
+  it.each([
+    { kept: "pane-b", added: "pane-a" },
+    { kept: "pane-a", added: "pane-b" },
+  ])("does not resurrect tabs of a pane the other side replaced ($kept -> $added)", ({ kept, added }) => {
+    // Base and local still show `kept`; remote closed it and opened `added` with a new tab.
+    const base = layout([workspace("ws", "asset", [pane(kept, [terminal("t1")])])]);
+    const local = layout([workspace("ws", "asset", [pane(kept, [terminal("t1")])])]);
+    const remote = layout([workspace("ws", "asset", [pane(added, [terminal("t2")])])]);
+    for (const merged of [mergeLayout(base, local, remote), mergeLayout(base, remote, local)]) {
+      expect(merged.workspaces[0].panes.map((item) => item.id)).toEqual([added]);
+      expect(merged.workspaces[0].panes[0].tabs.map((tab) => tab.id)).toEqual(["t2"]);
+    }
+  });
+
+  it("pairs the first panes of two copies opened independently, without a base", () => {
+    const local = layout([workspace("ws-a", "asset", [pane("pane-b", [terminal("t1")])])]);
+    const remote = layout([workspace("ws-b", "asset", [pane("pane-a", [terminal("t2")])])]);
+    for (const merged of [mergeLayout(null, local, remote), mergeLayout(null, remote, local)]) {
+      expect(merged.workspaces[0].panes.map((item) => item.id)).toEqual(["pane-a"]);
+      expect(merged.workspaces[0].panes[0].tabs.map((tab) => tab.id).sort()).toEqual(["t1", "t2"]);
+    }
   });
 
   it("lets close win over concurrent edits in either direction", () => {
@@ -153,7 +238,7 @@ describe("three-way shared layout merge", () => {
     local.aiBoards = { ws: board({ id: "ai-a" }, { id: "ai-b" }) };
     const changed = structuredClone(local);
     changed.leftOpen = false;
-    changed.leftMode = "files";
+    changed.leftMode = "credentials";
     changed.rightOpen = false;
     changed.leftWidth = 500;
     changed.rightWidth = 700;
@@ -180,6 +265,61 @@ describe("persistent reference filtering", () => {
     edited.workspaces[0].panes[0].tabs[0].title = "renamed";
     expect(hasPersistentLayoutChange(runtime, edited)).toBe(true);
     expect(hasPersistentLayoutChange(previous, { ...previous, workspaces: previous.workspaces })).toBe(false);
+  });
+});
+
+describe("split tree merge", () => {
+  const leaf = (paneId: string): SplitNode => ({ type: "leaf", id: `leaf-${paneId}`, paneId });
+  const row = (id: string, a: SplitNode, b: SplitNode, ratio = 0.5): SplitNode => ({ type: "split", id, dir: "row", ratio, a, b });
+
+  function timed(panes: Pane[], layoutTree: SplitNode, layoutUpdatedAt: number): Workspace {
+    return { ...workspace("ws", "asset", panes), layoutTree, layoutUpdatedAt };
+  }
+
+  it("lets the newer reshape win, keeps the other side's ratio edit and stays symmetric", () => {
+    const panes = [pane("p1", [terminal("t1")]), pane("p2", [terminal("t2")])];
+    const base = layout([timed(panes, row("s", leaf("p1"), leaf("p2")), 10)]);
+    // Local only drags the divider; remote swaps the panes later.
+    const local = layout([timed(panes, row("s", leaf("p1"), leaf("p2"), 0.3), 20)]);
+    const remote = layout([timed(panes, row("s", leaf("p2"), leaf("p1")), 30)]);
+
+    const merged = mergeLayout(base, local, remote);
+    const mirrored = mergeLayout(base, remote, local);
+    const tree = merged.workspaces[0].layoutTree!;
+    expect(paneIdsInOrder(tree)).toEqual(["p2", "p1"]);
+    expect(merged.workspaces[0].layoutUpdatedAt).toBe(30);
+    expect(mirrored.workspaces[0].layoutTree).toEqual(tree);
+    expect(sharedLayoutKey(merged)).toBe(sharedLayoutKey(mirrored));
+  });
+
+  it("collapses a pane closed on one side and places a pane added on the other", () => {
+    const base = layout([timed([pane("p1", [terminal("t1")]), pane("p2", [terminal("t2")])], row("s", leaf("p1"), leaf("p2")), 10)]);
+    const local = layout([timed([pane("p1", [terminal("t1")])], leaf("p1"), 20)]);
+    const remote = layout([
+      timed(
+        [pane("p1", [terminal("t1")]), pane("p2", [terminal("t2")]), pane("p3", [terminal("t3")])],
+        row("s", leaf("p1"), row("s2", leaf("p2"), leaf("p3"))),
+        15,
+      ),
+    ]);
+    const merged = mergeLayout(base, local, remote).workspaces[0];
+    expect(merged.panes.map((item) => item.id).sort()).toEqual(["p1", "p3"]);
+    expect(paneIdsInOrder(merged.layoutTree!).sort()).toEqual(["p1", "p3"]);
+  });
+
+  it("hands the tabs of a pane the tree cannot place to the active pane", () => {
+    // A full tree at the depth limit has no leaf left to split.
+    let next = 0;
+    const build = (depth: number): SplitNode =>
+      depth === 0 ? leaf(`p${next++}`) : row(`s${depth}-${next}`, build(depth - 1), build(depth - 1));
+    const full = build(8);
+    const placed = paneIdsInOrder(full).map((id) => pane(id, []));
+    placed[0] = pane("p0", [terminal("first")]);
+    const extra = pane("extra", [terminal("orphan")]);
+    const ws = { ...timed([...placed, extra], full, 1), activePaneId: "p0" };
+    const merged = mergeLayout(null, layout([ws]), layout([ws])).workspaces[0];
+    expect(merged.panes.some((item) => item.id === "extra")).toBe(false);
+    expect(merged.panes.find((item) => item.id === "p0")?.tabs.map((tab) => tab.id)).toEqual(["first", "orphan"]);
   });
 });
 

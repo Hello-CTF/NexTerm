@@ -1,12 +1,9 @@
 package sync
 
 import (
-	"fmt"
 	"net/http"
 	gosync "sync"
 	"time"
-
-	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const (
@@ -75,8 +72,7 @@ func (h *ObjectHandler) serveWait(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	if request.Protocol != ProtocolVersion {
-		writeSyncError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeUnsupported,
-			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion)))
+		writeSyncError(w, http.StatusBadRequest, protocolMismatchError(request.Protocol))
 		return
 	}
 	timeout := time.Duration(request.TimeoutMS) * time.Millisecond

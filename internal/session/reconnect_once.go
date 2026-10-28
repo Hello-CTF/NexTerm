@@ -116,7 +116,7 @@ func (m *Manager) reconnectOnce(ctx context.Context, session *Session, generatio
 	}
 	if err == nil {
 		var opened map[*Tab]*replacementChannel
-		var gone map[*Tab]struct{}
+		var gone map[*Tab]error
 		// Replacement channels must outlive the attempt: every transport
 		// binds an opened channel's lifetime to the context it receives,
 		// so opening with the caller's context tore the fresh channels

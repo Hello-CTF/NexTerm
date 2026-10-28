@@ -1,0 +1,12 @@
+# kind: choice
+# options: Start service | Stop service | Restart service | Quit
+# keys: 1 | 2 | 3 | 4
+---
+Service manager
+Select an action:
+  [1] Start service
+  [2] Stop service
+  [3] Restart service
+  [4] Quit
+
+Enter choice [1-4]: 

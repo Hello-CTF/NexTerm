@@ -1,0 +1,10 @@
+# kind: none
+---
+dev@build:~/c$ make
+cc -O2 -Wall -c main.c
+main.c: In function 'main':
+main.c:4:5: error: expected ';' before 'return'
+    4 |     return 0
+      |     ^~~~~~
+make: *** [Makefile:3: main.o] Error 1
+dev@build:~/c$ 

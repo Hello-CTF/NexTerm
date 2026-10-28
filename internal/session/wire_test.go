@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestControllerJSONUsesExplicitNullWithoutDroppingSnapshotKeys(t *testing.T) {
+func TestSizeOwnerJSONUsesExplicitNullWithoutDroppingSnapshotKeys(t *testing.T) {
 	tests := []struct {
 		name     string
 		empty    any
@@ -14,23 +14,23 @@ func TestControllerJSONUsesExplicitNullWithoutDroppingSnapshotKeys(t *testing.T)
 	}{
 		{
 			name:     "tab info",
-			empty:    TabInfo{ID: "tab", SessionID: "session", Controller: "", Subscribers: 0, Viewers: 0, Exited: true, Shell: ShellUnknown},
-			occupied: TabInfo{ID: "tab", SessionID: "session", Controller: "client-a", Subscribers: 1, Viewers: 1, Retainable: true, Shell: ShellPowerShell},
-			required: []string{"id", "sessionId", "cols", "rows", "gridRevision", "controller", "subscribers", "viewers", "exited", "retainable", "shell"},
+			empty:    TabInfo{ID: "tab", SessionID: "session", SizeOwner: "", Subscribers: 0, Viewers: 0, Exited: true, Shell: ShellUnknown},
+			occupied: TabInfo{ID: "tab", SessionID: "session", SizeOwner: "client-a", Subscribers: 1, Viewers: 1, Retainable: true, Shell: ShellPowerShell},
+			required: []string{"id", "sessionId", "cols", "rows", "gridRevision", "sizeOwner", "subscribers", "viewers", "exited", "retainable", "shell"},
 		},
 		{
 			name:     "control event",
-			empty:    ControlEvent{TabID: "tab", Controller: "", Subscribers: 0, Viewers: 0, Exited: true, Version: 4},
-			occupied: ControlEvent{TabID: "tab", Controller: "client-a", Subscribers: 2, Viewers: 1, Version: 5},
-			required: []string{"tabId", "cols", "rows", "gridRevision", "controller", "subscribers", "viewers", "exited", "version"},
+			empty:    ControlEvent{TabID: "tab", SizeOwner: "", Subscribers: 0, Viewers: 0, Exited: true, Version: 4},
+			occupied: ControlEvent{TabID: "tab", SizeOwner: "client-a", Subscribers: 2, Viewers: 1, Version: 5},
+			required: []string{"tabId", "cols", "rows", "gridRevision", "sizeOwner", "subscribers", "viewers", "exited", "version"},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			empty := marshalWireObject(t, test.empty)
-			controller, present := empty["controller"]
-			if !present || controller != nil {
-				t.Fatalf("empty controller = %#v (present=%v), want explicit null", controller, present)
+			owner, present := empty["sizeOwner"]
+			if !present || owner != nil {
+				t.Fatalf("empty size owner = %#v (present=%v), want explicit null", owner, present)
 			}
 			for _, key := range test.required {
 				if _, present := empty[key]; !present {
@@ -38,8 +38,8 @@ func TestControllerJSONUsesExplicitNullWithoutDroppingSnapshotKeys(t *testing.T)
 				}
 			}
 			occupied := marshalWireObject(t, test.occupied)
-			if got := occupied["controller"]; got != "client-a" {
-				t.Fatalf("occupied controller = %#v", got)
+			if got := occupied["sizeOwner"]; got != "client-a" {
+				t.Fatalf("occupied size owner = %#v", got)
 			}
 		})
 	}

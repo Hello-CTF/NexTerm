@@ -4,7 +4,7 @@ import { ask } from "../../ui/dialogs";
 import { assetApi, mountApi, systemApi } from "../../ipc/commands";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
-import { useUi } from "../../app/store";
+import { useSessionById, useUi } from "../../app/store";
 import { mountUnavailableReason } from "../../app/capabilities";
 import { DeviceSessionNotice } from "./DeviceSessionNotice";
 import { IconArrowLeft, IconChevronRight, IconDrive, IconRefresh, IconTrash } from "../../ui/icons";
@@ -46,7 +46,7 @@ function MountUnavailable({ reason }: { reason: string }) {
           <div className="text-[13px] font-semibold text-neutral-200">本平台暂不支持磁盘挂载</div>
           <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">{reason}</p>
           <p className="mt-2.5 text-[12px] leading-relaxed text-neutral-500">
-            远程文件读写请走左侧<span className="text-neutral-300">「文件树」</span>
+            远程文件读写请走会话侧栏的<span className="text-neutral-300">「文件」</span>页签
             （不需要任何本机依赖）。
           </p>
         </div>
@@ -68,9 +68,8 @@ export function MountPanel({ sessionId }: { sessionId?: string }) {
 function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
-  const sessions = useUi((s) => s.sessions);
   const visible = useMountPanelVisible(sessionId);
-  const session = sessions.find((s) => s.id === sessionId);
+  const session = useSessionById(sessionId);
   const localSession = session?.kind === "local";
   const assetId = session?.assetId ?? null;
   const platform = useQuery({

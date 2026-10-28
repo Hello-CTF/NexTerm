@@ -227,17 +227,13 @@ func TestProductionUpgradePreservesLegacyAccountAndSecretsDatabase(t *testing.T)
 		t.Fatalf("old TOTP login = %d %+v cookies=%v", totpLogin.status, totpLogin.body, totpLogin.cookies)
 	}
 
-	var ledgerBefore int64
-	if err := application.Services.Store.GORM().Model(&store.AIOwnerMigration{}).Count(&ledgerBefore).Error; err != nil {
+	beforeRetry, _, err := application.Services.Store.SettingGet(ctx, targetKey)
+	if err != nil {
 		t.Fatal(err)
 	}
 	application.RetryDeferredUpgrade(ctx)
-	var ledgerAfter int64
-	if err := application.Services.Store.GORM().Model(&store.AIOwnerMigration{}).Count(&ledgerAfter).Error; err != nil {
-		t.Fatal(err)
-	}
-	if ledgerAfter != ledgerBefore {
-		t.Fatalf("non-deferred retry repeated AI migration: ledger %d -> %d", ledgerBefore, ledgerAfter)
+	if afterRetry, _, err := application.Services.Store.SettingGet(ctx, targetKey); err != nil || afterRetry != beforeRetry {
+		t.Fatalf("non-deferred retry rewrote migrated AI settings: err=%v", err)
 	}
 	if count := strings.Count(logs.String(), "completed data upgrade"); count != 1 {
 		t.Fatalf("startup data upgrade log count = %d, logs=%s", count, logs.String())

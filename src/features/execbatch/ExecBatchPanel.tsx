@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useUi, type Workspace } from "../../app/store";
+import { useWorkspaceList, type Workspace } from "../../app/store";
 import { assetApi, type Asset, type SessionInfo } from "../../ipc/commands";
 import {
   createExecBatchId,
@@ -131,7 +131,7 @@ function ResultOutput({ result }: { result: ExecBatchResult }) {
 }
 
 export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions: SessionInfo[]; progressPollIntervalMs?: number }) {
-  const workspaces = useUi((state) => state.workspaces);
+  const workspaces = useWorkspaceList();
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
   const targets = useMemo(
     () => collectTargets(sessions, assetsQuery.data ?? [], workspaces),

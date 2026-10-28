@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { deferred, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { deferred, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -149,7 +149,6 @@ function seed(
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -179,7 +178,7 @@ async function clickTerminalMenuItem(label: string): Promise<void> {
   await act(async () => {
     item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
-  await waitFor(() => {
+  await waitForRendered(() => {
     expect(toastTexts()).toMatch(/已重新连接|已取消重连|会话已在服务端删除|重连失败/);
   });
 }
@@ -238,7 +237,7 @@ describe("Host key retry stays actionable", () => {
     mocks.connect.mockRejectedValueOnce({ code: "host_key_pending", message: "approval required", detail: PENDING_DETAIL });
     let current = true;
     const connection = connectWithHostKeyConfirm(() => mocks.connect(), () => current);
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
 
     current = false;
     confirmation.resolve(true);
@@ -279,14 +278,14 @@ describe("Host key confirmation when reconnecting a dead terminal (reconnectNow)
     await act(async () => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
 
     const [question, options] = mocks.ask.mock.calls[0] as [string, Record<string, unknown>];
     expect(question).toContain("首次连接 10.0.0.8:22");
     expect(question).toContain("SHA256:newfp");
     expect(options).toMatchObject({ title: "确认主机指纹", kind: "warning" });
 
-    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
@@ -318,7 +317,7 @@ describe("Host key confirmation when reconnecting a dead terminal (reconnectNow)
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       mocks.attachDead = false;
     });
-    await waitFor(() => expect(toastTexts()).toContain("已重新连接"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已重新连接"));
 
     const [question] = mocks.ask.mock.calls[0] as [string];
     expect(question).toContain("主机 10.0.0.8:22 的密钥已变更");
@@ -369,9 +368,9 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     await flush();
 
     await clickTerminalMenuItem("重连会话");
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("首次连接 10.0.0.8:22");
-    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
     expect(mocks.reconnect).not.toHaveBeenCalled();
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
@@ -391,7 +390,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     await flush();
 
     await clickTerminalMenuItem("重连会话");
-    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
     expect(question).toContain("主机 10.0.0.8:22 的密钥已变更");
@@ -418,7 +417,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     await flush();
 
     await clickTerminalMenuItem("重连会话");
-    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
@@ -439,10 +438,10 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     await flush();
 
     await clickTerminalMenuItem("重连会话");
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("首次连接 jump.example:22");
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("SHA256:jumpfp");
-    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
     expect(mocks.reconnect).not.toHaveBeenCalled();
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
@@ -466,7 +465,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     await flush();
 
     await clickTerminalMenuItem("重连会话");
-    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
     expect(question).toContain("主机 jump.example:22 的密钥已变更");
@@ -487,7 +486,7 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     await flush();
 
     await clickTerminalMenuItem("重连会话");
-    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
@@ -506,8 +505,8 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
     await flush();
 
     await clickTerminalMenuItem("重连会话");
-    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
-    await waitFor(() => expect(toastTexts()).toContain("会话已在服务端删除"));
+    await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    await waitForRendered(() => expect(toastTexts()).toContain("会话已在服务端删除"));
     expect(toastTexts()).not.toContain("请刷新后重试");
     expect(
       useUi.getState().toasts.some((t) => t.kind === "error" && t.text.includes("会话已在服务端删除")),

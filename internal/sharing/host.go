@@ -274,6 +274,9 @@ func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.I
 	if grant.revoked {
 		return deny("device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销"))
 	}
+	if grant.localHelper {
+		return deny("local_helper", errLocalHelperNotShareable)
+	}
 	if err := s.validateHostRecipientSession(ctx, identity.UserID, identity.SessionID); err != nil {
 		return deny("recipient_session", err)
 	}

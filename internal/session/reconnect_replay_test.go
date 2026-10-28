@@ -138,41 +138,15 @@ func writeDuringDisconnect(t *testing.T, ctx context.Context, client *supervisor
 }
 
 // offsetRecordingProvider wraps a durable provider and records the offsets
-// presented to successful checked and legacy resumes.
+// presented to successful checked resumes.
 type offsetRecordingProvider struct {
 	base.DurableProvider
 	mu      sync.Mutex
 	offsets []uint64
 }
 
-func (p *offsetRecordingProvider) AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error) {
-	attacher, ok := p.DurableProvider.(interface {
-		AttachFrom(context.Context, string, uint64) (base.DurableAttachment, error)
-	})
-	if !ok {
-		return nil, base.ErrUnsupported
-	}
-	attachment, err := attacher.AttachFrom(ctx, id, offset)
-	if err == nil {
-		p.recordOffset(offset)
-	}
-	return attachment, err
-}
-
-func (p *offsetRecordingProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
-	attacher, ok := p.DurableProvider.(base.DurableIdentityAttacher)
-	if !ok {
-		return nil, base.ErrUnsupported
-	}
-	return attacher.AttachWithIdentity(ctx, id, identity)
-}
-
 func (p *offsetRecordingProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
-	attacher, ok := p.DurableProvider.(base.DurableIdentityAttacher)
-	if !ok {
-		return nil, base.ErrUnsupported
-	}
-	attachment, err := attacher.AttachFromWithIdentity(ctx, id, identity, offset)
+	attachment, err := p.DurableProvider.AttachFromWithIdentity(ctx, id, identity, offset)
 	if err == nil {
 		p.recordOffset(offset)
 	}
@@ -252,7 +226,7 @@ func TestReconnectDurableAttachUsesConsumedOffset(t *testing.T) {
 	}
 	waitForTabMarker(t, manager, tabID, "during-marker")
 
-	stat, err := os.Stat(filepath.Join(stateDir, "sessions", tabID, "output.raw"))
+	stat, err := os.Stat(filepath.Join(stateDir, "sessions", tabID, "seg-00000000000000000000.raw"))
 	if err != nil {
 		t.Fatal(err)
 	}

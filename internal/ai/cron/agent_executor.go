@@ -20,8 +20,7 @@ type AgentRunner interface {
 type AgentExecutor struct {
 	Runner AgentRunner
 
-	ScopeFor             func(context.Context, Trigger) (tools.Scope, error)
-	AllowOwnerlessLegacy bool
+	ScopeFor func(context.Context, Trigger) (tools.Scope, error)
 	// Connect, when non-nil, authorizes and dials a disconnected scope asset
 	// before the run starts; a nil connector keeps the fail-without-connecting
 	// behavior for disconnected assets.
@@ -34,7 +33,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := ownerExecutionError(trigger.OwnerID, trigger.OwnerKind, e.AllowOwnerlessLegacy); err != nil {
+	if err := ownerExecutionError(trigger.OwnerID, trigger.OwnerKind); err != nil {
 		return err
 	}
 	ctx = contextWithOwner(ctx, trigger.OwnerID, trigger.OwnerKind)

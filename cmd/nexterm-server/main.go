@@ -235,6 +235,8 @@ func run(args []string) int {
 			MaxOpenConns: invocation.DBMaxOpenConns,
 		},
 		StagedBlobs: blobs,
+		// Applies only without accounts: one helper cannot be shared between accounts.
+		LocalHelper: true,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
@@ -298,6 +300,35 @@ func run(args []string) int {
 				return digest, nil
 			},
 			Authorize: fleetService.AuthorizeDeviceTerminal,
+			// The cross-host session listing reaches the account's devices
+			// through the bridge, so a phone sees them with the desktop closed.
+			Devices: func(ctx context.Context, userID string) ([]production.AggregateDevice, error) {
+				devices, err := fleetService.TerminalDevices(ctx, userID)
+				if err != nil {
+					return nil, err
+				}
+				result := make([]production.AggregateDevice, 0, len(devices))
+				for _, device := range devices {
+					result = append(result, production.AggregateDevice{
+						ID: device.ID, Name: device.Name, Kind: device.Kind, Platform: device.Platform,
+						Online: device.Digest != "", Digest: device.Digest, TerminalEnabled: device.TerminalEnabled,
+					})
+				}
+				return result, nil
+			},
+			CheckDevice: fleetService.CheckDeviceTerminal,
+		})
+		// Desktops and phones ask for their devices' sessions in one request
+		// instead of dialing a bridge per device.
+		fleetService.SetSessionLister(func(ctx context.Context, userID string, wait time.Duration) (any, int, error) {
+			list, err := application.DeviceSessions(ctx, userID, wait)
+			devices := 0
+			for _, host := range list.Hosts {
+				if host.DeviceID != "" {
+					devices++
+				}
+			}
+			return list, devices, err
 		})
 	}
 	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())

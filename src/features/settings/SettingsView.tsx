@@ -5,21 +5,43 @@ import { useUi } from "../../app/store";
 import {
   setTerminalCloseAction,
   setTerminalDefaultMode,
+  setTerminalGpuAcceleration,
+  setTerminalLinkActivation,
+  setTerminalConfirmMultilinePaste,
+  setTerminalDurableHistoryMiB,
+  setTerminalScrollback,
+  normalizeMultilinePasteConfirm,
+  normalizeTerminalScrollback,
+  terminalDefaultUsesAccount,
+  DEFAULT_DURABLE_HISTORY_MIB,
+  TERMINAL_SCROLLBACK_OPTIONS,
   useTerminalPrefs,
   type TerminalCloseAction,
   type TerminalDefaultMode,
+  type TerminalGpuAcceleration,
+  type TerminalLinkActivation,
+  type TerminalMultilinePasteConfirm,
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
 import { onSettingsSection } from "./settingsNavigation";
-import { isImeKeyEvent } from "../../ui/DialogHost";
-import { isMobile, isWindows } from "../../app/platform";
+import { SettingsSearch } from "./SettingsSearch";
+import { searchSettings, type SettingsPanelId, type SettingsSearchResult, type SettingsSectionId } from "./settingsIndex";
+import "./settingsSearch.css";
+import { isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
+import { isWindows } from "../../app/platform";
+import { isMobileShell, isTouchShell } from "../../app/shell";
 import { ModelManager } from "../ai/ModelPanel";
+import { PrivacyCard } from "./PrivacyCard";
 import { AppearanceCard } from "./AppearanceCard";
+import { LocalHelperSettings } from "./LocalHelperSettings";
+import { NotificationSettings } from "../inbox/NotificationSettings";
+import { LocalHelperExposureSettings } from "./LocalHelperExposureSettings";
 import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
 import { ProductionSettingsPanel } from "../production/ProductionSettingsPanel";
 import { ShortcutsCard } from "./ShortcutsCard";
+import { SessionRulesCard } from "./SessionRulesCard";
 import { SkillsCard } from "./SkillsCard";
 import { productionSkillsApi } from "./skillsApi";
 import { SyncCard } from "./SyncCard";
@@ -27,6 +49,7 @@ import { SyncBundleCard } from "./SyncBundleCard";
 import { ShareCard } from "./ShareCard";
 import { UpdateCard } from "./UpdateCard";
 import { DiagnosticsCard } from "./DiagnosticsCard";
+import { QuickCommandsEditor } from "../terminal/QuickCommandsEditor";
 import { describeError } from "../../ui/errorText";
 import { DESKTOP } from "../../ipc/env";
 import {
@@ -41,12 +64,14 @@ import {
   IconClose,
   IconCommand,
   IconDownload,
+  IconFlag,
   IconGlobe,
   IconLayers,
   IconLock,
   IconMonitor,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconServer,
   IconSettings,
   IconShield,
@@ -69,13 +94,17 @@ const SETTINGS_GROUPS: readonly { id: SettingsGroupId; label: string; icon: type
   { id: "account", label: "账号与同步", icon: IconServer },
 ];
 
-const SETTINGS_SECTIONS = [
+type SettingsSectionDef = { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId };
+
+const ALL_SETTINGS_SECTIONS = [
   { id: "settings-appearance", label: "外观", icon: IconMonitor, group: "general" },
   { id: "settings-terminal", label: "终端", icon: IconTerminal, group: "general" },
+  { id: "settings-state-rules", label: "状态规则", icon: IconFlag, group: "general" },
   { id: "settings-shortcuts", label: "快捷键", icon: IconCommand, group: "general" },
   { id: "settings-update", label: "软件更新", icon: IconDownload, group: "general" },
   { id: "settings-diagnostics", label: "诊断与调试", icon: IconActivity, group: "general" },
   { id: "settings-ai-model", label: "模型", icon: IconSparkles, group: "ai" },
+  { id: "settings-ai-privacy", label: "信息脱敏", icon: IconShield, group: "ai" },
   { id: "settings-ai-rules", label: "拦截规则", icon: IconShield, group: "ai" },
   { id: "settings-ai-skills", label: "技能", icon: IconLayers, group: "ai" },
   { id: "settings-memory", label: "记忆", icon: IconBot, group: "ai" },
@@ -85,10 +114,12 @@ const SETTINGS_SECTIONS = [
   { id: "settings-account", label: "账号同步", icon: IconServer, group: "account" },
   { id: "settings-bundle", label: "资产包", icon: IconArchive, group: "account" },
   { id: "settings-share", label: "分享", icon: IconGlobe, group: "account" },
-].filter((section) => {
+] as const satisfies readonly SettingsSectionDef[];
+
+const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = ALL_SETTINGS_SECTIONS.filter((section) => {
   if (section.id === "settings-update") return DESKTOP;
   return true;
-}) as readonly { id: string; label: string; icon: typeof IconMonitor; group: SettingsGroupId }[];
+});
 
 function groupOfSection(id: string): SettingsGroupId {
   return SETTINGS_SECTIONS.find((section) => section.id === id)?.group ?? "general";
@@ -114,7 +145,7 @@ function saveGroup(group: SettingsGroupId): void {
 }
 
 function jumpToSection(id: string): void {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
 }
 
 const NAV_OPEN_KEY = "nexterm.settingsNav.v1";
@@ -123,6 +154,29 @@ const CLOSE_ACTION_OPTIONS: { value: TerminalCloseAction; label: string }[] = [
   { value: "ask", label: "每次询问" },
   { value: "kill", label: "直接关闭" },
   { value: "detach", label: "转到后台" },
+];
+
+const GPU_ACCELERATION_OPTIONS: { value: TerminalGpuAcceleration; label: string }[] = [
+  { value: "auto", label: "自动" },
+  { value: "on", label: "开启" },
+  { value: "off", label: "关闭" },
+];
+
+const DURABLE_HISTORY_OPTIONS_MIB = [4, 8, 16, 32, 64, 128, 256];
+
+function formatScrollbackLines(lines: number): string {
+  return lines >= 10_000 ? `${lines / 10_000} 万行` : `${lines.toLocaleString("zh-CN")} 行`;
+}
+
+const LINK_ACTIVATION_OPTIONS: { value: TerminalLinkActivation; label: string }[] = [
+  { value: "modifier", label: "Ctrl/Cmd+单击" },
+  { value: "click", label: "单击" },
+];
+
+const MULTILINE_PASTE_OPTIONS: { value: TerminalMultilinePasteConfirm; label: string }[] = [
+  { value: "unbracketed", label: "仅在程序未开启括号粘贴时确认" },
+  { value: "always", label: "每次都确认" },
+  { value: "never", label: "从不确认" },
 ];
 
 const DEFAULT_MODE_OPTIONS: { value: TerminalDefaultMode; label: string }[] = [
@@ -145,11 +199,12 @@ function saveNavOpen(open: boolean): void {
   }
 }
 
-export function SettingsView() {
+export function SettingsView({ active = true }: { active?: boolean }) {
   const pushToast = useUi((s) => s.pushToast);
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
   const setTerminalOsc52 = useUi((s) => s.setTerminalOsc52);
   const terminalPrefs = useTerminalPrefs();
+  const multilinePasteSelectId = useId();
   const [terminalModeSaving, setTerminalModeSaving] = useState(false);
   const saveTerminalMode = async (value: TerminalDefaultMode) => {
     if (terminalModeSaving) return;
@@ -160,6 +215,21 @@ export function SettingsView() {
       pushToast("error", `保存默认终端模式失败：${describeError(error)}`);
     } finally {
       setTerminalModeSaving(false);
+    }
+  };
+  const scrollbackSelectId = useId();
+  const durableHistorySelectId = useId();
+  const [durableHistorySaving, setDurableHistorySaving] = useState(false);
+  const durableHistoryAccount = terminalDefaultUsesAccount();
+  const saveDurableHistory = async (value: number | null) => {
+    if (durableHistorySaving) return;
+    setDurableHistorySaving(true);
+    try {
+      await setTerminalDurableHistoryMiB(value);
+    } catch (error) {
+      pushToast("error", `保存持久终端历史上限失败：${describeError(error)}`);
+    } finally {
+      setDurableHistorySaving(false);
     }
   };
   const showCloseToTray = DESKTOP && isWindows();
@@ -256,6 +326,68 @@ export function SettingsView() {
     setActiveSection(id);
   };
 
+  // Search: results span all groups; picking one opens its group, scrolls to
+  // the setting (or its section when the setting is not rendered, e.g. inside a
+  // collapsed panel) and flashes it.
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
+  const searching = searchQuery.trim() !== "";
+  const searchResults = useMemo(() => searchSettings(searchQuery, SETTINGS_SECTIONS), [searchQuery]);
+  const [reveal, setReveal] = useState<{ panel: SettingsPanelId; n: number } | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ result: SettingsSearchResult; n: number } | null>(null);
+  const selectSearchResult = (result: SettingsSearchResult) => {
+    setSearchQuery("");
+    const target = groupOfSection(result.sectionId);
+    if (target !== group) {
+      setGroupState(target);
+      saveGroup(target);
+    }
+    setActiveSection(result.sectionId);
+    const n = Date.now() + Math.random();
+    if (result.kind === "item" && result.panel) setReveal({ panel: result.panel, n });
+    setFocusRequest({ result, n });
+  };
+  // Runs after the group is shown and any collapsed panel holding the setting
+  // has opened, which both need a frame of layout.
+  useEffect(() => {
+    if (!focusRequest) return;
+    const { result } = focusRequest;
+    const frame = requestAnimationFrame(() => {
+      const root = contentRef.current;
+      const el =
+        (result.kind === "item"
+          ? root?.querySelector<HTMLElement>(`[data-setting="${result.itemId}"]`)
+          : null) ?? document.getElementById(result.sectionId);
+      if (!el) return;
+      el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
+      el.focus({ preventScroll: true });
+      el.classList.add("nx-setting-flash");
+      window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => el.classList.remove("nx-setting-flash"), 2000);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusRequest]);
+  const focusSearch = () => {
+    // Expand without persisting: focusing search should not change the saved nav preference.
+    setNavOpenState(true);
+    requestAnimationFrame(() => searchInputRef.current?.focus());
+  };
+  // The active settings pane opens with the search box focused so typing
+  // searches right away. Inactive (kept-mounted) panes must not steal focus,
+  // and touch layouts skip it to avoid raising the on-screen keyboard.
+  useEffect(() => {
+    if (active && !isTouchShell()) searchInputRef.current?.focus();
+  }, [active]);
+  const onViewKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (isEditableTarget(e.target)) return;
+    e.preventDefault();
+    focusSearch();
+  };
+
   // Links from elsewhere in the app open the section's group, then scroll.
   const jumpRef = useRef(jump);
   jumpRef.current = jump;
@@ -328,7 +460,7 @@ export function SettingsView() {
     } else {
       await vaultApi.changePassword(old, next);
       // On iOS/Android with biometric material enrolled, silently re-store it with the new password after a change; otherwise biometric unlock would consistently fail
-      if (next !== "" && isMobile()) {
+      if (next !== "" && isMobileShell()) {
         try {
           const bio = await biometricApi.status();
           if (bio.canEvaluate && bio.hasMaterial) await biometricApi.enable(next);
@@ -459,7 +591,7 @@ export function SettingsView() {
     : "";
 
   return (
-    <div className="nx-pane nx-settings-view h-full">
+    <div className="nx-pane nx-settings-view h-full" onKeyDown={onViewKeyDown}>
       <div className="nx-toolbar">
         <IconSettings size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设置</span>
@@ -473,7 +605,17 @@ export function SettingsView() {
             navOpen ? "md:w-52" : "md:w-14"
           }`}
         >
+          <div className={navOpen ? "" : "md:hidden"}>
+            <SettingsSearch
+              query={searchQuery}
+              onQueryChange={setSearchQuery}
+              results={searchResults}
+              onSelect={selectSearchResult}
+              inputRef={searchInputRef}
+            />
+          </div>
           <div
+            hidden={searching}
             className="flex gap-1.5 overflow-x-auto px-3 py-2 sm:px-5 md:hidden"
             data-testid="settings-nav-chips"
           >
@@ -490,7 +632,7 @@ export function SettingsView() {
             ))}
           </div>
           <div
-            className="hidden md:flex md:flex-col md:gap-0.5 md:p-2"
+            className={`hidden md:flex md:flex-col md:gap-0.5 md:p-2 ${searching ? "md:!hidden" : ""}`}
             data-testid="settings-nav-toc"
           >
             <button
@@ -535,7 +677,18 @@ export function SettingsView() {
                       ))}
                   </div>
                 ))
-              : SETTINGS_GROUPS.map((g) => (
+              : [
+                  <button
+                    key="search"
+                    type="button"
+                    className="nx-icon-btn self-center"
+                    title="搜索设置"
+                    aria-label="搜索设置"
+                    onClick={focusSearch}
+                  >
+                    <IconSearch size={14} />
+                  </button>,
+                  ...SETTINGS_GROUPS.map((g) => (
                   <button
                     key={g.id}
                     type="button"
@@ -547,7 +700,8 @@ export function SettingsView() {
                   >
                     <g.icon size={14} />
                   </button>
-                ))}
+                  )),
+                ]}
           </div>
         </nav>
 
@@ -555,7 +709,7 @@ export function SettingsView() {
           <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3 p-3 sm:gap-4 sm:p-5">
         <div className="flex flex-col gap-4" hidden={group !== "general"} data-settings-group="general">
         <div id="settings-appearance" className="scroll-mt-12">
-          <AppearanceCard />
+          <AppearanceCard reveal={reveal} />
         </div>
 
         <section id="settings-terminal" className="nx-card scroll-mt-12">
@@ -567,7 +721,7 @@ export function SettingsView() {
             </span>
           </div>
           <div className="mb-3.5 mt-3.5">
-            <div className="nx-setting-label mb-1.5">默认终端模式</div>
+            <div className="nx-setting-label mb-1.5" data-setting="default-terminal-mode">默认终端模式</div>
             <div className="nx-segment" role="group" aria-label="默认终端模式" aria-busy={terminalModeSaving}>
               {DEFAULT_MODE_OPTIONS.map((option) => (
                 <button
@@ -584,14 +738,16 @@ export function SettingsView() {
             </div>
             <p className="nx-hint mt-1.5">
               {terminalPrefs.defaultMode === "durable"
-                ? "持久终端断开后进程继续运行，可在「后台会话」接管。首次连接主机时会自动安装持久终端组件，安装期间先使用普通终端。"
-                : "普通终端随连接断开而结束，不会在主机上安装持久终端组件。"}
+                ? "持久终端断开后进程继续运行，可在「后台会话」接管。打开主机工作区时会在后台准备持久终端组件；准备完成前新建的终端是普通终端，标签上会标明原因。"
+                : "普通终端随连接断开而结束，打开主机时不会准备或安装持久终端组件。"}
               资产单独设置优先；只影响新开的终端。
             </p>
           </div>
+          <LocalHelperSettings />
+          <LocalHelperExposureSettings />
           <label className="flex cursor-pointer items-start gap-3">
             <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] text-neutral-200">允许远程主机写入剪贴板（OSC 52）</div>
+              <div className="text-[12.5px] text-neutral-200" data-setting="osc52">允许远程主机写入剪贴板（OSC 52）</div>
               <p className="nx-hint mt-0.5">
                 {terminalOsc52
                   ? "开启后，远程主机可以通过转义序列直接改写你的系统剪贴板，不再逐次询问。只在可信的主机与网络环境下保持开启。"
@@ -606,7 +762,7 @@ export function SettingsView() {
             />
           </label>
           <div className="mt-3.5">
-            <div className="nx-setting-label mb-1.5">关闭运行中的终端标签时</div>
+            <div className="nx-setting-label mb-1.5" data-setting="close-action">关闭运行中的终端标签时</div>
             <div className="nx-segment" role="group" aria-label="关闭运行中的终端标签时">
               {CLOSE_ACTION_OPTIONS.map((option) => (
                 <button
@@ -630,6 +786,122 @@ export function SettingsView() {
               以上策略适用于支持后台的交互终端；本机后台终端仅在宿主应用运行期间保留，不是 durable SSH。
             </p>
           </div>
+          <div className="mt-3.5">
+            <div className="nx-setting-label mb-1.5" data-setting="terminal-gpu-acceleration">终端 GPU 加速</div>
+            <div className="nx-segment" role="group" aria-label="终端 GPU 加速">
+              {GPU_ACCELERATION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`nx-segment-item ${terminalPrefs.gpuAcceleration === option.value ? "is-active" : ""}`}
+                  aria-pressed={terminalPrefs.gpuAcceleration === option.value}
+                  onClick={() => setTerminalGpuAcceleration(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="nx-hint mt-1.5">
+              {terminalPrefs.gpuAcceleration === "auto" &&
+                "使用 WebGL 渲染终端；检测到软件渲染（如虚拟机或远程桌面）时改用兼容渲染。GPU 多次失效时自动回退。"}
+              {terminalPrefs.gpuAcceleration === "on" && "始终尝试 WebGL 渲染，包括软件渲染环境。GPU 多次失效时仍会回退。"}
+              {terminalPrefs.gpuAcceleration === "off" && "始终使用兼容渲染（DOM），不占用 GPU。"}
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <label className="nx-setting-label mb-1.5 block" htmlFor={scrollbackSelectId} data-setting="terminal-scrollback">
+              终端回滚行数
+            </label>
+            <select
+              id={scrollbackSelectId}
+              className="nx-select w-full sm:w-auto"
+              value={terminalPrefs.scrollback}
+              onChange={(event) => setTerminalScrollback(normalizeTerminalScrollback(Number(event.target.value)))}
+            >
+              {TERMINAL_SCROLLBACK_OPTIONS.map((lines) => (
+                <option key={lines} value={lines}>
+                  {formatScrollbackLines(lines)}
+                  {lines === 10_000 ? "（默认）" : ""}
+                </option>
+              ))}
+            </select>
+            <p className="nx-hint mt-1.5">
+              每个终端在这台设备上保留的滚动历史，只保存在本机；行数越多占用内存越多，改小会丢弃已超出的最早几行。普通终端只有这些行；持久终端的输出另在主机上按历史上限保留，滚到顶部时可「加载更早历史」，以只读方式查看。
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <label className="nx-setting-label mb-1.5 block" htmlFor={durableHistorySelectId} data-setting="terminal-durable-history">
+              持久终端历史上限
+            </label>
+            <select
+              id={durableHistorySelectId}
+              className="nx-select w-full sm:w-auto"
+              value={terminalPrefs.durableHistoryMiB ?? ""}
+              disabled={durableHistorySaving || !durableHistoryAccount}
+              aria-busy={durableHistorySaving}
+              onChange={(event) => void saveDurableHistory(event.target.value === "" ? null : Number(event.target.value))}
+            >
+              <option value="">默认（{DEFAULT_DURABLE_HISTORY_MIB} MB）</option>
+              {terminalPrefs.durableHistoryMiB !== null && !DURABLE_HISTORY_OPTIONS_MIB.includes(terminalPrefs.durableHistoryMiB) && (
+                <option value={terminalPrefs.durableHistoryMiB}>{terminalPrefs.durableHistoryMiB} MB</option>
+              )}
+              {DURABLE_HISTORY_OPTIONS_MIB.map((mib) => (
+                <option key={mib} value={mib}>
+                  {mib} MB
+                </option>
+              ))}
+            </select>
+            <p className="nx-hint mt-1.5">
+              主机为每个持久终端保留的输出量，超出时丢弃最早的部分并标记「早期历史已截断」。只影响新开的持久终端，随账号同步。
+              {!durableHistoryAccount && "这项设置保存在账号中；当前没有账号，持久终端使用默认上限。"}
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <div className="nx-setting-label mb-1.5" data-setting="terminal-link-activation">链接打开方式</div>
+            <div className="nx-segment" role="group" aria-label="链接打开方式">
+              {LINK_ACTIVATION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`nx-segment-item ${terminalPrefs.linkActivation === option.value ? "is-active" : ""}`}
+                  aria-pressed={terminalPrefs.linkActivation === option.value}
+                  onClick={() => setTerminalLinkActivation(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="nx-hint mt-1.5">
+              {terminalPrefs.linkActivation === "modifier"
+                ? "按住 Ctrl（macOS 为 Cmd）单击终端中的网址或 OSC 8 超链接时打开；直接单击仍可选择文本。触屏设备长按链接可打开或复制。"
+                : "单击终端中的网址或 OSC 8 超链接即打开。"}
+              {" "}http/https 与 mailto 链接用系统程序打开，本会话主机上的 file:// 链接在 NexTerm 中打开，其他协议需要确认，可执行系统操作的协议会被拒绝。终端程序捕获鼠标时（如 tmux、htop、vim mouse=a）需同时按住 Shift。
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <label className="nx-setting-label mb-1.5 block" htmlFor={multilinePasteSelectId} data-setting="terminal-confirm-multiline-paste">
+              多行粘贴确认
+            </label>
+            <select
+              id={multilinePasteSelectId}
+              className="nx-select w-full sm:w-auto"
+              value={terminalPrefs.confirmMultilinePaste}
+              onChange={(event) => setTerminalConfirmMultilinePaste(normalizeMultilinePasteConfirm(event.target.value))}
+            >
+              {MULTILINE_PASTE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="nx-hint mt-1.5">
+              开启括号粘贴的程序（如 bash/zsh）会把多行内容当成一次粘贴，不会逐行执行。
+              {terminalPrefs.confirmMultilinePaste === "unbracketed" && "只有程序未开启括号粘贴、多行内容可能被逐行执行时，才先预览并确认。"}
+              {terminalPrefs.confirmMultilinePaste === "always" && "每次粘贴多行文本前都先预览并确认。"}
+              {terminalPrefs.confirmMultilinePaste === "never" && "多行文本直接粘贴，不再确认。"}
+              确认窗口里的「本终端不再提示」在关闭该终端前有效。登录账号后随账号同步到你的其他设备。
+            </p>
+          </div>
           {showCloseToTray && (
             <label className="mt-3.5 flex cursor-pointer items-start gap-3">
               <div className="min-w-0 flex-1">
@@ -649,10 +921,22 @@ export function SettingsView() {
               />
             </label>
           )}
+          <div className="mt-3.5">
+            <div className="nx-setting-label mb-1.5" data-setting="quick-commands">快捷命令</div>
+            <p className="nx-hint mb-2">
+              常用命令可在终端按键条的「命令」中一键发送；登录账号后在桌面和手机间同步。终端开启括号粘贴时按粘贴发送，多行内容发送前会确认。
+            </p>
+            <QuickCommandsEditor />
+          </div>
+          <NotificationSettings />
         </section>
 
+        <div id="settings-state-rules" className="scroll-mt-12">
+          <SessionRulesCard />
+        </div>
+
         <div id="settings-shortcuts" className="scroll-mt-12">
-          <ShortcutsCard />
+          <ShortcutsCard reveal={reveal} />
         </div>
 
         {DESKTOP && (
@@ -732,6 +1016,8 @@ export function SettingsView() {
             )}
           </div>
         </section>
+
+        <PrivacyCard />
 
         <section id="settings-ai-rules" className="nx-card scroll-mt-12">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
@@ -869,7 +1155,7 @@ export function SettingsView() {
 
           <label className="flex cursor-pointer items-start gap-3">
             <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] text-neutral-200">用密码保护凭据</div>
+              <div className="text-[12.5px] text-neutral-200" data-setting="vault-password">用密码保护凭据</div>
               <p className="nx-hint mt-0.5">
                 {vaultPasswordProtected
                   ? "开启：每次启动需输入密码后方可使用凭据。"
@@ -985,7 +1271,7 @@ export function SettingsView() {
           {vaultPasswordProtected && (
             <div className="mt-3 border-t border-neutral-800/60 pt-3">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[12.5px] text-neutral-200">闲置自动锁定</span>
+                <span className="text-[12.5px] text-neutral-200" data-setting="vault-auto-lock">闲置自动锁定</span>
                 <input
                   type="number"
                   className="nx-input nx-input-sm w-[96px]"

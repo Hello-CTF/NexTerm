@@ -266,11 +266,12 @@ func TestTransportProviderCreateAttachRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	readUntilMarker(t, attachment, "device-provider-marker")
+	created := attachment.(interface{ Identity() supervisor.Identity }).Identity()
 	// detach keeps the device-side session; re-attach replays historical output (durable semantics).
 	if err := attachment.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reattached, err := provider.Attach(ctx, tabID)
+	reattached, err := provider.AttachWithIdentity(ctx, tabID, base.DurableIdentity{CreatedAt: created.CreatedAt, Incarnation: created.Incarnation})
 	if err != nil {
 		t.Fatal(err)
 	}

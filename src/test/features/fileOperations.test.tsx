@@ -591,7 +591,6 @@ describe("rename (FileBrowser)", () => {
             title: "w",
             panes: [{ id: "p", tabs: [tab], activeTabId: tab.id }],
             activePaneId: "p",
-            splitRatio: 0.5,
             closable: true,
           },
         ],
@@ -619,7 +618,6 @@ describe("rename (FileBrowser)", () => {
             title: "w",
             panes: [{ id: "p", tabs: [tab], activeTabId: tab.id }],
             activePaneId: "p",
-            splitRatio: 0.5,
             closable: true,
           },
         ],
@@ -712,7 +710,6 @@ describe("R2 rename editor locator migration", () => {
         sessionId: SID,
         panes: [{ id: "p", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p",
-        splitRatio: 0.5,
         closable: true,
       },
     ]);
@@ -860,7 +857,6 @@ describe("R2 rename editor locator migration", () => {
           { id: "p2", tabs: [target], activeTabId: target.id },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ]);
@@ -917,7 +913,6 @@ describe("R2 rename editor locator migration", () => {
             { id: "p2", tabs: [second], activeTabId: second.id },
           ],
           activePaneId: "p2",
-          splitRatio: 0.5,
           closable: true,
         },
         {
@@ -927,7 +922,6 @@ describe("R2 rename editor locator migration", () => {
           sessionId: SID,
           panes: [{ id: "p3", tabs: [neighbor, log], activeTabId: log.id }],
           activePaneId: "p3",
-          splitRatio: 0.5,
           closable: true,
         },
         {
@@ -937,7 +931,6 @@ describe("R2 rename editor locator migration", () => {
           sessionId: "s2",
           panes: [{ id: "p4", tabs: [otherSession], activeTabId: otherSession.id }],
           activePaneId: "p4",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -993,7 +986,6 @@ describe("R2 rename editor locator migration", () => {
         sessionId: SID,
         panes: [{ id: "p", tabs: [link, target], activeTabId: link.id }],
         activePaneId: "p",
-        splitRatio: 0.5,
         closable: true,
       },
     ]);
@@ -1176,7 +1168,6 @@ describe("R2 rename editor locator migration", () => {
           { id: "p2", tabs: [target], activeTabId: target.id },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ]);
@@ -1385,7 +1376,6 @@ describe("R2 rename editor locator migration", () => {
         sessionId: SID,
         panes: [{ id: "p", tabs: [], activeTabId: null }],
         activePaneId: "p",
-        splitRatio: 0.5,
         closable: true,
       },
     ]);
@@ -1892,7 +1882,6 @@ describe("rename open-editor directory boundaries", () => {
             title: "w",
             panes: [{ id: "p", tabs: [tab], activeTabId: tab.id }],
             activePaneId: "p",
-            splitRatio: 0.5,
             closable: true,
           },
         ],
@@ -2342,7 +2331,6 @@ describe("delete and discard confirmations (R42 destructive dialogs)", () => {
             sessionId: SID,
             panes: [{ id: "p", tabs: [], activeTabId: null }],
             activePaneId: "p",
-            splitRatio: 0.5,
             closable: true,
           },
         ],

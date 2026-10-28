@@ -6,6 +6,10 @@ const (
 	BuiltinLocalAssetID   = "01J0NEXTERMLOCALDEVICE0001"
 	BuiltinLocalAssetName = "当前设备"
 	LayoutKey             = "layout.workspace"
+	// DeviceKindLocalHelper marks a desktop that exposes its local helper
+	// sessions to its own account through the device bridge. Such a device is
+	// never shared with another account.
+	DeviceKindLocalHelper = "local-helper"
 )
 
 type AssetGroupRow = model.AssetGroupRow
@@ -22,7 +26,6 @@ type KnownHostRow = model.KnownHostRow
 type RecordingRow = model.RecordingRow
 type OutcomeRecord = model.OutcomeRecord
 type CronJob = model.CronJob
-type AIOwnerMigration = model.AIOwnerMigration
 type SyncTombstone = model.SyncTombstone
 type SyncState = model.SyncState
 type AppUser = model.AppUser

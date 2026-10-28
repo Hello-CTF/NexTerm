@@ -85,9 +85,9 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 	tab.mu.Lock()
 	old, replaced := tab.subscribers[options.ChannelID]
 	if replaced {
-		delete(tab.subscribers, options.ChannelID)
+		tab.dropSubscriberLocked(options.ChannelID)
 		tab.syncRecoveryFloorLocked()
-		tab.releaseOrphanControllerLocked()
+		tab.releaseDetachedInputLocked()
 	}
 	tab.mu.Unlock()
 	if replaced {
@@ -140,7 +140,7 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 	m.nextAttachmentId++
 	tab.subscribers[options.ChannelID] = subscriber{
 		client: clientID(options.ClientID), producer: producer, co: co, attachmentId: m.nextAttachmentId,
-		episodeFloor: -1, floorHighWater: -1,
+		episodeFloor: -1, floorHighWater: -1, spectator: true,
 	}
 	m.attachSubscriberOutput(tab, options.ChannelID, incarnation, producer, co)
 	info := tab.infoLocked()

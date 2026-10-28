@@ -98,6 +98,7 @@ func NewObjectHandler(db *gorm.DB, logger *slog.Logger) *ObjectHandler {
 
 func (h *ObjectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(protocolHeader, strconv.Itoa(ProtocolVersion))
 	w.Header().Add("Vary", "Accept-Encoding")
 	buffered := newSyncResponseWriter(w, acceptsGzip(r))
 	defer buffered.Close()
@@ -129,8 +130,7 @@ func (h *ObjectHandler) serveDelete(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	if request.Protocol != ProtocolVersion {
-		writeSyncError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeUnsupported,
-			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion)))
+		writeSyncError(w, http.StatusBadRequest, protocolMismatchError(request.Protocol))
 		return
 	}
 	head, maxSeq, err := h.store.deleteObject(r.Context(), userID, request.ID, request.KnownHead, request.BlobHash)
@@ -156,8 +156,7 @@ func (h *ObjectHandler) servePush(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	if request.Protocol != ProtocolVersion {
-		err := ipc.NewError(ipc.CodeUnsupported,
-			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion))
+		err := protocolMismatchError(request.Protocol)
 		h.logger.Warn("sync push failed", "user", userID, "error", err)
 		writeSyncError(w, http.StatusBadRequest, err)
 		return
@@ -190,8 +189,7 @@ func (h *ObjectHandler) servePull(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	if request.Protocol != ProtocolVersion {
-		err := ipc.NewError(ipc.CodeUnsupported,
-			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion))
+		err := protocolMismatchError(request.Protocol)
 		h.logger.Warn("sync pull failed", "user", userID, "error", err)
 		writeSyncError(w, http.StatusBadRequest, err)
 		return
@@ -216,8 +214,7 @@ func (h *ObjectHandler) serveIDs(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 	if request.Protocol != ProtocolVersion {
-		err := ipc.NewError(ipc.CodeUnsupported,
-			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion))
+		err := protocolMismatchError(request.Protocol)
 		h.logger.Warn("sync ids failed", "user", userID, "error", err)
 		writeSyncError(w, http.StatusBadRequest, err)
 		return

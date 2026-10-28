@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -127,7 +127,7 @@ describe("asset tree loading skeleton", () => {
     expect(mounted.container.textContent).not.toContain("还没有资产");
 
     pending.resolve([{ ...WEB }]);
-    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
     expect(mounted.container.querySelector('[role="status"]')).toBeNull();
   });
 
@@ -139,7 +139,7 @@ describe("asset tree loading skeleton", () => {
     expect(mounted.container.querySelector('[role="status"]')).not.toBeNull();
 
     pending.resolve([]);
-    await waitFor(() => expect(mounted!.container.textContent).toContain("还没有资产"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("还没有资产"));
     expect(mounted.container.querySelector('[role="status"]')).toBeNull();
   });
 
@@ -195,7 +195,7 @@ describe("asset tree loading skeleton", () => {
       }
 
       pending.resolve([]);
-      await waitFor(() => expect(mounted!.container.textContent).toContain("还没有资产"));
+      await waitForRendered(() => expect(mounted!.container.textContent).toContain("还没有资产"));
       mounted!.unmount();
       mounted = undefined;
     }

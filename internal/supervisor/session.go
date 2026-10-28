@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -24,11 +25,15 @@ type Session struct {
 	identity   Identity
 	attempt    string
 
-	pty       *pty.Session
-	recording *os.File
+	pty     *pty.Session
+	history *history
 
 	// exec is set for one-shot non-PTY sessions; pty and recording are nil.
 	exec *execState
+
+	// state tracks the attention state of a PTY session; nil for exec and
+	// recovered sessions and when state detection is disabled.
+	state *stateTracker
 
 	mu          sync.RWMutex
 	dead        bool
@@ -37,8 +42,17 @@ type Session struct {
 	recErr      error
 	inputErr    error
 	attachments map[*Attachment]struct{}
+	// detachedAt is when attachments last became empty; see activityLocked.
+	detachedAt time.Time
+	// lastOutput is the Unix nanosecond time of the latest recorded output,
+	// zero before any.
+	lastOutput atomic.Int64
 
-	inputQueue    chan []byte
+	inputQueue chan []byte
+	// inputMu orders input: a write records its input with the state
+	// tracker and queues its bytes as one step, so a prompt tap validated
+	// against the epoch is queued before any input that advances it.
+	inputMu       sync.Mutex
 	inputDone     chan struct{}
 	inputDoneOnce sync.Once
 
@@ -65,7 +79,7 @@ const (
 	maxInputChunkLen = 256 * 1024
 )
 
-func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySession *pty.Session, recording *os.File) *Session {
+func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySession *pty.Session, recording *history) *Session {
 	now := time.Now()
 	incarnation := ids.New()
 	entry := registryEntry{
@@ -79,14 +93,18 @@ func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySes
 		Dir:         options.Dir,
 		Running:     true,
 	}
+	if recording != nil {
+		entry.HistoryLimit = recording.limit
+	}
 	return &Session{
 		supervisor:  supervisor,
 		entry:       entry,
 		identity:    Identity{CreatedAt: now, Incarnation: incarnation},
 		attempt:     options.Attempt,
 		pty:         ptySession,
-		recording:   recording,
+		history:     recording,
 		attachments: make(map[*Attachment]struct{}),
+		detachedAt:  now,
 		inputQueue:  make(chan []byte, inputQueueSlots),
 		inputDone:   make(chan struct{}),
 		deadCh:      make(chan struct{}),
@@ -110,6 +128,7 @@ func newRecoveredSession(supervisor *Supervisor, entry registryEntry) *Session {
 		entry:       entry,
 		identity:    Identity{CreatedAt: entry.CreatedAt, Incarnation: entry.Incarnation},
 		attempt:     entry.Attempt,
+		history:     loadHistory(sessionDir(supervisor.stateDir, entry.ID), recoveredHistoryLimit(entry.HistoryLimit)),
 		attachments: make(map[*Attachment]struct{}),
 		inputQueue:  make(chan []byte, inputQueueSlots),
 		inputDone:   make(chan struct{}),
@@ -151,6 +170,7 @@ func (s *Session) infoLocked() Info {
 		ID:               s.entry.ID,
 		CreatedAt:        s.entry.CreatedAt,
 		Incarnation:      s.identity.Incarnation,
+		Generation:       s.supervisor.generation,
 		Title:            s.entry.Title,
 		MetadataRevision: s.entry.MetadataRevision,
 		Cols:             s.entry.Cols,
@@ -158,20 +178,82 @@ func (s *Session) infoLocked() Info {
 		Dead:             s.dead,
 		ExitCode:         s.entry.ExitCode,
 		Signal:           s.entry.Signal,
+		Legacy:           s.entry.legacy,
 	}
 	if s.entry.FinishedAt != nil {
 		finished := *s.entry.FinishedAt
 		info.FinishedAt = &finished
 	}
+	s.historyInfo(&info)
+	info.State = s.stateInfoLocked(false, 0)
+	info.Activity = s.activityLocked()
 	return info
+}
+
+// stateInfoLocked returns the attention state, with the retained events
+// after the given sequence when withEvents is set. A session recovered from
+// an earlier helper is reported exited. It returns nil when state detection
+// is disabled.
+func (s *Session) stateInfoLocked(withEvents bool, after uint64) *SessionState {
+	if s.state != nil {
+		return s.state.snapshot(withEvents, after)
+	}
+	if !s.supervisor.stateDetection || s.exec != nil || !s.dead {
+		return nil
+	}
+	state := &SessionState{
+		State:       base.SessionExited,
+		Confidence:  base.ConfidenceSignal,
+		Reason:      "exit",
+		ExitCode:    copyInt(s.entry.ExitCode),
+		PromptEpoch: 1,
+	}
+	if s.entry.FinishedAt != nil {
+		state.Since = *s.entry.FinishedAt
+	}
+	return state
+}
+
+// notifyState wakes the state pushers of the attachments.
+func (s *Session) notifyState() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for attachment := range s.attachments {
+		select {
+		case attachment.stateNotify <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// CurrentPrompt inspects the screen now and returns the detected prompt
+// with its epoch, or nil when there is none or state detection is off.
+func (s *Session) CurrentPrompt() *SessionPrompt {
+	if s.state == nil {
+		return nil
+	}
+	return s.state.currentPrompt()
+}
+
+// historyInfo fills the recorded output bounds of info.
+func (s *Session) historyInfo(info *Info) {
+	if s.history == nil {
+		return
+	}
+	info.HistoryBase, info.HistoryNext = s.history.bounds()
+	info.HistoryLimit = s.history.limit
+	info.HistoryTruncated = info.HistoryBase > 0
+}
+
+func recoveredHistoryLimit(limit uint64) uint64 {
+	if validHistoryLimit(limit) != nil {
+		return DefaultHistoryLimit
+	}
+	return limit
 }
 
 func (s *Session) Write(p []byte) (int, error) {
 	return s.writeInput(p, true)
-}
-
-func (s *Session) tryWrite(p []byte) (int, error) {
-	return s.writeInput(p, false)
 }
 
 func (s *Session) writeInput(p []byte, wait bool) (int, error) {
@@ -190,6 +272,16 @@ func (s *Session) writeInputCtx(ctx context.Context, p []byte, wait bool) (int, 
 	if dead {
 		return 0, fmt.Errorf("%w: %s", ErrExited, s.entry.ID)
 	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	if s.state != nil && len(p) > 0 {
+		s.state.input(time.Now())
+	}
+	return s.enqueueInputLocked(ctx, p, wait)
+}
+
+// enqueueInputLocked queues p in chunks. The caller holds s.inputMu.
+func (s *Session) enqueueInputLocked(ctx context.Context, p []byte, wait bool) (int, error) {
 	written := 0
 	for len(p) > 0 {
 		chunk := p
@@ -293,6 +385,10 @@ func (s *Session) Resize(ctx context.Context, cols, rows uint32) error {
 	if err := s.pty.Resize(ctx, cols, rows); err != nil {
 		return err
 	}
+	s.history.noteResize(rows)
+	if s.state != nil {
+		s.state.resize(int(cols), int(rows))
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entry.Cols = cols
@@ -312,37 +408,38 @@ func (s *Session) Wait(ctx context.Context) error {
 	}
 }
 
-func (s *Session) attach(offset uint64) (*Attachment, error) {
+func (s *Session) attach(options AttachOptions) (*Attachment, error) {
 	if s.exec != nil {
 		return nil, fmt.Errorf("%w: non-PTY exec sessions are not attachable", ErrUnsupported)
 	}
-	replay, err := openRecording(recordingPath(s.supervisor.stateDir, s.entry.ID))
+	if err := s.history.usable(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	var replay ReplayInfo
+	var err error
+	for attempt := 0; ; attempt++ {
+		replay, err = s.planReplay(options)
+		if !errors.Is(err, errHistoryEvicted) {
+			break
+		}
+		if attempt == 3 {
+			return nil, fmt.Errorf("%w: recorded output is evicted faster than it can be replayed", ErrUnavailable)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	if offset > 0 {
-		size, err := replay.Seek(0, io.SeekEnd)
-		if err != nil {
-			_ = replay.Close()
-			return nil, fmt.Errorf("%w: size supervisor recording: %v", ErrUnavailable, err)
-		}
-		if offset > uint64(size) {
-			_ = replay.Close()
-			return nil, fmt.Errorf("%w: attach offset %d beyond supervisor recording size %d", ErrInvalidInput, offset, size)
-		}
-		if _, err := replay.Seek(int64(offset), io.SeekStart); err != nil {
-			_ = replay.Close()
-			return nil, fmt.Errorf("%w: seek supervisor recording: %v", ErrUnavailable, err)
-		}
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	attachment := &Attachment{
-		session: s,
-		replay:  replay,
-		nextSeq: offset,
-		notify:  make(chan struct{}, 1),
-		ctx:     ctx,
-		cancel:  cancel,
+		session:     s,
+		replay:      s.history.newReader(replay.ReplayFrom),
+		nextSeq:     replay.ReplayFrom,
+		replayEnd:   replay.HistoryNext,
+		result:      replay,
+		notify:      make(chan struct{}, 1),
+		stateNotify: make(chan struct{}, 1),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 	s.mu.Lock()
 	s.attachments[attachment] = struct{}{}
@@ -350,9 +447,134 @@ func (s *Session) attach(offset uint64) (*Attachment, error) {
 	return attachment, nil
 }
 
+// planReplay chooses where an attach starts streaming. A resume (no Tail)
+// starts at the requested offset, or at the first safe boundary at or after
+// the history base when that offset was evicted (Truncated). A tail attach
+// displays from a safe boundary within the last Tail bytes; with Retain it
+// streams from the earlier requested offset (clamped to the base) so the
+// caller can record the bytes it does not display.
+//
+// A tail starts at a line boundary, so a shell's scrollback renders as it
+// would after a full replay. The prelude restores the screen buffer, input
+// modes, origin mode, character sets and (on the alternate screen, reset by
+// every resize) the scroll region in effect at the tail,
+// including modes set before the history base (see terminalModes); SGR is not
+// restored. Screen content drawn before the tail by a full-screen program
+// with cursor addressing is not restored until the program repaints, which
+// most do on their next update or on SIGWINCH. A recovered session whose
+// segment lacks a persisted mode snapshot starts that segment from defaults.
+func (s *Session) planReplay(options AttachOptions) (ReplayInfo, error) {
+	base, next := s.history.bounds()
+	if options.Tail == 0 && options.Offset > next {
+		return ReplayInfo{}, fmt.Errorf("%w: attach offset %d beyond supervisor recording size %d", ErrInvalidInput, options.Offset, next)
+	}
+	if options.Retain && options.Offset > next {
+		// A retained offset is the caller's bookkeeping (a transcript
+		// offset), which can run ahead of the recording, for example after
+		// a host crash lost unsynced output. Nothing beyond next can be
+		// streamed; the caller sees ReplayFrom and HistoryNext and corrects
+		// its offset.
+		options.Offset = next
+	}
+	replay := ReplayInfo{HistoryBase: base, HistoryNext: next}
+	if options.Tail == 0 {
+		replay.ReplayFrom = options.Offset
+		if options.Offset < base {
+			start, err := s.history.safeStartFrom(base)
+			if err != nil {
+				return ReplayInfo{}, err
+			}
+			replay.ReplayFrom = start
+			replay.Truncated = true
+		}
+		replay.DisplayFrom = replay.ReplayFrom
+		return replay, nil
+	}
+	low := base
+	if next-base > options.Tail {
+		low = next - options.Tail
+	}
+	display, err := s.history.safeStartFrom(low)
+	if err != nil {
+		return ReplayInfo{}, err
+	}
+	replay.DisplayFrom = display
+	replay.ReplayFrom = display
+	if options.Retain && options.Offset < display {
+		replay.ReplayFrom = max(options.Offset, base)
+		replay.Truncated = options.Offset < base
+	}
+	if display > 0 {
+		prelude, err := s.history.modesPreludeAt(display)
+		if err != nil {
+			return ReplayInfo{}, err
+		}
+		replay.Prelude = prelude
+	}
+	return replay, nil
+}
+
+// readHistory returns retained bytes ending at before, at most maxBytes, with
+// the start moved forward to a safe boundary unless it is offset zero.
+func (s *Session) readHistory(before uint64, maxBytes int) (HistoryChunk, error) {
+	if s.exec != nil {
+		return HistoryChunk{}, fmt.Errorf("%w: non-PTY exec sessions have no history", ErrUnsupported)
+	}
+	if err := s.history.usable(); err != nil {
+		return HistoryChunk{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	if maxBytes <= 0 || maxBytes > MaxHistoryRead {
+		maxBytes = MaxHistoryRead
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		base, next := s.history.bounds()
+		if before > next {
+			return HistoryChunk{}, fmt.Errorf("%w: history read end %d beyond supervisor recording size %d", ErrInvalidInput, before, next)
+		}
+		chunk := HistoryChunk{HistoryBase: base, HistoryNext: next, Start: before, End: before}
+		if before <= base {
+			chunk.Truncated = base > 0
+			return chunk, nil
+		}
+		start := base
+		if before-base > uint64(maxBytes) {
+			start = before - uint64(maxBytes)
+		}
+		data := make([]byte, before-start)
+		count, ok, err := s.history.readAt(start, data)
+		if err != nil {
+			return HistoryChunk{}, err
+		}
+		if !ok || count < len(data) {
+			continue
+		}
+		skip := 0
+		if start > 0 {
+			skip = safeReplayStart(data)
+			if skip == len(data) && start > base {
+				// No safe boundary at all: return the window unadjusted so
+				// a reader walking backwards keeps making progress.
+				skip = 0
+			}
+		}
+		chunk.Start = start + uint64(skip)
+		chunk.Data = data[skip:]
+		// At the base, the partial sequence before the first safe boundary
+		// is dropped with the output before the base.
+		chunk.Truncated = start == base && base > 0
+		return chunk, nil
+	}
+	return HistoryChunk{}, fmt.Errorf("%w: recorded output is evicted faster than it can be read", ErrUnavailable)
+}
+
 func (s *Session) removeAttachment(attachment *Attachment) {
 	s.mu.Lock()
-	delete(s.attachments, attachment)
+	if _, ok := s.attachments[attachment]; ok {
+		delete(s.attachments, attachment)
+		if len(s.attachments) == 0 {
+			s.detachedAt = time.Now()
+		}
+	}
 	s.mu.Unlock()
 }
 
@@ -441,10 +663,15 @@ func execExitStatus(err error) error {
 }
 
 func (s *Session) record(chunk []byte) {
-	if _, err := s.recording.Write(chunk); err != nil {
-		s.setRecErr(fmt.Errorf("%w: write supervisor recording: %v", ErrUnavailable, err))
+	if err := s.history.append(chunk); err != nil {
+		s.setRecErr(err)
 	}
+	now := time.Now()
+	s.lastOutput.Store(now.UnixNano())
 	s.notifyAll()
+	if s.state != nil {
+		s.state.output(chunk, now)
+	}
 }
 
 func (s *Session) setRecErr(err error) {
@@ -482,12 +709,12 @@ func (s *Session) finish(waitErr error) {
 			persistErr = writeEntry(sessionsRoot(s.supervisor.stateDir), s.entry)
 		}
 		s.mu.Unlock()
+		if s.state != nil {
+			s.state.exit(code, now)
+		}
 		var closeErr error
-		if s.recording != nil {
-			closeErr = s.recording.Close()
-			if errors.Is(closeErr, os.ErrClosed) {
-				closeErr = nil
-			}
+		if s.history != nil {
+			closeErr = s.history.closeWriter()
 		}
 		close(s.deadCh)
 		s.stopInput()

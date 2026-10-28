@@ -104,7 +104,8 @@ describe("terminal font stacks", () => {
       "consolas",
     ]);
     expect(TERMINAL_FONT_STACKS.cascadia).toBe(
-      "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
+      "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace, " +
+        "'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'",
     );
     const primaryNames = {
       system: "ui-monospace",
@@ -117,7 +118,11 @@ describe("terminal font stacks", () => {
     for (const [family, primaryName] of Object.entries(primaryNames)) {
       const stack = TERMINAL_FONT_STACKS[family as keyof typeof primaryNames];
       expect(stack).toContain(primaryName);
-      expect(stack.endsWith(", monospace")).toBe(true);
+      // The primary font leads, generic monospace follows it, and the emoji families come
+      // last as glyph fallbacks.
+      expect(stack.split(", ")[0]).toContain(primaryName);
+      expect(stack.indexOf(primaryName)).toBeLessThan(stack.indexOf(", monospace,"));
+      expect(stack.endsWith(", monospace, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'")).toBe(true);
     }
   });
 });
@@ -292,5 +297,36 @@ describe("terminal theme resolution", () => {
     prefs.setTerminalTheme("interface");
     theme.setThemeMode("system");
     expect(prefs.getResolvedTerminalTheme()).toBe(theme.getResolvedTheme());
+  });
+});
+
+describe("mobile terminal font size", () => {
+  const store = (overrides: Record<string, unknown>) => {
+    const puts: Record<string, unknown>[] = [];
+    return {
+      puts,
+      async getView() {
+        return { defaults: {}, overrides };
+      },
+      async putOverrides(set: Record<string, unknown>) {
+        puts.push(set);
+      },
+      async deleteOverrides() {},
+    };
+  };
+
+  it("syncs under its own key and ignores the desktop value on a phone", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)");
+    try {
+      const { prefs } = await loadPrefs();
+      const account = store({ "appearance.terminalFontSize": 20, "appearance.mobileTerminalFontSize": 14 });
+      prefs.registerAccountPreferenceStore(account);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(prefs.getAppearancePrefs().terminalFontSize).toBe(14);
+      prefs.setTerminalFontSize(15);
+      expect(account.puts).toEqual([{ "appearance.mobileTerminalFontSize": 15 }]);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });

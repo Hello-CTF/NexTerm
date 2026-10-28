@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { mount, setInputValue, setSelectValue, waitForRendered, type MountedView } from "./reactTestUtils";
 import { ALL_PROJECTS, projectFocusForGroup } from "../../app/projectFocus";
 import { useUi } from "../../app/store";
 import type { Asset, AssetGroup } from "../../ipc/commands";
@@ -133,7 +133,7 @@ afterEach(() => {
 describe("AssetTree project focus", () => {
   it("filters assets, search results, group nodes, and devices with all and ungrouped options", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(assetNames(mounted!.container)).toHaveLength(4));
+    await waitForRendered(() => expect(assetNames(mounted!.container)).toHaveLength(4));
     const selector = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="项目筛选"]');
     if (!selector) throw new Error("Project selector not found");
     expect([...selector.options].map((option) => option.textContent)).toEqual([
@@ -145,7 +145,7 @@ describe("AssetTree project focus", () => {
     expect(mounted.container.querySelector("[role='tree']")?.textContent).toContain("设备区");
 
     setSelectValue(selector, projectOne);
-    await waitFor(() => expect(assetNames(mounted!.container)).toEqual(["root-asset", "child-asset"]));
+    await waitForRendered(() => expect(assetNames(mounted!.container)).toEqual(["root-asset", "child-asset"]));
     expect(mounted.container.querySelector("[role='tree']")?.textContent).toContain("group-child");
     expect(mounted.container.querySelector("[role='tree']")?.textContent).not.toContain("group-p2");
     expect(mounted.container.querySelector("[role='tree']")?.textContent).not.toContain("设备区");
@@ -154,17 +154,17 @@ describe("AssetTree project focus", () => {
     const search = mounted.container.querySelector<HTMLInputElement>('input[aria-label="搜索资产 / 主机 / 用户"]');
     if (!search) throw new Error("Asset search not found");
     setInputValue(search, "asset");
-    await waitFor(() => expect(mocks.assetSearch).toHaveBeenCalledWith("asset"));
-    await waitFor(() => expect(assetNames(mounted!.container)).toEqual(["root-asset", "child-asset"]));
+    await waitForRendered(() => expect(mocks.assetSearch).toHaveBeenCalledWith("asset"));
+    await waitForRendered(() => expect(assetNames(mounted!.container)).toEqual(["root-asset", "child-asset"]));
     setInputValue(search, "");
 
     setSelectValue(selector, "ungrouped");
-    await waitFor(() => expect(assetNames(mounted!.container)).toEqual(["free-asset"]));
+    await waitForRendered(() => expect(assetNames(mounted!.container)).toEqual(["free-asset"]));
     expect(mounted.container.querySelector("[role='tree']")?.textContent).not.toContain("group-p1");
     expect(mounted.container.querySelector("[role='tree']")?.textContent).toContain("设备区");
 
     setSelectValue(selector, "all");
-    await waitFor(() => expect(assetNames(mounted!.container)).toHaveLength(4));
+    await waitForRendered(() => expect(assetNames(mounted!.container)).toHaveLength(4));
     expect(assetNames(mounted.container)).toEqual(["free-asset", "root-asset", "child-asset", "other-asset"]);
   });
 });

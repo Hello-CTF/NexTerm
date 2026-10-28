@@ -1,0 +1,13 @@
+# kind: none
+# alt: true
+# size: 80x10
+---
+LS(1)                            User Commands                           LS(1)
+
+NAME
+       ls - list directory contents
+
+SYNOPSIS
+       ls [OPTION]... [FILE]...
+
+ Manual page ls(1) line 1 (press h for help or q to quit)

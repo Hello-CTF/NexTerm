@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"log/slog"
 	"math/rand/v2"
 	"strings"
@@ -50,6 +52,16 @@ type SyncReport struct {
 	// (a credential while the vault is locked, or a missing dependency), so the
 	// next round must list every server ID again instead of trusting the head.
 	leftPending bool
+	// changedKinds names the kinds whose local copy this round changed,
+	// including the target kinds of applied tombstones.
+	changedKinds map[string]bool
+}
+
+func (report *SyncReport) markChanged(kind string) {
+	if report.changedKinds == nil {
+		report.changedKinds = map[string]bool{}
+	}
+	report.changedKinds[kind] = true
 }
 
 // markUnresolvedRef marks an object applied in reference-degraded form (a dependency has not arrived): the engine must not record reconciliation,
@@ -178,6 +190,20 @@ type Engine struct {
 	transcriptCacheMu sync.RWMutex
 	transcriptCache   map[string]transcriptCacheEntry
 	aiShared          bool
+
+	// skills is the AI skill manager whose per-owner cache synced overrides go through.
+	skillsMu sync.Mutex
+	skills   *skills.Manager
+
+	// cron is the cron job store bound to this database's device.
+	cronMu sync.Mutex
+	cron   *cron.SQLStore
+	// deviceInstall is the installation fingerprint the cron device ID is checked against.
+	deviceInstall string
+
+	// pendingRounds counts the rounds an object has waited for a dependency.
+	pendingMu     sync.Mutex
+	pendingRounds map[string]int
 }
 
 func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog.Logger) *Engine {
@@ -190,50 +216,20 @@ func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog
 	}
 }
 
-// kindOptIn is the per-sync-round opt-in snapshot of sync object kinds; the zero value means hard-off.
-type kindOptIn struct {
-	knownHost    bool
-	aiProfile    bool
-	aiPermission bool
-	aiGrant      bool
-	preferences  bool
-}
-
 // loadKindOptIn reads the sync object opt-in for the session user; with no session identity (empty userID) it is hard-off, not falling back to global settings.
 func (e *Engine) loadKindOptIn(ctx context.Context, userID string) (kindOptIn, error) {
 	if userID == "" {
 		return kindOptIn{}, nil
 	}
-	knownHost, err := e.store.KnownHostSyncOptIn(ctx, userID)
-	if err != nil {
-		return kindOptIn{}, err
-	}
-	aiProfile, err := e.store.AIProfileSyncOptIn(ctx, userID)
-	if err != nil {
-		return kindOptIn{}, err
-	}
-	aiPermission, err := e.store.AIPermissionSyncOptIn(ctx, userID)
-	if err != nil {
-		return kindOptIn{}, err
-	}
-	aiGrant, err := e.store.AIGrantSyncOptIn(ctx, userID)
-	if err != nil {
-		return kindOptIn{}, err
-	}
-	preferences, err := e.store.PreferencesSyncOptIn(ctx, userID)
-	if err != nil {
-		return kindOptIn{}, err
-	}
-	return kindOptIn{knownHost: knownHost, aiProfile: aiProfile, aiPermission: aiPermission, aiGrant: aiGrant, preferences: preferences}, nil
+	return loadKindOptIn(ctx, e.store, userID)
 }
 
 // key encodes the opt-in snapshot; a reconciled cursor is valid only for the snapshot it was reconciled under.
 func (o kindOptIn) key() string {
-	flags := []bool{o.knownHost, o.aiProfile, o.aiPermission, o.aiGrant, o.preferences}
-	encoded := make([]byte, len(flags))
-	for i, flag := range flags {
+	encoded := make([]byte, len(optInSpecs))
+	for i, spec := range optInSpecs {
 		encoded[i] = '0'
-		if flag {
+		if o[spec.id] {
 			encoded[i] = '1'
 		}
 	}
@@ -243,36 +239,14 @@ func (o kindOptIn) key() string {
 // allowsRemote decides whether a remote object (including tombstones) may be applied this round; hard-off kinds are neither applied nor reconciled,
 // staying unreconciled so a later round with opt-in enabled can pull and merge them.
 func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
-	switch kind {
-	case KindKnownHost:
-		return o.knownHost
-	case KindAIProfile:
-		return o.aiProfile
-	case KindAIPermission:
-		return o.aiPermission
-	case KindAIGrant:
-		return o.aiGrant
-	case KindPreference:
-		return o.preferences
-	case KindTombstone:
+	if kind == KindTombstone {
 		var payload tombstoneObject
 		if err := json.Unmarshal(plaintext, &payload); err != nil {
 			return true
 		}
-		switch payload.TargetKind {
-		case KindKnownHost:
-			return o.knownHost
-		case KindAIProfile:
-			return o.aiProfile
-		case KindAIPermission:
-			return o.aiPermission
-		case KindAIGrant:
-			return o.aiGrant
-		case KindPreference:
-			return o.preferences
-		}
+		kind = payload.TargetKind
 	}
-	return true
+	return o.allowsKind(kind)
 }
 
 // Sync runs one full sync round: reconcile -> pull and merge -> push local changes. Conflicts (another device pushed first or rolled back) retry automatically.
@@ -857,7 +831,7 @@ func (e *Engine) syncTombstoneList(ctx context.Context, includeAI ...bool) ([]sy
 	result := []syncTombstoneRow{}
 	statement := tombstone.WithContext(ctx).Select(tombstone.ID, tombstone.Kind, tombstone.DeletedAt)
 	if len(includeAI) > 0 && !includeAI[0] {
-		statement = statement.Where(tombstone.Kind.NotIn(KindAIProfile, KindAIPermission, KindAIGrant))
+		statement = statement.Where(tombstone.Kind.NotIn(aiOwnerKinds...))
 	}
 	err := statement.
 		Where(ownerConditions(ctx, tombstone.TableName())...).

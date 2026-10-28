@@ -27,7 +27,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   };
 });
 
-import { CommandPalette } from "../../app/CommandPalette";
+import { JumpPalette } from "../../app/JumpPalette";
 import {
   getKeybinding,
   loadKeybindings,
@@ -42,9 +42,8 @@ let mounted: MountedView | undefined;
 
 function mountPalette(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const node: ReactNode = createElement(CommandPalette, {
+  const node: ReactNode = createElement(JumpPalette, {
     onClose: () => {},
-    onQuickConnect: () => {},
   });
   const view = mount(createElement(QueryClientProvider, { client }, node));
   return view;
@@ -82,21 +81,22 @@ afterEach(() => {
 describe("command palette keybinding hints", () => {
   it("shows the default bindings with their descriptions", async () => {
     await show();
-    expect(optionHint("快速连接…")).toBe("Ctrl+Shift+K · 最近使用优先");
+    expect(optionHint("快速连接…")).toBe("Ctrl+Shift+K · 只看主机 · Tab 切换");
     expect(optionHint("打开本地终端")).toBe("当前设备");
-    expect(optionHint("上下分屏 / 取消分屏")).toBe("Ctrl+\\");
+    expect(optionHint("向下分屏")).toBe("Ctrl+\\ · 拆分当前窗格");
+    expect(optionHint("向右分屏")).toBe("Ctrl+Shift+\\ · 拆分当前窗格");
   });
 
   it("follows rebound bindings and the displayed key matches the dispatched action", async () => {
     act(() => {
       setKeybinding("quickConnect", "Alt+q");
       setKeybinding("newTerminal", "Alt+n");
-      setKeybinding("toggleSplit", "Alt+s");
+      setKeybinding("splitDown", "Alt+s");
     });
     await show();
-    expect(optionHint("快速连接…")).toBe("Alt+Q · 最近使用优先");
+    expect(optionHint("快速连接…")).toBe("Alt+Q · 只看主机 · Tab 切换");
     expect(optionHint("打开本地终端")).toBe("当前设备");
-    expect(optionHint("上下分屏 / 取消分屏")).toBe("Alt+S");
+    expect(optionHint("向下分屏")).toBe("Alt+S · 拆分当前窗格");
 
     const quick = matchAppKeybinding(
       new KeyboardEvent("keydown", { key: "q", altKey: true }),
@@ -109,30 +109,30 @@ describe("command palette keybinding hints", () => {
     const split = matchAppKeybinding(
       new KeyboardEvent("keydown", { key: "s", altKey: true }),
     );
-    expect(split).toEqual({ action: "toggleSplit", digit: null });
+    expect(split).toEqual({ action: "splitDown", digit: null });
   });
 
   it("omits the key fragment when a binding is cleared but keeps descriptions", async () => {
     act(() => {
       setKeybinding("quickConnect", null);
-      setKeybinding("toggleSplit", null);
+      setKeybinding("splitDown", null);
     });
     await show();
-    expect(optionHint("快速连接…")).toBe("最近使用优先");
-    expect(optionHint("上下分屏 / 取消分屏")).toBeNull();
+    expect(optionHint("快速连接…")).toBe("只看主机 · Tab 切换");
+    expect(optionHint("向下分屏")).toBe("拆分当前窗格");
     expect(optionHint("打开本地终端")).toBe("当前设备");
   });
 
   it("reads persisted overrides in the storage format on load", async () => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ quickConnect: "Alt+q", newTerminal: "Alt+n", toggleSplit: "Alt+s" }),
+      JSON.stringify({ quickConnect: "Alt+q", newTerminal: "Alt+n", splitDown: "Alt+s" }),
     );
     act(() => loadKeybindings());
     await show();
-    expect(optionHint("快速连接…")).toBe("Alt+Q · 最近使用优先");
+    expect(optionHint("快速连接…")).toBe("Alt+Q · 只看主机 · Tab 切换");
     expect(optionHint("打开本地终端")).toBe("当前设备");
-    expect(optionHint("上下分屏 / 取消分屏")).toBe("Alt+S");
+    expect(optionHint("向下分屏")).toBe("Alt+S · 拆分当前窗格");
     expect(getKeybinding("quickConnect")).toBe("Alt+q");
     expect(getKeybinding("closeTab")).toBe("Mod+w");
   });

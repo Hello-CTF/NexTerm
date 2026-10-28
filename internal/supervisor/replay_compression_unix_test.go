@@ -7,7 +7,6 @@ import (
 	"context"
 	"io"
 	"net"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,7 +33,7 @@ func TestRemoteCompressedReplayResumeAndLiveOutput(t *testing.T) {
 	}
 	readUntil(t, probe, "history-ready")
 	_ = probe.Close()
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +82,7 @@ func TestReplayCompressionRequiresClientCapability(t *testing.T) {
 	if err := session.Wait(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}

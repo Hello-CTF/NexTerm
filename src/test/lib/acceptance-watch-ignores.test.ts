@@ -19,6 +19,8 @@ describe("acceptanceWatchIgnored", () => {
     expect(patterns).toEqual([
       `${root}/.tower`,
       `${root}/.tower/**`,
+      `${root}/.claude/worktrees`,
+      `${root}/.claude/worktrees/**`,
       `${root}/target`,
       `${root}/target/**`,
       `${root}/target-alt`,
@@ -32,5 +34,7 @@ describe("acceptanceWatchIgnored", () => {
     }
     expect(patterns.some((p) => matchesAnchored(p, `${root}/.tower/worktrees/other/x.ts`))).toBe(true);
     expect(patterns.some((p) => matchesAnchored(p, `${root}/target/acceptance-x/report.json`))).toBe(true);
+    expect(patterns.some((p) => matchesAnchored(p, `${root}/.claude/worktrees/agent-x/src/main.tsx`))).toBe(true);
+    expect(patterns.some((p) => matchesAnchored(p, `${root}/.claude/settings.json`))).toBe(false);
   });
 });

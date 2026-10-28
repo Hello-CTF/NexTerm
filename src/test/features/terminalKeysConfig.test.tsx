@@ -96,6 +96,7 @@ describe("TerminalKeysBar default keys", () => {
       "Z",
       "^L",
       "^R",
+      "命令",
       "",
     ]);
     expect(buttonByAria("聚焦终端并打开系统键盘")).toBeTruthy();
@@ -191,7 +192,7 @@ describe("TerminalKeysBar configuration", () => {
     openConfig();
     toggleCheckbox(dialog()!, '在按键条中显示「Ctrl+U（删除到行首）」');
     const labels = barLabels();
-    expect(labels[labels.length - 2]).toBe("^U");
+    expect(labels[labels.length - 3]).toBe("^U");
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null")).toEqual([
       ...DEFAULT_TERMINAL_KEY_IDS,
       "ctrl-u",
@@ -233,6 +234,7 @@ describe("TerminalKeysBar configuration", () => {
       "Z",
       "^L",
       "^R",
+      "命令",
       "",
     ]);
   });
@@ -258,8 +260,8 @@ describe("TerminalKeysBar configuration", () => {
     mounted!.unmount();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(["bogus", "escape", "escape", 42]));
     renderBar();
-    expect(barLabels().slice(2)).toEqual(["Esc", ""]);
-    expect(barLabels()).toHaveLength(2 + 2);
+    expect(barLabels().slice(2)).toEqual(["Esc", "命令", ""]);
+    expect(barLabels()).toHaveLength(2 + 3);
   });
 
   it("keeps focus on the toggled checkbox after it moves between sections", () => {

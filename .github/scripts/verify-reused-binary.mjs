@@ -35,9 +35,9 @@ if (id.startsWith("helper-")) {
   try {
     expected = readHostHelperProtocolMetadata({ cwd: ROOT });
   } catch (error) {
-    die(`cannot read host helper protocol/features: ${error.message}`);
+    die(`cannot read host helper protocol: ${error.message}`);
   }
-  problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol, features: expected.features }));
+  problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol }));
 }
 if (problems.length) die(`reused binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
 if (id.startsWith("helper-") && manifest.binary_metadata_verified === false) {

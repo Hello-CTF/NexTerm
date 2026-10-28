@@ -330,7 +330,7 @@ describe("SkillsCard", () => {
     mounted = undefined;
   });
 
-  // NexTerm ships no built-in skills: every owner starts empty and writes its own.
+  // The default backend here is empty so rows are custom skills; built-in cases seed EMBEDDED.
   async function ownerWithSkills(backend: ReturnType<typeof createSkillsMockBackend>, owner: string): Promise<SkillsApi> {
     const api = backend.apiFor(owner);
     await api.saveOverride({ name: "alpha-skill", description: "Alpha synthetic skill", body: "alpha body\n" });
@@ -459,6 +459,28 @@ describe("SkillsCard", () => {
     await flushUntil(() => api.deleteOverride.mock.calls.length === 1);
     await expectNoText(mounted!.container, "Alpha synthetic skill");
     expect(toast).toHaveBeenCalledWith("success", "已删除技能 alpha-skill");
+  });
+
+  it("offers no delete for an untouched built-in skill and restores defaults after an override", async () => {
+    const api = spyApi(createSkillsMockBackend(EMBEDDED).apiFor("owner-a"));
+    mounted = mount(createElement(SkillsCard, { api }));
+    await expectText(mounted.container, "alpha-skill");
+    expect(mounted.container.querySelector('[aria-label="删除技能 alpha-skill"]')).toBeNull();
+    expect(mounted.container.querySelector('[aria-label="恢复默认技能 alpha-skill"]')).toBeNull();
+
+    mounted.unmount();
+
+    await api.saveOverride({ name: "alpha-skill", description: "Alpha edited" });
+    mounted = mount(createElement(SkillsCard, { api }));
+    await expectText(mounted.container, "Alpha edited");
+    expect(mounted.container.querySelector('[aria-label="删除技能 alpha-skill"]')).toBeNull();
+    mocks.ask.mockResolvedValueOnce(true);
+    click(await waitForButton(mounted.container, "恢复默认技能 alpha-skill"));
+    await flushUntil(() => api.deleteOverride.mock.calls.length === 1);
+    await expectText(mounted.container, "Alpha synthetic skill");
+    expect(mocks.ask).toHaveBeenLastCalledWith(expect.stringContaining("不会被删除"), expect.objectContaining({ title: "恢复默认" }));
+    expect(toast).toHaveBeenCalledWith("success", "已恢复技能 alpha-skill 的默认内容");
+    expect(mounted.container.querySelector('[aria-label="恢复默认技能 alpha-skill"]')).toBeNull();
   });
 
   it("reports a delete failure and keeps the row", async () => {
@@ -635,7 +657,6 @@ describe("production skills API", () => {
 
 describe("SettingsView skills navigation", () => {
   let mounted: MountedView | undefined;
-  let client: QueryClient | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -643,6 +664,16 @@ describe("SettingsView skills navigation", () => {
     localStorage.clear();
     mocks.call.mockImplementation(async (cmd: string) => {
       if (cmd === "ai_skills_list") return [WIRE_ENTRY];
+      if (cmd === "ai_privacy_status") {
+        return {
+          config: { enabled: false, precision: "int8", revision: "", version: "" },
+          installed: [],
+          runtime: { supported: true },
+          diskUsage: 0,
+          canManage: true,
+          download: { running: false, precision: "int8", progress: { file: "", downloaded: 0, total: 0 } },
+        };
+      }
       if (cmd === "vault_status") {
         return { initialized: true, mode: "master", unlocked: true, autoLockMinutes: 30 };
       }
@@ -657,16 +688,18 @@ describe("SettingsView skills navigation", () => {
 
   it("shows the AI skills section and loads it through the production API", async () => {
     localStorage.setItem("nexterm.settingsGroup.v1", "ai");
-    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mounted = mount(createElement(QueryClientProvider, { client }, createElement(SettingsView)));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => {
+      mounted = mount(createElement(QueryClientProvider, { client }, createElement(SettingsView)));
+    });
 
     const navLabels = [
-      ...mounted.container.querySelectorAll(
+      ...mounted!.container.querySelectorAll(
         "[data-testid='settings-nav-toc'] button, [data-testid='settings-nav-chips'] button",
       ),
     ].map((button) => button.textContent?.trim());
     expect(navLabels).toContain("技能");
-    const section = mounted.container.querySelector("#settings-ai-skills");
+    const section = mounted!.container.querySelector("#settings-ai-skills");
     expect(section).not.toBeNull();
 
     await flushUntil(() => mocks.call.mock.calls.some((call) => call[0] === "ai_skills_list"));

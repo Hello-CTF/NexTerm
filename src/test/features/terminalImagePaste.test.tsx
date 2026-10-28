@@ -24,10 +24,11 @@ vi.mock("@xterm/xterm", () => ({
     options = { scrollback: 1000 };
     element: HTMLElement | null = null;
     modes = { bracketedPasteMode: false };
-    buffer = { active: { type: "normal", baseY: 0, viewportY: 0 } };
+    buffer = { active: { type: "normal", baseY: 0, viewportY: 0 }, onBufferChange: () => ({ dispose: () => {} }) };
     constructor() {
       harness.terminals.push(this);
     }
+    parser = { registerOscHandler: () => ({ dispose: () => undefined }) };
     open(element: HTMLElement) {
       this.element = element;
       const viewport = document.createElement("div");
@@ -118,6 +119,7 @@ vi.mock("../../ipc/events", () => ({
 vi.mock("../../ipc/env", () => ({ clientId: () => "me", WEB: false }));
 
 import { XtermView, type XtermViewProps } from "../../features/terminal/XtermView";
+import { setTerminalConfirmMultilinePaste } from "../../app/preferences";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -167,15 +169,27 @@ function pasteEvent(files: File[], text = ""): Event {
   return event;
 }
 
-function dropEvent(files: File[], text = ""): Event {
+function dropEvent(files: File[], text = "", folders: string[] = []): Event {
   const event = new Event("drop", { bubbles: true, cancelable: true });
-  const items: { kind: string; type: string; getAsFile: () => File | null }[] = files.map(
-    (file) => ({
+  const items: {
+    kind: string;
+    type: string;
+    getAsFile: () => File | null;
+    webkitGetAsEntry?: () => { isDirectory: boolean; name: string };
+  }[] = files.map((file) => ({
+    kind: "file",
+    type: file.type,
+    getAsFile: () => file,
+    webkitGetAsEntry: () => ({ isDirectory: false, name: file.name }),
+  }));
+  for (const name of folders) {
+    items.push({
       kind: "file",
-      type: file.type,
-      getAsFile: () => file,
-    }),
-  );
+      type: "",
+      getAsFile: () => new File([], name),
+      webkitGetAsEntry: () => ({ isDirectory: true, name }),
+    });
+  }
   if (text) items.push({ kind: "string", type: "text/plain", getAsFile: () => null });
   Object.defineProperty(event, "dataTransfer", {
     value: {
@@ -202,7 +216,7 @@ beforeEach(() => {
     sessionId: "session",
     cols: 80,
     rows: 24,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -212,7 +226,7 @@ beforeEach(() => {
     tabId: "tab-existing",
     cols: 90,
     rows: 30,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -244,108 +258,115 @@ afterEach(() => {
 });
 
 describe("XtermView image paste interception", () => {
-  it("invokes onPasteImages and prevents default paste for an image-only clipboard", async () => {
-    const onPasteImages = vi.fn();
-    await show({ sessionId: "session", tabId: "pending", onPasteImages });
+  it("invokes onPasteFiles and prevents default paste for an image-only clipboard", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
 
     const event = pasteEvent([png("shot.png")]);
     act(() => {
       host().dispatchEvent(event);
     });
 
-    expect(onPasteImages).toHaveBeenCalledTimes(1);
-    expect(onPasteImages.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["shot.png"]);
+    expect(onPasteFiles).toHaveBeenCalledTimes(1);
+    expect(onPasteFiles.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["shot.png"]);
     expect(event.defaultPrevented).toBe(true);
     expect(harness.write).not.toHaveBeenCalled();
   });
 
   it("does not intercept a mixed clipboard containing plain text and preserves normal text paste", async () => {
-    const onPasteImages = vi.fn();
-    await show({ sessionId: "session", tabId: "pending", onPasteImages });
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
 
     const event = pasteEvent([png("shot.png")], "echo already-text");
     act(() => {
       host().dispatchEvent(event);
     });
 
-    expect(onPasteImages).not.toHaveBeenCalled();
+    expect(onPasteFiles).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("does not intercept a mixed image and non-image file clipboard and falls back to default handling as a whole", async () => {
-    const onPasteImages = vi.fn();
-    await show({ sessionId: "session", tabId: "pending", onPasteImages });
+  it("leaves a text-only paste to the default handling", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
 
-    const event = pasteEvent([
-      png("shot.png"),
-      new File(["x"], "notes.txt", { type: "text/plain" }),
-    ]);
+    const event = pasteEvent([], "echo hi");
     act(() => {
       host().dispatchEvent(event);
     });
 
-    expect(onPasteImages).not.toHaveBeenCalled();
+    expect(onPasteFiles).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("does not intercept non-image file drops", async () => {
-    const onPasteImages = vi.fn();
-    await show({ sessionId: "session", tabId: "pending", onPasteImages });
+  it("uploads a mixed image and non-image clipboard as a whole", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
+
+    const event = pasteEvent([png("shot.png"), new File(["x"], "notes.txt", { type: "text/plain" })]);
+    act(() => {
+      host().dispatchEvent(event);
+    });
+
+    expect(onPasteFiles.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["shot.png", "notes.txt"]);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("prefers a non-image file over the text that accompanies it on the clipboard", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
+
+    const event = pasteEvent([new File(["%PDF"], "doc.pdf", { type: "application/pdf" })], "/home/me/doc.pdf");
+    act(() => {
+      host().dispatchEvent(event);
+    });
+
+    expect(onPasteFiles.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["doc.pdf"]);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("intercepts non-image file drops", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
 
     const event = dropEvent([new File(["x"], "notes.txt", { type: "text/plain" })]);
     act(() => {
       host().dispatchEvent(event);
     });
 
-    expect(onPasteImages).not.toHaveBeenCalled();
-    expect(event.defaultPrevented).toBe(false);
-  });
-
-  it("does not intercept mixed image and non-image file drops and preserves non-image content", async () => {
-    const onPasteImages = vi.fn();
-    await show({ sessionId: "session", tabId: "pending", onPasteImages });
-
-    const event = dropEvent([
-      png("shot.png"),
-      new File(["x"], "notes.txt", { type: "text/plain" }),
-    ]);
-    act(() => {
-      host().dispatchEvent(event);
-    });
-
-    expect(onPasteImages).not.toHaveBeenCalled();
-    expect(event.defaultPrevented).toBe(false);
+    expect(onPasteFiles.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["notes.txt"]);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it("passes mixed image and text drops through like paste without upload or preventDefault", async () => {
-    const onPasteImages = vi.fn();
-    await show({ sessionId: "session", tabId: "pending", onPasteImages });
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
 
     const event = dropEvent([png("shot.png")], "https://example.com/page");
     act(() => {
       host().dispatchEvent(event);
     });
 
-    expect(onPasteImages).not.toHaveBeenCalled();
+    expect(onPasteFiles).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("invokes onPasteImages and prevents default behavior for image drops", async () => {
-    const onPasteImages = vi.fn();
-    await show({ sessionId: "session", tabId: "pending", onPasteImages });
+  it("invokes onPasteFiles and prevents default behavior for image drops", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
 
     const event = dropEvent([png("dropped.png")]);
     act(() => {
       host().dispatchEvent(event);
     });
 
-    expect(onPasteImages).toHaveBeenCalledTimes(1);
-    expect(onPasteImages.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["dropped.png"]);
+    expect(onPasteFiles).toHaveBeenCalledTimes(1);
+    expect(onPasteFiles.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["dropped.png"]);
     expect(event.defaultPrevented).toBe(true);
   });
 
   it("prevents default dragover behavior only for files to allow dropping", async () => {
-    await show({ sessionId: "session", tabId: "pending", onPasteImages: vi.fn() });
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles: vi.fn() });
 
     const withFiles = dragOverEvent(["Files"]);
     act(() => {
@@ -358,5 +379,86 @@ describe("XtermView image paste interception", () => {
       host().dispatchEvent(withText);
     });
     expect(withText.defaultPrevented).toBe(false);
+  });
+
+  it("reports a dropped folder as skipped instead of uploading it", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
+
+    const event = dropEvent([new File(["x"], "notes.txt", { type: "text/plain" })], "", ["src"]);
+    act(() => {
+      host().dispatchEvent(event);
+    });
+
+    expect(onPasteFiles).toHaveBeenCalledTimes(1);
+    expect(onPasteFiles.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["notes.txt"]);
+    expect(onPasteFiles.mock.calls[0]?.[1]).toEqual(["文件夹「src」"]);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("reports a folder-only drop so it is not silently ignored", async () => {
+    const onPasteFiles = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteFiles });
+
+    const event = dropEvent([], "", ["photos"]);
+    act(() => {
+      host().dispatchEvent(event);
+    });
+
+    expect(onPasteFiles).toHaveBeenCalledWith([], ["文件夹「photos」"]);
+    expect(event.defaultPrevented).toBe(true);
+  });
+});
+
+describe("XtermView multi-line text paste", () => {
+  afterEach(() => {
+    setTerminalConfirmMultilinePaste("unbracketed");
+  });
+
+  it("pastes without a prompt once the user turned the multi-line prompt off", async () => {
+    setTerminalConfirmMultilinePaste("never");
+    const onData = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onData });
+
+    const event = pasteEvent([], "echo one\necho two");
+    await act(async () => {
+      host().dispatchEvent(event);
+      await flushMacrotask();
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onData).toHaveBeenCalledWith("echo one\necho two");
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("sends a multi-line paste bracketed without a prompt when the program turned bracketed paste on", async () => {
+    setTerminalConfirmMultilinePaste("unbracketed");
+    const onData = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onData });
+    const terminal = harness.terminals[0] as unknown as { modes: { bracketedPasteMode: boolean } };
+    terminal.modes.bracketedPasteMode = true;
+
+    await act(async () => {
+      host().dispatchEvent(pasteEvent([], "echo one\necho two"));
+      await flushMacrotask();
+    });
+
+    expect(onData).toHaveBeenCalledWith("\x1b[200~echo one\necho two\x1b[201~");
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("keeps the bracketed paste closed against an embedded end sequence while the prompt is off", async () => {
+    setTerminalConfirmMultilinePaste("never");
+    const onData = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onData });
+    const terminal = harness.terminals[0] as unknown as { modes: { bracketedPasteMode: boolean } };
+    terminal.modes.bracketedPasteMode = true;
+
+    await act(async () => {
+      host().dispatchEvent(pasteEvent([], "echo one\x1b[201~\nrm -rf ~"));
+      await flushMacrotask();
+    });
+
+    expect(onData).toHaveBeenCalledWith("\x1b[200~echo one␛[201~\nrm -rf ~\x1b[201~");
   });
 });

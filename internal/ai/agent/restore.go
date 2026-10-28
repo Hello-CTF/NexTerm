@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
@@ -321,7 +322,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	if err != nil {
 		return nil, ErrJobNotFound
 	}
-	executionCtx := conversationExecutionContext(ctx, conversation.OwnerID)
+	executionCtx := privacy.WithConversation(conversationExecutionContext(ctx, conversation.OwnerID), row.ConversationID)
 	scope, err := scopeFromConversation(conversation.ScopeJSON)
 	if err != nil {
 		return nil, err

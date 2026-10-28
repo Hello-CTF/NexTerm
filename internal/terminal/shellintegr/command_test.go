@@ -309,3 +309,10 @@ func TestCommandTrackerObserveReportsIgnoresNoise(t *testing.T) {
 		t.Fatalf("malformed-exit report = %+v, want D without exit code", reports[1])
 	}
 }
+
+func TestParseOSC133ExitCodeWithExtraParams(t *testing.T) {
+	_, code, has, ok := parseOSC133([]byte("133;D;7;aid=12"))
+	if !ok || !has || code != 7 {
+		t.Fatalf("code=%d has=%v ok=%v", code, has, ok)
+	}
+}

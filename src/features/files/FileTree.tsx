@@ -25,7 +25,7 @@ import {
   reconnectDeadHost,
   useUi,
 } from "../../app/store";
-import { useCoarsePointer } from "../../app/platform";
+import { useCoarsePointer } from "../../app/shell";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import {
   HOME,
@@ -43,7 +43,7 @@ import {
 import { useFileOps } from "./useFileOps";
 import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
-import { useCwdFollow } from "./cwdFollow";
+import { useCwdFollow, type CwdFollowControl } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
 import { enqueueDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
@@ -347,11 +347,19 @@ const TreeRow = memo(function TreeRow({
   );
 });
 
-export function FileTree({ sessionId }: { sessionId: string }) {
-  return <FileTreeInner sessionId={sessionId} />;
+export interface FileTreeProps {
+  sessionId: string;
+  // follow hands the terminal-directory follow to an owner instead of the device-wide preference.
+  follow?: CwdFollowControl;
+  // embedded fills its container (the session side panel) instead of sizing itself as the left dock.
+  embedded?: boolean;
 }
 
-function FileTreeInner({ sessionId }: { sessionId: string }) {
+export function FileTree(props: FileTreeProps) {
+  return <FileTreeInner {...props} />;
+}
+
+function FileTreeInner({ sessionId, follow: followControl, embedded = false }: FileTreeProps) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
   const leftOpen = useUi((s) => s.leftOpen);
@@ -388,11 +396,17 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const computer = root === null && windowsComputer;
   const homeTarget = rootsData?.homePath ?? HOME;
   const homeSupported = sessionKind !== "winrm" || rootsData?.homePath != null;
-  const follow = useCwdFollow(sessionId, root ?? "\u0000", `tree:${sessionId}`, (next) => {
-    setExpanded([]);
-    setSelected(null);
-    setRoot(next);
-  });
+  const follow = useCwdFollow(
+    sessionId,
+    root ?? "\u0000",
+    followControl ? null : `tree:${sessionId}`,
+    (next) => {
+      setExpanded([]);
+      setSelected(null);
+      setRoot(next);
+    },
+    followControl,
+  );
 
   useEffect(() => {
     const el = crumbRef.current;
@@ -431,6 +445,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     }
     setEditing(false);
     if (next === root) return;
+    follow.noteUserNavigation();
     setExpanded([]);
     setSelected(null);
     setRoot(next);
@@ -600,6 +615,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const selectedEntry = selected ? findEntry(selected) : undefined;
 
   const navigateRoot = (next: string | null) => {
+    follow.noteUserNavigation();
     setSelected(null);
     if (next === null) {
       setExpanded([]);
@@ -762,6 +778,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
 
   const enterDir = (path: string) => {
     if (path === root) return;
+    follow.noteUserNavigation();
     setExpanded([]);
     setSelected(null);
     setRoot(path);
@@ -1305,7 +1322,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     );
   };
 
-  if (!leftOpen) return null;
+  if (!leftOpen && !embedded) return null;
 
   const crumbs = root ? crumbsOf(root) : [];
   const parent = root ? parentOf(root) : null;
@@ -1315,8 +1332,10 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
 
   return (
     <aside
-      className="nx-files-pane flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
-      style={{ width: leftWidth }}
+      className={`nx-files-pane flex h-full flex-col bg-neutral-950 ${
+        embedded ? "min-h-0 w-full min-w-0" : "shrink-0 border-r border-neutral-800/60"
+      }`}
+      style={embedded ? undefined : { width: leftWidth }}
     >
       <div className="nx-files-bar flex h-[34px] shrink-0 items-center gap-0.5 overflow-x-auto px-2">
         <span className="mr-1 shrink-0 text-xs font-semibold tracking-wide text-neutral-200">

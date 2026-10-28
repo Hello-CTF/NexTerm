@@ -5,6 +5,7 @@ package production
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,8 +43,32 @@ func (p *unavailableCreateProvider) Create(context.Context, base.DurableCreateOp
 	return nil, durable.ErrUnavailable
 }
 
-func (p *unavailableCreateProvider) Attach(context.Context, string) (base.DurableAttachment, error) {
+func (p *unavailableCreateProvider) AttachWithIdentity(context.Context, string, base.DurableIdentity) (base.DurableAttachment, error) {
 	return nil, durable.ErrNotFound
+}
+
+func (p *unavailableCreateProvider) AttachFromWithIdentity(context.Context, string, base.DurableIdentity, uint64) (base.DurableAttachment, error) {
+	return nil, durable.ErrNotFound
+}
+
+func (p *unavailableCreateProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+func (p *unavailableCreateProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
+	return nil, base.ErrUnsupported
+}
+
+func (p *unavailableCreateProvider) RenameDurable(context.Context, base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	return base.DurableRenameResult{}, base.ErrUnsupported
+}
+
+func (p *unavailableCreateProvider) KillWithIdentity(context.Context, string, base.DurableIdentity) error {
+	return base.ErrUnsupported
+}
+
+func (p *unavailableCreateProvider) ReadDurableHistory(context.Context, string, base.DurableIdentity, base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	return base.DurableHistoryChunk{}, base.ErrUnsupported
 }
 
 func (r *recordingDurableResolver) ResolveDurable(_ context.Context, transport base.Transport) (base.DurableProvider, error) {
@@ -467,8 +492,8 @@ func TestProductionAttachTabRemoteResolverFailurePropagatesMapping(t *testing.T)
 	if response.Error.Code == ipc.CodeNotFound {
 		t.Fatalf("attach tab %s = %+v, resolver failure must not collapse into not_found", missing, response)
 	}
-	if response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("attach tab %s = %+v, want unsupported for an unavailable daemon", missing, response)
+	if response.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("attach tab %s = %+v, want disconnected for an unavailable daemon", missing, response)
 	}
 }
 
@@ -477,7 +502,7 @@ type failingListDurableProvider struct {
 	err error
 }
 
-func (p failingListDurableProvider) ListDurable(context.Context) ([]string, error) {
+func (p failingListDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
 	return nil, p.err
 }
 
@@ -495,8 +520,8 @@ func TestProductionAttachTabRemoteListFailurePropagatesMapping(t *testing.T) {
 	if response.Error.Code == ipc.CodeNotFound {
 		t.Fatalf("attach tab %s = %+v, enumeration failure must not collapse into not_found", missing, response)
 	}
-	if response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("attach tab %s = %+v, want unsupported for an unenumerable daemon", missing, response)
+	if response.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("attach tab %s = %+v, want disconnected for an unenumerable daemon", missing, response)
 	}
 }
 
@@ -558,8 +583,8 @@ func TestProductionTerminalAttachFallsBackOnceWhenHelperUnavailable(t *testing.T
 		t.Fatalf("helper resolution calls = %d; want one per session", calls)
 	}
 	strict := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "strict-ssh-channel", "client-a")
-	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("explicit durable attach = %+v; want unsupported", strict)
+	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("explicit durable attach = %+v; want disconnected for a transiently unavailable helper", strict)
 	}
 	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 3 {
 		t.Fatalf("tabs after fallback and strict failure = %+v", tabs)
@@ -588,8 +613,8 @@ func TestProductionTerminalAttachFallsBackWhenDurableCreateBecomesUnavailable(t 
 		t.Fatalf("durable Create calls = %d, resolver calls = %d; want one each", provider.calls, len(resolver.recorded()))
 	}
 	strict := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "create-strict", "client-a")
-	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("explicit durable attach = %+v; want unsupported", strict)
+	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("explicit durable attach = %+v; want disconnected for a transiently unavailable helper", strict)
 	}
 	if provider.calls != 2 {
 		t.Fatalf("explicit durable Create calls = %d; want a retry after automatic fallback", provider.calls)
@@ -655,6 +680,67 @@ func TestProductionTerminalModePreferenceOwnerOverride(t *testing.T) {
 	}
 	if got, err := resolve(owner, asset.ID); err != nil || got != session.TerminalModeRegular {
 		t.Fatalf("asset regular override = %q, %v", got, err)
+	}
+}
+
+func TestProductionTerminalHistoryReadReturnsBoundedHelperOutput(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connectRemoteSSHAsset(t, production)
+	tabID := createDaemonTab(t, fixture.provider, "history-read-marker")
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":262144}`, "history-read-channel", "client-a"), &attachedTabDTO{})
+
+	infos, err := fixture.client.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var next uint64
+	for _, info := range infos {
+		if info.ID == tabID {
+			next = info.HistoryNext
+		}
+	}
+	if next == 0 {
+		t.Fatalf("helper reports no recorded output for %s: %+v", tabID, infos)
+	}
+	response := dispatchDurableTest(t, production, "terminal_history_read", fmt.Sprintf(`{"tabId":%q,"before":%d,"maxBytes":4096}`, tabID, next), "", "client-a")
+	var chunk terminalHistoryDTO
+	requireStoreTestResponse(t, response, &chunk)
+	data, err := base64.StdEncoding.DecodeString(chunk.DataBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunk.End != next || chunk.Start != 0 || chunk.Truncated || chunk.HistoryNext != next || !bytes.Contains(data, []byte("history-read-marker")) {
+		t.Fatalf("history read = %+v (%q)", chunk, data)
+	}
+	if response := dispatchDurableTest(t, production, "terminal_history_read", fmt.Sprintf(`{"tabId":%q,"before":%d}`, tabID, next+1), "", "client-a"); response.OK {
+		t.Fatal("history read beyond the recorded output succeeded")
+	}
+}
+
+func TestProductionDurableHistoryLimitPreference(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	owner := ipc.WithUserID(t.Context(), "history-owner")
+	resolve := newProductionDurableHistoryLimit(database)
+	if got := resolve(owner); got != 0 {
+		t.Fatalf("unset preference = %d, want the helper default", got)
+	}
+	preferences := account.NewPreferences(database)
+	if _, err := preferences.UpdateDefaults(owner, map[string]json.RawMessage{"terminal.durableHistoryMiB": json.RawMessage(`16`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolve(owner); got != 16<<20 {
+		t.Fatalf("default preference = %d, want 16 MiB", got)
+	}
+	if _, err := preferences.UpdateUserOverrides(owner, "history-owner", map[string]json.RawMessage{"terminal.durableHistoryMiB": json.RawMessage(`2`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolve(owner); got != 2<<20 {
+		t.Fatalf("owner override = %d, want 2 MiB", got)
+	}
+	if _, err := preferences.UpdateDefaults(owner, map[string]json.RawMessage{"terminal.durableHistoryMiB": json.RawMessage(`0`)}, nil); err == nil {
+		t.Fatal("a zero history limit preference was accepted")
 	}
 }
 
@@ -856,8 +942,8 @@ func TestProductionListDurableResolverFailureIsNotAnEmptyList(t *testing.T) {
 	connected := connectRemoteSSHAsset(t, production)
 
 	response := dispatchDurableTest(t, production, "terminal_list", `{"sessionId":"`+connected.ID+`","durable":true}`, "", "client-a")
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("descriptor resolver failure = %+v, want unsupported instead of an empty list", response)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("descriptor resolver failure = %+v, want disconnected instead of an empty list", response)
 	}
 }
 
@@ -877,8 +963,8 @@ func TestProductionListDurableEnumerationFailureIsNotAnEmptyList(t *testing.T) {
 	connected := connectRemoteSSHAsset(t, production)
 
 	response := dispatchDurableTest(t, production, "terminal_list", `{"sessionId":"`+connected.ID+`","durable":true}`, "", "client-a")
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("descriptor enumeration failure = %+v, want unsupported instead of an empty list", response)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("descriptor enumeration failure = %+v, want disconnected instead of an empty list", response)
 	}
 }
 
@@ -1060,19 +1146,12 @@ func TestProductionAttachTabHonorsDiscoveredSessionScope(t *testing.T) {
 
 type flakyMetadataProvider struct {
 	base.DurableProvider
-	base.DurableMetadataProvider
-	base.DurableDescriptorLister
-	base.DurableIdentityAttacher
 	calls     []base.DurableRenameOptions
 	failFirst error
 }
 
-func (p *flakyMetadataProvider) DurableMetadataSupported(context.Context) (bool, error) {
-	return true, nil
-}
-
 func (p *flakyMetadataProvider) RenameDurable(ctx context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
-	result, err := p.DurableMetadataProvider.RenameDurable(ctx, options)
+	result, err := p.DurableProvider.RenameDurable(ctx, options)
 	p.calls = append(p.calls, options)
 	if len(p.calls) == 1 && p.failFirst != nil && err == nil {
 		return base.DurableRenameResult{}, p.failFirst
@@ -1092,8 +1171,7 @@ func TestProductionRenameRetriesPreserveRequestAndRevision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newRemoteDaemonFixture(t)
 			provider := &flakyMetadataProvider{
-				DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider,
-				DurableDescriptorLister: fixture.provider, DurableIdentityAttacher: fixture.provider, failFirst: tc.failFirst,
+				DurableProvider: fixture.provider, failFirst: tc.failFirst,
 			}
 			resolver := &recordingDurableResolver{provider: provider}
 			production, _ := newRemoteRecoveryHarness(t, resolver)
@@ -1136,8 +1214,7 @@ func TestProductionRenameRetryReconcilesRemoteMetadataChanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newRemoteDaemonFixture(t)
 			provider := &flakyMetadataProvider{
-				DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider,
-				DurableDescriptorLister: fixture.provider, DurableIdentityAttacher: fixture.provider, failFirst: tc.failFirst,
+				DurableProvider: fixture.provider, failFirst: tc.failFirst,
 			}
 			resolver := &recordingDurableResolver{provider: provider}
 			production, _ := newRemoteRecoveryHarness(t, resolver)
@@ -1194,7 +1271,7 @@ func TestProductionRenameRetryReconcilesRemoteMetadataChanges(t *testing.T) {
 
 func TestProductionPendingRenameAfterIncarnationChange(t *testing.T) {
 	fixture := newRemoteDaemonFixture(t)
-	provider := &flakyMetadataProvider{DurableProvider: fixture.provider, DurableMetadataProvider: fixture.provider, DurableDescriptorLister: fixture.provider, DurableIdentityAttacher: fixture.provider, failFirst: base.ErrDisconnected}
+	provider := &flakyMetadataProvider{DurableProvider: fixture.provider, failFirst: base.ErrDisconnected}
 	resolver := &recordingDurableResolver{provider: provider}
 	production, _ := newRemoteRecoveryHarness(t, resolver)
 	connected := connectRemoteSSHAsset(t, production)

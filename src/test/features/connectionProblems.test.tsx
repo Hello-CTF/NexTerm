@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -78,7 +78,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   };
 });
 
-import { QuickConnect } from "../../app/QuickConnect";
+import { JumpPalette } from "../../app/JumpPalette";
 import { AssetTree } from "../../features/explorer/AssetTree";
 import {
   assetConnectionProblemKey,
@@ -152,7 +152,6 @@ function workspaceOf(id: string, assetId: string, restorePending = false): Works
     restorePending: restorePending || undefined,
     panes: [{ id: `${id}-pane`, tabs: [], activeTabId: null }],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -491,15 +490,15 @@ describe("connection problem visibility and retry", () => {
     expect(useUi.getState().workspaces).toEqual([]);
 
     const view = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(view.container.textContent).toContain(WEB.name));
+    await waitForRendered(() => expect(view.container.textContent).toContain(WEB.name));
     const retry = view.container.querySelector<HTMLButtonElement>(`button[aria-label="重试连接 ${WEB.name}"]`);
     expect(retry).not.toBeNull();
     expect(retry?.title).toContain("tree connection down");
 
     mocks.sessionConnect.mockResolvedValueOnce(sessionFor(WEB));
     click(retry!);
-    await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(globalProblem(WEB.id)).toBeUndefined());
+    await waitForRendered(() => expect(mocks.sessionConnect).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(globalProblem(WEB.id)).toBeUndefined());
   });
 
   it("hides the asset-tree failure badge a minute after the failure", async () => {
@@ -507,7 +506,7 @@ describe("connection problem visibility and retry", () => {
     await connectAsset(WEB);
     const view = mountWithClient(createElement(AssetTree));
     const selector = `button[aria-label="重试连接 ${WEB.name}"]`;
-    await waitFor(() => expect(view.container.querySelector(selector)).not.toBeNull());
+    await waitForRendered(() => expect(view.container.querySelector(selector)).not.toBeNull());
 
     const key = assetConnectionProblemKey(WEB.id);
     act(() => {
@@ -519,7 +518,7 @@ describe("connection problem visibility and retry", () => {
       }));
     });
 
-    await waitFor(() => expect(view.container.querySelector(selector)).toBeNull());
+    await waitForRendered(() => expect(view.container.querySelector(selector)).toBeNull());
   });
 
   it("shows a global quick-target problem after reopening and retries the original target", async () => {
@@ -528,8 +527,8 @@ describe("connection problem visibility and retry", () => {
     expect(useUi.getState().workspaces).toEqual([]);
     const onClose = vi.fn();
 
-    const view = mountWithClient(createElement(QuickConnect, { onClose }));
-    await waitFor(() => {
+    const view = mountWithClient(createElement(JumpPalette, { onClose, scope: "hosts" }));
+    await waitForRendered(() => {
       const section = view.container.querySelector('section[aria-label="本次问题"]');
       expect(section?.textContent).toContain("quick still visible");
     });
@@ -539,8 +538,8 @@ describe("connection problem visibility and retry", () => {
     expect(reconnect).toBeDefined();
 
     click(reconnect!);
-    await waitFor(() => expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(useUi.getState().connectionProblems[quickConnectionProblemKey(QUICK_TARGET)]).toBeUndefined();
   });
 
@@ -548,8 +547,8 @@ describe("connection problem visibility and retry", () => {
     mocks.sessionConnectQuick.mockRejectedValueOnce(new Error("dismiss quick"));
     await connectQuickTarget(QUICK_TARGET);
     const key = quickConnectionProblemKey(QUICK_TARGET);
-    const view = mountWithClient(createElement(QuickConnect, { onClose: vi.fn() }));
-    await waitFor(() => expect(view.container.textContent).toContain("dismiss quick"));
+    const view = mountWithClient(createElement(JumpPalette, { onClose: vi.fn(), scope: "hosts" }));
+    await waitForRendered(() => expect(view.container.textContent).toContain("dismiss quick"));
 
     const dismiss = view.container.querySelector<HTMLButtonElement>(
       `button[aria-label="关闭问题：dismiss quick"]`,
@@ -557,7 +556,7 @@ describe("connection problem visibility and retry", () => {
     expect(dismiss).not.toBeNull();
     click(dismiss!);
 
-    await waitFor(() => expect(useUi.getState().connectionProblems[key]).toBeUndefined());
+    await waitForRendered(() => expect(useUi.getState().connectionProblems[key]).toBeUndefined());
     expect(view.container.querySelector('section[aria-label="本次问题"]')).toBeNull();
   });
 });

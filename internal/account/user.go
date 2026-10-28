@@ -34,9 +34,6 @@ const (
 
 const (
 	passwordSaltBytes = 16
-	argon2Time        = 3
-	argon2Memory      = 64 * 1024
-	argon2Threads     = 4
 	argon2KeyLength   = 32
 	MinPasswordLength = 8
 	maxUsernameLength = 64
@@ -65,9 +62,10 @@ func hashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", ipc.WrapError(ipc.CodeCrypto, "加密错误: 密码盐生成失败", err)
 	}
-	key := argon2.IDKey([]byte(password), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLength)
+	params := vault.PasswordArgon2()
+	key := argon2.IDKey([]byte(password), salt, params.Time, params.MemoryKiB, params.Threads, argon2KeyLength)
 	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
-		argon2Memory, argon2Time, argon2Threads,
+		params.MemoryKiB, params.Time, params.Threads,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key)), nil
 }

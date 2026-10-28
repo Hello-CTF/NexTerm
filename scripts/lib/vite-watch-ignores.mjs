@@ -1,7 +1,7 @@
 import path from "node:path";
 import { normalizePath } from "vite";
 
-const ARTIFACT_DIRS = [".tower", "target", "target-alt", ".tmp"];
+const ARTIFACT_DIRS = [".tower", ".claude/worktrees", "target", "target-alt", ".tmp"];
 
 // Rules must be anchored to the resolved root itself: a bare "**/.tower/**" would also ignore
 // <root>/src/main.tsx when the root itself has a .tower ancestor (tower worktree), silently cutting off source watching.

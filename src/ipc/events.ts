@@ -14,6 +14,7 @@ import {
   type WailsChannel,
 } from "./wails";
 import type { ipcEventTopics } from "./generated/events";
+import type { AggregateHostStatus, AggregateSession } from "./generated/types";
 
 export type UnlistenFn = () => void;
 
@@ -29,6 +30,8 @@ export const EVENTS = {
   terminalExit: "terminal://exit",
   terminalThrottled: "terminal://throttled",
   terminalControl: "terminal://control",
+  terminalAttention: "terminal://attention",
+  terminalSessions: "terminal://sessions",
   fsProgress: "fs://progress",
   updateProgress: "update://progress",
   dockerStats: "docker://stats",
@@ -37,19 +40,37 @@ export const EVENTS = {
   aiWatchToolData: "ai://watch-tool-data",
   appError: "app://error",
   deepLink: "app://deep-link",
+  notificationClick: "app://notification-click",
   deviceStatus: "device://status",
   filesDropped: "files://dropped",
   layoutChanged: "layout://changed",
   inventoryChanged: "inventory://changed",
+  localHelperStatus: "local://helper-status",
   syncStatus: "sync://status",
   syncRoundComplete: "sync://round-complete",
 } as const satisfies typeof ipcEventTopics;
 
 export type { SessionStatusEvent, TerminalExitEvent } from "./types";
+export type { AttentionEvent as TerminalAttentionEvent } from "./generated/types";
+// One host's durable sessions after a cross-host listing refreshed it; it replaces what was known of that host.
+export interface TerminalSessionsEvent {
+  host: AggregateHostStatus;
+  sessions: AggregateSession[];
+}
+
+// A click on a system notification the desktop showed; tabId is the backend tab it was about.
+export interface NotificationClickEvent {
+  id: string;
+  tabId?: string;
+}
 
 export interface TerminalControlEvent {
   tabId: string;
-  controller: string | null;
+  // The client whose terminal size the PTY follows (the client that typed
+  // last, after a short hold); null while no attached client owns it.
+  sizeOwner: string | null;
+  // The share-preview guest holding input control.
+  guestControl?: string;
   subscribers: number;
   viewers: number;
   exited: boolean;
@@ -60,6 +81,14 @@ export interface TerminalControlEvent {
   cwd?: string;
   durable?: boolean;
   title?: string;
+  titleCustom?: boolean;
+  titleChangedAt?: number;
+  // Durable tabs: helper offset of the first rendered byte (earlier output is
+  // readable with terminal.historyRead), the oldest kept offset, and whether
+  // the helper's history limit dropped output.
+  historyFrom?: number;
+  historyBase?: number;
+  historyTruncated?: boolean;
 }
 
 export class EventVersionGate {
@@ -129,6 +158,9 @@ export interface TerminalThrottledEvent {
   channelId: string;
   inflightBytes: number;
   recovered?: boolean;
+  // The channel was disconnected because it could not keep up; its view
+  // resumes from its accepted offset.
+  resync?: boolean;
   version: number;
 }
 
@@ -173,9 +205,77 @@ export interface StreamAnchorControl {
   // it as its current attachment identity, so the ordered stream itself
   // carries the incarnation even before the attach RPC response arrives.
   attachmentId?: number;
+  // Output-class spans (by stream sequence) of the bytes this stream will
+  // deliver; later spans arrive as stream-class frames.
+  classes?: StreamClassControl[];
+  // Durable tabs, full replays: helper offset of the first helper byte this
+  // view renders; earlier output is read with terminal.historyRead.
+  historyFrom?: number;
+  // Set when this view is not the device that last typed into the tab: it
+  // must not write live clipboard requests (OSC 52).
+  inputPassive?: boolean;
 }
 
 export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";
+
+// Announces that the next `bytes` stream bytes are replayed output, for
+// streams without anchors (a resumed docker exec delivering its backlog).
+export interface StreamReplayControl {
+  type: string;
+  bytes: number;
+}
+
+export const STREAM_REPLAY_TYPE = "nexterm.stream-replay";
+
+// Classifies the stream sequence range [from, to) ahead of its bytes:
+// "replay" renders without side effects, "answered" without automatic replies.
+export interface StreamClassControl {
+  type?: string;
+  from: number;
+  to: number;
+  kind: string;
+}
+
+export const STREAM_CLASS_TYPE = "nexterm.stream-class";
+
+function isStreamClass(raw: unknown): raw is StreamClassControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === STREAM_CLASS_TYPE &&
+    typeof (raw as { from?: unknown }).from === "number" &&
+    typeof (raw as { to?: unknown }).to === "number" &&
+    typeof (raw as { kind?: unknown }).kind === "string"
+  );
+}
+
+// Tells this view whether it is the device that most recently typed into the
+// tab: only that device writes live OSC 52 clipboard requests. Anchors carry
+// the state at their position (inputPassive); these frames announce changes.
+export interface InputOwnerControl {
+  type: string;
+  active: boolean;
+}
+
+export const INPUT_OWNER_TYPE = "nexterm.input-owner";
+
+function isInputOwner(raw: unknown): raw is InputOwnerControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === INPUT_OWNER_TYPE &&
+    typeof (raw as { active?: unknown }).active === "boolean"
+  );
+}
+
+function isStreamReplay(raw: unknown): raw is StreamReplayControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === STREAM_REPLAY_TYPE &&
+    typeof (raw as { bytes?: unknown }).bytes === "number"
+  );
+}
 
 function isStreamAnchor(raw: unknown): raw is StreamAnchorControl {
   return (
@@ -220,12 +320,27 @@ function handleDesktopStreamClosed(channel: unknown, raw: unknown): boolean {
 export function createBinaryChannel(
   onBytes: (data: Uint8Array) => void,
   onControl?: (control: StreamAnchorControl) => void,
+  onReplay?: (control: StreamReplayControl) => void,
+  onClass?: (control: StreamClassControl) => void,
+  onInputOwner?: (control: InputOwnerControl) => void,
 ): IpcChannel<unknown> {
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = (raw) => {
     if (handleDesktopStreamClosed(channel, raw)) return;
     if (isStreamAnchor(raw)) {
       onControl?.(raw);
+      return;
+    }
+    if (isStreamReplay(raw)) {
+      onReplay?.(raw);
+      return;
+    }
+    if (isStreamClass(raw)) {
+      onClass?.(raw);
+      return;
+    }
+    if (isInputOwner(raw)) {
+      onInputOwner?.(raw);
       return;
     }
     decodeBytes(raw, onBytes);

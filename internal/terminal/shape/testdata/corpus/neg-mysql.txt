@@ -1,0 +1,11 @@
+# kind: none
+---
+mysql> show databases;
++--------------------+
+| Database           |
++--------------------+
+| app                |
++--------------------+
+1 row in set (0.00 sec)
+
+mysql> 

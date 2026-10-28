@@ -187,7 +187,7 @@ func TestSupervisorDurableWriteCancelDuringAckWait(t *testing.T) {
 	proxy.thaw()
 	if _, err := manager.OpenTab(ctx, OpenTabOptions{
 		TabID: tabID, SessionID: connected.ID, ClientID: "client-a", ChannelID: "cancel-2", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Recover: true},
+		Durable: &DurableTabOptions{Recover: true, Identity: recoveryIdentity(manager, tabID)},
 	}); err != nil {
 		t.Fatalf("reattach after terminated stream = %v", err)
 	}

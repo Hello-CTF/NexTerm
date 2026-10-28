@@ -6,6 +6,9 @@ SetCompressor /SOLID lzma
 !ifndef NEXTERM_BINARY
   !error "NEXTERM_BINARY is required"
 !endif
+!ifndef NEXTERM_AI_RUNTIME
+  !error "NEXTERM_AI_RUNTIME is required"
+!endif
 !ifndef NEXTERM_VERSION
   !error "NEXTERM_VERSION is required"
 !endif
@@ -73,6 +76,17 @@ VIAddVersionKey "FileDescription" "NexTerm desktop client"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
+;; In-place updates move loaded images into $INSTDIR\.nexterm-update-old-*;
+;; they become removable once the previous process exits.
+!macro NEXTERM_SWEEP_UPDATE_BACKUPS
+  FindFirst $R0 $R1 "$INSTDIR\.nexterm-update-old-*"
+  ${DoWhile} $R1 != ""
+    RMDir /r "$INSTDIR\$R1"
+    FindNext $R0 $R1
+  ${Loop}
+  FindClose $R0
+!macroend
+
 Section "NexTerm" SEC01
   SetShellVarContext current
   SetOutPath "$INSTDIR"
@@ -88,6 +102,10 @@ Section "NexTerm" SEC01
   File /oname=nexterm-helper-windows-amd64.exe "${NEXTERM_HELPER_WINDOWS_AMD64}"
   File /oname=nexterm-helper-windows-arm64.exe "${NEXTERM_HELPER_WINDOWS_ARM64}"
   File /oname=MicrosoftEdgeWebview2Setup.exe "${NEXTERM_WEBVIEW2}"
+  RMDir /r "$INSTDIR\ai-runtime"
+  SetOutPath "$INSTDIR\ai-runtime"
+  File /r "${NEXTERM_AI_RUNTIME}\*"
+  SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\NexTerm" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "DisplayName" "NexTerm"
@@ -116,6 +134,8 @@ Section "NexTerm" SEC01
     ${EndIf}
   ${EndIf}
   Delete "$INSTDIR\MicrosoftEdgeWebview2Setup.exe"
+  ; Sweep update backups only after every file is written and the runtime is installed.
+  !insertmacro NEXTERM_SWEEP_UPDATE_BACKUPS
 SectionEnd
 
 Section "Uninstall"
@@ -135,8 +155,16 @@ Section "Uninstall"
   Delete "$INSTDIR\nexterm-helper-windows-arm64.exe"
   Delete "$INSTDIR\MicrosoftEdgeWebview2Setup.exe"
   Delete "$INSTDIR\Uninstall.exe"
+  RMDir /r "$INSTDIR\ai-runtime"
+  !insertmacro NEXTERM_SWEEP_UPDATE_BACKUPS
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm"
   DeleteRegKey HKCU "Software\NexTerm"
   DeleteRegKey HKCU "Software\Classes\nexterm"
+  ; The toast activator the notification service registered for clicks.
+  ReadRegStr $0 HKCU "Software\Classes\AppUserModelId\NexTerm" "CustomActivator"
+  ${If} $0 != ""
+    DeleteRegKey HKCU "Software\Classes\CLSID\$0"
+  ${EndIf}
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\NexTerm"
 SectionEnd

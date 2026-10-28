@@ -32,20 +32,6 @@ func (s *memorySettings) SettingSet(_ context.Context, key, value string) error 
 	return nil
 }
 
-func (s *memorySettings) SettingCompareAndSwap(_ context.Context, key, expected, value string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.setErr != nil {
-		return false, s.setErr
-	}
-	current, ok := s.values[key]
-	if !ok || current != expected {
-		return false, nil
-	}
-	s.values[key] = value
-	return true, nil
-}
-
 func TestPermissionPersistenceBeforeRuntimeUpdate(t *testing.T) {
 	settings := &memorySettings{values: make(map[string]string)}
 	manager, err := NewManager(context.Background(), settings)

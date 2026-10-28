@@ -68,22 +68,32 @@ func (p *watchDurableProvider) Create(_ context.Context, options base.DurableCre
 	return &watchDurableAttachment{id: options.ID, record: record, closed: make(chan struct{})}, nil
 }
 
-func (p *watchDurableProvider) Attach(_ context.Context, id string) (base.DurableAttachment, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	record := p.records[id]
-	if record == nil || record.killed {
-		return nil, durable.ErrNotFound
-	}
-	return &watchDurableAttachment{id: id, record: record, closed: make(chan struct{})}, nil
-}
-
 func (p *watchDurableProvider) AttachWithIdentity(_ context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
 	return p.attachFrom(id, identity)
 }
 
 func (p *watchDurableProvider) AttachFromWithIdentity(_ context.Context, id string, identity base.DurableIdentity, _ uint64) (base.DurableAttachment, error) {
 	return p.attachFrom(id, identity)
+}
+
+func (p *watchDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+func (p *watchDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
+	return nil, base.ErrUnsupported
+}
+
+func (p *watchDurableProvider) RenameDurable(context.Context, base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	return base.DurableRenameResult{}, base.ErrUnsupported
+}
+
+func (p *watchDurableProvider) KillWithIdentity(context.Context, string, base.DurableIdentity) error {
+	return base.ErrUnsupported
+}
+
+func (p *watchDurableProvider) ReadDurableHistory(context.Context, string, base.DurableIdentity, base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	return base.DurableHistoryChunk{}, base.ErrUnsupported
 }
 
 func (p *watchDurableProvider) attachFrom(id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
@@ -170,11 +180,18 @@ func watchRecoveryManager(t *testing.T, provider *watchDurableProvider, hook fun
 	return manager
 }
 
-func openWatchDurableTab(t *testing.T, ctx context.Context, manager *session.Manager, connected *session.Session, tabID string, recover bool) session.TabInfo {
+func openWatchDurableTab(t *testing.T, ctx context.Context, manager *session.Manager, connected *session.Session, provider *watchDurableProvider, tabID string, recover bool) session.TabInfo {
 	t.Helper()
+	options := &session.DurableTabOptions{Command: []string{"/bin/sh"}, Recover: recover}
+	if recover {
+		if record := provider.recordFor(tabID); record != nil {
+			identity := record.identity
+			options.Identity = &identity
+		}
+	}
 	info, err := manager.OpenTabFor(ctx, session.OpenTabOptions{
 		TabID: tabID, SessionID: connected.ID, ClientID: "client-a", ChannelID: "a-1", Cols: 80, Rows: 24,
-		Durable: &session.DurableTabOptions{Command: []string{"/bin/sh"}, Recover: recover},
+		Durable: options,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +220,7 @@ func TestProductionWatchDurableRecoveryReattachesAndStaysHonest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tab := openWatchDurableTab(t, ctx, manager1, connected1, "durable-tab-1", false)
+	tab := openWatchDurableTab(t, ctx, manager1, connected1, provider, "durable-tab-1", false)
 	service1, dispatcher1 := newWatchTestService(t, database, manager1, events, 10*time.Millisecond)
 	conversationID := provisionWatchConversation(t, database, ctx, tab.ID)
 
@@ -254,7 +271,7 @@ func TestProductionWatchDurableRecoveryReattachesAndStaysHonest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tab2 := openWatchDurableTab(t, ctx, manager2, connected2, tab.ID, true)
+	tab2 := openWatchDurableTab(t, ctx, manager2, connected2, provider, tab.ID, true)
 	identity2 := summaryIdentity(t, ctx, manager2, tab2.ID)
 	if identity2 == identity1 {
 		t.Fatal("a recovered tab must carry a fresh stream epoch in its watch identity")

@@ -12,9 +12,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// ProtocolVersion 2: full-payload E2E object protocol. A breaking replacement of v1; no old-version compatibility.
-const ProtocolVersion = 2
-
 // Sync object kinds. Tombstones share the object id of their target, overwrite it in storage, and are decided by client-side LWW.
 const (
 	KindGroup        = "group"
@@ -28,10 +25,13 @@ const (
 	KindAIPermission = "ai_permission"
 	KindAIGrant      = "ai_grant"
 	KindPreference   = "preference"
-)
 
-// objectKinds is the fixed enumeration order for decryption attempts; AAD binds kind, so a wrong kind can never decrypt.
-var objectKinds = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference}
+	KindStateRule       = "state_rule"
+	KindRunbookTemplate = "runbook_template"
+	KindSkill           = "skill"
+	KindMemory          = "memory"
+	KindCron            = "cron"
+)
 
 const (
 	objectAADPrefix = "nexterm/go/sync-object/v1"
@@ -86,7 +86,7 @@ func openObject(dek, blob []byte, id, kind string) ([]byte, error) {
 	return plaintext, nil
 }
 
-// tryOpenObject attempts decryption with the fixed kind enumeration; if all fail, the key does not match or the data was tampered with.
+// tryOpenObject attempts decryption with the registered kind enumeration; if all fail, the key does not match or the data was tampered with.
 func tryOpenObject(dek, blob []byte, id string) (string, []byte, error) {
 	for _, kind := range objectKinds {
 		plaintext, err := openObject(dek, blob, id, kind)
@@ -161,8 +161,7 @@ type tombstoneObject struct {
 }
 
 // knownHostObject's revision is addedAt (re-accepting a host key refreshes it); the (host, port, keyType) triple is globally unique.
-// The payload is fingerprint-only by contract: it never carries key material, so old
-// peers sending this shape are fully compatible without version negotiation. A sync
+// The payload is fingerprint-only by contract: it never carries key material. A sync
 // apply that changes the fingerprint clears the locally stored key material (the row
 // degrades to fingerprint-only trust until the next verified accept refills it through
 // KnownHostFillKeyMaterial or PutHostKey); a same-fingerprint update preserves it.
@@ -264,6 +263,24 @@ type transcriptObject struct {
 	ContentOmitted bool                    `json:"contentOmitted,omitempty"`
 	Content        []transcriptChunkObject `json:"content,omitempty"`
 }
+
+// identifiedPayload is implemented by payloads whose JSON carries the object ID.
+type identifiedPayload interface {
+	payloadID() string
+}
+
+func (p *groupObject) payloadID() string         { return p.ID }
+func (p *assetObject) payloadID() string         { return p.ID }
+func (p *credentialObject) payloadID() string    { return p.ID }
+func (p *snippetObject) payloadID() string       { return p.ID }
+func (p *transcriptObject) payloadID() string    { return p.ID }
+func (p *knownHostObject) payloadID() string     { return p.ID }
+func (p *aiProfileObject) payloadID() string     { return p.ID }
+func (p *aiPermissionObject) payloadID() string  { return p.ID }
+func (p *aiGrantDeviceObject) payloadID() string { return p.ID }
+func (p *aiGrantRuleObject) payloadID() string   { return p.ID }
+func (p *aiGrantModeObject) payloadID() string   { return p.ID }
+func (p *preferenceObject) payloadID() string    { return p.ID }
 
 // marshalObject produces deterministic JSON as the payload plaintext; the same content always yields the same bytes, for LWW tiebreaks and incremental reconciliation.
 func marshalObject(payload any) ([]byte, error) {

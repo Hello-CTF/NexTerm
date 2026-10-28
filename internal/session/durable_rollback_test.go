@@ -103,7 +103,7 @@ func TestDurableRecoveryOpenRollbackDoesNotDetachReplacement(t *testing.T) {
 	go func() {
 		_, err := manager.OpenTab(context.Background(), OpenTabOptions{
 			TabID: tabID, SessionID: connected.ID, ClientID: "client-a", ChannelID: "recovery-a", Cols: 80, Rows: 24,
-			Durable: &DurableTabOptions{Recover: true},
+			Durable: &DurableTabOptions{Recover: true, Identity: recoveryIdentity(manager, tabID)},
 		})
 		firstResult <- err
 	}()
@@ -126,7 +126,7 @@ func TestDurableRecoveryOpenRollbackDoesNotDetachReplacement(t *testing.T) {
 	}
 	secondInfo, err := manager.OpenTab(context.Background(), OpenTabOptions{
 		TabID: tabID, SessionID: reconnected.ID, ClientID: "client-b", ChannelID: "recovery-b", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Recover: true},
+		Durable: &DurableTabOptions{Recover: true, Identity: recoveryIdentity(manager, tabID)},
 	})
 	if err != nil {
 		t.Fatal(err)

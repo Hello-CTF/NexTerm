@@ -243,6 +243,11 @@ function LoginResults({
   const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
   const retryable = results.filter(isRetryable).length;
   const canceled = results.filter((result) => result.tone === "canceled").length;
+  useEffect(() => {
+    if (copied === null) return;
+    const timer = window.setTimeout(() => setCopied(null), copied === "failed" ? 8000 : 3500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
   const copy = async () => {
     try {
       await copyText(loginResultsText(results));

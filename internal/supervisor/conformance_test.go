@@ -104,10 +104,10 @@ done`
 				t.Fatalf("Wait = %v, want exit code 3", err)
 			}
 
-			if _, err := provider.Attach(ctx, ids.New()); !errors.Is(err, durable.ErrNotFound) {
+			if _, err := provider.AttachWithIdentity(ctx, ids.New(), unknownDurableIdentity()); !errors.Is(err, durable.ErrNotFound) {
 				t.Fatalf("Attach unknown = %v, want durable.ErrNotFound", err)
 			}
-			reattached, err := provider.Attach(ctx, id)
+			reattached, err := provider.AttachWithIdentity(ctx, id, attachmentIdentity(t, attachment))
 			if err != nil {
 				t.Fatal(err)
 			}

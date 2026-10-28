@@ -2,6 +2,7 @@ package session
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -58,8 +59,14 @@ type outCoalescer struct {
 	followUp bool
 }
 
+// fixedOutputCoalescing makes new coalescers keep the normal window. Tests
+// that pace saturating output one chunk per round trip set it, because bulk
+// mode would otherwise hold every chunk for a full bulk window.
+var fixedOutputCoalescing atomic.Bool
+
 func newOutCoalescer(onTimer func()) *outCoalescer {
 	return &outCoalescer{
+		fixed:     fixedOutputCoalescing.Load(),
 		onTimer:   onTimer,
 		now:       time.Now,
 		afterFunc: func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) },

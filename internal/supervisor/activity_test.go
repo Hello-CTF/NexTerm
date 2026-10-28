@@ -54,12 +54,9 @@ func TestActivitySnapshotIsDaemonWideAcrossClients(t *testing.T) {
 	})
 	awaitSessionCount(t, supervisor, 2)
 
-	snapshot, known, err := clientA.Activity(ctx)
+	snapshot, err := clientA.Activity(ctx)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !known {
-		t.Fatal("daemon-wide activity is unknown")
 	}
 	if snapshot.PTY != 1 || snapshot.Exec != 1 || snapshot.Total() != 2 || !snapshot.Active() {
 		t.Fatalf("activity = %+v, total %d, active %v; want one PTY and one exec", snapshot, snapshot.Total(), snapshot.Active())
@@ -93,17 +90,17 @@ func TestActivitySnapshotIsDaemonWideAcrossClients(t *testing.T) {
 		t.Fatal("exec did not stop after cancellation")
 	}
 	awaitSessionCount(t, supervisor, 1)
-	snapshot, known, err = clientB.Activity(ctx)
-	if err != nil || !known || snapshot.PTY != 1 || snapshot.Exec != 0 {
-		t.Fatalf("activity after exec = %+v, known %v, %v; want only the shared PTY", snapshot, known, err)
+	snapshot, err = clientB.Activity(ctx)
+	if err != nil || snapshot.PTY != 1 || snapshot.Exec != 0 {
+		t.Fatalf("activity after exec = %+v, %v; want only the shared PTY", snapshot, err)
 	}
 
 	if err := clientA.Kill(ctx, info.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, known, err = clientB.Activity(ctx)
-	if err != nil || !known || snapshot.Active() {
-		t.Fatalf("activity after kill = %+v, known %v, %v; want idle", snapshot, known, err)
+	snapshot, err = clientB.Activity(ctx)
+	if err != nil || snapshot.Active() {
+		t.Fatalf("activity after kill = %+v, %v; want idle", snapshot, err)
 	}
 	if err := snapshot.RequireIdle(); err != nil {
 		t.Fatalf("idle snapshot guard = %v", err)
@@ -152,17 +149,15 @@ func TestActivitySnapshotExcludesDeadAndRecoveredSessions(t *testing.T) {
 	}
 }
 
-func TestActivityUnknownFromOlderDaemon(t *testing.T) {
+// Every hello acknowledgement carries daemon activity; one without it is a
+// protocol violation rather than an unknown that callers must guess around.
+func TestActivityMissingFromHelloIsProtocolError(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	client := NewClient(fakeHelloAckServer(t, stateDir, helloMsg{Version: ProtocolVersion}), stateDir)
-	snapshot, known, err := client.Activity(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	if _, err := client.Activity(context.Background()); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("activity without a snapshot = %v, want ErrProtocol", err)
 	}
-	if known || snapshot != (ActivitySnapshot{}) {
-		t.Fatalf("activity = %+v, known = %v; want explicit unknown", snapshot, known)
-	}
-	if err := client.RequireIdle(context.Background()); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("idle guard with unknown activity = %v, want ErrUnsupported", err)
+	if err := client.RequireIdle(context.Background()); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("idle guard without a snapshot = %v, want ErrProtocol", err)
 	}
 }

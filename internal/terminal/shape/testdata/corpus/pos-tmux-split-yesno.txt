@@ -1,0 +1,12 @@
+# kind: yesno
+# options: Y | n
+# cursor: 5,31
+---
+dev@build:~$ sudo apt upgrade         │top - 10:01:02 up 3 days,  2 users
+Reading package lists... Done         │Tasks: 211 total,   1 running
+Calculating upgrade... Done           │%Cpu(s):  2.1 us,  0.8 sy
+3 upgraded, 0 newly installed.        │MiB Mem :  15890.4 total
+Need to get 2,048 kB of archives.     │
+Do you want to continue? [Y/n]        │  PID USER      PR  NI    VIRT
+                                      │ 1201 dev       20   0  812344
+                                      │ 1388 root      20   0   23412

@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   fsList: vi.fn(),
@@ -147,7 +147,7 @@ describe("FileTree row actions", () => {
   it("keeps the hover action strip on fine pointers", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
     const row = rowByName(mounted!.container, "notes.txt");
     const labels = [...row.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")].map(
@@ -161,7 +161,7 @@ describe("FileTree row actions", () => {
   it("collapses row actions into one overflow button on coarse pointers", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
     const row = rowByName(mounted!.container, "notes.txt");
     expect(row.className).toContain("nx-row-oneline");
@@ -175,7 +175,7 @@ describe("FileTree row actions", () => {
   it("reaches every file action through the coarse overflow menu", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
     openRowMore(rowByName(mounted!.container, "notes.txt"));
     await flush();
@@ -194,7 +194,7 @@ describe("FileTree row actions", () => {
   it("does not leak double-clicks from the overflow trigger into openFile/enterDir", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
     const tabsBefore = (useUi.getState().workspaces[0]?.panes[0]?.tabs ?? []).length;
     const callsBefore = mocks.fsList.mock.calls.length;
@@ -220,7 +220,7 @@ describe("FileTree row actions", () => {
   it("offers directory actions without file-only entries on coarse pointers", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("logs"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("logs"));
 
     openRowMore(rowByName(mounted!.container, "logs"));
     await flush();
@@ -236,7 +236,7 @@ describe("FileBrowser row actions", () => {
   it("keeps the hover overflow button and truncatable columns on fine pointers", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
       r.textContent?.includes("notes.txt"),
@@ -262,7 +262,7 @@ describe("FileBrowser row actions", () => {
   it("shows a persistent overflow button on coarse pointers", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
       r.textContent?.includes("notes.txt"),

@@ -1,0 +1,148 @@
+
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+.xterm .xterm-scrollable-element > .scrollbar > .slider {
+  left: 3px !important;
+  width: 4px !important;
+  border-radius: 8px;
+}
+
+.cm-editor {
+  height: 100%;
+  background: var(--color-term) !important;
+}
+.cm-editor.cm-focused {
+  outline: none !important;
+}
+.cm-editor.cm-focused:focus-within {
+  outline: 2px solid var(--nx-focus-ring) !important;
+  outline-offset: -2px !important;
+}
+.cm-editor .cm-scroller {
+  font-family: var(--font-mono);
+  line-height: 1.65;
+}
+.cm-gutters {
+  background: var(--color-term) !important;
+  border-right: 1px solid
+    color-mix(in srgb, var(--color-neutral-800) 60%, transparent) !important;
+  color: var(--color-neutral-600) !important;
+}
+.cm-activeLineGutter {
+  background: color-mix(in srgb, var(--color-neutral-800) 55%, transparent) !important;
+  color: var(--color-neutral-300) !important;
+}
+.cm-activeLine {
+  background: color-mix(in srgb, var(--color-neutral-800) 32%, transparent) !important;
+}
+.cm-cursor {
+  border-left-color: var(--color-accent) !important;
+}
+.cm-selectionBackground,
+.cm-editor ::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent) !important;
+}
+.cm-tooltip {
+  border: 1px solid var(--color-neutral-700) !important;
+  background: var(--color-neutral-900) !important;
+}
+
+.cm-editor .cm-panels {
+  background: var(--color-neutral-950) !important;
+  color: var(--color-neutral-300) !important;
+}
+.cm-editor .cm-panels.cm-panels-bottom {
+  border-top: 1px solid color-mix(in srgb, var(--color-neutral-800) 80%, transparent) !important;
+}
+.cm-editor .cm-panels.cm-panels-top {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-neutral-800) 80%, transparent) !important;
+}
+.cm-editor .cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: calc(11.5px * var(--nx-ui-text-factor));
+}
+.cm-editor .cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-neutral-400) !important;
+  font-size: calc(11.5px * var(--nx-ui-text-factor));
+}
+.cm-editor .cm-search input[type="checkbox"] {
+  accent-color: var(--color-accent);
+}
+.cm-editor .cm-textfield {
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--color-neutral-700) !important;
+  border-radius: var(--radius-sm);
+  background: var(--color-neutral-800) !important;
+  color: var(--color-neutral-100) !important;
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--nx-ui-text-factor));
+}
+.cm-editor .cm-textfield:focus {
+  border-color: var(--color-accent) !important;
+  outline: none !important;
+}
+.cm-editor .cm-textfield:focus-visible {
+  outline: 2px solid var(--nx-focus-ring) !important;
+  outline-offset: -2px;
+}
+.cm-editor .cm-button {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--color-neutral-700) !important;
+  border-radius: var(--radius-sm);
+  background: var(--color-neutral-800) !important;
+  background-image: none !important;
+  color: var(--color-neutral-200) !important;
+  font-size: calc(11.5px * var(--nx-ui-text-factor));
+  cursor: pointer;
+}
+.cm-editor .cm-button:hover {
+  background: var(--color-neutral-700) !important;
+  color: var(--color-neutral-100) !important;
+}
+.cm-editor .cm-search [name="close"] {
+  padding: 0 6px;
+  border: none !important;
+  background: transparent !important;
+  color: var(--color-neutral-400) !important;
+  font-size: calc(15px * var(--nx-ui-text-factor));
+  line-height: 1;
+  cursor: pointer;
+}
+.cm-editor .cm-search [name="close"]:hover {
+  color: var(--color-neutral-100) !important;
+}
+.cm-editor .cm-searchMatch {
+  background: color-mix(in srgb, var(--color-amber-400) 26%, transparent);
+  outline: none;
+}
+.cm-editor .cm-searchMatch-selected {
+  background: color-mix(in srgb, var(--color-amber-400) 52%, transparent);
+}
+.cm-editor .cm-selectionMatch {
+  background: color-mix(in srgb, var(--color-neutral-600) 45%, transparent);
+}
+
+#root {
+  height: 100dvh;
+}
+
+/* With an overlaying keyboard the root covers exactly the visible area above it, so the
+   terminal pane, key toolbar and status bar shrink together and no pane remnant shows. */
+html[data-nx-keyboard="open"] #root {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--nx-vv-top, 0px);
+  height: var(--nx-vv-height, 100dvh);
+}

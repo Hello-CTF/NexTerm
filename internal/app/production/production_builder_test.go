@@ -40,20 +40,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-func TestConcreteProductionCompositionPreservesLegacyTaskData(t *testing.T) {
+func TestConcreteProductionComposesServices(t *testing.T) {
 	dataDir := t.TempDir()
-	legacyTasksDir := filepath.Join(dataDir, "tasks")
-	if err := os.MkdirAll(legacyTasksDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	sentinelPath := filepath.Join(legacyTasksDir, "task.json")
-	if err := os.WriteFile(sentinelPath, []byte("legacy task data"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	production, err := NewProduction(t.Context(), ProductionConfig{
-		Config: Config{Logger: logger}, DataDir: dataDir, Desktop: true,
+		DataDir: dataDir, Desktop: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -92,16 +82,6 @@ func TestConcreteProductionCompositionPreservesLegacyTaskData(t *testing.T) {
 	defer cancel()
 	if err := production.Shutdown(ctx); err != nil {
 		t.Fatal(err)
-	}
-	preserved, err := os.ReadFile(sentinelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(preserved) != "legacy task data" {
-		t.Fatalf("legacy task data = %q", preserved)
-	}
-	if count := bytes.Count(logs.Bytes(), []byte("legacy persistent task data directory preserved")); count != 1 {
-		t.Fatalf("legacy task log count = %d, logs = %s", count, logs.String())
 	}
 }
 
@@ -214,16 +194,11 @@ func TestDurableTranscriptAdaptersEmptyOwnerRoundtrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	offsets := durableTranscriptOffsets{database: database}
-	titles := durableTabTitles{database: database}
 	const tabID = "desktop-open-tab"
 
 	offsets.PersistDurableTranscriptOffsetContext(ctx, tabID, 41)
-	titles.PersistDurableTabTitleContext(ctx, tabID, "ownerless-title")
 	if got := offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID); got != 41 {
 		t.Fatalf("empty-owner offset = %d, want 41", got)
-	}
-	if got := titles.DurableTabTitleContext(ctx, tabID); got != "ownerless-title" {
-		t.Fatalf("empty-owner title = %q, want ownerless-title", got)
 	}
 	var offsetRow store.DurableTranscriptOffset
 	if err := database.GORM().Where("durable_id = ?", tabID).Take(&offsetRow).Error; err != nil {
@@ -232,21 +207,10 @@ func TestDurableTranscriptAdaptersEmptyOwnerRoundtrip(t *testing.T) {
 	if offsetRow.OwnerID != "" {
 		t.Fatalf("empty-owner offset row owner = %q, want empty", offsetRow.OwnerID)
 	}
-	var titleRow store.DurableTabTitle
-	if err := database.GORM().Where("durable_id = ?", tabID).Take(&titleRow).Error; err != nil {
-		t.Fatal(err)
-	}
-	if titleRow.OwnerID != "" {
-		t.Fatalf("empty-owner title row owner = %q, want empty", titleRow.OwnerID)
-	}
 
 	offsets.DeleteDurableTranscriptOffsetContext(ctx, tabID)
-	titles.DeleteDurableTabTitleContext(ctx, tabID)
 	if got := offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID); got != 0 {
 		t.Fatalf("empty-owner offset after delete = %d, want 0", got)
-	}
-	if got := titles.DurableTabTitleContext(ctx, tabID); got != "" {
-		t.Fatalf("empty-owner title after delete = %q, want empty", got)
 	}
 }
 

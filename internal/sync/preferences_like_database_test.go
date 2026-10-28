@@ -98,18 +98,18 @@ func openPreferenceNoBackslashStore(t *testing.T, fixture *dbtest.Fixture) *stor
 	return db
 }
 
-// A synced device grant persists the guard's explicit permanence marker on every supported backend:
-// payloads carry no permanence bit, so old peers stay compatible while the durable record lands as a
-// permanent long-term authorization, and a re-grant after a revocation tombstone is permanent again.
-// Whole-row rewrites normalize bystander records with the guard's own rule: a missing marker becomes
-// explicit permanent, while an explicit false marker is preserved verbatim.
+// A synced device grant persists the guard's explicit permanence marker and a generation on every
+// supported backend, and a re-grant after a revocation tombstone is permanent again. Whole-row rewrites
+// keep a rejected pre-1.3.0 bystander verbatim (never migrated, never effective) and keep a current
+// bystander's explicit false marker.
 func TestApplyAIGrantDevicePermanenceDatabase(t *testing.T) {
 	fixture := dbtest.NewFixture(t)
 	db := fixture.OpenStore(t)
 	ctx := context.Background()
 	engine := NewEngine(db, nil, nil)
 
-	if err := db.SettingSet(ctx, guard.DeviceGrantsSettingKey, `{"dev-legacy":{"deviceId":"dev-legacy","kinds":["terminal_write"],"updatedAt":50},"dev-explicit-false":{"deviceId":"dev-explicit-false","kinds":["db_query"],"permanent":false,"updatedAt":60}}`); err != nil {
+	legacyRecord := `{"deviceId":"dev-legacy","kinds":["terminal_write"],"updatedAt":50}`
+	if err := db.SettingSet(ctx, guard.DeviceGrantsSettingKey, `{"dev-legacy":`+legacyRecord+`,"dev-explicit-false":{"deviceId":"dev-explicit-false","kinds":["db_query"],"permanent":false,"updatedAt":60,"generation":"gen-false"}}`); err != nil {
 		t.Fatal(err)
 	}
 	requireBystanders := func() {
@@ -118,13 +118,20 @@ func TestApplyAIGrantDevicePermanenceDatabase(t *testing.T) {
 		if err != nil || !found {
 			t.Fatalf("device grants row: found=%v err=%v", found, err)
 		}
-		requireGrantRecordPermanence(t, value, map[string]bool{"dev-legacy": true, "dev-explicit-false": false})
+		var records map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(value), &records); err != nil {
+			t.Fatal(err)
+		}
+		if string(records["dev-legacy"]) != legacyRecord {
+			t.Fatalf("legacy bystander rewritten: %s", records["dev-legacy"])
+		}
+		requireGrantRecordPermanence(t, value, map[string]bool{"dev-explicit-false": false})
 		grants, err := guard.NewGrants(ctx, db, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if grant, ok, err := grants.Get(ctx, "dev-legacy"); err != nil || !ok || !grant.Permanent {
-			t.Fatalf("guard loads legacy bystander as %+v %v err=%v, want permanent", grant, ok, err)
+		if grant, ok, err := grants.Get(ctx, "dev-legacy"); err != nil || ok {
+			t.Fatalf("guard loads legacy bystander as effective %+v %v err=%v", grant, ok, err)
 		}
 		if grant, ok, err := grants.Get(ctx, "dev-explicit-false"); err != nil || !ok || grant.Permanent {
 			t.Fatalf("guard loads explicit-false bystander as %+v %v err=%v, want non-permanent", grant, ok, err)

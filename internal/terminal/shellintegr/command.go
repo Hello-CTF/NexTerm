@@ -77,19 +77,29 @@ func (t *CommandTracker) ObserveReports(p []byte) ([]Report, CommandState, bool)
 	before := t.state
 	var reports []Report
 	tail := scanOSC(pendingJoin(t.pending, p), func(payload []byte) {
-		letter, exitCode, hasExit, ok := parseOSC133(payload)
-		if !ok {
-			return
+		if report, ok := t.ObservePayload(payload); ok {
+			reports = append(reports, report)
 		}
-		started := letter == 'B' && !t.state.Running
-		t.apply(letter, exitCode, hasExit)
-		reports = append(reports, Report{
-			Letter: letter, ExitCode: exitCode, HasExitCode: hasExit,
-			Sequence: t.state.Sequence, Started: started,
-		})
 	})
 	t.pending = append(t.pending[:0], tail...)
 	return reports, t.state, t.state != before
+}
+
+// ObservePayload applies one complete OSC payload (the bytes between the
+// OSC introducer and its terminator) and returns the parsed report. It lets a
+// caller that already runs its own stream scanner reuse the 133 parsing and
+// state tracking; payloads that are not OSC 133 return ok false.
+func (t *CommandTracker) ObservePayload(payload []byte) (Report, bool) {
+	letter, exitCode, hasExit, ok := parseOSC133(payload)
+	if !ok {
+		return Report{}, false
+	}
+	started := letter == 'B' && !t.state.Running
+	t.apply(letter, exitCode, hasExit)
+	return Report{
+		Letter: letter, ExitCode: exitCode, HasExitCode: hasExit,
+		Sequence: t.state.Sequence, Started: started,
+	}, true
 }
 
 func (t *CommandTracker) apply(letter byte, exitCode int, hasExit bool) {
@@ -123,6 +133,8 @@ func parseOSC133(payload []byte) (letter byte, exitCode int, hasExit bool, ok bo
 	if len(letterBytes) != 1 {
 		return 0, 0, false, false
 	}
+	// Extra parameters such as "D;0;aid=1" follow the exit code.
+	params, _, _ = bytes.Cut(params, []byte(";"))
 	if len(params) > 0 {
 		if value, err := strconv.Atoi(string(params)); err == nil && value >= 0 {
 			return letterBytes[0], value, true, true

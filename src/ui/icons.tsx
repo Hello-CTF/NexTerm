@@ -178,6 +178,13 @@ export const IconSplitH = (p: IconProps) => (
   </Svg>
 );
 
+export const IconSplitV = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <path d="M12 4v16" />
+  </Svg>
+);
+
 export const IconMergeH = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2.5" />
@@ -437,6 +444,13 @@ export const IconHistory = (p: IconProps) => (
   </Svg>
 );
 
+export const IconBell = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6 9a6 6 0 0 1 12 0c0 4.5 1.5 6.5 2.5 7.5h-17C4.5 15.5 6 13.5 6 9Z" />
+    <path d="M10 19.5a2 2 0 0 0 4 0" />
+  </Svg>
+);
+
 export const IconCheck = (p: IconProps) => (
   <Svg {...p}>
     <path d="m5 12.5 4.6 4.6L19 7.5" />
@@ -462,6 +476,13 @@ export const IconAlert = (p: IconProps) => (
     <path d="M10.3 3.9 2.5 17.4A2 2 0 0 0 4.2 20.4h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
     <path d="M12 9.2v4.4" />
     <path d="M12 17h.01" />
+  </Svg>
+);
+
+export const IconFlag = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 21V4" />
+    <path d="M5 4h11l-2 4 2 4H5" />
   </Svg>
 );
 
@@ -574,6 +595,13 @@ export const IconActivity = (p: IconProps) => (
 export const IconZap = (p: IconProps) => (
   <Svg {...p}>
     <path d="M13.2 2.5 4.8 13.4h6.4l-1 8.1 8.4-10.9h-6.4z" />
+  </Svg>
+);
+
+// Marks a durable terminal that keeps running after the client disconnects.
+export const IconPersist = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 12c-1.8-2.3-3.4-3.5-5.2-3.5a3.5 3.5 0 0 0 0 7c1.8 0 3.4-1.2 5.2-3.5s3.4-3.5 5.2-3.5a3.5 3.5 0 0 1 0 7c-1.8 0-3.4-1.2-5.2-3.5z" />
   </Svg>
 );
 

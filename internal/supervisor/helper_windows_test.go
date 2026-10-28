@@ -96,7 +96,7 @@ func TestSessionEnvWindowsPassthrough(t *testing.T) {
 }
 
 func TestPipeListenDialRoundtrip(t *testing.T) {
-	name, err := pipeEndpointName(t.TempDir())
+	name, err := pipeEndpointName(t.TempDir(), ProtocolVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestPipeListenDialRoundtrip(t *testing.T) {
 			server <- result{err: err}
 			return
 		}
-		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
+		if err := writeFrame(conn, frameHelloAck, fakeHelloAck()); err != nil {
 			server <- result{err: err}
 			return
 		}
@@ -136,7 +136,7 @@ func TestPipeListenDialRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close() }()
-	if err := writeFrame(conn, frameHello, []byte(`{"version":2}`)); err != nil {
+	if err := writeFrame(conn, frameHello, fakeHelloAck()); err != nil {
 		t.Fatal(err)
 	}
 	kind, _, err := readFrame(conn)
@@ -156,7 +156,7 @@ func TestPipeListenDialRoundtrip(t *testing.T) {
 }
 
 func TestPipeListenerCloseUnblocksAccept(t *testing.T) {
-	name, err := pipeEndpointName(t.TempDir())
+	name, err := pipeEndpointName(t.TempDir(), ProtocolVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestConnectHelperProtocolMismatchPipeFailsWithoutSpawn(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	name, err := pipeEndpointName(stateDir)
+	name, err := pipeEndpointName(stateDir, ProtocolVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestWindowsHelperSpawnReattachAndKill(t *testing.T) {
 	if len(infos) != 1 || infos[0].ID != id || infos[0].Dead {
 		t.Fatalf("sessions after client close = %+v", infos)
 	}
-	reattached, err := NewRemoteProvider(second.Client()).Attach(ctx, id)
+	reattached, err := NewRemoteProvider(second.Client()).AttachWithIdentity(ctx, id, base.DurableIdentity{CreatedAt: infos[0].CreatedAt, Incarnation: infos[0].Incarnation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestSpawnDetachedWindows(t *testing.T) {
 	markerFile := filepath.Join(t.TempDir(), "spawned")
 	t.Setenv(windowsSpawnChildFileEnv, markerFile)
 	logPath := filepath.Join(t.TempDir(), "spawn.log")
-	if err := spawnDetached(os.Args[0], []string{"-test.run=^TestSpawnDetachedChildWindows$"}, logPath); err != nil {
+	if _, err := spawnDetached(os.Args[0], []string{"-test.run=^TestSpawnDetachedChildWindows$"}, logPath); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(30 * time.Second)
@@ -481,7 +481,7 @@ func TestOpenRecordingWindows(t *testing.T) {
 }
 
 func TestListenPipeLifecycle(t *testing.T) {
-	name, err := pipeEndpointName(t.TempDir())
+	name, err := pipeEndpointName(t.TempDir(), ProtocolVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +698,7 @@ func TestEnsurePrivateDirPermissiveParentWindows(t *testing.T) {
 }
 
 func TestPipeFullDuplexConcurrentIO(t *testing.T) {
-	name, err := pipeEndpointName(filepath.Join(t.TempDir(), "state"))
+	name, err := pipeEndpointName(filepath.Join(t.TempDir(), "state"), ProtocolVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -792,7 +792,7 @@ func TestPipeFullDuplexConcurrentIO(t *testing.T) {
 
 func fakePipeStreamServer(t *testing.T, stateDir string, handle func(conn net.Conn, kind frameType, payload []byte) bool) string {
 	t.Helper()
-	name, err := pipeEndpointName(stateDir)
+	name, err := pipeEndpointName(stateDir, ProtocolVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -823,7 +823,7 @@ func fakePipeStreamServer(t *testing.T, stateDir string, handle func(conn net.Co
 			_ = writeFrame(conn, frameError, []byte(`{"code":"state_mismatch","message":"wrong state"}`))
 			return
 		}
-		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
+		if err := writeFrame(conn, frameHelloAck, fakeHelloAck()); err != nil {
 			return
 		}
 		kind, payload, err = readFrame(conn)
@@ -972,7 +972,7 @@ func TestWindowsHelperSessionsSurviveAppProcessExitAndReattach(t *testing.T) {
 	if len(infos) != 1 || infos[0].ID != string(sessionID) || infos[0].Dead {
 		t.Fatalf("sessions after app exit = %+v", infos)
 	}
-	attachment, err := NewRemoteProvider(restarted.Client()).Attach(ctx, string(sessionID))
+	attachment, err := NewRemoteProvider(restarted.Client()).AttachWithIdentity(ctx, string(sessionID), base.DurableIdentity{CreatedAt: infos[0].CreatedAt, Incarnation: infos[0].Incarnation})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -122,7 +122,7 @@ func TestServerProcessRetriesDeferredUpgradeAfterFirstAdmin(t *testing.T) {
 	for _, row := range []any{
 		&store.AssetRow{ID: "legacy-asset", Kind: "ssh", Name: "legacy", OptionsJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
 		&store.ConversationRow{ID: "legacy-conversation", ScopeJSON: "{}", CreatedAt: 1, UpdatedAt: 1},
-		&store.CronJob{ID: "legacy-cron", SessionID: "legacy-conversation", Prompt: "synthetic-prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: false, TimeoutMS: 1000, CreatedAt: 1, UpdatedAt: 1, Revision: 1, NextRunAt: time.Now().Add(time.Hour).UnixMilli()},
+		&store.CronJob{ID: "legacy-cron", SessionID: "legacy-conversation", OwnerKind: "open", Prompt: "synthetic-prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: false, TimeoutMS: 1000, CreatedAt: 1, UpdatedAt: 1, Revision: 1, NextRunAt: time.Now().Add(time.Hour).UnixMilli()},
 	} {
 		if err := database.GORM().Create(row).Error; err != nil {
 			t.Fatal(err)
@@ -174,11 +174,11 @@ func TestSyncOnlyProcessServesV2ObjectProtocol(t *testing.T) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	requestURL(t, client, "http://"+address+"/rpc", http.MethodPost, strings.NewReader(`{"cmd":"app_platform","args":null}`), map[string]string{"Content-Type": "application/json"}, http.StatusNotFound)
 	requestURL(t, client, "http://"+address+"/", http.MethodGet, nil, nil, http.StatusNotFound)
-	requestURL(t, client, "http://"+address+"/sync/v2/push", http.MethodPost, strings.NewReader(`{"protocol":2,"known_head":"","objects":[]}`), map[string]string{"Content-Type": "application/json"}, http.StatusUnauthorized)
+	requestURL(t, client, "http://"+address+"/sync/v2/push", http.MethodPost, strings.NewReader(`{"protocol":3,"known_head":"","objects":[]}`), map[string]string{"Content-Type": "application/json"}, http.StatusUnauthorized)
 
 	session := initSuperadminThroughProcess(t, process, address, "alice", "alice-pw-123")
 	push := requestAccountJSON(t, client, address, "/sync/v2/push", map[string]any{
-		"protocol": 2, "known_head": genesisHeadForTest(session.userID), "objects": []map[string]any{},
+		"protocol": 3, "known_head": genesisHeadForTest(session.userID), "objects": []map[string]any{},
 	}, session, http.StatusOK)
 	var pushed struct {
 		Head    string `json:"head"`
@@ -188,17 +188,17 @@ func TestSyncOnlyProcessServesV2ObjectProtocol(t *testing.T) {
 	if pushed.Head == "" {
 		t.Fatalf("push response = %s", push.body)
 	}
-	pull := requestAccountJSON(t, client, address, "/sync/v2/pull", map[string]any{"protocol": 2, "since_seq": 0}, session, http.StatusOK)
+	pull := requestAccountJSON(t, client, address, "/sync/v2/pull", map[string]any{"protocol": 3, "since_seq": 0}, session, http.StatusOK)
 	if !strings.Contains(string(pull.body), `"objects"`) {
 		t.Fatalf("pull response = %s", pull.body)
 	}
-	ids := requestAccountJSON(t, client, address, "/sync/v2/ids", map[string]any{"protocol": 2}, session, http.StatusOK)
+	ids := requestAccountJSON(t, client, address, "/sync/v2/ids", map[string]any{"protocol": 3}, session, http.StatusOK)
 	if !strings.Contains(string(ids.body), `"entries"`) {
 		t.Fatalf("ids response = %s", ids.body)
 	}
 	// Push requests must carry the CSRF header; rejected when missing.
 	requestAccountJSON(t, client, address, "/sync/v2/push", map[string]any{
-		"protocol": 2, "known_head": pushed.Head, "objects": []map[string]any{},
+		"protocol": 3, "known_head": pushed.Head, "objects": []map[string]any{},
 	}, &accountSession{cookie: session.cookie}, http.StatusForbidden)
 }
 
@@ -831,6 +831,9 @@ func startServerProcess(t *testing.T, binary, dataDir string, syncOnly bool, ext
 	}
 	process := &testServerProcess{cmd: cmd, wait: make(chan error, 1), output: buffer}
 	go func() { process.wait <- cmd.Wait() }()
+	// A local terminal starts the server's local helper, which outlives the server by design.
+	stateDir := filepath.Join(dataDir, "durable", "supervisor")
+	t.Cleanup(func() { _ = exec.Command("pkill", "-9", "-f", "supervisor-helper --state-dir "+stateDir).Run() })
 	return process, address
 }
 

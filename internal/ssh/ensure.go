@@ -123,6 +123,13 @@ func (r *Resolver) ensureOnHostWithClient(ctx context.Context, host Host, client
 	}
 	var lastErr error
 	key := r.deploymentKey(host, client)
+	// One consent per user action: every attempt shares it, so it is spent
+	// by the first replacement however the ensure ends.
+	var consent *legacyConsent
+	if options.ReplaceLegacy != "" {
+		consent = &legacyConsent{token: options.ReplaceLegacy}
+		operationCtx = context.WithValue(operationCtx, legacyConsentKey{}, consent)
+	}
 	for attempt := 1; attempt <= maxEnsureAttempts; attempt++ {
 		attemptCtx := context.WithValue(operationCtx, helperOperationKey{}, helperOperationScope{id: operationID, attempt: attempt, deadline: deadline})
 		if attempt == 1 {
@@ -138,7 +145,10 @@ func (r *Resolver) ensureOnHostWithClient(ctx context.Context, host Host, client
 			return daemon, nil
 		}
 		lastErr = cycleErr
-		if operationCtx.Err() != nil || attempt == maxEnsureAttempts || permanentHelperFailure(cycleErr) {
+		// After a replacement was attempted nothing is retried: the next
+		// cycle would only meet its outcome again.
+		spent := consent != nil && consent.spent
+		if operationCtx.Err() != nil || attempt == maxEnsureAttempts || permanentHelperFailure(cycleErr) || spent {
 			r.reportProgress(attemptCtx, HelperProgress{Step: helperProgressSteps, Stage: "failed", Done: true, Cause: cycleErr.Error()})
 			return daemon, lastErr
 		}
@@ -178,7 +188,8 @@ func permanentHelperFailure(err error) bool {
 		errors.Is(err, base.ErrUnsupported) || errors.Is(err, ErrHelperNotFound) ||
 		errors.Is(err, ErrTrust) || errors.Is(err, ErrDigestMismatch) || errors.Is(err, ErrNoExec) ||
 		errors.Is(err, ErrProtocol) || errors.Is(err, supervisor.ErrProtocol) ||
-		errors.Is(err, supervisor.ErrStateMismatch) || errors.Is(err, fs.ErrPermission)
+		errors.Is(err, supervisor.ErrStateMismatch) || errors.Is(err, fs.ErrPermission) ||
+		errors.Is(err, supervisor.ErrHelperReplaceFailed)
 }
 
 func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transportssh.Client, options EnsureOptions) (*Daemon, error) {
@@ -212,7 +223,7 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 	for _, location := range ordered {
 		connection, err := r.findRunningDaemon(ctx, host, location, source)
 		if err != nil {
-			if daemonRefusal(err) || errors.Is(err, errRunningProcessEvidence) {
+			if daemonRefusal(err) || errors.Is(err, errRunningProcessEvidence) || errors.Is(err, supervisor.ErrHelperReplaceFailed) {
 				return nil, err
 			}
 			if errors.Is(err, errUnsafeTemporaryRoot) {
@@ -570,9 +581,16 @@ func (r *Resolver) findRunningDaemon(ctx context.Context, host Host, location de
 			}
 		}
 		daemon := newTargetDaemon(host, location, binary)
-		if err := r.probeDaemon(ctx, daemon); err != nil {
+		err := r.probeDaemon(ctx, daemon)
+		if err != nil {
+			err = r.replaceLegacyHelper(ctx, daemon, err)
+		}
+		if err != nil {
 			if daemonRefusal(err) {
 				return nil, fmt.Errorf("%w: running supervisor daemon is incompatible or owns different state; refusing to replace it: %w", durable.ErrUnavailable, err)
+			}
+			if errors.Is(err, supervisor.ErrHelperReplaceFailed) {
+				return nil, err
 			}
 			lastErr = err
 			continue
@@ -606,6 +624,79 @@ func (r *Resolver) probeDaemon(ctx context.Context, daemon *Daemon) error {
 	return err
 }
 
+type legacyConsentKey struct{}
+
+// legacyConsent is the replacement consent of one user action; it is spent by the
+// first replacement so a failed one is never repeated.
+type legacyConsent struct {
+	token string
+	spent bool
+	ended int
+	count string
+}
+
+// EndedCountOf says how exact the session count of a consented helper is:
+// "exact", "atLeast" (only PTY sessions were listed) or "unknown".
+func EndedCountOf(helper supervisor.RunningHelper) string {
+	switch {
+	case helper.ActivityKnown:
+		return "exact"
+	case helper.PTYListed:
+		return "atLeast"
+	default:
+		return "unknown"
+	}
+}
+
+// legacyReplacer is the part of *supervisor.Client that replaces an older
+// helper through the target's bridge.
+type legacyReplacer interface {
+	ReplaceLegacyHelper(ctx context.Context, token string) (supervisor.ReplaceResult, error)
+}
+
+// replaceLegacyHelper handles a probe that met an older-protocol helper. With
+// the user's consent in ctx, the bridge on the target verifies that helper
+// against the consent, stops it (TERM, bounded wait, KILL, state lock) and
+// starts this build's helper; the probe is then repeated. Without consent, or
+// once it is spent, probeErr is returned unchanged: the older helper is never
+// stopped on this side's own decision.
+func (r *Resolver) replaceLegacyHelper(ctx context.Context, daemon *Daemon, probeErr error) error {
+	var legacy *supervisor.LegacyHelperError
+	consent, _ := ctx.Value(legacyConsentKey{}).(*legacyConsent)
+	if !errors.As(probeErr, &legacy) || consent == nil || consent.spent {
+		return probeErr
+	}
+	replacer, ok := r.remoteClient(daemon).(legacyReplacer)
+	if !ok {
+		return probeErr
+	}
+	consent.spent = true
+	if expected, ok := supervisor.ParseHelperConsent(consent.token); ok {
+		consent.ended = expected.Activity.Total()
+		consent.count = EndedCountOf(expected)
+	}
+	r.reportProgress(ctx, HelperProgress{Step: 5, Stage: "replace_legacy", Path: daemon.StateDir})
+	result, err := replacer.ReplaceLegacyHelper(ctx, consent.token)
+	if err != nil {
+		var failed *supervisor.HelperReplaceError
+		if errors.As(err, &failed) && failed.RolledBack {
+			r.reportProgress(ctx, HelperProgress{Step: 6, Stage: "rollback", Cause: err.Error(), Path: daemon.StateDir})
+		}
+		return err
+	}
+	daemon.Update.ReplacedLegacy = true
+	daemon.Update.EndedSessions = consent.ended
+	daemon.Update.EndedCount = consent.count
+	daemon.Update.StoppedLegacy = result.Stopped
+	daemon.Update.ForcedLegacy = result.Forced
+	if err := r.probeDaemon(ctx, daemon); err != nil {
+		// The older helper is gone but its replacement does not answer: this
+		// is reported, never followed by a start beside it.
+		return &supervisor.HelperReplaceError{Stage: supervisor.ReplaceStart, Stopped: result.Stopped, Forced: result.Forced, Cause: err}
+	}
+	return nil
+}
+
 func daemonRefusal(err error) bool {
 	return errors.Is(err, supervisor.ErrProtocol) || errors.Is(err, supervisor.ErrVersionMismatch) || errors.Is(err, supervisor.ErrStateMismatch)
 }
@@ -615,7 +706,11 @@ func (r *Resolver) connectOrStartDaemon(ctx context.Context, host Host, location
 		return nil, err
 	}
 	daemon := newTargetDaemon(host, location, binary)
-	if err := r.probeDaemon(ctx, daemon); err == nil {
+	probeErr := r.probeDaemon(ctx, daemon)
+	if probeErr != nil {
+		probeErr = r.replaceLegacyHelper(ctx, daemon, probeErr)
+	}
+	if err := probeErr; err == nil {
 		metadata, known, err := r.remoteClient(daemon).RuntimeMetadata(ctx)
 		if err != nil {
 			return nil, helperUnavailable("read running helper metadata", err)
@@ -627,6 +722,10 @@ func (r *Resolver) connectOrStartDaemon(ctx context.Context, host Host, location
 		return &daemonConnection{daemon: daemon, metadata: metadata, known: known, running: true}, nil
 	} else if daemonRefusal(err) {
 		return nil, fmt.Errorf("%w: running supervisor daemon is incompatible or owns different state; refusing to replace it: %w", durable.ErrUnavailable, err)
+	} else if errors.Is(err, supervisor.ErrHelperReplaceFailed) {
+		// A consented replacement failed: it is reported, never followed by
+		// another start.
+		return nil, err
 	}
 	if err := ensureRemoteDirectory(ctx, host, location.target, location.paths.StateDir, true); err != nil {
 		return nil, err
@@ -959,12 +1058,6 @@ func (r *Resolver) updateIdleAllowed(ctx context.Context, daemon *Daemon, interr
 			return true, "active processes explicitly interrupted", nil
 		}
 		return false, "active PTY/exec processes; update deferred until idle", nil
-	}
-	if errors.Is(err, supervisor.ErrUnsupported) {
-		if interrupt {
-			return true, "activity unprovable; explicit interrupt accepted", nil
-		}
-		return false, "daemon-wide activity is unprovable; update deferred", nil
 	}
 	return false, "", helperUnavailable("check daemon-wide activity", err)
 }

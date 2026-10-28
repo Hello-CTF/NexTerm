@@ -34,7 +34,6 @@ function seed(tabs: AppTab[]): void {
         sessionId: "s1",
         panes: [{ id: "pane", tabs, activeTabId: tabs[0]?.id ?? null }],
         activePaneId: "pane",
-        splitRatio: 0.5,
         closable: true,
       },
     ],

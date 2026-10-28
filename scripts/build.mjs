@@ -5,10 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyRuntime, runtimeLibrary, fileDigest } from "./lib/privacy-runtime.mjs";
 import { resolveMakensis } from "./lib/makensis.mjs";
 import { readHostHelperProtocolMetadata } from "../.github/scripts/helper-metadata.mjs";
 import { commitLabel, dirtyPaths, sourceState } from "./lib/mobile.mjs";
 import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
+import { resolveTar } from "./lib/tar.mjs";
 import { parseReleaseVersion, parseSemVer } from "./lib/semver.mjs";
 import {
   canExecuteHelperMetadata,
@@ -29,9 +31,14 @@ import {
 
 const HELP_TEXT = `#!/usr/bin/env node
 /**
- * Go/Wails delivery entry point. Rust/Cargo/Tauri are deliberately not part of
- * this path. Artifact versions come from NEXTERM_RELEASE_VERSION (set from the
- * release tag in CI); the wails.json/package.json versions are 0.0.0 placeholders.
+ * Go/Wails delivery entry point. Desktop and server builds stage the latest stable
+ * ONNX Runtime 1.x library (NEXTERM_ORT_VERSION pins one) in ai-runtime/ (no model
+ * weights are bundled). Only the Linux and macOS desktops use cgo (Wails); every other
+ * binary is CGO_ENABLED=0. The Linux server loads ONNX Runtime through purego, so it is
+ * dynamically linked but glibc-portable (libc/libdl/libpthread only, no GLIBC_ version
+ * requirements); the Linux agent and helpers stay fully static.
+ * Artifact versions come from NEXTERM_RELEASE_VERSION (set from the release
+ * tag in CI); the wails.json/package.json versions are 0.0.0 placeholders.
  *
  *   node scripts/build.mjs                         # frontend + host debug desktop
  *   node scripts/build.mjs release                 # frontend + desktop with nine helpers and representative evidence
@@ -77,6 +84,9 @@ for (const arg of argv) {
 
 const wailsConfig = JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8"));
 const WAILS_VERSION_PLACEHOLDER = wailsConfig.info?.version;
+// The desktop entry is named after the GTK application id (Linux.ApplicationID
+// in cmd/nexterm-desktop) so shells match windows to it and its icon.
+const LINUX_DESKTOP_ENTRY = `usr/share/applications/${wailsConfig.info.productIdentifier}.desktop`;
 const VERSION = process.env.NEXTERM_RELEASE_VERSION || WAILS_VERSION_PLACEHOLDER;
 const VERSION_INFO = process.env.NEXTERM_RELEASE_VERSION ? parseReleaseVersion(VERSION) : parseSemVer(VERSION);
 if (!VERSION_INFO) {
@@ -457,16 +467,13 @@ function helperBinaryMetadata(file, goos, goarch) {
     throw new Error(`final ${goos}/${goarch} helper --metadata is not JSON: ${error.message}`);
   }
   const expected = helperProtocolMetadata();
-  const features = Array.isArray(metadata.features) ? [...metadata.features].sort() : null;
   const artifactSHA256 = sha256(file);
   if (metadata.version !== VERSION || metadata.commit !== COMMIT || metadata.protocol !== expected.protocol ||
-      features === null || features.some((feature) => typeof feature !== "string" || feature === "") ||
-      JSON.stringify(features) !== JSON.stringify(expected.features) || metadata.sha256 !== artifactSHA256) {
+      Object.hasOwn(metadata, "features") || metadata.sha256 !== artifactSHA256) {
     throw new Error(`final ${goos}/${goarch} helper metadata does not match this build and artifact sha256: ${JSON.stringify(metadata)}`);
   }
   const verified = {
     protocol: metadata.protocol,
-    features,
     sha256: metadata.sha256,
     binary_metadata_verified: true,
     metadata_host: { os: HOST_OS, arch: HOST_ARCH },
@@ -491,6 +498,7 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
     commit: COMMIT,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
   });
+  if (kind === "desktop" || kind === "server") manifest.privacy_runtime_sha256 = fileDigest(path.join(privacyRuntimeDirectory(file, goos, goarch), "runtime.json"));
   if (kind === "desktop") {
     manifest.source_ref = RELEASE_REF;
     manifest.updater_public_key_sha256 = desktopMinisignPublicKeyDigest();
@@ -551,7 +559,7 @@ function validateBinaryForPackaging(outputPath, kind, goos, goarch, reuseEvidenc
   }
   if (kind === "helper") {
     const expected = helperProtocolMetadata();
-    problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol, features: expected.features }));
+    problems.push(...helperMetadataManifestProblems({ manifest, goos, goarch, protocol: expected.protocol }));
   }
   if (problems.length) die(`--package-only binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
   if (kind === "helper" && manifest.binary_metadata_verified === false) {
@@ -578,13 +586,58 @@ function reproduceBinary(args, outputPath, kind, goos, goarch) {
     reproductionArgs[reproductionArgs.indexOf("-o") + 1] = reproduction;
     run("go", reproductionArgs, {
       cwd: checkout,
-      env: { ...buildEnvironment(goos, goarch, kind), GOCACHE: cache },
+      env: { ...compileEnvironment(goos, goarch, kind), GOCACHE: cache },
     });
     if (sha256(outputPath) !== sha256(reproduction)) die(`${kind} binary is not reproducible across checkout paths with a fresh GOCACHE: ${outputPath} != ${reproduction}`);
     log(`${kind} ${goos}/${goarch} cross-checkout reproducibility with fresh GOCACHE: ${sha256(outputPath)}`);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
+}
+
+// Staged per target so builds for another os/arch never overwrite each other;
+// packages and archives map it back to the plain ai-runtime name.
+function privacyRuntimeDirectory(binary, goos, goarch) {
+  if (!goos || !goarch) die(`privacy runtime target is missing for ${binary}`);
+  return path.join(path.dirname(binary), `ai-runtime-${goos}-${goarch}`);
+}
+
+function preparePrivacyRuntime(binary, goos, goarch, packageOnly) {
+  const directory = privacyRuntimeDirectory(binary, goos, goarch);
+  if (!packageOnly) {
+    fs.rmSync(directory, { recursive: true, force: true });
+    run(process.execPath, ["scripts/ai-privacy-runtime.mjs", `--os=${goos}`, `--arch=${goarch}`, `--output=${directory}`]);
+  }
+  const expected = packageOnly ? loadManifest(path.resolve(ROOT, option("binary-manifest", `${binary}.manifest.json`))).privacy_runtime_sha256 : undefined;
+  if (packageOnly && !expected) die("producing binary manifest lacks privacy runtime evidence");
+  verifyRuntime(directory, goos, goarch, expected);
+}
+
+function copyPrivacyRuntime(binary, destination, goos, goarch) {
+  const manifest = loadManifest(path.resolve(ROOT, option("binary-manifest", `${binary}.manifest.json`)));
+  if (!manifest.privacy_runtime_sha256) die("producing binary manifest lacks privacy runtime evidence");
+  verifyRuntime(privacyRuntimeDirectory(binary, goos, goarch), goos, goarch, manifest.privacy_runtime_sha256);
+  fs.cpSync(privacyRuntimeDirectory(binary, goos, goarch), destination, { recursive: true });
+}
+
+function privacyRuntimeAssertions(directory, goos, goarch, libraryDirectory = directory) {
+  try {
+    const { manifest, library, sizeBytes, unavailable } = verifyRuntime(directory, goos, goarch, undefined, libraryDirectory);
+    if (unavailable) return [{ ...assertion("privacy-runtime", true, `privacy runtime unavailable for ${goos}/${goarch}: ${unavailable}`), evidence: { unavailable, onnx_runtime: manifest.onnxRuntime ?? null } }];
+    const file = path.join(libraryDirectory, library);
+    const binary = inspectBinary(file);
+    if (binary.architecture !== goarch || binary.format !== ({ darwin: "mach-o", linux: "elf", windows: "pe" })[goos]) throw new Error(`Privacy runtime architecture mismatch: ${library}`);
+    const evidence = { library, onnx_runtime: manifest.onnxRuntime ?? null, size_bytes: sizeBytes, sha256: manifest.files[library] };
+    const detail = `ONNX Runtime ${evidence.onnx_runtime} ${library}: ${sizeBytes} bytes, architecture, SHA256 and third-party licenses verified`;
+    return [{ ...assertion("privacy-runtime", true, detail), evidence }];
+  } catch (error) {
+    return [assertion("privacy-runtime", false, error.message)];
+  }
+}
+
+function compileEnvironment(goos, goarch, kind) {
+  const env = buildEnvironment(goos, goarch, kind);
+  return env;
 }
 
 function buildBinary(kind) {
@@ -625,7 +678,7 @@ function buildBinary(kind) {
     if (packageOnly) {
       validateBinaryForPackaging(outputPath, kind, goos, goarch, desktopReuseEvidence());
     } else {
-      run("go", args, { env: buildEnvironment(goos, goarch, kind) });
+      run("go", args, { env: compileEnvironment(goos, goarch, kind) });
       if (flag("repro-check")) {
         reproduceBinary(args, outputPath, kind, goos, goarch);
         fs.rmSync(`${outputPath}.repro`, { force: true });
@@ -635,6 +688,7 @@ function buildBinary(kind) {
     if (kind === "desktop" && release) fs.rmSync(embeddedRoot, { recursive: true, force: true });
     if (windowsResource) fs.rmSync(windowsResource, { force: true });
   }
+  if (kind === "desktop" || kind === "server") preparePrivacyRuntime(outputPath, goos, goarch, packageOnly);
   if (!fs.existsSync(outputPath)) die(`Go linker did not produce ${outputPath}`);
   if (goos !== "windows") fs.chmodSync(outputPath, 0o755);
   if (!packageOnly) {
@@ -710,14 +764,83 @@ function inspectBinary(file) {
     const phoff = data[4] === 1 ? read32(0x1c) : Number(read64(0x20));
     const phentsize = read16(data[4] === 1 ? 0x2a : 0x36);
     const phnum = read16(data[4] === 1 ? 0x2c : 0x38);
+    const is64 = data[4] === 2;
+    const readWord = (offset) => (is64 ? Number(read64(offset)) : read32(offset));
+    const segments = [];
     let dynamic = false;
+    let interpreter = null;
+    let dynamicSegment = null;
     for (let index = 0; index < phnum; index += 1) {
-      const type = read32(phoff + index * phentsize);
-      if (type === 2) dynamic = true;
+      const base = phoff + index * phentsize;
+      const type = read32(base);
+      const segment = is64
+        ? { offset: Number(read64(base + 8)), vaddr: Number(read64(base + 16)), filesz: Number(read64(base + 32)) }
+        : { offset: read32(base + 4), vaddr: read32(base + 8), filesz: read32(base + 16) };
+      if (type === 1) segments.push(segment);
+      if (type === 2) { dynamic = true; dynamicSegment = segment; }
+      if (type === 3) interpreter = data.toString("latin1", segment.offset, segment.offset + segment.filesz).replace(/\0.*$/s, "");
     }
-    return { format: "elf", architecture, static: !dynamic };
+    const result = { format: "elf", architecture, static: !dynamic };
+    if (!dynamic) return result;
+    const toOffset = (vaddr) => {
+      const segment = segments.find((candidate) => vaddr >= candidate.vaddr && vaddr < candidate.vaddr + candidate.filesz);
+      if (!segment) throw new Error(`ELF address 0x${vaddr.toString(16)} is outside every PT_LOAD segment`);
+      return segment.offset + (vaddr - segment.vaddr);
+    };
+    const entries = [];
+    const entrySize = is64 ? 16 : 8;
+    for (let at = dynamicSegment.offset; at + entrySize <= dynamicSegment.offset + dynamicSegment.filesz; at += entrySize) {
+      const tag = is64 ? Number(read64(at)) : read32(at);
+      if (tag === 0) break;
+      entries.push({ tag, value: readWord(at + entrySize / 2) });
+    }
+    const value = (tag) => entries.find((entry) => entry.tag === tag)?.value;
+    const strtab = value(5);
+    const cstring = (offset) => {
+      const end = data.indexOf(0, offset);
+      return data.toString("latin1", offset, end);
+    };
+    const needed = strtab === undefined ? [] : entries.filter((entry) => entry.tag === 1).map((entry) => cstring(toOffset(strtab) + entry.value));
+    // DT_VERNEED (0x6ffffffe) lists the versioned symbols the binary requires from each library.
+    const verneed = value(0x6ffffffe);
+    const verneedNum = value(0x6fffffff) ?? 0;
+    const versionRequirements = [];
+    if (verneed !== undefined && strtab !== undefined) {
+      let at = toOffset(verneed);
+      for (let entry = 0; entry < verneedNum; entry += 1) {
+        const count = read16(at + 2);
+        const file = cstring(toOffset(strtab) + read32(at + 4));
+        let aux = at + read32(at + 8);
+        for (let index = 0; index < count; index += 1) {
+          versionRequirements.push({ file, version: cstring(toOffset(strtab) + read32(aux + 8)) });
+          aux += read32(aux + 12);
+        }
+        const next = read32(at + 12);
+        if (next === 0) break;
+        at += next;
+      }
+    }
+    return { ...result, interpreter, needed, versionRequirements };
   }
   throw new Error("unknown binary format");
+}
+
+const GLIBC_NEEDED = new Set(["libc.so.6", "libdl.so.2", "libpthread.so.0"]);
+const GLIBC_INTERPRETER = { amd64: "/lib64/ld-linux-x86-64.so.2", arm64: "/lib/ld-linux-aarch64.so.1" };
+const GLIBC_MAX_VERSION = [2, 17];
+
+// A purego (CGO_ENABLED=0) binary is dynamically linked against glibc only; this keeps it runnable on any glibc Linux.
+function glibcPortableProblems(inspected, goarch) {
+  if (inspected.static) return [];
+  const problems = [];
+  for (const name of inspected.needed ?? []) if (!GLIBC_NEEDED.has(name)) problems.push(`unexpected NEEDED ${name}`);
+  if (inspected.interpreter !== GLIBC_INTERPRETER[goarch]) problems.push(`interpreter ${inspected.interpreter} is not ${GLIBC_INTERPRETER[goarch]}`);
+  for (const { file, version } of inspected.versionRequirements ?? []) {
+    const match = /^GLIBC_(\d+)\.(\d+)/.exec(version);
+    const [major, minor] = match ? [Number(match[1]), Number(match[2])] : [Infinity, Infinity];
+    if (!match || major > GLIBC_MAX_VERSION[0] || (major === GLIBC_MAX_VERSION[0] && minor > GLIBC_MAX_VERSION[1])) problems.push(`symbol version ${version} required from ${file}`);
+  }
+  return problems;
 }
 
 function assertion(id, passed, detail) {
@@ -735,7 +858,11 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
     result.push(assertion("binary-format", inspected.format === ({ windows: "pe", darwin: "mach-o", linux: "elf" })[goos], JSON.stringify(inspected)));
     result.push(assertion("binary-architecture", inspected.architecture === expectedGOARCH, `expected ${goos}/${goarch} (GOARCH=${expectedGOARCH}); actual ${inspected.format}/${inspected.architecture}`));
     if (kind === "desktop" && goos === "windows") result.push(assertion("windows-icon-resource", inspected.resourceRva > 0, inspected.resourceRva > 0 ? `PE resource directory RVA 0x${inspected.resourceRva.toString(16)}` : "PE resource directory is empty; the .syso icon resource was not linked"));
-    if ((kind === "server" || kind === "agent") && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
+    if (kind === "agent" && goos === "linux") result.push(assertion("static-linux-agent", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
+    if (kind === "server" && goos === "linux") {
+      const problems = glibcPortableProblems(inspected, goarch);
+      result.push(assertion("glibc-portable-linux-server", problems.length === 0, problems.length === 0 ? "static, or glibc-only NEEDED with the standard interpreter and no GLIBC_ version requirement above 2.17" : problems.join("; ")));
+    }
     if (kind === "helper" && goos === "linux") result.push(assertion("static-linux-helper", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
   } catch (error) {
     result.push(assertion("binary-format", false, String(error)));
@@ -745,7 +872,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
       try {
         helperMetadata = helperBinaryMetadata(file, goos, goarch);
         result.push(assertion("helper-binary-metadata", true,
-            `executed final ${goos}/${goarch} helper --metadata on matching real host ${HOST_OS}/${HOST_ARCH}: protocol=${helperMetadata.protocol}; features=${helperMetadata.features.join(",")}; sha256=${helperMetadata.sha256}`));
+            `executed final ${goos}/${goarch} helper --metadata on matching real host ${HOST_OS}/${HOST_ARCH}: protocol=${helperMetadata.protocol}; sha256=${helperMetadata.sha256}`));
       } catch (error) {
         result.push(assertion("helper-binary-metadata", false, String(error)));
       }
@@ -757,6 +884,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
       });
     }
   }
+  if (kind === "desktop" || kind === "server") result.push(...privacyRuntimeAssertions(privacyRuntimeDirectory(file, goos, goarch), goos, goarch));
   const moduleInfo = output("go", ["version", "-m", file], { allowFailure: true });
   result.push(assertion("cgo-boundary", Boolean(moduleInfo?.includes(`CGO_ENABLED=${cgo}`)), `expected CGO_ENABLED=${cgo} in go version -m`));
   if (target?.goarm) result.push(assertion("goarm", moduleInfo?.includes(`GOARM=${target.goarm}`) === true, `expected GOARM=${target.goarm} in go version -m`));
@@ -801,7 +929,7 @@ function packagedHelperAssertions(directory, relativeDirectory, checkMode) {
       checks.push(assertion(`${label}-sha256`, packagedDigest === inputDigest,
           `package SHA256=${packagedDigest}; input SHA256=${inputDigest}`));
       const manifest = loadManifest(`${input}.manifest.json`);
-      const evidenceProblems = helperMetadataManifestProblems({ manifest, goos: target.os, goarch: target.arch, protocol: expectedMetadata.protocol, features: expectedMetadata.features });
+      const evidenceProblems = helperMetadataManifestProblems({ manifest, goos: target.os, goarch: target.arch, protocol: expectedMetadata.protocol });
       const evidenceDetail = evidenceProblems.length > 0 ? evidenceProblems.join("; ") : manifest.binary_metadata_verified === true
         ? `verified metadata protocol=${manifest.protocol}; sha256=${manifest.sha256}`
         : "untested: cross-compiled; metadata not-run";
@@ -853,7 +981,7 @@ function agentArchiveBinaryAssertions(kind, file, goos, goarch) {
   const checks = [];
   try {
     const extracted = kind === "agent-archive"
-      ? output("tar", ["-xzf", path.resolve(file), "-C", work, member], { allowFailure: true })
+      ? output(resolveTar(), ["-xzf", path.resolve(file), "-C", work, member], { allowFailure: true })
       : output(archiveTool(), ["extract", path.resolve(file), work], { allowFailure: true });
     checks.push(assertion(`${kind}-binary-extract`, extracted !== null, `extract ${member} from the final archive`));
     if (extracted === null) return checks;
@@ -890,7 +1018,10 @@ function packageAssertions(kind, file, goos, goarch) {
     try {
       const extracted = output(sevenZip, ["x", "-y", `-o${work}`, path.resolve(file)], { allowFailure: true });
       checks.push(assertion("nsis-extract", extracted !== null, "7-Zip must extract the NSIS installer"));
-      if (extracted !== null) checks.push(...packagedHelperAssertions(work, "", false));
+      if (extracted !== null) {
+        checks.push(...packagedHelperAssertions(work, "", false));
+        checks.push(...privacyRuntimeAssertions(path.join(work, "ai-runtime"), goos, goarch));
+      }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
     }
@@ -905,21 +1036,26 @@ function packageAssertions(kind, file, goos, goarch) {
         checks.push(assertion("linux-desktop-deb-extract", false, "ar extraction failed; the package is not a installable deb"));
         return checks;
       }
-      const control = output("tar", ["-xzOf", path.join(work, "control.tar.gz"), "control"], { allowFailure: true }) ?? "";
+      const control = output(resolveTar(), ["-xzOf", path.join(work, "control.tar.gz"), "control"], { allowFailure: true }) ?? "";
       checks.push(assertion(
           "linux-desktop-deb-control",
           control.includes("Package: nexterm\n") && control.includes(`Version: ${debVersion(VERSION)}\n`) && control.includes(`Architecture: ${goarch}\n`),
           "control file must carry the package name, release version and architecture",
       ));
-      const listing = output("tar", ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
+      const listing = output(resolveTar(), ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
       const members = new Set(listing?.split(/\r?\n/) || []);
-      const required = ["usr/bin/nexterm-desktop", "usr/share/applications/nexterm.desktop", "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
+      const required = ["usr/bin/nexterm-desktop", LINUX_DESKTOP_ENTRY, "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
       const missingHelpers = missingHelperArchiveMembers(members, "usr/bin/");
       checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && missingHelpers.length === 0 && required.every((member) => members.has(member)), `required members: ${[...required, ...helperArchiveMembers("usr/bin/")].join(", ")}; missing helpers: ${missingHelpers.join(", ") || "none"}`));
-      const unpacked = output("tar", ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
-        ...helperArchiveMembers("usr/bin/")], { allowFailure: true });
+      const unpacked = output(resolveTar(), ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
+        ...helperArchiveMembers("usr/bin/"), "usr/bin/ai-runtime", "usr/bin/nexterm-desktop"], { allowFailure: true });
       checks.push(assertion("linux-desktop-deb-helper-extract", unpacked !== null, "all nine helpers must extract from data.tar.gz"));
-      if (unpacked !== null) checks.push(...packagedHelperAssertions(work, "usr/bin", true));
+      if (unpacked !== null) {
+        const depends = linuxDesktopDepends(path.join(work, "usr/bin/nexterm-desktop"));
+        checks.push(assertion("linux-desktop-deb-depends", control.includes(`\nDepends: ${depends}\n`), `control Depends must match the packaged binary: ${depends}`));
+        checks.push(...packagedHelperAssertions(work, "usr/bin", true));
+        checks.push(...privacyRuntimeAssertions(path.join(work, "usr/bin/ai-runtime"), goos, goarch));
+      }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
     }
@@ -932,7 +1068,7 @@ function packageAssertions(kind, file, goos, goarch) {
       "nexterm-server", "nexterm-server.service", "nexterm-onlyserver.service",
       "nexterm.env.example", "onlyserver.env.example", "LICENSE", "README.md", "web/index.html",
     ].map((member) => `${root}/${member}`);
-    const listing = output("tar", ["-tzf", file], { allowFailure: true });
+    const listing = output(resolveTar(), ["-tzf", file], { allowFailure: true });
     const members = new Set(listing?.split(/\r?\n/) || []);
     const missingHelpers = missingHelperArchiveMembers(members, `${root}/`);
     checks.push(assertion(
@@ -942,10 +1078,13 @@ function packageAssertions(kind, file, goos, goarch) {
     ));
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-assert-"));
     try {
-      const extracted = output("tar", ["-xzf", path.resolve(file), "-C", work,
-        ...helperArchiveMembers(`${root}/`)], { allowFailure: true });
+      const extracted = output(resolveTar(), ["-xzf", path.resolve(file), "-C", work,
+        ...helperArchiveMembers(`${root}/`), `${root}/ai-runtime`], { allowFailure: true });
       checks.push(assertion("server-archive-helper-extract", extracted !== null, "all nine helpers must extract from the server archive"));
-      if (extracted !== null) checks.push(...packagedHelperAssertions(work, root, true));
+      if (extracted !== null) {
+        checks.push(...packagedHelperAssertions(work, root, true));
+        checks.push(...privacyRuntimeAssertions(path.join(work, root, "ai-runtime"), goos, goarch));
+      }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
     }
@@ -964,6 +1103,7 @@ function packageAssertions(kind, file, goos, goarch) {
       if (mounted) {
         checks.push(...packagedHelperAssertions(mountpoint, "NexTerm.app/Contents/Resources/helpers", true));
         checks.push(...packagedDarwinHelperLinkAssertions(mountpoint));
+        checks.push(...privacyRuntimeAssertions(path.join(mountpoint, "NexTerm.app/Contents/Resources/ai-runtime"), goos, goarch, path.join(mountpoint, "NexTerm.app/Contents/Frameworks/ai-runtime")));
       }
     } finally {
       if (mounted) {
@@ -976,7 +1116,7 @@ function packageAssertions(kind, file, goos, goarch) {
   }
   if (kind === "agent-archive") {
     const checks = [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "agent archive is not gzip compressed")];
-    const listing = output("tar", ["-tzf", file], { allowFailure: true });
+    const listing = output(resolveTar(), ["-tzf", file], { allowFailure: true });
     const members = listing?.split(/\r?\n/).filter((name) => name !== "") || [];
     checks.push(assertion(
         "agent-archive-members",
@@ -1123,6 +1263,22 @@ function debVersion(version) {
   return version.replace("-", "~");
 }
 
+// The cgo desktop links the glibc of its Debian 13 build host, so the package
+// declares the newest GLIBC_ symbol version the binary requires and dpkg rejects
+// older systems. GTK has no symbol versions; Wails calls GTK 4.14 API
+// (gdk_monitor_get_scale), so that floor is declared explicitly.
+function linuxDesktopDepends(binary) {
+  let floor = null;
+  for (const { version } of inspectBinary(binary).versionRequirements ?? []) {
+    const match = /^GLIBC_(\d+)\.(\d+)(?:\.(\d+))?$/.exec(version);
+    if (!match) continue;
+    const parts = match.slice(1).map((part) => Number(part ?? 0));
+    if (!floor || (parts[0] - floor[0] || parts[1] - floor[1] || parts[2] - floor[2]) > 0) floor = parts;
+  }
+  const libc = floor ? `libc6 (>= ${(floor[2] ? floor : floor.slice(0, 2)).join(".")})` : null;
+  return [libc, "libgtk-4-1 (>= 4.14)", "libwebkitgtk-6.0-4t64 | libwebkitgtk-6.0-4"].filter(Boolean).join(", ");
+}
+
 function packageLinuxDesktop(binary, goarch) {
   const assets = path.resolve(ROOT, option("assets-dir", "target/release-assets"));
   const name = `nexterm-desktop_linux_${goarch}_${VERSION}`;
@@ -1137,10 +1293,11 @@ function packageLinuxDesktop(binary, goarch) {
   fs.mkdirSync(assets, { recursive: true });
   fs.copyFileSync(binary, path.join(dataDir, "usr/bin/nexterm-desktop"));
   copyHelpers(path.join(dataDir, "usr/bin"));
+  copyPrivacyRuntime(binary, path.join(dataDir, "usr/bin/ai-runtime"), "linux", goarch);
   fs.copyFileSync(path.join(ROOT, "public/brand/nexterm-mark-256.png"), path.join(dataDir, "usr/share/icons/hicolor/256x256/apps/nexterm.png"));
   fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(dataDir, "usr/share/doc/nexterm/copyright"));
-  fs.writeFileSync(path.join(dataDir, "usr/share/applications/nexterm.desktop"), "[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop %u\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\nMimeType=x-scheme-handler/nexterm;\n");
-  fs.writeFileSync(path.join(work, "control", "control"), `Package: nexterm\nVersion: ${debVersion(VERSION)}\nSection: net\nPriority: optional\nArchitecture: ${goarch}\nMaintainer: Probius <https://github.com/Hello-CTF/NexTerm>\nHomepage: https://github.com/Hello-CTF/NexTerm\nDepends: libgtk-4-1, libwebkitgtk-6.0-4t64 | libwebkitgtk-6.0-4\nDescription: Browser-based SSH / SFTP / Docker / database operations terminal\n Terminal processes, sessions and workspace layout stay on your own server;\n credentials are encrypted with a vault key you control.\n`);
+  fs.writeFileSync(path.join(dataDir, LINUX_DESKTOP_ENTRY), `[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop %u\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\nMimeType=x-scheme-handler/nexterm;\nStartupWMClass=${wailsConfig.info.productIdentifier}\n`);
+  fs.writeFileSync(path.join(work, "control", "control"), `Package: nexterm\nVersion: ${debVersion(VERSION)}\nSection: net\nPriority: optional\nArchitecture: ${goarch}\nMaintainer: Probius <https://github.com/Hello-CTF/NexTerm>\nHomepage: https://github.com/Hello-CTF/NexTerm\nDepends: ${linuxDesktopDepends(binary)}\nRecommends: fonts-noto-color-emoji\nDescription: Browser-based SSH / SFTP / Docker / database operations terminal\n Terminal processes, sessions and workspace layout stay on your own server;\n credentials are encrypted with a vault key you control.\n`);
   const normalizeModes = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const target = path.join(directory, entry.name);
@@ -1175,6 +1332,14 @@ function packageDarwin(binary, goarch) {
   fs.copyFileSync(binary, path.join(app, "Contents/MacOS/NexTerm"));
   fs.chmodSync(path.join(app, "Contents/MacOS/NexTerm"), 0o755);
   copyDarwinHelpers(app);
+  const runtimeDirectory = path.join(app, "Contents/Frameworks/ai-runtime");
+  const runtimeResources = path.join(app, "Contents/Resources/ai-runtime");
+  copyPrivacyRuntime(binary, runtimeResources, "darwin", goarch);
+  const runtimeAvailable = fs.existsSync(path.join(runtimeResources, runtimeLibrary("darwin")));
+  if (runtimeAvailable) {
+    fs.mkdirSync(runtimeDirectory, { recursive: true });
+    fs.renameSync(path.join(runtimeResources, runtimeLibrary("darwin")), path.join(runtimeDirectory, runtimeLibrary("darwin")));
+  }
   const icon = path.join(ROOT, "public/brand/icon.icns");
   if (!fs.existsSync(icon)) die("macOS icon.icns asset is missing");
   fs.copyFileSync(icon, path.join(app, "Contents/Resources/icon.icns"));
@@ -1182,8 +1347,15 @@ function packageDarwin(binary, goarch) {
   fs.writeFileSync(path.join(app, "Contents/Info.plist"), plist);
   run("plutil", ["-lint", path.join(app, "Contents/Info.plist")]);
   const signIdentity = process.env.NEXTERM_MACOS_SIGN_IDENTITY || "-";
-  const signArgs = ["--force", "--deep", "--sign", signIdentity];
+  const signArgs = ["--force", "--sign", signIdentity];
   if (signIdentity !== "-") signArgs.push("--options", "runtime", "--timestamp");
+  run("codesign", [...signArgs, "--deep", app]);
+  // Signing changes Mach-O bytes; retain provenance and record the signed hashes.
+  const runtimeManifestPath = path.join(runtimeResources, "runtime.json");
+  const runtimeManifest = loadManifest(runtimeManifestPath);
+  runtimeManifest.unsigned_manifest_sha256 = fileDigest(runtimeManifestPath);
+  if (runtimeAvailable) runtimeManifest.files[runtimeLibrary("darwin")] = fileDigest(path.join(runtimeDirectory, runtimeLibrary("darwin")));
+  fs.writeFileSync(runtimeManifestPath, `${JSON.stringify(runtimeManifest, null, 2)}\n`);
   run("codesign", [...signArgs, app]);
   run("codesign", ["--verify", "--deep", "--strict", app]);
   fs.symlinkSync("/Applications", path.join(work, "Applications"));
@@ -1222,6 +1394,7 @@ function packageWindows(binary, goarch) {
   const installer = path.join(assets, `nexterm-desktop_windows_${goarch}_${VERSION}.exe`);
   const defines = [
     `NEXTERM_BINARY=${binary}`,
+    `NEXTERM_AI_RUNTIME=${privacyRuntimeDirectory(binary, "windows", goarch)}`,
     `NEXTERM_VERSION=${VERSION}`,
     `NEXTERM_NUMERIC_VERSION=${VERSION_INFO.core}.0`,
     `NEXTERM_OUT=${installer}`,

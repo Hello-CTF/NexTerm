@@ -69,7 +69,7 @@ function seed(): void {
 		closeTab: mocks.closeTab,
 		toasts: [],
 		sessions: [
-			{ id: "s-dev", assetId: "device/d-1", assetName: "device", kind: "device", status: "connected", controller: "" },
+			{ id: "s-dev", assetId: "device/d-1", assetName: "device", kind: "device", status: "connected" },
 		] as never,
 		workspaces: [
 			{
@@ -82,7 +82,6 @@ function seed(): void {
 				assetKind: "device",
 				panes: [{ id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", sessionId: "s-dev", title: "Terminal", closable: true }] }],
 				activePaneId: "p1",
-				splitRatio: 0.5,
 			},
 		] as never,
 		activeWorkspaceId: "ws-dev",
@@ -110,7 +109,6 @@ function adoptB(): import("../app/store").Workspace {
 		assetKind: "device",
 		panes: [{ id: "p-b", activeTabId: "t1", tabs: [{ id: "t1", tabId: "backend-t1", kind: "terminal", sessionId: "s-b", title: "B terminal", closable: true }] }],
 		activePaneId: "p-b",
-		splitRatio: 0.5,
 	} as import("../app/store").Workspace;
 	useUi.setState({ workspaces: [workspaceB], activeWorkspaceId: "ws-b" });
 	return workspaceB;
@@ -297,7 +295,6 @@ describe("auth logout device cleanup", () => {
 			assetKind: "device",
 			panes: [{ id: "p-b", activeTabId: "t1", tabs: [{ id: "t1", tabId: "backend-t1", kind: "terminal", sessionId: "s-b", title: "B terminal", closable: true }] }],
 			activePaneId: "p-b",
-			splitRatio: 0.5,
 		} as never;
 		useUi.setState({ workspaces: [workspaceB], activeWorkspaceId: "ws-b" });
 		finishClose();

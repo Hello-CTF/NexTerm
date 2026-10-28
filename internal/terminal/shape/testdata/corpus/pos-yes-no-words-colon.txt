@@ -1,0 +1,5 @@
+# kind: yesno
+# options: yes | no
+---
+This will delete 12 snapshots older than 30 days.
+Are you sure? [yes/no]: 

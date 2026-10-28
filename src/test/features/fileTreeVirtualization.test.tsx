@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flushUntil, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -133,7 +133,6 @@ function seedWorkspace(): void {
         assetKind: "local",
         panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ],
@@ -226,7 +225,7 @@ afterEach(() => {
 describe("FileTree virtualization", () => {
   it("renders only a bounded window of rows for a huge directory and keeps ARIA set metadata", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(items().length).toBeGreaterThan(0));
+    await waitForRendered(() => expect(items().length).toBeGreaterThan(0));
 
     expect(items().length).toBeLessThan(60);
     expect(mounted.container.textContent).toContain("5001 项");
@@ -254,36 +253,36 @@ describe("FileTree virtualization", () => {
 
   it("ArrowDown steps through rows and keeps the focused row mounted after scrolling away", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(itemByPath("~/sub")).toBeTruthy());
+    await waitForRendered(() => expect(itemByPath("~/sub")).toBeTruthy());
 
     const sub = itemByPath("~/sub")!;
     sub.focus();
     keyDown(sub, "ArrowDown");
-    await waitFor(() => expect(document.activeElement).toBe(itemByPath(FILES[0].path)));
+    await waitForRendered(() => expect(document.activeElement).toBe(itemByPath(FILES[0].path)));
 
     const scroller = mounted.container.querySelector<HTMLElement>('[role="tree"]')!;
     act(() => {
       scroller.scrollTop = ROW_HEIGHT * 3000;
       scroller.dispatchEvent(new Event("scroll"));
     });
-    await waitFor(() => expect(itemByPath(FILES[2999].path)).toBeTruthy());
+    await waitForRendered(() => expect(itemByPath(FILES[2999].path)).toBeTruthy());
     expect(itemByPath(FILES[0].path)).toBeTruthy();
     expect(document.activeElement).toBe(itemByPath(FILES[0].path));
   });
 
   it("expands and collapses a directory among virtualized rows", async () => {
     mounted = mountTree();
-    await waitFor(() => expect(itemByPath("~/sub")).toBeTruthy());
+    await waitForRendered(() => expect(itemByPath("~/sub")).toBeTruthy());
 
     click(itemByPath("~/sub")!);
-    await waitFor(() => expect(itemByPath("~/sub/inner.txt")).toBeTruthy());
+    await waitForRendered(() => expect(itemByPath("~/sub/inner.txt")).toBeTruthy());
     expect(itemByPath("~/sub")!.getAttribute("aria-expanded")).toBe("true");
     expect(itemByPath("~/sub/inner.txt")!.getAttribute("aria-level")).toBe("2");
     expect(itemByPath("~/sub/inner.txt")!.getAttribute("aria-setsize")).toBe("1");
     expect(items().length).toBeLessThan(60);
 
     click(itemByPath("~/sub")!);
-    await waitFor(() => expect(itemByPath("~/sub/inner.txt")).toBeUndefined());
+    await waitForRendered(() => expect(itemByPath("~/sub/inner.txt")).toBeUndefined());
     expect(itemByPath("~/sub")!.getAttribute("aria-expanded")).toBe("false");
   });
 });

@@ -42,6 +42,10 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"input.selectionAutoCopy",
 		"terminal.closeAction",
 		"terminal.defaultMode",
+		"terminal.gpuAcceleration",
+		"terminal.linkActivation",
+		"terminal.confirmMultilinePaste",
+		"terminal.durableHistoryMiB",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
 		"keybinding.newTerminal",
@@ -53,9 +57,18 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"keybinding.focusLowerPane",
 		"keybinding.toggleSidebar",
 		"keybinding.toggleAiSidebar",
+		"keybinding.toggleSessionPanel",
 		"keybinding.closeTab",
 		"keybinding.toggleSplit",
+		"keybinding.splitRight",
+		"keybinding.splitDown",
+		"keybinding.closePane",
+		"keybinding.focusPaneLeft",
+		"keybinding.focusPaneRight",
+		"keybinding.focusPaneUp",
+		"keybinding.focusPaneDown",
 		"keybinding.switchTab",
+		"keybinding.restoreClosedTab",
 		"keybinding.terminalSearch",
 		"keybinding.reclaimTakeover",
 		"keybinding.lockVault",
@@ -113,19 +126,22 @@ func TestNormalizePreferenceBinding(t *testing.T) {
 
 func TestValidatePreferenceValue(t *testing.T) {
 	valid := map[string]string{
-		"appearance.uiFontPreset":       "15.5",
-		"appearance.uiFontScale":        "1.25",
-		"appearance.terminalFontSize":   "32",
-		"appearance.terminalFontFamily": `"jetbrains-mono"`,
-		"appearance.terminalTheme":      `"light"`,
-		"appearance.terminalContrast":   `"maximum"`,
-		"appearance.themeMode":          `"system"`,
-		"input.selectionAutoCopy":       "true",
-		"terminal.closeAction":          `"kill"`,
-		"terminal.defaultMode":          `"regular"`,
-		"keybinding.closeTab":           `"Mod+Shift+w"`,
-		"keybinding.closeTab:null":      "null",
-		"keybinding.reclaimTakeover":    `"Mod+Shift+s"`,
+		"appearance.uiFontPreset":        "15.5",
+		"appearance.uiFontScale":         "1.25",
+		"appearance.terminalFontSize":    "32",
+		"appearance.terminalFontFamily":  `"jetbrains-mono"`,
+		"appearance.terminalTheme":       `"light"`,
+		"appearance.terminalContrast":    `"maximum"`,
+		"appearance.themeMode":           `"system"`,
+		"input.selectionAutoCopy":        "true",
+		"terminal.closeAction":           `"kill"`,
+		"terminal.defaultMode":           `"regular"`,
+		"terminal.gpuAcceleration":       `"off"`,
+		"terminal.linkActivation":        `"click"`,
+		"terminal.confirmMultilinePaste": `"unbracketed"`,
+		"keybinding.closeTab":            `"Mod+Shift+w"`,
+		"keybinding.closeTab:null":       "null",
+		"keybinding.reclaimTakeover":     `"Mod+Shift+s"`,
 	}
 	for key, want := range valid {
 		name := key
@@ -145,6 +161,22 @@ func TestValidatePreferenceValue(t *testing.T) {
 			t.Errorf("terminal font %q=(%q,%v)", value, got, err)
 		}
 	}
+	for raw, want := range map[string]string{
+		`"unbracketed"`: `"unbracketed"`,
+		`"always"`:      `"always"`,
+		`"never"`:       `"never"`,
+	} {
+		got, err := validatePreferenceValue("terminal.confirmMultilinePaste", json.RawMessage(raw))
+		if err != nil || got != want {
+			t.Errorf("multi-line paste confirmation %s=(%q,%v) want %q", raw, got, err, want)
+		}
+	}
+	for _, value := range []string{"modifier", "click"} {
+		got, err := validatePreferenceValue("terminal.linkActivation", json.RawMessage(strconv.Quote(value)))
+		if err != nil || got != strconv.Quote(value) {
+			t.Errorf("terminal link activation %q=(%q,%v)", value, got, err)
+		}
+	}
 	for _, value := range []string{"standard", "high", "maximum"} {
 		got, err := validatePreferenceValue("appearance.terminalContrast", json.RawMessage(strconv.Quote(value)))
 		if err != nil || got != strconv.Quote(value) {
@@ -152,17 +184,20 @@ func TestValidatePreferenceValue(t *testing.T) {
 		}
 	}
 	invalid := map[string][]string{
-		"appearance.uiFontPreset":       {`"13"`, "7.5", "13.25", "32.5", "null", "true"},
-		"appearance.uiFontScale":        {"1.1", "2.5", "null", `{"v":1}`},
-		"appearance.terminalFontSize":   {"7", "33", "13.5", `"13"`, "null"},
-		"appearance.terminalFontFamily": {`"downloaded-font"`, `"Cascadia Mono"`, "1", "null", "true"},
-		"appearance.terminalTheme":      {`"blue"`, "1", "null", "true"},
-		"appearance.terminalContrast":   {`"extreme"`, "1", "null", "true"},
-		"appearance.themeMode":          {`"blue"`, "1", "null", "true"},
-		"input.selectionAutoCopy":       {`"true"`, "1", "null"},
-		"terminal.closeAction":          {`"background"`, "1", "null", "true"},
-		"terminal.defaultMode":          {`"auto"`, `"persistent"`, "1", "null", "true"},
-		"keybinding.closeTab":           {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
+		"appearance.uiFontPreset":        {`"13"`, "7.5", "13.25", "32.5", "null", "true"},
+		"appearance.uiFontScale":         {"1.1", "2.5", "null", `{"v":1}`},
+		"appearance.terminalFontSize":    {"7", "33", "13.5", `"13"`, "null"},
+		"appearance.terminalFontFamily":  {`"downloaded-font"`, `"Cascadia Mono"`, "1", "null", "true"},
+		"appearance.terminalTheme":       {`"blue"`, "1", "null", "true"},
+		"appearance.terminalContrast":    {`"extreme"`, "1", "null", "true"},
+		"appearance.themeMode":           {`"blue"`, "1", "null", "true"},
+		"input.selectionAutoCopy":        {`"true"`, "1", "null"},
+		"terminal.closeAction":           {`"background"`, "1", "null", "true"},
+		"terminal.defaultMode":           {`"auto"`, `"persistent"`, "1", "null", "true"},
+		"terminal.gpuAcceleration":       {`"webgl"`, `"Auto"`, "1", "null", "true"},
+		"terminal.linkActivation":        {`"ctrl"`, `"Click"`, `"double"`, "1", "null", "true"},
+		"terminal.confirmMultilinePaste": {"true", "false", `"false"`, `"Always"`, `"ask"`, "0", "null"},
+		"keybinding.closeTab":            {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {
 		for _, rawString := range rawStrings {
@@ -445,5 +480,115 @@ func TestPreferencesTerminalFontAndContrastIsolation(t *testing.T) {
 	}
 	if string(bobOverrides["appearance.terminalFontFamily"]) != `"fira-code"` || string(bobOverrides["appearance.terminalContrast"]) != `"maximum"` {
 		t.Fatalf("alice clear must not touch bob=%v", bobOverrides)
+	}
+}
+
+func TestTerminalKeyBarPreference(t *testing.T) {
+	got, err := validatePreferenceValue("terminal.keyBar", json.RawMessage(`[ "escape", "tab", "digit-1", "enter" ]`))
+	if err != nil || got != `["escape","tab","digit-1","enter"]` {
+		t.Fatalf("key bar=(%q,%v)", got, err)
+	}
+	// An empty bar is a valid choice, and ids unknown to this server's clients are kept for newer clients.
+	for _, raw := range []string{`[]`, `["future-key"]`} {
+		if _, err := validatePreferenceValue("terminal.keyBar", json.RawMessage(raw)); err != nil {
+			t.Fatalf("key bar %s: %v", raw, err)
+		}
+	}
+	tooMany := make([]string, maxKeyBarKeys+1)
+	for i := range tooMany {
+		tooMany[i] = "k" + strconv.Itoa(i)
+	}
+	tooManyRaw, _ := json.Marshal(tooMany)
+	for _, raw := range []string{
+		"null", `"escape"`, `{"ids":[]}`, `[1]`, `["escape","escape"]`, `["Escape"]`, `[""]`, `["-x"]`,
+		`["has space"]`, `["` + strings.Repeat("a", 33) + `"]`, string(tooManyRaw),
+	} {
+		if got, err := validatePreferenceValue("terminal.keyBar", json.RawMessage(raw)); err == nil {
+			t.Fatalf("key bar %s accepted as %q", raw, got)
+		}
+	}
+}
+
+func TestTerminalQuickCommandsPreference(t *testing.T) {
+	want := `[{"label":"部署","text":"make deploy && echo <ok>","appendEnter":true},{"label":"multi","text":"a\nb\u001b[A","appendEnter":false}]`
+	got, err := validatePreferenceValue("terminal.quickCommands", json.RawMessage(want))
+	if err != nil || got != want {
+		t.Fatalf("quick commands=(%q,%v) want %q", got, err, want)
+	}
+	if got, err := validatePreferenceValue("terminal.quickCommands", json.RawMessage(`[]`)); err != nil || got != `[]` {
+		t.Fatalf("empty quick commands=(%q,%v)", got, err)
+	}
+
+	command := func(label, text string) map[string]any {
+		return map[string]any{"label": label, "text": text, "appendEnter": true}
+	}
+	encode := func(value any) json.RawMessage {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	maxLabel := strings.Repeat("标", maxQuickCommandLabel)
+	maxText := strings.Repeat("x", maxQuickCommandTextBytes)
+	if _, err := validatePreferenceValue("terminal.quickCommands", encode([]any{command(maxLabel, maxText)})); err != nil {
+		t.Fatalf("limits must be inclusive: %v", err)
+	}
+	full := make([]any, maxQuickCommands)
+	for i := range full {
+		full[i] = command("c"+strconv.Itoa(i), "echo "+strconv.Itoa(i))
+	}
+	if _, err := validatePreferenceValue("terminal.quickCommands", encode(full)); err != nil {
+		t.Fatalf("%d commands must be accepted: %v", maxQuickCommands, err)
+	}
+
+	bulky := make([]any, 20)
+	for i := range bulky {
+		bulky[i] = command("c"+strconv.Itoa(i), maxText)
+	}
+	invalid := map[string]json.RawMessage{
+		"null":            json.RawMessage("null"),
+		"object":          json.RawMessage(`{"label":"a","text":"b","appendEnter":true}`),
+		"too many":        encode(append(full, command("extra", "echo"))),
+		"label too long":  encode([]any{command(maxLabel+"x", "echo")}),
+		"empty label":     encode([]any{command("  ", "echo")}),
+		"label newline":   encode([]any{command("a\nb", "echo")}),
+		"empty text":      encode([]any{command("a", "")}),
+		"text too long":   encode([]any{command("a", maxText+"x")}),
+		"text NUL":        encode([]any{command("a", "echo\x00")}),
+		"unknown field":   json.RawMessage(`[{"label":"a","text":"b","appendEnter":true,"run":"x"}]`),
+		"wrong type":      json.RawMessage(`[{"label":"a","text":"b","appendEnter":"yes"}]`),
+		"list too large":  encode(bulky),
+		"trailing values": json.RawMessage(`[] []`),
+	}
+	for name, raw := range invalid {
+		if got, err := validatePreferenceValue("terminal.quickCommands", raw); err == nil {
+			t.Fatalf("%s accepted as %q", name, got)
+		}
+	}
+}
+
+func TestTerminalQuickCommandsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	preferences := testPreferences(t)
+	value := json.RawMessage(`[{"label":"状态","text":"git status","appendEnter":true}]`)
+	updated, err := preferences.UpdateUserOverrides(ctx, "alice", map[string]json.RawMessage{
+		"terminal.quickCommands": value,
+		"terminal.keyBar":        json.RawMessage(`["escape","digit-1","y","n","enter"]`),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(updated["terminal.quickCommands"]) != string(value) || string(updated["terminal.keyBar"]) != `["escape","digit-1","y","n","enter"]` {
+		t.Fatalf("stored overrides=%v", updated)
+	}
+	if _, err := preferences.UpdateUserOverrides(ctx, "alice", map[string]json.RawMessage{
+		"terminal.quickCommands": json.RawMessage(`[{"label":"","text":"x","appendEnter":true}]`),
+	}, nil); err == nil {
+		t.Fatal("an invalid quick command list must be rejected")
+	}
+	read, err := preferences.UserOverrides(ctx, "alice")
+	if err != nil || string(read["terminal.quickCommands"]) != string(value) {
+		t.Fatalf("rejected write must keep the stored list: %v %v", read, err)
 	}
 }

@@ -13,16 +13,3 @@ export function shouldSendTerminalResize(
 ): boolean {
   return hasKernelTab && !applyingRemoteDimensions && canResize;
 }
-
-export interface ControllerViewport {
-  fit: () => void;
-  dimensions: () => { cols: number; rows: number };
-}
-
-export function dimensionsForControllerClaim(
-  handle: ControllerViewport | null,
-): { cols: number; rows: number } | null {
-  if (!handle) return null;
-  handle.fit();
-  return handle.dimensions();
-}

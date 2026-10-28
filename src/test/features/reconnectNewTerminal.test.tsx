@@ -55,8 +55,7 @@ vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
-vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
-vi.mock("../../app/QuickConnect", () => ({ QuickConnect: () => null }));
+vi.mock("../../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../../features/fleet/DeviceSessionBoundary", () => ({ DeviceSessionBoundary: () => null }));
 
@@ -129,7 +128,6 @@ beforeEach(() => {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",

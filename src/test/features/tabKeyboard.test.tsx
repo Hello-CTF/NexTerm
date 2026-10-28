@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock("../../ipc/commands", () => ({
       lastError: null,
     }),
     status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
-    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false }),
     wake: vi.fn().mockResolvedValue(undefined),
   },
   terminalApi: {},
@@ -54,7 +54,7 @@ vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
-vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
+vi.mock("../../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../../app/App";
@@ -122,7 +122,6 @@ beforeEach(() => {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
       {
         id: "ws2",
@@ -138,7 +137,6 @@ beforeEach(() => {
           },
         ],
         activePaneId: "p2",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -193,7 +191,7 @@ describe("workspace switcher", () => {
     const close = menuItems().find((i) => i.getAttribute("aria-label") === "关闭工作区 ws-1");
     expect(close).toBeTruthy();
     click(close as HTMLButtonElement);
-    await waitFor(() => expect(useUi.getState().workspaces).toHaveLength(1));
+    await waitForRendered(() => expect(useUi.getState().workspaces).toHaveLength(1));
     expect(useUi.getState().activeWorkspaceId).toBe("ws2");
   });
 
@@ -211,7 +209,7 @@ describe("workspace switcher", () => {
     expect(document.activeElement).toBe(menuItems()[1]);
 
     keyDown(document.activeElement as HTMLElement, "Escape");
-    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
   });
 });
 
@@ -232,7 +230,7 @@ describe("pane tab strip keyboard support", () => {
     const close = list.querySelector<HTMLButtonElement>('button[aria-label="关闭标签 审计"]');
     expect(close).not.toBeNull();
     click(close as HTMLButtonElement);
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(1),
     );
     expect(useUi.getState().workspaces[0]?.panes[0]?.activeTabId).toBe("t1");
@@ -253,7 +251,7 @@ describe("pane tab strip keyboard support", () => {
     expect(menu?.textContent).toContain("关闭标签");
 
     keyDown(document.activeElement as HTMLElement, "Escape");
-    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
     expect(document.activeElement).toBe(settings);
   });
 
@@ -271,7 +269,7 @@ describe("pane tab strip keyboard support", () => {
     expect(useUi.getState().workspaces[0]?.panes[0]?.activeTabId).toBe("t1");
 
     click(close);
-    await waitFor(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(1));
+    await waitForRendered(() => expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(1));
   });
 });
 
@@ -299,7 +297,7 @@ describe("pane tab context menu bulk close", () => {
     expect(menuButton("关闭左侧全部标签").disabled).toBe(true);
     expect(menuButton("关闭右侧全部标签").disabled).toBe(false);
     keyDown(document.activeElement as HTMLElement, "Escape");
-    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    await waitForRendered(() => expect(document.querySelector('[role="menu"]')).toBeNull());
 
     expect(openMenu(tabByText(list, "审计"))).not.toBeNull();
     expect(menuButton("关闭左侧全部标签").disabled).toBe(false);
@@ -313,7 +311,7 @@ describe("pane tab context menu bulk close", () => {
     const list = tablist(mounted.container, "标签页");
     openMenu(tabByText(list, "审计"));
     click(menuButton("关闭左侧全部标签"));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.map((t) => t.id)).toEqual(["t2"]),
     );
   });
@@ -325,7 +323,7 @@ describe("pane tab context menu bulk close", () => {
     const list = tablist(mounted.container, "标签页");
     openMenu(tabByText(list, "设置"));
     click(menuButton("关闭右侧全部标签"));
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.map((t) => t.id)).toEqual(["t1"]),
     );
   });
@@ -357,5 +355,34 @@ describe("rail and toast accessibility", () => {
     expect(toast?.textContent).toContain("已保存");
     expect(toast?.className).toContain("nx-alert-success");
     expect(toast?.className).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+  });
+});
+
+describe("pane tab strip persistence marks", () => {
+  it("marks only the durable terminal tab with the persistence icon", async () => {
+    useUi.setState((state) => ({
+      workspaces: state.workspaces.map((ws) =>
+        ws.id !== "ws1"
+          ? ws
+          : {
+              ...ws,
+              panes: ws.panes.map((pane) => ({
+                ...pane,
+                tabs: [
+                  ...pane.tabs,
+                  { id: "t4", kind: "terminal", title: "持久的终端", sessionId: "s1", durable: true, closable: true },
+                  { id: "t5", kind: "terminal", title: "普通的终端", sessionId: "s1", regularReason: "打开时持久组件未就绪", closable: true },
+                ],
+              })),
+            },
+      ),
+    }));
+    mounted = mountApp();
+    await flush();
+
+    const list = tablist(mounted.container, "标签页");
+    expect(tabByText(list, "持久的终端").querySelector('[role="img"][aria-label="持久终端"]')).not.toBeNull();
+    expect(tabByText(list, "普通的终端").querySelector('[role="img"]')).toBeNull();
+    expect(tabByText(list, "普通的终端").getAttribute("title")).toContain("普通终端：打开时持久组件未就绪");
   });
 });

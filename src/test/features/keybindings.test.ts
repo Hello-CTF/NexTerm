@@ -259,7 +259,16 @@ describe("bindingConflicts", () => {
     expect(conflicts[0].actions.map((a) => a.id)).toEqual(["commandPalette", "quickConnect"]);
   });
 
+  it("flags a close-tab binding that collides with the close-pane default", () => {
+    setKeybinding("closeTab", getKeybinding("closePane"));
+    const conflicts = bindingConflicts();
+    expect(conflicts.map((conflict) => conflict.actions.map((action) => action.id))).toEqual([["closeTab", "closePane"]]);
+    // The desktop default Mod+Shift+W is flagged the same way.
+    expect(bindingsConflict("Mod+Shift+w", "Mod+Shift+W", false)).toBe(true);
+  });
+
   it("detects Mod and Primary overlapping the same key on both platforms", () => {
+    setKeybinding("terminalSearch", "Primary+f");
     setKeybinding("commandPalette", "Mod+f");
     for (const mac of [false, true]) {
       const conflicts = bindingConflicts(undefined, mac);
@@ -331,8 +340,10 @@ describe("browser navigation keybindings", () => {
     { action: "previousWorkspace", binding: "Ctrl+Alt+ArrowLeft", key: "ArrowLeft", code: "ArrowLeft" },
     { action: "nextTab", binding: "Ctrl+Alt+]", key: "]", code: "BracketRight" },
     { action: "previousTab", binding: "Ctrl+Alt+[", key: "[", code: "BracketLeft" },
-    { action: "focusUpperPane", binding: "Ctrl+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp" },
-    { action: "focusLowerPane", binding: "Ctrl+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown" },
+    { action: "focusPaneUp", binding: "Ctrl+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp" },
+    { action: "focusPaneDown", binding: "Ctrl+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown" },
+    // Ctrl+Shift+W closes the browser window, so the web build closes panes with Ctrl+Alt+W.
+    { action: "closePane", binding: "Ctrl+Alt+w", key: "w", code: "KeyW" },
   ] as const;
 
   it.each(cases)("maps $action from a real KeyboardEvent", ({ action, binding, key, code }) => {

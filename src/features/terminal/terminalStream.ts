@@ -1,4 +1,6 @@
 import { createOscStreamFilter, type OscStreamEvent, type OscStreamFilter, type OscStreamSegment } from "./oscStream";
+import { STREAM_MAX_PENDING_BYTES } from "./terminalBudget";
+import type { StreamMode } from "./streamClasses";
 
 // Parsed watermarks for the terminal write pipeline. Bytes handed to xterm
 // whose write callbacks have not fired yet are the parsed backlog: past the
@@ -18,9 +20,20 @@ import { createOscStreamFilter, type OscStreamEvent, type OscStreamFilter, type 
 // accepted prefix contiguous so the replayed suffix joins it in original
 // stream order. Local notices bypass the cap: they are a few dozen bytes of
 // UI chrome that must always render.
-export const STREAM_HIGH_WATER_BYTES = 4 << 20;
-export const STREAM_LOW_WATER_BYTES = 1 << 20;
-export const STREAM_MAX_PENDING_BYTES = 16 << 20;
+//
+// The writer may be given the output scheduler's per-pane target instead of
+// the xterm instance: bytes a hidden pane's scheduler still holds count as in
+// flight until xterm's write callback fires, so the watermarks, the upstream
+// pause, and the hard cap's refusal (and thus the server's offset replay)
+// cover the scheduler backlog too.
+//
+// Bytes are pushed with a stream mode (streamClasses.ts): live, replay or
+// answered. OSC events are dispatched with the mode of the bytes that
+// completed them, and onReplayChange reports exactly when xterm starts and
+// finishes parsing non-live bytes: empty writes before and after each such
+// unit fire their callbacks in parse order. A sequence takes the mode of the
+// bytes its final byte arrives in.
+export { STREAM_HIGH_WATER_BYTES, STREAM_LOW_WATER_BYTES, STREAM_MAX_PENDING_BYTES } from "./terminalBudget";
 
 export interface TerminalStreamBacklog {
   paused: boolean;
@@ -44,21 +57,42 @@ export interface TerminalStreamWriterOptions {
   onPausedChange?: (paused: boolean, stats: TerminalStreamStats) => void;
   onRefused?: (stats: TerminalStreamStats) => void;
   onWritten?: () => void;
+  // Events for which this returns true dispatch on acceptance instead of
+  // after xterm parses the bytes before them. Only for events that do not
+  // depend on the screen state (a hidden pane's desktop notifications): the
+  // bytes themselves keep their order. Two consequences are accepted: an
+  // early event can fire before a same-kind event still attached to a unit
+  // written before the pane was hidden (the two swap), and an early event
+  // skips generation suppression after an expired anchor. The latter never
+  // duplicates: an expired anchor rebuilds the screen without resending the
+  // bytes the event came from.
+  dispatchEarly?: (event: OscStreamEvent) => boolean;
+  // Called in xterm parse order when parsing enters (true) or leaves (false)
+  // replayed bytes.
+  onReplayChange?: (mode: StreamMode) => void;
 }
+
+// An OSC event to dispatch, or a mark callback that runs in stream order.
+type UnitEvent = { event: OscStreamEvent; mode: StreamMode } | { mark: () => void };
 
 interface WriteUnit {
   data: Uint8Array;
-  events: OscStreamEvent[];
+  events: UnitEvent[];
+  mode: StreamMode;
   generation: number;
   enqueuedAt: number;
   done: boolean;
 }
 
 export interface TerminalStreamWriter {
-  pushBytes: (bytes: Uint8Array) => boolean;
-  write: (segments: OscStreamSegment[]) => boolean;
+  pushBytes: (bytes: Uint8Array, mode?: StreamMode) => boolean;
+  write: (segments: OscStreamSegment[], mode?: StreamMode) => boolean;
   canAccept: (bytes: number) => boolean;
   writeLocalText: (data: string) => void;
+  // Runs callback in stream order: after the events of every byte accepted
+  // so far, before those of bytes accepted later. It runs even when the
+  // stream moved to a new generation.
+  mark: (callback: () => void) => void;
   beginAttachment: () => void;
   resetStream: () => void;
   nextGeneration: () => number;
@@ -67,7 +101,7 @@ export interface TerminalStreamWriter {
 
 export function createTerminalStreamWriter(
   term: { write: (data: string | Uint8Array, callback?: () => void) => void },
-  dispatch: (event: OscStreamEvent) => void,
+  dispatch: (event: OscStreamEvent, mode: StreamMode) => void,
   options: TerminalStreamWriterOptions,
 ): TerminalStreamWriter {
   const { highWaterBytes, lowWaterBytes } = options;
@@ -97,6 +131,7 @@ export function createTerminalStreamWriter(
   let suppressedEvents = 0;
   let refusedBytes = 0;
   let lastUnit: WriteUnit | null = null;
+  const emptyWrite = new Uint8Array(0);
 
   const pendingBytes = () => queuedBytes + inFlightBytes + filter.pendingBytes();
 
@@ -131,7 +166,16 @@ export function createTerminalStreamWriter(
         queuedBytes -= unit.data.length;
         inFlight.push(unit);
         inFlightBytes += unit.data.length;
-        term.write(unit.data, () => complete(unit));
+        if (unit.mode !== "live") {
+          // Bracket each non-live unit so its mode closes as soon as its last
+          // byte is parsed, even when no live output follows.
+          const mode = unit.mode;
+          term.write(emptyWrite, () => options.onReplayChange?.(mode));
+          term.write(unit.data, () => complete(unit));
+          term.write(emptyWrite, () => options.onReplayChange?.("live"));
+        } else {
+          term.write(unit.data, () => complete(unit));
+        }
         if (inFlightBytes >= highWaterBytes) setPaused(true);
       }
     } finally {
@@ -145,10 +189,10 @@ export function createTerminalStreamWriter(
     if (index >= 0) inFlight.splice(index, 1);
     unit.done = true;
     if (lastUnit === unit) lastUnit = null;
-    if (unit.generation === generation) {
-      for (const event of unit.events) dispatch(event);
-    } else {
-      suppressedEvents += unit.events.length;
+    for (const item of unit.events) {
+      if ("mark" in item) item.mark();
+      else if (unit.generation === generation) dispatch(item.event, item.mode);
+      else suppressedEvents += 1;
     }
     options.onWritten?.();
     if (paused) {
@@ -164,8 +208,8 @@ export function createTerminalStreamWriter(
     }
   };
 
-  const enqueue = (data: Uint8Array, events: OscStreamEvent[]): WriteUnit => {
-    const unit: WriteUnit = { data, events, generation, enqueuedAt: now(), done: false };
+  const enqueue = (data: Uint8Array, events: UnitEvent[], mode: StreamMode): WriteUnit => {
+    const unit: WriteUnit = { data, events, mode, generation, enqueuedAt: now(), done: false };
     queue.push(unit);
     queuedBytes += data.length;
     lastUnit = unit;
@@ -184,7 +228,7 @@ export function createTerminalStreamWriter(
     return false;
   };
 
-  const write = (segments: OscStreamSegment[]): boolean => {
+  const write = (segments: OscStreamSegment[], mode: StreamMode = "live"): boolean => {
     let incoming = 0;
     for (const segment of segments) {
       if (segment.kind === "text") incoming += segment.data.length;
@@ -197,20 +241,24 @@ export function createTerminalStreamWriter(
     }
     for (const segment of segments) {
       if (segment.kind === "event") {
+        if (options.dispatchEarly?.(segment.event)) {
+          dispatch(segment.event, mode);
+          continue;
+        }
         const tail = lastUnit;
         if (tail && !tail.done && tail.generation === generation) {
-          tail.events.push(segment.event);
+          tail.events.push({ event: segment.event, mode });
         } else if (tail && !tail.done) {
           // An older-generation write is still parsing: queue the event behind
           // it as an empty unit so it keeps stream order under the current
           // generation instead of being suppressed with the stale unit.
-          enqueue(new Uint8Array(0), [segment.event]);
+          enqueue(new Uint8Array(0), [{ event: segment.event, mode }], mode);
         } else {
-          dispatch(segment.event);
+          dispatch(segment.event, mode);
         }
         continue;
       }
-      enqueue(segment.data, []);
+      enqueue(segment.data, [], mode);
     }
     pump();
     return true;
@@ -220,19 +268,25 @@ export function createTerminalStreamWriter(
   // refused whole, and only acceptance lets the OSC filter see it. A refused
   // chunk leaves the filter, the queue, and the caller's byte offset exactly
   // as they were, so the resume replay can redeliver it in order.
-  const pushBytes = (bytes: Uint8Array): boolean => {
+  const pushBytes = (bytes: Uint8Array, mode: StreamMode = "live"): boolean => {
     if (bytes.length === 0) return true;
     if (episode || !canAccept(bytes.length)) {
       return refuse(bytes.length);
     }
-    return write(filter.push(bytes));
+    return write(filter.push(bytes), mode);
   };
 
   const writeLocalText = (data: string) => {
     // Local notices bypass the cap: they are a few dozen bytes of UI chrome
     // that must always render, and they carry no stream-sequence bytes.
-    enqueue(encoder.encode(data), []);
+    enqueue(encoder.encode(data), [], "live");
     pump();
+  };
+
+  const mark = (callback: () => void) => {
+    const tail = lastUnit;
+    if (tail && !tail.done) tail.events.push({ mark: callback });
+    else callback();
   };
 
   // beginAttachment marks the next attachment's stream boundary: the refusal
@@ -258,6 +312,7 @@ export function createTerminalStreamWriter(
     write,
     canAccept,
     writeLocalText,
+    mark,
     beginAttachment,
     resetStream,
     nextGeneration,

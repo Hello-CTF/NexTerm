@@ -16,13 +16,13 @@ import (
 
 const pipeBufferSize = 64 * 1024
 
-func pipeEndpointName(stateDir string) (string, error) {
+func pipeEndpointName(stateDir string, version int) (string, error) {
 	identity, err := currentUserIdentity()
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(identity + "\x00" + stateDir))
-	return fmt.Sprintf(`\\.\pipe\nexterm-supervisor-v%d-%s-%x`, ProtocolVersion, identity, sum[:8]), nil
+	return fmt.Sprintf(`\\.\pipe\nexterm-supervisor-v%d-%s-%x`, version, identity, sum[:8]), nil
 }
 
 func currentUserSIDString() (string, error) {

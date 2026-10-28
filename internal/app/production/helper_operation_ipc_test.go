@@ -807,10 +807,14 @@ func TestProductionHelperRollbackReturnsStructuredResult(t *testing.T) {
 	oldPath, _ := buildHelperUpdateBinaries(t)
 	failingPath := buildFailingHelper(t)
 	service, _, sessionID := newHelperUpdateService(t, oldPath)
-	if _, err := service.ensure(t.Context(), sessionID, "update"); err != nil {
+	if _, err := service.ensure(t.Context(), sessionID, "update", ""); err != nil {
 		t.Fatal(err)
 	}
 	service.ssh.HelperExecutable = failingPath
+	// The failing candidate never serves, so each start attempt waits out
+	// the whole start budget before the rollback; a short budget keeps that
+	// wait bounded while the restored helper still has seconds to start.
+	service.ssh.StartTimeout = 5 * time.Second
 	response := dispatchHelperOperation(t, service, sessionID, "update")
 	if response.OK || response.Error == nil {
 		t.Fatalf("rollback unexpectedly succeeded: %+v", response)
@@ -824,5 +828,36 @@ func TestProductionHelperRollbackReturnsStructuredResult(t *testing.T) {
 	}
 	if detail.Update.Status != "rolled_back" {
 		t.Fatalf("rollback status = %q", detail.Update.Status)
+	}
+}
+
+func TestProductionPrepareDurableIPCStartsDeploymentWithoutTab(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	resolver := session.DurableResolverFunc(func(ctx context.Context, _ base.Transport) (base.DurableProvider, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil, context.Cause(ctx)
+	})
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connected := connectRemoteSSHAsset(t, production)
+
+	response := dispatchDurableTest(t, production, "session_prepare_durable", `{"sessionId":"`+connected.ID+`"}`, "", "client-a")
+	var result durableReadinessDTO
+	requireStoreTestResponse(t, response, &result)
+	if result.State != "preparing" {
+		t.Fatalf("prepare result = %+v; want preparing", result)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("prepare did not start the helper deployment")
+	}
+	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 0 {
+		t.Fatalf("prepare created terminal tabs: %+v", tabs)
 	}
 }

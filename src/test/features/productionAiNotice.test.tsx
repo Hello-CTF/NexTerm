@@ -109,7 +109,6 @@ function seedWorkspace(assetTags: string): void {
         assetId: "a-s1",
         panes: [{ id: "p1", activeTabId: "t1", tabs: [] }],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",

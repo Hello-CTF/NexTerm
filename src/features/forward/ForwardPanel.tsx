@@ -4,7 +4,7 @@ import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { forwardApi, type ForwardSpec } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
-import { useUi } from "../../app/store";
+import { useUi, useSessionList } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { ForwardRules } from "./ForwardRules";
 import { useCompactWidth } from "../docker/useCompactWidth";
@@ -66,15 +66,18 @@ function useForwardPanelVisible(sessionId?: string): boolean {
   });
 }
 
-export function ForwardPanel({ sessionId }: { sessionId?: string }) {
-  return <ForwardPanelInner sessionId={sessionId} />;
+// visible overrides the tab-based visibility for hosts outside a forward tab (the session side panel), which are shown
+// whenever they are mounted.
+export function ForwardPanel({ sessionId, visible }: { sessionId?: string; visible?: boolean }) {
+  return <ForwardPanelInner sessionId={sessionId} visible={visible} />;
 }
 
-function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
+function ForwardPanelInner({ sessionId, visible: visibleOverride }: { sessionId?: string; visible?: boolean }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
-  const sessions = useUi((s) => s.sessions);
-  const visible = useForwardPanelVisible(sessionId);
+  const sessions = useSessionList();
+  const tabVisible = useForwardPanelVisible(sessionId);
+  const visible = visibleOverride ?? tabVisible;
   const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
   const localMachine = WEB ? "NexTerm 所在机器" : "本机";
   const remoteTarget = WEB ? "NexTerm 所在机器" : "本地";

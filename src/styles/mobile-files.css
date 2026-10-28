@@ -1,0 +1,56 @@
+/* mobile: files */
+@media (pointer: coarse) {
+  .nx-files-pane .nx-files-bar {
+    height: auto;
+    min-height: 34px;
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-block: 2px;
+  }
+  .nx-files-pane .nx-icon-btn-sm,
+  .nx-files-pane .nx-tree-caret {
+    width: 36px;
+    height: 36px;
+  }
+  .nx-files-pane .nx-pathbar {
+    min-height: 40px;
+  }
+  .nx-files-pane .nx-path-crumb {
+    min-height: 36px;
+  }
+  .nx-files-pane .nx-ftree-row {
+    height: 38px;
+    padding-block: 0;
+    flex-wrap: nowrap;
+  }
+  .nx-files-pane .nx-ftree-row .nx-tree-caret {
+    width: 28px;
+    height: 36px;
+  }
+  .nx-files-pane .nx-ftree-row .nx-row-more {
+    width: 40px;
+    height: 36px;
+  }
+}
+@media (pointer: coarse) {
+  .nx-xfer-panel .nx-link {
+    min-height: 32px;
+  }
+  .nx-xfer-panel .nx-icon-btn-sm {
+    width: 32px;
+    height: 32px;
+  }
+}
+@media (max-width: 640px) {
+  .nx-toolbar.nx-files-editor-bar > .nx-toolbar-title {
+    flex: 1 1 40%;
+  }
+}
+@media (pointer: coarse) {
+  .nx-files-editor-bar .nx-icon-btn-sm,
+  .nx-files-editor-bar .nx-icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+}
+/* end mobile: files */

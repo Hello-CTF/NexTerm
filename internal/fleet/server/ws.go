@@ -23,7 +23,7 @@ const (
 // controlMessage is the server -> agent control channel frame; its field semantics correspond one-to-one with
 // internal/fleet/agent's serverMessage (that type is unexported, mirrored here).
 // ServerVersion appears only in version_mismatch frames: the agent uses it as the target version to self-upgrade from the fixed official
-// release source; old agents ignore the unknown field when parsing.
+// release source.
 type controlMessage struct {
 	Type              string `json:"type"`
 	Code              string `json:"code,omitempty"`
@@ -34,7 +34,7 @@ type controlMessage struct {
 	TerminalEnabled   *bool  `json:"terminal_enabled,omitempty"`
 	BridgeID          string `json:"bridge_id,omitempty"`
 	// Purpose selects the bridge service; empty means terminal. Non-terminal purposes are requested only
-	// from agents that advertised them in hello capabilities, so old agents never see them.
+	// from agents that advertised them in hello capabilities.
 	Purpose string `json:"purpose,omitempty"`
 }
 

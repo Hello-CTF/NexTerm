@@ -22,6 +22,11 @@ import (
 	wailsevents "github.com/wailsapp/wails/v3/pkg/events"
 )
 
+// desktopAppID is the product identifier from wails.json. On Linux it is also
+// the GTK application id and program name, so the Wayland app_id and the X11
+// WM_CLASS match the packaged <desktopAppID>.desktop entry and its icon.
+const desktopAppID = "com.nexterm.desktop"
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -31,6 +36,7 @@ func run(args []string) int {
 		return supervisor.RunHelperCLI(args[1:])
 	}
 	args, launchLink := extractDeepLink(args)
+	args, toastActivation := stripToastActivationArgs(args)
 	invocation, err := core.ParseCLI(args, core.CommandDesktop, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
@@ -78,6 +84,7 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
 		return 1
 	}
+	brandIcon := desktopBrandIcon(invocation.WebRoot)
 	streams := newDesktopStreamFactory()
 	var window *application.WebviewWindow
 	var wailsApp *application.App
@@ -92,6 +99,15 @@ func run(args []string) int {
 		diagcapture.RecordEvent(string(event.Event), diagcapture.PayloadSize(event.Payload))
 		return nil
 	})
+	notificationBackend, notificationsUnsupported := newNotificationBackend()
+	notifier := newDesktopNotifier(notificationBackend, notificationsUnsupported, notificationMinInterval, func(click notificationClick) {
+		if window != nil {
+			showWindow(window)
+		}
+		if wailsApp != nil {
+			wailsApp.Event.Emit(notificationClickEvent, click)
+		}
+	})
 	production, err := production.NewProduction(context.Background(), production.ProductionConfig{
 		Config: core.Config{
 			Logger:  logger.Logger,
@@ -100,6 +116,7 @@ func run(args []string) int {
 		},
 		DataDir:         paths.DataDir,
 		Desktop:         true,
+		LocalHelper:     true,
 		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
 		RestartFunc: func(_ context.Context, target string) error {
 			if err := update.StartDetached(target, args); err != nil {
@@ -111,13 +128,14 @@ func run(args []string) int {
 		ScreenInsets: func(context.Context) (production.ScreenInsets, error) {
 			return screenInsets(currentScreen(window)), nil
 		},
+		SystemNotifier: notifier,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
-		return showStartupError(paths, err, logger.Logger)
+		return showStartupError(paths, err, logger.Logger, brandIcon)
 	}
 	service := &Service{app: production.Application, streams: streams}
-	wailsApp = application.New(application.Options{
+	appOptions := application.Options{
 		Name:        "NexTerm",
 		Description: "NexTerm desktop client",
 		Logger:      logger.WailsLogger(),
@@ -134,8 +152,9 @@ func run(args []string) int {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
+		Linux: application.LinuxOptions{ApplicationID: desktopAppID},
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "com.nexterm.desktop",
+			UniqueID: desktopAppID,
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				if window != nil {
 					showWindow(window)
@@ -145,7 +164,9 @@ func run(args []string) int {
 				}
 			},
 		},
-	})
+	}
+	applyAppIcon(&appOptions, brandIcon)
+	wailsApp = application.New(appOptions)
 	pprofServer, err := pprof.Start(logger.Logger, invocation.PprofAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
@@ -169,7 +190,7 @@ func run(args []string) int {
 		}
 		service.links.deliver(url)
 	})
-	window = wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	windowOptions := application.WebviewWindowOptions{
 		Title:          "NexTerm",
 		URL:            "/",
 		Width:          1480,
@@ -178,15 +199,34 @@ func run(args []string) int {
 		MinHeight:      600,
 		Frameless:      true,
 		EnableFileDrop: true,
+	}
+	savedWindow, hasSavedWindow := loadWindowState(paths.DataDir)
+	if hasSavedWindow {
+		windowOptions = applyWindowState(windowOptions, savedWindow, screenBounds(wailsApp))
+	}
+	window = wailsApp.Window.NewWithOptions(windowOptions)
+	trackWindowState(window, paths.DataDir, savedWindow, func(err error) {
+		logger.Warn("window state not saved", "error", err)
 	})
+	setWindowIconWhenReady(window, brandIcon, logger.Logger)
 	window.OnWindowEvent(wailsevents.Common.WindowFilesDropped, func(event *application.WindowEvent) {
 		emitFilesDropped(wailsApp, event)
 	})
 	streams.SetWindow(window)
-	setupTray(wailsApp, window, desktopBrandIcon(invocation.WebRoot), production.Services.Store, logger.Logger)
+	setupTray(wailsApp, window, brandIcon, production.Services.Store, logger.Logger)
 	if launchLink != "" {
 		service.links.deliver(launchLink)
 	}
+	if toastActivation {
+		// Started by a click on a toast: register the activator at once so
+		// the click reaches the frontend.
+		go notifier.Status(context.Background())
+	}
+	defer func() {
+		if err := notifier.Shutdown(); err != nil {
+			logger.Warn("notification service shutdown", "error", err)
+		}
+	}()
 	window.Show()
 	if err := wailsApp.Run(); err != nil {
 		logger.Error("desktop stopped", "error", err)

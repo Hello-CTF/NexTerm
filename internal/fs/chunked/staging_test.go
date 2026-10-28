@@ -2,9 +2,11 @@ package chunked_test
 
 import (
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fs/chunked"
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
@@ -126,7 +128,7 @@ func TestMatchesStagedRequiresExactParamsAndIntactParts(t *testing.T) {
 	}
 }
 
-func TestMatchesStagedBindsOwnerAndLegacyBoundary(t *testing.T) {
+func TestMatchesStagedBindsOwner(t *testing.T) {
 	remote := filepath.Join(t.TempDir(), "remote.bin")
 	destination := fslocal.New()
 	writeChunk(t, mustNewUpload(t, "00000000000000000000000001", remote, 8, 4, chunked.WithOwner("owner-a")), destination, 0, "abcd")
@@ -134,7 +136,7 @@ func TestMatchesStagedBindsOwnerAndLegacyBoundary(t *testing.T) {
 	if err != nil || len(staged) != 1 {
 		t.Fatalf("ScanStaging = %+v, %v", staged, err)
 	}
-	if staged[0].ParamsVersion != stagingParamsVersion2 || staged[0].Owner != "owner-a" {
+	if !staged[0].HasParams || staged[0].Owner != "owner-a" {
 		t.Fatalf("staged params = %+v", staged[0])
 	}
 	if !mustNewUpload(t, "00000000000000000000000001", remote, 8, 4, chunked.WithOwner("owner-a")).MatchesStaged(staged[0]) {
@@ -146,22 +148,53 @@ func TestMatchesStagedBindsOwnerAndLegacyBoundary(t *testing.T) {
 	if mustNewUpload(t, "00000000000000000000000001", remote, 8, 4).MatchesStaged(staged[0]) {
 		t.Fatal("empty owner matched owner-bound staging")
 	}
-
-	legacy := staged[0]
-	legacy.ParamsVersion = stagingParamsVersion1
-	legacy.Owner = ""
-	if !mustNewUpload(t, "00000000000000000000000001", remote, 8, 4).MatchesStaged(legacy) {
-		t.Fatal("desktop empty owner did not match legacy sidecar")
-	}
-	if mustNewUpload(t, "00000000000000000000000001", remote, 8, 4, chunked.WithOwner("owner-b")).MatchesStaged(legacy) {
-		t.Fatal("multi-account begin matched legacy owner-less sidecar")
-	}
 }
 
-const (
-	stagingParamsVersion1 = 1
-	stagingParamsVersion2 = 2
-)
+// Staging left on a host by an older build (ownerless 16-byte params) or with
+// an unknown params version must never be adopted, and the reaper must still
+// remove it.
+func TestUnreadableParamsStagingIsNeverAdoptedAndIsReaped(t *testing.T) {
+	legacy := make([]byte, 16)
+	binary.LittleEndian.PutUint64(legacy[0:8], 8)
+	binary.LittleEndian.PutUint64(legacy[8:16], 4)
+	unknown := make([]byte, 19)
+	unknown[0] = 9
+	binary.LittleEndian.PutUint64(unknown[1:9], 8)
+	binary.LittleEndian.PutUint64(unknown[9:17], 4)
+	for name, params := range map[string][]byte{"legacy": legacy, "unknown version": unknown, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			remote := filepath.Join(dir, "remote.bin")
+			destination := fslocal.New()
+			writeChunk(t, mustNewUpload(t, testUploadID, remote, 8, 4), destination, 0, "abcd")
+			paramsPath := chunkArtifactGlob(remote, testUploadID+".params")
+			if err := os.WriteFile(paramsPath, params, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			staged, err := chunked.ScanStaging(context.Background(), destination, remote)
+			if err != nil || len(staged) != 1 || staged[0].HasParams {
+				t.Fatalf("ScanStaging = %+v, %v; want one params-less group", staged, err)
+			}
+			if _, hit, err := chunked.FindStaged(context.Background(), destination, remote, 8, 4, ""); err != nil || hit {
+				t.Fatalf("FindStaged = %v, %v; want no adoption", hit, err)
+			}
+
+			old := time.Now().Add(-2 * time.Hour)
+			for _, match := range stagingGlob(t, remote, testUploadID) {
+				if err := os.Chtimes(match, old, old); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := chunked.ReapStaleStaging(context.Background(), destination, dir, time.Hour); err != nil {
+				t.Fatalf("ReapStaleStaging: %v", err)
+			}
+			if matches := stagingGlob(t, remote, testUploadID); len(matches) != 0 {
+				t.Fatalf("stale staging survived: %v", matches)
+			}
+		})
+	}
+}
 
 func TestFindStagedResumesCrashedUploadAndCommits(t *testing.T) {
 	remote := filepath.Join(t.TempDir(), "remote.bin")

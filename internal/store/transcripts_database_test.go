@@ -41,30 +41,6 @@ func TestTranscriptAppendChunksDurableOffsetDatabase(t *testing.T) {
 	}
 }
 
-func TestDurableTabTitleRoundtripDatabase(t *testing.T) {
-	ctx := context.Background()
-	db := dbtest.NewFixture(t).OpenStore(t)
-
-	if err := db.DurableTabTitleSet(ctx, "pg-title-tab", "构建机"); err != nil {
-		t.Fatal(err)
-	}
-	if title, err := db.DurableTabTitleGet(ctx, "pg-title-tab"); err != nil || title != "构建机" {
-		t.Fatalf("title after insert = %q, %v", title, err)
-	}
-	if err := db.DurableTabTitleSet(ctx, "pg-title-tab", "部署终端"); err != nil {
-		t.Fatal(err)
-	}
-	if title, err := db.DurableTabTitleGet(ctx, "pg-title-tab"); err != nil || title != "部署终端" {
-		t.Fatalf("title after conflict update = %q, %v", title, err)
-	}
-	if err := db.DurableTabTitleDelete(ctx, "pg-title-tab"); err != nil {
-		t.Fatal(err)
-	}
-	if title, err := db.DurableTabTitleGet(ctx, "pg-title-tab"); err != nil || title != "" {
-		t.Fatalf("title after delete = %q, %v", title, err)
-	}
-}
-
 func TestTranscriptHostsGroupByDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
@@ -339,61 +315,6 @@ func TestTranscriptInsertSyncedForeignOwnerRejectedDatabase(t *testing.T) {
 	replaced, err := db.TranscriptChunks(ctxA, "synced-legacy", 0, 1<<20)
 	if err != nil || len(replaced) != 1 || string(replaced[0].Data) != "aa" {
 		t.Fatalf("claimed chunks = %+v err=%v", replaced, err)
-	}
-}
-
-func TestDurableTabTitleOwnerIsolationDatabase(t *testing.T) {
-	// Guarded title update and delete: portable owner isolation on every
-	// backend, with an explicit owner_id = '' fallback for legacy rows.
-	db := dbtest.NewFixture(t).OpenStore(t)
-	ctx := context.Background()
-	ctxA := ipc.WithUserID(ctx, "owner-a")
-	ctxB := ipc.WithUserID(ctx, "owner-b")
-	now := time.Now().UnixMilli()
-
-	if err := db.DurableTabTitleSet(ctxB, "db-title", "bravo"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.DurableTabTitleSet(ctxA, "db-title", "alpha"); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableTabTitleRowState(t, db, "db-title", "owner-b", "bravo")
-	if title, err := db.DurableTabTitleGet(ctxA, "db-title"); err != nil || title != "" {
-		t.Fatalf("owner-a scoped title = %q, %v", title, err)
-	}
-
-	if err := db.GORM().Create(&store.DurableTabTitle{DurableID: "db-title-legacy", Title: "legacy", UpdatedAt: now, OwnerID: ""}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.DurableTabTitleSet(ctxA, "db-title-legacy", "claimed"); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableTabTitleRowState(t, db, "db-title-legacy", "owner-a", "claimed")
-
-	if err := db.DurableTabTitleDeleteIfOwned(ctx, "db-title", "owner-a"); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableTabTitleRowState(t, db, "db-title", "owner-b", "bravo")
-	if err := db.DurableTabTitleDeleteIfOwned(ctx, "db-title", "owner-b"); err != nil {
-		t.Fatal(err)
-	}
-	var count int64
-	if err := db.GORM().Model(&store.DurableTabTitle{}).Where("durable_id = ?", "db-title").Count(&count).Error; err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatal("owner-b's guarded delete must remove the row")
-	}
-}
-
-func requireDurableTabTitleRowState(t *testing.T, db *store.Store, durableID, owner, title string) {
-	t.Helper()
-	var row store.DurableTabTitle
-	if err := db.GORM().Model(&store.DurableTabTitle{}).Where("durable_id = ?", durableID).First(&row).Error; err != nil {
-		t.Fatalf("durable tab title row %s: %v", durableID, err)
-	}
-	if row.OwnerID != owner || row.Title != title {
-		t.Fatalf("durable tab title row %s = owner %q title %q, want owner %q title %q", durableID, row.OwnerID, row.Title, owner, title)
 	}
 }
 

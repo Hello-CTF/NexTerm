@@ -1,5 +1,6 @@
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
+import { storeSubscriptionPlugin } from "./scripts/lib/store-subscription-rule.mjs";
 
 const stringRestrictions = (pattern, message) => [
   { selector: `Literal[value=/${pattern}/]`, message },
@@ -47,8 +48,37 @@ const credentialAmberRestrictions = stringRestrictions(
   "Use the semantic warning foreground instead of low-contrast amber text.",
 );
 
+const storeImportRestriction = {
+  group: ["**/app/store/*", "./store/*", "../store/*"],
+  message: "Import the UI store through src/app/store.ts.",
+};
+
+const shellPredicateRestrictions = [
+  {
+    group: ["**/app/platform", "./platform", "../platform"],
+    importNames: [
+      "isMobile",
+      "isCoarsePointer",
+      "useCoarsePointer",
+      "coarsePointerMedia",
+      "isLandscapeFullScreen",
+      "useLandscapeFullScreen",
+    ],
+    message: "Import useShell(), useCoarsePointer() or the other shell helpers from src/app/shell instead of the raw predicates.",
+  },
+  {
+    group: ["**/workspaceLayout", "./workspaceLayout"],
+    importNames: ["workspaceViewport"],
+    message: "Use useShellLayout() or the helpers exported from src/app/shell instead of computing the workspace viewport.",
+  },
+];
+
+// Files that may read the raw shell predicates: the platform module and shell itself, tests that exercise them,
+// and the store, which cannot import the React shell (src/app/store/connection.ts reads the width-only overlay rule).
+const shellPredicateAllowlist = ["src/app/platform.ts", "src/app/shell/**", "src/test/**"];
+
 export default tseslint.config(
-  { ignores: ["dist", "cmd/nexterm-desktop/dist", ".buildcheck", ".sitetest", "_site", ".tower/worktrees", ".tmp", ".task", "lazycat", "reference", "target", "*.cjs", "src/ipc/bindings"] },
+  { ignores: ["dist", "cmd/nexterm-desktop/dist", ".buildcheck", ".sitetest", "_site", ".tower/worktrees", ".claude/worktrees", ".tmp", ".task", "lazycat", "reference", "target", "*.cjs", "src/ipc/bindings"] },
   tseslint.configs.recommended,
   {
     plugins: { "react-hooks": reactHooks },
@@ -71,6 +101,30 @@ export default tseslint.config(
       "@typescript-eslint/no-non-null-asserted-nullish-coalescing": "error",
       "@typescript-eslint/no-useless-empty-export": "error",
       "no-console": ["error", { allow: ["warn", "error"] }],
+    },
+  },
+  {
+    // The store slices import each other in a cycle that is only safe when src/app/store.ts is the entry point.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/app/store.ts", "src/app/store/**"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [storeImportRestriction] }],
+    },
+  },
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/app/store.ts", "src/app/store/**"],
+    plugins: { nexterm: storeSubscriptionPlugin },
+    rules: {
+      "nexterm/no-whole-collection-subscription": "error",
+    },
+  },
+  {
+    // Shell decisions go through src/app/shell; the raw predicates stay behind it.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/app/store.ts", "src/app/store/**", ...shellPredicateAllowlist],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [storeImportRestriction, ...shellPredicateRestrictions] }],
     },
   },
   {
@@ -107,7 +161,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/app/App.tsx"],
+    files: ["src/app/App.tsx", "src/app/shell/**/*.tsx", "src/app/workspace/**/*.tsx"],
     rules: {
       "no-restricted-syntax": [
         "error",

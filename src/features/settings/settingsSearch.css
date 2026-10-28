@@ -1,0 +1,23 @@
+@keyframes nx-setting-flash {
+  from {
+    background-color: rgb(59 130 246 / 0.35);
+    box-shadow: 0 0 0 4px rgb(59 130 246 / 0.35);
+  }
+  to {
+    background-color: transparent;
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+.nx-setting-flash {
+  border-radius: 4px;
+  outline: none;
+  animation: nx-setting-flash 2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-setting-flash {
+    animation: none;
+    background-color: rgb(59 130 246 / 0.25);
+  }
+}

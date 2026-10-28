@@ -1,60 +1,67 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+/** @vitest-environment jsdom */
 
-const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { declared, installCompiledCSS, rulesFor, styleRules } from "../lib/cssom";
 
-function ruleBlock(selector: string): string {
-  const start = css.indexOf(selector);
-  if (start < 0) throw new Error(`selector not found: ${selector}`);
-  const open = css.indexOf("{", start);
-  if (open < 0) throw new Error(`block not found: ${selector}`);
-  let depth = 0;
-  for (let i = open; i < css.length; i++) {
-    if (css[i] === "{") depth++;
-    else if (css[i] === "}") {
-      depth--;
-      if (depth === 0) return css.slice(open + 1, i);
-    }
-  }
-  throw new Error(`unbalanced block: ${selector}`);
-}
+let installed: HTMLStyleElement;
+let rules: CSSStyleRule[];
+
+beforeAll(async () => {
+  installed = await installCompiledCSS("src/styles.css");
+  rules = styleRules(installed);
+});
+
+afterAll(() => installed?.remove());
 
 describe("row action bar geometric stability (CSS mechanics)", () => {
   it("reserves layout for persistent row actions and toggles only visibility", () => {
-    const base = ruleBlock(".nx-row-reserve-actions .nx-row-actions");
-    expect(base).toMatch(/display:\s*flex/);
-    expect(base).toMatch(/visibility:\s*hidden/);
+    const selector = ".nx-row-reserve-actions .nx-row-actions";
+    expect(declared(rules, selector, "display")).toBe("flex");
+    expect(rulesFor(rules, selector)[0].style.getPropertyValue("visibility")).toBe("hidden");
   });
 
   it("hover, selected, and focus-within states toggle only visibility without display switching", () => {
-    expect(css).toMatch(
-      /\.nx-row-reserve-actions:hover \.nx-row-actions,\s*\.nx-row-reserve-actions\.is-selected \.nx-row-actions,\s*\.nx-row-reserve-actions:focus-within \.nx-row-actions\s*\{/,
-    );
-    const reveal = ruleBlock(".nx-row-reserve-actions:hover .nx-row-actions");
-    expect(reveal).toMatch(/visibility:\s*visible/);
-    expect(reveal).not.toMatch(/display:/);
+    for (const selector of [
+      ".nx-row-reserve-actions:hover .nx-row-actions",
+      ".nx-row-reserve-actions.is-selected .nx-row-actions",
+      ".nx-row-reserve-actions:focus-within .nx-row-actions",
+    ]) {
+      const [reveal] = rulesFor(rules, selector);
+      expect(reveal, selector).toBeDefined();
+      expect(reveal.style.getPropertyValue("visibility")).toBe("visible");
+      expect(reveal.style.getPropertyValue("display")).toBe("");
+    }
   });
 
   it("keeps persistent row actions visible for coarse pointers without changing row height during interaction", () => {
-    const coarse = css.slice(css.indexOf("@media (pointer: coarse)"));
-    const start = coarse.indexOf(".nx-row-reserve-actions .nx-row-actions");
-    expect(start).toBeGreaterThan(0);
-    const open = coarse.indexOf("{", start);
-    const body = coarse.slice(open + 1, coarse.indexOf("}", open));
-    expect(body).toMatch(/visibility:\s*visible/);
+    expect(
+      declared(
+        rules,
+        ".nx-row-reserve-actions .nx-row-actions",
+        "visibility",
+        "(pointer: coarse)",
+      ),
+    ).toBe("visible");
   });
 
   it("removes legacy display-based visibility switching and file-specific rules", () => {
-    expect(css).not.toContain(".nx-files-row");
-    expect(css).not.toMatch(/\.nx-row:hover \.nx-row-actions/);
+    const selectors = rules.flatMap((rule) =>
+      rule.selectorText.split(",").map((part) => part.trim()),
+    );
+    expect(selectors.filter((selector) => selector.includes(".nx-files-row"))).toEqual([]);
+    expect(selectors).not.toContain(".nx-row:hover .nx-row-actions");
   });
 
   it("keeps long asset names on one horizontally scrollable line without applying ellipsis", () => {
-    const name = ruleBlock(".nx-asset-row-name");
-    expect(name).toMatch(/overflow-x:\s*auto/);
-    expect(name).toMatch(/overflow-y:\s*hidden/);
-    expect(name).toMatch(/white-space:\s*nowrap/);
-    expect(name).not.toMatch(/overflow-wrap:\s*anywhere/);
-    expect(name).not.toMatch(/text-overflow:\s*ellipsis/);
+    const scroll = rulesFor(rules, ".nx-asset-row-name").find(
+      (rule) => rule.style.getPropertyValue("overflow-x").trim() === "auto",
+    );
+    expect(scroll).toBeDefined();
+    expect(scroll!.style.getPropertyValue("overflow-y")).toBe("hidden");
+    expect(scroll!.style.getPropertyValue("white-space")).toBe("nowrap");
+    for (const rule of rulesFor(rules, ".nx-asset-row-name")) {
+      expect(rule.style.getPropertyValue("overflow-wrap")).not.toBe("anywhere");
+      expect(rule.style.getPropertyValue("text-overflow")).not.toBe("ellipsis");
+    }
   });
 });

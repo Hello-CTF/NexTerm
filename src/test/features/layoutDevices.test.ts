@@ -85,7 +85,6 @@ function workspace(tabs: AppTab[], activeTabId: string | null = tabs[tabs.length
     title: "工具",
     panes: [{ id: "pane", tabs, activeTabId }],
     activePaneId: "pane",
-    splitRatio: 0.5,
     closable: true,
   };
 }

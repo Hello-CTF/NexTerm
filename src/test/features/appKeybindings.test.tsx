@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
@@ -55,17 +55,17 @@ vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
-vi.mock("../../app/CommandPalette", () => ({
-  CommandPalette: () => <div data-testid="command-palette" />,
-}));
-vi.mock("../../app/QuickConnect", () => ({
-  QuickConnect: () => <div data-testid="quick-connect" />,
+vi.mock("../../app/JumpPalette", () => ({
+  JumpPalette: (props: { scope?: string }) => (
+    <div data-testid={props.scope === "hosts" ? "quick-connect" : "command-palette"} />
+  ),
 }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../../app/App";
 import { useUi } from "../../app/store";
 import { getKeybinding, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
+import { ALL_PROJECTS } from "../../app/projectFocus";
 
 function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
@@ -85,6 +85,14 @@ function mountApp(): MountedView {
 function activePaneTabId(): string | null {
   return useUi.getState().workspaces[0]?.panes[0]?.activeTabId ?? null;
 }
+
+// The shell loads these panels through React.lazy or dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([
+    import("../../app/JumpPalette"),
+  ]);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -118,7 +126,6 @@ beforeEach(() => {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -213,7 +220,7 @@ describe("rebound app shortcuts", () => {
     await flush();
 
     keyDown(window, "o", { ctrlKey: true, shiftKey: true });
-    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null, 400);
+    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null);
     expect(mounted?.container.querySelector('[data-testid="command-palette"]')).not.toBeNull();
 
     mounted.unmount();
@@ -222,7 +229,7 @@ describe("rebound app shortcuts", () => {
     keyDown(window, "p", { ctrlKey: true, shiftKey: true });
     expect(mounted.container.querySelector('[data-testid="command-palette"]')).toBeNull();
     keyDown(window, "o", { ctrlKey: true, shiftKey: true });
-    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null, 400);
+    await flushUntil(() => (mounted?.container.querySelector('[data-testid="command-palette"]') ?? null) !== null);
     expect(mounted?.container.querySelector('[data-testid="command-palette"]')).not.toBeNull();
   });
 
@@ -238,6 +245,34 @@ describe("rebound app shortcuts", () => {
     await flush();
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(2);
     expect(getKeybinding("closeTab")).toBe("Mod+Shift+w");
+  });
+
+  it("closes the active pane with its shortcut and keeps its tabs in the remaining pane", async () => {
+    useUi.setState((state) => ({
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        panes: [
+          workspace.panes[0],
+          { id: "p2", activeTabId: "t4", tabs: [{ id: "t4", kind: "audit", title: "Audit 2", closable: true }] },
+        ],
+        activePaneId: "p2",
+      })),
+    }));
+    mounted = mountApp();
+    await flush();
+
+    // jsdom runs as the web build, whose default is Ctrl+Alt+W (browsers keep Ctrl+Shift+W).
+    expect(getKeybinding("closePane")).toBe("Ctrl+Alt+w");
+    const event = keyDown(window, "w", { code: "KeyW", ctrlKey: true, altKey: true });
+    expect(event.defaultPrevented).toBe(true);
+    const panes = useUi.getState().workspaces[0].panes;
+    expect(panes.map((pane) => pane.id)).toEqual(["p1"]);
+    expect(panes[0].tabs.map((tab) => tab.id)).toEqual(["t1", "t2", "t3", "t4"]);
+    expect(panes[0].activeTabId).toBe("t4");
+
+    // With a single pane there is nothing to close, so the window-level handler does not consume the
+    // key; a focused terminal still never receives it while the binding is set (as with every app binding).
+    expect(keyDown(window, "w", { code: "KeyW", ctrlKey: true, altKey: true }).defaultPrevented).toBe(false);
   });
 
   it("persists reboundings across remounts through localStorage", async () => {
@@ -276,7 +311,7 @@ describe("rebound app shortcuts", () => {
     await flush();
 
     keyDown(window, "q", { altKey: true });
-    await flushUntil(() => (mounted?.container.querySelector('[data-testid="quick-connect"]') ?? null) !== null, 400);
+    await flushUntil(() => (mounted?.container.querySelector('[data-testid="quick-connect"]') ?? null) !== null);
     expect(mounted?.container.querySelector('[data-testid="quick-connect"]')).not.toBeNull();
 
     mounted.unmount();
@@ -284,5 +319,50 @@ describe("rebound app shortcuts", () => {
     await flush();
     keyDown(window, "k", { ctrlKey: true, shiftKey: true });
     expect(mounted.container.querySelector('[data-testid="quick-connect"]')).toBeNull();
+  });
+});
+
+describe("held app shortcuts outside the terminal", () => {
+  it("keeps cycling tabs while the navigation chord auto-repeats", async () => {
+    useUi.setState({ activeProject: ALL_PROJECTS });
+    setKeybinding("nextTab", "Alt+n");
+    mounted = mountApp();
+    await flush();
+    keyDown(window, "n", { code: "KeyN", altKey: true });
+    expect(activePaneTabId()).toBe("t2");
+    const repeat = keyDown(window, "n", { code: "KeyN", altKey: true, repeat: true });
+    expect(repeat.defaultPrevented).toBe(true);
+    expect(activePaneTabId()).toBe("t3");
+  });
+
+  it("runs a one-shot shortcut once per press and swallows its repeats", async () => {
+    mounted = mountApp();
+    await flush();
+    const repeat = keyDown(window, "2", { code: "Digit2", ctrlKey: true, repeat: true });
+    expect(repeat.defaultPrevented).toBe(true);
+    expect(activePaneTabId()).toBe("t1");
+    keyDown(window, "b", { code: "KeyB", ctrlKey: true, repeat: true });
+    expect(useUi.getState().leftOpen).toBe(false);
+  });
+
+  // Ctrl+Shift+T restoring a tab is covered end to end in r09RestoreUx.test.tsx.
+  it("leaves Ctrl+Shift+T alone once restoreClosedTab is unbound", async () => {
+    setKeybinding("restoreClosedTab", null);
+    mounted = mountApp();
+    await flush();
+    const cleared = keyDown(window, "T", { code: "KeyT", ctrlKey: true, shiftKey: true });
+    expect(cleared.defaultPrevented).toBe(false);
+  });
+
+  it("ignores AltGr chords that happen to match a binding", async () => {
+    setKeybinding("toggleSidebar", "Ctrl+Alt+b");
+    mounted = mountApp();
+    await flush();
+    const event = new KeyboardEvent("keydown", { key: "b", code: "KeyB", ctrlKey: true, altKey: true, bubbles: true, cancelable: true });
+    Object.defineProperty(event, "getModifierState", { value: (key: string) => key === "AltGraph" });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+    expect(useUi.getState().leftOpen).toBe(false);
   });
 });

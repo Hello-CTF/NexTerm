@@ -28,8 +28,15 @@ const (
 	reconnectJitter = 0.2
 )
 
+// ConfigStore holds the enrolled device config. *Store keeps it in a file;
+// a desktop keeps it in its credential vault.
+type ConfigStore interface {
+	Load() (*Config, error)
+	Save(config *Config) error
+}
+
 type Options struct {
-	Store   *Store
+	Store   ConfigStore
 	DataDir string
 	Prober  *Prober
 	Manager ServiceManager
@@ -40,12 +47,18 @@ type Options struct {
 	EnsureHelper func(ctx context.Context) error
 	Bridge       BridgeSpawner
 	Upgrader     *Upgrader
-	Logger       *slog.Logger
-	Now          func() time.Time
+	// NoSelfUpgrade keeps a protocol mismatch fatal instead of replacing the
+	// executable: a desktop updates itself through its own updater.
+	NoSelfUpgrade bool
+	// OnChannel, when set, is called with true once the control channel is
+	// up and with false when it is lost.
+	OnChannel func(connected bool)
+	Logger    *slog.Logger
+	Now       func() time.Time
 }
 
 type Runtime struct {
-	store        *Store
+	store        ConfigStore
 	dataDir      string
 	prober       *Prober
 	manager      ServiceManager
@@ -53,6 +66,7 @@ type Runtime struct {
 	ensureHelper func(ctx context.Context) error
 	bridge       BridgeSpawner
 	upgrader     *Upgrader
+	onChannel    func(connected bool)
 	stateDir     string
 	executable   string
 	logger       *slog.Logger
@@ -139,7 +153,7 @@ func New(options Options) (*Runtime, error) {
 	// Embedded distributions (nexterm-server agent, non-empty cliServicePrefix) do not self-upgrade:
 	// replacing would overwrite the server binary with the agent asset. This path keeps ErrProtocolMismatch.
 	upgrader := options.Upgrader
-	if upgrader == nil && len(cliServicePrefix) == 0 {
+	if upgrader == nil && len(cliServicePrefix) == 0 && !options.NoSelfUpgrade {
 		upgrader = defaultUpgrader(executable)
 	}
 	return &Runtime{
@@ -151,6 +165,7 @@ func New(options Options) (*Runtime, error) {
 		ensureHelper:    ensureHelper,
 		bridge:          bridge,
 		upgrader:        upgrader,
+		onChannel:       options.OnChannel,
 		stateDir:        stateDir,
 		executable:      executable,
 		logger:          logger,
@@ -545,12 +560,14 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		r.prober.ReportSuccess(client)
 		r.notifyCurrentURL(ctx, client)
 		backoff = retrySleep
+		r.reportChannel(true)
 		err = channel.Run(ctx, channelHandlers{
 			onConfig: r.applyDesired,
 			onBridge: r.handleBridge,
 			onRevoke: r.revoke,
 		})
 		_ = channel.Close()
+		r.reportChannel(false)
 		if ctx.Err() != nil || errors.Is(err, ErrRevoked) {
 			return
 		}
@@ -564,6 +581,12 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			return
 		}
 		backoff = nextBackoff(backoff)
+	}
+}
+
+func (r *Runtime) reportChannel(connected bool) {
+	if r.onChannel != nil {
+		r.onChannel(connected)
 	}
 }
 
@@ -680,7 +703,13 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 		ensureCtx, cancel := context.WithTimeout(ctx, helperEnsureTimeout)
 		err := r.ensureHelper(ensureCtx)
 		cancel()
-		if err != nil {
+		switch {
+		case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
+			// An older helper still owns the state directory. The bridge is still
+			// dialed so the helper bridge answers the server's hello with the
+			// upgrade reason instead of leaving the server to time out.
+			r.logger.Warn("supervisor helper needs upgrade; bridging to report it", "bridge_id", bridgeID, "error", err)
+		case err != nil:
 			r.logger.Warn("bridge aborted: supervisor helper unavailable", "bridge_id", bridgeID, "error", err)
 			return
 		}

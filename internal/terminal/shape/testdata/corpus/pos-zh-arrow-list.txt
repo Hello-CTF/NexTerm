@@ -1,0 +1,9 @@
+# kind: choice
+# options: 开发环境 | 测试环境 | 生产环境
+# cursor-index: 2
+# cursor: 0,20
+---
+? 选择要部署的环境
+  开发环境
+  测试环境
+❯ 生产环境

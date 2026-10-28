@@ -54,7 +54,7 @@ func fakeUnaryServer(t *testing.T, stateDir string, handle func(conn net.Conn, k
 			_ = writeFrame(conn, frameError, []byte(`{"code":"state_mismatch","message":"wrong state"}`))
 			return
 		}
-		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
+		if err := writeFrame(conn, frameHelloAck, fakeHelloAck()); err != nil {
 			return
 		}
 		for {
@@ -73,7 +73,7 @@ func fakeUnaryServer(t *testing.T, stateDir string, handle func(conn net.Conn, k
 // ackInput is a fakeStreamServer handle that acknowledges every input frame.
 func ackInput(conn net.Conn, kind frameType, payload []byte) bool {
 	if kind == frameInput {
-		ack, err := marshalFrame(frameInputAck, inputAckMsg{Written: len(payload)})
+		ack, err := marshalFrame(frameInputAck, inputAckMsg{Written: len(inputData(payload))})
 		if err != nil {
 			return false
 		}
@@ -184,7 +184,7 @@ func TestStreamWriteContextCancelFailsStreamExactlyOnce(t *testing.T) {
 		<-releaseAck
 		// The late acknowledgement races the cancellation: it must never be
 		// consumed by a later request.
-		ack, err := marshalFrame(frameInputAck, inputAckMsg{Written: len(payload)})
+		ack, err := marshalFrame(frameInputAck, inputAckMsg{Written: len(inputData(payload))})
 		if err == nil {
 			_ = writeFrame(conn, frameInputAck, ack)
 		}

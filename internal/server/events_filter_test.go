@@ -224,6 +224,8 @@ func TestEventFilterSessionAndTerminalOwnerMetadata(t *testing.T) {
 		{ipc.TopicTerminalExit, session.ExitEvent{TabID: "t-1"}},
 		{ipc.TopicTerminalThrottled, session.ThrottleEvent{TabID: "t-1"}},
 		{ipc.TopicTerminalControl, session.ControlEvent{TabID: "t-1"}},
+		{ipc.TopicTerminalAttention, session.AttentionEvent{TabID: "t-1"}},
+		{ipc.TopicTerminalSessions, session.AggregateUpdate{Host: session.AggregateHostStatus{AggregateHost: session.AggregateHost{Key: "device:d-1"}}}},
 	}
 	for _, actor := range actors {
 		filter := server.eventFilter(actor)

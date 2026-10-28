@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => {
     collectAIPermission: vi.fn(),
     collectAIGrants: vi.fn(),
     collectPreferences: vi.fn(),
+    collectKindObjects: vi.fn(),
     kindOptInGet: vi.fn(),
     kindOptInSet: vi.fn(),
     applyObjects: vi.fn(),
@@ -57,6 +58,7 @@ vi.mock("../ipc/commands", () => ({
     collectAIPermission: mocks.collectAIPermission,
     collectAIGrants: mocks.collectAIGrants,
     collectPreferences: mocks.collectPreferences,
+    collectKindObjects: mocks.collectKindObjects,
     kindOptInGet: mocks.kindOptInGet,
     kindOptInSet: mocks.kindOptInSet,
   },
@@ -174,7 +176,7 @@ async function runAutoSync() {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../features/settings/SyncCard");
   await act(async () => {
     try {
-      const result = await runWebSync(DEK, { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+      const result = await runWebSync(DEK, { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false });
       if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
     } catch (error) {
       window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
@@ -201,7 +203,8 @@ beforeEach(() => {
   mocks.collectAIPermission.mockResolvedValue({ id: "", mode: "", dangerRules: [], updatedAt: 0, found: false });
   mocks.collectAIGrants.mockResolvedValue({ grants: [], rules: [], modes: [] });
   mocks.collectPreferences.mockResolvedValue([]);
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+  mocks.collectKindObjects.mockResolvedValue({ objects: [], warnings: [] });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
@@ -331,6 +334,18 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
+
+  it("shows the shared console title, status copy and deletion caveats in the web console", async () => {
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("个对象"));
+    const titles = [...mounted.container.querySelectorAll(".nx-card-title")].map((el) => el.textContent);
+    expect(titles).toContain("账号同步");
+    expect(text()).toContain("自动同步");
+    expect(text()).toContain("每 60 秒");
+    expect(text()).toContain("关闭上方内容类型开关不会删除服务端已有副本");
+    expect(text()).toContain("关闭单条录像同步会删除其服务端副本，本机记录保留");
+    expect(text()).not.toContain("同步台");
+  });
   it("keeps a same-ID local copy out of automatic sync when the cloud object cannot be decrypted", async () => {
     mocks.collectAssets.mockResolvedValue({
       assets: [
@@ -388,7 +403,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     });
 
     const { runWebSync } = await import("../features/settings/SyncCard");
-    const result = await runWebSync(new Uint8Array(DEK), { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+    const result = await runWebSync(new Uint8Array(DEK), { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false });
 
     expect(result?.warnings).toContain("服务端对象 a-1 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复");
     expect(result?.pushed).toBe(0);
@@ -683,7 +698,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     });
     let changed = false;
     mocks.kindOptInGet.mockImplementation(async () => ({
-      knownHost: changed, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false,
+      knownHost: changed, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false,
     }));
     mocks.ask.mockImplementationOnce(async () => {
       changed = true;
@@ -1098,7 +1113,7 @@ describe("transcript endedAt revision and content completion (P1-3)", () => {
     });
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 1, applied: 1, skipped: 0 });
     const { runWebSync } = await import("../features/settings/SyncCard");
-    const optIn = { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false };
+    const optIn = { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false };
 
     await runWebSync(DEK, optIn);
     expect(mocks.transcriptRead).toHaveBeenCalledTimes(1);

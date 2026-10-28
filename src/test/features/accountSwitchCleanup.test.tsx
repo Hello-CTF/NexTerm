@@ -36,7 +36,7 @@ import {
   registerPromptHandler,
 } from "../../ui/dialogs";
 import { SnippetsPanel } from "../../features/explorer/SnippetsPanel";
-import { click, flush, mountWithClient, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mountWithClient, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const USER_A: AccountUser = {
   id: "u-a",
@@ -123,7 +123,6 @@ beforeEach(() => {
       assetKind: "ssh",
       panes: [{ id: "p1", tabs: [], activeTabId: null }],
       activePaneId: "p1",
-      splitRatio: 0.5,
       closable: true,
     }],
     activeWorkspaceId: "ws-a",
@@ -254,15 +253,15 @@ describe("queued dialog account isolation", () => {
     let mounted: MountedView | undefined;
     try {
       mounted = mountWithClient(createElement(SnippetsPanel, { onClose: () => undefined }));
-      await waitFor(() => expect(mocks.snippetList).toHaveBeenCalled());
-      await waitFor(() => expect(mounted?.container.textContent).toContain("A snippet"));
+      await waitForRendered(() => expect(mocks.snippetList).toHaveBeenCalled());
+      await waitForRendered(() => expect(mounted?.container.textContent).toContain("A snippet"));
 
       // Click delete twice: the second confirmation queues behind the first.
       const deleteButton = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="删除片段「A snippet」"]');
       if (!deleteButton) throw new Error("delete button not found");
       click(deleteButton);
       click(deleteButton);
-      await waitFor(() => expect(useUi.getState().appDialog?.message).toContain("删除片段"));
+      await waitForRendered(() => expect(useUi.getState().appDialog?.message).toContain("删除片段"));
 
       // Account switch: the queued old confirmations must never fire a delete in B.
       authReady(USER_B);

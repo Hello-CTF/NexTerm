@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -190,7 +190,6 @@ function seedWorkspace(options: { assetId?: string; assetKind?: string; title?: 
         assetKind: kind,
         panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ],
@@ -287,7 +286,7 @@ describe("FileTree deleted session", () => {
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountTree();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("会话已在服务端删除"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("会话已在服务端删除"));
     expect(mounted.container.textContent).not.toContain("请刷新后重试");
     expect(button("重新连接这台主机")).toBeDefined();
     expect(button("重试")).toBeUndefined();
@@ -297,7 +296,7 @@ describe("FileTree deleted session", () => {
       expect(btn?.title, ariaLabel).toBe(GONE_HINT);
     }
     expect(toolbarButton("折叠全部目录")?.disabled).toBe(false);
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     expect(mocks.connect).toHaveBeenCalledWith("asset-1");
     await flush();
     expect(mocks.connect).toHaveBeenCalledTimes(1);
@@ -310,7 +309,7 @@ describe("FileTree deleted session", () => {
     );
     mounted = mountTree();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connect).toHaveBeenCalledWith("asset-1");
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(mocks.list).toHaveBeenCalledWith("s2", "~");
@@ -328,7 +327,7 @@ describe("FileTree deleted session", () => {
     seedWorkspace({ assetId: "asset-1" });
     mounted = mountTree();
 
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
     await flush();
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     expect(workspaceSessionId()).toBe("s2");
@@ -357,9 +356,9 @@ describe("FileTree deleted session", () => {
     mocks.connect.mockRejectedValue(CHANGED_HOST_KEY);
     mounted = mountTree();
 
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机 127.0.0.1:22 的密钥已变更");
-    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(workspaceSessionId()).toBe(SID);
@@ -367,8 +366,8 @@ describe("FileTree deleted session", () => {
 
     clickButton(mounted.container, "重新连接这台主机");
 
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
   });
 
   it("automatic reconnect failure: reports the real error, preserves the workspace session, and recovers after a successful manual retry", async () => {
@@ -376,7 +375,7 @@ describe("FileTree deleted session", () => {
     mocks.connect.mockRejectedValue(new Error("dial tcp 127.0.0.1:22: connect: connection refused"));
     mounted = mountTree();
 
-    await waitFor(() => expect(toastTexts()).toContain("重新连接失败"));
+    await waitForRendered(() => expect(toastTexts()).toContain("重新连接失败"));
     expect(toastTexts()).toContain("connection refused");
     expect(workspaceSessionId()).toBe(SID);
     expect(mounted.container.textContent).toContain("会话已在服务端删除");
@@ -384,8 +383,8 @@ describe("FileTree deleted session", () => {
 
     clickButton(mounted.container, "重新连接这台主机");
 
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(button("重新连接这台主机")).toBeDefined());
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(button("重新连接这台主机")).toBeDefined());
 
     mocks.connect.mockResolvedValue(NEW_SESSION);
     mocks.list.mockImplementation((sid: string) =>
@@ -393,7 +392,7 @@ describe("FileTree deleted session", () => {
     );
     clickButton(mounted.container, "重新连接这台主机");
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connect).toHaveBeenCalledTimes(3);
     expect(workspaceSessionId()).toBe("s2");
   });
@@ -405,7 +404,7 @@ describe("FileTree deleted session", () => {
     );
     mounted = mountTree();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connectLocal).toHaveBeenCalledTimes(1);
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(workspaceSessionId()).toBe("s-local");
@@ -419,7 +418,7 @@ describe("FileTree deleted session", () => {
     );
     mounted = mountTree();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connectDevice).toHaveBeenCalledWith("d-1", "build-box");
     expect(mocks.connectDevice).toHaveBeenCalledTimes(1);
     expect(mocks.connect).not.toHaveBeenCalled();
@@ -435,7 +434,7 @@ describe("FileTree deleted session", () => {
     mocks.connect.mockRejectedValue({ code: "not_found", message: "资产不存在" });
     mounted = mountTree();
 
-    await waitFor(() => expect(toastTexts()).toContain("重新连接失败"));
+    await waitForRendered(() => expect(toastTexts()).toContain("重新连接失败"));
     expect(toastTexts()).toContain("资源不存在：资产不存在");
     expect(mocks.connect).toHaveBeenCalledWith("asset-gone");
     await flush();
@@ -451,7 +450,7 @@ describe("FileTree transient file errors", () => {
     mocks.list.mockResolvedValue(ENTRIES.map((e) => ({ ...e })));
     mounted = mountTree();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("连接被对端重置"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("连接被对端重置"));
     expect(button("重试")).toBeDefined();
     expect(button("重新连接这台主机")).toBeUndefined();
     for (const ariaLabel of ["新建文件", "新建目录", "刷新文件列表", "上传到当前目录"]) {
@@ -460,7 +459,7 @@ describe("FileTree transient file errors", () => {
 
     clickButton(mounted.container, "重试");
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.connectLocal).not.toHaveBeenCalled();
     await flush();
@@ -515,7 +514,7 @@ describe("FileTree Windows roots and navigation", () => {
     mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
     mocks.list.mockResolvedValue([]);
     mounted = mountTree();
-    await waitFor(() => expect(treeItem("C:/")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("C:/")).toBeDefined());
     expect(treeItem("D:/")).toBeDefined();
 
     mocks.list.mockClear();
@@ -541,12 +540,12 @@ describe("FileTree Windows roots and navigation", () => {
       return Promise.resolve([]);
     });
     mounted = mountTree();
-    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("D:/")).toBeDefined());
 
     click(treeItem("C:/")!);
-    await waitFor(() => expect(treeItem("C:/Windows")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("C:/Windows")).toBeDefined());
     click(treeItem("D:/")!);
-    await waitFor(() => expect(mounted!.container.textContent).toContain("目录不存在"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("目录不存在"));
 
     expect(treeItem("C:/Windows")).toBeDefined();
     expect(treeItem("D:/")).toBeDefined();
@@ -561,7 +560,7 @@ describe("FileTree Windows roots and navigation", () => {
       return Promise.resolve([]);
     });
     clickButton(mounted.container, "重试");
-    await waitFor(() => expect(treeItem("D:/Project")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("D:/Project")).toBeDefined());
     expect(treeItem("C:/Windows")).toBeDefined();
   });
 
@@ -570,21 +569,21 @@ describe("FileTree Windows roots and navigation", () => {
     mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
     mocks.list.mockResolvedValue([]);
     mounted = mountTree();
-    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("D:/")).toBeDefined());
 
     click(toolbarButton("输入路径跳转")!);
     let input = mounted.container.querySelector<HTMLInputElement>(".nx-pathbar input");
     expect(input).not.toBeNull();
     setInputValue(input!, "D:");
     pressEnter(input!);
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/"));
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/"));
 
     click(toolbarButton("上级目录 此电脑")!);
     click(toolbarButton("输入路径跳转")!);
     input = mounted.container.querySelector<HTMLInputElement>(".nx-pathbar input");
     setInputValue(input!, "D:relative");
     pressEnter(input!);
-    await waitFor(() => expect(toastTexts()).toContain("需要绝对路径"));
+    await waitForRendered(() => expect(toastTexts()).toContain("需要绝对路径"));
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "D:relative");
   });
 
@@ -593,7 +592,7 @@ describe("FileTree Windows roots and navigation", () => {
     mocks.list.mockRejectedValue(LEGACY_NOT_FOUND);
     mounted = mountTree();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("旧服务返回的资源不存在"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("旧服务返回的资源不存在"));
     await flush();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mounted.container.textContent).not.toContain("会话已在服务端删除");
@@ -607,7 +606,7 @@ describe("FileTree Windows roots and navigation", () => {
     mocks.list.mockRejectedValue(PATH_NOT_FOUND);
     mounted = mountTree();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("目录不存在"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("目录不存在"));
     await flush();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(button("重试")).toBeDefined();
@@ -626,13 +625,13 @@ describe("FileTree Windows roots and navigation", () => {
       return Promise.resolve(() => {});
     });
     mounted = mountTree();
-    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("D:/")).toBeDefined());
 
     act(() => {
       control?.({ tabId: "k1", version: 1, cwd: "D:/Project" });
     });
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/Project"));
-    await waitFor(() =>
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/Project"));
+    await waitForRendered(() =>
       expect(mounted!.container.querySelector('.nx-path-crumb[title="D:/Project"]')).not.toBeNull(),
     );
   });
@@ -642,18 +641,18 @@ describe("FileTree Windows roots and navigation", () => {
     mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
     mocks.list.mockResolvedValue([]);
     mounted = mountTree();
-    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("D:/")).toBeDefined());
 
     click(toolbarButton("输入路径跳转")!);
     const input = mounted.container.querySelector<HTMLInputElement>(".nx-pathbar input");
     setInputValue(input!, String.raw`\\server\share\dir`);
     pressEnter(input!);
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share/dir"));
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share/dir"));
 
     click(toolbarButton("上级目录 //server/share")!);
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share"));
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share"));
     click(toolbarButton("上级目录 此电脑")!);
-    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("D:/")).toBeDefined());
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "//server");
   });
 
@@ -671,14 +670,14 @@ describe("FileTree Windows roots and navigation", () => {
     useUi.getState().updateTab("t1", { tabId: "k1" });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mounted = mountTree();
-    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(treeItem(dir)).toBeDefined());
 
     act(() => {
       treeItem(dir)!.dispatchEvent(
         new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
       );
     });
-    await waitFor(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
+    await waitForRendered(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
     const item = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
       (candidate) => candidate.textContent?.includes("在当前终端打开"),
     );
@@ -698,8 +697,8 @@ describe("FileTree roots errors", () => {
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountTree();
 
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("会话已在服务端删除"));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("会话已在服务端删除"));
     expect(button("重新连接这台主机")).toBeDefined();
   });
 
@@ -711,10 +710,10 @@ describe("FileTree roots errors", () => {
     mocks.list.mockResolvedValue([]);
     mounted = mountTree();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("根信息暂时不可用"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("根信息暂时不可用"));
     clickButton(mounted.container, "重试");
 
-    await waitFor(() => expect(treeItem("C:/")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("C:/")).toBeDefined());
     expect(treeItem("D:/")).toBeDefined();
     expect(mocks.roots).toHaveBeenCalledTimes(2);
     expect(mocks.connect).not.toHaveBeenCalled();
@@ -728,20 +727,20 @@ describe("FileTree new WinRM terminal navigation", () => {
     useUi.getState().updateTab("t1", { tabId: "k1" });
     mocks.list.mockResolvedValue([windowsEntry("D:/Project")]);
     mounted = mountTree();
-    await waitFor(() => expect(treeItem("D:/Project")).toBeDefined());
+    await waitForRendered(() => expect(treeItem("D:/Project")).toBeDefined());
 
     act(() => {
       treeItem("D:/Project")!.dispatchEvent(
         new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
       );
     });
-    await waitFor(() => expect(menuLabels().some((label) => label.includes("在新终端打开"))).toBe(true));
+    await waitForRendered(() => expect(menuLabels().some((label) => label.includes("在新终端打开"))).toBe(true));
     const item = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
       (candidate) => candidate.textContent?.includes("在新终端打开"),
     );
     click(item!);
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(
         useUi.getState().workspaces[0]?.panes[0]?.tabs.filter((tab) => tab.kind === "terminal"),
       ).toHaveLength(2),
@@ -754,7 +753,7 @@ describe("FileTree new WinRM terminal navigation", () => {
       useUi.getState().updateTab(newTab!.id, { tabId: "k2" });
     });
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.lineExec).toHaveBeenCalledWith("k2", "Set-Location -LiteralPath 'D:/Project'"),
     );
     expect(mocks.termWrite).not.toHaveBeenCalled();
@@ -768,7 +767,7 @@ describe("FileTree shell-aware terminal navigation", () => {
     act(() => {
       treeItem(path)!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     });
-    await waitFor(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
+    await waitForRendered(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
     const item = [...mounted!.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
       (candidate) => candidate.textContent?.includes("在当前终端打开"),
     );
@@ -784,7 +783,7 @@ describe("FileTree shell-aware terminal navigation", () => {
     useUi.getState().updateTab("t1", { tabId: "k1", shell });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mounted = mountTree();
-    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(treeItem(dir)).toBeDefined());
     await openCurrentAt(dir);
     expect(mocks.termWrite).toHaveBeenCalledTimes(1);
     expect(new TextDecoder().decode(mocks.termWrite.mock.calls[0][1])).toBe(command);
@@ -797,11 +796,11 @@ describe("FileTree shell-aware terminal navigation", () => {
     useUi.getState().updateTab("t1", { tabId: "k1", shell });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mounted = mountTree();
-    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(treeItem(dir)).toBeDefined());
     await openCurrentAt(dir);
     expect(mocks.termWrite).not.toHaveBeenCalled();
     expect(mocks.copy).toHaveBeenCalledWith(dir);
-    await waitFor(() => expect(toastTexts()).toContain("路径已复制"));
+    await waitForRendered(() => expect(toastTexts()).toContain("路径已复制"));
   });
 
   it("surfaces a copy failure without injecting into the terminal", async () => {
@@ -811,12 +810,12 @@ describe("FileTree shell-aware terminal navigation", () => {
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mocks.copy.mockRejectedValueOnce(new Error("clipboard denied"));
     mounted = mountTree();
-    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(treeItem(dir)).toBeDefined());
     await openCurrentAt(dir);
 
     expect(mocks.termWrite).not.toHaveBeenCalled();
     expect(mocks.copy).toHaveBeenCalledWith(dir);
-    await waitFor(() => {
+    await waitForRendered(() => {
       expect(toastTexts()).toContain("复制路径失败");
       expect(toastTexts()).toContain("clipboard denied");
     });
@@ -827,7 +826,7 @@ describe("FileTree shell-aware terminal navigation", () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mounted = mountTree();
-    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(treeItem(dir)).toBeDefined());
     act(() => {
       treeItem(dir)!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     });
@@ -835,7 +834,7 @@ describe("FileTree shell-aware terminal navigation", () => {
       (candidate) => candidate.textContent?.includes("在新终端打开"),
     );
     click(item!);
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.filter((tab) => tab.kind === "terminal")).toHaveLength(2),
     );
     const newTab = useUi.getState().workspaces[0]?.panes[0]?.tabs.find((tab) => tab.kind === "terminal" && tab.id !== "t1");

@@ -11,14 +11,6 @@ export interface ConnectHistoryEntry {
 
 export type ConnectHistoryEntries = Record<string, ConnectHistoryEntry>;
 
-export interface QuickConnectAsset {
-  id: string;
-  name: string;
-  host: string | null;
-  username: string | null;
-  tags: string;
-}
-
 function load(): ConnectHistoryEntries {
   try {
     const raw = localStorage.getItem(KEY);
@@ -75,39 +67,4 @@ export function quickConnectScore(entry: ConnectHistoryEntry | undefined, now: n
   const age = Math.max(0, now - entry.at);
   const recency = Math.pow(0.5, age / RECENCY_HALF_LIFE_MS);
   return recency + Math.min(entry.count, 10) * 0.05;
-}
-
-function matchRank(asset: QuickConnectAsset, query: string): number | null {
-  const name = asset.name.toLowerCase();
-  if (name.startsWith(query)) return 0;
-  if (name.includes(query)) return 1;
-  const fields = [asset.host, asset.username, asset.tags];
-  if (fields.some((field) => field && field.toLowerCase().includes(query))) return 2;
-  return null;
-}
-
-function compareName(a: QuickConnectAsset, b: QuickConnectAsset): number {
-  if (a.name === b.name) return 0;
-  return a.name < b.name ? -1 : 1;
-}
-
-export function orderQuickConnectAssets<T extends QuickConnectAsset>(
-  assets: T[],
-  entries: ConnectHistoryEntries,
-  query: string,
-  now: number = Date.now(),
-): T[] {
-  const q = query.trim().toLowerCase();
-  const scored = assets.map((asset) => ({
-    asset,
-    rank: q.length > 0 ? matchRank(asset, q) : 0,
-  }));
-  const kept = scored.filter((item): item is { asset: T; rank: number } => item.rank !== null);
-  kept.sort(
-    (x, y) =>
-      x.rank - y.rank ||
-      quickConnectScore(entries[y.asset.id], now) - quickConnectScore(entries[x.asset.id], now) ||
-      compareName(x.asset, y.asset),
-  );
-  return kept.map((item) => item.asset);
 }

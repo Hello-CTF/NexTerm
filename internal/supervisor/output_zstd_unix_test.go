@@ -16,33 +16,29 @@ import (
 
 const zstdLogScript = `i=0; while [ $i -lt 600 ]; do printf '[ %3d%%] Building CXX object src/module/file%d.cc.o with flags -O2 -g -Wall\n' $((i/6)) $i; i=$((i+1)); done; printf 'LOG-END\n'; sleep 60`
 
-// TestCompatMatrixOutputZstd checks that compressed output is used only when
-// both peers advertise it and that the stream content is identical either way.
-func TestCompatMatrixOutputZstd(t *testing.T) {
-	for _, m := range compatMatrix {
-		t.Run(m.name, func(t *testing.T) {
-			_, client, _ := matrixEnv(t, m)
-			session := testScriptSessionForClient(t, client, zstdLogScript)
-			if got := session.conn.supports(featureOutputZstd); got != m.extended() {
-				t.Fatalf("output_zstd negotiated = %v, want %v", got, m.extended())
-			}
-			var got bytes.Buffer
-			buf := make([]byte, 64<<10)
-			deadline := time.Now().Add(2 * testReadTimeout)
-			for !bytes.Contains(got.Bytes(), []byte("LOG-END")) {
-				if time.Now().After(deadline) {
-					t.Fatal("log end not received")
-				}
-				n, err := session.Read(buf)
-				if err != nil {
-					t.Fatal(err)
-				}
-				got.Write(buf[:n])
-			}
-			if !bytes.Contains(got.Bytes(), []byte("file599.cc.o")) || !bytes.Contains(got.Bytes(), []byte("file0.cc.o")) {
-				t.Fatalf("stream lost content: %d bytes", got.Len())
-			}
-		})
+// TestRemoteClientOutputZstd checks that a remote client receives compressed
+// output and that the stream content survives it intact.
+func TestRemoteClientOutputZstd(t *testing.T) {
+	_, client, _ := flowEnv(t)
+	session := testScriptSessionForClient(t, client, zstdLogScript)
+	if !session.conn.compress {
+		t.Fatal("remote client did not ask for compressed output")
+	}
+	var got bytes.Buffer
+	buf := make([]byte, 64<<10)
+	deadline := time.Now().Add(2 * testReadTimeout)
+	for !bytes.Contains(got.Bytes(), []byte("LOG-END")) {
+		if time.Now().After(deadline) {
+			t.Fatal("log end not received")
+		}
+		n, err := session.Read(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got.Write(buf[:n])
+	}
+	if !bytes.Contains(got.Bytes(), []byte("file599.cc.o")) || !bytes.Contains(got.Bytes(), []byte("file0.cc.o")) {
+		t.Fatalf("stream lost content: %d bytes", got.Len())
 	}
 }
 
@@ -83,7 +79,14 @@ func readRawFrames(t *testing.T, conn net.Conn, marker string) (decoded []byte, 
 				t.Fatal(err)
 			}
 			decoded = append(decoded, data...)
-		case frameInputAck:
+		case frameReplayGzip:
+			// Output recorded before the attach arrives as compressed replay.
+			_, data, err := parseReplayGzip(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded = append(decoded, data...)
+		case frameInputAck, frameState:
 			continue
 		default:
 			t.Fatalf("unexpected frame kind %d", kind)
@@ -94,40 +97,27 @@ func readRawFrames(t *testing.T, conn net.Conn, marker string) (decoded []byte, 
 	return decoded, kinds, wire
 }
 
-func rawAttach(t *testing.T, features []string, script string) (net.Conn, func()) {
+func rawAttach(t *testing.T, compress bool, script string) (net.Conn, Info) {
 	t.Helper()
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	session := testScriptSession(t, supervisor, script)
-	conn := rawHello(t, supervisor, server, features)
-	payload, _ := marshalFrame(frameAttach, attachMsg{ID: session.ID()})
-	if err := writeFrame(conn, frameAttach, payload); err != nil {
-		t.Fatal(err)
-	}
-	for {
-		kind, _, err := readFrame(conn)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if kind == frameAttached {
-			break
-		}
-	}
-	return conn, func() {}
+	conn := rawHello(t, supervisor, server, compress)
+	return conn, rawAttachSession(t, conn, attachMsg{ID: session.ID()})
 }
 
-func TestServerSendsZstdOnlyWhenNegotiated(t *testing.T) {
-	conn, _ := rawAttach(t, []string{featureOutputZstd}, zstdLogScript)
+func TestServerSendsZstdOnlyWhenRequested(t *testing.T) {
+	conn, _ := rawAttach(t, true, zstdLogScript)
 	decoded, kinds, wire := readRawFrames(t, conn, "LOG-END")
-	if kinds[frameOutputZstd] == 0 {
-		t.Fatalf("no compressed frames with output_zstd negotiated: %v", kinds)
+	if kinds[frameOutputZstd]+kinds[frameReplayGzip] == 0 {
+		t.Fatalf("no compressed frames although the client asked for them: %v", kinds)
 	}
-	t.Logf("negotiated: %d decoded bytes in %d wire bytes (ratio %.3f), frames %v", len(decoded), wire, float64(wire)/float64(len(decoded)), kinds)
+	t.Logf("compressed: %d decoded bytes in %d wire bytes (ratio %.3f), frames %v", len(decoded), wire, float64(wire)/float64(len(decoded)), kinds)
 
-	conn, _ = rawAttach(t, nil, zstdLogScript)
+	conn, _ = rawAttach(t, false, zstdLogScript)
 	plain, kinds, _ := readRawFrames(t, conn, "LOG-END")
-	if kinds[frameOutputZstd] != 0 {
-		t.Fatalf("compressed frames without negotiation: %v", kinds)
+	if kinds[frameOutputZstd]+kinds[frameReplayGzip] != 0 {
+		t.Fatalf("compressed frames the client did not ask for: %v", kinds)
 	}
 	if len(plain) == 0 {
 		t.Fatal("no output")
@@ -135,13 +125,11 @@ func TestServerSendsZstdOnlyWhenNegotiated(t *testing.T) {
 }
 
 func TestServerKeepsSmallEchoFramesRaw(t *testing.T) {
-	conn, _ := rawAttach(t, []string{featureOutputZstd}, "stty raw -echo; exec cat")
+	conn, info := rawAttach(t, true, "stty raw -echo; exec cat")
 	for i := 0; i < 5; i++ {
-		if err := writeFrame(conn, frameInput, []byte("echo-line-"+strconv.Itoa(i)+"\n")); err != nil {
-			t.Fatal(err)
-		}
+		rawInput(t, conn, info.Generation, info.Incarnation, []byte("echo-line-"+strconv.Itoa(i)+"\n"))
 		_, kinds, _ := readRawFrames(t, conn, "echo-line-"+strconv.Itoa(i))
-		if kinds[frameOutputZstd] != 0 {
+		if kinds[frameOutputZstd]+kinds[frameReplayGzip] != 0 {
 			t.Fatalf("small echo was compressed: %v", kinds)
 		}
 	}
@@ -152,7 +140,7 @@ func TestServerKeepsSmallEchoFramesRaw(t *testing.T) {
 // decoded bytes is in flight, not after the window's worth of wire bytes.
 func TestOutputCreditCountsDecodedBytesWithZstd(t *testing.T) {
 	const total = 16 << 20
-	conn, _ := rawAttach(t, []string{featureOutputZstd, featureOutputCredit},
+	conn, _ := rawAttach(t, true,
 		"head -c "+strconv.Itoa(total)+" /dev/zero | tr '\\000' x; printf 'FLOOD-END\\n'; sleep 60")
 	var decoded, wire int
 	compressed := 0
@@ -179,9 +167,18 @@ func TestOutputCreditCountsDecodedBytesWithZstd(t *testing.T) {
 				t.Fatal(err)
 			}
 			decoded += len(data)
+		case frameReplayGzip:
+			compressed++
+			_, data, err := parseReplayGzip(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded += len(data)
 		case frameOutput:
 			_, data, _ := parseOutput(payload)
 			decoded += len(data)
+		case frameState:
+			continue
 		default:
 			t.Fatalf("unexpected frame kind %d", kind)
 		}

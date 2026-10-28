@@ -17,6 +17,9 @@ import (
 )
 
 func TestKillCleanupFailureRetry(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires an unprivileged user; directory permissions do not bind root")
+	}
 	supervisor := testSupervisor(t)
 	id := ids.New()
 	testScriptSessionID(t, supervisor, id, `sleep 30`)
@@ -237,7 +240,7 @@ func TestCloseUnblocksInputPumpWithSlaveHeldOpen(t *testing.T) {
 	payload := make([]byte, maxInputChunkLen)
 	saturated := false
 	for attempt := 0; attempt < inputQueueSlots+2; attempt++ {
-		if _, err := session.tryWrite(payload); err != nil {
+		if _, err := session.writeInput(payload, false); err != nil {
 			if !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("fill input queue: %v", err)
 			}

@@ -197,6 +197,20 @@ describe("MultiHostLogTail", () => {
     expect(await blob.text()).toBe("[host-one] before\n[host-two] buffered\n");
   });
 
+  it("clears the save confirmation after a few seconds", async () => {
+    mounted = mountPanel();
+    await startTwoSources();
+    emit({ sequence: 1, type: "line", sourceId: "s1", text: "before" });
+    await flushUntil(() => logText().includes("before"));
+    vi.useFakeTimers();
+    clickButton(panel().container, "保存日志");
+    await flushUntil(() => panel().container.textContent?.includes("已保存 1 行合并日志") === true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_600);
+    });
+    expect(panel().container.textContent).not.toContain("已保存 1 行合并日志");
+  });
+
   it("cancels all sources on unmount even while the start RPC is pending", async () => {
     const pending = deferred<{ runId: string }>();
     mocks.start.mockReturnValue(pending.promise);

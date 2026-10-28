@@ -1,0 +1,10 @@
+# kind: choice
+# options: React | Vue | Svelte
+# cursor-index: 1
+---
+dev@build:~/app$ npx create-demo
+? Which framework do you want to use?
+  React
+❯ Vue
+  Svelte
+

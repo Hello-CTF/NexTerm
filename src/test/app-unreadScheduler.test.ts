@@ -34,7 +34,6 @@ function ws(panes: Pane[]): Workspace {
     sessionId: "s",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -47,7 +46,7 @@ function live(tabId: string, lastOutputMsAgo: number): LiveTabInfo {
     sessionKind: "ssh",
     cols: 80,
     rows: 24,
-    controller: null,
+    sizeOwner: null,
     subscribers: 1,
     viewers: 1,
     exited: false,

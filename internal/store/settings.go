@@ -248,6 +248,11 @@ func (s *Store) LayoutSave(ctx context.Context, expected int64, dataJSON string)
 	if currentRevision != expected {
 		return false, currentRevision, nil
 	}
+	if row != nil {
+		if err := checkLayoutFormat(row.Value, data); err != nil {
+			return false, currentRevision, err
+		}
+	}
 	next := currentRevision + 1
 	now := ids.NowMS()
 	value, err := json.Marshal(struct {
@@ -283,6 +288,42 @@ func (s *Store) LayoutSave(ctx context.Context, expected int64, dataJSON string)
 		return conflict()
 	}
 	return true, next, nil
+}
+
+// layoutFormatVersion returns the document format version "v" of layout data, when it has a numeric one.
+func layoutFormatVersion(data any) (float64, bool) {
+	object, ok := data.(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	version, ok := object["v"].(float64)
+	return version, ok
+}
+
+// checkLayoutFormat refuses to replace a stored layout that has a format version with one in an older
+// or unversioned format. A client that predates the stored format cannot read it and would otherwise
+// overwrite it with its own layout; it gets an error it can show instead.
+func checkLayoutFormat(storedValue string, incoming any) error {
+	_, stored := decodeLayout(storedValue)
+	if stored == nil {
+		return nil
+	}
+	var storedData any
+	if err := json.Unmarshal(stored, &storedData); err != nil {
+		return nil
+	}
+	storedVersion, ok := layoutFormatVersion(storedData)
+	if !ok {
+		return nil
+	}
+	incomingVersion, ok := layoutFormatVersion(incoming)
+	if !ok {
+		return badParam(fmt.Errorf("布局缺少格式版本，账号已保存的是 v%g，请刷新页面或升级 NexTerm 后再保存布局", storedVersion))
+	}
+	if incomingVersion >= storedVersion {
+		return nil
+	}
+	return badParam(fmt.Errorf("布局格式 v%g 旧于账号已保存的 v%g，请刷新页面或升级 NexTerm 后再保存布局", incomingVersion, storedVersion))
 }
 
 func decodeLayout(value string) (int64, json.RawMessage) {

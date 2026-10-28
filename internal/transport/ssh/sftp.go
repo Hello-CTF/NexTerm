@@ -542,6 +542,10 @@ func (f *sftpFileSystem) Mkdir(ctx context.Context, remotePath string) error {
 	return normalizeSFTPError(f.FS.Mkdir(ctx, f.sftpPath(remotePath)))
 }
 
+func (f *sftpFileSystem) MkdirPrivate(ctx context.Context, remotePath string) error {
+	return normalizeSFTPError(f.FS.MkdirPrivate(ctx, f.sftpPath(remotePath)))
+}
+
 func (f *sftpFileSystem) Rename(ctx context.Context, from, to string) error {
 	return normalizeSFTPError(f.FS.Rename(ctx, f.sftpPath(from), f.sftpPath(to)))
 }

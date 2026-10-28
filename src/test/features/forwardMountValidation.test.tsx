@@ -435,7 +435,6 @@ function selectWorkspaceTab(activeTabId: string): void {
         sessionId: "s1",
         closable: true,
         activePaneId: "p1",
-        splitRatio: 0.5,
         panes: [
           {
             id: "p1",

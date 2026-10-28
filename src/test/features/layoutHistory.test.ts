@@ -101,7 +101,6 @@ function workspace(tabs: AppTab[], activeTabId: string | null = tabs[tabs.length
     title: "工具",
     panes: [{ id: "pane", tabs, activeTabId }],
     activePaneId: "pane",
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -144,7 +143,6 @@ function hostWorkspace(
     assetId,
     panes: [{ id: `${id}-pane`, tabs, activeTabId }],
     activePaneId: `${id}-pane`,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -166,7 +164,7 @@ function legacyWorkspaces(activeTabId: string): Workspace[] {
 
 function persistedLayout(workspaces: Workspace[]): PersistedLayout {
   return {
-    v: 2,
+    v: 4,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,
@@ -329,7 +327,6 @@ describe("history tab in the layout pane contract", () => {
           },
         ],
         activePaneId: "host-p2",
-        splitRatio: 0.5,
         closable: true,
       },
       {
@@ -349,7 +346,6 @@ describe("history tab in the layout pane contract", () => {
           },
         ],
         activePaneId: "db-p",
-        splitRatio: 0.5,
         closable: true,
       },
       {
@@ -367,7 +363,6 @@ describe("history tab in the layout pane contract", () => {
           },
         ],
         activePaneId: "tools-p",
-        splitRatio: 0.5,
         closable: true,
       },
     ];

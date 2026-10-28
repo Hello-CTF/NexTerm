@@ -14,7 +14,6 @@ type OwnerKind string
 const (
 	OwnerKindAccount OwnerKind = "account"
 	OwnerKindOpen    OwnerKind = "open"
-	OwnerKindLegacy  OwnerKind = "legacy"
 )
 
 func ownerFromContext(ctx context.Context) (string, OwnerKind) {
@@ -29,8 +28,6 @@ func ownerFromModel(row *store.CronJob) (string, OwnerKind) {
 	if kind == "" {
 		if row.OwnerID != "" {
 			kind = OwnerKindAccount
-		} else {
-			kind = OwnerKindLegacy
 		}
 	}
 	return row.OwnerID, kind
@@ -51,7 +48,7 @@ func internalAccess(ctx context.Context) bool {
 	return internal
 }
 
-func ownerExecutionError(ownerID string, kind OwnerKind, allowLegacy bool) error {
+func ownerExecutionError(ownerID string, kind OwnerKind) error {
 	switch kind {
 	case OwnerKindAccount:
 		if ownerID == "" {
@@ -61,13 +58,11 @@ func ownerExecutionError(ownerID string, kind OwnerKind, allowLegacy bool) error
 		if ownerID != "" {
 			return fmt.Errorf("%w: open owner ID is not empty", ErrInvalidOwner)
 		}
-	case OwnerKindLegacy:
-		if ownerID != "" {
-			return fmt.Errorf("%w: legacy owner ID is not empty", ErrInvalidOwner)
+	case "":
+		if ownerID == "" {
+			return ErrOwnerless
 		}
-		if !allowLegacy {
-			return ErrOwnerlessLegacy
-		}
+		return fmt.Errorf("%w: owner kind is empty", ErrInvalidOwner)
 	default:
 		return fmt.Errorf("%w: kind %q", ErrInvalidOwner, kind)
 	}

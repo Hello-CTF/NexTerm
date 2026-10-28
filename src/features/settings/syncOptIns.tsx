@@ -43,7 +43,37 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     key: "preferences",
     summary: "外观快捷键",
     label: "同步外观与快捷键",
-    hint: "默认开启。关闭后不再同步界面外观和快捷键覆盖；Cron 任务不同步。",
+    hint: "默认开启。关闭后不再同步界面外观和快捷键覆盖；定时任务由单独的开关控制。",
+  },
+  {
+    key: "stateRules",
+    summary: "状态规则",
+    label: "同步会话状态规则",
+    hint: "默认开启。同步后的规则会推送到本机的会话助手；规则顺序按各设备收到的先后排列。",
+  },
+  {
+    key: "runbookTemplates",
+    summary: "Runbook 模板",
+    label: "同步 Runbook 模板",
+    hint: "默认开启。模板中的命令按保存时的快照同步。",
+  },
+  {
+    key: "skills",
+    summary: "AI 技能",
+    label: "同步自定义 AI 技能与内置技能的修改",
+    hint: "默认开启。只同步你的自定义技能、对内置技能的修改和禁用；内置技能本身随应用提供。",
+  },
+  {
+    key: "memory",
+    summary: "AI 记忆",
+    label: "同步 AI 记忆",
+    hint: "默认关闭。记忆内容端到端加密同步，离开本机前和写入前都会再次脱敏疑似密钥。",
+  },
+  {
+    key: "cron",
+    summary: "定时任务",
+    label: "同步 AI 定时任务",
+    hint: "默认关闭。每个任务只在它绑定的设备上运行；其他设备只显示，可在此改由本机运行或删除。",
   },
 ];
 

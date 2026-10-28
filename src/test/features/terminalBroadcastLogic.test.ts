@@ -58,7 +58,6 @@ function workspace(
     closable: true,
     panes: panes.map((pane) => ({ id: pane.id, tabs: pane.tabs, activeTabId: pane.tabs[0]?.id ?? null })),
     activePaneId: panes[0]?.id ?? "",
-    splitRatio: 0.5,
   };
 }
 
@@ -247,15 +246,6 @@ describe("broadcastInput", () => {
       { title: "t4", reason: "终端尚未连接" },
       { title: "gone", reason: "标签已关闭" },
     ]);
-  });
-
-  it("maps not_controller write failures to the observer skip reason", async () => {
-    const write = vi.fn().mockImplementation((id: string) =>
-      id === "k-t2" ? Promise.reject({ code: "not_controller" }) : Promise.resolve(),
-    );
-    const outcome = await broadcastInput({ candidates, targetIds: ["t1", "t2"], data: "x", write });
-    expect(outcome.sent).toBe(1);
-    expect(outcome.skipped).toEqual([{ title: "t2", reason: "正被其他设备控制" }]);
   });
 
   it("reports other write failures as failed instead of skipped", async () => {
@@ -635,15 +625,13 @@ describe("broadcast store cleanup", () => {
     expect(useUi.getState().broadcast?.generation ?? 0).toBeGreaterThan(generation);
   });
 
-  it("prunes targets removed by unsplit even when they need no close IPC", async () => {
+  it("keeps broadcast targets whose pane closes into its neighbour", async () => {
     setTerminalCloseAction("detach");
-    useUi.getState().updateTab("t3", { dead: true, tabId: undefined });
     enableBroadcast(["t1", "t3"]);
-    const generation = useUi.getState().broadcast?.generation ?? 0;
-    await useUi.getState().unsplitWorkspace("p2", "ws1");
+    const before = useUi.getState().broadcast;
+    useUi.getState().closePane("p2", "ws1");
     expect(useUi.getState().workspaces[0]?.panes.map((pane) => pane.id)).toEqual(["p1"]);
-    expectBroadcast(["t1"]);
-    expect(useUi.getState().broadcast?.generation ?? 0).toBeGreaterThan(generation);
+    expect(useUi.getState().broadcast).toBe(before);
   });
 
   it("clears the broadcast set when its origin workspace closes", async () => {

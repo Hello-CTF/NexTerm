@@ -868,9 +868,9 @@ func TestEnsureDaemonConnectsToRunningDaemon(t *testing.T) {
 	if host.sawCommand("setsid") {
 		t.Fatal("spawned a daemon although one was already running")
 	}
-	ids, err := daemon.Provider().ListDurable(context.Background())
-	if err != nil || len(ids) != 0 {
-		t.Fatalf("ListDurable = %v, %v", ids, err)
+	descriptors, err := daemon.Provider().ListDurableDescriptors(context.Background())
+	if err != nil || len(descriptors) != 0 {
+		t.Fatalf("ListDurableDescriptors = %v, %v", descriptors, err)
 	}
 }
 
@@ -2345,16 +2345,4 @@ func TestHelperUpdateRechecksProtocolAndStateBeforeSwitch(t *testing.T) {
 			t.Fatalf("state recheck error=%v old=%v new=%v", err, h.oldRunning, h.newRunning)
 		}
 	})
-}
-
-func TestHelperUpdateDefersWhenActivityIsUnprovable(t *testing.T) {
-	h := newHelperUpdateHarness(t)
-	h.oldClient.idle = func(context.Context) error { return supervisor.ErrUnsupported }
-	daemon, err := h.update(t.Context(), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !daemon.Update.Deferred || !h.oldRunning || h.newRunning || h.host.sawCommand("kill -TERM") {
-		t.Fatalf("unknown activity was not deferred: daemon=%+v old=%v new=%v", daemon, h.oldRunning, h.newRunning)
-	}
 }

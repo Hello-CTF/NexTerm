@@ -1,0 +1,17 @@
+# kind: choice
+# options: Yes | Yes, for every file in this run | No, keep editing
+# keys: 1 | 2 | 3
+# cursor-index: 0
+# alt: true
+# cursor: 9,0
+---
+
+╭───────────────────────────────────────────╮
+│ Apply these changes to 3 files?           │
+│                                           │
+│ ❯ 1. Yes                                  │
+│   2. Yes, for every file in this run      │
+│   3. No, keep editing                     │
+│                                           │
+╰───────────────────────────────────────────╯
+  Enter to confirm · Esc to cancel

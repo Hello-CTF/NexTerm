@@ -68,14 +68,6 @@ async function confirmRisk(s: Snippet, risk: InsertRisk, action: SnippetAction):
   return true;
 }
 
-function isNotController(e: unknown): boolean {
-  return (
-    typeof e === "object" &&
-    e !== null &&
-    (e as { code?: unknown }).code === "not_controller"
-  );
-}
-
 export async function runSnippetAction(s: Snippet, action: SnippetAction): Promise<boolean> {
   const pushToast = useUi.getState().pushToast;
   const label = ACTION_LABEL[action];
@@ -106,11 +98,7 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
     );
     return true;
   } catch (e) {
-    if (isNotController(e)) {
-      pushToast("error", `${label}失败：当前终端由其他设备控制，请先在终端上接管控制`);
-    } else {
-      pushToast("error", `${label}失败：${describeError(e)}`);
-    }
+    pushToast("error", `${label}失败：${describeError(e)}`);
     return false;
   }
 }

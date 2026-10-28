@@ -60,7 +60,7 @@ func TestObjectHandlerSyncDataPlaneLogging(t *testing.T) {
 	}
 
 	// An unauthenticated 401 is not logged.
-	request := httptest.NewRequest(http.MethodPost, "/sync/v2/pull", bytes.NewReader([]byte(`{"protocol":2}`)))
+	request := httptest.NewRequest(http.MethodPost, "/sync/v2/pull", bytes.NewReader([]byte(`{"protocol":3}`)))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUnauthorized || buf.Len() != 0 {

@@ -1,0 +1,5 @@
+# kind: none
+# known: a shell continuation prompt below a command line ending in "?" looks like a question with an input marker
+---
+dev@build:~$ echo "are you there?
+> 

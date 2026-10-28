@@ -161,6 +161,36 @@
       "channel": false,
       "stream": "none"
     },
+    "ai_privacy_cancel_download": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_privacy_check_updates": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_privacy_configure": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_privacy_download": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_privacy_remove": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_privacy_status": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "ai_roster_attach": {
       "scope": "ai-roster",
       "nested": false,
@@ -925,6 +955,12 @@
       "channel": false,
       "stream": "none"
     },
+    "fs_mkdir_private": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "fs_pack_download": {
       "scope": "fs",
       "nested": false,
@@ -1107,6 +1143,48 @@
     },
     "local_folder_list": {
       "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_expose_get": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_expose_set": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_mode_get": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_mode_set": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_restart": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_retry": {
+      "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_helper_status": {
+      "scope": "local-helper",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1398,6 +1476,36 @@
       "channel": false,
       "stream": "none"
     },
+    "runbook_template_create": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_template_delete": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_template_get": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_template_list": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_template_update": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "services_action": {
       "scope": "services",
       "nested": false,
@@ -1461,11 +1569,29 @@
       "channel": false,
       "stream": "none"
     },
+    "session_liveness_probe": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "session_local_hostname": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "session_open_line_tab": {
       "scope": "session",
       "nested": false,
       "channel": true,
       "stream": "binary"
+    },
+    "session_prepare_durable": {
+      "scope": "helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
     },
     "session_probe": {
       "nested": true,
@@ -1525,6 +1651,60 @@
       "channel": false,
       "stream": "none"
     },
+    "state_rule_delete": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "state_rule_draft": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "state_rule_export": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "state_rule_import": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "state_rule_list": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "state_rule_reorder": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "state_rule_save": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "state_rule_status": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "state_rule_validate": {
+      "scope": "state-rule",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "sync_apply_objects": {
       "scope": "sync",
       "nested": true,
@@ -1573,6 +1753,12 @@
       "channel": false,
       "stream": "none"
     },
+    "sync_collect_kind_objects": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
     "sync_collect_known_hosts": {
       "scope": "sync",
       "nested": true,
@@ -1594,6 +1780,24 @@
     "sync_compare": {
       "scope": "sync",
       "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_cron_foreign_adopt": {
+      "scope": "sync",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_cron_foreign_list": {
+      "scope": "sync",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "sync_cron_foreign_remove": {
+      "scope": "sync",
+      "nested": true,
       "channel": false,
       "stream": "none"
     },
@@ -1687,6 +1891,30 @@
       "channel": false,
       "stream": "none"
     },
+    "system_notification_remove": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "system_notification_request": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "system_notification_status": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "system_notify": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "target_set_create": {
       "scope": "target-set",
       "nested": false,
@@ -1728,14 +1956,21 @@
       "channel": true,
       "stream": "binary"
     },
-    "terminal_broadcast_prepare": {
-      "scope": "terminal",
-      "nested": true,
+    "terminal_attention_list": {
+      "scope": "attention",
+      "nested": false,
       "channel": false,
       "stream": "none"
     },
-    "terminal_claim": {
+    "terminal_attention_seen": {
+      "scope": "attention",
       "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_broadcast_prepare": {
+      "scope": "terminal",
+      "nested": true,
       "channel": false,
       "stream": "none"
     },
@@ -1776,6 +2011,12 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_history_read": {
+      "scope": "terminal",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_list": {
       "nested": false,
       "channel": false,
@@ -1783,6 +2024,12 @@
     },
     "terminal_pause": {
       "scope": "terminal-stream",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_prompt_tap": {
+      "scope": "attention",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1804,11 +2051,6 @@
     },
     "terminal_recover": {
       "scope": "terminal-stream",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "terminal_release": {
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -1836,6 +2078,12 @@
       "stream": "none"
     },
     "terminal_screen_text": {
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "terminal_sessions_aggregate": {
+      "scope": "attention",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -2006,6 +2254,12 @@
     "ai_model_save",
     "ai_models",
     "ai_presets",
+    "ai_privacy_cancel_download",
+    "ai_privacy_check_updates",
+    "ai_privacy_configure",
+    "ai_privacy_download",
+    "ai_privacy_remove",
+    "ai_privacy_status",
     "ai_run_events",
     "ai_run_get",
     "ai_run_list",
@@ -2035,7 +2289,6 @@
     "session_probe",
     "session_probe_host_key",
     "terminal_attach_tab",
-    "terminal_claim",
     "terminal_close_tab",
     "terminal_create_tab",
     "terminal_detach",
@@ -2045,7 +2298,6 @@
     "terminal_record_start",
     "terminal_record_status",
     "terminal_record_stop",
-    "terminal_release",
     "terminal_resize",
     "terminal_resize_flush",
     "terminal_screen_text",

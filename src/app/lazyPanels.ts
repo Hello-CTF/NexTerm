@@ -16,7 +16,9 @@ export const TranscriptHistoryPanel = lazy(() =>
   import("../features/terminal/TranscriptHistoryPanel").then((m) => ({ default: m.TranscriptHistoryPanel })),
 );
 export const FileBrowser = lazy(() => import("../features/files/FileBrowser").then((m) => ({ default: m.FileBrowser })));
-export const FileTree = lazy(() => import("../features/files/FileTree").then((m) => ({ default: m.FileTree })));
+export const SessionPanel = lazy(() =>
+  import("../features/session-panel/SessionPanel").then((m) => ({ default: m.SessionPanel })),
+);
 export const MountPanel = lazy(() => import("../features/files/MountPanel").then((m) => ({ default: m.MountPanel })));
 export const FileEditor = lazy(() => import("../features/files/FileEditor").then((m) => ({ default: m.FileEditor })));
 export const LogViewer = lazy(() => import("../features/files/LogViewer").then((m) => ({ default: m.LogViewer })));
@@ -35,6 +37,9 @@ export const DbPanel = lazy(() => import("../features/db/DbPanel").then((m) => (
 export const ExecBatchPanel = lazy(() =>
   import("../features/execbatch/ExecBatchPanel").then((m) => ({ default: m.ExecBatchPanel })),
 );
+export const HostDetailView = lazy(() =>
+  import("../features/hosts/HostDetailView").then((m) => ({ default: m.HostDetailView })),
+);
 export const AiSidebar = lazy(() => import("../features/ai/AiSidebar").then((m) => ({ default: m.AiSidebar })));
 export const SettingsView = lazy(() => import("../features/settings/SettingsView").then((m) => ({ default: m.SettingsView })));
 export const AuditView = lazy(() => import("../features/settings/AuditView").then((m) => ({ default: m.AuditView })));
@@ -44,10 +49,11 @@ export const CredentialsPanel = lazy(() =>
 export const CredentialsSidebar = lazy(() =>
   import("../features/credentials/CredentialsSidebar").then((m) => ({ default: m.CredentialsSidebar })),
 );
-const loadCommandPalette = () => import("./CommandPalette");
-const loadQuickConnect = () => import("./QuickConnect");
-export const CommandPalette = lazy(() => loadCommandPalette().then((m) => ({ default: m.CommandPalette })));
-export const QuickConnect = lazy(() => loadQuickConnect().then((m) => ({ default: m.QuickConnect })));
+const loadJumpPalette = () => import("./JumpPalette");
+export const JumpPalette = lazy(() => loadJumpPalette().then((m) => ({ default: m.JumpPalette })));
+export const StatusWall = lazy(() =>
+  import("../features/mobile/StatusWall").then((m) => ({ default: m.StatusWall })),
+);
 export const AutoSync = lazy(() => import("./AutoSync"));
 
 // The asset tree is on the first screen: start downloading it in parallel with the rest of boot.
@@ -72,8 +78,7 @@ export function prefetchOverlaysWhenIdle(): void {
   const connection = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
   if (!shouldPrefetch(connection)) return;
   const run = () => {
-    void loadCommandPalette().catch(() => undefined);
-    void loadQuickConnect().catch(() => undefined);
+    void loadJumpPalette().catch(() => undefined);
   };
   const schedule = () => {
     if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(run, { timeout: 5000 });

@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -85,6 +86,13 @@ func TestCoreTerminalRawReplayAndResponseIntegration(t *testing.T) {
 	if !bytes.Contains(frame.Data, raw) {
 		t.Fatalf("production terminal altered raw replay: %v", frame.Data)
 	}
+	// The headless screen answers queries only while no client is attached
+	// (an attached client's emulator answers them itself).
+	for _, channelID := range []string{"a-1", "b-1"} {
+		if err := manager.DetachChannel(channelID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := channel.emit([]byte("\x1b[6n")); err != nil {
 		t.Fatal(err)
 	}
@@ -155,15 +163,39 @@ func TestRecordingLifecycleEmitsControlInvalidations(t *testing.T) {
 	}
 	tab := openTestTab(t, manager, connected, "client-a", "a-1")
 	_ = waitRecordingEvents(t, events, 1)
+	// The tab's attention state is published on its own schedule; only
+	// control events are recording invalidations.
+	// wait zero only takes events already emitted.
+	nextControl := func(wait time.Duration) (Event, bool) {
+		deadline := time.After(wait)
+		for {
+			var event Event
+			if wait == 0 {
+				select {
+				case event = <-events:
+				default:
+					return Event{}, false
+				}
+			} else {
+				select {
+				case event = <-events:
+				case <-deadline:
+					return Event{}, false
+				}
+			}
+			if event.Topic != TopicTerminalAttention {
+				return event, true
+			}
+		}
+	}
 	assertInvalidation := func() {
 		t.Helper()
-		select {
-		case event := <-events:
-			if event.Topic != TopicTerminalControl {
-				t.Fatalf("event topic = %q, want %q", event.Topic, TopicTerminalControl)
-			}
-		case <-time.After(time.Second):
+		event, ok := nextControl(time.Second)
+		if !ok {
 			t.Fatal("recording control invalidation not emitted")
+		}
+		if event.Topic != TopicTerminalControl {
+			t.Fatalf("event topic = %q, want %q", event.Topic, TopicTerminalControl)
 		}
 	}
 
@@ -186,10 +218,8 @@ func TestRecordingLifecycleEmitsControlInvalidations(t *testing.T) {
 	if _, err := manager.StopRecording(tab.ID); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case event := <-events:
+	if event, ok := nextControl(0); ok {
 		t.Fatalf("repeated stop emitted another event: %+v", event)
-	default:
 	}
 	if err := manager.StartRecording(tab.ID, path); err != nil {
 		t.Fatal(err)
@@ -349,6 +379,15 @@ func TestRequestTerminalOperationsEnforceOwner(t *testing.T) {
 			_, _, _, _, err := fixture.manager.OutputSinceFor(ctx, fixture.tab.ID, 0, 1024)
 			return err
 		}},
+		{name: "durable-history", invoke: func(ctx context.Context, fixture *requestTerminalFixture) error {
+			_, err := fixture.manager.ReadDurableHistoryFor(ctx, fixture.tab.ID, DurableHistoryLatest, 1024)
+			// The fixture tab is regular: past the owner check the read is
+			// refused as unsupported.
+			if errors.Is(err, ErrUnsupported) {
+				return nil
+			}
+			return err
+		}},
 		{name: "mode-state", invoke: func(ctx context.Context, fixture *requestTerminalFixture) error {
 			_, err := fixture.manager.TerminalModeStateFor(ctx, fixture.tab.ID)
 			return err
@@ -380,14 +419,6 @@ func TestRequestTerminalOperationsEnforceOwner(t *testing.T) {
 		}},
 		{name: "rename", invoke: func(ctx context.Context, fixture *requestTerminalFixture) error {
 			_, err := fixture.manager.RenameTabFor(ctx, fixture.tab.ID, "renamed")
-			return err
-		}},
-		{name: "claim", invoke: func(ctx context.Context, fixture *requestTerminalFixture) error {
-			_, err := fixture.manager.ClaimFor(ctx, fixture.tab.ID, "next-client")
-			return err
-		}},
-		{name: "release", invoke: func(ctx context.Context, fixture *requestTerminalFixture) error {
-			_, err := fixture.manager.ReleaseFor(ctx, fixture.tab.ID, "owner-client")
 			return err
 		}},
 		{name: "detach-channel", invoke: func(ctx context.Context, fixture *requestTerminalFixture) error {

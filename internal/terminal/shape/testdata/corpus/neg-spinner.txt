@@ -1,0 +1,4 @@
+# kind: none
+---
+dev@build:~/app$ pnpm install
+⠋ Resolving dependencies...

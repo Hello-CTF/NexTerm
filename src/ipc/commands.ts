@@ -271,6 +271,12 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
 export const systemApi = {
   platform: () => call("app_platform"),
   insets: () => call("system_insets"),
+  // Operating system notifications through the desktop bridge; the server and mobile builds report them unsupported.
+  notificationStatus: () => call("system_notification_status"),
+  requestNotifications: () => call("system_notification_request"),
+  notify: (notification: { id: string; title: string; body?: string; tabId?: string }) =>
+    ignoreResult(call("system_notify", notification)),
+  removeNotification: (id: string) => ignoreResult(call("system_notification_remove", { id })),
 };
 
 export interface DesktopTrayDto {
@@ -329,6 +335,19 @@ function ignoreResult(operation: Promise<unknown>): Promise<void> {
   return operation.then(() => undefined);
 }
 
+export type DurableReadinessState = "ready" | "preparing" | "unavailable" | "disabled";
+
+export interface DurableReadiness {
+  state: DurableReadinessState;
+  reason?: string;
+}
+
+function normalizeDurableReadiness(value: { state: string; reason?: string }): DurableReadiness {
+  const state: DurableReadinessState =
+    value.state === "ready" || value.state === "preparing" || value.state === "disabled" ? value.state : "unavailable";
+  return value.reason ? { state, reason: value.reason } : { state };
+}
+
 export const sessionApi = {
   connect: (assetId: string) =>
     call<SessionInfo>("session_connect", { args: { assetId } }),
@@ -341,12 +360,20 @@ export const sessionApi = {
     acceptHostKey?: boolean;
   }) => call<SessionInfo>("session_connect_quick", { args }),
   quickConnectDefaultUser: () => call("session_quick_connect_user"),
+  // The machine name of a local session's host, for matching terminal file:// links.
+  localHostname: (sessionId: string) => call("session_local_hostname", { sessionId }),
   connectLocal: () => call("session_connect_local") as Promise<SessionInfo>,
   connectDevice: (deviceId: string, name: string) =>
     call("session_connect_device", { args: { deviceId, name } }) as Promise<SessionInfo>,
   disconnect: (sessionId: string) =>
     ignoreResult(call("session_disconnect", { sessionId })),
   reconnect: (sessionId: string) => call("session_reconnect", { sessionId }),
+  // Checks the session's connection now: a dead connection reconnects at once and a pending
+  // reconnect backoff is cut short. Results also arrive as session status events.
+  probeLiveness: (sessionId: string) => call("session_liveness_probe", { sessionId }),
+  // Reports whether a new terminal can be durable now and starts the helper deployment in the background when needed.
+  prepareDurable: (sessionId: string) =>
+    call("session_prepare_durable", { sessionId }).then(normalizeDurableReadiness),
   list: () => call("session_list") as Promise<SessionInfo[]>,
   probe: (host: string, port: number, timeoutMs?: number) =>
     call<{ open: boolean; error?: string }>("session_probe", {
@@ -375,7 +402,7 @@ export interface AttachedTabInfo {
   sessionId: string;
   cols: number;
   rows: number;
-  controller: string | null;
+  sizeOwner: string | null;
   subscribers: number;
   viewers: number;
   exited: boolean;
@@ -384,6 +411,8 @@ export interface AttachedTabInfo {
   ephemeral?: boolean;
   encoding?: string;
   title?: string;
+  titleCustom?: boolean;
+  titleChangedAt?: number;
   shell?: TerminalShell;
   fallbackNotice?: string;
   attachmentId?: number;
@@ -396,13 +425,40 @@ export interface LiveTabInfo {
   sessionKind: string;
   cols: number;
   rows: number;
-  controller: string | null;
+  sizeOwner: string | null;
   subscribers: number;
   viewers: number;
   exited: boolean;
   lastOutputAt?: number;
   lastOutputMsAgo: number;
   title?: string;
+  titleCustom?: boolean;
+  titleChangedAt?: number;
+  // Unix ms; detachedAt is absent while a client is subscribed.
+  createdAt?: number;
+  detachedAt?: number;
+  // Age of detachedAt on the backend's clock when it answered; omitted when zero.
+  detachedMsAgo?: number;
+  // detachedAt is only when this app reopened an existing helper session that no client has left since.
+  detachedSinceOpen?: boolean;
+  durable?: boolean;
+  // The helper's attention state of a durable tab; absent when none is reported.
+  state?: SessionAttentionState;
+}
+
+export type SessionAttentionState = "running" | "needs_me" | "just_finished" | "idle" | "exited";
+
+// Activity of a durable session as its host's helper tracks it in memory (Unix ms, host clock).
+// A null time is one the helper has not seen: no output yet, or a client is attached.
+export interface DurableActivity {
+  lastOutputAt: number | null;
+  detachedAt: number | null;
+  attached: boolean;
+  // Measured on the host's clock at asOf, so they need no comparison with this device's clock.
+  // A helper that reports times without ages leaves them out.
+  asOf?: number;
+  lastOutputMsAgo?: number;
+  detachedMsAgo?: number;
 }
 
 export type RecordingState = "never-started" | "running" | "stopped" | "failed";
@@ -428,6 +484,9 @@ export interface DurableDescriptor {
   exitCode: number | null;
   signal?: string;
   finishedAt: number | null;
+  state?: SessionAttentionState;
+  // Absent when the host reports no activity.
+  activity?: DurableActivity;
 }
 
 export interface StreamResumeAnchor {
@@ -474,7 +533,7 @@ export interface BroadcastConfirmationChallenge {
 }
 
 export type HelperCompatibility = "compatible" | "incompatible" | "unknown";
-export type HelperOperationAction = "status" | "cancel" | "retry" | "update" | "update_interrupt";
+export type HelperOperationAction = "status" | "cancel" | "retry" | "update" | "update_interrupt" | "replace_legacy";
 
 export interface HelperVersionInfo {
   known: boolean;
@@ -485,11 +544,43 @@ export interface HelperVersionInfo {
 }
 
 export interface HelperUpdateInfo {
-  status: "current" | "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "unknown";
+  status: "current" | "available" | "deferred" | "interrupted" | "updated" | "rolled_back" | "legacy" | "replaced" | "unknown";
   detail?: string;
   updated?: boolean;
   interrupted?: boolean;
   rolledBack?: boolean;
+  replacedLegacy?: boolean;
+  endedSessions?: number;
+  /** How exact endedSessions is: every session, at least these terminal sessions, or unknown. */
+  endedCount?: "exact" | "atLeast" | "unknown";
+  /** This action ended the older helper; absent when it had already exited or another replacement ended it. */
+  stopped?: boolean;
+  /** The older helper ignored the stop request and was killed. */
+  forced?: boolean;
+}
+
+/** Detail of a helper_replace_failed error: the stage that failed and what had happened to the older helper. */
+export interface HelperReplaceFailureInfo {
+  stage: string;
+  stopped: boolean;
+  forced: boolean;
+  rolledBack: boolean;
+  cause?: string;
+}
+
+/** An older-protocol helper that still owns the host's helper state, as inspected on that host. */
+export interface LegacyHelperInfo {
+  protocol: number;
+  pid?: number;
+  ptySessions: number;
+  execSessions: number;
+  /** False when the helper did not report its sessions; ptyListed then means only PTY sessions were counted. */
+  activityKnown: boolean;
+  ptyListed: boolean;
+  release?: string;
+  /** Names exactly this helper and count; empty when it could not be inspected. */
+  consentToken?: string;
+  stale?: boolean;
 }
 
 export interface HelperOfflineInfo {
@@ -510,6 +601,7 @@ export interface HelperOperationResult {
   compatibility: HelperCompatibility;
   update?: HelperUpdateInfo | null;
   offline?: HelperOfflineInfo | null;
+  legacy?: LegacyHelperInfo | null;
 }
 
 function normalizeHelperCompatibility(value: string): HelperCompatibility {
@@ -517,12 +609,17 @@ function normalizeHelperCompatibility(value: string): HelperCompatibility {
 }
 
 function normalizeHelperUpdateStatus(value: string): HelperUpdateInfo["status"] {
-  return value === "current" || value === "available" || value === "deferred" || value === "interrupted" || value === "updated" || value === "rolled_back"
+  return value === "current" || value === "available" || value === "deferred" || value === "interrupted" || value === "updated" || value === "rolled_back" ||
+    value === "legacy" || value === "replaced"
     ? value
     : "unknown";
 }
 
-type HelperUpdateInfoWire = Omit<HelperUpdateInfo, "status"> & { status: string };
+type HelperUpdateInfoWire = Omit<HelperUpdateInfo, "status" | "endedCount"> & { status: string; endedCount?: string };
+
+function normalizeEndedCount(value: string | undefined): HelperUpdateInfo["endedCount"] {
+  return value === "exact" || value === "atLeast" || value === "unknown" ? value : undefined;
+}
 type HelperOfflineInfoWire = Omit<HelperOfflineInfo, "compatibility"> & { compatibility: string };
 type HelperOperationResultWire = Omit<HelperOperationResult, "compatibility" | "update" | "offline"> & {
   compatibility: string;
@@ -535,7 +632,7 @@ function normalizeHelperOperationResult(result: HelperOperationResultWire): Help
     ...result,
     compatibility: normalizeHelperCompatibility(result.compatibility),
     update: result.update
-      ? { ...result.update, status: normalizeHelperUpdateStatus(result.update.status) }
+      ? { ...result.update, status: normalizeHelperUpdateStatus(result.update.status), endedCount: normalizeEndedCount(result.update.endedCount) }
       : result.update,
     offline: result.offline
       ? { ...result.offline, compatibility: normalizeHelperCompatibility(result.offline.compatibility) }
@@ -589,10 +686,6 @@ export const terminalApi = {
     call<void>("terminal_resize_flush", { tabId, clientId: clientId() }),
   detach: (tabId: string, channelId?: string) =>
     call<void>("terminal_detach", { tabId, channelId }),
-  claim: (tabId: string) =>
-    call<string | null>("terminal_claim", { tabId, clientId: clientId() }),
-  release: (tabId: string) =>
-    call<boolean>("terminal_release", { tabId, clientId: clientId() }),
   listLive: () => listTerminal<LiveTabInfo[]>(),
   listDurable: (sessionId: string) => listTerminal<DurableDescriptor[]>(sessionId, true),
   screenText: (tabId: string) => call<string>("terminal_screen_text", { tabId }),
@@ -604,6 +697,14 @@ export const terminalApi = {
     call<void>("terminal_set_visible", { tabId, visible }),
   dump: (tabId: string, maxBytes?: number) =>
     call<string>("terminal_dump", { tabId, maxBytes }),
+  // before "latest" reads up to the newest output the backend received.
+  historyRead: (tabId: string, before: number | "latest", maxBytes?: number) =>
+    call("terminal_history_read", {
+      tabId,
+      before: before === "latest" ? 0 : before,
+      maxBytes: maxBytes ?? 0,
+      latest: before === "latest",
+    }) as Promise<import("./types").TerminalHistoryChunk>,
   switchEncoding: (tabId: string, encoding: string) =>
     call<void>("terminal_switch_encoding", { tabId, encoding }),
   recordStart: (tabId: string, path: string) =>
@@ -615,14 +716,37 @@ export const terminalApi = {
     call<number>("terminal_export_log", { tabId, path, maxBytes }),
   helperOperation: (sessionId: string, operationId: string, action: HelperOperationAction, interruptActive = false) =>
     call("terminal_helper_operation", { sessionId, operationId, action, interruptActive }).then(normalizeHelperOperationResult),
+  /** Ends the older helper the user approved (with its sessions) and starts this build's helper. */
+  helperReplaceLegacy: (sessionId: string, consentToken: string) =>
+    call("terminal_helper_operation", { sessionId, action: "replace_legacy", consentToken }).then(normalizeHelperOperationResult),
   helperUpdate: (sessionId: string, interruptActive = false) =>
     call("terminal_helper_operation", { sessionId, action: "update", interruptActive }).then(normalizeHelperOperationResult),
   helperOffline: (sessionId: string, path: string, sha256?: string, confirmed = false) =>
     call("terminal_helper_offline", { sessionId, path, sha256, confirmed }).then(normalizeHelperOperationResult),
   closeTab: (tabId: string, mode?: "kill" | "detach", sessionId?: string) =>
     call<void>("terminal_close_tab", { tabId, mode, clientId: clientId(), ...(sessionId === undefined ? {} : { sessionId }) }),
-  renameTab: (tabId: string, title: string) =>
-    call("terminal_rename_tab", { tabId, title }) as Promise<AttachedTabInfo>,
+  renameTab: (tabId: string, title: string, at?: number) =>
+    call("terminal_rename_tab", { tabId, title, at }) as Promise<AttachedTabInfo>,
+  // The attention state of every terminal tab; tabs whose state cannot be known are "unknown".
+  attentionList: () => call("terminal_attention_list"),
+  // Marks the needs_me or just_finished state that began at since as seen by the user, for every device.
+  attentionSeen: (tabId: string, since: string) => ignoreResult(call("terminal_attention_seen", { tabId, since })),
+  // The durable sessions of every host this client can reach without connecting anything, with their attention
+  // state. Hosts still answering after waitMs are pending; their result follows as a terminal://sessions event.
+  sessionsAggregate: (waitMs?: number) =>
+    call("terminal_sessions_aggregate", waitMs === undefined ? {} : { waitMs }),
+  // Answers the detected prompt of an attention event with one of its options. The helper writes the
+  // option's keys only while that prompt instance (generation, epoch, fingerprint) is still shown;
+  // otherwise the call fails with code "stale_prompt" and nothing is sent.
+  tapPrompt: (tabId: string, prompt: { generation?: string; epoch: number; fingerprint: string }, option: number) =>
+    ignoreResult(call("terminal_prompt_tap", {
+      tabId,
+      clientId: clientId(),
+      generation: prompt.generation ?? "",
+      epoch: prompt.epoch,
+      fingerprint: prompt.fingerprint,
+      option,
+    })),
   createTab: (sessionId: string, options?: { title?: string; command?: string }) =>
     call<AttachedTabInfo>("terminal_create_tab", {
       sessionId,
@@ -880,6 +1004,9 @@ export const fsApi = {
   ) => call("fs_write", { args: { sessionId, path, contentBase64, backup, taskId, attemptId } }) as Promise<void>,
   mkdir: (sessionId: string, path: string) =>
     call("fs_mkdir", { sessionId, path }) as Promise<void>,
+  // mkdirPrivate creates one directory exclusively with mode 0700 and fails when anything already exists at the path.
+  mkdirPrivate: (sessionId: string, path: string) =>
+    call("fs_mkdir_private", { sessionId, path }) as Promise<void>,
   rename: (sessionId: string, from: string, to: string) =>
     call("fs_rename", { sessionId, from, to }) as Promise<void>,
   delete: (sessionId: string, path: string, isDir: boolean) =>
@@ -932,6 +1059,26 @@ export const fsApi = {
   extract: (sessionId: string, path: string) =>
     call("fs_extract", { sessionId, path }),
 };
+
+export type LocalHelperStatus = import("./generated/types").LocalHelperStatusDTO;
+export type LocalTerminalMode = "durable" | "regular";
+
+// The local helper runs local terminals detached from the app so they survive it. restart replaces an
+// outdated helper and ends its sessions, so it takes the consent token the user confirmed.
+export const localHelperApi = {
+  status: () => call("local_helper_status") as Promise<LocalHelperStatus>,
+  restart: (consentToken: string) => call("local_helper_restart", { consentToken }) as Promise<LocalHelperStatus>,
+  retry: () => call("local_helper_retry") as Promise<LocalHelperStatus>,
+  // The device's choice for new local terminals; the backend applies it to every local terminal it creates.
+  getMode: () => call("local_helper_mode_get").then((value) => (value as { mode: LocalTerminalMode }).mode),
+  setMode: (mode: LocalTerminalMode) => call("local_helper_mode_set", { mode }).then((value) => (value as { mode: LocalTerminalMode }).mode),
+  // Exposure lets the linked server account's browsers and phones reach this desktop's local terminals; it is off
+  // until the user turns it on.
+  getExposure: () => call("local_helper_expose_get") as Promise<LocalHelperExposure>,
+  setExposure: (enabled: boolean) => call("local_helper_expose_set", { enabled }) as Promise<LocalHelperExposure>,
+};
+
+export type LocalHelperExposure = import("./generated/types").LocalHelperExposureDTO;
 
 export type LocalFolderFileDto = import("./generated/types").LocalFolderFileDTO;
 export type LocalFolderListDto = import("./generated/types").LocalFolderListDTO;
@@ -1574,6 +1721,11 @@ export const syncApi = {
   collectAIGrants: () => call("sync_collect_ai_grants") as Promise<import("./types").SyncCollectAIGrants>,
 
   collectPreferences: () => call("sync_collect_preferences") as Promise<import("./types").SyncCollectPreference[]>,
+  collectKindObjects: (kind: string) =>
+    call("sync_collect_kind_objects", { args: { kind } }) as Promise<import("./types").SyncCollectKindObjectsResult>,
+  cronForeignList: () => call("sync_cron_foreign_list") as Promise<import("./types").SyncForeignCronJob[]>,
+  cronForeignRemove: (id: string) => call("sync_cron_foreign_remove", { args: { id } }),
+  cronForeignAdopt: (id: string) => call("sync_cron_foreign_adopt", { args: { id } }),
 
   preferencesGet: () => call("sync_preferences_get") as Promise<import("./types").PreferenceScopeView>,
 

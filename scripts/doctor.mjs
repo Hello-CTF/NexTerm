@@ -40,8 +40,12 @@ report("task", versionOutput("task", ["--version"]), (version) => version.replac
 report("wails3 (pinned go run)", versionOutput("go", ["run", `github.com/wailsapp/wails/v3/cmd/wails3@${wailsVersion}`, "version"], { ...process.env, GOTOOLCHAIN: goToolchain }), (version) => version === wailsVersion, wailsVersion);
 if (process.platform === "linux") {
   // Linux desktop builds link gtk4/webkitgtk-6.0 via cgo; CI installs the same
-  // pkg-config modules as libgtk-4-dev/libwebkitgtk-6.0-dev.
-  report("gtk4 (pkg-config)", versionOutput("pkg-config", ["--modversion", "gtk4"]), (version) => /^\d+\.\d+/.test(version), "libgtk-4-dev (pkg-config gtk4)");
+  // pkg-config modules as libgtk-4-dev/libwebkitgtk-6.0-dev on Debian 13.
+  // Wails calls GTK 4.14 API, so older GTK (Debian 12 ships 4.8) cannot build it.
+  report("gtk4 (pkg-config)", versionOutput("pkg-config", ["--modversion", "gtk4"]), (version) => {
+    const [major, minor] = version.split(".").map(Number);
+    return major > 4 || (major === 4 && minor >= 14);
+  }, "libgtk-4-dev 4.14 or newer (pkg-config gtk4)");
   report("webkitgtk-6.0 (pkg-config)", versionOutput("pkg-config", ["--modversion", "webkitgtk-6.0"]), (version) => /^\d+\.\d+/.test(version), "libwebkitgtk-6.0-dev (pkg-config webkitgtk-6.0)");
 }
 report("docker", versionOutput("docker", ["--version"]), (version) => Number(version.split(".")[0]) > 0, "Docker CLI");

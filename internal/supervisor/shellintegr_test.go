@@ -189,7 +189,7 @@ func TestSupervisorWrappedShellReportsCWD(t *testing.T) {
 	if err := session.Wait(waitCtx); err != nil {
 		t.Fatalf("session wait: %v", err)
 	}
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +377,7 @@ func TestSupervisorWrappedShellEmitsOSC133(t *testing.T) {
 	if err := session.Wait(waitCtx); err != nil {
 		t.Fatalf("session wait: %v", err)
 	}
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}

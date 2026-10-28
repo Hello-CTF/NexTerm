@@ -316,15 +316,20 @@ func composeCronScheduler(ctx context.Context, services *ProductionServices, opt
 	if services.Store == nil {
 		return nil, nil, errors.New("cron runtime requires store and agent services")
 	}
-	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.GORM(), cron.WithShared(services.desktop || owner.OpenAccess(ctx)))
+	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.GORM(), cron.WithShared(services.desktop || owner.OpenAccess(ctx)), cron.WithInstall(services.deviceInstall))
 	if err != nil {
 		return nil, nil, err
 	}
-	allowLegacy := services.desktop || owner.OpenAccess(ctx)
-	options.AllowOwnerlessLegacy = allowLegacy
+	ownerless, err := cronStore.CountOwnerless(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ownerless > 0 {
+		slog.Warn("cron jobs without owner information are disabled and will not run; recreate them", "count", ownerless)
+	}
 	executor := &cron.AgentExecutor{
-		ScopeFor: scopeForConversation(services.Store, productionScopeValidator(services)), AllowOwnerlessLegacy: allowLegacy,
-		Connect: newCronConnector(services),
+		ScopeFor: scopeForConversation(services.Store, productionScopeValidator(services)),
+		Connect:  newCronConnector(services),
 	}
 	if options.OnError == nil {
 		options.OnError = func(err error) {
@@ -455,6 +460,8 @@ func cronIPCError(err error) error {
 		return ipc.WrapError(ipc.CodeBadParam, cron.ErrConflict.Error(), err)
 	case errors.Is(err, cron.ErrJobLimit):
 		return ipc.WrapError(ipc.CodeBadParam, cron.ErrJobLimit.Error(), err)
+	case errors.Is(err, cron.ErrForeignDevice):
+		return ipc.WrapError(ipc.CodeBadParam, cron.ErrForeignDevice.Error(), err)
 	case errors.Is(err, cron.ErrJobRunning):
 		return ipc.WrapError(ipc.CodeBadParam, cron.ErrJobRunning.Error(), err)
 	case errors.Is(err, cron.ErrInvalidSchedule):

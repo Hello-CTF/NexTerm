@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -41,6 +42,11 @@ type faultDurableAttachment struct {
 	failed   chan struct{}
 	failOnce sync.Once
 	err      error
+}
+
+func (a *faultDurableAttachment) Identity() supervisor.Identity {
+	identity, _ := durableAttachmentIdentity(a.DurableAttachment)
+	return supervisor.Identity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation, Generation: identity.Generation}
 }
 
 func (a *faultDurableAttachment) Read(data []byte) (int, error) {

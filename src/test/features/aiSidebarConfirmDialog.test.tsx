@@ -436,7 +436,6 @@ describe("AiSidebar permission request dialogs", () => {
               },
             ],
             activePaneId: "p1",
-            splitRatio: 1,
             closable: true,
           },
         ],

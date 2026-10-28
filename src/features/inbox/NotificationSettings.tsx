@@ -1,0 +1,98 @@
+import { useCallback, useEffect, useState } from "react";
+import { describeError } from "../../ui/errorText";
+import { setNotificationPrefs, useNotificationPrefs, type NotificationPrefs } from "./notificationPrefs";
+import { refreshNotificationStatus } from "./inboxNotifications";
+import { systemNotifier, type SystemNotificationStatus } from "./systemNotifications";
+
+const CATEGORIES: readonly { key: Exclude<keyof NotificationPrefs, "system">; label: string; hint: string }[] = [
+  { key: "needsMe", label: "需要我处理", hint: "终端响铃或程序发出通知（OSC 9/777/99）" },
+  { key: "inferred", label: "根据屏幕推测的提问", hint: "屏幕看起来停在提问处，可能误判" },
+  { key: "finished", label: "长命令结束", hint: "运行 10 秒以上的命令结束（需要 shell 集成）" },
+  { key: "ai", label: "AI 通知", hint: "AI 助手的通知，仅在窗口不在前台时弹出" },
+];
+
+function statusText(status: SystemNotificationStatus | null): string {
+  if (!status) return "正在检查系统通知…";
+  if (!status.available) return status.reason ?? "此端不支持系统通知";
+  if (status.permission === "denied") return status.reason ?? "系统不允许 NexTerm 发送通知";
+  if (status.permission === "prompt") return "尚未允许系统通知";
+  return "系统通知可用";
+}
+
+// NotificationSettings decides, for this device only, which attention states pop an operating system notification.
+// The inbox in the header lists them either way.
+export function NotificationSettings() {
+  const prefs = useNotificationPrefs();
+  // A browser knows its permission at once; the desktop asks the backend.
+  const [status, setStatus] = useState<SystemNotificationStatus | null>(() => systemNotifier().knownStatus?.() ?? null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (systemNotifier().knownStatus) return;
+    let alive = true;
+    systemNotifier()
+      .status()
+      .then((next) => alive && setStatus(next))
+      .catch((e: unknown) => alive && setStatus({ available: false, reason: describeError(e) }));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const request = useCallback(() => {
+    setError(null);
+    systemNotifier()
+      .request()
+      .then((next) => {
+        refreshNotificationStatus();
+        setStatus(next);
+      })
+      .catch((e: unknown) => setError(describeError(e)));
+  }, []);
+
+  const usable = status?.available === true;
+  return (
+    <div className="mt-3.5" data-setting="system-notifications">
+      <label className="flex cursor-pointer items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[12.5px] text-neutral-200">在此设备弹出系统通知</div>
+          <p className="nx-hint mt-0.5">
+            另一个工作区或主机的会话需要你时弹出系统通知，点击回到该终端；正在看的终端不弹出。关闭或系统不支持时改为应用内提示。顶栏铃铛始终列出这些会话。只影响本设备。
+          </p>
+          <p className="nx-hint mt-0.5" role="status">
+            {statusText(status)}
+          </p>
+          {error && <p className="mt-0.5 text-[11.5px] text-red-400">{error}</p>}
+        </div>
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4 shrink-0"
+          checked={prefs.system}
+          onChange={(e) => setNotificationPrefs({ system: e.target.checked })}
+        />
+      </label>
+      {usable && status?.permission !== "granted" && (
+        <button type="button" className="nx-btn nx-btn-outline nx-btn-xs mt-1.5" onClick={request}>
+          允许系统通知
+        </button>
+      )}
+      <div className="mt-2 flex flex-col gap-1.5 pl-1" aria-disabled={!prefs.system}>
+        {CATEGORIES.map((category) => (
+          <label key={category.key} className="flex cursor-pointer items-start gap-2.5">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-3.5 w-3.5 shrink-0"
+              disabled={!prefs.system}
+              checked={prefs[category.key]}
+              onChange={(e) => setNotificationPrefs({ [category.key]: e.target.checked })}
+            />
+            <span className="min-w-0">
+              <span className="text-[12px] text-neutral-200">{category.label}</span>
+              <span className="nx-hint ml-1.5">{category.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}

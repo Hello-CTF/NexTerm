@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Hello-CTF/NexTerm/internal/ai/cron"
-	"github.com/Hello-CTF/NexTerm/internal/ai/owner/legacy"
 	"gorm.io/gorm"
 )
 
@@ -26,14 +24,16 @@ type Report struct {
 	DeferredNoActiveSuperadmin bool
 	Ownership                  OwnershipReport
 	Layout                     LayoutReport
-	AI                         cron.OwnerlessMigrationReport
-	AISettings                 legacy.Report
+	AI                         AIHistoryReport
+	AISettings                 AISettingsReport
 }
 
-// Migrate upgrades GORM-era data before the existing AI migrations run. Shared
-// desktop/Open mode keeps ownerless data and global settings in their original
-// scope. A deferred report is successful and safe to retry after an active
-// superadmin is created.
+// Migrate attributes ownerless data to the first active superadmin when an
+// account-mode server starts on a database last used in Open mode (or before
+// accounts existed): owned rows, AI history keyed by conversation owner, and a
+// copy of the global AI settings. Shared desktop/Open mode keeps ownerless data
+// and global settings in their original scope. A deferred report is successful
+// and safe to retry after an active superadmin is created.
 func Migrate(ctx context.Context, database *gorm.DB, shared bool) (Report, error) {
 	if database == nil {
 		return Report{}, errors.New("data upgrade: nil database")
@@ -67,22 +67,15 @@ func Migrate(ctx context.Context, database *gorm.DB, shared bool) (Report, error
 				if err := migrateLayout(tx, ownerID, &report.Layout); err != nil {
 					return err
 				}
+				if err := migrateAIHistory(tx, &report.AI); err != nil {
+					return err
+				}
+				if err := migrateAISettings(tx, ownerID, &report.AISettings); err != nil {
+					return err
+				}
 			}
 		}
 
-		aiReport, err := cron.MigrateOwnerlessAI(ctx, tx, shared)
-		if err != nil {
-			return err
-		}
-		report.AI = aiReport
-		aiSettingsReport, err := legacy.Migrate(ctx, tx, shared)
-		if err != nil {
-			return err
-		}
-		report.AISettings = aiSettingsReport
-		if aiSettingsReport.SkippedNoActiveSuperadmin {
-			report.DeferredNoActiveSuperadmin = true
-		}
 		return nil
 	})
 	if err != nil {
@@ -97,6 +90,8 @@ func dataMigrationPending(database *gorm.DB) (bool, error) {
 		vaultMigrationPending,
 		syncMigrationPending,
 		layoutMigrationPending,
+		aiHistoryMigrationPending,
+		aiSettingsMigrationPending,
 	} {
 		found, err := pending(database)
 		if err != nil || found {

@@ -17,6 +17,11 @@ function gatesPassed(report) {
     && report.assertions.every((item) => item !== null && typeof item === "object" && item.status === "passed");
 }
 
+function privacyRuntimePassed(report) {
+  return !/^(?:desktop-|server-|mobile-)/.test(report?.id || "")
+    || report.assertions?.some((item) => item.id === "privacy-runtime" && item.status === "passed");
+}
+
 function candidateFiles(directory) {
   const files = [];
   function visit(parent, relativeParent = "") {
@@ -49,6 +54,7 @@ function validateIntermediateReport(result, name, file, seenReportIDs) {
     return;
   }
   const initialIssueCount = result.issues.length;
+  if (!privacyRuntimePassed(report)) issue("privacy-runtime", "desktop/server/mobile evidence must verify the packaged ONNX Runtime privacy runtime");
   if (!gatesPassed(report)) issue("gates", "intermediate artifact report must have a passed status and non-empty passing assertions");
   if (report?.version !== result.version) issue("wrong-version", `intermediate report version ${JSON.stringify(report?.version)} does not match ${result.version}`);
   if (report?.commit !== result.commit) {
@@ -142,6 +148,7 @@ export function verifyReleaseEvidence(directory) {
     const intact = report?.artifact?.size_bytes === bytes && report?.artifact?.sha256 === sha256;
     const failures = [];
     if (!gatesPassed(report)) failures.push("gates");
+    if (!privacyRuntimePassed(report)) failures.push("privacy-runtime");
     if (!intact) failures.push("integrity");
     if (report?.version !== version) failures.push("wrong-version");
     if (report?.id !== reportIDs.get(name)) failures.push("wrong-report-id");

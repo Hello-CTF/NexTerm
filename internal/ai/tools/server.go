@@ -1517,6 +1517,12 @@ func (r *Registry) terminalRename(ctx context.Context, jobID string, scope Scope
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
 	}
+	// AI renames are custom titles exactly like manual renames, but a blank
+	// title (which clears the custom title for a manual rename) is rejected so
+	// the assistant never silently discards a title the user chose.
+	if strings.TrimSpace(args.Title) == "" {
+		return Fail(errors.New("title 不能为空"))
+	}
 	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)

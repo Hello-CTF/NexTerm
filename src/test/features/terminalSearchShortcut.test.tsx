@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, flushMacrotask, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, flushMacrotask, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   mac: false,
@@ -106,6 +106,9 @@ function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {})
   return event;
 }
 
+// The default terminal search chord off macOS.
+const SEARCH: KeyboardEventInit = { code: "KeyF", ctrlKey: true, shiftKey: true };
+
 function xtermTextarea(): HTMLTextAreaElement {
   const ta = mounted?.container.querySelector<HTMLTextAreaElement>('[data-testid="xterm-textarea"]');
   if (!ta) throw new Error("xterm textarea not found");
@@ -182,7 +185,6 @@ beforeEach(async () => {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -199,8 +201,8 @@ afterEach(() => {
 });
 
 describe("terminal search shortcut", () => {
-  it("opens and focuses terminal search with Ctrl+F on non-mac platforms", async () => {
-    const { event, targetSeen, bubbleSeen } = await pressFromTerminal("f", { ctrlKey: true });
+  it("opens and focuses terminal search with Ctrl+Shift+F on non-mac platforms", async () => {
+    const { event, targetSeen, bubbleSeen } = await pressFromTerminal("F", SEARCH);
 
     expect(event.defaultPrevented).toBe(true);
     expect(targetSeen).not.toHaveBeenCalled();
@@ -209,7 +211,7 @@ describe("terminal search shortcut", () => {
     expect(input).not.toBeNull();
     expect(document.activeElement).toBe(input);
     expect(
-      mounted?.container.querySelector('button[title="搜索终端内容 (Ctrl+F)"]'),
+      mounted?.container.querySelector('button[title="搜索终端内容 (Ctrl+Shift+F)"]'),
     ).not.toBeNull();
   });
 
@@ -237,20 +239,21 @@ describe("terminal search shortcut", () => {
     ).not.toBeNull();
   });
 
-  it("ignores Shift/Alt variants, key repeats and IME composition", async () => {
-    const shift = await pressFromTerminal("f", { ctrlKey: true, shiftKey: true });
-    expect(shift.event.defaultPrevented).toBe(false);
+  it("leaves Ctrl+F (readline forward-char) to the terminal and ignores Alt variants, key repeats and IME composition", async () => {
+    const ctrlF = await pressFromTerminal("f", { ctrlKey: true });
+    expect(ctrlF.event.defaultPrevented).toBe(false);
+    expect(ctrlF.targetSeen).toHaveBeenCalledTimes(1);
     expect(searchInput()).toBeNull();
 
-    const alt = await pressFromTerminal("f", { ctrlKey: true, altKey: true });
+    const alt = await pressFromTerminal("F", { ...SEARCH, altKey: true });
     expect(alt.event.defaultPrevented).toBe(false);
     expect(searchInput()).toBeNull();
 
-    const repeat = await pressFromTerminal("f", { ctrlKey: true, repeat: true });
+    const repeat = await pressFromTerminal("F", { ...SEARCH, repeat: true });
     expect(repeat.event.defaultPrevented).toBe(false);
     expect(searchInput()).toBeNull();
 
-    const composing = await pressFromTerminal("f", { ctrlKey: true, isComposing: true });
+    const composing = await pressFromTerminal("F", { ...SEARCH, isComposing: true });
     expect(composing.event.defaultPrevented).toBe(false);
     expect(composing.targetSeen).toHaveBeenCalledTimes(1);
     expect(searchInput()).toBeNull();
@@ -258,16 +261,16 @@ describe("terminal search shortcut", () => {
 
   it("prefills the terminal selection and jumps to the first match", async () => {
     harness.selection = "hello\nworld";
-    await pressFromTerminal("f", { ctrlKey: true });
+    await pressFromTerminal("F", SEARCH);
 
     const input = searchInput();
     expect(input).not.toBeNull();
     expect(input?.value).toBe("hello");
-    await waitFor(() => expect(harness.findNext).toHaveBeenCalledWith("hello"));
+    await waitForRendered(() => expect(harness.findNext).toHaveBeenCalledWith("hello"));
   });
 
   it("refocuses the search input when the shortcut fires while search is open", async () => {
-    await pressFromTerminal("f", { ctrlKey: true });
+    await pressFromTerminal("F", SEARCH);
     const input = searchInput();
     expect(input).not.toBeNull();
 
@@ -275,7 +278,7 @@ describe("terminal search shortcut", () => {
     act(() => ta.focus());
     expect(document.activeElement).toBe(ta);
 
-    keyDown(ta, "f", { ctrlKey: true });
+    keyDown(ta, "F", SEARCH);
     await flushTimers();
     expect(searchInput()).toBe(input);
     expect(document.activeElement).toBe(input);
@@ -290,7 +293,7 @@ describe("terminal search shortcut", () => {
     expect(palette.event.defaultPrevented).toBe(false);
     expect(searchInput()).toBeNull();
 
-    await pressFromTerminal("f", { ctrlKey: true });
+    await pressFromTerminal("F", SEARCH);
     const input = searchInput();
     expect(input).not.toBeNull();
     keyDown(input as HTMLInputElement, "Escape");
@@ -309,6 +312,6 @@ describe("terminal search shortcut", () => {
     });
     await flush();
     const menu = document.querySelector<HTMLElement>('[role="menu"]');
-    expect(menu?.textContent).toContain("Ctrl+F");
+    expect(menu?.textContent).toContain("Ctrl+Shift+F");
   });
 });

@@ -26,8 +26,10 @@ while [ $# -gt 0 ]; do
       cat <<'PACK_HELP_EOF'
 Usage: scripts/pack-linux-server.sh [options]
 
-Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units and
-all nine SSH target helpers. scripts/build.mjs owns compilation/versioning;
+Package one full glibc-portable CGO_ENABLED=0 Go server tar.gz with both runtime units and
+all nine SSH target helpers. The server binary may be dynamically linked only
+against glibc (libc, libdl, libpthread; the purego ONNX Runtime loader) with no
+GLIBC_ symbol version above 2.17, so it runs on any glibc Linux but not musl. scripts/build.mjs owns compilation/versioning;
 scripts/e2e-harness retains --sync-only acceptance.
 
 Options:
@@ -69,14 +71,30 @@ case "$ARCH:$FILE_INFO" in
   amd64:*x86-64*|amd64:*x86_64*|arm64:*aarch64*|arm64:*ARM\ aarch64*) ;;
   *) echo "ELF architecture does not match $ARCH: $FILE_INFO" >&2; exit 1 ;;
 esac
-case "$FILE_INFO" in *statically\ linked*) ;; *) echo "Linux server must be statically linked: $FILE_INFO" >&2; exit 1 ;; esac
-if command -v readelf >/dev/null 2>&1 && readelf -l "$BIN" | grep -q 'DYNAMIC'; then
-  echo "Linux server contains a PT_DYNAMIC segment" >&2; exit 1
-fi
 GO_INFO="$(go version -m "$BIN")"
 printf '%s' "$GO_INFO" | grep -q 'CGO_ENABLED=0' || { echo "server was not built with CGO_ENABLED=0" >&2; exit 1; }
+case "$FILE_INFO" in
+  *statically\ linked*|*static-pie\ linked*) ;;
+  *)
+    command -v readelf >/dev/null || { echo "readelf is required to verify the dynamic server binary" >&2; exit 1; }
+    case "$ARCH" in amd64) WANT_INTERP=/lib64/ld-linux-x86-64.so.2 ;; arm64) WANT_INTERP=/lib/ld-linux-aarch64.so.1 ;; esac
+    ELF_INTERP="$(readelf -lW "$BIN" | sed -n 's/.*Requesting program interpreter: \(.*\)\]/\1/p')"
+    [ "$ELF_INTERP" = "$WANT_INTERP" ] || { echo "server interpreter is not the glibc loader $WANT_INTERP: ${ELF_INTERP:-none}" >&2; exit 1; }
+    while read -r needed; do
+      case "$needed" in libc.so.6|libdl.so.2|libpthread.so.0) ;; *) echo "server needs a non-glibc-portable library: $needed" >&2; exit 1 ;; esac
+    done < <(readelf -dW "$BIN" | sed -n 's/.*(NEEDED).*Shared library: \[\(.*\)\]/\1/p')
+    while read -r version; do
+      case "$version" in
+        GLIBC_2.[0-9]|GLIBC_2.1[0-7]|GLIBC_2.[0-9].*|GLIBC_2.1[0-7].*) ;;
+        *) echo "server requires symbol version $version, newer than GLIBC_2.17" >&2; exit 1 ;;
+      esac
+    done < <(readelf -VW "$BIN" | sed -n 's/.*Name: \([^ ]*\).*/\1/p')
+    ;;
+esac
 export NEXTERM_RELEASE_VERSION="$VERSION"
 node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$BIN" "server-linux-$ARCH" linux "$ARCH" 0
+RUNTIME_DIR="$(dirname "$BIN")/ai-runtime-linux-$ARCH"
+node "$ROOT/scripts/lib/privacy-runtime.mjs" "$RUNTIME_DIR" linux "$ARCH" "$BIN.manifest.json"
 
 for unit in nexterm-server.service nexterm-onlyserver.service; do
   [ -f "$ROOT/deploy/systemd/$unit" ] || { echo "missing systemd unit: deploy/systemd/$unit" >&2; exit 1; }
@@ -105,6 +123,7 @@ package_full() {
   local unit env_file member helper_os helper_arch helper_name
   mkdir -p "$dir"
   install -m 0755 "$BIN" "$dir/nexterm-server"
+  "$ARCHIVE_TOOL" copy-tree "$RUNTIME_DIR" "$dir/ai-runtime"
   while IFS='|' read -r helper_os helper_arch helper_name; do
     install -m 0755 "$HELPERS_DIR/$helper_name" "$dir/$helper_name"
   done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
@@ -122,9 +141,14 @@ package_full() {
   chmod 0644 "$OUT/$name.tar.gz"
 
   local archive_members
+  # Targets whose ONNX Runtime release has no library ship only the unavailable manifest.
+  local RUNTIME_LIBRARY_MEMBER=ai-runtime/libonnxruntime.so
+  if grep -q '"unavailable"' "$RUNTIME_DIR/runtime.json"; then RUNTIME_LIBRARY_MEMBER=ai-runtime/runtime.json; fi
   archive_members="$(tar -tzf "$OUT/$name.tar.gz")"
   for member in \
     nexterm-server \
+    ai-runtime/runtime.json \
+    ${RUNTIME_LIBRARY_MEMBER} \
     nexterm-server.service \
     nexterm-onlyserver.service \
     install.sh \
@@ -143,7 +167,7 @@ package_full() {
 ARTIFACT="$OUT/nexterm-server_linux_${ARCH}_${VERSION}.tar.gz"
 (cd "$ROOT" && package_full)
 
-report_args=(--kind=server-archive --os=linux "--arch=$ARCH" "--file=$ARTIFACT" "--helpers-dir=$HELPERS_DIR")
+report_args=(--kind=server-archive --cgo=1 --os=linux "--arch=$ARCH" "--file=$ARTIFACT" "--helpers-dir=$HELPERS_DIR")
 if [ "$REQUIRE_EVIDENCE" -ne 0 ]; then
   report_args+=(--require-evidence)
 fi

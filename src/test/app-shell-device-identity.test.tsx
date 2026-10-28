@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { act, createElement } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 import type { AccountUser } from "../ipc/authApi";
@@ -67,8 +67,7 @@ vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null, AssetEditor: () => null }));
-vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
-vi.mock("../app/QuickConnect", () => ({ QuickConnect: () => null }));
+vi.mock("../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
 vi.mock("../app/DekUnlockBanner", () => ({ DekUnlockBanner: () => null }));
@@ -111,7 +110,7 @@ function seed(): void {
 		rightOpen: false,
 		leftMode: "assets",
 		sessions: [
-			{ id: "s-dev", assetId: "device/d-1", assetName: "web-01", kind: "device", status: "connected", controller: "" },
+			{ id: "s-dev", assetId: "device/d-1", assetName: "web-01", kind: "device", status: "connected" },
 		] as never,
 		workspaces: [
 			{
@@ -124,7 +123,6 @@ function seed(): void {
 				assetKind: "device",
 				panes: [{ id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", sessionId: "s-dev", title: "Terminal", closable: true }] }],
 				activePaneId: "p1",
-				splitRatio: 0.5,
 			},
 		] as never,
 		activeWorkspaceId: "ws-dev",
@@ -160,6 +158,15 @@ function expectDevicePreserved(): void {
 	expect(mocks.disconnect).not.toHaveBeenCalled();
 	expect(resetAccountWorkspaces).not.toHaveBeenCalled();
 }
+
+// The shell loads these panels through React.lazy or dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+	await Promise.all([
+		import("../app/AutoSync"),
+		import("../features/auth/AuthGate"),
+	]);
+});
 
 beforeEach(() => {
 	vi.clearAllMocks();

@@ -103,7 +103,7 @@ func (m *Manager) automaticDurableProvider(ctx context.Context, session *Session
 		session.durableMu.Unlock()
 		return provider, nil
 	}
-	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport && m.now().Sub(session.durableFailureAt) < 30*time.Second {
+	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport && m.now().Sub(session.durableFailureAt) < durableFailureRetryWindow {
 		err := session.durableFailure
 		session.durableMu.Unlock()
 		return nil, err
@@ -166,6 +166,25 @@ func (m *Manager) ensureBackgroundHelper(session *Session, transport *transportH
 		delete(backgroundHelperDeployments.entries, session)
 		entry.cancel()
 	}
+	backgroundHelperDeployments.Unlock()
+	// A deployment that just finished for this generation already stored its provider under session.mu; a caller that
+	// read the provider before that must join the finished deployment instead of starting a second one.
+	session.durableMu.Lock()
+	storedProvider := session.durableProvider
+	if session.durableGen != generation || session.durableTransport != transport {
+		storedProvider = nil
+	}
+	session.durableMu.Unlock()
+	completedHelperDeployments.Lock()
+	if completed := completedHelperDeployments.entries[session]; completed != nil && completed.transport == transport &&
+		completed.generation == generation && completed.err == nil && completed.provider != nil && completed.provider == storedProvider {
+		completedHelperDeployments.Unlock()
+		session.mu.Unlock()
+		return completed, false, nil
+	}
+	completedHelperDeployments.Unlock()
+	// Entries are only added under session.mu, which is still held, so the map has no entry for this session now.
+	backgroundHelperDeployments.Lock()
 	baseCtx := session.ctx
 	if baseCtx == nil {
 		baseCtx = m.ctx
@@ -244,6 +263,10 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 	if entry.err == nil && entry.provider == nil {
 		entry.err = errors.New("helper resolver returned a nil provider")
 	}
+	// The outcome is stored and the running entry removed under session.mu, the lock ensureBackgroundHelper holds:
+	// a caller that no longer sees the running deployment therefore already sees its provider or failure, and never
+	// starts a second deployment in between.
+	session.mu.Lock()
 	backgroundHelperDeployments.Lock()
 	canceledByUser := entry.canceledByUser
 	if backgroundHelperDeployments.entries[session] == entry {
@@ -251,7 +274,6 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 	}
 	backgroundHelperDeployments.Unlock()
 	recordCompletedHelperDeployment(entry)
-	session.mu.Lock()
 	if session.transport == entry.transport && session.generation == entry.generation {
 		session.durableMu.Lock()
 		session.durableGen = entry.generation
@@ -377,10 +399,12 @@ func (m *Manager) RetryHelperOperation(ctx context.Context, sessionID, operation
 // terminal creation uses automaticDurableProvider to return ordinary SSH first.
 func (m *Manager) durableProviderFor(ctx context.Context, session *Session, transport *transportHandle, kind string, generation uint64, retryFailure bool) (base.DurableProvider, error) {
 	if kind == KindLocal {
-		if m.durable == nil {
-			return nil, ErrUnsupported
+		// retryFailure marks the explicit paths (list, recover, kill) that
+		// work on existing terminals; new tabs pass false.
+		if retryFailure {
+			return m.localDurableProvider(ctx, localRecoverWait, true)
 		}
-		return m.durable, nil
+		return m.localDurableProvider(ctx, localOpenWait, false)
 	}
 	if (kind != KindSSH && kind != KindDevice) || m.resolver == nil || transport == nil {
 		return nil, ErrUnsupported
@@ -428,7 +452,7 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 		// Deploying while holding durableMu would stall every first tab of the session behind this call (the tab
 		// open path and fallback notice need the same lock), so no SSH deployment may run under it.
 		if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport &&
-			!retryFailure && m.now().Sub(session.durableFailureAt) < 30*time.Second {
+			!retryFailure && m.now().Sub(session.durableFailureAt) < durableFailureRetryWindow {
 			err := session.durableFailure
 			session.durableMu.Unlock()
 			return nil, err
@@ -446,7 +470,7 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 	}
 	defer session.durableMu.Unlock()
 	if session.durableFailure != nil && session.durableGen == generation && session.durableTransport == transport &&
-		!retryFailure && m.now().Sub(session.durableFailureAt) < 30*time.Second {
+		!retryFailure && m.now().Sub(session.durableFailureAt) < durableFailureRetryWindow {
 		return nil, session.durableFailure
 	}
 	session.durableFailure = nil
@@ -581,7 +605,7 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 	}
 	session.mu.Lock()
 	kind := session.asset.Kind
-	if kind != KindSSH && kind != KindDevice {
+	if kind != KindSSH && kind != KindDevice && (kind != KindLocal || !m.localDurableEnabled()) {
 		session.mu.Unlock()
 		return nil, ErrUnsupported
 	}
@@ -612,15 +636,15 @@ func (m *Manager) ListRemoteDurable(ctx context.Context, sessionID string) ([]ba
 			return nil, failure
 		}
 	}
-	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, false)
+	provider, err := m.durableProviderFor(ctx, session, transport, kind, generation, kind == KindLocal)
+	if localHelperNotRunning(kind, err) {
+		// No local helper runs, so no local terminal of an earlier run is alive.
+		return []base.DurableDescriptor{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	lister, ok := provider.(base.DurableDescriptorLister)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	descriptors, err := lister.ListDurableDescriptors(ctx)
+	descriptors, err := provider.ListDurableDescriptors(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -661,7 +685,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 			return TabInfo{}, err
 		}
 		info := selected.Info()
-		if info.Kind != KindSSH && info.Kind != KindDevice {
+		if !m.durableHostKind(info.Kind) {
 			return TabInfo{}, ErrUnsupported
 		}
 		if info.Status != StatusConnected {
@@ -689,11 +713,10 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 	type match struct {
 		sessionID  string
 		descriptor base.DurableDescriptor
-		canonical  bool
 	}
 	var matches []match
 	for _, info := range infos {
-		if (info.Kind != KindSSH && info.Kind != KindDevice) || info.Status != StatusConnected {
+		if !m.durableHostKind(info.Kind) || info.Status != StatusConnected {
 			continue
 		}
 		session, err := m.Session(info.ID)
@@ -708,7 +731,10 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		transport := session.transport
 		generation := session.generation
 		session.mu.Unlock()
-		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, false)
+		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, info.Kind == KindLocal)
+		if localHelperNotRunning(info.Kind, err) {
+			continue
+		}
 		if err != nil {
 			searchErrs = append(searchErrs, err)
 			continue
@@ -721,12 +747,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		if !found {
 			continue
 		}
-		canonical, err := durableMetadataSupported(ctx, provider)
-		if err != nil {
-			searchErrs = append(searchErrs, err)
-			continue
-		}
-		matches = append(matches, match{sessionID: session.ID, descriptor: descriptor, canonical: canonical})
+		matches = append(matches, match{sessionID: session.ID, descriptor: descriptor})
 	}
 	if len(matches) > 1 {
 		return TabInfo{}, ErrAmbiguousDurable
@@ -744,11 +765,11 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 	options.TabID = tabID
 	options.SessionID = selected.sessionID
 	options.Durable = &DurableTabOptions{
-		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision, CanonicalMetadata: selected.canonical,
+		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision,
 		RecoveredExited: selected.descriptor.Dead,
 	}
 	if selected.descriptor.Incarnation != "" {
-		identity := base.DurableIdentity{CreatedAt: selected.descriptor.CreatedAt, Incarnation: selected.descriptor.Incarnation}
+		identity := base.DurableIdentity{CreatedAt: selected.descriptor.CreatedAt, Incarnation: selected.descriptor.Incarnation, Generation: selected.descriptor.Generation}
 		options.Durable.Identity = &identity
 	}
 	return m.OpenTab(ctx, options)
@@ -766,7 +787,7 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 			continue
 		}
 		info := session.Info()
-		if (info.Kind != KindSSH && info.Kind != KindDevice) || info.Status != StatusConnected {
+		if !m.durableHostKind(info.Kind) || info.Status != StatusConnected {
 			continue
 		}
 		if _, err := m.terminalModeFor(ctx, session); err != nil {
@@ -777,7 +798,10 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 		transport := session.transport
 		generation := session.generation
 		session.mu.Unlock()
-		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, false)
+		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation, info.Kind == KindLocal)
+		if localHelperNotRunning(info.Kind, err) {
+			continue
+		}
 		if err != nil {
 			searchErrs = append(searchErrs, err)
 			continue
@@ -797,6 +821,12 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 	return owners, nil
 }
 
+// durableHostKind reports a session kind whose durable terminals live in a
+// helper this manager can list and recover from.
+func (m *Manager) durableHostKind(kind string) bool {
+	return kind == KindSSH || kind == KindDevice || kind == KindLocal && m.localDurableEnabled()
+}
+
 func onlyHelperUnavailable(errs []error) bool {
 	for _, err := range errs {
 		if !sshHelperUnavailable(err) {
@@ -807,55 +837,34 @@ func onlyHelperUnavailable(errs []error) bool {
 }
 
 func findDurableDescriptor(ctx context.Context, provider base.DurableProvider, tabID string) (base.DurableDescriptor, bool, error) {
-	if lister, ok := provider.(base.DurableDescriptorLister); ok {
-		descriptors, err := lister.ListDurableDescriptors(ctx)
-		if err != nil {
-			return base.DurableDescriptor{}, false, err
-		}
-		for _, descriptor := range descriptors {
-			if descriptor.ID == tabID {
-				return descriptor, true, nil
-			}
-		}
-		return base.DurableDescriptor{}, false, nil
-	}
-	lister, ok := provider.(DurableLister)
-	if !ok {
-		return base.DurableDescriptor{}, false, nil
-	}
-	ids, err := lister.ListDurable(ctx)
+	descriptors, err := provider.ListDurableDescriptors(ctx)
 	if err != nil {
 		return base.DurableDescriptor{}, false, err
 	}
-	for _, id := range ids {
-		if id == tabID {
-			return base.DurableDescriptor{ID: tabID}, true, nil
+	for _, descriptor := range descriptors {
+		if descriptor.ID == tabID {
+			return descriptor, true, nil
 		}
 	}
 	return base.DurableDescriptor{}, false, nil
 }
 
-func durableMetadataSupported(ctx context.Context, provider base.DurableProvider) (bool, error) {
-	metadata, ok := provider.(base.DurableMetadataProvider)
-	if !ok {
-		return false, nil
+// attachRecoveredDurable opens a durable tab this process has no resume
+// offset for, replaying only the recent tail; retain, when set, also streams
+// the output after that offset for the transcript.
+func attachRecoveredDurable(ctx context.Context, provider base.DurableProvider, tabID string, identity *base.DurableIdentity, retain *uint64) (base.DurableAttachment, error) {
+	if identity == nil || identity.Incarnation == "" {
+		return nil, ErrDurableUnrecoverable
 	}
-	supported, err := metadata.DurableMetadataSupported(ctx)
-	if errors.Is(err, base.ErrUnsupported) {
-		return false, nil
-	}
-	return supported, err
+	return provider.AttachTailWithIdentity(ctx, tabID, *identity, base.DurableTailOptions{Tail: base.DurableFreshTailBytes, Retain: retain})
 }
 
-func attachRecoveredDurable(ctx context.Context, provider base.DurableProvider, tabID string, identity *base.DurableIdentity) (base.DurableAttachment, error) {
-	if identity == nil || identity.Incarnation == "" {
-		return provider.Attach(ctx, tabID)
-	}
-	attacher, ok := provider.(base.DurableIdentityAttacher)
+func durableReplayOf(attachment base.DurableAttachment) (base.DurableReplay, bool) {
+	reporter, ok := attachment.(base.DurableReplayReporter)
 	if !ok {
-		return nil, ErrUnsupported
+		return base.DurableReplay{}, false
 	}
-	return attacher.AttachWithIdentity(ctx, tabID, *identity)
+	return reporter.DurableReplay(), true
 }
 
 func durableAttachmentIdentity(attachment base.DurableAttachment) (base.DurableIdentity, bool) {
@@ -869,13 +878,16 @@ func durableAttachmentIdentity(attachment base.DurableAttachment) (base.DurableI
 	if identity.Incarnation == "" {
 		return base.DurableIdentity{}, false
 	}
-	return base.DurableIdentity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation}, true
+	return base.DurableIdentity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation, Generation: identity.Generation}, true
 }
 
-func (m *Manager) renameCanonicalTab(ctx context.Context, tab *Tab, provider base.DurableProvider, title string) (TabInfo, error) {
+func (m *Manager) renameCanonicalTab(ctx context.Context, tab *Tab, provider base.DurableProvider, title string, at int64) (TabInfo, error) {
 	attempt, cached, err := beginDurableRename(ctx, tab, provider, title)
 	if err != nil {
 		return TabInfo{}, err
+	}
+	if !cached {
+		attempt.changedAt = at
 	}
 	if cached {
 		if attempt.err != nil {
@@ -896,7 +908,7 @@ func (m *Manager) renameCanonicalTab(ctx context.Context, tab *Tab, provider bas
 	if identity.Incarnation == "" {
 		return TabInfo{}, durable.ErrIdentity
 	}
-	result, err := provider.(base.DurableMetadataProvider).RenameDurable(ctx, base.DurableRenameOptions{
+	result, err := provider.RenameDurable(ctx, base.DurableRenameOptions{
 		ID: tab.ID, Incarnation: identity.Incarnation, RequestID: attempt.requestID, ExpectedMetadataRevision: metadataRevision, Title: title,
 	})
 	return m.finishDurableRename(ctx, tab, provider, attempt, result, err)
@@ -913,9 +925,8 @@ func beginDurableRename(ctx context.Context, tab *Tab, provider base.DurableProv
 		return nil, false, err
 	}
 	if found && descriptor.Incarnation != tab.durableIdentity.Incarnation {
-		tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
-		tab.title = descriptor.Title
-		tab.titleCustom = descriptor.Title != ""
+		tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
+		tab.adoptHelperTitleLocked(descriptor.Title)
 		tab.metadataRevision = descriptor.MetadataRevision
 	}
 	for id, attempt := range tab.renameAttempts {
@@ -945,6 +956,20 @@ func beginDurableRename(ctx context.Context, tab *Tab, provider base.DurableProv
 	return attempt, false, nil
 }
 
+// adoptHelperTitleLocked takes the canonical title the shared helper reports
+// (another instance may have renamed or cleared it). The helper carries no
+// decision time, so a title that differs from the current one is stamped
+// with this backend's clock: that decision is at least as new as now from
+// this backend's view, and a stale client decision must not win over it.
+func (t *Tab) adoptHelperTitleLocked(title string) {
+	custom := title != ""
+	if title != t.title || custom != t.titleCustom {
+		t.titleChangedAt = time.Now().UnixMilli()
+	}
+	t.title = title
+	t.titleCustom = custom
+}
+
 func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider base.DurableProvider, attempt *durableRenameAttempt, result base.DurableRenameResult, err error) (TabInfo, error) {
 	attempt.err = err
 	if err == nil {
@@ -960,6 +985,9 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 			}
 			tab.title = result.Title
 			tab.titleCustom = result.Title != ""
+			if attempt.changedAt > 0 {
+				tab.titleChangedAt = attempt.changedAt
+			}
 			tab.metadataRevision = result.MetadataRevision
 			attempt.resultTitle = result.Title
 			attempt.resultMetadataRevision = result.MetadataRevision
@@ -983,8 +1011,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 		attempt.resultMetadataRevision = conflict.CurrentMetadataRevision
 		tab.mu.Lock()
 		if !tab.closed && !tab.destroying {
-			tab.title = conflict.CurrentTitle
-			tab.titleCustom = conflict.CurrentTitle != ""
+			tab.adoptHelperTitleLocked(conflict.CurrentTitle)
 			tab.metadataRevision = conflict.CurrentMetadataRevision
 			event := tab.controlEventLocked()
 			tab.mu.Unlock()
@@ -1004,9 +1031,8 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 			attempt.resultMetadataRevision = descriptor.MetadataRevision
 			tab.mu.Lock()
 			if !tab.closed && !tab.destroying {
-				tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation}
-				tab.title = descriptor.Title
-				tab.titleCustom = descriptor.Title != ""
+				tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
+				tab.adoptHelperTitleLocked(descriptor.Title)
 				tab.metadataRevision = descriptor.MetadataRevision
 				event := tab.controlEventLocked()
 				tab.mu.Unlock()
@@ -1053,30 +1079,4 @@ func (t *Tab) addDurableFed(count int64) {
 		t.durableFed += count
 	}
 	t.mu.Unlock()
-}
-
-// prefixSkipChannel drops the leading bytes of the wrapped channel so a
-// reattached durable stream resumes where the previous attachment stopped
-// instead of replaying consumed history into the terminal and transcript.
-type prefixSkipChannel struct {
-	base.Channel
-	remaining int64
-}
-
-func (c *prefixSkipChannel) Read(p []byte) (int, error) {
-	for c.remaining > 0 {
-		discard := p
-		if int64(len(discard)) > c.remaining {
-			discard = discard[:c.remaining]
-		}
-		count, err := c.Channel.Read(discard)
-		c.remaining -= int64(count)
-		if err != nil {
-			return 0, err
-		}
-		if count == 0 {
-			return 0, nil
-		}
-	}
-	return c.Channel.Read(p)
 }

@@ -12,7 +12,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { type FleetBaseURLEntry, type FleetDevice } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
-import { connectDevice, useUi } from "../../app/store";
+import { connectDevice, deviceAssetId, useUi } from "../../app/store";
+import { openHostDetail } from "../hosts/hostDetail";
 import { WEB } from "../../ipc/env";
 import { fleetClient } from "./clients";
 import { useFleetAccount } from "./useFleetAccount";
@@ -241,12 +242,15 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   const hasServiceReport = Boolean(serviceState && (serviceState.installed || serviceState.enabled || serviceState.active || serviceState.last_reconcile_at));
   const autostartActual = Boolean(serviceState?.installed && serviceState?.enabled);
   const runningText = !hasServiceReport ? "未上报" : serviceState?.active ? "运行中" : "未运行";
-  const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== autostartActual && !revoked);
+  // A desktop exposing its local terminals runs inside the desktop app and has no autostart service.
+  const localHelper = device.kind === "local-helper";
+  const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== autostartActual && !revoked && !localHelper);
   const serviceError = serviceState?.last_error;
 
   const openMenu = (e: ReactMouseEvent<HTMLButtonElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const items: MenuItem[] = [];
+    items.push({ kind: "item", label: "主机详情", hint: "会话、容器和指标", onSelect: () => openHostDetail(deviceAssetId(device.id)) });
     items.push({ kind: "item", label: "复制设备名称", onSelect: () => copyText(device.name, pushToast, "设备名称") });
     if (agent?.current_url) {
       const url = agent.current_url;
@@ -335,7 +339,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             </span>
           </>
         ) : (
-          <span>{device.kind === "browser" ? "浏览器设备" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
+          <span>{device.kind === "browser" ? "浏览器设备" : device.kind === "local-helper" ? "桌面本机终端" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
         )}
       </div>
 
@@ -405,7 +409,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
         <dl className="m-0 mt-2 flex flex-col gap-1.5">
           <DetailRow label="创建时间">{formatTime(device.created_at)}</DetailRow>
           <DetailRow label="代理版本">{agent.app_version ? `v${agent.app_version.replace(/^v/i, "")}` : "未上报"}</DetailRow>
-          <DetailRow label="系统平台">{agent.platform ? platformLabel(agent.platform) : "未知"}</DetailRow>
+          {agent.platform && <DetailRow label="系统平台">{platformLabel(agent.platform)}</DetailRow>}
           <DetailRow label="接入地址">
             {agent.current_url ? (
               <span className="flex flex-wrap items-center gap-2">
@@ -438,7 +442,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             </label>
             {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：服务器立即按新设置拒绝或放行，设备上线后同步</div>}
           </DetailRow>
-          <DetailRow label="随登录自动启动">
+          {!localHelper && <DetailRow label="随登录自动启动">
             <label className="flex flex-wrap items-center gap-1.5">
               <input
                 type="checkbox"
@@ -453,7 +457,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
               </span>
             </label>
             {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：修改只会保存为期望状态，上线后生效</div>}
-          </DetailRow>
+          </DetailRow>}
           <DetailRow label="后台服务">{runningText}</DetailRow>
         </dl>
       )}

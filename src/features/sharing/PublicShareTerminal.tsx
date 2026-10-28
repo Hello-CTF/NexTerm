@@ -3,9 +3,11 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
-import { XTERM_DARK_THEME } from "../terminal/xtermTheme";
+import { TERMINAL_FONT_STACKS, XTERM_DARK_THEME } from "../terminal/xtermTheme";
 import { scheduleWebglRenderer } from "../terminal/xtermAddons";
 import { createSelectionAutoCopy } from "../terminal/selectionAutoCopy";
+import { isAutomaticTerminalReply } from "../terminal/terminalResponses";
+import { createUserInputGate } from "../terminal/userInputGate";
 
 export interface PublicShareTerminalHandle {
   write: (bytes: Uint8Array) => void;
@@ -37,7 +39,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
     if (!host || termRef.current) return;
     const term = new Terminal({
       scrollback: 100_000,
-      fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
+      fontFamily: TERMINAL_FONT_STACKS.cascadia,
       fontSize: 14,
       cursorBlink: true,
       disableStdin: readOnlyRef.current ?? false,
@@ -48,7 +50,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
     termRef.current = term;
     term.open(host);
     let disposed = false;
-    const cancelWebgl = scheduleWebglRenderer(term, () => disposed);
+    const webgl = scheduleWebglRenderer(term, () => disposed);
 
     const fitLocal = () => {
       try {
@@ -58,7 +60,15 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
     };
     fitLocal();
 
-    const dataDisposable = term.onData((data) => onInputRef.current(data));
+    // A guest view never answers terminal queries: the host's terminal or
+    // the server's headless screen does, so the shell gets one reply. Only
+    // reply-shaped data raised by the guest's own input (a modified F3 looks
+    // like a cursor report) goes through.
+    const userInput = createUserInputGate(host);
+    const dataDisposable = term.onData((data) => {
+      if (!userInput.active() && isAutomaticTerminalReply(data)) return;
+      onInputRef.current(data);
+    });
     const autoCopy = createSelectionAutoCopy({
       isEnabled: () => true,
       getSelection: () => term.getSelection(),
@@ -85,10 +95,11 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
       window.removeEventListener("resize", onWindowResize);
       window.visualViewport?.removeEventListener("resize", onWindowResize);
       dataDisposable.dispose();
+      userInput.dispose();
       selectionDisposable.dispose();
       autoCopy.dispose();
       disposed = true;
-      cancelWebgl();
+      webgl.cancel();
       term.dispose();
       termRef.current = null;
     };

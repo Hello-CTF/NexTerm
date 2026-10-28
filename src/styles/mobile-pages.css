@@ -1,0 +1,82 @@
+/* mobile: pages */
+/* A wrapper with .nx-cards-wrap turns an .nx-table-cards table into stacked cards when the wrapper is narrow.
+   Cells expose their column title through data-label. */
+.nx-cards-wrap {
+  container-type: inline-size;
+}
+
+@container (max-width: 640px) {
+  .nx-cards-wrap .nx-table-cards {
+    display: block;
+    min-width: 0 !important;
+    width: 100%;
+  }
+  .nx-cards-wrap .nx-table-cards thead {
+    display: none;
+  }
+  .nx-cards-wrap .nx-table-cards tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .nx-cards-wrap .nx-table-cards tbody tr {
+    display: block;
+    padding: 6px 10px;
+    border: 1px solid var(--nx-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-neutral-950) 35%, transparent);
+  }
+  .nx-cards-wrap .nx-table-cards tbody td {
+    display: block;
+    width: auto !important;
+    max-width: none !important;
+    padding: 4px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-neutral-800) 40%, transparent);
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    text-align: left !important;
+    overflow-wrap: anywhere;
+  }
+  .nx-cards-wrap .nx-table-cards tbody tr td:last-child {
+    border-bottom: none;
+  }
+  .nx-cards-wrap .nx-table-cards tbody td[data-label] {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    column-gap: 8px;
+    align-items: start;
+  }
+  .nx-cards-wrap .nx-table-cards tbody td[data-label]::before {
+    content: attr(data-label);
+    color: var(--nx-fg-tertiary);
+    font-size: 11px;
+  }
+  .nx-cards-wrap .nx-table-cards tbody td[data-label=""]::before {
+    content: none;
+  }
+  .nx-cards-wrap .nx-table-cards tbody td[data-label=""] {
+    display: block;
+  }
+  .nx-cards-wrap .nx-table-cards tbody tr:hover td {
+    background: transparent;
+  }
+}
+
+@media (max-width: 560px) {
+  .nx-settings-view .nx-card {
+    padding: 12px;
+  }
+  .nx-settings-view .nx-card-title {
+    white-space: nowrap;
+  }
+}
+
+@media (pointer: coarse) {
+  .nx-settings-view [data-testid="settings-nav-chips"] .nx-chip {
+    height: 34px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+}
+/* end mobile: pages */

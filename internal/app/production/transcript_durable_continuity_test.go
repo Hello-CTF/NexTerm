@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -35,7 +36,18 @@ func (p *continuityDurableProvider) Create(_ context.Context, options base.Durab
 	return continuityDurableAttachment{channel}, nil
 }
 
-func (p *continuityDurableProvider) Attach(_ context.Context, id string) (base.DurableAttachment, error) {
+// continuityDurableIdentity is the single incarnation this fake reports; these
+// tests exercise transcript continuity, not identity checks.
+var continuityDurableIdentity = base.DurableIdentity{Incarnation: "continuity-incarnation"}
+
+func (p *continuityDurableProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *continuityDurableProvider) AttachFromWithIdentity(_ context.Context, id string, identity base.DurableIdentity, _ uint64) (base.DurableAttachment, error) {
+	if identity.Incarnation != continuityDurableIdentity.Incarnation {
+		return nil, durable.ErrIdentity
+	}
 	p.mu.Lock()
 	record := p.records[id]
 	if record == nil {
@@ -50,6 +62,26 @@ func (p *continuityDurableProvider) Attach(_ context.Context, id string) (base.D
 		channel.reads <- bytes.Clone(data)
 	}
 	return continuityDurableAttachment{channel}, nil
+}
+
+func (p *continuityDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+func (p *continuityDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
+	return nil, base.ErrUnsupported
+}
+
+func (p *continuityDurableProvider) RenameDurable(context.Context, base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	return base.DurableRenameResult{}, base.ErrUnsupported
+}
+
+func (p *continuityDurableProvider) KillWithIdentity(context.Context, string, base.DurableIdentity) error {
+	return base.ErrUnsupported
+}
+
+func (p *continuityDurableProvider) ReadDurableHistory(context.Context, string, base.DurableIdentity, base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	return base.DurableHistoryChunk{}, base.ErrUnsupported
 }
 
 func (p *continuityDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
@@ -103,6 +135,38 @@ func startContinuityManager(t *testing.T, database *delayedTranscriptStore, prov
 	})
 	t.Cleanup(func() { _ = manager.Close() })
 	return manager, writer
+}
+
+// A gap reported by the session advances the durable offset by the dropped
+// bytes and records a visible notice instead of them.
+func TestTranscriptWriterDurableGapAdvancesOffset(t *testing.T) {
+	ctx := context.Background()
+	database := newDelayedTranscriptStore()
+	database.unblock()
+	writer := newTranscriptWriter(transcriptWriterConfig{Database: database, Logger: discardTranscriptLogger()})
+	cleanupDelayedTranscriptWriter(t, writer, database)
+	if err := writer.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	writer.SessionStarted(ctx, session.TranscriptInfo{SessionID: "gap-session", AssetID: "gap-asset", AssetName: "gap", AssetKind: session.KindSSH})
+	writer.SessionOutput(ctx, "gap-durable", "gap-session", "gap-tab", []byte("0123456789"))
+	writer.SessionOutputGap(ctx, "gap-durable", "gap-session", "gap-tab", 1000)
+	writer.SessionOutput(ctx, "gap-durable", "gap-session", "gap-tab", []byte("tail"))
+	writer.SessionEnded(ctx, "gap-session")
+	if err := writer.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chunks, _, offsets, _ := database.snapshot()
+	if offsets["gap-durable"] != 1014 {
+		t.Fatalf("durable offset = %d, want 1014", offsets["gap-durable"])
+	}
+	var recorded []byte
+	for _, chunk := range chunks {
+		recorded = append(recorded, chunk.Data...)
+	}
+	if !bytes.Contains(recorded, []byte("1000 byte(s) of output were dropped")) || !bytes.HasSuffix(recorded, []byte("tail")) {
+		t.Fatalf("transcript = %q", recorded)
+	}
 }
 
 func TestTranscriptWriterDurableRecoveryDoesNotSkipOrDuplicate(t *testing.T) {
@@ -169,7 +233,7 @@ func TestTranscriptWriterDurableRecoveryDoesNotSkipOrDuplicate(t *testing.T) {
 	}
 	if _, err := second.OpenTab(ctx, session.OpenTabOptions{
 		TabID: opened.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "continuity-b", Cols: 80, Rows: 24,
-		Durable: &session.DurableTabOptions{Recover: true},
+		Durable: &session.DurableTabOptions{Recover: true, Identity: &continuityDurableIdentity},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +286,7 @@ func TestTranscriptWriterDurableRecoveryMultipleIDsStayIndependent(t *testing.T)
 			TabID: tabID, SessionID: sessionID, ClientID: "client-a", ChannelID: channelID, Cols: 80, Rows: 24,
 		}
 		if recover {
-			options.Durable = &session.DurableTabOptions{Recover: true}
+			options.Durable = &session.DurableTabOptions{Recover: true, Identity: &continuityDurableIdentity}
 		} else {
 			options.Durable = &session.DurableTabOptions{Command: []string{"/bin/sh"}}
 		}

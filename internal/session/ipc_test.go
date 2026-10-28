@@ -10,6 +10,8 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
@@ -36,15 +38,16 @@ func TestIPCErrorPreservesControlAndLifecycleCodes(t *testing.T) {
 		err  error
 		code ipc.Code
 	}{
-		{err: ErrNotController, code: ipc.CodeNotController},
 		{err: ErrSessionNotFound, code: ipc.CodeNotFound},
+		{err: fmt.Errorf("tap: %w", base.ErrStalePrompt), code: ipc.Code("stale_prompt")},
 		{err: ErrTabNotFound, code: ipc.CodeNotFound},
 		{err: durable.ErrNotFound, code: ipc.CodeNotFound},
 		{err: ErrDisconnected, code: ipc.CodeDisconnected},
 		{err: ErrUnsupported, code: ipc.CodeUnsupported},
 		{err: ErrDurableDisabled, code: ipc.CodeUnsupported},
 		{err: ErrAmbiguousDurable, code: ipc.CodeBadParam},
-		{err: durable.ErrUnavailable, code: ipc.CodeUnsupported},
+		{err: durable.ErrUnavailable, code: ipc.CodeDisconnected},
+		{err: fmt.Errorf("%w: dial supervisor: connection refused", durable.ErrUnavailable), code: ipc.CodeDisconnected},
 		{err: ErrInvalidSize, code: ipc.CodeBadParam},
 		{err: ErrHidden, code: ipc.CodeBadParam},
 		{err: durable.ErrInvalidInput, code: ipc.CodeBadParam},
@@ -68,13 +71,19 @@ func TestIPCErrorUserMessagesAreActionable(t *testing.T) {
 		{err: ErrSessionNotFound, code: ipc.CodeNotFound, want: "会话不存在或已关闭"},
 		{err: fmt.Errorf("lookup: %w", ErrSessionNotFound), code: ipc.CodeNotFound, want: "会话不存在或已关闭"},
 		{err: ErrTabNotFound, code: ipc.CodeNotFound, want: "终端标签页不存在或已关闭"},
-		{err: ErrNotController, code: ipc.CodeNotController, want: "请先获取控制权"},
 		{err: ErrDisconnected, code: ipc.CodeDisconnected, want: "请重新连接"},
 		{err: ErrSessionClosed, code: ipc.CodeDisconnected, want: "会话已关闭"},
 		{err: ErrTabClosed, code: ipc.CodeDisconnected, want: "终端标签页已关闭"},
 		{err: ErrUnsupported, code: ipc.CodeUnsupported, want: "不支持"},
+		{err: durable.ErrUnavailable, code: ipc.CodeDisconnected, want: "主机连接可能已断开或不可达"},
+		{err: fmt.Errorf("%w: dial supervisor: connection refused", durable.ErrUnavailable), code: ipc.CodeDisconnected, want: "connection refused"},
 		{err: ErrDurableDisabled, code: ipc.CodeUnsupported, want: "已有持久终端可从后台会话恢复"},
 		{err: ErrAmbiguousDurable, code: ipc.CodeBadParam, want: "指定会话"},
+		{err: ErrDurableUnrecoverable, code: ipc.Code("durable_unrecoverable"), want: "无法恢复"},
+		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrHelperUpgradeRequired), code: ipc.Code("helper_upgrade_required"), want: "需要升级"},
+		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrLegacyHelperRunning), code: ipc.Code("helper_upgrade_required"), want: "确认升级"},
+		{err: durable.ErrGenerationMismatch, code: ipc.Code("durable_helper_restarted"), want: "helper 已重启"},
+		{err: supervisor.ErrClientUpgradeRequired, code: ipc.Code("client_upgrade_required"), want: "升级客户端"},
 		{err: ErrInvalidSize, code: ipc.CodeBadParam, want: "终端尺寸无效"},
 		{err: context.DeadlineExceeded, code: ipc.CodeTimeout, want: "操作超时"},
 		{err: fmt.Errorf("reconnect: %w", ErrAssetSessionConflict), code: ipc.CodeInternal, want: "该资产已有活动会话"},

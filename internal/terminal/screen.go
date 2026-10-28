@@ -31,7 +31,11 @@ func newLineHistory(limit int) *lineHistory {
 	}
 }
 
+// A nil lineHistory keeps no scrollback: pushes are dropped.
 func (h *lineHistory) push(line string) {
+	if h == nil {
+		return
+	}
 	if h.size == len(h.lines) && len(h.lines) < h.limit {
 		capacity := min(len(h.lines)*2, h.limit)
 		lines := make([]string, capacity)
@@ -51,15 +55,23 @@ func (h *lineHistory) push(line string) {
 	h.head = (h.head + 1) % capacity
 }
 
-func (h *lineHistory) len() int { return h.size }
+func (h *lineHistory) len() int {
+	if h == nil {
+		return 0
+	}
+	return h.size
+}
 
 func (h *lineHistory) clear() {
+	if h == nil {
+		return
+	}
 	clear(h.lines)
 	h.head, h.size = 0, 0
 }
 
 func (h *lineHistory) last(n int) []string {
-	if n <= 0 || h.size == 0 {
+	if h == nil || n <= 0 || h.size == 0 {
 		return nil
 	}
 	if n > h.size {
@@ -73,18 +85,23 @@ func (h *lineHistory) last(n int) []string {
 	return out
 }
 
+// cell is one screen cell. comb is zero, or one plus the index in the row's marks of the cell's combining runes, which keeps a cell
+// at 8 bytes while marks move with their cell wherever cells are copied.
 type cell struct {
 	r    rune
-	comb []rune
+	comb uint16
 	wide bool
 	cont bool
 }
 
 // row is a line of cells. hi is an exclusive upper bound of the cells that may be non-empty: every cell at index >= hi is the zero
 // cell, which lets reset and String skip the blank tail of wide terminals. Code that stores a non-empty cell must call touch.
+//
+// marks holds the combining runes of the row's cells. An entry whose cell was overwritten stays until reset or compactMarks drops it.
 type row struct {
 	cells []cell
 	hi    int
+	marks [][]rune
 }
 
 func newRow(cols int) *row {
@@ -96,6 +113,46 @@ func newRow(cols int) *row {
 func (r *row) reset() {
 	clear(r.cells[:min(r.hi, len(r.cells))])
 	r.hi = 0
+	r.marks = r.marks[:0]
+}
+
+// combAt returns the combining runes of the cell at index i.
+func (r *row) combAt(i int) []rune {
+	if c := r.cells[i].comb; c != 0 {
+		return r.marks[c-1]
+	}
+	return nil
+}
+
+// addComb appends a combining rune to the cell at index i, reusing the storage of dropped entries.
+func (r *row) addComb(i int, mark rune) {
+	c := &r.cells[i]
+	if c.comb == 0 {
+		if len(r.marks) >= 2*len(r.cells)+8 {
+			r.compactMarks()
+		}
+		n := len(r.marks)
+		if n < cap(r.marks) {
+			r.marks = r.marks[:n+1]
+			r.marks[n] = r.marks[n][:0]
+		} else {
+			r.marks = append(r.marks, nil)
+		}
+		c.comb = uint16(n + 1)
+	}
+	r.marks[c.comb-1] = append(r.marks[c.comb-1], mark)
+}
+
+// compactMarks drops the entries no cell refers to any more.
+func (r *row) compactMarks() {
+	live := make([][]rune, 0, len(r.marks))
+	for i := range r.cells {
+		if c := &r.cells[i]; c.comb != 0 {
+			live = append(live, r.marks[c.comb-1])
+			c.comb = uint16(len(live))
+		}
+	}
+	r.marks = live
 }
 
 // touch records that the cell at index i may now be non-empty.
@@ -134,7 +191,7 @@ func (r *row) String() string {
 		if c.cont {
 			continue
 		}
-		if (c.r != 0 && c.r != ' ') || len(c.comb) > 0 {
+		if (c.r != 0 && c.r != ' ') || c.comb != 0 {
 			last = i
 			break
 		}
@@ -146,7 +203,7 @@ func (r *row) String() string {
 	buf := make([]byte, 0, last+1)
 	for i := 0; i <= last; i++ {
 		c := &r.cells[i]
-		if c.cont || len(c.comb) > 0 || c.wide || c.r >= utf8.RuneSelf {
+		if c.cont || c.comb != 0 || c.wide || c.r >= utf8.RuneSelf {
 			return r.stringSlow(last)
 		}
 		if c.r == 0 {
@@ -175,7 +232,7 @@ func (r *row) stringSlow(last int) string {
 		} else {
 			b.WriteRune(c.r)
 		}
-		for _, cr := range c.comb {
+		for _, cr := range r.combAt(i) {
 			b.WriteRune(cr)
 		}
 	}
@@ -380,12 +437,11 @@ func (s *screen) putCombining(r rune) {
 	if row.cells[targetC].cont && targetC > 0 {
 		targetC--
 	}
-	c := &row.cells[targetC]
-	if len(c.comb) >= maxCombiningRunes {
+	if len(row.combAt(targetC)) >= maxCombiningRunes {
 		return
 	}
 	row.touch(targetC)
-	c.comb = append(c.comb, r)
+	row.addComb(targetC, r)
 }
 
 func (r *row) clearPairAt(c int) {
@@ -427,12 +483,12 @@ func (s *screen) put(r rune, width int) {
 		row.clearPairAt(s.cur.c + 1)
 	}
 	c := &row.cells[s.cur.c]
-	c.r, c.comb, c.wide, c.cont = r, nil, width == 2, false
+	c.r, c.comb, c.wide, c.cont = r, 0, width == 2, false
 	row.touch(s.cur.c)
 	if width == 2 && s.cur.c+1 < s.cols {
 		row.touch(s.cur.c + 1)
 		next := &row.cells[s.cur.c+1]
-		next.r, next.comb, next.wide, next.cont = 0, nil, false, true
+		next.r, next.comb, next.wide, next.cont = 0, 0, false, true
 	}
 	next := s.cur.c + width
 	switch {
@@ -466,7 +522,7 @@ func (s *screen) scrollUp(n int) {
 	fullRegion := s.scrollTop == 0 && s.scrollBot == s.rows-1
 	for i := 0; i < n; i++ {
 		off := s.grid.rows[s.scrollTop]
-		if fullRegion && !s.alt {
+		if fullRegion && !s.alt && s.history != nil {
 			s.history.push(off.String())
 		}
 		copy(s.grid.rows[s.scrollTop:s.scrollBot], s.grid.rows[s.scrollTop+1:s.scrollBot+1])

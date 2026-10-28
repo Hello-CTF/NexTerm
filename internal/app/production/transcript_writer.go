@@ -100,8 +100,11 @@ type transcriptItem struct {
 	ts        int64
 	chunkKind int
 	data      []byte
-	info      session.TranscriptInfo
-	drop      transcriptDrop
+	// durableSkip, when positive, marks a gap chunk: data is a notice and the
+	// durable offset advances by durableSkip instead of len(data).
+	durableSkip int64
+	info        session.TranscriptInfo
+	drop        transcriptDrop
 }
 
 type transcriptPeriod struct {
@@ -297,6 +300,20 @@ func (w *transcriptWriter) SessionOutput(ctx context.Context, durableID, session
 	w.enqueue(ctx, transcriptItem{
 		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, durableID: durableID,
 		ts: time.Now().UnixMilli(), data: bytes.Clone(data),
+	})
+}
+
+// SessionOutputGap records that the durable helper dropped skipped bytes of
+// output before this process could record them. The durable offset advances
+// past them so it keeps matching the helper's absolute offsets.
+func (w *transcriptWriter) SessionOutputGap(ctx context.Context, durableID, sessionID, tabID string, skipped int64) {
+	if skipped <= 0 {
+		return
+	}
+	w.enqueue(ctx, transcriptItem{
+		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, durableID: durableID,
+		ts: time.Now().UnixMilli(), durableSkip: skipped,
+		data: []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] %d byte(s) of output were dropped by the durable history limit before they could be recorded\x1b[0m\r\n", skipped)),
 	})
 }
 
@@ -564,7 +581,11 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, def
 				if period.durableBytes == nil {
 					period.durableBytes = make(map[string]int64)
 				}
-				period.durableBytes[item.durableID] += int64(len(item.data))
+				advance := int64(len(item.data))
+				if item.durableSkip > 0 {
+					advance = item.durableSkip
+				}
+				period.durableBytes[item.durableID] += advance
 			}
 			period.pending = append(period.pending, store.TranscriptChunkRow{
 				Seq: period.nextSeq, TabID: item.tabID, TS: item.ts, Kind: item.chunkKind, Data: item.data,
@@ -732,3 +753,5 @@ func (w *transcriptWriter) enforceRetention(ctx context.Context) {
 func (w *transcriptWriter) retentionPolicy(ctx context.Context) (store.TranscriptRetentionPolicy, error) {
 	return core.TranscriptRetentionPolicy(ctx, w.retentionDatabase)
 }
+
+var _ session.TranscriptGapSink = (*transcriptWriter)(nil)

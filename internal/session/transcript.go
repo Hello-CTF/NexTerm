@@ -71,7 +71,10 @@ func (m *Manager) transcriptStarted(ctx context.Context, session *Session) {
 	})
 }
 
+// transcriptOutput receives the session's own output, never replay preludes
+// or notices, so it also drives the observed attention state.
 func (m *Manager) transcriptOutput(ctx context.Context, tab *Tab, data []byte) {
+	m.observeAttentionOutput(tab, data)
 	if m.transcripts == nil {
 		return
 	}
@@ -109,7 +112,11 @@ func (m *Manager) transcriptEnded(session *Session) {
 	m.transcripts.SessionEnded(ownerCtx(m.ctx, session.userID), session.ID)
 }
 
+// transcriptInput receives every input written to the session.
 func (m *Manager) transcriptInput(ctx context.Context, tab *Tab, data []byte) {
+	if len(data) > 0 {
+		m.observeAttentionInput(tab)
+	}
 	if m.transcripts == nil || len(data) == 0 {
 		return
 	}
@@ -149,24 +156,5 @@ func (m *Manager) persistDurableTranscriptOffset(ctx context.Context, tabID stri
 func (m *Manager) deleteDurableTranscriptOffset(ctx context.Context, tabID string) {
 	if m.offsets != nil {
 		m.offsets.DeleteDurableTranscriptOffsetContext(ctx, tabID)
-	}
-}
-
-func (m *Manager) durableTabTitle(ctx context.Context, tabID string) string {
-	if m.titles == nil {
-		return ""
-	}
-	return m.titles.DurableTabTitleContext(ctx, tabID)
-}
-
-func (m *Manager) persistDurableTabTitle(ctx context.Context, tabID, title string) {
-	if m.titles != nil {
-		m.titles.PersistDurableTabTitleContext(ctx, tabID, title)
-	}
-}
-
-func (m *Manager) deleteDurableTabTitle(ctx context.Context, tabID string) {
-	if m.titles != nil {
-		m.titles.DeleteDurableTabTitleContext(ctx, tabID)
 	}
 }

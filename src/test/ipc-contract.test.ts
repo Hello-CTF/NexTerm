@@ -159,6 +159,18 @@ describe("session and terminal facade IPC contracts", () => {
       sessionId: "session-1", path: "/tmp/helper", sha256: "a".repeat(64), confirmed: true,
     });
   });
+
+  it("prepares durable terminals through the generated non-nested contract", async () => {
+    const calls = captureRpc({ session_prepare_durable: { state: "unavailable", reason: "目标主机不支持持久终端组件" } });
+    const { sessionApi } = await import("../ipc/commands");
+
+    await expect(sessionApi.prepareDurable("session-1")).resolves.toEqual({
+      state: "unavailable",
+      reason: "目标主机不支持持久终端组件",
+    });
+    expect(calls).toHaveLength(1);
+    expectManifestEnvelope(calls[0], "session_prepare_durable", { sessionId: "session-1" });
+  });
 });
 
 describe("remote desktop facade IPC contracts", () => {
@@ -565,7 +577,7 @@ describe("vault and credential facade IPC contracts", () => {
 });
 
 describe("fs, desktop local-file and mount facade IPC contracts", () => {
-  it("preserves the exact envelopes for all 26 commands, including upload identity and mount secrets", async () => {
+  it("preserves the exact envelopes for all 27 commands, including upload identity and mount secrets", async () => {
     const mountEntry = { id: "mount-1", localPoint: "Z:", remote: "\\\\nas\\share", sessionId: "session-1", createdAt: 1, managed: true };
     const calls = captureRpc({
       fs_roots: { pathStyle: "posix", roots: [], homePath: null, supported: true },
@@ -583,6 +595,7 @@ describe("fs, desktop local-file and mount facade IPC contracts", () => {
       { command: "fs_read_range", payload: { sessionId: "session-1", path: "/remote/a.bin", offset: 32, maxBytes: 64 }, invoke: () => fsApi.readRange("session-1", "/remote/a.bin", 32, 64) },
       { command: "fs_write", payload: { sessionId: "session-1", path: "/remote/a.bin", contentBase64: "AAEC/w==", backup: false, taskId: "task-1", attemptId: "attempt-1" }, invoke: () => fsApi.write("session-1", "/remote/a.bin", "AAEC/w==", false, "task-1", "attempt-1") },
       { command: "fs_mkdir", payload: { sessionId: "session-1", path: "/remote/new" }, invoke: () => fsApi.mkdir("session-1", "/remote/new") },
+      { command: "fs_mkdir_private", payload: { sessionId: "session-1", path: "/tmp/private" }, invoke: () => fsApi.mkdirPrivate("session-1", "/tmp/private") },
       { command: "fs_rename", payload: { sessionId: "session-1", from: "/remote/old", to: "/remote/new" }, invoke: () => fsApi.rename("session-1", "/remote/old", "/remote/new") },
       { command: "fs_delete", payload: { sessionId: "session-1", path: "/remote/old", isDir: false }, invoke: () => fsApi.delete("session-1", "/remote/old", false) },
       { command: "fs_chmod", payload: { sessionId: "session-1", path: "/remote/a.bin", mode: 0o644 }, invoke: () => fsApi.chmod("session-1", "/remote/a.bin", 0o644) },
@@ -605,12 +618,12 @@ describe("fs, desktop local-file and mount facade IPC contracts", () => {
       { command: "mount_remove", payload: { localPoint: "Z:", sessionId: "session-1" }, invoke: () => mountApi.remove("Z:", "session-1") },
     ];
 
-    expect(cases).toHaveLength(26);
+    expect(cases).toHaveLength(27);
     for (const [index, test] of cases.entries()) {
       await test.invoke();
       expectManifestEnvelope(calls[index], test.command, test.payload);
     }
-    expect(calls).toHaveLength(26);
+    expect(calls).toHaveLength(27);
   });
 
   it("omits only facade-optional fields and passes base64, truncation and null results through unchanged", async () => {

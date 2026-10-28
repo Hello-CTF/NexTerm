@@ -27,7 +27,6 @@ function hostWorkspace(id: string, assetId: string | undefined, patch: Partial<W
     assetId,
     panes: [{ id: paneId, tabs: [terminalTab(tabId)], activeTabId: tabId }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
     ...patch,
   };

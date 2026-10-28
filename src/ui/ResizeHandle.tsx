@@ -71,6 +71,8 @@ export interface ResizeHandleProps {
   max: number;
   defaultWidth: number;
   onChange: (width: number) => void;
+  // label names the panel the handle resizes; defaults to the left dock or the AI sidebar.
+  label?: string;
 }
 
 export function widthForPointer(
@@ -119,6 +121,7 @@ export function ResizeHandle({
   max,
   defaultWidth,
   onChange,
+  label,
 }: ResizeHandleProps) {
   const dragging = useRef(false);
   const [active, setActive] = useState(false);
@@ -150,7 +153,7 @@ export function ResizeHandle({
       role="separator"
       tabIndex={0}
       aria-orientation="vertical"
-      aria-label={side === "left" ? "调整左栏宽度" : "调整 AI 侧栏宽度"}
+      aria-label={label ?? (side === "left" ? "调整左栏宽度" : "调整 AI 侧栏宽度")}
       aria-valuemin={min}
       aria-valuemax={max}
       aria-valuenow={Math.round(width)}

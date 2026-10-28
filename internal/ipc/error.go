@@ -27,7 +27,6 @@ const (
 	CodeForbidden        Code = "forbidden"
 	// CodeMFAEnrollmentRequired means that under the mfa_required policy, unenrolled sessions are restricted to enrollment-related routes.
 	CodeMFAEnrollmentRequired Code = "mfa_enrollment_required"
-	CodeNotController         Code = "not_controller"
 	CodeNeedsConfirm          Code = "needs_confirm"
 	CodeTimeout               Code = "timeout"
 	CodeCrypto                Code = "crypto"

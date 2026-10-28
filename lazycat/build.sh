@@ -11,7 +11,8 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
 Usage: bash lazycat/build.sh [-o FILE|--output FILE]
 
 Build the frontend, linux/amd64 server and nine SSH target helpers, then
-package from a temporary directory. The tracked package.yml remains at 0.0.0.
+package from a temporary directory. Node/pnpm and Go build everything on the
+host; the static server is built on the host. The tracked package.yml remains at 0.0.0.
 NEXTERM_RELEASE_VERSION overrides version resolution; otherwise an exact git
 tag is used, with 0.0.0 as the non-tag fallback. A relative output path is
 resolved against the caller's working directory.

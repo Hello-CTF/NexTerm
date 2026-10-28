@@ -26,7 +26,7 @@ vi.mock("@xterm/xterm", () => ({
     cols = 80;
     rows = 24;
     modes = { bracketedPasteMode: false };
-    buffer = { active: { type: "normal", baseY: 0, viewportY: 0 } };
+    buffer = { active: { type: "normal", baseY: 0, viewportY: 0 }, onBufferChange: () => ({ dispose: () => {} }) };
     element: HTMLElement | null = null;
     options: Record<string, unknown>;
     resize = vi.fn((cols: number, rows: number) => {
@@ -37,6 +37,7 @@ vi.mock("@xterm/xterm", () => ({
       this.options = { scrollback: 1000, ...options };
       harness.terminals.push(this);
     }
+    parser = { registerOscHandler: () => ({ dispose: () => undefined }) };
     open(element: HTMLElement) {
       this.element = element;
       const viewport = document.createElement("div");
@@ -150,6 +151,7 @@ import {
   setTerminalContrast,
   setTerminalFontFamily,
   setTerminalFontSize,
+  setTerminalScrollback,
   setTerminalTheme,
 } from "../app/preferences";
 import { setThemeMode } from "../app/theme";
@@ -207,7 +209,7 @@ beforeEach(() => {
     sessionId: "session",
     cols: 80,
     rows: 24,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -217,7 +219,7 @@ beforeEach(() => {
     tabId: "tab-existing",
     cols: 90,
     rows: 30,
-    controller: "other",
+    sizeOwner: "other",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -484,5 +486,18 @@ describe("XtermView appearance hot updates", () => {
 
     expect(term.resize).not.toHaveBeenCalled();
     expect(getAppearancePrefs().terminalFontSize).toBe(13);
+  });
+});
+
+describe("XtermView scrollback preference", () => {
+  afterEach(() => setTerminalScrollback(10_000));
+
+  it("opens terminals with the preferred scrollback and applies a change to open terminals", async () => {
+    setTerminalScrollback(10_000);
+    await show();
+    const term = harness.terminals[0];
+    expect(term.options.scrollback).toBe(10_000);
+    act(() => setTerminalScrollback(50_000));
+    expect(term.options.scrollback).toBe(50_000);
   });
 });

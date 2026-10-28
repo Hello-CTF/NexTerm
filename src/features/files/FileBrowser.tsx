@@ -30,7 +30,7 @@ import {
   useUi,
   type Workspace,
 } from "../../app/store";
-import { useCoarsePointer } from "../../app/platform";
+import { useCoarsePointer } from "../../app/shell";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { copyText } from "../../ui/clipboard";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -100,16 +100,18 @@ function browserRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
 
 const fileBrowserReconnects = new Map<string, ReturnType<typeof reconnectDeadHost>>();
 
-export function FileBrowser({ sessionId }: { sessionId: string }) {
-  return <FileBrowserInner sessionId={sessionId} />;
+// initialPath opens the browser at a directory (a terminal file link); the
+// terminal's current directory is then followed only once it changes.
+export function FileBrowser({ sessionId, initialPath }: { sessionId: string; initialPath?: string }) {
+  return <FileBrowserInner sessionId={sessionId} initialPath={initialPath} />;
 }
 
-function FileBrowserInner({ sessionId }: { sessionId: string }) {
+function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initialPath?: string }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
-  const [pathChoice, setPath] = useState<string | null>(null);
+  const [pathChoice, setPath] = useState<string | null>(initialPath ?? null);
   const [draft, setDraft] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
@@ -131,10 +133,17 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const rootsSessionGone = fsErrorResource(rootsQuery.error) === "session";
   const path = pathChoice ?? (windowsComputer ? null : HOME);
   const computer = path === null && windowsComputer;
-  const follow = useCwdFollow(sessionId, path ?? "\u0000", null, (next) => {
-    setPath(next);
-    setSelected(null);
-  });
+  const follow = useCwdFollow(
+    sessionId,
+    path ?? "\u0000",
+    null,
+    (next) => {
+      setPath(next);
+      setSelected(null);
+    },
+    undefined,
+    initialPath !== undefined,
+  );
 
   const entries = useQuery({
     queryKey: ["fs", sessionId, path],

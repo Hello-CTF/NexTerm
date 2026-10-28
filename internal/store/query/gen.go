@@ -18,7 +18,6 @@ import (
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
 		db:                      db,
-		AIOwnerMigration:        newAIOwnerMigration(db, opts...),
 		AgentEvidenceAnchorRow:  newAgentEvidenceAnchorRow(db, opts...),
 		AgentEvidenceKeyRow:     newAgentEvidenceKeyRow(db, opts...),
 		AgentOutcomeRow:         newAgentOutcomeRow(db, opts...),
@@ -40,7 +39,6 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		DeviceEnrollCode:        newDeviceEnrollCode(db, opts...),
 		DeviceMetrics:           newDeviceMetrics(db, opts...),
 		DeviceMetricsHourly:     newDeviceMetricsHourly(db, opts...),
-		DurableTabTitle:         newDurableTabTitle(db, opts...),
 		DurableTranscriptOffset: newDurableTranscriptOffset(db, opts...),
 		ExecBatchResultRow:      newExecBatchResultRow(db, opts...),
 		ExecBatchRow:            newExecBatchRow(db, opts...),
@@ -57,9 +55,11 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		RecordingRow:            newRecordingRow(db, opts...),
 		RunEventRow:             newRunEventRow(db, opts...),
 		RunRow:                  newRunRow(db, opts...),
+		RunbookTemplateRow:      newRunbookTemplateRow(db, opts...),
 		Setting:                 newSetting(db, opts...),
 		SharePreviewLink:        newSharePreviewLink(db, opts...),
 		SnippetRow:              newSnippetRow(db, opts...),
+		StateRuleRow:            newStateRuleRow(db, opts...),
 		SyncCredential:          newSyncCredential(db, opts...),
 		SyncState:               newSyncState(db, opts...),
 		SyncTombstone:           newSyncTombstone(db, opts...),
@@ -81,7 +81,6 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 type Query struct {
 	db *gorm.DB
 
-	AIOwnerMigration        aIOwnerMigration
 	AgentEvidenceAnchorRow  agentEvidenceAnchorRow
 	AgentEvidenceKeyRow     agentEvidenceKeyRow
 	AgentOutcomeRow         agentOutcomeRow
@@ -103,7 +102,6 @@ type Query struct {
 	DeviceEnrollCode        deviceEnrollCode
 	DeviceMetrics           deviceMetrics
 	DeviceMetricsHourly     deviceMetricsHourly
-	DurableTabTitle         durableTabTitle
 	DurableTranscriptOffset durableTranscriptOffset
 	ExecBatchResultRow      execBatchResultRow
 	ExecBatchRow            execBatchRow
@@ -120,9 +118,11 @@ type Query struct {
 	RecordingRow            recordingRow
 	RunEventRow             runEventRow
 	RunRow                  runRow
+	RunbookTemplateRow      runbookTemplateRow
 	Setting                 setting
 	SharePreviewLink        sharePreviewLink
 	SnippetRow              snippetRow
+	StateRuleRow            stateRuleRow
 	SyncCredential          syncCredential
 	SyncState               syncState
 	SyncTombstone           syncTombstone
@@ -147,7 +147,6 @@ func (q *Query) UnderlyingDB() *gorm.DB { return q.db }
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
 		db:                      db,
-		AIOwnerMigration:        q.AIOwnerMigration.clone(db),
 		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.clone(db),
 		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.clone(db),
 		AgentOutcomeRow:         q.AgentOutcomeRow.clone(db),
@@ -169,7 +168,6 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		DeviceEnrollCode:        q.DeviceEnrollCode.clone(db),
 		DeviceMetrics:           q.DeviceMetrics.clone(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.clone(db),
-		DurableTabTitle:         q.DurableTabTitle.clone(db),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.clone(db),
 		ExecBatchResultRow:      q.ExecBatchResultRow.clone(db),
 		ExecBatchRow:            q.ExecBatchRow.clone(db),
@@ -186,9 +184,11 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		RecordingRow:            q.RecordingRow.clone(db),
 		RunEventRow:             q.RunEventRow.clone(db),
 		RunRow:                  q.RunRow.clone(db),
+		RunbookTemplateRow:      q.RunbookTemplateRow.clone(db),
 		Setting:                 q.Setting.clone(db),
 		SharePreviewLink:        q.SharePreviewLink.clone(db),
 		SnippetRow:              q.SnippetRow.clone(db),
+		StateRuleRow:            q.StateRuleRow.clone(db),
 		SyncCredential:          q.SyncCredential.clone(db),
 		SyncState:               q.SyncState.clone(db),
 		SyncTombstone:           q.SyncTombstone.clone(db),
@@ -218,7 +218,6 @@ func (q *Query) WriteDB() *Query {
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
 		db:                      db,
-		AIOwnerMigration:        q.AIOwnerMigration.replaceDB(db),
 		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.replaceDB(db),
 		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.replaceDB(db),
 		AgentOutcomeRow:         q.AgentOutcomeRow.replaceDB(db),
@@ -240,7 +239,6 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		DeviceEnrollCode:        q.DeviceEnrollCode.replaceDB(db),
 		DeviceMetrics:           q.DeviceMetrics.replaceDB(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.replaceDB(db),
-		DurableTabTitle:         q.DurableTabTitle.replaceDB(db),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.replaceDB(db),
 		ExecBatchResultRow:      q.ExecBatchResultRow.replaceDB(db),
 		ExecBatchRow:            q.ExecBatchRow.replaceDB(db),
@@ -257,9 +255,11 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		RecordingRow:            q.RecordingRow.replaceDB(db),
 		RunEventRow:             q.RunEventRow.replaceDB(db),
 		RunRow:                  q.RunRow.replaceDB(db),
+		RunbookTemplateRow:      q.RunbookTemplateRow.replaceDB(db),
 		Setting:                 q.Setting.replaceDB(db),
 		SharePreviewLink:        q.SharePreviewLink.replaceDB(db),
 		SnippetRow:              q.SnippetRow.replaceDB(db),
+		StateRuleRow:            q.StateRuleRow.replaceDB(db),
 		SyncCredential:          q.SyncCredential.replaceDB(db),
 		SyncState:               q.SyncState.replaceDB(db),
 		SyncTombstone:           q.SyncTombstone.replaceDB(db),
@@ -279,7 +279,6 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 }
 
 type queryCtx struct {
-	AIOwnerMigration        *aIOwnerMigrationDo
 	AgentEvidenceAnchorRow  *agentEvidenceAnchorRowDo
 	AgentEvidenceKeyRow     *agentEvidenceKeyRowDo
 	AgentOutcomeRow         *agentOutcomeRowDo
@@ -301,7 +300,6 @@ type queryCtx struct {
 	DeviceEnrollCode        *deviceEnrollCodeDo
 	DeviceMetrics           *deviceMetricsDo
 	DeviceMetricsHourly     *deviceMetricsHourlyDo
-	DurableTabTitle         *durableTabTitleDo
 	DurableTranscriptOffset *durableTranscriptOffsetDo
 	ExecBatchResultRow      *execBatchResultRowDo
 	ExecBatchRow            *execBatchRowDo
@@ -318,9 +316,11 @@ type queryCtx struct {
 	RecordingRow            *recordingRowDo
 	RunEventRow             *runEventRowDo
 	RunRow                  *runRowDo
+	RunbookTemplateRow      *runbookTemplateRowDo
 	Setting                 *settingDo
 	SharePreviewLink        *sharePreviewLinkDo
 	SnippetRow              *snippetRowDo
+	StateRuleRow            *stateRuleRowDo
 	SyncCredential          *syncCredentialDo
 	SyncState               *syncStateDo
 	SyncTombstone           *syncTombstoneDo
@@ -340,7 +340,6 @@ type queryCtx struct {
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
-		AIOwnerMigration:        q.AIOwnerMigration.WithContext(ctx),
 		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.WithContext(ctx),
 		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.WithContext(ctx),
 		AgentOutcomeRow:         q.AgentOutcomeRow.WithContext(ctx),
@@ -362,7 +361,6 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		DeviceEnrollCode:        q.DeviceEnrollCode.WithContext(ctx),
 		DeviceMetrics:           q.DeviceMetrics.WithContext(ctx),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.WithContext(ctx),
-		DurableTabTitle:         q.DurableTabTitle.WithContext(ctx),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.WithContext(ctx),
 		ExecBatchResultRow:      q.ExecBatchResultRow.WithContext(ctx),
 		ExecBatchRow:            q.ExecBatchRow.WithContext(ctx),
@@ -379,9 +377,11 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		RecordingRow:            q.RecordingRow.WithContext(ctx),
 		RunEventRow:             q.RunEventRow.WithContext(ctx),
 		RunRow:                  q.RunRow.WithContext(ctx),
+		RunbookTemplateRow:      q.RunbookTemplateRow.WithContext(ctx),
 		Setting:                 q.Setting.WithContext(ctx),
 		SharePreviewLink:        q.SharePreviewLink.WithContext(ctx),
 		SnippetRow:              q.SnippetRow.WithContext(ctx),
+		StateRuleRow:            q.StateRuleRow.WithContext(ctx),
 		SyncCredential:          q.SyncCredential.WithContext(ctx),
 		SyncState:               q.SyncState.WithContext(ctx),
 		SyncTombstone:           q.SyncTombstone.WithContext(ctx),

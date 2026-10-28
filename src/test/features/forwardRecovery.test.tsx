@@ -2,7 +2,7 @@
 
 import { act, createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { flush, mount, waitFor, deferred, type MountedView } from "./reactTestUtils";
+import { flush, mount, waitForRendered, deferred, type MountedView } from "./reactTestUtils";
 import { useAuth } from "../../features/auth/store";
 import { useUi, type Workspace } from "../../app/store";
 import {
@@ -51,7 +51,7 @@ describe("ForwardStartupRecovery", () => {
     const api = fakeApi();
     mountRecovery(api);
 
-    await waitFor(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
     await flush();
 
     expect(api.recoverNow).not.toHaveBeenCalled();
@@ -62,7 +62,7 @@ describe("ForwardStartupRecovery", () => {
     const api = fakeApi({ getRecoverySettings: vi.fn().mockRejectedValue(new Error("settings unavailable")) });
     mountRecovery(api);
 
-    await waitFor(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
     await flush();
 
     expect(api.recoverNow).not.toHaveBeenCalled();
@@ -92,13 +92,12 @@ describe("ForwardStartupRecovery", () => {
         }],
       }],
       activePaneId: "pane-restored",
-      splitRatio: 0.5,
     };
     useUi.setState({ workspaces: [restored] });
     const workspaces = useUi.getState().workspaces;
     mountRecovery(api);
 
-    await waitFor(() => expect(api.recoverNow).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(api.recoverNow).toHaveBeenCalledOnce());
     await flush();
 
     expect(api.getRecoverySettings).toHaveBeenCalledOnce();
@@ -116,19 +115,19 @@ describe("ForwardStartupRecovery", () => {
       .mockReturnValueOnce(second.promise);
     const api = fakeApi({ getRecoverySettings });
     mountRecovery(api);
-    await waitFor(() => expect(getRecoverySettings).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(getRecoverySettings).toHaveBeenCalledOnce());
 
     act(() => {
       useUi.getState().advanceAccountEpoch();
     });
-    await waitFor(() => expect(getRecoverySettings).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(getRecoverySettings).toHaveBeenCalledTimes(2));
 
     first.resolve({ ...DEFAULT_SETTINGS, enabled: true });
     await flush();
     expect(api.recoverNow).not.toHaveBeenCalled();
 
     second.resolve({ ...DEFAULT_SETTINGS, enabled: true });
-    await waitFor(() => expect(api.recoverNow).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(api.recoverNow).toHaveBeenCalledOnce());
     expect(toast).not.toHaveBeenCalled();
   });
 
@@ -136,7 +135,7 @@ describe("ForwardStartupRecovery", () => {
     const settings = deferred<ForwardRecoverySettings>();
     const api = fakeApi({ getRecoverySettings: vi.fn().mockReturnValue(settings.promise) });
     mountRecovery(api);
-    await waitFor(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
 
     mounted?.unmount();
     mounted = undefined;
@@ -154,7 +153,7 @@ describe("ForwardStartupRecovery", () => {
       recoverNow: vi.fn().mockReturnValue(recovery.promise),
     });
     mountRecovery(api);
-    await waitFor(() => expect(api.recoverNow).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(api.recoverNow).toHaveBeenCalledOnce());
 
     mounted?.unmount();
     mounted = undefined;
@@ -167,7 +166,7 @@ describe("ForwardStartupRecovery", () => {
       recoverNow: vi.fn().mockRejectedValue(new Error("dial failed")),
     });
     mountRecovery(current);
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(toast).toHaveBeenCalledWith("error", expect.stringContaining("启动恢复失败：dial failed")),
     );
   });
@@ -182,6 +181,6 @@ describe("ForwardStartupRecovery", () => {
     act(() => {
       useAuth.setState({ gate: "ready" });
     });
-    await waitFor(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(api.getRecoverySettings).toHaveBeenCalledOnce());
   });
 });

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
@@ -28,11 +29,21 @@ func (m *Manager) startReconnect(id string, expectedGeneration uint64, assets ..
 	if len(assets) > 0 {
 		refreshed = assets[0]
 	}
+	return m.startReconnectWith(id, expectedGeneration, false, refreshed)
+}
+
+// startReconnectImmediate reconnects a connection already known to be dead:
+// the first attempt runs without the initial backoff.
+func (m *Manager) startReconnectImmediate(id string, expectedGeneration uint64) error {
+	return m.startReconnectWith(id, expectedGeneration, true, nil)
+}
+
+func (m *Manager) startReconnectWith(id string, expectedGeneration uint64, immediate bool, refreshed *Asset) error {
 	if err := m.reconnectPreflight(id, expectedGeneration, refreshed); err != nil {
 		return err
 	}
 	if !m.startGoroutine(func() {
-		_ = m.reconnect(context.Background(), id, expectedGeneration)
+		_ = m.reconnectWith(context.Background(), id, expectedGeneration, immediate)
 	}) {
 		return ErrSessionClosed
 	}
@@ -106,6 +117,10 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 }
 
 func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration uint64) error {
+	return m.reconnectWith(ctx, id, expectedGeneration, false)
+}
+
+func (m *Manager) reconnectWith(ctx context.Context, id string, expectedGeneration uint64, immediate bool) error {
 	m.mu.Lock()
 	session := m.sessions[id]
 	if session == nil {
@@ -160,7 +175,14 @@ func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration u
 	session.reconnecting = true
 	session.reconnectCompletion = &reconnectCompletion{done: make(chan struct{})}
 	session.reconnectAttempt = 0
-	session.reconnectNextRetry = m.now().Add(m.reconnectBackoff[0])
+	firstDelay := time.Duration(0)
+	session.reconnectNextRetry = time.Time{}
+	if !immediate {
+		firstDelay = m.reconnectDelay(0)
+		session.reconnectNextRetry = m.now().Add(firstDelay)
+	}
+	wake := make(chan struct{}, 1)
+	session.reconnectWake = wake
 	channels := session.detachChannelsLocked()
 	m.byAsset[session.assetOwnerKey()] = session.ID
 	reconnectCtx := session.ctx
@@ -182,7 +204,46 @@ func (m *Manager) reconnect(ctx context.Context, id string, expectedGeneration u
 		stop()
 		cancel()
 	}()
-	return m.reconnectLoop(runCtx, session, generation)
+	return m.reconnectLoop(runCtx, session, generation, firstDelay, wake)
+}
+
+// reconnectDelay is the jittered backoff before the given attempt: a uniform
+// sample in [d/2, d) of the configured step, so sessions that dropped together
+// (a network change, a restarted bastion) do not redial in lockstep.
+func (m *Manager) reconnectDelay(attempt int) time.Duration {
+	step := m.reconnectBackoff[min(attempt, len(m.reconnectBackoff)-1)]
+	if step <= 0 {
+		return 0
+	}
+	half := step / 2
+	return half + time.Duration(m.jitter()*float64(step-half))
+}
+
+// waitReconnectBackoff sleeps for the backoff unless the context ends or, when
+// wakeable, a foreground probe wakes the loop; woken reports the latter. A
+// wake that arrived while the previous attempt was still dialing is
+// discarded: that attempt already answered it.
+func waitReconnectBackoff(ctx context.Context, delay time.Duration, wake <-chan struct{}, wakeable bool) (woken bool, err error) {
+	select {
+	case <-wake:
+	default:
+	}
+	if delay <= 0 {
+		return false, ctx.Err()
+	}
+	if !wakeable {
+		wake = nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case <-wake:
+		return true, nil
+	case <-timer.C:
+		return false, nil
+	}
 }
 
 func waitReconnect(ctx context.Context, completion *reconnectCompletion) error {
@@ -196,14 +257,19 @@ func waitReconnect(ctx context.Context, completion *reconnectCompletion) error {
 	return completion.err
 }
 
-func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generation uint64) error {
+func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generation uint64, delay time.Duration, wake <-chan struct{}) error {
 	var lastErr error
+	// A probe may cut a backoff short once; after a woken attempt fails, the
+	// next step waits its full delay so repeated foreground probes cannot
+	// turn the backoff into a redial loop.
+	wakeable := true
 	for attempt := 0; attempt < m.reconnectMax; attempt++ {
-		backoff := m.reconnectBackoff[min(attempt, len(m.reconnectBackoff)-1)]
-		if err := sleepContext(ctx, backoff); err != nil {
+		woken, err := waitReconnectBackoff(ctx, delay, wake, wakeable)
+		if err != nil {
 			lastErr = err
 			break
 		}
+		wakeable = !woken
 		transport, err := m.connector.Connect(ctx, session.Asset(), generation)
 		var handle *transportHandle
 		if transport != nil {
@@ -217,7 +283,7 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 		}
 		if err == nil {
 			var opened map[*Tab]*replacementChannel
-			var gone map[*Tab]struct{}
+			var gone map[*Tab]error
 			// Replacement channels must outlive the reconnect attempt: every
 			// transport binds an opened channel's lifetime to the context it
 			// receives, so opening with the attempt-scoped ctx tore the fresh
@@ -271,8 +337,8 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 			break
 		}
 		if attempt+1 < m.reconnectMax {
-			nextBackoff := m.reconnectBackoff[min(attempt+1, len(m.reconnectBackoff)-1)]
-			event, current := m.reconnectRetryEvent(session, generation, lastErr, m.now().Add(nextBackoff))
+			delay = m.reconnectDelay(attempt + 1)
+			event, current := m.reconnectRetryEvent(session, generation, lastErr, m.now().Add(delay))
 			if !current {
 				return lastErr
 			}
@@ -324,9 +390,9 @@ func (m *Manager) reconnectRetryEvent(session *Session, generation uint64, cause
 	return session.statusEventLocked(StatusReconnecting, cause), true
 }
 
-func (m *Manager) openReplacementChannels(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (map[*Tab]*replacementChannel, map[*Tab]struct{}, error) {
+func (m *Manager) openReplacementChannels(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (map[*Tab]*replacementChannel, map[*Tab]error, error) {
 	opened := make(map[*Tab]*replacementChannel)
-	gone := make(map[*Tab]struct{})
+	gone := make(map[*Tab]error)
 	if !ptyBacked(session.Asset().Kind) {
 		return opened, gone, nil
 	}
@@ -338,9 +404,10 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 	kind := session.Asset().Kind
 	session.mu.Unlock()
 	var provider base.DurableProvider
+	var legacyErr error
 	for _, tab := range tabs {
 		tab.mu.Lock()
-		if tab.closed {
+		if tab.closed || tab.durableLost {
 			tab.mu.Unlock()
 			continue
 		}
@@ -355,19 +422,45 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 		}
 		tab.mu.Unlock()
 		if durableTab {
+			if legacyErr != nil {
+				gone[tab] = legacyErr
+				continue
+			}
 			if provider == nil {
 				var err error
-				provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, false)
+				provider, err = m.durableProviderFor(ctx, session, transport, kind, generation, kind == KindLocal)
+				if errors.Is(err, supervisor.ErrLegacyHelperRunning) {
+					// An older helper runs these sessions and this build
+					// cannot attach to them: the tabs end with a visible
+					// reason instead of the reconnect retrying forever.
+					legacyErr = err
+					gone[tab] = err
+					continue
+				}
 				if err != nil {
 					return opened, gone, err
 				}
 			}
-			attachment, offsetResume, err := attachDurableReplacement(ctx, provider, tab.ID, durableIdentity, uint64(durableFed))
-			if errors.Is(err, durable.ErrNotFound) || errors.Is(err, durable.ErrIdentity) {
+			attachment, err := attachDurableReplacement(ctx, provider, tab.ID, durableIdentity, uint64(durableFed))
+			if errors.Is(err, supervisor.ErrLegacyHelperRunning) {
+				// A provider reached through a bridge (a managed device)
+				// meets the older helper only on attach. This is final for
+				// every durable tab of the session, not a reason to retry.
 				if attachment != nil {
 					_ = attachment.Close()
 				}
-				gone[tab] = struct{}{}
+				legacyErr = err
+				gone[tab] = err
+				continue
+			}
+			if errors.Is(err, durable.ErrNotFound) || errors.Is(err, durable.ErrIdentity) || errors.Is(err, ErrDurableUnrecoverable) || errors.Is(err, durable.ErrGenerationMismatch) {
+				if attachment != nil {
+					_ = attachment.Close()
+				}
+				if errors.Is(err, ErrDurableUnrecoverable) || errors.Is(err, durable.ErrGenerationMismatch) {
+					m.logger.Warn("durable terminal cannot be recovered after reconnect", "session", session.ID, "tab", tab.ID, "error", err)
+				}
+				gone[tab] = err
 				continue
 			}
 			if attachment == nil {
@@ -380,12 +473,8 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 				_ = attachment.Close()
 				return opened, gone, err
 			}
-			channel := newChannelHandle(attachment)
-			if !offsetResume {
-				channel = newChannelHandle(&prefixSkipChannel{Channel: attachment, remaining: durableFed})
-			}
 			opened[tab] = &replacementChannel{
-				channel: channel,
+				channel: newChannelHandle(attachment),
 				durable: attachment,
 			}
 			continue
@@ -411,28 +500,29 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 	return opened, gone, nil
 }
 
-// attachDurableReplacement uses legacy unchecked attach only for tabs that never had an incarnation.
-// A known identity always requires checked attach; identity errors never fall back to the legacy path.
-func attachDurableReplacement(ctx context.Context, provider base.DurableProvider, tabID string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, bool, error) {
-	if identity.Incarnation != "" {
-		attacher, ok := provider.(base.DurableIdentityAttacher)
-		if !ok {
-			return nil, false, ErrUnsupported
-		}
-		attachment, err := attacher.AttachFromWithIdentity(ctx, tabID, identity, offset)
-		return attachment, true, err
+// attachDurableReplacement resumes a durable tab only through checked attach.
+// A tab that never recorded an incarnation cannot be matched to its helper
+// session, so it is reported as unrecoverable instead of attaching unchecked.
+func attachDurableReplacement(ctx context.Context, provider base.DurableProvider, tabID string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	if identity.Incarnation == "" {
+		return nil, ErrDurableUnrecoverable
 	}
-	if attacher, ok := provider.(durableOffsetAttacher); ok {
-		attachment, err := attacher.AttachFrom(ctx, tabID, offset)
-		return attachment, true, err
-	}
-	attachment, err := provider.Attach(ctx, tabID)
-	return attachment, false, err
+	return provider.AttachFromWithIdentity(ctx, tabID, identity, offset)
 }
 
 type replacementChannel struct {
 	channel *channelHandle
 	durable base.DurableAttachment
+}
+
+// reconnectNotice targets a tab that reconnect left exited; generation is the
+// tab's own generation because it was not moved to the replacement transport.
+type reconnectNotice struct {
+	tab        *Tab
+	generation uint64
+	banner     []byte
+	// legacy marks a tab ended because an older helper runs its session.
+	legacy bool
 }
 
 type reconnectResize struct {
@@ -454,7 +544,7 @@ func reconnectGeometryLocked(tab *Tab) (cols, rows uint32) {
 	return cols, rows
 }
 
-func (m *Manager) commitReconnect(session *Session, transport *transportHandle, opened map[*Tab]*replacementChannel, gone map[*Tab]struct{}, generation uint64) (bool, error) {
+func (m *Manager) commitReconnect(session *Session, transport *transportHandle, opened map[*Tab]*replacementChannel, gone map[*Tab]error, generation uint64) (bool, error) {
 	m.mu.Lock()
 	session.mu.Lock()
 	if m.closed || session.closed || m.sessions[session.ID] != session || session.status != StatusReconnecting || !session.reconnecting || session.generation != generation {
@@ -492,6 +582,14 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			}
 			tab.channel = replacement.channel
 			tab.durable = replacement.durable
+			if replacement.durable != nil {
+				tab.noteDurableReplacementLocked(replacement.durable)
+			}
+			if identity, ok := durableAttachmentIdentity(replacement.durable); ok {
+				// The checked attach proved the incarnation; record the helper
+				// generation it was served by for the next reconnect.
+				tab.durableIdentity = identity
+			}
 			tab.setGenerationLocked(generation)
 			tab.exited = false
 			if tab.runtimeEpisode != "" {
@@ -512,14 +610,24 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		}
 		tab.mu.Unlock()
 	}
-	for tab := range gone {
+	var unrecoverable []reconnectNotice
+	for tab, cause := range gone {
 		tab.mu.Lock()
 		if !tab.closed && m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
+			switch {
+			case errors.Is(cause, ErrDurableUnrecoverable):
+				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: durableUnrecoverableBanner})
+			case errors.Is(cause, durable.ErrGenerationMismatch):
+				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: durableHelperRestartedBanner})
+			case errors.Is(cause, supervisor.ErrLegacyHelperRunning):
+				unrecoverable = append(unrecoverable, reconnectNotice{tab: tab, generation: tab.generation, banner: legacyHelperBanner, legacy: true})
+			}
 			if tab.durable != nil {
 				retired = append(retired, tab.durable)
 				tab.durable = nil
 				goneOffsets = append(goneOffsets, tab.ID)
 			}
+			tab.durableLost = true
 			tab.exited = true
 			exits = append(exits, tab.exitEventLocked(nil))
 			controls = append(controls, tab.controlEventLocked())
@@ -559,6 +667,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		session.idleSince = m.now()
 	}
 	session.finishReconnectLocked(nil)
+	liveness := m.armLivenessLocked(session)
 	reconnectCtx := session.ctx
 	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
@@ -575,6 +684,12 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	m.transcriptStarted(reconnectCtx, session)
 	for _, resize := range resizes {
 		m.transcriptResize(reconnectCtx, resize.tab, resize.cols, resize.rows)
+	}
+	for _, notice := range unrecoverable {
+		if notice.legacy {
+			m.legacyEnded.add(session.ID, notice.tab, notice.generation)
+		}
+		_ = m.feed(reconnectCtx, notice.tab, notice.generation, notice.banner)
 	}
 	for _, exit := range exits {
 		m.emit(context.Background(), TopicTerminalExit, exit)
@@ -607,6 +722,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			_ = m.feed(reconnectCtx, tab, generation, reconnectBanner)
 		}
 	}
+	m.startLiveness(session, liveness)
 	m.emit(context.Background(), TopicSessionStatus, connectedEvent)
 	committed = true
 	return true, nil
@@ -643,18 +759,4 @@ func (m *Manager) finishReconnect(session *Session, generation uint64, reconnect
 	}
 	m.emit(context.Background(), TopicSessionStatus, finishedEvent)
 	return reconnectErr
-}
-
-func sleepContext(ctx context.Context, duration time.Duration) error {
-	if duration <= 0 {
-		return ctx.Err()
-	}
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }

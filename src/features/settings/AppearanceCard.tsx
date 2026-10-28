@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import type { SettingsPanelId } from "./settingsIndex";
 import { useUi } from "../../app/store";
 import type { ThemeMode } from "../../app/theme";
 import {
@@ -52,7 +53,7 @@ const TERM_FONT_LABELS: Record<TerminalFontFamily, string> = {
   consolas: "Consolas",
 };
 
-export function AppearanceCard() {
+export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; n: number } | null }) {
   const themeMode = useUi((s) => s.themeMode);
   const resolvedTheme = useUi((s) => s.resolvedTheme);
   const setThemeMode = useUi((s) => s.setThemeMode);
@@ -75,6 +76,9 @@ export function AppearanceCard() {
     prefs.terminalContrast === "standard";
   const advancedPanelId = useId();
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  useEffect(() => {
+    if (reveal?.panel === "appearance-advanced") setAdvancedOpen(true);
+  }, [reveal]);
 
   const [customFontOpen, setCustomFontOpen] = useState(false);
   const [customFontDraft, setCustomFontDraft] = useState("");
@@ -102,7 +106,7 @@ export function AppearanceCard() {
       <p className="nx-hint mb-3.5">
         界面配色随主题切换；终端与代码编辑器有独立的主题和字号设置，默认深色，也可选择跟随界面主题。
       </p>
-      <div className="nx-segment" role="group" aria-label="界面主题">
+      <div className="nx-segment" role="group" aria-label="界面主题" data-setting="ui-theme">
         {THEME_OPTIONS.map((option) => (
           <button
             key={option.value}
@@ -134,7 +138,7 @@ export function AppearanceCard() {
         {advancedOpen && (
           <div id={advancedPanelId}>
             <div className="mt-3">
-              <div className="nx-setting-label mb-1.5">界面字号（像素）</div>
+              <div className="nx-setting-label mb-1.5" data-setting="ui-font-size">界面字号（像素）</div>
               <div className="nx-segment" role="group" aria-label="界面字号">
                 {UI_FONT_PRESETS.map((preset) => (
                   <button
@@ -178,7 +182,7 @@ export function AppearanceCard() {
             </div>
 
             <div className="mt-3.5">
-              <div className="nx-setting-label mb-1.5">界面文字倍率</div>
+              <div className="nx-setting-label mb-1.5" data-setting="ui-text-scale">界面文字倍率</div>
               <div className="nx-segment flex-wrap" role="group" aria-label="界面文字倍率">
                 {UI_FONT_SCALE_STEPS.map((step) => (
                   <button
@@ -196,7 +200,7 @@ export function AppearanceCard() {
 
             <div className="mt-3.5">
               <div className="mb-1.5 flex items-center gap-2">
-                <span className="nx-setting-label">终端与编辑器主题</span>
+                <span className="nx-setting-label" data-setting="terminal-theme">终端与编辑器主题</span>
                 {prefs.terminalTheme === "interface" && (
                   <span className="nx-badge">当前{resolvedTermTheme === "dark" ? "深色" : "浅色"}</span>
                 )}
@@ -217,7 +221,7 @@ export function AppearanceCard() {
             </div>
 
             <div className="mt-3.5">
-              <div className="nx-setting-label mb-1.5">终端对比度</div>
+              <div className="nx-setting-label mb-1.5" data-setting="terminal-contrast">终端对比度</div>
               <div className="nx-segment" role="group" aria-label="终端对比度">
                 {TERM_CONTRAST_OPTIONS.map((option) => (
                   <button
@@ -234,7 +238,7 @@ export function AppearanceCard() {
             </div>
 
             <div className="mt-3.5">
-              <div className="nx-setting-label mb-1.5">终端字号</div>
+              <div className="nx-setting-label mb-1.5" data-setting="terminal-font-size">终端字号</div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -259,7 +263,7 @@ export function AppearanceCard() {
             </div>
 
             <div className="mt-3.5">
-              <div className="nx-setting-label mb-1.5">终端字体</div>
+              <div className="nx-setting-label mb-1.5" data-setting="terminal-font-family">终端字体</div>
               <select
                 className="nx-select nx-input-sm w-full"
                 aria-label="终端字体"

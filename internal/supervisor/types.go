@@ -20,6 +20,15 @@ var ErrMetadataConflict = errors.New("supervisor session metadata changed")
 type Config struct {
 	StateDir       string
 	CommandTimeout time.Duration
+	// HistoryLimit is the recorded output kept per session when the creator
+	// does not choose one; zero means DefaultHistoryLimit.
+	HistoryLimit uint64
+	// DisableStateDetection turns off the per-session attention state
+	// (signal scanning, screen model and prompt detection); Info.State is
+	// then nil.
+	DisableStateDetection bool
+	// Limits bounds process growth; zero fields take DefaultLimits.
+	Limits Limits
 }
 
 type CreateOptions struct {
@@ -30,11 +39,18 @@ type CreateOptions struct {
 	Env     []string
 	Cols    uint32
 	Rows    uint32
+	// HistoryLimit bounds the recorded output the session keeps; zero uses the
+	// supervisor default. The oldest output is dropped beyond it.
+	HistoryLimit uint64
 	// Pty is nil or true for a PTY session; false requests a one-shot non-PTY
 	// exec session. Non-PTY sessions take no input, are excluded from List,
 	// cannot be attached, persist nothing, and are dropped when the process
 	// exits.
 	Pty *bool
+	// StateRulesOwner selects the state rules the session is evaluated
+	// with; empty uses none. A remote session takes the rule owner of the
+	// connection that created it.
+	StateRulesOwner string
 }
 
 func (o CreateOptions) usePTY() bool {
@@ -42,7 +58,10 @@ func (o CreateOptions) usePTY() bool {
 }
 
 type Info struct {
-	ID               string     `json:"id"`
+	ID string `json:"id"`
+	// Generation is the helper generation that reported this info; it
+	// changes when the helper restarts.
+	Generation       string     `json:"generation,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	Incarnation      string     `json:"incarnation"`
 	Title            string     `json:"title,omitempty"`
@@ -53,6 +72,62 @@ type Info struct {
 	ExitCode         *int       `json:"exit_code,omitempty"`
 	Signal           string     `json:"signal,omitempty"`
 	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	// Legacy marks the read-only recording of a session an older helper
+	// (protocol 2) ran; it is always dead and never renamed.
+	Legacy bool `json:"legacy,omitempty"`
+	// HistoryBase is the oldest retained offset of the recorded output and
+	// HistoryNext the offset the next output byte gets. Offsets are absolute
+	// and never decrease; HistoryTruncated reports that output before
+	// HistoryBase was dropped to stay within HistoryLimit.
+	HistoryBase      uint64 `json:"history_base"`
+	HistoryNext      uint64 `json:"history_next"`
+	HistoryLimit     uint64 `json:"history_limit,omitempty"`
+	HistoryTruncated bool   `json:"history_truncated,omitempty"`
+	// State is the session's attention state; nil when the helper runs
+	// with state detection disabled.
+	State *SessionState `json:"state,omitempty"`
+	// Activity is the session's in-memory activity record.
+	Activity *SessionActivity `json:"activity,omitempty"`
+}
+
+// AttachOptions selects where an attach starts streaming recorded output.
+type AttachOptions struct {
+	// Offset is the absolute offset to resume from. With Tail and Retain it is
+	// the earliest offset the caller still needs streamed.
+	Offset uint64
+	// Tail, when non-zero, requests a fresh open: the display starts at a safe
+	// boundary within the last Tail bytes instead of at Offset.
+	Tail   uint64
+	Retain bool
+}
+
+// ReplayInfo reports where an attach started.
+type ReplayInfo struct {
+	HistoryBase uint64 `json:"history_base"`
+	HistoryNext uint64 `json:"history_next"`
+	// ReplayFrom is the offset of the first streamed byte.
+	ReplayFrom uint64 `json:"replay_from"`
+	// DisplayFrom is the offset from which the stream should be rendered;
+	// bytes before it were streamed only because Retain asked for them.
+	DisplayFrom uint64 `json:"display_from"`
+	// Truncated reports that the requested offset was no longer retained.
+	Truncated bool `json:"truncated,omitempty"`
+	// Prelude restores the screen buffer and input modes in effect at
+	// DisplayFrom; feed it to the renderer before the stream. It occupies no
+	// offsets.
+	Prelude []byte `json:"prelude,omitempty"`
+}
+
+// HistoryChunk is recorded output read without attaching.
+type HistoryChunk struct {
+	HistoryBase uint64 `json:"history_base"`
+	HistoryNext uint64 `json:"history_next"`
+	Start       uint64 `json:"start"`
+	End         uint64 `json:"end"`
+	// Truncated reports that Start is the history base and earlier output
+	// was dropped.
+	Truncated bool   `json:"truncated,omitempty"`
+	Data      []byte `json:"-"`
 }
 
 type RenameRequest struct {
@@ -82,8 +157,14 @@ func (e *MetadataConflictError) Unwrap() error {
 type Identity struct {
 	CreatedAt   time.Time
 	Incarnation string
+	// Generation is the helper generation the identity was observed in. A
+	// non-empty value makes attach fail with ErrGenerationMismatch once the
+	// helper has restarted; it is not part of the session's own identity.
+	Generation string
 }
 
+// sameIdentity compares session identities; the helper generation is checked
+// separately.
 func sameIdentity(left, right Identity) bool {
 	return left.Incarnation == right.Incarnation && left.CreatedAt.Equal(right.CreatedAt)
 }
@@ -107,6 +188,11 @@ func normalizeCreate(options CreateOptions) (CreateOptions, string, error) {
 	}
 	if err := validateSize(options.Cols, options.Rows); err != nil {
 		return CreateOptions{}, "", err
+	}
+	if options.HistoryLimit != 0 {
+		if err := validHistoryLimit(options.HistoryLimit); err != nil {
+			return CreateOptions{}, "", err
+		}
 	}
 	command, err := launchCommand(options)
 	if err != nil {

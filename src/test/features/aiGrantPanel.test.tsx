@@ -352,3 +352,45 @@ describe("GrantPanel scope and loading", () => {
     expect(text()).not.toContain("授权加载失败");
   });
 });
+
+describe("GrantPanel legacy records", () => {
+  it("keeps pre-1.3.0 records out of the effective view and clears them explicitly", async () => {
+    mocks.grantList.mockResolvedValue([{ deviceId: "asset-4", kinds: ["session_exec"], permanent: false, updatedAt: 1, legacy: true }]);
+    mocks.ruleList.mockResolvedValue([
+      { id: "rule-old", deviceId: "asset-4", action: "exec_commands", createdAt: 1, updatedAt: 1, legacy: true },
+    ]);
+    await mountPanel("asset-4");
+    expect(text()).toContain("1.3.0 之前的旧格式");
+    expect(text()).toContain("在这台设备上不生效");
+    expect(text()).toContain("其他设备上的同一授权可能仍然有效");
+    expect(checkbox("dev-m4：执行命令免确认").checked).toBe(false);
+    expect(text()).toContain("没有其他主机开启免确认授权");
+    const alert = view!.container.querySelector<HTMLElement>('[aria-label="旧格式授权"]')!;
+    mocks.ask.mockResolvedValueOnce(false);
+    clickButton(alert, "清除");
+    await flush();
+    await flush();
+    expect(mocks.ask.mock.calls[0][0]).toContain("所有已同步的设备");
+    expect(mocks.grantRevoke).not.toHaveBeenCalled();
+    clickButton(alert, "清除");
+    await flush();
+    await flush();
+    expect(mocks.grantRevoke).toHaveBeenCalledWith("asset-4");
+    clickButton(alert, "清除");
+    await flush();
+    await flush();
+    expect(mocks.ruleRevoke).toHaveBeenCalledWith("rule-old");
+    expect(text()).not.toContain("1.3.0 之前的旧格式");
+  });
+
+  it("explains that re-granting replaces the whole legacy record", async () => {
+    mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["session_exec", "terminal_write"], permanent: false, updatedAt: 1, legacy: true }]);
+    await mountPanel("asset-1");
+    expect(text()).toContain("1.3.0 之前的旧格式");
+    await toggle("生产 Web：执行命令免确认");
+    // The confirmation states that the whole legacy record is replaced and its other kinds are not carried over.
+    expect(mocks.ask.mock.calls[0][0]).toContain("替换该主机 1.3.0 之前的旧格式授权（执行命令、终端输入）");
+    expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["session_exec"]);
+    expect(text()).not.toContain("1.3.0 之前的旧格式");
+  });
+});

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"log/slog"
 	"strings"
 	stdsync "sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -50,6 +52,14 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// WithDeviceInstall names the installation fingerprint kept outside the
+// database, the same one the cron scheduler uses, so both agree on the device ID.
+func WithDeviceInstall(install string) Option {
+	return func(s *Service) {
+		s.deviceInstall = install
+	}
+}
+
 func WithProfilesReload(reload func(context.Context) error) Option {
 	return func(s *Service) {
 		s.profilesReload = reload
@@ -80,7 +90,11 @@ type Service struct {
 	profilesReload    func(context.Context) error
 	permissionsReload func(context.Context) error
 	grantsReload      func(context.Context) error
+	stateRulesChanged func(context.Context)
+	deviceInstall     string
 	syncPeriod        time.Duration
+	// linkChanged is called after the saved sync link was written.
+	linkChanged atomic.Pointer[func()]
 
 	settingsMu  stdsync.Mutex
 	lifecycleMu stdsync.Mutex
@@ -114,6 +128,37 @@ func (s *Service) SetGrantsReload(reload func(context.Context) error) {
 	s.grantsReload = reload
 }
 
+// SetLinkChanged registers a callback run after every write of the saved sync
+// link, such as a switch to another account. It must not block.
+func (s *Service) SetLinkChanged(changed func()) {
+	s.linkChanged.Store(&changed)
+}
+
+func (s *Service) notifyLinkChanged() {
+	if changed := s.linkChanged.Load(); changed != nil && *changed != nil {
+		(*changed)()
+	}
+}
+
+// SetStateRulesChanged sets the hook run after a sync changed the caller's
+// state rules, so the rules reach the owner's helpers on this device.
+func (s *Service) SetStateRulesChanged(changed func(context.Context)) {
+	s.stateRulesChanged = changed
+}
+
+// SetSkills routes synced AI skill overrides through the manager that serves
+// them, keeping its per-owner cache current.
+func (s *Service) SetSkills(manager *skills.Manager) {
+	s.engine.setSkills(manager)
+}
+
+// afterKindsChanged runs the hooks of kinds a sync changed locally.
+func (s *Service) afterKindsChanged(ctx context.Context, changed map[string]bool) {
+	if changed[KindStateRule] && s.stateRulesChanged != nil {
+		s.stateRulesChanged(ctx)
+	}
+}
+
 func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Service {
 	s := &Service{store: db, vault: credentialVault, syncPeriod: defaultBackgroundSyncPeriod, wakeCh: make(chan struct{}, 1)}
 	for _, option := range options {
@@ -121,6 +166,7 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 	}
 	s.engine = NewEngine(db, credentialVault, s.logger)
 	s.engine.aiShared = s.desktop
+	s.engine.deviceInstall = s.deviceInstall
 	if credentialVault != nil {
 		// Wake a background sync round immediately after the vault unlocks: a vault locked at startup no longer waits for the next period.
 		credentialVault.AddUnlockListener(s.wake)
@@ -472,10 +518,16 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 		return LinkResult{}, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无法安全保存同步链接设置；请先完成凭据保护初始化")
 	}
 	secret := linkSecret{}
-	// Only envelope values participate in field-by-field merging; wholesale overwrite of legacy plaintext relies on the caller submitting the complete link every time.
+	// Envelope values are merged field by field. A pre-1.3.0 plaintext value is never read: it can only be
+	// replaced by a patch that supplies the credentials (username and password), which the user re-enters
+	// after seeing errLegacyPlaintextLink; a partial patch is rejected instead of silently dropping fields.
 	if value, found, err := s.store.SettingGet(ctx, settingLink); err != nil {
 		return LinkResult{}, err
-	} else if found && strings.HasPrefix(strings.TrimSpace(value), store.SecretEnvelopePrefix) {
+	} else if found && strings.TrimSpace(value) != "" && !strings.HasPrefix(strings.TrimSpace(value), store.SecretEnvelopePrefix) {
+		if patch.Username == nil || patch.Password == nil {
+			return LinkResult{}, errLegacyPlaintextLink
+		}
+	} else if found && strings.TrimSpace(value) != "" {
 		plaintext, err := s.revealSettingSecret(ctx, value)
 		if err != nil {
 			return LinkResult{}, err
@@ -510,6 +562,7 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	if err := s.store.SettingSet(ctx, settingLink, protected); err != nil {
 		return LinkResult{}, err
 	}
+	s.notifyLinkChanged()
 	if changed {
 		// The new link is already saved. A failed login must not leave the old
 		// account or old password's cookie available to desktop commands.
@@ -644,7 +697,15 @@ func (s *Service) linkView(secret linkSecret) Link {
 	}
 }
 
+func sameLinkTarget(a, b linkSecret) bool {
+	return a.URL == b.URL && a.Username == b.Username && a.Password == b.Password && a.Insecure == b.Insecure
+}
+
 func (s *Service) saveLinkSecret(ctx context.Context, secret linkSecret) error {
+	return s.saveLinkSecretNotify(ctx, secret, true)
+}
+
+func (s *Service) saveLinkSecretNotify(ctx context.Context, secret linkSecret, notify bool) error {
 	encoded, err := json.Marshal(secret)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "无法编码同步链接设置", err)
@@ -653,7 +714,13 @@ func (s *Service) saveLinkSecret(ctx context.Context, secret linkSecret) error {
 	if err != nil {
 		return err
 	}
-	return s.store.SettingSet(ctx, settingLink, protected)
+	if err := s.store.SettingSet(ctx, settingLink, protected); err != nil {
+		return err
+	}
+	if notify {
+		s.notifyLinkChanged()
+	}
+	return nil
 }
 
 func (s *Service) recordProbe(ctx context.Context, probeErr error) {
@@ -669,13 +736,16 @@ func (s *Service) recordProbe(ctx context.Context, probeErr error) {
 	if err := json.Unmarshal([]byte(plaintext), &secret); err != nil {
 		return
 	}
+	previous := secret
 	if probeErr != nil {
 		secret.LastError = probeErr.Error()
 	} else {
 		secret.VerifiedAt = ids.NowMS()
 		secret.LastError = ""
 	}
-	if err := s.saveLinkSecret(ctx, secret); err != nil {
+	// A probe only records its outcome; the link itself is unchanged, so
+	// listeners such as the exposure reconcile are not woken.
+	if err := s.saveLinkSecretNotify(ctx, secret, !sameLinkTarget(previous, secret)); err != nil {
 		s.engine.logger.Warn("sync probe result not recorded", "error", err)
 	}
 }
@@ -738,6 +808,7 @@ func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error)
 	report, syncErr := s.engine.Sync(ctx, RemoteConfig{
 		URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure,
 	})
+	s.afterKindsChanged(ctx, report.changedKinds)
 	if syncReportChanged(report) {
 		if s.profilesReload != nil {
 			if err := s.profilesReload(ctx); err != nil {

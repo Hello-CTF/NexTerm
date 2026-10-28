@@ -1,4 +1,11 @@
 import type { AiBoard, AiDockTab, AppTab, LeftMode, Pane, Workspace } from "./store";
+import { workspaceLayoutTree, workspacePaneOrder } from "./paneLayout";
+import { cleanTree, paneIdsInOrder, type SplitNode } from "./splitTree";
+import { mergeSplitTrees, type TimedSplitTree } from "./splitTreeSync";
+
+// Version 4 stores each workspace's split tree (layoutTree, layoutUpdatedAt) and identifies panes by
+// id. Documents of any other version are not read as this one.
+export const LAYOUT_VERSION = 4;
 
 export interface PersistedLayout {
   v: number;
@@ -36,7 +43,7 @@ interface EntityItem<T> {
   parent: number;
 }
 
-const TOOL_TAB_KINDS = new Set(["credentials", "settings", "audit", "devices", "history", "execBatch"]);
+const TOOL_TAB_KINDS = new Set(["credentials", "settings", "audit", "devices", "history", "execBatch", "host"]);
 const GLOBAL_BOARD = "global";
 
 function sameValue(left: unknown, right: unknown): boolean {
@@ -79,8 +86,10 @@ export function workspaceLogicalKey(workspace: Workspace): string {
   return `${workspace.kind}:id:${workspace.id}`;
 }
 
-export function paneLogicalKey(_pane: Pane, index: number): string {
-  return `pane:${index}`;
+// Panes are matched by id: the split tree places panes by id, so an index would pair unrelated panes
+// once two devices split differently.
+export function paneLogicalKey(pane: Pane): string {
+  return `pane:${pane.id}`;
 }
 
 export function tabLogicalKey(tab: AppTab): string {
@@ -288,7 +297,6 @@ const WORKSPACE_FIELDS = [
   "quickTarget",
   "deletedTarget",
   "restorePending",
-  "splitRatio",
   "closable",
 ] as const;
 
@@ -306,6 +314,7 @@ const TAB_FIELDS = [
   "closable",
   "exited",
   "renamedByUser",
+  "customTitleAt",
   "restorePending",
 ] as const;
 
@@ -336,6 +345,17 @@ function mergeTabMeta(group: EntityGroup<AppTab>, id: string): AppTab {
       : mergeAddedValue(local?.[field], remote?.[field]);
     output[field] = value as never;
   }
+  // title, renamedByUser and customTitleAt are one fact: the newest title decision (a rename
+  // or a clear) wins as a whole, so a stale device can neither resurrect a cleared title nor
+  // keep an older rename, and a custom title never pairs with the other device's OSC title.
+  const localAt = local?.customTitleAt ?? 0;
+  const remoteAt = remote?.customTitleAt ?? 0;
+  const winner = localAt > remoteAt ? local : remoteAt > localAt ? remote : undefined;
+  if (winner) {
+    output.title = winner.title;
+    output.renamedByUser = winner.renamedByUser;
+    output.customTitleAt = winner.customTitleAt;
+  }
   return output;
 }
 
@@ -349,35 +369,60 @@ function normalizePane(pane: Pane, fallbackActive = false): Pane {
   return { ...pane, activeTabId };
 }
 
-export function capWorkspacePanes(workspace: Workspace): Workspace {
+/**
+ * Normalizes a workspace after a merge: active tabs and pane point at existing entries, and the
+ * split tree holds exactly the panes. A pane the tree cannot place (every leaf at the depth limit)
+ * hands its tabs to the active pane instead of disappearing.
+ */
+export function normalizeMergedWorkspace(workspace: Workspace): Workspace {
   let panes = workspace.panes.map((pane) => normalizePane(pane));
   if (panes.length === 0) return { ...workspace, panes, activePaneId: workspace.activePaneId };
-  if (panes.length > 2) {
-    const overflowActive = panes.slice(2).find((pane) => pane.id === workspace.activePaneId)?.activeTabId;
-    const seen = new Set<string>();
-    const tabs: AppTab[] = [];
-    for (const pane of panes.slice(1)) {
-      for (const tab of pane.tabs) {
-        const key = tabLogicalKey(tab);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        tabs.push(tab);
-      }
-    }
-    const second = normalizePane({
-      ...panes[1],
-      tabs,
-      activeTabId:
-        overflowActive && tabs.some((tab) => tab.id === overflowActive)
-          ? overflowActive
-          : panes[1].activeTabId,
-    });
-    panes = [panes[0], second];
-  }
-  const activePaneId = panes.some((pane) => pane.id === workspace.activePaneId)
+  let tree = workspaceLayoutTree({ panes, layoutTree: workspace.layoutTree });
+  const placed = new Set(tree ? paneIdsInOrder(tree) : []);
+  const unplaced = panes.filter((pane) => !placed.has(pane.id));
+  const activePaneId = panes.some((pane) => pane.id === workspace.activePaneId && placed.has(pane.id))
     ? workspace.activePaneId
-    : panes[0].id;
-  return { ...workspace, panes, activePaneId };
+    : (tree ? paneIdsInOrder(tree)[0] : panes[0].id);
+  if (unplaced.length > 0 && tree) {
+    const moved = unplaced.flatMap((pane) => pane.tabs);
+    panes = panes
+      .filter((pane) => placed.has(pane.id))
+      .map((pane) =>
+        pane.id === activePaneId && moved.length > 0
+          ? normalizePane({ ...pane, tabs: [...pane.tabs, ...moved] })
+          : pane,
+      );
+    tree = workspaceLayoutTree({ panes, layoutTree: tree });
+  }
+  return {
+    ...workspace,
+    panes,
+    activePaneId,
+    ...(tree ? { layoutTree: tree } : {}),
+    layoutUpdatedAt: workspace.layoutUpdatedAt ?? 0,
+  };
+}
+
+function timedTree(workspace: Workspace | undefined): TimedSplitTree | null {
+  const tree = workspace ? workspaceLayoutTree(workspace) : null;
+  return tree && workspace ? { tree, updatedAt: workspace.layoutUpdatedAt ?? 0 } : null;
+}
+
+// mergeWorkspaceLayout resolves the split tree of a workspace both sides kept: structure as a whole
+// (one-sided change wins, otherwise the newer tree), ratios per split, then the tree is reconciled
+// to the merged pane list so panes added on either side are placed and removed ones collapse.
+function mergeWorkspaceLayout(
+  group: EntityGroup<Workspace>,
+  panes: Pane[],
+): Pick<Workspace, "layoutTree" | "layoutUpdatedAt"> {
+  const local = timedTree(group.local);
+  const remote = timedTree(group.remote);
+  if (!local || !remote) {
+    const only = local ?? remote;
+    return only ? { layoutTree: only.tree, layoutUpdatedAt: only.updatedAt } : {};
+  }
+  const merged = mergeSplitTrees(timedTree(group.base), local, remote, { paneIds: panes.map((pane) => pane.id) });
+  return merged.tree ? { layoutTree: merged.tree, layoutUpdatedAt: merged.updatedAt } : {};
 }
 
 function mergeTabs(
@@ -445,14 +490,55 @@ function mergePanes(
 }
 
 function protectedWorkspace(workspace: Workspace, options: LayoutMergeOptions): Workspace | undefined {
-  if (options.preserveLocalWorkspace?.(workspace)) return capWorkspacePanes(workspace);
+  if (options.preserveLocalWorkspace?.(workspace)) return normalizeMergedWorkspace(workspace);
   const panes = workspace.panes
     .map((pane) => ({
       ...pane,
       tabs: pane.tabs.filter((tab) => options.preserveLocalTab?.(tab, workspace) === true),
     }))
     .filter((pane) => pane.tabs.length > 0);
-  return panes.length > 0 ? capWorkspacePanes({ ...workspace, panes }) : undefined;
+  return panes.length > 0 ? normalizeMergedWorkspace({ ...workspace, panes }) : undefined;
+}
+
+function renameLeaf(node: SplitNode, from: string, to: string): SplitNode {
+  if (node.type === "leaf") return node.paneId === from ? { ...node, paneId: to } : node;
+  const a = renameLeaf(node.a, from, to);
+  const b = renameLeaf(node.b, from, to);
+  return a === node.a && b === node.b ? node : { ...node, a, b };
+}
+
+function renamePane(workspace: Workspace, from: string, to: string): Workspace {
+  if (from === to || !workspace.panes.some((pane) => pane.id === from)) return workspace;
+  const tree = workspaceLayoutTree(workspace);
+  return {
+    ...workspace,
+    panes: workspace.panes.map((pane) => (pane.id === from ? { ...pane, id: to } : pane)),
+    activePaneId: workspace.activePaneId === from ? to : workspace.activePaneId,
+    ...(tree ? { layoutTree: renameLeaf(tree, from, to) } : {}),
+  };
+}
+
+// alignPrimaryPanes pairs two copies of one logical workspace that were opened independently (no
+// pane id in common, e.g. the same host opened on two devices): their first panes are the same
+// pane, so both take the smaller of the two ids and their tabs merge instead of becoming a split.
+// A first pane the base already knows is not a fresh copy: the other side removed it, so nothing
+// is paired and the usual add/remove merge applies.
+function alignPrimaryPanes(group: EntityGroup<Workspace>): EntityGroup<Workspace> {
+  const { local, remote } = group;
+  if (!local || !remote) return group;
+  const remoteIds = new Set(remote.panes.map((pane) => pane.id));
+  if (local.panes.some((pane) => remoteIds.has(pane.id))) return group;
+  const localPrimary = workspacePaneOrder(local)[0];
+  const remotePrimary = workspacePaneOrder(remote)[0];
+  if (!localPrimary || !remotePrimary) return group;
+  const baseIds = new Set(group.base?.panes.map((pane) => pane.id) ?? []);
+  if (baseIds.has(localPrimary) || baseIds.has(remotePrimary)) return group;
+  const canonical = localPrimary < remotePrimary ? localPrimary : remotePrimary;
+  return {
+    ...group,
+    local: renamePane(local, localPrimary, canonical),
+    remote: renamePane(remote, remotePrimary, canonical),
+  };
 }
 
 function mergeWorkspaces(
@@ -466,23 +552,26 @@ function mergeWorkspaces(
     if (group.base && !group.remote) {
       return group.local ? protectedWorkspace(group.local, options) : undefined;
     }
-    if (!group.local) return group.remote ? capWorkspacePanes(group.remote) : undefined;
-    if (!group.remote) return capWorkspacePanes(group.local);
-    const workspace = mergeWorkspaceMeta(group, group.local.id);
+    if (!group.local) return group.remote ? normalizeMergedWorkspace(group.remote) : undefined;
+    if (!group.remote) return normalizeMergedWorkspace(group.local);
+    const aligned = alignPrimaryPanes(group);
+    const local = aligned.local ?? group.local;
+    const remote = aligned.remote ?? group.remote;
+    const workspace = mergeWorkspaceMeta(aligned, local.id);
     const panes = mergePanes(
-      group.base?.panes ?? [],
-      group.local.panes,
-      group.remote.panes,
-      group.local,
+      aligned.base?.panes ?? [],
+      local.panes,
+      remote.panes,
+      local,
       options,
     );
-    const capped = capWorkspacePanes({ ...workspace, panes });
-    if (capped.panes.some((pane) => pane.id === group.local?.activePaneId)) {
-      return { ...capped, activePaneId: group.local?.activePaneId ?? capped.activePaneId };
+    const capped = normalizeMergedWorkspace({ ...workspace, panes, ...mergeWorkspaceLayout(aligned, panes) });
+    if (capped.panes.some((pane) => pane.id === local.activePaneId)) {
+      return { ...capped, activePaneId: local.activePaneId };
     }
-    if (group.local.panes.length > 0) return { ...capped, activePaneId: capped.panes[0]?.id ?? capped.activePaneId };
-    if (capped.panes.some((pane) => pane.id === group.remote?.activePaneId)) {
-      return { ...capped, activePaneId: group.remote?.activePaneId ?? capped.activePaneId };
+    if (local.panes.length > 0) return { ...capped, activePaneId: workspacePaneOrder(capped)[0] ?? capped.activePaneId };
+    if (capped.panes.some((pane) => pane.id === remote.activePaneId)) {
+      return { ...capped, activePaneId: remote.activePaneId };
     }
     return capped;
   });
@@ -593,7 +682,7 @@ export function mergeLayout(
   else if (remoteActive) activeWorkspaceId = workspaceResult.merged.get(remoteActive)?.id ?? null;
   else activeWorkspaceId = workspaces[0]?.id ?? null;
   return {
-    v: 3,
+    v: LAYOUT_VERSION,
     leftOpen: local.leftOpen,
     leftMode: local.leftMode,
     rightOpen: local.rightOpen,
@@ -624,10 +713,14 @@ function canonicalWorkspace(workspace: Workspace, key: string) {
   const meta = Object.fromEntries(
     WORKSPACE_FIELDS.map((field) => [field, workspace[field]]).filter(([, value]) => value !== undefined),
   );
+  const tree = workspaceLayoutTree(workspace);
   return {
     key,
     ...meta,
+    layout: tree ? cleanTree(tree) : null,
+    layoutUpdatedAt: workspace.layoutUpdatedAt ?? 0,
     panes: workspace.panes.map((pane) => ({
+      id: pane.id,
       tabs: pane.tabs.map((tab, index) => ({
         key: duplicateKeys(pane.tabs, tabLogicalKey)[index],
         ...Object.fromEntries(
@@ -667,8 +760,8 @@ function matchingWorkspace(reference: Workspace, candidates: Workspace[]): Works
   return matches.length === 1 ? matches[0] : undefined;
 }
 
-function matchingPane(reference: Pane, referenceIndex: number, candidates: Pane[]): Pane | undefined {
-  return candidates.find((pane) => pane.id === reference.id) ?? candidates[referenceIndex];
+function matchingPane(reference: Pane, candidates: Pane[]): Pane | undefined {
+  return candidates.find((pane) => pane.id === reference.id);
 }
 
 function matchingTab(reference: AppTab, candidates: AppTab[]): AppTab | undefined {
@@ -696,17 +789,15 @@ export function projectSharedLayout(
   const workspaces = candidate.workspaces.map((workspace) => {
     const baseWorkspace = matchingWorkspace(workspace, base.workspaces);
     if (!baseWorkspace) return workspace;
-    const panes = workspace.panes.map((pane, paneIndex) => {
-      const basePane =
-        baseWorkspace.panes.find((item) => item.id === pane.id) ?? baseWorkspace.panes[paneIndex];
+    const panes = workspace.panes.map((pane) => {
+      const basePane = baseWorkspace.panes.find((item) => item.id === pane.id);
       if (!basePane) return pane;
       const reference = basePane.tabs.find((tab) => tab.id === basePane.activeTabId);
       const active = reference ? matchingTab(reference, pane.tabs) : undefined;
       return active ? { ...pane, activeTabId: active.id } : pane;
     });
-    const baseActiveIndex = baseWorkspace.panes.findIndex((pane) => pane.id === baseWorkspace.activePaneId);
-    const baseActive = baseActiveIndex >= 0 ? baseWorkspace.panes[baseActiveIndex] : undefined;
-    const activePane = baseActive ? matchingPane(baseActive, baseActiveIndex, panes) : undefined;
+    const baseActive = baseWorkspace.panes.find((pane) => pane.id === baseWorkspace.activePaneId);
+    const activePane = baseActive ? matchingPane(baseActive, panes) : undefined;
     return { ...workspace, panes, activePaneId: activePane?.id ?? workspace.activePaneId };
   });
   const baseActiveWorkspace = base.workspaces.find((workspace) => workspace.id === base.activeWorkspaceId);
@@ -760,8 +851,10 @@ function persistentWorkspaceEqual(left: Workspace, right: Workspace): boolean {
   return (
     left.id === right.id &&
     WORKSPACE_FIELDS.every((field) => sameValue(left[field], right[field])) &&
+    (left.layoutUpdatedAt ?? 0) === (right.layoutUpdatedAt ?? 0) &&
     left.panes.length === right.panes.length &&
-    left.panes.every((pane, index) => persistentPaneEqual(pane, right.panes[index]))
+    left.panes.every((pane, index) => persistentPaneEqual(pane, right.panes[index])) &&
+    sameValue(workspaceLayoutTree(left), workspaceLayoutTree(right))
   );
 }
 

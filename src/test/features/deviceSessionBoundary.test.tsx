@@ -44,8 +44,8 @@ function seed(): void {
 	useUi.setState({
 		closeTab: mocks.closeTab,
 		sessions: [
-			{ id: "s-dev", assetId: "device/d-1", assetName: "web-01", kind: "device", status: "connected", controller: "" },
-			{ id: "s-ssh", assetId: "a-1", assetName: "prod", kind: "ssh", status: "connected", controller: "" },
+			{ id: "s-dev", assetId: "device/d-1", assetName: "web-01", kind: "device", status: "connected" },
+			{ id: "s-ssh", assetId: "a-1", assetName: "prod", kind: "ssh", status: "connected" },
 		] as never,
 		workspaces: [
 			{
@@ -58,7 +58,6 @@ function seed(): void {
 				assetKind: "device",
 				panes: [{ id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", sessionId: "s-dev", title: "Terminal", closable: true }] }],
 				activePaneId: "p1",
-				splitRatio: 0.5,
 			},
 			{
 				id: "ws-ssh",
@@ -70,7 +69,6 @@ function seed(): void {
 				assetKind: "ssh",
 				panes: [{ id: "p2", activeTabId: "t2", tabs: [{ id: "t2", kind: "terminal", sessionId: "s-ssh", title: "Terminal", closable: true }] }],
 				activePaneId: "p2",
-				splitRatio: 0.5,
 			},
 		] as never,
 		activeWorkspaceId: "ws-dev",

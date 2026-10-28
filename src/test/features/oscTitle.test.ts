@@ -40,7 +40,6 @@ function seed(tabs: AppTab[]) {
         title: "ws",
         panes: [{ id: "pane", tabs, activeTabId: tabs[0]?.id ?? null }],
         activePaneId: "pane",
-        splitRatio: 0.5,
         closable: true,
       },
     ],
@@ -72,14 +71,14 @@ describe("remote tab titles (OSC 0/2)", () => {
   });
 
   it("never overrides a user-renamed tab", () => {
-    seed([terminal("t1", { title: "my terminal", renamedByUser: true })]);
+    seed([terminal("t1", { title: "my terminal", renamedByUser: true, customTitleAt: 1 })]);
     expect(applyRemoteTabTitle("t1", "remote title")).toBe(false);
     expect(titleOf()).toBe("my terminal");
   });
 
   it("keeps a user rename authoritative even after remote title updates", () => {
     applyRemoteTabTitle("t1", "first remote");
-    useUi.getState().updateTab("t1", { title: "locked", renamedByUser: true });
+    useUi.getState().updateTab("t1", { title: "locked", renamedByUser: true, customTitleAt: 1 });
     expect(applyRemoteTabTitle("t1", "second remote")).toBe(false);
     expect(titleOf()).toBe("locked");
   });
@@ -98,6 +97,17 @@ describe("remote tab titles (OSC 0/2)", () => {
     expect(titleOf()).toBe("Terminal 1");
   });
 
+  it("unlocks a legacy rename lock without a decision time on load", () => {
+    // Older builds recorded backend OSC titles as renames; such a lock may hold an OSC title.
+    seed([terminal("t1", { title: "user@host: ~", renamedByUser: true })]);
+    const parsed = sanitizeLayout(JSON.parse(JSON.stringify(serializeLayout(useUi.getState()))));
+    const tab = parsed?.workspaces[0].panes[0].tabs[0];
+    expect(tab?.title).toBe("user@host: ~");
+    expect(tab?.renamedByUser).toBeUndefined();
+    // In memory the same legacy lock does not block OSC titles either.
+    expect(applyRemoteTabTitle("t1", "vim")).toBe(true);
+  });
+
   it("ignores unknown tabs", () => {
     expect(applyRemoteTabTitle("missing", "title")).toBe(false);
   });
@@ -107,12 +117,76 @@ describe("remote tab titles (OSC 0/2)", () => {
     expect(sanitizeRemoteTabTitle("\x1b]0;abc")).toBe("]0;abc");
   });
 
+  it("keeps emoji sequences whole in remote titles", () => {
+    const family = "👨\u200d👩\u200d👧\u200d👦";
+    for (const title of [
+      `${family} family`,
+      "❤\ufe0f build",
+      "🇯🇵🇺🇸 flags",
+      "👍🏽 ok",
+      "1\ufe0f\u20e3 keycap",
+      "🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f} scotland",
+    ]) {
+      expect(applyRemoteTabTitle("t1", title)).toBe(true);
+      expect(titleOf()).toBe(title);
+    }
+    // At the 80 code point cap a straddling cluster is dropped whole, never split.
+    const prefix = "中".repeat(76);
+    applyRemoteTabTitle("t1", `${prefix}${family}tail`);
+    expect(titleOf()).toBe(prefix);
+    applyRemoteTabTitle("t1", "🙂".repeat(100));
+    expect(titleOf()).toBe("🙂".repeat(80));
+    expect(titleOf()).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]|\ufffd/);
+  });
+
+  it("drops C1 controls and bidi overrides but keeps joiners", () => {
+    expect(sanitizeRemoteTabTitle("a\u0085b\u009bc")).toBe("a b c");
+    expect(sanitizeRemoteTabTitle("\u202eevil\u202c \u2066x\u2069")).toBe("evil x");
+    expect(sanitizeRemoteTabTitle("👩\u200d💻 dev")).toBe("👩\u200d💻 dev");
+  });
+
+  it("drops zero-width spaces and deprecated format controls but keeps direction marks", () => {
+    expect(sanitizeRemoteTabTitle("a\u200bb\u206ac\u206fd")).toBe("abcd");
+    // LRM, RLM, ALM and ZWNJ stay: scripts and mixed-direction titles need them.
+    expect(sanitizeRemoteTabTitle("a\u200eb\u200fc\u061cd\u200ce")).toBe("a\u200eb\u200fc\u061cd\u200ce");
+  });
+
+  it("turns lone surrogates into U+FFFD so the shown and stored title agree", () => {
+    const high = String.fromCharCode(0xd83d);
+    const low = String.fromCharCode(0xde00);
+    expect(sanitizeRemoteTabTitle(`a${high}b${low}c`)).toBe("a\ufffdb\ufffdc");
+    expect(sanitizeRemoteTabTitle(`${high}${low} ok`)).toBe(`${String.fromCodePoint(0x1f600)} ok`);
+    expect(applyRemoteTabTitle("t1", `vim ${high}`)).toBe(true);
+    expect(titleOf()).toBe("vim \ufffd");
+    // The stored title survives a JSON round trip unchanged, as it does through the backend.
+    expect(JSON.parse(JSON.stringify(titleOf()))).toBe(titleOf());
+  });
+
+  it("an emoji rename and an AI dock title survive a layout round trip", () => {
+    const title = "🚀 部署 👨\u200d👩\u200d👧\u200d👦 ❤\ufe0f";
+    seed([terminal("t1", { title, renamedByUser: true, customTitleAt: 1700000000000 })]);
+    const longAiTitle = `${"中".repeat(78)}🇯🇵tail`;
+    useUi.setState({
+      aiBoards: { ws: { tabs: [{ id: "ai1", title: longAiTitle }], activeTabId: "ai1" } },
+    } as never);
+    const parsed = sanitizeLayout(JSON.parse(JSON.stringify(serializeLayout(useUi.getState()))));
+    expect(parsed?.workspaces[0].panes[0].tabs[0]).toMatchObject({ title, renamedByUser: true });
+    expect(parsed?.aiBoards?.ws?.tabs[0].title).toBe(`${"中".repeat(78)}🇯🇵`);
+    const clipped = `${"中".repeat(79)}🇯🇵`;
+    useUi.setState({ aiBoards: { ws: { tabs: [{ id: "ai1", title: clipped }], activeTabId: "ai1" } } } as never);
+    const reparsed = sanitizeLayout(JSON.parse(JSON.stringify(serializeLayout(useUi.getState()))));
+    expect(reparsed?.aiBoards?.ws?.tabs[0].title).toBe("中".repeat(79));
+  });
+
   it("renamedByUser survives a layout serialize/sanitize round trip", () => {
-    seed([terminal("t1", { title: "my terminal", renamedByUser: true })]);
+    seed([terminal("t1", { title: "my terminal", renamedByUser: true, customTitleAt: 1700000000000 })]);
     const dto = serializeLayout(useUi.getState());
     expect(dto).not.toBeNull();
     const parsed = sanitizeLayout(JSON.parse(JSON.stringify(dto)));
-    expect(parsed?.workspaces[0].panes[0].tabs[0].renamedByUser).toBe(true);
+    expect(parsed?.workspaces[0].panes[0].tabs[0]).toMatchObject({
+      renamedByUser: true,
+      customTitleAt: 1700000000000,
+    });
 
     seed([terminal("t2")]);
     const plain = serializeLayout(useUi.getState());

@@ -26,8 +26,7 @@ import (
 // bytes travel as base64, which hides their redundancy, so the pack layout splits the JSON into a skeleton whose chunk
 // "data" strings are emptied and the decoded chunk bytes stored back to back, and compresses the whole body as one
 // zstd stream. Readers refill each emptied string with the base64 of its bytes and get the original JSON byte for
-// byte. wireKindTranscriptGzip and wireKindTranscriptZstd compress the JSON itself; builds that emitted them remain
-// readable.
+// byte. wireKindTranscriptGzip compresses the JSON itself.
 //
 // Sealed plaintext layout: "NXZ1" | uint64 big-endian decoded size | zstd frame (gzip stream for the gzip label).
 // The decoded pack body is "NXP1" | uvarint skeleton length | skeleton | uvarint slot count | one uvarint byte length
@@ -35,7 +34,6 @@ import (
 const (
 	wireKindTranscriptPack = "transcript.zpack"
 	wireKindTranscriptGzip = "transcript.gzip"
-	wireKindTranscriptZstd = "transcript.zstd"
 
 	packMagic = "NXP1"
 	// packWindowSize bounds the zstd history a reader must hold; repeated prompts and command output within a
@@ -245,19 +243,6 @@ func compressObjectPlaintext(plaintext []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// compressObjectPlaintextZstd produces the zstd layout. The writer no longer uses it; it exists for interop tests.
-func compressObjectPlaintextZstd(plaintext []byte) ([]byte, error) {
-	encoder, err := acquireZstdEncoder()
-	if err != nil {
-		return nil, ipc.WrapError(ipc.CodeInternal, "无法压缩同步对象", err)
-	}
-	defer zstdEncoders.Put(encoder)
-	header := make([]byte, compressedHeaderSize, compressedHeaderSize+len(plaintext)/2)
-	copy(header, compressedMagic)
-	binary.BigEndian.PutUint64(header[len(compressedMagic):], uint64(len(plaintext)))
-	return encoder.EncodeAll(plaintext, header), nil
-}
-
 // decompressGzipPlaintext inflates the gzip layout with the same bounds as the zstd path: declared size 1..cap,
 // exact match, and at most one extra byte read.
 func decompressGzipPlaintext(data []byte) ([]byte, error) {
@@ -334,7 +319,7 @@ func sealObjectWire(dek, plaintext []byte, id, kind string) ([]byte, error) {
 
 // openCompressedTranscript tries the compressed labels and returns the logical transcript JSON.
 func openCompressedTranscript(dek, blob []byte, id string) ([]byte, bool, error) {
-	for _, label := range []string{wireKindTranscriptPack, wireKindTranscriptGzip, wireKindTranscriptZstd} {
+	for _, label := range []string{wireKindTranscriptPack, wireKindTranscriptGzip} {
 		packed, err := openObject(dek, blob, id, label)
 		if err != nil {
 			continue
@@ -343,8 +328,6 @@ func openCompressedTranscript(dek, blob []byte, id string) ([]byte, bool, error)
 		switch label {
 		case wireKindTranscriptPack:
 			decode = decompressPackedTranscript
-		case wireKindTranscriptZstd:
-			decode = decompressObjectPlaintext
 		}
 		plaintext, err := decode(packed)
 		if err != nil {

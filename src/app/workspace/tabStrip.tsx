@@ -1,0 +1,202 @@
+import { type ReactNode } from "react";
+import { hasCustomTitle, useUi, type AppTab } from "../store";
+import { useTabUnread } from "../unreadStore";
+import { awarenessBadge, useTabAwareness, type AwarenessBadge } from "../sessionAwarenessStore";
+import { useTerminalTabTitle } from "../terminalViewStore";
+import { fileVisual } from "../../features/files/fileTypes";
+import { useAssetProductionClassification } from "../../features/production/productionSettings";
+import {
+  reshowPersistenceHint,
+  usePersistenceFailureMark,
+  usePersistenceTabNote,
+  type PersistenceTabInfo,
+} from "../../features/terminal/persistenceHintStore";
+import {
+  IconActivity,
+  IconBox,
+  IconCheck,
+  IconClose,
+  IconClock,
+  IconCommand,
+  IconDatabase,
+  IconDrive,
+  IconFolderOpen,
+  IconHistory,
+  IconKey,
+  IconList,
+  IconMonitor,
+  IconNetwork,
+  IconPersist,
+  IconServer,
+  IconSettings,
+  IconTerminal,
+} from "../../ui/icons";
+
+const TAB_ICON = {
+  terminal: IconTerminal,
+  files: IconFolderOpen,
+  log: IconList,
+  mount: IconDrive,
+  forward: IconNetwork,
+  docker: IconBox,
+  db: IconDatabase,
+  credentials: IconKey,
+  settings: IconSettings,
+  audit: IconHistory,
+  devices: IconMonitor,
+  background: IconActivity,
+  history: IconClock,
+  execBatch: IconCommand,
+  host: IconServer,
+} as const;
+
+export function tabIcon(t: AppTab) {
+  if ((t.kind === "files" || t.kind === "log") && t.path) return fileVisual(t.path, "file").Icon;
+  return TAB_ICON[t.kind] ?? IconTerminal;
+}
+
+// tabTooltip prefers what the tab's pane reports about persistence (live) over the reason recorded when the tab
+// opened, which only applies until a pane has reported.
+export function tabTooltip(
+  t: AppTab,
+  unread: boolean,
+  live: PersistenceTabInfo = {},
+  attention: AwarenessBadge | null = null,
+): string {
+  const notes: string[] = [];
+  if (t.kind === "terminal" && attention) notes.push(attention.label);
+  const persistence = t.kind === "terminal" ? live.failureMark ?? live.note : undefined;
+  if (persistence) notes.push(persistence);
+  else if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
+  else if (t.kind === "terminal" && t.regularReason) notes.push(`普通终端：${t.regularReason}`);
+  if (unread) notes.push("有新输出");
+  if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
+  return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
+}
+
+// A durable terminal tab carries a small persistence mark before its title; regular tabs carry none. A failure
+// hint the user dismissed while it still applies leaves a red dot that names it and shows the hint again; its hit
+// area extends past the dot without taking layout space. The tab bar renders the icon before the title and the
+// dot on the trailing side (part), away from the attention badge; the plain dot is reserved for this mark.
+export function TabPersistenceMark({ tab, part = "all" }: { tab: AppTab; part?: "all" | "icon" | "failure" }) {
+  const failure = usePersistenceFailureMark(tab.id);
+  if (tab.kind !== "terminal") return null;
+  return (
+    <>
+      {part !== "failure" && tab.durable === true && (
+        <span className="flex shrink-0 items-center" role="img" aria-label="持久终端">
+          <IconPersist size={12} />
+        </span>
+      )}
+      {part !== "icon" && failure && (
+        <button
+          type="button"
+          className="relative h-1.5 w-1.5 shrink-0 rounded-full bg-red-500 p-0 before:absolute before:-inset-2 before:content-['']"
+          aria-label={`重新显示提示：${failure}`}
+          title={failure}
+          onClick={() => reshowPersistenceHint(tab.id)}
+        />
+      )}
+    </>
+  );
+}
+
+// The attention badge sits before the title at the persistence icon's scale, and each state has its own shape so
+// it never depends on colour: "!" in a disc for needs_me, a check for a just_finished command that succeeded (a slate cross when it failed; red stays for the persistence failure dot), a turning ring while a
+// background tab runs and "?" when the state cannot be known. Inferred states (from the screen shape) are drawn
+// lighter: "!" in an outlined ring, a faded check. A tab the user is on shows no running badge, and a needs_me or
+// just_finished state seen on any device shows nothing.
+export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
+  if (!badge) return null;
+  const common = {
+    role: "img",
+    "aria-label": badge.label,
+    title: badge.label,
+    "data-attention": badge.kind,
+    "data-inferred": badge.inferred ? "true" : undefined,
+  } as const;
+  switch (badge.kind) {
+    case "needs_me":
+      return (
+        <span
+          {...common}
+          className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none ${
+            badge.inferred ? "border border-amber-500/80 text-[var(--nx-fg-warning)]" : "bg-amber-400 text-slate-900"
+          }`}
+        >
+          !
+        </span>
+      );
+    case "just_finished":
+      return (
+        <span
+          {...common}
+          data-outcome={badge.outcome}
+          className={`flex shrink-0 items-center ${badge.outcome === "failed" ? "text-slate-400" : "text-green-500"} ${
+            badge.inferred ? "opacity-60" : ""
+          }`}
+        >
+          {badge.outcome === "failed" ? <IconClose size={11} /> : <IconCheck size={11} />}
+        </span>
+      );
+    case "running":
+      return (
+        <span
+          {...common}
+          className="h-2 w-2 shrink-0 rounded-full border border-slate-400 border-t-transparent motion-safe:animate-spin"
+        />
+      );
+    case "unknown":
+      return (
+        <span {...common} className="shrink-0 text-[10px] font-semibold leading-none text-slate-500">
+          ?
+        </span>
+      );
+  }
+}
+
+export function TabStripItem({
+  tab,
+  active = false,
+  children,
+}: {
+  tab: AppTab;
+  active?: boolean;
+  children: (unread: boolean, persistence: PersistenceTabInfo, attention: AwarenessBadge | null) => ReactNode;
+}) {
+  const unread = useTabUnread(tab.id);
+  const note = usePersistenceTabNote(tab.id);
+  const failureMark = usePersistenceFailureMark(tab.id);
+  const awareness = useTabAwareness(tab.kind === "terminal" && !tab.exited ? tab.tabId : undefined);
+  let attention = awarenessBadge(awareness);
+  if (attention?.kind === "running" && active) attention = null;
+  return children(unread, { note, failureMark }, attention);
+}
+
+// A terminal tab's label prefers the OSC-derived remote title from the per-tab view
+// store (narrow subscription: only this tab's label re-renders on a title change);
+// renames clear that entry, so the authoritative workspace tab title shows instead.
+export function TabStripTitle({ tab }: { tab: AppTab }) {
+  const remoteTitle = useTerminalTabTitle(tab.id);
+  return (
+    // A custom title always rules the strip, even when an OSC view title is still cached
+    // (a rename synced from another device, a restored layout, or a reattach).
+    <span className="truncate">
+      {tab.kind === "terminal" && !hasCustomTitle(tab) && remoteTitle ? remoteTitle : tab.title}
+    </span>
+  );
+}
+
+// R-01 workspace-scope warning: a terminal tab whose backend-classified asset
+// environment is production carries an amber badge; the environment name is in
+// the tooltip, the tab strip stays compact.
+export function TabProductionBadge({ sessionId }: { sessionId?: string }) {
+  const assetId = useUi((s) => (sessionId ? s.sessions.find((x) => x.id === sessionId)?.assetId : undefined));
+  const classification = useAssetProductionClassification(assetId);
+  if (!classification?.production) return null;
+  return (
+    <span className="nx-badge nx-badge-amber shrink-0" title={`生产环境：${classification.environment}`}>
+      生产
+    </span>
+  );
+}

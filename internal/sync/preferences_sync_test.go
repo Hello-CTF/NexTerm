@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,6 +109,51 @@ func TestEngineAIPermissionAndPreferencesConverge(t *testing.T) {
 	}
 	if tombstones != 0 {
 		t.Fatalf("tombstones were not cleared after restoring: %d", tombstones)
+	}
+}
+
+// The multi-line paste confirmation mode converges between devices: each enum value set on one device reaches the
+// other as the account override the terminal reads.
+func TestEngineMultilinePastePreferenceConverges(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	for _, device := range []*testDevice{deviceA, deviceB} {
+		enableDeviceKindOptIn(t, device, userID)
+	}
+	const key = "terminal.confirmMultilinePaste"
+	overrides := func(device *testDevice) string {
+		t.Helper()
+		values, err := account.NewPreferences(device.db).UserOverrides(context.Background(), userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(values[key])
+	}
+	round := func(from, to *testDevice) {
+		t.Helper()
+		syncDevice(t, from, server, "alice", "alice-pw-123")
+		syncDevice(t, to, server, "alice", "alice-pw-123")
+	}
+
+	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, `"never"`, 100)
+	round(deviceA, deviceB)
+	if got := overrides(deviceB); got != `"never"` {
+		t.Fatalf("device B mode = %s, want \"never\"", got)
+	}
+
+	putPreferenceSetting(t, deviceB, "prefs.user."+userID+"."+key, `"unbracketed"`, 200)
+	round(deviceB, deviceA)
+	if got := overrides(deviceA); got != `"unbracketed"` {
+		t.Fatalf("device A mode = %s, want \"unbracketed\"", got)
+	}
+
+	putPreferenceSetting(t, deviceA, "prefs.user."+userID+"."+key, `"always"`, 300)
+	round(deviceA, deviceB)
+	if got := overrides(deviceB); got != `"always"` {
+		t.Fatalf("device B mode = %s, want \"always\"", got)
 	}
 }
 
@@ -215,7 +261,7 @@ func TestCollectLocalObjectsHonorsPreferenceOptOut(t *testing.T) {
 	if len(objects) != 0 {
 		t.Fatalf("disabled preference kinds produced %d objects", len(objects))
 	}
-	objects, err = device.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{aiPermission: true, preferences: true}, userID)
+	objects, err = device.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{optInAIPermission: true, optInPreferences: true}, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,8 +539,8 @@ func TestCollectLocalObjectsHonorsAIGrantOptOut(t *testing.T) {
 	device := newTestDevice(t)
 	ctx := context.Background()
 	userID := ids.New()
-	putPreferenceSetting(t, device, guard.DeviceGrantsSettingKey, `{"dev-1":{"deviceId":"dev-1","kinds":["terminal_write"],"updatedAt":100}}`, 100)
-	putPreferenceSetting(t, device, guard.GrantRulesSettingKey, `[{"id":"r-1","deviceId":"dev-1","action":"write_file","path":"/var/log/**","createdAt":100,"updatedAt":100}]`, 100)
+	putPreferenceSetting(t, device, guard.DeviceGrantsSettingKey, `{"dev-1":{"deviceId":"dev-1","kinds":["terminal_write"],"permanent":true,"updatedAt":100,"generation":"gen-dev-1"}}`, 100)
+	putPreferenceSetting(t, device, guard.GrantRulesSettingKey, `[{"id":"r-1","deviceId":"dev-1","action":"write_file","path":"/var/log/**","createdAt":100,"updatedAt":100,"generation":"gen-r-1"}]`, 100)
 	putPreferenceSetting(t, device, guard.DevicePermissionSettingKey, `{"dev-1":"read_only"}`, 100)
 	if err := device.engine.syncTombstonePut(ctx, "device/dev-x", KindAIGrant, 100); err != nil {
 		t.Fatal(err)
@@ -506,7 +552,7 @@ func TestCollectLocalObjectsHonorsAIGrantOptOut(t *testing.T) {
 	if len(objects) != 0 {
 		t.Fatalf("disabled aiGrant produced %d objects", len(objects))
 	}
-	objects, err = device.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{aiGrant: true}, userID)
+	objects, err = device.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{optInAIGrant: true}, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,53 +800,55 @@ func requireGrantRecordPermanence(t *testing.T, value string, want map[string]bo
 }
 
 // A synced device grant is a long-term authorization: the apply path must bind the guard's explicit
-// permanence marker exactly like guard.Grant writes it locally, keeping the durable record permanent
-// across LWW updates, revocations, and re-grants. The payload carries no permanence bit, so old peers
-// stay compatible and legacy records (written before the marker existed) keep their permanent meaning.
-// Whole-row rewrites (apply and tombstone alike) must normalize every bystander record with the guard's
-// own rule: only a missing marker defaults to permanent, while an explicit false marker is preserved.
+// permanence marker and a fresh generation exactly like guard.Grant writes it locally, keeping the durable
+// record permanent across LWW updates, revocations, and re-grants. Whole-row rewrites (apply and tombstone
+// alike) keep current bystanders byte-identical, generation included, and write rejected pre-1.3.0 records
+// back verbatim: they are neither migrated nor dropped, and never become effective.
 func TestApplyAIGrantDeviceBindsExplicitPermanence(t *testing.T) {
 	device := newTestDevice(t)
 	ctx := context.Background()
 	engine := device.engine
 
-	// Bystanders sharing the row: two legacy records without a permanence marker (as written before the
-	// field existed) and one explicit non-permanent control. No whole-row rewrite may flip any of them.
-	putPreferenceSetting(t, device, guard.DeviceGrantsSettingKey, `{"dev-legacy-a":{"deviceId":"dev-legacy-a","kinds":["terminal_write"],"updatedAt":50},"dev-legacy-b":{"deviceId":"dev-legacy-b","kinds":["session_exec"],"updatedAt":60},"dev-explicit-false":{"deviceId":"dev-explicit-false","kinds":["db_query"],"permanent":false,"updatedAt":70}}`, 50)
-	bystanderPermanence := map[string]bool{"dev-legacy-a": true, "dev-legacy-b": true, "dev-explicit-false": false}
-	bystanderKinds := map[string]guard.GrantKind{"dev-legacy-a": guard.GrantKindTerminalWrite, "dev-legacy-b": guard.GrantKindSessionExec, "dev-explicit-false": guard.GrantKindDBQuery}
+	// Bystanders sharing the row: one pre-1.3.0 record without a permanence marker or generation, and one
+	// current-format explicit non-permanent control. No whole-row rewrite may change either of them.
+	legacyRecord := `{"deviceId":"dev-legacy-a","kinds":["terminal_write"],"updatedAt":50}`
+	currentRecord := `{"deviceId":"dev-explicit-false","kinds":["db_query"],"permanent":false,"updatedAt":70,"generation":"gen-explicit-false"}`
+	putPreferenceSetting(t, device, guard.DeviceGrantsSettingKey, `{"dev-legacy-a":`+legacyRecord+`,"dev-explicit-false":`+currentRecord+`}`, 50)
 	requireBystanders := func() {
 		t.Helper()
 		value, _, found := readPreferenceSetting(t, device, guard.DeviceGrantsSettingKey)
 		if !found {
 			t.Fatal("device grants row missing")
 		}
-		requireGrantRecordPermanence(t, value, bystanderPermanence)
+		var records map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(value), &records); err != nil {
+			t.Fatal(err)
+		}
+		if string(records["dev-legacy-a"]) != legacyRecord {
+			t.Fatalf("legacy bystander rewritten: %s", records["dev-legacy-a"])
+		}
+		var current struct {
+			Generation string `json:"generation"`
+		}
+		if err := json.Unmarshal(records["dev-explicit-false"], &current); err != nil || current.Generation != "gen-explicit-false" {
+			t.Fatalf("current bystander generation changed: %s", records["dev-explicit-false"])
+		}
+		requireGrantRecordPermanence(t, value, map[string]bool{"dev-explicit-false": false})
 		grants, err := guard.NewGrants(ctx, device.db, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for deviceID, permanent := range bystanderPermanence {
-			grant, ok := grantForTest(t, ctx, grants, deviceID)
-			if !ok || grant.Permanent != permanent {
-				t.Fatalf("guard loads bystander %s as %+v %v, want permanent=%v", deviceID, grant, ok, permanent)
-			}
-			if !grant.Covers(bystanderKinds[deviceID]) {
-				t.Fatalf("bystander %s content rewritten: %+v, want kind %s preserved", deviceID, grant, bystanderKinds[deviceID])
-			}
+		if grant, ok := grantForTest(t, ctx, grants, "dev-explicit-false"); !ok || grant.Permanent || !grant.Covers(guard.GrantKindDBQuery) {
+			t.Fatalf("guard loads current bystander as %+v %v", grant, ok)
+		}
+		if grant, ok := grantForTest(t, ctx, grants, "dev-legacy-a"); ok {
+			t.Fatalf("legacy bystander became effective: %+v", grant)
+		}
+		if decision := deviceGrantsEvaluate(t, device, ctx, "dev-legacy-a", "send_keys"); decision.Action == guard.ActionAllow {
+			t.Fatalf("legacy bystander authorized a call: %+v", decision)
 		}
 	}
-
-	// Seed sanity: the guard's own legacy rule already loads the marker-less records as permanent.
-	seedGrants, err := guard.NewGrants(ctx, device.db, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, deviceID := range []string{"dev-legacy-a", "dev-legacy-b"} {
-		if grant, ok := grantForTest(t, ctx, seedGrants, deviceID); !ok || !grant.Permanent {
-			t.Fatalf("legacy seed %s = %+v %v, want permanent", deviceID, grant, ok)
-		}
-	}
+	requireBystanders()
 
 	applyGrant := func(updatedAt int64, kinds ...string) {
 		t.Helper()
@@ -854,83 +902,48 @@ func TestApplyAIGrantDeviceBindsExplicitPermanence(t *testing.T) {
 	requireBystanders()
 }
 
-// Legacy device grant records written before permanence was explicit (no marker) still converge: the
-// collector exports them like any device grant without mutating the local record, and the receiving
-// device persists the explicit permanence marker. Another account on the same server never receives it.
-func TestEngineAIGrantLegacyRecordConvergesPermanent(t *testing.T) {
+// Pre-1.3.0 device grant records (no permanence marker or generation) are rejected, not migrated: the
+// collector does not push them, the round reports them as a visible warning, the local row stays
+// byte-identical, and other devices never receive them. Current-format records in the same row still sync.
+func TestEngineAIGrantLegacyRecordIsNotPushed(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
-	server.createUser(t, "bob", "bob-pw-123")
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
-	deviceC := newTestDevice(t)
 	userID := serverUserID(t, server, "alice", "alice-pw-123")
-	bobID := serverUserID(t, server, "bob", "bob-pw-123")
 	enableDeviceAIGrantOptIn(t, deviceA, userID)
 	enableDeviceAIGrantOptIn(t, deviceB, userID)
-	enableDeviceAIGrantOptIn(t, deviceC, bobID)
 	ctx := context.Background()
 
-	// A carries two legacy records: no permanence marker, as written before the field existed.
-	legacy := `{"dev-legacy":{"deviceId":"dev-legacy","kinds":["terminal_write"],"updatedAt":100},"dev-legacy-2":{"deviceId":"dev-legacy-2","kinds":["db_query"],"updatedAt":100}}`
-	putPreferenceSetting(t, deviceA, guard.DeviceGrantsSettingKey, legacy, 100)
-	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
-	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
-
-	// The legacy records on A stay byte-identical and still load as permanent through the guard.
-	if value, _, found := readPreferenceSetting(t, deviceA, guard.DeviceGrantsSettingKey); !found || value != legacy {
-		t.Fatalf("legacy records mutated on A: %q %v", value, found)
-	}
-	grantsA, err := guard.NewGrants(ctx, deviceA.db, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, deviceID := range []string{"dev-legacy", "dev-legacy-2"} {
-		if grant, ok := grantForTest(t, ctx, grantsA, deviceID); !ok || !grant.Permanent {
-			t.Fatalf("legacy grant %s on A = %+v %v, want permanent", deviceID, grant, ok)
+	row := `{"dev-legacy":{"deviceId":"dev-legacy","kinds":["terminal_write"],"updatedAt":100},"dev-current":{"deviceId":"dev-current","kinds":["db_query"],"permanent":true,"updatedAt":100,"generation":"gen-current"}}`
+	putPreferenceSetting(t, deviceA, guard.DeviceGrantsSettingKey, row, 100)
+	report := syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	warned := false
+	for _, warning := range report.Warnings {
+		if strings.Contains(warning, "1.3.0") && strings.Contains(warning, "dev-legacy") {
+			warned = true
 		}
 	}
-
-	// B persists both grants with the explicit permanence marker, and guard evaluation allows them.
-	value, _, found := readPreferenceSetting(t, deviceB, guard.DeviceGrantsSettingKey)
-	if !found {
-		t.Fatal("device grants row missing on B")
+	if !warned {
+		t.Fatalf("legacy grant was skipped without a visible warning: %v", report.Warnings)
 	}
-	requireGrantRecordPermanence(t, value, map[string]bool{"dev-legacy": true, "dev-legacy-2": true})
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+
+	if value, _, found := readPreferenceSetting(t, deviceA, guard.DeviceGrantsSettingKey); !found || value != row {
+		t.Fatalf("legacy records mutated on A: %q %v", value, found)
+	}
+	if serverObjectIDs(t, server)["device/dev-legacy"] {
+		t.Fatal("legacy grant was pushed to the server")
+	}
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", "device/dev-current", KindAIGrant)
 	grantsB, err := guard.NewGrants(ctx, deviceB.db, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, deviceID := range []string{"dev-legacy", "dev-legacy-2"} {
-		if grant, ok := grantForTest(t, ctx, grantsB, deviceID); !ok || !grant.Permanent {
-			t.Fatalf("grant %s on B = %+v %v, want permanent", deviceID, grant, ok)
-		}
+	if _, ok := grantForTest(t, ctx, grantsB, "dev-legacy"); ok {
+		t.Fatal("legacy grant reached B")
 	}
-	if decision := deviceGrantsEvaluate(t, deviceB, ctx, "dev-legacy", "send_keys"); decision.Action != guard.ActionAllow {
-		t.Fatalf("converged permanent grant must allow on B: %+v", decision)
+	if grant, ok := grantForTest(t, ctx, grantsB, "dev-current"); !ok || !grant.Permanent {
+		t.Fatalf("current grant on B = %+v %v", grant, ok)
 	}
-	if decision := deviceGrantsEvaluate(t, deviceB, ctx, "dev-legacy-2", "db_query"); decision.Action != guard.ActionAllow {
-		t.Fatalf("converged permanent grant must allow db_query on B: %+v", decision)
-	}
-	assertServerObjectKind(t, server, "alice", "alice-pw-123", "device/dev-legacy", KindAIGrant)
-	assertServerObjectKind(t, server, "alice", "alice-pw-123", "device/dev-legacy-2", KindAIGrant)
-
-	// Bob's device never receives alice's grants.
-	syncDevice(t, deviceC, server, "bob", "bob-pw-123")
-	if _, _, found := readPreferenceSetting(t, deviceC, guard.DeviceGrantsSettingKey); found {
-		t.Fatal("bob received alice's device grants")
-	}
-	grantsC, err := guard.NewGrants(ctx, deviceC.db, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, deviceID := range []string{"dev-legacy", "dev-legacy-2"} {
-		if _, ok := grantForTest(t, ctx, grantsC, deviceID); ok {
-			t.Fatalf("bob's guard sees alice's grant %s", deviceID)
-		}
-	}
-
-	// The legacy local form (A) and the permanent-bound form (B) collect byte-identical payloads: no flip-flop.
-	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
-	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 }

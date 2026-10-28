@@ -20,7 +20,7 @@ type upgradeFaultSnapshot struct {
 	cronJobs      []store.CronJob
 	tombstones    []store.SyncTombstone
 	settings      []store.Setting
-	ledger        []store.AIOwnerMigration
+	messages      []store.MessageRow
 }
 
 func snapshotUpgradeFault(t *testing.T, database *gorm.DB) upgradeFaultSnapshot {
@@ -36,7 +36,7 @@ func snapshotUpgradeFault(t *testing.T, database *gorm.DB) upgradeFaultSnapshot 
 		{&snapshot.cronJobs, []string{"id"}},
 		{&snapshot.tombstones, []string{"owner_id", "id"}},
 		{&snapshot.settings, []string{"key"}},
-		{&snapshot.ledger, []string{"migration", "kind", "record_id"}},
+		{&snapshot.messages, []string{"id"}},
 	} {
 		statement := database
 		for _, column := range query.order {
@@ -60,7 +60,8 @@ func seedUpgradeFault(t *testing.T, database *gorm.DB) {
 		&store.AssetRow{ID: "asset", Kind: "ssh", Name: "asset", OptionsJSON: "{}", CreatedAt: 2, UpdatedAt: 2},
 		&store.CredentialRow{ID: "credential", Name: "credential", Kind: "password", Cipher: "opaque", Nonce: []byte{1}, Blob: []byte{2}, KEKHint: "hint", CreatedAt: 3, UpdatedAt: 3},
 		&store.ConversationRow{ID: "conversation", ScopeJSON: "{}", CreatedAt: 4, UpdatedAt: 4},
-		&store.CronJob{ID: "cron", SessionID: "conversation", Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 5, UpdatedAt: 5, Revision: 1, NextRunAt: 1},
+		&store.MessageRow{ID: "message", ConversationID: "conversation", Role: "user", ContentJSON: "{}", CreatedAt: 4, Seq: 1},
+		&store.CronJob{ID: "cron", SessionID: "conversation", OwnerKind: "open", Prompt: "prompt", Schedule: "* * * * *", Timezone: "UTC", Enabled: true, TimeoutMS: 1000, CreatedAt: 5, UpdatedAt: 5, Revision: 1, NextRunAt: 1},
 		&store.SyncTombstone{ID: "deleted-group", Kind: "group", DeletedAt: 6},
 		&store.Setting{Key: store.LayoutKey, Value: "layout", UpdatedAt: 7},
 		&store.Setting{Key: store.AIProfilesSettingKey, Value: `{"version":1,"profiles":[{"id":"profile","name":"Profile","apiKey":"opaque-ai","model":"model"}],"activeId":"profile"}`, UpdatedAt: 8},
@@ -121,7 +122,9 @@ func TestMigrateFaultRollbackAndReentryDatabase(t *testing.T) {
 		{name: "Sync", verb: "update", table: "sync_tombstone", hits: 1},
 		{name: "Layout", verb: "create", table: "setting", hits: 1},
 		{name: "AIHistory", verb: "update", table: "cron_job", hits: 1},
+		{name: "AIMessages", verb: "update", table: "ai_message", hits: 1},
 		{name: "AISettings", verb: "create", table: "setting", hits: 2},
+		{name: "AISettingsMarker", verb: "create", table: "setting", hits: 3},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			database := dbtest.NewFixture(t).OpenStore(t)
@@ -146,7 +149,7 @@ func TestMigrateFaultRollbackAndReentryDatabase(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if retried.Ownership.Assigned != 4 || retried.Layout.Copied != 1 || retried.AI.CronJobsAssigned != 1 || retried.AISettings.Profiles.Migrated != 1 {
+			if retried.Ownership.Assigned != 4 || retried.Layout.Copied != 1 || retried.AI.CronJobsAssigned != 1 || retried.AI.MessagesAssigned != 1 || retried.AISettings.Profiles.Migrated != 1 {
 				t.Fatalf("retry report = %+v", retried)
 			}
 			converged := snapshotUpgradeFault(t, db)
@@ -158,6 +161,7 @@ func TestMigrateFaultRollbackAndReentryDatabase(t *testing.T) {
 				{&store.CredentialRow{}, "credential"},
 				{&store.ConversationRow{}, "conversation"},
 				{&store.CronJob{}, "cron"},
+				{&store.MessageRow{}, "message"},
 				{&store.SyncTombstone{}, "deleted-group"},
 			} {
 				requireUpgradeOwner(t, db, check.model, "id", check.id, "admin")

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 // FLEET149 app shell: desktop also shows the "Device Management" entry (leading to the login onboarding view); entry display only, no HTTP.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { flush, flushUntil as flushUntilBase, mount, type MountedView } from "./features/reactTestUtils";
@@ -36,7 +36,7 @@ vi.mock("../ipc/commands", () => ({
   syncApi: {
     linkGet: vi.fn().mockResolvedValue({ url: "" }),
     status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
-    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+    kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false }),
     wake: vi.fn().mockResolvedValue(undefined),
   },
   appUpdateApi: { check: mocks.updateCheck },
@@ -79,7 +79,7 @@ vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
-vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
+vi.mock("../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
 vi.mock("../app/unread", () => ({ startUnreadTracking: () => {}, resetUnreadTracking: () => {} }));
@@ -94,6 +94,15 @@ function mountApp(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(createElement(QueryClientProvider, { client }, createElement(App)));
 }
+
+// The shell loads these panels through React.lazy or dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([
+    import("../app/AutoSync"),
+    import("../app/JumpPalette"),
+  ]);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

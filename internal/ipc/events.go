@@ -14,6 +14,8 @@ const (
 	TopicTerminalExit      Topic = "terminal://exit"
 	TopicTerminalThrottled Topic = "terminal://throttled"
 	TopicTerminalControl   Topic = "terminal://control"
+	// TopicTerminalAttention carries a tab's attention state after each change.
+	TopicTerminalAttention Topic = "terminal://attention"
 	TopicFSProgress        Topic = "fs://progress"
 	TopicDockerStats       Topic = "docker://stats"
 	TopicAIEvent           Topic = "ai://event"
@@ -25,6 +27,11 @@ const (
 	TopicAINotification    Topic = "ai://notification"
 	TopicAIWatchToolData   Topic = "ai://watch-tool-data"
 	TopicInventoryChanged  Topic = "inventory://changed"
+	// TopicLocalHelperStatus carries the local helper status after each change.
+	TopicLocalHelperStatus Topic = "local://helper-status"
+	// TopicTerminalSessions carries one host's durable sessions after a
+	// cross-host listing refreshed it.
+	TopicTerminalSessions Topic = "terminal://sessions"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")

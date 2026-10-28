@@ -2,11 +2,11 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  orderQuickConnectAssets,
   quickConnectScore,
   useConnectHistory,
   type ConnectHistoryEntries,
 } from "../../features/explorer/connectHistory";
+import { hostCandidates, rankJumpItems } from "../../app/jump/jumpRanking";
 
 interface TestAsset {
   id: string;
@@ -14,13 +14,18 @@ interface TestAsset {
   host: string | null;
   username: string | null;
   tags: string;
+  kind: string;
 }
 
 function asset(id: string, name: string, extra: Partial<TestAsset> = {}): TestAsset {
-  return { id, name, host: null, username: null, tags: "", ...extra };
+  return { id, name, host: null, username: null, tags: "", kind: "ssh", ...extra };
 }
 
 const NOW = 1_700_000_000_000;
+
+function orderQuickConnectAssets(list: TestAsset[], entries: ConnectHistoryEntries, query: string, now: number): TestAsset[] {
+  return rankJumpItems(hostCandidates(list, (item) => quickConnectScore(entries[item.id], now)), query).map((item) => item.asset);
+}
 
 describe("quickConnectScore recency and frequency weighting", () => {
   it("returns zero without history", () => {
@@ -45,7 +50,7 @@ describe("quickConnectScore recency and frequency weighting", () => {
   });
 });
 
-describe("orderQuickConnectAssets sorting and filtering", () => {
+describe("jump palette host ranking and filtering", () => {
   const assets = [
     asset("a-web", "web-01", { host: "10.0.0.8", username: "root" }),
     asset("a-db", "db-01", { host: "10.0.0.9", username: "dba", tags: "production, mysql" }),

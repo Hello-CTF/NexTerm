@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -185,7 +185,7 @@ afterEach(() => {
 describe("FileBrowser keyboard accessibility", () => {
   beforeEach(async () => {
     mounted = mountBrowser();
-    await waitFor(() => expect(itemByName(mounted!.container, "a.txt")).toBeTruthy());
+    await waitForRendered(() => expect(itemByName(mounted!.container, "a.txt")).toBeTruthy());
   });
 
   it("exposes tree/treeitem roles, levels, selection state, and tabIndex on rows while keeping action buttons semantic", () => {
@@ -226,7 +226,6 @@ describe("FileBrowser keyboard accessibility", () => {
             sessionId: SID,
             panes: [{ id: "p", tabs: [], activeTabId: null }],
             activePaneId: "p",
-            splitRatio: 0.5,
             closable: true,
           },
         ],
@@ -236,7 +235,7 @@ describe("FileBrowser keyboard accessibility", () => {
     const a = itemByName(mounted!.container, "a.txt");
     act(() => a.focus());
     keyDown(a, "Enter");
-    await waitFor(() => {
+    await waitForRendered(() => {
       const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
       expect(tabs.some((t) => t.kind === "files" && t.path === "~/a.txt")).toBe(true);
     });
@@ -253,7 +252,6 @@ describe("FileBrowser keyboard accessibility", () => {
             sessionId: SID,
             panes: [{ id: "p", tabs: [], activeTabId: null }],
             activePaneId: "p",
-            splitRatio: 0.5,
             closable: true,
           },
         ],
@@ -263,7 +261,7 @@ describe("FileBrowser keyboard accessibility", () => {
     const a = itemByName(mounted!.container, "a.txt");
     act(() => a.focus());
     keyDown(a, "Enter");
-    await waitFor(() => {
+    await waitForRendered(() => {
       const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
       expect(tabs.some((t) => t.kind === "files" && t.path === "~/a.txt")).toBe(true);
     });
@@ -294,7 +292,7 @@ describe("FileBrowser keyboard accessibility", () => {
     const sub = itemByName(mounted!.container, "sub");
     act(() => sub.focus());
     keyDown(sub, "Enter");
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub"));
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub"));
   });
 
   it("moves focus between rows with ArrowDown/ArrowUp", () => {
@@ -324,7 +322,7 @@ describe("FileBrowser keyboard accessibility", () => {
 
     mocks.ask.mockResolvedValueOnce(true);
     keyDown(a, "Delete");
-    await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/a.txt", false));
+    await waitForRendered(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/a.txt", false));
   });
 
   it("explains recursive deletion for Backspace on a directory and deletes it with directory semantics after confirmation", async () => {
@@ -333,7 +331,7 @@ describe("FileBrowser keyboard accessibility", () => {
 
     mocks.ask.mockResolvedValueOnce(true);
     keyDown(sub, "Backspace");
-    await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/sub", true));
+    await waitForRendered(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/sub", true));
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("递归删除，不可恢复"),
       expect.objectContaining({ kind: "warning" }),
@@ -344,7 +342,7 @@ describe("FileBrowser keyboard accessibility", () => {
     const sub = itemByName(mounted!.container, "sub");
     act(() => sub.focus());
     keyDown(sub, "ContextMenu");
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mounted!.container.querySelector('[role="menu"]')).not.toBeNull(),
     );
     expect(sub.getAttribute("aria-selected")).toBe("true");
@@ -355,11 +353,11 @@ describe("FileBrowser keyboard accessibility", () => {
     ).toBe(true);
 
     keyDown(document.activeElement as HTMLElement, "Escape");
-    await waitFor(() => expect(mounted!.container.querySelector('[role="menu"]')).toBeNull());
+    await waitForRendered(() => expect(mounted!.container.querySelector('[role="menu"]')).toBeNull());
 
     act(() => sub.focus());
     keyDown(sub, "F10", { shiftKey: true });
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mounted!.container.querySelector('[role="menu"]')).not.toBeNull(),
     );
     expect(sub.getAttribute("aria-selected")).toBe("true");
@@ -411,7 +409,7 @@ describe("FileBrowser keyboard accessibility", () => {
 describe("useFileOps dialog copy (plain text)", () => {
   beforeEach(async () => {
     mounted = mountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    await waitForRendered(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
   it("omits Markdown asterisks from the chmod symlink confirmation and preserves the target meaning", async () => {
@@ -469,7 +467,6 @@ describe("session filesystem locator semantics", () => {
             assetKind: kind,
             panes: [{ id: "p", tabs, activeTabId: tabs[0]?.id ?? null }],
             activePaneId: "p",
-            splitRatio: 0.5,
             closable: true,
           },
         ],

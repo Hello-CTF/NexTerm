@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
 )
@@ -780,6 +781,70 @@ func TestRuntimeRoutesTerminalBridge(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("terminal bridge was not dialed")
+	}
+}
+
+// When an older helper still owns the state directory, ensureHelper reports a
+// helper upgrade but the bridge is still dialed: the helper bridge answers the
+// server's hello with that reason instead of leaving the server waiting until
+// it declares the device offline. Other helper failures still abort the bridge.
+func TestRuntimeBridgesWhenHelperNeedsUpgrade(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		dialed bool
+	}{
+		{"legacy helper", fmt.Errorf("connect: %w", supervisor.ErrLegacyHelperRunning), true},
+		{"helper unavailable", fmt.Errorf("connect: %w", supervisor.ErrUnavailable), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			probe := newBridgeProbe(serverMessage{Type: "bridge", BridgeID: "bridge-l1", Purpose: PurposeTerminal})
+			server := newFakeFleetServer(t)
+			server.setWSControl(probe.control(t))
+			dataDir := t.TempDir()
+			entries := []BaseURLEntry{{URL: server.server.URL}}
+			writeRuntimeConfig(t, dataDir, entries, true)
+			prober, err := NewProber(entries)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prober.baseBackoff = 100 * time.Millisecond
+			prober.maxBackoff = time.Second
+			ensureErr := test.err
+			agentRuntime, err := New(Options{
+				Store:        StoreAt(dataDir),
+				DataDir:      dataDir,
+				Prober:       prober,
+				Manager:      &fakeManager{},
+				Collector:    fakeCollector{},
+				EnsureHelper: func(context.Context) error { return ensureErr },
+				Bridge:       func(context.Context, string) (io.ReadWriteCloser, error) { return nil, ErrServiceUnsupported },
+				Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runBridgeProbe(t, agentRuntime)
+			select {
+			case <-probe.controlHello:
+			case <-time.After(15 * time.Second):
+				t.Fatal("control channel did not come up")
+			}
+			wait := 500 * time.Millisecond
+			if test.dialed {
+				wait = 15 * time.Second
+			}
+			select {
+			case hello := <-probe.bridgeHello:
+				if !test.dialed {
+					t.Fatalf("bridge dialed although the helper is unavailable: %+v", hello)
+				}
+			case <-time.After(wait):
+				if test.dialed {
+					t.Fatal("bridge was not dialed for a helper that needs upgrade")
+				}
+			}
+		})
 	}
 }
 

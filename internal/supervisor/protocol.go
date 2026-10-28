@@ -6,9 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
-const ProtocolVersion = 2
+// ProtocolVersion is the only protocol a helper and its clients speak. Version
+// 3 folded every capability earlier versions negotiated per feature (exec,
+// metadata, compressed replay and output, runtime metadata, activity,
+// create-then-attach, windowed input and output credit) into the baseline.
+// Helpers of different versions listen on different endpoints, so a version 3
+// helper never sees the sessions of an older one.
+const ProtocolVersion = 3
 
 const (
 	maxFramePayload = 256 * 1024
@@ -45,38 +52,51 @@ const (
 	frameRenamed
 	frameReplayGzip
 	// frameCredit carries the client's cumulative count of retired output
-	// bytes (8-byte big-endian) once output_credit is negotiated. It has no reply.
+	// bytes (8-byte big-endian). It has no reply.
 	frameCredit
 	// frameOutputZstd is a live output chunk compressed per frame; see
-	// output_zstd.go. Only valid once output_zstd is negotiated.
+	// output_zstd.go. Only sent to clients that asked for compressed output.
 	frameOutputZstd
+	// frameHistoryGap tells an attached client that the output between two
+	// offsets (8-byte big-endian each) was dropped by the history limit
+	// before it was streamed; the stream continues at the second offset.
+	frameHistoryGap
+	// frameReadHistory asks for recorded output without attaching
+	// (readHistoryMsg); frameHistory answers with historyPayload.
+	frameReadHistory
+	frameHistory
+	// frameState pushes an attached session's attention state (stateMsg)
+	// after it changes, with the events since the previous push. The
+	// attach reply carries the state at attach time.
+	frameState
 )
 
+// Frames added after frameState carry explicit values so concurrent
+// additions cannot shift each other.
 const (
-	// featureExec is advertised in the hello handshake by peers that support
-	// non-PTY exec sessions (createMsg.Pty == false and frameExecOutput).
-	featureExec            = "exec"
-	featureMetadata        = "metadata"
-	featureReplayGzip      = "replay_gzip"
-	featureRuntimeMetadata = "runtime_metadata"
-	featureActivity        = "activity"
-	// featureCreateAttach lets a connection stay usable after frameCreate so the
-	// creator can attach on it (and pipeline the attach right behind the create).
-	featureCreateAttach = "create_attach"
-	// featureInputWindow lets the client keep several frameInput frames in flight.
-	// The server then acknowledges each one in order with an inputAckMsg that may
-	// carry an error, and delays the acknowledgement while the session's input
-	// queue is full instead of rejecting the frame.
-	featureInputWindow = "input_window"
-	// featureOutputCredit makes the server pause streaming the recording once
-	// outputCreditWindow bytes are unretired; the client returns credit with
-	// frameCredit as its consumer reads.
-	featureOutputCredit = "output_credit"
-	// featureOutputZstd lets the server send output chunks as independently
-	// zstd-compressed frameOutputZstd frames when that is smaller on the wire.
-	featureOutputZstd = "output_zstd"
+	// frameSetStateRules replaces the state rules of the connection's rule
+	// owner (helloMsg.StateRulesOwner) with a StateRuleSet; the helper
+	// persists and applies it and answers frameOK. It needs no attach.
+	frameSetStateRules frameType = 33
+	// frameStateSeen tells the helper that the attached client showed the
+	// session's needs_me or just_finished state to its user (stateSeenMsg);
+	// the helper answers frameOK and pushes the seen state to every client.
+	frameStateSeen frameType = 34
+
+	// frameTapPrompt answers the attached session's detected prompt by one
+	// of its options (tapPromptMsg); the helper validates the prompt epoch
+	// and fingerprint against a fresh inspection, writes the option's keys
+	// and answers frameOK with tapPromptReply.
+	frameTapPrompt frameType = 35
 )
 
+// Every connection uses windowed input and credited output. The client may keep
+// several frameInput frames in flight; the server acknowledges each one in
+// order with an inputAckMsg that may carry an error, and delays the
+// acknowledgement while the session's input queue is full instead of rejecting
+// the frame. The server pauses streaming the recording once
+// outputCreditWindow bytes are unretired; the client returns credit with
+// frameCredit as its consumer reads.
 const (
 	// inputWindowBytes and inputWindowFrames bound the unacknowledged input a
 	// client may have in flight; the server tolerates a small multiple of it.
@@ -101,11 +121,31 @@ const (
 )
 
 type helloMsg struct {
-	Version     int               `json:"version"`
-	StateDigest string            `json:"state_digest,omitempty"`
-	Features    []string          `json:"features,omitempty"`
-	Runtime     *RuntimeMetadata  `json:"runtime,omitempty"`
-	Activity    *ActivitySnapshot `json:"activity,omitempty"`
+	Version     int    `json:"version"`
+	StateDigest string `json:"state_digest,omitempty"`
+	// StateRulesOwner is the opaque key of the state rule owner the client
+	// acts for. Sessions the connection creates are evaluated with that
+	// owner's rules, and frameSetStateRules replaces them. Empty means no
+	// rules: such sessions use none.
+	StateRulesOwner string `json:"state_rules_owner,omitempty"`
+	// CompressOutput is a client preference, not a capability: remote clients
+	// ask for gzip replay batches and per-frame zstd live output, local clients
+	// keep raw frames to save CPU.
+	CompressOutput bool `json:"compress_output,omitempty"`
+	// Generation, Runtime and Activity are sent by the helper in its
+	// acknowledgement. Generation identifies the helper process.
+	Generation string `json:"generation,omitempty"`
+	// Runtime is absent only when the helper could not hash its executable.
+	Runtime  *RuntimeMetadata  `json:"runtime,omitempty"`
+	Activity *ActivitySnapshot `json:"activity,omitempty"`
+	// ReplaceLegacy is sent by a client only: the consent token of a
+	// legacy_helper_running rejection the user approved. A bridge that stands
+	// in for that older helper replaces it; a current helper ignores it.
+	ReplaceLegacy string `json:"replace_legacy,omitempty"`
+	// StateRules is sent by the helper only, and is required in its
+	// acknowledgement: the revision of the hello's rule owner's state rules
+	// (empty for none or no owner).
+	StateRules *stateRulesAck `json:"state_rules,omitempty"`
 }
 
 type createMsg struct {
@@ -116,8 +156,11 @@ type createMsg struct {
 	Env     []string `json:"env,omitempty"`
 	Cols    uint32   `json:"cols,omitempty"`
 	Rows    uint32   `json:"rows,omitempty"`
-	// Pty is nil or true for a PTY session (the only mode pre-feature peers
-	// know); false requests a one-shot non-PTY exec session.
+	// HistoryLimit bounds the session's recorded output; zero uses the
+	// helper default.
+	HistoryLimit uint64 `json:"history_limit,omitempty"`
+	// Pty is nil or true for a PTY session; false requests a one-shot non-PTY
+	// exec session.
 	Pty *bool `json:"pty,omitempty"`
 }
 
@@ -125,9 +168,36 @@ type attachMsg struct {
 	ID                string `json:"id"`
 	ExpectCreatedAt   int64  `json:"expect_created_at_unix_nano,omitempty"`
 	ExpectIncarnation string `json:"expect_incarnation,omitempty"`
-	// Offset is the absolute byte offset of the recording the client has consumed; the server seeks there
-	// and resumes. Old servers ignore this field and replay from 0; the client degrades by skipping the prefix in-stream.
+	// ExpectGeneration, when set, rejects the attach with
+	// codeGenerationMismatch unless this helper process is the one the client
+	// observed the session in.
+	ExpectGeneration string `json:"expect_generation,omitempty"`
+	// Offset is the absolute byte offset of the recording the client has
+	// consumed; the server seeks there and resumes. An offset that was
+	// dropped by the history limit resumes after the history base and the
+	// reply reports truncated.
 	Offset uint64 `json:"offset,omitempty"`
+	// Tail and Retain request a fresh open; see AttachOptions.
+	Tail   uint64 `json:"tail,omitempty"`
+	Retain bool   `json:"retain,omitempty"`
+}
+
+// attachedMsg answers frameAttach: the session info and where the stream
+// starts.
+type attachedMsg struct {
+	Info
+	Replay ReplayInfo `json:"replay"`
+}
+
+type readHistoryMsg struct {
+	ID                string `json:"id"`
+	ExpectCreatedAt   int64  `json:"expect_created_at_unix_nano"`
+	ExpectIncarnation string `json:"expect_incarnation"`
+	ExpectGeneration  string `json:"expect_generation,omitempty"`
+	// Before is the exclusive end offset; at most MaxBytes before it are
+	// returned.
+	Before   uint64 `json:"before"`
+	MaxBytes int    `json:"max_bytes,omitempty"`
 }
 
 type killSessionMsg struct {
@@ -137,9 +207,42 @@ type killSessionMsg struct {
 	ExpectIncarnation string `json:"expect_incarnation,omitempty"`
 }
 
+// resizeMsg and every frameInput carry the helper generation and session
+// incarnation the client attached to; the helper rejects a mismatch instead of
+// applying the request to another process or session.
 type resizeMsg struct {
-	Cols uint32 `json:"cols"`
-	Rows uint32 `json:"rows"`
+	Cols              uint32 `json:"cols"`
+	Rows              uint32 `json:"rows"`
+	ExpectGeneration  string `json:"expect_generation"`
+	ExpectIncarnation string `json:"expect_incarnation"`
+}
+
+// stateMsg is the payload of frameState.
+type stateMsg struct {
+	ID    string       `json:"id"`
+	State SessionState `json:"state"`
+}
+
+// stateSeenMsg is the payload of frameStateSeen. Since identifies the state
+// the user saw; a state that has changed since is left unseen.
+type stateSeenMsg struct {
+	Since time.Time `json:"since"`
+}
+
+// tapPromptMsg is the payload of frameTapPrompt: the helper generation and
+// session incarnation, the prompt epoch and fingerprint the client showed,
+// and the index of the chosen option.
+type tapPromptMsg struct {
+	ExpectGeneration  string `json:"expect_generation"`
+	ExpectIncarnation string `json:"expect_incarnation"`
+	Epoch             uint64 `json:"epoch"`
+	Fingerprint       string `json:"fingerprint"`
+	Option            int    `json:"option"`
+}
+
+// tapPromptReply is the frameOK payload of a tap: the bytes written.
+type tapPromptReply struct {
+	Sent string `json:"sent"`
 }
 
 type versionsMsg struct {
@@ -149,8 +252,8 @@ type versionsMsg struct {
 
 type inputAckMsg struct {
 	Written int `json:"written"`
-	// Error is set only when input_window is negotiated: the frame was
-	// rejected and the stream's later writes surface it.
+	// Error is set when the frame was rejected; the stream's later writes
+	// surface it.
 	Error *errorMsg `json:"error,omitempty"`
 }
 
@@ -160,6 +263,17 @@ type errorMsg struct {
 	ID               string `json:"id,omitempty"`
 	Title            string `json:"title,omitempty"`
 	MetadataRevision uint64 `json:"metadata_revision,omitempty"`
+	// Version accompanies codeVersionMismatch: the protocol the rejecting
+	// helper speaks. Helpers before version 3 leave it empty. With
+	// codeLegacyHelper it is the protocol of the older helper.
+	Version int `json:"version,omitempty"`
+	// Legacy accompanies codeLegacyHelper: the inspected older helper.
+	Legacy *legacyErrorWire `json:"legacy,omitempty"`
+	// Stage, Stopped, Forced and RolledBack accompany codeReplaceFailed.
+	Stage      string `json:"stage,omitempty"`
+	Stopped    bool   `json:"stopped,omitempty"`
+	Forced     bool   `json:"forced,omitempty"`
+	RolledBack bool   `json:"rolled_back,omitempty"`
 }
 
 type exitMsg struct {
@@ -168,23 +282,32 @@ type exitMsg struct {
 }
 
 const (
-	codeInternal         = "internal"
-	codeNotFound         = "not_found"
-	codeAlreadyExists    = "already_exists"
-	codeIdentity         = "identity"
-	codeIdentityChanged  = "identity_changed"
-	codeMetadataConflict = "metadata_conflict"
-	codeExited           = "exited"
-	codeInvalidInput     = "invalid_input"
-	codeUnavailable      = "unavailable"
-	codeClosed           = "closed"
-	codeProtocol         = "protocol"
-	codeVersionMismatch  = "version_mismatch"
-	codeStateMismatch    = "state_mismatch"
+	codeInternal           = "internal"
+	codeNotFound           = "not_found"
+	codeAlreadyExists      = "already_exists"
+	codeIdentity           = "identity"
+	codeMetadataConflict   = "metadata_conflict"
+	codeExited             = "exited"
+	codeInvalidInput       = "invalid_input"
+	codeUnavailable        = "unavailable"
+	codeClosed             = "closed"
+	codeProtocol           = "protocol"
+	codeVersionMismatch    = "version_mismatch"
+	codeLegacyHelper       = "legacy_helper_running"
+	codeReplaceFailed      = "helper_replace_failed"
+	codeStateMismatch      = "state_mismatch"
+	codeGenerationMismatch = "generation_mismatch"
+	// codeStateSeenUnsupported is only sent for a state_seen request.
+	codeStateSeenUnsupported = "state_seen_unsupported"
+	codeStalePrompt          = "stale_prompt"
+	codeUnsupported          = "unsupported"
+	codeLimit                = "limit"
 )
 
 func errorCode(err error) string {
 	switch {
+	case errors.Is(err, ErrLimit):
+		return codeLimit
 	case errors.Is(err, ErrNotFound):
 		return codeNotFound
 	case errors.Is(err, ErrAlreadyExists):
@@ -205,8 +328,14 @@ func errorCode(err error) string {
 		return codeProtocol
 	case errors.Is(err, ErrStateMismatch):
 		return codeStateMismatch
+	case errors.Is(err, ErrGenerationMismatch):
+		return codeGenerationMismatch
+	case errors.Is(err, ErrStateSeenUnsupported):
+		return codeStateSeenUnsupported
+	case errors.Is(err, ErrStalePrompt):
+		return codeStalePrompt
 	case errors.Is(err, ErrUnsupported):
-		return codeProtocol
+		return codeUnsupported
 	default:
 		return codeInternal
 	}
@@ -240,6 +369,15 @@ func codedError(code, message string) error {
 }
 
 func decodedError(msg errorMsg) error {
+	if msg.Code == codeVersionMismatch {
+		return &wireError{versionMismatchError(msg.Version, msg.Message)}
+	}
+	if msg.Code == codeLegacyHelper {
+		return &wireError{decodedLegacyError(msg)}
+	}
+	if msg.Code == codeReplaceFailed {
+		return &wireError{&HelperReplaceError{Stage: ReplaceStage(msg.Stage), Stopped: msg.Stopped, Forced: msg.Forced, RolledBack: msg.RolledBack, Cause: errors.New(msg.Message)}}
+	}
 	if msg.Code == codeMetadataConflict {
 		return &wireError{&MetadataConflictError{
 			Current: Info{ID: msg.ID, Title: msg.Title, MetadataRevision: msg.MetadataRevision},
@@ -255,7 +393,7 @@ func errorSentinel(code string) error {
 		return ErrNotFound
 	case codeAlreadyExists:
 		return ErrAlreadyExists
-	case codeIdentity, codeIdentityChanged:
+	case codeIdentity:
 		return ErrIdentity
 	case codeMetadataConflict:
 		return ErrMetadataConflict
@@ -273,6 +411,16 @@ func errorSentinel(code string) error {
 		return ErrVersionMismatch
 	case codeStateMismatch:
 		return ErrStateMismatch
+	case codeGenerationMismatch:
+		return ErrGenerationMismatch
+	case codeStateSeenUnsupported:
+		return ErrStateSeenUnsupported
+	case codeStalePrompt:
+		return ErrStalePrompt
+	case codeUnsupported:
+		return ErrUnsupported
+	case codeLimit:
+		return ErrLimit
 	default:
 		return fmt.Errorf("%w: remote error %q", ErrUnavailable, code)
 	}
@@ -341,6 +489,87 @@ func parseOutput(payload []byte) (seq uint64, data []byte, err error) {
 	return binary.BigEndian.Uint64(payload), payload[8:], nil
 }
 
+// maxInputHeader bounds the expectation header of a frameInput payload: two
+// length-prefixed IDs.
+const maxInputHeader = 2 * (1 + 255)
+
+// maxInputData is the most input one frame carries.
+const maxInputData = maxFramePayload - maxInputHeader
+
+// inputPayload prefixes input data with the helper generation and session
+// incarnation it is meant for, each as a one-byte length and the ID bytes.
+func inputPayload(generation, incarnation string, data []byte) ([]byte, error) {
+	if len(generation) > 255 || len(incarnation) > 255 {
+		return nil, fmt.Errorf("%w: input expectation is too long", ErrInvalidInput)
+	}
+	payload := make([]byte, 0, 2+len(generation)+len(incarnation)+len(data))
+	payload = append(payload, byte(len(generation)))
+	payload = append(payload, generation...)
+	payload = append(payload, byte(len(incarnation)))
+	payload = append(payload, incarnation...)
+	return append(payload, data...), nil
+}
+
+func parseInput(payload []byte) (generation, incarnation string, data []byte, err error) {
+	fields := [2]string{}
+	for index := range fields {
+		if len(payload) < 1 || len(payload) < 1+int(payload[0]) {
+			return "", "", nil, fmt.Errorf("%w: truncated input frame header", ErrProtocol)
+		}
+		size := int(payload[0])
+		fields[index] = string(payload[1 : 1+size])
+		payload = payload[1+size:]
+	}
+	return fields[0], fields[1], payload, nil
+}
+
+func gapPayload(from, to uint64) []byte {
+	payload := make([]byte, 16)
+	binary.BigEndian.PutUint64(payload, from)
+	binary.BigEndian.PutUint64(payload[8:], to)
+	return payload
+}
+
+func parseGap(payload []byte) (from, to uint64, err error) {
+	if len(payload) != 16 {
+		return 0, 0, fmt.Errorf("%w: history gap frame of %d bytes", ErrProtocol, len(payload))
+	}
+	from, to = binary.BigEndian.Uint64(payload), binary.BigEndian.Uint64(payload[8:])
+	if to < from {
+		return 0, 0, fmt.Errorf("%w: history gap runs backwards", ErrProtocol)
+	}
+	return from, to, nil
+}
+
+// historyPayload is a four-byte header length, the JSON HistoryChunk and the
+// raw bytes.
+func historyPayload(chunk HistoryChunk) ([]byte, error) {
+	header, err := json.Marshal(chunk)
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode history: %v", ErrProtocol, err)
+	}
+	payload := make([]byte, 4, 4+len(header)+len(chunk.Data))
+	binary.BigEndian.PutUint32(payload, uint32(len(header)))
+	payload = append(payload, header...)
+	return append(payload, chunk.Data...), nil
+}
+
+func parseHistory(payload []byte) (HistoryChunk, error) {
+	if len(payload) < 4 || uint64(len(payload)-4) < uint64(binary.BigEndian.Uint32(payload)) {
+		return HistoryChunk{}, fmt.Errorf("%w: truncated history frame", ErrProtocol)
+	}
+	size := binary.BigEndian.Uint32(payload)
+	var chunk HistoryChunk
+	if err := unmarshalFrame(payload[4:4+size], &chunk); err != nil {
+		return HistoryChunk{}, err
+	}
+	chunk.Data = append([]byte(nil), payload[4+size:]...)
+	if chunk.Start > chunk.End || chunk.End-chunk.Start != uint64(len(chunk.Data)) || (chunk.HistoryBase > chunk.Start && len(chunk.Data) > 0) || chunk.End > chunk.HistoryNext {
+		return HistoryChunk{}, fmt.Errorf("%w: inconsistent history frame", ErrProtocol)
+	}
+	return chunk, nil
+}
+
 func execOutputPayload(stream byte, data []byte) []byte {
 	payload := make([]byte, 1+len(data))
 	payload[0] = stream
@@ -353,4 +582,18 @@ func parseExecOutput(payload []byte) (stream byte, data []byte, err error) {
 		return 0, nil, fmt.Errorf("%w: exec output frame is empty", ErrProtocol)
 	}
 	return payload[0], payload[1:], nil
+}
+
+// versionMismatchError turns a helper's version rejection into the error that
+// says which side needs upgrading. helperVersion is zero when the helper is
+// older than version 3 and did not report its version.
+func versionMismatchError(helperVersion int, message string) error {
+	if helperVersion > ProtocolVersion {
+		return fmt.Errorf("%w: the supervisor helper speaks protocol %d but this client only speaks protocol %d; update this client (%s)", ErrClientUpgradeRequired, helperVersion, ProtocolVersion, message)
+	}
+	spoken := "an older protocol"
+	if helperVersion > 0 {
+		spoken = fmt.Sprintf("protocol %d", helperVersion)
+	}
+	return fmt.Errorf("%w: the supervisor helper speaks %s but this client requires protocol %d; sessions of the older helper stay with it until it is upgraded (%s)", ErrHelperUpgradeRequired, spoken, ProtocolVersion, message)
 }

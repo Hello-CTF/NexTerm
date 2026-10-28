@@ -16,7 +16,7 @@ const harness = vi.hoisted(() => ({
   attachInfo: null as
     | ((info: {
         tabId: string;
-        controller: string | null;
+        sizeOwner: string | null;
         subscribers: number;
         viewers: number;
         exited: boolean;
@@ -93,7 +93,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
         if (harness.attachShell) {
           (onAttachInfoRef.current as ((info: unknown) => void) | undefined)?.({
             tabId: "kernel-1",
-            controller: "me",
+            sizeOwner: "me",
             subscribers: 1,
             viewers: 1,
             exited: false,
@@ -170,7 +170,6 @@ beforeEach(() => {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -214,7 +213,7 @@ describe("terminal encoding badge", () => {
     act(() => {
       harness.attachInfo?.({
         tabId: "kernel-1",
-        controller: "me",
+        sizeOwner: "me",
         subscribers: 1,
         viewers: 1,
         exited: false,

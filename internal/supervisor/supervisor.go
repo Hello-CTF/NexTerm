@@ -10,16 +10,31 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/staterule"
 )
 
 type Supervisor struct {
-	stateDir       string
+	stateDir string
+	// generation identifies this supervisor process. It is minted at start
+	// and changes whenever the helper restarts, so a client can tell a session
+	// it attached before from a crash-recovered record of it.
+	generation     string
 	commandTimeout time.Duration
+	historyLimit   uint64
+	limits         Limits
+	now            func() time.Time
 	ptyStart       func(context.Context, pty.Config) (*pty.Session, error)
+	// stateDetection enables the per-session attention state; eventSeq
+	// numbers state events across all sessions.
+	stateDetection bool
+	eventSeq       atomic.Uint64
+	// stateRules are the user state rules of each rule owner.
+	stateRules *stateRuleOwners
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -29,8 +44,10 @@ type Supervisor struct {
 	startingPTY  int
 	startingExec int
 	killed       map[string]string
-	closing      bool
-	finishErrs   []error
+	// recentCreates holds the accept times of creates inside the create window.
+	recentCreates []time.Time
+	closing       bool
+	finishErrs    []error
 
 	killMu  sync.Mutex
 	creates sync.WaitGroup
@@ -46,6 +63,15 @@ func New(config Config) (*Supervisor, error) {
 	}
 	if config.CommandTimeout < 0 {
 		return nil, fmt.Errorf("%w: negative command timeout", ErrInvalidInput)
+	}
+	if config.HistoryLimit == 0 {
+		config.HistoryLimit = DefaultHistoryLimit
+	}
+	if err := validHistoryLimit(config.HistoryLimit); err != nil {
+		return nil, err
+	}
+	if err := config.Limits.validate(); err != nil {
+		return nil, err
 	}
 	stateDir, err := filepath.Abs(config.StateDir)
 	if err != nil {
@@ -64,8 +90,13 @@ func New(config Config) (*Supervisor, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	supervisor := &Supervisor{
 		stateDir:       stateDir,
+		generation:     ids.New(),
 		commandTimeout: config.CommandTimeout,
+		historyLimit:   config.HistoryLimit,
+		limits:         config.Limits.withDefaults(),
+		now:            time.Now,
 		ptyStart:       pty.Start,
+		stateDetection: !config.DisableStateDetection,
 		ctx:            ctx,
 		cancel:         cancel,
 		sessions:       make(map[string]*Session),
@@ -74,11 +105,18 @@ func New(config Config) (*Supervisor, error) {
 	for _, entry := range entries {
 		supervisor.sessions[entry.ID] = newRecoveredSession(supervisor, entry)
 	}
+	supervisor.stateRules = loadStateRuleOwners(stateDir)
+	supervisor.stateRules.bound = supervisor.boundRuleOwners
 	return supervisor, nil
 }
 
 func (s *Supervisor) StateDir() string {
 	return s.stateDir
+}
+
+// Generation returns the ID minted when this supervisor started.
+func (s *Supervisor) Generation() string {
+	return s.generation
 }
 
 func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Session, error) {
@@ -101,6 +139,10 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		s.mu.Unlock()
 		return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, id)
 	}
+	if err := s.admitCreateLocked(usePTY); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	delete(s.killed, id)
 	s.startActivityLocked(usePTY)
 	s.creates.Add(1)
@@ -122,7 +164,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		return nil, cause
 	}
 	var session *Session
-	var recording *os.File
+	var recording *history
 	if usePTY {
 		dir := sessionDir(s.stateDir, id)
 		if err := os.Mkdir(dir, 0o700); err != nil {
@@ -131,9 +173,13 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 			}
 			return nil, fmt.Errorf("create supervisor session directory: %w", err)
 		}
-		recording, err = os.OpenFile(recordingPath(s.stateDir, id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		limit := options.HistoryLimit
+		if limit == 0 {
+			limit = s.historyLimit
+		}
+		recording, err = createHistoryRows(dir, limit, options.Rows)
 		if err != nil {
-			return abort(fmt.Errorf("create supervisor recording: %w", err))
+			return abort(err)
 		}
 		launch, wrapped := wrapShellIntegration(options.Command, options.Env)
 		command, commandEnv := options.Command, options.Env
@@ -153,17 +199,31 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 			if wrapped {
 				launch.cleanup()
 			}
-			_ = recording.Close()
+			_ = recording.closeWriter()
 			return abort(err)
 		}
 		session = newSession(s, options, id, ptySession, recording)
 		if wrapped {
 			session.shellCleanup = launch.cleanup
 		}
+		if s.stateDetection {
+			session.state = newStateTracker(stateOptions{
+				cols:        int(options.Cols),
+				rows:        int(options.Rows),
+				shellLeader: interactiveShell(options.Command),
+				foreground:  ptySession.Foreground,
+				appCursor:   recording.appCursor,
+				seq:         &s.eventSeq,
+				onChange:    session.notifyState,
+				timers:      true,
+				rulesOwner:  options.StateRulesOwner,
+				rules:       func() *staterule.Compiled { return s.stateRules.compiled(options.StateRulesOwner) },
+			}, time.Now())
+		}
 		if err := writeEntry(sessionsRoot(s.stateDir), session.entry); err != nil {
 			session.closeProcess()
 			session.cleanupShell()
-			_ = recording.Close()
+			_ = recording.closeWriter()
 			return abort(err)
 		}
 	} else {
@@ -181,7 +241,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		session.closeProcess()
 		session.cleanupShell()
 		if recording != nil {
-			_ = recording.Close()
+			_ = recording.closeWriter()
 		}
 		if !usePTY {
 			s.pumps.Add(1)
@@ -255,8 +315,15 @@ func (s *Supervisor) Attach(ctx context.Context, id string) (*Attachment, error)
 
 // AttachFrom resumes the session's recorded output from the absolute byte
 // offset instead of replaying the recording from byte zero. An offset beyond
-// the recording size is rejected with ErrInvalidInput.
+// the recording size is rejected with ErrInvalidInput; an offset that was
+// already dropped resumes at the first safe boundary after the history base
+// and the attachment's Replay reports Truncated.
 func (s *Supervisor) AttachFrom(ctx context.Context, id string, offset uint64) (*Attachment, error) {
+	return s.AttachWithOptions(ctx, id, AttachOptions{Offset: offset})
+}
+
+// AttachWithOptions attaches with an explicit replay plan; see AttachOptions.
+func (s *Supervisor) AttachWithOptions(ctx context.Context, id string, options AttachOptions) (*Attachment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -264,7 +331,7 @@ func (s *Supervisor) AttachFrom(ctx context.Context, id string, offset uint64) (
 	if err != nil {
 		return nil, err
 	}
-	return session.attach(offset)
+	return session.attach(options)
 }
 
 func (s *Supervisor) resolveSession(id string) (*Session, error) {

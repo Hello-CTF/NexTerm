@@ -282,122 +282,6 @@ func TestExecValidation(t *testing.T) {
 	}
 }
 
-// fakeExecUnawareServer acks the hello without a feature list, like a daemon
-// built before exec support, and reports any frame the client sends next.
-func fakeExecUnawareServer(t *testing.T, stateDir string, received chan<- frameType) string {
-	t.Helper()
-	runDir, err := os.MkdirTemp("/tmp", "nx-sup-old-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
-	path := filepath.Join(runDir, "supervisor.sock")
-	listener, err := net.Listen("unix", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer func() { _ = conn.Close() }()
-		kind, _, err := readFrame(conn)
-		if err != nil || kind != frameHello {
-			return
-		}
-		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
-			return
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		kind, _, err = readFrame(conn)
-		if err != nil {
-			received <- 0
-			return
-		}
-		received <- kind
-	}()
-	return path
-}
-
-func TestExecUnsupportedWithoutFeature(t *testing.T) {
-	stateDir := filepath.Join(t.TempDir(), "state")
-	received := make(chan frameType, 1)
-	path := fakeExecUnawareServer(t, stateDir, received)
-	client := NewClient(path, stateDir)
-	_, _, _, _, err := client.Exec(context.Background(), ExecSpec{
-		Command: []string{"/bin/sh", "-c", "true"},
-	})
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("exec error = %v, want ErrUnsupported", err)
-	}
-	select {
-	case kind := <-received:
-		if kind != 0 {
-			t.Fatalf("client sent frame %d to a server that never advertised exec", kind)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("fake server saw neither a frame nor idle timeout")
-	}
-}
-
-func TestServerRejectsExecWithoutFeature(t *testing.T) {
-	supervisor := testSupervisor(t)
-	server := testServer(t, supervisor)
-	conn, err := net.DialTimeout("unix", server.SocketPath(), 2*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = conn.Close() }()
-	digest, err := stateDigestFor(supervisor.StateDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFrame(conn, frameHello, payload); err != nil {
-		t.Fatal(err)
-	}
-	kind, ack, err := readFrame(conn)
-	if err != nil || kind != frameHelloAck {
-		t.Fatalf("hello ack = %d, %v", kind, err)
-	}
-	var ackMsg helloMsg
-	if err := unmarshalFrame(ack, &ackMsg); err != nil {
-		t.Fatal(err)
-	}
-	if len(ackMsg.Features) == 0 {
-		t.Fatal("server ack carries no feature list")
-	}
-	noPTY := false
-	create, err := marshalFrame(frameCreate, createMsg{
-		ID:      ids.New(),
-		Command: []string{"/bin/sh", "-c", "true"},
-		Pty:     &noPTY,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFrame(conn, frameCreate, create); err != nil {
-		t.Fatal(err)
-	}
-	kind, response := readErrorFrame(t, conn)
-	if kind != frameError {
-		t.Fatalf("response frame = %d, want error", kind)
-	}
-	var msg errorMsg
-	if err := unmarshalFrame(response, &msg); err != nil {
-		t.Fatal(err)
-	}
-	if msg.Code != codeProtocol {
-		t.Fatalf("error code = %q, want %q", msg.Code, codeProtocol)
-	}
-	awaitSessionCount(t, supervisor, 0)
-}
-
 func TestServerReapsExecWhenCreatedReplyFails(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
@@ -409,7 +293,7 @@ func TestServerReapsExecWhenCreatedReplyFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hello, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: []string{featureExec}})
+	hello, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
 	if err != nil {
 		t.Fatal(err)
 	}

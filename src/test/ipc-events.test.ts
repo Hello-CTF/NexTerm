@@ -105,6 +105,66 @@ describe("Wails events and channels", () => {
     expect(frames).toEqual([[1, 2]]);
   });
 
+  it("routes replay announcements to onReplay, never to the byte stream", async () => {
+    const { createBinaryChannel, STREAM_REPLAY_TYPE } = await import("../ipc/events");
+    const frames: number[][] = [];
+    const replays: unknown[] = [];
+    const channel = createBinaryChannel(
+      (bytes) => frames.push(Array.from(bytes)),
+      undefined,
+      (control) => replays.push(control),
+    );
+    await ready(channel);
+    const push = handlerAt();
+
+    push({ data: { type: STREAM_REPLAY_TYPE, bytes: 2 } });
+    push({ data: [1, 2] });
+
+    expect(replays).toEqual([{ type: STREAM_REPLAY_TYPE, bytes: 2 }]);
+    expect(frames).toEqual([[1, 2]]);
+  });
+
+  it("routes stream class frames to onClass, never to the byte stream", async () => {
+    const { createBinaryChannel, STREAM_CLASS_TYPE } = await import("../ipc/events");
+    const frames: number[][] = [];
+    const classes: unknown[] = [];
+    const channel = createBinaryChannel(
+      (bytes) => frames.push(Array.from(bytes)),
+      undefined,
+      undefined,
+      (control) => classes.push(control),
+    );
+    await ready(channel);
+    const push = handlerAt();
+
+    push({ data: { type: STREAM_CLASS_TYPE, from: 4, to: 9, kind: "replay" } });
+    push({ data: [1] });
+
+    expect(classes).toEqual([{ type: STREAM_CLASS_TYPE, from: 4, to: 9, kind: "replay" }]);
+    expect(frames).toEqual([[1]]);
+  });
+
+  it("routes input-owner frames to onInputOwner, never to the byte stream", async () => {
+    const { createBinaryChannel, INPUT_OWNER_TYPE } = await import("../ipc/events");
+    const frames: number[][] = [];
+    const owners: unknown[] = [];
+    const channel = createBinaryChannel(
+      (bytes) => frames.push(Array.from(bytes)),
+      undefined,
+      undefined,
+      undefined,
+      (control) => owners.push(control),
+    );
+    await ready(channel);
+    const push = handlerAt();
+
+    push({ data: { type: INPUT_OWNER_TYPE, active: false } });
+    push({ data: [1] });
+
+    expect(owners).toEqual([{ type: INPUT_OWNER_TYPE, active: false }]);
+    expect(frames).toEqual([[1]]);
+  });
+
   it("silently ignores anchor frames when onControl is not registered", async () => {
     const { createBinaryChannel, STREAM_ANCHOR_TYPE } = await import("../ipc/events");
     const frames: number[] = [];
@@ -217,7 +277,7 @@ describe("shared event DTOs and version high-water marks", () => {
   it("carries the authoritative grid and event version in TerminalControlEvent (matching Go ControlEvent)", () => {
     const control: TerminalControlEvent = {
       tabId: "t-1",
-      controller: null,
+      sizeOwner: null,
       subscribers: 2,
       viewers: 1,
       exited: false,

@@ -2,8 +2,8 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  cycleActivePane,
   cycleActiveTab,
+  focusActivePane,
   cycleActiveWorkspace,
   useUi,
   type AppTab,
@@ -26,7 +26,6 @@ function workspace(id: string, panes: Pane[]): Workspace {
     title: id,
     panes,
     activePaneId: panes[0]?.id ?? "",
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -89,23 +88,45 @@ describe("workspace navigation", () => {
     expect(cycleActiveTab(-1)).toBeNull();
   });
 
-  it("cycles dual-pane focus and never selects an unrendered third pane", () => {
-    const current = workspace("ws", [
-      pane("upper", [tab("t1")]),
-      pane("lower", [tab("t2")]),
-      pane("hidden-third", [tab("t3")]),
-    ]);
+  it("moves pane focus by on-screen geometry and stops at the edges", () => {
+    // [ left | [ top-right / bottom-right ] ]
+    const current: Workspace = {
+      ...workspace("ws", [pane("left", [tab("t1")]), pane("top-right", [tab("t2")]), pane("bottom-right", [tab("t3")])]),
+      layoutTree: {
+        type: "split",
+        id: "root",
+        dir: "row",
+        ratio: 0.5,
+        a: { type: "leaf", id: "leaf-left", paneId: "left" },
+        b: {
+          type: "split",
+          id: "right",
+          dir: "col",
+          ratio: 0.5,
+          a: { type: "leaf", id: "leaf-top-right", paneId: "top-right" },
+          b: { type: "leaf", id: "leaf-bottom-right", paneId: "bottom-right" },
+        },
+      },
+    };
     useUi.setState({ workspaces: [current], activeWorkspaceId: "ws" });
 
-    expect(cycleActivePane(1)).toBe("lower");
-    expect(cycleActivePane(1)).toBe("upper");
-    expect(cycleActivePane(-1)).toBe("lower");
-    expect(cycleActivePane(-1)).toBe("upper");
+    expect(focusActivePane("left")).toBeNull();
+    expect(focusActivePane("right")).toBe("top-right");
+    expect(focusActivePane("down")).toBe("bottom-right");
+    expect(focusActivePane("down")).toBeNull();
+    expect(focusActivePane("left")).toBe("left");
+    expect(useUi.getState().workspaces[0].activePaneId).toBe("left");
+  });
 
-    useUi.setState((state) => ({
-      workspaces: state.workspaces.map((item) => ({ ...item, activePaneId: "hidden-third" })),
-    }));
-    expect(cycleActivePane(1)).toBe("lower");
-    expect(useUi.getState().workspaces[0].activePaneId).toBe("lower");
+  it("treats a workspace without a stored tree as panes stacked top to bottom", () => {
+    useUi.setState({
+      workspaces: [workspace("ws", [pane("upper", [tab("t1")]), pane("lower", [tab("t2")])])],
+      activeWorkspaceId: "ws",
+    });
+    expect(focusActivePane("down")).toBe("lower");
+    expect(focusActivePane("right")).toBeNull();
+    expect(focusActivePane("up")).toBe("upper");
+    useUi.setState({ workspaces: [], activeWorkspaceId: null });
+    expect(focusActivePane("up")).toBeNull();
   });
 });

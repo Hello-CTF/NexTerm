@@ -178,6 +178,36 @@ func TestLayoutOptimisticLockingAndCorruptionFallback(t *testing.T) {
 	}
 }
 
+func TestLayoutSaveRejectsOlderFormatVersion(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	if saved, _, err := db.LayoutSave(ctx, 0, `{"v":3,"workspaces":[]}`); err != nil || !saved {
+		t.Fatalf("v3 save saved=%v err=%v", saved, err)
+	}
+	if saved, revision, err := db.LayoutSave(ctx, 1, `{"v":4,"workspaces":[]}`); err != nil || !saved || revision != 2 {
+		t.Fatalf("upgrade save saved=%v revision=%d err=%v", saved, revision, err)
+	}
+	saved, revision, err := db.LayoutSave(ctx, 2, `{"v":3,"workspaces":[{"id":"old"}]}`)
+	requireCode(t, err, ipc.CodeBadParam)
+	if saved || revision != 2 {
+		t.Fatalf("older format saved=%v revision=%d", saved, revision)
+	}
+	_, _, data, err := db.LayoutLoad(ctx)
+	if err != nil || string(data) != `{"v":4,"workspaces":[]}` {
+		t.Fatalf("layout after rejected downgrade: %s err=%v", data, err)
+	}
+	for _, unversioned := range []string{`{"workspaces":[]}`, `{"v":"4","workspaces":[]}`, `[]`} {
+		saved, revision, err = db.LayoutSave(ctx, 2, unversioned)
+		requireCode(t, err, ipc.CodeBadParam)
+		if saved || revision != 2 {
+			t.Fatalf("unversioned %s saved=%v revision=%d", unversioned, saved, revision)
+		}
+	}
+	if saved, revision, err := db.LayoutSave(ctx, 2, `{"v":4,"workspaces":[{"id":"new"}]}`); err != nil || !saved || revision != 3 {
+		t.Fatalf("same format save saved=%v revision=%d err=%v", saved, revision, err)
+	}
+}
+
 func TestLayoutConcurrentConflict(t *testing.T) {
 	ctx := context.Background()
 	db, _ := fileStore(t)

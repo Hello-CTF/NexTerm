@@ -1,4 +1,4 @@
-import { useState, type DragEvent, type KeyboardEvent } from "react";
+import { useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import {
   ALL_PROJECTS,
   focusedWorkspaces,
@@ -6,9 +6,19 @@ import {
   type ProjectFocus,
   type ProjectInventory,
 } from "./projectFocus";
-import { sessionStatusText, type SessionRuntimeInfo, type Workspace } from "./store";
+import {
+  reconnectWorkspaceConnection,
+  sessionStatusText,
+  useUi,
+  workspaceConnectionState,
+  workspaceNeedsReconnect,
+  type Workspace,
+} from "./store";
+import { useWorkspaceAttention } from "./sessionAwarenessStore";
+import { TabAttentionBadge } from "./workspace/tabStrip";
+import { ContextMenu, type ContextMenuState } from "../ui/ContextMenu";
 import type { AssetGroup } from "../ipc/commands";
-import { IconDatabase, IconLayers, IconSettings, assetIcon } from "../ui/icons";
+import { IconDatabase, IconLayers, IconRefresh, IconSettings, assetIcon } from "../ui/icons";
 
 const WORKSPACE_DRAG_MIME = "application/x-nexterm-workspace";
 
@@ -18,13 +28,93 @@ function workspaceIcon(workspace: Workspace) {
   return assetIcon(workspace.assetKind ?? "ssh");
 }
 
+interface WorkspaceStripTabProps {
+  workspace: Workspace;
+  selected: boolean;
+  draggable: boolean;
+  dropEdge: "before" | "after" | null;
+  dragging: boolean;
+  onClick: () => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragEnd: () => void;
+  onDragOver: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragLeave: () => void;
+  onDrop: (event: DragEvent<HTMLButtonElement>) => void;
+}
+
+function WorkspaceStripTab({
+  workspace,
+  selected,
+  draggable,
+  dropEdge,
+  dragging,
+  ...handlers
+}: WorkspaceStripTabProps) {
+  const Icon = workspaceIcon(workspace);
+  const status = useUi((state) => workspaceConnectionState(workspace, state.sessions));
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const allTabs = workspace.panes.flatMap((pane) => pane.tabs);
+  const tabCount = allTabs.length;
+  const terminalTabIds = allTabs.flatMap((tab) => (tab.kind === "terminal" && !tab.exited && tab.tabId ? [tab.tabId] : []));
+  const attention = useWorkspaceAttention(terminalTabIds);
+  const statusLabel = status ? sessionStatusText(status) : null;
+  const needsReconnect = workspaceNeedsReconnect(status);
+  const onContextMenu = (event: MouseEvent<HTMLButtonElement>) => {
+    if (!needsReconnect) return;
+    event.preventDefault();
+    setMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [{
+        kind: "item",
+        label: "重新连接",
+        icon: <IconRefresh size={13} />,
+        hint: statusLabel ?? undefined,
+        onSelect: () => void reconnectWorkspaceConnection(workspace.id),
+      }],
+    });
+  };
+  return (
+    <>
+      <button
+        type="button"
+        role="tab"
+        data-project-workspace-id={workspace.id}
+        aria-selected={selected}
+        tabIndex={selected ? 0 : -1}
+        draggable={draggable}
+        className={`nx-tab ${selected ? "is-active" : ""}${dropEdge ? ` nx-drop-${dropEdge}` : ""}${dragging ? " nx-drag-source" : ""}`}
+        title={[statusLabel, attention?.label, `${tabCount} 个标签`].filter(Boolean).join(" · ")}
+        onContextMenu={onContextMenu}
+        {...handlers}
+      >
+        <Icon size={13} />
+        <span className="truncate">{workspace.title}</span>
+        <TabAttentionBadge badge={attention} />
+        {statusLabel && (
+          <span
+            role="img"
+            aria-label={statusLabel}
+            title={statusLabel}
+            data-status={status}
+            className={`nx-ws-status ${status === "connected" ? "is-ok" : status === "failed" ? "is-bad" : "is-warn"}`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-current" />
+          </span>
+        )}
+      </button>
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
+    </>
+  );
+}
+
 export function ProjectWorkspaceStrip({
   workspaces,
   activeWorkspaceId,
   activeProject,
   projectInventory,
   groups,
-  sessions,
   onSelect,
   onReorder,
 }: {
@@ -33,7 +123,6 @@ export function ProjectWorkspaceStrip({
   activeProject: ProjectFocus;
   projectInventory: ProjectInventory | null;
   groups: readonly AssetGroup[];
-  sessions: readonly SessionRuntimeInfo[];
   onSelect: (workspaceId: string) => void;
   onReorder?: (dragId: string, overId: string, before: boolean) => void;
 }) {
@@ -112,44 +201,28 @@ export function ProjectWorkspaceStrip({
       <div className="nx-tabstrip-scroll">
         {visible.length > 0 ? (
           <div role="tablist" aria-label={`${label}工作区`} className="flex items-center gap-[3px]">
-            {visible.map((workspace) => {
-              const Icon = workspaceIcon(workspace);
-              const selected = workspace.id === activeWorkspaceId;
-              const session = sessions.find((item) => item.id === workspace.sessionId);
-              const tabCount = workspace.panes.flatMap((pane) => pane.tabs).length;
-              return (
-                <button
-                  key={workspace.id}
-                  type="button"
-                  role="tab"
-                  data-project-workspace-id={workspace.id}
-                  aria-selected={selected}
-                  tabIndex={selected ? 0 : -1}
-                  draggable={Boolean(onReorder)}
-                  className={`nx-tab ${selected ? "is-active" : ""}${
-                    dropHint?.id === workspace.id ? ` nx-drop-${dropHint.edge}` : ""
-                  }${draggingId === workspace.id ? " nx-drag-source" : ""}`}
-                  title={[session ? sessionStatusText(session.status) : null, `${tabCount} 个标签`]
-                    .filter(Boolean)
-                    .join(" · ")}
-                  onClick={() => onSelect(workspace.id)}
-                  onKeyDown={(event) => onKeyDown(event, workspace.id)}
-                  onDragStart={(event) => onDragStart(event, workspace.id)}
-                  onDragEnd={() => {
-                    setDraggingId(null);
-                    setDropHint(null);
-                  }}
-                  onDragOver={(event) => onDragOver(event, workspace)}
-                  onDragLeave={() => {
-                    setDropHint((hint) => (hint?.id === workspace.id ? null : hint));
-                  }}
-                  onDrop={(event) => onDrop(event, workspace)}
-                >
-                  <Icon size={13} />
-                  <span className="truncate">{workspace.title}</span>
-                </button>
-              );
-            })}
+            {visible.map((workspace) => (
+              <WorkspaceStripTab
+                key={workspace.id}
+                workspace={workspace}
+                selected={workspace.id === activeWorkspaceId}
+                draggable={Boolean(onReorder)}
+                dropEdge={dropHint?.id === workspace.id ? dropHint.edge : null}
+                dragging={draggingId === workspace.id}
+                onClick={() => onSelect(workspace.id)}
+                onKeyDown={(event) => onKeyDown(event, workspace.id)}
+                onDragStart={(event) => onDragStart(event, workspace.id)}
+                onDragEnd={() => {
+                  setDraggingId(null);
+                  setDropHint(null);
+                }}
+                onDragOver={(event) => onDragOver(event, workspace)}
+                onDragLeave={() => {
+                  setDropHint((hint) => (hint?.id === workspace.id ? null : hint));
+                }}
+                onDrop={(event) => onDrop(event, workspace)}
+              />
+            ))}
           </div>
         ) : (
           <span className="px-2 text-xs text-neutral-500">没有打开的工作区</span>

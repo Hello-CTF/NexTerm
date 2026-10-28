@@ -1,8 +1,6 @@
 // Account DEK envelope and sync object encryption/decryption, interoperating with internal/vault (userdek.go) and internal/sync (object.go).
 // DEK plaintext exists only in caller memory: never persisted, never uploaded; the server stores only envelopes and ciphertext.
 
-import { argon2idKey } from "./argon2";
-
 export { bytesToBase64 } from "../../ui/base64";
 
 const DEK_LENGTH = 32;
@@ -14,7 +12,10 @@ const userDEKRecoveryAAD = "nexterm/go/user-dek-recovery/v1";
 const objectAADPrefix = "nexterm/go/sync-object/v1";
 
 // Same enum order as objectKinds in Go internal/sync/object.go (AAD binds kind; a wrong kind never decrypts).
-export const SYNC_OBJECT_KINDS = ["group", "asset", "credential", "snippet", "tombstone", "transcript", "known_host", "ai_profile", "ai_permission", "ai_grant", "preference"] as const;
+export const SYNC_OBJECT_KINDS = [
+  "group", "asset", "credential", "snippet", "tombstone", "transcript", "known_host", "ai_profile", "ai_permission", "ai_grant", "preference",
+  "state_rule", "runbook_template", "skill", "memory", "cron",
+] as const;
 export type SyncObjectKind = (typeof SYNC_OBJECT_KINDS)[number];
 
 // Go vault.userDEKKDFDefaults: the JSON form of Time/MemoryKiB/Threads is {"t":3,"m":65536,"p":4}.
@@ -135,6 +136,8 @@ async function deriveUserKEK(password: string, salt: Uint8Array, params: KdfPara
   if (salt.length < 16) {
     throw new CryptoError("crypto", "加密失败：盐值长度不足");
   }
+  // The Argon2 implementation is only needed when a password is actually derived, so it stays out of the entry chunk.
+  const { argon2idKey } = await import("./argon2");
   return argon2idKey(utf8Bytes(password), salt, params.t, params.m, params.p, DEK_LENGTH);
 }
 
@@ -288,9 +291,7 @@ export async function openSyncObject(dek: Uint8Array, blob: Uint8Array, id: stri
 // Compressed transcripts (internal/sync/object_compress.go). Both labels seal "NXZ1" | uint64 BE decoded size | stream.
 // "transcript.gzip" carries a gzip stream of the logical JSON. "transcript.zpack" carries a zstd frame of a pack body:
 // the JSON skeleton with every chunk "data" string emptied, followed by the raw chunk bytes; refilling each string
-// with the base64 of its bytes rebuilds the exact JSON, so payload hashes match the Go side. The legacy
-// "transcript.zstd" label is deliberately not read here; such an object fails as undecryptable and is quarantined
-// visibly.
+// with the base64 of its bytes rebuilds the exact JSON, so payload hashes match the Go side.
 export const COMPRESSED_TRANSCRIPT_LABEL = "transcript.gzip";
 export const PACKED_TRANSCRIPT_LABEL = "transcript.zpack";
 // Must equal maxSyncObjectBytes in internal/sync.

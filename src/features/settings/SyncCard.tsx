@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { assetApi, syncApi, transcriptApi, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
+import { assetApi, localHelperApi, syncApi, transcriptApi, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
 import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncStatus } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { remoteLinkApi, syncCompareApi, type SyncCompareRow } from "../../ipc/remoteApi";
@@ -40,6 +40,7 @@ import { formatTime } from "../../ui/format";
 import { AuthCard } from "./AuthCard";
 import { AccountCard } from "./AccountCard";
 import { SYNC_AUTO_BADGE, SYNC_CONSOLE_TITLE, SYNC_INTERVAL_LABEL, SYNC_MERGE_GUIDE, SyncOptInSection } from "./syncOptIns";
+import { ForeignCronSection } from "./syncForeignCron";
 import { COMPARE_KIND_LABELS, CompareDetails, type UndecryptableAction } from "./syncCompareRows";
 import {
   IconChevronDown,
@@ -275,7 +276,14 @@ function DesktopLinkCard() {
     setBusy("logout");
     setError(null);
     try {
-      if (!(await ask("登出当前账号？本机将停止自动登录和同步；本机和服务端的数据都会保留。", {
+      let exposing = false;
+      try {
+        exposing = (await localHelperApi.getExposure()).enabled;
+      } catch {
+        // Exposure is unsupported or unreadable here; the plain confirmation applies.
+      }
+      const exposureNote = exposing ? "登出期间会停止开放本机终端。" : "";
+      if (!(await ask(`登出当前账号？本机将停止自动登录和同步；本机和服务端的数据都会保留。${exposureNote}`, {
         title: "登出账号", kind: "warning",
       })) || !active.current || currentAccount.current !== account) return;
       const [latestLink, latestStatus] = await Promise.all([syncApi.linkGet(), syncApi.status()]);
@@ -775,6 +783,7 @@ function DesktopSyncConsole() {
       </p>
 
       {kindOptIn && <SyncOptInSection value={kindOptIn} busy={optInBusy} onChange={(patch) => void updateKindOptIn(patch)} />}
+      {kindOptIn?.cron && <ForeignCronSection />}
 
       {status?.lastError && !status.paused && !status.vaultLocked && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
@@ -1077,9 +1086,62 @@ async function localEntity(
 // Credentials whose plaintext cannot be read (locked/unavailable/error) are explicitly recorded in warnings, never silently dropped.
 // Optional sync kinds are collected per the account user's switches (default on): only enabled ones enter comparison and push;
 // a profile apiKey withheld (locked/unavailable/error) likewise only records a warning; keyless profiles (apiKeySet=false) are unaffected by vault lock.
+// OPT_IN_BY_KIND names the switch gating each optional kind and the tombstones targeting it.
+const OPT_IN_BY_KIND: Partial<Record<string, keyof SyncKindOptIn>> = {
+  known_host: "knownHost",
+  ai_profile: "aiProfile",
+  ai_permission: "aiPermission",
+  ai_grant: "aiGrant",
+  preference: "preferences",
+  state_rule: "stateRules",
+  runbook_template: "runbookTemplates",
+  skill: "skills",
+  memory: "memory",
+  cron: "cron",
+};
+
+// GENERIC_COLLECT_KINDS are collected through sync_collect_kind_objects: the server returns each object's
+// canonical payload, which is sealed as is so hashes and revisions match the desktop engine.
+const GENERIC_COLLECT_KINDS: SyncObjectKind[] = ["state_rule", "runbook_template", "skill", "memory", "cron"];
+
+function allKindOptIn(): SyncKindOptIn {
+  const optIn = {} as SyncKindOptIn;
+  for (const key of Object.values(OPT_IN_BY_KIND)) optIn[key as keyof SyncKindOptIn] = true;
+  return optIn;
+}
+
+function kindAllowed(kind: string | undefined, optIn: SyncKindOptIn): boolean {
+  const key = kind ? OPT_IN_BY_KIND[kind] : undefined;
+  return key === undefined || !!optIn[key];
+}
+
+async function collectGenericEntities(optIn: SyncKindOptIn): Promise<{ entities: LocalEntity[]; warnings: string[] }> {
+  const results = await Promise.all(
+    GENERIC_COLLECT_KINDS.map((kind) => (kindAllowed(kind, optIn) ? syncApi.collectKindObjects(kind) : Promise.resolve({ objects: [], warnings: [] }))),
+  );
+  const entities: LocalEntity[] = [];
+  const warnings: string[] = [];
+  for (const result of results) {
+    warnings.push(...result.warnings);
+    for (const o of result.objects) {
+      entities.push({
+        id: o.id,
+        kind: o.kind as SyncObjectKind,
+        name: o.name,
+        updatedAt: o.updatedAt,
+        deletedAt: null,
+        payload: JSON.parse(o.payload) as unknown,
+        payloadText: o.payload,
+        payloadHash: await objectPayloadHash(utf8Bytes(o.payload)),
+      });
+    }
+  }
+  return { entities, warnings };
+}
+
 async function loadLocalEntities(optIn: SyncKindOptIn, dek: Uint8Array): Promise<LocalCollection> {
   const warnings: string[] = [];
-  const [groups, snippets, transcripts, assets, tombstones, credentials, knownHosts, aiProfiles, aiPermission, aiGrants, preferences] = await Promise.all([
+  const [groups, snippets, transcripts, assets, tombstones, credentials, knownHosts, aiProfiles, aiPermission, aiGrants, preferences, generic] = await Promise.all([
     assetApi.groupList(),
     assetApi.snippetList(),
     loadOptedInTranscripts(dek),
@@ -1091,6 +1153,7 @@ async function loadLocalEntities(optIn: SyncKindOptIn, dek: Uint8Array): Promise
     optIn.aiPermission ? syncApi.collectAIPermission() : Promise.resolve({ id: "", mode: "", dangerRules: [], updatedAt: 0, found: false }),
     optIn.aiGrant ? syncApi.collectAIGrants() : Promise.resolve({ grants: [], rules: [], modes: [] }),
     optIn.preferences ? syncApi.collectPreferences() : Promise.resolve([]),
+    collectGenericEntities(optIn),
   ]);
   const byId = new Map<string, LocalEntity>();
   for (const g of groups) {
@@ -1135,13 +1198,13 @@ async function loadLocalEntities(optIn: SyncKindOptIn, dek: Uint8Array): Promise
   for (const p of preferences) {
     byId.set(p.id, await localEntity(p.id, "preference", p.key, p.updatedAt, null, preferencePayload(p)));
   }
+  warnings.push(...generic.warnings);
+  for (const entity of generic.entities) {
+    byId.set(entity.id, entity);
+  }
   for (const t of tombstones) {
     // Tombstones of disabled kinds stay out of comparison and push: disabled sync must not delete remote objects
-    if (t.targetKind === "known_host" && !optIn.knownHost) continue;
-    if (t.targetKind === "ai_profile" && !optIn.aiProfile) continue;
-    if (t.targetKind === "ai_permission" && !optIn.aiPermission) continue;
-    if (t.targetKind === "ai_grant" && !optIn.aiGrant) continue;
-    if (t.targetKind === "preference" && !optIn.preferences) continue;
+    if (!kindAllowed(t.targetKind, optIn)) continue;
     const live = byId.get(t.id);
     if (live && revisionOf(live.updatedAt, live.deletedAt) > t.deletedAt) continue;
     const label = COMPARE_KIND_LABELS[t.targetKind] ?? t.targetKind;
@@ -1160,20 +1223,8 @@ function revisionOf(updatedAt: number, deletedAt: number | null): number {
 // remoteKindVisible filters remote objects by opt-in: disabled kinds are neither applied nor compared;
 // remote tombstones of optional kinds are likewise governed by their targetKind switch (disabled sync must not delete remote/local objects).
 function remoteKindVisible(kind: SyncObjectKind, plaintext: string, optIn: SyncKindOptIn): boolean {
-  if (kind === "known_host") return optIn.knownHost;
-  if (kind === "ai_profile") return optIn.aiProfile;
-  if (kind === "ai_permission") return !!optIn.aiPermission;
-  if (kind === "ai_grant") return !!optIn.aiGrant;
-  if (kind === "preference") return !!optIn.preferences;
-  if (kind === "tombstone") {
-    const target = (JSON.parse(plaintext) as { targetKind?: string }).targetKind;
-    if (target === "known_host") return optIn.knownHost;
-    if (target === "ai_profile") return optIn.aiProfile;
-    if (target === "ai_permission") return !!optIn.aiPermission;
-    if (target === "ai_grant") return !!optIn.aiGrant;
-    if (target === "preference") return !!optIn.preferences;
-  }
-  return true;
+  if (kind === "tombstone") return kindAllowed((JSON.parse(plaintext) as { targetKind?: string }).targetKind, optIn);
+  return kindAllowed(kind, optIn);
 }
 
 interface RemoteCache {
@@ -1221,6 +1272,14 @@ async function decodeRemoteObject(entry: { id: string; seq: number; blob_hash: s
           : g.deviceId
       : entry.id;
     return { ...base, name, updatedAt: g.updatedAt ?? 0 };
+  }
+  if (kind === "cron") {
+    const c = JSON.parse(text) as { name?: string; prompt?: string; updatedAt?: number };
+    return { ...base, name: c.name || c.prompt || entry.id, updatedAt: c.updatedAt ?? 0 };
+  }
+  if (kind === "memory") {
+    const m = JSON.parse(text) as { topic?: string; updatedAt?: number };
+    return { ...base, name: m.topic || entry.id, updatedAt: m.updatedAt ?? 0 };
   }
   const p = JSON.parse(text) as { name?: string; updatedAt?: number; deletedAt?: number };
   return { ...base, name: p.name ?? entry.id, updatedAt: p.updatedAt ?? 0, deletedAt: p.deletedAt ?? null };
@@ -1310,7 +1369,7 @@ function computeWinners(local: LocalEntity[], remote: RemoteObject[], undecrypta
 }
 
 // sealAll encrypts winner objects into wire form in kind dependency order (aligned with Go objectKindRank:
-// AI permissions, AI grants, and preferences rank before plain tombstones, transcripts still go last).
+// AI permissions, AI grants, preferences and the other optional kinds rank before plain tombstones, transcripts still go last).
 async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: string; blob: string }[]> {
   const rank = (k: SyncObjectKind) => {
     switch (k) {
@@ -1323,9 +1382,14 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
       case "ai_permission": return 6;
       case "ai_grant": return 7;
       case "preference": return 8;
-      case "tombstone": return 9;
-      case "transcript": return 10;
-      default: return 11;
+      case "state_rule": return 9;
+      case "runbook_template": return 10;
+      case "skill": return 11;
+      case "memory": return 12;
+      case "cron": return 13;
+      case "tombstone": return 14;
+      case "transcript": return 15;
+      default: return 16;
     }
   };
   const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
@@ -1485,7 +1549,8 @@ function computeApplySet(local: LocalEntity[], remote: RemoteObject[]): RemoteOb
 async function optInMatches(optIn: SyncKindOptIn, shouldContinue: () => boolean): Promise<boolean> {
   if (!shouldContinue()) return false;
   const current = await syncApi.kindOptInGet();
-  return current.knownHost === optIn.knownHost && current.aiProfile === optIn.aiProfile && !!current.aiPermission === !!optIn.aiPermission && !!current.aiGrant === !!optIn.aiGrant && !!current.preferences === !!optIn.preferences && shouldContinue();
+  const keys = new Set([...Object.values(OPT_IN_BY_KIND)] as (keyof SyncKindOptIn)[]);
+  return [...keys].every((key) => !!current[key] === !!optIn[key]) && shouldContinue();
 }
 
 export async function runWebSync(
@@ -1780,7 +1845,7 @@ function CompareConsole() {
         title: "清除无法解密的服务端副本", kind: "warning",
       }))) return;
       if (!stillCurrent()) return;
-      const localNow = await loadLocalEntities({ knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true }, dek);
+      const localNow = await loadLocalEntities(allKindOptIn(), dek);
       if (localNow.warnings.length > 0) {
         throw new Error("本机内容读取不完整，请先解锁凭据库或修复读取错误，再刷新对比结果");
       }
@@ -1877,6 +1942,7 @@ function CompareConsole() {
       </p>
 
       {kindOptIn && <SyncOptInSection value={kindOptIn} busy={optInBusy} onChange={(patch) => void updateKindOptIn(patch)} />}
+      {kindOptIn?.cron && <ForeignCronSection />}
 
       {error && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">

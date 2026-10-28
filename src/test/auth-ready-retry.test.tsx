@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { deferred, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
@@ -128,7 +128,7 @@ vi.mock("../features/settings/SettingsView", () => ({ SettingsView: () => null }
 vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
-vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
+vi.mock("../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../app/App";
@@ -220,6 +220,12 @@ async function logout(): Promise<void> {
   });
 }
 
+// The account gate and the asset tree load through dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([import("../features/auth/AuthGate"), import("../features/explorer/AssetTree")]);
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
@@ -248,7 +254,7 @@ beforeEach(() => {
   mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
   mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
@@ -345,7 +351,6 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
             title: "account workspace",
             panes: [{ id: "pane-account", tabs: [], activeTabId: null }],
             activePaneId: "pane-account",
-            splitRatio: 0.5,
             closable: true,
           },
         ],

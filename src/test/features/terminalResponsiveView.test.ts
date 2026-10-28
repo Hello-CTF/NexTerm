@@ -63,6 +63,7 @@ vi.mock("@xterm/xterm", () => ({
     };
     buffer = {
       active: { type: "normal", baseY: 0, viewportY: 0 },
+      onBufferChange: () => ({ dispose: () => {} }),
     };
     scrollToBottom = vi.fn(() => {
       this.buffer.active.viewportY = this.buffer.active.baseY;
@@ -79,6 +80,7 @@ vi.mock("@xterm/xterm", () => ({
     constructor() {
       harness.terminals.push(this);
     }
+    parser = { registerOscHandler: () => ({ dispose: () => undefined }) };
     open(element: HTMLElement) {
       this.element = element;
       const viewport = document.createElement("div");
@@ -271,7 +273,7 @@ beforeEach(() => {
     sessionId: "session",
     cols: 36,
     rows: 20,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -282,7 +284,7 @@ beforeEach(() => {
     tabId: "tab-existing",
     cols: 90,
     rows: 30,
-    controller: "other",
+    sizeOwner: "other",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -293,7 +295,7 @@ beforeEach(() => {
     sessionId: "session-1",
     cols: 80,
     rows: 30,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -381,6 +383,37 @@ describe("XtermView production grid lifecycle", () => {
 
     expect(harness.attach).toHaveBeenCalledWith("session", 36, 20, expect.anything());
     expect(useUi.getState().toasts.some((toast) => toast.text.includes("无法读取资产终端模式"))).toBe(true);
+  });
+
+  it("opens a regular shell when the tab requested one because the durable helper was not ready", async () => {
+    await show(props({ requestRegular: true }));
+
+    expect(harness.attach).toHaveBeenCalledWith("session", 36, 20, expect.anything(), false);
+  });
+
+  it("still resumes an existing attachment of a tab that requested a regular shell", async () => {
+    await show(props({ requestRegular: true, resumeTabId: "tab-existing" }));
+
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, "session");
+    expect(harness.attach).not.toHaveBeenCalled();
+  });
+
+  it("reports the durable fallback notice with the attach info", async () => {
+    harness.attach.mockResolvedValue({
+      tabId: "tab-new", sessionId: "session", cols: 36, rows: 20, sizeOwner: "me", subscribers: 1, viewers: 1,
+      exited: false, shell: "posix", retainable: false, durable: false, fallbackNotice: "持久终端不可用",
+    });
+    const notices: Array<[string | undefined, boolean | undefined]> = [];
+    await show(props({ onAttachInfo: (info) => notices.push([info.fallbackNotice, info.durableRequested]) }));
+
+    expect(notices).toEqual([["持久终端不可用", true]]);
+  });
+
+  it("reports that a regular shell was requested", async () => {
+    const requested: Array<boolean | undefined> = [];
+    await show(props({ requestRegular: true, onAttachInfo: (info) => requested.push(info.durableRequested) }));
+
+    expect(requested).toEqual([false]);
   });
 
   it("reports attached shell and background capability before the attach callback", async () => {
@@ -472,7 +505,7 @@ describe("XtermView production grid lifecycle", () => {
       tabId: "tab-new",
       cols: 90,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -503,7 +536,7 @@ describe("XtermView production grid lifecycle", () => {
     await act(async () => root?.unmount());
     root = null;
     harness.detach.mockClear();
-    finish?.({ tabId: "tab-new", cols: 90, rows: 30, controller: "me", subscribers: 1, viewers: 1, exited: false });
+    finish?.({ tabId: "tab-new", cols: 90, rows: 30, sizeOwner: "me", subscribers: 1, viewers: 1, exited: false });
     await flushWork();
     expect(harness.detach).toHaveBeenCalledWith("tab-new", "channel-1");
     expect(harness.attach).toHaveBeenCalledTimes(1);
@@ -517,7 +550,7 @@ describe("XtermView production grid lifecycle", () => {
       tabId: "tab-new",
       cols: 90,
       rows: 30,
-      controller: "me",
+      sizeOwner: "me",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -549,7 +582,7 @@ describe("XtermView production grid lifecycle", () => {
       tabId: "tab-existing",
       cols: 90,
       rows: 30,
-      controller: "other",
+      sizeOwner: "other",
       subscribers: 1,
       viewers: 1,
       exited: false,
@@ -725,7 +758,7 @@ describe("XtermView stream anchors", () => {
     tabId: "tab-new",
     cols: 90,
     rows: 30,
-    controller: "me",
+    sizeOwner: "me",
     subscribers: 1,
     viewers: 1,
     exited: false,
@@ -852,8 +885,8 @@ describe("XtermView stream anchors", () => {
   });
 
   it("drops incomplete OSC state before expired clear and replay", async () => {
-    const notifications = vi.fn();
-    await show(props({ onNotification: notifications }));
+    const clipboard = vi.fn();
+    await show(props({ onClipboard: clipboard }));
     const channel = harness.channels[0];
     const term = harness.terminals[0];
     const written: number[] = [];
@@ -863,7 +896,7 @@ describe("XtermView stream anchors", () => {
       callback?.();
     };
     act(() => {
-      channel.onBytes(new TextEncoder().encode("old\x1b]9;stale"));
+      channel.onBytes(new TextEncoder().encode("old\x1b]52;c;stale"));
     });
     written.length = 0;
     const replay = "\x1b[2J\x1b[3J\x1b[HREPLAY";
@@ -884,7 +917,7 @@ describe("XtermView stream anchors", () => {
       ...Array.from(new TextEncoder().encode("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n")),
       7,
     ]);
-    expect(notifications).not.toHaveBeenCalled();
+    expect(clipboard).not.toHaveBeenCalled();
   });
 
   it("rebuilds command blocks only once on expired OSC133 replay", async () => {
@@ -907,11 +940,11 @@ describe("XtermView stream anchors", () => {
   });
 
   it("preserves pending OSC state across continuous resume", async () => {
-    const notifications = vi.fn();
-    await show(props({ onNotification: notifications }));
+    const clipboard = vi.fn();
+    await show(props({ onClipboard: clipboard }));
     const channel = harness.channels[0];
     act(() => {
-      channel.onBytes(new TextEncoder().encode("old\x1b]9;contin"));
+      channel.onBytes(new TextEncoder().encode("old\x1b]52;c;contin"));
     });
 
     act(() => {
@@ -919,7 +952,7 @@ describe("XtermView stream anchors", () => {
       channel.onBytes(new TextEncoder().encode("ued\x07"));
     });
 
-    expect(notifications).toHaveBeenCalledWith("continued");
+    expect(clipboard).toHaveBeenCalledWith("c;continued");
     expect(harness.blockClearCount).toBe(0);
   });
 

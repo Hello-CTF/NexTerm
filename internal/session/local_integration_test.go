@@ -57,9 +57,6 @@ func TestRealLocalPTYAttachDetachReplayAndReap(t *testing.T) {
 			t.Fatal("real local replay did not contain shell output")
 		}
 	}
-	if _, err := manager.Claim(tab.ID, "client-b"); err != nil {
-		t.Fatal(err)
-	}
 	if err := manager.DetachClient(tab.ID, "client-a"); err != nil {
 		t.Fatal(err)
 	}

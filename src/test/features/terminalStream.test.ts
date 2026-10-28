@@ -9,6 +9,7 @@ import {
   type OscStreamEvent,
   type OscStreamSegment,
 } from "../../features/terminal/oscStream";
+import type { StreamMode } from "../../features/terminal/streamClasses";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -93,6 +94,36 @@ describe("terminal stream writer generation isolation (T-01)", () => {
       { kind: "notification", body: "a" },
       { kind: "notification", body: "b" },
     ]);
+  });
+
+  it("runs a mark after the events of earlier bytes and before those of later bytes", () => {
+    const h = setup();
+    const order: string[] = [];
+    const writer = createTerminalStreamWriter(
+      h.term,
+      (event) => order.push(event.kind === "notification" ? event.body : event.kind),
+      { highWaterBytes: 1024, lowWaterBytes: 512 },
+    );
+    writer.write([text("one"), notify("before")]);
+    writer.mark(() => order.push("mark"));
+    writer.write([notify("same-unit"), text("two"), notify("after")]);
+    expect(order).toEqual([]);
+    h.drain();
+    expect(order).toEqual(["before", "mark", "same-unit", "after"]);
+  });
+
+  it("runs a mark at once when nothing is pending, and across a generation bump", () => {
+    const h = setup();
+    const marks: string[] = [];
+    h.writer.mark(() => marks.push("idle"));
+    expect(marks).toEqual(["idle"]);
+    h.writer.write([text("old"), notify("stale")]);
+    h.writer.mark(() => marks.push("queued"));
+    h.writer.nextGeneration();
+    h.drain();
+    expect(marks).toEqual(["idle", "queued"]);
+    expect(h.events).toEqual([]);
+    expect(h.writer.stats().suppressedEvents).toBe(1);
   });
 
   it("dispatches an event immediately when no write is in flight", () => {
@@ -516,6 +547,41 @@ describe("terminal stream writer bounded FIFO (T-03 hard backpressure)", () => {
     for (let i = 0; i < 10000; i += 1) {
       expect(buffer.getLine(i)?.translateToString(true)).toBe("line-");
     }
+    term.dispose();
+  });
+});
+
+describe("terminal stream writer replayed bytes", () => {
+  it("reports the parse mode exactly around replayed and answered bytes in a real xterm", async () => {
+    const term = new Terminal({ cols: 40, rows: 10, scrollback: 1000, allowProposedApi: true });
+    let mode: StreamMode = "live";
+    const replies: { data: string; mode: StreamMode }[] = [];
+    term.onData((data) => replies.push({ data, mode }));
+    const events: { event: OscStreamEvent; mode: StreamMode }[] = [];
+    const writer = createTerminalStreamWriter(term, (event, eventMode) => events.push({ event, mode: eventMode }), {
+      highWaterBytes: 1 << 20,
+      lowWaterBytes: 1 << 19,
+      onReplayChange: (next) => {
+        mode = next;
+      },
+    });
+    writer.pushBytes(enc.encode("old\r\n\x1b[c\x1b[6n\x1b]9;old note\x07\x1b]52;c;b2xk\x07"), "replay");
+    writer.pushBytes(enc.encode("mid\r\n\x1b[6n\x1b]9;mid note\x07"), "answered");
+    writer.pushBytes(enc.encode("new\r\n\x1b[c\x1b]9;new note\x07"));
+    await drainWriter(writer, term);
+    expect(mode).toBe("live");
+    // Every reply xterm produced is attributed to the mode of the bytes that
+    // asked for it.
+    expect(replies.map((reply) => reply.mode)).toEqual(["replay", "replay", "answered", "live"]);
+    expect(replies[3].data).toMatch(/^\x1b\[\?[\d;]*c$/);
+    expect(events).toEqual([
+      { event: { kind: "notification", body: "old note" }, mode: "replay" },
+      { event: { kind: "clipboard", payload: "c;b2xk" }, mode: "replay" },
+      { event: { kind: "notification", body: "mid note" }, mode: "answered" },
+      { event: { kind: "notification", body: "new note" }, mode: "live" },
+    ]);
+    expect(term.buffer.active.getLine(0)?.translateToString(true)).toBe("old");
+    expect(term.buffer.active.getLine(2)?.translateToString(true)).toBe("new");
     term.dispose();
   });
 });

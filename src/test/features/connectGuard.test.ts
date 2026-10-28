@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   sessionDisconnect: vi.fn(),
   sessionReconnect: vi.fn(),
   sessionList: vi.fn(),
+  prepareDurable: vi.fn(),
   assetCreate: vi.fn(),
   probeHostKey: vi.fn(),
   dbConnect: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       reconnect: mocks.sessionReconnect,
       list: mocks.sessionList,
       probeHostKey: mocks.probeHostKey,
+      prepareDurable: mocks.prepareDurable,
     },
     terminalApi: { ...actual.terminalApi, closeTab: mocks.closeTab },
     dbApi: { connect: mocks.dbConnect, disconnect: mocks.dbDisconnect },
@@ -55,6 +57,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { connectAsset, connectDevice, connectQuickTarget, saveQuickConnectAsset, useUi, type ConnectOutcome, type SqlDraft } from "../../app/store";
+import { setTerminalCloseAction } from "../../app/preferences";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
 import { sessionApi, type SessionInfo } from "../../ipc/commands";
 
@@ -113,7 +116,7 @@ describe("connectAsset in-flight guard", () => {
     mocks.ask.mockReturnValueOnce(confirmation.promise);
     const workspace = {
       id: "shared-id", kind: "db" as const, title: "Database", closable: true,
-      panes: [{ id: "pane", tabs: [], activeTabId: null }], activePaneId: "pane", splitRatio: 0.5,
+      panes: [{ id: "pane", tabs: [], activeTabId: null }], activePaneId: "pane",
     };
     useUi.setState({
       workspaces: [workspace],
@@ -203,6 +206,35 @@ describe("connectAsset in-flight guard", () => {
     expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(2);
     expect(useUi.getState().sessions.map((session) => session.id)).toEqual(["new-quick-session"]);
     expect(mocks.sessionDisconnect).toHaveBeenCalledWith("old-quick-session");
+  });
+
+  it("still opens a terminal right away for a quick connection", async () => {
+    mocks.promptText.mockResolvedValue("");
+    mocks.sessionConnectQuick.mockResolvedValue({ ...SESSION, id: "quick-session", assetId: null });
+    mocks.prepareDurable.mockResolvedValue({ state: "preparing" });
+
+    expect(await connectQuickTarget({ host: "example.invalid", port: 22, username: "operator" })).toEqual({ ok: true });
+
+    const state = useUi.getState();
+    const workspace = state.workspaces.find((item) => item.sessionId === "quick-session");
+    const terminals = workspace?.panes.flatMap((pane) => pane.tabs).filter((tab) => tab.kind === "terminal") ?? [];
+    expect(state.activeWorkspaceId).toBe(workspace?.id);
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]).toMatchObject({ title: "终端 1", sessionId: "quick-session", regularReason: "持久组件准备中" });
+  });
+
+  it("still opens a terminal right away when a quick connection is saved as an asset", async () => {
+    mocks.promptText.mockResolvedValue("");
+    mocks.assetCreate.mockResolvedValue({ id: "asset-new", name: "operator@example.invalid", kind: "ssh", credId: null });
+    mocks.sessionConnect.mockResolvedValue({ ...SESSION, id: "saved-session", assetId: "asset-new" });
+    mocks.prepareDurable.mockResolvedValue({ state: "ready" });
+
+    expect(await saveQuickConnectAsset({ host: "example.invalid", port: 22, username: "operator" })).toMatchObject({ ok: true });
+
+    const workspace = useUi.getState().workspaces.find((item) => item.sessionId === "saved-session");
+    const terminals = workspace?.panes.flatMap((pane) => pane.tabs).filter((tab) => tab.kind === "terminal") ?? [];
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.regularReason).toBeUndefined();
   });
 
   it("does not save a quick SSH asset after its password prompt crosses an account switch", async () => {
@@ -335,7 +367,6 @@ describe("connectAsset asset workspace deduplication", () => {
           assetKind: "ssh",
           panes: [{ id: "p1", tabs, activeTabId: tabs[0]?.id ?? null }],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -354,7 +385,7 @@ describe("connectAsset asset workspace deduplication", () => {
     expect(workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
   });
 
-  it("reopens a terminal tab when the workspace remains but its terminal tab was closed", async () => {
+  it("switches to the workspace without reopening a closed terminal tab and keeps preparing durable terminals", async () => {
     seedSessionWorkspace("connected");
     const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
@@ -362,7 +393,9 @@ describe("connectAsset asset workspace deduplication", () => {
     const { workspaces, activeWorkspaceId } = useUi.getState();
     expect(activeWorkspaceId).toBe("ws-1");
     const tabs = workspaces[0]?.panes.flatMap((p) => p.tabs) ?? [];
-    expect(tabs.some((t) => t.kind === "terminal" && t.sessionId === "s1")).toBe(true);
+    expect(tabs.some((t) => t.kind === "terminal")).toBe(false);
+    await flush();
+    expect(mocks.prepareDurable).toHaveBeenCalledWith("s1");
   });
 
   it("reconnects directly when the asset workspace session is disconnected and takes over the existing terminal tab", async () => {
@@ -427,7 +460,7 @@ describe("connectAsset asset workspace deduplication", () => {
     const workspace = useUi.getState().workspaces[0];
     useUi.setState({
       sessions: state === "missing" ? [] : useUi.getState().sessions,
-      workspaces: [{ ...workspace, activePaneId: "p2", splitRatio: 0.37, panes: [
+      workspaces: [{ ...workspace, activePaneId: "p2", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.37, a: { type: "leaf" as const, id: "leaf-a", paneId: "p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "p2" } }, panes: [
         { id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", title: "one", sessionId: "s1", tabId: "shell-one", closable: true }] },
         { id: "p2", activeTabId: "t2", tabs: [{ id: "t2", kind: "terminal", title: "two", sessionId: "s1", tabId: "shell-two", closable: true }] },
       ] }],
@@ -438,7 +471,7 @@ describe("connectAsset asset workspace deduplication", () => {
     expect(await connectAsset(SSH_ASSET)).toEqual({ ok: true });
 
     const restored = useUi.getState().workspaces[0];
-    expect(restored).toMatchObject({ id: "ws-1", sessionId: "s-new", activePaneId: "p2", splitRatio: 0.37 });
+    expect(restored).toMatchObject({ id: "ws-1", sessionId: "s-new", activePaneId: "p2", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.37, a: { type: "leaf" as const, id: "leaf-a", paneId: "p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "p2" } } });
     expect(restored.panes.map((pane) => ({ id: pane.id, activeTabId: pane.activeTabId, tabs: pane.tabs.map((tab) => [tab.id, tab.tabId, tab.sessionId]) }))).toEqual([
       { id: "p1", activeTabId: "t1", tabs: [["t1", "shell-one", "s-new"]] },
       { id: "p2", activeTabId: "t2", tabs: [["t2", "shell-two", "s-new"]] },
@@ -474,7 +507,6 @@ describe("connectAsset asset workspace deduplication", () => {
             },
           ],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -641,14 +673,12 @@ describe("connectAsset focus guard", () => {
     expect(state.connectFocusRevision).toBe(0);
   });
 
-  it("keeps the default connection and terminal focus when a guarded connection is undisturbed", async () => {
+  it("opens the host workspace without a terminal when a guarded connection is undisturbed", async () => {
     expect(await connectAsset(SSH_ASSET, { preserveUserFocus: true })).toEqual({ ok: true });
 
     const state = useUi.getState();
     const workspace = state.workspaces.find((w) => w.sessionId === SESSION.id);
-    const terminal = workspace?.panes[0].tabs.find((t) => t.kind === "terminal");
-    expect(terminal?.title).toBe("终端 1");
-    expect(workspace?.panes[0].activeTabId).toBe(terminal?.id);
+    expect(workspace?.panes[0].tabs).toEqual([]);
     expect(state.activeWorkspaceId).toBe(workspace?.id);
     expect(state.connectFocusRevision).toBe(1);
   });
@@ -660,7 +690,7 @@ describe("connectAsset focus guard", () => {
 
     const state = useUi.getState();
     const workspace = state.workspaces.find((w) => w.sessionId === SESSION.id);
-    expect(workspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(true);
+    expect(workspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(false);
     expect(state.activeWorkspaceId).toBe(workspace?.id);
     expect(state.connectFocusRevision).toBe(1);
   });
@@ -695,6 +725,92 @@ describe("connectAsset focus guard", () => {
     const manualWorkspace = state.workspaces.find((w) => w.sessionId === manualSession.id);
     expect(state.connectingAssetIds).not.toContain("asset-1");
     expect(state.activeWorkspaceId).toBe(manualWorkspace?.id);
-    expect(manualWorkspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(true);
+    expect(manualWorkspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(false);
+  });
+});
+
+describe("closing a workspace whose host dropped", () => {
+  function seedDroppedHost() {
+    useUi.setState({
+      sessions: [{ ...SESSION, status: "failed" }],
+      workspaces: [
+        {
+          id: "ws-1",
+          kind: "session" as const,
+          sessionId: "s1",
+          title: "dev-m4",
+          assetId: "asset-1",
+          assetKind: "ssh",
+          panes: [{
+            id: "p1",
+            tabs: [{
+              id: "t1",
+              kind: "terminal" as const,
+              title: "Terminal 1",
+              sessionId: "s1",
+              tabId: "kernel-t1",
+              durable: true,
+              retainable: true,
+              closable: true,
+            }],
+            activeTabId: "t1",
+          }],
+          activePaneId: "p1",
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws-1",
+    });
+  }
+  const unreachable = {
+    code: "disconnected",
+    message: "持久终端组件暂时无法访问：主机连接可能已断开或不可达，或 helper 暂时不可用；请重新连接后重试",
+  };
+
+  afterEach(() => setTerminalCloseAction("ask"));
+
+  it("closes locally when the kill cannot reach the host, says why, and reopens with a fresh connection", async () => {
+    setTerminalCloseAction("kill");
+    seedDroppedHost();
+    mocks.closeTab.mockImplementation((_tabId: string, mode?: string) =>
+      mode === "kill" ? Promise.reject(unreachable) : Promise.resolve(undefined));
+
+    expect(await useUi.getState().closeWorkspace("ws-1")).toBe(true);
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s1");
+    expect(mocks.closeTab).toHaveBeenLastCalledWith("kernel-t1", "detach", "s1");
+    expect(useUi.getState().workspaces).toEqual([]);
+    const toasts = mocks.toast.mock.calls.map((call) => String(call[1])).join("\n");
+    expect(toasts).toContain("已关闭「dev-m4」");
+    expect(toasts).toContain("主机已断开或无法访问");
+    expect(toasts).toContain("后台会话");
+    expect(toasts).not.toContain("不支持");
+    expect(toasts).not.toContain("进程已结束");
+
+    const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionReconnect).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().workspaces).toHaveLength(1);
+    expect(useUi.getState().workspaces[0]).toMatchObject({ assetId: "asset-1", sessionId: "s1" });
+  });
+
+  it("detaches without a remote kill and leaves reopening to the normal connection failure while the host is down", async () => {
+    setTerminalCloseAction("detach");
+    seedDroppedHost();
+    mocks.closeTab.mockImplementation((_tabId: string, mode?: string) =>
+      mode === "kill" ? Promise.reject(unreachable) : Promise.resolve(undefined));
+
+    expect(await useUi.getState().closeWorkspace("ws-1")).toBe(true);
+    expect(mocks.closeTab).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s1");
+    expect(useUi.getState().workspaces).toEqual([]);
+    expect(mocks.toast.mock.calls.map((call) => String(call[1])).join("\n")).not.toContain("不支持");
+
+    mocks.sessionConnect.mockRejectedValueOnce({ code: "ssh", message: "dial tcp: connection refused" });
+    const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
+    expect(outcome.ok).toBe(false);
+    expect(mocks.sessionReconnect).not.toHaveBeenCalled();
+    expect(Object.values(useUi.getState().connectionProblems)).toHaveLength(1);
   });
 });

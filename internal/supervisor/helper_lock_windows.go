@@ -11,8 +11,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func lockHelperState(stateDir string) (func(), error) {
-	path := filepath.Join(stateDir, "helper.lock")
+func lockStateFile(stateDir, name string) (func(), error) {
+	path := filepath.Join(stateDir, name)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open supervisor helper lock: %w", err)

@@ -56,6 +56,9 @@ func newCronJob(db *gorm.DB, opts ...gen.DOOption) cronJob {
 	_cronJob.RunCoalesced = field.NewBool(tableName, "run_coalesced")
 	_cronJob.OwnerID = field.NewString(tableName, "owner_id")
 	_cronJob.OwnerKind = field.NewString(tableName, "owner_kind")
+	_cronJob.DeviceID = field.NewString(tableName, "device_id")
+	_cronJob.DeviceName = field.NewString(tableName, "device_name")
+	_cronJob.ConfigUpdatedAt = field.NewInt64(tableName, "config_updated_at")
 
 	_cronJob.fillFieldMap()
 
@@ -95,6 +98,9 @@ type cronJob struct {
 	RunCoalesced        field.Bool
 	OwnerID             field.String
 	OwnerKind           field.String
+	DeviceID            field.String
+	DeviceName          field.String
+	ConfigUpdatedAt     field.Int64
 
 	fieldMap map[string]field.Expr
 }
@@ -140,6 +146,9 @@ func (c *cronJob) updateTableName(table string) *cronJob {
 	c.RunCoalesced = field.NewBool(table, "run_coalesced")
 	c.OwnerID = field.NewString(table, "owner_id")
 	c.OwnerKind = field.NewString(table, "owner_kind")
+	c.DeviceID = field.NewString(table, "device_id")
+	c.DeviceName = field.NewString(table, "device_name")
+	c.ConfigUpdatedAt = field.NewInt64(table, "config_updated_at")
 
 	c.fillFieldMap()
 
@@ -164,7 +173,7 @@ func (c *cronJob) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (c *cronJob) fillFieldMap() {
-	c.fieldMap = make(map[string]field.Expr, 29)
+	c.fieldMap = make(map[string]field.Expr, 32)
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["session_id"] = c.SessionID
 	c.fieldMap["name"] = c.Name
@@ -194,6 +203,9 @@ func (c *cronJob) fillFieldMap() {
 	c.fieldMap["run_coalesced"] = c.RunCoalesced
 	c.fieldMap["owner_id"] = c.OwnerID
 	c.fieldMap["owner_kind"] = c.OwnerKind
+	c.fieldMap["device_id"] = c.DeviceID
+	c.fieldMap["device_name"] = c.DeviceName
+	c.fieldMap["config_updated_at"] = c.ConfigUpdatedAt
 }
 
 func (c cronJob) clone(db *gorm.DB) cronJob {

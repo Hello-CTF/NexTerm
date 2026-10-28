@@ -25,7 +25,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 )
 
-func TestProductionLocalTerminalMultiClientAttachAndControl(t *testing.T) {
+func TestProductionLocalTerminalMultiClientAttachAndInput(t *testing.T) {
 	dataDir := durableTestDataDir(t)
 	factory := &bridgeTestFactory{}
 	production := newTerminalTestProduction(t, dataDir, factory, nil)
@@ -41,34 +41,19 @@ func TestProductionLocalTerminalMultiClientAttachAndControl(t *testing.T) {
 	attachB := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":262144}`, channelB, "client-b")
 	var infoB attachedTabDTO
 	requireStoreTestResponse(t, attachB, &infoB)
-	if infoB.Controller == nil || *infoB.Controller != "client-a" {
-		t.Fatalf("controller after second attach = %+v, want client-a", infoB.Controller)
+	if infoB.SizeOwner == nil || *infoB.SizeOwner != "client-a" {
+		t.Fatalf("size owner after second attach = %+v, want client-a", infoB.SizeOwner)
 	}
 	streamB := factory.at(channelB, 0)
 	waitForProductionOutput(t, streamB, "multi-ready")
 
-	writeB := dispatchDurableTest(t, production, "terminal_write", `{"args":{"tabId":"`+tabID+`","data":[101,99,104,111,13],"clientId":"client-b"}}`, "", "client-b")
-	if writeB.OK || writeB.Error == nil || writeB.Error.Code != ipc.CodeNotController {
-		t.Fatalf("viewer write = %+v, want not_controller", writeB)
-	}
-
-	writeDurableTestCommand(t, production, tabID, "multi-broadcast", "client-a")
-	waitForProductionOutput(t, streamA, "multi-broadcast")
-	waitForProductionOutput(t, streamB, "multi-broadcast")
-
-	claimResponse := dispatchDurableTest(t, production, "terminal_claim", `{"tabId":"`+tabID+`"}`, "", "client-b")
-	var previous *string
-	requireStoreTestResponse(t, claimResponse, &previous)
-	if previous == nil || *previous != "client-a" {
-		t.Fatalf("claim previous = %+v, want client-a", previous)
-	}
-	writeA := dispatchDurableTest(t, production, "terminal_write", `{"args":{"tabId":"`+tabID+`","data":[101,99,104,111,13],"clientId":"client-a"}}`, "", "client-a")
-	if writeA.OK || writeA.Error == nil || writeA.Error.Code != ipc.CodeNotController {
-		t.Fatalf("write after claim loss = %+v, want not_controller", writeA)
-	}
-	writeDurableTestCommand(t, production, tabID, "multi-after-claim", "client-b")
-	waitForProductionOutput(t, streamA, "multi-after-claim")
-	waitForProductionOutput(t, streamB, "multi-after-claim")
+	// Both clients type; each one's input reaches the shell and both views.
+	writeDurableTestCommand(t, production, tabID, "multi-from-b", "client-b")
+	waitForProductionOutput(t, streamA, "multi-from-b")
+	waitForProductionOutput(t, streamB, "multi-from-b")
+	writeDurableTestCommand(t, production, tabID, "multi-from-a", "client-a")
+	waitForProductionOutput(t, streamA, "multi-from-a")
+	waitForProductionOutput(t, streamB, "multi-from-a")
 
 	listResponse := dispatchDurableTest(t, production, "terminal_list", `null`, "", "")
 	var live []liveTabDTO
@@ -360,12 +345,12 @@ func TestProductionTerminalWriteIsolatesTabsForBroadcast(t *testing.T) {
 	attachA2 := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabA+`","replayBytes":262144}`, "broadcast-tab-a2", "client-b")
 	var info attachedTabDTO
 	requireStoreTestResponse(t, attachA2, &info)
-	if info.Controller == nil || *info.Controller != "client-a" {
-		t.Fatalf("controller after second attach = %+v, want client-a", info.Controller)
+	if info.SizeOwner == nil || *info.SizeOwner != "client-a" {
+		t.Fatalf("size owner after second attach = %+v, want client-a", info.SizeOwner)
 	}
-	writeForeign := dispatchDurableTest(t, production, "terminal_write", `{"args":{"tabId":"`+tabA+`","data":[101,99,104,111,13],"clientId":"client-b"}}`, "", "client-b")
-	if writeForeign.OK || writeForeign.Error == nil || writeForeign.Error.Code != ipc.CodeNotController {
-		t.Fatalf("write from non-controller = %+v, want not_controller", writeForeign)
+	writeSecond := dispatchDurableTest(t, production, "terminal_write", `{"args":{"tabId":"`+tabA+`","data":[101,99,104,111,13],"clientId":"client-b"}}`, "", "client-b")
+	if !writeSecond.OK {
+		t.Fatalf("write from the second client = %+v", writeSecond)
 	}
 
 	writeDurableTestInput(t, production, tabB, "exit", "client-a")
@@ -496,6 +481,9 @@ func newTerminalTestProduction(t *testing.T, dataDir string, factory *bridgeTest
 
 func connectLocalTerminalTest(t *testing.T, production *Production) sessionInfoDTO {
 	t.Helper()
+	// These protocol tests must not execute the developer's interactive shell startup files.
+	t.Setenv("SHELL", "")
+	t.Setenv("ENV", "")
 	connectedResponse := dispatchDurableTest(t, production, "session_connect_local", `null`, "", "")
 	var connected sessionInfoDTO
 	requireStoreTestResponse(t, connectedResponse, &connected)
@@ -679,9 +667,8 @@ func TestProductionSessionAndTerminalListsAreOwnerScoped(t *testing.T) {
 
 func TestProductionTerminalRequestsEnforceAccountOwnership(t *testing.T) {
 	operations := []struct {
-		name       string
-		controller bool
-		invoke     func(*productionAuthorizationFixture, productionAuthorizationActor) []ipc.Response
+		name   string
+		invoke func(*productionAuthorizationFixture, productionAuthorizationActor) []ipc.Response
 	}{
 		{name: "read", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
 			args := `{"tabId":"` + f.ownerTab.ID + `","n":10,"maxBytes":1024}`
@@ -699,18 +686,10 @@ func TestProductionTerminalRequestsEnforceAccountOwnership(t *testing.T) {
 				f.dispatch(actor, "terminal_create_tab", `{"sessionId":"`+f.ownerSession.ID+`","title":"created","cols":80,"rows":24}`, ""),
 			}
 		}},
-		{name: "write", controller: true, invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+		{name: "write", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
 			return []ipc.Response{f.dispatch(actor, "terminal_write", `{"args":{"tabId":"`+f.ownerTab.ID+`","data":[120],"clientId":"`+actor.clientID+`"}}`, "")}
 		}},
-		{name: "claim-and-release", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
-			clientID := actor.name + "-controller"
-			args := `{"tabId":"` + f.ownerTab.ID + `","clientId":"` + clientID + `"}`
-			return []ipc.Response{
-				f.dispatch(actor, "terminal_claim", args, ""),
-				f.dispatch(actor, "terminal_release", args, ""),
-			}
-		}},
-		{name: "resize-and-flush", controller: true, invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+		{name: "resize-and-flush", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
 			return []ipc.Response{
 				f.dispatch(actor, "terminal_resize", `{"tabId":"`+f.ownerTab.ID+`","clientId":"`+actor.clientID+`","cols":100,"rows":30}`, ""),
 				f.dispatch(actor, "terminal_resize_flush", `{"tabId":"`+f.ownerTab.ID+`","clientId":"`+actor.clientID+`"}`, ""),
@@ -752,10 +731,6 @@ func TestProductionTerminalRequestsEnforceAccountOwnership(t *testing.T) {
 				t.Run(actorName, func(t *testing.T) {
 					fixture := newProductionAuthorizationFixture(t, actorName == "open", false)
 					actor := fixture.actor(actorName)
-					if operation.controller && actorName == "same-account-second-client" {
-						claim := fixture.dispatch(actor, "terminal_claim", `{"tabId":"`+fixture.ownerTab.ID+`","clientId":"`+actor.clientID+`"}`, "")
-						requireProductionAuthorization(t, claim, true)
-					}
 					for _, response := range operation.invoke(fixture, actor) {
 						requireProductionAuthorization(t, response, actor.allowed)
 					}

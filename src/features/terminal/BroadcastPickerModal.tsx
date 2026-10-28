@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { useUi } from "../../app/store";
+import { useUi, useSessionList, useWorkspaceList } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconAlert, IconClose, IconZap } from "../../ui/icons";
@@ -19,8 +19,8 @@ export function BroadcastPickerModal(props: {
   onClose: () => void;
 }) {
   const broadcast = useUi((state) => state.broadcast);
-  const workspaces = useUi((state) => state.workspaces);
-  const sessions = useUi((state) => state.sessions);
+  const workspaces = useWorkspaceList();
+  const sessions = useSessionList();
   const setBroadcast = useUi((state) => state.setBroadcast);
   const pushToast = useUi((state) => state.pushToast);
   const candidates = collectBroadcastCandidates(workspaces, sessions);

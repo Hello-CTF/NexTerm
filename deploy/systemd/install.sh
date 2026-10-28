@@ -854,6 +854,7 @@ backup_current() {
     if [ -f "$OPT_DIR/$f" ]; then cp -p "$OPT_DIR/$f" "$BACKUP_DIR/$f"; fi
   done
   if [ -d "$OPT_DIR/web" ]; then cp -R "$OPT_DIR/web" "$BACKUP_DIR/web"; fi
+  if [ -d "$OPT_DIR/ai-runtime" ]; then cp -R "$OPT_DIR/ai-runtime" "$BACKUP_DIR/ai-runtime"; fi
   for unit in $UNITS; do
     for d in "$UNIT_DIR" "$ROOT_PREFIX/usr/lib/systemd/system" "$ROOT_PREFIX/lib/systemd/system"; do
       if [ -f "$d/$unit" ]; then
@@ -896,6 +897,22 @@ install_web() {
   if [ -d "$OPT_DIR/web" ]; then mv "$OPT_DIR/web" "$OPT_DIR/web.old"; fi
   mv "$OPT_DIR/web.new" "$OPT_DIR/web"
   rm -rf "$OPT_DIR/web.old"
+}
+
+install_ai_runtime() {
+  fail_at ai-runtime
+  rm -rf "$OPT_DIR/ai-runtime.new"
+  if [ -d "$SOURCE_DIR/ai-runtime" ]; then
+    cp -R "$SOURCE_DIR/ai-runtime" "$OPT_DIR/ai-runtime.new"
+  fi
+  rm -rf "$OPT_DIR/ai-runtime.old"
+  if [ -d "$OPT_DIR/ai-runtime" ]; then mv "$OPT_DIR/ai-runtime" "$OPT_DIR/ai-runtime.old"; fi
+  if [ -d "$OPT_DIR/ai-runtime.new" ]; then
+    mv "$OPT_DIR/ai-runtime.new" "$OPT_DIR/ai-runtime"
+  else
+    log "payload has no AI privacy runtime; optional local AI redaction will be unavailable"
+  fi
+  rm -rf "$OPT_DIR/ai-runtime.old"
 }
 
 legacy_capture_failed() {
@@ -1230,6 +1247,23 @@ bootstrap_admin() {
   esac
 }
 
+# Run the payload binary before mutating anything so an unsupported C library or
+# CPU fails the install instead of leaving a service that cannot start.
+preflight_server_binary() {
+  local output rc=0 missing
+  output="$("$SOURCE_DIR/nexterm-server" --version 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    die "payload nexterm-server cannot run on this host (exit $rc): ${output:-no output}; it requires a matching CPU architecture and a glibc-based Linux (musl distributions such as Alpine are not supported)"
+  fi
+  log "payload server version: ${output:-unknown}"
+  if [ -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] && command -v ldd >/dev/null 2>&1; then
+    missing="$(ldd "$SOURCE_DIR/ai-runtime/libonnxruntime.so" 2>/dev/null | grep 'not found' || true)"
+    if [ -n "$missing" ]; then
+      log "WARNING: optional local AI redaction will be unavailable until these ONNX Runtime dependencies are installed: $(printf '%s' "$missing" | tr -s ' \t\n' ' ')"
+    fi
+  fi
+}
+
 run_install() {
   fail_at preflight
   local f
@@ -1237,6 +1271,13 @@ run_install() {
     [ -f "$SOURCE_DIR/$f" ] || die "payload is missing $f (run this script from an extracted NexTerm server archive, or pass --source DIR)"
   done
   [ -f "$SOURCE_DIR/web/index.html" ] || die "payload is missing web/index.html"
+  if [ -d "$SOURCE_DIR/ai-runtime" ]; then
+    # A target without an upstream ONNX Runtime build ships only runtime.json with an "unavailable" reason.
+    if [ ! -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] && ! grep -q '"unavailable"' "$SOURCE_DIR/ai-runtime/runtime.json" 2>/dev/null; then
+      die "payload is missing ai-runtime/libonnxruntime.so"
+    fi
+  fi
+  preflight_server_binary
   detect_platform
   require_systemctl
   require_root_when_real
@@ -1275,6 +1316,7 @@ run_install() {
   fi
   install_binaries
   install_web
+  install_ai_runtime
   install_units
   ensure_env_files
   ensure_master_key
@@ -1331,6 +1373,7 @@ run_rollback() {
     if [ -f "$OPT_DIR/$f" ]; then mv "$OPT_DIR/$f" "$FAILED_DIR/$f"; fi
   done
   if [ -d "$OPT_DIR/web" ]; then mv "$OPT_DIR/web" "$FAILED_DIR/web"; fi
+  if [ -d "$OPT_DIR/ai-runtime" ]; then mv "$OPT_DIR/ai-runtime" "$FAILED_DIR/ai-runtime"; fi
   for unit in $UNITS; do
     for rel in "etc/systemd/system" "usr/lib/systemd/system" "lib/systemd/system"; do
       if [ -f "$ROOT_PREFIX/$rel/$unit" ] && [ ! -f "$BACKUP_DIR/units/$rel/$unit" ]; then
@@ -1343,6 +1386,7 @@ run_rollback() {
     if [ -f "$BACKUP_DIR/$f" ]; then install -m 0755 "$BACKUP_DIR/$f" "$OPT_DIR/$f"; fi
   done
   if [ -d "$BACKUP_DIR/web" ]; then cp -R "$BACKUP_DIR/web" "$OPT_DIR/web"; fi
+  if [ -d "$BACKUP_DIR/ai-runtime" ]; then cp -R "$BACKUP_DIR/ai-runtime" "$OPT_DIR/ai-runtime"; fi
   if [ -d "$BACKUP_DIR/units" ]; then
     (cd "$BACKUP_DIR/units" && find . -type f | sed 's|^\./||' | while read -r rel; do
       mkdir -p "$ROOT_PREFIX/$(dirname "$rel")"

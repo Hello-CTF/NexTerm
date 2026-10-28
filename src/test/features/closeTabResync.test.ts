@@ -57,7 +57,6 @@ function seedWorkspaceWithTerminal() {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ],
@@ -168,8 +167,22 @@ describe("session list resynchronization after closeTab", () => {
     expect(useUi.getState().toasts).toEqual([]);
   });
 
-  it("preserves a running SSH tab when the close request only loses its connection", async () => {
+  it("detaches a durable SSH tab to background sessions when a kill cannot reach the host", async () => {
     seedWorkspaceWithTerminal();
+    useUi.getState().updateTab("t1", { durable: true });
+    mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "network unavailable" });
+
+    await expect(useUi.getState().closeTab("t1", "kill")).resolves.toBe(true);
+
+    expect(mocks.closeTab).toHaveBeenCalledTimes(2);
+    expect(mocks.closeTab).toHaveBeenLastCalledWith("bt1", "detach", "s1");
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
+    expect(useUi.getState().toasts.map((toast) => toast.text).join("\n")).toContain("后台会话");
+  });
+
+  it("preserves a running non-durable SSH tab when the close request only loses its connection", async () => {
+    seedWorkspaceWithTerminal();
+    useUi.getState().updateTab("t1", { durable: false });
     mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "network unavailable" });
 
     await expect(useUi.getState().closeTab("t1", "kill")).resolves.toBe(false);

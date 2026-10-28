@@ -204,12 +204,30 @@ func (p opaqueDurableProvider) Create(ctx context.Context, options base.DurableC
 	return opaqueDurableAttachment{attachment}, err
 }
 
-func (p opaqueDurableProvider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
-	attachment, err := p.DurableProvider.Attach(ctx, id)
+func (p opaqueDurableProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p opaqueDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+func (p opaqueDurableProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	attachment, err := p.DurableProvider.AttachFromWithIdentity(ctx, id, identity, offset)
 	if attachment == nil {
 		return nil, err
 	}
 	return opaqueDurableAttachment{attachment}, err
+}
+
+func (p opaqueDurableProvider) currentDurableIdentity(id string) (base.DurableIdentity, bool) {
+	source, ok := p.DurableProvider.(interface {
+		currentDurableIdentity(string) (base.DurableIdentity, bool)
+	})
+	if !ok {
+		return base.DurableIdentity{}, false
+	}
+	return source.currentDurableIdentity(id)
 }
 
 func newDurableTestManagerWithEmitter(t *testing.T, provider base.DurableProvider, emitter Emitter) (*Manager, *fakeConnector, *fakeTerminalFactory, *Session) {

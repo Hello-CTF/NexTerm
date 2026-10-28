@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useUi, type Workspace } from "../../app/store";
+import { useWorkspaceList, type Workspace } from "../../app/store";
 import { assetApi, type Asset, type SessionInfo } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { createJsonChannel, disposeChannel, type IpcChannel } from "../../ipc/events";
@@ -143,8 +143,10 @@ function statusTone(status: SourceViewStatus["status"]): string {
   return "text-neutral-500";
 }
 
-export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
-  const workspaces = useUi((state) => state.workspaces);
+// singleHost follows the given sessions without the target picker, title bar or concurrency field: the session side
+// panel passes the one host it follows.
+export function MultiHostLogTail({ sessions, singleHost = false }: { sessions: SessionInfo[]; singleHost?: boolean }) {
+  const workspaces = useWorkspaceList();
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
   const targets = useMemo(
     () => collectTargets(sessions, assetsQuery.data ?? [], workspaces),
@@ -264,7 +266,9 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
     if (flushTimerRef.current === null) flushTimerRef.current = window.setTimeout(flushEvents, 40);
   };
 
-  const selectedIds = targets.filter((target) => selected.includes(target.id)).map((target) => target.id);
+  const selectedIds = targets
+    .filter((target) => singleHost || selected.includes(target.id))
+    .map((target) => target.id);
   const start = () => {
     if (activeRef.current) return;
     const maxConcurrent = Number(concurrency);
@@ -378,6 +382,12 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
   const filters = useMemo(() => compileLogFilters(include, exclude), [include, exclude]);
   const visibleLines = filterMergedLines(bufferRef.current.visibleLines(), filters);
 
+  useEffect(() => {
+    if (!saveMessage) return;
+    const timer = window.setTimeout(() => setSaveMessage(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [saveMessage]);
+
   const save = async () => {
     const content = exportMergedLines(bufferRef.current.retainedLines());
     if (!content || saving) return;
@@ -403,25 +413,33 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
   };
 
   return (
-    <section className="nx-pane" aria-label="多主机日志合并" data-testid="multi-host-log-tail">
-      <div className="nx-toolbar flex-wrap">
-        <IconServer size={14} className="text-neutral-500" />
-        <h2 className="nx-toolbar-title">多主机日志</h2>
-        <span className="nx-badge nx-badge-amber" title="只执行只读日志命令，无需生产确认">
-          只读 · 无 PTY
-        </span>
-        <span className="nx-hint">仅当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不自动连接</span>
-      </div>
+    <section
+      className="nx-pane"
+      aria-label={singleHost ? "主机日志" : "多主机日志合并"}
+      data-testid="multi-host-log-tail"
+    >
+      {!singleHost && (
+        <div className="nx-toolbar flex-wrap">
+          <IconServer size={14} className="text-neutral-500" />
+          <h2 className="nx-toolbar-title">多主机日志</h2>
+          <span className="nx-badge nx-badge-amber" title="只执行只读日志命令，无需生产确认">
+            只读 · 无 PTY
+          </span>
+          <span className="nx-hint">仅当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不自动连接</span>
+        </div>
+      )}
 
       <div className="flex max-h-[42%] min-h-[160px] flex-col sm:max-h-[46%] sm:min-h-[220px] gap-3 overflow-y-auto border-b border-neutral-800/70 px-3 py-3">
-        <TargetSetPicker
-          targets={targets}
-          selectedIds={selectedIds}
-          onChange={setSelected}
-          disabled={running}
-          maxTargets={MAX_TARGETS}
-          metadataError={assetsQuery.isError ? `资产详情加载失败：${describeError(assetsQuery.error)}` : null}
-        />
+        {!singleHost && (
+          <TargetSetPicker
+            targets={targets}
+            selectedIds={selectedIds}
+            onChange={setSelected}
+            disabled={running}
+            maxTargets={MAX_TARGETS}
+            metadataError={assetsQuery.isError ? `资产详情加载失败：${describeError(assetsQuery.error)}` : null}
+          />
+        )}
         {selectedIds.length > 0 && (
           <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
             {selectedIds.map((sessionId) => {
@@ -467,18 +485,20 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
           </div>
         )}
         <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
-            并发数
-            <input
-              type="number"
-              className="nx-input w-24"
-              min={1}
-              max={MAX_CONCURRENT}
-              value={concurrency}
-              disabled={running}
-              onChange={(event) => setConcurrency(event.target.value)}
-            />
-          </label>
+          {!singleHost && (
+            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
+              并发数
+              <input
+                type="number"
+                className="nx-input w-24"
+                min={1}
+                max={MAX_CONCURRENT}
+                value={concurrency}
+                disabled={running}
+                onChange={(event) => setConcurrency(event.target.value)}
+              />
+            </label>
+          )}
           <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
             保留行数
             <input
@@ -492,6 +512,7 @@ export function MultiHostLogTail({ sessions }: { sessions: SessionInfo[] }) {
             />
           </label>
           <span className="nx-spacer" />
+          {singleHost && !running && <span className="nx-hint">切换页签会停止跟随</span>}
           {running ? (
             <button type="button" className="nx-btn nx-btn-danger" disabled={stopping} onClick={() => void stop()}>
               <IconStop size={13} />

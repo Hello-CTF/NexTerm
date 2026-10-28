@@ -1,0 +1,9 @@
+# kind: choice
+# options: MIT | Apache-2.0 | GPL-3.0
+# cursor-index: 0
+# cursor: 0,55
+---
+? Pick a license › - Use arrow-keys. Return to submit.
+❯   MIT
+    Apache-2.0
+    GPL-3.0

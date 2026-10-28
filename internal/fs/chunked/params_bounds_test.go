@@ -13,7 +13,8 @@ import (
 
 // r3 P2: a malicious or corrupt staging params file with an out-of-range
 // declared size must fail closed before any large allocation or read. Only
-// 16-byte legacy params and 19..65554-byte version 2 params are accepted.
+// 19..65554-byte version 2 params are accepted; the 16-byte params of older
+// builds are rejected too.
 type declaredSizeFS struct {
 	base.FileSystem
 	size int64
@@ -46,7 +47,7 @@ func (r *declaredSizeReader) Close() error { return nil }
 func (r *declaredSizeReader) Size() int64  { return r.size }
 
 func TestScanStagingRejectsOutOfRangeParamsSizeWithoutReading(t *testing.T) {
-	for _, size := range []int64{17, 18, 65555, 1 << 40} {
+	for _, size := range []int64{0, 16, 17, 18, 65555, 1 << 40} {
 		destination := &declaredSizeFS{size: size}
 		staged, err := chunked.ScanStaging(context.Background(), destination, "/dir/remote.bin")
 		if err != nil {

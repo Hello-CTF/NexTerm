@@ -69,29 +69,22 @@ func (s *Supervisor) Activity(ctx context.Context) (ActivitySnapshot, error) {
 	return snapshot, nil
 }
 
-// Activity returns a fresh daemon-wide snapshot from each negotiated hello.
-// known is false when an older daemon cannot prove that it is idle.
-func (c *Client) Activity(ctx context.Context) (snapshot ActivitySnapshot, known bool, err error) {
+// Activity returns the fresh daemon-wide snapshot every hello carries.
+func (c *Client) Activity(ctx context.Context) (ActivitySnapshot, error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
-		return ActivitySnapshot{}, false, err
+		return ActivitySnapshot{}, err
 	}
 	defer func() { _ = conn.Close() }()
-	if conn.activity == nil {
-		return ActivitySnapshot{}, false, nil
-	}
-	return *conn.activity, true, nil
+	return conn.activity, nil
 }
 
-// RequireIdle fails closed when activity exists or the daemon cannot provide a
-// daemon-wide snapshot. It never kills or migrates a process.
+// RequireIdle fails closed when activity exists. It never kills or migrates a
+// process.
 func (c *Client) RequireIdle(ctx context.Context) error {
-	snapshot, known, err := c.Activity(ctx)
+	snapshot, err := c.Activity(ctx)
 	if err != nil {
 		return err
-	}
-	if !known {
-		return fmt.Errorf("%w: daemon-wide activity is unavailable", ErrUnsupported)
 	}
 	return snapshot.RequireIdle()
 }

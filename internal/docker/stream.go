@@ -371,21 +371,35 @@ func (s *managedStream) resume(sink FrameSink) error {
 	sinkCtx := s.sinkCtx
 	backlog := s.replay.drain()
 	s.mu.Unlock()
+	// abandon puts the undelivered backlog back and drops this sink, unless a
+	// newer sink already replaced it.
+	abandon := func(rest [][]byte, err error) error {
+		s.mu.Lock()
+		if s.sinkVersion == version {
+			s.replay.restore(rest)
+			if s.sinkCancel != nil {
+				s.sinkCancel()
+			}
+			s.sink = nil
+			s.sinkCtx = nil
+			s.sinkCancel = nil
+			s.sinkVersion++
+		}
+		s.mu.Unlock()
+		return err
+	}
+	if announcer, ok := sink.(ReplaySink); ok && len(backlog) > 0 {
+		size := 0
+		for _, frame := range backlog {
+			size += len(frame)
+		}
+		if err := announcer.AnnounceReplay(sinkCtx, size); err != nil {
+			return abandon(backlog, err)
+		}
+	}
 	for index, frame := range backlog {
 		if err := sink.Send(sinkCtx, frame); err != nil {
-			s.mu.Lock()
-			if s.sinkVersion == version {
-				s.replay.restore(backlog[index:])
-				if s.sinkCancel != nil {
-					s.sinkCancel()
-				}
-				s.sink = nil
-				s.sinkCtx = nil
-				s.sinkCancel = nil
-				s.sinkVersion++
-			}
-			s.mu.Unlock()
-			return err
+			return abandon(backlog[index:], err)
 		}
 	}
 	return nil

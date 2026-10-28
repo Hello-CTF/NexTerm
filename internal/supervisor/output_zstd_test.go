@@ -142,12 +142,12 @@ func TestOutputZstdClientRejectsBadFrames(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		features string
+		compress bool
 		payload  []byte
 	}{
-		{"corrupt", `["output_zstd"]`, corrupt},
-		{"oversized", `["output_zstd"]`, oversized},
-		{"unnegotiated", `[]`, good},
+		{"corrupt", true, corrupt},
+		{"oversized", true, oversized},
+		{"not requested", false, good},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,12 +155,13 @@ func TestOutputZstdClientRejectsBadFrames(t *testing.T) {
 			t.Cleanup(func() { _ = local.Close(); _ = peer.Close() })
 			go func() {
 				_, _, _ = readFrame(peer)
-				_ = writeFrame(peer, frameHelloAck, []byte(`{"version":2,"features":`+tc.features+`}`))
+				_ = writeFrame(peer, frameHelloAck, fakeHelloAck())
 				_, _, _ = readFrame(peer)
 				_ = writeFrame(peer, frameAttached, []byte(`{"id":"fake","incarnation":"i"}`))
 				_ = writeFrame(peer, frameOutputZstd, tc.payload)
 			}()
 			client := NewRemoteClient(func(context.Context) (net.Conn, error) { return local, nil }, "digest")
+			client.compressOutput = tc.compress
 			stream, err := client.Attach(context.Background(), "fake", nil)
 			if err != nil {
 				t.Fatal(err)

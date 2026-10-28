@@ -48,7 +48,7 @@ func TestOutputContinuesAfterClientDisconnect(t *testing.T) {
 	output := string(readUntil(t, reattached, "late-marker"))
 	assertOrderedOnce(t, output, "boot", "detached-marker", "late-marker")
 
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestReattachReplayWithoutDuplicationOrRollback(t *testing.T) {
 	}
 	assertOrderedOnce(t, output, markers...)
 
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestReplayStaysCompleteAcrossChunkBoundaries(t *testing.T) {
 	output := string(readToEOF(t, attachment))
 	assertOrderedOnce(t, output, "head-marker", "tail-marker")
 
-	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	recording, err := readRecording(supervisor.StateDir(), session.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,13 +336,13 @@ func TestRegistryWithoutMetadataLoadsAndPersistsRename(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = supervisor.Close() })
 	provider := NewProvider(supervisor)
-	descriptors, err := requireDurableDescriptorLister(t, provider).ListDurableDescriptors(context.Background())
+	descriptors, err := provider.ListDurableDescriptors(context.Background())
 	if err != nil || len(descriptors) != 1 || descriptors[0].Title != "" || descriptors[0].MetadataRevision != 0 {
 		t.Fatal("unexpected registry result")
 	}
 
 	request := base.DurableRenameOptions{ID: id, Incarnation: incarnation, RequestID: ids.New(), Title: "recovered-title"}
-	result, err := requireDurableMetadataProvider(t, provider).RenameDurable(context.Background(), request)
+	result, err := provider.RenameDurable(context.Background(), request)
 	if err != nil || result.Title != request.Title || result.MetadataRevision != 1 {
 		t.Fatal("unexpected registry result")
 	}
@@ -360,11 +360,11 @@ func TestRegistryWithoutMetadataLoadsAndPersistsRename(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = restarted.Close() })
 	provider = NewProvider(restarted)
-	descriptors, err = requireDurableDescriptorLister(t, provider).ListDurableDescriptors(context.Background())
+	descriptors, err = provider.ListDurableDescriptors(context.Background())
 	if err != nil || len(descriptors) != 1 || descriptors[0].Title != request.Title || descriptors[0].MetadataRevision != 1 {
 		t.Fatal("unexpected registry result")
 	}
-	retry, err := requireDurableMetadataProvider(t, provider).RenameDurable(context.Background(), request)
+	retry, err := provider.RenameDurable(context.Background(), request)
 	if err != nil || retry != result {
 		t.Fatal("unexpected registry result")
 	}
@@ -453,7 +453,7 @@ func TestCanonicalMetadataConsistentAcrossInfoSurfaces(t *testing.T) {
 func TestRenameConcurrentAttachmentIDAndVersions(t *testing.T) {
 	supervisor := testSupervisor(t)
 	session := testScriptSession(t, supervisor, `sleep 30`)
-	attachment, err := session.attach(0)
+	attachment, err := session.attach(AttachOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +523,7 @@ func TestRenameConcurrentAttachmentIDAndVersions(t *testing.T) {
 func TestVersionsMonotonicFloor(t *testing.T) {
 	supervisor := testSupervisor(t)
 	session := testScriptSession(t, supervisor, `sleep 5`)
-	attachment, err := session.attach(0)
+	attachment, err := session.attach(AttachOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -729,7 +729,7 @@ func TestPrivateDirsAndFiles(t *testing.T) {
 	}
 	for _, path := range []string{
 		entryPath(supervisor.StateDir(), session.ID()),
-		recordingPath(supervisor.StateDir(), session.ID()),
+		historySegmentPath(sessionDir(supervisor.StateDir(), session.ID()), 0),
 	} {
 		info, err := os.Lstat(path)
 		if err != nil {

@@ -3,11 +3,13 @@ package production
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,8 +20,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
@@ -38,6 +42,8 @@ type terminalCommandService struct {
 	desktop      bool
 	helpers      *productionHelperService
 	databases    databaseLoginTester
+	// localHelper is set when local terminals run through the local helper.
+	localHelper *localhelper.Service
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -50,11 +56,13 @@ type databaseLoginTester interface {
 }
 
 type dockerTabInfo struct {
-	sessionID  string
-	cols       uint
-	rows       uint
-	controller string
-	channels   map[string]string
+	sessionID string
+	cols      uint
+	rows      uint
+	// sizeOwner is the client whose size the exec follows: the client that
+	// typed last, or the one that opened it.
+	sizeOwner string
+	channels  map[string]string
 }
 
 type sessionConnectRequest struct {
@@ -94,7 +102,10 @@ type sessionInfoDTO struct {
 	ErrorCode   ipc.Code   `json:"errorCode,omitempty"`
 	Attempt     int        `json:"attempt,omitempty"`
 	NextRetryAt *time.Time `json:"nextRetryAt,omitempty"`
-	StaleConfig bool       `json:"staleConfig"`
+	// Liveness is "suspect" while a connected session's heartbeats go
+	// unanswered and is omitted otherwise.
+	Liveness    string `json:"liveness,omitempty"`
+	StaleConfig bool   `json:"staleConfig"`
 }
 
 type openTerminalRequest struct {
@@ -109,6 +120,16 @@ type helperOperationRequest struct {
 	OperationID     string `json:"operationId,omitempty"`
 	Action          string `json:"action"`
 	InterruptActive bool   `json:"interruptActive,omitempty"`
+	// ConsentToken is the consentToken of the legacy helper the user agreed
+	// to end, for the replace_legacy action.
+	ConsentToken string `json:"consentToken,omitempty"`
+}
+
+// durableReadinessDTO reports whether a new terminal can be durable now: ready, preparing, unavailable (with a
+// reason) or disabled when the asset or account chose regular terminals.
+type durableReadinessDTO struct {
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type helperOfflineRequest struct {
@@ -130,6 +151,48 @@ type durableDescriptorDTO struct {
 	ExitCode         *int   `json:"exitCode"`
 	Signal           string `json:"signal,omitempty"`
 	FinishedAt       *int64 `json:"finishedAt"`
+	// State is the helper's attention state; omitted when it reports none.
+	State string `json:"state,omitempty"`
+	// Activity is omitted when the helper reports none.
+	Activity *durableActivityDTO `json:"activity,omitempty"`
+}
+
+// durableActivityDTO carries Unix ms times on the host's clock; a nil time
+// is unknown to the helper. The ages and asOf are measured on that clock too,
+// so clients show ages and rebase times instead of comparing clocks; they are
+// nil for a helper that reports times without ages.
+type durableActivityDTO struct {
+	LastOutputAt    *int64 `json:"lastOutputAt"`
+	DetachedAt      *int64 `json:"detachedAt"`
+	Attached        bool   `json:"attached"`
+	AsOf            *int64 `json:"asOf,omitempty"`
+	LastOutputMSAgo *int64 `json:"lastOutputMsAgo,omitempty"`
+	DetachedMSAgo   *int64 `json:"detachedMsAgo,omitempty"`
+}
+
+func newDurableActivityDTO(activity *base.DurableActivity) *durableActivityDTO {
+	if activity == nil {
+		return nil
+	}
+	dto := &durableActivityDTO{
+		LastOutputAt:    unixMilliPointer(activity.LastOutputAt),
+		DetachedAt:      unixMilliPointer(activity.DetachedAt),
+		Attached:        activity.Attached,
+		LastOutputMSAgo: activity.LastOutputMSAgo,
+		DetachedMSAgo:   activity.DetachedMSAgo,
+	}
+	if !activity.AsOf.IsZero() {
+		dto.AsOf = unixMilliPointer(&activity.AsOf)
+	}
+	return dto
+}
+
+func unixMilliPointer(at *time.Time) *int64 {
+	if at == nil {
+		return nil
+	}
+	value := at.UnixMilli()
+	return &value
 }
 
 type terminalListRequest struct {
@@ -150,7 +213,7 @@ type attachedTabDTO struct {
 	SessionID      string  `json:"sessionId"`
 	Cols           uint32  `json:"cols"`
 	Rows           uint32  `json:"rows"`
-	Controller     *string `json:"controller"`
+	SizeOwner      *string `json:"sizeOwner"`
 	Subscribers    int     `json:"subscribers"`
 	Viewers        int     `json:"viewers"`
 	Exited         bool    `json:"exited"`
@@ -159,6 +222,8 @@ type attachedTabDTO struct {
 	Ephemeral      bool    `json:"ephemeral"`
 	Encoding       string  `json:"encoding,omitempty"`
 	Title          string  `json:"title,omitempty"`
+	TitleCustom    bool    `json:"titleCustom,omitempty"`
+	TitleChangedAt int64   `json:"titleChangedAt,omitempty"`
 	Shell          string  `json:"shell"`
 	FallbackNotice string  `json:"fallbackNotice,omitempty"`
 	AttachmentID   uint64  `json:"attachmentId,omitempty"`
@@ -167,6 +232,28 @@ type attachedTabDTO struct {
 type renameTerminalRequest struct {
 	TabID string `json:"tabId"`
 	Title string `json:"title"`
+	// At is the client's decision time (Unix ms) that orders title decisions
+	// across devices; omitted means now.
+	At int64 `json:"at,omitempty"`
+}
+
+// attentionSeenRequest names the attention state the user saw by the since
+// value of its event.
+type attentionSeenRequest struct {
+	TabID string `json:"tabId"`
+	Since string `json:"since"`
+}
+
+// promptTapRequest answers the detected prompt of an attention event: the
+// generation, epoch and fingerprint come from that event's prompt and
+// option indexes its options.
+type promptTapRequest struct {
+	TabID       string `json:"tabId"`
+	ClientID    string `json:"clientId,omitempty"`
+	Generation  string `json:"generation"`
+	Epoch       uint64 `json:"epoch"`
+	Fingerprint string `json:"fingerprint"`
+	Option      int    `json:"option"`
 }
 
 type createTerminalRequest struct {
@@ -203,6 +290,27 @@ type terminalIDRequest struct {
 	Encoding string `json:"encoding"`
 	Path     string `json:"path"`
 	Line     string `json:"line"`
+}
+
+type terminalHistoryReadRequest struct {
+	TabID string `json:"tabId"`
+	// Before is the exclusive end offset of the requested output.
+	Before   uint64 `json:"before"`
+	MaxBytes int    `json:"maxBytes"`
+	// Latest reads up to the newest output instead of Before.
+	Latest bool `json:"latest"`
+}
+
+// terminalHistoryDTO is recorded output of a durable tab in [start, end), in
+// the helper's absolute offsets. truncated means the helper dropped the output
+// before start under its history limit.
+type terminalHistoryDTO struct {
+	Start       uint64 `json:"start"`
+	End         uint64 `json:"end"`
+	HistoryBase uint64 `json:"historyBase"`
+	HistoryNext uint64 `json:"historyNext"`
+	Truncated   bool   `json:"truncated"`
+	DataBase64  string `json:"dataBase64"`
 }
 
 type terminalRecoverRequest struct {
@@ -284,13 +392,22 @@ type liveTabDTO struct {
 	SessionKind     string  `json:"sessionKind"`
 	Cols            uint32  `json:"cols"`
 	Rows            uint32  `json:"rows"`
-	Controller      *string `json:"controller"`
+	SizeOwner       *string `json:"sizeOwner"`
 	Subscribers     int     `json:"subscribers"`
 	Viewers         int     `json:"viewers"`
 	Exited          bool    `json:"exited"`
 	LastOutputAt    int64   `json:"lastOutputAt"`
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 	Title           string  `json:"title,omitempty"`
+	TitleCustom     bool    `json:"titleCustom,omitempty"`
+	TitleChangedAt  int64   `json:"titleChangedAt,omitempty"`
+	CreatedAt       int64   `json:"createdAt,omitempty"`
+	DetachedAt      int64   `json:"detachedAt,omitempty"`
+	DetachedMSAgo   int64   `json:"detachedMsAgo,omitempty"`
+	// DetachedSinceOpen: the detach time is only when this app reopened the helper session.
+	DetachedSinceOpen bool   `json:"detachedSinceOpen,omitempty"`
+	Durable           bool   `json:"durable,omitempty"`
+	State             string `json:"state,omitempty"`
 }
 
 func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver, desktop bool) *terminalCommandService {
@@ -369,6 +486,25 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
+			// The machine name of a local session's host, so terminal file:// links
+			// can be matched against it rather than a host a nested shell reports.
+			return ipc.Register(dispatcher, "session_local_hostname", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (string, error) {
+				ctx = productionSessionRequestContext(ctx)
+				connected, err := s.sessions.SessionFor(ctx, input.SessionID)
+				if err != nil {
+					return "", terminalIPCError(err)
+				}
+				if connected.Asset().Kind != session.KindLocal {
+					return "", ipc.NewError(ipc.CodeUnsupported, "只有本机会话提供本机主机名")
+				}
+				name, err := os.Hostname()
+				if err != nil {
+					return "", ipc.NewError(ipc.CodeUnsupported, "无法读取本机主机名")
+				}
+				return name, nil
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "session_connect_local", func(ctx context.Context, _ *ipc.Call, _ struct{}) (sessionInfoDTO, error) {
 				ctx = productionSessionRequestContext(ctx)
 				connected, err := s.connectLocal(ctx)
@@ -418,6 +554,19 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					s.closeDockerSession(ctx, input.SessionID)
 				}
 				return true, nil
+			})
+		},
+		func() error {
+			// session_liveness_probe checks a session's connection now (the client
+			// returned to the foreground): a dead connection reconnects at once and
+			// a pending reconnect backoff is cut short.
+			return ipc.Register(dispatcher, "session_liveness_probe", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (sessionInfoDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				info, err := s.sessions.ProbeLivenessFor(ctx, input.SessionID)
+				if err != nil {
+					return sessionInfoDTO{}, terminalIPCError(err)
+				}
+				return productionSessionInfo(info), nil
 			})
 		},
 		func() error {
@@ -502,9 +651,16 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					}
 					useDurable = *input.Durable
 				}
+				// A local terminal is durable by default when this app runs a
+				// local helper; an explicit regular request or a regular local
+				// asset keeps it in this process.
+				localDurable := kind == session.KindLocal && s.localHelper != nil && mode != session.TerminalModeRegular && (input.Durable == nil || *input.Durable)
+				if localDurable {
+					useDurable, ephemeral, retainable = true, false, false
+				}
 				if useDurable {
 					durable = &session.DurableTabOptions{}
-					fallback = kind == session.KindSSH && input.Durable == nil
+					fallback = (kind == session.KindSSH || kind == session.KindLocal) && input.Durable == nil
 				}
 				bridged, err := s.bridge.bridge(call.Channel.ID)
 				if err != nil {
@@ -538,7 +694,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						}
 						remoteIDs := make([]string, 0, len(infos))
 						for _, info := range infos {
-							if (info.Kind == session.KindSSH || info.Kind == session.KindDevice) && info.Status == session.StatusConnected {
+							if s.durableHostKind(info.Kind) && info.Status == session.StatusConnected {
 								remoteIDs = append(remoteIDs, info.ID)
 							}
 						}
@@ -730,7 +886,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			// The client's accepted-offset ACK for one channel: opens the
 			// recovery ring's retention floor without waiting for a pause/recover
-			// RPC. The caller must own the tab and be its controller.
+			// RPC. The caller must own the tab and be attached to the channel.
 			return ipc.Register(dispatcher, "terminal_stream_ack", func(ctx context.Context, call *ipc.Call, input terminalStreamAckRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				client, err := streamControlCaller(call, input.ClientID)
@@ -738,32 +894,6 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return nil, terminalIPCError(err)
 				}
 				return nil, terminalIPCError(s.sessions.StreamAckFor(ctx, input.TabID, input.ChannelID, client, input.AttachmentID, input.AcceptedBytes))
-			})
-		},
-		func() error {
-			return ipc.Register(dispatcher, "terminal_claim", func(ctx context.Context, call *ipc.Call, input terminalIDRequest) (*string, error) {
-				ctx = productionSessionRequestContext(ctx)
-				previous, err := s.sessions.ClaimFor(ctx, input.TabID, call.ClientID)
-				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
-					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
-						return nil, terminalIPCError(authErr)
-					}
-					return s.claimDocker(input.TabID, call.ClientID)
-				}
-				return nullableProductionString(previous), terminalIPCError(err)
-			})
-		},
-		func() error {
-			return ipc.Register(dispatcher, "terminal_release", func(ctx context.Context, call *ipc.Call, input terminalIDRequest) (bool, error) {
-				ctx = productionSessionRequestContext(ctx)
-				released, err := s.sessions.ReleaseFor(ctx, input.TabID, call.ClientID)
-				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
-					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
-						return false, terminalIPCError(authErr)
-					}
-					return s.releaseDocker(input.TabID, call.ClientID)
-				}
-				return released, terminalIPCError(err)
 			})
 		},
 		func() error {
@@ -783,6 +913,10 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 							ID: descriptor.ID, Incarnation: descriptor.Incarnation, CreatedAt: descriptor.CreatedAt.UnixMilli(),
 							Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision,
 							Cols: descriptor.Cols, Rows: descriptor.Rows, Dead: descriptor.Dead, ExitCode: descriptor.ExitCode, Signal: descriptor.Signal,
+							Activity: newDurableActivityDTO(descriptor.Activity),
+						}
+						if descriptor.State != nil {
+							item.State = descriptor.State.State
 						}
 						if descriptor.FinishedAt != nil {
 							finishedAt := descriptor.FinishedAt.UnixMilli()
@@ -805,9 +939,10 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					sessionInfo := connected.Info()
 					result = append(result, liveTabDTO{
 						TabID: info.ID, SessionID: info.SessionID, SessionName: sessionInfo.Name, SessionKind: sessionInfo.Kind,
-						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
+						Cols: info.Cols, Rows: info.Rows, SizeOwner: nullableProductionString(info.SizeOwner),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title,
+						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt,
+						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, DetachedMSAgo: info.DetachedMSAgo, DetachedSinceOpen: info.DetachedSinceOpen, Durable: info.Durable, State: info.State,
 					})
 				}
 				return result, nil
@@ -832,6 +967,23 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				ctx = productionSessionRequestContext(ctx)
 				value, err := s.sessions.TailLinesFor(ctx, input.TabID, input.N)
 				return value, terminalIPCError(err)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_history_read", func(ctx context.Context, _ *ipc.Call, input terminalHistoryReadRequest) (terminalHistoryDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				before := input.Before
+				if input.Latest {
+					before = session.DurableHistoryLatest
+				}
+				chunk, err := s.sessions.ReadDurableHistoryFor(ctx, input.TabID, before, input.MaxBytes)
+				if err != nil {
+					return terminalHistoryDTO{}, terminalIPCError(err)
+				}
+				return terminalHistoryDTO{
+					Start: chunk.Start, End: chunk.End, HistoryBase: chunk.HistoryBase, HistoryNext: chunk.HistoryNext,
+					Truncated: chunk.Truncated, DataBase64: base64.StdEncoding.EncodeToString(chunk.Data),
+				}, nil
 			})
 		},
 		func() error {
@@ -926,11 +1078,36 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "terminal_rename_tab", func(ctx context.Context, _ *ipc.Call, input renameTerminalRequest) (attachedTabDTO, error) {
 				ctx = productionSessionRequestContext(ctx)
-				info, err := s.sessions.RenameTabFor(ctx, input.TabID, input.Title)
+				info, err := s.sessions.RenameTabForAt(ctx, input.TabID, input.Title, input.At)
 				if err != nil {
 					return attachedTabDTO{}, terminalIPCError(err)
 				}
 				return attachedSessionTab(info), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_attention_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]session.AttentionEvent, error) {
+				ctx = productionSessionRequestContext(ctx)
+				states, err := s.sessions.ListAttentionFor(ctx)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
+				return states, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_attention_seen", func(ctx context.Context, _ *ipc.Call, input attentionSeenRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				return nil, terminalIPCError(s.sessions.MarkAttentionSeenFor(ctx, input.TabID, input.Since))
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_prompt_tap", func(ctx context.Context, call *ipc.Call, input promptTapRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client := gridRequestClient(call.ClientID, input.ClientID)
+				return nil, terminalIPCError(s.sessions.TapPromptFor(ctx, input.TabID, client, session.PromptTapRequest{
+					Generation: input.Generation, Epoch: input.Epoch, Fingerprint: input.Fingerprint, Option: input.Option,
+				}))
 			})
 		},
 		func() error {
@@ -970,11 +1147,14 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						SessionID: input.SessionID, OperationID: input.OperationID, Action: action, Accepted: true,
 						Local: helperVersionDTO{Known: false}, Running: helperVersionDTO{Known: false}, Compatibility: "unknown",
 					}, nil
-				case "status", "update", "update_interrupt":
+				case "status", "update", "update_interrupt", "replace_legacy":
 					if s.helpers == nil {
 						return helperOperationDTO{}, terminalIPCError(session.ErrUnsupported)
 					}
-					result, err := s.helpers.ensure(ctx, input.SessionID, action)
+					if action == "replace_legacy" && input.ConsentToken == "" {
+						return helperOperationDTO{}, ipc.BadParam(errors.New("缺少升级确认"))
+					}
+					result, err := s.helpers.ensure(ctx, input.SessionID, action, input.ConsentToken)
 					if err != nil {
 						if result.Update != nil && result.Update.RolledBack {
 							return result, ipc.NormalizeError(err).WithDetail(result)
@@ -986,6 +1166,16 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				default:
 					return helperOperationDTO{}, ipc.BadParam(errors.New("未知的持久终端操作"))
 				}
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "session_prepare_durable", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (durableReadinessDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				readiness, err := s.sessions.PrepareDurable(ctx, input.SessionID)
+				if err != nil {
+					return durableReadinessDTO{}, terminalIPCError(err)
+				}
+				return durableReadinessDTO{State: readiness.State, Reason: readiness.Reason}, nil
 			})
 		},
 		func() error {
@@ -1045,8 +1235,8 @@ func (s *terminalCommandService) closeSessionTab(ctx context.Context, call *ipc.
 	if err != nil {
 		return err
 	}
-	// Without an explicit mode only a durable remote terminal goes to the background; a regular PTY just closes.
-	if kind := connected.Asset().Kind; (kind == session.KindSSH || kind == session.KindDevice) && tab.Info().Durable {
+	// Without an explicit mode only a durable terminal goes to the background; a regular PTY just closes.
+	if kind := connected.Asset().Kind; s.durableHostKind(kind) && tab.Info().Durable {
 		return s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
 	}
 	return s.sessions.CloseTabFor(ctx, input.TabID)
@@ -1065,7 +1255,7 @@ func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call 
 		}
 		sessionIDs = make([]string, 0, len(infos))
 		for _, info := range infos {
-			if (info.Kind != session.KindSSH && info.Kind != session.KindDevice) || info.Status != session.StatusConnected {
+			if !s.durableHostKind(info.Kind) || info.Status != session.StatusConnected {
 				continue
 			}
 			sessionIDs = append(sessionIDs, info.ID)
@@ -1089,6 +1279,12 @@ func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call 
 		return attachedTabDTO{}, err
 	}
 	return attachedSessionTab(info), nil
+}
+
+// durableHostKind reports a session kind whose durable terminals this app can
+// list and recover: remote helpers, and the local helper when it runs one.
+func (s *terminalCommandService) durableHostKind(kind string) bool {
+	return kind == session.KindSSH || kind == session.KindDevice || kind == session.KindLocal && s.localHelper != nil
 }
 
 func (s *terminalCommandService) connectLocal(ctx context.Context) (*session.Session, error) {
@@ -1231,6 +1427,35 @@ func newProductionTerminalModeResolver(database *store.Store) func(context.Conte
 	}
 }
 
+// newProductionDurableHistoryLimit resolves the recorded output limit for new
+// durable tabs from the terminal.durableHistoryMiB preference, the owner's
+// override first. An unset or unreadable preference keeps the helper default.
+func newProductionDurableHistoryLimit(database *store.Store) func(context.Context) uint64 {
+	return func(ctx context.Context) uint64 {
+		preferences := account.NewPreferences(database)
+		values, err := preferences.Defaults(ctx)
+		if err != nil {
+			return 0
+		}
+		if userID, ok := ipc.UserIDFromContext(ctx); ok {
+			overrides, err := preferences.UserOverrides(ctx, userID)
+			if err != nil {
+				return 0
+			}
+			values = account.MergePreferences(values, overrides)
+		}
+		raw, ok := values["terminal.durableHistoryMiB"]
+		if !ok {
+			return 0
+		}
+		var mib uint64
+		if err := json.Unmarshal(raw, &mib); err != nil || mib == 0 || mib > 1024 {
+			return 0
+		}
+		return mib << 20
+	}
+}
+
 func (s *terminalCommandService) refreshStaleConfigs(ctx context.Context, infos []session.SessionInfo) {
 	if s.database == nil {
 		return
@@ -1258,15 +1483,15 @@ func productionSessionInfo(info session.SessionInfo) sessionInfoDTO {
 	return sessionInfoDTO{
 		ID: info.ID, AssetID: assetID, Name: info.Name, Kind: info.Kind, Status: string(info.Status),
 		Tabs: info.Tabs, CreatedAt: info.CreatedAt.UnixMilli(), Error: info.Error, ErrorCode: info.ErrorCode,
-		Attempt: info.Attempt, NextRetryAt: info.NextRetryAt, StaleConfig: info.StaleConfig,
+		Attempt: info.Attempt, NextRetryAt: info.NextRetryAt, Liveness: string(info.Liveness), StaleConfig: info.StaleConfig,
 	}
 }
 
 func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
-		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-		Retainable: info.Retainable, Durable: info.Durable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
+		SizeOwner: nullableProductionString(info.SizeOwner), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
+		Retainable: info.Retainable, Durable: info.Durable, Ephemeral: info.Ephemeral, Encoding: info.Encoding, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt, Shell: string(info.Shell), FallbackNotice: info.FallbackNotice,
 		AttachmentID: info.AttachmentID,
 	}
 }
@@ -1319,6 +1544,11 @@ func terminalIPCError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, supervisor.ErrHelperReplaceFailed) {
+		// A failed replacement also wraps durable.ErrUnavailable; its own
+		// code and stage detail must win.
+		return session.IPCError(err)
+	}
 	var connectErr *ssh.ConnectError
 	if errors.As(err, &connectErr) {
 		return sshConnectIPCError(connectErr)
@@ -1335,7 +1565,10 @@ func terminalIPCError(err error) error {
 	if errors.Is(err, docker.ErrDaemonUnavailable) {
 		return ipc.WrapError(ipc.Code("docker_unavailable"), "Docker 服务未运行或无法连接，请在主机上启动 Docker 后重试", err)
 	}
-	if errors.Is(err, docker.ErrUnsupported) || errors.Is(err, docker.ErrNoBackend) || errors.Is(err, durable.ErrUnavailable) {
+	if errors.Is(err, durable.ErrSeenUnsupported) {
+		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err).WithDetail(map[string]any{"reason": "seen_unsupported"})
+	}
+	if errors.Is(err, docker.ErrUnsupported) || errors.Is(err, docker.ErrNoBackend) {
 		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err)
 	}
 	if errors.Is(err, durable.ErrNotFound) {

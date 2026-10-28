@@ -12,6 +12,17 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 )
 
+// useFixedOutputCoalescing keeps the subscribers attached during the test on
+// the normal coalescing window. Tests that emit one 64 KiB chunk and wait for
+// its frames would otherwise put the coalescer into bulk mode after three
+// heavy flushes, where every chunk waits a whole bulk window before it
+// leaves. Bulk mode itself is covered by the coalescer tests.
+func useFixedOutputCoalescing(t *testing.T) {
+	t.Helper()
+	fixedOutputCoalescing.Store(true)
+	t.Cleanup(func() { fixedOutputCoalescing.Store(false) })
+}
+
 func readFramesUntil(t *testing.T, receiver *hub.Receiver, want int) []byte {
 	t.Helper()
 	var got []byte
@@ -68,6 +79,7 @@ func drainAttachHeader(t *testing.T, receiver *hub.Receiver) {
 
 func openOpenTestSession(t *testing.T, kind string) (*Manager, *fakeConnector, *fakeTerminalFactory, *Session) {
 	t.Helper()
+	useFixedOutputCoalescing(t)
 	connector := newFakeConnector()
 	terminals := newFakeTerminalFactory()
 	manager := NewManager(Config{
@@ -116,6 +128,12 @@ func TestRecoverChannelForRedeliversRefusedSuffix(t *testing.T) {
 	anchor := receiveTestFrame(t, receiver)
 	if !bytes.Contains(anchor.Data, []byte("recovery-")) {
 		t.Fatalf("anchor = %q", anchor.Data)
+	}
+	// The refused suffix is live output: it is not announced as replay, so
+	// its replies, clipboard writes and notifications still happen.
+	var decoded streamAnchor
+	if err := json.Unmarshal(anchor.Data, &decoded); err != nil || len(decoded.Classes) != 0 {
+		t.Fatalf("recovery anchor = %+v (err %v), want no classes", decoded, err)
 	}
 	if got := readFramesUntil(t, receiver, 3); string(got) != "two" {
 		t.Fatalf("recovered frame = %q", got)

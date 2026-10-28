@@ -32,7 +32,6 @@ function ws(panes: Pane[]): Workspace {
     title: "workspace",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -63,17 +62,20 @@ describe("dirty editor close safeguards", () => {
     expect(mocks.askChoice).not.toHaveBeenCalled();
   });
 
-  it("cancels unsplit before closing its dirty pane or terminal", async () => {
+  it("keeps a dirty editor and its terminal when their pane closes, without a prompt", async () => {
     const panes = [
       { id: "p1", tabs: [terminal("other")], activeTabId: "other" },
       { id: "p2", tabs: [editor(), terminal()], activeTabId: "editor" },
     ];
     useUi.setState({ workspaces: [ws(panes)], activeWorkspaceId: "ws" });
     setFileEditorDirty("s", "/a.txt", true);
-    await useUi.getState().unsplitWorkspace("p2", "ws");
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
+    useUi.getState().closePane("p2", "ws");
+    expect(useUi.getState().workspaces[0].panes.map((pane) => pane.tabs.map((tab) => tab.id))).toEqual([
+      ["other", "editor", "terminal"],
+    ]);
+    expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("editor");
+    expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).not.toHaveBeenCalled();
-    expect(mocks.askChoice).not.toHaveBeenCalled();
   });
 
   it("closes clean editors without a dirty prompt", async () => {

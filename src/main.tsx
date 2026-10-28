@@ -10,13 +10,15 @@ import { mountApi, systemApi } from "./ipc/commands";
 import { WEB } from "./ipc/env";
 import { consumeDeepLinks } from "./ipc/wails";
 import { openDeepLink } from "./app/deepLink";
-import { applySessionStatusEvent, useUi } from "./app/store";
+import { applySessionStatusEvent, noteHelperProgress, probeForegroundSessions, useUi } from "./app/store";
+import { installForegroundResume } from "./app/foregroundResume";
 import { onRemoteChange } from "./app/layout";
 import { setMacPlatform, setWindowsPlatform } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
 import { setMountUnavailableReason } from "./app/capabilities";
 import { forceResolvedTheme } from "./app/theme";
 import { Lazy } from "./ui/LazyBoundary";
+import { notifyAi } from "./features/inbox/inboxNotifications";
 
 // Public share pages carry their own terminal/preview stack; keep it out of the main app's entry chunk.
 const PublicPreviewApp = lazy(() => import("./features/sharing/PublicPreviewApp").then((m) => ({ default: m.PublicPreviewApp })));
@@ -56,6 +58,7 @@ function wireDesktopShell(): void {
   });
 
   void listenEvent<HelperProgressEvent>(EVENTS.helperProgress, (p) => {
+    noteHelperProgress(p);
     useUi.getState().setHelperProgress(p);
   });
 
@@ -73,6 +76,7 @@ function wireDesktopShell(): void {
 
   void listenEvent<AINotificationEvent>(EVENTS.aiNotification, (p) => {
     useUi.getState().pushToast("info", `AI 通知：${p.text}`);
+    notifyAi(p.text);
   });
 
   if (!WEB) {
@@ -81,6 +85,10 @@ function wireDesktopShell(): void {
       for (const url of urls) void openDeepLink(url);
     });
   }
+
+  // Returning to the foreground (tab shown, app resumed, machine woke, network back) checks the visible
+  // sessions at once instead of waiting for the next heartbeat or reconnect backoff.
+  installForegroundResume(() => void probeForegroundSessions());
 
   onEventsResync(() => {
     void useUi.getState().resyncSessions();

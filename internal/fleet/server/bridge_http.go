@@ -47,8 +47,8 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// Pre-check purpose support before upgrading: a rejected purpose must reach the caller as a readable fleet
-	// error, not as a bare WS close after Accept (the desktop only surfaces close reasons). Old agents report no
-	// capabilities at all, which is an empty list - online state is checked separately from capability reporting.
+	// error, not as a bare WS close after Accept (the desktop only surfaces close reasons). Online state is
+	// checked separately from capability reporting.
 	if !s.registry.AgentOnline(deviceID) {
 		writeFleetJSON(w, http.StatusServiceUnavailable, ipc.Failure(ipc.NewError(ipc.CodeDisconnected, errDeviceOffline.Error())))
 		return

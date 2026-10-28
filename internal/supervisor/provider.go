@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -28,6 +29,18 @@ func translateError(err error) error {
 		return durable.ErrExited
 	case errors.Is(err, ErrClosed):
 		return durable.ErrClosed
+	case errors.Is(err, ErrGenerationMismatch):
+		return durable.ErrGenerationMismatch
+	case errors.Is(err, ErrStateSeenUnsupported):
+		return durable.ErrSeenUnsupported
+	case errors.Is(err, ErrStalePrompt):
+		return fmt.Errorf("%w: %w", base.ErrStalePrompt, err)
+	case errors.Is(err, ErrLimit):
+		// Keep the helper's message: it names the limit that was reached.
+		return fmt.Errorf("%w: %w", durable.ErrLimit, err)
+	case errors.Is(err, ErrHelperUpgradeRequired), errors.Is(err, ErrClientUpgradeRequired):
+		// Keep the readable reason: it names the side that must be upgraded.
+		return fmt.Errorf("%w: %w", durable.ErrUnavailable, err)
 	case errors.Is(err, ErrUnavailable), errors.Is(err, ErrProtocol), errors.Is(err, ErrUnsupported):
 		return durable.ErrUnavailable
 	default:
@@ -53,7 +66,7 @@ func checkedIdentity(identity base.DurableIdentity) (*Identity, error) {
 	if identity.Incarnation == "" {
 		return nil, durable.ErrInvalidInput
 	}
-	return &Identity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation}, nil
+	return &Identity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation, Generation: identity.Generation}, nil
 }
 
 func renameResult(info Info) base.DurableRenameResult {
@@ -77,7 +90,7 @@ type Provider struct {
 
 func embeddedProviderAttach(ctx context.Context, supervisor *Supervisor, session *Session) (*Attachment, error) {
 	identity := session.Identity()
-	return supervisor.attachFrom(ctx, session.ID(), 0, &identity)
+	return supervisor.attachFrom(ctx, session.ID(), AttachOptions{}, &identity, "")
 }
 
 func NewProvider(supervisor *Supervisor) *Provider {
@@ -95,6 +108,8 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 		Env:     options.Env,
 		Cols:    options.Cols,
 		Rows:    options.Rows,
+
+		HistoryLimit: options.HistoryLimit,
 	})
 	if session == nil {
 		return nil, translateError(err)
@@ -108,36 +123,67 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 	return &channelAttachment{Attachment: attachment}, nil
 }
 
-func (p *Provider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
-	attachment, err := p.supervisor.attachFrom(ctx, id, 0, nil)
-	if attachment == nil {
-		return nil, translateError(err)
-	}
-	return &channelAttachment{Attachment: attachment}, nil
-}
-
-func (p *Provider) AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error) {
-	attachment, err := p.supervisor.attachFrom(ctx, id, offset, nil)
-	if attachment == nil {
-		return nil, translateError(err)
-	}
-	return &channelAttachment{Attachment: attachment}, nil
-}
-
 func (p *Provider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
 	return p.AttachFromWithIdentity(ctx, id, identity, 0)
 }
 
 func (p *Provider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	return p.attachWith(ctx, id, identity, AttachOptions{Offset: offset})
+}
+
+func (p *Provider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, options base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.attachWith(ctx, id, identity, tailAttachOptions(options))
+}
+
+func (p *Provider) attachWith(ctx context.Context, id string, identity base.DurableIdentity, options AttachOptions) (base.DurableAttachment, error) {
 	expected, err := checkedIdentity(identity)
 	if err != nil {
 		return nil, err
 	}
-	attachment, err := p.supervisor.attachFrom(ctx, id, offset, expected)
+	attachment, err := p.supervisor.attachFrom(ctx, id, options, expected, identity.Generation)
 	if attachment == nil {
 		return nil, translateError(err)
 	}
 	return &channelAttachment{Attachment: attachment}, nil
+}
+
+func (p *Provider) ReadDurableHistory(ctx context.Context, id string, identity base.DurableIdentity, request base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return base.DurableHistoryChunk{}, err
+	}
+	chunk, err := p.supervisor.readHistory(ctx, id, request.Before, request.MaxBytes, *expected, identity.Generation)
+	if err != nil {
+		return base.DurableHistoryChunk{}, translateError(err)
+	}
+	return durableHistoryChunk(chunk), nil
+}
+
+func tailAttachOptions(options base.DurableTailOptions) AttachOptions {
+	tail := options.Tail
+	if tail == 0 {
+		tail = DefaultTailBytes
+	}
+	attach := AttachOptions{Tail: tail}
+	if options.Retain != nil {
+		attach.Offset = *options.Retain
+		attach.Retain = true
+	}
+	return attach
+}
+
+func durableHistoryChunk(chunk HistoryChunk) base.DurableHistoryChunk {
+	return base.DurableHistoryChunk{
+		Start: chunk.Start, End: chunk.End, HistoryBase: chunk.HistoryBase, HistoryNext: chunk.HistoryNext,
+		Truncated: chunk.Truncated, Data: chunk.Data,
+	}
+}
+
+func durableReplay(replay ReplayInfo) base.DurableReplay {
+	return base.DurableReplay{
+		HistoryBase: replay.HistoryBase, HistoryNext: replay.HistoryNext, ReplayFrom: replay.ReplayFrom,
+		DisplayFrom: replay.DisplayFrom, Truncated: replay.Truncated, Prelude: replay.Prelude,
+	}
 }
 
 func (p *Provider) KillWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) error {
@@ -148,13 +194,6 @@ func (p *Provider) KillWithIdentity(ctx context.Context, id string, identity bas
 	return translateError(p.supervisor.kill(ctx, id, expected))
 }
 
-func (p *Provider) DurableMetadataSupported(ctx context.Context) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func (p *Provider) RenameDurable(ctx context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
 	info, err := p.supervisor.Rename(ctx, renameRequest(options))
 	if err != nil {
@@ -163,20 +202,10 @@ func (p *Provider) RenameDurable(ctx context.Context, options base.DurableRename
 	return renameResult(info), nil
 }
 
-func (p *Provider) ListDurable(ctx context.Context) ([]string, error) {
-	infos, err := p.supervisor.List(ctx)
-	if err != nil {
-		return nil, translateError(err)
-	}
-	ids := make([]string, len(infos))
-	for index, info := range infos {
-		ids[index] = info.ID
-	}
-	return ids, nil
-}
-
+// ListDurableDescriptors carries each session's state without its events,
+// which polling callers do not read.
 func (p *Provider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
-	infos, err := p.supervisor.listCanonical(ctx)
+	infos, err := p.supervisor.listCanonicalWith(ctx, listOptions{})
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -189,6 +218,7 @@ func durableDescriptors(infos []Info) []base.DurableDescriptor {
 		descriptors[index] = base.DurableDescriptor{
 			ID:               info.ID,
 			Incarnation:      info.Incarnation,
+			Generation:       info.Generation,
 			CreatedAt:        info.CreatedAt,
 			Title:            info.Title,
 			MetadataRevision: info.MetadataRevision,
@@ -196,6 +226,11 @@ func durableDescriptors(infos []Info) []base.DurableDescriptor {
 			Rows:             info.Rows,
 			Dead:             info.Dead,
 			Signal:           info.Signal,
+			HistoryBase:      info.HistoryBase,
+			HistoryNext:      info.HistoryNext,
+			HistoryTruncated: info.HistoryTruncated,
+			State:            info.State,
+			Activity:         info.Activity,
 		}
 		if info.ExitCode != nil {
 			exitCode := *info.ExitCode
@@ -217,6 +252,39 @@ func (a *channelAttachment) Stderr() io.Reader  { return nil }
 func (a *channelAttachment) CloseWrite() error  { return base.ErrUnsupported }
 func (a *channelAttachment) Generation() uint64 { return 0 }
 func (a *channelAttachment) Info() Info         { return a.session.canonicalInfo() }
+
+func (a *channelAttachment) DurableSessionState() *base.SessionState {
+	state := a.SessionState(^uint64(0))
+	if state != nil {
+		state.Events, state.EventsDropped = nil, false
+		if state.Prompt != nil {
+			state.Prompt.Generation = a.Identity().Generation
+		}
+	}
+	return state
+}
+
+func (a *channelAttachment) DurableStateUpdates() <-chan struct{} { return a.StateUpdates() }
+
+func (a *channelAttachment) MarkDurableStateSeen(_ context.Context, since time.Time) error {
+	return translateError(a.MarkStateSeen(since))
+}
+
+// TapDurablePrompt answers the in-process session's prompt; the helper
+// generation is this process's supervisor.
+func (a *channelAttachment) TapDurablePrompt(_ context.Context, tap base.PromptTap) (string, error) {
+	if generation := a.Identity().Generation; tap.Generation != generation {
+		return "", fmt.Errorf("%w: prompt from helper generation %q, attached to %q", base.ErrStalePrompt, tap.Generation, generation)
+	}
+	sent, err := a.TapPrompt(tap.Epoch, tap.Fingerprint, tap.Option)
+	if errors.Is(err, ErrUnsupported) {
+		return "", fmt.Errorf("%w: %w", base.ErrUnsupported, err)
+	}
+	return sent, translateError(err)
+}
+
+func (a *channelAttachment) DurableReplay() base.DurableReplay { return durableReplay(a.Replay()) }
+func (a *channelAttachment) DurableOffset() uint64             { return a.NextSeq() }
 
 func (a *channelAttachment) Read(p []byte) (int, error) {
 	count, err := a.Attachment.Read(p)
@@ -265,10 +333,21 @@ type RemoteProvider struct {
 	client *Client
 	create func(context.Context, *Client, CreateOptions) (Info, error)
 	attach func(context.Context, *Client, string, *Identity) (*Stream, error)
-	// createAttach, when set, creates and attaches on one connection. It
-	// returns a nil stream when the helper cannot chain the two, in which case
-	// Create attaches separately. Tests that replace create or attach clear it.
+	// createAttach, when set, creates and attaches on one connection. Tests
+	// that replace create or attach clear it so Create attaches separately.
 	createAttach func(context.Context, *Client, CreateOptions) (Info, *Stream, error)
+}
+
+// ReplaceLegacyHelper asks the helper's host to end the older helper the
+// consent token names; see Client.ReplaceLegacyHelper.
+func (p *RemoteProvider) ReplaceLegacyHelper(ctx context.Context, token string) (ReplaceResult, error) {
+	return p.client.ReplaceLegacyHelper(ctx, token)
+}
+
+// HelperStatus reads the serving helper's runtime metadata; an older helper
+// that owns the state directory is reported as a *LegacyHelperError.
+func (p *RemoteProvider) HelperStatus(ctx context.Context) (RuntimeMetadata, bool, error) {
+	return p.client.RuntimeMetadata(ctx)
 }
 
 func NewRemoteProvider(client *Client) *RemoteProvider {
@@ -276,6 +355,20 @@ func NewRemoteProvider(client *Client) *RemoteProvider {
 		return nil
 	}
 	return &RemoteProvider{client: client, create: remoteProviderCreate, attach: remoteProviderAttach, createAttach: remoteProviderCreateAttach}
+}
+
+// WithStateRules returns a copy of the provider whose connections keep the
+// helper on the state rules of source; see Client.WithStateRules.
+func (p *RemoteProvider) WithStateRules(source StateRuleSource) *RemoteProvider {
+	copied := *p
+	copied.client = p.client.WithStateRules(source)
+	return &copied
+}
+
+// SyncStateRules pushes the current state rules to the helper now; see
+// Client.SyncStateRules.
+func (p *RemoteProvider) SyncStateRules(ctx context.Context) error {
+	return p.client.SyncStateRules(ctx)
 }
 
 func remoteProviderCreate(ctx context.Context, client *Client, options CreateOptions) (Info, error) {
@@ -303,6 +396,8 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		Env:     options.Env,
 		Cols:    options.Cols,
 		Rows:    options.Rows,
+
+		HistoryLimit: options.HistoryLimit,
 	}
 	var info Info
 	var stream *Stream
@@ -325,7 +420,7 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 	if stream != nil {
 		return &streamAttachment{Stream: stream, provider: p}, nil
 	}
-	expect := &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation}
+	expect := &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation, Generation: info.Generation}
 	stream, err = p.attach(ctx, p.client, info.ID, expect)
 	if err != nil {
 		p.compensateCreate(info.ID, expect)
@@ -351,22 +446,6 @@ func (p *RemoteProvider) compensateCreateAttempt(id, attempt string) {
 	_ = p.client.ReconcileCreate(cleanupCtx, id, attempt)
 }
 
-func (p *RemoteProvider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
-	stream, err := p.client.Attach(ctx, id, nil)
-	if err != nil {
-		return nil, translateError(err)
-	}
-	return &streamAttachment{Stream: stream, provider: p}, nil
-}
-
-func (p *RemoteProvider) AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error) {
-	stream, err := p.client.AttachFrom(ctx, id, nil, offset)
-	if err != nil {
-		return nil, translateError(err)
-	}
-	return &streamAttachment{Stream: stream, provider: p}, nil
-}
-
 func (p *RemoteProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
 	return p.AttachFromWithIdentity(ctx, id, identity, 0)
 }
@@ -383,17 +462,36 @@ func (p *RemoteProvider) AttachFromWithIdentity(ctx context.Context, id string, 
 	return &streamAttachment{Stream: stream, provider: p}, nil
 }
 
+func (p *RemoteProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, options base.DurableTailOptions) (base.DurableAttachment, error) {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := p.client.AttachWithOptions(ctx, id, expected, tailAttachOptions(options))
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &streamAttachment{Stream: stream, provider: p}, nil
+}
+
+func (p *RemoteProvider) ReadDurableHistory(ctx context.Context, id string, identity base.DurableIdentity, request base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return base.DurableHistoryChunk{}, err
+	}
+	chunk, err := p.client.ReadHistory(ctx, id, *expected, request.Before, request.MaxBytes)
+	if err != nil {
+		return base.DurableHistoryChunk{}, translateError(err)
+	}
+	return durableHistoryChunk(chunk), nil
+}
+
 func (p *RemoteProvider) KillWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) error {
 	expected, err := checkedIdentity(identity)
 	if err != nil {
 		return err
 	}
 	return translateError(p.client.Kill(ctx, id, expected))
-}
-
-func (p *RemoteProvider) DurableMetadataSupported(ctx context.Context) (bool, error) {
-	supported, err := p.client.MetadataSupported(ctx)
-	return supported, translateError(err)
 }
 
 func (p *RemoteProvider) RenameDurable(ctx context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
@@ -404,18 +502,8 @@ func (p *RemoteProvider) RenameDurable(ctx context.Context, options base.Durable
 	return renameResult(info), nil
 }
 
-func (p *RemoteProvider) ListDurable(ctx context.Context) ([]string, error) {
-	infos, err := p.client.List(ctx)
-	if err != nil {
-		return nil, translateError(err)
-	}
-	ids := make([]string, len(infos))
-	for index, info := range infos {
-		ids[index] = info.ID
-	}
-	return ids, nil
-}
-
+// ListDurableDescriptors carries each session's state without its events,
+// which polling callers do not read.
 func (p *RemoteProvider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
 	infos, err := p.client.List(ctx)
 	if err != nil {
@@ -433,6 +521,43 @@ func (a *streamAttachment) Stderr() io.Reader  { return nil }
 func (a *streamAttachment) CloseWrite() error  { return base.ErrUnsupported }
 func (a *streamAttachment) Generation() uint64 { return 0 }
 func (a *streamAttachment) ID() string         { return a.Info().ID }
+
+func (a *streamAttachment) DurableReplay() base.DurableReplay { return durableReplay(a.Replay()) }
+func (a *streamAttachment) DurableOffset() uint64             { return a.ConsumedOffset() }
+
+func (a *streamAttachment) DurableSessionState() *base.SessionState {
+	state := a.SessionState()
+	if state != nil {
+		state.Events, state.EventsDropped = nil, false
+		if state.Prompt != nil {
+			prompt := *state.Prompt
+			prompt.Generation = a.Identity().Generation
+			state.Prompt = &prompt
+		}
+	}
+	return state
+}
+
+func (a *streamAttachment) DurableStateUpdates() <-chan struct{} { return a.StateUpdates() }
+
+func (a *streamAttachment) MarkDurableStateSeen(ctx context.Context, since time.Time) error {
+	return translateError(a.MarkStateSeen(ctx, since))
+}
+
+// TapDurablePrompt answers the helper session's prompt; a prompt from
+// another helper generation is stale.
+func (a *streamAttachment) TapDurablePrompt(ctx context.Context, tap base.PromptTap) (string, error) {
+	if generation := a.Identity().Generation; tap.Generation != generation {
+		return "", fmt.Errorf("%w: prompt from helper generation %q, attached to %q", base.ErrStalePrompt, tap.Generation, generation)
+	}
+	sent, err := a.TapPrompt(ctx, tap.Epoch, tap.Fingerprint, tap.Option)
+	if errors.Is(err, ErrUnsupported) {
+		// A helper without state detection does not support taps, which is
+		// not an unavailable helper.
+		return "", fmt.Errorf("%w: %w", base.ErrUnsupported, err)
+	}
+	return sent, translateError(err)
+}
 
 func (a *streamAttachment) Read(p []byte) (int, error) {
 	count, err := a.Stream.Read(p)
@@ -489,16 +614,12 @@ func (a *streamAttachment) DurableGrid() (cols, rows uint32, ok bool) {
 }
 
 var (
-	_ base.DurableProvider         = (*Provider)(nil)
-	_ base.DurableDescriptorLister = (*Provider)(nil)
-	_ base.DurableMetadataProvider = (*Provider)(nil)
-	_ base.DurableIdentityAttacher = (*Provider)(nil)
-	_ base.DurableIdentityKiller   = (*Provider)(nil)
-	_ base.DurableAttachment       = (*channelAttachment)(nil)
-	_ base.DurableProvider         = (*RemoteProvider)(nil)
-	_ base.DurableDescriptorLister = (*RemoteProvider)(nil)
-	_ base.DurableMetadataProvider = (*RemoteProvider)(nil)
-	_ base.DurableIdentityAttacher = (*RemoteProvider)(nil)
-	_ base.DurableIdentityKiller   = (*RemoteProvider)(nil)
-	_ base.DurableAttachment       = (*streamAttachment)(nil)
+	_ base.DurableProvider       = (*Provider)(nil)
+	_ base.DurableAttachment     = (*channelAttachment)(nil)
+	_ base.DurableReplayReporter = (*channelAttachment)(nil)
+	_ base.DurableStateReporter  = (*channelAttachment)(nil)
+	_ base.DurableProvider       = (*RemoteProvider)(nil)
+	_ base.DurableAttachment     = (*streamAttachment)(nil)
+	_ base.DurableReplayReporter = (*streamAttachment)(nil)
+	_ base.DurableStateReporter  = (*streamAttachment)(nil)
 )

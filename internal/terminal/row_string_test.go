@@ -14,7 +14,7 @@ func referenceRowString(r *row) string {
 		if c.cont {
 			continue
 		}
-		if (c.r != 0 && c.r != ' ') || len(c.comb) > 0 {
+		if (c.r != 0 && c.r != ' ') || len(r.combAt(i)) > 0 {
 			last = i
 			break
 		}
@@ -37,7 +37,7 @@ func referenceRowString(r *row) string {
 		} else {
 			b.WriteRune(c.r)
 		}
-		for _, cr := range c.comb {
+		for _, cr := range r.combAt(i) {
 			b.WriteRune(cr)
 		}
 	}
@@ -56,7 +56,7 @@ func TestRowStringMatchesReferenceOnGeneratedRows(t *testing.T) {
 			c.r = runes[rng.Intn(len(runes))]
 			switch rng.Intn(6) {
 			case 0:
-				c.comb = []rune{combs[rng.Intn(len(combs))]}
+				r.addComb(i, combs[rng.Intn(len(combs))])
 			case 1:
 				if i+1 < cols {
 					c.r, c.wide = '中', true
@@ -91,7 +91,7 @@ func TestRowStringMatchesReferenceAfterScreenOps(t *testing.T) {
 					t.Fatalf("iter %d step %d row %d: got %q want %q", n, step, i, got, want)
 				}
 				for j := r.hi; j < len(r.cells); j++ {
-					if r.cells[j].r != 0 || r.cells[j].comb != nil || r.cells[j].wide || r.cells[j].cont {
+					if r.cells[j].r != 0 || r.cells[j].comb != 0 || r.cells[j].wide || r.cells[j].cont {
 						t.Fatalf("iter %d step %d row %d: non-empty cell %d beyond hi %d", n, step, i, j, r.hi)
 					}
 				}

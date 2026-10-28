@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { click, flush, mountWithClient, waitFor, type MountedView } from "./reactTestUtils";
+import { act, createElement } from "react";
+import { click, flush, mountWithClient, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -82,7 +82,7 @@ describe("default terminal mode settings", () => {
     const regular = [...(group?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "普通终端");
     if (!regular) throw new Error("Regular terminal option not found");
     click(regular);
-    await waitFor(() => expect(regular.getAttribute("aria-pressed")).toBe("true"));
+    await waitForRendered(() => expect(regular.getAttribute("aria-pressed")).toBe("true"));
 
     expect(put).toHaveBeenCalledWith({ "terminal.defaultMode": "regular" });
     expect(getTerminalPrefs().defaultMode).toBe("regular");
@@ -98,9 +98,80 @@ describe("default terminal mode settings", () => {
     const regular = [...(group?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "普通终端");
     if (!regular) throw new Error("Regular terminal option not found");
     click(regular);
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("error", "保存默认终端模式失败：保存失败"));
+    await waitForRendered(() => expect(toast).toHaveBeenCalledWith("error", "保存默认终端模式失败：保存失败"));
 
     expect(regular.getAttribute("aria-pressed")).toBe("false");
     expect(getTerminalPrefs().defaultMode).toBe("durable");
+  });
+});
+
+describe("terminal GPU acceleration settings", () => {
+  it("saves the selected mode to the account and updates the hint", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    registerAccountPreferenceStore({ getView: async () => ({ defaults: {}, overrides: {} }), putOverrides: put, deleteOverrides: async () => {} });
+    mounted = mountWithClient(createElement(SettingsView));
+    await flush();
+    const group = mounted.container.querySelector('[aria-label="终端 GPU 加速"]');
+    const buttons = [...(group?.querySelectorAll("button") ?? [])];
+    expect(buttons.find((button) => button.textContent === "自动")?.getAttribute("aria-pressed")).toBe("true");
+    const off = buttons.find((button) => button.textContent === "关闭");
+    if (!off) throw new Error("GPU off option not found");
+    click(off);
+    await waitForRendered(() => expect(off.getAttribute("aria-pressed")).toBe("true"));
+
+    expect(put).toHaveBeenCalledWith({ "terminal.gpuAcceleration": "off" });
+    expect(getTerminalPrefs().gpuAcceleration).toBe("off");
+    expect(mounted.container.textContent).toContain("始终使用兼容渲染");
+  });
+});
+
+describe("terminal link activation settings", () => {
+  it("defaults to modifier-click and saves plain click to the account", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    registerAccountPreferenceStore({ getView: async () => ({ defaults: {}, overrides: {} }), putOverrides: put, deleteOverrides: async () => {} });
+    mounted = mountWithClient(createElement(SettingsView));
+    await flush();
+    const group = mounted.container.querySelector('[aria-label="链接打开方式"]');
+    const buttons = [...(group?.querySelectorAll("button") ?? [])];
+    expect(buttons.find((button) => button.textContent === "Ctrl/Cmd+单击")?.getAttribute("aria-pressed")).toBe("true");
+    const plain = buttons.find((button) => button.textContent === "单击");
+    if (!plain) throw new Error("plain click option not found");
+    click(plain);
+    await waitForRendered(() => expect(plain.getAttribute("aria-pressed")).toBe("true"));
+
+    expect(put).toHaveBeenCalledWith({ "terminal.linkActivation": "click" });
+    expect(getTerminalPrefs().linkActivation).toBe("click");
+    expect(mounted.container.textContent).toContain("单击终端中的网址或 OSC 8 超链接即打开");
+  });
+});
+
+describe("multi-line paste confirmation setting", () => {
+  it("shows the account mode and saves the chosen mode to the account", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    registerAccountPreferenceStore({
+      getView: async () => ({ defaults: {}, overrides: { "terminal.confirmMultilinePaste": "never" } }),
+      putOverrides: put,
+      deleteOverrides: async () => {},
+    });
+    mounted = mountWithClient(createElement(SettingsView));
+    await flush();
+    const label = [...mounted.container.querySelectorAll("label")].find((node) => node.textContent?.trim() === "多行粘贴确认");
+    const select = label ? mounted.container.querySelector<HTMLSelectElement>(`#${CSS.escape(label.htmlFor)}`) : null;
+    if (!select) throw new Error("multi-line paste select not found");
+    await waitForRendered(() => expect(select.value).toBe("never"));
+    expect([...select.options].map((option) => option.textContent)).toEqual([
+      "仅在程序未开启括号粘贴时确认",
+      "每次都确认",
+      "从不确认",
+    ]);
+    expect(mounted.container.textContent).toContain("开启括号粘贴的程序（如 bash/zsh）会把多行内容当成一次粘贴，不会逐行执行");
+
+    act(() => {
+      select.value = "unbracketed";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await waitForRendered(() => expect(select.value).toBe("unbracketed"));
+    expect(put).toHaveBeenCalledWith({ "terminal.confirmMultilinePaste": "unbracketed" });
+    expect(getTerminalPrefs().confirmMultilinePaste).toBe("unbracketed");
   });
 });

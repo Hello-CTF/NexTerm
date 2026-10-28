@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -111,9 +112,10 @@ func TestGeneratedContractMetadata(t *testing.T) {
 		"dockerStats": "docker://stats", "filesDropped": "files://dropped",
 		"fsProgress": "fs://progress", "helperProgress": "session://helper-progress",
 		"layoutChanged": "layout://changed", "sessionStatus": "session://status",
-		"inventoryChanged":  "inventory://changed",
+		"notificationClick": "app://notification-click", "terminalAttention": "terminal://attention",
+		"inventoryChanged": "inventory://changed", "localHelperStatus": "local://helper-status",
 		"syncRoundComplete": "sync://round-complete", "syncStatus": "sync://status",
-		"terminalControl": "terminal://control", "terminalExit": "terminal://exit",
+		"terminalControl": "terminal://control", "terminalExit": "terminal://exit", "terminalSessions": "terminal://sessions",
 		"terminalThrottled": "terminal://throttled", "updateProgress": "update://progress",
 	}
 	if !reflect.DeepEqual(events, wantEvents) {
@@ -143,6 +145,10 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 		{name: "desktop_tray_get", scope: "platform", input: "Record<string, never>", output: "DesktopTrayDTO"},
 		{name: "desktop_tray_set", scope: "platform", input: "DesktopTraySetRequest", output: "DesktopTrayDTO"},
 		{name: "system_insets", scope: "platform", input: "Record<string, never>", output: "ScreenInsets"},
+		{name: "system_notification_status", scope: "platform", input: "Record<string, never>", output: "SystemNotificationStatus"},
+		{name: "system_notification_request", scope: "platform", input: "Record<string, never>", output: "SystemNotificationStatus"},
+		{name: "system_notify", scope: "platform", input: "SystemNotification", output: "unknown"},
+		{name: "system_notification_remove", scope: "platform", input: "SystemNotificationIDRequest", output: "unknown"},
 		{name: "app_update_check", scope: "update", input: "Record<string, never>", output: "UpdateStatus"},
 		{name: "app_update_install", scope: "update", input: updateInstallInput, output: "UpdateResult"},
 		{name: "app_restart", scope: "update", input: "Record<string, never>", output: "UpdateResult"},
@@ -182,8 +188,8 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 11 {
-		t.Fatalf("selected platform/update/biometric command count = %d, want 11", len(selected))
+	if len(selected) != 15 {
+		t.Fatalf("selected platform/update/biometric command count = %d, want 15", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "platform" || command.Scope == "update" || command.Scope == "biometric") && !selected[name] {
@@ -325,10 +331,14 @@ func TestSyncVerticalContracts(t *testing.T) {
 		{name: "sync_collect_ai_profiles", nested: true},
 		{name: "sync_collect_assets", nested: true},
 		{name: "sync_collect_credentials", nested: true},
+		{name: "sync_collect_kind_objects", nested: true},
 		{name: "sync_collect_known_hosts", nested: true},
 		{name: "sync_collect_preferences"},
 		{name: "sync_collect_tombstones", nested: true},
 		{name: "sync_compare"},
+		{name: "sync_cron_foreign_adopt", nested: true},
+		{name: "sync_cron_foreign_list"},
+		{name: "sync_cron_foreign_remove", nested: true},
 		{name: "sync_digest"},
 		{name: "sync_export", nested: true},
 		{name: "sync_import", nested: true},
@@ -513,11 +523,14 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 		{name: "session_connect_local", scope: "session", stream: "none", output: "SessionInfoDTO"},
 		{name: "session_disconnect", scope: "session", stream: "none", output: "unknown"},
 		{name: "session_list", scope: "session", stream: "none", output: "SessionInfoDTO[]"},
+		{name: "session_liveness_probe", scope: "session", stream: "none", output: "SessionInfoDTO"},
+		{name: "session_local_hostname", scope: "session", stream: "none", output: "string"},
 		{name: "session_open_line_tab", scope: "session", channel: true, stream: "binary", output: "AttachedTabDTO"},
 		{name: "session_quick_connect_user", scope: "session", stream: "none", output: "string"},
 		{name: "session_reconnect", scope: "session", stream: "none", output: "boolean"},
 		{name: "terminal_attach", scope: "terminal", channel: true, stream: "binary", output: "AttachedTabDTO"},
 		{name: "terminal_broadcast_prepare", scope: "terminal", nested: true, stream: "none", output: "unknown"},
+		{name: "terminal_history_read", scope: "terminal", stream: "none", output: "TerminalHistoryDTO"},
 		{name: "terminal_rename_tab", scope: "terminal", stream: "none", output: "AttachedTabDTO"},
 		{name: "terminal_write", scope: "terminal", nested: true, stream: "none", output: "unknown"},
 	}
@@ -546,8 +559,8 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 11 {
-		t.Fatalf("selected session/terminal command count = %d, want 11", len(selected))
+	if len(selected) != 14 {
+		t.Fatalf("selected session/terminal command count = %d, want 14", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "session" || command.Scope == "terminal") && !selected[name] {
@@ -561,7 +574,6 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 		"session_probe",
 		"session_probe_host_key",
 		"terminal_attach_tab",
-		"terminal_claim",
 		"terminal_close_tab",
 		"terminal_create_tab",
 		"terminal_detach",
@@ -571,7 +583,6 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 		"terminal_record_start",
 		"terminal_record_status",
 		"terminal_record_stop",
-		"terminal_release",
 		"terminal_resize",
 		"terminal_resize_flush",
 		"terminal_screen_text",
@@ -618,6 +629,36 @@ func TestHelperOperationContracts(t *testing.T) {
 	}
 	if rendered := registry.render(); !strings.Contains(rendered, "protocol?: number | null;") {
 		t.Fatalf("helper protocol evidence must remain optional and nullable:\n%s", rendered)
+	}
+}
+
+func TestAttentionContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	registry := newTypeRegistry()
+	for name, want := range map[string]string{
+		"terminal_attention_list":     "AttentionEvent[]",
+		"terminal_attention_seen":     "unknown",
+		"terminal_prompt_tap":         "unknown",
+		"terminal_sessions_aggregate": "AggregateList",
+	} {
+		command, ok := commands[name]
+		if !ok {
+			t.Fatalf("attention command %q is missing", name)
+		}
+		if command.Scope != "attention" || command.Nested || command.Channel || command.Stream != "none" {
+			t.Fatalf("attention command %q metadata = %+v", name, command)
+		}
+		if command.Input == nil || command.Output == nil {
+			t.Fatalf("attention command %q must have real DTOs", name)
+		}
+		output, err := registry.ref(command.Output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if output.TS != want {
+			t.Fatalf("attention command %q output = %q, want %q", name, output.TS, want)
+		}
 	}
 }
 
@@ -951,6 +992,7 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 		{name: "fs_extract", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "string"},
 		{name: "fs_list", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "FSEntryDTO[]"},
 		{name: "fs_mkdir", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "unknown"},
+		{name: "fs_mkdir_private", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "unknown"},
 		{name: "fs_pack_download", scope: "fs", input: structType("sessionId: string;", "remotePath: string;", "localPath: string;", "taskId?: string;", "attemptId?: string;"), output: "number"},
 		{name: "fs_read", scope: "fs", input: structType("sessionId: string;", "path: string;", "maxBytes?: number;"), output: "FSReadDTO"},
 		{name: "fs_read_range", scope: "fs", input: structType("sessionId: string;", "path: string;", "offset: number;", "maxBytes?: number;"), output: "FSRangeReadDTO"},
@@ -1004,8 +1046,8 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 26 {
-		t.Fatalf("selected fs/local-file/mount command count = %d, want 26", len(selected))
+	if len(selected) != 27 {
+		t.Fatalf("selected fs/local-file/mount command count = %d, want 27", len(selected))
 	}
 	for name, command := range commands {
 		inventory := strings.HasPrefix(name, "fs_") || strings.HasPrefix(name, "local_file_") || strings.HasPrefix(name, "local_folder_") || strings.HasPrefix(name, "mount_")
@@ -1598,6 +1640,12 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 		"ai_model_save",
 		"ai_models",
 		"ai_presets",
+		"ai_privacy_cancel_download",
+		"ai_privacy_check_updates",
+		"ai_privacy_configure",
+		"ai_privacy_download",
+		"ai_privacy_remove",
+		"ai_privacy_status",
 		"ai_run_events",
 		"ai_run_get",
 		"ai_run_list",
@@ -1627,7 +1675,6 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 		"session_probe",
 		"session_probe_host_key",
 		"terminal_attach_tab",
-		"terminal_claim",
 		"terminal_close_tab",
 		"terminal_create_tab",
 		"terminal_detach",
@@ -1637,7 +1684,6 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 		"terminal_record_start",
 		"terminal_record_status",
 		"terminal_record_stop",
-		"terminal_release",
 		"terminal_resize",
 		"terminal_resize_flush",
 		"terminal_screen_text",
@@ -1672,8 +1718,8 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("remaining legacy commands = %v, want %v", got, want)
 	}
-	if len(got) != 71 || aiMemory != 46 || sessionTerminal != 24 || appInfo != 1 {
-		t.Fatalf("legacy categories = total:%d AI/memory:%d session/terminal:%d app_info:%d, want 71/46/24/1", len(got), aiMemory, sessionTerminal, appInfo)
+	if len(got) != 75 || aiMemory != 52 || sessionTerminal != 22 || appInfo != 1 {
+		t.Fatalf("legacy categories = total:%d AI/memory:%d session/terminal:%d app_info:%d, want 75/52/22/1", len(got), aiMemory, sessionTerminal, appInfo)
 	}
 	if scopes := deferredScopes(); !reflect.DeepEqual(scopes, []string{"memory-owner", "ai-owner"}) {
 		t.Fatalf("deferred scopes = %v, want only memory-owner and ai-owner", scopes)
@@ -1824,8 +1870,27 @@ func TestCheckGeneratedIgnoresOSMetadataAndRejectsStrayFiles(t *testing.T) {
 	}
 }
 
+// The unmodified tree is loaded and type-checked once per test binary: every
+// load parses the whole module, which dominates the package's runtime. Tests
+// only read the shared result; overlay loads stay per call.
+var baselineGeneration struct {
+	once      sync.Once
+	generated *generation
+	err       error
+}
+
 func generateForTest(t *testing.T, overlay map[string][]byte) *generation {
 	t.Helper()
+	if overlay == nil {
+		root := repositoryRoot(t)
+		baselineGeneration.once.Do(func() {
+			baselineGeneration.generated, baselineGeneration.err = generateContract(root, nil)
+		})
+		if baselineGeneration.err != nil {
+			t.Fatal(baselineGeneration.err)
+		}
+		return baselineGeneration.generated
+	}
 	generated, err := generateContract(repositoryRoot(t), overlay)
 	if err != nil {
 		t.Fatal(err)

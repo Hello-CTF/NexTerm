@@ -93,9 +93,6 @@ func TestRuntimeMetadataDescribesRunningExecutable(t *testing.T) {
 	if metadata.Protocol != ProtocolVersion {
 		t.Fatalf("running protocol = %d, want %d", metadata.Protocol, ProtocolVersion)
 	}
-	if got, want := strings.Join(metadata.Features, ","), "activity,create_attach,exec,input_window,metadata,output_credit,output_zstd,replay_gzip,runtime_metadata"; got != want {
-		t.Fatalf("running features = %q, want %q", got, want)
-	}
 
 	candidate := filepath.Join(t.TempDir(), "candidate-helper")
 	if err := os.WriteFile(candidate, []byte("not the running daemon"), 0o700); err != nil {
@@ -107,34 +104,17 @@ func TestRuntimeMetadataDescribesRunningExecutable(t *testing.T) {
 	}
 }
 
+// A helper that could not hash its own executable sends no runtime metadata;
+// the client reports that as unknown instead of inventing it.
 func TestRuntimeMetadataUnknownWithoutProof(t *testing.T) {
-	valid := RuntimeMetadata{
-		Version:  "old-release",
-		Commit:   "old-commit",
-		Protocol: ProtocolVersion,
-		SHA256:   strings.Repeat("a", 64),
-		Features: []string{featureRuntimeMetadata},
+	stateDir := filepath.Join(t.TempDir(), "state")
+	client := NewClient(fakeHelloAckServer(t, stateDir, helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Activity: &ActivitySnapshot{}, StateRules: &stateRulesAck{}}), stateDir)
+	metadata, known, err := client.RuntimeMetadata(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	tests := []struct {
-		name string
-		ack  helloMsg
-	}{
-		{name: "older daemon", ack: helloMsg{Version: ProtocolVersion}},
-		{name: "unprovable daemon", ack: helloMsg{Version: ProtocolVersion, Features: []string{featureRuntimeMetadata}}},
-		{name: "unnegotiated payload", ack: helloMsg{Version: ProtocolVersion, Runtime: &valid}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			stateDir := filepath.Join(t.TempDir(), "state")
-			client := NewClient(fakeHelloAckServer(t, stateDir, test.ack), stateDir)
-			metadata, known, err := client.RuntimeMetadata(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if known || metadata.Version != "" || metadata.Commit != "" || metadata.Protocol != 0 || metadata.SHA256 != "" || len(metadata.Features) != 0 {
-				t.Fatalf("metadata = %+v, known = %v; want explicit unknown", metadata, known)
-			}
-		})
+	if known || metadata != (RuntimeMetadata{}) {
+		t.Fatalf("metadata = %+v, known = %v; want explicit unknown", metadata, known)
 	}
 }
 
@@ -144,16 +124,15 @@ func TestRuntimeMetadataAllowsCompatibleReleaseDifference(t *testing.T) {
 		Commit:   "different-commit",
 		Protocol: ProtocolVersion,
 		SHA256:   strings.Repeat("0123456789abcdef", 4),
-		Features: []string{featureExec, featureRuntimeMetadata},
 	}
 	stateDir := filepath.Join(t.TempDir(), "state")
-	ack := helloMsg{Version: ProtocolVersion, Features: want.Features, Runtime: &want}
+	ack := helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Runtime: &want, Activity: &ActivitySnapshot{}, StateRules: &stateRulesAck{}}
 	client := NewClient(fakeHelloAckServer(t, stateDir, ack), stateDir)
 	got, known, err := client.RuntimeMetadata(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !known || got.Version != want.Version || got.Commit != want.Commit || got.Protocol != want.Protocol || got.SHA256 != want.SHA256 || strings.Join(got.Features, ",") != strings.Join(want.Features, ",") {
+	if !known || got != want {
 		t.Fatalf("metadata = %+v, known = %v; want %+v", got, known, want)
 	}
 }
@@ -161,10 +140,18 @@ func TestRuntimeMetadataAllowsCompatibleReleaseDifference(t *testing.T) {
 func TestRuntimeMetadataKeepsHandshakeGuards(t *testing.T) {
 	t.Run("protocol", func(t *testing.T) {
 		stateDir := filepath.Join(t.TempDir(), "state")
-		ack := helloMsg{Version: ProtocolVersion + 1}
+		ack := helloMsg{Version: ProtocolVersion + 1, Activity: &ActivitySnapshot{}}
+		client := NewClient(fakeHelloAckServer(t, stateDir, ack), stateDir)
+		if _, _, err := client.RuntimeMetadata(context.Background()); !errors.Is(err, ErrClientUpgradeRequired) {
+			t.Fatalf("protocol mismatch error = %v, want ErrClientUpgradeRequired", err)
+		}
+	})
+	t.Run("state rules", func(t *testing.T) {
+		stateDir := filepath.Join(t.TempDir(), "state")
+		ack := helloMsg{Version: ProtocolVersion, Generation: fakeGeneration, Activity: &ActivitySnapshot{}}
 		client := NewClient(fakeHelloAckServer(t, stateDir, ack), stateDir)
 		if _, _, err := client.RuntimeMetadata(context.Background()); !errors.Is(err, ErrProtocol) {
-			t.Fatalf("protocol mismatch error = %v, want ErrProtocol", err)
+			t.Fatalf("ack without state rules error = %v, want ErrProtocol", err)
 		}
 	})
 	t.Run("state digest", func(t *testing.T) {
@@ -180,7 +167,9 @@ func TestRuntimeMetadataKeepsHandshakeGuards(t *testing.T) {
 	})
 }
 
-func TestHelloRuntimeExtensionsRequireClientFeature(t *testing.T) {
+// Runtime metadata and daemon activity are part of every v3 hello
+// acknowledgement; no client feature has to ask for them.
+func TestHelloAcknowledgementCarriesRuntimeAndActivity(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	conn, err := net.DialTimeout("unix", server.SocketPath(), 2*time.Second)
@@ -207,7 +196,7 @@ func TestHelloRuntimeExtensionsRequireClientFeature(t *testing.T) {
 	if err := unmarshalFrame(payload, &ack); err != nil {
 		t.Fatal(err)
 	}
-	if ack.Runtime != nil || ack.Activity != nil {
-		t.Fatalf("unnegotiated hello extensions = runtime %+v, activity %+v", ack.Runtime, ack.Activity)
+	if ack.Version != ProtocolVersion || ack.Runtime == nil || ack.Runtime.Protocol != ProtocolVersion || ack.Activity == nil || ack.StateRules == nil {
+		t.Fatalf("hello ack = %+v, want version, runtime metadata, activity and state rules", ack)
 	}
 }

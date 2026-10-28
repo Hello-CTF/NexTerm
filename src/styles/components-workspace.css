@@ -1,0 +1,354 @@
+@layer components {
+  .nx-ws-switch {
+    display: inline-flex;
+    max-width: 220px;
+    min-width: 0;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 7px 0 9px;
+    border: 1px solid color-mix(in srgb, var(--color-neutral-700) 70%, transparent);
+    border-radius: var(--radius-md);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
+    font-size: calc(12px * var(--nx-ui-text-factor));
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .nx-ws-switch:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 55%, transparent);
+    color: var(--nx-fg-emphasis);
+  }
+
+  .nx-ws-status {
+    display: inline-flex;
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-neutral-600);
+  }
+  .nx-ws-status.is-ok {
+    color: var(--color-green-500);
+  }
+  .nx-ws-status.is-warn {
+    color: var(--color-amber-500);
+  }
+  .nx-ws-status.is-bad {
+    color: var(--color-red-500);
+  }
+
+  .nx-tab {
+    display: inline-flex;
+    max-width: 220px;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px 0 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--nx-fg-soft);
+    font-size: calc(12px * var(--nx-ui-text-factor));
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .nx-tab:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
+    color: var(--nx-fg-emphasis);
+  }
+  .nx-tab.is-active {
+    border-color: color-mix(in srgb, var(--color-neutral-700) 80%, transparent);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset;
+  }
+
+  .nx-tab-close {
+    display: inline-flex;
+    visibility: hidden;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    border-radius: 4px;
+    color: var(--nx-fg-tertiary);
+  }
+  .nx-tab:hover .nx-tab-close,
+  .nx-tab.is-active .nx-tab-close,
+  .nx-tab:focus-within .nx-tab-close {
+    visibility: visible;
+  }
+  .nx-tab-close:hover {
+    background: color-mix(in srgb, var(--color-red-500) 22%, transparent);
+    color: var(--color-red-300);
+  }
+
+  .nx-drag-source {
+    opacity: 0.45;
+  }
+  .nx-drop-before,
+  .is-drop-before {
+    box-shadow: inset 2px 0 0 0 var(--color-accent);
+  }
+  .nx-drop-after,
+  .is-drop-after {
+    box-shadow: inset -2px 0 0 0 var(--color-accent);
+  }
+
+  /* Pane drop targets exist only during a tab drag; the preview never takes pointer events. */
+  .nx-tab-drop-target {
+    position: absolute;
+    z-index: 5;
+  }
+  .nx-tab-drop-preview {
+    position: absolute;
+    pointer-events: none;
+    border: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    transition: left 80ms ease-out, top 80ms ease-out, width 80ms ease-out, height 80ms ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nx-tab-drop-preview {
+      transition: none;
+    }
+  }
+
+  .nx-badge {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 5px;
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-soft);
+    font-size: calc(10.5px * var(--nx-ui-text-factor));
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+  .nx-badge-green {
+    background: color-mix(in srgb, var(--color-green-500) 10%, transparent);
+    color: var(--color-green-300);
+  }
+  .nx-badge-amber {
+    background: color-mix(in srgb, var(--color-amber-500) 18%, transparent);
+    color: var(--color-amber-300);
+  }
+  .nx-badge-red {
+    background: color-mix(in srgb, var(--color-red-500) 18%, transparent);
+    color: var(--color-red-300);
+  }
+  .nx-badge-blue {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--color-blue-300);
+  }
+  .nx-badge-purple {
+    background: color-mix(in srgb, var(--color-purple-500) 20%, transparent);
+    color: var(--color-purple-300);
+  }
+
+  .nx-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-tertiary);
+    font-size: calc(10px * var(--nx-ui-text-factor));
+    font-variant-numeric: tabular-nums;
+  }
+
+  .nx-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 21px;
+    padding: 0 7px;
+    border: 1px solid
+      color-mix(in srgb, var(--color-neutral-700) 60%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--color-neutral-800) 45%, transparent);
+    color: var(--nx-fg-soft);
+    font-size: calc(10.5px * var(--nx-ui-text-factor));
+    white-space: nowrap;
+  }
+  .nx-chip-accent {
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+    color: var(--color-blue-300);
+  }
+
+  .nx-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .nx-dot-pulse {
+    animation: nx-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes nx-pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  .nx-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: calc(12px * var(--nx-ui-text-factor));
+  }
+  .nx-table-fixed {
+    table-layout: fixed;
+  }
+  .nx-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--nx-border);
+    background: var(--nx-bg-pane);
+    color: var(--nx-fg-tertiary);
+    font-size: calc(11px * var(--nx-ui-text-factor));
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .nx-table tbody td {
+    padding: 7px 10px;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 45%, transparent);
+    color: var(--nx-fg);
+    vertical-align: middle;
+  }
+  .nx-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .nx-table tbody tr:hover td {
+    background: color-mix(in srgb, var(--color-neutral-800) 45%, transparent);
+  }
+  .nx-table .nx-mono {
+    font-family: var(--font-mono);
+    font-size: calc(11.5px * var(--nx-ui-text-factor));
+    color: var(--nx-fg-soft);
+  }
+  .nx-table .nx-right {
+    text-align: right;
+  }
+
+  .nx-table-empty {
+    padding: 40px 16px;
+    color: var(--nx-fg-tertiary);
+    font-size: calc(12px * var(--nx-ui-text-factor));
+    text-align: center;
+  }
+
+  .nx-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    color: var(--nx-fg);
+    font-size: calc(12.5px * var(--nx-ui-text-factor));
+    cursor: pointer;
+  }
+  .nx-row:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+  }
+  .nx-row.is-selected {
+    background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+    color: var(--nx-fg-strong);
+  }
+  .nx-row-name {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .nx-asset-row-name {
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+  }
+  .nx-row-target {
+    max-width: 42%;
+    flex: 0 1 auto;
+  }
+  .nx-row-actions {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    display: none;
+    align-items: center;
+    gap: 2px;
+    padding-left: 14px;
+    transform: translateY(-50%);
+    background: linear-gradient(90deg, transparent, var(--nx-bg-pane) 22%);
+  }
+
+  .nx-row-reserve-actions .nx-row-actions {
+    display: flex;
+    visibility: hidden;
+  }
+  .nx-row-reserve-actions:hover .nx-row-actions,
+  .nx-row-reserve-actions.is-selected .nx-row-actions,
+  .nx-row-reserve-actions:focus-within .nx-row-actions {
+    visibility: visible;
+  }
+
+  .nx-row.nx-asset-row {
+    flex-wrap: nowrap;
+  }
+  .nx-asset-row > .nx-row-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 0%;
+  }
+  .nx-asset-row-name {
+    flex: 0 0 auto;
+    max-width: 100%;
+  }
+  .nx-asset-row-identity {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nx-asset-row > .nx-row-actions {
+    position: static;
+    flex: 0 0 auto;
+    padding-left: 0;
+    transform: none;
+    background: none;
+  }
+
+  .nx-card {
+    border: 1px solid color-mix(in srgb, var(--color-neutral-800) 90%, transparent);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--color-neutral-950) 35%, transparent);
+    padding: 16px;
+  }
+
+  .nx-card-title {
+    color: var(--nx-fg-strong);
+    font-size: calc(13px * var(--nx-ui-text-factor));
+    font-weight: 550;
+    letter-spacing: 0.01em;
+  }
+}

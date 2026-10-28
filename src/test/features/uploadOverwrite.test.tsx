@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -147,12 +147,12 @@ afterEach(() => {
 describe("upload overwrite confirmation (FileBrowser)", () => {
   beforeEach(async () => {
     remountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    await waitForRendered(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
   it("uploads directly without asking when no same-named file exists", async () => {
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
+    await waitForRendered(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("~/nginx-access.log"));
   });
@@ -160,11 +160,11 @@ describe("upload overwrite confirmation (FileBrowser)", () => {
   it("names the remote path in the confirmation for a same-named file; cancelling skips upload and leaves the remote unchanged", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "file"]]);
     remountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
+    await waitForRendered(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
 
     mocks.ask.mockResolvedValueOnce(false);
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalled());
 
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("~/nginx-access.log"),
@@ -172,28 +172,28 @@ describe("upload overwrite confirmation (FileBrowser)", () => {
     );
     expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("保持原样"), expect.anything());
     expect(mocks.upload).not.toHaveBeenCalled();
-    await waitFor(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
+    await waitForRendered(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("保持原样"));
   });
 
   it("overwrites the original path after confirmation", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "file"]]);
     remountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
+    await waitForRendered(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
 
     mocks.ask.mockResolvedValueOnce(true);
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
+    await waitForRendered(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
   });
 
   it("also blocks same-named directories and identifies them as directories", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "dir"]]);
     remountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
+    await waitForRendered(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
 
     mocks.ask.mockResolvedValueOnce(false);
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalled());
 
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("目录"),
@@ -209,7 +209,7 @@ describe("upload overwrite confirmation (FileBrowser)", () => {
         : Promise.reject(new Error("stat boom")),
     );
     remountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+    await waitForRendered(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
 
     act(() => {
       rowByPath(mounted!.container, "~/sub").dispatchEvent(
@@ -221,10 +221,10 @@ describe("upload overwrite confirmation (FileBrowser)", () => {
     );
     if (!item) throw new Error("Menu item not found: 上传到该目录");
     click(item);
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("stat boom")));
+    await waitForRendered(() => expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("stat boom")));
 
     expect(mocks.upload).not.toHaveBeenCalled();
-    await waitFor(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
+    await waitForRendered(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
   });
 
   it("falls back to fresh stat when the current directory listing is unloaded: still detects conflicts and cancel prevents upload", async () => {
@@ -238,7 +238,7 @@ describe("upload overwrite confirmation (FileBrowser)", () => {
     mocks.ask.mockResolvedValueOnce(false);
     const callsBefore = mocks.list.mock.calls.length;
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalled());
 
     expect(mocks.list.mock.calls.length).toBe(callsBefore + 1);
     expect(mocks.ask).toHaveBeenCalledWith(
@@ -257,21 +257,21 @@ describe("upload overwrite confirmation (FileBrowser)", () => {
     await flush();
 
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("stat offline")));
+    await waitForRendered(() => expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("stat offline")));
 
     expect(mocks.upload).not.toHaveBeenCalled();
-    await waitFor(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
+    await waitForRendered(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
   });
 
   it("does not repeat stat when the current directory listing is already loaded", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "file"]]);
     remountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
+    await waitForRendered(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
 
     mocks.ask.mockResolvedValueOnce(false);
     const callsBefore = mocks.list.mock.calls.length;
     click(buttonByTitle(mounted!.container, "上传"));
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalled());
     expect(mocks.list.mock.calls.length).toBe(callsBefore);
     expect(mocks.upload).not.toHaveBeenCalled();
   });
@@ -285,32 +285,32 @@ describe("upload overwrite confirmation (FileTree)", () => {
 
   beforeEach(async () => {
     remountTree();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
   });
 
   it("uploads directly without asking when no same-named file exists", async () => {
     click(buttonByTitle(mounted!.container, "上传到当前目录"));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
+    await waitForRendered(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
   it("skips a same-named file upload on cancel and overwrites on confirmation", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "file"]]);
     remountTree();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("nginx-access.log"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("nginx-access.log"));
 
     mocks.ask.mockResolvedValueOnce(false);
     click(buttonByTitle(mounted!.container, "上传到当前目录"));
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalled());
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("~/nginx-access.log"),
       expect.objectContaining({ kind: "warning" }),
     );
     expect(mocks.upload).not.toHaveBeenCalled();
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("保持原样")));
+    await waitForRendered(() => expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("保持原样")));
 
     mocks.ask.mockResolvedValueOnce(true);
     click(buttonByTitle(mounted!.container, "上传到当前目录"));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
+    await waitForRendered(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
   });
 });

@@ -57,6 +57,7 @@ let accountStore: AccountPreferenceStore | null = null;
 let accountDefaults: Record<string, unknown> = {};
 let accountOverrides: Record<string, unknown> = {};
 let deviceOnlyPreferences = false;
+let accountViewLoaded = false;
 let accountViewLoading: Promise<void> | null = null;
 let registerGeneration = 0;
 const accountListeners = new Set<() => void>();
@@ -72,6 +73,7 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
   const generation = registerGeneration;
   accountStore = store;
   deviceOnlyPreferences = false;
+  accountViewLoaded = false;
   accountDefaults = {};
   accountOverrides = {};
   syncThemePreferenceLayers();
@@ -88,6 +90,7 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
       accountDefaults = view.defaults;
       accountOverrides = view.overrides;
       deviceOnlyPreferences = view.deviceOnly === true;
+      accountViewLoaded = true;
       syncThemePreferenceLayers();
       rebuildSnapshots();
       for (const listener of accountListeners) listener();
@@ -104,6 +107,12 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
 export function waitAccountPreferences(timeoutMs = 3000): Promise<void> | null {
   if (!accountViewLoading) return null;
   return Promise.race([accountViewLoading, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
+}
+
+// accountPreferencesReady is true once the signed-in account's preferences have loaded: account values can be
+// read and an absent key really is absent. A device-only store (desktop without a sync account) never becomes ready.
+export function accountPreferencesReady(): boolean {
+  return accountStore !== null && accountViewLoaded && !deviceOnlyPreferences;
 }
 
 export function getAccountPreferenceStore(): AccountPreferenceStore | null {
@@ -223,16 +232,66 @@ export function useInputPrefs(): InputPrefs {
 
 export type TerminalCloseAction = "ask" | "kill" | "detach";
 export type TerminalDefaultMode = "durable" | "regular";
+// auto loads WebGL unless the GPU is a software renderer; on always tries it; off keeps the DOM renderer.
+export type TerminalGpuAcceleration = "auto" | "on" | "off";
+// modifier opens terminal links with Ctrl+click (Cmd+click on macOS); click opens them with a plain click.
+export type TerminalLinkActivation = "modifier" | "click";
+// When a multi-line paste is confirmed first: unbracketed asks only when the program in the terminal has not turned on
+// bracketed paste (a bracketed paste reaches the shell as one paste instead of running line by line); always asks for
+// every multi-line paste; never does not ask.
+export type TerminalMultilinePasteConfirm = "unbracketed" | "always" | "never";
+// Lines each terminal keeps in its own scrollback. Older output of a durable terminal stays on the host and is
+// loaded on demand from the top of the scrollback. The right size depends on the device's memory, so it is a device
+// setting and never synced.
+export const TERMINAL_SCROLLBACK_OPTIONS = [5_000, 10_000, 25_000, 50_000, 100_000] as const;
+export type TerminalScrollback = (typeof TERMINAL_SCROLLBACK_OPTIONS)[number];
 
 export interface TerminalPrefs {
   closeAction: TerminalCloseAction;
   defaultMode: TerminalDefaultMode;
+  gpuAcceleration: TerminalGpuAcceleration;
+  linkActivation: TerminalLinkActivation;
+  confirmMultilinePaste: TerminalMultilinePasteConfirm;
+  scrollback: TerminalScrollback;
+  // MiB of output the host keeps per new durable terminal; null keeps the helper default.
+  durableHistoryMiB: number | null;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
 const TERMINAL_CLOSE_ACTION_KEY = "terminal.closeAction";
 const TERMINAL_DEFAULT_MODE_KEY = "terminal.defaultMode";
-const TERMINAL_DEFAULTS: TerminalPrefs = { closeAction: "ask", defaultMode: "durable" };
+const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
+const TERMINAL_LINK_ACTIVATION_KEY = "terminal.linkActivation";
+const TERMINAL_CONFIRM_MULTILINE_PASTE_KEY = "terminal.confirmMultilinePaste";
+const TERMINAL_DURABLE_HISTORY_KEY = "terminal.durableHistoryMiB";
+// The helper's own history limit per durable terminal when the account sets none.
+export const DEFAULT_DURABLE_HISTORY_MIB = 8;
+const TERMINAL_DEFAULTS: TerminalPrefs = {
+  closeAction: "ask",
+  defaultMode: "durable",
+  gpuAcceleration: "auto",
+  linkActivation: "modifier",
+  confirmMultilinePaste: "unbracketed",
+  scrollback: 10_000,
+  durableHistoryMiB: null,
+};
+
+// Any value that is not one of the options, including a missing one, is the default.
+export function normalizeTerminalScrollback(value: unknown): TerminalScrollback {
+  return (TERMINAL_SCROLLBACK_OPTIONS as readonly unknown[]).includes(value)
+    ? (value as TerminalScrollback)
+    : TERMINAL_DEFAULTS.scrollback;
+}
+
+function normalizeDurableHistoryMiB(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 1024 ? value : null;
+}
+
+// Any value that is not one of the modes, including a missing one, is the default.
+export function normalizeMultilinePasteConfirm(value: unknown): TerminalMultilinePasteConfirm {
+  if (value === "unbracketed" || value === "always" || value === "never") return value;
+  return TERMINAL_DEFAULTS.confirmMultilinePaste;
+}
 
 function loadTerminal(): TerminalPrefs {
   let local: Partial<TerminalPrefs> = {};
@@ -243,13 +302,32 @@ function loadTerminal(): TerminalPrefs {
     local = {};
   }
   const value = preferenceValue<unknown>(TERMINAL_CLOSE_ACTION_KEY, local.closeAction, TERMINAL_DEFAULTS.closeAction);
-  // Account defaults must match the server's terminal creation policy; device values only apply without an account.
+  // Account defaults must match the server's terminal creation policy. They apply only once the account view has
+  // loaded; until then (including a re-registration on wake) and without a sync account the device value applies.
   const defaultMode = terminalDefaultUsesAccount()
     ? accountOverrides[TERMINAL_DEFAULT_MODE_KEY] ?? accountDefaults[TERMINAL_DEFAULT_MODE_KEY]
     : local.defaultMode;
+  const gpu = preferenceValue<unknown>(TERMINAL_GPU_ACCELERATION_KEY, local.gpuAcceleration, TERMINAL_DEFAULTS.gpuAcceleration);
+  const links = preferenceValue<unknown>(TERMINAL_LINK_ACTIVATION_KEY, local.linkActivation, TERMINAL_DEFAULTS.linkActivation);
+  // A signed-in account reads only its own layers (override, then server default) once they have loaded: a device
+  // value saved by another account in this browser must not decide whether this account is asked before pasting.
+  // Until then, including on desktop where the store is registered before it is known whether a sync account exists
+  // (and again on wake), and on a desktop without a sync account, the device value applies.
+  const confirmPaste: unknown = accountPreferencesReady()
+    ? accountOverrides[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY] ?? accountDefaults[TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]
+    : local.confirmMultilinePaste;
+  // The server applies the history limit when it creates a durable terminal, so only the account layers count.
+  const durableHistory: unknown = terminalDefaultUsesAccount()
+    ? accountOverrides[TERMINAL_DURABLE_HISTORY_KEY] ?? accountDefaults[TERMINAL_DURABLE_HISTORY_KEY]
+    : undefined;
   return {
     closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction,
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
+    gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
+    linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
+    confirmMultilinePaste: normalizeMultilinePasteConfirm(confirmPaste),
+    scrollback: normalizeTerminalScrollback(local.scrollback),
+    durableHistoryMiB: normalizeDurableHistoryMiB(durableHistory),
   };
 }
 
@@ -261,12 +339,19 @@ export function getTerminalPrefs(): TerminalPrefs {
 }
 
 export function terminalDefaultUsesAccount(): boolean {
-  return accountStore !== null && !deviceOnlyPreferences;
+  return accountPreferencesReady();
 }
 
+// A choice made while the account view is still loading waits for it, so it lands where it will be read: the account
+// once it turns out to have one, otherwise the device. An account switch in the meantime drops it.
 export async function setTerminalDefaultMode(value: TerminalDefaultMode): Promise<void> {
-  const store = terminalDefaultUsesAccount() ? accountStore : null;
   const generation = registerGeneration;
+  const loading = waitAccountPreferences();
+  if (loading) {
+    await loading;
+    if (generation !== registerGeneration) return;
+  }
+  const store = terminalDefaultUsesAccount() ? accountStore : null;
   if (store) {
     await store.putOverrides({ [TERMINAL_DEFAULT_MODE_KEY]: value });
     if (generation !== registerGeneration || accountStore !== store) return;
@@ -294,6 +379,104 @@ export function setTerminalCloseAction(value: TerminalCloseAction): void {
     patchAccountOverrideCache({ [TERMINAL_CLOSE_ACTION_KEY]: value }, []);
   }
   for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalGpuAcceleration(value: TerminalGpuAcceleration): void {
+  if (terminalPrefs.gpuAcceleration === value) return;
+  terminalPrefs = { ...terminalPrefs, gpuAcceleration: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, gpuAcceleration: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_GPU_ACCELERATION_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_GPU_ACCELERATION_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalLinkActivation(value: TerminalLinkActivation): void {
+  if (terminalPrefs.linkActivation === value) return;
+  terminalPrefs = { ...terminalPrefs, linkActivation: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, linkActivation: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_LINK_ACTIVATION_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_LINK_ACTIVATION_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalScrollback(value: TerminalScrollback): void {
+  if (terminalPrefs.scrollback === value) return;
+  terminalPrefs = { ...terminalPrefs, scrollback: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, scrollback: value }));
+  } catch {
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+// setTerminalDurableHistoryMiB saves the account's history limit for new durable terminals; null returns to the
+// helper default. The server reads it from the account, so without one there is nowhere to save it.
+export async function setTerminalDurableHistoryMiB(value: number | null): Promise<void> {
+  const store = terminalDefaultUsesAccount() ? accountStore : null;
+  if (!store) throw new Error("持久终端历史上限保存在账号中，当前没有可用的账号");
+  const generation = registerGeneration;
+  if (value === null) {
+    await store.deleteOverrides([TERMINAL_DURABLE_HISTORY_KEY]);
+    if (generation !== registerGeneration || accountStore !== store) return;
+    patchAccountOverrideCache({}, [TERMINAL_DURABLE_HISTORY_KEY]);
+  } else {
+    await store.putOverrides({ [TERMINAL_DURABLE_HISTORY_KEY]: value });
+    if (generation !== registerGeneration || accountStore !== store) return;
+    patchAccountOverrideCache({ [TERMINAL_DURABLE_HISTORY_KEY]: value }, []);
+  }
+  terminalPrefs = loadTerminal();
+  for (const listener of terminalListeners) listener();
+}
+
+// setTerminalConfirmMultilinePaste writes a signed-in account's choice only as that account's override, which reaches
+// its other devices through preference sync; without an account it is kept on this device only.
+// A choice made while the account view is still loading waits for it, so it lands where it will be read: the account
+// once it turns out to have one, otherwise the device. An account switch in the meantime drops it.
+export function setTerminalConfirmMultilinePaste(value: TerminalMultilinePasteConfirm): void {
+  if (terminalPrefs.confirmMultilinePaste === value) return;
+  const apply = () => {
+    const store = accountPreferencesReady() ? accountStore : null;
+    if (store) {
+      void store.putOverrides({ [TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]: value }).catch(() => undefined);
+      patchAccountOverrideCache({ [TERMINAL_CONFIRM_MULTILINE_PASTE_KEY]: value }, []);
+    } else {
+      try {
+        const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+        const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+        localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, confirmMultilinePaste: value }));
+      } catch {
+      }
+    }
+    terminalPrefs = { ...terminalPrefs, confirmMultilinePaste: value };
+    for (const listener of terminalListeners) listener();
+  };
+  const loading = waitAccountPreferences();
+  if (!loading) {
+    apply();
+    return;
+  }
+  const generation = registerGeneration;
+  terminalPrefs = { ...terminalPrefs, confirmMultilinePaste: value };
+  for (const listener of terminalListeners) listener();
+  void loading.then(() => {
+    if (generation === registerGeneration) apply();
+  });
 }
 
 export function subscribeTerminalPrefs(listener: () => void): () => void {
@@ -369,6 +552,13 @@ const APPEARANCE_PREF_KEYS: Record<keyof AppearancePrefs, string> = {
   terminalContrast: "appearance.terminalContrast",
 };
 
+// Phones and tablets sync their terminal font size under a separate key, so tuning it for a small screen never changes the desktop value and vice versa.
+function appearanceKey(field: keyof AppearancePrefs): string {
+  return field === "terminalFontSize" && isMobileDevice()
+    ? "appearance.mobileTerminalFontSize"
+    : APPEARANCE_PREF_KEYS[field];
+}
+
 function parsePreset(value: unknown): UiFontPreset {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_APPEARANCE.uiFontPreset;
@@ -425,7 +615,7 @@ function loadAppearance(): AppearancePrefs {
   }
   const merged = {} as Record<keyof AppearancePrefs, unknown>;
   for (const field of Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]) {
-    merged[field] = preferenceValue(APPEARANCE_PREF_KEYS[field], local[field], builtinAppearance(field));
+    merged[field] = preferenceValue(appearanceKey(field), local[field], builtinAppearance(field));
   }
   return {
     uiFontPreset: parsePreset(merged.uiFontPreset),
@@ -490,7 +680,7 @@ function commitAppearance(next: AppearancePrefs): void {
   // Account-level override: after registration, written to the user_setting backend (M140) for cross-device sync
   if (accountStore && changedFields.length > 0) {
     const set: Record<string, unknown> = {};
-    for (const field of changedFields) set[APPEARANCE_PREF_KEYS[field]] = next[field];
+    for (const field of changedFields) set[appearanceKey(field)] = next[field];
     void accountStore.putOverrides(set).catch(() => undefined);
     patchAccountOverrideCache(set, []);
   }
@@ -539,7 +729,7 @@ export function resetAppearancePrefs(): void {
     localStorage.removeItem(APPEARANCE_KEY);
   } catch {
   }
-  const keys = [...Object.values(APPEARANCE_PREF_KEYS), THEME_MODE_PREFERENCE_KEY];
+  const keys = [...(Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).map(appearanceKey), THEME_MODE_PREFERENCE_KEY];
   if (accountStore) {
     void accountStore.deleteOverrides(keys).catch(() => undefined);
   }

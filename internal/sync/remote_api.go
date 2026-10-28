@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -51,7 +52,7 @@ type RemoteFleetDevice struct {
 
 type RemoteFleetDevices struct {
 	Devices []RemoteFleetDevice `json:"devices"`
-	// ServerVersion is empty when talking to an older server that does not report it.
+	// ServerVersion is the version the server reports.
 	ServerVersion string `json:"server_version,omitempty"`
 }
 
@@ -190,6 +191,16 @@ func (c *remoteClient) ListDevices(ctx context.Context) (*RemoteFleetDevices, er
 		return nil, err
 	}
 	return &view, nil
+}
+
+// ListSessions returns the server's listing of the durable sessions on the account's devices (the JSON of
+// session.AggregateList, decoded by the caller), waiting up to waitMS for devices still answering.
+func (c *remoteClient) ListSessions(ctx context.Context, waitMS int) (json.RawMessage, error) {
+	var view json.RawMessage
+	if err := c.api(ctx, http.MethodGet, "/fleet/sessions?wait_ms="+strconv.Itoa(max(waitMS, 0)), nil, &view); err != nil {
+		return nil, err
+	}
+	return view, nil
 }
 
 func (c *remoteClient) DeviceMetrics(ctx context.Context, deviceID string, sinceMS int64) (*RemoteMetricsSamples, error) {

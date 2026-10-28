@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -191,7 +191,6 @@ function seedWorkspace(options: { assetId?: string; assetKind?: string; title?: 
         assetKind: kind,
         panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p1",
-        splitRatio: 0.5,
         closable: true,
       },
     ],
@@ -309,11 +308,11 @@ describe("FileBrowser deleted sessions", () => {
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountFromStore();
 
-    await waitFor(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
+    await waitForRendered(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
     expect(panel()?.textContent).not.toContain("请刷新后重试");
     expect(buttonTexts()).toContain("重新连接这台主机");
     expect(buttonTexts()).not.toContain("重试");
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     expect(mocks.connect).toHaveBeenCalledWith("asset-1");
     await flush();
     expect(mocks.connect).toHaveBeenCalledTimes(1);
@@ -326,7 +325,7 @@ describe("FileBrowser deleted sessions", () => {
     );
     mounted = mountFromStore();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connect).toHaveBeenCalledWith("asset-1");
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(mocks.list).toHaveBeenCalledWith("s2", "~");
@@ -367,7 +366,6 @@ describe("FileBrowser deleted sessions", () => {
         },
       ],
       activePaneId: `pane-${id}`,
-      splitRatio: 0.5,
       closable: true,
     });
     useUi.setState({
@@ -417,10 +415,10 @@ describe("FileBrowser deleted sessions", () => {
       ),
     );
 
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalled());
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalled());
     await flush();
     pending.resolve(NEW_SESSION);
-    await waitFor(() => {
+    await waitForRendered(() => {
       const tabs = useUi.getState().workspaces.map((workspace) => workspace.panes[0]?.tabs[0]);
       expect(tabs[0]?.sessionId).toBe("s2");
       expect(tabs[1]?.sessionId).toBe("s2");
@@ -434,7 +432,7 @@ describe("FileBrowser deleted sessions", () => {
     seedWorkspace({ assetId: "asset-1" });
     mounted = mountFromStore();
 
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
     await flush();
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     expect(storeTabSessionId()).toBe("s2");
@@ -472,7 +470,6 @@ describe("FileBrowser deleted sessions", () => {
           sessionId: "other",
           panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -488,7 +485,7 @@ describe("FileBrowser deleted sessions", () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountFromStore();
-    await waitFor(() => expect(panel()).not.toBeNull());
+    await waitForRendered(() => expect(panel()).not.toBeNull());
 
     for (const label of ["上传", "文件夹", "新建"] as const) {
       const btn = toolbarButton(label);
@@ -530,9 +527,9 @@ describe("FileBrowser deleted sessions", () => {
     mocks.connect.mockRejectedValue(CHANGED_HOST_KEY);
     mounted = mountFromStore();
 
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机 127.0.0.1:22 的密钥已变更");
-    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    await waitForRendered(() => expect(toastTexts()).toContain("已取消重连"));
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(storeTabSessionId()).toBe(SID);
@@ -540,8 +537,8 @@ describe("FileBrowser deleted sessions", () => {
 
     clickButton(mounted.container, "重新连接这台主机");
 
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
   });
 
   it("accepting a host-key change records it, reconnects automatically, and reuses the original tab", async () => {
@@ -553,7 +550,7 @@ describe("FileBrowser deleted sessions", () => {
     );
     mounted = mountFromStore();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new", "ZmFrZS1ob3N0LWtleQ==");
     expect(mocks.connect).toHaveBeenCalledTimes(2);
     expect(storeTabSessionId()).toBe("s2");
@@ -567,7 +564,7 @@ describe("FileBrowser deleted sessions", () => {
     mocks.connect.mockRejectedValue(new Error("dial tcp 127.0.0.1:22: connect: connection refused"));
     mounted = mountFromStore();
 
-    await waitFor(() => expect(toastTexts()).toContain("重新连接失败"));
+    await waitForRendered(() => expect(toastTexts()).toContain("重新连接失败"));
     expect(toastTexts()).toContain("connection refused");
     expect(storeTabSessionId()).toBe(SID);
     expect(useUi.getState().sessions.map((s) => s.id)).toEqual([SID]);
@@ -576,8 +573,8 @@ describe("FileBrowser deleted sessions", () => {
 
     clickButton(mounted.container, "重新连接这台主机");
 
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(buttonTexts()).toContain("重新连接这台主机"));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
+    await waitForRendered(() => expect(buttonTexts()).toContain("重新连接这台主机"));
 
     mocks.connect.mockResolvedValue(NEW_SESSION);
     mocks.list.mockImplementation((sid: string) =>
@@ -585,7 +582,7 @@ describe("FileBrowser deleted sessions", () => {
     );
     clickButton(mounted.container, "重新连接这台主机");
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connect).toHaveBeenCalledTimes(3);
     expect(storeTabSessionId()).toBe("s2");
   });
@@ -597,7 +594,7 @@ describe("FileBrowser deleted sessions", () => {
     );
     mounted = mountFromStore();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connectLocal).toHaveBeenCalledTimes(1);
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(storeTabSessionId()).toBe("s-local");
@@ -611,7 +608,7 @@ describe("FileBrowser deleted sessions", () => {
     );
     mounted = mountFromStore();
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connectDevice).toHaveBeenCalledWith("d-1", "build-box");
     expect(mocks.connectDevice).toHaveBeenCalledTimes(1);
     expect(mocks.connect).not.toHaveBeenCalled();
@@ -627,7 +624,7 @@ describe("FileBrowser deleted sessions", () => {
     mocks.connect.mockRejectedValue({ code: "not_found", message: "资产不存在" });
     mounted = mountFromStore();
 
-    await waitFor(() => expect(toastTexts()).toContain("重新连接失败"));
+    await waitForRendered(() => expect(toastTexts()).toContain("重新连接失败"));
     expect(toastTexts()).toContain("资源不存在：资产不存在");
     expect(mocks.connect).toHaveBeenCalledWith("asset-gone");
     await flush();
@@ -639,7 +636,7 @@ describe("FileBrowser deleted sessions", () => {
   it("reports the precise reason when the file tab is missing and does not connect blindly or retry in a loop", async () => {
     mounted = mountStandalone();
 
-    await waitFor(() => expect(toastTexts()).toContain("找不到这个文件标签的主机信息"));
+    await waitForRendered(() => expect(toastTexts()).toContain("找不到这个文件标签的主机信息"));
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.connectLocal).not.toHaveBeenCalled();
     expect(useUi.getState().toasts).toHaveLength(1);
@@ -647,7 +644,7 @@ describe("FileBrowser deleted sessions", () => {
 
     clickButton(mounted.container, "重新连接这台主机");
 
-    await waitFor(() => expect(useUi.getState().toasts[0]?.id).not.toBe(firstToastId));
+    await waitForRendered(() => expect(useUi.getState().toasts[0]?.id).not.toBe(firstToastId));
     expect(useUi.getState().toasts).toHaveLength(1);
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.connectLocal).not.toHaveBeenCalled();
@@ -662,7 +659,7 @@ describe("FileBrowser transient file errors", () => {
     mocks.list.mockResolvedValue(ENTRIES.map((e) => ({ ...e })));
     mounted = mountFromStore();
 
-    await waitFor(() => expect(panel()?.textContent).toContain("连接被对端重置"));
+    await waitForRendered(() => expect(panel()?.textContent).toContain("连接被对端重置"));
     expect(mocks.list).toHaveBeenCalledTimes(2);
     expect(buttonTexts()).toContain("重试");
     expect(buttonTexts()).not.toContain("重新连接这台主机");
@@ -671,7 +668,7 @@ describe("FileBrowser transient file errors", () => {
 
     clickButton(mounted.container, "重试");
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.list).toHaveBeenCalledTimes(3);
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.connectLocal).not.toHaveBeenCalled();
@@ -695,7 +692,7 @@ describe("FileBrowser production retry policy (retry: 1)", () => {
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountProductionRetry();
 
-    await waitFor(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
+    await waitForRendered(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
     expect(mocks.list).toHaveBeenCalledTimes(1);
     expect(mocks.list).toHaveBeenCalledWith(SID, "~");
     await flush();
@@ -707,13 +704,13 @@ describe("FileBrowser production retry policy (retry: 1)", () => {
     mocks.list.mockRejectedValue({ code: "sftp", message: "SFTP：连接被对端重置" });
     mounted = mountProductionRetry();
 
-    await waitFor(() => expect(panel()?.textContent).toContain("连接被对端重置"));
+    await waitForRendered(() => expect(panel()?.textContent).toContain("连接被对端重置"));
     expect(mocks.list).toHaveBeenCalledTimes(2);
 
     mocks.list.mockResolvedValue(ENTRIES.map((e) => ({ ...e })));
     clickButton(mounted.container, "重试");
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.list).toHaveBeenCalledTimes(3);
   });
 });
@@ -806,7 +803,7 @@ describe("FileBrowser Windows roots and navigation", () => {
     mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
     mocks.list.mockResolvedValue([]);
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem("C:/")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("C:/")).toBeDefined());
     expect(browserItem("D:/")).toBeDefined();
 
     mocks.list.mockClear();
@@ -832,10 +829,10 @@ describe("FileBrowser Windows roots and navigation", () => {
       return Promise.resolve([]);
     });
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("D:/")).toBeDefined());
 
     doubleClick(browserItem("D:/")!);
-    await waitFor(() => expect(panel()?.textContent).toContain("目录不存在"));
+    await waitForRendered(() => expect(panel()?.textContent).toContain("目录不存在"));
     await flush();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(buttonTexts()).toContain("重试");
@@ -844,9 +841,9 @@ describe("FileBrowser Windows roots and navigation", () => {
     expect(toolbarButton("新建")?.disabled).toBe(false);
 
     click(upButton());
-    await waitFor(() => expect(browserItem("C:/")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("C:/")).toBeDefined());
     doubleClick(browserItem("C:/")!);
-    await waitFor(() => expect(browserItem("C:/Windows")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("C:/Windows")).toBeDefined());
     expect(mocks.connect).not.toHaveBeenCalled();
   });
 
@@ -855,17 +852,17 @@ describe("FileBrowser Windows roots and navigation", () => {
     mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
     mocks.list.mockResolvedValue([]);
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("D:/")).toBeDefined());
 
     setInputValue(pathInput(), "D:");
     pressEnter(pathInput());
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/"));
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/"));
 
     click(upButton());
-    await waitFor(() => expect(browserItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("D:/")).toBeDefined());
     setInputValue(pathInput(), "D:relative");
     pressEnter(pathInput());
-    await waitFor(() => expect(toastTexts()).toContain("需要绝对路径"));
+    await waitForRendered(() => expect(toastTexts()).toContain("需要绝对路径"));
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "D:relative");
   });
 
@@ -874,7 +871,7 @@ describe("FileBrowser Windows roots and navigation", () => {
     mocks.list.mockRejectedValue(LEGACY_NOT_FOUND);
     mounted = mountFromStore();
 
-    await waitFor(() => expect(panel()?.textContent).toContain("旧服务返回的资源不存在"));
+    await waitForRendered(() => expect(panel()?.textContent).toContain("旧服务返回的资源不存在"));
     await flush();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(panel()?.textContent).not.toContain("会话已在服务端删除");
@@ -888,7 +885,7 @@ describe("FileBrowser Windows roots and navigation", () => {
     mocks.list.mockRejectedValue(PATH_NOT_FOUND);
     mounted = mountFromStore();
 
-    await waitFor(() => expect(panel()?.textContent).toContain("目录不存在"));
+    await waitForRendered(() => expect(panel()?.textContent).toContain("目录不存在"));
     await flush();
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(buttonTexts()).toContain("重试");
@@ -908,13 +905,13 @@ describe("FileBrowser Windows roots and navigation", () => {
       return Promise.resolve(() => {});
     });
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("D:/")).toBeDefined());
 
     act(() => {
       control?.({ tabId: "k1", version: 1, cwd: "D:/Project" });
     });
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/Project"));
-    await waitFor(() => expect(pathInput().value).toBe("D:/Project"));
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/Project"));
+    await waitForRendered(() => expect(pathInput().value).toBe("D:/Project"));
   });
 
   it("keeps a UNC share as the parent boundary before returning to the computer", async () => {
@@ -922,15 +919,15 @@ describe("FileBrowser Windows roots and navigation", () => {
     mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
     mocks.list.mockResolvedValue([]);
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("D:/")).toBeDefined());
 
     setInputValue(pathInput(), String.raw`\\server\share\dir`);
     pressEnter(pathInput());
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share/dir"));
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share/dir"));
     click(upButton());
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share"));
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share"));
     click(upButton());
-    await waitFor(() => expect(browserItem("D:/")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("D:/")).toBeDefined());
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "//server");
   });
 
@@ -948,14 +945,14 @@ describe("FileBrowser Windows roots and navigation", () => {
     attachTerminalTab();
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(browserItem(dir)).toBeDefined());
 
     act(() => {
       browserItem(dir)!.dispatchEvent(
         new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
       );
     });
-    await waitFor(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
+    await waitForRendered(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
     const item = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
       (candidate) => candidate.textContent?.includes("在当前终端打开"),
     );
@@ -975,8 +972,8 @@ describe("FileBrowser roots errors", () => {
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountFromStore();
 
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    await waitForRendered(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
     expect(buttonTexts()).toContain("重新连接这台主机");
   });
 
@@ -988,10 +985,10 @@ describe("FileBrowser roots errors", () => {
     mocks.list.mockResolvedValue([]);
     mounted = mountFromStore();
 
-    await waitFor(() => expect(panel()?.textContent).toContain("根信息暂时不可用"));
+    await waitForRendered(() => expect(panel()?.textContent).toContain("根信息暂时不可用"));
     clickButton(mounted.container, "重试");
 
-    await waitFor(() => expect(browserItem("C:/")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("C:/")).toBeDefined());
     expect(browserItem("D:/")).toBeDefined();
     expect(mocks.roots).toHaveBeenCalledTimes(2);
     expect(mocks.connect).not.toHaveBeenCalled();
@@ -1005,20 +1002,20 @@ describe("FileBrowser new WinRM terminal navigation", () => {
     attachTerminalTab();
     mocks.list.mockResolvedValue([windowsEntry("D:/Project")]);
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem("D:/Project")).toBeDefined());
+    await waitForRendered(() => expect(browserItem("D:/Project")).toBeDefined());
 
     act(() => {
       browserItem("D:/Project")!.dispatchEvent(
         new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
       );
     });
-    await waitFor(() => expect(menuLabels().some((label) => label.includes("在新终端打开"))).toBe(true));
+    await waitForRendered(() => expect(menuLabels().some((label) => label.includes("在新终端打开"))).toBe(true));
     const item = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
       (candidate) => candidate.textContent?.includes("在新终端打开"),
     );
     click(item!);
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(
         useUi.getState().workspaces[0]?.panes[0]?.tabs.filter((tab) => tab.kind === "terminal"),
       ).toHaveLength(2),
@@ -1033,7 +1030,7 @@ describe("FileBrowser new WinRM terminal navigation", () => {
       useUi.getState().updateTab(newTab!.id, { tabId: "k2" });
     });
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.lineExec).toHaveBeenCalledWith("k2", "Set-Location -LiteralPath 'D:/Project'"),
     );
     expect(mocks.termWrite).not.toHaveBeenCalled();
@@ -1047,7 +1044,7 @@ describe("FileBrowser shell-aware terminal navigation", () => {
     act(() => {
       browserItem(path)!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     });
-    await waitFor(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
+    await waitForRendered(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
     const item = [...mounted!.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
       (candidate) => candidate.textContent?.includes("在当前终端打开"),
     );
@@ -1064,7 +1061,7 @@ describe("FileBrowser shell-aware terminal navigation", () => {
     useUi.getState().updateTab("terminal-1", { shell });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(browserItem(dir)).toBeDefined());
     await openCurrentAt(dir);
     expect(mocks.termWrite).toHaveBeenCalledTimes(1);
     expect(new TextDecoder().decode(mocks.termWrite.mock.calls[0][1])).toBe(command);
@@ -1078,11 +1075,11 @@ describe("FileBrowser shell-aware terminal navigation", () => {
     useUi.getState().updateTab("terminal-1", { shell });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(browserItem(dir)).toBeDefined());
     await openCurrentAt(dir);
     expect(mocks.termWrite).not.toHaveBeenCalled();
     expect(mocks.copy).toHaveBeenCalledWith(dir);
-    await waitFor(() => expect(toastTexts()).toContain("路径已复制"));
+    await waitForRendered(() => expect(toastTexts()).toContain("路径已复制"));
   });
 
   it("surfaces a copy failure without injecting into the terminal", async () => {
@@ -1093,12 +1090,12 @@ describe("FileBrowser shell-aware terminal navigation", () => {
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mocks.copy.mockRejectedValueOnce(new Error("clipboard denied"));
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(browserItem(dir)).toBeDefined());
     await openCurrentAt(dir);
 
     expect(mocks.termWrite).not.toHaveBeenCalled();
     expect(mocks.copy).toHaveBeenCalledWith(dir);
-    await waitFor(() => {
+    await waitForRendered(() => {
       expect(toastTexts()).toContain("复制路径失败");
       expect(toastTexts()).toContain("clipboard denied");
     });
@@ -1109,7 +1106,7 @@ describe("FileBrowser shell-aware terminal navigation", () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mounted = mountFromStore();
-    await waitFor(() => expect(browserItem(dir)).toBeDefined());
+    await waitForRendered(() => expect(browserItem(dir)).toBeDefined());
     act(() => {
       browserItem(dir)!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     });
@@ -1117,7 +1114,7 @@ describe("FileBrowser shell-aware terminal navigation", () => {
       (candidate) => candidate.textContent?.includes("在新终端打开"),
     );
     click(item!);
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.filter((tab) => tab.kind === "terminal")).toHaveLength(1),
     );
     const newTab = useUi.getState().workspaces[0]?.panes[0]?.tabs.find((tab) => tab.kind === "terminal" && tab.id !== "files-1");

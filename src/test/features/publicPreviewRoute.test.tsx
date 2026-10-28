@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { flush, flushUntil } from "./reactTestUtils";
 
@@ -62,6 +62,12 @@ async function importMainAt(pathname: string): Promise<void> {
   });
 }
 
+// The preview app is a React.lazy panel behind main.tsx. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await import("../../features/sharing/PublicPreviewApp");
+});
+
 describe("main.tsx public preview route", () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];
@@ -83,7 +89,7 @@ describe("main.tsx public preview route", () => {
 
   it("mounts the anonymous preview at /share/preview/{token} without dialing any account channel", async () => {
     await importMainAt("/share/preview/route-token-1");
-    await flushUntil(() => document.body.textContent?.includes("NexTerm 预览") === true, 400);
+    await flushUntil(() => document.body.textContent?.includes("NexTerm 预览") === true);
     expect(document.body.textContent).toContain("NexTerm 预览");
     expect(document.body.textContent).toContain("正在连接预览终端");
     expect(FakeWebSocket.instances.length).toBeGreaterThan(0);

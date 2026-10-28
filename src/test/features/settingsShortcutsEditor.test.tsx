@@ -89,7 +89,8 @@ describe("shortcuts editor", () => {
     expect(kbdText("commandPalette")).toBe("Ctrl+Shift+P");
     expect(kbdText("quickConnect")).toBe("Ctrl+Shift+K");
     expect(kbdText("newTerminal")).toBe("Ctrl+T");
-    expect(kbdText("terminalSearch")).toBe("Ctrl+F");
+    expect(kbdText("terminalSearch")).toBe("Ctrl+Shift+F");
+    expect(kbdText("restoreClosedTab")).toBe("Ctrl+Shift+T");
     expect(kbdText("reclaimTakeover")).toBe("Esc");
     expect(kbdText("switchTab")).toBe("Ctrl+1…9");
   });

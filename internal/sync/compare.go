@@ -72,59 +72,70 @@ func newCompareEntity(id, kind string, plaintext []byte) compareEntity {
 // compareName extracts the row name from plaintext: groups/assets/snippets/credentials/AI profiles use name, known_host uses host:port,
 // preferences use key, AI permissions are a global singleton, session records carry the asset name, tombstones degrade to the object id.
 func compareName(id, kind string, plaintext []byte) string {
-	switch kind {
-	case KindTombstone:
+	if spec, ok := lookupKind(kind); ok && spec.displayName != nil {
+		if name := spec.displayName(id, plaintext); name != "" {
+			return name
+		}
 		return id
-	case KindTranscript:
-		var payload struct {
-			AssetName string `json:"assetName"`
-		}
-		if err := json.Unmarshal(plaintext, &payload); err == nil && payload.AssetName != "" {
-			return payload.AssetName + " 的会话记录"
-		}
-	case KindKnownHost:
-		var payload struct {
-			Host string `json:"host"`
-			Port int32  `json:"port"`
-		}
-		if err := json.Unmarshal(plaintext, &payload); err == nil && payload.Host != "" {
-			return fmt.Sprintf("%s:%d", payload.Host, payload.Port)
-		}
-	case KindPreference:
-		var payload preferenceObject
-		if err := json.Unmarshal(plaintext, &payload); err == nil && payload.Key != "" {
-			return payload.Key
-		}
-	case KindAIPermission:
-		return "全局 AI 权限"
-	case KindAIGrant:
-		var payload struct {
-			DeviceID string `json:"deviceId"`
-			Action   string `json:"action"`
-			Path     string `json:"path"`
-			Mode     string `json:"mode"`
-		}
-		if err := json.Unmarshal(plaintext, &payload); err == nil && payload.DeviceID != "" {
-			switch {
-			case payload.Action != "" && payload.Path != "":
-				return payload.DeviceID + " " + payload.Action + " " + payload.Path
-			case payload.Action != "":
-				return payload.DeviceID + " " + payload.Action
-			case payload.Mode != "":
-				return payload.DeviceID + " " + payload.Mode
-			default:
-				return payload.DeviceID
-			}
-		}
-	default:
-		var payload struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(plaintext, &payload); err == nil && payload.Name != "" {
-			return payload.Name
-		}
+	}
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(plaintext, &payload); err == nil && payload.Name != "" {
+		return payload.Name
 	}
 	return id
+}
+
+func transcriptDisplayName(_ string, plaintext []byte) string {
+	var payload struct {
+		AssetName string `json:"assetName"`
+	}
+	if err := json.Unmarshal(plaintext, &payload); err == nil && payload.AssetName != "" {
+		return payload.AssetName + " 的会话记录"
+	}
+	return ""
+}
+
+func knownHostDisplayName(_ string, plaintext []byte) string {
+	var payload struct {
+		Host string `json:"host"`
+		Port int32  `json:"port"`
+	}
+	if err := json.Unmarshal(plaintext, &payload); err == nil && payload.Host != "" {
+		return fmt.Sprintf("%s:%d", payload.Host, payload.Port)
+	}
+	return ""
+}
+
+func preferenceDisplayName(_ string, plaintext []byte) string {
+	var payload preferenceObject
+	if err := json.Unmarshal(plaintext, &payload); err == nil && payload.Key != "" {
+		return payload.Key
+	}
+	return ""
+}
+
+func aiGrantDisplayName(_ string, plaintext []byte) string {
+	var payload struct {
+		DeviceID string `json:"deviceId"`
+		Action   string `json:"action"`
+		Path     string `json:"path"`
+		Mode     string `json:"mode"`
+	}
+	if err := json.Unmarshal(plaintext, &payload); err != nil || payload.DeviceID == "" {
+		return ""
+	}
+	switch {
+	case payload.Action != "" && payload.Path != "":
+		return payload.DeviceID + " " + payload.Action + " " + payload.Path
+	case payload.Action != "":
+		return payload.DeviceID + " " + payload.Action
+	case payload.Mode != "":
+		return payload.DeviceID + " " + payload.Mode
+	default:
+		return payload.DeviceID
+	}
 }
 
 // compareDeleted decides whether this side's content is in deleted form: a tombstone object or a soft-deleted asset with deletedAt.

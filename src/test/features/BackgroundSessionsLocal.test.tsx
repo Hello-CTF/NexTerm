@@ -44,7 +44,7 @@ import {
   type Pane,
   type Workspace,
 } from "../../app/store";
-import { deferred, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { deferred, flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { LiveTabInfo, SessionInfo } from "../../ipc/commands";
 import type { AccountUser } from "../../ipc/authApi";
 
@@ -55,7 +55,7 @@ function liveTab(extra: Partial<LiveTabInfo> & { tabId: string }): LiveTabInfo {
     sessionKind: "ssh",
     cols: 80,
     rows: 24,
-    controller: null,
+    sizeOwner: null,
     subscribers: 0,
     viewers: 0,
     exited: false,
@@ -80,7 +80,6 @@ function ws(panes: Pane[]): Workspace {
     sessionId: "s",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -133,7 +132,6 @@ describe("BackgroundSessions host-scoped view", () => {
       sessionId,
       panes: [{ id: "host-pane", tabs: [], activeTabId: null }],
       activePaneId: "host-pane",
-      splitRatio: 0.5,
       closable: true,
     };
     const active = {
@@ -143,7 +141,6 @@ describe("BackgroundSessions host-scoped view", () => {
       sessionId: activeSessionId,
       panes: [{ id: "active-pane", tabs: [], activeTabId: null }],
       activePaneId: "active-pane",
-      splitRatio: 0.5,
       closable: true,
     };
     useUi.setState({
@@ -180,7 +177,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("这台主机上没有在后台运行的终端"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("这台主机上没有在后台运行的终端"));
       expect(view.container.textContent).toContain("持久终端关闭标签后会继续在主机上运行并出现在这里；普通模式的终端关闭后会结束");
     } finally {
       view.unmount();
@@ -199,7 +196,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("本地构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("本地构建"));
       expect(view.container.textContent).toContain("远程构建");
       expect(view.container.textContent).not.toContain("其他主机");
       expect(view.container.textContent).not.toContain("有人看着");
@@ -229,7 +226,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("设备任务"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("设备任务"));
       expect(view.container.textContent).not.toContain("其他设备");
       expect(mocks.listDurable).toHaveBeenCalledWith("s1");
       expect(mocks.listDurable).not.toHaveBeenCalledWith("s2");
@@ -253,7 +250,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("远端训练"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("远端训练"));
       expect(mocks.listDurable).toHaveBeenCalledWith("s1");
       await act(async () => {
         actionButton(view, "接管").click();
@@ -282,7 +279,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("已有后台"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("已有后台"));
       expect(view.container.textContent).not.toContain("重复远端");
       expect(view.container.textContent).not.toContain("重复观看");
       expect(view.container.textContent).not.toContain("已退出远端");
@@ -298,7 +295,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("远端任务"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("远端任务"));
       await act(async () => {
         actionButton(view, "结束进程").click();
         await flush();
@@ -318,7 +315,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("SSH disconnected"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("SSH disconnected"));
       expect(view.container.textContent).toContain("已有后台");
       expect(view.container.textContent).not.toContain("这台主机上没有在后台运行的终端");
     } finally {
@@ -351,9 +348,9 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(view, "连接并查找").click();
         await flush();
       });
-      await waitFor(() => expect(mocks.reconnectSession).toHaveBeenCalledWith("s1"));
-      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("s1"));
-      await waitFor(() => expect(view.container.textContent).toContain("远端构建"));
+      await waitForRendered(() => expect(mocks.reconnectSession).toHaveBeenCalledWith("s1"));
+      await waitForRendered(() => expect(mocks.listDurable).toHaveBeenCalledWith("s1"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("远端构建"));
       expect(mocks.listDurable).not.toHaveBeenCalledWith("s2");
     } finally {
       view.unmount();
@@ -380,7 +377,7 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(view, "连接并查找").click();
         await flush();
       });
-      await waitFor(() => expect(toastText()).toContain("重新连接失败：重连未能启动"));
+      await waitForRendered(() => expect(toastText()).toContain("重新连接失败：重连未能启动"));
       expect(useUi.getState().workspaceRuntime["ws-host"]?.problems?.[0]).toMatchObject({
         connectionKey: assetConnectionProblemKey("asset-host-one"),
         summary: "重连未能启动",
@@ -390,7 +387,7 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(view, "连接并查找").click();
         await flush();
       });
-      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("s1"));
+      await waitForRendered(() => expect(mocks.listDurable).toHaveBeenCalledWith("s1"));
       expect(useUi.getState().workspaceRuntime["ws-host"]?.problems ?? []).toEqual([]);
     } finally {
       view.unmount();
@@ -409,7 +406,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("持续编译"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("持续编译"));
       await act(async () => {
         useUi.setState((state) => ({ sessions: state.sessions.map((session) => session.id === "s1"
           ? { ...session, status: "disconnected" as const } : session) }));
@@ -443,7 +440,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("快速连接的终端"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("快速连接的终端"));
       expect(mocks.listDurable).toHaveBeenCalledWith("s1");
       expect(view.container.textContent).not.toContain("连接并查找");
       expect(mocks.connectSession).not.toHaveBeenCalled();
@@ -489,7 +486,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const first = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(first.container.textContent).toContain("远端任务"));
+      await waitForRendered(() => expect(first.container.textContent).toContain("远端任务"));
     } finally {
       first.unmount();
     }
@@ -513,7 +510,7 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(second, "连接并查找").click();
         await flush();
       });
-      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-host"));
+      await waitForRendered(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-host"));
       expect(mocks.listDurable).not.toHaveBeenCalledWith("s1");
       expect(second.container.textContent).toContain("接管");
     } finally {
@@ -534,7 +531,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const first = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(first.container.textContent).toContain("仅账号 A 可见"));
+      await waitForRendered(() => expect(first.container.textContent).toContain("仅账号 A 可见"));
     } finally {
       first.unmount();
     }
@@ -555,7 +552,7 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(second, "连接并查找").click();
         await flush();
       });
-      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-a"));
+      await waitForRendered(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-a"));
       expect(mocks.listDurable).not.toHaveBeenCalledWith("s1");
     } finally {
       second.unmount();
@@ -575,7 +572,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("账号 A 的任务"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("账号 A 的任务"));
       act(() => {
         useAuth.setState({ user: { id: "account-b" } as AccountUser });
         useUi.setState((state) => ({ sessions: state.sessions.map((session) => session.id === "s1"
@@ -601,7 +598,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const first = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(first.container.textContent).toContain("私有任务"));
+      await waitForRendered(() => expect(first.container.textContent).toContain("私有任务"));
     } finally {
       first.unmount();
     }
@@ -610,7 +607,7 @@ describe("BackgroundSessions host-scoped view", () => {
 
     useUi.setState({
       sessions: [],
-      workspaces: [{ id: "tools", kind: "tools", title: "工具", panes: [{ id: "p", tabs: [], activeTabId: null }], activePaneId: "p", splitRatio: 0.5, closable: true }],
+      workspaces: [{ id: "tools", kind: "tools", title: "工具", panes: [{ id: "p", tabs: [], activeTabId: null }], activePaneId: "p", closable: true }],
       activeWorkspaceId: "tools",
     });
     mocks.listDurable.mockClear();
@@ -649,8 +646,8 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(view, "连接并查找").click();
         await flush();
       });
-      await waitFor(() => expect(mocks.connectSession).toHaveBeenCalledWith("asset-host-one"));
-      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-s1"));
+      await waitForRendered(() => expect(mocks.connectSession).toHaveBeenCalledWith("asset-host-one"));
+      await waitForRendered(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-s1"));
       expect(useUi.getState().workspaces.find((workspace) => workspace.id === "ws-host")?.sessionId).toBe("fresh-s1");
       expect(mocks.listDurable).not.toHaveBeenCalledWith("s1");
       expect(view.container.textContent).toContain("持续任务");
@@ -680,8 +677,8 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(view, "连接并查找").click();
         await flush();
       });
-      await waitFor(() => expect(mocks.connectDevice).toHaveBeenCalledWith("dev-1", "设备一"));
-      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-device"));
+      await waitForRendered(() => expect(mocks.connectDevice).toHaveBeenCalledWith("dev-1", "设备一"));
+      await waitForRendered(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-device"));
       expect(useUi.getState().workspaces.find((workspace) => workspace.id === "ws-host")?.sessionId).toBe("fresh-device");
       expect(view.container.textContent).toContain("持续设备任务");
     } finally {
@@ -717,7 +714,7 @@ describe("BackgroundSessions host-scoped view", () => {
       });
       expect(mocks.reconnectSession).not.toHaveBeenCalled();
       expect(mocks.connectSession).toHaveBeenCalledWith("asset-host-one");
-      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-s1"));
+      await waitForRendered(() => expect(mocks.listDurable).toHaveBeenCalledWith("fresh-s1"));
       expect(view.container.textContent).toContain("本主机任务");
     } finally {
       view.unmount();
@@ -734,7 +731,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("旧任务"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("旧任务"));
       expect(view.container.textContent).not.toContain("连接并查找");
       expect(mocks.listDurable).not.toHaveBeenCalled();
       await act(async () => {
@@ -773,7 +770,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.querySelectorAll('tr[aria-hidden="true"]').length).toBeGreaterThan(0));
+      await waitForRendered(() => expect(view.container.querySelectorAll('tr[aria-hidden="true"]').length).toBeGreaterThan(0));
       expect(view.container.textContent).toContain("加载中");
       expect(view.container.textContent).not.toContain("这台主机上没有在后台运行的终端");
 
@@ -797,7 +794,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("暂无输出"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("暂无输出"));
       expect(view.container.textContent).toContain("空终端");
     } finally {
       view.unmount();
@@ -810,7 +807,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("无法读取后台会话"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("无法读取后台会话"));
       expect(view.container.textContent).toContain("database unavailable");
       expect(view.container.textContent).not.toContain("这台主机上没有在后台运行的终端");
     } finally {
@@ -820,13 +817,13 @@ describe("BackgroundSessions host-scoped view", () => {
 
   it("restores a detached tab with its backend title on takeover", async () => {
     mocks.listLive.mockResolvedValue([
-      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "AI 构建" }),
+      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "AI 构建", titleCustom: true, titleChangedAt: 1_000 }),
     ]);
     seedScope();
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("AI 构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("AI 构建"));
       await act(async () => {
         actionButton(view, "接管").click();
         await flush();
@@ -847,6 +844,57 @@ describe("BackgroundSessions host-scoped view", () => {
     }
   });
 
+  it("does not lock an OSC program title as a custom title on takeover", async () => {
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "vim" }),
+    ]);
+    seedScope();
+    const view = mountHost();
+    try {
+      await flush();
+      await waitForRendered(() => expect(view.container.textContent).toContain("vim"));
+      await act(async () => {
+        actionButton(view, "接管").click();
+        await flush();
+      });
+      const added = useUi
+        .getState()
+        .workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .find((tab) => tab.tabId === "tab-local");
+      expect(added?.title).toBe("vim");
+      expect(added?.renamedByUser).toBeUndefined();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("does not invent a decision time for a custom title listed without one", async () => {
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "tab-local", sessionId: "s1", sessionKind: "local", sessionName: "主机一", title: "部署", titleCustom: true }),
+    ]);
+    seedScope();
+    const view = mountHost();
+    try {
+      await flush();
+      await waitForRendered(() => expect(view.container.textContent).toContain("部署"));
+      await act(async () => {
+        actionButton(view, "接管").click();
+        await flush();
+      });
+      const added = useUi
+        .getState()
+        .workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .find((tab) => tab.tabId === "tab-local");
+      expect(added?.title).toBe("部署");
+      // The attach reports the backend's decision time; a local Date.now() would win merges.
+      expect(added?.customTitleAt).toBeUndefined();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("restores a background row and resynchronizes sessions after kill fails", async () => {
     mocks.listLive.mockResolvedValue([
       liveTab({ tabId: "tab-local", sessionKind: "local", sessionName: "本机", title: "构建" }),
@@ -856,7 +904,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建"));
       const button = [...view.container.querySelectorAll("button")].find(
         (candidate) => candidate.textContent?.trim() === "结束进程",
       );
@@ -913,7 +961,7 @@ describe("BackgroundSessions host-scoped view", () => {
         view.root.render(createElement(BackgroundSessions, { workspaceId: "ws-host", sessionId: "s2" }));
         await flush();
       });
-      await waitFor(() => expect(mocks.listLive).toHaveBeenCalledTimes(2));
+      await waitForRendered(() => expect(mocks.listLive).toHaveBeenCalledTimes(2));
 
       await act(async () => {
         newRequest.resolve([liveTab({ tabId: "new", sessionId: "s2", sessionName: "主机二", title: "新连接" })]);
@@ -954,7 +1002,6 @@ describe("BackgroundSessions host-scoped view", () => {
           sessionId: host.sessionId,
           panes: [{ id: "p", tabs: [], activeTabId: null }],
           activePaneId: "p",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -970,7 +1017,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建"));
       expect(view.container.textContent).not.toContain("训练");
       expectNoAssetSelector(view);
     } finally {
@@ -984,7 +1031,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建"));
       expect(view.container.textContent).toContain("训练");
       expectNoAssetSelector(view);
     } finally {
@@ -1044,8 +1091,8 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      await waitFor(() => expect(mocks.listDurable).toHaveBeenCalledWith("s2"));
-      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+      await waitForRendered(() => expect(mocks.listDurable).toHaveBeenCalledWith("s2"));
+      expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(1);
       expect(view.container.textContent).toContain("共享任务");
       await act(async () => {
         actionButton(view, "接管").click();
@@ -1065,7 +1112,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+      expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(1);
       expect(view.container.textContent).toContain("现场任务");
       expect(view.container.textContent).not.toContain("持久任务");
     } finally {
@@ -1084,7 +1131,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(1);
+      expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(1);
       expect(view.container.textContent).toContain("仍在运行的任务");
       expect(view.container.textContent).not.toContain("已退出任务");
     } finally {
@@ -1200,22 +1247,22 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("主机二任务"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("主机二任务"));
       expect(view.container.textContent).toContain("主机一任务");
-      expect(view.container.querySelectorAll("tbody tr")).toHaveLength(2);
+      expect(view.container.querySelectorAll("tbody tr[data-background-row]")).toHaveLength(2);
 
-      const firstRow = [...view.container.querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("主机一任务"));
+      const firstRow = [...view.container.querySelectorAll("tbody tr[data-background-row]")].find((row) => row.textContent?.includes("主机一任务"));
       const killFirst = [...(firstRow?.querySelectorAll("button") ?? [])].find((button) => button.textContent?.includes("结束进程"));
       if (!killFirst) throw new Error("主机一的结束按钮未找到");
       await act(async () => {
         killFirst.click();
         await flush();
       });
-      await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("shared", "kill", "s1"));
+      await waitForRendered(() => expect(mocks.closeTab).toHaveBeenCalledWith("shared", "kill", "s1"));
       expect(view.container.textContent).toContain("主机二任务");
       expect(view.container.textContent).not.toContain("主机一任务");
 
-      const secondRow = [...view.container.querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("主机二任务"));
+      const secondRow = [...view.container.querySelectorAll("tbody tr[data-background-row]")].find((row) => row.textContent?.includes("主机二任务"));
       const takeOverSecond = [...(secondRow?.querySelectorAll("button") ?? [])].find((button) => button.textContent?.includes("接管"));
       if (!takeOverSecond) throw new Error("主机二的接管按钮未找到");
       await act(async () => {
@@ -1235,7 +1282,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions));
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建"));
       expect(view.container.textContent).not.toContain("训练");
       expectNoAssetSelector(view);
     } finally {
@@ -1254,7 +1301,6 @@ describe("BackgroundSessions host-scoped view", () => {
           sessionId: "s2",
           panes: [{ id: "p1", tabs: [], activeTabId: null }],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
         {
@@ -1264,7 +1310,6 @@ describe("BackgroundSessions host-scoped view", () => {
           sessionId: "s1",
           panes: [{ id: "p2", tabs: [], activeTabId: null }],
           activePaneId: "p2",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -1275,7 +1320,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions, { workspaceId: "ws-host" }));
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建"));
       expect(view.container.textContent).not.toContain("训练");
       expectNoAssetSelector(view);
     } finally {
@@ -1289,7 +1334,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mount(createElement(BackgroundSessions, { workspaceId: "ws", sessionId: "s1" }));
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建"));
       expect(view.container.textContent).not.toContain("训练");
       expectNoAssetSelector(view);
     } finally {
@@ -1305,12 +1350,12 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建"));
       await act(async () => {
         actionButton(view, "结束进程").click();
         await flush();
       });
-      await waitFor(() => expect(mocks.closeTab).toHaveBeenCalledWith("t1", "kill", "s1"));
+      await waitForRendered(() => expect(mocks.closeTab).toHaveBeenCalledWith("t1", "kill", "s1"));
       expect(mocks.ask).toHaveBeenCalledWith(
         expect.stringContaining("无法恢复"),
         { title: "结束进程", kind: "warning" },
@@ -1330,12 +1375,12 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建"));
       await act(async () => {
         actionButton(view, "结束进程").click();
         await flush();
       });
-      await waitFor(() => expect(toastText()).toContain("结束进程失败：kill failed"));
+      await waitForRendered(() => expect(toastText()).toContain("结束进程失败：kill failed"));
       expect(view.container.textContent).toContain("构建");
     } finally {
       view.unmount();
@@ -1351,7 +1396,7 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      await waitForRendered(() => expect(view.container.textContent).toContain("构建"));
       await act(async () => {
         actionButton(view, "结束进程").click();
         await flush();

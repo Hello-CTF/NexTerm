@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,7 +16,6 @@ type Server struct {
 	supervisor      *Supervisor
 	stateDigest     string
 	runtimeMetadata *RuntimeMetadata
-	features        []string
 	endpoint        endpointIdentity
 	listener        net.Listener
 	unlock          func()
@@ -34,12 +32,6 @@ type Server struct {
 }
 
 func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
-	return newServer(supervisor, socketPath, HelperFeatures())
-}
-
-// newServer lets compatibility tests start a server that advertises only the
-// capabilities of an older helper.
-func newServer(supervisor *Supervisor, socketPath string, features []string) (*Server, error) {
 	if supervisor == nil {
 		return nil, fmt.Errorf("%w: supervisor is required", ErrInvalidInput)
 	}
@@ -58,7 +50,6 @@ func newServer(supervisor *Supervisor, socketPath string, features []string) (*S
 		supervisor:      supervisor,
 		stateDigest:     stateDigest,
 		runtimeMetadata: provenRuntimeMetadata(),
-		features:        slices.Clone(features),
 		endpoint:        endpoint,
 		listener:        listener,
 		unlock:          unlock,
@@ -156,20 +147,24 @@ type serverConn struct {
 	sessionMu  sync.Mutex
 	attachment *Attachment
 
-	clientFeatures []string
+	// compress records the client's hello preference for gzip replay batches
+	// and zstd live output.
+	compress bool
+	// rulesOwner is the hello's state rule owner key; empty for none.
+	rulesOwner string
 
 	// done closes with the connection so goroutines parked on input or credit
 	// stop without waiting for the peer.
 	done chan struct{}
 
-	// Windowed input (input_window): frames queue here and one goroutine feeds
+	// Windowed input: frames queue here and one goroutine feeds
 	// the session, so a full session queue delays acknowledgements instead of
 	// stalling the read loop or rejecting the frame.
 	inputOnce   sync.Once
-	inputFrames chan []byte
+	inputFrames chan inputFrame
 	inputBytes  atomic.Int64
 
-	// Output credit (output_credit): creditMu guards credited, the client's
+	// Output credit: creditMu guards credited, the client's
 	// cumulative retired byte count, and sent, what the server has streamed.
 	creditMu   sync.Mutex
 	credited   uint64
@@ -206,25 +201,27 @@ func (c *serverConn) serve() {
 		return
 	}
 	if hello.Version != ProtocolVersion {
-		c.replyError(frameError, errorMsg{Code: codeVersionMismatch, Message: fmt.Sprintf("protocol version %d is not supported", hello.Version)})
+		c.replyError(frameError, versionRejection(hello.Version))
 		return
 	}
 	if hello.StateDigest != c.server.stateDigest {
 		c.replyError(frameError, errorMsg{Code: codeStateMismatch, Message: "supervisor state digest does not match this endpoint"})
 		return
 	}
-	c.clientFeatures = hello.Features
-	ack := helloMsg{Version: ProtocolVersion, Features: slices.Clone(c.server.features)}
-	if slices.Contains(c.clientFeatures, featureRuntimeMetadata) {
-		ack.Runtime = c.server.runtimeMetadata
+	c.compress = hello.CompressOutput
+	if hello.StateRulesOwner != "" && !validStateRulesOwner(hello.StateRulesOwner) {
+		c.replyError(frameError, errorMsg{Code: codeInvalidInput, Message: "malformed state rule owner key"})
+		return
 	}
-	if slices.Contains(c.clientFeatures, featureActivity) {
-		activity, err := c.server.supervisor.Activity(context.Background())
-		if err != nil {
-			c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
-			return
-		}
-		ack.Activity = &activity
+	c.rulesOwner = hello.StateRulesOwner
+	activity, err := c.server.supervisor.Activity(context.Background())
+	if err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		return
+	}
+	ack := helloMsg{
+		Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity,
+		StateRules: &stateRulesAck{Revision: c.server.supervisor.stateRulesSeen(c.rulesOwner)},
 	}
 	if err := c.reply(frameHelloAck, ack); err != nil {
 		return
@@ -238,7 +235,7 @@ func (c *serverConn) serve() {
 		case frameCreate:
 			c.handleCreate(payload)
 		case frameList:
-			c.handleList()
+			c.handleList(payload)
 		case frameRename:
 			c.handleRename(payload)
 		case frameAttach:
@@ -255,6 +252,10 @@ func (c *serverConn) serve() {
 			}
 		case frameResize:
 			c.handleResize(payload)
+		case frameStateSeen:
+			c.handleStateSeen(payload)
+		case frameTapPrompt:
+			c.handleTapPrompt(payload)
 		case frameKill:
 			c.handleKill()
 		case frameGetVersions:
@@ -263,12 +264,21 @@ func (c *serverConn) serve() {
 			c.handleSetVersions(payload)
 		case frameKillSession:
 			c.handleKillSession(payload)
+		case frameReadHistory:
+			c.handleReadHistory(payload)
+		case frameSetStateRules:
+			c.handleSetStateRules(payload)
 		case frameDetach:
 			_ = c.reply(frameOK, struct{}{})
 			return
 		default:
+			// A frame from a newer client is refused without ending the
+			// connection, so the client keeps its session. Only request/reply
+			// frames may rely on this refusal, because the client waits for
+			// an answer. A new frame that has no reply must first be
+			// advertised in the hello ack, so the client never sends it to a
+			// helper that would answer with an unexpected error frame.
 			c.replyError(frameError, errorMsg{Code: codeProtocol, Message: fmt.Sprintf("unexpected frame type %d", kind)})
-			return
 		}
 	}
 }
@@ -280,10 +290,6 @@ func (c *serverConn) handleCreate(payload []byte) {
 		return
 	}
 	usePTY := msg.Pty == nil || *msg.Pty
-	if !usePTY && !slices.Contains(c.clientFeatures, featureExec) {
-		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "client does not support non-PTY exec"})
-		return
-	}
 	session, err := c.server.supervisor.Create(context.Background(), CreateOptions{
 		ID:      msg.ID,
 		Attempt: msg.Attempt,
@@ -293,6 +299,9 @@ func (c *serverConn) handleCreate(payload []byte) {
 		Cols:    msg.Cols,
 		Rows:    msg.Rows,
 		Pty:     msg.Pty,
+
+		HistoryLimit:    msg.HistoryLimit,
+		StateRulesOwner: c.rulesOwner,
 	})
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
@@ -322,8 +331,15 @@ func (c *serverConn) handleCreate(payload []byte) {
 	}
 }
 
-func (c *serverConn) handleList() {
-	infos, err := c.server.supervisor.listCanonical(context.Background())
+func (c *serverConn) handleList(payload []byte) {
+	var options listOptions
+	if len(payload) > 0 {
+		if err := unmarshalFrame(payload, &options); err != nil {
+			c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+			return
+		}
+	}
+	infos, err := c.server.supervisor.listCanonicalWith(context.Background(), options)
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
@@ -332,10 +348,6 @@ func (c *serverConn) handleList() {
 }
 
 func (c *serverConn) handleRename(payload []byte) {
-	if !slices.Contains(c.clientFeatures, featureMetadata) {
-		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "client does not support session metadata"})
-		return
-	}
 	var msg RenameRequest
 	if err := unmarshalFrame(payload, &msg); err != nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
@@ -369,7 +381,8 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	if msg.ExpectIncarnation != "" || msg.ExpectCreatedAt != 0 {
 		expected = &Identity{CreatedAt: time.Unix(0, msg.ExpectCreatedAt), Incarnation: msg.ExpectIncarnation}
 	}
-	attachment, err := c.server.supervisor.attachFrom(context.Background(), msg.ID, msg.Offset, expected)
+	options := AttachOptions{Offset: msg.Offset, Tail: msg.Tail, Retain: msg.Retain}
+	attachment, err := c.server.supervisor.attachFrom(context.Background(), msg.ID, options, expected, msg.ExpectGeneration)
 	if err != nil {
 		c.replyOperationError(err)
 		return true
@@ -377,18 +390,44 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	c.sessionMu.Lock()
 	c.attachment = attachment
 	c.sessionMu.Unlock()
-	if err := c.reply(frameAttached, attachment.session.canonicalInfo()); err != nil {
+	info := attachment.session.canonicalInfo()
+	if err := c.reply(frameAttached, attachedMsg{Info: info, Replay: attachment.Replay()}); err != nil {
 		_ = attachment.Detach()
 		return false
 	}
 	go c.streamOutput(attachment)
+	if info.State != nil {
+		c.server.wg.Add(1)
+		go func() {
+			defer c.server.wg.Done()
+			c.streamState(attachment, info.State.LastEventSeq)
+		}()
+	}
 	return true
 }
 
-// negotiated reports whether the client asked for feature and this server
-// advertises it; only then may the connection use the extended behaviour.
-func (c *serverConn) negotiated(feature string) bool {
-	return slices.Contains(c.clientFeatures, feature) && slices.Contains(c.server.features, feature)
+// streamState pushes the attached session's state whenever it changes,
+// with the events after the last pushed sequence. The attachment registers
+// for changes before the attach reply snapshots the state, so no change
+// between the two is missed.
+func (c *serverConn) streamState(attachment *Attachment, after uint64) {
+	for {
+		select {
+		case <-attachment.StateUpdates():
+		case <-attachment.ctx.Done():
+			return
+		case <-c.done:
+			return
+		}
+		state := attachment.SessionState(after)
+		if state == nil {
+			continue
+		}
+		if c.reply(frameState, stateMsg{ID: attachment.ID(), State: *state}) != nil {
+			return
+		}
+		after = state.LastEventSeq
+	}
 }
 
 func (c *serverConn) handleInput(payload []byte) bool {
@@ -397,36 +436,56 @@ func (c *serverConn) handleInput(payload []byte) bool {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "input frame without attach"})
 		return true
 	}
-	if c.negotiated(featureInputWindow) {
-		return c.queueWindowedInput(attachment, payload)
-	}
-	count, err := attachment.tryWrite(payload)
+	generation, incarnation, data, err := parseInput(payload)
 	if err != nil {
-		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
-		return true
+		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return false
 	}
-	_ = c.reply(frameInputAck, inputAckMsg{Written: count})
-	return true
+	return c.queueWindowedInput(attachment, inputFrame{generation: generation, incarnation: incarnation, data: data})
+}
+
+// inputFrame is one parsed frameInput: the data and the helper generation
+// and session incarnation the client meant it for.
+type inputFrame struct {
+	generation  string
+	incarnation string
+	data        []byte
+}
+
+// checkAttached rejects a request whose expectations name another helper
+// process or another incarnation of the attached session. Both expectations
+// are required.
+func checkAttached(supervisor *Supervisor, attachment *Attachment, generation, incarnation string) error {
+	if generation == "" {
+		return fmt.Errorf("%w: request lacks the expected helper generation", ErrProtocol)
+	}
+	if err := supervisor.checkGeneration(generation); err != nil {
+		return err
+	}
+	if current := attachment.session.Identity().Incarnation; incarnation != current {
+		return fmt.Errorf("%w: request for incarnation %q, attached session is %q", ErrIdentity, incarnation, current)
+	}
+	return nil
 }
 
 // queueWindowedInput hands the frame to the input goroutine. The client bounds
 // its own window; a peer that exceeds the server's tolerance is cut off rather
 // than allowed to grow memory.
-func (c *serverConn) queueWindowedInput(attachment *Attachment, payload []byte) bool {
+func (c *serverConn) queueWindowedInput(attachment *Attachment, frame inputFrame) bool {
 	c.inputOnce.Do(func() {
-		c.inputFrames = make(chan []byte, serverInputMaxFrames)
+		c.inputFrames = make(chan inputFrame, serverInputMaxFrames)
 		c.server.wg.Add(1)
 		go func() {
 			defer c.server.wg.Done()
 			c.pumpWindowedInput(attachment)
 		}()
 	})
-	if c.inputBytes.Add(int64(len(payload))) > serverInputMaxBytes {
+	if c.inputBytes.Add(int64(len(frame.data))) > serverInputMaxBytes {
 		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "input window exceeded"})
 		return false
 	}
 	select {
-	case c.inputFrames <- payload:
+	case c.inputFrames <- frame:
 		return true
 	default:
 		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "input window exceeded"})
@@ -440,9 +499,13 @@ func (c *serverConn) queueWindowedInput(attachment *Attachment, payload []byte) 
 func (c *serverConn) pumpWindowedInput(attachment *Attachment) {
 	for {
 		select {
-		case payload := <-c.inputFrames:
-			count, err := attachment.writeBlocking(payload)
-			c.inputBytes.Add(-int64(len(payload)))
+		case frame := <-c.inputFrames:
+			var count int
+			err := checkAttached(c.server.supervisor, attachment, frame.generation, frame.incarnation)
+			if err == nil {
+				count, err = attachment.writeBlocking(frame.data)
+			}
+			c.inputBytes.Add(-int64(len(frame.data)))
 			ack := inputAckMsg{Written: count}
 			if err != nil {
 				msg := errorMessage(err)
@@ -458,7 +521,7 @@ func (c *serverConn) pumpWindowedInput(attachment *Attachment) {
 }
 
 func (c *serverConn) handleCredit(payload []byte) bool {
-	if !c.negotiated(featureOutputCredit) || len(payload) != 8 {
+	if len(payload) != 8 {
 		c.replyError(frameFatal, errorMsg{Code: codeProtocol, Message: "unexpected credit frame"})
 		return false
 	}
@@ -531,6 +594,34 @@ func (c *serverConn) handleKillSession(payload []byte) {
 	_ = c.reply(frameOK, struct{}{})
 }
 
+func (c *serverConn) handleReadHistory(payload []byte) {
+	if c.attached() != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "history read on attached connection"})
+		return
+	}
+	var msg readHistoryMsg
+	if err := unmarshalFrame(payload, &msg); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if msg.ExpectIncarnation == "" {
+		c.replyError(frameError, errorMsg{Code: codeInvalidInput, Message: "history read requires the session identity"})
+		return
+	}
+	expected := Identity{CreatedAt: time.Unix(0, msg.ExpectCreatedAt), Incarnation: msg.ExpectIncarnation}
+	chunk, err := c.server.supervisor.readHistory(context.Background(), msg.ID, msg.Before, msg.MaxBytes, expected, msg.ExpectGeneration)
+	if err != nil {
+		c.replyOperationError(err)
+		return
+	}
+	reply, err := historyPayload(chunk)
+	if err != nil {
+		c.replyOperationError(err)
+		return
+	}
+	_ = c.replyRaw(frameHistory, reply)
+}
+
 func (c *serverConn) handleResize(payload []byte) {
 	attachment := c.attached()
 	if attachment == nil {
@@ -542,11 +633,59 @@ func (c *serverConn) handleResize(payload []byte) {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
 		return
 	}
+	if err := checkAttached(c.server.supervisor, attachment, msg.ExpectGeneration, msg.ExpectIncarnation); err != nil {
+		c.replyError(frameError, errorMessage(err))
+		return
+	}
 	if err := attachment.Resize(context.Background(), msg.Cols, msg.Rows); err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
 	_ = c.reply(frameOK, struct{}{})
+}
+
+func (c *serverConn) handleStateSeen(payload []byte) {
+	attachment := c.attached()
+	if attachment == nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "state seen frame without attach"})
+		return
+	}
+	var msg stateSeenMsg
+	if err := unmarshalFrame(payload, &msg); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if err := attachment.MarkStateSeen(msg.Since); err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		return
+	}
+	_ = c.reply(frameOK, struct{}{})
+}
+
+// handleTapPrompt answers the attached session's prompt. It runs on the
+// frame loop: the client sends it only after its earlier input frames were
+// acknowledged, so the keys follow that input.
+func (c *serverConn) handleTapPrompt(payload []byte) {
+	attachment := c.attached()
+	if attachment == nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "tap frame without attach"})
+		return
+	}
+	var msg tapPromptMsg
+	if err := unmarshalFrame(payload, &msg); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if err := checkAttached(c.server.supervisor, attachment, msg.ExpectGeneration, msg.ExpectIncarnation); err != nil {
+		c.replyError(frameError, errorMessage(err))
+		return
+	}
+	sent, err := attachment.TapPrompt(msg.Epoch, msg.Fingerprint, msg.Option)
+	if err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		return
+	}
+	_ = c.reply(frameOK, tapPromptReply{Sent: sent})
 }
 
 func (c *serverConn) handleKill() {
@@ -568,6 +707,23 @@ func (c *serverConn) handleKill() {
 	}
 	if err := attachment.Kill(context.Background()); err != nil {
 		c.replyOperationError(err)
+		return
+	}
+	_ = c.reply(frameOK, struct{}{})
+}
+
+func (c *serverConn) handleSetStateRules(payload []byte) {
+	var set StateRuleSet
+	if err := unmarshalFrame(payload, &set); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if c.rulesOwner == "" {
+		c.replyError(frameError, errorMsg{Code: codeInvalidInput, Message: "state rules need a rule owner in the hello"})
+		return
+	}
+	if err := c.server.supervisor.SetStateRules(c.rulesOwner, set); err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
 	_ = c.reply(frameOK, struct{}{})
@@ -650,24 +806,17 @@ func (c *serverConn) execKill(ctx context.Context, session *Session) error {
 
 func (c *serverConn) streamOutput(attachment *Attachment) {
 	var replayEnd uint64
-	if slices.Contains(c.clientFeatures, featureReplayGzip) {
-		attachment.replayMu.Lock()
-		if attachment.replay != nil {
-			if info, err := attachment.replay.Stat(); err == nil {
-				replayEnd = uint64(info.Size())
-			}
-		}
-		attachment.replayMu.Unlock()
+	if c.compress {
+		replayEnd = attachment.replayEnd
 	}
 	var compressor replayCompressor
 	buffer := make([]byte, replayChunkSize)
-	credit := c.negotiated(featureOutputCredit)
-	zstdOutput := c.negotiated(featureOutputZstd)
 	base := attachment.NextSeq()
+	expected := base
 	for {
-		if credit && !c.awaitCredit(attachment) {
+		if !c.awaitCredit(attachment) {
 			// A kill or detach cancels the attachment while parked on credit; deliver
-			// the exit exactly as the non-credit path does when Read reports ErrClosed.
+			// the exit exactly as a Read that reports ErrClosed does.
 			select {
 			case <-c.done:
 			default:
@@ -677,37 +826,45 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 			}
 			return
 		}
-		seq := attachment.NextSeq()
 		size := outputChunkSize
-		if seq < replayEnd {
-			size = int(min(uint64(replayChunkSize), replayEnd-seq))
+		if expected < replayEnd {
+			size = int(min(uint64(replayChunkSize), replayEnd-expected))
 		}
-		count, err := attachment.Read(buffer[:size])
+		seq, count, err := attachment.readChunk(buffer[:size])
 		if count > 0 {
+			if seq != expected {
+				// The reader fell behind the history limit. The skipped
+				// output counts as streamed so credit stays aligned.
+				c.creditMu.Lock()
+				c.sent = seq - base
+				c.creditMu.Unlock()
+				if writeErr := c.replyRaw(frameHistoryGap, gapPayload(expected, seq)); writeErr != nil {
+					return
+				}
+			}
 			kind, payload := frameOutput, outputPayload(seq, buffer[:count])
 			if seq < replayEnd && count >= 1024 {
 				if compressed, compressErr := compressor.encode(seq, buffer[:count]); compressErr == nil && len(compressed) < len(payload) {
 					kind, payload = frameReplayGzip, compressed
 				}
 			}
-			if zstdOutput && kind == frameOutput {
+			if c.compress && kind == frameOutput {
 				// Credit below counts decoded bytes (seq advances by count), so
 				// compression never widens the flow-control window.
 				if packed, packErr := encodeOutputZstd(seq, buffer[:count]); packErr == nil && packed != nil {
 					kind, payload = frameOutputZstd, packed
 				}
 			}
-			if credit {
-				// Counted before the write: the client may return credit for
-				// this chunk before the write call comes back here.
-				c.creditMu.Lock()
-				c.sent = seq + uint64(count) - base
-				c.creditMu.Unlock()
-			}
+			expected = seq + uint64(count)
+			// Counted before the write: the client may return credit for this
+			// chunk before the write call comes back here.
+			c.creditMu.Lock()
+			c.sent = expected - base
+			c.creditMu.Unlock()
 			if writeErr := c.replyRaw(kind, payload); writeErr != nil {
 				return
 			}
-			if seq+uint64(count) >= replayEnd {
+			if expected >= replayEnd {
 				compressor = replayCompressor{}
 			}
 		}
@@ -747,11 +904,18 @@ func (c *serverConn) replyError(kind frameType, msg errorMsg) {
 }
 
 func (c *serverConn) replyOperationError(err error) {
-	msg := errorMessage(err)
-	if errors.Is(err, ErrIdentity) && slices.Contains(c.clientFeatures, featureMetadata) {
-		msg.Code = codeIdentityChanged
+	c.replyError(frameError, errorMessage(err))
+}
+
+// versionRejection answers a hello of another protocol version. It names the
+// side that must upgrade and carries this helper's version, so a newer client
+// can tell its own upgrade apart from the helper's.
+func versionRejection(clientVersion int) errorMsg {
+	message := fmt.Sprintf("client protocol %d is older than helper protocol %d; update the client", clientVersion, ProtocolVersion)
+	if clientVersion > ProtocolVersion {
+		message = fmt.Sprintf("helper protocol %d is older than client protocol %d; the helper needs upgrade", ProtocolVersion, clientVersion)
 	}
-	c.replyError(frameError, msg)
+	return errorMsg{Code: codeVersionMismatch, Message: message, Version: ProtocolVersion}
 }
 
 func (c *serverConn) close() {

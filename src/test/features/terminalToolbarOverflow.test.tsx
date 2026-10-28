@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
 
-import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
+import { declared, installCompiledCSS, styleRules } from "../lib/cssom";
 import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const harness = vi.hoisted(() => ({
@@ -175,7 +175,6 @@ beforeEach(async () => {
           },
         ],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -317,8 +316,13 @@ describe("terminal toolbar overflow", () => {
     }
     expect(overflowButton().className).not.toContain("hidden");
 
-    const css = readFileSync("src/styles.css", "utf8");
-    const block = css.match(/@container term \(max-width: 560px\) \{([\s\S]*?)\n\}/);
-    expect(block?.[1]).toContain("overflow-x: auto");
+    const installed = await installCompiledCSS("src/styles.css");
+    try {
+      expect(
+        declared(styleRules(installed), ".nx-toolbar", "overflow-x", "term (max-width: 560px)"),
+      ).toBe("auto");
+    } finally {
+      installed.remove();
+    }
   });
 });

@@ -17,10 +17,15 @@ var (
 	ErrStorage          = errors.New("定时任务存储失败，请重试")
 	ErrExecutionTimeout = errors.New("定时任务执行超时")
 	ErrLeaseLost        = errors.New("定时任务租约丢失，本次运行已中断")
-	ErrOwnerlessLegacy  = errors.New("账号模式不能执行无所有者的旧定时任务，请重新创建")
+	ErrOwnerless        = errors.New("旧版本定时任务缺少所有者信息，已停用，请重新创建（或先升级到 1.2.x 最终版）")
 	ErrInvalidOwner     = errors.New("定时任务所有者信息无效")
 	ErrForeignScope     = errors.New("定时任务会话不属于任务所有者")
+	ErrForeignDevice    = errors.New("定时任务绑定在其他设备上，只能在该设备上修改；可在同步设置中删除")
 )
+
+// ErrOpenJobUnattributed marks Open-mode jobs disabled after switching to
+// account mode because their conversation no longer exists.
+var ErrOpenJobUnattributed = errors.New("开放模式创建的定时任务找不到所属会话，切换到账号模式后已停用，请重新创建")
 
 type StorageError struct {
 	Op    string
@@ -112,6 +117,13 @@ type Job struct {
 	Run                 RunState      `json:"run"`
 	OwnerID             string        `json:"ownerId"`
 	OwnerKind           OwnerKind     `json:"ownerKind"`
+	// DeviceID and DeviceName name the device that runs the job; empty for a job created before binding existed.
+	DeviceID   string `json:"deviceId,omitempty"`
+	DeviceName string `json:"deviceName,omitempty"`
+	// ForeignDevice marks a job synced from another device: it is shown here but runs only on its device.
+	ForeignDevice bool `json:"foreignDevice,omitempty"`
+	// ConfigUpdatedAt moves when the configuration changes; run bookkeeping leaves it alone.
+	ConfigUpdatedAt time.Time `json:"configUpdatedAt,omitzero"`
 }
 
 func (j Job) Running() bool { return j.Run.ID != "" }
@@ -160,7 +172,6 @@ type Options struct {
 	CircuitCooldown         time.Duration
 	DueScanBatchSize        int
 	RecoveryBatchSize       int
-	AllowOwnerlessLegacy    bool
 	OwnerID                 string
 	Now                     func() time.Time
 	OnError                 func(error)

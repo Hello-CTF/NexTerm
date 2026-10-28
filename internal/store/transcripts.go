@@ -17,7 +17,6 @@ import (
 type TranscriptRow = model.TranscriptRow
 type TranscriptChunkRow = model.TranscriptChunkRow
 type DurableTranscriptOffset = model.DurableTranscriptOffset
-type DurableTabTitle = model.DurableTabTitle
 
 const (
 	TranscriptChunkKindOutput = 0
@@ -782,84 +781,6 @@ func (s *Store) DurableTranscriptOffsetDelete(ctx context.Context, durableID str
 	_, err := offset.WithContext(ctx).
 		Where(offset.DurableID.Eq(durableID)).
 		Where(ownerConditions(ctx, offset.TableName())...).
-		Delete()
-	if err != nil {
-		return dbError(err)
-	}
-	return nil
-}
-
-func (s *Store) DurableTabTitleGet(ctx context.Context, durableID string) (string, error) {
-	title := query.Use(s.db).DurableTabTitle
-	row, err := title.WithContext(ctx).
-		Where(title.DurableID.Eq(durableID)).
-		Where(ownerConditions(ctx, title.TableName())...).
-		First()
-	if isNoRows(err) {
-		return "", nil
-	}
-	if err != nil {
-		return "", dbError(err)
-	}
-	return row.Title, nil
-}
-
-func (s *Store) DurableTabTitleSet(ctx context.Context, durableID, value string) error {
-	now := ids.NowMS()
-	ownerID := ipc.OwnerID(ctx)
-	// Insert-if-absent never touches an existing row; the guarded UPDATE then
-	// applies only to this owner's row or a legacy ownerless one on every
-	// backend (MySQL and MariaDB ignore ON CONFLICT ... WHERE).
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "durable_id"}},
-			DoNothing: true,
-		}).Create(&DurableTabTitle{DurableID: durableID, Title: value, UpdatedAt: now, OwnerID: ownerID}).Error; err != nil {
-			return err
-		}
-		return tx.Model(&DurableTabTitle{}).
-			Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
-			Updates(map[string]any{"title": value, "updated_at": now, "owner_id": ownerID}).Error
-	})
-	if err != nil {
-		return dbError(err)
-	}
-	return nil
-}
-
-// DurableTabTitleOwner resolves the owner recorded on a durable tab title;
-// an empty string means the row is legacy ownerless or absent.
-func (s *Store) DurableTabTitleOwner(ctx context.Context, durableID string) (string, error) {
-	var ownerID string
-	err := s.db.WithContext(ctx).Model(&DurableTabTitle{}).
-		Select("owner_id").
-		Where("durable_id = ?", durableID).
-		Limit(1).
-		Scan(&ownerID).Error
-	if err != nil {
-		return "", dbError(err)
-	}
-	return ownerID, nil
-}
-
-// DurableTabTitleDeleteIfOwned removes a durable tab title only while the row
-// is still owned by ownerID or still legacy ownerless, so a delete racing a
-// claim never removes a freshly claimed row.
-func (s *Store) DurableTabTitleDeleteIfOwned(ctx context.Context, durableID, ownerID string) error {
-	info := s.db.WithContext(ctx).
-		Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
-		Delete(&DurableTabTitle{})
-	if info.Error != nil {
-		return dbError(info.Error)
-	}
-	return nil
-}
-
-func (s *Store) DurableTabTitleDelete(ctx context.Context, durableID string) error {
-	title := query.Use(s.db).DurableTabTitle
-	_, err := title.WithContext(ctx).
-		Where(title.DurableID.Eq(durableID)).
-		Where(ownerConditions(ctx, title.TableName())...).
 		Delete()
 	if err != nil {
 		return dbError(err)

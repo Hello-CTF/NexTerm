@@ -26,6 +26,9 @@ type deviceIPCTestRig struct {
 
 func newDeviceIPCTestRig(t *testing.T) *deviceIPCTestRig {
 	t.Helper()
+	// The in-process device supervisor must not run the developer's login shell or startup files.
+	t.Setenv("SHELL", "")
+	t.Setenv("ENV", "")
 	stateDir := filepath.Join(t.TempDir(), "state")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)

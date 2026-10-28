@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func TestThrottleEventPairsEntryWithRealDrain(t *testing.T) {
@@ -50,24 +51,7 @@ func TestThrottleEventPairsEntryWithRealDrain(t *testing.T) {
 	channel := connector.transport(0).channel(0)
 
 	flood := func() (chan struct{}, *sync.WaitGroup) {
-		stop := make(chan struct{})
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			frame := bytes.Repeat([]byte("x"), 1024)
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				if err := channel.emit(frame); err != nil {
-					return
-				}
-			}
-		}()
-		return stop, &wg
+		return startFakeChannelFlood(channel)
 	}
 
 	stop, wg := flood()
@@ -164,9 +148,37 @@ func throttleCollector() (Emitter, chan ThrottleEvent) {
 	return emitter, events
 }
 
+// startFakeChannelFlood emits 1 KiB frames until the returned stop channel
+// closes. A starved pump can make a single emit time out; the flood retries
+// instead of quitting so the backlog keeps building under CPU contention, and
+// it ends early only when the channel itself is closed.
+func startFakeChannelFlood(channel *fakeChannel) (chan struct{}, *sync.WaitGroup) {
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		frame := bytes.Repeat([]byte("x"), 1024)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := channel.emit(frame); errors.Is(err, base.ErrClosed) {
+				return
+			}
+		}
+	}()
+	return stop, &wg
+}
+
+// waitThrottleEventMatching waits for a matching event. The bound only limits
+// a genuine failure; with a retrying flood the event arrives as soon as the
+// hub queue fills, so passing runs never wait for it.
 func waitThrottleEventMatching(t *testing.T, events chan ThrottleEvent, match func(ThrottleEvent) bool) ThrottleEvent {
 	t.Helper()
-	timer := time.NewTimer(5 * time.Second)
+	timer := time.NewTimer(30 * time.Second)
 	defer timer.Stop()
 	for {
 		select {
@@ -452,7 +464,24 @@ func TestSlowConsumerKickedAfterGraceOthersUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tab := openTestTab(t, manager, connected, "client-a", "a-1")
+	info, err := manager.OpenTab(context.Background(), OpenTabOptions{SessionID: connected.ID, Cols: 80, Rows: 24, Detached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The default 64-frame fanout aborts a starved delivery with
+	// ErrFanoutQueueFull before the hub queue fills, so under CPU contention
+	// the hub never reports backpressure. A large fanout makes the hub queue
+	// the only bound, which is what this test exercises.
+	tab.fanout = terminal.NewFanoutWithOptions(terminal.FanoutOptions{
+		QueueFrames: 1 << 20, QueueBytes: 1 << 30, Logger: manager.logger,
+	})
+	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-a", ChannelID: "a-1"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1", ReplayBytes: 1024}); err != nil {
 		t.Fatal(err)
 	}
@@ -493,34 +522,28 @@ func TestSlowConsumerKickedAfterGraceOthersUnaffected(t *testing.T) {
 	}()
 	t.Cleanup(func() { close(stopDrain); <-drainDone })
 
-	stopFlood := make(chan struct{})
-	var floodWG sync.WaitGroup
-	floodWG.Add(1)
-	go func() {
-		defer floodWG.Done()
-		frame := bytes.Repeat([]byte("x"), 1024)
-		for {
-			select {
-			case <-stopFlood:
-				return
-			default:
-			}
-			if err := channel.emit(frame); err != nil {
-				return
-			}
-		}
-	}()
+	stopFlood, floodWG := startFakeChannelFlood(channel)
 
 	entry := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", false))
 	if entry.Recovered || entry.TabID != tab.ID || entry.ChannelID != "a-1" {
 		t.Fatalf("entry = %+v", entry)
 	}
 
+	// The resync notice comes first and outranks the detach's recovery, so
+	// clients show the notice instead of "recovered".
+	resync := waitThrottleEventMatching(t, events, func(event ThrottleEvent) bool { return event.Resync })
+	if resync.TabID != tab.ID || resync.ChannelID != "a-1" || resync.Recovered {
+		t.Fatalf("kick resync = %+v", resync)
+	}
 	recovery := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
 	if !recovery.Recovered || recovery.TabID != tab.ID || recovery.ChannelID != "a-1" {
 		t.Fatalf("kick recovery = %+v", recovery)
 	}
-	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "" {
+	if recovery.Version >= resync.Version {
+		t.Fatalf("recovery version %d not older than resync %d", recovery.Version, resync.Version)
+	}
+	// The kicked view owned the size: the remaining client takes it.
+	if info := tab.Info(); info.Subscribers != 1 || info.SizeOwner != "client-b" {
 		t.Fatalf("tab info after kick = %+v", info)
 	}
 
@@ -561,24 +584,7 @@ func TestSlowConsumerDrainedWithinGraceIsNotKicked(t *testing.T) {
 	channel := connector.transport(0).channel(0)
 
 	flood := func() (chan struct{}, *sync.WaitGroup) {
-		stop := make(chan struct{})
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			frame := bytes.Repeat([]byte("x"), 1024)
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				if err := channel.emit(frame); err != nil {
-					return
-				}
-			}
-		}()
-		return stop, &wg
+		return startFakeChannelFlood(channel)
 	}
 	receiver := bindTestReceiver(t, manager, "a-1")
 	t.Cleanup(func() { _ = receiver.Close() })

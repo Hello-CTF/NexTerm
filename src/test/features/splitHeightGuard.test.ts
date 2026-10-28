@@ -35,7 +35,6 @@ function ws(panes: Pane[]): Workspace {
     sessionId: "s",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -125,7 +124,7 @@ describe("split height guard in the shared lower-pane entry", () => {
       workspaces: [ws(panes)],
       activeWorkspaceId: "ws",
     });
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    useUi.getState().closePane("p2", "ws");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 });

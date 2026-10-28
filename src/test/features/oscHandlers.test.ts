@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  createOsc9Notifier,
   createOsc52Handler,
   decodeOsc52Payload,
 } from "../../features/terminal/oscHandlers";
@@ -233,36 +232,5 @@ describe("createOsc52Handler", () => {
     expect(fed.join("")).toBe("AB");
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0]).toBeInstanceOf(TypeError);
-  });
-});
-
-describe("createOsc9Notifier", () => {
-  it("trims, collapses whitespace and drops empty bodies", () => {
-    const notify = vi.fn();
-    const notifier = createOsc9Notifier({ notify, now: () => 0 });
-    notifier("  build\ndone  ");
-    expect(notify).toHaveBeenCalledWith("build done");
-    notifier("   ");
-    expect(notify).toHaveBeenCalledTimes(1);
-  });
-
-  it("caps very long bodies", () => {
-    const notify = vi.fn();
-    const notifier = createOsc9Notifier({ notify, now: () => 0 });
-    notifier("x".repeat(500));
-    expect(notify).toHaveBeenCalledWith("x".repeat(200));
-  });
-
-  it("throttles bursts but delivers after the interval", () => {
-    const notify = vi.fn();
-    let clock = 0;
-    const notifier = createOsc9Notifier({ notify, now: () => clock, throttleMs: 1500 });
-    notifier("one");
-    notifier("two");
-    expect(notify).toHaveBeenCalledTimes(1);
-    clock = 1500;
-    notifier("three");
-    expect(notify).toHaveBeenCalledTimes(2);
-    expect(notify).toHaveBeenLastCalledWith("three");
   });
 });

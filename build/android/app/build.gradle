@@ -103,12 +103,15 @@ android {
             // JNI libraries are in jniLibs folder
             jniLibs.srcDirs = ['src/main/jniLibs']
             // Assets for the WebView
-            assets.srcDirs = ['src/main/assets']
+            assets.srcDirs = ['src/main/assets', '../gen/privacy-assets']
         }
     }
 
     // Packaging options
     packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         // Don't strip Go symbols in debug builds
         doNotStrip '*/arm64-v8a/libwails.so'
         doNotStrip '*/x86_64/libwails.so'

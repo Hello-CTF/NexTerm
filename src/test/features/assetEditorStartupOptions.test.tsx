@@ -236,6 +236,63 @@ describe("AssetEditor SSH startup options", () => {
     expect(updatedPayload().options).toEqual({});
   });
 
+  it("saves normalised paste upload directories", async () => {
+    mountEditor();
+    await flush();
+    expandAdvanced();
+    setInputValue(findInput("/tmp"), "/ ");
+    setInputValue(findInput("与上传目录相同"), "/tmp/");
+    fillName("chroot-01");
+    fillHost("10.0.0.8");
+    click(saveButton());
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    expect(createdPayload().options).toEqual({ pasteUploadDir: "/", pasteTerminalDir: "/tmp" });
+  });
+
+  it("loads paste directories on edit and drops a terminal path equal to the upload directory", async () => {
+    const initial = {
+      ...baseAsset,
+      options: { pasteUploadDir: "/upload", pasteTerminalDir: "/home/jail/upload" },
+    } as unknown as Asset;
+    mountEditor(initial);
+    await flush();
+    expandAdvanced();
+    expect(findInput("/tmp").value).toBe("/upload");
+    expect(findInput("与上传目录相同").value).toBe("/home/jail/upload");
+    setInputValue(findInput("与上传目录相同"), "/upload/");
+    click(saveButton());
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    expect(updatedPayload().options).toEqual({ pasteUploadDir: "/upload" });
+  });
+
+  it("removes paste directories after clearing the upload directory", async () => {
+    mountEditor({ ...baseAsset, options: { pasteUploadDir: "/upload" } } as unknown as Asset);
+    await flush();
+    expandAdvanced();
+    setInputValue(findInput("/tmp"), "");
+    click(saveButton());
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    expect(updatedPayload().options).toEqual({});
+  });
+
+  it.each([
+    ["tmp", "", "以 / 开头"],
+    ["/srv/../etc", "", ".."],
+    ["", "/tmp", "必须同时填写粘贴上传目录"],
+  ])("rejects paste directories %j / %j", async (upload, terminal, message) => {
+    mountEditor();
+    await flush();
+    expandAdvanced();
+    setInputValue(findInput("/tmp"), upload);
+    setInputValue(findInput("与上传目录相同"), terminal);
+    fillName("bad-dir");
+    fillHost("10.0.0.8");
+    click(saveButton());
+    await flush();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mounted!.container.textContent).toContain(message);
+  });
+
   it("does not render SSH advanced options for WinRM and local assets", async () => {
     mountEditor({ ...baseAsset, kind: "winrm" } as unknown as Asset);
     await flush();

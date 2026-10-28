@@ -12,6 +12,13 @@ import (
 
 func openGridTestSession(t *testing.T, events chan ControlEvent) (*Manager, *fakeConnector, *fakeTerminalFactory, *Session) {
 	t.Helper()
+	return openGridTestSessionAt(t, events, nil)
+}
+
+// openGridTestSessionAt is openGridTestSession on an injected clock, which
+// decides when input hands the PTY size to another client.
+func openGridTestSessionAt(t *testing.T, events chan ControlEvent, now func() time.Time) (*Manager, *fakeConnector, *fakeTerminalFactory, *Session) {
+	t.Helper()
 	connector := newFakeConnector()
 	terminals := newFakeTerminalFactory()
 	manager := NewManager(Config{
@@ -25,6 +32,7 @@ func openGridTestSession(t *testing.T, events chan ControlEvent) (*Manager, *fak
 		}),
 		ReconnectMax:     2,
 		ReconnectBackoff: []time.Duration{0},
+		Now:              now,
 	})
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Connect(context.Background(), Asset{ID: "grid-asset", Kind: KindSSH})
@@ -149,8 +157,13 @@ func TestGridRuntimeSerializedLatestWinsAndPropagates(t *testing.T) {
 			t.Fatalf("grid event did not describe both clients: %+v", event)
 		}
 	}
-	if err := manager.Resize(context.Background(), tab.ID, "client-b", 70, 20); !errors.Is(err, ErrNotController) {
-		t.Fatalf("observer resize error = %v", err)
+	// client-b has not typed: its size is kept for later, the PTY keeps
+	// the size owner's.
+	if err := manager.Resize(context.Background(), tab.ID, "client-b", 70, 20); err != nil {
+		t.Fatalf("follower resize error = %v", err)
+	}
+	if info := tab.Info(); info.Cols != 110 || info.Rows != 50 || info.SizeOwner != "client-a" {
+		t.Fatalf("follower resize changed the PTY: %+v", info)
 	}
 }
 
@@ -257,9 +270,10 @@ func TestGridRuntimeReconnectFencesDelayedOldTransport(t *testing.T) {
 	}
 }
 
-func TestGridRuntimeClaimFencesDelayedResize(t *testing.T) {
+func TestGridRuntimeInputHandoffFencesDelayedResize(t *testing.T) {
 	events := make(chan ControlEvent, 32)
-	manager, connector, terminals, session := openGridTestSession(t, events)
+	clock := newSessionTestClock()
+	manager, connector, terminals, session := openGridTestSessionAt(t, events, clock.Now)
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
 	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
 		t.Fatal(err)
@@ -278,19 +292,25 @@ func TestGridRuntimeClaimFencesDelayedResize(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(time.Second):
-		t.Fatal("pre-claim resize did not start")
+		t.Fatal("pre-handoff resize did not start")
 	}
-	if previous, err := manager.Claim(tab.ID, "client-b"); err != nil || previous != "client-a" {
-		t.Fatalf("claim previous = %q, err = %v", previous, err)
-	}
+	clock.Advance(sizeHandoffHold)
+	// The input takes the size at once; the write itself announces the new
+	// input owner under the feed gate, which the delayed resize still holds.
+	written := make(chan error, 1)
+	go func() { written <- manager.Write(context.Background(), tab.ID, "client-b", []byte("b")) }()
+	waitFor(t, func() bool { return tab.Info().SizeOwner == "client-b" })
 	latestResult := resizeAsync(manager, tab.ID, "client-b", 120, 40)
 	waitFor(t, func() bool {
 		snapshot, err := manager.GridSnapshot(tab.ID)
 		return err == nil && snapshot.DesiredGrid == (terminalgrid.Grid{Cols: 120, Rows: 40})
 	})
 	close(release)
+	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
 	if err := <-oldResult; err != nil && !errors.Is(err, ErrStaleGeneration) {
-		t.Fatalf("pre-claim resize error = %v", err)
+		t.Fatalf("pre-handoff resize error = %v", err)
 	}
 	if err := <-latestResult; err != nil {
 		t.Fatal(err)
@@ -301,7 +321,7 @@ func TestGridRuntimeClaimFencesDelayedResize(t *testing.T) {
 	if cols, rows := fakeTerminalGrid(terminals.terminal(tab.ID)); cols != 120 || rows != 40 {
 		t.Fatalf("claimed terminal grid = %dx%d", cols, rows)
 	}
-	if info := tab.Info(); info.Controller != "client-b" || info.GridRevision != 1 {
+	if info := tab.Info(); info.SizeOwner != "client-b" || info.GridRevision != 1 {
 		t.Fatalf("claim committed stale grid: %+v", info)
 	}
 }
@@ -382,7 +402,7 @@ func TestGridRuntimeAutomaticHandoffFencesDetachedIntent(t *testing.T) {
 		Emitter: EmitterFunc(func(_ context.Context, event Event) error {
 			if event.Topic == TopicTerminalControl {
 				payload := event.Payload.(ControlEvent)
-				if payload.Controller == "client-b" {
+				if payload.SizeOwner == "client-b" {
 					handoffOnce.Do(func() { close(handoffStarted) })
 					<-unblock
 				}
@@ -451,7 +471,7 @@ func TestGridRuntimeAutomaticHandoffFencesDetachedIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, result := range []<-chan error{first, second} {
-		if err := <-result; err != nil && !errors.Is(err, ErrStaleGeneration) && !errors.Is(err, ErrNotController) {
+		if err := <-result; err != nil && !errors.Is(err, ErrStaleGeneration) {
 			t.Fatalf("detached resize error = %v", err)
 		}
 	}
@@ -475,20 +495,21 @@ func TestGridRuntimeAutomaticHandoffFencesDetachedIntent(t *testing.T) {
 	if last.Cols != 120 || last.Rows != 50 {
 		t.Fatalf("last handoff grid event = %+v", last)
 	}
-	if info := tab.Info(); info.Controller != "client-b" || info.GridRevision != uint64(len(committed)) {
+	if info := tab.Info(); info.SizeOwner != "client-b" || info.GridRevision != uint64(len(committed)) {
 		t.Fatalf("handoff revision state = %+v, events %+v", info, committed)
 	}
 }
 
 func TestGridRuntimeHiddenOwnershipHandoffs(t *testing.T) {
 	for _, automatic := range []bool{false, true} {
-		name := "release-claim"
+		name := "input"
 		if automatic {
 			name = "detach-attach"
 		}
 		t.Run(name, func(t *testing.T) {
 			events := make(chan ControlEvent, 16)
-			manager, connector, terminals, session := openGridTestSession(t, events)
+			clock := newSessionTestClock()
+			manager, connector, terminals, session := openGridTestSessionAt(t, events, clock.Now)
 			tab := openTestTab(t, manager, session, "client-a", "a-1")
 			channel := connector.transport(0).channel(0)
 			if err := manager.SetVisible(tab.ID, false); err != nil {
@@ -502,10 +523,11 @@ func TestGridRuntimeHiddenOwnershipHandoffs(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if released, err := manager.Release(tab.ID, "client-a"); err != nil || !released {
-					t.Fatalf("release = %v, err = %v", released, err)
+				if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
+					t.Fatal(err)
 				}
-				if _, err := manager.Claim(tab.ID, "client-b"); err != nil {
+				clock.Advance(sizeHandoffHold)
+				if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("b")); err != nil {
 					t.Fatal(err)
 				}
 			}

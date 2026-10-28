@@ -73,8 +73,11 @@ func deriveMasterKey(password string, salt []byte) (*secretKey, error) {
 	if len(salt) < 16 {
 		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: salt 过短")
 	}
+	// The master key records no parameters, so the cost must stay fixed for
+	// the whole process; it only differs inside an opted-in test binary.
+	params := PasswordArgon2()
 	key := &secretKey{}
-	copy(key.bytes[:], argon2.IDKey([]byte(password), salt, 3, 64*1024, 4, DEKLength))
+	copy(key.bytes[:], argon2.IDKey([]byte(password), salt, params.Time, params.MemoryKiB, params.Threads, DEKLength))
 	return key, nil
 }
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -90,13 +89,6 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 			return nil, ipc.WrapError(ipc.CodeIO, "创建数据库目录失败: "+err.Error(), err)
 		}
 	}
-	legacy, err := hasLegacySchemaMarkerAtPath(ctx, path, busyTimeoutMS)
-	if err != nil {
-		return nil, err
-	}
-	if legacy {
-		return nil, ipc.NewError(ipc.CodeUnsupported, "不支持直接升级 v1.0.3 之前的 pre-GORM 数据库；原数据库未修改")
-	}
 	if err := prepareDatabaseFile(path); err != nil {
 		return nil, ipc.WrapError(ipc.CodeIO, "准备数据库文件失败: "+err.Error(), err)
 	}
@@ -105,7 +97,10 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 		db, err := openDB(sqliteDSN(path, busyTimeoutMS), 8)
 		if err == nil {
 			s = newStore(db, options.Logger)
-			err = s.migrate(ctx)
+			err = s.rejectPreGormSchema(ctx)
+			if err == nil {
+				err = s.migrate(ctx)
+			}
 			if err != nil {
 				_ = s.Close()
 				s = nil
@@ -192,12 +187,6 @@ func sqliteDSN(path string, busyTimeoutMS int64) string {
 	return u.String()
 }
 
-func sqliteImmutableDSN(path string) string {
-	u := sqliteURL(path)
-	u.RawQuery = "mode=ro&immutable=1"
-	return u.String()
-}
-
 func sqliteURL(path string) *url.URL {
 	path = filepath.ToSlash(path)
 	if runtime.GOOS == "windows" && len(path) >= 2 && path[1] == ':' {
@@ -214,157 +203,21 @@ func pragmaQuery(memory bool, busyTimeoutMS int64) string {
 	return query
 }
 
-const legacyPreflightSnapshotAttempts = 3
-
-var errLegacyPreflightSnapshotChanged = errors.New("数据库文件在旧版预检期间发生变化")
-
-// legacyPreflightBeforeCopyHook lets tests interleave source-file changes at
-// each copy boundary.
-var legacyPreflightBeforeCopyHook func(suffix string)
-
-func hasLegacySchemaMarkerAtPath(ctx context.Context, path string, busyTimeoutMS int64) (bool, error) {
-	_, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
-	}
-	var snapshotErr error
-	for attempt := 0; attempt < legacyPreflightSnapshotAttempts; attempt++ {
-		legacy, err := hasLegacySchemaMarkerAtPathAttempt(ctx, path, busyTimeoutMS)
-		if !errors.Is(err, errLegacyPreflightSnapshotChanged) {
-			return legacy, err
-		}
-		snapshotErr = err
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-	}
-	return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: 无法获得一致快照: "+snapshotErr.Error(), snapshotErr)
-}
-
-func hasLegacySchemaMarkerAtPathAttempt(ctx context.Context, path string, busyTimeoutMS int64) (bool, error) {
-	database, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("%w: %v", errLegacyPreflightSnapshotChanged, err)
-	}
-	if err != nil {
-		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
-	}
-	legacy, err := hasLegacySchemaMarkerInDatabase(ctx, sqliteImmutableDSN(path))
-	if err != nil || legacy {
-		return legacy, err
-	}
-	wal, err := os.Stat(path + "-wal")
-	walMissing := errors.Is(err, os.ErrNotExist)
-	if err != nil && !walMissing {
-		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
-	}
-	if walMissing || wal.Size() == 0 {
-		unchanged, err := sqliteFileVersionUnchanged(path, database)
-		if err != nil {
-			return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
-		}
-		if !unchanged {
-			return false, fmt.Errorf("%w: %s", errLegacyPreflightSnapshotChanged, path)
-		}
-		return false, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-
-	// A disposable copy includes uncheckpointed schema changes without
-	// allowing SQLite to rewrite the original database or its sidecars.
-	dir, err := os.MkdirTemp("", "nexterm-legacy-marker-")
-	if err != nil {
-		return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	copyPath := filepath.Join(dir, "data.db")
-	for _, suffix := range []string{"", "-wal"} {
-		if legacyPreflightBeforeCopyHook != nil {
-			legacyPreflightBeforeCopyHook(suffix)
-		}
-		if err := copySQLiteFile(path+suffix, copyPath+suffix); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return false, fmt.Errorf("%w: %v", errLegacyPreflightSnapshotChanged, err)
-			}
-			return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
-		}
-	}
-	for _, file := range []struct {
-		suffix string
-		info   os.FileInfo
-	}{
-		{suffix: "", info: database},
-		{suffix: "-wal", info: wal},
-	} {
-		unchanged, err := sqliteFileVersionUnchanged(path+file.suffix, file.info)
-		if err != nil {
-			return false, ipc.WrapError(ipc.CodeIO, "检查旧版数据库失败: "+err.Error(), err)
-		}
-		if !unchanged {
-			return false, fmt.Errorf("%w: %s", errLegacyPreflightSnapshotChanged, path+file.suffix)
-		}
-	}
-	return hasLegacySchemaMarkerInDatabase(ctx, sqliteDSN(copyPath, busyTimeoutMS))
-}
-
-func sqliteFileVersionUnchanged(path string, expected os.FileInfo) (bool, error) {
-	actual, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return os.SameFile(expected, actual) && expected.Size() == actual.Size() && expected.ModTime().Equal(actual.ModTime()), nil
-}
-
-func hasLegacySchemaMarkerInDatabase(ctx context.Context, dsn string) (bool, error) {
-	db, err := openDB(dsn, 1)
-	if err != nil {
-		return false, err
-	}
-	s := newStore(db, nil)
-	defer func() { _ = s.Close() }()
-	legacy, err := hasLegacySchemaMarker(ctx, s)
-	if err != nil {
-		return false, dbError(err)
-	}
-	return legacy, nil
-}
-
-func copySQLiteFile(source, destination string) error {
-	from, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = from.Close() }()
-	to, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(to, from); err != nil {
-		_ = to.Close()
-		return err
-	}
-	return to.Close()
-}
-
-func hasLegacySchemaMarker(ctx context.Context, s *Store) (bool, error) {
+// rejectPreGormSchema refuses databases created before the GORM schema (the
+// schema_migrations marker). It runs on the normal connection before any
+// AutoMigrate so the old tables are never altered; it never opens the file
+// with immutable=1, which is unsafe for a database another process may write.
+func (s *Store) rejectPreGormSchema(ctx context.Context) error {
 	var name string
 	err := s.sqlDB.QueryRowContext(ctx,
 		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).Scan(&name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return nil
 	}
 	if err != nil {
-		return false, err
+		return dbError(err)
 	}
-	return true, nil
+	return ipc.NewError(ipc.CodeUnsupported, "不支持 v1.0.3 之前的 pre-GORM 数据库，数据库表未被迁移；请将该数据库文件移走后重新启动以创建新数据库")
 }
 
 func (s *Store) DB() *sql.DB {

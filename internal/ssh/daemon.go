@@ -56,9 +56,20 @@ type HelperUpdateStatus struct {
 	Updated     bool
 	Interrupted bool
 	RolledBack  bool
-	Reason      string
-	Local       supervisor.RuntimeMetadata
-	Running     supervisor.RuntimeMetadata
+	// ReplacedLegacy reports that an older-protocol helper was ended with
+	// consent; EndedSessions is how many sessions the user agreed to end.
+	ReplacedLegacy bool
+	EndedSessions  int
+	// EndedCount is how exact EndedSessions is (see EndedCountOf);
+	// ForcedLegacy reports that the older helper had to be killed.
+	EndedCount string
+	// StoppedLegacy reports that this replacement ended the older helper;
+	// false when it had already exited or another replacement ended it.
+	StoppedLegacy bool
+	ForcedLegacy  bool
+	Reason        string
+	Local         supervisor.RuntimeMetadata
+	Running       supervisor.RuntimeMetadata
 }
 
 // Daemon is a connected handle to a supervisor daemon on an SSH target.
@@ -107,6 +118,11 @@ func (d *Daemon) RequireIdle(ctx context.Context) error {
 // active processes are interrupted only when InterruptActive is explicitly set.
 type EnsureOptions struct {
 	InterruptActive bool
+	// ReplaceLegacy is the consent token of a supervisor.LegacyHelperError
+	// the user approved: the older helper it names is ended with its
+	// sessions and this build's helper is started. It is used at most once
+	// per ensure; a stale token is refused with a fresh LegacyHelperError.
+	ReplaceLegacy string
 }
 
 // Resolver resolves the durable provider for an SSH session transport,

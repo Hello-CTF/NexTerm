@@ -45,6 +45,11 @@ type registryEntry struct {
 	ExitCode         *int                    `json:"exit_code,omitempty"`
 	Signal           string                  `json:"signal,omitempty"`
 	FinishedAt       *time.Time              `json:"finished_at,omitempty"`
+	HistoryLimit     uint64                  `json:"history_limit,omitempty"`
+	// legacy marks an entry an older helper (protocol 2) recorded: its
+	// recording is output.raw. This helper never rewrites or removes such an
+	// entry on its own; only an explicit kill by a client deletes it.
+	legacy bool
 }
 
 func (e registryEntry) info() Info {
@@ -59,6 +64,7 @@ func (e registryEntry) info() Info {
 		Dead:             !e.Running,
 		ExitCode:         e.ExitCode,
 		Signal:           e.Signal,
+		Legacy:           e.legacy,
 	}
 	if e.FinishedAt != nil {
 		finished := *e.FinishedAt
@@ -68,12 +74,28 @@ func (e registryEntry) info() Info {
 }
 
 func (s *Session) canonicalInfo() Info {
+	return s.canonicalInfoWith(listOptions{})
+}
+
+func (s *Session) canonicalInfoWith(options listOptions) Info {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.entry.info()
+	info := s.entry.info()
+	info.Generation = s.supervisor.generation
+	s.historyInfo(&info)
+	info.State = s.stateInfoLocked(options.Events, options.EventsAfter)
+	info.Activity = s.activityLocked()
+	return info
 }
 
 func (s *Supervisor) listCanonical(ctx context.Context) ([]Info, error) {
+	return s.listCanonicalWith(ctx, listOptions{})
+}
+
+// listCanonicalWith lists the PTY sessions; with options.Events each state
+// carries the retained events after options.EventsAfter, trimmed so the
+// reply fits one frame.
+func (s *Supervisor) listCanonicalWith(ctx context.Context, options listOptions) ([]Info, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -88,18 +110,26 @@ func (s *Supervisor) listCanonical(ctx context.Context) ([]Info, error) {
 	s.mu.Unlock()
 	infos := make([]Info, 0, len(sessions))
 	for _, session := range sessions {
-		infos = append(infos, session.canonicalInfo())
+		infos = append(infos, session.canonicalInfoWith(options))
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
+	if options.Events {
+		trimListEvents(infos, listEventBudget)
+	}
 	return infos, nil
 }
 
-func (s *Supervisor) attachFrom(ctx context.Context, id string, offset uint64, expected *Identity) (*Attachment, error) {
+// attachFrom attaches to id. expected, when set, must match the session's
+// identity; expectGeneration, when set, must be this helper's generation.
+func (s *Supervisor) attachFrom(ctx context.Context, id string, options AttachOptions, expected *Identity, expectGeneration string) (*Attachment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	s.killMu.Lock()
 	defer s.killMu.Unlock()
+	if err := s.checkGeneration(expectGeneration); err != nil {
+		return nil, fmt.Errorf("%w (session %s)", err, id)
+	}
 	session, err := s.resolveSession(id)
 	if err != nil {
 		return nil, err
@@ -107,7 +137,26 @@ func (s *Supervisor) attachFrom(ctx context.Context, id string, offset uint64, e
 	if expected != nil && !sameIdentity(*expected, session.Identity()) {
 		return nil, fmt.Errorf("%w: %s", ErrIdentity, id)
 	}
-	return session.attach(offset)
+	return session.attach(options)
+}
+
+// readHistory reads recorded output of id without attaching; expected is
+// required.
+func (s *Supervisor) readHistory(ctx context.Context, id string, before uint64, maxBytes int, expected Identity, expectGeneration string) (HistoryChunk, error) {
+	if err := ctx.Err(); err != nil {
+		return HistoryChunk{}, err
+	}
+	if err := s.checkGeneration(expectGeneration); err != nil {
+		return HistoryChunk{}, fmt.Errorf("%w (session %s)", err, id)
+	}
+	session, err := s.resolveSession(id)
+	if err != nil {
+		return HistoryChunk{}, err
+	}
+	if !sameIdentity(expected, session.Identity()) {
+		return HistoryChunk{}, fmt.Errorf("%w: %s", ErrIdentity, id)
+	}
+	return session.readHistory(before, maxBytes)
 }
 
 func (s *Supervisor) Rename(ctx context.Context, request RenameRequest) (Info, error) {
@@ -129,6 +178,9 @@ func (s *Supervisor) Rename(ctx context.Context, request RenameRequest) (Info, e
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	if session.entry.legacy {
+		return Info{}, fmt.Errorf("%w: %s is a read-only recording of an older helper", ErrExited, request.ID)
+	}
 	current := session.entry.info()
 	if record, exists := session.entry.RenameRequests[request.RequestID]; exists {
 		if record.ExpectedMetadataRevision != request.ExpectedMetadataRevision || record.Title != request.Title {
@@ -197,10 +249,6 @@ func entryPath(stateDir, id string) string {
 	return filepath.Join(sessionDir(stateDir, id), entryName)
 }
 
-func recordingPath(stateDir, id string) string {
-	return filepath.Join(sessionDir(stateDir, id), recordingName)
-}
-
 func versionsPath(stateDir, id string) string {
 	return filepath.Join(sessionDir(stateDir, id), versionsName)
 }
@@ -229,6 +277,11 @@ func loadRegistry(stateDir string) (map[string]registryEntry, error) {
 		}
 		entry, err := readEntry(root, id)
 		if errors.Is(err, os.ErrNotExist) {
+			if legacyRecording(root, id) {
+				// An older helper's recording without its entry is left as
+				// it is: this helper never removes another helper's data.
+				continue
+			}
 			if err := removeRegistryArtifacts(root, id); err != nil {
 				return nil, err
 			}
@@ -237,19 +290,32 @@ func loadRegistry(stateDir string) (map[string]registryEntry, error) {
 		if err != nil {
 			return nil, err
 		}
+		entry.legacy = legacyRecording(root, id)
 		if entry.Running {
+			// The helper that ran it is gone, so it has exited. An older
+			// helper's entry stays as that helper wrote it: it is read-only
+			// history, read as exited without an exit status.
 			entry.Running = false
 			entry.ExitCode = nil
 			entry.Signal = ""
 			finished := time.Now()
 			entry.FinishedAt = &finished
-			if err := writeEntry(root, entry); err != nil {
-				return nil, err
+			if !entry.legacy {
+				if err := writeEntry(root, entry); err != nil {
+					return nil, err
+				}
 			}
 		}
 		entries[id] = entry
 	}
 	return entries, nil
+}
+
+// legacyRecording reports whether the session directory holds the single
+// output.raw recording of a protocol 2 helper.
+func legacyRecording(root, id string) bool {
+	info, err := os.Lstat(filepath.Join(root, id, recordingName))
+	return err == nil && info.Mode().IsRegular()
 }
 
 func readEntry(root, id string) (registryEntry, error) {
@@ -330,4 +396,13 @@ func openRecording(path string) (*os.File, error) {
 		return nil, fmt.Errorf("%w: supervisor recording changed while opening", ErrUnavailable)
 	}
 	return file, nil
+}
+
+// checkGeneration rejects a request meant for another helper process. An
+// empty expectation is accepted only where the protocol allows one.
+func (s *Supervisor) checkGeneration(expected string) error {
+	if expected != "" && expected != s.generation {
+		return fmt.Errorf("%w: expected helper generation %s, this helper is %s", ErrGenerationMismatch, expected, s.generation)
+	}
+	return nil
 }

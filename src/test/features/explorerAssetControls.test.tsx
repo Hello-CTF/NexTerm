@@ -148,7 +148,6 @@ function setTerminalWorkspace(tabId: string | null) {
               },
             ],
             activePaneId: "p1",
-            splitRatio: 0.5,
           },
         ]
       : [],

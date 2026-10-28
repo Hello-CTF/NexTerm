@@ -146,6 +146,12 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 		case ipc.TopicTerminalControl:
 			_, ok := event.Payload.(session.ControlEvent)
 			return ok && event.OwnerID != "" && event.OwnerID == userID
+		case ipc.TopicTerminalAttention:
+			_, ok := event.Payload.(session.AttentionEvent)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
+		case ipc.TopicTerminalSessions:
+			_, ok := event.Payload.(session.AggregateUpdate)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
 		case ipc.TopicFSProgress:
 			_, ok := event.Payload.(fslocal.Progress)
 			return ok && event.OwnerID != "" && event.OwnerID == userID
@@ -205,6 +211,10 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 			return ok
 		case ipc.TopicAppError, ipc.TopicUpdateProgress:
 			return true
+		case ipc.TopicLocalHelperStatus:
+			// Only a single-account server runs a local helper, and its status
+			// names no account data.
+			return true
 		default:
 			return false
 		}
@@ -245,7 +255,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	connection, err := websocket.Accept(w, r, wscompress.Accept(wscompress.Terminal, &websocket.AcceptOptions{
 		OriginPatterns: s.options.AllowedOrigins,
-		Subprotocols:   []string{channelInputSubprotocol, channelSubprotocol},
+		Subprotocols:   []string{channelInputSubprotocol},
 	}))
 	if err != nil {
 		return

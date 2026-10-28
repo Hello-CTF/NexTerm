@@ -140,7 +140,7 @@ export function binaryManifestProblems({ manifest, file, expect }) {
   return problems;
 }
 
-export function helperMetadataManifestProblems({ manifest, goos, goarch, protocol, features }) {
+export function helperMetadataManifestProblems({ manifest, goos, goarch, protocol }) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return ["helper metadata manifest is not a JSON object"];
   const problems = [];
   const representative = requiresHelperExecutionEvidence(goos, goarch);
@@ -172,12 +172,8 @@ export function helperMetadataManifestProblems({ manifest, goos, goarch, protoco
   } else if (protocol !== undefined && manifest.protocol !== protocol) {
     problems.push(`helper metadata protocol ${manifest.protocol} does not match ${protocol}`);
   }
-  if (!Array.isArray(manifest.features) || manifest.features.length === 0 || manifest.features.some((feature) => typeof feature !== "string" || feature === "")) {
-    problems.push("helper metadata features must be non-empty strings");
-  } else {
-    const sorted = [...manifest.features].sort();
-    if (JSON.stringify(manifest.features) !== JSON.stringify(sorted)) problems.push("helper metadata features must be sorted");
-    if (features !== undefined && JSON.stringify(sorted) !== JSON.stringify([...features].sort())) problems.push("helper metadata features do not match this build");
+  if (Object.hasOwn(manifest, "features")) {
+    problems.push("helper metadata must not list features; the protocol number defines the helper baseline");
   }
   if (manifest.metadata_host?.os !== goos || manifest.metadata_host?.arch !== goarch) {
     problems.push(`helper metadata execution host ${JSON.stringify(manifest.metadata_host)} does not match ${goos}/${goarch}`);

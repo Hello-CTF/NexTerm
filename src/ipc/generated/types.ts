@@ -18,6 +18,46 @@ export type AdvanceRequest = {
   productionConfirmation?: ProductionConfirmation | null;
 };
 
+export type AggregateHost = {
+  key: string;
+  kind: string;
+  name: string;
+  sessionId?: string;
+  assetId?: string;
+  deviceId?: string;
+  deviceKind?: string;
+};
+
+export type AggregateHostStatus = AggregateHost & {
+  status: string;
+  error?: string;
+  errorCode?: string;
+  fetchedAt?: number;
+  stale?: boolean;
+  answeredAt?: number;
+};
+
+export type AggregateList = {
+  hosts: AggregateHostStatus[];
+  sessions: AggregateSession[];
+  complete: boolean;
+};
+
+export type AggregateSession = {
+  hostKey: string;
+  tabId: string;
+  title?: string;
+  createdAt?: number;
+  cols: number;
+  rows: number;
+  dead?: boolean;
+  exitCode?: number | null;
+  attention: AttentionEvent;
+  lastOutputAt?: number;
+  detachedAt?: number;
+  attached?: boolean;
+};
+
 export type ApplyObject = {
   id: string;
   kind: string;
@@ -177,7 +217,7 @@ export type AttachedTabDTO = {
   sessionId: string;
   cols: number;
   rows: number;
-  controller: string | null;
+  sizeOwner: string | null;
   subscribers: number;
   viewers: number;
   exited: boolean;
@@ -186,9 +226,54 @@ export type AttachedTabDTO = {
   ephemeral: boolean;
   encoding?: string;
   title?: string;
+  titleCustom?: boolean;
+  titleChangedAt?: number;
   shell: string;
   fallbackNotice?: string;
   attachmentId?: number;
+};
+
+export type AttentionEvent = {
+  tabId: string;
+  state: string;
+  confidence?: string;
+  source?: string;
+  reason?: string;
+  since?: string;
+  seen?: boolean;
+  notable?: boolean;
+  exitCode?: number | null;
+  title?: string;
+  body?: string;
+  prompt?: AttentionPrompt | null;
+  lastInputClient?: string;
+  version: number;
+};
+
+export type AttentionPrompt = {
+  kind: string;
+  question?: string;
+  options?: AttentionPromptOption[];
+  cursorIndex: number;
+  fingerprint: string;
+  epoch: number;
+  generation?: string;
+  tappable: boolean;
+  blocked?: string;
+  method?: string;
+  submit?: string;
+  enterKey?: string;
+};
+
+export type AttentionPromptOption = {
+  label: string;
+  keys?: string;
+  default?: boolean;
+};
+
+export type AttentionSeenRequest = {
+  tabId: string;
+  since: string;
 };
 
 export type AuditCountDTO = {
@@ -392,6 +477,23 @@ export type CollectCredentialsResult = {
   credentials: CollectCredential[];
   hasMore: boolean;
   nextAfterId?: string;
+};
+
+export type CollectKindObject = {
+  id: string;
+  kind: string;
+  name: string;
+  updatedAt: number;
+  payload: string;
+};
+
+export type CollectKindObjectsRequest = {
+  kind: string;
+};
+
+export type CollectKindObjectsResult = {
+  objects: CollectKindObject[];
+  warnings: string[];
 };
 
 export type CollectKnownHost = {
@@ -635,6 +737,10 @@ export type CronJob = {
   run: CronRunState;
   ownerId: string;
   ownerKind: string;
+  deviceId?: string;
+  deviceName?: string;
+  foreignDevice?: boolean;
+  configUpdatedAt?: string;
 };
 
 export type CronJobRequest = {
@@ -695,6 +801,7 @@ export type DeviceGrant = {
   kinds: string[];
   permanent: boolean;
   updatedAt: number;
+  legacy?: boolean;
 };
 
 export type DiagnosticsArmRequest = {
@@ -853,6 +960,11 @@ export type DockerPrunePreviewIPCRequest = {
   kinds: string[];
 };
 
+export type DurableReadinessDTO = {
+  state: string;
+  reason?: string;
+};
+
 export type Entry = {
   name: string;
   description: string;
@@ -954,6 +1066,7 @@ export type ExecBatchHistoryItem = {
   stepCount?: number;
   groupNumber?: number;
   groupCount?: number;
+  runbookVersion?: number;
   syncOptIn: boolean;
   ownerScope: string;
 };
@@ -1056,6 +1169,7 @@ export type ExecBatchRow = {
   groupNumber?: number;
   groupCount?: number;
   syncOptIn: boolean;
+  runbookVersion?: number;
 };
 
 export type ExecBatchRunHistory = {
@@ -1168,6 +1282,25 @@ export type FinderQuery = {
   value: string;
 };
 
+export type ForeignCronAdoptRequest = {
+  id: string;
+};
+
+export type ForeignCronJob = {
+  id: string;
+  name: string;
+  prompt: string;
+  schedule: string;
+  timezone: string;
+  enabled: boolean;
+  deviceId: string;
+  deviceName: string;
+};
+
+export type ForeignCronRemoveRequest = {
+  id: string;
+};
+
 export type ForwardRecoverOutcomeDTO = {
   assetId: string;
   sessionId?: string;
@@ -1261,6 +1394,7 @@ export type GrantRule = {
   expiresAt?: number;
   createdAt: number;
   updatedAt: number;
+  legacy?: boolean;
 };
 
 export type HelperOfflineDTO = {
@@ -1288,6 +1422,7 @@ export type HelperOperationDTO = {
   compatibility: string;
   update?: HelperUpdateDTO | null;
   offline?: HelperOfflineDTO | null;
+  legacy?: LegacyHelperDetail | null;
 };
 
 export type HelperOperationRequest = {
@@ -1295,6 +1430,7 @@ export type HelperOperationRequest = {
   operationId?: string;
   action: string;
   interruptActive?: boolean;
+  consentToken?: string;
 };
 
 export type HelperUpdateDTO = {
@@ -1303,6 +1439,11 @@ export type HelperUpdateDTO = {
   updated: boolean;
   interrupted: boolean;
   rolledBack: boolean;
+  replacedLegacy?: boolean;
+  stopped?: boolean;
+  endedSessions: number;
+  endedCount?: string;
+  forced?: boolean;
 };
 
 export type HelperVersionDTO = {
@@ -1460,6 +1601,11 @@ export type KindOptIn = {
   aiPermission: boolean;
   aiGrant: boolean;
   preferences: boolean;
+  stateRules: boolean;
+  runbookTemplates: boolean;
+  skills: boolean;
+  memory: boolean;
+  cron: boolean;
 };
 
 export type KindOptInPatch = {
@@ -1468,6 +1614,11 @@ export type KindOptInPatch = {
   aiPermission?: boolean | null;
   aiGrant?: boolean | null;
   preferences?: boolean | null;
+  stateRules?: boolean | null;
+  runbookTemplates?: boolean | null;
+  skills?: boolean | null;
+  memory?: boolean | null;
+  cron?: boolean | null;
 };
 
 export type KnownHostRequest = {
@@ -1493,6 +1644,18 @@ export type LayoutSaveDTO = {
   saved: boolean;
   revision: number;
   conflict: boolean;
+};
+
+export type LegacyHelperDetail = {
+  protocol: number;
+  pid?: number;
+  ptySessions: number;
+  execSessions: number;
+  activityKnown: boolean;
+  ptyListed: boolean;
+  release?: string;
+  consentToken?: string;
+  stale?: boolean;
 };
 
 export type Link = {
@@ -1568,6 +1731,38 @@ export type LocalFolderListDTO = {
 
 export type LocalFolderListRequest = {
   path: string;
+};
+
+export type LocalHelperExposeRequest = {
+  enabled: boolean;
+};
+
+export type LocalHelperExposureDTO = {
+  enabled: boolean;
+  state: string;
+  reason?: string;
+  deviceId?: string;
+  server?: string;
+};
+
+export type LocalHelperRestartRequest = {
+  consentToken: string;
+};
+
+export type LocalHelperStatusDTO = {
+  state: string;
+  reason?: string;
+  updateAvailable?: boolean;
+  activeSessions?: number;
+  activityKnown?: boolean;
+  helperProtocol?: number;
+  helperVersion?: string;
+  consentToken?: string;
+  warning?: string;
+};
+
+export type LocalTerminalModeDTO = {
+  mode: string;
 };
 
 export type LogTailCancelRequest = {
@@ -1757,6 +1952,15 @@ export type ProductionSettingsUpdateRequest = {
   targetSetConnectProductionOptIn?: boolean | null;
   aiTerminalConnectOptIn?: boolean | null;
   aiTerminalConnectProductionOptIn?: boolean | null;
+};
+
+export type PromptTapRequest = {
+  tabId: string;
+  clientId?: string;
+  generation: string;
+  epoch: number;
+  fingerprint: string;
+  option: number;
 };
 
 export type PruneItem = {
@@ -2061,6 +2265,7 @@ export type RemoveRequest = {
 export type RenameTerminalRequest = {
   tabId: string;
   title: string;
+  at?: number;
 };
 
 export type RenderedCommand = {
@@ -2167,6 +2372,7 @@ export type RunRequest = {
 export type RunState = {
   runId: string;
   runbookId: string;
+  runbookVersion?: number;
   runbookName: string;
   status: string;
   confirmationPolicy: string;
@@ -2188,6 +2394,38 @@ export type RunbookMetadata = {
   stepCount: number;
   groupNumber: number;
   groupCount: number;
+};
+
+export type RunbookTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  steps: RunbookTemplateStep[];
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type RunbookTemplateInput = {
+  name: string;
+  description: string;
+  steps: RunbookTemplateStep[];
+};
+
+export type RunbookTemplateRequest = {
+  id: string;
+};
+
+export type RunbookTemplateStep = {
+  id: string;
+  snippetId?: string;
+  name: string;
+  description?: string;
+  command: string;
+};
+
+export type RunbookTemplateUpdateRequest = RunbookTemplateInput & {
+  id: string;
 };
 
 export type ScreenInsets = {
@@ -2218,6 +2456,10 @@ export type ServiceUnit = {
   description: string;
 };
 
+export type SessionAggregateRequest = {
+  waitMs?: number;
+};
+
 export type SessionConnectDeviceRequest = {
   deviceId: string;
   name: string;
@@ -2239,6 +2481,7 @@ export type SessionInfoDTO = {
   errorCode?: string;
   attempt?: number;
   nextRetryAt?: string | null;
+  liveness?: string;
   staleConfig: boolean;
 };
 
@@ -2365,6 +2608,7 @@ export type SshImportPreviewRequest = {
 export type StartRequest = {
   runId: string;
   runbookId: string;
+  templateId?: string;
   runbookName: string;
   steps: Step[];
   sessionIds: string[];
@@ -2372,6 +2616,110 @@ export type StartRequest = {
   stopOnFailure?: boolean | null;
   timeoutMs?: number;
   maxConcurrent?: number;
+};
+
+export type StateRuleDTO = {
+  id: string;
+  name: string;
+  scope: string;
+  assetId?: string;
+  region: string;
+  lines?: number;
+  pattern: string;
+  state: string;
+  keys?: string;
+  enabled: boolean;
+  createdAt?: number;
+  updatedAt: number;
+};
+
+export type StateRuleDeleteRequest = {
+  id: string;
+};
+
+export type StateRuleDeleteResult = {
+  id: string;
+};
+
+export type StateRuleDraftDTO = {
+  name: string;
+  region: string;
+  lines?: number;
+  pattern: string;
+  state: string;
+  explanation?: string;
+  redacted?: boolean;
+};
+
+export type StateRuleDraftRequest = {
+  intent: string;
+  current?: string;
+  screen: StateRuleScreenDTO;
+};
+
+export type StateRuleExportDTO = {
+  format: string;
+  version: number;
+  rules: StateRuleDTO[];
+};
+
+export type StateRuleHelperStatusDTO = {
+  assetId: string;
+  status: string;
+  revision?: string;
+  error?: string;
+  skipped?: string[];
+  at?: number;
+};
+
+export type StateRuleImportRequest = {
+  format: string;
+  version: number;
+  rules: StateRuleDTO[];
+};
+
+export type StateRuleImportResultDTO = {
+  created: number;
+  updated: number;
+  unchanged: number;
+};
+
+export type StateRuleReorderRequest = {
+  ids: string[];
+};
+
+export type StateRuleSaveRequest = {
+  id?: string;
+  name: string;
+  scope: string;
+  assetId?: string;
+  region: string;
+  lines?: number;
+  pattern: string;
+  state: string;
+  keys?: string;
+  enabled: boolean;
+};
+
+export type StateRuleScreenDTO = {
+  lines: string[];
+  cursorRow: number;
+  title?: string;
+};
+
+export type StateRuleValidateRequest = {
+  rule: StateRuleSaveRequest;
+  screen?: StateRuleScreenDTO | null;
+};
+
+export type StateRuleValidateResult = {
+  valid: boolean;
+  field?: string;
+  error?: string;
+  lines?: number;
+  tested: boolean;
+  matched: boolean;
+  region?: string;
 };
 
 export type Status = {
@@ -2480,6 +2828,23 @@ export type SyncDigest = {
   assets: DigestEntry[];
 };
 
+export type SystemNotification = {
+  id: string;
+  title: string;
+  body?: string;
+  tabId?: string;
+};
+
+export type SystemNotificationIDRequest = {
+  id: string;
+};
+
+export type SystemNotificationStatus = {
+  available: boolean;
+  permission?: string;
+  reason?: string;
+};
+
 export type TableColumn = {
   name: string;
   type: string;
@@ -2549,6 +2914,22 @@ export type TerminalBroadcastPrepareRequest = {
 export type TerminalBroadcastWriteOptions = {
   targetTabIds: string[];
   productionConfirmation?: BroadcastProductionConfirmation | null;
+};
+
+export type TerminalHistoryDTO = {
+  start: number;
+  end: number;
+  historyBase: number;
+  historyNext: number;
+  truncated: boolean;
+  dataBase64: string;
+};
+
+export type TerminalHistoryReadRequest = {
+  tabId: string;
+  before: number;
+  maxBytes: number;
+  latest: boolean;
 };
 
 export type TerminalPauseRequest = {

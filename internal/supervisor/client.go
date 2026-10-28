@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"slices"
 	"sync"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 )
 
 const (
-	maxStreamBuffer                = 64 * 1024 * 1024
 	defaultMaxExecOutput           = 4 * 1024 * 1024
 	defaultStreamCloseDrainTimeout = 10 * time.Second
 )
@@ -29,9 +27,73 @@ type Client struct {
 	stateDigest   string
 	dial          DialFunc
 	maxExecOutput int
-	// offeredFeatures replaces the default hello capabilities; compatibility
-	// tests use it to behave like an older client.
-	offeredFeatures []string
+	// compressOutput asks the helper for compressed replay and live output;
+	// remote clients set it because their bytes cross a network.
+	compressOutput bool
+	// rules, when set, names the rule owner in every hello and is pushed to
+	// the helper when the acknowledgement reports another revision.
+	rules StateRuleSource
+}
+
+// WithStateRules returns a copy of the client that acts for the rule owner
+// of source: every connection it opens names the owner in its hello, so the
+// sessions it creates are evaluated with that owner's rules, and pushes the
+// owner's rules when the helper reports another revision. A push the helper
+// rejects is reported to source and does not fail the connection. A source
+// with a malformed owner key is ignored.
+func (c *Client) WithStateRules(source StateRuleSource) *Client {
+	copied := *c
+	copied.rules = source
+	return &copied
+}
+
+// SyncStateRules connects to the helper once so it takes the current state
+// rules, and returns the push error, including a rejection. It does nothing
+// without a state rule source.
+func (c *Client) SyncStateRules(ctx context.Context) error {
+	if c.rulesOwner() == "" {
+		return nil
+	}
+	conn, err := c.dialHello(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	return c.pushStateRules(ctx, conn)
+}
+
+// rulesOwner is the owner key the client sends in its hello; empty without a
+// source or for a malformed key.
+func (c *Client) rulesOwner() string {
+	if c.rules == nil {
+		return ""
+	}
+	if key := c.rules.StateRulesOwner(); validStateRulesOwner(key) {
+		return key
+	}
+	return ""
+}
+
+// pushStateRules sends the source's rules unless the helper already has
+// their revision, and reports the outcome to the source.
+func (c *Client) pushStateRules(ctx context.Context, conn *clientConn) error {
+	set, ok := c.rules.StateRules()
+	if !ok {
+		return nil
+	}
+	if set.Revision == conn.stateRules {
+		c.rules.StateRulesPushed(set.Revision, nil)
+		return nil
+	}
+	kind, _, err := conn.request(ctx, frameSetStateRules, set)
+	if err == nil && kind != frameOK {
+		err = protocolMismatch(kind)
+	}
+	if err == nil {
+		conn.stateRules = set.Revision
+	}
+	c.rules.StateRulesPushed(set.Revision, err)
+	return err
 }
 
 func NewClient(socketPath, stateDir string) *Client {
@@ -43,7 +105,7 @@ func NewClient(socketPath, stateDir string) *Client {
 // remote daemon socket. The state digest of the remote state directory is
 // presented at hello; the caller computes it on the remote host.
 func NewRemoteClient(dial DialFunc, stateDigest string) *Client {
-	return &Client{stateDigest: stateDigest, dial: dial, maxExecOutput: defaultMaxExecOutput}
+	return &Client{stateDigest: stateDigest, dial: dial, maxExecOutput: defaultMaxExecOutput, compressOutput: true}
 }
 
 func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error) {
@@ -66,6 +128,8 @@ func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error
 		Env:     options.Env,
 		Cols:    options.Cols,
 		Rows:    options.Rows,
+
+		HistoryLimit: options.HistoryLimit,
 	})
 	if err != nil {
 		return Info{}, err
@@ -82,9 +146,7 @@ func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error
 
 // CreateAttach creates a PTY session and attaches to it on one connection,
 // saving the second connection (a full exec channel and hello for remote
-// helpers). When the helper does not advertise create_attach it only creates
-// the session and returns a nil stream; the caller then attaches separately
-// exactly as it did before the feature existed.
+// helpers).
 //
 // On error, a non-empty Info.ID means the session was created and the caller
 // must remove it; an empty one means the outcome of the create is unknown (or
@@ -100,7 +162,6 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 	if err != nil {
 		return Info{}, nil, err
 	}
-	chain := conn.supports(featureCreateAttach)
 	payload, err := marshalFrame(frameCreate, createMsg{
 		ID:      options.ID,
 		Attempt: options.Attempt,
@@ -109,6 +170,8 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 		Env:     options.Env,
 		Cols:    options.Cols,
 		Rows:    options.Rows,
+
+		HistoryLimit: options.HistoryLimit,
 	})
 	if err != nil {
 		_ = conn.Close()
@@ -124,9 +187,9 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 	// connection after reading the create error; nothing is consumed or retired.
 	// With a caller-chosen ID the attach can follow the create without
 	// waiting for its reply; the identity is verified once both arrive.
-	pipelined := chain && options.ID != ""
+	pipelined := options.ID != ""
 	if pipelined {
-		if err := conn.sendJSON(ctx, frameAttach, attachMsg{ID: options.ID}); err != nil {
+		if err := conn.sendJSON(ctx, frameAttach, attachMsg{ID: options.ID, ExpectGeneration: conn.generation}); err != nil {
 			_ = conn.Close()
 			return Info{}, nil, err
 		}
@@ -136,27 +199,24 @@ func (c *Client) CreateAttach(ctx context.Context, options CreateOptions) (Info,
 		_ = conn.Close()
 		return Info{}, nil, err
 	}
-	if !chain {
-		_ = conn.Close()
-		return info, nil, nil
-	}
 	if !pipelined {
-		msg := attachMsg{ID: info.ID, ExpectCreatedAt: info.CreatedAt.UnixNano(), ExpectIncarnation: info.Incarnation}
+		msg := attachMsg{ID: info.ID, ExpectCreatedAt: info.CreatedAt.UnixNano(), ExpectIncarnation: info.Incarnation, ExpectGeneration: info.Generation}
 		if err := conn.sendJSON(ctx, frameAttach, msg); err != nil {
 			_ = conn.Close()
 			return info, nil, err
 		}
 	}
-	attached, err := conn.awaitInfo(ctx, frameAttached)
+	reply, err := conn.awaitAttached(ctx)
 	if err != nil {
 		_ = conn.Close()
 		return info, nil, err
 	}
-	if attached.ID != info.ID || attached.Incarnation != info.Incarnation || !attached.CreatedAt.Equal(info.CreatedAt) {
+	attached := reply.Info
+	if attached.ID != info.ID || attached.Incarnation != info.Incarnation || attached.Generation != info.Generation || !attached.CreatedAt.Equal(info.CreatedAt) {
 		_ = conn.Close()
 		return info, nil, fmt.Errorf("%w: attached session is not the one just created", ErrIdentity)
 	}
-	return info, c.newStream(conn, attached, 0), nil
+	return info, c.newStream(conn, reply), nil
 }
 
 // ExecSpec describes a one-shot non-PTY command: an argv with environment and
@@ -202,9 +262,6 @@ func (c *Client) ExecStream(ctx context.Context, spec ExecSpec, onOutput func(st
 		return -1, "", err
 	}
 	defer func() { _ = conn.Close() }()
-	if !slices.Contains(conn.features, featureExec) {
-		return -1, "", fmt.Errorf("%w: supervisor does not support non-PTY exec", ErrUnsupported)
-	}
 	noPTY := false
 	kind, _, err := conn.request(ctx, frameCreate, createMsg{
 		ID:      ids.New(),
@@ -264,12 +321,23 @@ func (c *Client) ExecStream(ctx context.Context, spec ExecSpec, onOutput func(st
 }
 
 func (c *Client) List(ctx context.Context) ([]Info, error) {
+	return c.list(ctx, listOptions{})
+}
+
+// ListWithEvents is List with each session's retained state events after
+// the given sequence. Sequences are shared by all sessions of one helper
+// generation; pass zero after a generation change.
+func (c *Client) ListWithEvents(ctx context.Context, after uint64) ([]Info, error) {
+	return c.list(ctx, listOptions{Events: true, EventsAfter: after})
+}
+
+func (c *Client) list(ctx context.Context, options listOptions) ([]Info, error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
-	kind, payload, err := conn.request(ctx, frameList, struct{}{})
+	kind, payload, err := conn.request(ctx, frameList, options)
 	if err != nil {
 		return nil, err
 	}
@@ -283,24 +351,12 @@ func (c *Client) List(ctx context.Context) ([]Info, error) {
 	return infos, nil
 }
 
-func (c *Client) MetadataSupported(ctx context.Context) (bool, error) {
-	conn, err := c.dialConn(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = conn.Close() }()
-	return slices.Contains(conn.features, featureMetadata), nil
-}
-
 func (c *Client) Rename(ctx context.Context, request RenameRequest) (Info, error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return Info{}, err
 	}
 	defer func() { _ = conn.Close() }()
-	if !slices.Contains(conn.features, featureMetadata) {
-		return Info{}, fmt.Errorf("%w: supervisor does not support session metadata", ErrUnsupported)
-	}
 	kind, payload, err := conn.request(ctx, frameRename, request)
 	if err != nil {
 		return Info{}, err
@@ -320,58 +376,100 @@ func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stre
 }
 
 // AttachFrom asks the daemon to resume the recorded output from the absolute
-// byte offset. Daemons that predate the offset field ignore it and replay
-// from byte zero; the stream detects either case from the first output frame
-// and skips the already-consumed prefix locally, so both honor the offset.
+// byte offset. The stream checks the first output frame against the offset
+// and skips any already-consumed prefix locally. An offset the helper no
+// longer retains resumes after the history base; Stream.Replay reports it.
 func (c *Client) AttachFrom(ctx context.Context, id string, expect *Identity, offset uint64) (*Stream, error) {
+	return c.AttachWithOptions(ctx, id, expect, AttachOptions{Offset: offset})
+}
+
+// AttachWithOptions attaches with an explicit replay plan; see AttachOptions.
+func (c *Client) AttachWithOptions(ctx context.Context, id string, expect *Identity, options AttachOptions) (*Stream, error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	msg := attachMsg{ID: id, Offset: offset}
+	msg := attachMsg{ID: id, Offset: options.Offset, Tail: options.Tail, Retain: options.Retain}
 	if expect != nil {
 		msg.ExpectCreatedAt = expect.CreatedAt.UnixNano()
 		msg.ExpectIncarnation = expect.Incarnation
+		msg.ExpectGeneration = expect.Generation
 	}
-	kind, payload, err := conn.request(ctx, frameAttach, msg)
+	if err := conn.sendJSON(ctx, frameAttach, msg); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	reply, err := conn.awaitAttached(ctx)
 	if err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
-	if kind != frameAttached {
+	if options.Tail == 0 && !reply.Replay.Truncated && reply.Replay.ReplayFrom != options.Offset {
 		_ = conn.Close()
-		return nil, protocolMismatch(kind)
+		return nil, fmt.Errorf("%w: helper resumed at %d instead of %d", ErrProtocol, reply.Replay.ReplayFrom, options.Offset)
 	}
-	var info Info
-	if err := unmarshalFrame(payload, &info); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	return c.newStream(conn, info, offset), nil
+	return c.newStream(conn, reply), nil
 }
 
-func (c *Client) newStream(conn *clientConn, info Info, offset uint64) *Stream {
+// ReadHistory returns recorded output of the session ending at before, at
+// most maxBytes (bounded by MaxHistoryRead), without attaching. expect is
+// required.
+func (c *Client) ReadHistory(ctx context.Context, id string, expect Identity, before uint64, maxBytes int) (HistoryChunk, error) {
+	if expect.Incarnation == "" {
+		return HistoryChunk{}, fmt.Errorf("%w: history read requires the session identity", ErrInvalidInput)
+	}
+	conn, err := c.dialConn(ctx)
+	if err != nil {
+		return HistoryChunk{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	kind, payload, err := conn.request(ctx, frameReadHistory, readHistoryMsg{
+		ID: id, ExpectCreatedAt: expect.CreatedAt.UnixNano(), ExpectIncarnation: expect.Incarnation,
+		ExpectGeneration: expect.Generation, Before: before, MaxBytes: maxBytes,
+	})
+	if err != nil {
+		return HistoryChunk{}, err
+	}
+	if kind != frameHistory {
+		return HistoryChunk{}, protocolMismatch(kind)
+	}
+	chunk, err := parseHistory(payload)
+	if err != nil {
+		return HistoryChunk{}, err
+	}
+	if chunk.End > before || len(chunk.Data) > MaxHistoryRead {
+		return HistoryChunk{}, fmt.Errorf("%w: history reply exceeds the request", ErrProtocol)
+	}
+	return chunk, nil
+}
+
+func (c *Client) newStream(conn *clientConn, reply attachedMsg) *Stream {
+	info := reply.Info
 	stream := &Stream{
 		conn:              conn,
 		info:              info,
-		identity:          Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation},
+		replay:            reply.Replay,
+		identity:          Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation, Generation: info.Generation},
 		closeDrainTimeout: defaultStreamCloseDrainTimeout,
-		want:              offset,
+		want:              reply.Replay.ReplayFrom,
+		consumed:          reply.Replay.ReplayFrom,
 		reqToken:          make(chan struct{}, 1),
 		resp:              make(chan clientFrame, 1),
 		newData:           make(chan struct{}, 1),
 		exitCh:            make(chan struct{}),
 		closed:            make(chan struct{}),
-		windowed:          conn.supports(featureInputWindow),
-		credit:            conn.supports(featureOutputCredit),
 		inputToken:        make(chan struct{}, 1),
 		inputWake:         make(chan struct{}),
 		creditWake:        make(chan struct{}, 1),
+		stateWake:         make(chan struct{}, 1),
+	}
+	if info.State != nil {
+		state := *info.State
+		state.Events = nil
+		stream.state = &state
 	}
 	go stream.readLoop()
-	if stream.credit {
-		go stream.creditLoop()
-	}
+	go stream.creditLoop()
 	return stream
 }
 
@@ -413,8 +511,18 @@ func (c *Client) Kill(ctx context.Context, id string, expect *Identity) error {
 }
 
 func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
+	return c.dialHello(ctx, true)
+}
+
+// dialHello connects and says hello; with push it also brings the helper
+// to the rule owner's current rules.
+func (c *Client) dialHello(ctx context.Context, push bool) (*clientConn, error) {
+	owner := c.rulesOwner()
 	netConn, err := c.dialNet(ctx)
 	if err != nil {
+		if legacyErr := c.legacyHelperError(ctx); legacyErr != nil {
+			return nil, legacyErr
+		}
 		return nil, fmt.Errorf("%w: dial supervisor: %v", ErrUnavailable, err)
 	}
 	digest := c.stateDigest
@@ -425,9 +533,8 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 			return nil, err
 		}
 	}
-	conn := &clientConn{conn: netConn}
-	features := c.helloFeatures()
-	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: features})
+	conn := &clientConn{conn: netConn, compress: c.compressOutput}
+	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, CompressOutput: conn.compress, StateRulesOwner: owner})
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -443,39 +550,45 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 	}
 	if ack.Version != ProtocolVersion {
 		_ = netConn.Close()
-		return nil, fmt.Errorf("%w: server speaks protocol %d", ErrProtocol, ack.Version)
+		return nil, versionMismatchError(ack.Version, "hello acknowledged with another protocol version")
 	}
-	conn.features = slices.Clone(ack.Features)
-	conn.offered = features
-	if slices.Contains(features, featureRuntimeMetadata) && slices.Contains(conn.features, featureRuntimeMetadata) && ack.Runtime != nil {
+	if ack.Runtime != nil {
 		metadata := *ack.Runtime
 		if err := validateRuntimeMetadata(metadata, ack.Version); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
-		metadata.Features = slices.Clone(metadata.Features)
 		conn.runtimeMetadata = &metadata
 	}
-	if slices.Contains(features, featureActivity) && slices.Contains(conn.features, featureActivity) && ack.Activity != nil {
-		if ack.Activity.PTY < 0 || ack.Activity.Exec < 0 {
+	if ack.Generation == "" {
+		_ = conn.Close()
+		return nil, fmt.Errorf("%w: hello acknowledgement lacks the helper generation", ErrProtocol)
+	}
+	conn.generation = ack.Generation
+	if ack.Activity == nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("%w: hello acknowledgement lacks daemon activity", ErrProtocol)
+	}
+	if ack.Activity.PTY < 0 || ack.Activity.Exec < 0 {
+		_ = conn.Close()
+		return nil, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
+	}
+	conn.activity = *ack.Activity
+	if ack.StateRules == nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("%w: hello acknowledgement lacks the state rule revision", ErrProtocol)
+	}
+	conn.stateRules = ack.StateRules.Revision
+	if push && owner != "" {
+		// A rejected push keeps the connection usable; a failed exchange
+		// leaves it broken.
+		var remote *wireError
+		if err := c.pushStateRules(ctx, conn); err != nil && !errors.As(err, &remote) {
 			_ = conn.Close()
-			return nil, fmt.Errorf("%w: negative daemon activity count", ErrProtocol)
+			return nil, err
 		}
-		activity := *ack.Activity
-		conn.activity = &activity
 	}
 	return conn, nil
-}
-
-func (c *Client) helloFeatures() []string {
-	if c.offeredFeatures != nil {
-		return slices.Clone(c.offeredFeatures)
-	}
-	features := []string{featureExec, featureMetadata, featureRuntimeMetadata, featureActivity, featureCreateAttach, featureInputWindow, featureOutputCredit}
-	if c.dial != nil {
-		features = append(features, featureReplayGzip, featureOutputZstd)
-	}
-	return features
 }
 
 func (c *Client) dialNet(ctx context.Context) (net.Conn, error) {
@@ -491,18 +604,18 @@ type clientFrame struct {
 }
 
 type clientConn struct {
-	conn            net.Conn
-	features        []string
-	offered         []string
+	conn net.Conn
+	// compress is the hello preference: only then may the server send
+	// frameReplayGzip and frameOutputZstd.
+	compress bool
+	// generation is the helper process this connection reached.
+	generation      string
 	runtimeMetadata *RuntimeMetadata
-	activity        *ActivitySnapshot
-	writeMu         sync.Mutex
-}
-
-// supports reports whether feature was offered in our hello and acknowledged
-// by the server.
-func (c *clientConn) supports(feature string) bool {
-	return slices.Contains(c.offered, feature) && slices.Contains(c.features, feature)
+	activity        ActivitySnapshot
+	// stateRules is the helper's state rule revision for the hello's owner,
+	// empty for none.
+	stateRules string
+	writeMu    sync.Mutex
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {
@@ -526,6 +639,26 @@ func (c *clientConn) sendJSON(ctx context.Context, kind frameType, message any) 
 		return err
 	}
 	return c.send(ctx, kind, payload)
+}
+
+// awaitAttached waits for the attach reply.
+func (c *clientConn) awaitAttached(ctx context.Context) (attachedMsg, error) {
+	kind, payload, err := c.await(ctx)
+	if err != nil {
+		return attachedMsg{}, err
+	}
+	if kind != frameAttached {
+		return attachedMsg{}, protocolMismatch(kind)
+	}
+	var reply attachedMsg
+	if err := unmarshalFrame(payload, &reply); err != nil {
+		return attachedMsg{}, err
+	}
+	replay := reply.Replay
+	if replay.HistoryBase > replay.ReplayFrom || replay.ReplayFrom > replay.DisplayFrom || replay.DisplayFrom > replay.HistoryNext {
+		return attachedMsg{}, fmt.Errorf("%w: inconsistent attach replay offsets", ErrProtocol)
+	}
+	return reply, nil
 }
 
 // awaitInfo waits for the next response, which must be a want frame carrying Info.
@@ -601,6 +734,7 @@ func (c *clientConn) Close() error {
 type Stream struct {
 	conn              *clientConn
 	info              Info
+	replay            ReplayInfo
 	identity          Identity
 	closeDrainTimeout time.Duration
 
@@ -608,11 +742,19 @@ type Stream struct {
 
 	reqToken chan struct{}
 
-	mu         sync.Mutex
-	readBuf    []byte
-	seq        uint64
-	want       uint64
-	skip       uint64
+	mu      sync.Mutex
+	readBuf []byte
+	seq     uint64
+	want    uint64
+	skip    uint64
+	// consumed is the absolute offset of the next byte Read returns.
+	// buffered counts every byte appended to readBuf and taken the bytes
+	// Read returned; gapMarks are history gaps positioned in that count.
+	consumed   uint64
+	buffered   uint64
+	taken      uint64
+	gapMarks   []streamGap
+	gaps       uint64
 	started    bool
 	exitErr    error
 	dead       bool
@@ -630,11 +772,10 @@ type Stream struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	// Windowed input (input_window). inflight holds the sizes of frames on the
+	// Windowed input. inflight holds the sizes of frames on the
 	// wire that have no acknowledgement yet, oldest first; inputErr is the
 	// first rejection reported by the server. All three are guarded by mu.
 	// inputToken serializes writers so reservation order equals wire order.
-	windowed      bool
 	inputToken    chan struct{}
 	inflight      []int
 	inflightBytes int
@@ -645,9 +786,8 @@ type Stream struct {
 	inputErrUnacked int
 	inputWake       chan struct{}
 
-	// Output credit (output_credit). retired counts stream bytes the consumer
-	// has read or skipped; creditSent is what the server has been told.
-	credit     bool
+	// Output credit. retired counts stream bytes the consumer has read or
+	// skipped; creditSent is what the server has been told.
 	retired    uint64
 	creditSent uint64
 	creditWake chan struct{}
@@ -659,14 +799,91 @@ type Stream struct {
 	// window space. Tests use it to observe the wait deterministically.
 	windowWaitHook func()
 
-	// tokenWaitHook, when non-nil, runs after the initial ctx check and
-	// immediately before requestRaw blocks acquiring the request token.
-	// Tests use it to observe the token wait deterministically.
+	// state is the latest attention state pushed by the helper, nil when
+	// it reports none; stateEvents are the events pushed since attach,
+	// at most maxStateEvents. Both are guarded by mu.
+	state       *SessionState
+	stateEvents []SessionEvent
+	stateWake   chan struct{}
+
+	// tokenWaitHook, when non-nil, runs immediately before requestRaw blocks
+	// acquiring the request token (after its initial ctx check) and before a
+	// write blocks acquiring the input token. Tests use it to observe the
+	// token wait deterministically.
 	tokenWaitHook func()
 }
 
 func (s *Stream) Info() Info {
 	return s.info
+}
+
+// Replay reports where the stream started.
+func (s *Stream) Replay() ReplayInfo {
+	return s.replay
+}
+
+// ConsumedOffset returns the absolute offset just past the bytes Read has
+// returned. A Read never spans a history gap, so after a Read the offset is
+// the end of the returned bytes; it jumps past dropped output on the Read
+// that crosses the gap.
+func (s *Stream) ConsumedOffset() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.consumed
+}
+
+// Gaps returns how many history gaps the stream crossed.
+func (s *Stream) Gaps() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gaps
+}
+
+// streamGap is a history gap at a position of the buffered byte count.
+type streamGap struct {
+	at uint64
+	to uint64
+}
+
+// applyGapsLocked crosses every gap at the current read position.
+func (s *Stream) applyGapsLocked() {
+	for len(s.gapMarks) > 0 && s.gapMarks[0].at == s.taken {
+		s.consumed = s.gapMarks[0].to
+		s.gapMarks = s.gapMarks[1:]
+	}
+}
+
+// SessionState returns the latest attention state the helper pushed, with
+// the events received since attach (at most the newest maxStateEvents), or
+// nil when the helper reports no state.
+func (s *Stream) SessionState() *SessionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		return nil
+	}
+	state := *s.state
+	state.Events = append([]SessionEvent(nil), s.stateEvents...)
+	return &state
+}
+
+// applyStateLocked records a pushed state. A drop stays reported: the
+// events held since attach are incomplete once any were lost.
+func (s *Stream) applyStateLocked(state SessionState) {
+	s.stateEvents = append(s.stateEvents, state.Events...)
+	dropped := state.EventsDropped || s.state != nil && s.state.EventsDropped
+	if extra := len(s.stateEvents) - maxStateEvents; extra > 0 {
+		s.stateEvents = append([]SessionEvent(nil), s.stateEvents[extra:]...)
+		dropped = true
+	}
+	state.Events = nil
+	state.EventsDropped = dropped
+	s.state = &state
+}
+
+// StateUpdates is signalled after each pushed state. Signals coalesce.
+func (s *Stream) StateUpdates() <-chan struct{} {
+	return s.stateWake
 }
 
 func (s *Stream) Identity() Identity {
@@ -683,8 +900,16 @@ func (s *Stream) Read(p []byte) (int, error) {
 			s.mu.Unlock()
 			return 0, ErrClosed
 		}
+		s.applyGapsLocked()
 		if len(s.readBuf) > 0 {
-			count := copy(p, s.readBuf)
+			limit := p
+			if len(s.gapMarks) > 0 && s.gapMarks[0].at-s.taken < uint64(len(limit)) {
+				// Read never spans a gap, so ConsumedOffset stays exact.
+				limit = limit[:s.gapMarks[0].at-s.taken]
+			}
+			count := copy(limit, s.readBuf)
+			s.taken += uint64(count)
+			s.consumed += uint64(count)
 			s.readBuf = s.readBuf[count:]
 			if len(s.readBuf) == 0 && cap(s.readBuf) > 1<<20 {
 				// Release the backing array so a drained burst does not stay resident.
@@ -718,11 +943,10 @@ func (s *Stream) Write(p []byte) (int, error) {
 // WriteContext writes p to the session's input pipeline and returns once the
 // supervisor has acknowledged all of it.
 //
-// Without input_window (older helpers) every chunk is acknowledged before the
-// next is sent. With it, the chunks of one call are pipelined inside a bounded
-// window (inputWindowBytes), so a large write costs about one round trip per
-// window instead of per chunk; the call still returns only after every
-// acknowledgement, so the contract is the same in both modes:
+// The chunks of one call are pipelined inside a bounded window
+// (inputWindowBytes), so a large write costs about one round trip per window
+// instead of per chunk; the call still returns only after every
+// acknowledgement:
 //   - ctx governs the acknowledgement wait. Cancelling it fails the stream: the
 //     unconfirmed chunks may or may not have reached the supervisor and their
 //     late acknowledgements can no longer be told apart from later responses,
@@ -735,52 +959,28 @@ func (s *Stream) WriteContext(ctx context.Context, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	if s.windowed {
-		return s.writeWindowed(ctx, p, true)
-	}
-	written := 0
-	for len(p) > 0 {
-		chunk := p
-		if len(chunk) > maxFramePayload {
-			chunk = chunk[:maxFramePayload]
-		}
-		kind, payload, err := s.requestRaw(ctx, frameInput, chunk)
-		if err != nil {
-			return written, err
-		}
-		if kind != frameInputAck {
-			return written, protocolMismatch(kind)
-		}
-		var ack inputAckMsg
-		if err := unmarshalFrame(payload, &ack); err != nil {
-			return written, err
-		}
-		written += ack.Written
-		p = p[len(chunk):]
-	}
-	return written, nil
+	return s.writeWindowed(ctx, p, true)
 }
 
-// WriteWindowed is the non-waiting form of WriteContext for streams that
-// negotiated input_window: it returns once the data is on the wire inside the
-// window, without waiting for acknowledgements, so a caller can keep many small
-// writes in flight. n counts bytes fully written to the connection. A rejection
-// of earlier data is returned by the next call (n == 0), FlushInput and Close;
-// it does not fail the stream. Cancelling ctx while waiting for window space
-// sends nothing for the unsent part and leaves the stream healthy; cancelling
-// during a frame write fails the stream as in WriteContext. Without
-// input_window it behaves exactly like WriteContext.
+// WriteWindowed is the non-waiting form of WriteContext: it returns once the
+// data is on the wire inside the window, without waiting for
+// acknowledgements, so a caller can keep many small writes in flight. n counts
+// bytes fully written to the connection. A rejection of earlier data is
+// returned by the next call (n == 0), FlushInput and Close; it does not fail
+// the stream. Cancelling ctx while waiting for window space sends nothing for
+// the unsent part and leaves the stream healthy; cancelling during a frame
+// write fails the stream as in WriteContext.
 func (s *Stream) WriteWindowed(ctx context.Context, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
-	}
-	if !s.windowed {
-		return s.WriteContext(ctx, p)
 	}
 	return s.writeWindowed(ctx, p, false)
 }
 
 func (s *Stream) writeWindowed(ctx context.Context, p []byte, wait bool) (int, error) {
+	if s.tokenWaitHook != nil {
+		s.tokenWaitHook()
+	}
 	select {
 	case s.inputToken <- struct{}{}:
 	case <-ctx.Done():
@@ -792,8 +992,8 @@ func (s *Stream) writeWindowed(ctx context.Context, p []byte, wait bool) (int, e
 	written := 0
 	for len(p) > 0 {
 		chunk := p
-		if len(chunk) > maxFramePayload {
-			chunk = chunk[:maxFramePayload]
+		if len(chunk) > maxInputData {
+			chunk = chunk[:maxInputData]
 		}
 		if err := s.reserveInput(ctx, len(chunk)); err != nil {
 			return written, err
@@ -935,9 +1135,12 @@ func (s *Stream) sendInput(ctx context.Context, chunk []byte) error {
 		s.fail(context.Cause(ctx))
 		close(cancelDone)
 	})
-	s.writeMu.Lock()
-	err := writeFrame(s.conn.conn, frameInput, chunk)
-	s.writeMu.Unlock()
+	payload, err := inputPayload(s.identity.Generation, s.identity.Incarnation, chunk)
+	if err == nil {
+		s.writeMu.Lock()
+		err = writeFrame(s.conn.conn, frameInput, payload)
+		s.writeMu.Unlock()
+	}
 	if !stopCancel() {
 		<-cancelDone
 		return context.Cause(ctx)
@@ -982,12 +1185,8 @@ func (s *Stream) handleInputAck(payload []byte) error {
 }
 
 // FlushInput waits until every accepted input frame has been acknowledged by
-// the supervisor and returns the first rejection, if any. It is a no-op for
-// streams without input_window, whose writes are acknowledged synchronously.
+// the supervisor and returns the first rejection, if any.
 func (s *Stream) FlushInput(ctx context.Context) error {
-	if !s.windowed {
-		return nil
-	}
 	for {
 		s.mu.Lock()
 		if s.inputErr != nil {
@@ -1022,7 +1221,7 @@ func (s *Stream) FlushInput(ctx context.Context) error {
 // retireLocked records consumed (or skipped) output and wakes the credit
 // sender once a full step has accumulated. s.mu must be held.
 func (s *Stream) retireLocked(count uint64) {
-	if !s.credit || count == 0 {
+	if count == 0 {
 		return
 	}
 	s.retired += count
@@ -1069,7 +1268,7 @@ func (s *Stream) Resize(ctx context.Context, cols, rows uint32) error {
 	if err := validateSize(cols, rows); err != nil {
 		return err
 	}
-	kind, _, err := s.request(ctx, frameResize, resizeMsg{Cols: cols, Rows: rows})
+	kind, _, err := s.request(ctx, frameResize, resizeMsg{Cols: cols, Rows: rows, ExpectGeneration: s.identity.Generation, ExpectIncarnation: s.identity.Incarnation})
 	if err != nil {
 		return err
 	}
@@ -1077,6 +1276,46 @@ func (s *Stream) Resize(ctx context.Context, cols, rows uint32) error {
 		return protocolMismatch(kind)
 	}
 	return nil
+}
+
+// MarkStateSeen tells the helper that the user saw the needs_me or
+// just_finished state that began at since; the helper pushes the seen state
+// to every attached client.
+func (s *Stream) MarkStateSeen(ctx context.Context, since time.Time) error {
+	kind, _, err := s.request(ctx, frameStateSeen, stateSeenMsg{Since: since})
+	if err != nil {
+		return err
+	}
+	if kind != frameOK {
+		return protocolMismatch(kind)
+	}
+	return nil
+}
+
+// TapPrompt answers the session's detected prompt with option when the
+// prompt identified by epoch and fingerprint is still shown and tappable,
+// and returns the bytes the helper wrote. It first waits for the stream's
+// earlier input to be acknowledged, so the keys follow it. A stale prompt
+// fails with ErrStalePrompt.
+func (s *Stream) TapPrompt(ctx context.Context, epoch uint64, fingerprint string, option int) (string, error) {
+	if err := s.FlushInput(ctx); err != nil {
+		return "", err
+	}
+	kind, payload, err := s.request(ctx, frameTapPrompt, tapPromptMsg{
+		ExpectGeneration: s.identity.Generation, ExpectIncarnation: s.identity.Incarnation,
+		Epoch: epoch, Fingerprint: fingerprint, Option: option,
+	})
+	if err != nil {
+		return "", err
+	}
+	if kind != frameOK {
+		return "", protocolMismatch(kind)
+	}
+	var reply tapPromptReply
+	if err := unmarshalFrame(payload, &reply); err != nil {
+		return "", err
+	}
+	return reply.Sent, nil
 }
 
 func (s *Stream) Kill(ctx context.Context) error {
@@ -1161,19 +1400,17 @@ func (s *Stream) Close() error {
 		defer func() { <-s.reqToken }()
 		// Input accepted into the window must reach the supervisor before the
 		// detach; a stalled supervisor is cut off after the drain timeout.
-		var inputErr, droppedErr error
-		if s.windowed {
-			flushCtx, cancel := context.WithTimeout(context.Background(), s.closeDrainTimeout)
-			inputErr = s.FlushInput(flushCtx)
-			cancel()
-			if errors.Is(inputErr, context.DeadlineExceeded) {
-				inputErr = nil
-				s.mu.Lock()
-				dropped := len(s.inflight)
-				s.mu.Unlock()
-				droppedErr = fmt.Errorf("%w: %d unacknowledged input frames dropped", base.ErrDisconnected, dropped)
-				_ = s.conn.Close()
-			}
+		var droppedErr error
+		flushCtx, cancel := context.WithTimeout(context.Background(), s.closeDrainTimeout)
+		inputErr := s.FlushInput(flushCtx)
+		cancel()
+		if errors.Is(inputErr, context.DeadlineExceeded) {
+			inputErr = nil
+			s.mu.Lock()
+			dropped := len(s.inflight)
+			s.mu.Unlock()
+			droppedErr = fmt.Errorf("%w: %d unacknowledged input frames dropped", base.ErrDisconnected, dropped)
+			_ = s.conn.Close()
 		}
 		s.mu.Lock()
 		readErr := s.readErr
@@ -1323,7 +1560,7 @@ func (s *Stream) readLoop() {
 			s.fail(fmt.Errorf("%w: supervisor stream ended: %v", base.ErrDisconnected, err))
 			return
 		}
-		if kind == frameInputAck && s.windowed {
+		if kind == frameInputAck {
 			if ackErr := s.handleInputAck(payload); ackErr != nil {
 				s.fail(ackErr)
 				return
@@ -1334,17 +1571,13 @@ func (s *Stream) readLoop() {
 		case frameOutput, frameReplayGzip, frameOutputZstd:
 			var seq uint64
 			var data []byte
+			if kind != frameOutput && !s.conn.compress {
+				s.fail(fmt.Errorf("%w: compressed output the client did not ask for", ErrProtocol))
+				return
+			}
 			if kind == frameOutputZstd {
-				if !s.conn.supports(featureOutputZstd) {
-					s.fail(fmt.Errorf("%w: unnegotiated compressed output", ErrProtocol))
-					return
-				}
 				seq, data, err = parseOutputZstd(payload)
 			} else if kind == frameReplayGzip {
-				if !slices.Contains(s.conn.features, featureReplayGzip) {
-					s.fail(fmt.Errorf("%w: unnegotiated compressed replay", ErrProtocol))
-					return
-				}
 				seq, data, err = parseReplayGzip(payload)
 			} else {
 				seq, data, err = parseOutput(payload)
@@ -1379,21 +1612,57 @@ func (s *Stream) readLoop() {
 				s.skip -= drop
 				s.retireLocked(drop)
 			}
-			limit := maxStreamBuffer
-			if s.credit {
-				// A credited server never runs further ahead than the window.
-				limit = outputCreditWindow + 2*replayChunkSize
-			}
-			if len(s.readBuf)+len(data) > limit {
+			// A credited server never runs further ahead than the window.
+			if len(s.readBuf)+len(data) > outputCreditWindow+2*replayChunkSize {
 				s.mu.Unlock()
 				s.fail(fmt.Errorf("%w: stream buffer overflow", ErrProtocol))
 				return
 			}
 			s.readBuf = append(s.readBuf, data...)
+			s.buffered += uint64(len(data))
 			s.peakBuffered = max(s.peakBuffered, len(s.readBuf))
 			s.mu.Unlock()
 			select {
 			case s.newData <- struct{}{}:
+			default:
+			}
+		case frameHistoryGap:
+			from, to, err := parseGap(payload)
+			if err != nil {
+				s.fail(err)
+				return
+			}
+			s.mu.Lock()
+			if !s.started {
+				s.started = true
+				s.seq = from
+			}
+			if from != s.seq || from < s.want {
+				s.mu.Unlock()
+				s.fail(fmt.Errorf("%w: history gap at %d does not match expected %d", ErrProtocol, from, s.seq))
+				return
+			}
+			s.seq = to
+			s.gaps++
+			s.gapMarks = append(s.gapMarks, streamGap{at: s.buffered, to: to})
+			// The server counts the dropped range as streamed.
+			s.retireLocked(to - from)
+			s.mu.Unlock()
+			select {
+			case s.newData <- struct{}{}:
+			default:
+			}
+		case frameState:
+			var msg stateMsg
+			if err := unmarshalFrame(payload, &msg); err != nil {
+				s.fail(err)
+				return
+			}
+			s.mu.Lock()
+			s.applyStateLocked(msg.State)
+			s.mu.Unlock()
+			select {
+			case s.stateWake <- struct{}{}:
 			default:
 			}
 		case frameExit:

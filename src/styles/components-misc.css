@@ -1,0 +1,188 @@
+@layer components {
+  .nx-hint {
+    color: var(--nx-fg-tertiary);
+    font-size: calc(11.5px * var(--nx-ui-text-factor));
+    line-height: 1.6;
+  }
+
+  .nx-setting-label {
+    color: var(--nx-fg-emphasis);
+    font-size: calc(12px * var(--nx-ui-text-factor));
+    line-height: 1.5;
+  }
+
+  .nx-kbd {
+    display: inline-flex;
+    align-items: center;
+    height: 19px;
+    padding: 0 6px;
+    border: 1px solid var(--nx-border-strong);
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    color: var(--nx-fg-soft);
+    font-family: var(--font-mono);
+    font-size: calc(10.5px * var(--nx-ui-text-factor));
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .nx-form-row {
+    margin-bottom: 12px;
+  }
+
+  .nx-link {
+    color: var(--nx-fg-soft);
+    cursor: pointer;
+  }
+  .nx-link:hover {
+    color: var(--nx-fg-strong);
+  }
+
+  .nx-pre {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--color-term);
+    color: var(--nx-term-fg);
+    font-family: var(--font-mono);
+    font-size: calc(11.5px * var(--nx-ui-text-factor));
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow: auto;
+  }
+
+  .nx-code {
+    font-family: var(--font-mono);
+    font-size: calc(11.5px * var(--nx-ui-text-factor));
+    color: var(--nx-fg-soft);
+  }
+
+  .nx-progress {
+    height: 3px;
+    width: 100%;
+    overflow: hidden;
+    background: var(--nx-bg-raised);
+  }
+  .nx-progress-bar {
+    display: block;
+    height: 100%;
+    background: var(--color-accent);
+    transition: width 0.2s ease;
+  }
+
+  .nx-empty {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 32px 20px;
+    color: var(--nx-fg-tertiary);
+    font-size: calc(12px * var(--nx-ui-text-factor));
+    text-align: center;
+  }
+  .nx-empty-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    color: var(--nx-fg-tertiary);
+  }
+
+  .nx-alert {
+    border: 1px solid color-mix(in srgb, var(--color-amber-500) 34%, transparent);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-amber-500) 9%, transparent);
+    padding: 10px 12px;
+    color: var(--color-amber-300);
+    font-size: calc(11.8px * var(--nx-ui-text-factor));
+    line-height: 1.6;
+  }
+  .nx-alert-danger {
+    border-color: color-mix(in srgb, var(--color-red-500) 34%, transparent);
+    background: color-mix(in srgb, var(--color-red-500) 10%, transparent);
+    color: var(--color-red-300);
+  }
+  .nx-alert-success {
+    border-color: color-mix(in srgb, var(--color-green-500) 30%, transparent);
+    background: color-mix(in srgb, var(--color-green-500) 9%, var(--nx-bg-pane));
+    color: var(--color-green-300);
+  }
+  .nx-alert-info {
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+    color: var(--color-blue-300);
+  }
+
+  .nx-tab-new {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin-left: 2px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--nx-fg-soft);
+    cursor: pointer;
+  }
+  .nx-tab-new:hover {
+    border-color: color-mix(in srgb, var(--color-neutral-700) 80%, transparent);
+    background: color-mix(in srgb, var(--color-neutral-800) 85%, transparent);
+    color: var(--nx-fg-strong);
+  }
+
+  .nx-pathbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+    height: 27px;
+    padding: 0 6px;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    font-size: calc(11.5px * var(--nx-ui-text-factor));
+  }
+
+  .nx-path-crumb {
+    padding: 2px 5px;
+    border-radius: 4px;
+    color: var(--nx-fg-soft);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .nx-path-crumb:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 85%, transparent);
+    color: var(--nx-fg-strong);
+  }
+  .nx-path-crumb.is-current {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--nx-fg-strong);
+    font-weight: 500;
+  }
+
+  .nx-tree-caret {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    color: var(--nx-fg-tertiary);
+    cursor: pointer;
+  }
+  .nx-tree-caret:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-neutral-700) 90%, transparent);
+    color: var(--nx-fg-strong);
+  }
+  .nx-tree-caret:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+}

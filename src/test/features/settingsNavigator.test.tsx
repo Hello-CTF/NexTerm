@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, setInputValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -70,7 +70,7 @@ function toc(): HTMLElement {
 
 function tocButtons(): HTMLButtonElement[] {
   return [...toc().querySelectorAll<HTMLButtonElement>("button")].filter(
-    (button) => !button.getAttribute("aria-label")?.endsWith("设置目录"),
+    (button) => !/设置目录$|^搜索设置$/.test(button.getAttribute("aria-label") ?? ""),
   );
 }
 
@@ -81,7 +81,7 @@ function tocToggle(): HTMLButtonElement {
 }
 
 const GROUP_LABELS = ["通用", "AI", "安全", "账号与同步"];
-const GENERAL_TOC = ["通用", "外观", "终端", "快捷键", "诊断与调试", "AI", "安全", "账号与同步"];
+const GENERAL_TOC = ["通用", "外观", "终端", "状态规则", "快捷键", "诊断与调试", "AI", "安全", "账号与同步"];
 
 function groupShown(id: string): boolean {
   return mounted!.container.querySelector<HTMLElement>(`[data-settings-group="${id}"]`)?.hidden === false;
@@ -130,7 +130,7 @@ describe("Settings section navigation", () => {
     expect(groupShown("ai")).toBe(false);
     // Hidden groups stay mounted, so every section keeps a real target.
     for (const id of [
-      "settings-appearance", "settings-terminal", "settings-shortcuts", "settings-ai-model", "settings-ai-rules",
+      "settings-appearance", "settings-terminal", "settings-state-rules", "settings-shortcuts", "settings-ai-model", "settings-ai-rules",
       "settings-memory", "settings-vault", "settings-known-hosts", "settings-production",
       "settings-account", "settings-bundle", "settings-share",
     ]) {
@@ -189,7 +189,7 @@ describe("Settings section navigation", () => {
     expect(groupShown("ai")).toBe(true);
     click(tocToggle());
     await flush();
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["通用", "AI", "模型", "拦截规则", "技能", "记忆", "安全", "账号与同步"]);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["通用", "AI", "模型", "信息脱敏", "拦截规则", "技能", "记忆", "安全", "账号与同步"]);
   });
 
   it("persists TOC expansion state to local storage", async () => {
@@ -251,7 +251,7 @@ describe("AI interception rule drafts", () => {
 
     expect(useUi.getState().aiRulePrefill).toBeNull();
     const section = document.getElementById("settings-ai-rules")!;
-    expect(section.scrollIntoView).toHaveBeenCalled();
+    await waitForRendered(() => expect(section.scrollIntoView).toHaveBeenCalled());
     const draft = section.querySelector<HTMLInputElement>('input[placeholder*="Enter 保存"]')!;
     expect(draft.value).toBe("kubectl delete");
 

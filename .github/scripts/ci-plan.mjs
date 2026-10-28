@@ -23,6 +23,8 @@ export function planCI({ isPR, files = [], labels = [] }) {
       go = frontend = tooling = true;
     }
     if (/^build\/|^\.github\/|^scripts\/build|(^|\/)(go\.mod|go\.sum)$|_(darwin|linux|unix|windows)\.go$/.test(file)) fullNative = true;
+    // The privacy runtime is native code staged per OS/architecture.
+    if (/^internal\/ai\/privacy\/(inference|third_party)\/|^scripts\/ai-privacy-runtime\.mjs$|^scripts\/lib\/privacy-runtime\.mjs$/.test(file)) fullNative = true;
   }
   const native = !isPR || go || frontend || tooling;
   const scope = {

@@ -31,9 +31,8 @@ type RepairUndecryptableResult struct {
 func syncCompareToken(session *remoteSession, optIn kindOptIn) string {
 	mac := hmac.New(sha256.New, session.dek)
 	_, _ = mac.Write([]byte("nexterm/sync/compare/v1\x00" + session.key + "\x00" + session.userID + "\x00" + session.credentialHash))
-	flags := []bool{optIn.knownHost, optIn.aiProfile, optIn.aiPermission, optIn.aiGrant, optIn.preferences}
-	for _, enabled := range flags {
-		if enabled {
+	for _, spec := range optInSpecs {
+		if optIn[spec.id] {
 			_, _ = mac.Write([]byte{1})
 		} else {
 			_, _ = mac.Write([]byte{0})
@@ -132,7 +131,7 @@ func (s *Service) RepairUndecryptable(ctx context.Context, request RepairUndecry
 	// optional kind, including kinds hidden from the current sync comparison.
 	collectionOptIn := optIn
 	if request.Action == "clear-cloud" {
-		collectionOptIn = kindOptIn{knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true}
+		collectionOptIn = allKindOptIn()
 	}
 	localReport := &SyncReport{}
 	objects, err := s.engine.collectLocalObjects(ctx, localReport, collectionOptIn, session.userID)

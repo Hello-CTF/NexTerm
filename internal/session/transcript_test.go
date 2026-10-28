@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -345,7 +346,18 @@ func (p *transcriptDurableProvider) Create(_ context.Context, options base.Durab
 	return &transcriptDurableAttachment{fakeChannel: channel}, nil
 }
 
-func (p *transcriptDurableProvider) Attach(_ context.Context, id string) (base.DurableAttachment, error) {
+// transcriptDurableIdentity is the single incarnation this fake reports; the
+// tests here exercise transcript catch-up, not identity checks.
+var transcriptDurableIdentity = base.DurableIdentity{Incarnation: "transcript-incarnation"}
+
+func (p *transcriptDurableProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *transcriptDurableProvider) AttachFromWithIdentity(_ context.Context, id string, identity base.DurableIdentity, _ uint64) (base.DurableAttachment, error) {
+	if identity.Incarnation != transcriptDurableIdentity.Incarnation {
+		return nil, durable.ErrIdentity
+	}
 	p.mu.Lock()
 	record := p.records[id]
 	if record == nil {
@@ -361,6 +373,27 @@ func (p *transcriptDurableProvider) Attach(_ context.Context, id string) (base.D
 		channel.reads <- append([]byte(nil), read...)
 	}
 	return attachment, nil
+}
+
+func (p *transcriptDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
+	return p.AttachWithIdentity(ctx, id, identity)
+}
+
+// The transcript tests never list, rename, kill by identity or page history.
+func (p *transcriptDurableProvider) ListDurableDescriptors(context.Context) ([]base.DurableDescriptor, error) {
+	return nil, base.ErrUnsupported
+}
+
+func (p *transcriptDurableProvider) RenameDurable(context.Context, base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	return base.DurableRenameResult{}, base.ErrUnsupported
+}
+
+func (p *transcriptDurableProvider) KillWithIdentity(context.Context, string, base.DurableIdentity) error {
+	return base.ErrUnsupported
+}
+
+func (p *transcriptDurableProvider) ReadDurableHistory(context.Context, string, base.DurableIdentity, base.DurableHistoryRequest) (base.DurableHistoryChunk, error) {
+	return base.DurableHistoryChunk{}, base.ErrUnsupported
 }
 
 func (p *transcriptDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
@@ -448,7 +481,7 @@ func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
 	}
 	recoveredInfo, err := second.OpenTab(context.Background(), OpenTabOptions{
 		TabID: info.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "channel-b",
-		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true, Identity: &transcriptDurableIdentity},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -521,7 +554,7 @@ func TestTranscriptDurableRecoveryCatchUpLogsPrefixSkip(t *testing.T) {
 	}
 	if _, err := second.OpenTab(context.Background(), OpenTabOptions{
 		TabID: info.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "channel-b",
-		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true, Identity: &transcriptDurableIdentity},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +612,7 @@ func TestTranscriptDurableRecoveryRepeatedNoDuplication(t *testing.T) {
 		}
 		if _, err := manager.OpenTab(context.Background(), OpenTabOptions{
 			TabID: info.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "channel-b",
-			Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+			Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true, Identity: &transcriptDurableIdentity},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -705,12 +738,11 @@ func TestTranscriptRecordsInputAndResize(t *testing.T) {
 		t.Fatal("input must not leak into recorded output")
 	}
 
-	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("rejected")); err == nil {
-		t.Fatal("non-controller write must fail")
+	// Another client's input is recorded like the first one's.
+	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("second-client")); err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Contains(recorder.inputBytes(), []byte("rejected")) {
-		t.Fatal("failed write must not be recorded")
-	}
+	waitFor(t, func() bool { return bytes.Contains(recorder.inputBytes(), []byte("second-client")) })
 
 	if err := manager.Resize(context.Background(), tab.ID, "client-a", 120, 40); err != nil {
 		t.Fatal(err)

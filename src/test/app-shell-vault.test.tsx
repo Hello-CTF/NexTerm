@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
@@ -36,7 +36,7 @@ vi.mock("../ipc/commands", async (importOriginal) => {
         lastError: null,
       }),
       status: vi.fn().mockResolvedValue({ configured: false, loggedIn: false, lastError: "", warnings: [] }),
-      kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false }),
+      kindOptInGet: vi.fn().mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false }),
       wake: vi.fn().mockResolvedValue(undefined),
     },
   });
@@ -56,7 +56,7 @@ vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
-vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
+vi.mock("../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 vi.mock("../features/settings/SettingsView", async () => {
@@ -112,6 +112,15 @@ function openTabKinds(): string[] {
     .map((t) => t.kind);
 }
 
+// The shell loads these panels through React.lazy or dynamic imports. A cold import transforms the module
+// in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([
+    import("../app/AutoSync"),
+    import("../app/JumpPalette"),
+  ]);
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
@@ -160,7 +169,6 @@ describe("status bar credential vault state", () => {
             },
           ],
           activePaneId: "remote-pane",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -194,7 +202,8 @@ describe("status bar credential vault state", () => {
   it("renders a clickable enable-protection entry when uninitialized", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     const control = vaultStatusControl();
     expect(control?.tagName).toBe("BUTTON");
@@ -206,7 +215,8 @@ describe("status bar credential vault state", () => {
   it("opens the settings tab and locates the credential protection card after clicking the entry", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     click(vaultStatusControl() as HTMLElement);
     await flush();
@@ -241,7 +251,6 @@ describe("status bar credential vault state", () => {
             },
           ],
           activePaneId: "pane-a",
-          splitRatio: 0.5,
           closable: true,
         },
         {
@@ -250,14 +259,14 @@ describe("status bar credential vault state", () => {
           title: "Tools",
           panes: [{ id: "pane-b", tabs: [], activeTabId: null }],
           activePaneId: "pane-b",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
       activeWorkspaceId: "ws-b",
     });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     click(vaultStatusControl() as HTMLElement);
     await flush();
@@ -283,10 +292,55 @@ describe("status bar credential vault state", () => {
     expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
+  it("finds the settings card when the workspace shows two tab panels side by side", async () => {
+    mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws-b",
+          kind: "tools",
+          title: "工具",
+          panes: [
+            { id: "pane-a", tabs: [{ id: "a-audit", kind: "audit", title: "Audit", closable: true }], activeTabId: "a-audit" },
+            { id: "pane-b", tabs: [{ id: "z-settings", kind: "settings", title: "Settings", closable: true }], activeTabId: "z-settings" },
+          ],
+          activePaneId: "pane-a",
+          layoutTree: {
+            type: "split",
+            id: "root",
+            dir: "row",
+            ratio: 0.5,
+            a: { type: "leaf", id: "leaf-a", paneId: "pane-a" },
+            b: { type: "leaf", id: "leaf-b", paneId: "pane-b" },
+          },
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws-b",
+    });
+    mounted = mountApp();
+    await flushUntil(() => vaultStatusControl() !== null);
+    await flush();
+
+    expect(document.querySelectorAll("#nx-ws-panel-ws-b [data-tab-content]:not(.hidden) [role='tabpanel']")).toHaveLength(2);
+    const card = [...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-b .nx-card")].find(
+      (c) => c.textContent?.includes("凭据保护"),
+    );
+    expect(card).toBeTruthy();
+    const scroll = vi.fn();
+    (card as HTMLElement).scrollIntoView = scroll;
+
+    click(vaultStatusControl() as HTMLElement);
+    await flush();
+
+    expect(scroll).toHaveBeenCalledWith({ block: "start" });
+  });
+
   it("keeps the locked state as plain text without an enable-protection entry", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     const control = vaultStatusControl();
     expect(control?.tagName).toBe("SPAN");
@@ -297,7 +351,8 @@ describe("status bar credential vault state", () => {
   it("keeps the unlocked state as plain text", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     const control = vaultStatusControl();
     expect(control?.tagName).toBe("SPAN");
@@ -318,7 +373,8 @@ describe("status bar credential vault state", () => {
   it("refreshes an open settings page through the shared vault-status query after initialization elsewhere", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();
-    await flush();
+    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => vaultStatusControl() !== null);
 
     click(vaultStatusControl() as HTMLElement);
     await flush();

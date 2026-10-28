@@ -8,6 +8,11 @@ import {
   getTerminalPrefs,
   setTerminalDefaultMode,
   setTerminalCloseAction,
+  setTerminalGpuAcceleration,
+  setTerminalLinkActivation,
+  setTerminalDurableHistoryMiB,
+  setTerminalScrollback,
+  subscribeTerminalPrefs,
   type AccountPreferenceStore,
   type AccountPreferenceView,
 } from "../app/preferences";
@@ -149,16 +154,16 @@ describe("account-level keybinding overrides (M140 flat allowlisted keys)", () =
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
 
     setKeybinding("quickConnect", "Mod+Shift+g");
-    setKeybinding("toggleSplit", "Mod+Shift+\\");
+    setKeybinding("splitRight", "Mod+Alt+\\");
     // The account snapshot is not wiped by later key changes, and other keys in the account store are not overwritten wholesale.
     expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t");
     expect(getKeybinding("closeTab")).toBe("Mod+Shift+w");
     expect(store.data["keybinding.newTerminal"]).toBe("Mod+Shift+t");
     expect(store.data["keybinding.closeTab"]).toBe("Mod+Shift+w");
-    expect(store.puts).toEqual([{ "keybinding.quickConnect": "Mod+Shift+g" }, { "keybinding.toggleSplit": "Mod+Shift+\\" }]);
+    expect(store.puts).toEqual([{ "keybinding.quickConnect": "Mod+Shift+g" }, { "keybinding.splitRight": "Mod+Alt+\\" }]);
     expect(JSON.parse(window.localStorage.getItem("nexterm.keybindings.v1")!)).toEqual({
       quickConnect: "Mod+Shift+g",
-      toggleSplit: "Mod+Shift+\\",
+      splitRight: "Mod+Alt+\\",
     });
   });
 
@@ -264,6 +269,80 @@ describe("default terminal mode preferences", () => {
     expect(getTerminalPrefs().defaultMode).toBe("durable");
   });
 
+  it("keeps the device value for a device-only store, including while a re-registration loads", async () => {
+    registerAccountPreferenceStore(null);
+    await setTerminalDefaultMode("regular");
+    const store = memoryStore({});
+    vi.spyOn(store, "getView").mockResolvedValue({ defaults: {}, overrides: {}, deviceOnly: true });
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+
+    let resolveView: (() => void) | undefined;
+    const waking = memoryStore({});
+    vi.spyOn(waking, "getView").mockImplementation(() => new Promise((resolve) => {
+      resolveView = () => resolve({ defaults: {}, overrides: {}, deviceOnly: true });
+    }));
+    registerAccountPreferenceStore(waking);
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    resolveView?.();
+    await flushMacrotask();
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    expect(waking.puts).toEqual([]);
+  });
+
+  it("reads the device value while the account view loads", async () => {
+    registerAccountPreferenceStore(null);
+    await setTerminalDefaultMode("regular");
+    const store = memoryStore({}, { "terminal.defaultMode": "durable" });
+    let resolveView: (() => void) | undefined;
+    vi.spyOn(store, "getView").mockImplementation(() => new Promise((resolve) => {
+      resolveView = () => resolve({ defaults: {}, overrides: { "terminal.defaultMode": "durable" } });
+    }));
+    registerAccountPreferenceStore(store);
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    resolveView?.();
+    await flushMacrotask();
+    expect(getTerminalPrefs().defaultMode).toBe("durable");
+  });
+
+  it("holds a choice made while the view loads and lands it on the device for a device-only store", async () => {
+    registerAccountPreferenceStore(null);
+    const store = memoryStore({});
+    let resolveView: (() => void) | undefined;
+    vi.spyOn(store, "getView").mockImplementation(() => new Promise((resolve) => {
+      resolveView = () => resolve({ defaults: {}, overrides: {}, deviceOnly: true });
+    }));
+    registerAccountPreferenceStore(store);
+    const saving = setTerminalDefaultMode("regular");
+    await flushMacrotask();
+    expect(store.puts).toEqual([]);
+    resolveView?.();
+    await saving;
+    expect(store.puts).toEqual([]);
+    expect(localStorage.getItem("nexterm.terminalClose.v1")).toContain('"defaultMode":"regular"');
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+  });
+
+  it("holds a choice made while the view loads and sends it to the account once loaded", async () => {
+    registerAccountPreferenceStore(null);
+    const store = memoryStore({ "terminal.defaultMode": "durable" });
+    let resolveView: (() => void) | undefined;
+    vi.spyOn(store, "getView").mockImplementation(() => new Promise((resolve) => {
+      resolveView = () => resolve({ defaults: {}, overrides: { "terminal.defaultMode": "durable" } });
+    }));
+    registerAccountPreferenceStore(store);
+    const saving = setTerminalDefaultMode("regular");
+    await flushMacrotask();
+    expect(store.puts).toEqual([]);
+    resolveView?.();
+    await saving;
+    expect(store.puts).toEqual([{ "terminal.defaultMode": "regular" }]);
+    expect(getAccountOverrides()["terminal.defaultMode"]).toBe("regular");
+    expect(getTerminalPrefs().defaultMode).toBe("regular");
+    expect(localStorage.getItem("nexterm.terminalClose.v1") ?? "").not.toContain("defaultMode");
+  });
+
   it("does not copy an account terminal mode into device settings when changing the close action", async () => {
     registerAccountPreferenceStore(null);
     await setTerminalDefaultMode("regular");
@@ -291,6 +370,137 @@ describe("default terminal mode preferences", () => {
     await saving;
     expect(getTerminalPrefs().defaultMode).toBe("durable");
     expect(getAccountOverrides()["terminal.defaultMode"]).toBe("durable");
+  });
+});
+
+describe("terminal GPU acceleration preference", () => {
+  afterEach(() => registerAccountPreferenceStore(null));
+
+  it("defaults to auto and round-trips through the account store", async () => {
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().gpuAcceleration).toBe("auto");
+    const store = memoryStore({});
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    const changed = vi.fn();
+    const unsubscribe = subscribeTerminalPrefs(changed);
+    setTerminalGpuAcceleration("off");
+    setTerminalGpuAcceleration("off");
+    unsubscribe();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(store.puts).toEqual([{ "terminal.gpuAcceleration": "off" }]);
+
+    // Another device reads the saved override.
+    registerAccountPreferenceStore(null);
+    window.localStorage.clear();
+    registerAccountPreferenceStore(memoryStore({ ...store.data }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().gpuAcceleration).toBe("off");
+  });
+
+  it("keeps a device value without an account and ignores unknown stored values", async () => {
+    registerAccountPreferenceStore(null);
+    setTerminalGpuAcceleration("on");
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().gpuAcceleration).toBe("on");
+
+    registerAccountPreferenceStore(memoryStore({ "terminal.gpuAcceleration": "webgl" }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().gpuAcceleration).toBe("auto");
+  });
+});
+
+describe("terminal scrollback preference", () => {
+  afterEach(() => registerAccountPreferenceStore(null));
+
+  it("defaults to ten thousand lines and stays on this device, even with an account", async () => {
+    registerAccountPreferenceStore(null);
+    window.localStorage.clear();
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().scrollback).toBe(10_000);
+    const store = memoryStore({});
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    const changed = vi.fn();
+    const unsubscribe = subscribeTerminalPrefs(changed);
+    setTerminalScrollback(50_000);
+    setTerminalScrollback(50_000);
+    unsubscribe();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(store.puts).toEqual([]);
+    expect(getTerminalPrefs().scrollback).toBe(50_000);
+
+    // Another device with the same account keeps its own value.
+    window.localStorage.clear();
+    registerAccountPreferenceStore(memoryStore({ "terminal.scrollback": 25_000 }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().scrollback).toBe(10_000);
+  });
+
+  it("ignores stored values that are not an option", () => {
+    window.localStorage.setItem("nexterm.terminalClose.v1", JSON.stringify({ scrollback: 12_345 }));
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().scrollback).toBe(10_000);
+  });
+});
+
+describe("durable terminal history limit preference", () => {
+  afterEach(() => registerAccountPreferenceStore(null));
+
+  it("saves the account override and clears it back to the helper default", async () => {
+    const store = memoryStore({});
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    expect(getTerminalPrefs().durableHistoryMiB).toBeNull();
+    await setTerminalDurableHistoryMiB(32);
+    expect(store.data["terminal.durableHistoryMiB"]).toBe(32);
+    expect(getTerminalPrefs().durableHistoryMiB).toBe(32);
+    await setTerminalDurableHistoryMiB(null);
+    expect(store.clears).toEqual([["terminal.durableHistoryMiB"]]);
+    expect(getTerminalPrefs().durableHistoryMiB).toBeNull();
+  });
+
+  it("reads the server default and refuses to save without an account", async () => {
+    registerAccountPreferenceStore(memoryStore({}, { "terminal.durableHistoryMiB": 64 }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().durableHistoryMiB).toBe(64);
+
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().durableHistoryMiB).toBeNull();
+    await expect(setTerminalDurableHistoryMiB(16)).rejects.toThrow();
+  });
+});
+
+describe("terminal link activation preference", () => {
+  afterEach(() => registerAccountPreferenceStore(null));
+
+  it("defaults to modifier-click and round-trips through the account store", async () => {
+    registerAccountPreferenceStore(null);
+    window.localStorage.clear();
+    registerAccountPreferenceStore(null);
+    expect(getTerminalPrefs().linkActivation).toBe("modifier");
+    const store = memoryStore({});
+    registerAccountPreferenceStore(store);
+    await flushMacrotask();
+    const changed = vi.fn();
+    const unsubscribe = subscribeTerminalPrefs(changed);
+    setTerminalLinkActivation("click");
+    setTerminalLinkActivation("click");
+    unsubscribe();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(store.puts).toEqual([{ "terminal.linkActivation": "click" }]);
+
+    registerAccountPreferenceStore(null);
+    window.localStorage.clear();
+    registerAccountPreferenceStore(memoryStore({ ...store.data }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().linkActivation).toBe("click");
+  });
+
+  it("ignores unknown stored values", async () => {
+    registerAccountPreferenceStore(memoryStore({ "terminal.linkActivation": "double" }));
+    await flushMacrotask();
+    expect(getTerminalPrefs().linkActivation).toBe("modifier");
   });
 });
 
@@ -343,7 +553,7 @@ describe("server global defaults in the keybinding snapshot (built-in < server <
     // Device-local beats the server default
     await vi.waitFor(() => expect(getKeybinding("quickConnect")).toBe("Mod+Shift+j"));
     // Undeclared keys fall back to built-in defaults
-    expect(getKeybinding("toggleSplit")).toBe("Mod+\\");
+    expect(getKeybinding("splitDown")).toBe("Mod+\\");
   });
 
   it("falls back to the server default rather than the built-in default after resetKeybinding", async () => {

@@ -214,10 +214,10 @@ describe("syncV2Api production contract", () => {
     await syncV2Api.push("head-1", [{ id: "a1", blob: "blob-1" }]);
     await syncV2Api.deleteObject("head-2", "a1", "hash-1");
 
-    expect(calls[0]).toMatchObject({ url: "/sync/v2/ids", body: { protocol: 2 } });
-    expect(calls[1]).toMatchObject({ url: "/sync/v2/pull", body: { protocol: 2, since_seq: 42, ids: ["a1", "a2"], max_bytes: 1024 } });
-    expect(calls[2]).toMatchObject({ url: "/sync/v2/push", body: { protocol: 2, known_head: "head-1", objects: [{ id: "a1", blob: "blob-1" }] } });
-    expect(calls[3]).toMatchObject({ url: "/sync/v2/delete", body: { protocol: 2, known_head: "head-2", id: "a1", blob_hash: "hash-1" } });
+    expect(calls[0]).toMatchObject({ url: "/sync/v2/ids", body: { protocol: 3 } });
+    expect(calls[1]).toMatchObject({ url: "/sync/v2/pull", body: { protocol: 3, since_seq: 42, ids: ["a1", "a2"], max_bytes: 1024 } });
+    expect(calls[2]).toMatchObject({ url: "/sync/v2/push", body: { protocol: 3, known_head: "head-1", objects: [{ id: "a1", blob: "blob-1" }] } });
+    expect(calls[3]).toMatchObject({ url: "/sync/v2/delete", body: { protocol: 3, known_head: "head-2", id: "a1", blob_hash: "hash-1" } });
     expect(calls[2]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
     expect(calls[3]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
     expect(calls[1]?.headers["X-NexTerm-CSRF"]).toBeUndefined();

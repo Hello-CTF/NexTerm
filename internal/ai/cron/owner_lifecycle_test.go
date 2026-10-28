@@ -3,6 +3,7 @@ package cron
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -76,7 +77,7 @@ func TestDatabaseCreateAndCASUseRequestAndDurableOwners(t *testing.T) {
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	input := fullTestJob("job", "session", now)
 	input.OwnerID = "request-forgery"
-	input.OwnerKind = OwnerKindLegacy
+	input.OwnerKind = OwnerKind("forged")
 	created, err := cronStore.Create(ctxA, input, 4)
 	if err != nil {
 		t.Fatal(err)
@@ -105,64 +106,88 @@ func TestDatabaseCreateAndCASUseRequestAndDurableOwners(t *testing.T) {
 	}
 }
 
-func TestOwnerlessLegacyGateAndDesktopCompatibility(t *testing.T) {
-	for _, testCase := range []struct {
-		name        string
-		allowLegacy bool
-	}{
-		{name: "account mode blocks", allowLegacy: false},
-		{name: "desktop open mode runs", allowLegacy: true},
+func TestOwnerlessJobIsDisabledWithVisibleError(t *testing.T) {
+	cronStore := newTestSQLiteStore(t)
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	job := fullTestJob("ownerless", "session", now)
+	job.Run = RunState{}
+	job.Lease = Lease{}
+	job.NextRunAt = now
+	job.RetryAt = time.Time{}
+	job.CircuitOpenUntil = time.Time{}
+	if _, err := cronStore.Create(context.Background(), job, 4); err != nil {
+		t.Fatal(err)
+	}
+	if err := cronStore.db.Model(&storepkg.CronJob{}).Where("id = ?", job.ID).
+		Updates(map[string]any{"owner_id": "", "owner_kind": ""}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count, err := cronStore.CountOwnerless(context.Background()); err != nil || count != 1 {
+		t.Fatalf("ownerless job count = %d, err = %v", count, err)
+	}
+	clock := newFakeClock(now)
+	triggers := make(chan Trigger, 1)
+	scheduler := testScheduler(t, cronStore, executorFunc(func(_ context.Context, trigger Trigger) error {
+		triggers <- trigger
+		return nil
+	}), clock)
+	claimed, err := scheduler.runOnce(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed != 0 || len(triggers) != 0 {
+		t.Fatalf("ownerless execution claimed = %d, triggers = %d", claimed, len(triggers))
+	}
+	stored := loadStoredJob(t, cronStore, job.ID)
+	if stored.Enabled || stored.OwnerID != "" || !strings.Contains(stored.LastError, ErrOwnerless.Error()) {
+		t.Fatalf("blocked ownerless job = %+v", stored)
+	}
+}
+
+func TestAccountModeSchedulerLeavesOpenJobsUntouched(t *testing.T) {
+	cronStore := newTestSQLiteStore(t)
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	for _, id := range []string{"open", "account"} {
+		job := fullTestJob(id, "session-"+id, now)
+		job.Run = RunState{}
+		job.Lease = Lease{}
+		job.NextRunAt = now
+		job.RetryAt = time.Time{}
+		job.CircuitOpenUntil = time.Time{}
+		job.LastError = ""
+		if _, err := cronStore.Create(context.Background(), job, 4); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, owner := range map[string]map[string]any{
+		"open":    {"owner_id": "", "owner_kind": string(OwnerKindOpen)},
+		"account": {"owner_id": "owner-a", "owner_kind": string(OwnerKindAccount)},
 	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			cronStore := newTestSQLiteStore(t)
-			now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
-			job := fullTestJob("legacy", "session", now)
-			job.Run = RunState{}
-			job.Lease = Lease{}
-			job.NextRunAt = now
-			job.RetryAt = time.Time{}
-			job.CircuitOpenUntil = time.Time{}
-			if _, err := cronStore.Create(context.Background(), job, 4); err != nil {
-				t.Fatal(err)
-			}
-			if err := cronStore.db.Model(&storepkg.CronJob{}).Where("id = ?", job.ID).
-				Updates(map[string]any{"owner_id": "", "owner_kind": ""}).Error; err != nil {
-				t.Fatal(err)
-			}
-			clock := newFakeClock(now)
-			triggers := make(chan Trigger, 1)
-			scheduler := testScheduler(t, cronStore, executorFunc(func(_ context.Context, trigger Trigger) error {
-				triggers <- trigger
-				return nil
-			}), clock, func(options *Options) {
-				options.AllowOwnerlessLegacy = testCase.allowLegacy
-			})
-			claimed, err := scheduler.runOnce(context.Background(), now)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !testCase.allowLegacy {
-				if claimed != 0 || len(triggers) != 0 {
-					t.Fatalf("legacy execution claimed = %d, triggers = %d", claimed, len(triggers))
-				}
-				stored := loadStoredJob(t, cronStore, job.ID)
-				if stored.Enabled || stored.OwnerID != "" || stored.OwnerKind != OwnerKindLegacy || !strings.Contains(stored.LastError, ErrOwnerlessLegacy.Error()) {
-					t.Fatalf("blocked legacy job = %+v", stored)
-				}
-				return
-			}
-			if claimed != 1 {
-				t.Fatalf("desktop legacy claim = %d", claimed)
-			}
-			waitSchedulerWithTimeout(t, scheduler)
-			trigger := <-triggers
-			if trigger.OwnerID != "" || trigger.OwnerKind != OwnerKindLegacy {
-				t.Fatalf("desktop legacy trigger = %+v", trigger)
-			}
-			stored := loadStoredJob(t, cronStore, job.ID)
-			if stored.OwnerKind != OwnerKindLegacy || stored.OwnerID != "" || stored.Running() || stored.LastError != "" {
-				t.Fatalf("desktop legacy result = %+v", stored)
-			}
-		})
+		if err := cronStore.db.Model(&storepkg.CronJob{}).Where("id = ?", id).Updates(owner).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := loadStoredJob(t, cronStore, "open")
+	cronStore.shared = false
+	clock := newFakeClock(now)
+	triggers := make(chan Trigger, 2)
+	scheduler := testScheduler(t, cronStore, executorFunc(func(_ context.Context, trigger Trigger) error {
+		triggers <- trigger
+		return nil
+	}), clock)
+	claimed, err := scheduler.runOnce(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitSchedulerWithTimeout(t, scheduler)
+	if claimed != 1 || len(triggers) != 1 {
+		t.Fatalf("claimed = %d, triggers = %d; want only the account job", claimed, len(triggers))
+	}
+	if trigger := <-triggers; trigger.JobID != "account" {
+		t.Fatalf("triggered job = %+v, want the account job", trigger)
+	}
+	cronStore.shared = true
+	if after := loadStoredJob(t, cronStore, "open"); !reflect.DeepEqual(after, before) {
+		t.Fatalf("account-mode scheduler changed the Open job:\nbefore %+v\nafter  %+v", before, after)
 	}
 }

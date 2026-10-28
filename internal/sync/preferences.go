@@ -26,25 +26,6 @@ const (
 	aiGrantModePrefix   = "mode/"
 )
 
-func (e *Engine) collectPreferenceObjects(ctx context.Context, userID string, objects map[string]localObject, optIn kindOptIn) error {
-	if optIn.aiPermission {
-		if err := e.collectAIPermission(ctx, objects); err != nil {
-			return err
-		}
-	}
-	if optIn.aiGrant {
-		if err := e.collectAIGrantObjects(ctx, objects); err != nil {
-			return err
-		}
-	}
-	if optIn.preferences {
-		if err := e.collectPreferences(ctx, userID, objects); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (e *Engine) collectAIPermission(ctx context.Context, objects map[string]localObject) error {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		return err
@@ -120,7 +101,9 @@ func aiGrantKindStrings(kinds []guard.GrantKind) []string {
 // collectAIGrantObjects emits one object per device grant, grant rule, and per-device permission mode;
 // grants and rules carry per-entry revisions, modes share the mode map row's revision as their LWW clock (same tradeoff as ai_profiles).
 // Grants, rules, and modes use the request owner's settings keys; the sync object IDs and payload shapes stay unchanged.
-func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]localObject) error {
+// Rejected pre-1.3.0 grant records are never pushed: they are reported on the round (report is nil on the browser
+// collect path, where the grant panel lists them as legacy) instead of propagating unmigrated data to other devices.
+func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]localObject, report *SyncReport) error {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		return err
 	}
@@ -129,11 +112,14 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 		return err
 	}
 	if found && value != "" {
-		var grants map[string]guard.DeviceGrant
-		if err := json.Unmarshal([]byte(value), &grants); err != nil {
+		grants, err := guard.DecodeDeviceGrants(value)
+		if err != nil {
 			return ipc.WrapError(ipc.CodeBadParam, "AI 设备授权数据损坏", err)
 		}
-		for _, grant := range grants {
+		if legacy := grants.LegacyIDs(); len(legacy) > 0 && report != nil {
+			report.warnf("%d 条 AI 设备授权为 1.3.0 之前的旧格式，在这台设备上不生效，也不会从这台设备推送（其他设备上的同一授权可能仍然有效），请在 AI 授权设置中重新授权或清除：%s", len(legacy), strings.Join(legacy, ", "))
+		}
+		for _, grant := range grants.Current {
 			id := aiGrantDevicePrefix + grant.DeviceID
 			payload, err := marshalObject(aiGrantDeviceObject{ID: id, DeviceID: grant.DeviceID, Kinds: aiGrantKindStrings(grant.Kinds), UpdatedAt: grant.UpdatedAt})
 			if err != nil {
@@ -147,11 +133,14 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 		return err
 	}
 	if found && value != "" {
-		var rules []guard.GrantRule
-		if err := json.Unmarshal([]byte(value), &rules); err != nil {
+		rules, err := guard.DecodeGrantRules(value)
+		if err != nil {
 			return ipc.WrapError(ipc.CodeBadParam, "AI 授权规则数据损坏", err)
 		}
-		for _, rule := range rules {
+		if legacy := rules.LegacyIDs(); len(legacy) > 0 && report != nil {
+			report.warnf("%d 条 AI 授权规则为 1.3.0 之前的旧格式，在这台设备上不生效，也不会从这台设备推送（其他设备上的同一规则可能仍然有效），请在 AI 授权设置中重新添加或清除：%s", len(legacy), strings.Join(legacy, ", "))
+		}
+		for _, rule := range rules.Current {
 			id := aiGrantRulePrefix + rule.ID
 			payload, err := marshalObject(aiGrantRuleObject{
 				ID: id, DeviceID: rule.DeviceID, Action: rule.Action, Path: rule.Path,
@@ -188,15 +177,34 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 }
 
 // aiGrantSettingPut writes a guard settings row back as a whole, preserving the given revision verbatim (same semantics as settingPut for ai_permission).
+// Device grant and rule sets go through the guard codec so current records keep their generations and rejected legacy
+// records are written back verbatim.
 func (e *Engine) aiGrantSettingPut(ctx context.Context, key string, value any, updatedAt int64) error {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		return err
 	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return err
+	var encoded string
+	switch set := value.(type) {
+	case guard.DeviceGrantSet:
+		raw, err := set.Encode()
+		if err != nil {
+			return err
+		}
+		encoded = raw
+	case guard.GrantRuleSet:
+		raw, err := set.Encode()
+		if err != nil {
+			return err
+		}
+		encoded = raw
+	default:
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		encoded = string(raw)
 	}
-	return e.settingPut(ctx, key, string(encoded), updatedAt)
+	return e.settingPut(ctx, key, encoded, updatedAt)
 }
 
 func (e *Engine) applyAIPermissionObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
@@ -281,36 +289,6 @@ func (e *Engine) applyAIGrantObject(ctx context.Context, objectID string, plaint
 	}
 }
 
-// decodeAIGrantDeviceRecords decodes the persisted device grant map record by record with the guard's
-// own permanence rule (the same normalization guard.loadGrants applies on reads): only records written
-// before the marker existed (absent permanence) default to permanent, and an explicit marker is kept
-// verbatim. Every whole-row rewrite of the map must decode through here so bystander records keep their
-// durable permanence instead of silently adopting the zero value.
-func decodeAIGrantDeviceRecords(value string) (map[string]guard.DeviceGrant, error) {
-	grants := map[string]guard.DeviceGrant{}
-	var records map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(value), &records); err != nil {
-		return nil, err
-	}
-	for id, item := range records {
-		var grant guard.DeviceGrant
-		if err := json.Unmarshal(item, &grant); err != nil {
-			return nil, err
-		}
-		var marker struct {
-			Permanent *bool `json:"permanent"`
-		}
-		if err := json.Unmarshal(item, &marker); err != nil {
-			return nil, err
-		}
-		if marker.Permanent == nil {
-			grant.Permanent = true
-		}
-		grants[id] = grant
-	}
-	return grants, nil
-}
-
 func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		report.warnf("AI 授权应用需要账号身份: %v", err)
@@ -343,20 +321,17 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
 	}
-	value, revision, found, err := e.settingRow(ctx, guard.DeviceGrantsSettingKeyForUser(ctx))
+	value, revision, _, err := e.settingRow(ctx, guard.DeviceGrantsSettingKeyForUser(ctx))
 	if err != nil {
 		report.warnf("无法读取 AI 设备授权: %v", err)
 		return false, false
 	}
-	grants := map[string]guard.DeviceGrant{}
-	if found && value != "" {
-		grants, err = decodeAIGrantDeviceRecords(value)
-		if err != nil {
-			report.warnf("AI 设备授权数据损坏: %v", err)
-			return false, false
-		}
+	grants, err := guard.DecodeDeviceGrants(value)
+	if err != nil {
+		report.warnf("AI 设备授权数据损坏: %v", err)
+		return false, false
 	}
-	local, exists := grants[payload.DeviceID]
+	local, exists := grants.Current[payload.DeviceID]
 	if exists {
 		localPlaintext, err := marshalObject(aiGrantDeviceObject{ID: payload.ID, DeviceID: local.DeviceID, Kinds: aiGrantKindStrings(local.Kinds), UpdatedAt: local.UpdatedAt})
 		if err != nil {
@@ -370,9 +345,11 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 		}
 	}
 	// A device grant in the guard store is a long-term authorization, so permanence is bound
-	// explicitly exactly like guard.Grant writes it locally; the payload carries no permanence
-	// bit, keeping old peers and pre-marker legacy records compatible by the guard's own rule.
-	grants[payload.DeviceID] = guard.DeviceGrant{DeviceID: payload.DeviceID, Kinds: kinds, Permanent: true, UpdatedAt: payload.UpdatedAt}
+	// explicitly and a fresh generation is issued exactly like guard.Grant writes it locally.
+	// A rejected pre-1.3.0 local record for the same device is replaced by the synced state;
+	// bystander records keep their generations, and other legacy records stay verbatim.
+	grants.Current[payload.DeviceID] = guard.DeviceGrant{DeviceID: payload.DeviceID, Kinds: kinds, Permanent: true, UpdatedAt: payload.UpdatedAt}.Renewed()
+	delete(grants.Legacy, payload.DeviceID)
 	if err := e.aiGrantSettingPut(ctx, guard.DeviceGrantsSettingKeyForUser(ctx), grants, max(revision, payload.UpdatedAt)); err != nil {
 		report.warnf("AI 设备授权应用失败: %v", err)
 		return false, false
@@ -425,31 +402,29 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
 	}
-	value, revision, found, err := e.settingRow(ctx, guard.GrantRulesSettingKeyForUser(ctx))
+	value, revision, _, err := e.settingRow(ctx, guard.GrantRulesSettingKeyForUser(ctx))
 	if err != nil {
 		report.warnf("无法读取 AI 授权规则: %v", err)
 		return false, false
 	}
-	rules := []guard.GrantRule{}
-	if found && value != "" {
-		if err := json.Unmarshal([]byte(value), &rules); err != nil {
-			report.warnf("AI 授权规则数据损坏: %v", err)
-			return false, false
-		}
+	rules, err := guard.DecodeGrantRules(value)
+	if err != nil {
+		report.warnf("AI 授权规则数据损坏: %v", err)
+		return false, false
 	}
 	applied := guard.GrantRule{
 		ID: ruleID, DeviceID: payload.DeviceID, Action: payload.Action, Path: payload.Path,
 		ExpiresAt: payload.ExpiresAt, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
-	}
+	}.Renewed()
 	index := -1
-	for i, rule := range rules {
+	for i, rule := range rules.Current {
 		if rule.ID == ruleID {
 			index = i
 			break
 		}
 	}
 	if index >= 0 {
-		local := rules[index]
+		local := rules.Current[index]
 		localPlaintext, err := marshalObject(aiGrantRuleObject{
 			ID: payload.ID, DeviceID: local.DeviceID, Action: local.Action, Path: local.Path,
 			ExpiresAt: local.ExpiresAt, CreatedAt: local.CreatedAt, UpdatedAt: local.UpdatedAt,
@@ -463,9 +438,16 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 		if !remoteWins(payload.UpdatedAt, local.UpdatedAt, plaintext, localPlaintext) {
 			return false, false
 		}
-		rules[index] = applied
+		rules.Current[index] = applied
 	} else {
-		rules = append(rules, applied)
+		rules.Current = append(rules.Current, applied)
+	}
+	// A rejected pre-1.3.0 local rule with the same ID is replaced by the synced state.
+	for i, legacy := range rules.Legacy {
+		if legacy.View.ID == ruleID {
+			rules.Legacy = append(rules.Legacy[:i], rules.Legacy[i+1:]...)
+			break
+		}
 	}
 	if err := e.aiGrantSettingPut(ctx, guard.GrantRulesSettingKeyForUser(ctx), rules, max(revision, payload.UpdatedAt)); err != nil {
 		report.warnf("AI 授权规则应用失败: %v", err)
@@ -577,21 +559,21 @@ func (e *Engine) applyAIGrantDeviceTombstone(ctx context.Context, objectID strin
 		report.warnf("AI 授权目标校验失败: %v", err)
 		return false, false
 	}
-	value, revision, found, err := e.settingRow(ctx, guard.DeviceGrantsSettingKeyForUser(ctx))
+	value, revision, _, err := e.settingRow(ctx, guard.DeviceGrantsSettingKeyForUser(ctx))
 	if err != nil {
 		report.warnf("无法读取 AI 设备授权: %v", err)
 		return false, false
 	}
-	grants := map[string]guard.DeviceGrant{}
-	if found && value != "" {
-		grants, err = decodeAIGrantDeviceRecords(value)
-		if err != nil {
-			report.warnf("AI 设备授权数据损坏: %v", err)
-			return false, false
-		}
+	grants, err := guard.DecodeDeviceGrants(value)
+	if err != nil {
+		report.warnf("AI 设备授权数据损坏: %v", err)
+		return false, false
 	}
 	deviceID := strings.TrimPrefix(objectID, aiGrantDevicePrefix)
-	local, exists := grants[deviceID]
+	local, exists := grants.Current[deviceID]
+	if legacy, ok := grants.Legacy[deviceID]; ok && !exists {
+		local, exists = legacy.View, true
+	}
 	if exists && local.UpdatedAt > deletedAt {
 		return false, false
 	}
@@ -600,7 +582,8 @@ func (e *Engine) applyAIGrantDeviceTombstone(ctx context.Context, objectID strin
 		return false, false
 	}
 	if exists {
-		delete(grants, deviceID)
+		delete(grants.Current, deviceID)
+		delete(grants.Legacy, deviceID)
 		if err := e.aiGrantSettingPut(ctx, guard.DeviceGrantsSettingKeyForUser(ctx), grants, max(revision, deletedAt)); err != nil {
 			report.warnf("应用 AI 设备授权的删除标记失败：%v", err)
 			return false, false
@@ -614,31 +597,40 @@ func (e *Engine) applyAIGrantRuleTombstone(ctx context.Context, objectID string,
 		report.warnf("AI 授权规则删除标记需要账号身份: %v", err)
 		return false, false
 	}
-	value, revision, found, err := e.settingRow(ctx, guard.GrantRulesSettingKeyForUser(ctx))
+	value, revision, _, err := e.settingRow(ctx, guard.GrantRulesSettingKeyForUser(ctx))
 	if err != nil {
 		report.warnf("无法读取 AI 授权规则: %v", err)
 		return false, false
 	}
-	rules := []guard.GrantRule{}
-	if found && value != "" {
-		if err := json.Unmarshal([]byte(value), &rules); err != nil {
-			report.warnf("AI 授权规则数据损坏: %v", err)
-			return false, false
-		}
+	rules, err := guard.DecodeGrantRules(value)
+	if err != nil {
+		report.warnf("AI 授权规则数据损坏: %v", err)
+		return false, false
 	}
 	ruleID := strings.TrimPrefix(objectID, aiGrantRulePrefix)
-	index := -1
-	for i, rule := range rules {
+	var local guard.GrantRule
+	index, legacyIndex := -1, -1
+	for i, rule := range rules.Current {
 		if rule.ID == ruleID {
-			index = i
+			index, local = i, rule
 			break
 		}
 	}
-	if index >= 0 && rules[index].UpdatedAt > deletedAt {
+	for i, legacy := range rules.Legacy {
+		if legacy.View.ID == ruleID {
+			legacyIndex = i
+			if index < 0 {
+				local = legacy.View
+			}
+			break
+		}
+	}
+	exists := index >= 0 || legacyIndex >= 0
+	if exists && local.UpdatedAt > deletedAt {
 		return false, false
 	}
-	if index >= 0 {
-		if err := e.validateAIGrantTarget(ctx, rules[index].DeviceID); err != nil {
+	if exists {
+		if err := e.validateAIGrantTarget(ctx, local.DeviceID); err != nil {
 			report.warnf("AI 授权目标校验失败: %v", err)
 			return false, false
 		}
@@ -647,8 +639,13 @@ func (e *Engine) applyAIGrantRuleTombstone(ctx context.Context, objectID string,
 		report.warnf("AI 授权规则删除标记记录失败：%v", err)
 		return false, false
 	}
-	if index >= 0 {
-		rules = append(rules[:index], rules[index+1:]...)
+	if exists {
+		if index >= 0 {
+			rules.Current = append(rules.Current[:index], rules.Current[index+1:]...)
+		}
+		if legacyIndex >= 0 {
+			rules.Legacy = append(rules.Legacy[:legacyIndex], rules.Legacy[legacyIndex+1:]...)
+		}
 		if err := e.aiGrantSettingPut(ctx, guard.GrantRulesSettingKeyForUser(ctx), rules, max(revision, deletedAt)); err != nil {
 			report.warnf("应用 AI 授权规则的删除标记失败：%v", err)
 			return false, false
@@ -985,7 +982,7 @@ func (s *Service) CollectAIPermission(ctx context.Context) (CollectAIPermission,
 // CollectAIGrants lists device grants, grant rules, and per-device permission modes for the browser collect path; no secrets are involved.
 func (s *Service) CollectAIGrants(ctx context.Context) (CollectAIGrants, error) {
 	objects := map[string]localObject{}
-	if err := s.engine.collectAIGrantObjects(ctx, objects); err != nil {
+	if err := s.engine.collectAIGrantObjects(ctx, objects, nil); err != nil {
 		return CollectAIGrants{}, err
 	}
 	result := CollectAIGrants{Grants: []CollectAIGrantDevice{}, Rules: []CollectAIGrantRule{}, Modes: []CollectAIGrantMode{}}

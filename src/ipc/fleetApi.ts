@@ -41,7 +41,6 @@ export interface FleetDevice {
   agent?: FleetAgentInfo;
 }
 
-// server_version is absent when talking to an older server.
 export interface FleetDeviceList {
   devices: FleetDevice[];
   server_version?: string;

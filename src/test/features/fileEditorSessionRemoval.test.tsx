@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { deferred, flush, mountWithClient, waitFor, type MountedView } from "./reactTestUtils";
+import { deferred, flush, mountWithClient, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(),
@@ -181,7 +181,7 @@ describe("FileEditor WinRM session removal", () => {
     mocks.readRange.mockResolvedValue({ path: "/A.txt", offset: 0, size: 8, contentBase64: "" });
     const onClose = vi.fn();
     mounted = await mountEditor(onClose);
-    await waitFor(() => expect(mocks.read).toHaveBeenCalledOnce());
+    await waitForRendered(() => expect(mocks.read).toHaveBeenCalledOnce());
 
     removeSession();
     await flush();
@@ -205,7 +205,7 @@ describe("FileEditor WinRM session removal", () => {
     mocks.readRange.mockResolvedValue({ path: "/A.txt", offset: 0, size: 8, contentBase64: "" });
     const onClose = vi.fn();
     mounted = await mountEditor(onClose);
-    await waitFor(() => expect(editors.views).toHaveLength(1));
+    await waitForRendered(() => expect(editors.views).toHaveLength(1));
 
     removeSession();
     await flush();

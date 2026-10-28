@@ -180,6 +180,41 @@ func TestOSCTitleKeepsOutputPathContracts(t *testing.T) {
 	}
 }
 
+// Emoji sequences in OSC 0/2 titles survive whole: ZWJ, variation selectors,
+// skin tones, keycaps, regional-indicator flags and tag sequences, including a
+// sequence fed byte by byte.
+func TestOSCTitleKeepsEmojiSequences(t *testing.T) {
+	titles := []string{
+		"👨\u200d👩\u200d👧\u200d👦 family",
+		"❤\ufe0f build",
+		"🇯🇵🇺🇸 flags",
+		"👍🏽 ok",
+		"1\ufe0f\u20e3 keycap",
+		"🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f scotland",
+		"中文🙂 mixed",
+	}
+	for _, title := range titles {
+		for _, cmd := range []string{"0", "2"} {
+			tab := newTestTab(t)
+			feedString(tab, "\x1b]"+cmd+";"+title+"\x07")
+			if got := tab.Title(); got != title {
+				t.Fatalf("OSC %s title = %q, want %q", cmd, got, title)
+			}
+			if got := tab.Snapshot().Title; got != title {
+				t.Fatalf("OSC %s snapshot title = %q, want %q", cmd, got, title)
+			}
+		}
+	}
+	tab := newTestTab(t)
+	seq := []byte("\x1b]2;👨\u200d💻 dev\x07")
+	for i := range seq {
+		tab.Feed(seq[i : i+1])
+	}
+	if got := tab.Title(); got != "👨\u200d💻 dev" || !utf8.ValidString(got) {
+		t.Fatalf("byte-split title = %q", got)
+	}
+}
+
 // The title stays readable after the tab closes.
 func TestOSCTitleReadableAfterClose(t *testing.T) {
 	tab := NewTab("t1", "s1", 80, 24, UTF8)

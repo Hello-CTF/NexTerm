@@ -1,13 +1,23 @@
 import type { ResolvedTerminalTheme, TerminalContrast, TerminalFontFamily } from "../../app/preferences";
 
+// Colour emoji families follow the generic family as glyph fallbacks only. The UI's
+// "NexTerm Emoji" alias (styles/base.css) is deliberately absent: terminal programs lay out
+// text-default symbols such as check marks, warning signs, arrows and boxes as one-cell
+// glyphs, which the primary monospace font must keep drawing.
+export const EMOJI_FONT_FALLBACKS = "'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'";
+
+function terminalStack(families: string): string {
+  return `${families}, ${EMOJI_FONT_FALLBACKS}`;
+}
+
 export const TERMINAL_FONT_STACKS: Record<TerminalFontFamily, string> = {
-  cascadia: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
-  system: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-  "jetbrains-mono": "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace",
-  "fira-code": "'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace",
-  "source-code-pro": "'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace",
-  menlo: "Menlo, Monaco, ui-monospace, 'Courier New', monospace",
-  consolas: "Consolas, 'Courier New', monospace",
+  cascadia: terminalStack("'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace"),
+  system: terminalStack("ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace"),
+  "jetbrains-mono": terminalStack("'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace"),
+  "fira-code": terminalStack("'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace"),
+  "source-code-pro": terminalStack("'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace"),
+  menlo: terminalStack("Menlo, Monaco, ui-monospace, 'Courier New', monospace"),
+  consolas: terminalStack("Consolas, 'Courier New', monospace"),
 };
 
 export const XTERM_DARK_THEME = {

@@ -11,13 +11,19 @@ export type KeybindingActionId =
   | "previousWorkspace"
   | "nextTab"
   | "previousTab"
-  | "focusUpperPane"
-  | "focusLowerPane"
+  | "focusPaneLeft"
+  | "focusPaneRight"
+  | "focusPaneUp"
+  | "focusPaneDown"
   | "toggleSidebar"
   | "toggleAiSidebar"
+  | "toggleSessionPanel"
   | "closeTab"
-  | "toggleSplit"
+  | "splitRight"
+  | "splitDown"
+  | "closePane"
   | "switchTab"
+  | "restoreClosedTab"
   | "terminalSearch"
   | "reclaimTakeover"
   | "lockVault";
@@ -26,25 +32,38 @@ export interface KeybindingAction {
   id: KeybindingActionId;
   label: string;
   defaultBinding: string;
+  /** An extra chord that also triggers the action on macOS desktop while the default binding is in effect. */
   macDefaultBinding?: string;
+  /** The default on macOS (desktop and web) in place of defaultBinding. */
+  macBinding?: string;
 }
 
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
-  { id: "commandPalette", label: "命令面板", defaultBinding: "Mod+Shift+p" },
+  { id: "commandPalette", label: "跳转面板", defaultBinding: "Mod+Shift+p" },
   { id: "quickConnect", label: "快速连接", defaultBinding: "Mod+Shift+k" },
   { id: "newTerminal", label: "新建终端标签", defaultBinding: "Mod+t" },
   { id: "nextWorkspace", label: "下一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowRight" : "Mod+Alt+ArrowRight" },
   { id: "previousWorkspace", label: "上一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowLeft" : "Mod+Alt+ArrowLeft" },
   { id: "nextTab", label: "下一个标签", defaultBinding: WEB ? "Ctrl+Alt+]" : "Ctrl+Tab", macDefaultBinding: "Mod+Shift+]" },
   { id: "previousTab", label: "上一个标签", defaultBinding: WEB ? "Ctrl+Alt+[" : "Ctrl+Shift+Tab", macDefaultBinding: "Mod+Shift+[" },
-  { id: "focusUpperPane", label: "聚焦上方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowUp" : "Mod+Alt+ArrowUp" },
-  { id: "focusLowerPane", label: "聚焦下方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
+  { id: "focusPaneLeft", label: "聚焦左侧窗格", defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowLeft" : "Mod+Shift+Alt+ArrowLeft" },
+  { id: "focusPaneRight", label: "聚焦右侧窗格", defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowRight" : "Mod+Shift+Alt+ArrowRight" },
+  { id: "focusPaneUp", label: "聚焦上方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowUp" : "Mod+Alt+ArrowUp" },
+  { id: "focusPaneDown", label: "聚焦下方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
   { id: "toggleSidebar", label: "收起 / 展开左栏", defaultBinding: "Mod+b" },
   { id: "toggleAiSidebar", label: "收起 / 展开 AI 侧栏", defaultBinding: "Mod+j" },
+  // Ctrl+Shift+letter chords send nothing to the terminal, so the desktop toggle withholds no shell input. Browsers keep
+  // Ctrl+Shift+E (Firefox's network monitor), so the web build uses Ctrl+Alt+E, as closePane does.
+  { id: "toggleSessionPanel", label: "收起 / 展开会话侧栏", defaultBinding: WEB ? "Ctrl+Alt+e" : "Mod+Shift+e" },
   { id: "closeTab", label: "关闭当前标签", defaultBinding: "Mod+w" },
-  { id: "toggleSplit", label: "上下分屏 / 取消分屏", defaultBinding: "Mod+\\" },
+  { id: "splitDown", label: "向下分屏", defaultBinding: "Mod+\\" },
+  { id: "splitRight", label: "向右分屏", defaultBinding: "Mod+Shift+\\" },
+  // Browsers reserve Ctrl+Shift+W for closing the window, so the web build uses Ctrl+Alt+W.
+  { id: "closePane", label: "关闭当前窗格（保留标签页）", defaultBinding: WEB ? "Ctrl+Alt+w" : "Mod+Shift+w" },
   { id: "switchTab", label: "跳到第 1-9 个标签", defaultBinding: "Mod+1-9" },
-  { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Primary+f" },
+  { id: "restoreClosedTab", label: "恢复关闭的标签", defaultBinding: "Mod+Shift+t" },
+  // Ctrl+F is readline's forward-char, so off macOS the search takes Ctrl+Shift+F and leaves Ctrl+F to the shell.
+  { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
   { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Escape" },
   { id: "lockVault", label: "锁定凭据库", defaultBinding: "Mod+Shift+l" },
 ];
@@ -57,15 +76,43 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "previousWorkspace",
   "nextTab",
   "previousTab",
-  "focusUpperPane",
-  "focusLowerPane",
+  "focusPaneLeft",
+  "focusPaneRight",
+  "focusPaneUp",
+  "focusPaneDown",
   "toggleSidebar",
   "toggleAiSidebar",
+  "toggleSessionPanel",
   "closeTab",
-  "toggleSplit",
+  "splitRight",
+  "splitDown",
+  "closePane",
   "switchTab",
+  "restoreClosedTab",
   "lockVault",
 ];
+
+// Actions that repeat while held: moving between tabs, workspaces and panes. Every other app shortcut runs once per
+// press, so holding it cannot open, close or split repeatedly.
+const REPEATABLE_ACTIONS: ReadonlySet<KeybindingActionId> = new Set<KeybindingActionId>([
+  "nextTab",
+  "previousTab",
+  "nextWorkspace",
+  "previousWorkspace",
+  "focusPaneLeft",
+  "focusPaneRight",
+  "focusPaneUp",
+  "focusPaneDown",
+]);
+
+export function keybindingRepeats(id: KeybindingActionId): boolean {
+  return REPEATABLE_ACTIONS.has(id);
+}
+
+/** The built-in default binding of an action on the current (or given) platform. */
+export function defaultBindingFor(action: KeybindingAction, mac = isMac()): string {
+  return mac && action.macBinding ? action.macBinding : action.defaultBinding;
+}
 
 export interface KeyEventLike {
   key: string;
@@ -74,6 +121,7 @@ export interface KeyEventLike {
   metaKey: boolean;
   shiftKey: boolean;
   altKey: boolean;
+  getModifierState?: (key: string) => boolean;
 }
 
 export interface ParsedBinding {
@@ -136,6 +184,8 @@ function logicalEventKey(event: KeyEventLike): string | null {
   if (codeDigit) return codeDigit[1];
   if (code === "BracketLeft") return "[";
   if (code === "BracketRight") return "]";
+  // Shift turns the key into "|" on most layouts; the physical key keeps Mod+Shift+\ bindable.
+  if (code === "Backslash") return "\\";
   if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
   if (event.key === " ") return "Space";
   if (NAMED_KEYS.has(event.key)) return event.key;
@@ -295,10 +345,15 @@ type Overrides = Partial<Record<KeybindingActionId, string | null>>;
 export type KeybindingSnapshot = Readonly<Record<KeybindingActionId, string | null>>;
 
 const ACTION_IDS = new Set<string>(KEYBINDING_ACTIONS.map((a) => a.id));
-const DEFAULTS = new Map(KEYBINDING_ACTIONS.map((a) => [a.id, a.defaultBinding]));
+const ACTIONS_BY_ID = new Map(KEYBINDING_ACTIONS.map((a) => [a.id, a]));
+
+function builtinDefault(id: KeybindingActionId): string | undefined {
+  const action = ACTIONS_BY_ID.get(id);
+  return action ? defaultBindingFor(action) : undefined;
+}
 
 // keybindingPrefKey is the wire flat key for account-level keybinding overrides (whitelist in internal/account/preferences.go).
-function keybindingPrefKey(id: KeybindingActionId): string {
+function keybindingPrefKey(id: string): string {
   return `keybinding.${id}`;
 }
 
@@ -356,7 +411,7 @@ export function applyAccountKeybindingLayers(defaults: Record<string, unknown>, 
 function buildSnapshot(overrides: Overrides): KeybindingSnapshot {
   const out = {} as Record<KeybindingActionId, string | null>;
   for (const action of KEYBINDING_ACTIONS) {
-    out[action.id] = action.id in overrides ? (overrides[action.id] ?? null) : action.defaultBinding;
+    out[action.id] = action.id in overrides ? (overrides[action.id] ?? null) : defaultBindingFor(action);
   }
   return out;
 }
@@ -367,6 +422,8 @@ let localOverrides: Overrides = loadLocalOverrides();
 let defaultsLayer: Overrides = {};
 let accountLayer: Overrides = {};
 let snapshot: KeybindingSnapshot = buildSnapshot({ ...defaultsLayer, ...localOverrides, ...accountLayer });
+// Platform defaults (macBinding) depend on isMac(), which the backend can still settle after this module loads.
+let snapshotMac = isMac();
 const listeners = new Set<() => void>();
 
 function persistLocal(): void {
@@ -379,15 +436,24 @@ function persistLocal(): void {
 
 function emit(): void {
   snapshot = buildSnapshot({ ...defaultsLayer, ...localOverrides, ...accountLayer });
+  snapshotMac = isMac();
   for (const listener of listeners) listener();
 }
 
-export function getKeybindings(): KeybindingSnapshot {
+function currentSnapshot(): KeybindingSnapshot {
+  if (snapshotMac !== isMac()) {
+    snapshot = buildSnapshot({ ...defaultsLayer, ...localOverrides, ...accountLayer });
+    snapshotMac = isMac();
+  }
   return snapshot;
 }
 
+export function getKeybindings(): KeybindingSnapshot {
+  return currentSnapshot();
+}
+
 export function getKeybinding(id: KeybindingActionId): string | null {
-  return snapshot[id];
+  return currentSnapshot()[id];
 }
 
 export function setKeybinding(id: KeybindingActionId, binding: string | null): void {
@@ -396,7 +462,7 @@ export function setKeybinding(id: KeybindingActionId, binding: string | null): v
   const store = getAccountPreferenceStore();
   const key = keybindingPrefKey(id);
   // Matching the effective default (server default takes precedence over builtin default) means back to default: clear the device-local value and the account override.
-  if (normalized === (id in defaultsLayer ? defaultsLayer[id] : DEFAULTS.get(id))) {
+  if (normalized === (id in defaultsLayer ? defaultsLayer[id] : builtinDefault(id))) {
     delete localOverrides[id];
     delete accountLayer[id];
     persistLocal();
@@ -455,7 +521,7 @@ export function useKeybindings(): KeybindingSnapshot {
 }
 
 function matchActionBinding(event: KeyEventLike, id: KeybindingActionId): boolean {
-  const binding = snapshot[id];
+  const binding = currentSnapshot()[id];
   if (binding !== null && matchBinding(event, binding)) return true;
   const action = KEYBINDING_ACTIONS.find((candidate) => candidate.id === id);
   return Boolean(
@@ -476,10 +542,16 @@ export interface AppKeybindingHit {
   digit: number | null;
 }
 
+// AltGr reports Ctrl+Alt on Windows; an AltGr chord types a character and is never an app shortcut.
+function isAltGraph(event: KeyEventLike): boolean {
+  return event.getModifierState?.("AltGraph") === true;
+}
+
 export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null {
+  if (isAltGraph(event)) return null;
   for (const id of APP_ACTION_ORDER) {
     if (!matchActionBinding(event, id)) continue;
-    const binding = snapshot[id];
+    const binding = currentSnapshot()[id];
     const parsed = binding === null ? null : parseBinding(binding);
     let digit: number | null = null;
     if (parsed && (parsed.key === "1-9" || /^[1-9]$/.test(parsed.key))) {
@@ -491,6 +563,19 @@ export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null
     return { action: id, digit };
   }
   return null;
+}
+
+/**
+ * Actions whose chords a focused terminal never receives: the app-level shortcuts, plus terminal search, which the
+ * terminal pane intercepts before xterm. Listed in match precedence order.
+ */
+export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, "terminalSearch"];
+
+/** matchAppKeybinding widened to every chord a focused terminal withholds from the program running in it. */
+export function matchTerminalWithheldKeybinding(event: KeyEventLike): AppKeybindingHit | null {
+  const hit = matchAppKeybinding(event);
+  if (hit) return hit;
+  return !isAltGraph(event) && matchActionBinding(event, "terminalSearch") ? { action: "terminalSearch", digit: null } : null;
 }
 
 export interface KeybindingConflict {
@@ -535,7 +620,7 @@ export function bindingsConflict(bindingA: string, bindingB: string, mac: boolea
 }
 
 export function bindingConflicts(
-  bindings: KeybindingSnapshot = snapshot,
+  bindings: KeybindingSnapshot = currentSnapshot(),
   mac = isMac(),
 ): KeybindingConflict[] {
   const parsed = KEYBINDING_ACTIONS.flatMap((action) => {

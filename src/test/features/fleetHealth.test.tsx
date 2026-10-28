@@ -60,7 +60,7 @@ import {
   FLEET_HEALTH_TAB_ID,
   isFleetHealthTab,
 } from "../../features/fleet/fleetHealthTab";
-import { CommandPalette } from "../../app/CommandPalette";
+import { JumpPalette } from "../../app/JumpPalette";
 
 function group(id: string, parentId: string | null = null): AssetGroup {
   return { id, parentId, name: `Project ${id}`, sort: 0, createdAt: 1, updatedAt: 1 };
@@ -354,7 +354,6 @@ describe("fleet health tab identity across workspaces", () => {
         assetKind: "ssh",
         panes: [{ id: "ws-1-pane", tabs: [], activeTabId: null }],
         activePaneId: "ws-1-pane",
-        splitRatio: 0.5,
         closable: true,
       },
       {
@@ -363,7 +362,6 @@ describe("fleet health tab identity across workspaces", () => {
         title: "工具",
         panes: [{ id: "ws-2-pane", tabs: [], activeTabId: null }],
         activePaneId: "ws-2-pane",
-        splitRatio: 0.5,
         closable: true,
       },
     ];
@@ -451,7 +449,6 @@ describe("fleet health tab identity across workspaces", () => {
         assetKind: "ssh",
         panes: [{ id: "ws-1-pane", tabs: [legacyTab()], activeTabId: FLEET_HEALTH_TAB_ID }],
         activePaneId: "ws-1-pane",
-        splitRatio: 0.5,
         closable: true,
       },
       {
@@ -460,7 +457,6 @@ describe("fleet health tab identity across workspaces", () => {
         title: "工具",
         panes: [{ id: "ws-2-pane", tabs: [legacyTab()], activeTabId: FLEET_HEALTH_TAB_ID }],
         activePaneId: "ws-2-pane",
-        splitRatio: 0.5,
         closable: true,
       },
     ];
@@ -516,7 +512,7 @@ describe("fleet health palette entry", () => {
       createElement(
         QueryClientProvider,
         { client: currentClient },
-        createElement(CommandPalette, { onClose: () => undefined }),
+        createElement(JumpPalette, { onClose: () => undefined }),
       ),
     );
     return palette;
@@ -540,7 +536,6 @@ describe("fleet health palette entry", () => {
           title: "工具",
           panes: [{ id: "ws-palette-pane", tabs: [], activeTabId: null }],
           activePaneId: "ws-palette-pane",
-          splitRatio: 0.5,
           closable: true,
         },
       ],

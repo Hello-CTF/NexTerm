@@ -185,6 +185,48 @@ func (f *FS) Mkdir(ctx context.Context, remotePath string) error {
 	return ctx.Err()
 }
 
+// MkdirPrivate creates remotePath exclusively with mode 0700. SFTP mkdir is non-recursive and fails when anything
+// already exists at the path; Chmod overrides the server umask and Lstat verifies a real owner-only directory.
+func (f *FS) MkdirPrivate(ctx context.Context, remotePath string) error {
+	remotePath, err := f.real(ctx, remotePath)
+	if err != nil {
+		return err
+	}
+	if err := f.client.Mkdir(remotePath); err != nil {
+		return fmt.Errorf("SFTP mkdir %s: %w", remotePath, err)
+	}
+	if err := f.verifyPrivateDir(remotePath); err != nil {
+		// Remove only a real, empty directory: RemoveDirectory never follows a symlink or deletes contents, and a
+		// sticky temp directory refuses unless we own it.
+		if info, lerr := f.client.Lstat(remotePath); lerr == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			_ = f.client.RemoveDirectory(remotePath)
+		}
+		return err
+	}
+	return ctx.Err()
+}
+
+func (f *FS) verifyPrivateDir(remotePath string) error {
+	info, err := f.client.Lstat(remotePath)
+	if err != nil {
+		return fmt.Errorf("SFTP lstat %s: %w", remotePath, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s: %w", remotePath, base.ErrNotPrivateDir)
+	}
+	if err := f.client.Chmod(remotePath, 0o700); err != nil {
+		return fmt.Errorf("SFTP chmod %s: %w", remotePath, err)
+	}
+	info, err = f.client.Lstat(remotePath)
+	if err != nil {
+		return fmt.Errorf("SFTP lstat %s: %w", remotePath, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 {
+		return fmt.Errorf("%s: %w", remotePath, base.ErrNotPrivateDir)
+	}
+	return nil
+}
+
 func (f *FS) Rename(ctx context.Context, from, to string) error {
 	from, to, err := f.realPair(ctx, from, to)
 	if err != nil {

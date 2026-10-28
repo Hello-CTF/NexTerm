@@ -85,7 +85,7 @@ func TestHelperSessionsSurviveAppProcessExitAndReattach(t *testing.T) {
 		t.Fatalf("sessions after app exit = %+v", infos)
 	}
 
-	attachment, err := NewRemoteProvider(restarted.Client()).Attach(ctx, string(sessionID))
+	attachment, err := NewRemoteProvider(restarted.Client()).AttachWithIdentity(ctx, string(sessionID), base.DurableIdentity{CreatedAt: infos[0].CreatedAt, Incarnation: infos[0].Incarnation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestHelperSessionsSurviveClientRestart(t *testing.T) {
 	if len(infos) != 1 || infos[0].ID != id || infos[0].Dead {
 		t.Fatalf("sessions after client close = %+v", infos)
 	}
-	reattached, err := NewRemoteProvider(second.Client()).Attach(ctx, id)
+	reattached, err := NewRemoteProvider(second.Client()).AttachWithIdentity(ctx, id, base.DurableIdentity{CreatedAt: infos[0].CreatedAt, Incarnation: infos[0].Incarnation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestHelperRespawnsAfterHelperCrashWithoutSurvivalClaim(t *testing.T) {
 	if infos[0].ExitCode != nil || infos[0].Signal != "" {
 		t.Fatalf("crash-recovered exit status = %+v, want unknown", infos[0])
 	}
-	reattached, err := NewRemoteProvider(second.Client()).Attach(ctx, id)
+	reattached, err := NewRemoteProvider(second.Client()).AttachWithIdentity(ctx, id, base.DurableIdentity{CreatedAt: infos[0].CreatedAt, Incarnation: infos[0].Incarnation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestSpawnDetachedStartsNewSession(t *testing.T) {
 	sidFile := filepath.Join(t.TempDir(), "sid")
 	t.Setenv(spawnChildFileEnv, sidFile)
 	logPath := filepath.Join(t.TempDir(), "spawn.log")
-	if err := spawnDetached(os.Args[0], []string{"-test.run=^TestSpawnDetachedChild$"}, logPath); err != nil {
+	if _, err := spawnDetached(os.Args[0], []string{"-test.run=^TestSpawnDetachedChild$"}, logPath); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(30 * time.Second)

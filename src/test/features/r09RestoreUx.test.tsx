@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -60,6 +60,7 @@ vi.mock("../../ipc/commands", () => ({
     connectLocal: mocks.connectLocal,
     connect: mocks.sessionConnect,
     reconnect: vi.fn(),
+    prepareDurable: vi.fn(async () => ({ state: "preparing" })),
     probe: vi.fn(),
     lineExec: vi.fn(),
   },
@@ -143,8 +144,7 @@ vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null, AssetEditor: () => null }));
-vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
-vi.mock("../../app/QuickConnect", () => ({ QuickConnect: () => null }));
+vi.mock("../../app/JumpPalette", () => ({ JumpPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({
   TakeoverBanner: () => (mocks.banners.takeover ? <div data-testid="takeover-banner" /> : null),
 }));
@@ -247,7 +247,6 @@ function hostWorkspace(id: string, sessionId: string, tabs: AppTab[]): Workspace
     assetId: "asset-1",
     panes: [{ id: paneId, tabs, activeTabId: tabs[0]?.id ?? null }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -293,6 +292,16 @@ function restoreMenuItem(): HTMLButtonElement | undefined {
     (item) => item.textContent?.includes("恢复关闭的标签"),
   );
 }
+
+// The file and log panes are React.lazy panels. A cold import transforms the module in real time, which
+// no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
+beforeAll(async () => {
+  await Promise.all([
+    import("../../features/files/FileBrowser"),
+    import("../../features/files/FileEditor"),
+    import("../../features/files/LogViewer"),
+  ]);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -442,7 +451,7 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     await flush();
 
     expect(findTab("f1")?.restorePending).toBeUndefined();
-    await waitFor(() => expect(mocks.fsRead).toHaveBeenCalled());
+    await flushUntil(() => mocks.fsRead.mock.calls.length > 0);
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
   });
 
@@ -468,7 +477,7 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     await flush();
 
     expect(findTab("log-1")?.restorePending).toBeUndefined();
-    await waitFor(() => expect(mocks.fsReadRange).toHaveBeenCalled());
+    await flushUntil(() => mocks.fsReadRange.mock.calls.length > 0);
   });
 
   it("files browser: placeholder first, roots/list only after the explicit reconnect", async () => {
@@ -493,8 +502,8 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
     await flush();
 
     expect(findTab("files-s1")?.restorePending).toBeUndefined();
-    await waitFor(() => expect(mocks.fsRoots).toHaveBeenCalled());
-    await waitFor(() => expect(mocks.fsList).toHaveBeenCalled());
+    await flushUntil(() => mocks.fsRoots.mock.calls.length > 0);
+    await flushUntil(() => mocks.fsList.mock.calls.length > 0);
   });
 
   it("deletedTarget keeps the placeholder, reports the failure, and never mounts the editor", async () => {

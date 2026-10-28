@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, setInputValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -46,7 +46,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
   return { ...actual, promptText: mocks.promptText };
 });
 
-import { QuickConnect } from "../../app/QuickConnect";
+import { JumpPalette } from "../../app/JumpPalette";
 import { SshImportDialog } from "../../features/explorer/SshImportDialog";
 import { useUi } from "../../app/store";
 import { useAssetReachability } from "../../features/explorer/assetReachability";
@@ -112,10 +112,10 @@ describe("QuickConnect web mode (server assembly)", () => {
   it("shows only save-as-asset-and-connect for user@host:port, without a temporary connection", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = mount(
-      createElement(QueryClientProvider, { client }, createElement(QuickConnect, { onClose: vi.fn() })),
+      createElement(QueryClientProvider, { client }, createElement(JumpPalette, { onClose: vi.fn(), scope: "hosts" })),
     );
     mountedViews.push(view);
-    await waitFor(() => expect(options(view.container).length).toBeGreaterThan(0));
+    await waitForRendered(() => expect(options(view.container).length).toBeGreaterThan(0));
 
     setInputValue(searchInput(view.container), "deploy@example.com:2222");
     await flush();
@@ -128,16 +128,16 @@ describe("QuickConnect web mode (server assembly)", () => {
   it("does not prefill the server OS user when saving as an asset (session_quick_connect_user is disabled)", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = mount(
-      createElement(QueryClientProvider, { client }, createElement(QuickConnect, { onClose: vi.fn() })),
+      createElement(QueryClientProvider, { client }, createElement(JumpPalette, { onClose: vi.fn(), scope: "hosts" })),
     );
     mountedViews.push(view);
-    await waitFor(() => expect(options(view.container).length).toBeGreaterThan(0));
+    await waitForRendered(() => expect(options(view.container).length).toBeGreaterThan(0));
 
     setInputValue(searchInput(view.container), "example.com:2222");
     await flush();
     click(options(view.container)[0] as HTMLButtonElement);
 
-    await waitFor(() =>
+    await waitForRendered(() =>
       expect(mocks.assetCreate).toHaveBeenCalledWith({
         kind: "ssh",
         name: "example.com:2222",
@@ -157,10 +157,10 @@ describe("QuickConnect web mode (server assembly)", () => {
     mocks.list.mockResolvedValue([]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = mount(
-      createElement(QueryClientProvider, { client }, createElement(QuickConnect, { onClose: vi.fn() })),
+      createElement(QueryClientProvider, { client }, createElement(JumpPalette, { onClose: vi.fn(), scope: "hosts" })),
     );
     mountedViews.push(view);
-    await waitFor(() => expect(view.container.textContent).toContain("新建连接"));
+    await waitForRendered(() => expect(view.container.textContent).toContain("新建连接"));
     expect(view.container.textContent).toContain("导入 SSH 配置");
   });
 

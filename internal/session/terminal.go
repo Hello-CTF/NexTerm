@@ -24,6 +24,17 @@ func (t *coreTerminal) Feed(raw []byte) {
 	_ = t.output.Chunk(context.Background(), raw)
 }
 
+// FeedWith overrides the embedded Tab's so options reach the screen through
+// the same output path (recording and fanout) as Feed.
+func (t *coreTerminal) FeedWith(raw []byte, options terminal.FeedOptions) {
+	_ = t.output.ChunkWith(context.Background(), raw, options)
+}
+
+// FeedReplay overrides the embedded Tab's for the same reason.
+func (t *coreTerminal) FeedReplay(raw []byte) {
+	t.FeedWith(raw, terminal.FeedOptions{Replay: true})
+}
+
 func (t *coreTerminal) Close() {
 	t.StopRecording()
 	t.output.Close()
@@ -75,7 +86,7 @@ type recordingControlQueue struct {
 var controlCoalesceWindow = 150 * time.Millisecond
 
 // controlMergeable reports whether next differs from prev only in the fields safe to merge (latest wins): version and title.
-// Size, grid revision, controller, subscriber/viewer counts, exit and durability changes always flow through in order.
+// Size, grid revision, size owner, subscriber/viewer counts, exit and durability changes always flow through in order.
 func controlMergeable(prev, next ControlEvent) bool {
 	if next.Exited {
 		return false
@@ -614,7 +625,7 @@ func (m *Manager) SetVisible(tabID string, visible bool) error {
 		return ErrTabClosed
 	}
 	mode := terminalgrid.ModeHidden
-	if visible && tab.controller != "" {
+	if visible && tab.sizeOwner != "" {
 		mode = terminalgrid.ModeController
 	} else if visible {
 		mode = terminalgrid.ModeObserver

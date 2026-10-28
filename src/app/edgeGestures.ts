@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
-import { isCoarsePointer, isMobile } from "./platform";
+import { isTouchShell } from "./shell/shellMode";
 
 const EDGE_PX = 20;
 const SWIPE_MIN_PX = 32;
 
 interface EdgeGestureHandlers {
-  overlayDock: "left" | "right" | null;
+  // The session sheet ("session") is closed with its own button or Escape, not a swipe.
+  overlayDock: "left" | "right" | "session" | null;
   openLeft: () => void;
   openRight: () => void;
   closeOverlay: () => void;
@@ -17,7 +18,7 @@ export function useEdgeGestures(handlers: EdgeGestureHandlers): void {
   const ref = useRef(handlers);
   ref.current = handlers;
   useEffect(() => {
-    if (!isCoarsePointer() && !isMobile()) return;
+    if (!isTouchShell()) return;
     let startX = 0;
     let startY = 0;
     let edge: "left" | "right" | null = null;

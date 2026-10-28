@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, flushMacrotask, mount, setInputValue, waitFor, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flush, flushMacrotask, mount, setInputValue, waitForRendered, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -141,15 +141,15 @@ vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
 vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null, AssetEditor: () => null }));
-vi.mock("../app/CommandPalette", () => ({
-  CommandPalette: (props: { onOpenFiles?: () => void }) => (
-    <button type="button" data-testid="palette-files" onClick={props.onOpenFiles}>
-      Open file browser
-    </button>
-  ),
-}));
-vi.mock("../app/QuickConnect", () => ({
-  QuickConnect: () => <div data-testid="quick-connect" />,
+vi.mock("../app/JumpPalette", () => ({
+  JumpPalette: (props: { scope?: string; onOpenFiles?: () => void }) =>
+    props.scope === "all" ? (
+      <button type="button" data-testid="palette-files" onClick={props.onOpenFiles}>
+        Open file browser
+      </button>
+    ) : (
+      <div data-testid="quick-connect" data-scope={props.scope} />
+    ),
 }));
 vi.mock("../app/TakeoverBanner", () => ({
   TakeoverBanner: () =>
@@ -203,7 +203,6 @@ function workspaceOf(sessionId?: string, tabs: AppTab[] = []): Workspace {
     sessionId,
     panes: [{ id: "pane", tabs, activeTabId: tabs[0]?.id ?? null }],
     activePaneId: "pane",
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -249,7 +248,7 @@ function expectShellOrder(expected: string[]): void {
 }
 
 async function openPaletteFiles(): Promise<void> {
-  const paletteButton = mounted?.container.querySelector('button[aria-label^="命令面板"]');
+  const paletteButton = mounted?.container.querySelector('button[aria-label^="跳转面板"]');
   if (!paletteButton) throw new Error("Command palette button not found");
   click(paletteButton);
   await flush();
@@ -307,7 +306,6 @@ function hostWorkspace(id: string, sessionId: string, assetId?: string): Workspa
     assetId,
     panes: [{ id: paneId, tabs: [], activeTabId: null }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -322,7 +320,6 @@ function nonHostWorkspace(kind: "tools" | "db"): Workspace {
     connId: kind === "db" ? "db-conn" : undefined,
     panes: [{ id: paneId, tabs: [], activeTabId: null }],
     activePaneId: paneId,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -498,7 +495,7 @@ describe("App workspace actions", () => {
 
     const entry = () => mounted?.container.querySelector('button[aria-label="后台会话"]');
     expect(entry()).not.toBeNull();
-    await waitFor(() => expect(entry()?.querySelector(".nx-rail-count")?.textContent).toBe("1"));
+    await waitForRendered(() => expect(entry()?.querySelector(".nx-rail-count")?.textContent).toBe("1"));
     await clickRail("后台会话");
     expect(allTabs().some((tab) => tab.kind === "background")).toBe(true);
   });
@@ -704,7 +701,6 @@ describe("App workspace scope", () => {
           connId: "c1",
           panes: [{ id: "pane", tabs: [], activeTabId: null }],
           activePaneId: "pane",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -766,7 +762,7 @@ describe("App empty states", () => {
     const main = mounted.container.querySelector("main");
     expect(
       [...(main?.querySelectorAll("button") ?? [])].some(
-        (button) => button.textContent?.trim() === "命令面板",
+        (button) => button.textContent?.trim() === "跳转面板",
       ),
     ).toBe(true);
     expect(main?.textContent).toContain("MySQL / PostgreSQL / Redis");
@@ -792,7 +788,7 @@ describe("App empty states", () => {
       const main = mounted.container.querySelector("main");
       expect(
         [...(main?.querySelectorAll("button") ?? [])].some(
-          (button) => button.textContent?.trim() === "命令面板",
+          (button) => button.textContent?.trim() === "跳转面板",
         ),
       ).toBe(false);
       expect(main?.textContent).toContain("MySQL / PostgreSQL / Redis");
@@ -861,7 +857,6 @@ describe("App Ctrl+T new terminal", () => {
           connId: "c1",
           panes: [{ id: "pane", tabs: [], activeTabId: null }],
           activePaneId: "pane",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -961,7 +956,7 @@ describe("App workspace navigation in browser mode", () => {
     expect(useUi.getState().workspaces[0].panes[0].activeTabId).toBe("t2");
   });
 
-  it("cycles focus between the two rendered panes only", async () => {
+  it("moves pane focus by geometry across every rendered pane and stops at the edge", async () => {
     const current = workspaceOf("s1", [
       { id: "t1", kind: "terminal", title: "Terminal 1", sessionId: "s1", closable: true },
     ]);
@@ -971,7 +966,7 @@ describe("App workspace navigation in browser mode", () => {
         tabs: [{ id: "t2", kind: "terminal", title: "Terminal 2", sessionId: "s1", closable: true }],
         activeTabId: "t2",
       },
-      { id: "hidden-third", tabs: [], activeTabId: null },
+      { id: "third", tabs: [], activeTabId: null },
     );
     useUi.setState({ workspaces: [current], activeWorkspaceId: "ws" });
     mounted = mountApp();
@@ -980,7 +975,9 @@ describe("App workspace navigation in browser mode", () => {
     expect((await pressNavigationKey("ArrowDown", "ArrowDown", { ctrlKey: true, altKey: true })).defaultPrevented).toBe(true);
     expect(useUi.getState().workspaces[0].activePaneId).toBe("lower");
     await pressNavigationKey("ArrowDown", "ArrowDown", { ctrlKey: true, altKey: true });
-    expect(useUi.getState().workspaces[0].activePaneId).toBe("pane");
+    expect(useUi.getState().workspaces[0].activePaneId).toBe("third");
+    expect((await pressNavigationKey("ArrowDown", "ArrowDown", { ctrlKey: true, altKey: true })).defaultPrevented).toBe(false);
+    expect(useUi.getState().workspaces[0].activePaneId).toBe("third");
     await pressNavigationKey("ArrowUp", "ArrowUp", { ctrlKey: true, altKey: true });
     expect(useUi.getState().workspaces[0].activePaneId).toBe("lower");
   });
@@ -1109,13 +1106,21 @@ async function submitRenameDraft(draft: string): Promise<void> {
 }
 
 describe("App terminal rename", () => {
+  it("keeps the decision time the backend recorded (a clamped clock)", async () => {
+    mocks.renameTab.mockResolvedValue({ title: "deploy", titleCustom: true, titleChangedAt: 42 });
+    await submitRenameDraft("deploy");
+    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+    expect(tabs[0]?.customTitleAt).toBe(42);
+  });
+
   it("uses the remotely confirmed canonical title", async () => {
     mocks.renameTab.mockResolvedValue({ title: "remote-canonical" });
     await submitRenameDraft("draft-title");
-    expect(mocks.renameTab).toHaveBeenCalledWith("T1", "draft-title");
+    expect(mocks.renameTab).toHaveBeenCalledWith("T1", "draft-title", expect.any(Number));
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     expect(tabs[0]?.title).toBe("remote-canonical");
     expect(tabs[0]?.renamedByUser).toBe(true);
+    expect(tabs[0]?.customTitleAt).toBe(mocks.renameTab.mock.calls[0]?.[2]);
   });
 
   it("keeps the edit draft and shows the conflict instead of swallowing it", async () => {

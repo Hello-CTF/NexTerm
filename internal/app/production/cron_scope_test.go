@@ -30,29 +30,6 @@ func TestCronExecutionContextOnlyOpensExplicitSharedCalls(t *testing.T) {
 	}
 }
 
-func TestComposeCronSchedulerDistinguishesOpenLegacyCapability(t *testing.T) {
-	database, err := store.OpenInMemory(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	services := &ProductionServices{Store: database}
-	_, accountExecutor, err := composeCronScheduler(context.Background(), services, cron.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if accountExecutor.AllowOwnerlessLegacy {
-		t.Fatal("account mode enabled ownerless legacy execution")
-	}
-	_, openExecutor, err := composeCronScheduler(owner.WithOpenAccess(context.Background()), services, cron.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !openExecutor.AllowOwnerlessLegacy {
-		t.Fatal("explicit Open deployment disabled ownerless legacy execution")
-	}
-}
-
 func TestCronRegisterRejectsInvalidScopeBeforeCreate(t *testing.T) {
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
 	database, err := store.OpenInMemory(context.Background())

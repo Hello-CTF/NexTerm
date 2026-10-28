@@ -59,7 +59,7 @@ function liveTab(tabId: string, exited = false) {
     sessionKind: "ssh",
     cols: 80,
     rows: 24,
-    controller: null,
+    sizeOwner: null,
     subscribers: 1,
     viewers: 1,
     exited,
@@ -73,7 +73,6 @@ function ws(panes: Pane[]): Workspace {
     title: "workspace",
     panes,
     activePaneId: panes[0].id,
-    splitRatio: 0.5,
     closable: true,
   };
 }
@@ -228,43 +227,34 @@ describe("close = detach (M111)", () => {
     expect(toastText()).toContain("1 个进程已结束");
   });
 
-  it("confirms before killing docker exec tabs on unsplit, cancel keeps the split with zero IPC", async () => {
+  it.each([
+    { name: "ssh, docker exec and exited", assetKind: undefined as string | undefined, close: "detach" as const },
+    { name: "winrm", assetKind: "winrm", close: "ask" as const },
+  ])("closing a pane keeps its $name terminals running with no dialog or close IPC", async ({ assetKind, close }) => {
     const panes = [
       { id: "p1", tabs: [terminal("keep")], activeTabId: "keep" },
-      { id: "p2", tabs: [terminal("gone"), execTerminal("e1")], activeTabId: "gone" },
+      {
+        id: "p2",
+        tabs: [terminal("gone"), execTerminal("e1"), { ...terminal("x1"), exited: true }],
+        activeTabId: "e1",
+      },
     ];
-    seed(panes);
-    mocks.ask.mockResolvedValueOnce(false);
+    useUi.setState({
+      workspaces: [{ ...ws(panes), assetKind }],
+      activeWorkspaceId: "ws",
+      toasts: [],
+    });
+    setTerminalCloseAction(close);
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
-
-    expect(mocks.ask).toHaveBeenCalledTimes(1);
-    const [message] = mocks.ask.mock.calls[0];
-    expect(message).toContain("容器 exec");
-    expect(mocks.closeTab).not.toHaveBeenCalled();
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
-
-    mocks.ask.mockResolvedValueOnce(true);
-    await useUi.getState().unsplitWorkspace("p2", "ws");
-
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "detach", "s");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
-  });
-
-  it("detaches the pane's running terminals on unsplit", async () => {
-    const panes = [
-      { id: "p1", tabs: [terminal("keep")], activeTabId: "keep" },
-      { id: "p2", tabs: [terminal("gone")], activeTabId: "gone" },
-    ];
-    seed(panes);
-
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    useUi.getState().closePane("p2", "ws");
 
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledTimes(1);
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "detach", "s");
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    const [merged] = useUi.getState().workspaces[0].panes;
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
+    expect(merged.tabs.map((tab) => tab.id)).toEqual(["keep", "gone", "e1", "x1"]);
+    expect(merged.activeTabId).toBe("e1");
   });
 
   it("workspace close uses default cleanup for a currently exited backend tab", async () => {
@@ -279,22 +269,6 @@ describe("close = detach (M111)", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", undefined, "s");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
     expect(useUi.getState().workspaces).toEqual([]);
-  });
-
-  it("unsplit uses default cleanup for a currently exited backend tab", async () => {
-    const panes = [
-      { id: "p1", tabs: [terminal("keep")], activeTabId: "keep" },
-      { id: "p2", tabs: [{ ...terminal("x1"), exited: true }], activeTabId: "x1" },
-    ];
-    seed(panes);
-    mocks.listLive.mockResolvedValueOnce([liveTab("kernel-x1", true)]);
-
-    await useUi.getState().unsplitWorkspace("p2", "ws");
-
-    expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", undefined, "s");
-    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
   it("workspace close with only currently exited tabs asks nothing and uses default cleanup", async () => {
@@ -392,36 +366,19 @@ describe("workspace and pane reclaim follow terminal close preferences", () => {
     expect(toastText()).not.toContain("转入后台");
   });
 
-  it("uses saved kill without dialogs for a retainable local tab on unsplit", async () => {
-    const panes = [
-      { id: "p1", tabs: [{ ...terminal("keep"), retainable: true }], activeTabId: "keep" },
-      { id: "p2", tabs: [{ ...terminal("gone"), retainable: true }], activeTabId: "gone" },
-    ];
-    seed(panes, "local");
-    setTerminalCloseAction("kill");
+  it("reports a failed workspace close under the current workspace title", async () => {
+    const tab = { ...terminal("t1"), retainable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: "t1" }], "local");
+    setTerminalCloseAction("detach");
+    mocks.closeTab.mockImplementationOnce(async () => {
+      useUi.setState({ workspaces: [{ ...useUi.getState().workspaces[0], title: "renamed" }] });
+      throw new Error("boom");
+    });
 
-    await useUi.getState().unsplitWorkspace("p2", "ws");
+    await useUi.getState().closeWorkspace("ws");
 
-    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
-    expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "kill");
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
-  });
-
-  it("keeps the split and issues no terminal IPC when the ask choice is cancelled on unsplit", async () => {
-    const panes = [
-      { id: "p1", tabs: [{ ...terminal("keep"), retainable: true }], activeTabId: "keep" },
-      { id: "p2", tabs: [{ ...terminal("gone"), retainable: true }], activeTabId: "gone" },
-    ];
-    seed(panes, "local");
-    setTerminalCloseAction("ask");
-    mocks.askChoiceRemember.mockResolvedValueOnce(null);
-
-    await useUi.getState().unsplitWorkspace("p2", "ws");
-
-    expect(mocks.closeTab).not.toHaveBeenCalled();
-    expect(mocks.ask).not.toHaveBeenCalled();
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
+    expect(toastText()).toContain("关闭「renamed」");
+    expect(toastText()).not.toContain("关闭「workspace」");
   });
 
   it("keeps failed workspace tabs with closeError and removes only successful detach operations", async () => {
@@ -438,27 +395,6 @@ describe("workspace and pane reclaim follow terminal close preferences", () => {
     expect(toastText()).not.toContain("转入后台");
   });
 
-  it("keeps a failed pane tab with closeError while removing successful unsplit operations", async () => {
-    const panes = [
-      { id: "p1", tabs: [{ ...terminal("keep"), retainable: true }], activeTabId: "keep" },
-      {
-        id: "p2",
-        tabs: [{ ...terminal("t1"), retainable: true }, { ...terminal("t2"), retainable: true }],
-        activeTabId: "t1",
-      },
-    ];
-    seed(panes, "local");
-    setTerminalCloseAction("detach");
-    mocks.closeTab.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("boom"));
-
-    await useUi.getState().unsplitWorkspace("p2", "ws");
-
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
-    const remaining = useUi.getState().workspaces[0].panes[1].tabs;
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]).toMatchObject({ id: "t2", closeError: "boom" });
-    expect(toastText()).not.toContain("转入后台");
-  });
 });
 
 describe("kill danger actions", () => {
@@ -480,6 +416,32 @@ describe("kill danger actions", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
     expect(toastText()).toContain("已结束");
+  });
+
+  it("requestKillTab on an unreachable host closes locally and never claims the process ended", async () => {
+    const tab = { ...terminal(), durable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "持久终端组件暂时无法访问" });
+
+    await requestKillTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenLastCalledWith("kernel-terminal", "detach", "s");
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    expect(toastText()).toContain("远端进程未能结束");
+    expect(toastText()).toContain("后台会话");
+    expect(toastText()).not.toContain("已结束「");
+  });
+
+  it("requestKillTab keeps a regular remote tab when its kill fails as disconnected", async () => {
+    const tab = { ...terminal(), durable: false, retainable: false };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "会话已断开，请重新连接" });
+
+    await requestKillTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().workspaces[0].panes[0].tabs[0]?.closeError).toContain("会话已断开");
   });
 
   it("requestKillTab cancel keeps the tab and the process", async () => {
@@ -508,6 +470,19 @@ describe("kill danger actions", () => {
     const remaining = useUi.getState().workspaces[0].panes[0].tabs;
     expect(remaining).toHaveLength(3);
     expect(remaining.every((t) => t.exited === true)).toBe(true);
+  });
+
+  it("requestKillWorkspaceTerminals reads sessions after the confirmation, not before the dialog", async () => {
+    const tab = terminal("t1");
+    seed([{ id: "p", tabs: [tab], activeTabId: "t1" }], "local");
+    mocks.ask.mockImplementationOnce(async () => {
+      useUi.setState({ sessions: [sessionInfo("ssh")] });
+      return true;
+    });
+
+    await requestKillWorkspaceTerminals("ws");
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
   });
 
   it("requestKillWorkspaceTerminals keeps failures with closeError and no success toast", async () => {
@@ -667,32 +642,6 @@ describe("detach capability without session metadata", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s1");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-w1", "kill");
     expect(useUi.getState().workspaces).toEqual([]);
-  });
-
-  it("unsplit with missing sessions confirms the blocked winrm tab before any IPC", async () => {
-    const panes = [
-      { id: "p1", tabs: [terminal("keep")], activeTabId: "keep" },
-      { id: "p2", tabs: [terminal("w1")], activeTabId: "w1" },
-    ];
-    useUi.setState({
-      workspaces: [{ ...ws(panes), assetKind: "winrm" }],
-      activeWorkspaceId: "ws",
-      sessions: [],
-      toasts: [],
-    });
-    mocks.ask.mockResolvedValueOnce(false);
-
-    await useUi.getState().unsplitWorkspace("p2", "ws");
-
-    expect(mocks.ask).toHaveBeenCalledTimes(1);
-    expect(mocks.closeTab).not.toHaveBeenCalled();
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
-
-    mocks.ask.mockResolvedValueOnce(true);
-    await useUi.getState().unsplitWorkspace("p2", "ws");
-
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-w1", "kill");
-    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
   it("unknown terminal type never promises background — confirm+kill with an explicit hint", async () => {

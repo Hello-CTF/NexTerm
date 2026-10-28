@@ -1,0 +1,14 @@
+# kind: yesno
+# options: y | n | q | a | d | e
+---
+diff --git a/main.go b/main.go
+index 3b18e51..a1c2d3f 100644
+--- a/main.go
++++ b/main.go
+@@ -1,5 +1,6 @@
+ package main
+
+ func main() {
++	println("hello")
+ }
+(1/1) Stage this hunk [y,n,q,a,d,e,?]? 

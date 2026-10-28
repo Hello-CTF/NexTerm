@@ -174,6 +174,36 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_privacy_cancel_download": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_privacy_check_updates": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_privacy_configure": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_privacy_download": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_privacy_remove": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_privacy_status": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "ai_roster_attach": {
       scope: "ai-roster",
       nested: false,
@@ -1170,6 +1200,14 @@ export const ipcContractManifest = {
       input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n}" },
       output: { go: "any", ts: "unknown" },
     },
+    "fs_mkdir_private": {
+      scope: "fs",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n}" },
+      output: { go: "any", ts: "unknown" },
+    },
     "fs_pack_download": {
       scope: "fs",
       nested: false,
@@ -1418,6 +1456,62 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderListRequest", ts: "LocalFolderListRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderListDTO", ts: "LocalFolderListDTO" },
+    },
+    "local_helper_expose_get": {
+      scope: "local-helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localHelperExposureDTO", ts: "LocalHelperExposureDTO" },
+    },
+    "local_helper_expose_set": {
+      scope: "local-helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localHelperExposeRequest", ts: "LocalHelperExposeRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localHelperExposureDTO", ts: "LocalHelperExposureDTO" },
+    },
+    "local_helper_mode_get": {
+      scope: "local-helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localTerminalModeDTO", ts: "LocalTerminalModeDTO" },
+    },
+    "local_helper_mode_set": {
+      scope: "local-helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localTerminalModeDTO", ts: "LocalTerminalModeDTO" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localTerminalModeDTO", ts: "LocalTerminalModeDTO" },
+    },
+    "local_helper_restart": {
+      scope: "local-helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localHelperRestartRequest", ts: "LocalHelperRestartRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localHelperStatusDTO", ts: "LocalHelperStatusDTO" },
+    },
+    "local_helper_retry": {
+      scope: "local-helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localHelperStatusDTO", ts: "LocalHelperStatusDTO" },
+    },
+    "local_helper_status": {
+      scope: "local-helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localHelperStatusDTO", ts: "LocalHelperStatusDTO" },
     },
     "log_tail_cancel": {
       scope: "log-tail",
@@ -1791,6 +1885,46 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.StartRequest", ts: "StartRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.RunState", ts: "RunState" },
     },
+    "runbook_template_create": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplateInput", ts: "RunbookTemplateInput" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate" },
+    },
+    "runbook_template_delete": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.runbookTemplateRequest", ts: "RunbookTemplateRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "runbook_template_get": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.runbookTemplateRequest", ts: "RunbookTemplateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate" },
+    },
+    "runbook_template_list": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate[]" },
+    },
+    "runbook_template_update": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.runbookTemplateUpdateRequest", ts: "RunbookTemplateUpdateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate" },
+    },
     "services_action": {
       scope: "services",
       nested: false,
@@ -1870,6 +2004,22 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.sessionInfoDTO", ts: "SessionInfoDTO[]" },
     },
+    "session_liveness_probe": {
+      scope: "session",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionInfoDTO", ts: "SessionInfoDTO" },
+    },
+    "session_local_hostname": {
+      scope: "session",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "string", ts: "string" },
+    },
     "session_open_line_tab": {
       scope: "session",
       nested: false,
@@ -1878,6 +2028,14 @@ export const ipcContractManifest = {
       streamPayload: "unknown",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.openTerminalRequest", ts: "OpenTerminalRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.attachedTabDTO", ts: "AttachedTabDTO" },
+    },
+    "session_prepare_durable": {
+      scope: "helper",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.durableReadinessDTO", ts: "DurableReadinessDTO" },
     },
     "session_probe": {
       nested: true,
@@ -1953,6 +2111,78 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sshImportPreviewRequest", ts: "SshImportPreviewRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sshImportPreviewDTO", ts: "SshImportPreviewDTO" },
     },
+    "state_rule_delete": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDeleteRequest", ts: "StateRuleDeleteRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDeleteResult", ts: "StateRuleDeleteResult" },
+    },
+    "state_rule_draft": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDraftRequest", ts: "StateRuleDraftRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDraftDTO", ts: "StateRuleDraftDTO" },
+    },
+    "state_rule_export": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleExportDTO", ts: "StateRuleExportDTO" },
+    },
+    "state_rule_import": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleImportRequest", ts: "StateRuleImportRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleImportResultDTO", ts: "StateRuleImportResultDTO" },
+    },
+    "state_rule_list": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDTO", ts: "StateRuleDTO[]" },
+    },
+    "state_rule_reorder": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleReorderRequest", ts: "StateRuleReorderRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDTO", ts: "StateRuleDTO[]" },
+    },
+    "state_rule_save": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleSaveRequest", ts: "StateRuleSaveRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleDTO", ts: "StateRuleDTO" },
+    },
+    "state_rule_status": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleHelperStatusDTO", ts: "StateRuleHelperStatusDTO[]" },
+    },
+    "state_rule_validate": {
+      scope: "state-rule",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleValidateRequest", ts: "StateRuleValidateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.stateRuleValidateResult", ts: "StateRuleValidateResult" },
+    },
     "sync_apply_objects": {
       scope: "sync",
       nested: true,
@@ -2017,6 +2247,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectCredentialsRequest", ts: "CollectCredentialsRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectCredentialsResult", ts: "CollectCredentialsResult" },
     },
+    "sync_collect_kind_objects": {
+      scope: "sync",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectKindObjectsRequest", ts: "CollectKindObjectsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CollectKindObjectsResult", ts: "CollectKindObjectsResult" },
+    },
     "sync_collect_known_hosts": {
       scope: "sync",
       nested: true,
@@ -2048,6 +2286,30 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.CompareResult", ts: "CompareResult" },
+    },
+    "sync_cron_foreign_adopt": {
+      scope: "sync",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ForeignCronAdoptRequest", ts: "ForeignCronAdoptRequest" },
+      output: { go: "struct{}", ts: "Record<string, never>" },
+    },
+    "sync_cron_foreign_list": {
+      scope: "sync",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/sync.ForeignCronJob", ts: "ForeignCronJob[]" },
+    },
+    "sync_cron_foreign_remove": {
+      scope: "sync",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.ForeignCronRemoveRequest", ts: "ForeignCronRemoveRequest" },
+      output: { go: "struct{}", ts: "Record<string, never>" },
     },
     "sync_digest": {
       scope: "sync",
@@ -2169,6 +2431,38 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.ScreenInsets", ts: "ScreenInsets" },
     },
+    "system_notification_remove": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.systemNotificationIDRequest", ts: "SystemNotificationIDRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "system_notification_request": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.SystemNotificationStatus", ts: "SystemNotificationStatus" },
+    },
+    "system_notification_status": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.SystemNotificationStatus", ts: "SystemNotificationStatus" },
+    },
+    "system_notify": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.SystemNotification", ts: "SystemNotification" },
+      output: { go: "any", ts: "unknown" },
+    },
     "target_set_create": {
       scope: "target-set",
       nested: false,
@@ -2223,6 +2517,22 @@ export const ipcContractManifest = {
       channel: true,
       stream: "binary",
     },
+    "terminal_attention_list": {
+      scope: "attention",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/session.AttentionEvent", ts: "AttentionEvent[]" },
+    },
+    "terminal_attention_seen": {
+      scope: "attention",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.attentionSeenRequest", ts: "AttentionSeenRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "terminal_broadcast_prepare": {
       scope: "terminal",
       nested: true,
@@ -2230,11 +2540,6 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalBroadcastPrepareRequest", ts: "TerminalBroadcastPrepareRequest" },
       output: { go: "any", ts: "unknown" },
-    },
-    "terminal_claim": {
-      nested: false,
-      channel: false,
-      stream: "none",
     },
     "terminal_close_tab": {
       nested: false,
@@ -2277,6 +2582,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.helperOperationRequest", ts: "HelperOperationRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.helperOperationDTO", ts: "HelperOperationDTO" },
     },
+    "terminal_history_read": {
+      scope: "terminal",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalHistoryReadRequest", ts: "TerminalHistoryReadRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalHistoryDTO", ts: "TerminalHistoryDTO" },
+    },
     "terminal_list": {
       nested: false,
       channel: false,
@@ -2288,6 +2601,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalPauseRequest", ts: "TerminalPauseRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "terminal_prompt_tap": {
+      scope: "attention",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.promptTapRequest", ts: "PromptTapRequest" },
       output: { go: "any", ts: "unknown" },
     },
     "terminal_record_start": {
@@ -2312,11 +2633,6 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalRecoverRequest", ts: "TerminalRecoverRequest" },
       output: { go: "any", ts: "unknown" },
-    },
-    "terminal_release": {
-      nested: false,
-      channel: false,
-      stream: "none",
     },
     "terminal_rename_tab": {
       scope: "terminal",
@@ -2348,6 +2664,14 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
+    },
+    "terminal_sessions_aggregate": {
+      scope: "attention",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionAggregateRequest", ts: "SessionAggregateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/session.AggregateList", ts: "AggregateList" },
     },
     "terminal_set_visible": {
       nested: false,
@@ -2555,6 +2879,12 @@ export const ipcContractManifest = {
     "ai_model_save",
     "ai_models",
     "ai_presets",
+    "ai_privacy_cancel_download",
+    "ai_privacy_check_updates",
+    "ai_privacy_configure",
+    "ai_privacy_download",
+    "ai_privacy_remove",
+    "ai_privacy_status",
     "ai_run_events",
     "ai_run_get",
     "ai_run_list",
@@ -2584,7 +2914,6 @@ export const ipcContractManifest = {
     "session_probe",
     "session_probe_host_key",
     "terminal_attach_tab",
-    "terminal_claim",
     "terminal_close_tab",
     "terminal_create_tab",
     "terminal_detach",
@@ -2594,7 +2923,6 @@ export const ipcContractManifest = {
     "terminal_record_start",
     "terminal_record_status",
     "terminal_record_stop",
-    "terminal_release",
     "terminal_resize",
     "terminal_resize_flush",
     "terminal_screen_text",
@@ -3215,6 +3543,13 @@ export interface IPCCommandTypeMap {
 };
     output: unknown;
   };
+  "fs_mkdir_private": {
+    input: {
+  sessionId: string;
+  path: string;
+};
+    output: unknown;
+  };
   "fs_pack_download": {
     input: {
   sessionId: string;
@@ -3400,6 +3735,34 @@ export interface IPCCommandTypeMap {
     input: contractTypes.LocalFolderListRequest;
     output: contractTypes.LocalFolderListDTO;
   };
+  "local_helper_expose_get": {
+    input: Record<string, never>;
+    output: contractTypes.LocalHelperExposureDTO;
+  };
+  "local_helper_expose_set": {
+    input: contractTypes.LocalHelperExposeRequest;
+    output: contractTypes.LocalHelperExposureDTO;
+  };
+  "local_helper_mode_get": {
+    input: Record<string, never>;
+    output: contractTypes.LocalTerminalModeDTO;
+  };
+  "local_helper_mode_set": {
+    input: contractTypes.LocalTerminalModeDTO;
+    output: contractTypes.LocalTerminalModeDTO;
+  };
+  "local_helper_restart": {
+    input: contractTypes.LocalHelperRestartRequest;
+    output: contractTypes.LocalHelperStatusDTO;
+  };
+  "local_helper_retry": {
+    input: Record<string, never>;
+    output: contractTypes.LocalHelperStatusDTO;
+  };
+  "local_helper_status": {
+    input: Record<string, never>;
+    output: contractTypes.LocalHelperStatusDTO;
+  };
   "log_tail_cancel": {
     input: contractTypes.LogTailCancelRequest;
     output: contractTypes.LogTailCancelResult;
@@ -3568,6 +3931,26 @@ export interface IPCCommandTypeMap {
     input: contractTypes.StartRequest;
     output: contractTypes.RunState;
   };
+  "runbook_template_create": {
+    input: contractTypes.RunbookTemplateInput;
+    output: contractTypes.RunbookTemplate;
+  };
+  "runbook_template_delete": {
+    input: contractTypes.RunbookTemplateRequest;
+    output: unknown;
+  };
+  "runbook_template_get": {
+    input: contractTypes.RunbookTemplateRequest;
+    output: contractTypes.RunbookTemplate;
+  };
+  "runbook_template_list": {
+    input: Record<string, never>;
+    output: contractTypes.RunbookTemplate[];
+  };
+  "runbook_template_update": {
+    input: contractTypes.RunbookTemplateUpdateRequest;
+    output: contractTypes.RunbookTemplate;
+  };
   "services_action": {
     input: contractTypes.ActionRequest;
     output: contractTypes.ServiceOperationBatch;
@@ -3600,9 +3983,21 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.SessionInfoDTO[];
   };
+  "session_liveness_probe": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.SessionInfoDTO;
+  };
+  "session_local_hostname": {
+    input: contractTypes.SessionIDRequest;
+    output: string;
+  };
   "session_open_line_tab": {
     input: contractTypes.OpenTerminalRequest;
     output: contractTypes.AttachedTabDTO;
+  };
+  "session_prepare_durable": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.DurableReadinessDTO;
   };
   "session_quick_connect_user": {
     input: Record<string, never>;
@@ -3638,6 +4033,42 @@ export interface IPCCommandTypeMap {
     input: contractTypes.SshImportPreviewRequest;
     output: contractTypes.SshImportPreviewDTO;
   };
+  "state_rule_delete": {
+    input: contractTypes.StateRuleDeleteRequest;
+    output: contractTypes.StateRuleDeleteResult;
+  };
+  "state_rule_draft": {
+    input: contractTypes.StateRuleDraftRequest;
+    output: contractTypes.StateRuleDraftDTO;
+  };
+  "state_rule_export": {
+    input: Record<string, never>;
+    output: contractTypes.StateRuleExportDTO;
+  };
+  "state_rule_import": {
+    input: contractTypes.StateRuleImportRequest;
+    output: contractTypes.StateRuleImportResultDTO;
+  };
+  "state_rule_list": {
+    input: Record<string, never>;
+    output: contractTypes.StateRuleDTO[];
+  };
+  "state_rule_reorder": {
+    input: contractTypes.StateRuleReorderRequest;
+    output: contractTypes.StateRuleDTO[];
+  };
+  "state_rule_save": {
+    input: contractTypes.StateRuleSaveRequest;
+    output: contractTypes.StateRuleDTO;
+  };
+  "state_rule_status": {
+    input: Record<string, never>;
+    output: contractTypes.StateRuleHelperStatusDTO[];
+  };
+  "state_rule_validate": {
+    input: contractTypes.StateRuleValidateRequest;
+    output: contractTypes.StateRuleValidateResult;
+  };
   "sync_apply_objects": {
     input: contractTypes.ApplyObjectsRequest;
     output: contractTypes.ApplyObjectsResult;
@@ -3670,6 +4101,10 @@ export interface IPCCommandTypeMap {
     input: contractTypes.CollectCredentialsRequest;
     output: contractTypes.CollectCredentialsResult;
   };
+  "sync_collect_kind_objects": {
+    input: contractTypes.CollectKindObjectsRequest;
+    output: contractTypes.CollectKindObjectsResult;
+  };
   "sync_collect_known_hosts": {
     input: contractTypes.CollectKnownHostsRequest;
     output: contractTypes.CollectKnownHostsResult;
@@ -3685,6 +4120,18 @@ export interface IPCCommandTypeMap {
   "sync_compare": {
     input: Record<string, never>;
     output: contractTypes.CompareResult;
+  };
+  "sync_cron_foreign_adopt": {
+    input: contractTypes.ForeignCronAdoptRequest;
+    output: Record<string, never>;
+  };
+  "sync_cron_foreign_list": {
+    input: Record<string, never>;
+    output: contractTypes.ForeignCronJob[];
+  };
+  "sync_cron_foreign_remove": {
+    input: contractTypes.ForeignCronRemoveRequest;
+    output: Record<string, never>;
   };
   "sync_digest": {
     input: Record<string, never>;
@@ -3746,6 +4193,22 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.ScreenInsets;
   };
+  "system_notification_remove": {
+    input: contractTypes.SystemNotificationIDRequest;
+    output: unknown;
+  };
+  "system_notification_request": {
+    input: Record<string, never>;
+    output: contractTypes.SystemNotificationStatus;
+  };
+  "system_notification_status": {
+    input: Record<string, never>;
+    output: contractTypes.SystemNotificationStatus;
+  };
+  "system_notify": {
+    input: contractTypes.SystemNotification;
+    output: unknown;
+  };
   "target_set_create": {
     input: contractTypes.TargetSetCreateRequest;
     output: contractTypes.ExecTargetSet;
@@ -3770,6 +4233,14 @@ export interface IPCCommandTypeMap {
     input: contractTypes.OpenTerminalRequest;
     output: contractTypes.AttachedTabDTO;
   };
+  "terminal_attention_list": {
+    input: Record<string, never>;
+    output: contractTypes.AttentionEvent[];
+  };
+  "terminal_attention_seen": {
+    input: contractTypes.AttentionSeenRequest;
+    output: unknown;
+  };
   "terminal_broadcast_prepare": {
     input: contractTypes.TerminalBroadcastPrepareRequest;
     output: unknown;
@@ -3782,8 +4253,16 @@ export interface IPCCommandTypeMap {
     input: contractTypes.HelperOperationRequest;
     output: contractTypes.HelperOperationDTO;
   };
+  "terminal_history_read": {
+    input: contractTypes.TerminalHistoryReadRequest;
+    output: contractTypes.TerminalHistoryDTO;
+  };
   "terminal_pause": {
     input: contractTypes.TerminalPauseRequest;
+    output: unknown;
+  };
+  "terminal_prompt_tap": {
+    input: contractTypes.PromptTapRequest;
     output: unknown;
   };
   "terminal_recover": {
@@ -3797,6 +4276,10 @@ export interface IPCCommandTypeMap {
   "terminal_resume": {
     input: contractTypes.TerminalResumeRequest;
     output: unknown;
+  };
+  "terminal_sessions_aggregate": {
+    input: contractTypes.SessionAggregateRequest;
+    output: contractTypes.AggregateList;
   };
   "terminal_stream_ack": {
     input: contractTypes.TerminalStreamAckRequest;

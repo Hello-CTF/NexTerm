@@ -223,7 +223,6 @@ beforeEach(() => {
         sessionId: "s1",
         panes: [{ id: "p1", activeTabId: null, tabs: [] }],
         activePaneId: "p1",
-        splitRatio: 0.5,
       },
     ],
     activeWorkspaceId: "ws1",
@@ -544,7 +543,7 @@ describe("narrow-screen layout for the credentials header and new-credential mod
 
 describe("device session panels render directly", () => {
   const DEVICE_SESSIONS = [
-    { id: "s-dev", assetId: "device/d-1", assetName: "edge-gateway", kind: "device", status: "connected", controller: "" },
+    { id: "s-dev", assetId: "device/d-1", assetName: "edge-gateway", kind: "device", status: "connected" },
   ];
 
   it("FileTree renders a normal file tree for device sessions without changing the left-panel width shell", async () => {

@@ -11,3 +11,11 @@ func peerUIDFD(fd uintptr) (int, error) {
 	}
 	return int(cred.Uid), nil
 }
+
+func peerPIDFD(fd uintptr) (int, error) {
+	cred, err := unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+	if err != nil {
+		return 0, err
+	}
+	return int(cred.Pid), nil
+}

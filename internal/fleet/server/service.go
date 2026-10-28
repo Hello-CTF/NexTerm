@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
@@ -90,6 +91,8 @@ type Service struct {
 	onlineDevices map[string]bool
 
 	shareRevalidateInterval time.Duration
+
+	sessionList sessionListState
 }
 
 type Option func(*Service)
@@ -232,6 +235,8 @@ type EnrollResult struct {
 	MetricsIntervalMS int64
 	DesiredAutostart  bool
 	TerminalEnabled   bool
+	// Kind echoes the requested enroll kind.
+	Kind string
 }
 
 type auditPayload struct {
@@ -241,6 +246,8 @@ type auditPayload struct {
 	Outcome   string `json:"outcome"`
 	Reason    string `json:"reason,omitempty"`
 	URL       string `json:"url,omitempty"`
+	// Devices is how many devices a terminal_list covered.
+	Devices *int `json:"devices,omitempty"`
 }
 
 // audit writes a fleet audit; when the payload carries a device ID the asset_id column is populated as well, so the audit view can filter
@@ -315,6 +322,7 @@ func (s *Service) transitionPresence(deviceID string, online bool) {
 type deviceGrant struct {
 	deviceID string
 	userID   string
+	kind     string
 	revoked  bool
 }
 
@@ -327,7 +335,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	if err != nil {
 		return nil, dbError(err)
 	}
-	return &deviceGrant{deviceID: deviceID, userID: device.UserID, revoked: device.RevokedAt != nil}, nil
+	return &deviceGrant{deviceID: deviceID, userID: device.UserID, kind: device.Kind, revoked: device.RevokedAt != nil}, nil
 }
 
 // authorize is the single authorization point for fleet device actions: only the device owner is allowed,
@@ -410,6 +418,23 @@ func (s *Service) IssueEnrollCode(ctx context.Context, identity *account.Identit
 }
 
 func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, appVersion string) (*EnrollResult, error) {
+	return s.ConsumeEnrollCodeKind(ctx, code, name, platform, appVersion, "")
+}
+
+// ConsumeEnrollCodeKind enrolls a device of the given enroll kind: empty for a
+// managed host agent, or agent.DeviceKindLocalHelper for a desktop exposing its
+// local helper. A local helper device starts without autostart, since it runs
+// inside the desktop app, and is never shared with another account.
+func (s *Service) ConsumeEnrollCodeKind(ctx context.Context, code, name, platform, appVersion, kind string) (*EnrollResult, error) {
+	deviceKind := agentDeviceKind
+	switch kind {
+	case "":
+	case agent.DeviceKindLocalHelper:
+		deviceKind = store.DeviceKindLocalHelper
+	default:
+		return nil, ipc.BadParam(fmt.Errorf("未知的设备类型 %q", kind))
+	}
+	desiredAutostart := deviceKind == agentDeviceKind
 	if name == "" || len(name) > maxAgentNameLength {
 		return nil, ipc.BadParam(fmt.Errorf("设备名长度需在 1-%d 之间", maxAgentNameLength))
 	}
@@ -448,7 +473,7 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 		}
 		ownerID := consumed.UserID
 		if err := q.UserDevice.WithContext(ctx).Create(&store.UserDevice{
-			ID: deviceID, UserID: ownerID, Name: name, Kind: agentDeviceKind, CreatedAt: now,
+			ID: deviceID, UserID: ownerID, Name: name, Kind: deviceKind, CreatedAt: now,
 		}); err != nil {
 			return dbError(err)
 		}
@@ -461,7 +486,7 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 		}
 		if err := q.DeviceAgent.WithContext(ctx).Create(&store.DeviceAgent{
 			DeviceID: deviceID, CredentialID: credentialID, Platform: platform, AppVersion: appVersion,
-			DesiredAutostart: true, TerminalEnabled: true, ServiceStateJSON: "{}", CreatedAt: now,
+			DesiredAutostart: desiredAutostart, TerminalEnabled: true, ServiceStateJSON: "{}", CreatedAt: now,
 		}); err != nil {
 			return dbError(err)
 		}
@@ -486,8 +511,9 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 		Secret:            secret,
 		BaseURLs:          baseURLs,
 		MetricsIntervalMS: DefaultMetricsIntervalMS,
-		DesiredAutostart:  true,
+		DesiredAutostart:  desiredAutostart,
 		TerminalEnabled:   true,
+		Kind:              kind,
 	}, nil
 }
 
@@ -681,8 +707,12 @@ type AgentConfig struct {
 }
 
 func (s *Service) SetDesiredAutostart(ctx context.Context, identity *account.Identity, deviceID string, desired bool) error {
-	if _, err := s.authorize(ctx, identity, deviceID, "autostart", auditKindDeviceAutostart); err != nil {
+	grant, err := s.authorize(ctx, identity, deviceID, "autostart", auditKindDeviceAutostart)
+	if err != nil {
 		return err
+	}
+	if desired && grant.kind == store.DeviceKindLocalHelper {
+		return ipc.NewError(ipc.CodeBadParam, "该设备随 NexTerm 桌面应用运行，不使用自启动服务")
 	}
 	deviceAgent := query.Use(s.db).DeviceAgent
 	updated, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).

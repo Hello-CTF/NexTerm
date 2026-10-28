@@ -26,6 +26,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import { connectDevice, deviceAssetId, openTerminalTab, useUi, type ConnectOutcome } from "../../app/store";
 import type { SessionInfo } from "../../ipc/commands";
+import { resetSessionPanelForTest, useSessionPanel } from "../../features/session-panel/sessionPanelStore";
 
 const DEVICE = { id: "d-1", name: "build-box" };
 
@@ -41,7 +42,12 @@ const DEVICE_SESSION: SessionInfo = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
+  resetSessionPanelForTest();
   useUi.setState({
+    // Room for the session panel beside the docks, so connecting opens it.
+    leftOpen: false,
+    rightOpen: false,
     sessions: [],
     workspaces: [],
     activeWorkspaceId: null,
@@ -85,11 +91,11 @@ describe("connectDevice opens device workspaces", () => {
     expect(visibleStates.every((hasTerminal) => !hasTerminal)).toBe(true);
   });
 
-  it("automatically switches to the files panel after connecting a device workspace, consistent with SSH sessions", async () => {
+  it("opens the session side panel (files) after connecting a device workspace, consistent with SSH sessions", async () => {
     useUi.setState({ leftMode: "assets" });
     await connectDevice(DEVICE);
-    expect(useUi.getState().leftMode).toBe("files");
-    expect(useUi.getState().leftOpen).toBe(true);
+    expect(useSessionPanel.getState().open).toBe(true);
+    expect(useUi.getState().leftMode).toBe("assets");
   });
 
   it("allows the user to create a shell after entering the workspace and preserves it when reopening", async () => {
@@ -101,11 +107,12 @@ describe("connectDevice opens device workspaces", () => {
     expect(terminalTabs[0]).toMatchObject({ kind: "terminal", sessionId: "s-dev-1" });
 
     useUi.setState({ activeWorkspaceId: null, leftMode: "assets", leftOpen: false });
+    useSessionPanel.getState().setOpen(false);
     await connectDevice(DEVICE);
 
     expect(useUi.getState().activeWorkspaceId).toBe(workspace?.id);
-    expect(useUi.getState().leftMode).toBe("files");
-    expect(useUi.getState().leftOpen).toBe(true);
+    expect(useSessionPanel.getState().open).toBe(true);
+    expect(useUi.getState().leftOpen).toBe(false);
     expect(useUi.getState().workspaces.find((w) => w.id === workspace?.id)?.panes.flatMap((pane) => pane.tabs)).toEqual(terminalTabs);
     expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
   });
@@ -161,7 +168,6 @@ describe("connectDevice workspace deduplication", () => {
           assetKind: "device",
           panes: [{ id: "p1", tabs, activeTabId: tabs[0]?.id ?? null }],
           activePaneId: "p1",
-          splitRatio: 0.5,
           closable: true,
         },
       ],
@@ -185,7 +191,7 @@ describe("connectDevice workspace deduplication", () => {
     const ws = useUi.getState().workspaces.find((w) => w.id === "ws-dev");
     expect(ws?.panes.flatMap((p) => p.tabs)).toEqual([]);
     expect(useUi.getState().activeWorkspaceId).toBe("ws-dev");
-    expect(useUi.getState().leftMode).toBe("files");
+    expect(useSessionPanel.getState().open).toBe(true);
   });
 
   it("restores an empty device workspace without adding a shell", async () => {
@@ -199,7 +205,7 @@ describe("connectDevice workspace deduplication", () => {
     const workspace = useUi.getState().workspaces[0];
     expect(workspace).toMatchObject({ id: "ws-dev", sessionId: "s-dev-1", restorePending: undefined });
     expect(workspace.panes.flatMap((pane) => pane.tabs)).toEqual([]);
-    expect(useUi.getState().leftMode).toBe("files");
+    expect(useSessionPanel.getState().open).toBe(true);
   });
 
   it("reconnects directly when the session is disconnected without starting a new connection", async () => {
@@ -231,7 +237,7 @@ describe("connectDevice workspace deduplication", () => {
     const workspace = useUi.getState().workspaces[0];
     useUi.setState({
       sessions: state === "missing" ? [] : useUi.getState().sessions,
-      workspaces: [{ ...workspace, activePaneId: "p2", splitRatio: 0.4, panes: [
+      workspaces: [{ ...workspace, activePaneId: "p2", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.4, a: { type: "leaf" as const, id: "leaf-a", paneId: "p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "p2" } }, panes: [
         { id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", title: "one", sessionId: "s-dev-1", tabId: "shell-one", closable: true }] },
         { id: "p2", activeTabId: "t2", tabs: [{ id: "t2", kind: "terminal", title: "two", sessionId: "s-dev-1", tabId: "shell-two", closable: true }] },
       ] }],
@@ -242,7 +248,7 @@ describe("connectDevice workspace deduplication", () => {
     expect(await connectDevice(DEVICE)).toEqual({ ok: true });
 
     const restored = useUi.getState().workspaces[0];
-    expect(restored).toMatchObject({ id: "ws-dev", sessionId: "s-new", activePaneId: "p2", splitRatio: 0.4 });
+    expect(restored).toMatchObject({ id: "ws-dev", sessionId: "s-new", activePaneId: "p2", layoutTree: { type: "split" as const, id: "split-root", dir: "row" as const, ratio: 0.4, a: { type: "leaf" as const, id: "leaf-a", paneId: "p1" }, b: { type: "leaf" as const, id: "leaf-b", paneId: "p2" } } });
     expect(restored.panes.map((pane) => ({ id: pane.id, activeTabId: pane.activeTabId, tabs: pane.tabs.map((tab) => [tab.id, tab.tabId, tab.sessionId]) }))).toEqual([
       { id: "p1", activeTabId: "t1", tabs: [["t1", "shell-one", "s-new"]] },
       { id: "p2", activeTabId: "t2", tabs: [["t2", "shell-two", "s-new"]] },
