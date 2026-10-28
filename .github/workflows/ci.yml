@@ -95,23 +95,15 @@ jobs:
     needs: version
     if: fromJSON(needs.version.outputs.scope).frontend
     runs-on: ubuntu-latest
-    container: debian:trixie
     timeout-minutes: 15
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
       NEXTERM_ORT_VERSION: ${{ needs.version.outputs.ort-version }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - name: Bootstrap git in the Debian container
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Debian build packages
-        uses: ./.github/actions/debian-setup
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -143,25 +135,17 @@ jobs:
     needs: version
     if: fromJSON(needs.version.outputs.scope).quality
     runs-on: ubuntu-latest
-    container: debian:trixie
     timeout-minutes: 20
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
       NEXTERM_ORT_VERSION: ${{ needs.version.outputs.ort-version }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - name: Bootstrap git in the Debian container
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Debian build packages with the Wails cgo prerequisites
-        uses: ./.github/actions/debian-setup
-        with:
-          gui: "true"
+      - name: Install the Wails cgo prerequisites
+        uses: ./.github/actions/linux-gui-deps
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -176,7 +160,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: wails3-v3.0.0-beta.27-debian-trixie-${{ runner.arch }}-go1.27.3
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.27.3
       - name: Install the pinned Wails CLI
         run: |
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
@@ -199,60 +183,38 @@ jobs:
     needs: version
     if: fromJSON(needs.version.outputs.scope).unit
     runs-on: ubuntu-latest
-    container: debian:trixie
     timeout-minutes: 60
     env:
       RACE_PACKAGE_PARALLELISM: "4"
     steps:
-      - name: Bootstrap git in the Debian container
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Debian build packages with the Wails cgo prerequisites and test shells
-        uses: ./.github/actions/debian-setup
+      - name: Install the Wails cgo prerequisites and test shells
+        uses: ./.github/actions/linux-gui-deps
         with:
-          gui: "true"
           packages: zsh openssh-server
-      # Workflow tests run the ci-ok and stamping scripts with node; the hosted image used to provide it.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24.22.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.3
           cache: true
-      # The container runs as root, which permission tests skip; run the suite as an ordinary user like a hosted runner.
-      - name: Prepare an unprivileged test user
-        run: |
-          useradd --create-home tester
-          GOCACHE="$(go env GOCACHE)"; GOMODCACHE="$(go env GOMODCACHE)"
-          mkdir -p "$GOCACHE" "$GOMODCACHE"
-          chown -R tester "$GITHUB_WORKSPACE" "$GOCACHE" "$GOMODCACHE"
-          chmod a+x "$HOME"
-          echo "GOCACHE=$GOCACHE" >> "$GITHUB_ENV"
-          echo "GOMODCACHE=$GOMODCACHE" >> "$GITHUB_ENV"
       - name: Run all Go tests
         if: ${{ !fromJSON(needs.version.outputs.scope).race }}
-        run: runuser -u tester -- go test -count=1 ./...
+        run: go test -count=1 ./...
       - name: Run all Go tests with the race detector (full-ci)
         if: fromJSON(needs.version.outputs.scope).race
         # Keep in sync with the Taskfile test:race task: checkptr is skipped
         # only in the transpiled SQLite driver; race instrumentation stays on.
-        run: runuser -u tester -- go test -race -count=1 -timeout=25m '-gcflags=modernc.org/...=-d=checkptr=0' -p=${RACE_PACKAGE_PARALLELISM} ./...
+        run: go test -race -count=1 -timeout=25m '-gcflags=modernc.org/...=-d=checkptr=0' -p=${RACE_PACKAGE_PARALLELISM} ./...
       - name: Run terminal workloads that intentionally skip race instrumentation
         if: fromJSON(needs.version.outputs.scope).race
-        run: runuser -u tester -- go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'
+        run: go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'
 
   database:
     needs: version
     if: fromJSON(needs.version.outputs.scope).database
     name: Database contracts (${{ matrix.backend }})
     runs-on: ubuntu-latest
-    container: debian:trixie
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -260,73 +222,90 @@ jobs:
         include:
           - backend: postgres
             image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+            port: 5432
             health: pg_isready -h 127.0.0.1 -U nexterm -d nexterm_test
-            dsn: postgres://nexterm:nexterm@db:5432/nexterm_test?sslmode=disable
+            dsn: postgres://nexterm:nexterm@127.0.0.1:5432/nexterm_test?sslmode=disable
           - backend: mysql
             image: mysql:8.4@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70
+            port: 3306
             health: mysqladmin ping --silent -h 127.0.0.1
-            dsn: root:nexterm_root@tcp(db:3306)/nexterm_test?parseTime=true
+            dsn: root:nexterm_root@tcp(127.0.0.1:3306)/nexterm_test?parseTime=true
           - backend: mariadb
             image: mariadb:11.4@sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873
+            port: 3306
             health: healthcheck.sh --connect --innodb_initialized
-            dsn: root:nexterm_root@tcp(db:3306)/nexterm_test?parseTime=true
+            dsn: root:nexterm_root@tcp(127.0.0.1:3306)/nexterm_test?parseTime=true
           - backend: sqlite
-            image: ""
-            health: "true"
             dsn: ""
-    # The job runs in a container, so the database service is reached by its
-    # service name on the job network. An empty image (sqlite) starts no
-    # service, and the runner waits for the health check before any step.
-    services:
-      db:
-        image: ${{ matrix.image }}
-        env:
-          POSTGRES_USER: nexterm
-          POSTGRES_PASSWORD: nexterm
-          POSTGRES_DB: nexterm_test
-          MYSQL_ROOT_HOST: "%"
-          MYSQL_ROOT_PASSWORD: nexterm_root
-          MYSQL_USER: nexterm
-          MYSQL_PASSWORD: nexterm
-          MYSQL_DATABASE: nexterm_test
-          MARIADB_ROOT_HOST: "%"
-          MARIADB_ROOT_PASSWORD: nexterm_root
-          MARIADB_USER: nexterm
-          MARIADB_PASSWORD: nexterm
-          MARIADB_DATABASE: nexterm_test
-        options: >-
-          --health-cmd "${{ matrix.health }}"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     env:
       NEXTERM_TEST_DB_BACKEND: ${{ matrix.backend }}
       NEXTERM_TEST_DB_DSN: ${{ matrix.dsn }}
     steps:
-      - name: Bootstrap git in the Debian container
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Debian build packages
-        uses: ./.github/actions/debian-setup
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.3
           cache: true
+      - name: Start the database container
+        if: matrix.backend != 'sqlite'
+        run: |
+          docker run --detach --name nexterm-test-db \
+            --publish "${{ matrix.port }}:${{ matrix.port }}" \
+            --env POSTGRES_USER=nexterm \
+            --env POSTGRES_PASSWORD=nexterm \
+            --env POSTGRES_DB=nexterm_test \
+            --env MYSQL_ROOT_HOST="%" \
+            --env MYSQL_ROOT_PASSWORD=nexterm_root \
+            --env MYSQL_USER=nexterm \
+            --env MYSQL_PASSWORD=nexterm \
+            --env MYSQL_DATABASE=nexterm_test \
+            --env MARIADB_ROOT_HOST="%" \
+            --env MARIADB_ROOT_PASSWORD=nexterm_root \
+            --env MARIADB_USER=nexterm \
+            --env MARIADB_PASSWORD=nexterm \
+            --env MARIADB_DATABASE=nexterm_test \
+            --health-cmd "${{ matrix.health }}" \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-retries 20 \
+            "${{ matrix.image }}"
       - name: Install the pinned task runner
         run: |
           go install github.com/go-task/task/v3/cmd/task@v3.45.5
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Wait for the database container
+        if: matrix.backend != 'sqlite'
+        run: |
+          for _ in {1..60}; do
+            status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' nexterm-test-db)"
+            case "$status" in
+              healthy)
+                exit 0
+                ;;
+              unhealthy|dead|exited)
+                docker logs nexterm-test-db
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+          echo "database did not become healthy" >&2
+          docker logs nexterm-test-db
+          exit 1
       - name: Run the shared database contracts
         run: |
           if [ -n "$NEXTERM_TEST_DB_DSN" ]; then
             echo "::add-mask::$NEXTERM_TEST_DB_DSN"
           fi
           task test:database
+      - name: Stop the database container
+        if: always() && matrix.backend != 'sqlite'
+        run: |
+          if docker container inspect nexterm-test-db >/dev/null 2>&1; then
+            docker rm --force --volumes nexterm-test-db
+          fi
 
   native:
     name: ${{ matrix.os }}/${{ matrix.arch }} (${{ join(matrix.kinds, ', ') }})
@@ -343,24 +322,13 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.version.outputs.native-matrix) }}
     runs-on: ${{ matrix.runner }}
-    # Linux targets build inside Debian 13; an empty container runs macOS and
-    # Windows targets directly on their hosted runners.
-    container: ${{ matrix.os == 'linux' && 'debian:trixie' || '' }}
     steps:
-      - name: Bootstrap git in the Debian container
-        if: matrix.os == 'linux'
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Debian build packages
-        if: matrix.os == 'linux'
-        uses: ./.github/actions/debian-setup
-        with:
-          gui: ${{ contains(matrix.kinds, 'desktop') }}
+      - name: Install Linux WebView prerequisites
+        if: matrix.os == 'linux' && contains(matrix.kinds, 'desktop')
+        uses: ./.github/actions/linux-gui-deps
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
@@ -485,22 +453,13 @@ jobs:
           - platform: ios
             runner: macos-26
     runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.platform == 'android' && 'debian:trixie' || '' }}
     steps:
-      - name: Bootstrap git in the Debian container
-        if: matrix.platform == 'android'
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Debian build packages with the libraries required by the Wails CLI
+      - name: Install Linux libraries required by the Wails CLI
         if: matrix.platform == 'android'
-        uses: ./.github/actions/debian-setup
-        with:
-          gui: "true"
+        uses: ./.github/actions/linux-gui-deps
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
@@ -521,7 +480,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: wails3-v3.0.0-beta.27-${{ matrix.platform == 'android' && 'debian-trixie' || runner.os }}-${{ runner.arch }}-go1.27.3
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.27.3
       - name: Install the pinned Wails CLI
         run: |
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
@@ -586,22 +545,13 @@ jobs:
           - platform: ios
             runner: macos-26
     runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.platform == 'android' && 'debian:trixie' || '' }}
     steps:
-      - name: Bootstrap git in the Debian container
-        if: matrix.platform == 'android'
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Debian build packages with the libraries required by the Wails CLI
+      - name: Install Linux libraries required by the Wails CLI
         if: matrix.platform == 'android'
-        uses: ./.github/actions/debian-setup
-        with:
-          gui: "true"
+        uses: ./.github/actions/linux-gui-deps
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
@@ -619,18 +569,6 @@ jobs:
         with:
           name: frontend-dist
           path: target/ci-work/verified-dist
-      - name: Install Java 21
-        if: matrix.platform == 'android'
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: gradle
-      # The Debian container has no preinstalled Android SDK; this installs the
-      # command-line tools, accepts the SDK licenses and exports ANDROID_HOME.
-      - name: Install the Android SDK command-line tools
-        if: matrix.platform == 'android'
-        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
       - name: Resolve the Android SDK root
         if: matrix.platform == 'android'
         id: android-sdk-root
@@ -655,6 +593,13 @@ jobs:
           if [ "${{ steps.android-sdk-cache.outputs.cache-hit }}" != "true" ]; then
             "$SDKMANAGER" "ndk;26.3.11579264"
           fi
+      - name: Install Java 21
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
       - name: Verify the iOS toolchain
         if: matrix.platform == 'ios'
         run: xcodebuild -version
@@ -663,7 +608,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
-          key: wails3-v3.0.0-beta.27-${{ matrix.platform == 'android' && 'debian-trixie' || runner.os }}-${{ runner.arch }}-go1.27.3
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.27.3
       - name: Install the pinned Wails CLI
         run: |
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
