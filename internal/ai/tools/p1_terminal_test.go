@@ -1126,3 +1126,28 @@ func TestWaitForTabsConcurrentOutputRace(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalListHidesExitedTabsUnlessRequested(t *testing.T) {
+	fake := newTabFake(fakeTab("t1", "s1", "$ ", 0), fakeTab("t2", "s1", "$ ", 0), fakeTab("t3", "s1", "$ ", 0))
+	fake.tabs["t2"].detail = TabDetail{TabID: "t2", SessionID: "s1", Kind: "ssh", Exited: true}
+	registry := p1Registry(fake)
+	scope := Scope{SessionID: "s1", TabID: "t1"}
+
+	result := registry.Execute(context.Background(), "job", scope, p1Call("l", "terminal_list", `{}`), nil)
+	if !result.OK || len(result.Terminals) != 2 {
+		t.Fatalf("default list = %+v", result)
+	}
+	for _, brief := range result.Terminals {
+		if brief.Exited {
+			t.Fatalf("exited tab listed by default: %+v", brief)
+		}
+	}
+	if !strings.Contains(result.Text, "共 2 个终端标签页，本页 2 个") || !strings.Contains(result.Text, "另有 1 个已退出标签页已隐藏") {
+		t.Fatalf("text = %q", result.Text)
+	}
+
+	result = registry.Execute(context.Background(), "job", scope, p1Call("l", "terminal_list", `{"include_exited":true}`), nil)
+	if !result.OK || len(result.Terminals) != 3 || strings.Contains(result.Text, "已隐藏") {
+		t.Fatalf("include_exited list = %+v", result)
+	}
+}
