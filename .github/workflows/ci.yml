@@ -383,7 +383,7 @@ jobs:
         if: contains(matrix.kinds, 'desktop') || contains(matrix.kinds, 'server')
         env:
           CGO_ENABLED: "1"
-          NEXTERM_PRIVACY_TEST_RUNTIME: ${{ github.workspace }}/target/go-build/ai-runtime
+          NEXTERM_PRIVACY_TEST_RUNTIME: ${{ github.workspace }}/target/go-build/ai-runtime-${{ matrix.os }}-${{ matrix.arch }}
         run: go test -count=1 -run '^(TestRuntimeLoaderErrorIsReported|TestRuntimeSmoke)$' -v ./internal/ai/privacy/inference/
       - name: Run Go two-process server acceptance
         if: contains(matrix.kinds, 'server')
