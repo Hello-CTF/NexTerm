@@ -81,7 +81,7 @@ func (e *Engine) collectMemoryObjects(ctx context.Context, c *localCollection) e
 func (e *Engine) applyMemoryObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload memoryObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 记忆对象数据损坏：%v", err)
+		report.warnf("AI 记忆数据已损坏：%v", err)
 		return false, false
 	}
 	entries, scope, err := e.memoryScope(ctx)

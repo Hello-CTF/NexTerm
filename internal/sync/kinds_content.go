@@ -219,7 +219,7 @@ func (e *Engine) tombstoneWins(ctx context.Context, objectID string, revision in
 func (e *Engine) applyStateRuleObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload stateRuleObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("状态规则对象数据损坏：%v", err)
+		report.warnf("状态规则数据已损坏：%v", err)
 		return false, false
 	}
 	local, exists, err := e.store.StateRuleGet(ctx, payload.ID)
@@ -294,7 +294,7 @@ func (e *Engine) applyStateRuleTombstone(ctx context.Context, objectID string, d
 func (e *Engine) applyRunbookTemplateObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload runbookTemplateObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("Runbook 模板对象数据损坏：%v", err)
+		report.warnf("Runbook 模板数据已损坏：%v", err)
 		return false, false
 	}
 	local, err := e.store.RunbookTemplateGet(ctx, payload.ID)
@@ -345,7 +345,7 @@ func (e *Engine) applyRunbookTemplateTombstone(ctx context.Context, objectID str
 func (e *Engine) applySkillObject(ctx context.Context, objectID string, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload skillObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 技能对象数据损坏：%v", err)
+		report.warnf("AI 技能数据已损坏：%v", err)
 		return false, false
 	}
 	if objectID != skills.SyncObjectID(payload.Name) {

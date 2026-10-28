@@ -583,7 +583,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		if err := e.saveCursor(ctx, userID, cursor); err != nil {
 			return false, err
 		}
-		return false, ipc.NewError(ipc.CodeDisconnected, "同步数据不完整（部分对象未返回），请稍后重试")
+		return false, ipc.NewError(ipc.CodeDisconnected, "同步数据不完整（部分条目未返回），请稍后重试")
 	}
 	objects, err := e.collectLocalObjects(ctx, report, optIn, session.userID)
 	if err != nil {
@@ -645,7 +645,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	if completed, err := e.pullAllAndApply(ctx, session, &cursor, nil, report, optIn); err != nil {
 		return false, err
 	} else if !completed {
-		report.warnf("收尾拉取超过页数上限，剩余对象将在下一轮同步")
+		report.warnf("收尾拉取超过页数上限，剩余条目将在下次同步时处理")
 		report.leftPending = true
 	}
 	if !report.leftPending {

@@ -128,7 +128,7 @@ func (e *Engine) collectCredentialObjects(ctx context.Context, c *localCollectio
 		// Credentials are not synced this round while the vault is locked/uninitialized (same deferred semantics as keyed AI profiles); other objects are collected as usual.
 		// Credentials stay out of objects, so no reconciliation state is written; the next round after unlock pushes them automatically.
 		if err := e.requireVault(ctx); err != nil {
-			c.report.warnf("%d 条凭据因凭据库未解锁而跳过本次同步，其余对象正常同步：%v", len(credentials), err)
+			c.report.warnf("%d 条凭据因凭据库未解锁而跳过本次同步，其余条目正常同步：%v", len(credentials), err)
 			credentials = nil
 		}
 	}
@@ -448,7 +448,7 @@ func (e *Engine) quarantineObject(ctx context.Context, userID, objectID string, 
 func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload groupObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("分组对象数据损坏：%v", err)
+		report.warnf("分组数据已损坏：%v", err)
 		return false, false
 	}
 	local, err := e.store.GroupGet(ctx, payload.ID)
@@ -597,7 +597,7 @@ func (e *Engine) groupParents(ctx context.Context) (map[string]*string, error) {
 func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload assetObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("资产对象数据损坏：%v", err)
+		report.warnf("资产数据已损坏：%v", err)
 		return false, false
 	}
 	if payload.ID == store.BuiltinLocalAssetID {
@@ -703,7 +703,7 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload credentialObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("凭据对象数据损坏：%v", err)
+		report.warnf("凭据数据已损坏：%v", err)
 		return false, false
 	}
 	if err := e.requireVault(ctx); err != nil {
@@ -804,7 +804,7 @@ func (e *Engine) credentialUpsertTxBound(ctx context.Context, tx *gorm.DB, paylo
 func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload snippetObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("片段对象数据损坏：%v", err)
+		report.warnf("片段数据已损坏：%v", err)
 		return false, false
 	}
 	local, err := e.store.SnippetGet(ctx, payload.ID)
@@ -864,7 +864,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plaintext []byte, report *SyncReport, userID string) (bool, bool) {
 	var payload tombstoneObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("删除标记对象数据损坏：%v", err)
+		report.warnf("删除标记数据已损坏：%v", err)
 		return false, false
 	}
 	target, ok := lookupKind(payload.TargetKind)
@@ -978,7 +978,7 @@ func (e *Engine) applyTranscriptTombstone(ctx context.Context, objectID string, 
 func (e *Engine) applyTranscriptObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload transcriptObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("会话记录对象数据损坏：%v", err)
+		report.warnf("会话记录数据已损坏：%v", err)
 		return false, false
 	}
 	if payload.EndedAt <= 0 {
@@ -1041,7 +1041,7 @@ func chunksToRows(chunks []transcriptChunkObject) []store.TranscriptChunkRow {
 func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload knownHostObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("已知主机对象数据损坏：%v", err)
+		report.warnf("已知主机数据已损坏：%v", err)
 		return false, false
 	}
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
@@ -1179,7 +1179,7 @@ func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, rep
 	}
 	var payload aiProfileObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 模型档案对象数据损坏：%v", err)
+		report.warnf("AI 模型档案数据已损坏：%v", err)
 		return false, false
 	}
 	if payload.APIKey != "" {
