@@ -206,7 +206,11 @@ async function windowsCRTDirectory(env = process.env) {
 // hosts; other hosts cannot check it and skip.
 function verifyAuthenticode(file) {
   if (process.platform !== "win32") return "skipped";
-  const result = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", "(Get-AuthenticodeSignature -LiteralPath $args[0]).Status", file], { encoding: "utf8" });
+  // -Command joins trailing arguments into the script text, so the path travels in the environment instead.
+  const result = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", "(Get-AuthenticodeSignature -LiteralPath $env:NEXTERM_AUTHENTICODE_FILE).Status"], {
+    encoding: "utf8",
+    env: { ...process.env, NEXTERM_AUTHENTICODE_FILE: file },
+  });
   const status = result.stdout?.trim();
   if (result.status !== 0 || status !== "Valid") throw new Error(`Authenticode signature of ${path.basename(file)} is not valid (${status || result.stderr?.trim() || "unknown"})`);
   return "valid";
