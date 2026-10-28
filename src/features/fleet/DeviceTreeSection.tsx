@@ -5,10 +5,11 @@
 // Devices are not asset table records: they are excluded from asset search/CRUD/sync, cannot be edited or deleted,
 // cannot be dragged into groups, and there is no cross-device drag; row visuals and keyboard/click behavior match regular assets
 // (role=treeitem, single/double click/Enter or the play button opens the device workspace).
-// Renders nothing and issues no requests when logged out. Revoked, offline, and agent-less devices remain visible
-// with a status badge; all are disabled for terminal access. Revocation requires two warning confirmations.
+// Renders nothing and issues no requests when logged out. Revoked devices are not listed at all (the device management view
+// reveals them on demand); offline and agent-less devices remain visible with a status badge, disabled for terminal access.
+// Revoking from the context menu removes the row immediately. Revocation requires two warning confirmations.
 // Convergence cadence matches the device management view: WEB polls every 60s / desktop every 30s as fallback (coming online/newly enrolled/
-// revoked elsewhere converge on refresh), WEB additionally subscribes to device://status for realtime online flips
+// revoked elsewhere disappear on refresh), WEB additionally subscribes to device://status for realtime online flips
 // (events win within the event threshold, otherwise heartbeat determination), and refetches immediately on event WS reconnect resync;
 // the desktop has no event channel and relies on polling alone.
 
@@ -173,7 +174,8 @@ export function DeviceTreeSection() {
     return items;
   };
 
-  const devices = devicesQuery.data?.devices ?? [];
+  // Revoked devices are never listed in the asset tree; they stay reachable only from the device management view.
+  const devices = (devicesQuery.data?.devices ?? []).filter((device) => device.revoked_at === 0);
   const menuDevice = menu ? devices.find((device) => device.id === menu.device.id) : undefined;
   if (devices.length === 0) return null;
 
