@@ -237,9 +237,22 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		appUser := query.Use(tx).AppUser
+		current, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(userID)).First()
+		if err == gorm.ErrRecordNotFound {
+			return ipc.NewError(ipc.CodeNotFound, "用户不存在")
+		}
+		if err != nil {
+			return dbError(err)
+		}
+		// A reset must not re-enable a disabled account; enabling it later
+		// restores the pending reset through must_change_password.
+		state := string(StateResetRequired)
+		if current.State == string(StateDisabled) {
+			state = string(StateDisabled)
+		}
 		info, err := appUser.WithContext(ctx).
 			Where(appUser.ID.Eq(userID)).
-			UpdateColumns(map[string]any{"state": string(StateResetRequired), "must_change_password": true, "updated_at": a.now()})
+			UpdateColumns(map[string]any{"state": state, "must_change_password": true, "updated_at": a.now()})
 		if err != nil {
 			return dbError(err)
 		}

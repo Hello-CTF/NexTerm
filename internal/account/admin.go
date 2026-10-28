@@ -49,9 +49,13 @@ func (a *Accounts) SetUserDisabled(ctx context.Context, userID string, disabled 
 		if err != nil {
 			return dbError(err)
 		}
+		next := target
+		if !disabled && current.MustChangePassword {
+			next = StateResetRequired
+		}
 		info, err := appUser.WithContext(ctx).
 			Where(appUser.ID.Eq(userID)).
-			UpdateColumns(map[string]any{"state": string(target), "updated_at": a.now()})
+			UpdateColumns(map[string]any{"state": string(next), "updated_at": a.now()})
 		if err != nil {
 			return dbError(err)
 		}
@@ -59,7 +63,7 @@ func (a *Accounts) SetUserDisabled(ctx context.Context, userID string, disabled 
 			return ipc.NewError(ipc.CodeNotFound, "用户不存在")
 		}
 		if !disabled && current.Role == string(RoleSuperadmin) && current.State == string(StateDisabled) {
-			reenabled = &User{Role: RoleSuperadmin, State: StateActive}
+			reenabled = &User{Role: RoleSuperadmin, State: next}
 		}
 		if disabled {
 			userSession := query.Use(tx).UserSession
