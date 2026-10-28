@@ -224,7 +224,7 @@ func TestQualityStaysStaticAndRequiredUnitOwnsGoTests(t *testing.T) {
 func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 	tasks := loadTaskfile(t)
 	race := tasks.Tasks["test:race"]
-	const selectedRace = `go test -race -count=1 -timeout=25m -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}`
+	const selectedRace = `go test -race -count=1 -timeout=25m '-gcflags=modernc.org/...=-d=checkptr=0' -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}`
 	if len(race.Commands) != 1 || normalize(race.Commands[0].Run) != selectedRace {
 		t.Fatalf("test:race must select packages and bounded parallelism for an uncached full run: %#v", race.Commands)
 	}
@@ -257,7 +257,7 @@ func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 	if got := ciRace.Env["RACE_PACKAGE_PARALLELISM"]; got != "4" {
 		t.Fatalf("CI race package parallelism = %q, want the evidenced default 4", got)
 	}
-	raceStep := requireRun(t, ciRace, "runuser -u tester -- go test -race -count=1 -timeout=25m -p=${RACE_PACKAGE_PARALLELISM} ./...")
+	raceStep := requireRun(t, ciRace, "runuser -u tester -- go test -race -count=1 -timeout=25m '-gcflags=modernc.org/...=-d=checkptr=0' -p=${RACE_PACKAGE_PARALLELISM} ./...")
 	if got := expression(raceStep.If); got != "fromJSON(needs.version.outputs.scope).race" {
 		t.Fatalf("the race suite must be opt-in through full-ci, got %q", got)
 	}

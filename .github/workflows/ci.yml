@@ -236,7 +236,9 @@ jobs:
         run: runuser -u tester -- go test -count=1 ./...
       - name: Run all Go tests with the race detector (full-ci)
         if: fromJSON(needs.version.outputs.scope).race
-        run: runuser -u tester -- go test -race -count=1 -timeout=25m -p=${RACE_PACKAGE_PARALLELISM} ./...
+        # Keep in sync with the Taskfile test:race task: checkptr is skipped
+        # only in the transpiled SQLite driver; race instrumentation stays on.
+        run: runuser -u tester -- go test -race -count=1 -timeout=25m '-gcflags=modernc.org/...=-d=checkptr=0' -p=${RACE_PACKAGE_PARALLELISM} ./...
       - name: Run terminal workloads that intentionally skip race instrumentation
         if: fromJSON(needs.version.outputs.scope).race
         run: runuser -u tester -- go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'

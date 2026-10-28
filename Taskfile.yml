@@ -111,7 +111,10 @@ tasks:
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
-      - go test -race -count=1 -timeout=25m -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}
+      # Race instrumentation stays on everywhere; only checkptr is skipped in
+      # the transpiled SQLite driver, whose pointer arithmetic dominated the
+      # race suite's CPU. Keep in sync with the CI race step.
+      - go test -race -count=1 -timeout=25m '-gcflags=modernc.org/...=-d=checkptr=0' -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}
 
   test:production:
     summary: Build or consume verified frontend assets, test production embedding and clean staged assets
