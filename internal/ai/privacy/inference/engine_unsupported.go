@@ -16,3 +16,5 @@ func CheckPlatform() error { return ErrUnavailable }
 func Open(string, string, string) (*Engine, error)             { return nil, ErrUnavailable }
 func (*Engine) Detect(context.Context, string) ([]Span, error) { return nil, ErrUnavailable }
 func (*Engine) Close() error                                   { return nil }
+
+func LoadRuntime(string) (string, error) { return "", ErrUnavailable }
