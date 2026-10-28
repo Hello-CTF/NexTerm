@@ -50,6 +50,8 @@ describe("AI privacy settings", () => {
     expect(toggle.checked).toBe(false);
     expect(toggle.disabled).toBe(true);
     expect(mounted.container.textContent).toContain("当前 NexTerm 服务端");
+    expect(mounted.container.textContent).toContain("模型由管理员在服务端下载，所有账号共用");
+    expect(mounted.container.textContent).not.toContain("每台设备需单独下载");
     const precision = mounted.container.querySelector<HTMLSelectElement>('[aria-label="下载模型精度"]')!;
     act(() => { precision.value = "fp32"; precision.dispatchEvent(new Event("change", { bubbles: true })); });
     mocks.download.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true, precision: "fp32" } });
@@ -134,6 +136,23 @@ describe("AI privacy settings", () => {
     await waitForRendered(() => expect(mocks.configure).toHaveBeenCalledWith(expect.objectContaining({ enabled: false })));
     await waitForRendered(() => expect(toggle.checked).toBe(false));
     expect(mounted.container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("attributes an enabled guard's failure to the runtime when the runtime is unavailable", async () => {
+    const state = baseline();
+    state.config = { enabled: true, precision: "int8", revision: "d".repeat(40), version: "v0.1.3" };
+    state.runtime = { supported: false, reason: "未找到可用的本地推理运行时" };
+    mocks.status.mockResolvedValue(state);
+    mounted = mount(createElement(PrivacyCard));
+    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("服务端的脱敏运行时不可用：未找到可用的本地推理运行时。"));
+    expect(mounted.container.querySelector('[role="alert"]')?.textContent).not.toContain("所选模型不可用");
+  });
+
+  it("asks accounts that cannot manage models to contact an administrator", async () => {
+    mocks.status.mockResolvedValue({ ...baseline(), canManage: false });
+    mounted = mount(createElement(PrivacyCard));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("请联系管理员下载模型"));
+    expect(mounted.container.textContent).not.toContain("需先下载并选择模型");
   });
 
   it("shows download failures with detail and cancellation as status", async () => {
