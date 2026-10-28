@@ -44,6 +44,21 @@ function compareCommits(a, b) {
   return 0;
 }
 
+// Returns the whole BREAKING CHANGE footer (wrapped and multi-paragraph lines
+// included), ending at the next footer token such as "Co-authored-by:" or at the
+// end of the message, collapsed into a single line.
+function breakingFooterText(body) {
+  const lines = body.split("\n");
+  const start = lines.findIndex((line) => /^BREAKING[ -]CHANGE:/.test(line));
+  if (start < 0) return null;
+  const collected = [lines[start].replace(/^BREAKING[ -]CHANGE:/, "")];
+  for (const line of lines.slice(start + 1)) {
+    if (/^(BREAKING[ -]CHANGE|[A-Za-z][A-Za-z-]*): |^[A-Za-z][A-Za-z-]* #/.test(line)) break;
+    collected.push(line);
+  }
+  return collected.join(" ").replace(/\s+/g, " ").trim();
+}
+
 function formatCommit(commit) {
   if (!commit.scope) return `- ${commit.text}`;
   return `- **${commit.scope}**: ${commit.text}`;
@@ -71,9 +86,9 @@ for (const message of messages) {
   const commit = match
     ? { type: match[1], scope: match[2] || "", text: match[4] }
     : { type: "", scope: "", text: subject };
-  const breakingFooter = /^BREAKING CHANGE:[ \t]*(.*)$/m.exec(body);
-  if ((match && match[3]) || breakingFooter) {
-    breaking.push({ scope: commit.scope, text: breakingFooter?.[1]?.trim() || commit.text });
+  const breakingFooter = breakingFooterText(body);
+  if ((match && match[3]) || breakingFooter !== null) {
+    breaking.push({ scope: commit.scope, text: breakingFooter || commit.text });
   }
   const group = groups.find((item) => item.type === commit.type);
   if (group) group.commits.push(commit);

@@ -97,7 +97,7 @@ func privacyCommandResult[T any](value T, err error) (T, error) {
 		return value, ipc.WrapError(ipc.CodeUnsupported, platformError.Message, err)
 	}
 	if errors.Is(err, inference.ErrUnavailable) {
-		return value, ipc.WrapError(ipc.CodeUnsupported, "本地隐私推理运行时未安装或不兼容，请安装支持本设备的完整 NexTerm 版本", err)
+		return value, ipc.WrapError(ipc.CodeUnsupported, privacy.RuntimeUnavailableMessage(), err)
 	}
 	return value, err
 }

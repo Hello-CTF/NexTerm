@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -215,6 +216,17 @@ func (m *Manager) runtimeError() error {
 }
 
 // safeMessage returns UI-safe text for an error; other diagnostics are hidden.
+// RuntimeUnavailableMessage is the user-facing text for a missing or incompatible
+// ONNX Runtime. On Linux an in-app update from an older release replaces only the
+// executable, so the message names how to restore the runtime payload.
+func RuntimeUnavailableMessage() string {
+	message := "未找到可用的本地推理运行时，请安装支持本设备的完整 NexTerm 版本"
+	if runtime.GOOS == "linux" {
+		message += "（Linux：重新安装 deb 包：apt install ./nexterm-*.deb，或重新运行安装脚本）"
+	}
+	return message
+}
+
 func safeMessage(err error, fallback string) string {
 	var safe *UserError
 	var platform *inference.PlatformError
@@ -224,7 +236,7 @@ func safeMessage(err error, fallback string) string {
 	case errors.As(err, &platform):
 		return platform.Message
 	case errors.Is(err, inference.ErrUnavailable):
-		return "未找到可用的本地推理运行时，请安装支持本设备的完整 NexTerm 版本"
+		return RuntimeUnavailableMessage()
 	default:
 		return fallback
 	}

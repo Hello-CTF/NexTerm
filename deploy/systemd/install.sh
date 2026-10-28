@@ -5,6 +5,7 @@ SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_PREFIX="/"
 ROLLBACK=0
 ENABLE=1
+ASSUME_YES=0
 
 usage() {
   cat <<'INSTALL_HELP_EOF'
@@ -72,6 +73,7 @@ Options:
   --root DIR     filesystem prefix for a staged install (default: /)
   --rollback     restore the payload saved by the previous upgrade
   --no-enable    do not enable and start nexterm-server on first install
+  -y, --yes      do not ask for confirmation when upgrading from before 1.3.0
   -h, --help     show this help
 
 Test hooks (see scripts/test-systemd-install.py):
@@ -91,6 +93,7 @@ while [ $# -gt 0 ]; do
     --root=*) ROOT_PREFIX="${1#*=}"; shift ;;
     --rollback) ROLLBACK=1; shift ;;
     --no-enable) ENABLE=0; shift ;;
+    -y|--yes) ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -1264,6 +1267,36 @@ preflight_server_binary() {
   fi
 }
 
+# 1.3.0 changed the sync protocol: pre-1.3.0 devices and servers can no longer
+# sync with it. Warn once (the warning disappears after the upgrade) and ask for
+# confirmation only when a terminal is available.
+warn_breaking_upgrade() {
+  local installed major minor answer
+  [ -x "$OPT_DIR/nexterm-server" ] || return 0
+  installed="$(timeout 5 "$OPT_DIR/nexterm-server" --version 2>/dev/null | head -n 1 || true)"
+  if [[ "$installed" =~ ^v?([0-9]+)\.([0-9]+)\. ]]; then
+    major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"
+    if [ "$major" -gt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -ge 3 ]; }; then
+      return 0
+    fi
+  else
+    installed="unknown"
+  fi
+  log "WARNING: upgrading from NexTerm ${installed} to 1.3.0 or newer is a breaking change."
+  log "WARNING: 1.3.0 devices and servers no longer sync with pre-1.3.0 ones; upgrade ALL devices and servers that sync with this server."
+  if [ "$ASSUME_YES" = "1" ] || [ "$ROOT_PREFIX" != "/" ]; then
+    return 0
+  fi
+  if [ -t 0 ]; then
+    read -r -p "install: continue with the upgrade? [y/N] " answer || answer=""
+  elif { : </dev/tty; } 2>/dev/null; then
+    read -r -p "install: continue with the upgrade? [y/N] " answer </dev/tty || answer=""
+  else
+    return 0
+  fi
+  case "$answer" in y|Y|yes|YES) ;; *) die "upgrade cancelled (re-run with --yes to skip this confirmation)" ;; esac
+}
+
 run_install() {
   fail_at preflight
   local f
@@ -1290,6 +1323,9 @@ run_install() {
     MODE=upgrade
   fi
   log "mode: $MODE install"
+  if [ "$MODE" = "upgrade" ] && ! transaction_pending; then
+    warn_breaking_upgrade
+  fi
 
   ensure_user
   ensure_dirs

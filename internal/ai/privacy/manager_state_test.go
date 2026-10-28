@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -346,3 +347,18 @@ type netError struct{}
 func (*netError) Error() string   { return "dial tcp: connection refused" }
 func (*netError) Timeout() bool   { return false }
 func (*netError) Temporary() bool { return false }
+
+func TestManagerMissingRuntimeReasonGuidesLinuxReinstall(t *testing.T) {
+	manager, _, _, _ := managedFixture(t)
+	manager.runtime = func() error { return inference.ErrUnavailable }
+	status, err := manager.Status(privacyAdmin(t, "alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Runtime.Supported || status.Runtime.Reason != RuntimeUnavailableMessage() {
+		t.Fatalf("runtime = %+v", status.Runtime)
+	}
+	if runtime.GOOS == "linux" && !strings.Contains(status.Runtime.Reason, "apt install ./nexterm-*.deb") {
+		t.Fatalf("reason lacks the Linux reinstall hint: %q", status.Runtime.Reason)
+	}
+}
