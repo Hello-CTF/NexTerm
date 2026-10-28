@@ -1,6 +1,11 @@
+// Ported from Hugging Face tokenizers 0.23.1 (Apache-2.0) normalizers/precompiled.rs
+// and spm_precompiled 0.1.4 (Apache-2.0) src/lib.rs.
+// Modified for NexTerm; see ../third_party/ASTRLINK_NOTICE.md.
+
 package inference
 
 import (
+	"context"
 	"encoding/binary"
 	"unicode/utf8"
 )
@@ -103,24 +108,28 @@ func precompiledReplace(changes []charChange, old, replacement string) []charCha
 
 // normalize reproduces the grapheme-then-character lookup of HF tokenizers,
 // including its use of the shortest matching prefix for a whole grapheme.
-func (p *precompiled) normalize(n *normalizedString) error {
+// It checks ctx every cancelCheckInterval graphemes.
+func (p *precompiled) normalize(ctx context.Context, n *normalizedString) error {
 	changes := make([]charChange, 0, len(n.normalized))
 	modified := false
 	var failure error
-	forEachGrapheme(n.normalized, func(grapheme string) {
-		if failure != nil {
-			return
+	count := 0
+	forEachGrapheme(n.normalized, func(grapheme string) bool {
+		if count++; count%cancelCheckInterval == 0 {
+			if failure = ctx.Err(); failure != nil {
+				return false
+			}
 		}
 		if len(grapheme) < 6 {
 			replacement, ok, err := p.transform(grapheme)
 			if err != nil {
 				failure = err
-				return
+				return false
 			}
 			if ok {
 				modified = true
 				changes = precompiledReplace(changes, grapheme, replacement)
-				return
+				return true
 			}
 		}
 		for b, r := range grapheme {
@@ -128,7 +137,7 @@ func (p *precompiled) normalize(n *normalizedString) error {
 			replacement, ok, err := p.transform(part)
 			if err != nil {
 				failure = err
-				return
+				return false
 			}
 			if ok {
 				modified = true
@@ -137,6 +146,7 @@ func (p *precompiled) normalize(n *normalizedString) error {
 				changes = append(changes, charChange{r, 0})
 			}
 		}
+		return true
 	})
 	if failure != nil {
 		return failure

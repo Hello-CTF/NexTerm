@@ -377,6 +377,14 @@ jobs:
           NATIVE_TARGET: ${{ toJSON(matrix) }}
           REPRO_CHECK: ${{ fromJSON(needs.version.outputs.scope).repro }}
         run: node .github/scripts/build-native.mjs
+      # Loads the staged ONNX Runtime through the cgo shim and runs a generated
+      # model, so an OrtApi slot or ABI mismatch fails before release.
+      - name: Smoke-test the staged privacy runtime
+        if: contains(matrix.kinds, 'desktop') || contains(matrix.kinds, 'server')
+        env:
+          CGO_ENABLED: "1"
+          NEXTERM_PRIVACY_TEST_RUNTIME: ${{ github.workspace }}/target/go-build/ai-runtime
+        run: go test -count=1 -run '^(TestRuntimeLoaderErrorIsReported|TestRuntimeSmoke)$' -v ./internal/ai/privacy/inference/
       - name: Run Go two-process server acceptance
         if: contains(matrix.kinds, 'server')
         run: go run ./scripts/e2e-harness sync --bin target/go-build/nexterm-server-${{ matrix.os }}-${{ matrix.arch }} --no-build

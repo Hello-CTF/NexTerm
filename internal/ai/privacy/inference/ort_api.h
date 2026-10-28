@@ -53,7 +53,8 @@ typedef enum ONNXTensorElementDataType {
   ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
 } ONNXTensorElementDataType;
 
-typedef enum GraphOptimizationLevel { ORT_ENABLE_ALL = 99 } GraphOptimizationLevel;
+// ort 2.0.0-rc.11 GraphOptimizationLevel::Level3, as AstrLink configured it.
+typedef enum GraphOptimizationLevel { ORT_ENABLE_LAYOUT = 3 } GraphOptimizationLevel;
 typedef enum ExecutionMode { ORT_SEQUENTIAL = 0 } ExecutionMode;
 typedef enum OrtAllocatorType { OrtArenaAllocator = 1 } OrtAllocatorType;
 typedef enum OrtMemType { OrtMemTypeDefault = 0 } OrtMemType;

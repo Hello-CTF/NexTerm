@@ -1,7 +1,12 @@
+// Ported from Hugging Face tokenizers 0.23.1 (Apache-2.0) tokenizer/mod.rs,
+// tokenizer/added_vocabulary.rs and processors/template.rs.
+// Modified for NexTerm; see ../third_party/ASTRLINK_NOTICE.md.
+
 package inference
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -429,8 +434,12 @@ func (t *tokenizer) prepareWindow(e *encoding, start, end int) (*window, error) 
 	return w, nil
 }
 
+// cancelCheckInterval bounds the work between context checks while
+// tokenizing, so a slow path over a large input stays cancellable.
+const cancelCheckInterval = 1024
+
 // encode mirrors Tokenizer::encode(text, false) with byte offsets.
-func (t *tokenizer) encode(text string) (*encoding, error) {
+func (t *tokenizer) encode(ctx context.Context, text string) (*encoding, error) {
 	type split struct {
 		n      *normalizedString
 		tokens []modelToken
@@ -453,13 +462,18 @@ func (t *tokenizer) encode(text string) (*encoding, error) {
 		}
 	}
 	var pre []split
-	for _, s := range splits {
+	for i, s := range splits {
+		if i%cancelCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if s.done {
 			pre = append(pre, s)
 			continue
 		}
 		for _, normalizer := range t.normalizer {
-			if err := normalizer.normalize(s.n); err != nil {
+			if err := normalizer.normalize(ctx, s.n); err != nil {
 				return nil, err
 			}
 		}
@@ -482,7 +496,12 @@ func (t *tokenizer) encode(text string) (*encoding, error) {
 		}
 	}
 	e := &encoding{}
-	for _, s := range pre {
+	for i, s := range pre {
+		if i%cancelCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		tokens := s.tokens
 		if !s.done {
 			tokens = t.model.tokenize(s.n.normalized)

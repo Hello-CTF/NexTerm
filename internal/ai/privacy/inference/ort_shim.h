@@ -13,7 +13,8 @@ enum {
   NG_SHAPE = 7,
 };
 
-int ng_ort_init(const char *path);
+int ng_ort_init(const char *path, char *detail, size_t detail_capacity);
+const char *ng_ort_version(void);
 int ng_ort_session_open(const char *model_path, int threads, void **session);
 void ng_ort_session_close(void *session);
 int ng_ort_session_io_count(void *session, int output, size_t *count);

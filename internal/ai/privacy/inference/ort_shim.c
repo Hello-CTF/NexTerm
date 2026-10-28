@@ -5,6 +5,7 @@
 #endif
 #include "ort_shim.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -68,23 +69,64 @@ static void *ng_library(const char *path) {
   return handle;
 }
 #define NG_SYMBOL(handle, name) ((void *)GetProcAddress((HMODULE)(handle), name))
+static void ng_unload(void *handle) { FreeLibrary((HMODULE)handle); }
+
+// Describes the last loader error, such as a missing Visual C++ runtime.
+static void ng_loader_error(char *detail, size_t capacity) {
+  DWORD code = GetLastError();
+  char message[256] = {0};
+  DWORD length = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, code, 0, message,
+                                sizeof message, NULL);
+  while (length > 0 && (message[length - 1] == '\r' || message[length - 1] == '\n' || message[length - 1] == ' '))
+    message[--length] = 0;
+  snprintf(detail, capacity, "Windows error %lu: %s", (unsigned long)code, message);
+}
 #else
 static void *ng_library(const char *path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
 #define NG_SYMBOL(handle, name) dlsym(handle, name)
+static void ng_unload(void *handle) { dlclose(handle); }
+
+// Describes the last dynamic loader error, such as a missing libstdc++.
+static void ng_loader_error(char *detail, size_t capacity) {
+  const char *message = dlerror();
+  snprintf(detail, capacity, "%s", message ? message : "unknown loader error");
+}
 #endif
 
-// The library stays loaded for the process lifetime: ONNX Runtime owns
-// threads and a global environment that must never outlive its code.
-int ng_ort_init(const char *path) {
+static const OrtApiBase *ng_base;
+
+// The library stays loaded for the process lifetime once initialized: ONNX
+// Runtime owns threads and a global environment that must never outlive its
+// code. A library that fails initialization is unloaded. On failure detail
+// receives a loader or version diagnostic that never contains user text.
+int ng_ort_init(const char *path, char *detail, size_t detail_capacity) {
+  if (detail_capacity > 0) detail[0] = 0;
   if (ng_api) return NG_OK;
   void *library = ng_library(path);
-  if (!library) return NG_UNAVAILABLE;
+  if (!library) {
+    ng_loader_error(detail, detail_capacity);
+    return NG_UNAVAILABLE;
+  }
   OrtGetApiBaseFn get_base = (OrtGetApiBaseFn)NG_SYMBOL(library, "OrtGetApiBase");
-  if (!get_base) return NG_UNAVAILABLE;
+  if (!get_base) {
+    ng_loader_error(detail, detail_capacity);
+    ng_unload(library);
+    return NG_UNAVAILABLE;
+  }
   const OrtApiBase *base = get_base();
-  if (!base || !base->GetApi) return NG_UNAVAILABLE;
+  if (!base || !base->GetApi || !base->GetVersionString) {
+    snprintf(detail, detail_capacity, "OrtGetApiBase returned no API base");
+    ng_unload(library);
+    return NG_UNAVAILABLE;
+  }
   const void *const *api = (const void *const *)base->GetApi(ORT_API_VERSION);
-  if (!api) return NG_UNAVAILABLE;
+  if (!api) {
+    const char *version = base->GetVersionString();
+    snprintf(detail, detail_capacity, "ONNX Runtime %s does not provide C API version %d", version ? version : "unknown",
+             ORT_API_VERSION);
+    ng_unload(library);
+    return NG_UNAVAILABLE;
+  }
   ng_api = api;
   OrtEnv *env = NULL;
   if (ng_failed(NG_CALL(CreateEnvWithCustomLogger,
@@ -92,6 +134,8 @@ int ng_ort_init(const char *path) {
                                                     OrtEnv **))(ng_discard_log, NULL, ORT_LOGGING_LEVEL_WARNING,
                                                                 "nexterm-privacy", &env))) {
     ng_api = NULL;
+    snprintf(detail, detail_capacity, "ONNX Runtime environment creation failed");
+    ng_unload(library);
     return NG_UNAVAILABLE;
   }
   ng_release_status(NG_CALL(DisableTelemetryEvents, OrtStatus *(ORT_API_CALL *)(const OrtEnv *))(env));
@@ -101,12 +145,17 @@ int ng_ort_init(const char *path) {
                                                                                           OrtMemTypeDefault, &memory))) {
     NG_CALL(ReleaseEnv, void(ORT_API_CALL *)(OrtEnv *))(env);
     ng_api = NULL;
+    snprintf(detail, detail_capacity, "ONNX Runtime CPU memory info creation failed");
+    ng_unload(library);
     return NG_UNAVAILABLE;
   }
+  ng_base = base;
   ng_env = env;
   ng_memory = memory;
   return NG_OK;
 }
+
+const char *ng_ort_version(void) { return ng_base ? ng_base->GetVersionString() : NULL; }
 
 #if defined(__APPLE__) && TARGET_OS_OSX
 // macOS starts each new thread at the default QoS class instead of its
@@ -170,7 +219,7 @@ int ng_ort_session_open(const char *model_path, int threads, void **session) {
                                                                                                    ORT_SEQUENTIAL));
   failed |= ng_failed(
       NG_CALL(SetSessionGraphOptimizationLevel,
-              OrtStatus *(ORT_API_CALL *)(OrtSessionOptions *, GraphOptimizationLevel))(options, ORT_ENABLE_ALL));
+              OrtStatus *(ORT_API_CALL *)(OrtSessionOptions *, GraphOptimizationLevel))(options, ORT_ENABLE_LAYOUT));
 #if defined(__APPLE__) && TARGET_OS_OSX
   failed |= ng_failed(
       NG_CALL(SessionOptionsSetCustomCreateThreadFn,

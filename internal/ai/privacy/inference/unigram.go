@@ -1,3 +1,7 @@
+// Ported from Hugging Face tokenizers 0.23.1 (Apache-2.0) models/unigram/model.rs
+// and models/unigram/trie.rs.
+// Modified for NexTerm; see ../third_party/ASTRLINK_NOTICE.md.
+
 package inference
 
 import (
@@ -112,21 +116,23 @@ func (u *unigram) encode(sentence string) []string {
 		}
 		startsAt += characterLength
 	}
-	var results, unknown []string
+	// Consecutive unknown pieces are adjacent in sentence, so their merged
+	// value is one substring.
+	var results []string
+	unknownStart, unknownEnd := -1, -1
 	flush := func() {
-		if len(unknown) > 0 {
-			value := ""
-			for i := len(unknown) - 1; i >= 0; i-- {
-				value += unknown[i]
-			}
-			results = append(results, value)
-			unknown = nil
+		if unknownStart >= 0 {
+			results = append(results, sentence[unknownStart:unknownEnd])
+			unknownStart, unknownEnd = -1, -1
 		}
 	}
 	for end := size; end > 0; {
 		node := best[end]
 		if node.id == u.unknownID {
-			unknown = append(unknown, sentence[node.startsAt:end])
+			if unknownStart < 0 {
+				unknownEnd = end
+			}
+			unknownStart = node.startsAt
 		} else {
 			flush()
 			results = append(results, sentence[node.startsAt:end])
