@@ -7,8 +7,9 @@ import { Select } from "../../ui/Select";
 import { confirmDialog } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { formatBytes } from "../../ui/format";
-import { IconChevronDown, IconChevronRight, IconRefresh, IconShield } from "../../ui/icons";
+import { IconRefresh, IconShield } from "../../ui/icons";
 import { useAuth } from "../auth/store";
+import { SummaryDialog } from "./SummaryDialog";
 
 const precisionNames: Record<PrivacyPrecision, string> = {
   int8: "INT8",
@@ -36,11 +37,8 @@ function PrivacyCardBody() {
   const [enabling, setEnabling] = useState(false);
   const [checkError, setCheckError] = useState("");
   const [precision, setPrecision] = useState<PrivacyPrecision>("int8");
-  const [managerOpen, setManagerOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const mounted = useRef(true);
   const autoChecked = useRef(false);
-  const autoOpened = useRef(false);
   // undefined until the first status arrives: a completion already recorded then is stale, not news.
   const notifiedCompletion = useRef<string | undefined>(undefined);
   const requestGeneration = useRef(0);
@@ -70,11 +68,6 @@ function PrivacyCardBody() {
       .then(() => refresh())
       .catch((cause) => { if (mounted.current) setCheckError(describeError(cause)); });
   }, [status, refresh]);
-  useEffect(() => {
-    if (!status || autoOpened.current || !status.canManage || status.installed.length > 0) return;
-    autoOpened.current = true;
-    setManagerOpen(true);
-  }, [status]);
 
   const run = async (action: () => Promise<void>) => {
     requestGeneration.current++;
@@ -153,128 +146,123 @@ function PrivacyCardBody() {
               disabled={busy || (!config.enabled && (!selected || missingSelection || !supported))}
               onChange={(event) => void run(() => configure({ ...config, enabled: event.target.checked }))} />
           </label>
-          <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800/60 pt-3">
-            <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] text-neutral-200">本地模型</div>
-              <p className="nx-hint mt-0.5 truncate">
-                {currentInstallation
-                  ? `${currentInstallation.precision.toUpperCase()} · ${currentInstallation.version} · ${formatBytes(installationSize(currentInstallation))}`
-                  : noModelHint}
-              </p>
-            </div>
-            {status.latest && status.installed.length > 0 && !hasLatest && <span className="nx-badge nx-badge-green">可更新至 {status.latest.version}</span>}
-            {(status.canManage || status.installed.length > 0) && (
-              <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" aria-expanded={managerOpen || status.download.running}
-                aria-controls="privacy-model-manager" onClick={() => setManagerOpen((current) => !current)}>
-                {status.installed.length === 0 ? "下载模型" : "管理"}
-                {managerOpen ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
-              </button>
-            )}
-          </div>
-          {(managerOpen || status.download.running) && (
-            <div id="privacy-model-manager" className="flex flex-col gap-3 rounded-md border border-neutral-800/60 p-3">
-              {status.installed.length > 0 || missingSelection ? (
-                <label className="flex flex-col gap-1 text-xs text-neutral-400">
-                  当前模型
-                  <Select ariaLabel="使用的本地隐私模型" value={selected} disabled={busy}
-                    options={[
-                      ...(missingSelection ? [{ value: selected, label: `${config.version || config.revision.slice(0, 7)} · ${config.precision.toUpperCase()}（文件缺失）`, disabled: true }] : []),
-                      ...status.installed.map((item) => ({
-                        value: keyOf(item),
-                        label: `${item.precision.toUpperCase()} · ${item.version}`,
-                        description: formatBytes(installationSize(item)),
-                      })),
-                    ]}
-                    onChange={(value) => {
-                      const installation = status.installed.find((item) => keyOf(item) === value);
-                      if (installation) void run(() => configure({ ...config, ...installation }));
-                    }} />
-                </label>
-              ) : null}
-              {status.canManage ? (
-                <div className="flex flex-col gap-1.5">
-                  <div className="text-xs text-neutral-400">下载模型</div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Select className="min-w-48 flex-1 sm:flex-none" ariaLabel="下载模型精度" value={precision}
-                      disabled={busy || status.download.running || !supported}
-                      options={(Object.keys(precisionNames) as PrivacyPrecision[]).map((value) => ({
-                        value,
-                        label: precisionNames[value],
-                        description: `${precisionDescriptions[value]}${status.latestSizes?.[value] ? ` · 约 ${formatBytes(status.latestSizes[value])}` : ""}`,
-                      }))}
-                      onChange={(value) => setPrecision(value as PrivacyPrecision)} />
-                    <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || status.download.running || !supported}
-                      onClick={() => void run(async () => { const next = await privacyApi.download(precision); if (mounted.current) setStatus(next); })}>
-                      下载
-                    </button>
-                    <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy || !supported}
-                      onClick={() => void run(async () => { await privacyApi.checkUpdates(); await refresh(); })}>
-                      <IconRefresh size={12} />检查更新
-                    </button>
-                  </div>
-                  <p className="nx-hint text-[11px]">下载后不会自动启用脱敏。</p>
-                </div>
-              ) : (
-                <p className="nx-hint text-[11.5px]">模型由管理员在服务端下载和管理。</p>
-              )}
-              {checkError && <p className="nx-hint text-[11.5px]">暂时无法获取模型更新：{checkError}</p>}
-              {status.newerIncompatible && (
-                <p className="nx-hint text-[11.5px]">新版本 {status.newerIncompatible.version} 需要先更新 NexTerm。</p>
-              )}
-              {status.download.running && (
-                <DownloadProgress label={`正在下载 ${status.download.precision.toUpperCase()}`}
-                  transferred={progress?.downloaded ?? 0} total={progress?.total ?? 0}
-                  cancelDisabled={busy} onCancel={() => void run(async () => { await privacyApi.cancelDownload(); await refresh(); })} />
-              )}
-              {!status.download.running && completed && selected !== completedKey && (
-                <div role="status" className="flex flex-wrap items-center gap-2 text-[12px] text-green-300">
-                  <span>已下载 {completed.version} {status.download.precision.toUpperCase()}</span>
-                  <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" disabled={busy}
-                    onClick={() => void run(() => configure({ ...config, ...completed, precision: status.download.precision }))}>使用此模型</button>
-                </div>
-              )}
-              {!status.download.running && status.download.canceled && (
-                <p role="status" className="nx-hint text-[11.5px]">{status.download.error}</p>
-              )}
-              {!status.download.running && status.download.error && !status.download.canceled && (
-                <div role="alert" className="nx-alert nx-alert-danger text-[12px]">
-                  <div>{status.download.error}</div>
-                  {status.download.detail && <div className="mt-0.5 break-words font-mono text-[11px] opacity-70">{status.download.detail}</div>}
-                </div>
-              )}
-              {status.installed.length > 0 && (
-                <div className="flex flex-col gap-1 border-t border-neutral-800/60 pt-2">
-                  <div className="text-xs text-neutral-400">已下载 · 共占用 {formatBytes(status.diskUsage)}</div>
-                  {status.installed.map((item) => (
-                    <div key={keyOf(item)} className="flex items-center justify-between gap-2 text-[11.5px]">
-                      <span>{item.precision.toUpperCase()} · {item.version} · {formatBytes(installationSize(item))}{keyOf(item) === selected ? " · 当前" : ""}</span>
-                      {status.canManage && (
-                        <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy || status.download.running || (config.enabled && keyOf(item) === selected)}
-                          title={config.enabled && keyOf(item) === selected ? "正在使用，请先关闭脱敏或切换到其他模型" : undefined}
-                          onClick={() => void remove(item)}>删除</button>
-                      )}
+          <div className="border-t border-neutral-800/60 pt-3">
+            <div className="text-[12.5px] text-neutral-200">本地模型</div>
+            <SummaryDialog
+              manageable={status.canManage || status.installed.length > 0}
+              buttonLabel={status.installed.length === 0 ? "下载模型" : "管理"}
+              title="管理本地脱敏模型"
+              description="选择、下载和删除本地隐私模型。下载后不会自动启用脱敏。"
+              summary={
+                <>
+                  <span className="block truncate">
+                    {currentInstallation
+                      ? `${currentInstallation.precision.toUpperCase()} · ${currentInstallation.version} · ${formatBytes(installationSize(currentInstallation))}`
+                      : noModelHint}
+                    {status.installed.length > 0 ? ` · 已下载 ${status.installed.length} 个` : ""}
+                  </span>
+                  {status.latest && status.installed.length > 0 && !hasLatest && <span className="nx-badge nx-badge-green mt-1">可更新至 {status.latest.version}</span>}
+                </>
+              }
+            >
+              <div className="flex flex-col gap-3">
+                {status.installed.length > 0 || missingSelection ? (
+                  <label className="flex flex-col gap-1 text-xs text-neutral-400">
+                    当前模型
+                    <Select ariaLabel="使用的本地隐私模型" value={selected} disabled={busy}
+                      options={[
+                        ...(missingSelection ? [{ value: selected, label: `${config.version || config.revision.slice(0, 7)} · ${config.precision.toUpperCase()}（文件缺失）`, disabled: true }] : []),
+                        ...status.installed.map((item) => ({
+                          value: keyOf(item),
+                          label: `${item.precision.toUpperCase()} · ${item.version}`,
+                          description: formatBytes(installationSize(item)),
+                        })),
+                      ]}
+                      onChange={(value) => {
+                        const installation = status.installed.find((item) => keyOf(item) === value);
+                        if (installation) void run(() => configure({ ...config, ...installation }));
+                      }} />
+                  </label>
+                ) : null}
+                {status.canManage ? (
+                  <div className="flex flex-col gap-1.5">
+                    <div className="text-xs text-neutral-400">下载模型</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Select className="min-w-48 flex-1 sm:flex-none" ariaLabel="下载模型精度" value={precision}
+                        disabled={busy || status.download.running || !supported}
+                        options={(Object.keys(precisionNames) as PrivacyPrecision[]).map((value) => ({
+                          value,
+                          label: precisionNames[value],
+                          description: `${precisionDescriptions[value]}${status.latestSizes?.[value] ? ` · 约 ${formatBytes(status.latestSizes[value])}` : ""}`,
+                        }))}
+                        onChange={(value) => setPrecision(value as PrivacyPrecision)} />
+                      <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || status.download.running || !supported}
+                        onClick={() => void run(async () => { const next = await privacyApi.download(precision); if (mounted.current) setStatus(next); })}>
+                        下载
+                      </button>
+                      <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy || !supported}
+                        onClick={() => void run(async () => { await privacyApi.checkUpdates(); await refresh(); })}>
+                        <IconRefresh size={12} />检查更新
+                      </button>
                     </div>
-                  ))}
+                    <p className="nx-hint text-[11px]">下载后不会自动启用脱敏。</p>
+                  </div>
+                ) : (
+                  <p className="nx-hint text-[11.5px]">模型由管理员在服务端下载和管理。</p>
+                )}
+                {status.installed.length > 0 && (
+                  <div className="flex flex-col gap-1 border-t border-neutral-800/60 pt-2">
+                    <div className="text-xs text-neutral-400">已下载 · 共占用 {formatBytes(status.diskUsage)}</div>
+                    {status.installed.map((item) => (
+                      <div key={keyOf(item)} className="flex items-center justify-between gap-2 text-[11.5px]">
+                        <span>{item.precision.toUpperCase()} · {item.version} · {formatBytes(installationSize(item))}{keyOf(item) === selected ? " · 当前" : ""}</span>
+                        {status.canManage && (
+                          <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy || status.download.running || (config.enabled && keyOf(item) === selected)}
+                            title={config.enabled && keyOf(item) === selected ? "正在使用，请先关闭脱敏或切换到其他模型" : undefined}
+                            onClick={() => void remove(item)}>删除</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex flex-col gap-1.5 border-t border-neutral-800/60 pt-2">
+                  <div className="text-xs text-neutral-400">模型与隐私说明</div>
+                  <p className="nx-hint text-[11px]">
+                    适用于{WEB ? "当前账号" : "这台设备"}的对话、定时任务、上下文压缩、子代理和工具输出。{WEB ? "设置不参与同步；模型由管理员在服务端下载，所有账号共用。" : "设置和模型仅保存在本机，不参与同步。"}
+                  </p>
+                  <p className="nx-hint text-[11px]">
+                    模型来自 Hugging Face / QuantumNous/astrlink-guard，不包含在安装包中。INT8 适合日常使用；FP16 兼顾体积与精度；FP32 更侧重代码和凭证检测。模型可能漏检或误报。
+                  </p>
                 </div>
-              )}
+              </div>
+            </SummaryDialog>
+          </div>
+          {checkError && <p className="nx-hint text-[11.5px]">暂时无法获取模型更新：{checkError}</p>}
+          {status.newerIncompatible && (
+            <p className="nx-hint text-[11.5px]">新版本 {status.newerIncompatible.version} 需要先更新 NexTerm。</p>
+          )}
+          {/* Download state stays on the main panel so progress, completion and failures are never hidden in the dialog. */}
+          {status.download.running && (
+            <DownloadProgress label={`正在下载 ${status.download.precision.toUpperCase()}`}
+              transferred={progress?.downloaded ?? 0} total={progress?.total ?? 0}
+              cancelDisabled={busy} onCancel={() => void run(async () => { await privacyApi.cancelDownload(); await refresh(); })} />
+          )}
+          {!status.download.running && completed && selected !== completedKey && (
+            <div role="status" className="flex flex-wrap items-center gap-2 text-[12px] text-green-300">
+              <span>已下载 {completed.version} {status.download.precision.toUpperCase()}</span>
+              <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" disabled={busy}
+                onClick={() => void run(() => configure({ ...config, ...completed, precision: status.download.precision }))}>使用此模型</button>
             </div>
           )}
-          <div>
-            <button type="button" className="flex items-center gap-1 text-[11.5px] text-neutral-500 hover:text-neutral-300"
-              aria-expanded={detailsOpen} aria-controls="privacy-details" onClick={() => setDetailsOpen((current) => !current)}>
-              {detailsOpen ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />}模型与隐私说明
-            </button>
-            {detailsOpen && (
-              <div id="privacy-details" className="mt-1.5 flex flex-col gap-1.5">
-                <p className="nx-hint text-[11px]">
-                  适用于{WEB ? "当前账号" : "这台设备"}的对话、定时任务、上下文压缩、子代理和工具输出。{WEB ? "设置不参与同步；模型由管理员在服务端下载，所有账号共用。" : "设置和模型仅保存在本机，不参与同步。"}
-                </p>
-                <p className="nx-hint text-[11px]">
-                  模型来自 Hugging Face / QuantumNous/astrlink-guard，不包含在安装包中。INT8 适合日常使用；FP16 兼顾体积与精度；FP32 更侧重代码和凭证检测。模型可能漏检或误报。
-                </p>
-              </div>
-            )}
-          </div>
+          {!status.download.running && status.download.canceled && (
+            <p role="status" className="nx-hint text-[11.5px]">{status.download.error}</p>
+          )}
+          {!status.download.running && status.download.error && !status.download.canceled && (
+            <div role="alert" className="nx-alert nx-alert-danger text-[12px]">
+              <div>{status.download.error}</div>
+              {status.download.detail && <div className="mt-0.5 break-words font-mono text-[11px] opacity-70">{status.download.detail}</div>}
+            </div>
+          )}
         </div>
       )}
     </section>

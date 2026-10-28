@@ -66,6 +66,13 @@ import { useUi } from "../../app/store";
 const LINK = { url: "https://nexterm.example.com", username: "alice", insecure: false, hasPassword: true, verifiedAt: 1700000000000, lastError: "" };
 const OPT_IN = { knownHost: true, aiProfile: false, aiPermission: true, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false };
 
+// The sync toggles live in a secondary dialog; open it from the summary row.
+function openOptInDialog(): void {
+  const manage = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "管理同步项");
+  if (!manage) throw new Error("manage sync items button not found");
+  click(manage as HTMLButtonElement);
+}
+
 let mounted: MountedView | undefined;
 
 function withClient(node: React.ReactElement): MountedView {
@@ -76,7 +83,7 @@ function withClient(node: React.ReactElement): MountedView {
 async function waitForConsole(extraText?: string): Promise<void> {
   await flushUntil(() =>
     document.body.textContent?.includes("立即同步") === true &&
-    document.body.textContent?.includes("已知主机 已开启") === true &&
+    document.body.textContent?.includes("已开启 2 / 10 项") === true &&
     document.body.textContent?.includes("服务端 0 个对象") === true &&
     (!extraText || document.body.textContent.includes(extraText)),
   );
@@ -180,8 +187,8 @@ describe("Desktop account sync console", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("自动同步");
     expect(text).toContain("每 60 秒");
-    expect(text).toContain("已知主机 已开启");
-    expect(text).toContain("AI 模型档案 已关闭");
+    expect(text).toContain("已开启 2 / 10 项，未开启：AI 模型档案、AI 授权、外观快捷键、状态规则、Runbook 模板、AI 技能、AI 记忆、定时任务");
+    openOptInDialog();
 
     const consoleCard = [...document.querySelectorAll("section.nx-card")].find((c) => c.textContent?.includes("立即同步"));
     expect(consoleCard?.querySelector(".nx-card-title")?.textContent).toBe("账号同步");
@@ -204,13 +211,14 @@ describe("Desktop account sync console", () => {
     mounted = withClient(createElement(SyncCard));
     await waitForConsole();
 
+    openOptInDialog();
     const knownHost = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(
       (c) => c.closest("label")?.textContent?.includes("同步已知主机"),
     )!;
     click(knownHost);
     await flushUntil(() =>
       mocks.kindOptInSet.mock.calls.length === 1 &&
-      document.body.textContent?.includes("已知主机 已关闭") === true && !knownHost.disabled,
+      document.body.textContent?.includes("已开启 1 / 10 项") === true && !knownHost.disabled,
     );
     expect(mocks.kindOptInSet).toHaveBeenCalledWith({ knownHost: false });
   });

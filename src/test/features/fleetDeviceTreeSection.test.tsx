@@ -815,7 +815,7 @@ describe("DevicesView MetricsPanel reuse regression", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
-    const metricsButton = [...(card?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "指标");
+    const metricsButton = [...(card?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "详情");
     click(metricsButton as HTMLButtonElement);
     await flushUntil(() => card?.querySelector('svg[role="img"]') !== null);
 

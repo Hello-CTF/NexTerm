@@ -38,18 +38,19 @@ let mounted: MountedView | undefined;
 beforeEach(() => { vi.resetAllMocks(); mocks.status.mockResolvedValue(baseline()); });
 afterEach(() => { mounted?.unmount(); mounted = undefined; });
 function button(label: string): HTMLButtonElement {
-  const found = [...mounted!.container.querySelectorAll("button")].find((item) => item.textContent?.replace(/\s+/g, " ").trim() === label);
+  // The model manager lives in a portaled dialog, so search the whole document.
+  const found = [...document.body.querySelectorAll("button")].find((item) => item.textContent?.replace(/\s+/g, " ").trim() === label);
   if (!found) throw new Error(`Missing button: ${label}`);
   return found;
 }
 function control(label: string): HTMLButtonElement {
-  const found = mounted!.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  const found = document.body.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
   if (!found) throw new Error(`Missing control: ${label}`);
   return found;
 }
 function choose(label: string, optionText: string): void {
   click(control(label));
-  const option = [...mounted!.container.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes(optionText));
+  const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes(optionText));
   if (!option) throw new Error(`Missing option: ${optionText}`);
   click(option);
 }
@@ -62,9 +63,9 @@ describe("AI privacy settings", () => {
     expect(toggle.checked).toBe(false);
     expect(toggle.disabled).toBe(true);
     expect(mounted.container.textContent).toContain("当前 NexTerm 服务端");
-    click(button("模型与隐私说明"));
-    expect(mounted.container.textContent).toContain("模型由管理员在服务端下载，所有账号共用");
-    expect(mounted.container.textContent).not.toContain("每台设备需单独下载");
+    click(button("下载模型"));
+    expect(document.body.textContent).toContain("模型由管理员在服务端下载，所有账号共用");
+    expect(document.body.textContent).not.toContain("每台设备需单独下载");
     choose("下载模型精度", "FP32");
     mocks.download.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true, precision: "fp32" } });
     click(button("下载"));
@@ -135,6 +136,7 @@ describe("AI privacy settings", () => {
     mocks.status.mockResolvedValue({ ...baseline(), runtime: { supported: false, reason: "本地 AI 脱敏需要 macOS 13.4 或更新版本" } });
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("本地脱敏当前不可用：本地 AI 脱敏需要 macOS 13.4 或更新版本。"));
+    click(button("下载模型"));
     expect(button("下载").disabled).toBe(true);
     expect(mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.disabled).toBe(true);
     expect(mounted.container.textContent).toContain("尚未下载模型");
@@ -148,6 +150,7 @@ describe("AI privacy settings", () => {
     mocks.status.mockResolvedValue(state);
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("已启用脱敏，但所选模型不可用：本地隐私模型文件缺失，请重新下载模型。在恢复或关闭前，所有 AI 请求都会被阻止。"));
+    click(button("下载模型"));
     await waitForRendered(() => expect(control("使用的本地隐私模型").textContent).toContain("（文件缺失）"));
     const toggle = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(toggle.disabled).toBe(false);
@@ -195,7 +198,7 @@ describe("AI privacy settings", () => {
     await waitForRendered(() => expect(button("管理")).toBeTruthy());
     click(button("管理"));
     expect(mounted.container.textContent).toContain("已下载 v0.1.3 FP32");
-    expect(mounted.container.textContent).toContain("共占用 2.0 MiB");
+    expect(document.body.textContent).toContain("共占用 2.0 MiB");
     mocks.configure.mockResolvedValue({ ...state, config: { ...state.config, ...installed, enabled: false }, download: baseline().download });
     click(button("使用此模型"));
     await waitForRendered(() => expect(mocks.configure).toHaveBeenCalledWith({ enabled: false, precision: "fp32", revision: installed.revision }));
@@ -208,7 +211,19 @@ describe("AI privacy settings", () => {
     mocks.remove.mockResolvedValue({ ...baseline() });
     click(button("删除"));
     await waitForRendered(() => expect(mocks.remove).toHaveBeenCalledWith({ revision: installed.revision, precision: "fp32" }));
-    await waitForRendered(() => expect(mounted!.container.textContent).not.toContain("已下载 ·"));
+    await waitForRendered(() => expect(document.body.textContent).not.toContain("已下载 ·"));
+  });
+
+  it("keeps download failures and update errors visible on the main panel without opening the manager", async () => {
+    mocks.status.mockResolvedValue({
+      ...baseline(),
+      newerIncompatible: { version: "v2.0.0", revision: "e".repeat(40) },
+      download: { ...baseline().download, error: "下载失败：网络中断" },
+    });
+    mounted = mount(createElement(PrivacyCard));
+    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("下载失败：网络中断"));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(mounted.container.textContent).toContain("新版本 v2.0.0 需要先更新 NexTerm");
   });
 
   it("does not announce a download that finished before the settings page opened", async () => {

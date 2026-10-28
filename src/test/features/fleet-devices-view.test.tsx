@@ -56,10 +56,12 @@ function buttonByText(root: ParentNode | null | undefined, text: string): HTMLBu
   return [...(root?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === text);
 }
 
-function expandDetails(card: Element | null | undefined): void {
+async function expandDetails(card: Element | null | undefined): Promise<void> {
   const toggle = buttonByText(card, "详情");
   if (!toggle) throw new Error("details toggle not found");
   if (toggle.getAttribute("aria-expanded") !== "true") click(toggle);
+  // Expanding details also loads the metrics panel; let that settle inside act.
+  await flush();
 }
 
 function pickMenuItem(card: Element | null | undefined, label: string): void {
@@ -353,12 +355,10 @@ describe("Device management view - device list and metrics", () => {
     expect(card?.textContent).toContain("在线");
     expect(card?.textContent).toContain("上报");
     expect(card?.textContent).not.toContain("https://nexterm.example.com");
-    expandDetails(card);
+    await expandDetails(card);
     expect(card?.textContent).toContain("https://nexterm.example.com");
 
-    const metricsButton = [...(card?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "指标");
-    expect(metricsButton).not.toBeNull();
-    click(metricsButton as HTMLButtonElement);
+    expect([...(card?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "指标")).toBe(false);
     await flushUntil(() => card?.textContent?.includes("12.5%") ?? false);
     expect(card?.textContent).toContain("8.0 GiB / 16.0 GiB");
     expect(card?.textContent).toContain("100 GiB / 200 GiB");
@@ -786,7 +786,7 @@ describe("Device management view - device list and metrics", () => {
     const target = cardOf("needle-device");
     expect(target?.textContent).toContain("owner-59");
     expect([...(target?.querySelectorAll("button") ?? [])].map((button) => button.textContent?.trim())).toEqual(
-      expect.arrayContaining(["打开工作区", "详情", "指标"]),
+      expect.arrayContaining(["打开工作区", "详情"]),
     );
     expect(target?.querySelector('button[aria-label="更多操作"]')).not.toBeNull();
     expect(document.activeElement).toBe(search);
@@ -1048,7 +1048,7 @@ describe("Device management view - device list and metrics", () => {
     expect(card?.textContent).toContain("离线");
     expect(buttonByText(card, "打开工作区")).toBeUndefined();
     expect(buttonByText(card, "离线原因")).toBeDefined();
-    expandDetails(card);
+    await expandDetails(card);
     expect(card?.textContent).toContain("设备离线：修改只会保存为期望状态，上线后生效");
     expect(card?.textContent).toContain("未运行");
   });
@@ -1320,7 +1320,7 @@ describe("Device management view - revocation and autostart", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
-    expandDetails(card);
+    await expandDetails(card);
     const checkbox = card?.querySelector<HTMLInputElement>('input[aria-label="随登录自动启动"]');
     expect(checkbox?.checked).toBe(true);
     click(checkbox as HTMLInputElement);
@@ -1342,7 +1342,7 @@ describe("Device management view - revocation and autostart", () => {
     await flushUntil(() => document.body.textContent?.includes("desk-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("desk-01"));
-    expandDetails(card);
+    await expandDetails(card);
     expect(card?.textContent).toContain("后台服务");
     expect(card?.querySelector('input[aria-label="随登录自动启动"]')).toBeNull();
   });
@@ -1355,7 +1355,7 @@ describe("Device management view - revocation and autostart", () => {
     await flushUntil(() => document.body.textContent?.includes("db-02") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("db-02"));
-    expandDetails(card);
+    await expandDetails(card);
     const checkbox = card?.querySelector<HTMLInputElement>('input[aria-label="随登录自动启动"]');
     expect(checkbox?.checked).toBe(false);
     click(checkbox as HTMLInputElement);
@@ -1392,7 +1392,7 @@ describe("Device management view - remote terminal switch and version note", () 
     await flushUntil(() => document.body.textContent?.includes("db-02") ?? false);
 
     const card = cardWith("db-02");
-    expandDetails(card);
+    await expandDetails(card);
     const checkbox = card?.querySelector<HTMLInputElement>('input[aria-label="远程终端"]');
     expect(checkbox?.checked).toBe(false);
     click(checkbox as HTMLInputElement);
@@ -1411,7 +1411,7 @@ describe("Device management view - remote terminal switch and version note", () 
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = cardWith("web-01");
-    expandDetails(card);
+    await expandDetails(card);
     click(card?.querySelector<HTMLInputElement>('input[aria-label="远程终端"]') as HTMLInputElement);
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-1/terminal-access"));
 
@@ -1426,7 +1426,7 @@ describe("Device management view - remote terminal switch and version note", () 
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = cardWith("web-01");
-    expandDetails(card);
+    await expandDetails(card);
     const checkbox = card?.querySelector<HTMLInputElement>('input[aria-label="远程终端"]') as HTMLInputElement;
     click(checkbox);
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
@@ -1502,7 +1502,7 @@ describe("Device management view - autostart drift from installed/enabled", () =
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
     expect(card?.textContent).not.toContain("没有生效");
     expect(card?.querySelector('[role="status"]')).toBeNull();
-    expandDetails(card);
+    await expandDetails(card);
     expect(card?.textContent).toContain("当前已生效");
     expect(card?.textContent).toContain("后台服务");
     expect(card?.textContent).toContain("未运行");
@@ -1516,7 +1516,7 @@ describe("Device management view - autostart drift from installed/enabled", () =
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
     expect(card?.querySelector('[role="status"]')?.textContent).toContain("已设置随用户登录自动启动，但当前没有生效");
-    expandDetails(card);
+    await expandDetails(card);
     expect(card?.textContent).toContain("当前未生效");
     expect(card?.textContent).toContain("运行中");
   });
@@ -1561,7 +1561,7 @@ describe("Device management view - card layout", () => {
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
 
     expect(card?.querySelector('[role="status"]')).toBeNull();
-    expandDetails(card);
+    await expandDetails(card);
     expect(card?.textContent).toContain("允许新建终端、文件和端口转发连接");
     expect(card?.querySelector('button[aria-label="复制接入地址"]')).not.toBeNull();
     expect(card?.querySelector("code")?.textContent).toBe("https://nexterm.example.com");
