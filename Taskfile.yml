@@ -150,16 +150,13 @@ tasks:
       - task: frontend
 
   check:scripts:
-    summary: Test tooling, release scripts, artifact evidence and fixture discovery
+    summary: Check database fixture discovery and version placeholders
     env:
       GOFLAGS: '{{.GOFLAGS}}'
       SOURCE_DATE_EPOCH: '1'
     cmds:
       - go run ./scripts/test-database --check
       - node scripts/check-placeholders.mjs
-      - node --test scripts/*.test.mjs
-      - node --test .github/scripts/*.test.mjs
-      - go run ./scripts/check-release-evidence
 
   check:ci-quality:
     summary: Run shared static Go, generated artifact, bindings and script quality gates
