@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -31,7 +32,10 @@ type bundleKDFParams struct {
 	Threads   uint32
 }
 
-var bundleKDFDefaults = bundleKDFParams{Time: 3, MemoryKiB: 64 * 1024, Threads: 4}
+func bundleKDFDefaults() bundleKDFParams {
+	params := vault.PasswordArgon2()
+	return bundleKDFParams{Time: params.Time, MemoryKiB: params.MemoryKiB, Threads: uint32(params.Threads)}
+}
 
 type bundleHeader struct {
 	encrypted bool
@@ -117,7 +121,7 @@ func encodeBundleContainer(plaintext []byte, password string) ([]byte, error) {
 		return append(header.marshal(), plaintext...), nil
 	}
 	header.encrypted = true
-	header.kdf = bundleKDFDefaults
+	header.kdf = bundleKDFDefaults()
 	header.cipherLen = header.plainLen + bundleGCMTagSize
 	if _, err := rand.Read(header.salt[:]); err != nil {
 		return nil, ipc.NewError(ipc.CodeCrypto, "资产包加密失败")

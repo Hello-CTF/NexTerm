@@ -29,7 +29,10 @@ type UserDEKKDFParams struct {
 	Threads   uint32 `json:"p"`
 }
 
-var userDEKKDFDefaults = UserDEKKDFParams{Time: 3, MemoryKiB: 64 * 1024, Threads: 4}
+func userDEKKDFDefaults() UserDEKKDFParams {
+	params := PasswordArgon2()
+	return UserDEKKDFParams{Time: params.Time, MemoryKiB: params.MemoryKiB, Threads: uint32(params.Threads)}
+}
 
 type UserDEKEnvelopes struct {
 	DEKEnvelope      []byte
@@ -89,7 +92,8 @@ func WrapUserDEK(password string, dek []byte) (envelope, salt []byte, params str
 	if err := randomBytes(salt); err != nil {
 		return nil, nil, "", err
 	}
-	kek, err := deriveUserKEK(password, salt, userDEKKDFDefaults)
+	kdf := userDEKKDFDefaults()
+	kek, err := deriveUserKEK(password, salt, kdf)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -98,7 +102,7 @@ func WrapUserDEK(password string, dek []byte) (envelope, salt []byte, params str
 	if err != nil {
 		return nil, nil, "", err
 	}
-	encoded, err := json.Marshal(userDEKKDFDefaults)
+	encoded, err := json.Marshal(kdf)
 	if err != nil {
 		return nil, nil, "", ipc.WrapError(ipc.CodeCrypto, "加密错误: KDF 参数编码失败", err)
 	}
