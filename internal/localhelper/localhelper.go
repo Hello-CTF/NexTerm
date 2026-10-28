@@ -628,8 +628,13 @@ func (s *Service) run() {
 		// Its terminals ended with it; the next durable terminal starts a
 		// new helper.
 		s.setWanted(false)
-		if quickExits > 0 && !s.pause(quickExits) {
-			return
+		if quickExits > 0 {
+			// The exited helper's provider must not stay offered as ready
+			// while the respawn backoff runs.
+			s.setStatus(Status{State: StateStarting, Reason: "本机持久组件已退出，正在重新启动"}, nil)
+			if !s.pause(quickExits) {
+				return
+			}
 		}
 	}
 }

@@ -1951,7 +1951,12 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		session.mu.Unlock()
 	}
 	m.mu.Unlock()
-	_ = m.closeTabResources(tab, false)
+	// The tab is unregistered, so a failed channel close can never be
+	// retried: finish the teardown regardless (a durable process is already
+	// killed here) instead of leaking the pump and subscribers.
+	if err := m.closeTabResources(tab, true); err != nil {
+		m.logger.Warn("close terminal channel after removing the tab", "tab", id, "error", err)
+	}
 	return nil
 }
 

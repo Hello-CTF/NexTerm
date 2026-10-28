@@ -15,14 +15,8 @@ import (
 // is produced (log following, batch progress). The channel has no stdin and no PTY: Write and Resize report
 // ErrUnsupported, so interactive consumers must keep using durable terminal sessions.
 func (t *Transport) OpenExec(ctx context.Context, command string, options base.ExecOptions) (base.Channel, error) {
-	if t.closed.Load() {
-		return nil, base.ErrClosed
-	}
-	if options.ExpectedGeneration != 0 && options.ExpectedGeneration != t.generation {
-		return nil, fmt.Errorf("%w: device transport generation changed", base.ErrDisconnected)
-	}
-	if options.Timeout < 0 {
-		return nil, fmt.Errorf("exec timeout must not be negative")
+	if err := t.checkExec(options); err != nil {
+		return nil, err
 	}
 	var opCtx context.Context
 	var cancel context.CancelFunc
@@ -60,6 +54,21 @@ func (t *Transport) OpenExec(ctx context.Context, command string, options base.E
 		}
 	}()
 	return channel, nil
+}
+
+// checkExec rejects an exec for a closed transport, an earlier generation or
+// a negative timeout before any bridge is dialled.
+func (t *Transport) checkExec(options base.ExecOptions) error {
+	if t.closed.Load() {
+		return base.ErrClosed
+	}
+	if options.ExpectedGeneration != 0 && options.ExpectedGeneration != t.generation {
+		return fmt.Errorf("%w: device transport generation changed", base.ErrDisconnected)
+	}
+	if options.Timeout < 0 {
+		return fmt.Errorf("exec timeout must not be negative")
+	}
+	return nil
 }
 
 type execChannel struct {
