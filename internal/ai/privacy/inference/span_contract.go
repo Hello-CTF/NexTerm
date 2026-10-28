@@ -1,3 +1,7 @@
+// Ported from AstrLink privacy-worker (Apache-2.0, commit 24ddf0d823785fe9b3ed7ee23b3a0fc517313e93)
+// src/span_contract.rs.
+// Modified for NexTerm; see ../third_party/ASTRLINK_NOTICE.md.
+
 package inference
 
 import (

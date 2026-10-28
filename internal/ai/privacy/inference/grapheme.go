@@ -1,3 +1,6 @@
+// Ported from unicode-segmentation 1.13.3 (MIT OR Apache-2.0) src/grapheme.rs.
+// Modified for NexTerm; see ../third_party/ASTRLINK_NOTICE.md.
+
 package inference
 
 import (

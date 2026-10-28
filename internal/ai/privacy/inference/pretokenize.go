@@ -1,3 +1,7 @@
+// Ported from Hugging Face tokenizers 0.23.1 (Apache-2.0) pre_tokenizers/split.rs,
+// pre_tokenizers/metaspace.rs and pre_tokenizers/sequence.rs.
+// Modified for NexTerm; see ../third_party/ASTRLINK_NOTICE.md.
+
 package inference
 
 import (

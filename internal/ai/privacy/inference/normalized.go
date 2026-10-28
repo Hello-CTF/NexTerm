@@ -1,3 +1,7 @@
+// Ported from Hugging Face tokenizers 0.23.1 (Apache-2.0) tokenizer/normalizer.rs
+// and tokenizer/pattern.rs.
+// Modified for NexTerm; see ../third_party/ASTRLINK_NOTICE.md.
+
 package inference
 
 import (
