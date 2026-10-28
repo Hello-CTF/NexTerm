@@ -111,7 +111,7 @@ func (e *Engine) collectCronObjects(ctx context.Context, c *localCollection) err
 func (e *Engine) applyCronObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload cronObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("定时任务对象数据损坏：%v", err)
+		report.warnf("定时任务数据已损坏：%v", err)
 		return false, false
 	}
 	jobs, list, err := e.syncableCronJobs(ctx)

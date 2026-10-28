@@ -236,7 +236,7 @@ func (e *Engine) applyAIPermissionObject(ctx context.Context, plaintext []byte, 
 	}
 	var payload aiPermissionObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 权限对象数据损坏：%v", err)
+		report.warnf("AI 权限数据已损坏：%v", err)
 		return false, false
 	}
 	if payload.ID != "global" {
@@ -327,7 +327,7 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 	}
 	var payload aiGrantDeviceObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 授权对象数据损坏：%v", err)
+		report.warnf("AI 授权数据已损坏：%v", err)
 		return false, false
 	}
 	// DeviceID is normalized exactly like guard.Grant trims it locally; the object ID must match the normalized form,
@@ -397,7 +397,7 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 	}
 	var payload aiGrantRuleObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 授权规则对象数据损坏：%v", err)
+		report.warnf("AI 授权规则数据已损坏：%v", err)
 		return false, false
 	}
 	ruleID := strings.TrimPrefix(payload.ID, aiGrantRulePrefix)
@@ -489,7 +489,7 @@ func (e *Engine) applyAIGrantMode(ctx context.Context, plaintext []byte, report 
 	}
 	var payload aiGrantModeObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 设备权限模式对象数据损坏：%v", err)
+		report.warnf("AI 设备权限模式数据已损坏：%v", err)
 		return false, false
 	}
 	// DeviceID is normalized exactly like guard.SetDeviceMode trims it locally; the object ID must match the normalized form,
@@ -714,7 +714,7 @@ func (e *Engine) applyAIGrantModeTombstone(ctx context.Context, objectID string,
 func (e *Engine) applyPreferenceObject(ctx context.Context, plaintext []byte, report *SyncReport, userID string) (bool, bool) {
 	var payload preferenceObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("偏好对象数据损坏：%v", err)
+		report.warnf("偏好数据已损坏：%v", err)
 		return false, false
 	}
 	if userID == "" {

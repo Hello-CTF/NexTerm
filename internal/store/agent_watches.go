@@ -38,7 +38,7 @@ const (
 )
 
 var (
-	ErrAgentWatchNotFound = ipc.NewError(ipc.CodeNotFound, "agent watch 不存在")
+	ErrAgentWatchNotFound = ipc.NewError(ipc.CodeNotFound, "监视不存在")
 	ErrAgentWatchConflict = errors.New("agent watch revision conflict")
 	ErrAgentWatchIdentity = errors.New("agent watch identity mismatch")
 	ErrAgentWatchState    = errors.New("agent watch state conflict")

@@ -544,7 +544,7 @@ func TestProductionSSHAgentForwardingOption(t *testing.T) {
 	if response.OK || response.Error == nil {
 		t.Fatalf("connect = %+v", response)
 	}
-	if !strings.Contains(response.Error.Message, "agent socket") {
+	if !strings.Contains(response.Error.Message, "SSH_AUTH_SOCK") {
 		t.Fatalf("missing-socket error is unclear: %+v", response.Error)
 	}
 }

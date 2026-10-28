@@ -111,7 +111,7 @@ func userGuidanceForKind(kind ErrorKind) string {
 	case ErrorKindTimeout:
 		return "连接超时，请检查网络连通性与防火墙设置"
 	case ErrorKindAuth:
-		return "认证失败，请检查用户名、密码、私钥或 SSH agent 配置"
+		return "认证失败，请检查用户名、密码、私钥或 SSH Agent 配置"
 	case ErrorKindHostKeyPending:
 		return "请核对主机指纹后确认是否信任该主机"
 	case ErrorKindHostKeyChanged:

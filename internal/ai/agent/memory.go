@@ -112,7 +112,7 @@ func memorySaveOutput(ctx context.Context, store *memory.Store, scope memory.Sco
 	entry, err := store.Create(ctx, scope, memory.CreateInput{Topic: input.Topic, Content: input.Content, Secrets: memory.SecretReject})
 	if err != nil {
 		if errors.Is(err, memory.ErrSensitiveContent) {
-			return tools.Fail(errors.New("内容疑似包含密钥（如 password/token/api_key 赋值），已拒绝保存；请去掉密钥后再保存"))
+			return tools.Fail(errors.New("内容疑似包含密钥（如 password、token、api_key 的赋值），已拒绝保存；请移除密钥后重试"))
 		}
 		return tools.Fail(err)
 	}

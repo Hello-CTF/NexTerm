@@ -136,7 +136,7 @@ func (h *ObjectHandler) serveDelete(w http.ResponseWriter, r *http.Request, user
 	head, maxSeq, err := h.store.deleteObject(r.Context(), userID, request.ID, request.KnownHead, request.BlobHash)
 	if errors.Is(err, errHeadMismatch) {
 		writeSyncError(w, http.StatusConflict, ipc.NewError(ipc.CodeForbidden,
-			"服务端对象已变化，请重新获取同步清单后再确认清除"))
+			"服务端数据已变化，请重新获取同步清单后再确认清除"))
 		return
 	}
 	if err != nil {

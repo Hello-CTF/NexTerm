@@ -382,9 +382,9 @@ func shareTermination(err error) (string, string, bool) {
 		return "not_found", "分享会话不存在", true
 	case errors.Is(err, supervisor.ErrLegacyHelperRunning):
 		// The agent is current, but the helper it started before its upgrade still owns the state directory.
-		return "helper_upgrade_required", "设备上的终端组件（helper）仍是旧版本，暂时无法打开终端；旧终端会继续在其中运行", true
+		return "helper_upgrade_required", "设备上的持久终端组件版本过旧，暂时无法打开终端；已有终端会继续运行", true
 	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
-		return "helper_upgrade_required", "设备上的 nexterm-agent 版本过旧，请升级后重试", true
+		return "helper_upgrade_required", "设备代理版本过旧，请升级后重试", true
 	case errors.Is(err, supervisor.ErrUnavailable):
 		return "disconnected", "设备代理离线", true
 	}

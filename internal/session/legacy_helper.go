@@ -112,7 +112,7 @@ var legacyHelperBanner = []byte("\r\n\x1b[33m[NexTerm] 旧版组件：此持久�
 
 // legacyHelperTerminatedBanner follows legacyHelperBanner once the user agreed
 // to replace the older helper: the session it ran was ended with it.
-var legacyHelperTerminatedBanner = []byte("\r\n\x1b[31m[NexTerm] 已终止：已按你的确认升级持久终端组件，旧版组件及此终端的会话已结束；" +
+var legacyHelperTerminatedBanner = []byte("\r\n\x1b[31m[NexTerm] 已终止：已按确认升级持久终端组件，旧版组件及此终端的会话已结束；" +
 	"其输出记录保留为只读。\x1b[0m\r\n")
 
 // legacyEndedTabs remembers the tabs of each session that ended with the

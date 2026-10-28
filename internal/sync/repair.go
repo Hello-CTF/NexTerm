@@ -124,7 +124,7 @@ func (s *Service) RepairUndecryptable(ctx context.Context, request RepairUndecry
 		return RepairUndecryptableResult{}, repairStale()
 	}
 	if _, _, err := tryOpenObject(session.dek, pullResponse.Objects[0].Blob, request.ID); err == nil {
-		return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeForbidden, "服务端对象现在可以读取，请刷新对比结果")
+		return RepairUndecryptableResult{}, ipc.NewError(ipc.CodeForbidden, "服务端数据现在可以读取，请刷新对比结果")
 	}
 
 	// Read local data after checking the cloud. Clearing must search every

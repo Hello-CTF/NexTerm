@@ -29,8 +29,8 @@
 | 被拦的入口 | 选「网盘」时 | 选「本地」时 |
 |---|---|---|
 | `<input type="file">` 的 `click()` | 用 `DataTransfer` 回填 `input.files` 并派发 `input`/`change` | 走原生选择器 |
-| `showOpenFilePicker()` | 返回网盘文件句柄 | 走原生 |
-| `showSaveFilePicker()` | 返回网盘写入句柄 | 走原生 |
+| `showOpenFilePicker()` | 返回网盘文件的访问对象 | 走原生 |
+| `showSaveFilePicker()` | 返回网盘文件的写入对象 | 走原生 |
 | 带 `download` 的 `blob:` / `data:` 锚点 | 走网盘保存 | 走原生下载 |
 
 **判据是「页面上有没有可拦的原生入口」**，而不是「有没有上传下载功能」。

@@ -412,7 +412,7 @@ func TestTestLoginIPCHostKeyChanged(t *testing.T) {
 	if len(batch.Results) != 1 || batch.Results[0].Reachable || batch.Results[0].Kind != "host_key_changed" {
 		t.Fatalf("rotated key test login = %+v", batch.Results)
 	}
-	if !strings.Contains(batch.Results[0].Error, "不一样") {
+	if !strings.Contains(batch.Results[0].Error, "不一致") {
 		t.Fatalf("changed key error lacks mismatch guidance: %q", batch.Results[0].Error)
 	}
 	if listed := knownHostTestFingerprints(t, production); len(listed) != 1 || listed[0] != gossh.FingerprintSHA256(firstKey.PublicKey()) {
