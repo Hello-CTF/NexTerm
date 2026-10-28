@@ -1373,9 +1373,33 @@ func (m *Manager) BackgroundTab(ctx context.Context, tabID, client string) error
 		return ErrForbidden
 	}
 	client = clientID(client)
-	return m.detachMatching(tab, func(subscriberClient string) bool {
+	if err := m.detachMatching(tab, func(subscriberClient string) bool {
 		return subscriberClient == client
-	}, true, client)
+	}, true, client); err != nil {
+		return err
+	}
+	return m.releaseUnreachableDurable(tab)
+}
+
+// releaseUnreachableDurable drops the local record of a durable tab nobody
+// watches once its session has stopped reconnecting. The process keeps
+// running on the host; a later connection is a new session that lists and
+// recovers it, which a stale record under the same ID would block. A session
+// that is still reconnecting keeps the record so the reconnect re-attaches it.
+func (m *Manager) releaseUnreachableDurable(tab *Tab) error {
+	tab.session.mu.Lock()
+	status := tab.session.status
+	tab.session.mu.Unlock()
+	if status != StatusFailed && status != StatusDisconnected {
+		return nil
+	}
+	tab.mu.Lock()
+	release := tab.durable != nil && len(tab.subscribers) == 0
+	tab.mu.Unlock()
+	if !release {
+		return nil
+	}
+	return m.closeTab(tab, false)
 }
 
 func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background bool, backgroundClient string) error {

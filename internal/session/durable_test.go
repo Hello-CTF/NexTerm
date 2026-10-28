@@ -703,6 +703,35 @@ func TestDurableCloseUnreachableKeepsTabAndDetachStillSucceeds(t *testing.T) {
 	if _, _, killed := provider.counts(); killed != 0 {
 		t.Fatalf("detach killed %d processes", killed)
 	}
+	if _, err := manager.Tab(info.ID); err != nil {
+		t.Fatalf("detach on a connected session dropped the background tab: %v", err)
+	}
+}
+
+// Once a session has stopped reconnecting, detaching its last viewer drops
+// the local record without any remote call, so the process stays on the host
+// and a later connection can recover the same ID instead of hitting the stale
+// record.
+func TestDurableDetachOnFailedSessionReleasesLocalRecord(t *testing.T) {
+	provider := newFakeDurableProvider()
+	manager, _, _, connected := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, manager, connected, "stale-record", "a-1", false)
+	provider.mu.Lock()
+	provider.killErr = durable.ErrUnavailable
+	provider.mu.Unlock()
+	connected.mu.Lock()
+	connected.status = StatusFailed
+	connected.mu.Unlock()
+
+	if err := manager.BackgroundTab(context.Background(), info.ID, "client-a"); err != nil {
+		t.Fatalf("detach on a failed session = %v, want nil", err)
+	}
+	if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("stale durable record remains after detach: %v", err)
+	}
+	if _, _, killed := provider.counts(); killed != 0 {
+		t.Fatalf("releasing the local record killed %d processes", killed)
+	}
 }
 
 func infoExited(manager *Manager, id string) bool {
