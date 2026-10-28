@@ -217,6 +217,10 @@ jobs:
         with:
           gui: "true"
           packages: zsh openssh-server
+      # Workflow tests run the ci-ok and stamping scripts with node; the hosted image used to provide it.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.3
