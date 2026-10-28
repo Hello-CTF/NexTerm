@@ -392,7 +392,7 @@ describe("App workspace actions", () => {
     expect(railButton("终端历史")).toBeTruthy();
   });
 
-  it("opens files, mount, docker, forward and logs in the explicit current host", async () => {
+  it("opens files, mount, docker and forward in the explicit current host and logs in the tools workspace", async () => {
     const first = hostWorkspace("ws-a", "s1");
     const second = hostWorkspace("ws-b", "s2");
     useUi.setState({
@@ -416,9 +416,15 @@ describe("App workspace actions", () => {
       expect.objectContaining({ kind: "mount", sessionId: "s2" }),
       expect.objectContaining({ kind: "docker", sessionId: "s2" }),
       expect.objectContaining({ kind: "forward", sessionId: "s2" }),
-      expect.objectContaining({ kind: "log", title: "日志" }),
     ]);
-    expect(isMultiHostLogTabId(secondTabs?.[4]?.id ?? "")).toBe(true);
+    // The merged log is a cross-host tool: it opens in the tools workspace with the current host preselected.
+    const logTab = useUi
+      .getState()
+      .workspaces.find((workspace) => workspace.kind === "tools")
+      ?.panes.flatMap((pane) => pane.tabs)
+      .find((tab) => tab.kind === "log");
+    expect(isMultiHostLogTabId(logTab?.id ?? "")).toBe(true);
+    expect(logTab).toEqual(expect.objectContaining({ title: "多主机日志", logSessionIds: ["s2"] }));
     expect(
       useUi
         .getState()

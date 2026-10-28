@@ -39,6 +39,8 @@ export interface AppTab {
   tabId?: string;
   containerId?: string;
   connId?: string;
+  // Hosts a multi-host log tab starts with selected (set when opened from a host workspace; not persisted).
+  logSessionIds?: string[];
   dbKind?: DbKind;
   credId?: string;
   path?: string;

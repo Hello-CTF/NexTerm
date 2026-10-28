@@ -94,16 +94,28 @@ function panel(): MountedView {
   return mounted;
 }
 
+function openPopover(label: string): void {
+  const trigger = panel().container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (trigger?.getAttribute("aria-expanded") === "false") click(trigger);
+}
+
 function target(id: string): HTMLInputElement {
+  openPopover("选择主机与来源");
   const input = panel().container.querySelector<HTMLInputElement>(`input[value="${id}"]`);
   if (!input) throw new Error(`target ${id} not found`);
   return input;
 }
 
 function source(host: string): HTMLInputElement {
+  openPopover("选择主机与来源");
   const input = panel().container.querySelector<HTMLInputElement>(`input[aria-label="来源 ${host}"]`);
   if (!input) throw new Error(`source ${host} not found`);
   return input;
+}
+
+function clickMore(text: string): void {
+  openPopover("更多选项");
+  clickButton(panel().container, text);
 }
 
 function logText(): string {
@@ -150,7 +162,7 @@ describe("MultiHostLogTail", () => {
     mounted = mountPanel();
     expect(target("s5").disabled).toBe(false);
     expect(panel().container.textContent).toContain("edge-device");
-    expect(panel().container.textContent).toContain("Windows 设备暂不支持");
+    expect(panel().container.querySelector('[aria-label*="Windows 设备暂不支持"]')).not.toBeNull();
   });
 
   it("preselects connected initial targets and drops local or offline ones", () => {
@@ -197,7 +209,7 @@ describe("MultiHostLogTail", () => {
 
     clickButton(panel().container, "继续显示");
     await flushUntil(() => logText().includes("buffered"));
-    clickButton(panel().container, "保存日志");
+    clickMore("保存日志");
     await flush();
     await flushUntil(() => mocks.saveBlob.mock.calls.length === 1);
     await flushUntil(() => panel().container.textContent?.includes("已保存 2 行合并日志") === true);
@@ -211,7 +223,7 @@ describe("MultiHostLogTail", () => {
     emit({ sequence: 1, type: "line", sourceId: "s1", text: "before" });
     await flushUntil(() => logText().includes("before"));
     vi.useFakeTimers();
-    clickButton(panel().container, "保存日志");
+    clickMore("保存日志");
     await flushUntil(() => panel().container.textContent?.includes("已保存 1 行合并日志") === true);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3_600);

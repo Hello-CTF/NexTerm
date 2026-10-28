@@ -73,10 +73,17 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     });
   }, [ws?.sessionId, needSession]);
 
-  // openLogs opens a log follow tab; in a host workspace that host starts selected.
+  // openLogs opens the merged log tab in the tools workspace; from a host workspace that host starts selected.
   const openLogs = useCallback(() => {
-    useUi.getState().addTab({ id: createMultiHostLogTabId(), kind: "log", title: "日志", closable: true });
-  }, []);
+    const sessionId = ws?.kind === "session" ? ws.sessionId : undefined;
+    useUi.getState().addTab({
+      id: createMultiHostLogTabId(),
+      kind: "log",
+      title: "多主机日志",
+      ...(sessionId ? { logSessionIds: [sessionId] } : {}),
+      closable: true,
+    });
+  }, [ws?.kind, ws?.sessionId]);
 
   const openMount = useCallback(() => {
     if (!activeSessionId) return needSession();

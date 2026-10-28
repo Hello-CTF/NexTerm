@@ -2063,7 +2063,8 @@ export function AssetEditor({
     typeof initial?.options?.icon === "string" ? (initial.options.icon as string) : "",
   );
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // A saved terminal mode override lives in the advanced section, so open it to keep the override visible.
+  const [advancedOpen, setAdvancedOpen] = useState(terminalMode !== "auto");
   const pushToast = useUi((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
@@ -2820,25 +2821,6 @@ export function AssetEditor({
             </>
           )}
 
-          {kind === "asset" && groupKind === "ssh" && (
-            <div className="nx-form-row">
-              <label className="nx-label" htmlFor={terminalModeId}>终端模式</label>
-              <select
-                id={terminalModeId}
-                className="nx-select"
-                value={terminalMode}
-                onChange={(e) => setTerminalMode(e.target.value as "auto" | "durable" | "regular")}
-              >
-                <option value="auto">默认（使用全局设置）</option>
-                <option value="durable">持久终端（断开后可在后台接管）</option>
-                <option value="regular">普通终端（随连接断开结束）</option>
-              </select>
-              <div className="nx-hint mt-1.5">
-                首次连接会自动安装持久终端组件，安装期间先使用普通终端，完成后新建的标签生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
-              </div>
-            </div>
-          )}
-
           {kind === "asset" && groupKind !== "local" && !inventoryOnly && (
             <>
               <fieldset disabled={managed !== null} className="contents">
@@ -3199,6 +3181,24 @@ export function AssetEditor({
                   </button>
                   {advancedOpen && (
                     <div id={advancedPanelId} className="mt-2.5">
+                      {groupKind === "ssh" && (
+                        <div className="nx-form-row">
+                          <label className="nx-label" htmlFor={terminalModeId}>终端模式</label>
+                          <select
+                            id={terminalModeId}
+                            className="nx-select"
+                            value={terminalMode}
+                            onChange={(e) => setTerminalMode(e.target.value as "auto" | "durable" | "regular")}
+                          >
+                            <option value="auto">默认（使用全局设置）</option>
+                            <option value="durable">持久终端（断开后可在后台接管）</option>
+                            <option value="regular">普通终端（随连接断开结束）</option>
+                          </select>
+                          <div className="nx-hint mt-1.5">
+                            首次连接会自动安装持久终端组件，安装期间先使用普通终端，完成后新建的标签生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
+                          </div>
+                        </div>
+                      )}
                       <div className="nx-form-row">
                         <label className="nx-label">跳板机</label>
                         <select
