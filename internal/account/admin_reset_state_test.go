@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestAdminResetKeepsDisabledAccountDisabled(t *testing.T) {
+func TestAdminResetOfDisabledAccountRequiresPasswordChange(t *testing.T) {
 	ctx := context.Background()
 	a, _ := testAccounts(t)
 	user, err := a.CreateUser(ctx, "alice", "", "password-1")
@@ -22,18 +22,8 @@ func TestAdminResetKeepsDisabledAccountDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != StateDisabled {
-		t.Fatalf("admin reset must not re-enable a disabled account, state=%s", got.State)
-	}
-	if err := a.SetUserDisabled(ctx, user.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	got, err = a.GetUser(ctx, user.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.State != StateResetRequired {
-		t.Fatalf("re-enabling a reset-pending account must keep the reset requirement, state=%s", got.State)
+	if got.State != StateResetRequired || !got.MustChangePassword {
+		t.Fatalf("an admin reset must leave a forced password change, state=%s must_change=%v", got.State, got.MustChangePassword)
 	}
 }
 
