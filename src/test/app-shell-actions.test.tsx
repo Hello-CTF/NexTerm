@@ -168,6 +168,7 @@ import { setMacPlatform } from "../app/platform";
 import { useUi, type AppTab, type Workspace } from "../app/store";
 import { resetUnreadTabs, setTabUnread } from "../app/unreadStore";
 import type { Asset, SessionInfo } from "../ipc/commands";
+import { isMultiHostLogTabId } from "../features/logs/logTailTab";
 
 function assetOf(extra: Partial<Asset> & { id: string; name: string }): Asset {
   return {
@@ -384,17 +385,17 @@ describe("App workspace actions", () => {
     mounted = mountApp();
     await flush();
 
-    for (const label of ["容器", "磁盘挂载", "端口转发"]) {
+    for (const label of ["文件", "容器", "磁盘挂载", "端口转发"]) {
       await clickRail(label);
     }
     expect(mounted.container.querySelector('button[aria-label="后台会话"]')).toBeNull();
 
-    expect(allTabs().filter((tab) => ["docker", "mount", "forward", "background"].includes(tab.kind))).toEqual([]);
+    expect(allTabs().filter((tab) => ["files", "docker", "mount", "forward", "background"].includes(tab.kind))).toEqual([]);
     expect(useUi.getState().workspaces).toHaveLength(workspace ? 1 : 0);
     expect(useUi.getState().toasts.some((toast) => toast.text === needSessionText)).toBe(true);
   });
 
-  it("opens mount, docker, and forward in the explicit current host", async () => {
+  it("opens files, mount, docker, forward and logs in the explicit current host", async () => {
     const first = hostWorkspace("ws-a", "s1");
     const second = hostWorkspace("ws-b", "s2");
     useUi.setState({
@@ -405,7 +406,7 @@ describe("App workspace actions", () => {
     mounted = mountApp();
     await flush();
 
-    for (const label of ["磁盘挂载", "容器", "端口转发"]) {
+    for (const label of ["文件", "磁盘挂载", "容器", "端口转发", "日志"]) {
       await clickRail(label);
     }
 
@@ -414,10 +415,13 @@ describe("App workspace actions", () => {
       .workspaces.find((workspace) => workspace.id === second.id)
       ?.panes.flatMap((pane) => pane.tabs);
     expect(secondTabs).toEqual([
+      expect.objectContaining({ kind: "files", sessionId: "s2" }),
       expect.objectContaining({ kind: "mount", sessionId: "s2" }),
       expect.objectContaining({ kind: "docker", sessionId: "s2" }),
       expect.objectContaining({ kind: "forward", sessionId: "s2" }),
+      expect.objectContaining({ kind: "log", title: "日志" }),
     ]);
+    expect(isMultiHostLogTabId(secondTabs?.[4]?.id ?? "")).toBe(true);
     expect(
       useUi
         .getState()

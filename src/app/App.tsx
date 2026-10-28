@@ -16,7 +16,7 @@ import { useKeyboardInset } from "./shell/keyboardInset";
 import { MobileShell } from "./shell/MobileShell";
 import { type ShellParts } from "./shell/ShellFrame";
 import { useAppKeybindings } from "./shell/useAppKeybindings";
-import { useOverlayDocks, useSessionSheetDismiss } from "./shell/useOverlayDocks";
+import { useOverlayDocks } from "./shell/useOverlayDocks";
 import { useSyncStatusSummary, useVaultStatus } from "./shell/useStatusBarState";
 import { useWorkspaceActions } from "./shell/useWorkspaceActions";
 import { useWorkspaceSwitcher } from "./shell/useWorkspaceSwitcher";
@@ -96,13 +96,8 @@ function AppShell() {
   const layout = useShellLayout();
   const { viewport, overlaySidebars } = layout;
   useKeyboardInset();
-  const docks = useOverlayDocks(overlaySidebars, viewport.width);
-  useSessionSheetDismiss(docks, `${ws?.id ?? ""}:${ws?.activePaneId ?? ""}:${ws?.panes.map((p) => p.activeTabId).join(",") ?? ""}`);
-  const { leftDockOpen, rightDockOpen, sessionDockOpen, setLeftOpen, setRightOpen, setSessionOpen } = docks;
-  const toggleSessionPanel = useCallback(
-    () => setSessionOpen(!sessionDockOpen),
-    [setSessionOpen, sessionDockOpen],
-  );
+  const docks = useOverlayDocks(overlaySidebars);
+  const { leftDockOpen, rightDockOpen, setLeftOpen, setRightOpen } = docks;
   useAiToastInset(rightDockOpen);
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
@@ -129,7 +124,6 @@ function AppShell() {
     activeTabId,
     setLeftOpen,
     setRightOpen,
-    toggleSessionPanel,
     openLocalTerminal,
     openNewTerminal,
     lockVault,
@@ -162,12 +156,9 @@ function AppShell() {
       activeSessionId,
       activeTab: active,
       rightDockOpen,
-      sessionPanelOpen: sessionDockOpen,
-      sessionPanelLabel: bindings.toggleSessionPanel ? formatBinding(bindings.toggleSessionPanel) : "",
       commandPaletteLabel: formatBinding(bindings.commandPalette),
       onOpenWorkspaceSwitcher: openWorkspaceSwitcher,
       onToggleRight: () => setRightOpen(!rightDockOpen),
-      onToggleSessionPanel: toggleSessionPanel,
       onOpenPalette: openCommandPalette,
     },
     strip: {

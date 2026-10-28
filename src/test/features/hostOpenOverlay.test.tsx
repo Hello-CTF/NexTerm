@@ -34,7 +34,7 @@ function activeTabKind(): string | null {
 }
 
 function MobileDocks() {
-  const current = useOverlayDocks(true, 400);
+  const current = useOverlayDocks(true);
   const kind = useUi(() => activeTabKind());
   useMobileTerminalDockCollapse(current, true, kind);
   docks = current;

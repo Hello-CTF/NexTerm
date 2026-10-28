@@ -185,8 +185,6 @@ export interface AiChatTabProps {
   conversationId?: string;
   active: boolean;
   tabKey: string;
-  // visible overrides the right dock's open state when the assistant is hosted elsewhere (the session side panel).
-  visible?: boolean;
   draft?: string;
   onDraftChange: (v: string) => void;
   onConversationChange: (conversationId: string | undefined, title?: string) => void;

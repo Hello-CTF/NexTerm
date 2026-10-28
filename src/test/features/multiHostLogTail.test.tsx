@@ -153,6 +153,14 @@ describe("MultiHostLogTail", () => {
     expect(panel().container.textContent).toContain("Windows 设备暂不支持");
   });
 
+  it("preselects connected initial targets and drops local or offline ones", () => {
+    mounted = mountWithClient(createElement(MultiHostLogTail, { sessions, initialSelected: ["s2", "s3", "s4"] }));
+    expect(target("s2").checked).toBe(true);
+    expect(target("s1").checked).toBe(false);
+    expect(source("host-two")).toBeTruthy();
+    expect(panel().container.querySelector('input[aria-label="来源 host-one"]')).toBeNull();
+  });
+
   it("keeps failed hosts visible while merging and prefixing healthy sources", async () => {
     mounted = mountPanel();
     expect(panel().container.querySelector('input[value="s3"]')).toBeNull();

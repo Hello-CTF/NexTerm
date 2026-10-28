@@ -93,10 +93,20 @@ function pruneCwds(workspaces: Workspace[]): void {
 function ensureListener(): void {
   if (listenerStarted) return;
   listenerStarted = true;
-  void listenEvent<TerminalControlEvent>(EVENTS.terminalControl, noteCwdEvent).catch(() => {
+  try {
+    void listenEvent<TerminalControlEvent>(EVENTS.terminalControl, noteCwdEvent).catch(() => {
+      listenerStarted = false;
+    });
+  } catch {
     listenerStarted = false;
-  });
+    return;
+  }
   stopWorkspaceWatch = useUi.subscribe((s) => pruneCwds(s.workspaces));
+}
+
+/** Starts recording terminal directories before any view subscribes, so a file tab opened later can start there. */
+export function startCwdTracking(): void {
+  ensureListener();
 }
 
 function subscribeCwd(cb: () => void): () => void {
@@ -125,6 +135,12 @@ export function pickFollowedTabId(workspaces: Workspace[], sessionId: string): s
   return null;
 }
 
+/** The last directory reported by the session's followed terminal (see pickFollowedTabId). */
+export function focusedTerminalCwd(workspaces: Workspace[], sessionId: string): string | null {
+  const tabId = pickFollowedTabId(workspaces, sessionId);
+  return tabId ? (cwds.get(tabId) ?? null) : null;
+}
+
 export function useFollowedCwd(sessionId: string): string | null {
   const tabId = useUi((s) => pickFollowedTabId(s.workspaces, sessionId));
   return useTerminalCwd(tabId);
@@ -142,7 +158,7 @@ export function normalizeFollowTarget(cwd: string): string {
 }
 
 /**
- * Lets an owner (the session side panel) drive the follow instead of the device-wide preference: the owner supplies the
+ * Lets an owner drive the follow instead of the device-wide preference: the owner supplies the
  * terminal directory to follow and keeps the attached state, which user navigation inside the view turns off.
  */
 export interface CwdFollowControl {

@@ -16,9 +16,6 @@ export const TranscriptHistoryPanel = lazy(() =>
   import("../features/terminal/TranscriptHistoryPanel").then((m) => ({ default: m.TranscriptHistoryPanel })),
 );
 export const FileBrowser = lazy(() => import("../features/files/FileBrowser").then((m) => ({ default: m.FileBrowser })));
-export const SessionPanel = lazy(() =>
-  import("../features/session-panel/SessionPanel").then((m) => ({ default: m.SessionPanel })),
-);
 export const MountPanel = lazy(() => import("../features/files/MountPanel").then((m) => ({ default: m.MountPanel })));
 export const FileEditor = lazy(() => import("../features/files/FileEditor").then((m) => ({ default: m.FileEditor })));
 export const LogViewer = lazy(() => import("../features/files/LogViewer").then((m) => ({ default: m.LogViewer })));

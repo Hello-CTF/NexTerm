@@ -124,9 +124,18 @@ function RestoredWorkspacePlaceholder({ workspaceId }: { workspaceId: string }) 
 }
 
 // The few panels that list every session subscribe here, so other tabs do not re-render on session changes.
-function MultiHostLogTailTab() {
+// A log tab opened in a host workspace starts with that host selected.
+function MultiHostLogTailTab({ workspaceId }: { workspaceId: string }) {
   const sessions = useSessionList();
-  return <Lazy><MultiHostLogTail sessions={sessions} /></Lazy>;
+  const hostSessionId = useUi((s) => {
+    const workspace = s.workspaces.find((w) => w.id === workspaceId);
+    return workspace?.kind === "session" ? workspace.sessionId : undefined;
+  });
+  return (
+    <Lazy>
+      <MultiHostLogTail sessions={sessions} initialSelected={hostSessionId ? [hostSessionId] : undefined} />
+    </Lazy>
+  );
 }
 
 function FleetHealthTab({ visible }: { visible: boolean }) {
@@ -206,7 +215,7 @@ export const PaneForTab = memo(function PaneForTab({
         </Lazy>
       );
     case "log":
-      if (isMultiHostLogTabId(tab.id)) return <MultiHostLogTailTab />;
+      if (isMultiHostLogTabId(tab.id)) return <MultiHostLogTailTab workspaceId={workspaceId} />;
       if (isFleetHealthTabId(tab.id)) return <FleetHealthTab visible={active} />;
       if (!tab.sessionId || !tab.path) return <EmptyState />;
       return <Lazy><LogViewer sessionId={tab.sessionId} path={tab.path} onClose={close} /></Lazy>;

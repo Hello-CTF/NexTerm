@@ -6,7 +6,7 @@ import { dockerApi, terminalApi, type ContainerSummary, type ImageSummary } from
 import { useUi } from "../../app/store";
 import { createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
-import { describeDockerError, isDockerNotInstalled } from "./dockerErrors";
+import { describeDockerError, dockerHostUnavailableText, isDockerNotInstalled } from "./dockerErrors";
 import "../../ui/skeleton.css";
 import {
   IconArrowLeft,
@@ -105,11 +105,11 @@ function TableQueryBody({
       </>
     );
   }
-  if (error && isDockerNotInstalled(error)) {
+  if (error && dockerHostUnavailableText(error)) {
     return (
       <tr>
         <td colSpan={colSpan} className="nx-table-empty">
-          这台主机没有安装 Docker，安装后点击重试。
+          {dockerHostUnavailableText(error)}
           <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
             <IconRefresh size={12} />
             重试
@@ -197,9 +197,7 @@ function CompactNotice({
   if (error) {
     return (
       <div className="nx-table-empty">
-        {isDockerNotInstalled(error) ? (
-          "这台主机没有安装 Docker，安装后点击重试。"
-        ) : (
+        {dockerHostUnavailableText(error) ?? (
           <span className="text-red-300">{errorPrefix}加载失败 · {describeDockerError(error)}</span>
         )}
         <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
@@ -881,7 +879,11 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           {containers.data
             ? `${running} 运行中 / 共 ${cRows.length}`
             : containers.isError
-              ? isDockerNotInstalled(containers.error) ? "未安装 Docker" : "容器状态加载失败"
+              ? isDockerNotInstalled(containers.error)
+                ? "未安装 Docker"
+                : dockerHostUnavailableText(containers.error)
+                  ? "未运行 Docker"
+                  : "容器状态加载失败"
               : "容器状态加载中"}
         </span>
         <div className="nx-spacer" />
