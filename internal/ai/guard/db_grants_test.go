@@ -109,11 +109,11 @@ func TestDeviceGrantPermanenceIsExplicit(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, ok := mustGrant(t, reloaded, "device-a")
-	if !ok || !loaded.Permanent || loaded.Legacy {
+	if !ok || !loaded.Permanent {
 		t.Fatalf("reloaded grant = %+v, %v", loaded, ok)
 	}
 
-	// Records without the marker are pre-1.3.0 data: rejected, not defaulted to permanent.
+	// Records without the marker are dropped, not defaulted to permanent.
 	legacy := &memorySettings{values: map[string]string{
 		DeviceGrantsSettingKey: `{"device-a":{"deviceId":"device-a","kinds":["terminal_write"],"updatedAt":1,"generation":"gen-a"}}`,
 	}}
@@ -124,9 +124,8 @@ func TestDeviceGrantPermanenceIsExplicit(t *testing.T) {
 	if _, ok := mustGrant(t, rejected, "device-a"); ok {
 		t.Fatal("grant without the permanence marker was accepted as effective")
 	}
-	listed := mustGrantList(t, rejected)
-	if len(listed) != 1 || !listed[0].Legacy || listed[0].Permanent {
-		t.Fatalf("legacy grant listing = %+v", listed)
+	if listed := mustGrantList(t, rejected); len(listed) != 0 {
+		t.Fatalf("old-format grant listing = %+v", listed)
 	}
 }
 
