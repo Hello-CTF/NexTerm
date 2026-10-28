@@ -1,0 +1,38 @@
+name: Pinned Wails CLI
+description: >-
+  Restores the pinned wails3 binary from a cache keyed by runner OS,
+  architecture and Go version, installs it on a miss, and puts it on PATH.
+  Run it after the go-toolchain action.
+inputs:
+  version:
+    description: Wails v3 CLI version
+    required: false
+    default: v3.0.0-beta.27
+  go-version:
+    description: Go toolchain version the CLI is built with
+    required: false
+    default: 1.27.3
+runs:
+  using: composite
+  steps:
+    - name: Restore the pinned Wails CLI
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/wails-bin
+        key: wails3-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-go${{ inputs.go-version }}
+    - name: Install the pinned Wails CLI
+      shell: bash
+      env:
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        WAILS_BIN: ${{ runner.temp }}/wails-bin
+        WAILS_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ "$CACHE_HIT" != "true" ]; then
+          GOBIN="$WAILS_BIN" go install "github.com/wailsapp/wails/v3/cmd/wails3@$WAILS_VERSION"
+        fi
+        echo "$WAILS_BIN" >> "$GITHUB_PATH"
+    - name: Report the Wails CLI version
+      shell: bash
+      run: wails3 version

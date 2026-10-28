@@ -1,0 +1,53 @@
+name: Linux GUI build dependencies
+description: >-
+  Installs the GTK 4 and WebKitGTK 6.0 development packages that Wails cgo
+  links, plus any extra packages a job needs, on a hosted Ubuntu runner. The
+  downloaded .deb files are cached per runner image, architecture and package
+  list, so a repeated run only refreshes the package indexes and installs from
+  the cache.
+inputs:
+  packages:
+    description: Additional space-separated apt packages a single job needs
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Resolve the apt package cache key
+      id: plan
+      shell: bash
+      env:
+        INPUT_PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+        read -r -a extra <<< "$INPUT_PACKAGES"
+        packages="$(printf '%s\n' libgtk-4-dev libwebkitgtk-6.0-dev "${extra[@]}" | sort -u | tr '\n' ' ')"
+        list_hash="$(printf '%s' "$packages" | sha256sum | cut -c1-16)"
+        echo "packages=$packages" >> "$GITHUB_OUTPUT"
+        echo "prefix=apt-${ImageOS:-unknown}-${RUNNER_ARCH}-${list_hash}-" >> "$GITHUB_OUTPUT"
+        echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+    # A new runner image misses the exact key; the prefix restores the previous
+    # image's .debs and apt downloads only the packages whose versions changed.
+    - name: Restore downloaded packages
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-archives
+        key: ${{ steps.plan.outputs.prefix }}${{ steps.plan.outputs.image }}
+        restore-keys: ${{ steps.plan.outputs.prefix }}
+    - name: Install packages
+      shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
+        PACKAGES: ${{ steps.plan.outputs.packages }}
+      run: |
+        set -euo pipefail
+        archives="$RUNNER_TEMP/apt-archives"
+        mkdir -p "$archives/partial"
+        # The man-db trigger dominates install time on hosted images.
+        sudo rm -f /var/lib/man-db/auto-update
+        read -r -a packages <<< "$PACKAGES"
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends -o Dir::Cache::Archives="$archives" "${packages[@]}"
+        sudo apt-get autoclean -o Dir::Cache::Archives="$archives"
+        sudo chown -R "$(id -u):$(id -g)" "$archives"
+        echo "gtk4 $(pkg-config --modversion gtk4), webkitgtk-6.0 $(pkg-config --modversion webkitgtk-6.0), $(getconf GNU_LIBC_VERSION)"

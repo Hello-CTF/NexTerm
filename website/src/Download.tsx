@@ -45,7 +45,7 @@ const text = {
     notes: {
       windows: "运行安装器即可。安装包没有代码签名，提示未知发布者时选择「更多信息 → 仍要运行」。",
       macos: "打开后拖入「应用程序」。浏览器无法识别 Mac 芯片，Intel 机型请点上方的「Intel」。",
-      linux: "在 Debian 13 上构建，需要 GTK 4.14+ 与 WebKitGTK 6.0（例如 Debian 13、Ubuntu 24.04 或更新版本）。下载后执行：",
+      linux: "需要 GTK 4.14+ 与 WebKitGTK 6.0；安装包声明了所需的最低 glibc，系统不满足时 apt 会拒绝安装。下载后执行：",
       server: "在带 systemd 的 Linux 服务器（amd64 / arm64；服务端可在任意基于 glibc 的 Linux 上运行，不支持 Alpine 等 musl 发行版；可选的本地 AI 脱敏运行库另需 glibc 2.27 或更新）上执行（需要 root 权限）：",
       android: "预览版，适用于 arm64 设备。",
       ios: "预览版通过 TestFlight 安装：在 iPhone 或 iPad 上打开下面的链接，按提示安装 TestFlight 后加入测试。",
@@ -67,7 +67,7 @@ const text = {
     notes: {
       windows: "Run the installer. It is not code-signed; if Windows reports an unknown publisher, choose More info → Run anyway.",
       macos: "Open it and drag NexTerm into Applications. Browsers cannot tell Mac chips apart, so on an Intel Mac pick Intel above.",
-      linux: "Built on Debian 13; needs GTK 4.14+ and WebKitGTK 6.0 (for example Debian 13, Ubuntu 24.04 or newer). After downloading, run:",
+      linux: "Needs GTK 4.14+ and WebKitGTK 6.0; the package declares the minimum glibc it requires, and apt refuses older systems. After downloading, run:",
       server: "On a Linux server with systemd (amd64 / arm64; the server runs on any glibc-based Linux, musl distributions such as Alpine are not supported, and the optional local AI redaction library additionally needs glibc 2.27 or newer), run with root privileges:",
       android: "Preview build for arm64 devices.",
       ios: "The preview installs through TestFlight: open the link below on your iPhone or iPad and follow the prompts.",
