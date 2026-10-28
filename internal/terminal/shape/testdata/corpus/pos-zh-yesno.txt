@@ -1,7 +1,0 @@
-# kind: yesno
-# options: y | N
-# keys: y | n
----
-正在检查现有配置……
-发现旧版配置文件 config.toml。
-是否覆盖现有配置？[y/N] 

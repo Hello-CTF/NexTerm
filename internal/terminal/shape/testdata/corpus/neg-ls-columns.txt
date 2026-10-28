@@ -1,5 +1,0 @@
-# kind: none
----
-dev@build:~/app$ ls
-Makefile  README.md  cmd  go.mod  go.sum  internal  scripts
-dev@build:~/app$ 

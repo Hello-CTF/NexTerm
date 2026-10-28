@@ -1,4 +1,0 @@
-# kind: none
-# known: a progress label ending in ":" with the cursor right after it looks like a question until the caller sees more output
----
-Fetching index:

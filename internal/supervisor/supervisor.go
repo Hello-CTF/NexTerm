@@ -208,16 +208,13 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		}
 		if s.stateDetection {
 			session.state = newStateTracker(stateOptions{
-				cols:        int(options.Cols),
-				rows:        int(options.Rows),
-				shellLeader: interactiveShell(options.Command),
-				foreground:  ptySession.Foreground,
-				appCursor:   recording.appCursor,
-				seq:         &s.eventSeq,
-				onChange:    session.notifyState,
-				timers:      true,
-				rulesOwner:  options.StateRulesOwner,
-				rules:       func() *staterule.Compiled { return s.stateRules.compiled(options.StateRulesOwner) },
+				cols:       int(options.Cols),
+				rows:       int(options.Rows),
+				seq:        &s.eventSeq,
+				onChange:   session.notifyState,
+				timers:     true,
+				rulesOwner: options.StateRulesOwner,
+				rules:      func() *staterule.Compiled { return s.stateRules.compiled(options.StateRulesOwner) },
 			}, time.Now())
 		}
 		if err := writeEntry(sessionsRoot(s.stateDir), session.entry); err != nil {

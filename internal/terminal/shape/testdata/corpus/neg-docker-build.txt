@@ -1,5 +1,0 @@
-# kind: none
----
-#5 [2/4] RUN apt-get update
-#5 1.204 Get:1 http://deb.example.org/debian stable InRelease [151 kB]
-#5 2.881 Reading package lists...

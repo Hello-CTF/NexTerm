@@ -1,5 +1,0 @@
-# kind: none
----
-irb(main):001:0> [1, 2, 3].sum
-=> 6
-irb(main):002:0> 

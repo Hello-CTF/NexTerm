@@ -1,7 +1,0 @@
-# kind: none
----
-❯ cat question.txt
-What should we name the project?
-
-~/app on main
-❯ 

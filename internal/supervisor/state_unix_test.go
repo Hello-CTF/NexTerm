@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
-	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -25,102 +24,8 @@ func waitSessionState(t *testing.T, session *Session, what string, match func(*S
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s; last state %+v (prompt %+v)", what, last, promptOf(last))
+	t.Fatalf("timed out waiting for %s; last state %+v", what, last)
 	return nil
-}
-
-func promptOf(state *SessionState) *SessionPrompt {
-	if state == nil {
-		return nil
-	}
-	return state.Prompt
-}
-
-func promptReady(state *SessionState) bool {
-	return state.State == base.SessionNeedsMe && state.Prompt != nil
-}
-
-func interactiveShellSession(t *testing.T, supervisor *Supervisor) *Session {
-	t.Helper()
-	session, err := supervisor.Create(context.Background(), CreateOptions{
-		ID:      ids.New(),
-		Command: []string{"/bin/sh", "-i"},
-		Env:     []string{"TERM=xterm-256color", "LC_ALL=C", "PS1=$ ", "ENV=/dev/null", "HOME=" + t.TempDir()},
-		Cols:    80,
-		Rows:    24,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return session
-}
-
-func TestStateTapGatingOnRealPTY(t *testing.T) {
-	supervisor := testSupervisor(t)
-
-	t.Run("line mode program", func(t *testing.T) {
-		session := testScriptSession(t, supervisor, `printf 'Proceed? [y/N] '; read answer; echo "got=$answer"; sleep 30`)
-		state := waitSessionState(t, session, "yes/no prompt", promptReady)
-		prompt := state.Prompt
-		if !prompt.Tappable || prompt.Submit != base.TapSubmitEnter || prompt.Options[0].Send != "y\r" {
-			t.Fatalf("prompt = %+v", prompt)
-		}
-		if _, err := session.Write([]byte(prompt.Options[0].Send)); err != nil {
-			t.Fatal(err)
-		}
-		after := waitSessionState(t, session, "answer consumed", func(s *SessionState) bool { return s.PromptEpoch > prompt.Epoch })
-		if after.Prompt != nil && after.Prompt.Epoch == prompt.Epoch {
-			t.Fatalf("prompt kept its epoch after input: %+v", after.Prompt)
-		}
-		readUntilState(t, session, "got=y")
-	})
-
-	t.Run("raw mode program", func(t *testing.T) {
-		session := testScriptSession(t, supervisor, `stty -icanon -echo; printf 'Proceed? [y/N] '; dd bs=1 count=1 >/dev/null 2>&1; sleep 30`)
-		prompt := waitSessionState(t, session, "yes/no prompt", promptReady).Prompt
-		if !prompt.Tappable || prompt.Submit != base.TapSubmitSeparate || prompt.EnterKey != "\r" || prompt.Options[0].Send != "y" {
-			t.Fatalf("prompt = %+v", prompt)
-		}
-	})
-
-	t.Run("numbered menu needs line mode", func(t *testing.T) {
-		session := testScriptSession(t, supervisor, `stty -icanon; printf '1) apple\r\n2) pear\r\n\r\nPick a fruit: '; sleep 30`)
-		prompt := waitSessionState(t, session, "numbered menu", promptReady).Prompt
-		if prompt.Tappable || prompt.Blocked != base.TapBlockedNotLineMode {
-			t.Fatalf("prompt = %+v", prompt)
-		}
-	})
-
-	t.Run("shell prompt per OSC 133", func(t *testing.T) {
-		session := testScriptSession(t, supervisor, `printf '\033]133;A\007Proceed? [y/N] \033]133;B\007'; sleep 30`)
-		state := waitSessionState(t, session, "inspected shell prompt", func(s *SessionState) bool { return s.Prompt != nil })
-		if state.State != base.SessionIdle || state.Prompt.Tappable || state.Prompt.Blocked != base.TapBlockedShellPrompt {
-			t.Fatalf("state %s prompt %+v", state.State, state.Prompt)
-		}
-	})
-
-	t.Run("interactive shell in the foreground", func(t *testing.T) {
-		session := interactiveShellSession(t, supervisor)
-		// The shell's own read builtin: the shell holds the foreground.
-		if _, err := session.Write([]byte("printf 'Proceed? [y/N] '; read answer\n")); err != nil {
-			t.Fatal(err)
-		}
-		prompt := waitSessionState(t, session, "prompt read by the shell", promptReady).Prompt
-		if prompt.Tappable || prompt.Blocked != base.TapBlockedShellForeground {
-			t.Fatalf("prompt = %+v", prompt)
-		}
-	})
-
-	t.Run("job started by an interactive shell", func(t *testing.T) {
-		session := interactiveShellSession(t, supervisor)
-		if _, err := session.Write([]byte("/bin/sh -c \"printf 'Proceed? [y/N] '; read answer\"\n")); err != nil {
-			t.Fatal(err)
-		}
-		prompt := waitSessionState(t, session, "prompt read by a job", promptReady).Prompt
-		if !prompt.Tappable || prompt.Submit != base.TapSubmitEnter {
-			t.Fatalf("prompt = %+v", prompt)
-		}
-	})
 }
 
 // readUntilState attaches and reads the session output until marker.
@@ -202,10 +107,7 @@ func TestStateVisibleWithoutClientsAndPushedToAttached(t *testing.T) {
 	if _, err := stream.Write([]byte("x\n")); err != nil {
 		t.Fatal(err)
 	}
-	answered := waitStreamState(t, stream, "answered", func(s *SessionState) bool { return s.State != base.SessionNeedsMe })
-	if answered.PromptEpoch <= pushed.PromptEpoch {
-		t.Fatalf("input did not advance the epoch: %d -> %d", pushed.PromptEpoch, answered.PromptEpoch)
-	}
+	waitStreamState(t, stream, "answered", func(s *SessionState) bool { return s.State != base.SessionNeedsMe })
 }
 
 func TestStateSeenReachesEveryAttachedClient(t *testing.T) {
@@ -367,46 +269,5 @@ func TestStateDetectionCanBeDisabled(t *testing.T) {
 	readUntilState(t, session, "ring")
 	if state := session.Info().State; state != nil {
 		t.Fatalf("state reported with detection disabled: %+v", state)
-	}
-	if prompt := session.CurrentPrompt(); prompt != nil {
-		t.Fatalf("prompt reported with detection disabled: %+v", prompt)
-	}
-}
-
-// A prompt tap on a helper with state detection disabled reaches the client
-// as unsupported, not as an unavailable helper, both embedded and over the
-// wire.
-func TestPromptTapWithStateDetectionDisabledIsUnsupported(t *testing.T) {
-	supervisor, err := New(Config{StateDir: filepath.Join(t.TempDir(), "state"), CommandTimeout: 5 * time.Second, DisableStateDetection: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = supervisor.Close() })
-	server := testServer(t, supervisor)
-	for name, provider := range map[string]base.DurableProvider{
-		"embedded": NewProvider(supervisor),
-		"remote":   NewRemoteProvider(testClient(t, server)),
-	} {
-		t.Run(name, func(t *testing.T) {
-			ctx := context.Background()
-			attachment, err := provider.Create(ctx, base.DurableCreateOptions{
-				ID: ids.New(), Command: []string{"/bin/sh", "-c", "sleep 30"}, Env: []string{"TERM=xterm-256color", "LC_ALL=C"},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				_ = attachment.Kill(context.Background())
-				_ = attachment.Close()
-			})
-			tapper, ok := attachment.(base.DurablePromptTapper)
-			if !ok {
-				t.Fatalf("%T does not tap prompts", attachment)
-			}
-			_, err = tapper.TapDurablePrompt(ctx, base.PromptTap{Generation: supervisor.Generation(), Epoch: 1, Fingerprint: "none", Option: 1})
-			if !errors.Is(err, base.ErrUnsupported) || errors.Is(err, durable.ErrUnavailable) {
-				t.Fatalf("TapDurablePrompt = %v, want unsupported", err)
-			}
-		})
 	}
 }

@@ -1,5 +1,0 @@
-# kind: yesno
-# options: Y | N
----
-^C
-Terminate batch job (Y/N)? 

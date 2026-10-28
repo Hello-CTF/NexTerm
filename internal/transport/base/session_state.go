@@ -2,23 +2,21 @@ package base
 
 import (
 	"context"
-	"errors"
 	"time"
 )
 
 // Session attention states reported by a durable helper. They are derived
-// inside the helper from terminal-standard signals and generic screen
-// shapes, independent of any attached client.
+// inside the helper from terminal-standard signals and user state
+// rules, independent of any attached client.
 const (
 	// SessionRunning: output arrived within the idle threshold.
 	SessionRunning = "running"
 	// SessionNeedsMe: the program rang the bell or sent a notification
-	// (confidence signal), or output went idle with a prompt shape near the
-	// cursor (confidence heuristic).
+	// (confidence signal), or a user state rule matched (confidence rule).
 	SessionNeedsMe = "needs_me"
 	// SessionJustFinished: the shell reported a command end (OSC 133 D).
 	SessionJustFinished = "just_finished"
-	// SessionIdle: no output and no prompt.
+	// SessionIdle: no recent output.
 	SessionIdle = "idle"
 	// SessionExited: the session process exited.
 	SessionExited = "exited"
@@ -29,8 +27,6 @@ const (
 	// ConfidenceSignal: the state follows from an explicit terminal signal
 	// or an observed fact (output, exit).
 	ConfidenceSignal = "signal"
-	// ConfidenceHeuristic: the state was inferred from the screen shape.
-	ConfidenceHeuristic = "heuristic"
 	// ConfidenceRule: a user-defined state rule matched the screen.
 	ConfidenceRule = "rule"
 )
@@ -43,32 +39,13 @@ const (
 	SessionEventState      = "state"
 )
 
-// Prompt tap methods and submit modes; see SessionPrompt.
-const (
-	TapMethodKeys   = "keys"
-	TapMethodArrows = "arrows"
-
-	TapSubmitEnter    = "enter"
-	TapSubmitSeparate = "separate"
-)
-
-// Reasons a detected prompt is not tappable.
-const (
-	TapBlockedQuestion          = "question"
-	TapBlockedShellPrompt       = "shell_prompt"
-	TapBlockedShellForeground   = "shell_foreground"
-	TapBlockedForegroundUnknown = "foreground_unknown"
-	TapBlockedWeakMarker        = "weak_marker"
-	TapBlockedNotLineMode       = "not_line_mode"
-)
-
 // SessionState is the attention state of one durable session.
 type SessionState struct {
 	State string    `json:"state"`
 	Since time.Time `json:"since"`
-	// Confidence is ConfidenceSignal, ConfidenceHeuristic or ConfidenceRule.
+	// Confidence is ConfidenceSignal or ConfidenceRule.
 	Confidence string `json:"confidence"`
-	// Reason names the input that caused the state: bell, notify, prompt,
+	// Reason names the input that caused the state: bell, notify,
 	// rule, command_end, command_start, output, input, quiet or exit.
 	Reason string `json:"reason,omitempty"`
 	// RuleID is the user state rule that set the state (confidence rule).
@@ -93,13 +70,6 @@ type SessionState struct {
 	// other state or reason.
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
-	// PromptEpoch advances whenever the detected prompt changes or appears
-	// or disappears, and on any input written to the session. Together with
-	// the helper generation it identifies one prompt instance.
-	PromptEpoch uint64 `json:"prompt_epoch"`
-	// Prompt is the prompt detected when output last went idle; nil when
-	// none was found or output has arrived since.
-	Prompt *SessionPrompt `json:"prompt,omitempty"`
 	// LastEventSeq is the sequence of the newest event of this session.
 	// Sequences are monotonic across all sessions of one helper generation.
 	LastEventSeq uint64 `json:"last_event_seq,omitempty"`
@@ -123,67 +93,6 @@ type DurableStateReporter interface {
 	// MarkDurableStateSeen marks the state that began at since as seen for
 	// every client of the session. A state that has moved on is left alone.
 	MarkDurableStateSeen(ctx context.Context, since time.Time) error
-}
-
-// ErrStalePrompt reports a prompt tap whose prompt is no longer the one the
-// user saw: it changed, went away, was already answered, any input reached
-// the session since, the helper restarted, or it is not tappable.
-var ErrStalePrompt = errors.New("prompt is stale")
-
-// PromptTap answers a detected prompt by one of its options. Generation,
-// Epoch and Fingerprint identify the prompt instance the user saw.
-type PromptTap struct {
-	Generation  string
-	Epoch       uint64
-	Fingerprint string
-	Option      int
-}
-
-// DurablePromptTapper is implemented by durable attachments whose helper
-// answers detected prompts. TapDurablePrompt validates the tap against a
-// fresh inspection of the screen, consumes the prompt epoch and writes the
-// option's keys; it returns those bytes, or ErrStalePrompt.
-type DurablePromptTapper interface {
-	TapDurablePrompt(ctx context.Context, tap PromptTap) (string, error)
-}
-
-// SessionPrompt is a detected prompt with what a client may do about it.
-type SessionPrompt struct {
-	// Kind is yesno, choice or question.
-	Kind     string                `json:"kind"`
-	Question string                `json:"question,omitempty"`
-	Options  []SessionPromptOption `json:"options,omitempty"`
-	// CursorIndex is the option carrying the selection marker, or -1.
-	CursorIndex int `json:"cursor_index"`
-	// Fingerprint is the hexadecimal prompt fingerprint.
-	Fingerprint string `json:"fingerprint"`
-	Epoch       uint64 `json:"epoch"`
-	// Generation is the helper generation the prompt was detected in. The
-	// client side sets it from the attachment; the helper leaves it empty.
-	Generation string `json:"generation,omitempty"`
-	// Tappable reports that the options can be answered by sending each
-	// option's Send bytes; Blocked names the reason when it is false.
-	Tappable bool   `json:"tappable"`
-	Blocked  string `json:"blocked,omitempty"`
-	// Method is TapMethodKeys (type the option keys) or TapMethodArrows
-	// (move the selection, then Enter).
-	Method string `json:"method,omitempty"`
-	// Submit is TapSubmitEnter when Send ends with Enter, or
-	// TapSubmitSeparate when the terminal is not known to be in line mode:
-	// Send carries only the keys and EnterKey offers Enter as its own action.
-	Submit string `json:"submit,omitempty"`
-	// EnterKey is the byte sequence of the separate Enter action.
-	EnterKey string `json:"enter_key,omitempty"`
-}
-
-// SessionPromptOption is one answer of a detected prompt.
-type SessionPromptOption struct {
-	Label   string `json:"label"`
-	Keys    string `json:"keys,omitempty"`
-	Default bool   `json:"default,omitempty"`
-	// Send is the exact input that selects the option; empty when the
-	// prompt is not tappable.
-	Send string `json:"send,omitempty"`
 }
 
 // SessionEvent is one entry of a session's recent events.

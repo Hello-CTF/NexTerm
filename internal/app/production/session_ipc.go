@@ -244,18 +244,6 @@ type attentionSeenRequest struct {
 	Since string `json:"since"`
 }
 
-// promptTapRequest answers the detected prompt of an attention event: the
-// generation, epoch and fingerprint come from that event's prompt and
-// option indexes its options.
-type promptTapRequest struct {
-	TabID       string `json:"tabId"`
-	ClientID    string `json:"clientId,omitempty"`
-	Generation  string `json:"generation"`
-	Epoch       uint64 `json:"epoch"`
-	Fingerprint string `json:"fingerprint"`
-	Option      int    `json:"option"`
-}
-
 type createTerminalRequest struct {
 	SessionID string `json:"sessionId"`
 	Cols      uint32 `json:"cols"`
@@ -1099,15 +1087,6 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			return ipc.Register(dispatcher, "terminal_attention_seen", func(ctx context.Context, _ *ipc.Call, input attentionSeenRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
 				return nil, terminalIPCError(s.sessions.MarkAttentionSeenFor(ctx, input.TabID, input.Since))
-			})
-		},
-		func() error {
-			return ipc.Register(dispatcher, "terminal_prompt_tap", func(ctx context.Context, call *ipc.Call, input promptTapRequest) (any, error) {
-				ctx = productionSessionRequestContext(ctx)
-				client := gridRequestClient(call.ClientID, input.ClientID)
-				return nil, terminalIPCError(s.sessions.TapPromptFor(ctx, input.TabID, client, session.PromptTapRequest{
-					Generation: input.Generation, Epoch: input.Epoch, Fingerprint: input.Fingerprint, Option: input.Option,
-				}))
 			})
 		},
 		func() error {

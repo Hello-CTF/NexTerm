@@ -1292,32 +1292,6 @@ func (s *Stream) MarkStateSeen(ctx context.Context, since time.Time) error {
 	return nil
 }
 
-// TapPrompt answers the session's detected prompt with option when the
-// prompt identified by epoch and fingerprint is still shown and tappable,
-// and returns the bytes the helper wrote. It first waits for the stream's
-// earlier input to be acknowledged, so the keys follow it. A stale prompt
-// fails with ErrStalePrompt.
-func (s *Stream) TapPrompt(ctx context.Context, epoch uint64, fingerprint string, option int) (string, error) {
-	if err := s.FlushInput(ctx); err != nil {
-		return "", err
-	}
-	kind, payload, err := s.request(ctx, frameTapPrompt, tapPromptMsg{
-		ExpectGeneration: s.identity.Generation, ExpectIncarnation: s.identity.Incarnation,
-		Epoch: epoch, Fingerprint: fingerprint, Option: option,
-	})
-	if err != nil {
-		return "", err
-	}
-	if kind != frameOK {
-		return "", protocolMismatch(kind)
-	}
-	var reply tapPromptReply
-	if err := unmarshalFrame(payload, &reply); err != nil {
-		return "", err
-	}
-	return reply.Sent, nil
-}
-
 func (s *Stream) Kill(ctx context.Context) error {
 	kind, _, err := s.request(ctx, frameKill, struct{}{})
 	if err != nil {

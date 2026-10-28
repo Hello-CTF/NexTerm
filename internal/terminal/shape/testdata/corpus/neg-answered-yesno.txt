@@ -1,6 +1,0 @@
-# kind: none
----
-Do you want to continue? [Y/n] y
-Get:1 http://deb.example.org/debian stable/main amd64 curl amd64 8.5.0-2 [315 kB]
-Fetched 315 kB in 0s (1,210 kB/s)
-Selecting previously unselected package curl.

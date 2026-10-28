@@ -1,4 +1,0 @@
-# kind: question
----
-dev@laptop:~$ git pull
-Enter passphrase for key '/home/dev/.ssh/id_ed25519': 

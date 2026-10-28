@@ -1,7 +1,0 @@
-# kind: none
----
-top - 10:01:02 up 3 days,  2 users,  load average: 0.31, 0.42, 0.40
-Tasks: 211 total,   1 running, 210 sleeping,   0 stopped,   0 zombie
-    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
-   1201 dev       20   0  812344 122880  41060 S   2.0   0.8   1:02.33 node
-dev@build:~$ 

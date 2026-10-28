@@ -1,5 +1,0 @@
-# kind: none
----
-Python 3.12.3 (main, Apr  1 2026, 00:00:00) [GCC 13.2.0] on linux
-Type "help", "copyright", "credits" or "license" for more information.
->>> 

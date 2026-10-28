@@ -12,8 +12,7 @@ import (
 // regular local PTY). It applies the helper's rules to the output the client
 // receives. It parses that output only for signals: the screen comes from
 // the terminal model the caller already keeps, read once when output goes
-// quiet. Without access to the PTY it cannot read the foreground process,
-// so detected prompts are never tappable.
+// quiet.
 type AttentionTracker struct {
 	tracker *stateTracker
 }

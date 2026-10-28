@@ -1,6 +1,0 @@
-# kind: question
----
-Press ^C at any time to quit.
-package name: (demo)
-version: (1.0.0)
-description: 

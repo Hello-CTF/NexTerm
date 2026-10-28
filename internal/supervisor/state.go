@@ -1,17 +1,12 @@
 package supervisor
 
 import (
-	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
-	"github.com/Hello-CTF/NexTerm/internal/pty"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
-	"github.com/Hello-CTF/NexTerm/internal/terminal/shape"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/signals"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/staterule"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -19,17 +14,15 @@ import (
 
 // Session attention state types; see base.SessionState.
 type (
-	SessionState        = base.SessionState
-	SessionPrompt       = base.SessionPrompt
-	SessionPromptOption = base.SessionPromptOption
-	SessionEvent        = base.SessionEvent
+	SessionState = base.SessionState
+	SessionEvent = base.SessionEvent
 )
 
 const (
 	// defaultStateIdle is how long output must pause before the session
-	// counts as idle and the screen is inspected for a prompt.
+	// counts as idle and the screen is checked against the state rules.
 	defaultStateIdle = 400 * time.Millisecond
-	// defaultStateSettle is how long a session without a prompt stays
+	// defaultStateSettle is how long a session without a matching rule stays
 	// running after its output pauses, so a build printing every second does
 	// not flap between running and idle.
 	defaultStateSettle = 3 * time.Second
@@ -41,8 +34,6 @@ const (
 	// maxEventText bounds each of a notification's title and body as kept in
 	// the event ring.
 	maxEventText = 256
-	// enterKey is what a terminal sends for Enter.
-	enterKey = "\r"
 	// bellEchoWindow is how long after input a bell counts as the reaction
 	// to that input, such as a line editor's failed completion, rather than
 	// a request for attention.
@@ -57,14 +48,6 @@ type stateOptions struct {
 	idle         time.Duration
 	settle       time.Duration
 	notableAfter time.Duration
-	// shellLeader reports that the session process is an interactive
-	// shell, so its own process group in the terminal foreground means the
-	// shell, not a program it started, reads the input.
-	shellLeader bool
-	// foreground reads the PTY foreground state; nil where unsupported.
-	foreground func() (pty.Foreground, error)
-	// appCursor reports DECCKM (application cursor keys); nil means off.
-	appCursor func() bool
 	// screen, when set, reads the screen of a terminal model the caller
 	// already keeps; the tracker then parses output only for signals and
 	// keeps no screen of its own. It is called once per inspection, with
@@ -88,28 +71,25 @@ type stateOptions struct {
 
 // stateTracker derives a session's attention state from its output and
 // input. It parses the output with a signal scanner and a scrollback-free
-// screen emulator, and inspects the screen for a prompt shape only when the
-// output goes idle, never on a poll.
+// screen emulator, and matches the user state rules against the screen only
+// when the output goes idle, never on a poll.
 //
 // Rules:
 //   - output makes the session running unless a signal state is pending or
-//     a detected prompt holds it in needs_me: a redraw keeps the prompt until
-//     the next inspection finds none or a different one, and output that
-//     goes on for settle without a pause is inspected anyway;
+//     a state rule holds it in needs_me: a redraw keeps the rule's state
+//     until the next inspection no longer matches, and output that goes on
+//     for settle without a pause is inspected anyway;
 //   - BEL or a notification makes it needs_me (confidence signal) until
 //     input arrives, a command starts or ends, or the process exits; a bell
 //     within bellEchoWindow of input or at the shell prompt is only recorded;
 //   - OSC 133 D makes it just_finished until input arrives or a command
 //     starts; the state is notable when the command ran notableAfter or
 //     longer;
-//   - when output pauses for idle, the screen is inspected once: a prompt
-//     shape makes it needs_me (confidence heuristic) unless OSC 133 puts the
-//     shell at its own prompt; otherwise it is idle at once at the shell
-//     prompt, or after settle of quiet elsewhere;
-//   - a user state rule matching the screen at that inspection decides the
-//     state (confidence rule) ahead of the prompt shape and the shell prompt;
-//     only a pending signal state wins over it. A rule's needs_me is held
-//     through redraws like a detected prompt;
+//   - when output pauses for idle, the screen is inspected once: a user state
+//     rule matching it decides the state (confidence rule) ahead of the shell
+//     prompt; only a pending signal state wins over it. A rule's needs_me is
+//     held through redraws. Otherwise the session is idle at once at the
+//     shell prompt, or after settle of quiet elsewhere;
 //   - input clears needs_me and just_finished and inspects again after the
 //     next pause;
 //   - process exit makes it exited.
@@ -157,13 +137,6 @@ type stateTracker struct {
 	rule  staterule.Match
 	ruled bool
 
-	// prompt is the result of the last inspection, info its published form.
-	// fresh reports that nothing was written or input since.
-	prompt shape.Prompt
-	info   *SessionPrompt
-	fresh  bool
-	epoch  uint64
-
 	events []SessionEvent
 	// lastSeq is the newest event sequence; evictedSeq the newest one
 	// dropped from the ring.
@@ -179,7 +152,7 @@ type stateTracker struct {
 	// writes counts changes to the screen, so an inspection prepared
 	// outside the lock can tell whether the screen moved on since.
 	writes uint64
-	// inspections counts prompt detector runs.
+	// inspections counts screen inspections.
 	inspections uint64
 }
 
@@ -208,12 +181,8 @@ func newStateTracker(opts stateOptions, now time.Time) *stateTracker {
 		confidence: base.ConfidenceSignal,
 		reason:     "start",
 		since:      now,
-		prompt:     noPrompt(),
-		epoch:      1,
 	}
 }
-
-func noPrompt() shape.Prompt { return shape.Prompt{Kind: shape.KindNone, CursorIndex: -1} }
 
 // output feeds one chunk of session output.
 func (t *stateTracker) output(p []byte, now time.Time) {
@@ -234,11 +203,6 @@ func (t *stateTracker) output(p []byte, now time.Time) {
 		if t.signalLocked(event, now) {
 			changed = true
 		}
-	}
-	// A held prompt stays published through redraws; a tap re-inspects the
-	// screen before it sends anything.
-	if t.fresh && !t.heldLocked() {
-		t.fresh, changed = false, true
 	}
 	if !t.signalPending && !t.finishedPending && !t.heldLocked() && t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) {
 		changed = true
@@ -305,25 +269,21 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 	return true
 }
 
-// input records bytes written to the session by any client. Every write
-// advances the prompt epoch, so a prompt answered once can never be
-// answered again with the same epoch, and clears pending signal states.
+// input records bytes written to the session by any client and clears
+// pending signal states.
 func (t *stateTracker) input(now time.Time) {
 	t.mu.Lock()
 	if t.exited {
 		t.mu.Unlock()
 		return
 	}
-	t.epoch++
 	t.lastInput = now
-	changed := t.fresh
-	t.fresh = false
+	changed := false
 	t.signalPending, t.finishedPending = false, false
 	if t.state == base.SessionNeedsMe || t.state == base.SessionJustFinished {
 		changed = t.setLocked(base.SessionIdle, base.ConfidenceSignal, "input", now) || changed
 	}
-	// Re-inspect once the program has reacted: a prompt that ignored the
-	// input is reported again with the new epoch.
+	// Re-inspect once the program has reacted.
 	t.activityLocked(now)
 	t.mu.Unlock()
 	if changed {
@@ -331,9 +291,9 @@ func (t *stateTracker) input(now time.Time) {
 	}
 }
 
-// heldLocked reports that a detected prompt holds the session in needs_me.
+// heldLocked reports that a state rule holds the session in needs_me.
 func (t *stateTracker) heldLocked() bool {
-	return t.state == base.SessionNeedsMe && (t.confidence == base.ConfidenceHeuristic || t.confidence == base.ConfidenceRule)
+	return t.state == base.SessionNeedsMe && t.confidence == base.ConfidenceRule
 }
 
 // activityLocked starts a new pause. The armed deadline is kept when it is
@@ -364,9 +324,9 @@ func (t *stateTracker) fire() {
 }
 
 // tick runs the idle transition when activity paused for the idle
-// threshold: the screen is inspected once, and a prompt makes the session
-// need its user. Without a prompt the session is idle at once when the
-// shell shows its own prompt, and otherwise after the settle time. tick
+// threshold: the screen is inspected once against the state rules. Without
+// a matching rule the session is idle at once when the shell shows its own
+// prompt, and otherwise after the settle time. tick
 // returns how long to wait for the next step, or zero when none is due.
 func (t *stateTracker) tick(now time.Time) time.Duration {
 	pre := t.prepare(now)
@@ -377,21 +337,14 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 	switch {
 	case t.exited:
 	case t.active && quiet < t.opts.idle && t.heldLocked() && !t.heldCheck.IsZero() && !now.Before(t.heldCheck):
-		// Output has kept a held prompt busy for settle: check that the
-		// prompt is still there.
-		before := t.prompt
+		// Output has kept a held rule busy for settle: check that it still
+		// matches.
 		changed = t.inspectLocked(pre)
 		t.heldCheck = now.Add(t.opts.settle)
 		switch {
 		case t.signalPending, t.finishedPending:
 		case t.ruled:
 			changed = t.applyRuleLocked(now) || changed
-		case t.prompt.Kind != shape.KindNone && !t.scanner.AtPrompt():
-			if before.Kind != t.prompt.Kind || before.Fingerprint != t.prompt.Fingerprint {
-				t.forceLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now)
-				t.heldCheck = now.Add(t.opts.settle)
-				changed = true
-			}
 		default:
 			changed = t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) || changed
 		}
@@ -403,7 +356,6 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 		wait = t.activeWaitLocked(now, quiet)
 	case t.active:
 		t.active, t.heldCheck = false, time.Time{}
-		before := t.prompt
 		ruleGone := t.confidence == base.ConfidenceRule
 		changed = t.inspectLocked(pre)
 		ruleGone = ruleGone && !t.ruled
@@ -412,16 +364,9 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 		case t.signalPending, t.finishedPending:
 		case t.ruled:
 			changed = t.applyRuleLocked(now) || changed
-		case t.prompt.Kind != shape.KindNone && !atPrompt:
-			if held && (before.Kind != t.prompt.Kind || before.Fingerprint != t.prompt.Fingerprint) {
-				// A different prompt replaced the held one.
-				t.forceLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now)
-				changed = true
-				break
-			}
-			changed = t.setLocked(base.SessionNeedsMe, base.ConfidenceHeuristic, "prompt", now) || changed
 		case held && !atPrompt && quiet < t.opts.settle:
-			// The held prompt is gone while output went on: the program runs.
+			// The held rule no longer matches while output went on: the
+			// program runs.
 			changed = t.setLocked(base.SessionRunning, base.ConfidenceSignal, "output", now) || changed
 			t.settling = true
 			wait = t.opts.settle - quiet
@@ -455,7 +400,7 @@ func (t *stateTracker) tick(now time.Time) time.Duration {
 }
 
 // activeWaitLocked is how long tick waits while output is active: until the
-// idle inspection, or the check of a held prompt when that comes first.
+// idle inspection, or the check of a held rule when that comes first.
 func (t *stateTracker) activeWaitLocked(now time.Time, quiet time.Duration) time.Duration {
 	wait := t.opts.idle - quiet
 	if t.heldLocked() && !t.heldCheck.IsZero() {
@@ -473,19 +418,17 @@ func (t *stateTracker) due() (time.Time, bool) {
 }
 
 // inspection is the screen evaluated for one inspection: the state rule that
-// matched and the detected prompt, for the screen at writes and the rule set
-// rules.
+// matched, for the screen at writes and the rule set rules.
 type inspection struct {
-	writes   uint64
-	rules    *staterule.Compiled
-	rule     staterule.Match
-	ruled    bool
-	detected shape.Prompt
+	writes uint64
+	rules  *staterule.Compiled
+	rule   staterule.Match
+	ruled  bool
 }
 
 // prepare evaluates the screen for an inspection tick is about to make, so
-// the rule match and prompt detection run outside the tracker lock and do
-// not stall the output pump. It returns nil when no inspection is due.
+// the rule match runs outside the tracker lock and does not stall the
+// output pump. It returns nil when no inspection is due.
 func (t *stateTracker) prepare(now time.Time) *inspection {
 	t.mu.Lock()
 	quiet := now.Sub(t.lastActivity)
@@ -502,7 +445,7 @@ func (t *stateTracker) prepare(now time.Time) *inspection {
 
 func (t *stateTracker) evaluate(snap terminal.Snapshot, writes uint64) *inspection {
 	rules := t.currentRules()
-	result := &inspection{writes: writes, rules: rules, detected: shape.Detect(snap)}
+	result := &inspection{writes: writes, rules: rules}
 	result.rule, result.ruled = rules.Match(staterule.Screen{Lines: snap.Lines, CursorRow: snap.CursorRow, Title: snap.Title})
 	return result
 }
@@ -517,25 +460,15 @@ func (t *stateTracker) currentRules() *staterule.Compiled {
 
 // inspectLocked applies an inspection of the current screen: pre when it
 // was made for the screen and the rule set as they are, otherwise one made
-// now. It updates the matched rule, the prompt and its epoch, and reports
-// whether the published prompt changed.
+// now. It updates the matched rule.
 func (t *stateTracker) inspectLocked(pre *inspection) bool {
 	t.inspections++
 	if pre == nil || pre.writes != t.writes || pre.rules != t.currentRules() {
 		pre = t.evaluate(t.screenLocked(), t.writes)
 	}
+	changed := t.ruled != pre.ruled || t.rule != pre.rule
 	t.rule, t.ruled = pre.rule, pre.ruled
-	detected := pre.detected
-	wasFresh := t.fresh
-	before := t.prompt
-	if (before.Kind == shape.KindNone) != (detected.Kind == shape.KindNone) ||
-		(detected.Kind != shape.KindNone && detected.Fingerprint != before.Fingerprint) {
-		t.epoch++
-	}
-	t.prompt = detected
-	t.info = t.promptInfoLocked(detected)
-	t.fresh = true
-	return !wasFresh && detected.Kind != shape.KindNone || before.Kind != detected.Kind || before.Fingerprint != detected.Fingerprint
+	return changed
 }
 
 func (t *stateTracker) screenLocked() terminal.Snapshot {
@@ -543,23 +476,6 @@ func (t *stateTracker) screenLocked() terminal.Snapshot {
 		return t.emu.Snapshot()
 	}
 	return t.opts.screen()
-}
-
-// currentPrompt inspects the screen now, as a tap validation must, and
-// returns the published prompt (nil for none) with its epoch.
-func (t *stateTracker) currentPrompt() *SessionPrompt {
-	t.mu.Lock()
-	changed := false
-	var prompt *SessionPrompt
-	if !t.exited {
-		changed = t.inspectLocked(nil)
-		prompt = t.publishedPromptLocked()
-	}
-	t.mu.Unlock()
-	if changed {
-		t.changed()
-	}
-	return prompt
 }
 
 // rulesChanged re-evaluates a quiet session after the state rules changed,
@@ -575,45 +491,6 @@ func (t *stateTracker) rulesChanged(now time.Time) {
 	t.lastActivity = now.Add(-t.opts.idle)
 	t.mu.Unlock()
 	t.tick(now)
-}
-
-// tap validates a tap on option of the prompt identified by epoch and
-// fingerprint and returns the bytes that answer it. The screen is inspected
-// again first: the prompt must still be published with the same epoch and
-// fingerprint and be tappable. A valid tap consumes the epoch, so a repeated
-// or concurrent tap with the same epoch fails. Any mismatch is ErrStalePrompt.
-func (t *stateTracker) tap(epoch uint64, fingerprint string, option int) (string, error) {
-	t.mu.Lock()
-	if t.exited {
-		t.mu.Unlock()
-		return "", fmt.Errorf("%w: the session exited", ErrStalePrompt)
-	}
-	changed := t.inspectLocked(nil)
-	prompt := t.publishedPromptLocked()
-	var send string
-	var err error
-	switch {
-	case prompt == nil:
-		err = fmt.Errorf("%w: no prompt is shown", ErrStalePrompt)
-	case prompt.Epoch != epoch || prompt.Fingerprint != fingerprint:
-		err = fmt.Errorf("%w: the prompt changed", ErrStalePrompt)
-	case !prompt.Tappable:
-		err = fmt.Errorf("%w: the prompt is not tappable (%s)", ErrStalePrompt, prompt.Blocked)
-	case option < 0 || option >= len(prompt.Options) || prompt.Options[option].Send == "":
-		err = fmt.Errorf("%w: option %d does not exist", ErrInvalidInput, option)
-	default:
-		send = prompt.Options[option].Send
-		// Consume the epoch now: the write that follows advances it again,
-		// but a second tap racing it must already fail.
-		t.epoch++
-		t.fresh = false
-		changed = true
-	}
-	t.mu.Unlock()
-	if changed {
-		t.changed()
-	}
-	return send, err
 }
 
 func (t *stateTracker) resize(cols, rows int) {
@@ -632,10 +509,6 @@ func (t *stateTracker) exit(code *int, now time.Time) {
 		t.mu.Unlock()
 		return
 	}
-	if t.prompt.Kind != shape.KindNone {
-		t.epoch++
-	}
-	t.prompt, t.info, t.fresh = noPrompt(), nil, false
 	t.signalPending, t.finishedPending = false, false
 	t.forceLocked(base.SessionExited, base.ConfidenceSignal, "exit", now)
 	t.exitCode = copyInt(code)
@@ -733,8 +606,6 @@ func (t *stateTracker) snapshot(withEvents bool, after uint64) *SessionState {
 		Seen:         t.seen,
 		Title:        t.notifyTitle,
 		Body:         t.notifyBody,
-		PromptEpoch:  t.epoch,
-		Prompt:       t.publishedPromptLocked(),
 		LastEventSeq: t.lastSeq,
 	}
 	if withEvents {
@@ -747,141 +618,6 @@ func (t *stateTracker) snapshot(withEvents bool, after uint64) *SessionState {
 		state.EventsDropped = t.evictedSeq > after
 	}
 	return state
-}
-
-func (t *stateTracker) publishedPromptLocked() *SessionPrompt {
-	if !t.fresh || t.info == nil {
-		return nil
-	}
-	prompt := *t.info
-	prompt.Options = append([]SessionPromptOption(nil), t.info.Options...)
-	prompt.Epoch = t.epoch
-	return &prompt
-}
-
-// promptInfoLocked describes a detected prompt with its tap metadata.
-func (t *stateTracker) promptInfoLocked(p shape.Prompt) *SessionPrompt {
-	if p.Kind == shape.KindNone {
-		return nil
-	}
-	ctx := tapContext{atShellPrompt: t.scanner.AtPrompt()}
-	if t.opts.appCursor != nil {
-		ctx.appCursor = t.opts.appCursor()
-	}
-	if t.opts.foreground != nil {
-		if fg, err := t.opts.foreground(); err == nil {
-			ctx.foregroundKnown = true
-			ctx.shellForeground = t.opts.shellLeader && fg.LeaderInForeground()
-			ctx.canonical, ctx.canonicalKnown = fg.Canonical, fg.CanonicalKnown
-		}
-	}
-	return describePrompt(p, ctx)
-}
-
-// tapContext is what tap gating needs to know about the terminal.
-type tapContext struct {
-	// atShellPrompt: OSC 133 says the shell shows its own prompt.
-	atShellPrompt bool
-	// foregroundKnown: the foreground process group could be read; false
-	// on Windows ConPTY, where no prompt is tappable.
-	foregroundKnown bool
-	// shellForeground: the session's interactive shell, not a program it
-	// started, owns the terminal foreground.
-	shellForeground bool
-	// canonical is ICANON on the terminal when canonicalKnown.
-	canonical      bool
-	canonicalKnown bool
-	// appCursor is DECCKM: arrows are sent as SS3 instead of CSI.
-	appCursor bool
-}
-
-// describePrompt applies the tap rules to a detected prompt:
-//   - a question (free text, including passwords) is never tappable;
-//   - nothing is tappable while the shell is at its prompt or owns the
-//     terminal foreground, or when the foreground cannot be read;
-//   - yes/no sends the answer key, followed by Enter when the terminal is in
-//     canonical (line) mode. Otherwise the key is sent alone and Enter is
-//     offered separately: a raw-mode foreground may be a relay such as ssh,
-//     docker exec or a tmux client, whose mode says nothing about the remote
-//     program;
-//   - a menu with a selection marker is answered by moving the selection
-//     with the arrow keys (encoded per DECCKM) and pressing Enter, except a
-//     menu whose only marker is "*" or ">" without numbering;
-//   - a numbered menu without a marker is answered by its number and Enter,
-//     only in canonical mode.
-func describePrompt(p shape.Prompt, ctx tapContext) *SessionPrompt {
-	info := &SessionPrompt{
-		Kind:        string(p.Kind),
-		Question:    p.Question,
-		CursorIndex: p.CursorIndex,
-		Fingerprint: strconv.FormatUint(p.Fingerprint, 16),
-		Options:     make([]SessionPromptOption, len(p.Options)),
-	}
-	numbered := false
-	for i, option := range p.Options {
-		info.Options[i] = SessionPromptOption{Label: option.Label, Keys: option.Keys, Default: option.Default}
-		if option.Keys != "" {
-			numbered = true
-		}
-	}
-	block := func(reason string) *SessionPrompt {
-		info.Blocked = reason
-		return info
-	}
-	switch {
-	case p.Kind == shape.KindQuestion:
-		return block(base.TapBlockedQuestion)
-	case ctx.atShellPrompt:
-		return block(base.TapBlockedShellPrompt)
-	case !ctx.foregroundKnown:
-		return block(base.TapBlockedForegroundUnknown)
-	case ctx.shellForeground:
-		return block(base.TapBlockedShellForeground)
-	}
-	switch p.Kind {
-	case shape.KindYesNo:
-		info.Method = base.TapMethodKeys
-		suffix := ""
-		if ctx.canonicalKnown && ctx.canonical {
-			info.Submit, suffix = base.TapSubmitEnter, enterKey
-		} else {
-			info.Submit, info.EnterKey = base.TapSubmitSeparate, enterKey
-		}
-		for i := range info.Options {
-			info.Options[i].Send = info.Options[i].Keys + suffix
-		}
-	case shape.KindChoice:
-		if p.CursorIndex >= 0 {
-			if p.WeakMarker && !numbered {
-				return block(base.TapBlockedWeakMarker)
-			}
-			up, down := "\x1b[A", "\x1b[B"
-			if ctx.appCursor {
-				up, down = "\x1bOA", "\x1bOB"
-			}
-			info.Method, info.Submit = base.TapMethodArrows, base.TapSubmitEnter
-			for i := range info.Options {
-				steps := i - p.CursorIndex
-				key := down
-				if steps < 0 {
-					steps, key = -steps, up
-				}
-				info.Options[i].Send = strings.Repeat(key, steps) + enterKey
-			}
-			break
-		}
-		if !numbered || !ctx.canonicalKnown || !ctx.canonical {
-			return block(base.TapBlockedNotLineMode)
-		}
-		info.Method, info.Submit = base.TapMethodKeys, base.TapSubmitEnter
-		for i := range info.Options {
-			info.Options[i].Send = info.Options[i].Keys + enterKey
-		}
-	default:
-		return info
-	}
-	info.Tappable = true
-	return info
 }
 
 func clipText(s string) (string, bool) {

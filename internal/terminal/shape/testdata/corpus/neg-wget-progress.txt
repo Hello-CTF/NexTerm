@@ -1,5 +1,0 @@
-# kind: none
----
-Saving to: 'image.iso'
-
-image.iso            34%[=====>              ] 345.2M  10.4MB/s    eta 62s
