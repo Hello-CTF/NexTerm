@@ -359,10 +359,10 @@ afterEach(() => {
   mounted = undefined;
 });
 
-function fireSyncEvent(topic: string): void {
+function fireSyncEvent(topic: string, payload: unknown = { applied: true }): void {
   act(() => {
     for (const entry of [...mocks.syncHandlers]) {
-      if (entry.topic === topic) entry.handler({});
+      if (entry.topic === topic) entry.handler(payload);
     }
   });
 }
@@ -470,7 +470,7 @@ describe("persistent asset session refresh", () => {
   it("coalesces local and sync events with one trailing request and no per-pane amplification", async () => {
     mounted = mountApp(false, true, 2);
     await flush();
-    expect(mocks.syncHandlers.filter((entry) => entry.topic === "sync://status" || entry.topic === "sync://round-complete")).toHaveLength(2);
+    expect(mocks.syncHandlers.filter((entry) => entry.topic === "sync://status" || entry.topic === "sync://round-complete")).toHaveLength(1);
 
     const first = deferred<ReturnType<typeof sessionRows>>();
     const second = deferred<ReturnType<typeof sessionRows>>();
@@ -495,6 +495,16 @@ describe("persistent asset session refresh", () => {
     await flushUntil(() => !(document.body.textContent?.includes("配置已修改，重连后生效") ?? false));
     expect(eventCalls).toBe(2);
     expect(useUi.getState().workspaces[0]?.panes).toHaveLength(2);
+  });
+
+  it("ignores sync status events that applied no remote changes", async () => {
+    mounted = mountApp(false, true, 2);
+    await flush();
+    mocks.sessionList.mockClear();
+    fireSyncEvent("sync://status", {});
+    fireSyncEvent("sync://status", { ownerId: "a" });
+    await flush();
+    expect(mocks.sessionList).not.toHaveBeenCalled();
   });
 
   it("keeps AppShell mounted and warns when the event adapter throws synchronously", async () => {

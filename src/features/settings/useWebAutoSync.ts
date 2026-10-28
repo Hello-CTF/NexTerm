@@ -11,6 +11,11 @@ import { WEB_SYNC_ERROR_EVENT, WEB_SYNC_REQUEST_EVENT, WEB_SYNC_RESULT_EVENT } f
 
 const SYNC_PERIOD_MS = 60_000;
 
+// applied is set by the backend when a sync round or apply landed remote changes locally.
+export interface SyncStatusPayload {
+  applied?: boolean;
+}
+
 // After any sync round lands remote changes locally, refresh every synced view; without this the asset tree,
 // credentials and snippets keep showing pre-sync data until remount (the queries have no poll of their own).
 function invalidateSyncedViews(qc: QueryClient): void {
@@ -91,21 +96,24 @@ export function useDesktopAutoSync() {
       void qc.invalidateQueries({ queryKey: ["sync-status"] });
       void qc.invalidateQueries({ queryKey: ["sync-link"] });
     };
-    const wake = () => {
+    // Only a round that applied remote changes (flagged on the status event) re-registers the preference store
+    // and refreshes data views; plain status events refresh the health display alone. The backend wakes itself
+    // after login/link paths and the IPC layer schedules a wake after synced writes, so no wake is issued here.
+    const onStatus = (payload?: SyncStatusPayload) => {
       if (disposed) return;
+      refreshHealth();
+      if (payload?.applied !== true) return;
       useUi.getState().bumpModelProfilesRevision();
       registerAccountPreferenceStore(createHttpPreferenceStore());
       invalidateSyncedViews(qc);
-      refreshHealth();
-      void syncApi.wake().catch(() => undefined);
     };
-    const subscribe = (topic: string, handler: () => void) => {
-      void listenEvent(topic, handler).then((off) => {
+    const subscribe = <T,>(topic: string, handler: (payload: T) => void) => {
+      void listenEvent<T>(topic, handler).then((off) => {
         if (disposed) off();
         else unlisten.push(off);
       }).catch(() => undefined);
     };
-    subscribe("sync://status", wake);
+    subscribe<SyncStatusPayload | undefined>("sync://status", onStatus);
     subscribe("sync://round-complete", refreshHealth);
     return () => {
       disposed = true;

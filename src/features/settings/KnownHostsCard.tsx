@@ -45,7 +45,10 @@ export function KnownHostsCard() {
   useEffect(() => {
     void reload();
     let unlisten: (() => void) | undefined;
-    void listenEvent("sync://status", () => void reload()).then((off) => {
+    void listenEvent<{ applied?: boolean } | undefined>("sync://status", (payload) => {
+      // Known hosts change locally through this card; only a sync that applied remote changes needs a refetch.
+      if (payload?.applied === true) void reload();
+    }).then((off) => {
       unlisten = off;
     });
     return () => unlisten?.();

@@ -132,9 +132,13 @@ export function useAppBootEffects(queryClient: QueryClient): void {
     };
     const offAssetData = onAssetDataChanged(refresh);
     const subscriptions: (() => void)[] = [];
-    for (const topic of ["sync://status", "sync://round-complete"]) {
+    // Only a sync that applied remote changes can alter asset-backed sessions; plain status and round events cannot.
+    const refreshIfApplied = (payload?: { applied?: boolean }) => {
+      if (payload?.applied === true) refresh();
+    };
+    for (const topic of ["sync://status"]) {
       try {
-        void Promise.resolve(listenEvent(topic, refresh)).then((off) => {
+        void Promise.resolve(listenEvent<{ applied?: boolean } | undefined>(topic, refreshIfApplied)).then((off) => {
           if (typeof off !== "function") return;
           if (disposed) off();
           else subscriptions.push(off);

@@ -358,7 +358,9 @@ export function BackgroundSessions({
         }
       });
     };
-    void listenEvent("sync://status", () => refresh(true)).then((off) => {
+    // A status event usually leaves the account unchanged; refresh(false) compares the scope first and only a real
+    // change resets the list (via the accountScope effect), so ordinary events never blank or re-poll it.
+    void listenEvent("sync://status", () => refresh(false)).then((off) => {
       if (!current) { off(); return; }
       unlisten = off;
       refresh(false);
@@ -371,6 +373,15 @@ export function BackgroundSessions({
     const id = workspaceId ?? (sessionId === undefined ? s.activeWorkspaceId : undefined);
     return id === undefined ? undefined : s.workspaces.find((workspace) => workspace.id === id);
   });
+  // Identity of the owner for loading: tab/title/split changes must not restart polling, so load() depends on this
+  // primitive key and reads the live workspace from the store.
+  const ownerKey = ownerWorkspace
+    ? JSON.stringify([
+      ownerWorkspace.id, ownerWorkspace.kind, ownerWorkspace.sessionId ?? null, ownerWorkspace.assetId ?? null,
+      ownerWorkspace.assetKind ?? null, workspaceHostKey(ownerWorkspace) ?? null,
+    ])
+    : null;
+  const ownerId = ownerWorkspace?.id;
   const workspaceSessionId =
     ownerWorkspace?.kind === "session" ? (ownerWorkspace.sessionId ?? null) : null;
   const hostSessionId = workspaceSessionId ?? sessionId ?? null;
@@ -432,11 +443,12 @@ export function BackgroundSessions({
       const scope: BackgroundScope = {
         sessions: st.sessions, workspaces: st.workspaces, verified: verifiedQuickSessions, localDurable: localDurableEnabled(localHelper),
       };
-      const targets = backgroundTargets(scope, { showAll, hostSessionId, owner: ownerWorkspace, remoteOwner });
+      const owner = ownerId === undefined ? undefined : st.workspaces.find((workspace) => workspace.id === ownerId);
+      const targets = backgroundTargets(scope, { showAll, hostSessionId, owner, remoteOwner });
       const { collected, liveFailed, liveError } = await listBackgroundTabs(
         scope,
         targets,
-        openTerminalTabIds(showAll ? st.workspaces : ownerWorkspace ? [ownerWorkspace] : []),
+        openTerminalTabIds(showAll ? st.workspaces : owner ? [owner] : []),
       );
       if (generation !== loadGenerationRef.current) return;
       const errors: string[] = [];
@@ -466,7 +478,9 @@ export function BackgroundSessions({
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [hostSessionId, showAll, remoteOwner, ownerWorkspace, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions, localHelper]);
+    // ownerKey is a deliberate trigger: the owner's identity fields are read from the store inside load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostSessionId, showAll, remoteOwner, ownerKey, ownerId, accountScope, runtimeEpoch, desktopChecking, verifiedQuickSessions, localHelper]);
 
   useEffect(() => {
     ownerGenerationRef.current += 1;
