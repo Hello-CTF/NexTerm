@@ -125,7 +125,7 @@ function App() {
             <a className="button button-secondary" href={repository} target="_blank" rel="noreferrer"><GithubIcon size={17} />{t.source}</a>
           </div>
           <div className="view-tabs" role="tablist" aria-label={t.nav[0]}>
-            {t.views.map(([name, label], index) => <button key={name} type="button" role="tab" aria-selected={index === view} className={index === view ? "active" : ""} onClick={() => setView(index)}>{label}</button>)}
+            {t.views.map(([name, label], index) => <button key={name} type="button" role="tab" aria-selected={index === view} className={index === view ? "active" : ""} onClick={(event) => { setView(index); event.currentTarget.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); }}>{label}</button>)}
           </div>
           <Window title={current[2]} className="hero-window">
             <div role="tabpanel" aria-label={current[3]}><FeatureDemo mode={current[0]} language={language} /></div>
