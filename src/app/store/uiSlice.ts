@@ -87,7 +87,8 @@ export function createUiSlice(set: UiSet, get: UiGet) {
       if (existing) get().dismissToast(existing.id);
       const id = toastSeq++;
       set((st) => ({ toasts: [...st.toasts, { id, kind, text, action }] }));
-      window.setTimeout(() => get().dismissToast(id), kind === "error" ? 8000 : 3500);
+      // An error or a toast with a button needs time to read or act on.
+      window.setTimeout(() => get().dismissToast(id), kind === "error" || action ? 8000 : 3500);
     },
     dismissToast: (id) =>
       set((st) => ({ toasts: st.toasts.filter((t) => t.id !== id) })),
