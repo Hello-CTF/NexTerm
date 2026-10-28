@@ -222,7 +222,7 @@ describe("stream recovery: sequence cursor and reorder", () => {
     const tool = state.items.find((i) => i.role === "tool");
     expect(tool).toMatchObject({ summary: "已停止" });
     const card = state.items.find((i) => i.role === "confirm");
-    expect(card).toMatchObject({ resolution: "这次回答已停止，无需再处理" });
+    expect(card).toMatchObject({ resolution: "本次回答已停止，无需再处理" });
     expect(state.items.at(-1)).toMatchObject({ role: "outcome", outcome: "canceled", text: "已停止" });
   });
 
@@ -433,7 +433,7 @@ describe("AiSidebar stream recovery", () => {
     emit({ type: "error", message: "模型超时", retryable: true, seq: 1 });
     await flush();
 
-    expect(textOf(view!)).toContain("这次回答失败：模型超时");
+    expect(textOf(view!)).toContain("本次回答失败：模型超时");
     clickButton(view!.container, "重试");
     await flush();
 

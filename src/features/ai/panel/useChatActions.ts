@@ -169,7 +169,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     } catch (e) {
       stream.resolveSteer(target.generation, itemId, "dropped");
       setInput((prev) => (prev ? `${message}\n${prev}` : message));
-      pushToast("error", `追加的指令没有送达：${describeError(e)}`);
+      pushToast("error", `追加的指令未送达：${describeError(e)}`);
     }
   };
 
@@ -188,7 +188,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
   const retryRun = (item: ChatItem) => {
     if (item.role !== "outcome" || item.outcome !== "error" || !item.retryable) return;
     if (busy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", "AI 还在回答，请先停止再重试");
+      pushToast("info", "AI 正在回答，请先停止后再重试");
       return;
     }
     const source = [...conv.items]
@@ -306,7 +306,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
           await aiApi.confirm(input);
         }
       } catch (e) {
-        pushToast("error", `无法提交你的选择：${describeError(e)}`);
+        pushToast("error", `无法提交选择：${describeError(e)}`);
         if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
           void replayHitl(run.generation, id);
         }
@@ -369,7 +369,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
         await aiApi.answer(input);
       }
     } catch (e) {
-      pushToast("error", `无法提交你的回答：${describeError(e)}`);
+      pushToast("error", `无法提交回答：${describeError(e)}`);
       if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
         void replayHitl(run.generation, id);
       }

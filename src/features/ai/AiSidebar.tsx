@@ -119,7 +119,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (existing) return existing;
     const request = (async () => {
       if (aiTabBusyIds.has(tab.id)) {
-        const ok = await ask("AI 还在回答，关闭标签会停止它。确定关闭？", {
+        const ok = await ask("AI 正在回答，关闭标签将停止本次回答。确定关闭？", {
           title: "关闭 AI 标签",
           kind: "warning",
         });
@@ -127,7 +127,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         if (aiTabBusyIds.has(tab.id)) {
           const cancelAndConfirm = aiTabRunControls.get(tab.id);
           if (!cancelAndConfirm) {
-            pushToast("error", "没能确认 AI 已停止，标签已保留。请稍后再试");
+            pushToast("error", "未能确认 AI 已停止，标签已保留。请稍后重试");
             return false;
           }
           if (!(await cancelAndConfirm())) return false;

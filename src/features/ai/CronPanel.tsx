@@ -174,15 +174,15 @@ export function CronPanel({
     !!editingJob && actionBusy === `${editingJob.sessionId}/${editingJob.id}`;
   const profilesState = profilesError ? "error" : profilesView ? "ready" : "loading";
   const followActiveLabel = () => {
-    if (profilesState === "error") return "跟随当前档案（读取失败，状态未知）";
-    if (profilesState === "loading") return "跟随当前档案（读取中…）";
+    if (profilesState === "error") return "跟随当前档案（读取失败）";
+    if (profilesState === "loading") return "跟随当前档案（正在读取…）";
     return activeProfile
       ? `跟随当前档案「${activeProfile.name}」`
       : "跟随当前档案（当前未设置）";
   };
   const unresolvedProfileLabel = (id: string) => {
-    if (profilesState === "error") return `已存档案（读取失败，状态未知）· ${id}`;
-    if (profilesState === "loading") return `已存档案（读取中…）· ${id}`;
+    if (profilesState === "error") return `已存档案（读取失败）· ${id}`;
+    if (profilesState === "loading") return `已存档案（正在读取…）· ${id}`;
     return `未知档案（可能已删除）· ${id}`;
   };
 
@@ -251,7 +251,7 @@ export function CronPanel({
       open();
       return;
     }
-    void guardDraft("切换编辑对象").then((ok) => {
+    void guardDraft("改为编辑其它任务").then((ok) => {
       if (ok) open();
     });
   };
@@ -287,16 +287,16 @@ export function CronPanel({
     if (!draft || registering) return;
     if (editingJob && actionBusy === `${editingJob.sessionId}/${editingJob.id}`) return;
     if (!draft.prompt.trim()) {
-      setRegisterError("任务内容（提示词）不能为空");
+      setRegisterError("请填写任务内容");
       return;
     }
     if (!draft.schedule.trim()) {
-      setRegisterError("cron 表达式不能为空");
+      setRegisterError("请填写执行时间（cron 表达式）");
       return;
     }
     const timeoutSec = draft.timeoutSec.trim() === "" ? null : Number(draft.timeoutSec);
     if (timeoutSec !== null && (!Number.isFinite(timeoutSec) || timeoutSec <= 0)) {
-      setRegisterError("超时必须是正数（秒）");
+      setRegisterError("超时时间要大于 0 秒");
       return;
     }
     const modelProfileId = draft.modelProfileId.trim();
@@ -305,7 +305,7 @@ export function CronPanel({
       profilesView &&
       !profilesView.profiles.some((p) => p.id === modelProfileId)
     ) {
-      setRegisterError("所选模型档案已不存在，请重新选择");
+      setRegisterError("所选模型已被删除，请重新选择");
       return;
     }
     setRegistering(true);
@@ -343,7 +343,7 @@ export function CronPanel({
         try {
           await cronApi.unregister(created.sessionId, created.id);
           setRegisterError(
-            `保存失败：旧任务删除未成功（${describeError(e)}）。已清理重建的新任务，旧任务保持原样，可重试保存。`,
+            `无法保存：未能删除原任务（${describeError(e)}）。原任务保持不变，请重试。`,
           );
         } catch (rollbackError) {
           applyReplaceConflict({
@@ -364,7 +364,7 @@ export function CronPanel({
         try {
           await cronApi.setEnabled(created.sessionId, created.id, true);
         } catch (e) {
-          pushToast("error", `任务已重建但启用失败：${describeError(e)}；任务当前为停用状态`);
+          pushToast("error", `任务已保存，但未能启用：${describeError(e)}。任务目前为停用状态，请手动启用。`);
           setRegisterOpen(false);
           setDraft(null);
           setEditingJob(null);
@@ -399,7 +399,7 @@ export function CronPanel({
       );
       pushToast("success", updated.enabled ? "任务已启用" : "任务已停用");
     } catch (e) {
-      pushToast("error", `${job.enabled ? "停用" : "启用"}失败：${describeError(e)}`);
+      pushToast("error", `无法${job.enabled ? "停用" : "启用"}任务：${describeError(e)}`);
       if (aliveRef.current) await reload();
     } finally {
       if (aliveRef.current) setActionBusy(null);
@@ -409,7 +409,7 @@ export function CronPanel({
   const unregister = async (job: CronJob) => {
     const display = job.name?.trim() || clipText(job.prompt, 40);
     const ok = await ask(
-      `删除定时任务「${display}」？\n表达式：${job.schedule}（${job.timezone}）\n\n删除后不再执行，且无法恢复。`,
+      `删除定时任务「${display}」？\n表达式：${job.schedule}（${job.timezone}）\n\n删除后将不再执行，且无法恢复。`,
       { title: "删除定时任务", kind: "warning" },
     );
     if (!ok) return;
@@ -420,7 +420,7 @@ export function CronPanel({
       pushToast("success", "定时任务已删除");
       await reload();
     } catch (e) {
-      pushToast("error", `删除失败：${describeError(e)}`);
+      pushToast("error", `无法删除任务：${describeError(e)}`);
     } finally {
       if (aliveRef.current) setActionBusy(null);
     }
@@ -451,11 +451,11 @@ export function CronPanel({
       </div>
       {hostName && (
         <div className="nx-hint mb-1.5 truncate text-[11px]" title={hostName}>
-          绑定主机：{hostName}
+          所属主机：{hostName}
         </div>
       )}
       <p className="nx-hint mb-2 text-[11px]">
-        到达设定时间后，AI 将基于当前会话自动执行任务。需要人工确认或被禁止的操作会被拒绝，原因记录在「上次错误」中。无人值守任务不会新建终端；需要执行命令时，请在提示词中明确要求 AI 直接执行命令。
+        到达设定时间后，AI 将基于当前会话自动执行任务。需要确认或被禁止的操作会被拒绝，原因会显示在「上次错误」中。无人值守时不会新建终端；需要运行命令时，请在任务内容中明确要求 AI 直接运行命令。
       </p>
 
       {registerOpen && draft ? (
@@ -503,7 +503,7 @@ export function CronPanel({
           </div>
           {profilesError && (
             <div className="nx-hint text-[11px] text-red-300" role="alert">
-              模型档案读取失败：{profilesError}（档案列表可能不完整；「跟随当前档案」不受影响）
+              无法读取模型列表：{profilesError}。列表可能不完整，「跟随当前档案」不受影响。
             </div>
           )}
           {editingJob &&
@@ -512,8 +512,8 @@ export function CronPanel({
             profilesState !== "loading" && (
               <div className="nx-hint text-[11px] text-amber-300">
                 {profilesState === "error"
-                  ? "该任务保存的模型档案状态未知（读取失败）；请刷新重试，或改选其它档案。"
-                  : "该任务保存的模型档案已不存在（可能已删除）；请选择其它档案，或改回「跟随当前档案」。"}
+                  ? "无法确认该任务所用的模型，请刷新重试，或改选其它模型。"
+                  : "该任务所用的模型已被删除，请选择其它模型，或改回「跟随当前档案」。"}
               </div>
             )}
           <div className="flex flex-wrap items-center gap-2">
@@ -564,7 +564,7 @@ export function CronPanel({
             <button
               className="nx-btn nx-btn-primary nx-btn-sm"
               disabled={registering || editActionPending}
-              title={editActionPending ? "该行启停保存中，完成后再保存" : undefined}
+              title={editActionPending ? "正在启用或停用此任务，完成后再保存" : undefined}
               onClick={() => void submitRegister()}
             >
               {registering
@@ -584,9 +584,9 @@ export function CronPanel({
             </button>
           </div>
           <p className="nx-hint text-[11px]">
-            cron 表达式为 5 段（分、时、日、月、周），时区默认为 UTC，超时默认为 60 秒。重新启用后，从当前时间计算下次执行时间，不补执行停用期间的任务。
+            cron 表达式为 5 段（分、时、日、月、周），时区默认为 UTC，超时默认为 60 秒。重新启用后从现在起计算下次执行时间，不会补做停用期间错过的任务。
             {editingJob
-              ? " 保存将重新创建任务，任务标识和执行历史不会保留，下次执行从当前时间起算。"
+              ? " 保存时会重新创建任务，原来的执行记录不会保留，下次执行时间从现在起重新计算。"
               : ""}
           </p>
           {registerError && (
@@ -613,8 +613,8 @@ export function CronPanel({
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="break-words">
-              编辑「{replaceConflict.label}」未完成：旧任务保留，重建的新任务（已停用）也未能自动清理（
-              {replaceConflict.error}）。两条任务不会同时执行，但请手动删除其中一条。
+              「{replaceConflict.label}」未保存成功：原任务仍在，新建的副本（已停用）也未能自动删除（
+              {replaceConflict.error}）。两个任务不会同时运行，请手动删除其中一个。
             </div>
             <div className="mt-1 break-words font-mono text-[11px]">
               旧 {replaceConflict.oldKey} · 新 {replaceConflict.newKey}
@@ -635,7 +635,7 @@ export function CronPanel({
           <div className="nx-alert nx-alert-danger flex items-start gap-2" role="alert">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="break-words">读取定时任务失败：{error}</div>
+              <div className="break-words">无法读取定时任务：{error}</div>
               <button className="nx-btn nx-btn-outline nx-btn-sm mt-2" onClick={() => void reload()}>
                 <IconRefresh size={11} />
                 重试
@@ -644,7 +644,7 @@ export function CronPanel({
           </div>
         ) : (
           <div className="nx-hint py-2 text-[12px]" aria-busy="true">
-            读取中…
+            正在读取…
           </div>
         )
       ) : (
@@ -699,7 +699,7 @@ export function CronPanel({
                       )}
                     </div>
                     <div className="nx-hint text-[11px]">
-                      {nextRun ? `下次执行 ${nextRun}` : "暂无待执行时间"}
+                      {nextRun ? `下次执行 ${nextRun}` : "暂无下次执行时间"}
                       {lastRun ? ` · 上次执行 ${lastRun}` : ""}
                     </div>
                     {job.lastError && (
@@ -722,9 +722,9 @@ export function CronPanel({
                       }
                       title={
                         job.run.id
-                          ? "执行中不能编辑"
+                          ? "任务正在执行，暂时不能编辑"
                           : conflicted
-                            ? "存在未完成的编辑冲突，请先手动处理"
+                            ? "有任务没保存成功，请先按上方提示处理"
                             : editingThis && registerOpen
                               ? "正在编辑"
                               : "编辑定时任务"
@@ -751,7 +751,7 @@ export function CronPanel({
                       disabled={actionBusy !== null || (editingThis && registerOpen)}
                       title={
                         editingThis && registerOpen
-                          ? "编辑中，请先保存或取消编辑"
+                          ? "正在编辑，请先保存或取消"
                           : `删除定时任务 ${job.name?.trim() || job.id}`
                       }
                       onClick={() => void unregister(job)}
@@ -768,7 +768,7 @@ export function CronPanel({
       )}
 
       <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
-        启停和删除仅影响当前任务；删除所属 AI 会话时，其全部定时任务也会删除。
+        启用、停用和删除只影响所选任务。删除 AI 会话时，该会话的全部定时任务也会一并删除。
       </p>
     </div>
   );

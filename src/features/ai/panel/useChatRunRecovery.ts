@@ -63,8 +63,8 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       pushToast(
         "error",
         error === undefined
-          ? "没能确认任务已停止，请再点一次停止"
-          : `没能确认任务已停止：${describeError(error)}。请再点一次停止`,
+          ? "未能确认任务已停止，请重试"
+          : `未能确认任务已停止：${describeError(error)}。请重试`,
       );
     }
   }, [activeRunRef, setActiveRun, cancelWaitersRef, pushToast]);
@@ -169,7 +169,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
           if (isCurrentAiRun(latest, generation) && latest.cancellation !== "idle") {
             setActiveRun(markAiRunCancellationUnconfirmed(latest));
           }
-          pushToast("error", "没能确认任务已停止，请再点一次停止");
+          pushToast("error", "未能确认任务已停止，请重试");
           resolve(false);
         }, 5000),
       };

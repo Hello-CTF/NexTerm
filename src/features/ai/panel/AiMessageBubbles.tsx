@@ -107,7 +107,7 @@ export const ChatBubble = memo(function ChatBubble({
           {item.maxIterations ? (
             <span className="nx-badge nx-badge-amber shrink-0">已达到最大步数</span>
           ) : null}
-          <span className="whitespace-pre-wrap">这次回答失败：{item.text}</span>
+          <span className="whitespace-pre-wrap">本次回答失败：{item.text}</span>
           {item.retryable ? (
             <button
               className="nx-btn nx-btn-outline nx-btn-xs ml-auto shrink-0"

@@ -303,7 +303,7 @@ export function ModelManager({
       if (list.malformed > 0) {
         pushToast("info", `模型列表中有 ${list.malformed} 项无法识别，已忽略`);
       } else if (list.models.length === 0) {
-        pushToast("info", "这个地址没有返回任何模型，请检查接口地址和密钥，或手动填写模型名");
+        pushToast("info", "该地址未返回任何模型，请检查接口地址和密钥，或手动填写模型名");
       }
     } catch (e) {
       pushToast("error", `无法获取模型列表：${describeError(e)}。请检查接口地址、密钥和网络`);
@@ -414,7 +414,7 @@ export function ModelManager({
                     </button>
                   ))
                 ) : (
-                  <div className="nx-hint px-2 py-3 text-center text-[11px]">还没有模型档案。点击上方「+」添加，或从预设开始。</div>
+                  <div className="nx-hint px-2 py-3 text-center text-[11px]">尚无模型档案。选择上方「+」添加，或从预设开始。</div>
                 )}
               </>
             )}
@@ -730,7 +730,7 @@ export function ModelManager({
               </div>
 
               <div className="nx-hint mt-0.5">
-                API Key 由当前 NexTerm 实例加密保存；模型请求只会发送到你填写的接口地址。
+                API Key 由当前 NexTerm 实例加密保存；模型请求只会发送到所填写的接口地址。
               </div>
             </div>
           ) : (

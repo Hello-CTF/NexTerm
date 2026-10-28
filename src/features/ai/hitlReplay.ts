@@ -32,13 +32,13 @@ const SWEPT_LABEL = "已在服务端结束";
 export function hitlTerminalLabel(reason: string): string {
   switch (reason) {
     case "canceled":
-      return "这次回答已停止，无需再处理";
+      return "本次回答已停止，无需再处理";
     case "failed":
-      return "这次回答已出错，无需再处理";
+      return "本次回答已出错，无需再处理";
     case "expired":
       return "等待已过期，无需再处理";
     default:
-      return "这次回答已结束，无需再处理";
+      return "本次回答已结束，无需再处理";
   }
 }
 

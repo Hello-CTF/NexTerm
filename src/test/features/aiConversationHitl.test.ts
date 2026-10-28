@@ -151,18 +151,18 @@ describe("applyHitlReplay: event folding by per-run seq", () => {
     );
     expect(result.changed).toBe(true);
     expect(resolutionsOf(result.state)).toEqual([
-      "这次回答已出错，无需再处理",
-      "这次回答已出错，无需再处理",
-      "这次回答已出错，无需再处理",
+      "本次回答已出错，无需再处理",
+      "本次回答已出错，无需再处理",
+      "本次回答已出错，无需再处理",
     ]);
   });
 
   it("maps terminal reasons to the same closing labels as the local paths", () => {
-    expect(hitlTerminalLabel("completed")).toBe("这次回答已结束，无需再处理");
-    expect(hitlTerminalLabel("canceled")).toBe("这次回答已停止，无需再处理");
-    expect(hitlTerminalLabel("failed")).toBe("这次回答已出错，无需再处理");
+    expect(hitlTerminalLabel("completed")).toBe("本次回答已结束，无需再处理");
+    expect(hitlTerminalLabel("canceled")).toBe("本次回答已停止，无需再处理");
+    expect(hitlTerminalLabel("failed")).toBe("本次回答已出错，无需再处理");
     expect(hitlTerminalLabel("expired")).toBe("等待已过期，无需再处理");
-    expect(hitlTerminalLabel("interrupted")).toBe("这次回答已结束，无需再处理");
+    expect(hitlTerminalLabel("interrupted")).toBe("本次回答已结束，无需再处理");
   });
 
   it("leaves cards of other generations untouched", () => {
@@ -181,7 +181,7 @@ describe("applyHitlReplay: event folding by per-run seq", () => {
     const confirmCards = result.state.items.filter((i) => i.role === "confirm");
     expect(confirmCards[0]).toMatchObject({ callId: "call-1" });
     expect((confirmCards[0] as ConfirmItem).resolution).toBeUndefined();
-    expect(confirmCards[1]).toMatchObject({ callId: "call-2", resolution: "这次回答已结束，无需再处理" });
+    expect(confirmCards[1]).toMatchObject({ callId: "call-2", resolution: "本次回答已结束，无需再处理" });
   });
 });
 
@@ -309,7 +309,7 @@ describe("applyHitlReplay: snapshot reconciliation", () => {
       }),
       0,
     );
-    expect(resolutionsOf(result.state)).toEqual(["这次回答已结束，无需再处理"]);
+    expect(resolutionsOf(result.state)).toEqual(["本次回答已结束，无需再处理"]);
   });
 
   it("labels a swept card with the resumed fact when the events proved consumption", () => {

@@ -15,7 +15,7 @@ function NoModelHint({ onConfigure }: { onConfigure: () => void }) {
     let alive = true;
     Promise.resolve(modelApi.overview()).then(
       (view) => {
-        if (alive) setNone(view.profiles.length === 0);
+        if (alive) setNone((view?.profiles?.length ?? 1) === 0);
       },
       () => {},
     );
@@ -26,7 +26,7 @@ function NoModelHint({ onConfigure }: { onConfigure: () => void }) {
   if (!none) return null;
   return (
     <div className="flex flex-col items-center gap-2">
-      <div className="text-xs text-amber-300">还没有配置模型，AI 暂时无法回答。</div>
+      <div className="text-xs text-amber-300">尚未配置模型，AI 暂时无法回答。</div>
       <button className="nx-btn nx-btn-primary nx-btn-xs" onClick={onConfigure}>
         添加模型
       </button>
@@ -57,7 +57,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               <span className="nx-empty-icon">
                 <IconAlert size={19} />
               </span>
-              <div className="text-xs text-red-300">无法打开这个会话：{conversationError}。请检查网络后重试。</div>
+              <div className="text-xs text-red-300">无法打开此会话：{conversationError}。请检查网络后重试。</div>
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 onClick={() => {
@@ -75,7 +75,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               <span className="nx-empty-icon">
                 <IconBot size={19} />
               </span>
-              <div className="text-xs text-neutral-400">在下方输入你想让 AI 做的事，开始新的对话。</div>
+              <div className="text-xs text-neutral-400">在下方输入内容，开始新的对话。</div>
               <NoModelHint onConfigure={() => setModelPanelOpen(true)} />
             </div>
           )}
@@ -189,7 +189,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 )}
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs"
-                  title="拒绝这次操作，AI 会得知你已拒绝（Esc）"
+                  title="拒绝本次操作，AI 将收到拒绝通知（Esc）"
                   disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("deny")}
                 >

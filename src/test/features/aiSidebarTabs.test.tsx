@@ -194,7 +194,7 @@ describe("AiSidebar multiple tabs", () => {
 
   it("shows how to get started when no model is configured", async () => {
     await flush();
-    expect(textOf(view!)).toContain("还没有配置模型");
+    expect(textOf(view!)).toContain("尚未配置模型");
     expect(textOf(view!)).toContain("添加模型");
   });
 
@@ -230,7 +230,7 @@ describe("AiSidebar multiple tabs", () => {
     click(stripTabs(view!)[0].querySelector("button")!);
     await flush();
     expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("会停止它"),
+      expect.stringContaining("将停止本次回答"),
       expect.objectContaining({ kind: "warning" }),
     );
     expect(mocks.cancel).not.toHaveBeenCalled();

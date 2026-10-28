@@ -872,7 +872,7 @@ describe("AiSidebar conversation stream UX", () => {
     reconnect();
     await flushReplay();
     expect(textOf(view!)).not.toContain("需要你确认");
-    expect(textOf(view!)).toContain("这次回答已结束，无需再处理");
+    expect(textOf(view!)).toContain("本次回答已结束，无需再处理");
   });
 
   it("settles a rejected confirmation from the server snapshot instead of hanging", async () => {

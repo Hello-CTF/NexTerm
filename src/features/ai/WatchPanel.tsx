@@ -4,7 +4,7 @@ import { IconLoader, IconRefresh } from "../../ui/icons";
 
 const statusLabels: Record<WatchStatus, string> = {
   armed: "等待中",
-  matched: "已触发",
+  matched: "已命中",
   cancelled: "已取消",
   expired: "已过期",
   unverifiable: "无法确认",
@@ -72,7 +72,7 @@ function WatchPanelContent({
       onChangedRef.current?.();
     } catch (err) {
       if (!aliveRef.current || gen !== loadGenRef.current) return;
-      setError(`读取监视失败：${String(err)}`);
+      setError(`无法读取监视：${String(err)}`);
     } finally {
       if (aliveRef.current && gen === loadGenRef.current) setLoading(false);
     }
@@ -112,7 +112,7 @@ function WatchPanelContent({
         if (!aliveRef.current) return;
         setNotice({
           tone: "error",
-          text: `取消失败：${err instanceof Error ? err.message : String(err)}`,
+          text: `无法取消监视：${err instanceof Error ? err.message : String(err)}`,
         });
       } finally {
         if (aliveRef.current) {
@@ -143,7 +143,7 @@ function WatchPanelContent({
       <span className="font-medium">{watch.name}</span>
       <span className="min-w-0 flex-1 truncate text-neutral-500" title={watch.condition.pattern}>
         {targetLabel(watch.targetId)}
-        {conditionLabels[watch.condition.type]}「{watch.condition.pattern}」时叫醒 AI
+        {conditionLabels[watch.condition.type]}「{watch.condition.pattern}」时通知 AI
       </span>
       <span className={`nx-badge ${statusClasses[watch.status]}`}>{statusLabels[watch.status]}</span>
       {watch.repeat && <span className="nx-badge">重复</span>}
@@ -157,7 +157,7 @@ function WatchPanelContent({
           aria-busy={cancelling.has(watch.id)}
           onClick={() => void cancel(watch)}
         >
-          {cancelling.has(watch.id) ? "取消中…" : "取消监视"}
+          {cancelling.has(watch.id) ? "正在取消…" : "取消监视"}
         </button>
       )}
     </div>
@@ -181,7 +181,7 @@ function WatchPanelContent({
           {loading ? <IconLoader size={11} className="animate-spin" /> : <IconRefresh size={11} />}
         </button>
       </header>
-      <p className="nx-hint text-[11px]">监视：AI 盯着某个终端，出现指定输出或进程结束时叫醒它。不再需要时可以取消。</p>
+      <p className="nx-hint text-[11px]">监视：AI 持续观察指定终端，出现指定输出或进程结束时将收到通知。不再需要时可取消。</p>
       {error && (
         <div role="alert" className="nx-badge nx-badge-red">
           {error}
@@ -205,7 +205,7 @@ function WatchPanelContent({
         </div>
       )}
       {watches !== null && active.length === 0 && !error && (
-        <div className="py-1 text-[11px] text-neutral-500">现在没有进行中的监视</div>
+        <div className="py-1 text-[11px] text-neutral-500">当前没有进行中的监视</div>
       )}
       {active.map((w) => row(w, true))}
       {ended.length > 0 && (

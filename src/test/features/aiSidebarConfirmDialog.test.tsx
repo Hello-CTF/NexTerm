@@ -370,7 +370,7 @@ describe("AiSidebar permission request dialogs", () => {
     clickButton(mounted!.container, "重试");
     await flush();
     const retry = mocks.chat.mock.calls[1][0] as Record<string, unknown>;
-    expect(retry.message).toBe("[引用对象]\n- 生产机（ssh 会话）\n\n重试快照");
+    expect(retry.message).toBe("[引用]\n- 生产机（ssh 会话）\n\n重试快照");
     expect(retry.images).toEqual([expect.stringContaining("data:image/png;base64")]);
     expect(retry.planMode).toBe(true);
   });
@@ -466,7 +466,7 @@ describe("AiSidebar permission request dialogs", () => {
       { kind: "tab", id: "term-2", label: "构建机", path: undefined, sessionId: undefined },
       { kind: "file", id: "f1", label: "nginx.conf", path: "/etc/nginx/nginx.conf", sessionId: "s1" },
     ]);
-    expect(call.message).toContain("[引用对象]");
+    expect(call.message).toContain("[引用]");
     expect(call.message).toContain("构建机");
   });
 

@@ -164,7 +164,7 @@ describe("slash command menu", () => {
     press("Enter");
     await flush();
     expect(mocks.activate).toHaveBeenCalledWith("p2");
-    expect(mocks.toast).toHaveBeenCalledWith("success", "已切换到 Kimi");
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已切换模型：Kimi");
   });
 
   it("explains that /compact needs a conversation first", async () => {
@@ -173,7 +173,7 @@ describe("slash command menu", () => {
     press("Enter");
     await flush();
     expect(mocks.compact).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("info", "当前还没有对话内容，不需要压缩");
+    expect(mocks.toast).toHaveBeenCalledWith("info", "当前没有对话内容，无需压缩");
   });
 
   it("does not open for a slash inside the message", async () => {

@@ -249,7 +249,7 @@ describe("AiSidebar session restore", () => {
     mountSidebar();
     await flushReplay();
 
-    expect(textOf(view!)).toContain("无法打开这个会话：会话库不可用");
+    expect(textOf(view!)).toContain("无法打开此会话：会话库不可用");
     expect(textOf(view!)).not.toContain("开始新的对话");
 
     clickButton(view!.container, "重试");
@@ -263,7 +263,7 @@ describe("AiSidebar session restore", () => {
     mocks.messages.mockRejectedValueOnce(new Error("会话库不可用"));
     mountSidebar();
     await flushReplay();
-    expect(textOf(view!)).toContain("无法打开这个会话：会话库不可用");
+    expect(textOf(view!)).toContain("无法打开此会话：会话库不可用");
 
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();

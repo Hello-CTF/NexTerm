@@ -279,7 +279,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
   const composeMessage = (text: string, refList: RefChip[]): string => {
     if (refList.length === 0) return text;
     const list = refList.map((r) => `- ${r.label}（${r.detail}）`).join("\n");
-    return `[引用对象]\n${list}\n\n${text}`;
+    return `[引用]\n${list}\n\n${text}`;
   };
 
   return { isRestoreActive, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, imageInputRef };

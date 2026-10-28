@@ -175,7 +175,7 @@ describe("AiSidebar history conversation run status", () => {
 
     click(mounted!.container.querySelector('button[title="删除「在途会话」"]')!);
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
-    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("还在工作"));
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("正在工作"));
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.conversationDelete).not.toHaveBeenCalled();
     expect(text()).toContain("在途会话");
