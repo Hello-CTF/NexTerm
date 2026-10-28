@@ -51,7 +51,7 @@ test("full-ci opts into every gate even for a docs PR", () => {
 
 test("platform files, module manifests, build tooling and unknown configuration fail closed", () => {
   for (const file of ["internal/pty/pty_windows.go", "go.mod", "go.sum", "build/config.yml", ".github/workflows/ci.yml",
-    "internal/ai/privacy/inference/engine_cgo.go", "internal/ai/privacy/inference/ort.c", "scripts/ai-privacy-runtime.mjs", "scripts/lib/privacy-runtime.mjs"]) {
+    "internal/ai/privacy/inference/engine.go", "internal/ai/privacy/inference/ort_api.go", "scripts/ai-privacy-runtime.mjs", "scripts/lib/privacy-runtime.mjs"]) {
     const plan = planCI({ isPR: true, files: [file] });
     assert.deepEqual(plan.matrix, planCI({ isPR: false }).matrix, file);
   }

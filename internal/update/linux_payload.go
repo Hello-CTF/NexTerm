@@ -3,6 +3,7 @@ package update
 import (
 	"archive/tar"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -99,7 +100,7 @@ func installLinuxPayload(ctx context.Context, reader *tar.Reader, executable str
 	if !found {
 		return errPayloadMissingExecutable
 	}
-	if hasRuntime {
+	if hasRuntime && !runtimeUnavailable(runtimeStage) {
 		const name = "libonnxruntime.so"
 		if info, err := os.Stat(filepath.Join(runtimeStage, name)); err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("更新包缺少 AI 运行时 %s", name)
@@ -141,4 +142,18 @@ func installLinuxPayload(ctx context.Context, reader *tar.Reader, executable str
 		return err
 	}
 	return nil
+}
+
+// runtimeUnavailable reports whether runtime.json in directory declares that no
+// ONNX Runtime library exists for this target. Such a payload ships only that
+// manifest, so the library must not be required.
+func runtimeUnavailable(directory string) bool {
+	data, err := os.ReadFile(filepath.Join(directory, "runtime.json"))
+	if err != nil {
+		return false
+	}
+	var manifest struct {
+		Unavailable string `json:"unavailable"`
+	}
+	return json.Unmarshal(data, &manifest) == nil && manifest.Unavailable != ""
 }

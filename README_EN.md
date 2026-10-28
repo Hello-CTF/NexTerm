@@ -75,7 +75,7 @@ Mobile builds are previews and are not officially supported until real-device si
 
 ## Deploy the server
 
-On Linux with systemd (amd64 / arm64; the server is a static binary that does not depend on a glibc version, while the optional local AI redaction library needs glibc 2.27 or newer with libstdc++, so musl distributions such as Alpine lose only that feature), run as root:
+On Linux with systemd (amd64 / arm64; the server runs on any glibc-based Linux with no minimum glibc version, and musl distributions such as Alpine are not supported; the optional local AI redaction library additionally needs glibc 2.27 or newer with libstdc++), run as root:
 
 ```bash
 curl -fsSL https://nexterm.work/install.sh | sudo bash
@@ -95,7 +95,7 @@ The script downloads the latest server archive, verifies it against `SHA256SUMS`
 
 ## Development
 
-Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a static `CGO_ENABLED=0` build that can be produced on any host.
+Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` build (ONNX Runtime is loaded through purego; it links glibc dynamically with no version requirement) that can be produced on any host, and the Windows desktop needs no C compiler either.
 
 ```bash
 pnpm install && pnpm build && go build ./...

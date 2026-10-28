@@ -32,8 +32,10 @@ const HELP_TEXT = `#!/usr/bin/env node
 /**
  * Go/Wails delivery entry point. Desktop and server builds stage the latest stable
  * ONNX Runtime 1.x library (NEXTERM_ORT_VERSION pins one) in ai-runtime/ (no model
- * weights are bundled); the Linux server is a static CGO_ENABLED=0 binary. The Windows
- * desktop needs a MinGW-w64 CC for the target; non-Windows hosts must set CC.
+ * weights are bundled). Only the Linux and macOS desktops use cgo (Wails); every other
+ * binary is CGO_ENABLED=0. The Linux server loads ONNX Runtime through purego, so it is
+ * dynamically linked but glibc-portable (libc/libdl/libpthread only, no GLIBC_ version
+ * requirements); the Linux agent and helpers stay fully static.
  * Artifact versions come from NEXTERM_RELEASE_VERSION (set from the release
  * tag in CI); the wails.json/package.json versions are 0.0.0 placeholders.
  *
@@ -190,7 +192,7 @@ function assertTarget(kind, goos, goarch) {
 }
 
 function buildEnvironment(goos, goarch, kind) {
-  const cgo = kind === "desktop" ? "1" : "0";
+  const cgo = kind === "desktop" && (goos === "darwin" || goos === "linux") ? "1" : "0";
   const target = kind === "helper" ? helperTarget(goos, goarch) : null;
   const env = {
     ...process.env,
@@ -634,9 +636,6 @@ function privacyRuntimeAssertions(directory, goos, goarch, libraryDirectory = di
 
 function compileEnvironment(goos, goarch, kind) {
   const env = buildEnvironment(goos, goarch, kind);
-  if (kind === "desktop" && goos === "windows" && HOST_OS !== "windows" && !process.env.CC) {
-    die("the CGO Windows desktop cannot be cross-built without a MinGW-w64 C compiler; set CC for the target (for example x86_64-w64-mingw32-gcc) or build on Windows");
-  }
   return env;
 }
 
@@ -764,14 +763,83 @@ function inspectBinary(file) {
     const phoff = data[4] === 1 ? read32(0x1c) : Number(read64(0x20));
     const phentsize = read16(data[4] === 1 ? 0x2a : 0x36);
     const phnum = read16(data[4] === 1 ? 0x2c : 0x38);
+    const is64 = data[4] === 2;
+    const readWord = (offset) => (is64 ? Number(read64(offset)) : read32(offset));
+    const segments = [];
     let dynamic = false;
+    let interpreter = null;
+    let dynamicSegment = null;
     for (let index = 0; index < phnum; index += 1) {
-      const type = read32(phoff + index * phentsize);
-      if (type === 2) dynamic = true;
+      const base = phoff + index * phentsize;
+      const type = read32(base);
+      const segment = is64
+        ? { offset: Number(read64(base + 8)), vaddr: Number(read64(base + 16)), filesz: Number(read64(base + 32)) }
+        : { offset: read32(base + 4), vaddr: read32(base + 8), filesz: read32(base + 16) };
+      if (type === 1) segments.push(segment);
+      if (type === 2) { dynamic = true; dynamicSegment = segment; }
+      if (type === 3) interpreter = data.toString("latin1", segment.offset, segment.offset + segment.filesz).replace(/\0.*$/s, "");
     }
-    return { format: "elf", architecture, static: !dynamic };
+    const result = { format: "elf", architecture, static: !dynamic };
+    if (!dynamic) return result;
+    const toOffset = (vaddr) => {
+      const segment = segments.find((candidate) => vaddr >= candidate.vaddr && vaddr < candidate.vaddr + candidate.filesz);
+      if (!segment) throw new Error(`ELF address 0x${vaddr.toString(16)} is outside every PT_LOAD segment`);
+      return segment.offset + (vaddr - segment.vaddr);
+    };
+    const entries = [];
+    const entrySize = is64 ? 16 : 8;
+    for (let at = dynamicSegment.offset; at + entrySize <= dynamicSegment.offset + dynamicSegment.filesz; at += entrySize) {
+      const tag = is64 ? Number(read64(at)) : read32(at);
+      if (tag === 0) break;
+      entries.push({ tag, value: readWord(at + entrySize / 2) });
+    }
+    const value = (tag) => entries.find((entry) => entry.tag === tag)?.value;
+    const strtab = value(5);
+    const cstring = (offset) => {
+      const end = data.indexOf(0, offset);
+      return data.toString("latin1", offset, end);
+    };
+    const needed = strtab === undefined ? [] : entries.filter((entry) => entry.tag === 1).map((entry) => cstring(toOffset(strtab) + entry.value));
+    // DT_VERNEED (0x6ffffffe) lists the versioned symbols the binary requires from each library.
+    const verneed = value(0x6ffffffe);
+    const verneedNum = value(0x6fffffff) ?? 0;
+    const versionRequirements = [];
+    if (verneed !== undefined && strtab !== undefined) {
+      let at = toOffset(verneed);
+      for (let entry = 0; entry < verneedNum; entry += 1) {
+        const count = read16(at + 2);
+        const file = cstring(toOffset(strtab) + read32(at + 4));
+        let aux = at + read32(at + 8);
+        for (let index = 0; index < count; index += 1) {
+          versionRequirements.push({ file, version: cstring(toOffset(strtab) + read32(aux + 8)) });
+          aux += read32(aux + 12);
+        }
+        const next = read32(at + 12);
+        if (next === 0) break;
+        at += next;
+      }
+    }
+    return { ...result, interpreter, needed, versionRequirements };
   }
   throw new Error("unknown binary format");
+}
+
+const GLIBC_NEEDED = new Set(["libc.so.6", "libdl.so.2", "libpthread.so.0"]);
+const GLIBC_INTERPRETER = { amd64: "/lib64/ld-linux-x86-64.so.2", arm64: "/lib/ld-linux-aarch64.so.1" };
+const GLIBC_MAX_VERSION = [2, 17];
+
+// A purego (CGO_ENABLED=0) binary is dynamically linked against glibc only; this keeps it runnable on any glibc Linux.
+function glibcPortableProblems(inspected, goarch) {
+  if (inspected.static) return [];
+  const problems = [];
+  for (const name of inspected.needed ?? []) if (!GLIBC_NEEDED.has(name)) problems.push(`unexpected NEEDED ${name}`);
+  if (inspected.interpreter !== GLIBC_INTERPRETER[goarch]) problems.push(`interpreter ${inspected.interpreter} is not ${GLIBC_INTERPRETER[goarch]}`);
+  for (const { file, version } of inspected.versionRequirements ?? []) {
+    const match = /^GLIBC_(\d+)\.(\d+)/.exec(version);
+    const [major, minor] = match ? [Number(match[1]), Number(match[2])] : [Infinity, Infinity];
+    if (!match || major > GLIBC_MAX_VERSION[0] || (major === GLIBC_MAX_VERSION[0] && minor > GLIBC_MAX_VERSION[1])) problems.push(`symbol version ${version} required from ${file}`);
+  }
+  return problems;
 }
 
 function assertion(id, passed, detail) {
@@ -789,7 +857,11 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
     result.push(assertion("binary-format", inspected.format === ({ windows: "pe", darwin: "mach-o", linux: "elf" })[goos], JSON.stringify(inspected)));
     result.push(assertion("binary-architecture", inspected.architecture === expectedGOARCH, `expected ${goos}/${goarch} (GOARCH=${expectedGOARCH}); actual ${inspected.format}/${inspected.architecture}`));
     if (kind === "desktop" && goos === "windows") result.push(assertion("windows-icon-resource", inspected.resourceRva > 0, inspected.resourceRva > 0 ? `PE resource directory RVA 0x${inspected.resourceRva.toString(16)}` : "PE resource directory is empty; the .syso icon resource was not linked"));
-    if ((kind === "agent" || kind === "server") && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
+    if (kind === "agent" && goos === "linux") result.push(assertion("static-linux-agent", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
+    if (kind === "server" && goos === "linux") {
+      const problems = glibcPortableProblems(inspected, goarch);
+      result.push(assertion("glibc-portable-linux-server", problems.length === 0, problems.length === 0 ? "static, or glibc-only NEEDED with the standard interpreter and no GLIBC_ version requirement above 2.17" : problems.join("; ")));
+    }
     if (kind === "helper" && goos === "linux") result.push(assertion("static-linux-helper", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
   } catch (error) {
     result.push(assertion("binary-format", false, String(error)));
@@ -1111,7 +1183,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     schema_version: 2,
     id,
     kind,
-    platform: { os: goos, arch: goarch, cgo: cgo === "1" ? "enabled-for-native-platform-and-privacy-inference" : "disabled", ...(target?.goarm ? { goarm: target.goarm } : {}) },
+    platform: { os: goos, arch: goarch, cgo: cgo === "1" ? "enabled-only-for-wails-platform-layer" : "disabled", ...(target?.goarm ? { goarm: target.goarm } : {}) },
     version: VERSION,
     commit: COMMIT,
     source_commit: SOURCE_COMMIT,

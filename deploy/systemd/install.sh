@@ -1253,7 +1253,7 @@ preflight_server_binary() {
   local output rc=0 missing
   output="$("$SOURCE_DIR/nexterm-server" --version 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    die "payload nexterm-server cannot run on this host (exit $rc): ${output:-no output}; it requires a matching CPU architecture"
+    die "payload nexterm-server cannot run on this host (exit $rc): ${output:-no output}; it requires a matching CPU architecture and a glibc-based Linux (musl distributions such as Alpine are not supported)"
   fi
   log "payload server version: ${output:-unknown}"
   if [ -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] && command -v ldd >/dev/null 2>&1; then
@@ -1272,7 +1272,10 @@ run_install() {
   done
   [ -f "$SOURCE_DIR/web/index.html" ] || die "payload is missing web/index.html"
   if [ -d "$SOURCE_DIR/ai-runtime" ]; then
-    [ -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] || die "payload is missing ai-runtime/libonnxruntime.so"
+    # A target without an upstream ONNX Runtime build ships only runtime.json with an "unavailable" reason.
+    if [ ! -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] && ! grep -q '"unavailable"' "$SOURCE_DIR/ai-runtime/runtime.json" 2>/dev/null; then
+      die "payload is missing ai-runtime/libonnxruntime.so"
+    fi
   fi
   preflight_server_binary
   detect_platform
