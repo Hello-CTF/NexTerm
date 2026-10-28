@@ -419,7 +419,7 @@ export function EnrollPanel(props: EnrollPanelProps) {
               </>
             )}
             <div className="text-[11.5px] text-neutral-400">
-              安装命令会注册随用户登录自动启动的后台服务（Linux 使用 systemd --user，macOS 使用 launchd，Windows 使用计划任务）。数据目录默认为用户数据目录，可通过环境变量 NEXTERM_DATA_DIR 同时覆盖接入与安装。
+              安装命令会注册随用户登录自动启动的后台服务（Linux 使用 systemd --user，macOS 使用 launchd，Windows 使用计划任务）。数据目录为可选项，默认 ~/.local/share/NexTerm（Windows 为 %LOCALAPPDATA%\NexTerm），可通过环境变量 NEXTERM_DATA_DIR 或 --data-dir 指定。
             </div>
           </div>
         </details>

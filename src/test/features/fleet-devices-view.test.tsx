@@ -1111,19 +1111,17 @@ describe("Device management view - enrollment code issuance", () => {
     expect(labels).not.toContain("完成");
     expect(labels).not.toContain("刷新设备列表");
 
-    // enroll and install share one data directory: a double-quoted single argument, expansion priority
-    // NEXTERM_DATA_DIR > XDG_DATA_HOME > $HOME (matches the override promise in the copy).
-    const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
+    // The data directory is optional: the CLI resolves --data-dir > NEXTERM_DATA_DIR > default itself.
     const codes = [...document.querySelectorAll("code")].map((c) => c.textContent ?? "");
     expect(codes).toContain(
-      `nexterm-agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir ${dataDir}`,
+      `nexterm-agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1'`,
     );
-    expect(codes).toContain(`nexterm-agent install --data-dir ${dataDir}`);
+    expect(codes).toContain(`nexterm-agent install`);
     // The fallback address lives inside the "更多选项" disclosure.
     const more = [...document.querySelectorAll("details")].find((d) => d.querySelector("summary")?.textContent === "更多选项");
     expect(more?.open).toBe(false);
     expect(more?.textContent).toContain(
-      `nexterm-agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure --data-dir ${dataDir}`,
+      `nexterm-agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure`,
     );
   });
 

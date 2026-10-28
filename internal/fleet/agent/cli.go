@@ -89,6 +89,7 @@ func RunCLIWithServicePrefix(args []string, servicePrefix []string, getenv func(
 
 func printCLIUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "用法：agent <enroll|run|install|uninstall|status|update|version> [选项]")
+	fmt.Fprintln(stderr, "  --data-dir <目录>  数据目录（可选；默认 ~/.local/share/NexTerm，Windows 为 %LOCALAPPDATA%\\NexTerm，也可通过 NEXTERM_DATA_DIR 指定）")
 	fmt.Fprintln(stderr, "  update|upgrade [--version <版本>] [--yes|-y] [--force|-f] [--check]  从官方 release 升级已安装的设备代理")
 }
 
@@ -112,14 +113,45 @@ func (writer redactingCLIWriter) Write(input []byte) (int, error) {
 	return len(input), nil
 }
 
+// dataDirUsage is the shared flag description; the default mirrors public/install-device.sh and install-device.ps1.
+const dataDirUsage = "数据目录（可选；默认 ~/.local/share/NexTerm（Windows 为 %LOCALAPPDATA%\\NexTerm），也可通过 NEXTERM_DATA_DIR 指定）"
+
+// DefaultDataDir returns the standard agent data directory for goos. Unix hosts use
+// ${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm and Windows uses %LOCALAPPDATA%\NexTerm, identical to the install scripts.
+func DefaultDataDir(goos string, getenv func(string) string, homeDir func() (string, error)) (string, error) {
+	if goos == "windows" {
+		if base := getenv("LOCALAPPDATA"); base != "" {
+			return filepath.Join(base, "NexTerm"), nil
+		}
+		home, err := homeDir()
+		if err != nil || home == "" {
+			return "", errors.New("无法确定默认数据目录，请使用 --data-dir 或 NEXTERM_DATA_DIR 指定")
+		}
+		return filepath.Join(home, "AppData", "Local", "NexTerm"), nil
+	}
+	if base := getenv("XDG_DATA_HOME"); base != "" {
+		return filepath.Join(base, "NexTerm"), nil
+	}
+	home, err := homeDir()
+	if err != nil || home == "" {
+		return "", errors.New("无法确定默认数据目录，请使用 --data-dir 或 NEXTERM_DATA_DIR 指定")
+	}
+	return filepath.Join(home, ".local", "share", "NexTerm"), nil
+}
+
 func resolveDataDir(flagValue string, getenv func(string) string) (string, error) {
+	return resolveDataDirFor(flagValue, runtime.GOOS, getenv, os.UserHomeDir)
+}
+
+// resolveDataDirFor applies the precedence flag, NEXTERM_DATA_DIR, then the standard default.
+func resolveDataDirFor(flagValue, goos string, getenv func(string) string, homeDir func() (string, error)) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
 	if value := getenv("NEXTERM_DATA_DIR"); value != "" {
 		return value, nil
 	}
-	return "", errors.New("请指定 --data-dir 或设置 NEXTERM_DATA_DIR")
+	return DefaultDataDir(goos, getenv, homeDir)
 }
 
 func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
@@ -127,7 +159,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 	server := set.String("server", "", "服务器地址（必填）")
 	code := set.String("code", "", "设备注册码（必填）")
 	name := set.String("name", "", "设备名（默认为主机名）")
-	dataDir := set.String("data-dir", "", "数据目录（默认为 NEXTERM_DATA_DIR）")
+	dataDir := set.String("data-dir", "", dataDirUsage)
 	insecure := set.Bool("insecure", false, "跳过 TLS 证书校验（仅用于受信任的自签名服务器）")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
@@ -194,7 +226,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 
 func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("run", stderr)
-	dataDir := set.String("data-dir", "", "数据目录（默认为 NEXTERM_DATA_DIR）")
+	dataDir := set.String("data-dir", "", dataDirUsage)
 	pprofAddr := set.String("pprof-addr", "", "pprof 监听地址（默认为 NEXTERM_PPROF_ADDR；仅限回环地址，显式指定 0.0.0.0 除外）")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
@@ -238,6 +270,10 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		defer shutdownCancel()
 		_ = pprofServer.Close(shutdownCtx)
 	}()
+	if _, statErr := os.Stat(dir); errors.Is(statErr, os.ErrNotExist) {
+		fmt.Fprintf(stderr, "未找到设备代理的数据目录：%s。设备可能尚未接入。\n", dir)
+		return ExitError
+	}
 	store := StoreAt(dir)
 	config, err := store.Load()
 	if errors.Is(err, ErrNotEnrolled) {
@@ -297,7 +333,7 @@ func cliUninstall(args []string, getenv func(string) string, stdout, stderr io.W
 
 func cliServiceChange(command string, args []string, getenv func(string) string, stdout, stderr io.Writer, action func(context.Context, ServiceManager, string, string) error) int {
 	set := newFlagSet(command, stderr)
-	dataDir := set.String("data-dir", "", "数据目录（可选；默认使用标准位置，也可通过 NEXTERM_DATA_DIR 指定）")
+	dataDir := set.String("data-dir", "", dataDirUsage)
 	shell := set.String("shell", "", "终端使用的 shell 绝对路径（仅 install 使用；auto 表示清除设置，改用账户登录 shell）")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
@@ -340,7 +376,7 @@ func cliServiceChange(command string, args []string, getenv func(string) string,
 
 func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("status", stderr)
-	dataDir := set.String("data-dir", "", "数据目录（默认为 NEXTERM_DATA_DIR）")
+	dataDir := set.String("data-dir", "", dataDirUsage)
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -348,6 +384,10 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 	if err != nil {
 		printCLIError(stderr, "agent status:", err)
 		return ExitUsage
+	}
+	if _, statErr := os.Stat(dir); errors.Is(statErr, os.ErrNotExist) {
+		fmt.Fprintf(stderr, "未找到设备代理的数据目录：%s。设备可能尚未接入。\n", dir)
+		return ExitError
 	}
 	store := StoreAt(dir)
 	config, err := store.Load()

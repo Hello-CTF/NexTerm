@@ -110,11 +110,6 @@ func TestCLIUsageErrors(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	noEnv := func(string) string { return "" }
-	if code := RunCLI([]string{"status"}, noEnv, &stdout, &stderr); code != ExitUsage {
-		t.Fatal("status without data dir must be usage error")
-	}
-	stdout.Reset()
-	stderr.Reset()
 	if code := RunCLI([]string{"run", "-data-dir", t.TempDir(), "-pprof-addr", "192.168.1.10:6060"}, noEnv, &stdout, &stderr); code != ExitUsage {
 		t.Fatal("run with a non-loopback pprof address must be usage error")
 	}

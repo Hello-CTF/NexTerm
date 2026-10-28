@@ -43,18 +43,12 @@ import { releaseOrNull, shellQuote } from "./installCommand";
 import { showSettingsSection } from "../settings/settingsNavigation";
 
 
-// The data directory matches the repo's per-user convention (platform.desktopDataDir: XDG_DATA_HOME
-// or ~/.local/share), writable by regular users, fitting systemd --user / launchd per-user.
-// Double quotes let the shell expand before invocation: NEXTERM_DATA_DIR takes top priority (matching the copy's override promise;
-// in the CLI flags beat env, so the override must be embedded into the flag value), then XDG_DATA_HOME, finally $HOME.
-const AGENT_DATA_DIR = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
-
 function enrollCommand(baseUrl: string, insecure: boolean, code: string): string {
-  return `nexterm-agent enroll --server ${shellQuote(baseUrl)} --code ${shellQuote(code)}${insecure ? " --insecure" : ""} --data-dir ${AGENT_DATA_DIR}`;
+  return `nexterm-agent enroll --server ${shellQuote(baseUrl)} --code ${shellQuote(code)}${insecure ? " --insecure" : ""}`;
 }
 
 function installCommand(): string {
-  return `nexterm-agent install --data-dir ${AGENT_DATA_DIR}`;
+  return `nexterm-agent install`;
 }
 
 function copyText(text: string, pushToast: (kind: "info" | "error" | "success", text: string) => void, what: string): void {
