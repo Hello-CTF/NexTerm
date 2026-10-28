@@ -101,9 +101,9 @@ func aiGrantKindStrings(kinds []guard.GrantKind) []string {
 // collectAIGrantObjects emits one object per device grant, grant rule, and per-device permission mode;
 // grants and rules carry per-entry revisions, modes share the mode map row's revision as their LWW clock (same tradeoff as ai_profiles).
 // Grants, rules, and modes use the request owner's settings keys; the sync object IDs and payload shapes stay unchanged.
-// Rejected pre-1.3.0 grant records are never pushed: they are reported on the round (report is nil on the browser
-// collect path, where the grant panel lists them as legacy) instead of propagating unmigrated data to other devices.
-func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]localObject, report *SyncReport) error {
+// Rejected pre-1.3.0 grant records are never pushed, so unmigrated data does not propagate to other devices; the grant
+// panel lists them as legacy.
+func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]localObject) error {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		return err
 	}
@@ -115,9 +115,6 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 		grants, err := guard.DecodeDeviceGrants(value)
 		if err != nil {
 			return ipc.WrapError(ipc.CodeBadParam, "AI 设备授权数据损坏", err)
-		}
-		if legacy := grants.LegacyIDs(); len(legacy) > 0 && report != nil {
-			report.warnf("%d 条 AI 设备授权为 1.3.0 之前的旧格式，在这台设备上不生效，也不会从这台设备推送（其他设备上的同一授权可能仍然有效），请在 AI 授权设置中重新授权或清除：%s", len(legacy), strings.Join(legacy, ", "))
 		}
 		for _, grant := range grants.Current {
 			id := aiGrantDevicePrefix + grant.DeviceID
@@ -136,9 +133,6 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 		rules, err := guard.DecodeGrantRules(value)
 		if err != nil {
 			return ipc.WrapError(ipc.CodeBadParam, "AI 授权规则数据损坏", err)
-		}
-		if legacy := rules.LegacyIDs(); len(legacy) > 0 && report != nil {
-			report.warnf("%d 条 AI 授权规则为 1.3.0 之前的旧格式，在这台设备上不生效，也不会从这台设备推送（其他设备上的同一规则可能仍然有效），请在 AI 授权设置中重新添加或清除：%s", len(legacy), strings.Join(legacy, ", "))
 		}
 		for _, rule := range rules.Current {
 			id := aiGrantRulePrefix + rule.ID
@@ -982,7 +976,7 @@ func (s *Service) CollectAIPermission(ctx context.Context) (CollectAIPermission,
 // CollectAIGrants lists device grants, grant rules, and per-device permission modes for the browser collect path; no secrets are involved.
 func (s *Service) CollectAIGrants(ctx context.Context) (CollectAIGrants, error) {
 	objects := map[string]localObject{}
-	if err := s.engine.collectAIGrantObjects(ctx, objects, nil); err != nil {
+	if err := s.engine.collectAIGrantObjects(ctx, objects); err != nil {
 		return CollectAIGrants{}, err
 	}
 	result := CollectAIGrants{Grants: []CollectAIGrantDevice{}, Rules: []CollectAIGrantRule{}, Modes: []CollectAIGrantMode{}}

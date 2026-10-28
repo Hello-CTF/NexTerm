@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -903,7 +902,7 @@ func TestApplyAIGrantDeviceBindsExplicitPermanence(t *testing.T) {
 }
 
 // Pre-1.3.0 device grant records (no permanence marker or generation) are rejected, not migrated: the
-// collector does not push them, the round reports them as a visible warning, the local row stays
+// collector does not push them, the round stays silent about them, the local row stays
 // byte-identical, and other devices never receive them. Current-format records in the same row still sync.
 func TestEngineAIGrantLegacyRecordIsNotPushed(t *testing.T) {
 	server := newTestSyncServer(t)
@@ -918,14 +917,8 @@ func TestEngineAIGrantLegacyRecordIsNotPushed(t *testing.T) {
 	row := `{"dev-legacy":{"deviceId":"dev-legacy","kinds":["terminal_write"],"updatedAt":100},"dev-current":{"deviceId":"dev-current","kinds":["db_query"],"permanent":true,"updatedAt":100,"generation":"gen-current"}}`
 	putPreferenceSetting(t, deviceA, guard.DeviceGrantsSettingKey, row, 100)
 	report := syncDevice(t, deviceA, server, "alice", "alice-pw-123")
-	warned := false
-	for _, warning := range report.Warnings {
-		if strings.Contains(warning, "1.3.0") && strings.Contains(warning, "dev-legacy") {
-			warned = true
-		}
-	}
-	if !warned {
-		t.Fatalf("legacy grant was skipped without a visible warning: %v", report.Warnings)
+	if len(report.Warnings) != 0 {
+		t.Fatalf("a legacy grant must be skipped silently: %v", report.Warnings)
 	}
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 

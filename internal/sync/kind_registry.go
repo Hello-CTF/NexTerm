@@ -259,7 +259,7 @@ func init() {
 				return e.applyAIGrantTombstone(ctx, objectID, tombstone.DeletedAt, report)
 			},
 			collect: func(e *Engine, ctx context.Context, c *localCollection) error {
-				return e.collectAIGrantObjects(ctx, c.objects, c.report)
+				return e.collectAIGrantObjects(ctx, c.objects)
 			},
 			collectNeedsUser: true,
 		},
