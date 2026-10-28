@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -30,6 +31,9 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	}
 	defer compressed.Close()
 	if err := installLinuxPayload(ctx, tar.NewReader(compressed), m.ExePath); err != nil {
+		if errors.Is(err, errPayloadMissingExecutable) {
+			return userErrorf(UserErrorIO, "%s 中没有 nexterm-desktop", filepath.Base(archive))
+		}
 		return userErrorf(UserErrorIO, "安装更新文件失败: %w", err)
 	}
 	m.restartTarget = m.ExePath

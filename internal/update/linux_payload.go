@@ -12,6 +12,9 @@ import (
 	"strings"
 )
 
+// errPayloadMissingExecutable lets callers name the archive that lacked the executable.
+var errPayloadMissingExecutable = errors.New("更新包中没有 nexterm-desktop")
+
 // installLinuxPayload stages the executable and its optional native runtime
 // together. An interrupted extraction cannot publish a half-written library.
 func installLinuxPayload(ctx context.Context, reader *tar.Reader, executable string) error {
@@ -94,7 +97,7 @@ func installLinuxPayload(ctx context.Context, reader *tar.Reader, executable str
 		}
 	}
 	if !found {
-		return errors.New("更新包中没有 nexterm-desktop")
+		return errPayloadMissingExecutable
 	}
 	if hasRuntime {
 		const name = "libonnxruntime.so"
