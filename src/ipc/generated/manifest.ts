@@ -740,6 +740,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsFrontendReport", ts: "DiagnosticsFrontendReport" },
       output: { go: "any", ts: "unknown" },
     },
+    "diagnostics_reveal_archive": {
+      scope: "diagnostics",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.diagnosticsPathRequest", ts: "DiagnosticsPathRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "diagnostics_status": {
       scope: "diagnostics",
       nested: false,
@@ -3247,6 +3255,10 @@ export interface IPCCommandTypeMap {
   };
   "diagnostics_report_frontend": {
     input: contractTypes.DiagnosticsFrontendReport;
+    output: unknown;
+  };
+  "diagnostics_reveal_archive": {
+    input: contractTypes.DiagnosticsPathRequest;
     output: unknown;
   };
   "diagnostics_status": {

@@ -95,6 +95,33 @@ func ResolveCapture(paths platform.Paths, dir string) (string, error) {
 	return candidate, nil
 }
 
+// ResolveArchive validates that file is a plain .zip file directly under the capture root and returns its
+// cleaned path. Nested paths, traversal, symlinks and other file types are rejected.
+func ResolveArchive(paths platform.Paths, file string) (string, error) {
+	if strings.TrimSpace(file) == "" {
+		return "", errors.New("archive path is empty")
+	}
+	root, err := filepath.Abs(Root(paths))
+	if err != nil {
+		return "", err
+	}
+	candidate := filepath.Clean(file)
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(root, candidate)
+	}
+	if filepath.Dir(candidate) != root || !strings.EqualFold(filepath.Ext(candidate), ".zip") {
+		return "", fmt.Errorf("archive must be a .zip file directly under %s", root)
+	}
+	info, err := os.Lstat(candidate)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("archive is not a plain file")
+	}
+	return candidate, nil
+}
+
 // Pack zips a capture folder into <root>/<name>.zip and returns the archive path.
 func Pack(paths platform.Paths, dir string) (string, error) {
 	src, err := ResolveCapture(paths, dir)

@@ -3,8 +3,9 @@ import { diagnosticsApi, type DiagnosticsCapture, type DiagnosticsStatus } from 
 import { toAppError } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { ask } from "../../ui/dialogs";
+import { copyText } from "../../ui/clipboard";
 import { formatBytes } from "../../ui/format";
-import { IconActivity, IconArchive, IconFolderOpen, IconLoader, IconTrash } from "../../ui/icons";
+import { IconActivity, IconArchive, IconCopy, IconFolderOpen, IconLoader, IconTrash } from "../../ui/icons";
 
 function formatTime(timeMs: number): string {
   return timeMs > 0 ? new Date(timeMs).toLocaleString() : "";
@@ -62,6 +63,24 @@ export function DiagnosticsCard() {
     setError(null);
     try {
       await diagnosticsApi.openFolder(path);
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const revealArchive = async (path: string) => {
+    setError(null);
+    try {
+      await diagnosticsApi.revealArchive(path);
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const copyPath = async (path: string) => {
+    setError(null);
+    try {
+      await copyText(path);
     } catch (e) {
       fail(e);
     }
@@ -182,6 +201,12 @@ export function DiagnosticsCard() {
             开启下次启动的调试模式
           </button>
         )}
+        {canOpen && (
+          <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void openFolder("")}>
+            <IconFolderOpen size={12} />
+            打开记录目录
+          </button>
+        )}
       </div>
 
       {error && (
@@ -247,7 +272,29 @@ export function DiagnosticsCard() {
                   )}
                 </div>
                 {(packed[capture.name] || capture.archive) && (
-                  <div className="nx-hint mt-1 break-all">压缩包：{packed[capture.name] || capture.archive}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <span className="nx-hint min-w-0 flex-1 break-all">压缩包：{packed[capture.name] || capture.archive}</span>
+                    {canOpen && (
+                      <button
+                        type="button"
+                        className="nx-btn nx-btn-outline nx-btn-sm"
+                        aria-label={`在文件夹中显示 ${capture.name}`}
+                        onClick={() => void revealArchive(packed[capture.name] || capture.archive || "")}
+                      >
+                        <IconFolderOpen size={12} />
+                        在文件夹中显示
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="nx-btn nx-btn-outline nx-btn-sm"
+                      aria-label={`复制路径 ${capture.name}`}
+                      onClick={() => void copyPath(packed[capture.name] || capture.archive || "")}
+                    >
+                      <IconCopy size={12} />
+                      复制路径
+                    </button>
+                  </div>
                 )}
               </li>
             ))}
