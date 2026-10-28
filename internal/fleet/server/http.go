@@ -77,7 +77,8 @@ func writeFleetFailure(w http.ResponseWriter, err error) {
 	switch normalized.Code {
 	case ipc.CodeBadParam:
 		status = http.StatusBadRequest
-	case ipc.CodeForbidden:
+	case ipc.CodeForbidden, codeOwnerUnavailable:
+		// owner_unavailable stays 403 so agents that predate it keep treating the response as a denial.
 		status = http.StatusForbidden
 	case ipc.CodeNotFound:
 		status = http.StatusNotFound

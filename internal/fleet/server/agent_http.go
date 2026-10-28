@@ -9,6 +9,7 @@ import (
 // serveAgentSync handles POST /agent/sync: device credential auth + metrics persistence + service state write-back,
 // with the response carrying the server-desired config (desired_autostart / metrics_interval_ms / terminal_enabled).
 // Bad credentials or a revoked device always get 403, and the agent treats that as revoked and stops per the contract.
+// A disabled/reset-required owner also gets 403 but with code owner_unavailable, which current agents treat as temporary.
 func (s *Service) serveAgentSync(w http.ResponseWriter, r *http.Request) {
 	var request agent.SyncRequest
 	if err := decodeFleetJSON(w, r, &request); err != nil {

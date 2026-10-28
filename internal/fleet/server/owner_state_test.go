@@ -119,7 +119,7 @@ func TestDisabledOwnerDeviceRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = f.service.AuthenticateAgent(context.Background(), result.DeviceID, result.Secret)
-	requireIPCCode(t, err, ipc.CodeForbidden)
+	requireIPCCode(t, err, ipc.Code(agent.ErrorCodeOwnerUnavailable))
 	_, err = f.service.ConsumeEnrollCode(context.Background(), code, "late", "linux", "1.0.0")
 	requireIPCCode(t, err, ipc.CodeForbidden)
 
@@ -139,7 +139,7 @@ func TestResetRequiredOwnerDeviceRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := f.service.AuthenticateAgent(context.Background(), result.DeviceID, result.Secret)
-	requireIPCCode(t, err, ipc.CodeForbidden)
+	requireIPCCode(t, err, ipc.Code(agent.ErrorCodeOwnerUnavailable))
 }
 
 func TestDisablingOwnerClosesControlChannel(t *testing.T) {
@@ -155,10 +155,39 @@ func TestDisablingOwnerClosesControlChannel(t *testing.T) {
 	if err := f.accounts.SetUserDisabled(context.Background(), owner.ID, true); err != nil {
 		t.Fatal(err)
 	}
+	// Old agents read a plain revoke; new agents see the reason and wait for recovery instead of stopping.
+	if frame := readControlMessage(t, control, 3*time.Second); frame.Type != "revoke" || frame.Reason != agent.ErrorCodeOwnerUnavailable {
+		t.Fatalf("kick frame = %+v", frame)
+	}
 	if !drainUntilClosed(control, 3*time.Second) {
 		t.Fatal("control channel stayed open after the owner was disabled")
 	}
 	if f.service.registry.AgentOnline(deviceID) {
 		t.Fatal("device of a disabled owner remained online")
+	}
+}
+
+func TestDisabledOwnerHandshakeKeepsForbiddenCodeWithReason(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "hs-disabled-owner")
+	deviceID, secret := enrollWSAgent(t, f, owner, "hs-disabled-box")
+	if err := f.accounts.SetUserDisabled(context.Background(), owner.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	hello := agent.HelloMessage{Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret}
+	response := helloDevice(t, dialDeviceWS(t, f), hello)
+	if response.Type != "error" || response.Code != "forbidden" || response.Reason != agent.ErrorCodeOwnerUnavailable {
+		t.Fatalf("disabled owner handshake = %+v", response)
+	}
+	if err := f.accounts.SetUserDisabled(context.Background(), owner.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if response := helloDevice(t, dialDeviceWS(t, f), hello); response.Type != "hello_ok" {
+		t.Fatalf("re-enabled owner handshake = %+v", response)
+	}
+	// A bad credential carries no reason: it stays a plain, permanent denial.
+	hello.Secret = "wrong"
+	if response := helloDevice(t, dialDeviceWS(t, f), hello); response.Code != "forbidden" || response.Reason != "" {
+		t.Fatalf("bad credential handshake = %+v", response)
 	}
 }

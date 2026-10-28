@@ -31,7 +31,9 @@ type fakeFleetServer struct {
 	currentURLReports []currentURLRequest
 	syncResponse      SyncResponse
 	syncForbidden     bool
-	wsControl         func(conn *websocket.Conn, hello HelloMessage)
+	// syncOwnerUnavailable answers sync with 403 + owner_unavailable.
+	syncOwnerUnavailable bool
+	wsControl            func(conn *websocket.Conn, hello HelloMessage)
 }
 
 func newFakeFleetServer(t *testing.T) *fakeFleetServer {
@@ -74,8 +76,15 @@ func newFakeFleetServer(t *testing.T) *fakeFleetServer {
 		fake.mu.Lock()
 		fake.syncRequests = append(fake.syncRequests, request)
 		forbidden := fake.syncForbidden
+		ownerOff := fake.syncOwnerUnavailable
 		response := fake.syncResponse
 		fake.mu.Unlock()
+		if ownerOff {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"ok":false,"error":{"code":"owner_unavailable","message":"owner"}}`))
+			return
+		}
 		if forbidden {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)

@@ -151,6 +151,12 @@ func (r *Registry) PushControl(deviceID string, message controlMessage) bool {
 // KickDevice is the revocation closed loop: the control channel closes after receiving the revoke frame, and all of the device's bridges close with it.
 // After the revoke frame is written, the teardown also uses CloseNow, without waiting for the peer's close handshake.
 func (r *Registry) KickDevice(deviceID string) {
+	r.kickDevice(deviceID, "")
+}
+
+// kickDevice is KickDevice with an optional reason on the revoke frame; owner_unavailable tells new agents
+// the block is temporary while old agents still read a plain revoke.
+func (r *Registry) kickDevice(deviceID, reason string) {
 	r.mu.Lock()
 	control := r.controls[deviceID]
 	delete(r.controls, deviceID)
@@ -171,7 +177,7 @@ func (r *Registry) KickDevice(deviceID string) {
 	r.mu.Unlock()
 	if control != nil {
 		writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = writeControlJSON(writeCtx, control.conn, controlMessage{Type: "revoke"})
+		_ = writeControlJSON(writeCtx, control.conn, controlMessage{Type: "revoke", Reason: reason})
 		cancel()
 		control.conn.CloseNow()
 	}

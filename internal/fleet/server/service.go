@@ -477,6 +477,10 @@ func (s *Service) ConsumeEnrollCodeKind(ctx context.Context, code, name, platfor
 		}
 		ownerID := consumed.UserID
 		if err := requireOwnerUsable(ctx, tx, ownerID); err != nil {
+			if isOwnerUnavailable(err) {
+				// A new enrollment is an ordinary denial; only an existing device waits for its owner to recover.
+				return ipc.NewError(ipc.CodeForbidden, "设备所属账号已禁用或需要重置密码")
+			}
 			return err
 		}
 		if err := q.UserDevice.WithContext(ctx).Create(&store.UserDevice{
@@ -591,9 +595,17 @@ func requireOwnerUsable(ctx context.Context, db *gorm.DB, ownerID string) error 
 		return dbError(err)
 	}
 	if owner.State == string(account.StateDisabled) || owner.State == string(account.StateResetRequired) {
-		return ipc.NewError(ipc.CodeForbidden, "设备所属账号已禁用或需要重置密码")
+		return ipc.NewError(codeOwnerUnavailable, "设备所属账号已禁用或需要重置密码")
 	}
 	return nil
+}
+
+// codeOwnerUnavailable marks a denial caused by the owner account, not by the device: it is temporary and recoverable.
+const codeOwnerUnavailable ipc.Code = agent.ErrorCodeOwnerUnavailable
+
+func isOwnerUnavailable(err error) bool {
+	var appErr *ipc.Error
+	return errors.As(err, &appErr) && appErr.Code == codeOwnerUnavailable
 }
 
 // recheckDevice re-reads the device and owner after a channel was registered, closing the window in which a
@@ -621,7 +633,7 @@ func (s *Service) kickUserDevices(userID string) {
 		return
 	}
 	for _, row := range rows {
-		s.registry.KickDevice(row.ID)
+		s.registry.kickDevice(row.ID, agent.ErrorCodeOwnerUnavailable)
 		s.deviceOffline(row.ID)
 	}
 }

@@ -360,6 +360,9 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 		fmt.Fprintf(stdout, "接入地址: 当前=%s 已配置=%d metrics_interval=%ds desired_autostart=%t terminal=%s\n",
 			applog.RedactText(orNone(config.CurrentURL)), len(config.BaseURLs), config.MetricsIntervalMS/1000, config.DesiredAutostart, enabledText(config.TerminalEnabled))
 	}
+	if since, waiting := ReadOwnerWait(dir); waiting {
+		fmt.Fprintf(stdout, "状态: 所属账号暂不可用，正在等待恢复 (自 %s)\n", since.Local().Format(time.RFC3339))
+	}
 	manager := cliNewManager(getenv)
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
 	defer cancel()
