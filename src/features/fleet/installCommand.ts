@@ -30,5 +30,12 @@ export function psQuote(value: string): string {
 // iwr ... | iex pipe cannot take arguments. The ps1 is provided as a separate deliverable; only the URL and argument shape are agreed here.
 export function oneLineInstallCommandWindows(baseUrl: string, insecure: boolean, code: string, version: string): string {
   const scriptUrl = `${baseUrl}/install-device.ps1`;
-  return `iex "& { $(iwr -UseBasicParsing ${psQuote(scriptUrl)}) } --server ${psQuote(baseUrl)} --code ${psQuote(code)} --version ${psQuote(version)}${insecure ? " --insecure" : ""}"`;
+  return `iex "& { $(iwr -UseBasicParsing ${psQuote(scriptUrl)}) } -Server ${psQuote(baseUrl)} -Code ${psQuote(code)} -Version ${psQuote(version)}${insecure ? " -Insecure" : ""}"`;
+}
+
+// releaseOrNull keeps only versions that can exist as a GitHub release (x.y.z with an optional pre-release suffix).
+// Development builds report "dev" or an empty string; install-device downloads v<version> assets, so these map to null.
+export function releaseOrNull(version: string | null | undefined): string | null {
+  const v = (version ?? "").trim();
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v) && !/^0\.0\.0(?![\d.])/.test(v) ? v : null;
 }

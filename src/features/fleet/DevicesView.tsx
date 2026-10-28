@@ -28,7 +28,6 @@ import {
   IconChevronDown,
   IconChevronUp,
   IconCopy,
-  IconInfo,
   IconMonitor,
   IconPlus,
   IconRefresh,
@@ -39,14 +38,10 @@ import {
 import { formatTime, isOnline, ONLINE_THRESHOLD_MS, relativeTime } from "./format";
 import { BaseUrlsSection } from "./BaseUrlsSection";
 import { MetricsPanel } from "./MetricsPanel";
-import { oneLineInstallCommand, oneLineInstallCommandWindows, shellQuote } from "./installCommand";
+import { EnrollPanel, ENROLL_TTL_OPTIONS, type IssuedEnrollCode } from "./EnrollPanel";
+import { releaseOrNull, shellQuote } from "./installCommand";
 import { showSettingsSection } from "../settings/settingsNavigation";
 
-const ENROLL_TTL_OPTIONS = [
-  { label: "5 分钟", ms: 5 * 60_000 },
-  { label: "15 分钟", ms: 15 * 60_000 },
-  { label: "1 小时", ms: 60 * 60_000 },
-];
 
 // The data directory matches the repo's per-user convention (platform.desktopDataDir: XDG_DATA_HOME
 // or ~/.local/share), writable by regular users, fitting systemd --user / launchd per-user.
@@ -490,7 +485,6 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
 export function DevicesView() {
   const qc = useQueryClient();
-  const pushToast = useUi((s) => s.pushToast);
   const account = useFleetAccount();
   const authStatus = useAuth((s) => s.status);
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
@@ -505,7 +499,8 @@ export function DevicesView() {
   const [now, setNow] = useState(() => Date.now());
   const [enrollOpen, setEnrollOpen] = useState(false);
   const [ttlMs, setTtlMs] = useState(ENROLL_TTL_OPTIONS[1].ms);
-  const [issued, setIssued] = useState<{ code: string; expiresAt: number } | null>(null);
+  const [issued, setIssued] = useState<IssuedEnrollCode | null>(null);
+  const [issueError, setIssueError] = useState<string | null>(null);
   const [issuing, setIssuing] = useState(false);
   // serverVersion is the real server version from /healthz (used for one-click install --version);
   // null means unavailable, and the whole one-click install section hides - never fabricate a version.
@@ -514,6 +509,10 @@ export function DevicesView() {
   // Past the heartbeat threshold it falls back to the heartbeat determination (polling fallback), consistent with existing display semantics.
   const [presence, setPresence] = useState<Record<string, { online: boolean; at: number }>>({});
   const loadSeq = useRef(0);
+  const devicesRef = useRef<FleetDevice[] | null>(null);
+  const waitingRef = useRef(false);
+  const pollRef = useRef<() => void>(() => {});
+  const enrollButtonRef = useRef<HTMLButtonElement>(null);
   const baseUrlsSeq = useRef(0);
   const versionSeq = useRef(0);
   // accountEpoch bumps only on account switch (manual refresh leaves it alone), isolating in-flight issuance
@@ -545,6 +544,7 @@ export function DevicesView() {
     setError(null);
     setEnrollOpen(false);
     setIssued(null);
+    setIssueError(null);
     setIssuing(false);
     setLoading(false);
     setServerVersion(null);
@@ -614,6 +614,12 @@ export function DevicesView() {
   }, [qc, userId]);
 
   useEffect(() => {
+    devicesRef.current = devices;
+    waitingRef.current = enrollOpen && issued !== null;
+    pollRef.current = poll;
+  });
+
+  useEffect(() => {
     if (!userId) return;
     const timer = setInterval(poll, WEB ? 60_000 : 30_000);
     return () => clearInterval(timer);
@@ -629,6 +635,8 @@ export function DevicesView() {
     void listenEvent<DeviceStatusEvent>(EVENTS.deviceStatus, (p) => {
       if (!p || typeof p.deviceId !== "string" || typeof p.online !== "boolean") return;
       setPresence((prev) => ({ ...prev, [p.deviceId]: { online: p.online, at: Date.now() } }));
+      // A status event from a device not in the list may be the one that is being enrolled: refresh right away.
+      if (waitingRef.current && !devicesRef.current?.some((d) => d.id === p.deviceId)) pollRef.current();
     }).then((off) => {
       if (cancelled) off();
       else unlisten = off;
@@ -653,6 +661,32 @@ export function DevicesView() {
     return isOnline(d.agent.last_seen_at || d.last_seen_at, now);
   };
 
+  const issueEnrollCode = async () => {
+    if (!userId || baseUrlsStatus !== "ready" || issuing) return;
+    const epoch = accountEpoch.current;
+    const baselineIds = (devicesRef.current ?? devices ?? []).map((d) => d.id);
+    setIssuing(true);
+    setIssueError(null);
+    try {
+      const r = await fleetClient().issueEnrollCode(ttlMs);
+      if (epoch !== accountEpoch.current) return;
+      setIssued({ code: r.code, expiresAt: r.expires_at, baselineIds });
+    } catch (e) {
+      if (epoch !== accountEpoch.current) return;
+      setIssueError(describeError(e));
+    } finally {
+      if (epoch === accountEpoch.current) setIssuing(false);
+    }
+  };
+
+  // Opening the panel issues a code right away so the command is ready to copy; a failed attempt is not retried
+  // automatically (the panel offers a retry button), and no code is issued while no base URL is configured.
+  const autoIssue = enrollOpen && Boolean(userId) && baseUrlsStatus === "ready" && baseUrls.length > 0 && issued === null && !issuing && issueError === null;
+  useEffect(() => {
+    if (autoIssue) void issueEnrollCode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoIssue]);
+
   // Read the real server version from /healthz when opening the enroll panel (for one-click install --version);
   // failure or an empty string both map to null: the one-click install section hides entirely, never fabricating a version.
   useEffect(() => {
@@ -661,7 +695,7 @@ export function DevicesView() {
     fleetClient()
       .serverVersion()
       .then((v) => {
-        if (seq === versionSeq.current) setServerVersion(v || null);
+        if (seq === versionSeq.current) setServerVersion(releaseOrNull(v));
       })
       .catch(() => {
         if (seq === versionSeq.current) setServerVersion(null);
@@ -779,22 +813,6 @@ export function DevicesView() {
     );
   }
 
-  const issueEnrollCode = async () => {
-    if (!userId || baseUrlsStatus !== "ready") return;
-    const epoch = accountEpoch.current;
-    setIssuing(true);
-    try {
-      const r = await fleetClient().issueEnrollCode(ttlMs);
-      if (epoch !== accountEpoch.current) return;
-      setIssued({ code: r.code, expiresAt: r.expires_at });
-    } catch (e) {
-      if (epoch !== accountEpoch.current) return;
-      pushToast("error", describeError(e));
-    } finally {
-      if (epoch === accountEpoch.current) setIssuing(false);
-    }
-  };
-
   const patchDevice = (id: string, patch: Partial<FleetDevice>) => {
     setDevices((prev) => (prev === null ? prev : prev.map((d) => (d.id === id ? { ...d, ...patch } : d))));
   };
@@ -804,44 +822,25 @@ export function DevicesView() {
     document.querySelector<HTMLInputElement>('input[aria-label="新接入地址"]')?.focus({ preventScroll: true });
   };
 
-  const copyCommandRow = (key: string, command: string, what: string) => (
-    <div key={key} className="flex flex-wrap items-center gap-2">
-      <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">{command}</code>
-      <button
-        type="button"
-        className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
-        onClick={() => copyText(command, pushToast, what)}
-      >
-        <IconCopy size={11} />
-        复制
-      </button>
-    </div>
-  );
-
-  const enrollRows = issued
-    ? baseUrls.map((entry) => copyCommandRow(`enroll:${entry.url}`, enrollCommand(entry.url, Boolean(entry.insecure), issued.code), "接入命令"))
-    : null;
-  const oneLineRows =
-    issued && serverVersion
-      ? baseUrls.map((entry) =>
-          copyCommandRow(
-            `one-line:${entry.url}`,
-            oneLineInstallCommand(entry.url, Boolean(entry.insecure), issued.code, serverVersion),
-            "一键安装命令",
-          ),
-        )
-      : null;
-  const windowsRows =
-    issued && serverVersion
-      ? baseUrls.map((entry) =>
-          copyCommandRow(
-            `one-line-windows:${entry.url}`,
-            oneLineInstallCommandWindows(entry.url, Boolean(entry.insecure), issued.code, serverVersion),
-            "Windows 一键安装命令",
-          ),
-        )
-      : null;
-  const installRow = issued ? copyCommandRow("install", installCommand(), "安装命令") : null;
+  const manualRows = (code: string) => ({
+    enroll: baseUrls.map((entry) => ({
+      key: `enroll:${entry.url}`,
+      label: baseUrls.length > 1 ? `接入：${entry.url}` : "接入",
+      what: `${entry.url} 的接入命令`,
+      command: enrollCommand(entry.url, Boolean(entry.insecure), code),
+    })),
+    install: { key: "install", label: "安装后台服务", what: "安装命令", command: installCommand() },
+  });
+  const outdatedNote = (d: FleetDevice): string | null => {
+    const agentRelease = releaseVersion(d.agent?.app_version);
+    const serverRelease = releaseVersion(listServerVersion ?? serverVersion);
+    if (!agentRelease || !serverRelease || !olderRelease(agentRelease, serverRelease)) return null;
+    return `设备代理版本较旧（v${agentRelease}，服务器为 v${serverRelease}）。请在设备上运行 nexterm-agent update；1.2.x 版本需重新运行一次安装命令。`;
+  };
+  const closeEnroll = () => {
+    setEnrollOpen(false);
+    enrollButtonRef.current?.focus();
+  };
   const hiddenRevokedCount = devices?.filter((d) => d.revoked_at !== 0).length ?? 0;
   const renderDeviceCard = (d: FleetDevice) => (
     <DeviceCard
@@ -870,6 +869,7 @@ export function DevicesView() {
         {error && devices !== null && <span className="nx-hint text-red-300">刷新失败 · {error}</span>}
         <div className="nx-spacer" />
         <button
+          ref={enrollButtonRef}
           className={`nx-btn nx-btn-sm ${devices !== null && devices.length === 0 ? "nx-btn-primary" : "nx-btn-outline"}`}
           onClick={() => {
             setEnrollOpen(!enrollOpen);
@@ -921,141 +921,27 @@ export function DevicesView() {
         )}
 
         {enrollOpen && (
-          <section className="nx-card">
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              <IconPlus size={15} className="text-neutral-400" />
-              <span className="nx-card-title">接入新设备</span>
-            </div>
-            {!issued ? (
-              <>
-                <p className="nx-hint mb-3">
-                  先生成一个一次性接入码，再到要接入的机器上执行命令，机器就会出现在这个列表里。接入码只能使用一次，到期自动作废。
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    className="nx-select shrink-0"
-                    style={{ width: 120 }}
-                    value={ttlMs}
-                    aria-label="接入码有效期"
-                    onChange={(e) => setTtlMs(Number(e.target.value))}
-                  >
-                    {ENROLL_TTL_OPTIONS.map((o) => (
-                      <option key={o.ms} value={o.ms}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="nx-btn nx-btn-primary"
-                    disabled={issuing || baseUrlsStatus !== "ready"}
-                    onClick={() => void issueEnrollCode()}
-                  >
-                    {issuing ? "正在生成…" : "生成接入码"}
-                  </button>
-                  {baseUrlsStatus !== "ready" && (
-                    <span className="nx-hint text-[11px]">
-                      {baseUrlsStatus === "loading" ? "正在读取接入地址，读取完成后才能生成接入码。" : "无法读取接入地址，请在下方重试后再生成接入码。"}
-                    </span>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="nx-alert nx-alert-info flex flex-col gap-2">
-                <div className="flex items-start gap-2">
-                  <IconInfo size={14} className="mt-0.5 shrink-0" />
-                  <div className="min-w-0">
-                    接入码只能使用一次，有效期至 {formatTime(issued.expiresAt)}；完成后不再显示。设备凭证只保存在设备上，服务器只保存校验信息。
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <code className="nx-code break-all font-mono text-[13px]">{issued.code}</code>
-                  <button
-                    type="button"
-                    className="nx-btn nx-btn-outline nx-btn-sm"
-                    onClick={() => copyText(issued.code, pushToast, "接入码")}
-                  >
-                    <IconCopy size={12} />
-                    复制接入码
-                  </button>
-                  <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setIssued(null)}>
-                    完成
-                  </button>
-                </div>
-                <div className="flex flex-col gap-1.5 border-t border-red-500/20 pt-2">
-                  {baseUrls.length === 0 ? (
-                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-amber-300">
-                      {isAdmin ? (
-                        <>
-                          <span>还没有配置接入地址，设备无法接入，也无法生成接入命令。</span>
-                          <button type="button" className="nx-btn nx-btn-outline nx-btn-xs shrink-0" onClick={jumpToBaseUrls}>
-                            去配置接入地址
-                          </button>
-                        </>
-                      ) : (
-                        <span>管理员还没有配置接入地址，请联系管理员配置后再接入。</span>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      {serverVersion ? (
-                        <>
-                          <div className="text-[12px] text-neutral-200">
-                            在设备上用<b>普通用户</b>执行一键接入命令（Linux / macOS）：
-                          </div>
-                          {oneLineRows?.[0]}
-                          <div className="text-[12px] text-neutral-200">Windows 设备请用 PowerShell 版：</div>
-                          {windowsRows?.[0]}
-                        </>
-                      ) : (
-                        <>
-                          <div className="text-[12px] text-neutral-200">
-                            在设备上用<b>普通用户</b>依次执行两条命令：第一条领取设备凭证，第二条安装后台服务。
-                          </div>
-                          {enrollRows?.[0]}
-                          {installRow}
-                        </>
-                      )}
-                      <div className="text-[11.5px] text-neutral-400">
-                        本页面不会执行安装，也无法确认安装结果；请以设备上的输出为准。
-                      </div>
-                      <details className="rounded border border-red-500/20 px-2 py-1.5" onToggle={handleAdvancedDetailsToggle}>
-                        <summary className="cursor-pointer text-[11.5px] text-neutral-300">高级说明：多地址、手动接入与服务管理</summary>
-                        <div className="mt-2 flex flex-col gap-1.5">
-                          {baseUrls.length > 1 && (
-                            <>
-                              <div className="text-[11.5px] text-neutral-400">其他接入地址按配置顺序作为备用，第一个可达的即接入点：</div>
-                              {serverVersion ? [...(oneLineRows?.slice(1) ?? []), ...(windowsRows?.slice(1) ?? [])] : enrollRows?.slice(1)}
-                            </>
-                          )}
-                          {serverVersion && (
-                            <>
-                              <div className="text-[11.5px] text-neutral-400">
-                                设备已安装 nexterm-agent 时，也可手动执行 enroll 与 install：
-                              </div>
-                              {enrollRows}
-                              {installRow}
-                            </>
-                          )}
-                          <div className="text-[11.5px] text-neutral-400">
-                            agent install 会安装随用户登录自动启动的后台服务（systemd --user / launchd）；数据目录默认使用用户数据目录，可通过 NEXTERM_DATA_DIR 同时覆盖 enroll 和 install。
-                          </div>
-                        </div>
-                      </details>
-                    </>
-                  )}
-                  <div className="flex flex-wrap items-center gap-2 border-t border-red-500/20 pt-2">
-                    <span className="text-[12px] text-neutral-200">
-                      命令执行完成后刷新列表，设备会出现在这里；在线后可点设备卡片上的「打开工作区」。
-                    </span>
-                    <button type="button" className="nx-btn nx-btn-primary nx-btn-sm shrink-0" disabled={loading} onClick={() => void load()}>
-                      <IconRefresh size={12} className={loading ? "animate-spin" : ""} />
-                      刷新设备列表
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
+          <EnrollPanel
+            baseUrls={baseUrls}
+            baseUrlsStatus={baseUrlsStatus}
+            isAdmin={Boolean(isAdmin)}
+            serverVersion={serverVersion}
+            devices={devices}
+            issued={issued}
+            issuing={issuing}
+            issueError={issueError}
+            ttlMs={ttlMs}
+            onTtlChange={setTtlMs}
+            onIssue={() => void issueEnrollCode()}
+            onClose={closeEnroll}
+            onPoll={poll}
+            onOpenWorkspace={(d) => void connectDevice(d)}
+            onJumpBaseUrls={jumpToBaseUrls}
+            onLayoutChange={handleAdvancedDetailsToggle}
+            isOnline={onlineOf}
+            outdatedNote={outdatedNote}
+            manualRows={manualRows}
+          />
         )}
 
         {error && devices === null && (
