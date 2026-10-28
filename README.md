@@ -91,7 +91,7 @@ curl -fsSL https://nexterm.work/install.sh | sudo bash
 
 **懒猫微服**：应用中心安装即可用（目前仅 amd64 机型），内置端口转发不可用，请使用平台转发。
 
-**设备接入**：超管在「设备管理」（浏览器模式，或桌面端登录服务端账号后）配置接入地址并签发一次性接入码，在设备上执行面板给出的一行命令（Linux/macOS 用普通用户，Windows 用 PowerShell），agent 会随用户登录自动启动。
+**设备接入**：超管在「设备管理」（浏览器模式，或桌面端登录服务端账号后）配置接入地址并签发一次性接入码，在设备上执行面板给出的一行命令（Linux/macOS 用普通用户，Windows 用 PowerShell），agent 会随用户登录自动启动。安装时会把当时的 `SHELL` 和 `PATH` 写入服务定义（`nexterm-agent status` 可查看），修改后重新运行安装命令即可刷新；只在 `~/.zshrc` 中定义的 PATH 条目对 agent 进程不可见（agent 以非交互登录 shell 读取 PATH，请改放 `~/.zprofile`），而终端标签会读取 `.zshrc`。
 
 ## 开发
 

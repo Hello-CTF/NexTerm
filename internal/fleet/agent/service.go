@@ -56,7 +56,7 @@ func NewServiceManagerWithPrefix(goos string, runner CommandRunner, getenv func(
 	case "linux":
 		return newSystemdManager(runner, getenv, homeDir, commandPrefix...)
 	case "darwin":
-		return newLaunchdManager(runner, homeDir, launchdUID(), commandPrefix...)
+		return newLaunchdManagerEnv(runner, getenv, homeDir, launchdUID(), commandPrefix...)
 	case "windows":
 		return newWindowsManager(runner, commandPrefix...)
 	default:

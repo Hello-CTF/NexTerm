@@ -22,8 +22,8 @@ func TestParseDscl(t *testing.T) {
 
 func TestUsableRejectsNonShells(t *testing.T) {
 	for _, shell := range []string{"", "zsh", "/usr/sbin/nologin", "/nonexistent/shell"} {
-		if usable(shell) {
-			t.Fatalf("usable(%q) = true", shell)
+		if Usable(shell) {
+			t.Fatalf("Usable(%q) = true", shell)
 		}
 	}
 }

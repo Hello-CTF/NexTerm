@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Hello-CTF/NexTerm/internal/usershell"
 )
 
 const launchdLabel = "com.nexterm.agent"
@@ -17,10 +19,21 @@ type launchdManager struct {
 	plistPath     string
 	uid           string
 	commandPrefix []string
+	getenv        func(string) string
+	lookupShell   func() string
 }
 
 func newLaunchdManager(runner CommandRunner, homeDir, uid string, commandPrefix ...string) ServiceManager {
+	return newLaunchdManagerEnv(runner, nil, homeDir, uid, commandPrefix...)
+}
+
+func newLaunchdManagerEnv(runner CommandRunner, getenv func(string) string, homeDir, uid string, commandPrefix ...string) *launchdManager {
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
 	return &launchdManager{
+		getenv:        getenv,
+		lookupShell:   usershell.Lookup,
 		runner:        runner,
 		plistPath:     filepath.Join(homeDir, "Library", "LaunchAgents", launchdLabel+".plist"),
 		uid:           uid,
@@ -33,7 +46,7 @@ func (m *launchdManager) domain() string {
 }
 
 func (m *launchdManager) Install(ctx context.Context, executable, dataDir string) error {
-	plist := renderLaunchdPlist(executable, dataDir, m.commandPrefix...)
+	plist := renderLaunchdPlistEnv(executable, dataDir, captureServiceEnvironment(m.getenv, m.lookupShell), m.commandPrefix...)
 	if err := os.MkdirAll(filepath.Dir(m.plistPath), 0o755); err != nil {
 		return fmt.Errorf("create LaunchAgents directory: %w", err)
 	}
@@ -90,6 +103,37 @@ func (m *launchdManager) Status(ctx context.Context) ServiceState {
 	return status
 }
 
+// RecordedEnvironment reads the SHELL and PATH stored in the installed plist.
+func (m *launchdManager) RecordedEnvironment() (ServiceEnvironment, bool) {
+	data, err := os.ReadFile(m.plistPath)
+	if err != nil {
+		return ServiceEnvironment{}, false
+	}
+	var env ServiceEnvironment
+	env.Shell = plistString(string(data), "SHELL")
+	env.Path = plistString(string(data), "PATH")
+	finishRecorded(&env)
+	return env, true
+}
+
+func plistString(plist, key string) string {
+	marker := "<key>" + key + "</key>\n    <string>"
+	start := strings.Index(plist, marker)
+	if start < 0 {
+		return ""
+	}
+	rest := plist[start+len(marker):]
+	end := strings.Index(rest, "</string>")
+	if end < 0 {
+		return ""
+	}
+	return xmlUnescape(rest[:end])
+}
+
+func xmlUnescape(value string) string {
+	return strings.NewReplacer("&quot;", "\"", "&apos;", "'", "&lt;", "<", "&gt;", ">", "&amp;", "&").Replace(value)
+}
+
 func launchdState(output string) string {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -132,6 +176,10 @@ func launchdFailure(output string, err error) string {
 }
 
 func renderLaunchdPlist(executable, dataDir string, commandPrefix ...string) string {
+	return renderLaunchdPlistEnv(executable, dataDir, ServiceEnvironment{}, commandPrefix...)
+}
+
+func renderLaunchdPlistEnv(executable, dataDir string, env ServiceEnvironment, commandPrefix ...string) string {
 	arguments := make([]string, 0, len(commandPrefix)+4)
 	arguments = append(arguments, executable)
 	arguments = append(arguments, commandPrefix...)
@@ -146,6 +194,16 @@ func renderLaunchdPlist(executable, dataDir string, commandPrefix ...string) str
 		builder.WriteString("    <string>" + xmlEscape(argument) + "</string>\n")
 	}
 	builder.WriteString("  </array>\n")
+	if env.Shell != "" || env.Path != "" {
+		builder.WriteString("  <key>EnvironmentVariables</key>\n  <dict>\n")
+		if env.Path != "" {
+			builder.WriteString("    <key>PATH</key>\n    <string>" + xmlEscape(env.Path) + "</string>\n")
+		}
+		if env.Shell != "" {
+			builder.WriteString("    <key>SHELL</key>\n    <string>" + xmlEscape(env.Shell) + "</string>\n")
+		}
+		builder.WriteString("  </dict>\n")
+	}
 	builder.WriteString("  <key>RunAtLoad</key>\n  <true/>\n")
 	builder.WriteString("  <key>KeepAlive</key>\n  <dict>\n    <key>Crashed</key>\n    <true/>\n  </dict>\n")
 	builder.WriteString("</dict>\n</plist>\n")

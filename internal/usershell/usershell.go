@@ -30,7 +30,7 @@ func Lookup() string {
 			shell = fromPasswdFile("/etc/passwd", current.Username)
 		}
 	}
-	if usable(shell) {
+	if Usable(shell) {
 		return shell
 	}
 	return ""
@@ -98,7 +98,9 @@ func ParsePasswdLine(line string) string {
 	return strings.TrimSpace(fields[len(fields)-1])
 }
 
-func usable(shell string) bool {
+// Usable reports whether shell is an absolute path to an executable file that is not a
+// non-interactive placeholder such as nologin.
+func Usable(shell string) bool {
 	if !filepath.IsAbs(shell) {
 		return false
 	}

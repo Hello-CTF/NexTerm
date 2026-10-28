@@ -134,3 +134,4 @@ fi
 
 printf '==> 完成。数据目录: %s\n' "$DATA_DIR"
 printf '    查看状态: %s status --data-dir "%s"\n' "$BINARY" "$DATA_DIR"
+printf '    提示: 仅在 ~/.zshrc 中定义的 PATH 对 agent 进程不可见, 请放入 ~/.zprofile; 终端标签仍会读取 .zshrc\n'

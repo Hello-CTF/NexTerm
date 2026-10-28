@@ -91,7 +91,7 @@ The script downloads the latest server archive, verifies it against `SHA256SUMS`
 
 **LazyCat MicroServer**: install from the App Store (amd64 devices only for now); built-in port forwarding is unavailable, so use the platform's forwarding.
 
-**Device enrollment**: a super-admin sets the enrollment address in Devices (in browser mode, or in the desktop app signed in to a server account) and issues a one-time enrollment code; run the one-line command shown there on the device (as a regular user on Linux/macOS, in PowerShell on Windows). The agent starts automatically at user login.
+**Device enrollment**: a super-admin sets the enrollment address in Devices (in browser mode, or in the desktop app signed in to a server account) and issues a one-time enrollment code; run the one-line command shown there on the device (as a regular user on Linux/macOS, in PowerShell on Windows). The agent starts automatically at user login. Install records the then-current `SHELL` and `PATH` in the service definition (`nexterm-agent status` shows them; re-run the install command to refresh). PATH entries defined only in `~/.zshrc` are not visible to the agent process, which reads PATH through a non-interactive login shell: put them in `~/.zprofile`. Terminal tabs do read `.zshrc`.
 
 ## Development
 

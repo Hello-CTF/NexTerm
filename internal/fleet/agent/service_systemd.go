@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Hello-CTF/NexTerm/internal/usershell"
 )
 
 const systemdUnitName = "nexterm-agent.service"
@@ -16,6 +18,8 @@ type systemdManager struct {
 	runner        CommandRunner
 	unitPath      string
 	commandPrefix []string
+	getenv        func(string) string
+	lookupShell   func() string
 }
 
 func newSystemdManager(runner CommandRunner, getenv func(string) string, homeDir string, commandPrefix ...string) ServiceManager {
@@ -27,11 +31,13 @@ func newSystemdManager(runner CommandRunner, getenv func(string) string, homeDir
 		runner:        runner,
 		unitPath:      filepath.Join(configHome, "systemd", "user", systemdUnitName),
 		commandPrefix: commandPrefix,
+		getenv:        getenv,
+		lookupShell:   usershell.Lookup,
 	}
 }
 
 func (m *systemdManager) Install(ctx context.Context, executable, dataDir string) error {
-	unit := renderSystemdUnit(executable, dataDir, m.commandPrefix...)
+	unit := renderSystemdUnitEnv(executable, dataDir, captureServiceEnvironment(m.getenv, m.lookupShell), m.commandPrefix...)
 	if err := os.MkdirAll(filepath.Dir(m.unitPath), 0o755); err != nil {
 		return fmt.Errorf("create systemd user directory: %w", err)
 	}
@@ -114,17 +120,29 @@ func systemdQuery(output string, err error) (string, string) {
 }
 
 func renderSystemdUnit(executable, dataDir string, commandPrefix ...string) string {
+	return renderSystemdUnitEnv(executable, dataDir, ServiceEnvironment{}, commandPrefix...)
+}
+
+func renderSystemdUnitEnv(executable, dataDir string, env ServiceEnvironment, commandPrefix ...string) string {
 	command := systemdEscape(executable)
 	if len(commandPrefix) > 0 {
 		command += " " + strings.Join(commandPrefix, " ")
 	}
 	command += " run --data-dir " + systemdEscape(dataDir)
+	var environment string
+	if env.Shell != "" {
+		environment += "Environment=" + systemdEnvAssignment("SHELL", env.Shell) + "\n"
+	}
+	if env.Path != "" {
+		environment += "Environment=" + systemdEnvAssignment("PATH", env.Path) + "\n"
+	}
 	return "[Unit]\n" +
 		"Description=NexTerm Device Agent\n" +
 		"After=network-online.target\n" +
 		"\n" +
 		"[Service]\n" +
 		"ExecStart=" + command + "\n" +
+		environment +
 		"Restart=on-failure\n" +
 		"RestartSec=5\n" +
 		"RestartPreventExitStatus=" + fmt.Sprintf("%d %d", ExitRevoked, ExitProtocol) + "\n" +
@@ -141,4 +159,36 @@ func systemdEscape(value string) string {
 		"$", "$$",
 	)
 	return "\"" + replacer.Replace(value) + "\""
+}
+
+// systemdEnvAssignment quotes KEY=value for Environment=. Only backslash, double quote and % need escaping;
+// $ is not expanded in Environment= values.
+func systemdEnvAssignment(key, value string) string {
+	replacer := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%")
+	return "\"" + key + "=" + replacer.Replace(value) + "\""
+}
+
+// RecordedEnvironment reads the SHELL and PATH stored in the installed unit.
+func (m *systemdManager) RecordedEnvironment() (ServiceEnvironment, bool) {
+	data, err := os.ReadFile(m.unitPath)
+	if err != nil {
+		return ServiceEnvironment{}, false
+	}
+	var env ServiceEnvironment
+	unquote := strings.NewReplacer("%%", "%", "\\\"", "\"", "\\\\", "\\")
+	for _, line := range strings.Split(string(data), "\n") {
+		rest, ok := strings.CutPrefix(line, "Environment=\"")
+		if !ok || !strings.HasSuffix(rest, "\"") {
+			continue
+		}
+		rest = unquote.Replace(strings.TrimSuffix(rest, "\""))
+		switch {
+		case strings.HasPrefix(rest, "SHELL="):
+			env.Shell = strings.TrimPrefix(rest, "SHELL=")
+		case strings.HasPrefix(rest, "PATH="):
+			env.Path = strings.TrimPrefix(rest, "PATH=")
+		}
+	}
+	finishRecorded(&env)
+	return env, true
 }

@@ -114,7 +114,25 @@ func resolveLoginPATHImpl() string {
 	if err != nil || !strings.HasPrefix(text, "/") || strings.ContainsAny(text, " \t\n\r") {
 		return ""
 	}
-	return text
+	return mergePATH(os.Getenv("PATH"), text)
+}
+
+// mergePATH returns base followed by the entries of extra that base lacks. Only absolute entries are kept,
+// duplicates are dropped and order is preserved. The service-installed PATH is the base, so the entries it
+// recorded stay first and the login shell only adds what it knows beyond them.
+func mergePATH(base, extra string) string {
+	seen := map[string]bool{}
+	var merged []string
+	for _, list := range []string{base, extra} {
+		for _, entry := range strings.Split(list, ":") {
+			if !strings.HasPrefix(entry, "/") || seen[entry] {
+				continue
+			}
+			seen[entry] = true
+			merged = append(merged, entry)
+		}
+	}
+	return strings.Join(merged, ":")
 }
 
 var loginPATH = sync.OnceValue(resolveLoginPATHImpl)

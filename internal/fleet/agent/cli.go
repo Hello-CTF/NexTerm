@@ -320,6 +320,7 @@ func cliServiceChange(command string, args []string, getenv func(string) string,
 	if status.LastError != "" {
 		fmt.Fprintf(stdout, "注意: %s\n", applog.RedactText(status.LastError))
 	}
+	printServiceEnvironment(stdout, manager)
 	return ExitOK
 }
 
@@ -353,6 +354,7 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 	if status.LastError != "" {
 		fmt.Fprintf(stdout, "服务错误: %s\n", applog.RedactText(status.LastError))
 	}
+	printServiceEnvironment(stdout, manager)
 	stateDir := filepath.Join(dir, "durable", "supervisor")
 	if endpoint, err := supervisor.HelperEndpoint(stateDir); err == nil {
 		probeCtx, probeCancel := context.WithTimeout(ctx, 3*time.Second)
@@ -406,4 +408,18 @@ func orNone(value string) string {
 		return "无"
 	}
 	return value
+}
+
+func printServiceEnvironment(stdout io.Writer, manager ServiceManager) {
+	reporter, ok := manager.(EnvironmentReporter)
+	if !ok {
+		return
+	}
+	env, installed := reporter.RecordedEnvironment()
+	if !installed {
+		return
+	}
+	for _, line := range env.describe() {
+		fmt.Fprintln(stdout, applog.RedactText(line))
+	}
 }
