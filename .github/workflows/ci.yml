@@ -387,7 +387,7 @@ jobs:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
           path: |
             target/go-build/nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}*
-            target/go-build/ai-runtime/
+            target/go-build/ai-runtime-${{ matrix.os }}-${{ matrix.arch }}/
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
@@ -400,7 +400,7 @@ jobs:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-server
           path: |
             target/go-build/nexterm-server-${{ matrix.os }}-${{ matrix.arch }}*
-            target/go-build/ai-runtime/
+            target/go-build/ai-runtime-${{ matrix.os }}-${{ matrix.arch }}/
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
