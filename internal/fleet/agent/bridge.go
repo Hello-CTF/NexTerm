@@ -4,6 +4,10 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"runtime"
+	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/coder/websocket"
@@ -58,10 +62,34 @@ func (p *subprocessPipe) Close() error {
 	return nil
 }
 
+// bridgeEnvWait bounds how long the first terminal waits for the login environment to resolve.
+const bridgeEnvWait = 3 * time.Second
+
+// bridgeCreateDefaults makes this host authoritative for new terminals: the account's shell and the login
+// environment's PATH are written into every create request that does not carry its own, so a helper that
+// was started earlier with a stale environment (or by an older build) still starts the right shell.
+var bridgeCreateDefaults = func() supervisor.CreateDefaults {
+	if runtime.GOOS == "windows" {
+		return supervisor.CreateDefaults{}
+	}
+	return supervisor.CreateDefaults{
+		Shell: func(request string) (string, bool) {
+			choice := shellenv.Default().Shell(request)
+			return choice.Path, choice.Login
+		},
+		Path: func() string {
+			return shellenv.EnvValue(shellenv.Default().Env(bridgeEnvWait), "PATH")
+		},
+	}
+}
+
 // BridgePipe shuttles raw supervisor protocol bytes between the bridge
 // connection and the local helper bridge until either side fails or the
-// context ends. It is byte-transparent, so protocol-level resume (attach
-// with an expected incarnation, version checks) passes through unchanged.
+// context ends. It is byte-transparent apart from two additions made by
+// supervisor.StreamFilter: create requests get this host's shell and PATH when
+// they carry none, and a consented replacement of an older build of the
+// helper is performed here. Protocol-level resume (attach with an expected
+// incarnation, version checks) passes through unchanged.
 func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, stateDir string) error {
 	pipe, err := spawn(ctx, stateDir)
 	if err != nil {
@@ -76,12 +104,23 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 			return conn.Write(writeCtx, websocket.MessageBinary, chunk)
 		})
 	}()
+	filter := supervisor.NewStreamFilter(bridgeCreateDefaults())
 	for {
 		_, payload, err := conn.Read(ctx)
 		if err != nil {
 			break
 		}
-		if _, err := pipe.Write(payload); err != nil {
+		forward, replaceToken := filter.Filter(payload)
+		if len(forward) > 0 {
+			if _, err := pipe.Write(forward); err != nil {
+				break
+			}
+		}
+		if replaceToken != "" {
+			reply := supervisor.ReplaceStaleHelperFrame(ctx, supervisor.HelperConfig{StateDir: stateDir}, replaceToken)
+			if len(reply) > 0 {
+				_ = conn.Write(ctx, websocket.MessageBinary, reply)
+			}
 			break
 		}
 	}

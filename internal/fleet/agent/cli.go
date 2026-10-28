@@ -382,6 +382,7 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 			fmt.Fprintf(stdout, "supervisor helper: 未运行 (%s)\n", applog.RedactText(probeErr.Error()))
 		} else {
 			fmt.Fprintf(stdout, "supervisor helper: 正常 (%s)\n", endpoint)
+			printHelperBuild(ctx, stdout, stateDir)
 		}
 	}
 	collector := NewCollector(dir, time.Now)
@@ -391,6 +392,47 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 		fmt.Fprintln(stdout, "指标采集: 正常")
 	}
 	return ExitOK
+}
+
+// printHelperBuild reports which process owns new terminals and whether it runs an older build.
+func printHelperBuild(ctx context.Context, stdout io.Writer, stateDir string) {
+	inspectCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	build, err := supervisor.InspectHelperBuild(inspectCtx, stateDir)
+	if err != nil {
+		fmt.Fprintf(stdout, "主机端组件: 无法读取详情 (%s)\n", applog.RedactText(err.Error()))
+		return
+	}
+	started := helperStartedAt(inspectCtx, build.Helper.PID)
+	for _, line := range describeHelperBuild(build, started) {
+		fmt.Fprintln(stdout, line)
+	}
+}
+
+// describeHelperBuild lists the status lines about the host component that owns new terminals.
+func describeHelperBuild(build supervisor.HelperBuild, started string) []string {
+	release := "未知"
+	if build.Helper.Runtime != nil && build.Helper.Runtime.Version != "" {
+		release = build.Helper.Runtime.Version
+	}
+	if started == "" {
+		started = "未知"
+	}
+	sessions := "未知"
+	if build.SessionsKnown {
+		sessions = fmt.Sprintf("%d", build.Sessions)
+	}
+	lines := []string{
+		fmt.Sprintf("主机端组件: 进程=%d 启动时间=%s 版本=%s 持久终端=%s", build.Helper.PID, started, release, sessions),
+		"新终端的 shell 与 PATH: 由本代理在每次创建时按账号登录 shell 解析并显式指定，不沿用主机端组件启动时的环境",
+	}
+	switch {
+	case build.Notice() != "":
+		lines = append(lines, "提示: "+build.Notice())
+	case build.Stale:
+		lines = append(lines, "提示: 主机端组件版本较旧，当前没有持久终端，将自动更新。")
+	}
+	return lines
 }
 
 func printServerError(stderr io.Writer, prefix string, err error) {
