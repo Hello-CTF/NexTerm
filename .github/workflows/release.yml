@@ -189,7 +189,7 @@ jobs:
           fi
           if command -v makensis >/dev/null 2>&1; then
             echo "using preinstalled $(command -v makensis)"
-            makensis /VERSION
+            MSYS_NO_PATHCONV=1 makensis /VERSION
             exit 0
           fi
           # Fail closed: only install when the tool is neither cached nor preinstalled,
