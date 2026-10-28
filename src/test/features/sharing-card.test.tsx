@@ -353,7 +353,7 @@ describe("ShareCard lists and states", () => {
     route(shareHandler({ shares: { shares: [] }}));
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("还没有主机分享") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("暂无主机分享") ?? false);
     expect(document.body.textContent).not.toContain("旧版链接");
     expect(document.body.textContent).toContain("「预览链接」");
     mounted.unmount();
@@ -646,7 +646,7 @@ describe("ShareCard account-switch isolation", () => {
     vi.stubGlobal("fetch", mocks.fetch);
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("还没有主机分享") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("暂无主机分享") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");

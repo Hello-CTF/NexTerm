@@ -293,7 +293,7 @@ describe("M165 opt-ins disabled by default", () => {
     await flushUntilOptInRendered();
     openDetails();
     // Remote known_host / AI profiles are filtered by opt-in: they enter neither the apply set nor the compare rows
-    await flushUntil(() => text().includes("本机与服务端都还没有可同步的内容。"));
+    await flushUntil(() => text().includes("本机与服务端均暂无可同步的内容。"));
     expect(mocks.kindOptInGet).toHaveBeenCalled();
     expect(mocks.collectKnownHosts).not.toHaveBeenCalled();
     expect(mocks.collectAIProfiles).not.toHaveBeenCalled();
@@ -352,7 +352,7 @@ describe("M165 known_host sync", () => {
     await flushUntilOptInRendered();
     openDetails();
     // Off by default: the known_host tombstone enters neither the push set nor the compare rows
-    await flushUntil(() => text().includes("本机与服务端都还没有可同步的内容。"));
+    await flushUntil(() => text().includes("本机与服务端均暂无可同步的内容。"));
     expect(text()).toContain("待推送 0 项");
     expect(text()).not.toContain("kh-del");
     expect(mocks.syncPush).not.toHaveBeenCalled();
@@ -482,7 +482,7 @@ describe("M166 AI permission and preference sync", () => {
     mounted = mountSyncCard();
     await flushUntilOptInRendered();
     openDetails();
-    await flushUntil(() => text().includes("本机与服务端都还没有可同步的内容。"));
+    await flushUntil(() => text().includes("本机与服务端均暂无可同步的内容。"));
     expect(mocks.collectAIPermission).not.toHaveBeenCalled();
     expect(mocks.collectAIGrants).not.toHaveBeenCalled();
     expect(mocks.collectPreferences).not.toHaveBeenCalled();
@@ -572,7 +572,7 @@ describe("M165 R2 opt-in toggle races", () => {
     await flushUntilOptInRendered();
     act(() => optInCheckbox(0).click());
     openDetails();
-    await flushUntil(() => text().includes("本机与服务端都还没有可同步的内容。"));
+    await flushUntil(() => text().includes("本机与服务端均暂无可同步的内容。"));
     // The slow load finishes only now: the write-back must be discarded by the generation check, and the disabled kind must not appear in compare rows
     slowLoad.resolve();
     await flushUntil(() => text().includes("待推送 0 项"));

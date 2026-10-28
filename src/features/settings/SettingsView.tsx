@@ -604,7 +604,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               <div className="text-[12.5px] text-neutral-200" data-setting="osc52">允许远程主机写入剪贴板（OSC 52）</div>
               <p className="nx-hint mt-0.5">
                 {terminalOsc52
-                  ? "开启后，远程主机可以通过转义序列直接改写你的系统剪贴板，不再逐次询问。只在可信的主机与网络环境下保持开启。"
+                  ? "开启后，远程主机可以通过转义序列直接改写你的系统剪贴板，不再逐次询问。仅在可信的主机与网络环境下保持开启。"
                   : "默认关闭。远程主机每次请求写剪贴板时都会先询问你，可选择允许本次、允许本会话或拒绝。"}
               </p>
             </div>
@@ -618,7 +618,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                   setTerminalOsc52(false);
                   return;
                 }
-                void ask("允许远程主机直接写入你的剪贴板？\n开启后不再逐次询问，恶意主机可能改写剪贴板内容。只在可信的主机和网络下开启。", {
+                void ask("允许远程主机直接写入你的剪贴板？\n开启后将不再逐次询问，恶意主机可能改写剪贴板内容。仅在可信的主机和网络下开启。", {
                   title: "开启剪贴板写入",
                   kind: "warning",
                 }).then((ok) => {
@@ -644,7 +644,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </div>
             <p className="nx-hint mt-1.5">
               {terminalPrefs.closeAction === "ask" &&
-                "每次关闭前询问：转到后台运行（可在「后台会话」接管）或直接关闭结束进程。弹窗里勾选「以后都按此选择」会记住你的决定。"}
+                "每次关闭前询问：转到后台运行（可在「后台会话」接管）或直接关闭结束进程。弹窗里勾选「以后都按此选择」将记住该选择。"}
               {terminalPrefs.closeAction === "kill" && "直接结束进程并关闭标签，不再询问。"}
               {terminalPrefs.closeAction === "detach" && "进程转入后台继续运行，可在「后台会话」中随时接管。"}
             </p>

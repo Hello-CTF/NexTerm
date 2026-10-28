@@ -226,7 +226,7 @@ export function AiRulesCard() {
             }}
           />
         )}
-        {aiPerm && rules.length === 0 && !draftOpen && <div className="nx-hint text-[11px]">还没有拦截规则</div>}
+        {aiPerm && rules.length === 0 && !draftOpen && <div className="nx-hint text-[11px]">暂无拦截规则</div>}
         {aiPerm && rules.length > 0 && filtered.length === 0 && (
           <div className="nx-hint text-[11px]">没有匹配的规则</div>
         )}

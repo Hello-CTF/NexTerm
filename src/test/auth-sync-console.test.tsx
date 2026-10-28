@@ -471,7 +471,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     await flushUntil(() => text().includes("服务端数据在读取期间发生变化"));
 
     expect(mocks.syncPull).toHaveBeenCalledWith(5, ["changing"]);
-    expect(text()).not.toContain("本机与服务端都还没有可同步的内容");
+    expect(text()).not.toContain("本机与服务端均暂无可同步的内容");
   });
 
   it.each([
@@ -781,7 +781,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     clickButton(mounted.container, "清除服务端副本");
     await flushUntil(() => mocks.syncDelete.mock.calls.length === 1);
     expect(mocks.syncDelete).toHaveBeenCalledWith("head-1", "cloud-only", "hash-1");
-    await flushUntil(() => text().includes("本机与服务端都还没有可同步的内容"));
+    await flushUntil(() => text().includes("本机与服务端均暂无可同步的内容"));
   });
 
   it("refuses cloud deletion when a locked local credential makes collection incomplete", async () => {

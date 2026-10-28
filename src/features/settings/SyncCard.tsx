@@ -334,7 +334,7 @@ function DesktopLinkCard() {
       {loadError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">同步配置读取失败 · {loadError}</span>
+          <span className="min-w-0 flex-1 break-words">未能读取同步配置：{loadError}。请重试。</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
             <IconRefresh size={12} />
             重试
@@ -485,7 +485,7 @@ function DesktopLinkCard() {
       {step.kind === "reset" && (
         <div className="flex flex-col gap-2">
           <p className="nx-hint">
-            账号已被管理员重置，请先设置新密码。数据密钥、所有登录会话和两步验证绑定已清除；设置后会生成新的数据密钥和一次性恢复密钥，加密数据需从仍保有数据的设备重新同步。
+            账号已被管理员重置，请先设置新密码。加密密钥、全部登录状态和两步验证绑定已清除；设置后将生成新的加密密钥和一次性恢复密钥，加密数据需从仍保留数据的设备重新同步。
           </p>
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
             <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass">
@@ -723,9 +723,9 @@ function DesktopSyncConsole() {
       const failed = fresh.lastError !== "" && !(Number.isFinite(attemptedAt) && attemptedAt < startedAt - 5000);
       let result: { ok: boolean; text: string };
       if (!finished) {
-        result = { ok: false, text: "同步用时较长，仍在后台进行。稍后在此查看结果，或再次点击「立即同步」。" };
+        result = { ok: false, text: "同步耗时较长，仍在后台进行。请稍后查看结果，或再次选择「立即同步」。" };
       } else if (failed) {
-        result = { ok: false, text: `同步失败：${fresh.lastError}。可点击「立即同步」重试。` };
+        result = { ok: false, text: `同步失败：${fresh.lastError}。请选择「立即同步」重试。` };
       } else if (before && fresh.seq === before.seq && fresh.head === before.head) {
         result = { ok: true, text: "已是最新，没有需要同步的更改。" };
       } else {
@@ -736,7 +736,7 @@ function DesktopSyncConsole() {
     } catch (e) {
       roundWaitRef.current = null;
       if (aliveRef.current) {
-        setError(`同步失败：${describeError(e)}。可点击「立即同步」重试。`);
+        setError(`同步失败：${describeError(e)}。请选择「立即同步」重试。`);
       }
     } finally {
       if (aliveRef.current) setSyncBusy(false);
@@ -821,7 +821,7 @@ function DesktopSyncConsole() {
         </button>
       </div>
       {syncBusy && (
-        <div className="nx-hint mb-2" role="status">正在同步…完成后会在这里显示结果。</div>
+        <div className="nx-hint mb-2" role="status">正在同步…完成后将显示结果。</div>
       )}
       {!syncBusy && syncResult && (
         <div className={`nx-alert mb-2 ${syncResult.ok ? "nx-alert-success" : "nx-alert-danger"}`} role="status">

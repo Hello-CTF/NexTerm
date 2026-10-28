@@ -50,17 +50,17 @@ function parseBundle(text: string): { bundle?: SyncBundle; error?: string } {
     return { error: "不是合法的 JSON 文件" };
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { error: "资产包必须是一个 JSON 对象" };
+    return { error: "资产包内容格式不正确" };
   }
   const candidate = raw as Record<string, unknown>;
   if (candidate.protocol !== BUNDLE_PROTOCOL) {
     return {
-      error: `不支持的资产包协议版本（文件为 ${String(candidate.protocol)}，当前支持 ${BUNDLE_PROTOCOL}）`,
+      error: `不支持的资产包版本（文件为 ${String(candidate.protocol)}，当前支持 ${BUNDLE_PROTOCOL}）`,
     };
   }
   for (const key of ["groups", "assets", "creds"] as const) {
     if (candidate[key] !== undefined && !Array.isArray(candidate[key])) {
-      return { error: `资产包字段 ${key} 必须是数组` };
+      return { error: `资产包中的 ${key} 必须是列表` };
     }
   }
   const bundle = candidate as unknown as SyncBundle;
@@ -164,7 +164,7 @@ export function SyncBundleCard() {
   const doExport = async () => {
     const ids = [...selected];
     if (ids.length === 0) {
-      pushToast("error", "先勾选要导出的资产");
+      pushToast("error", "请先选择要导出的资产");
       return;
     }
     if (password !== password2) {
@@ -287,7 +287,7 @@ export function SyncBundleCard() {
           ? `导入完成：新建 ${data.assetsCreated + data.groupsCreated + data.credsCreated} · 更新 ${
               data.assetsUpdated + data.groupsUpdated + data.credsUpdated
             }`
-          : "没有任何条目被写入，请看下方原因",
+          : "未写入任何条目，原因见下方",
       );
     } catch (e) {
       setImportError(describeError(e));
@@ -309,7 +309,7 @@ export function SyncBundleCard() {
       {digestError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">本机资产摘要读取失败 · {digestError}</span>
+          <span className="min-w-0 flex-1 break-words">未能读取本机资产摘要：{digestError}。请重试。</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void refreshDigest()}>
             <IconRefresh size={12} />
             重试
@@ -362,7 +362,7 @@ export function SyncBundleCard() {
         </div>
 
         {exportable.length === 0 ? (
-          <div className="nx-hint py-2 text-[12px]">本机还没有可导出的资产。</div>
+          <div className="nx-hint py-2 text-[12px]">本机暂无可导出的资产。</div>
         ) : (
           <div className="max-h-[220px] overflow-y-auto rounded border border-neutral-800/60">
             {exportable.map((a) => (
@@ -475,7 +475,7 @@ export function SyncBundleCard() {
             onClick={() => void doExport()}
           >
             {exporting ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
-            {exporting ? "导出中…" : "导出资产包（.nxbm）"}
+            {exporting ? "正在导出…" : "导出资产包（.nxbm）"}
           </button>
         </div>
 
@@ -565,7 +565,7 @@ export function SyncBundleCard() {
               <div className="nx-alert nx-alert-info flex items-start gap-2">
                 <IconInfo size={14} className="mt-0.5 shrink-0" />
                 <div>
-                  包含 {preview.tombstones} 条删除标记，导入后本机对应资产会被一并标记删除。
+                  包含 {preview.tombstones} 条已删除记录，导入后本机对应资产会被一并标记删除。
                 </div>
               </div>
             )}
@@ -592,7 +592,7 @@ export function SyncBundleCard() {
                 onClick={() => void doImport()}
               >
                 {importing ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
-                {importing ? "导入中…" : `确认导入 ${preview.bundle.assets.length} 条资产`}
+                {importing ? "正在导入…" : `确认导入 ${preview.bundle.assets.length} 条资产`}
               </button>
             </div>
           </div>

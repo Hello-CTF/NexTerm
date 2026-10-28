@@ -118,7 +118,7 @@ describe("SyncCard desktop states", () => {
   it("reports sync configuration read failures inline and supports retry", async () => {
     mocks.linkGet.mockRejectedValueOnce(new Error("corrupt configuration"));
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => text().includes("同步配置读取失败 · corrupt configuration"));
+    await flushUntil(() => text().includes("未能读取同步配置：corrupt configuration"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => !text().includes("同步配置读取失败"));
     expect(mocks.linkGet).toHaveBeenCalledTimes(2);

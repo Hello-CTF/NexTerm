@@ -252,7 +252,7 @@ describe("Desktop account sync console", () => {
     seedLoggedIn({ lastError: "connection refused", lastAttemptAt: new Date(Date.now() + 1000).toISOString() });
     fireRoundComplete();
     await flushUntil(() => !syncButton().disabled);
-    expect(mocks.toast).toHaveBeenCalledWith("error", "同步失败：connection refused。可点击「立即同步」重试。");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "同步失败：connection refused。请选择「立即同步」重试。");
   });
 
   it("surfaces the previous sync failure from status.lastError", async () => {

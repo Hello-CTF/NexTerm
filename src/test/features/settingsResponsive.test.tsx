@@ -279,6 +279,7 @@ describe("SettingsView responsive structure", () => {
     const box = label!.querySelector<HTMLInputElement>('input[type="checkbox"]');
     expect(box).toBeTruthy();
     expect(box!.checked).toBe(false);
+    mocks.ask.mockResolvedValueOnce(true);
     click(box!);
     await flush();
     expect(useUi.getState().terminalOsc52).toBe(true);

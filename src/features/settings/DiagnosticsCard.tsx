@@ -15,7 +15,10 @@ export function DiagnosticsCard() {
   const [status, setStatus] = useState<DiagnosticsStatus | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // task names the running action in words; notice reports the last result.
+  const [task, setTask] = useState<{ label: string; name?: string } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const busy = task !== null;
   const [packed, setPacked] = useState<Record<string, string>>({});
   const mounted = useRef(true);
 
@@ -46,18 +49,28 @@ export function DiagnosticsCard() {
     })();
   }, [fail]);
 
-  const toggle = async (armed: boolean) => {
-    setBusy(true);
+  // run keeps one action in flight, names it while it runs and reports the result.
+  const run = async (label: string, name: string | undefined, action: () => Promise<string | void>) => {
+    if (task) return;
+    setTask({ label, name });
     setError(null);
+    setNotice(null);
     try {
-      const next = await diagnosticsApi.arm(armed);
-      if (mounted.current) setStatus(next);
+      const done = await action();
+      if (mounted.current && done) setNotice(done);
     } catch (e) {
       fail(e);
     } finally {
-      if (mounted.current) setBusy(false);
+      if (mounted.current) setTask(null);
     }
   };
+
+  const toggle = (armed: boolean) =>
+    run(armed ? "正在开启调试模式…" : "正在取消调试模式…", undefined, async () => {
+      const next = await diagnosticsApi.arm(armed);
+      if (mounted.current) setStatus(next);
+      return armed ? "已开启。请重启应用，下次启动时开始记录（仅记录一次）。" : "已取消，下次启动不会记录调试信息。";
+    });
 
   const openFolder = async (path: string) => {
     setError(null);
@@ -81,52 +94,37 @@ export function DiagnosticsCard() {
     setError(null);
     try {
       await copyText(path);
+      setNotice("已复制路径。");
     } catch (e) {
       fail(e);
     }
   };
 
-  const pack = async (capture: DiagnosticsCapture) => {
-    setBusy(true);
-    setError(null);
-    try {
+  const pack = (capture: DiagnosticsCapture) =>
+    run("正在打包…", capture.name, async () => {
       const result = await diagnosticsApi.pack(capture.path);
       if (mounted.current) setPacked((prev) => ({ ...prev, [capture.name]: result.path }));
       const next = await diagnosticsApi.status();
       if (mounted.current) setStatus(next);
-    } catch (e) {
-      fail(e);
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  };
+      return `已打包 ${capture.name}，压缩包在：${result.path}`;
+    });
 
   const remove = async (capture: DiagnosticsCapture) => {
     if (!(await ask(`删除调试记录 ${capture.name}？\n\n文件夹和已打包的压缩包都会被删除，无法恢复。`, { kind: "warning" }))) return;
-    setBusy(true);
-    setError(null);
-    try {
+    await run("正在删除…", capture.name, async () => {
       const next = await diagnosticsApi.remove(capture.path);
       if (mounted.current) setStatus(next);
-    } catch (e) {
-      fail(e);
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
+      return `已删除 ${capture.name}。`;
+    });
   };
 
   const clearAll = async () => {
     if (!(await ask("清空全部调试记录？\n\n除本次正在记录的以外，所有文件夹和压缩包都会被删除，无法恢复。", { kind: "warning" }))) return;
-    setBusy(true);
-    setError(null);
-    try {
+    await run("正在清空…", undefined, async () => {
       const next = await diagnosticsApi.clear();
       if (mounted.current) setStatus(next);
-    } catch (e) {
-      fail(e);
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
+      return "已清空历史调试记录。";
+    });
   };
 
   // Non-admin accounts on a server cannot use these commands; keep the navigation target but say why it is empty.
@@ -181,12 +179,12 @@ export function DiagnosticsCard() {
       )}
 
       <p className="nx-hint">
-        仅对下次启动生效，最长 30 分钟、约 200 MB，期间运行会略慢。记录性能数据、调试日志和系统信息，不含终端输入输出；密码、令牌、私钥已脱敏，发送前请自行检查主机名、路径等信息。
+        只在下次启动时生效，最长记录 30 分钟、约 200 MB，期间运行会稍慢。会记录性能数据、调试日志和系统信息，不含终端输入输出，密码、令牌、私钥已隐去。发送前请自行检查主机名、路径等信息。
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {status?.armed ? (
           <>
-            <span className="text-[12.5px] text-neutral-200">已开启，重启应用后开始记录（仅一次）</span>
+            <span className="text-[12.5px] text-neutral-200">已开启：重启应用后开始记录（仅一次）</span>
             <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy} onClick={() => void toggle(false)}>
               取消
             </button>
@@ -209,9 +207,12 @@ export function DiagnosticsCard() {
         )}
       </div>
 
+      <div className="nx-hint mt-3 empty:hidden" role="status" aria-busy={busy}>
+        {task ? task.label : notice}
+      </div>
       {error && (
         <div className="nx-alert nx-alert-danger mt-3" role="alert">
-          操作失败：{error}
+          未能完成：{error}（可稍后重试）
         </div>
       )}
 
@@ -255,7 +256,11 @@ export function DiagnosticsCard() {
                     disabled={busy}
                     onClick={() => void pack(capture)}
                   >
-                    {busy ? <IconLoader size={12} className="animate-spin" /> : <IconArchive size={12} />}
+                    {task?.name === capture.name && task.label === "正在打包…" ? (
+                      <IconLoader size={12} className="animate-spin" />
+                    ) : (
+                      <IconArchive size={12} />
+                    )}
                     打包
                   </button>
                   {capture.path !== activeDir && (

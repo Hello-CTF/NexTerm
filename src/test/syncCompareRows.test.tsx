@@ -27,8 +27,8 @@ function text(): string {
 
 describe("compareSummary summary statistics", () => {
   it("covers loading, empty, different, and fully synchronized states", () => {
-    expect(compareSummary(null)).toBe("读取中…");
-    expect(compareSummary([])).toBe("本机与服务端都还没有可同步的内容");
+    expect(compareSummary(null)).toBe("正在读取…");
+    expect(compareSummary([])).toBe("本机与服务端均暂无可同步的内容");
     expect(compareSummary(ROWS)).toBe("资产 1 · 分组 1 · 凭据 1 · 无法识别的数据 1 — 差异 3 条");
     expect(compareSummary([{ id: "x", kind: "asset", name: "a", state: "same" }])).toBe("资产 1 — 全部一致");
   });
@@ -125,7 +125,7 @@ describe("CompareDetails row rendering", () => {
 
   it("shows a loading placeholder for null rows and hides it on error", async () => {
     mounted = mount(createElement(CompareDetails, { rows: null }));
-    expect(text()).toContain("读取中…");
+    expect(text()).toContain("正在读取…");
     clickButton(mounted.container, "对比详情");
     await flush();
     expect(text()).toContain("正在读取本机与服务端数据…");
@@ -141,6 +141,6 @@ describe("CompareDetails row rendering", () => {
     mounted = mount(createElement(CompareDetails, { rows: [] }));
     clickButton(mounted.container, "对比详情");
     await flush();
-    expect(text()).toContain("本机与服务端都还没有可同步的内容。");
+    expect(text()).toContain("本机与服务端均暂无可同步的内容。");
   });
 });

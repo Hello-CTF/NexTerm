@@ -267,7 +267,7 @@ describe("KnownHostsCard", () => {
     const slow = deferred<KnownHostDto[]>();
     mocks.knownHostList.mockReturnValue(slow.promise);
     mounted = mount(createElement(KnownHostsCard));
-    expect(mounted.container.textContent).toContain("读取中…");
+    expect(mounted.container.textContent).toContain("正在读取…");
 
     slow.resolve([KH1, KH2]);
     await flush();
@@ -310,7 +310,7 @@ describe("KnownHostsCard", () => {
     mocks.knownHostList.mockResolvedValue([]);
     mounted = mount(createElement(KnownHostsCard));
     await flush();
-    expect(mounted.container.textContent).toContain("还没有信任过任何主机");
+    expect(mounted.container.textContent).toContain("尚未信任任何主机");
   });
 
   it("surfaces a list failure with a working retry", async () => {

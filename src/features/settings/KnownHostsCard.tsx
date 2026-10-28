@@ -63,10 +63,10 @@ export function KnownHostsCard() {
     setRevokingId(host.id);
     try {
       await assetApi.knownHostRemove(host.id);
-      pushToast("success", `已撤销 ${host.host}:${host.port} 的信任`);
+      pushToast("success", `已撤销对 ${host.host}:${host.port} 的信任，下次连接时会重新确认指纹`);
       await reload();
     } catch (e) {
-      pushToast("error", `撤销失败：${describeError(e)}`);
+      pushToast("error", `撤销失败：${describeError(e)}。请重试。`);
     } finally {
       if (aliveRef.current) setRevokingId(null);
     }
@@ -108,7 +108,7 @@ export function KnownHostsCard() {
             }}
           />
         )}
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void reload()}>
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" aria-busy={loading} onClick={() => void reload()}>
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
           刷新
         </button>
@@ -122,7 +122,7 @@ export function KnownHostsCard() {
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="break-words">{error}</div>
+              <div className="break-words">未能读取：{error}</div>
               <button className="nx-btn nx-btn-outline nx-btn-sm mt-2" onClick={() => void reload()}>
                 <IconRefresh size={11} />
                 重试
@@ -130,16 +130,16 @@ export function KnownHostsCard() {
             </div>
           </div>
         ) : (
-          <div className="nx-hint py-2 text-[12px]">读取中…</div>
+          <div className="nx-hint py-2 text-[12px]">正在读取…</div>
         )
       ) : hosts.length === 0 ? (
-        <div className="nx-hint py-2 text-[12px]">还没有信任过任何主机。</div>
+        <div className="nx-hint py-2 text-[12px]">尚未信任任何主机。</div>
       ) : (
         <div className="flex flex-col gap-1">
           {error && (
             <div className="nx-alert nx-alert-danger mb-1 flex items-center gap-2 text-[12px]">
               <IconXCircle size={13} className="shrink-0" />
-              <span className="min-w-0 break-words">{error}</span>
+              <span className="min-w-0 break-words">未能读取：{error}。请选择「刷新」重试。</span>
             </div>
           )}
           {pageHosts.map((h) => (
@@ -158,7 +158,8 @@ export function KnownHostsCard() {
               <button
                 className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
                 disabled={revokingId !== null}
-                title={`撤销对 ${h.host}:${h.port} 的信任`}
+                aria-busy={revokingId === h.id}
+                title={revokingId !== null && revokingId !== h.id ? "正在撤销另一台主机，请稍候" : `撤销对 ${h.host}:${h.port} 的信任`}
                 onClick={() => void revoke(h)}
               >
                 {revokingId === h.id ? (
@@ -166,7 +167,7 @@ export function KnownHostsCard() {
                 ) : (
                   <IconTrash size={11} />
                 )}
-                撤销信任
+                {revokingId === h.id ? "正在撤销…" : "撤销信任"}
               </button>
             </div>
           ))}

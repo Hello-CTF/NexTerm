@@ -48,9 +48,9 @@ export const COMPARE_KIND_LABELS: Record<string, string> = {
 export function compareRowLabel(state: CompareRowState): { text: string; tone: string; hint: string } {
   switch (state) {
     case "local-only":
-      return { text: "仅本机", tone: "", hint: "服务端还没有这条。推送会新建。" };
+      return { text: "仅本机", tone: "", hint: "服务端尚无这条数据，推送后将新建。" };
     case "remote-only":
-      return { text: "仅服务端", tone: "", hint: "本机还没有这条，拉取并应用会新建。" };
+      return { text: "仅服务端", tone: "", hint: "本机尚无这条数据，拉取并应用后将新建。" };
     case "same":
       return { text: "已一致", tone: "nx-badge-green", hint: "两边内容相同。" };
     case "local-newer":
@@ -92,8 +92,8 @@ export function compareRowTitle(r: CompareRowView): { title: string; secondary?:
 
 // compareSummary summary line grouped by category; rows null means still reading. Matching rows are only counted, never listed.
 export function compareSummary(rows: CompareRowView[] | null): string {
-  if (!rows) return "读取中…";
-  if (rows.length === 0) return "本机与服务端都还没有可同步的内容";
+  if (!rows) return "正在读取…";
+  if (rows.length === 0) return "本机与服务端均暂无可同步的内容";
   const counts = new Map<string, number>();
   let diff = 0;
   for (const r of rows) {
@@ -144,7 +144,7 @@ export function CompareDetails({ rows, error, onUndecryptableAction, actionsBusy
       </div>
       {open && (
         <div id={panelId} className="mt-2">
-          {rows && rows.length === 0 && <div className="nx-hint py-3 text-[12px]">本机与服务端都还没有可同步的内容。</div>}
+          {rows && rows.length === 0 && <div className="nx-hint py-3 text-[12px]">本机与服务端均暂无可同步的内容。</div>}
           {rows && rows.length > 0 && diffRows.length === 0 && (
             <div className="nx-hint px-0.5 py-2 text-[12px]">本机与服务端全部一致，无需处理。</div>
           )}

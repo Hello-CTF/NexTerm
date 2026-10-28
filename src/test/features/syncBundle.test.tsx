@@ -201,7 +201,7 @@ describe("SyncBundleCard import", () => {
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
-    await flushUntil(() => text().includes("不支持的资产包协议版本"));
+    await flushUntil(() => text().includes("不支持的资产包版本"));
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
@@ -210,7 +210,7 @@ describe("SyncBundleCard import", () => {
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
-    await flushUntil(() => text().includes("assets 必须是数组"));
+    await flushUntil(() => text().includes("assets 必须是列表"));
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
@@ -346,7 +346,7 @@ describe("SyncBundleCard import", () => {
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
-    await flushUntil(() => text().includes("删除标记"));
+    await flushUntil(() => text().includes("已删除记录"));
     expect(text()).toContain("本机对应资产会被一并标记删除");
   });
 });

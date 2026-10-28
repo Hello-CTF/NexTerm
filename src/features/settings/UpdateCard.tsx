@@ -54,7 +54,7 @@ export function UpdateCard() {
       : null;
   const showInstall =
     verdict === "available" && installAllowed && !install.active && !installedVersion;
-  const failReason = checkError || status?.unavailableReason || "原因未查明";
+  const failReason = checkError || status?.unavailableReason || "原因不明";
 
   return (
     <section className="nx-card">
@@ -85,7 +85,7 @@ export function UpdateCard() {
       {verdict === "check-failed" && (
         <div className="nx-alert nx-alert-danger mb-2 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">检查失败：{failReason}</span>
+          <span className="min-w-0 flex-1 break-words">未能检查更新：{failReason}。请检查网络后再点「立即检查」。</span>
         </div>
       )}
 
@@ -95,6 +95,8 @@ export function UpdateCard() {
             type="button"
             className="nx-btn nx-btn-outline nx-btn-sm"
             disabled={checking}
+            aria-busy={checking}
+            title={checking ? "正在检查更新，请稍候" : undefined}
             onClick={() => void update.check()}
           >
             {checking ? (
@@ -125,7 +127,7 @@ export function UpdateCard() {
       {install.error && (
         <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">安装失败：{install.error}</span>
+          <span className="min-w-0 flex-1 break-words">安装失败：{install.error}。可选择「重试」，仍失败请到 Releases 页面手动下载。</span>
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
@@ -141,13 +143,14 @@ export function UpdateCard() {
           <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
             已安装 v{installedVersion}，重启应用后生效。
-            {restartError && <span className="mt-0.5 block text-red-300">重启失败：{restartError}</span>}
+            {restartError && <span className="mt-0.5 block text-red-300">重启失败：{restartError}。请手动退出并重新打开应用。</span>}
           </span>
           {DESKTOP && (
             <button
               type="button"
               className="nx-btn nx-btn-success nx-btn-sm shrink-0"
               disabled={restarting}
+              aria-busy={restarting}
               onClick={() => void update.restart()}
             >
               <IconRestart size={12} />
