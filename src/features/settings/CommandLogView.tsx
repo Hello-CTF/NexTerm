@@ -216,7 +216,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
               : `已加载 ${entries.length} 条`}
         </span>
         {error && entries.length > 0 && (
-          <span className="nx-hint text-red-300">刷新失败 · {error}</span>
+          <span className="nx-hint text-red-300">刷新失败：{error}</span>
         )}
         <div className="nx-spacer" />
         <select
@@ -288,10 +288,10 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
               </div>
             </li>
           ))}
-          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">加载中…</li>}
+          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">正在加载…</li>}
           {entries.length === 0 && !loading && error && (
             <li className="flex flex-wrap items-center justify-center gap-2 px-3 py-4 text-center text-[12px]">
-              <span className="min-w-0 break-words text-red-300">命令记录加载失败 · {error}</span>
+              <span className="min-w-0 break-words text-red-300">未能加载命令记录：{error}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadFirstPage(assetId, userId, sessionId)} disabled={loading}>
                 <IconRefresh size={12} />
                 重试
@@ -299,7 +299,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
             </li>
           )}
           {entries.length === 0 && !loading && !error && (
-            <li className="nx-hint px-3 py-4 text-center">暂无记录：仅记录启用了 OSC 133 集成的 shell 中执行的命令。</li>
+            <li className="nx-hint px-3 py-4 text-center">暂无记录。仅记录启用了 OSC 133 集成的 shell 中执行的命令。</li>
           )}
         </ul>
         ) : (
@@ -358,7 +358,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
             ) : entries.length === 0 && error ? (
               <tr>
                 <td colSpan={7} className="nx-table-empty">
-                  <span className="text-red-300">命令记录加载失败 · {error}</span>
+                  <span className="text-red-300">未能加载命令记录：{error}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void loadFirstPage(assetId, userId, sessionId)}
@@ -372,7 +372,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
             ) : entries.length === 0 ? (
               <tr>
                 <td colSpan={7} className="nx-table-empty">
-                  暂无记录：仅记录启用了 OSC 133 集成的 shell 中执行的命令。
+                  暂无记录。仅记录启用了 OSC 133 集成的 shell 中执行的命令。
                 </td>
               </tr>
             ) : null}
@@ -389,7 +389,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
           <div className="nx-spacer" />
           {moreError ? (
             <>
-              <span className="min-w-0 break-words text-red-300">加载更多失败 · {moreError}</span>
+              <span className="min-w-0 break-words text-red-300">未能加载更多：{moreError}</span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs"
                 onClick={() => void loadMore()}
@@ -416,7 +416,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>
-          仅覆盖启用 OSC 133 shell 集成的会话（本地注入或远端支持）；命令文本取自执行时的屏幕行，可能包含提示符。纯输出和其他来源不会记录。
+          仅覆盖启用 OSC 133 shell 集成的会话（本地注入或远端支持）；命令文本取自执行时的屏幕行，可能包含提示符。纯输出和其他来源将不被记录。
         </span>
       </div>
     </div>

@@ -155,7 +155,7 @@ describe("AuditView pagination", () => {
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 100);
 
     clickButton(mounted!.container, "加载更多");
-    await flushUntil(() => text(mounted!.container).includes("加载更多失败 · Network interrupted"));
+    await flushUntil(() => text(mounted!.container).includes("未能加载更多：Network interrupted"));
     expect(mounted!.container.querySelectorAll("tbody tr").length).toBe(100);
 
     clickButton(mounted!.container, "重试");
@@ -359,9 +359,9 @@ describe("AuditView responsive layout", () => {
       mocks.auditQuery.mockReset();
       mocks.auditQuery.mockRejectedValueOnce(new Error(longError));
       clickButton(mounted!.container, "加载更多");
-      await flushUntil(() => text(mounted!.container).includes("加载更多失败"));
+      await flushUntil(() => text(mounted!.container).includes("未能加载更多"));
       const errorSpan = [...mounted!.container.querySelectorAll("span")].find((s) =>
-        s.textContent?.includes("加载更多失败"),
+        s.textContent?.includes("未能加载更多"),
       );
       expect(errorSpan!.className).toContain("min-w-0");
       expect(errorSpan!.className).toContain("break-words");

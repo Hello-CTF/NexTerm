@@ -185,7 +185,7 @@ describe("DiagnosticsCard", () => {
   it("explains the missing permission instead of leaving an empty section", async () => {
     mocks.status.mockRejectedValue({ code: "forbidden", message: "仅管理员可使用诊断功能" });
     mounted = mount(createElement(DiagnosticsCard));
-    await flushUntil(() => text().includes("仅管理员可以使用调试模式"));
+    await flushUntil(() => text().includes("仅管理员可使用调试模式"));
     expect(hasButton("开启下次启动的调试模式")).toBe(false);
   });
 

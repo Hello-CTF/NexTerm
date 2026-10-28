@@ -150,7 +150,7 @@ describe("shortcuts editor", () => {
     const badge = row("commandPalette").querySelector(".nx-badge-amber");
     expect(badge?.textContent).toContain("冲突");
     expect(row("newTerminal").querySelector(".nx-badge-amber")).not.toBeNull();
-    expect(mounted?.container.textContent).toContain("排在前面的动作生效");
+    expect(mounted?.container.textContent).toContain("排在前面的操作生效");
   });
 
   it("restores a single row to its default", () => {

@@ -185,7 +185,7 @@ describe("Desktop account sync console", () => {
 
     const consoleCard = [...document.querySelectorAll("section.nx-card")].find((c) => c.textContent?.includes("立即同步"));
     expect(consoleCard?.querySelector(".nx-card-title")?.textContent).toBe("账号同步");
-    expect(consoleCard?.textContent).toContain("数据会自动在本机与服务端之间同步。");
+    expect(consoleCard?.textContent).toContain("数据将在本机与服务端之间自动同步。");
     expect(consoleCard?.textContent).toContain("服务端共 0 项数据");
 
     const knownHost = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(

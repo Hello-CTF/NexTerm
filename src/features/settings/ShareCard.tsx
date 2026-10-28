@@ -74,7 +74,7 @@ function ShareUnsupported() {
         <span className="nx-badge nx-badge-amber">登录服务端账号后可用</span>
       </div>
       <p className="nx-hint">
-        主机分享依赖服务端账号体系。在「设置 → 账号同步」登录服务端账号后，即可把接入的设备分享给其他注册用户。
+        主机分享需要服务端账号。在「设置 → 账号同步」中登录服务端账号后，即可将已接入的受管设备分享给其他注册用户。
       </p>
       <div className="mt-3">
         <button
@@ -82,7 +82,7 @@ function ShareUnsupported() {
           className="nx-btn nx-btn-outline nx-btn-sm"
           onClick={() => showSettingsSection("settings-account")}
         >
-          去设置 → 账号同步登录
+          前往「账号同步」登录
         </button>
       </div>
     </section>
@@ -97,7 +97,7 @@ function ShareLoginHint() {
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">分享</span>
       </div>
-      <p className="nx-hint">登录后可以把你接入的设备分享给其他注册用户。</p>
+      <p className="nx-hint">登录后可将已接入的受管设备分享给其他注册用户。</p>
     </section>
   );
 }
@@ -111,7 +111,7 @@ function ShareAuthOff() {
         <span className="nx-badge nx-badge-amber">账号功能已关闭</span>
       </div>
       <p className="nx-hint">
-        这台服务器关闭了账号功能（--auth=off），终端分享不可用；主机分享依赖账号体系。
+        此服务器已关闭账号功能（--auth=off），终端分享不可用；主机分享需要账号。
       </p>
     </section>
   );
@@ -149,7 +149,7 @@ export function ShareCard() {
         <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <IconGlobe size={15} className="text-neutral-400" />
           <span className="nx-card-title">分享</span>
-          <span className="nx-hint">账号状态读取中…</span>
+          <span className="nx-hint">正在读取账号状态…</span>
         </div>
       </section>
     );
@@ -274,7 +274,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
     // The epoch must be captured before the confirmation opens: if the account switches while the dialog is open, the old account's row must not be revoked in the new session.
     const epoch = accountEpoch.current;
     const ok = await ask(
-      `吊销这条主机分享？\n\n「${share.recipient_username}」将无法再通过此分享在「${deviceName(share.device_id)}」上新建终端，进行中的连接也会尽快断开。`,
+      `确定要吊销这条主机分享吗？\n\n「${share.recipient_username}」将无法再通过此分享在「${deviceName(share.device_id)}」上新建终端，进行中的连接也将尽快断开。`,
       { title: "吊销主机分享", kind: "warning" },
     );
     if (!ok) return;
@@ -312,7 +312,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       </div>
 
       <p className="nx-hint mb-3">
-        主机分享允许另一个注册用户在有效期内通过设备代理在你的接入设备上新建终端。公开访问请使用终端中的「预览链接」。
+        主机分享允许其他注册用户在有效期内通过设备代理在已接入的受管设备上新建终端。如需公开访问，请使用终端中的「预览链接」。
       </p>
 
       {createOpen && (
@@ -357,18 +357,18 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
               <input type="checkbox" className="h-4 w-4" checked={write} onChange={(e) => setWrite(e.target.checked)} />
               允许读写
             </label>
-            <span className="nx-hint text-[11px]">默认只读；勾选后，对方才能在终端中输入。</span>
+            <span className="nx-hint text-[11px]">默认只读；勾选后，对方可在终端中输入。</span>
             <div className="nx-spacer" />
             <button
               className="nx-btn nx-btn-primary"
               disabled={creating || !deviceId || !recipientUsername.trim()}
               onClick={() => void submitCreate()}
             >
-              {creating ? "创建中…" : "创建分享"}
+              {creating ? "正在创建…" : "创建分享"}
             </button>
           </div>
           {devices !== null && shareableDevices.length === 0 && (
-            <p className="nx-hint text-[11px]">没有可分享的设备：请先在「设备管理」中接入设备并开启远程终端。</p>
+            <p className="nx-hint text-[11px]">暂无可分享的受管设备。请先在「设备管理」中接入设备并开启远程终端。</p>
           )}
           {createError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2">
@@ -382,7 +382,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       {listError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">分享数据加载失败 · {listError}</span>
+          <span className="min-w-0 flex-1 break-words">未能加载分享数据：{listError}。请重试。</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()} disabled={loading}>
             <IconRefresh size={12} />
             重试
@@ -438,7 +438,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
           })}
         </div>
       )}
-      {shares === null && !listError && <div className="nx-hint py-1.5 text-[11.5px]">分享数据加载中…</div>}
+      {shares === null && !listError && <div className="nx-hint py-1.5 text-[11.5px]">正在加载分享数据…</div>}
       {shares !== null && shares.length === 0 && !listError && (
         <div className="nx-hint py-1.5 text-[11.5px]">暂无主机分享。</div>
       )}
@@ -446,7 +446,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          列表由服务端按账号过滤：普通用户只能查看自己授予或接收的分享；超级管理员可查看全部。吊销立即生效；主机分享不会向访问者泄露主机密码或私钥。
+          列表由服务端按账号过滤：普通用户仅可查看自己授予或接收的分享，超级管理员可查看全部。吊销立即生效；主机分享不会向访问者暴露主机密码或私钥。
         </div>
       </div>
       {activeShare && (

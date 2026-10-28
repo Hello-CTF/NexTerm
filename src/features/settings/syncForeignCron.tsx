@@ -27,7 +27,7 @@ export function ForeignCronSection() {
   const remove = async (job: SyncForeignCronJob) => {
     const { ask } = await import("../../ui/dialogs");
     const label = job.name || job.prompt;
-    if (!(await ask(`删除定时任务「${label}」？它会从所有设备上删除，包括运行它的设备 ${job.deviceName || job.deviceId}。`, {
+    if (!(await ask(`确定要删除定时任务「${label}」吗？该任务将从所有设备中删除，包括运行它的设备 ${job.deviceName || job.deviceId}。`, {
       title: "删除其他设备的定时任务", kind: "warning",
     }))) return;
     setBusy(job.id);
@@ -44,7 +44,7 @@ export function ForeignCronSection() {
   const adopt = async (job: SyncForeignCronJob) => {
     const { ask } = await import("../../ui/dialogs");
     const label = job.name || job.prompt;
-    if (!(await ask(`改由本机运行定时任务「${label}」？同步后它不再在 ${job.deviceName || job.deviceId} 上运行。`, {
+    if (!(await ask(`确定要改由本机运行定时任务「${label}」吗？同步后将不再在 ${job.deviceName || job.deviceId} 上运行。`, {
       title: "改由本机运行定时任务", kind: "warning",
     }))) return;
     setBusy(job.id);
@@ -58,11 +58,11 @@ export function ForeignCronSection() {
     }
   };
 
-  if (error) return <p className="nx-hint mb-3 text-[12px]">其他设备的定时任务读取失败：{error}</p>;
+  if (error) return <p className="nx-hint mb-3 text-[12px]">未能读取其他设备的定时任务：{error}</p>;
   if (!jobs || jobs.length === 0) return null;
   return (
     <div className="mb-3">
-      <div className="text-[12px] text-neutral-400">其他设备的定时任务（只在所属设备上运行）</div>
+      <div className="text-[12px] text-neutral-400">其他设备的定时任务（仅在所属设备上运行）</div>
       <ul className="mt-1 flex flex-col gap-1">
         {jobs.map((job) => (
           <li key={job.id} className="flex items-center gap-2 text-[12px] text-neutral-300">

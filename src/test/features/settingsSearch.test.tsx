@@ -223,7 +223,7 @@ describe("Settings search", () => {
   it("shows an empty state when nothing matches", () => {
     search("zzzz-no-such-setting");
     expect(mounted!.container.querySelector('[role="option"]')).toBeNull();
-    expect(mounted!.container.textContent).toContain("没有找到与「zzzz-no-such-setting」相关的设置");
+    expect(mounted!.container.textContent).toContain("未找到与「zzzz-no-such-setting」相关的设置");
   });
 
   it("restores the full navigation when the query is cleared", () => {

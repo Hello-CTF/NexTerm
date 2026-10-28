@@ -99,7 +99,7 @@ export function AiRulesCard() {
       return [...cur, r];
     }, `已添加拦截规则「${r}」`);
     if (duplicate) {
-      pushToast("info", `规则「${r}」已存在，没有重复添加`);
+      pushToast("info", `规则「${r}」已存在，未重复添加`);
       return;
     }
     if (ok) {
@@ -119,12 +119,12 @@ export function AiRulesCard() {
       }
       return cur.map((x) => (x === orig ? r : x));
     }, `已修改拦截规则「${r}」`);
-    if (duplicate) pushToast("info", `规则「${r}」已存在，没有修改`);
+    if (duplicate) pushToast("info", `规则「${r}」已存在，未修改`);
     return ok;
   };
 
   const removeRule = async (rule: string) => {
-    const confirmed = await ask(`删除拦截规则「${rule}」？\n删除后，命中它的命令不再需要确认或被拒绝。`, {
+    const confirmed = await ask(`确定要删除拦截规则「${rule}」吗？\n删除后，命中该规则的命令将不再需要确认或被拒绝。`, {
       title: "删除拦截规则",
       kind: "warning",
     });
@@ -196,7 +196,7 @@ export function AiRulesCard() {
             <button
               type="button"
               className="nx-icon-btn"
-              title="删除这条规则"
+              title="删除规则"
               aria-label={`删除拦截规则 ${r}`}
               disabled={saving}
               onClick={() => void removeRule(r)}
@@ -228,7 +228,7 @@ export function AiRulesCard() {
         )}
         {aiPerm && rules.length === 0 && !draftOpen && <div className="nx-hint text-[11px]">暂无拦截规则</div>}
         {aiPerm && rules.length > 0 && filtered.length === 0 && (
-          <div className="nx-hint text-[11px]">没有匹配的规则</div>
+          <div className="nx-hint text-[11px]">无匹配的规则</div>
         )}
       </div>
       {filtered.length > RULE_PAGE_SIZE && (
@@ -262,11 +262,11 @@ export function AiRulesCard() {
         onClick={() => setDraftOpen(true)}
       >
         <IconPlus size={11} />
-        添加一条规则
+        添加规则
       </button>
 
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        不可逆操作（格式化磁盘、清空系统目录、删除数据库）会直接拒绝。
+        不可逆操作（格式化磁盘、清空系统目录、删除数据库）将被直接拒绝。
       </p>
     </section>
   );

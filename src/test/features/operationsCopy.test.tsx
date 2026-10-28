@@ -329,7 +329,7 @@ describe("AuditView copy", () => {
     ]);
     mounted = mount(createElement(AuditView));
     await flushUntil(() => text().includes("✓ 0"));
-    expect(text()).toContain("会话命令、AI 操作、文件写入和设备上下线都会记录并标注来源；退出码和耗时随记录显示。");
+    expect(text()).toContain("会话命令、AI 操作、文件写入和设备上线与离线均会记录并标注来源；退出码和耗时随记录显示。");
     expect(text()).not.toContain("齐全");
     expect(text()).not.toContain("可导出");
     expect(text()).not.toContain("§");

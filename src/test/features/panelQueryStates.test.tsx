@@ -230,14 +230,14 @@ describe("AuditView query states", () => {
   it("surfaces the load failure with retry instead of the empty hint", async () => {
     mocks.auditQuery.mockRejectedValue(new Error("audit database unavailable"));
     mounted = withClient(createElement(AuditView));
-    await flushUntil(() => text().includes("审计记录加载失败 · audit database unavailable"));
+    await flushUntil(() => text().includes("未能加载审计记录：audit database unavailable"));
     expect(text()).not.toContain("暂无记录");
   });
 
   it("retry after failure reaches the true empty state", async () => {
     mocks.auditQuery.mockRejectedValueOnce(new Error("audit database unavailable"));
     mounted = withClient(createElement(AuditView));
-    await flushUntil(() => text().includes("审计记录加载失败"));
+    await flushUntil(() => text().includes("未能加载审计记录"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("暂无记录"));
   });

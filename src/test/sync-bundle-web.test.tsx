@@ -132,7 +132,7 @@ describe("SyncBundleCard browser asset bundles", () => {
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
-    await flushUntil(() => text().includes("这是加密的 .nxbm 资产包"));
+    await flushUntil(() => text().includes("该资产包已加密"));
     expect(text()).toContain("请在桌面版 NexTerm 中导入");
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });

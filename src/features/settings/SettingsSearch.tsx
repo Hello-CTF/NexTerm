@@ -69,7 +69,7 @@ export function SettingsSearch({ query, onQueryChange, results, onSelect, inputR
       {searching &&
         (results.length === 0 ? (
           <p className="nx-hint px-1 py-3">
-            没有找到与「{query.trim()}」相关的设置
+            未找到与「{query.trim()}」相关的设置
           </p>
         ) : (
           <ul

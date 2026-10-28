@@ -5,7 +5,7 @@ import { IconChevronDown, IconChevronRight } from "../../ui/icons";
 export const SYNC_CONSOLE_TITLE = "账号同步";
 export const SYNC_AUTO_BADGE = "自动同步";
 export const SYNC_INTERVAL_LABEL = "每 60 秒";
-export const SYNC_MERGE_GUIDE = "数据会自动在本机与服务端之间同步。";
+export const SYNC_MERGE_GUIDE = "数据将在本机与服务端之间自动同步。";
 
 interface SyncOptInItem {
   key: keyof SyncKindOptIn;
@@ -49,7 +49,7 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     key: "stateRules",
     summary: "状态规则",
     label: "同步会话状态规则",
-    hint: "默认开启。同步后的规则会推送到本机的会话助手；规则顺序按各设备收到的先后排列。",
+    hint: "默认开启。同步后的规则将应用到本机的会话助手；规则顺序取决于各设备收到的先后。",
   },
   {
     key: "runbookTemplates",
@@ -61,7 +61,7 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     key: "skills",
     summary: "AI 技能",
     label: "同步自定义 AI 技能与内置技能的修改",
-    hint: "默认开启。只同步你的自定义技能、对内置技能的修改和禁用；内置技能本身随应用提供。",
+    hint: "默认开启。仅同步自定义技能，以及对内置技能的修改和禁用；内置技能本身随应用提供。",
   },
   {
     key: "memory",
@@ -73,7 +73,7 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     key: "cron",
     summary: "定时任务",
     label: "同步 AI 定时任务",
-    hint: "默认关闭。每个任务只在它绑定的设备上运行；其他设备只显示，可在此改由本机运行或删除。",
+    hint: "默认关闭。每个任务只在它绑定的设备上运行；其他设备仅显示该任务，可在此改由本机运行或删除。",
   },
 ];
 

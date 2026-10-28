@@ -256,7 +256,7 @@ describe("ShareCard creation entry and roles", () => {
     const calls = route(shareHandler());
     seedUser(null);
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的设备分享给其他注册用户") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("登录后可将已接入的受管设备分享给其他注册用户") ?? false);
 
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
@@ -268,11 +268,11 @@ describe("ShareCard auth=off/on/loopback", () => {
     const calls = route(shareHandler());
     seedUser(null, "off");
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("关闭了账号功能") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("已关闭账号功能") ?? false);
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("这台服务器关闭了账号功能（--auth=off），终端分享不可用");
-    expect(text).not.toContain("登录后可以把你接入的设备分享给其他注册用户");
+    expect(text).toContain("此服务器已关闭账号功能（--auth=off），终端分享不可用");
+    expect(text).not.toContain("登录后可将已接入的受管设备分享给其他注册用户");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
   });
@@ -307,7 +307,7 @@ describe("ShareCard auth=off/on/loopback", () => {
     const calls = route(shareHandler());
     seedUser(null, "on");
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的设备分享给其他注册用户") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("登录后可将已接入的受管设备分享给其他注册用户") ?? false);
 
     expect(document.body.textContent).not.toContain("终端分享不可用");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
@@ -318,7 +318,7 @@ describe("ShareCard auth=off/on/loopback", () => {
     const calls = route(shareHandler());
     seedUser(null, "loopback");
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的设备分享给其他注册用户") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("登录后可将已接入的受管设备分享给其他注册用户") ?? false);
 
     expect(document.body.textContent).not.toContain("终端分享不可用");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
@@ -336,7 +336,7 @@ describe("ShareCard lists and states", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("5 条主机分享");
     expect(text).not.toContain("旧版链接");
-    expect(text).toContain("公开访问请使用终端中的「预览链接」");
+    expect(text).toContain("如需公开访问，请使用终端中的「预览链接」");
     expect(text).toContain("分享给 alice");
     expect(text).toContain("来自 alice");
     expect(text).toContain("alice 分享给 carol");
@@ -345,7 +345,7 @@ describe("ShareCard lists and states", () => {
     expect(text).toContain("有效");
     expect(text).toContain("已吊销");
     expect(text).toContain("已过期");
-    expect(text).toContain("通过设备代理在你的接入设备上新建终端");
+    expect(text).toContain("通过设备代理在已接入的受管设备上新建终端");
     expect(text.match(/主机密码或私钥/g)).toHaveLength(1);
   });
 
@@ -360,7 +360,7 @@ describe("ShareCard lists and states", () => {
 
     route(() => ({ status: 500, payload: { error: { code: "internal", message: "database error" } } }));
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("分享数据加载失败") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("未能加载分享数据") ?? false);
     expect(document.body.textContent).toContain("database error");
     mounted.unmount();
 
@@ -368,7 +368,7 @@ describe("ShareCard lists and states", () => {
     vi.stubGlobal("fetch", mocks.fetch);
     mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("无法连接服务器") ?? false);
-    expect(document.body.textContent).toContain("分享数据加载失败");
+    expect(document.body.textContent).toContain("未能加载分享数据");
   });
 });
 
@@ -659,8 +659,8 @@ describe("ShareCard account-switch isolation", () => {
       seedUser(ALICE);
       await flush();
     });
-    await flushUntil(() => !document.body.textContent?.includes("创建中") && shareRefreshEnabled());
-    expect(document.body.textContent).not.toContain("创建中");
+    await flushUntil(() => !document.body.textContent?.includes("正在创建") && shareRefreshEnabled());
+    expect(document.body.textContent).not.toContain("正在创建");
 
     // The old account's creation response arrives only now: it must not trigger the old account's refresh or any write.
     await act(async () => {

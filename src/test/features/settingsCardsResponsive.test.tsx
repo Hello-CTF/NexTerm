@@ -124,23 +124,23 @@ describe("MemoryCard narrow-screen layout", () => {
     mounted = mount(createElement(MemoryCard));
     await flushUntil(() => {
       const input = mounted!.container.querySelector<HTMLInputElement>(
-        'input[aria-label="在 AI 运行时注入记忆"]',
+        'input[aria-label="在 AI 运行时使用记忆"]',
       );
       return !!input && !input.disabled;
     });
-    for (const name of ["在 AI 运行时注入记忆", "允许模型使用记忆工具"]) {
+    for (const name of ["在 AI 运行时使用记忆", "允许模型使用记忆工具"]) {
       const input = mounted.container.querySelector<HTMLInputElement>(
         `input[aria-label="${name}"]`,
       );
       expect(input?.closest("label")).toBeTruthy();
     }
-    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="在 AI 运行时注入记忆"]')!;
+    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="在 AI 运行时使用记忆"]')!;
     click(input.closest("label")!);
     await act(async () => {
       await flush();
     });
     expect(mocks.memorySetSettings).toHaveBeenCalledWith(3, { injectionEnabled: true });
-    const updated = mounted.container.querySelector<HTMLInputElement>('input[aria-label="在 AI 运行时注入记忆"]')!;
+    const updated = mounted.container.querySelector<HTMLInputElement>('input[aria-label="在 AI 运行时使用记忆"]')!;
     expect(updated.checked).toBe(true);
     expect(updated.disabled).toBe(false);
   });

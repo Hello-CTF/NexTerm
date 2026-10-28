@@ -112,7 +112,7 @@ export function MemoryCard() {
     } catch (e) {
       const conflict = versionConflict(e);
       if (conflict && aliveRef.current) {
-        pushToast("error", `开关已被其他地方修改（版本 ${conflict.expected} → ${conflict.actual}），已重新读取`);
+        pushToast("error", `开关已在其他位置被修改（版本 ${conflict.expected} → ${conflict.actual}），已重新读取`);
         await reload();
       } else {
         pushToast("error", `保存开关失败：${describeError(e)}`);
@@ -176,7 +176,7 @@ export function MemoryCard() {
     const topic = draft.topic.trim();
     const content = draft.content.trim();
     if (!topic || !content) {
-      setFormError("主题和内容都不能为空");
+      setFormError("主题和内容不能为空");
       return;
     }
     setSaving(true);
@@ -200,8 +200,8 @@ export function MemoryCard() {
       const conflict = versionConflict(e);
       if (conflict) {
         setFormError(
-          `这条记忆已被其他地方修改（版本 ${conflict.expected} → ${conflict.actual}）。` +
-            "列表已刷新，请基于最新内容重新编辑，避免覆盖他人的修改。",
+          `该记忆已在其他位置被修改（版本 ${conflict.expected} → ${conflict.actual}）。` +
+            "列表已刷新，请基于最新内容重新编辑，以免覆盖他人的修改。",
         );
         await reload();
       } else {
@@ -214,7 +214,7 @@ export function MemoryCard() {
 
   const remove = async (entry: MemoryIndexEntry, topic: string) => {
     const ok = await ask(
-      `删除这条记忆？\n主题：${topic}\n\n删除后，AI 将不再使用这条记忆，且无法恢复。`,
+      `确定要删除这条记忆吗？\n主题：${topic}\n\n删除后，AI 将不再使用该记忆，且无法恢复。`,
       { title: "删除记忆", kind: "warning" },
     );
     if (!ok) return;
@@ -231,7 +231,7 @@ export function MemoryCard() {
     } catch (e) {
       const conflict = versionConflict(e);
       if (conflict) {
-        pushToast("error", `删除失败：这条记忆已被其他地方修改（版本 ${conflict.expected} → ${conflict.actual}），已重新读取`);
+        pushToast("error", `删除失败：该记忆已在其他位置被修改（版本 ${conflict.expected} → ${conflict.actual}），已重新读取`);
         await reload();
       } else {
         pushToast("error", `删除失败：${describeError(e)}`);
@@ -260,13 +260,13 @@ export function MemoryCard() {
       <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
         <label className="flex cursor-pointer items-start gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] text-neutral-200">在 AI 运行时注入记忆</div>
+            <div className="text-[12.5px] text-neutral-200">在 AI 运行时使用记忆</div>
             <p className="nx-hint mt-0.5">将选中的记忆加入模型输入，不写入会话历史。</p>
           </div>
           <input
             type="checkbox"
             className="mt-0.5 h-4 w-4 shrink-0"
-            aria-label="在 AI 运行时注入记忆"
+            aria-label="在 AI 运行时使用记忆"
             disabled={!settings || settingsBusy}
             checked={settings?.injectionEnabled ?? false}
             onChange={(e) => void toggleSetting("injectionEnabled", e.target.checked)}
@@ -298,7 +298,7 @@ export function MemoryCard() {
             }}
           >
             <IconPlus size={11} />
-            新建一条记忆
+            新建记忆
           </button>
         </div>
       ) : draft.kind === "edit-loading" ? (
@@ -306,7 +306,7 @@ export function MemoryCard() {
           className="mb-3 flex items-center gap-2 border-b border-neutral-800/60 pb-3"
           aria-busy="true"
         >
-          <span className="text-[12.5px] text-neutral-200">读取记忆正文…</span>
+          <span className="text-[12.5px] text-neutral-200">正在读取记忆正文…</span>
           <IconRefresh size={11} className="animate-spin text-neutral-500" />
           <div className="nx-spacer" />
           <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={closeDraft}>
@@ -349,7 +349,7 @@ export function MemoryCard() {
               disabled={saving}
               onClick={() => void saveDraft()}
             >
-              {saving ? "保存中…" : "保存"}
+              {saving ? "正在保存…" : "保存"}
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -360,7 +360,7 @@ export function MemoryCard() {
             </button>
           </div>
           <p className="nx-hint text-[11px]">
-            请勿写入密码、令牌、API 密钥等敏感信息：默认策略会拒绝保存整条记忆；替换策略会把敏感内容替换为 [REDACTED] 后保存，并标记为「已脱敏」。
+            请勿写入密码、令牌、API 密钥等敏感信息：默认策略将拒绝保存整条记忆；替换策略将把敏感内容替换为 [REDACTED] 后保存，并标记为「已脱敏」。
           </p>
           {formError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2 text-[12px]" role="alert">
@@ -385,11 +385,11 @@ export function MemoryCard() {
           </div>
         ) : (
           <div className="nx-hint py-2 text-[12px]" aria-busy="true">
-            读取中…
+            正在读取…
           </div>
         )
       ) : topics.length === 0 ? (
-        <div className="nx-hint py-2 text-[12px]">暂无记忆。新建后，AI 运行时可以使用。</div>
+        <div className="nx-hint py-2 text-[12px]">暂无记忆。新建后，AI 运行时即可使用。</div>
       ) : (
         <div className="flex flex-col gap-2">
           {topics.map((t) => (
@@ -422,7 +422,7 @@ export function MemoryCard() {
                         </button>
                         <button
                           className="nx-icon-btn nx-icon-btn-sm"
-                          title="编辑这条记忆"
+                          title="编辑记忆"
                           aria-label={`编辑记忆 ${entry.id}`}
                           onClick={() => void startEdit(entry)}
                         >
@@ -430,7 +430,7 @@ export function MemoryCard() {
                         </button>
                         <button
                           className="nx-icon-btn nx-icon-btn-sm is-danger"
-                          title="删除这条记忆"
+                          title="删除记忆"
                           aria-label={`删除记忆 ${entry.id}`}
                           disabled={deletingId !== null}
                           onClick={() => void remove(entry, t.topic)}
@@ -444,7 +444,7 @@ export function MemoryCard() {
                       </div>
                       {open === "loading" && (
                         <div className="nx-hint py-1 pl-1 text-[11px]" aria-busy="true">
-                          读取正文…
+                          正在读取正文…
                         </div>
                       )}
                       {open === "error" && (
@@ -473,7 +473,7 @@ export function MemoryCard() {
       )}
 
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        记忆保存在当前 NexTerm 实例；浏览器账号模式按账号隔离，桌面和开放部署使用共享记忆。
+        记忆保存在当前 NexTerm 实例；浏览器账号模式按账号隔离，桌面版和开放部署共用同一份记忆。
       </p>
     </section>
   );

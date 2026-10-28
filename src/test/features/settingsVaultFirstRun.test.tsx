@@ -200,14 +200,14 @@ describe("SettingsView first-run credential protection guidance", () => {
   it("shows encryption enabled without a password and the set-password entry in a passwordless vault, without auto-lock", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
     mounted = withClient(createElement(SettingsView));
-    await waitForVaultText("加密已启用 · 未设密码");
+    await waitForVaultText("加密已启用 · 未设置密码");
 
     const text = vaultCard()?.textContent ?? "";
-    expect(text).toContain("凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密");
+    expect(text).toContain("凭据加密保存、无需密码即可使用，但任何获得数据目录的人均可解密");
     expect(text).not.toContain("未开启");
     expect(text).not.toContain("尚未初始化");
     expect(text).not.toContain("闲置自动锁定");
-    expect(text).not.toContain("锁定与解锁在「凭据」页");
+    expect(text).not.toContain("锁定与解锁请在「凭据」页中操作");
     expect(protectionToggle()!.checked).toBe(false);
     const buttons = Array.from(vaultCard()!.querySelectorAll("button")).map((b) => b.textContent);
     expect(buttons).toContain("设置密码");
@@ -217,7 +217,7 @@ describe("SettingsView first-run credential protection guidance", () => {
   it("uses the change-password flow with an empty old password when setting a password in a passwordless vault", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
     mounted = withClient(createElement(SettingsView));
-    await waitForVaultText("加密已启用 · 未设密码");
+    await waitForVaultText("加密已启用 · 未设置密码");
 
     click(buttonWithText(vaultCard()!, "设置密码")!);
     await flushUntil(() => passwordField(vaultCard()!, "新密码") !== null);
@@ -234,7 +234,7 @@ describe("SettingsView first-run credential protection guidance", () => {
   it("enters the set-password flow instead of reinitializing when the passwordless vault toggle is changed", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
     mounted = withClient(createElement(SettingsView));
-    await waitForVaultText("加密已启用 · 未设密码");
+    await waitForVaultText("加密已启用 · 未设置密码");
 
     click(protectionToggle()!);
     await flushUntil(() => passwordField(vaultCard()!, "新密码") !== null);
@@ -248,7 +248,7 @@ describe("SettingsView first-run credential protection guidance", () => {
   it("cannot set an empty or mismatched password and cancels without changes", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
     mounted = withClient(createElement(SettingsView));
-    await waitForVaultText("加密已启用 · 未设密码");
+    await waitForVaultText("加密已启用 · 未设置密码");
 
     click(buttonWithText(vaultCard()!, "设置密码")!);
     await flushUntil(() => passwordField(vaultCard()!, "新密码") !== null);
@@ -276,7 +276,7 @@ describe("SettingsView first-run credential protection guidance", () => {
     protectionToggle()!.click();
     await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
 
-    expect(ask).toHaveBeenCalledWith(expect.stringContaining("任何拿到数据目录的人都能解密"));
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("任何获得数据目录的人均可解密"));
     expect(mocks.changePassword).toHaveBeenCalledWith("current-password", "");
     expect(mocks.initDpapi).not.toHaveBeenCalled();
     await flushUntil(() => mocks.toast.mock.calls.length > 0);

@@ -48,9 +48,9 @@ export const COMPARE_KIND_LABELS: Record<string, string> = {
 export function compareRowLabel(state: CompareRowState): { text: string; tone: string; hint: string } {
   switch (state) {
     case "local-only":
-      return { text: "仅本机", tone: "", hint: "服务端尚无这条数据，推送后将新建。" };
+      return { text: "仅本机", tone: "", hint: "服务端尚无该条数据，推送后将新建。" };
     case "remote-only":
-      return { text: "仅服务端", tone: "", hint: "本机尚无这条数据，拉取并应用后将新建。" };
+      return { text: "仅服务端", tone: "", hint: "本机尚无该条数据，拉取并应用后将新建。" };
     case "same":
       return { text: "已一致", tone: "nx-badge-green", hint: "两边内容相同。" };
     case "local-newer":
@@ -58,11 +58,11 @@ export function compareRowLabel(state: CompareRowState): { text: string; tone: s
     case "remote-newer":
       return { text: "服务端较新", tone: "nx-badge-amber", hint: "服务端版本较新，拉取并应用会覆盖本机。" };
     case "local-deleted":
-      return { text: "本机已删", tone: "nx-badge-amber", hint: "这条在本机已删除。" };
+      return { text: "本机已删除", tone: "nx-badge-amber", hint: "该条目已在本机删除。" };
     case "remote-deleted":
-      return { text: "服务端已删", tone: "nx-badge-amber", hint: "这条在服务端已被删除。" };
+      return { text: "服务端已删除", tone: "nx-badge-amber", hint: "该条目已在服务端删除。" };
     case "remote-undecryptable":
-      return { text: "无法解密", tone: "nx-badge-amber", hint: "服务端数据与当前数据密钥不匹配或已损坏；自动同步已跳过这项数据，修复需要手动确认。" };
+      return { text: "无法解密", tone: "nx-badge-amber", hint: "服务端数据与当前数据密钥不匹配或已损坏；自动同步已跳过这项数据，修复需手动确认。" };
   }
 }
 

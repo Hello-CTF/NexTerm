@@ -864,10 +864,10 @@ describe("SyncCard (web account sync)", () => {
     });
 
     mounted = mountSyncCard();
-    await flushUntil(() => mounted!.container.textContent?.includes("分页游标未推进"));
+    await flushUntil(() => mounted!.container.textContent?.includes("读取未能继续"));
     expect(mocks.syncPush).not.toHaveBeenCalled();
 
-    await expect(runAutoSync()).rejects.toThrow("分页游标未推进");
+    await expect(runAutoSync()).rejects.toThrow("读取未能继续");
     expect(mocks.transcriptRead).toHaveBeenCalledWith("t1", 0);
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });

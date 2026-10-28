@@ -175,7 +175,7 @@ export function AuthCard() {
 
   const revokeDevice = async (device: AccountDevice) => {
     const actionAccount = accountKey;
-    const ok = await ask(`吊销设备「${device.name}」？\n\n吊销后该设备立即退出登录，不可恢复。`, {
+    const ok = await ask(`确定要吊销设备「${device.name}」吗？\n\n吊销后，该设备将立即退出登录，且无法恢复。`, {
       title: "吊销设备",
       kind: "warning",
     });
@@ -199,7 +199,7 @@ export function AuthCard() {
   const revokeSession = async (session: AccountLoginSession) => {
     const actionAccount = accountKey;
     const ok = await ask(
-      `退出登录会话「${session.name}」？${session.current ? "\n\n当前浏览器将立即退出登录。" : "\n\n该会话将立即失效。"}`,
+      `确定要退出登录会话「${session.name}」吗？${session.current ? "\n\n当前浏览器将立即退出登录。" : "\n\n该会话将立即失效。"}`,
       { title: "退出登录会话", kind: "warning" },
     );
     if (!ok || !actionAccount || accountKeyRef.current !== actionAccount) return;
@@ -238,7 +238,7 @@ export function AuthCard() {
             <span className="nx-card-title">账号</span>
           </div>
           <p className="nx-hint mb-3">
-            本实例部署在懒猫平台上，账号随平台登录自动建立，这里没有需要填写的初始化码或密码。
+            本实例部署在懒猫平台上，账号随平台登录自动建立，无需填写初始化码或密码。
             若看到此提示，请改用平台访问地址重新打开。
           </p>
         </section>
@@ -253,7 +253,7 @@ export function AuthCard() {
             <span className="nx-card-title">账号</span>
           </div>
           <p className="nx-hint mb-3">
-            这台服务器关闭了账号功能（--auth=off），不提供登录、注册与账号同步；其他本地功能不受影响。
+            此服务器已关闭账号功能（--auth=off），不提供登录、注册与账号同步；其他本地功能不受影响。
           </p>
         </section>
       );
@@ -267,9 +267,9 @@ export function AuthCard() {
             <span className="nx-card-title">账号</span>
           </div>
           <p className="nx-hint mb-3">
-            这台服务器尚无任何账号{status.auth === "loopback" ? "，当前允许匿名使用" : ""}。
-            初始化后创建超级管理员，资产、分组、片段会端到端加密同步到你的账号，在其他设备上可用；
-            也可以继续匿名本地使用。
+            此服务器尚未创建任何账号{status.auth === "loopback" ? "，当前允许匿名使用" : ""}。
+            初始化后将创建超级管理员，资产、分组、片段将端到端加密同步到该账号，并可在其他设备上使用；
+            也可以继续匿名使用本地功能。
           </p>
           <button
             className="nx-btn nx-btn-primary nx-btn-sm"
@@ -288,8 +288,8 @@ export function AuthCard() {
           <span className="nx-card-title">账号</span>
         </div>
         <p className="nx-hint mb-3">
-          当前未登录{status?.auth === "loopback" ? "(这台服务器允许匿名使用)" : ""}。
-          登录后，数据会自动在本机与服务端之间同步；不登录也能继续本地使用。
+          当前未登录{status?.auth === "loopback" ? "（此服务器允许匿名使用）" : ""}。
+          登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
@@ -342,7 +342,7 @@ export function AuthCard() {
 
         {platformManaged && (
           <p className="nx-hint mt-2">
-            本实例部署在懒猫平台上，登录由平台负责：打开地址即为当前账号，不需要在这里登录或退出。
+            本实例部署在懒猫平台上，登录由平台负责，打开地址即使用当前账号，无需在此登录或退出。
             账号随平台登录自动建立，用于承载设备、分享等需要归属的功能。
           </p>
         )}
@@ -362,7 +362,7 @@ export function AuthCard() {
               aria-busy={pending === "logout"}
               onClick={() =>
                 void (async () => {
-                  const ok = await ask("退出当前账号？\n\n本机浏览器会话立即失效。", { title: "退出登录" });
+                  const ok = await ask("确定要退出当前账号吗？\n\n本机浏览器的会话将立即失效。", { title: "退出登录" });
                   if (!ok) return;
                   await guarded("logout", async () => {
                     try {
@@ -383,7 +383,7 @@ export function AuthCard() {
               aria-busy={pending === "logout-all"}
               onClick={() =>
                 void (async () => {
-                  const ok = await ask("退出所有设备上的会话？\n\n包括这台浏览器，退出后需重新登录。", {
+                  const ok = await ask("确定要退出所有设备上的会话吗？\n\n包括当前浏览器，退出后需重新登录。", {
                     title: "退出全部会话",
                     kind: "warning",
                   });
@@ -412,7 +412,7 @@ export function AuthCard() {
             <span className="nx-card-title">修改密码</span>
           </div>
           <p className="nx-hint mb-3">
-            修改密码后，数据将改用新密码保护，服务端已保存的内容不受影响。修改成功后会生成新的恢复密钥（旧的立即作废），并退出其他设备上的登录。
+            修改密码后，数据将改用新密码保护，服务端已保存的内容不受影响。修改成功后将生成新的恢复密钥（旧密钥立即作废），并退出其他设备上的登录。
           </p>
           {pwdOpen ? (
             <PasswordChangeForm
@@ -495,7 +495,7 @@ export function AuthCard() {
               刷新
             </button>
           </div>
-          <p className="nx-hint mb-3">这里列出当前有效的服务端登录会话，包含浏览器和桌面客户端。退出其他会话后，对方需重新登录。</p>
+          <p className="nx-hint mb-3">列出当前有效的服务端登录会话，包括浏览器和桌面客户端。退出其他会话后，对应设备需重新登录。</p>
           {sessionsError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2">
               <IconXCircle size={13} className="mt-0.5 shrink-0" />
@@ -505,7 +505,7 @@ export function AuthCard() {
               </button>
             </div>
           )}
-          {sessions && sessions.length === 0 && <div className="nx-hint py-1 text-[12px]">当前没有有效登录会话。</div>}
+          {sessions && sessions.length === 0 && <div className="nx-hint py-1 text-[12px]">暂无有效的登录会话。</div>}
           {sessions && sessions.length > 0 && (
             <div className="max-h-[240px] overflow-y-auto rounded border border-neutral-800/60">
               {sessions.map((session) => (
@@ -546,7 +546,7 @@ export function AuthCard() {
           </button>
         </div>
         <p className="nx-hint mb-3">
-          这里列出已登记的受管设备。吊销设备会使关联的登录会话失效。
+          列出已登记的受管设备。吊销设备将使其关联的登录会话失效。
         </p>
 
         {devicesError && (
@@ -739,7 +739,7 @@ function TotpCard() {
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconInfo size={14} className="mt-0.5 shrink-0" />
           <div>
-            管理员已要求所有账号启用两步验证，完成绑定前，只能使用绑定功能。
+            管理员要求所有账号启用两步验证。完成绑定前，仅可使用绑定功能。
           </div>
         </div>
       )}
@@ -749,7 +749,7 @@ function TotpCard() {
           <div className="flex items-start gap-2">
             <IconInfo size={14} className="mt-0.5 shrink-0" />
             <div>
-              恢复码仅显示一次。手机丢失时，可用任一恢复码代替动态码登录，每个只能使用一次。服务端只保存校验值、不保存原文，关闭两步验证后无法再次查看。
+              恢复码仅显示一次。无法使用认证器时，可用任一恢复码代替动态码登录，每个恢复码仅可使用一次。服务端仅保存校验值，不保存原文，此后无法再次查看。
             </div>
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
@@ -777,7 +777,7 @@ function TotpCard() {
               onClick={() => setRecoveryCodes(null)}
             >
               <IconCheckCircle size={12} />
-              {copied ? "我已安全保存" : "已手动保存"}
+              {copied ? "我已保存" : "已手动保存"}
             </button>
           </div>
           {!confirmed && <p className="nx-hint text-[11px]">请先复制或手动保存恢复码，再关闭此面板</p>}
@@ -821,7 +821,7 @@ function TotpCard() {
             )}
             <div className="flex flex-wrap items-center gap-2">
               <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || confirmCode.trim().length === 0}>
-                {busy ? "确认中…" : "确认绑定"}
+                {busy ? "正在确认…" : "确认绑定"}
               </button>
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setSetup(null)}>
                 取消
@@ -855,7 +855,7 @@ function TotpCard() {
                   )}
                   <div className="flex flex-wrap items-center gap-2">
                     <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || !disableCode.trim()}>
-                      {busy ? "关闭中…" : "确认关闭"}
+                      {busy ? "正在关闭…" : "确认关闭"}
                     </button>
                     <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setDisableOpen(false)}>
                       取消
@@ -879,7 +879,7 @@ function TotpCard() {
                   )}
                   <div className="flex flex-wrap items-center gap-2">
                     <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || !reverify.trim()}>
-                      {busy ? "验证中…" : "验证并换绑"}
+                      {busy ? "正在验证…" : "验证并换绑"}
                     </button>
                     <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setRebindOpen(false)}>
                       取消
@@ -913,10 +913,10 @@ function TotpCard() {
           ) : (
             <div>
               <p className="nx-hint mb-2">
-                开启后，登录时除密码外还需输入认证器 App 中的 6 位动态码。即使密码泄露，账号也多一层保护。服务端加密保存认证密钥，恢复码只保存校验值。
+                开启后，登录时除密码外还需输入认证器 App 中的 6 位动态码。即使密码泄露，账号仍受到额外保护。服务端加密保存认证密钥，恢复码只保存校验值。
               </p>
               <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy} onClick={() => void startSetup()}>
-                {busy ? "生成中…" : status.pending ? "继续绑定" : "开启两步验证"}
+                {busy ? "正在生成…" : status.pending ? "继续绑定" : "开启两步验证"}
               </button>
               {error && (
                 <div className="nx-alert nx-alert-danger mt-2 flex items-start gap-2">

@@ -63,7 +63,7 @@ export function LocalHelperSettings() {
     if (busy || !status.consentToken) return;
     const sessions = sessionCount(status.activeSessions, status.activityKnown);
     const ok = await ask(
-      `重启本机持久组件会结束其中正在运行的 ${sessions}，未保存的工作会丢失。\n重启后新开的本机终端将使用当前版本的组件。仍要重启？`,
+      `重启本机持久组件将结束其中正在运行的 ${sessions}，未保存的工作将丢失。\n重启后新建的本机终端将使用当前版本的组件。确定要重启吗？`,
       { title: "重启本机持久组件", kind: "warning" },
     );
     if (!ok) return;
@@ -118,8 +118,8 @@ export function LocalHelperSettings() {
       <p className="nx-hint mt-1.5">
         {mode === "regular"
           ? "本机终端随 NexTerm 退出而结束；已在后台运行的本机终端仍可接管。"
-          : "本机终端在独立的持久组件中运行，关闭标签或退出 NexTerm 后继续运行，可在「后台会话」接管或终止。"}
-        只影响这台设备新开的终端，包括 AI 和定时任务打开的终端。
+          : "本机终端在独立的持久组件中运行，关闭标签页或退出 NexTerm 后继续运行，可在「后台会话」中接管或终止。"}
+        仅影响本机新建的终端，包括 AI 和定时任务打开的终端。
       </p>
       {status.reason && status.state !== "idle" && <p className="nx-hint mt-1.5 text-amber-300">{status.reason}</p>}
       {status.warning && <p className="nx-hint mt-1.5 text-amber-300">{status.warning}</p>}
