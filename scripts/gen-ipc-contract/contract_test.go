@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -1869,8 +1870,27 @@ func TestCheckGeneratedIgnoresOSMetadataAndRejectsStrayFiles(t *testing.T) {
 	}
 }
 
+// The unmodified tree is loaded and type-checked once per test binary: every
+// load parses the whole module, which dominates the package's runtime. Tests
+// only read the shared result; overlay loads stay per call.
+var baselineGeneration struct {
+	once      sync.Once
+	generated *generation
+	err       error
+}
+
 func generateForTest(t *testing.T, overlay map[string][]byte) *generation {
 	t.Helper()
+	if overlay == nil {
+		root := repositoryRoot(t)
+		baselineGeneration.once.Do(func() {
+			baselineGeneration.generated, baselineGeneration.err = generateContract(root, nil)
+		})
+		if baselineGeneration.err != nil {
+			t.Fatal(baselineGeneration.err)
+		}
+		return baselineGeneration.generated
+	}
 	generated, err := generateContract(repositoryRoot(t), overlay)
 	if err != nil {
 		t.Fatal(err)
