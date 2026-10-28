@@ -481,9 +481,12 @@ func TestRecordingFailureEventOnceAndObserverCanStop(t *testing.T) {
 func TestRecordingEventGenerations(t *testing.T) {
 	tab := newTestTab(t)
 	o := newTestOutput(t, tab)
+	var eventsMu sync.Mutex
 	var events []RecordingStatus
 	tab.SetRecordingHandler(func(status RecordingStatus) {
+		eventsMu.Lock()
 		events = append(events, status)
+		eventsMu.Unlock()
 	})
 	path := filepath.Join(t.TempDir(), "generations.log")
 	if err := tab.StartRecording(path); err != nil {
@@ -515,6 +518,20 @@ func TestRecordingEventGenerations(t *testing.T) {
 		{RecordingRunning, 2},
 		{RecordingStopped, 2},
 	}
+	// Only one drainer delivers at a time, so a call that finds another drainer active returns before its own
+	// events are delivered; wait for the in-order delivery to finish instead of reading mid-flight.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		eventsMu.Lock()
+		delivered := len(events)
+		eventsMu.Unlock()
+		if delivered >= len(want) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
 	if len(events) != len(want) {
 		t.Fatalf("events = %+v", events)
 	}
