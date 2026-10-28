@@ -330,3 +330,35 @@ describe("mobile terminal font size", () => {
     }
   });
 });
+
+describe("account preference re-registration", () => {
+  it("does not flip the theme while a loaded account view is refreshed", async () => {
+    const { theme, prefs } = await loadPrefs();
+    theme.initTheme();
+    theme.setThemeMode("dark");
+    const view = { defaults: {}, overrides: { "appearance.themeMode": "light" } };
+    const makeStore = (getView: () => Promise<typeof view>) => ({
+      getView,
+      putOverrides: async () => undefined,
+      deleteOverrides: async () => undefined,
+    });
+    prefs.registerAccountPreferenceStore(makeStore(async () => view));
+    await vi.waitFor(() => expect(document.documentElement.dataset.nxTheme).toBe("light"));
+
+    const seen: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const r of records) seen.push(r.target instanceof HTMLElement ? (r.target.dataset.nxTheme ?? "") : "");
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-nx-theme"] });
+    // Models a sync://status event triggered by any click that writes a synced object.
+    prefs.registerAccountPreferenceStore(makeStore(async () => view));
+    await prefs.waitAccountPreferences();
+    await new Promise((r) => setTimeout(r, 0));
+    observer.disconnect();
+    expect(seen).toEqual([]);
+    expect(document.documentElement.dataset.nxTheme).toBe("light");
+
+    prefs.registerAccountPreferenceStore(null);
+    expect(document.documentElement.dataset.nxTheme).toBe("dark");
+  });
+});

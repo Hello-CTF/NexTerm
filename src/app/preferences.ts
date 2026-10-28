@@ -71,14 +71,19 @@ function syncThemePreferenceLayers(): void {
 export function registerAccountPreferenceStore(store: AccountPreferenceStore | null): void {
   registerGeneration += 1;
   const generation = registerGeneration;
+  // Re-registering over an already loaded view (sync round, wake) is a refresh: keep the cached layers until the
+  // new view arrives, otherwise theme/appearance briefly fall back to the local layer and flash on every sync event.
+  const refresh = store !== null && accountStore !== null && accountViewLoaded;
   accountStore = store;
-  deviceOnlyPreferences = false;
-  accountViewLoaded = false;
-  accountDefaults = {};
-  accountOverrides = {};
-  syncThemePreferenceLayers();
-  rebuildSnapshots();
-  for (const listener of accountListeners) listener();
+  if (!refresh) {
+    deviceOnlyPreferences = false;
+    accountViewLoaded = false;
+    accountDefaults = {};
+    accountOverrides = {};
+    syncThemePreferenceLayers();
+    rebuildSnapshots();
+    for (const listener of accountListeners) listener();
+  }
   if (!store) {
     accountViewLoading = null;
     return;
