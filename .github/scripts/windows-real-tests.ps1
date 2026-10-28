@@ -146,6 +146,7 @@ try {
 
     Invoke-TargetedGoTest -Package './internal/pty' -Test 'TestSessionWindowsNaturalExitEOF'
     Invoke-TargetedGoTest -Package './internal/pty' -Test 'TestSessionWindowsBackpressureAndDrain'
+    Invoke-TargetedGoTest -Package './internal/update' -Test 'TestWindowsPayloadWithLoadedRuntimeDLL' -RequiredSubtests @('success', 'installer_error')
 
     $userName = 'nxt' + [guid]::NewGuid().ToString('N').Substring(0, 10)
     $password = [guid]::NewGuid().ToString('N') + 'aA1!'

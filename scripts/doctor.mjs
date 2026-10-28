@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ZIG_VERSION } from "./install-zig.mjs";
+import { LINUX_SERVER_GLIBC_FLOOR } from "./lib/elf-glibc.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const goMod = fs.readFileSync(path.join(ROOT, "go.mod"), "utf8");
@@ -36,14 +38,13 @@ report("go", versionOutput("go", ["env", "GOVERSION"], { ...process.env, GOTOOLC
 const nodeMajor = Number(process.versions.node.split(".")[0]);
 report("node", { ok: true, output: process.version }, () => nodeMajor >= 24, "Node 24 or newer");
 report("pnpm", versionOutput("pnpm", ["--version"]), (version) => version.split(".")[0] === pnpmRequirement, `pnpm ${pnpmRequirement}.x`);
-report("rustc", versionOutput("rustc", ["--version"]), (version) => version === "1.95.0", "Rust 1.95.0 (privacy runtime)");
-report("cargo", versionOutput("cargo", ["--version"]), (version) => version === "1.95.0", "Cargo 1.95.0 (privacy runtime)");
 report("task", versionOutput("task", ["--version"]), (version) => version.replace(/^v/, "").split(".")[0] === "3", "Task v3 (CI uses v3.45.5)");
 report("wails3 (pinned go run)", versionOutput("go", ["run", `github.com/wailsapp/wails/v3/cmd/wails3@${wailsVersion}`, "version"], { ...process.env, GOTOOLCHAIN: goToolchain }), (version) => version === wailsVersion, wailsVersion);
 if (process.platform === "linux") {
   // Linux desktop builds link gtk4/webkitgtk-6.0 via cgo; CI installs the same
   // pkg-config modules as libgtk-4-dev/libwebkitgtk-6.0-dev.
   report("gtk4 (pkg-config)", versionOutput("pkg-config", ["--modversion", "gtk4"]), (version) => /^\d+\.\d+/.test(version), "libgtk-4-dev (pkg-config gtk4)");
+  report(`zig (Linux server glibc ${LINUX_SERVER_GLIBC_FLOOR} linker)`, versionOutput(process.env.NEXTERM_ZIG || "zig", ["version"]), (version) => version === ZIG_VERSION, `zig ${ZIG_VERSION}; run node scripts/install-zig.mjs ~/.cache/nexterm-zig and set NEXTERM_ZIG`);
   report("webkitgtk-6.0 (pkg-config)", versionOutput("pkg-config", ["--modversion", "webkitgtk-6.0"]), (version) => /^\d+\.\d+/.test(version), "libwebkitgtk-6.0-dev (pkg-config webkitgtk-6.0)");
 }
 report("docker", versionOutput("docker", ["--version"]), (version) => Number(version.split(".")[0]) > 0, "Docker CLI");

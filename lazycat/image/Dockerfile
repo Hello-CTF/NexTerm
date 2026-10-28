@@ -2,7 +2,6 @@ FROM --platform=linux/amd64 registry.lazycat.cloud/u0642568667/library/debian:07
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libstdc++6 \
         ca-certificates=20250419~deb12u1 \
         openssh-client=1:9.2p1-2+deb12u10 \
         sshfs=3.7.3-1.2~deb12u1 \
@@ -37,7 +36,6 @@ RUN test -x /usr/local/bin/nexterm-server \
     && test -x /usr/local/bin/nexterm-helper-windows-amd64.exe \
     && test -x /usr/local/bin/nexterm-helper-windows-arm64.exe \
     && test -f /usr/local/bin/ai-runtime/runtime.json \
-    && test -f /usr/local/bin/ai-runtime/libnexterm_privacy.so \
     && test -f /usr/local/bin/ai-runtime/libonnxruntime.so \
     && ldd /usr/local/bin/nexterm-server /usr/local/bin/ai-runtime/*.so > /tmp/nexterm-runtime-deps \
     && cat /tmp/nexterm-runtime-deps \

@@ -12,10 +12,10 @@ import (
 func addPrivacyRuntime(t *testing.T, payload, version string) {
 	t.Helper()
 	directory := filepath.Join(payload, "ai-runtime")
-	if err := os.MkdirAll(directory, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(directory, "licenses"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range []string{"libnexterm_privacy.so", "libonnxruntime.so", "LICENSE-ASTRLINK"} {
+	for _, file := range []string{"libonnxruntime.so", "runtime.json", "licenses/ONNX-RUNTIME-LICENSE"} {
 		if err := os.WriteFile(filepath.Join(directory, file), []byte(version+":"+file), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -27,7 +27,7 @@ func TestSystemdPrivacyRuntimeUpgradeRollback(t *testing.T) {
 	v1 := s.payload("v1")
 	addPrivacyRuntime(t, v1, "v1")
 	s.mustInstall(v1, installOptions{})
-	if got := s.read("opt/nexterm/ai-runtime/libnexterm_privacy.so"); got != "v1:libnexterm_privacy.so" {
+	if got := s.read("opt/nexterm/ai-runtime/licenses/ONNX-RUNTIME-LICENSE"); got != "v1:licenses/ONNX-RUNTIME-LICENSE" {
 		t.Fatal(got)
 	}
 	v2 := s.payload("v2")
@@ -73,5 +73,18 @@ func TestSystemdRollbackRemovesRuntimeAbsentFromOldPayload(t *testing.T) {
 	s.mustInstall(v2, installOptions{args: []string{"--rollback"}})
 	if s.exists("opt/nexterm/ai-runtime") {
 		t.Fatal("retained runtime for reverted binary")
+	}
+}
+
+func TestSystemdRejectsServerBinaryThatCannotRunBeforeMutation(t *testing.T) {
+	s := newSandbox(t, stubOptions{})
+	payload := s.payload("v1")
+	writeFile(t, filepath.Join(payload, "nexterm-server"), "#!/bin/sh\necho 'version GLIBC_2.39 not found' >&2\nexit 1\n", 0o755)
+	result := s.mustFail(payload, installOptions{})
+	if !strings.Contains(result.stderr, "cannot run on this host") || !strings.Contains(result.stderr, "GLIBC_2.39") {
+		t.Fatal(result.stderr)
+	}
+	if s.exists("opt/nexterm") || s.exists("etc/nexterm") {
+		t.Fatal("mutated installation before the binary preflight")
 	}
 }

@@ -60,7 +60,7 @@ func requirePayloadFile(t *testing.T, path, body string) {
 }
 
 func TestLinuxPayloadStagesAndRejectsInvalidRuntime(t *testing.T) {
-	valid := []payloadEntry{{"usr/bin/nexterm-desktop", "new", 0}, {"usr/bin/ai-runtime/libnexterm_privacy.so", "native", 0}, {"usr/bin/ai-runtime/libonnxruntime.so", "ort", 0}}
+	valid := []payloadEntry{{"usr/bin/nexterm-desktop", "new", 0}, {"usr/bin/ai-runtime/licenses/ONNX-RUNTIME-LICENSE", "license", 0}, {"usr/bin/ai-runtime/libonnxruntime.so", "native", 0}}
 	for _, test := range []struct {
 		name         string
 		entries      []payloadEntry
@@ -77,7 +77,7 @@ func TestLinuxPayloadStagesAndRejectsInvalidRuntime(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
 			exe := filepath.Join(dir, "nexterm-desktop")
-			runtime := filepath.Join(dir, "ai-runtime/libnexterm_privacy.so")
+			runtime := filepath.Join(dir, "ai-runtime/libonnxruntime.so")
 			writePayloadFile(t, exe, "old")
 			writePayloadFile(t, runtime, "old-native")
 			ctx, cancel := context.WithCancel(context.Background())
@@ -113,9 +113,9 @@ func TestLinuxPayloadRestoresRuntimeWhenExecutableCannotBeReplaced(t *testing.T)
 	if err := os.Mkdir(exe, 0755); err != nil {
 		t.Fatal(err)
 	}
-	library := filepath.Join(dir, "ai-runtime/libnexterm_privacy.so")
+	library := filepath.Join(dir, "ai-runtime/libonnxruntime.so")
 	writePayloadFile(t, library, "old")
-	err := installLinuxPayload(context.Background(), payloadTar(t, payloadEntry{"usr/bin/nexterm-desktop", "new", 0}, payloadEntry{"usr/bin/ai-runtime/libnexterm_privacy.so", "native", 0}, payloadEntry{"usr/bin/ai-runtime/libonnxruntime.so", "ort", 0}), exe)
+	err := installLinuxPayload(context.Background(), payloadTar(t, payloadEntry{"usr/bin/nexterm-desktop", "new", 0}, payloadEntry{"usr/bin/ai-runtime/libonnxruntime.so", "ort", 0}), exe)
 	if err == nil {
 		t.Fatal("expected executable replacement failure")
 	}
@@ -127,25 +127,26 @@ func TestWindowsPayloadRollsBackBothImages(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			exe := filepath.Join(dir, "nexterm.exe")
-			native := filepath.Join(dir, "ai-runtime/nexterm_privacy.dll")
+			library := filepath.Join(dir, "ai-runtime/onnxruntime.dll")
+			license := filepath.Join(dir, "ai-runtime/licenses/ONNX-RUNTIME-LICENSE")
 			writePayloadFile(t, exe, "old")
 			if mode != "no old runtime" {
-				writePayloadFile(t, native, "old-native")
+				writePayloadFile(t, library, "old-ort")
+				writePayloadFile(t, license, "old-license")
 			}
 			err := installWindowsPayload(exe, func() error {
-				if _, err := os.Stat(exe); !errors.Is(err, os.ErrNotExist) {
-					t.Fatal("loaded executable not moved aside")
-				}
-				if _, err := os.Stat(filepath.Dir(native)); !errors.Is(err, os.ErrNotExist) {
-					t.Fatal("loaded runtime not moved aside")
+				for _, name := range []string{exe, library, license} {
+					if _, err := os.Stat(name); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("loaded image %s not moved aside", name)
+					}
 				}
 				writePayloadFile(t, exe, "new")
-				writePayloadFile(t, native, "new-native")
+				writePayloadFile(t, license, "new-license")
 				if mode == "installer error" || mode == "no old runtime" {
 					return errors.New("failed installer")
 				}
 				if mode != "incomplete runtime" {
-					writePayloadFile(t, filepath.Join(dir, "ai-runtime/onnxruntime.dll"), "ort")
+					writePayloadFile(t, library, "new-ort")
 				}
 				return nil
 			})
@@ -154,18 +155,48 @@ func TestWindowsPayloadRollsBackBothImages(t *testing.T) {
 					t.Fatal(err)
 				}
 				requirePayloadFile(t, exe, "new")
-				requirePayloadFile(t, native, "new-native")
+				requirePayloadFile(t, library, "new-ort")
+				requirePayloadFile(t, license, "new-license")
 			} else {
 				if err == nil {
 					t.Fatal("expected failure")
 				}
 				requirePayloadFile(t, exe, "old")
 				if mode != "no old runtime" {
-					requirePayloadFile(t, native, "old-native")
-				} else if _, err := os.Stat(filepath.Dir(native)); !errors.Is(err, os.ErrNotExist) {
+					requirePayloadFile(t, library, "old-ort")
+					requirePayloadFile(t, license, "old-license")
+				} else if _, err := os.Stat(filepath.Dir(library)); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("partial runtime remains: %v", err)
 				}
 			}
+			if mode != "success" {
+				requireNoWindowsBackups(t, dir)
+			}
 		})
+	}
+}
+
+func TestWindowsPayloadSweepsStaleBackups(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "nexterm.exe")
+	writePayloadFile(t, exe, "old")
+	writePayloadFile(t, filepath.Join(dir, windowsBackupPrefix+"stale", "ai-runtime", "onnxruntime.dll"), "stale")
+	writePayloadFile(t, filepath.Join(dir, "unrelated", "keep"), "keep")
+	if err := installWindowsPayload(exe, func() error {
+		writePayloadFile(t, exe, "new")
+		writePayloadFile(t, filepath.Join(dir, "ai-runtime/onnxruntime.dll"), "ort")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireNoWindowsBackups(t, dir)
+	requirePayloadFile(t, filepath.Join(dir, "unrelated", "keep"), "keep")
+}
+
+func requireNoWindowsBackups(t *testing.T, dir string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, windowsBackupPrefix+"*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("stale update backups remain: %v %v", matches, err)
 	}
 }

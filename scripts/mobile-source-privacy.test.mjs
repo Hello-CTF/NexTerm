@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 for (const [platform, expected] of [['iphoneos', 'device'], ['iphonesimulator', 'simulator']]) {
-  test(`Xcode embeds and signs ${platform} inference frameworks`, () => {
+  test(`Xcode embeds and signs the ${platform} ONNX Runtime framework`, () => {
     const root = mkdtempSync(join(tmpdir(), 'nexterm-xcode-'));
     try {
       const tools = join(root, 'tools');
@@ -17,7 +17,7 @@ for (const [platform, expected] of [['iphoneos', 'device'], ['iphonesimulator', 
 set -eu
 printf '%s\\n' "$@" > "$TEST_LOG"
 for arg in "$@"; do case "$arg" in --output=*) output="\${arg#--output=}";; esac; done
-for name in NexTermPrivacy onnxruntime; do
+for name in onnxruntime; do
  mkdir -p "$output/$name.framework"
  printf 'binary' > "$output/$name.framework/$name"
 done
@@ -32,7 +32,7 @@ done
       });
       assert.equal(result.status, 0, result.stderr);
       assert.ok(readFileSync(join(root, 'args'), 'utf8').includes(`--ios-platform=${expected}`));
-      for (const name of ['NexTermPrivacy', 'onnxruntime']) {
+      for (const name of ['onnxruntime']) {
         assert.ok(existsSync(join(root, `built/NexTerm.app/Frameworks/${name}.framework/${name}`)));
         assert.ok(readFileSync(join(root, 'sign'), 'utf8').includes(`${name}.framework`));
       }

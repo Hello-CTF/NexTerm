@@ -78,8 +78,9 @@ tasks:
 
   prepare:privacy:runtime:
     internal: true
-    summary: Build local AI privacy inference frameworks without model weights
+    summary: Stage the checksum-pinned ONNX Runtime framework for local AI privacy inference (no model weights)
     cmds:
+      - rm -rf "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}"
       - node scripts/ai-privacy-runtime.mjs --os=ios --arch=arm64 --ios-platform={{.IOS_PLATFORM}} --output="{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}"
 
   package:ipa:

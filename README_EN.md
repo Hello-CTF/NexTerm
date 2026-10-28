@@ -75,7 +75,7 @@ Mobile builds are previews and are not officially supported until real-device si
 
 ## Deploy the server
 
-On Linux with systemd (amd64 / arm64), run as root:
+On Linux with systemd and glibc 2.28 or newer (amd64 / arm64; for example RHEL 8, Debian 11, Ubuntu 20.04 or later; musl distributions such as Alpine are not supported), run as root:
 
 ```bash
 curl -fsSL https://nexterm.work/install.sh | sudo bash
@@ -95,7 +95,7 @@ The script downloads the latest server archive, verifies it against `SHA256SUMS`
 
 ## Development
 
-Toolchain: Go 1.27, Node 24+, pnpm.
+Toolchain: Go 1.27, Node 24+, pnpm; Linux server release builds also need the pinned zig installed by `node scripts/install-zig.mjs ~/.cache/nexterm-zig` (links against glibc 2.28).
 
 ```bash
 pnpm install && pnpm build && go build ./...

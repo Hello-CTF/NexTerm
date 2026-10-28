@@ -18,9 +18,9 @@ func TestPrivacyRuntimeValidation(t *testing.T) {
 		want     string
 	}{
 		{name: "missing android runtime", id: "mobile-android", entries: []zipFixture{{name: "lib/arm64-v8a/libwails.so"}}, want: "missing"},
-		{name: "wrong android ABI", id: "mobile-android", entries: []zipFixture{{name: "lib/arm64-v8a/libwails.so"}, {name: "lib/arm64-v8a/libnexterm_privacy.so", data: privacyELF(62)}}, want: "does not match"},
+		{name: "wrong android ABI", id: "mobile-android", entries: []zipFixture{{name: "lib/arm64-v8a/libwails.so"}, {name: "lib/arm64-v8a/libonnxruntime.so", data: privacyELF(62)}}, want: "does not match"},
 		{name: "missing ios runtime", id: "mobile-ios", want: "missing"},
-		{name: "simulator runtime", id: "mobile-ios", entries: []zipFixture{{name: "Payload/nexterm.app/Frameworks/NexTermPrivacy.framework/Info.plist", data: []byte("<plist><dict><key>CFBundleExecutable</key><string>NexTermPrivacy</string></dict></plist>")}, {name: "Payload/nexterm.app/Frameworks/NexTermPrivacy.framework/NexTermPrivacy", data: thinMachO(7)}}, want: "not an iOS device"},
+		{name: "simulator runtime", id: "mobile-ios", entries: []zipFixture{{name: "Payload/nexterm.app/Frameworks/onnxruntime.framework/Info.plist", data: []byte("<plist><dict><key>CFBundleExecutable</key><string>onnxruntime</string></dict></plist>")}, {name: "Payload/nexterm.app/Frameworks/onnxruntime.framework/onnxruntime", data: thinMachO(7)}}, want: "not an iOS device"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "package.zip")
@@ -36,7 +36,7 @@ func TestPrivacyRuntimeValidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			c := checker{id: test.id, handle: file, manifest: manifest}
-			err = c.validatePrivacyRuntime()
+			_, err = c.validatePrivacyRuntime()
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("got %v, want %s", err, test.want)
 			}
@@ -47,7 +47,7 @@ func TestPrivacyRuntimeValidation(t *testing.T) {
 func privacyLicenseFixtures(base, platform, arch string) []zipFixture {
 	var entries []zipFixture
 	files := map[string]string{}
-	for _, name := range append(append([]string{}, requiredPrivacyNotices...), "dependency-1.0/LICENSE") {
+	for _, name := range append(append([]string{}, requiredPrivacyNotices...), "extra/NOTICE") {
 		content := []byte("license fixture " + name)
 		files["licenses/"+name] = fmt.Sprintf("%x", sha256.Sum256(content))
 		entries = append(entries, zipFixture{name: base + "licenses/" + name, data: content, mode: 0644})
@@ -62,14 +62,14 @@ func TestPrivacyLicenseEvidence(t *testing.T) {
 		if platform == "android" {
 			base = "assets/ai-runtime/arm64-v8a/"
 		}
-		for _, variant := range []string{"complete", "missing upstream", "missing dependency", "altered notice", "wrong platform"} {
+		for _, variant := range []string{"complete", "missing upstream", "missing listed notice", "altered notice", "wrong platform"} {
 			t.Run(platform+"/"+variant, func(t *testing.T) {
 				entries := privacyLicenseFixtures(base, platform, "arm64")
 				for i := range entries {
 					if variant == "missing upstream" && entries[i].name == base+"licenses/ASTRLINK-LICENSE" {
 						entries[i].name += ".removed"
 					}
-					if variant == "missing dependency" && entries[i].name == base+"licenses/dependency-1.0/LICENSE" {
+					if variant == "missing listed notice" && entries[i].name == base+"licenses/extra/NOTICE" {
 						entries[i].name += ".removed"
 					}
 					if variant == "altered notice" && entries[i].name == base+"licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES" {
@@ -99,5 +99,27 @@ func TestPrivacyLicenseEvidence(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPrivacyRuntimeEvidenceRecordsLibrarySizes(t *testing.T) {
+	archive := makeAndroidAPK(t, "AndroidManifest.xml", nil)
+	file, err := os.Open(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	stat, _ := file.Stat()
+	manifest, err := inspectZip(file, stat.Size(), 512*mib, 4*gib, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := checker{id: "mobile-android", handle: file, manifest: manifest}
+	sizes, err := c.validatePrivacyRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("lib/arm64-v8a/libonnxruntime.so=%d bytes", len(privacyELF(183))); len(sizes) != 1 || sizes[0] != want {
+		t.Fatalf("sizes = %v, want %s", sizes, want)
 	}
 }

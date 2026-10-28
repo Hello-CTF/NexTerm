@@ -313,22 +313,12 @@ jobs:
         with:
           go-version: 1.27.3
           cache: true
-      - name: Install the pinned privacy runtime Rust toolchain
-        if: contains(matrix.kinds, 'desktop') || contains(matrix.kinds, 'server')
-        shell: bash
+      - name: Install the pinned Zig linker for the glibc 2.28 Linux server
+        if: matrix.os == 'linux' && contains(matrix.kinds, 'server')
         run: |
-          rustup toolchain install 1.95.0 --profile minimal
-          rustup default 1.95.0
-          cpu=x86_64
-          if [ "${{ matrix.arch }}" = "arm64" ]; then cpu=aarch64; fi
-          case "${{ matrix.os }}" in
-            windows) triple="$cpu-pc-windows-msvc" ;;
-            darwin) triple="$cpu-apple-darwin" ;;
-            linux) triple="$cpu-unknown-linux-gnu" ;;
-          esac
-          rustup target add "$triple" --toolchain 1.95.0
-          rustc --version
-          cargo --version
+          zig="$(node scripts/install-zig.mjs "$RUNNER_TEMP/zig")"
+          "$zig" version
+          echo "NEXTERM_ZIG=$zig" >> "$GITHUB_ENV"
       - name: Install the Windows CGO compiler
         if: matrix.os == 'windows' && contains(matrix.kinds, 'desktop')
         shell: pwsh
@@ -556,16 +546,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
-      - name: Install the pinned mobile privacy runtime toolchain
-        shell: bash
-        run: |
-          rustup toolchain install 1.95.0 --profile minimal
-          rustup default 1.95.0
-          if [ "${{ matrix.platform }}" = "android" ]; then
-            rustup target add aarch64-linux-android x86_64-linux-android
-          else
-            rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-          fi
       - name: Prepare Android release signing
         if: matrix.platform == 'android'
         env:

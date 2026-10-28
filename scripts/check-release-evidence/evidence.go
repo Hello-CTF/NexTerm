@@ -289,19 +289,23 @@ func runEvidenceChecks(root string) []checkResult {
 }
 
 // The evidence fixture validates packaging contracts without loading inference.
+// The stub library reuses the host binary so architecture checks still apply.
 func writeStubPrivacyRuntime(binary, goos, goarch string) error {
 	directory := filepath.Join(filepath.Dir(binary), "ai-runtime")
-	libraries := map[string][]string{
-		"linux":   {"libnexterm_privacy.so", "libonnxruntime.so"},
-		"darwin":  {"libnexterm_privacy.dylib", "libonnxruntime.dylib"},
-		"windows": {"nexterm_privacy.dll", "onnxruntime.dll"},
-	}
+	library := map[string]string{
+		"linux":   "libonnxruntime.so",
+		"darwin":  "libonnxruntime.dylib",
+		"windows": "onnxruntime.dll",
+	}[goos]
 	data, err := os.ReadFile(binary)
 	if err != nil {
 		return err
 	}
+	if err := os.RemoveAll(directory); err != nil {
+		return err
+	}
 	files := map[string]string{}
-	for _, name := range append(libraries[goos], "licenses/ASTRLINK-LICENSE", "licenses/ONNX-RUNTIME-LICENSE", "licenses/native-dependencies.json") {
+	for _, name := range []string{library, "licenses/ASTRLINK-LICENSE", "licenses/ASTRLINK-NOTICE.md", "licenses/ONNX-RUNTIME-LICENSE", "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES"} {
 		file := filepath.Join(directory, name)
 		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
 			return err
@@ -316,7 +320,7 @@ func writeStubPrivacyRuntime(binary, goos, goarch string) error {
 		digest := sha256.Sum256(content)
 		files[name] = hex.EncodeToString(digest[:])
 	}
-	manifest, err := json.Marshal(map[string]interface{}{"abi": 1, "platform": goos, "arch": goarch, "files": files})
+	manifest, err := json.Marshal(map[string]interface{}{"abi": 2, "platform": goos, "arch": goarch, "onnxRuntime": "1.23.2", "files": files})
 	if err != nil {
 		return err
 	}

@@ -416,6 +416,12 @@ func runDesktopDistChecks(root, version, goos, goarch string) []checkResult {
 			helperEdit: func(manifest map[string]interface{}) { manifest["protocol"] = 1 },
 		},
 		{
+			name:       "helper features mismatch",
+			want:       "features",
+			helperName: "nexterm-helper-linux-amd64",
+			helperEdit: func(manifest map[string]interface{}) { manifest["features"] = []string{"exec"} },
+		},
+		{
 			name: "updater public key mismatch",
 			want: "updater public key SHA-256",
 			env:  []string{"NEXTERM_MINISIGN_PUBLIC_KEY=" + syntheticDesktopUpdaterPublicKeyVariant()},

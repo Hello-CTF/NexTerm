@@ -76,6 +76,17 @@ VIAddVersionKey "FileDescription" "NexTerm desktop client"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
+;; In-place updates move loaded images into $INSTDIR\.nexterm-update-old-*;
+;; they become removable once the previous process exits.
+!macro NEXTERM_SWEEP_UPDATE_BACKUPS
+  FindFirst $R0 $R1 "$INSTDIR\.nexterm-update-old-*"
+  ${DoWhile} $R1 != ""
+    RMDir /r "$INSTDIR\$R1"
+    FindNext $R0 $R1
+  ${Loop}
+  FindClose $R0
+!macroend
+
 Section "NexTerm" SEC01
   SetShellVarContext current
   SetOutPath "$INSTDIR"
@@ -91,6 +102,8 @@ Section "NexTerm" SEC01
   File /oname=nexterm-helper-windows-amd64.exe "${NEXTERM_HELPER_WINDOWS_AMD64}"
   File /oname=nexterm-helper-windows-arm64.exe "${NEXTERM_HELPER_WINDOWS_ARM64}"
   File /oname=MicrosoftEdgeWebview2Setup.exe "${NEXTERM_WEBVIEW2}"
+  !insertmacro NEXTERM_SWEEP_UPDATE_BACKUPS
+  RMDir /r "$INSTDIR\ai-runtime"
   SetOutPath "$INSTDIR\ai-runtime"
   File /r "${NEXTERM_AI_RUNTIME}\*"
   SetOutPath "$INSTDIR"
@@ -142,6 +155,7 @@ Section "Uninstall"
   Delete "$INSTDIR\MicrosoftEdgeWebview2Setup.exe"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir /r "$INSTDIR\ai-runtime"
+  !insertmacro NEXTERM_SWEEP_UPDATE_BACKUPS
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm"
   DeleteRegKey HKCU "Software\NexTerm"
