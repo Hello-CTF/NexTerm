@@ -199,7 +199,7 @@ func (c *productionConnector) sshConfigHop(ctx context.Context, options producti
 		options.Username = "root"
 	}
 	if (options.ForwardAgent || options.AuthKind == "agent") && options.AgentSocket == "" && os.Getenv("SSH_AUTH_SOCK") == "" {
-		return ssh.Config{}, ipc.NewError(ipc.CodeBadParam, "SSH agent 已启用，但未配置 agent socket，且 SSH_AUTH_SOCK 环境变量为空")
+		return ssh.Config{}, ipc.NewError(ipc.CodeBadParam, "已启用 SSH Agent，但未配置其 socket，且环境变量 SSH_AUTH_SOCK 为空")
 	}
 	strict = strict || options.StrictHostKey
 	config := ssh.Config{

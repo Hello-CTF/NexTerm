@@ -344,7 +344,7 @@ const loginKindPortOnly = "port_only"
 func describeNonConnectLoginFailure(err error) (kind, message string) {
 	switch probeFailureKind(err) {
 	case "vault":
-		return "vault", "密码库还没有解锁，或这条资产绑定的凭据读不出来。请先解锁密码库，再检查资产绑定的凭据"
+		return "vault", "凭据库尚未解锁，或该资产绑定的凭据无法读取。请先解锁凭据库，再检查资产绑定的凭据"
 	case "config":
 		return "config", "资产配置不完整或无效，请检查主机、端口、用户名和认证方式"
 	case "unsupported":

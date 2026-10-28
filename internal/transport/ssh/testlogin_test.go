@@ -409,11 +409,11 @@ func TestDescribeLoginFailure(t *testing.T) {
 	}{
 		{"nil", nil, false, "", nil},
 		{"pending", newConnectError(ErrorKindHostKeyPending, "host key verification", "h", 22, "", pending), false, "host_key_pending", []string{"SHA256:abc", "不会自动信任"}},
-		{"changed", newConnectError(ErrorKindHostKeyChanged, "host key verification", "h", 22, "", changed), false, "host_key_changed", []string{"SHA256:new", "不一样"}},
+		{"changed", newConnectError(ErrorKindHostKeyChanged, "host key verification", "h", 22, "", changed), false, "host_key_changed", []string{"SHA256:new", "不一致"}},
 		{"auth", newConnectError(ErrorKindAuth, "authentication", "h", 22, "", errors.New("ssh: unable to authenticate "+secret)), false, "auth", []string{"已连通", "被拒绝"}},
 		{"key unreadable", newConnectError(ErrorKindAuth, "authentication setup", "h", 22, "", errors.New("read SSH private key: open /x/"+secret+": no such file")), false, "credential", []string{"私钥文件"}},
 		{"passphrase", newConnectError(ErrorKindAuth, "authentication setup", "h", 22, "", errors.New("parse encrypted SSH private key: x")), false, "credential", []string{"口令"}},
-		{"agent", newConnectError(ErrorKindAuth, "authentication setup", "h", 22, "", errors.New("SSH agent socket is not configured")), false, "credential", []string{"agent"}},
+		{"agent", newConnectError(ErrorKindAuth, "authentication setup", "h", 22, "", errors.New("SSH agent socket is not configured")), false, "credential", []string{"Agent"}},
 		{"refused ssh", newConnectError(ErrorKindRefused, "dial", "h", 22, "", errors.New("refused")), false, "refused", []string{"拒绝连接"}},
 		{"refused port", newConnectError(ErrorKindRefused, "dial", "h", 3306, "", errors.New("refused")), true, "refused", []string{"h:3306", "拒绝了连接"}},
 		{"timeout port", newConnectError(ErrorKindTimeout, "dial", "h", 3306, "", errors.New("t")), true, "timeout", []string{"超时"}},

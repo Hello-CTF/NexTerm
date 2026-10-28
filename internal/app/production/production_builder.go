@@ -266,7 +266,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 						continue
 					}
 					if listed.Agent == nil || listed.Agent.StateDigest == "" {
-						return "", ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已经离线")
+						return "", ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已离线")
 					}
 					return listed.Agent.StateDigest, nil
 				}

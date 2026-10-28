@@ -76,8 +76,8 @@ func agentIPCError(err error) error {
 	case "AI 补充指令不能为空",
 		"只能编辑用户消息",
 		"无法确定设备身份，不能清除设备模式",
-		"无法确定设备身份, 权限未保存; 请重新连接后再试",
-		"缺少 config":
+		"无法确定设备身份，权限未保存；请重新连接后重试",
+		"缺少配置":
 		return ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
 	case "消息不存在":
 		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err)
@@ -236,7 +236,7 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 					return config, agentIPCError(err)
 				}
 				if args.Config == nil {
-					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "缺少 config")
+					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "缺少配置")
 				}
 				if deviceID != "" {
 					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, args.Config.Mode); err != nil {
@@ -250,7 +250,7 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 					return config, agentIPCError(err)
 				}
 				if args.Scope.SessionID != "" || args.Scope.TabID != "" {
-					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "无法确定设备身份, 权限未保存; 请重新连接后再试")
+					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "无法确定设备身份，权限未保存；请重新连接后重试")
 				}
 				if err := r.config.Permissions.Set(ctx, *args.Config); err != nil {
 					return guard.Config{}, agentIPCError(err)

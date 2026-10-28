@@ -14,9 +14,9 @@ import (
 const historyTypeSummary = "summary"
 
 var (
-	ErrConversationBusy      = ipc.NewError(ipc.CodeForbidden, "这段对话还有任务在运行或等待确认，结束后再压缩")
-	ErrNothingToCompact      = ipc.NewError(ipc.CodeBadParam, "对话内容太少，不需要压缩")
-	errCompactNoConversation = ipc.NewError(ipc.CodeBadParam, "请先开始一段对话再压缩")
+	ErrConversationBusy      = ipc.NewError(ipc.CodeForbidden, "该对话仍有任务在运行或等待确认，请在任务结束后再压缩")
+	ErrNothingToCompact      = ipc.NewError(ipc.CodeBadParam, "对话内容过少，无需压缩")
+	errCompactNoConversation = ipc.NewError(ipc.CodeBadParam, "请先开始对话，再进行压缩")
 )
 
 type CompactResult struct {

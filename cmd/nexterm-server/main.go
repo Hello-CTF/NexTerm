@@ -295,7 +295,7 @@ func run(args []string) int {
 			Digest: func(_ context.Context, deviceID string) (string, error) {
 				digest, ok := fleetService.DeviceStateDigest(deviceID)
 				if !ok || digest == "" {
-					return "", ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已经离线")
+					return "", ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已离线")
 				}
 				return digest, nil
 			},
@@ -489,7 +489,7 @@ func printAccountInitCode(ctx context.Context, accounts *account.Accounts, stder
 		}
 		return err
 	}
-	fmt.Fprintf(stderr, "\nnexterm-server: 账号系统尚未初始化\nnexterm-server: 一次性初始化码: %s\nnexterm-server: 请在浏览器中打开本服务完成超级管理员账号初始化(初始化码仅可使用一次)\n\n", code)
+	fmt.Fprintf(stderr, "\nnexterm-server: 账号系统尚未初始化\nnexterm-server: 一次性初始化码: %s\nnexterm-server: 请在浏览器中打开本服务完成超级管理员账号初始化（初始化码仅可使用一次）\n\n", code)
 	return nil
 }
 

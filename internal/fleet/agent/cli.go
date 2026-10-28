@@ -87,8 +87,8 @@ func RunCLIWithServicePrefix(args []string, servicePrefix []string, getenv func(
 }
 
 func printCLIUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "用法: agent <enroll|run|install|uninstall|status|update|version> [选项]")
-	fmt.Fprintln(stderr, "  update|upgrade [--version <版本>] [--yes|-y] [--force|-f] [--check]  从官方 release 升级已安装的 agent")
+	fmt.Fprintln(stderr, "用法：agent <enroll|run|install|uninstall|status|update|version> [选项]")
+	fmt.Fprintln(stderr, "  update|upgrade [--version <版本>] [--yes|-y] [--force|-f] [--check]  从官方 release 升级已安装的设备代理")
 }
 
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
@@ -118,21 +118,21 @@ func resolveDataDir(flagValue string, getenv func(string) string) (string, error
 	if value := getenv("NEXTERM_DATA_DIR"); value != "" {
 		return value, nil
 	}
-	return "", errors.New("需要 --data-dir 或 NEXTERM_DATA_DIR")
+	return "", errors.New("请指定 --data-dir 或设置 NEXTERM_DATA_DIR")
 }
 
 func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("enroll", stderr)
-	server := set.String("server", "", "服务器地址 (必填)")
-	code := set.String("code", "", "设备注册码 (必填)")
-	name := set.String("name", "", "设备名 (默认主机名)")
-	dataDir := set.String("data-dir", "", "数据目录 (默认 NEXTERM_DATA_DIR)")
+	server := set.String("server", "", "服务器地址（必填）")
+	code := set.String("code", "", "设备注册码（必填）")
+	name := set.String("name", "", "设备名（默认为主机名）")
+	dataDir := set.String("data-dir", "", "数据目录（默认为 NEXTERM_DATA_DIR）")
 	insecure := set.Bool("insecure", false, "跳过 TLS 证书校验（仅用于受信任的自签名服务器）")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
 	if *server == "" || *code == "" {
-		fmt.Fprintln(stderr, "agent enroll: --server 与 --code 必填")
+		fmt.Fprintln(stderr, "agent enroll: 必须指定 --server 与 --code")
 		return ExitUsage
 	}
 	dir, err := resolveDataDir(*dataDir, getenv)
@@ -185,7 +185,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 		printCLIError(stderr, "agent enroll:", err)
 		return ExitError
 	}
-	fmt.Fprintf(stdout, "注册成功: device_id=%s name=%s base_urls=%d metrics_interval=%ds desired_autostart=%t terminal=%s\n",
+	fmt.Fprintf(stdout, "注册成功：device_id=%s name=%s base_urls=%d metrics_interval=%ds desired_autostart=%t terminal=%s\n",
 		config.DeviceID, config.Name, len(config.BaseURLs), config.MetricsIntervalMS/1000, config.DesiredAutostart, enabledText(config.TerminalEnabled))
 	fmt.Fprintf(stdout, "配置已写入 %s (0600)\n", store.Path())
 	return ExitOK
@@ -193,8 +193,8 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 
 func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("run", stderr)
-	dataDir := set.String("data-dir", "", "数据目录 (默认 NEXTERM_DATA_DIR)")
-	pprofAddr := set.String("pprof-addr", "", "pprof 监听地址 (默认 NEXTERM_PPROF_ADDR, 仅回环, 显式 0.0.0.0 除外)")
+	dataDir := set.String("data-dir", "", "数据目录（默认为 NEXTERM_DATA_DIR）")
+	pprofAddr := set.String("pprof-addr", "", "pprof 监听地址（默认为 NEXTERM_PPROF_ADDR；仅限回环地址，显式指定 0.0.0.0 除外）")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -213,7 +213,7 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	}
 	unlock, err := acquireLock(filepath.Join(dir, "fleet", "agent.lock"))
 	if errors.Is(err, errLockBusy) {
-		fmt.Fprintln(stdout, "另一个 agent 实例正在运行，本实例已退出")
+		fmt.Fprintln(stdout, "已有另一个设备代理实例正在运行，本实例已退出")
 		return ExitOK
 	}
 	if err != nil {
@@ -260,19 +260,19 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	fmt.Fprintf(stdout, "agent 运行中: device_id=%s name=%s\n", config.DeviceID, config.Name)
+	fmt.Fprintf(stdout, "设备代理运行中：device_id=%s name=%s\n", config.DeviceID, config.Name)
 	err = agentRuntime.Run(ctx)
 	switch {
 	case err == nil:
 		return ExitOK
 	case errors.Is(err, errUpgradeStaged):
-		fmt.Fprintln(stdout, "agent: 协议版本不兼容，已从官方 release 下载并校验新版本；延迟替换脚本将完成升级并启动服务")
+		fmt.Fprintln(stdout, "agent: 协议版本不兼容，已下载并校验新版本，稍后将自动完成替换并启动服务")
 		return ExitOK
 	case errors.Is(err, ErrRevoked):
-		fmt.Fprintln(stderr, "agent: 设备已被吊销，已停止运行；请执行 agent enroll 接入新设备")
+		fmt.Fprintln(stderr, "agent: 设备已被吊销，已停止运行；如需重新接入，请执行 agent enroll")
 		return ExitRevoked
 	case errors.Is(err, ErrProtocolMismatch):
-		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容，自动升级不可用或已失败，请执行 agent update --force 或使用 install-device.sh 重新安装")
+		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容，且自动升级不可用或已失败；请执行 agent update --force，或使用 install-device.sh 重新安装")
 		return ExitProtocol
 	default:
 		printCLIError(stderr, "agent run:", err)
@@ -294,7 +294,7 @@ func cliUninstall(args []string, getenv func(string) string, stdout, stderr io.W
 
 func cliServiceChange(command string, args []string, getenv func(string) string, stdout, stderr io.Writer, action func(context.Context, ServiceManager, string, string) error) int {
 	set := newFlagSet(command, stderr)
-	dataDir := set.String("data-dir", "", "数据目录 (默认 NEXTERM_DATA_DIR)")
+	dataDir := set.String("data-dir", "", "数据目录（默认为 NEXTERM_DATA_DIR）")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -316,9 +316,9 @@ func cliServiceChange(command string, args []string, getenv func(string) string,
 		return ExitError
 	}
 	status := manager.Status(ctx)
-	fmt.Fprintf(stdout, "%s 完成: installed=%t enabled=%t active=%t\n", command, status.Installed, status.Enabled, status.Active)
+	fmt.Fprintf(stdout, "%s 完成：installed=%t enabled=%t active=%t\n", command, status.Installed, status.Enabled, status.Active)
 	if status.LastError != "" {
-		fmt.Fprintf(stdout, "注意: %s\n", applog.RedactText(status.LastError))
+		fmt.Fprintf(stdout, "注意：%s\n", applog.RedactText(status.LastError))
 	}
 	printServiceEnvironment(stdout, manager)
 	return ExitOK
@@ -326,7 +326,7 @@ func cliServiceChange(command string, args []string, getenv func(string) string,
 
 func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("status", stderr)
-	dataDir := set.String("data-dir", "", "数据目录 (默认 NEXTERM_DATA_DIR)")
+	dataDir := set.String("data-dir", "", "数据目录（默认为 NEXTERM_DATA_DIR）")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -338,21 +338,21 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 	store := StoreAt(dir)
 	config, err := store.Load()
 	if errors.Is(err, ErrNotEnrolled) {
-		fmt.Fprintf(stdout, "配置: 未注册 (配置路径 %s)\n", store.Path())
+		fmt.Fprintf(stdout, "配置：未注册（配置路径 %s）\n", store.Path())
 	} else if err != nil {
-		fmt.Fprintf(stdout, "配置: 读取失败: %s\n", applog.RedactText(err.Error()))
+		fmt.Fprintf(stdout, "配置：读取失败：%s\n", applog.RedactText(err.Error()))
 	} else {
-		fmt.Fprintf(stdout, "配置: device_id=%s name=%s platform=%s app_version=%s\n", config.DeviceID, config.Name, config.Platform, config.AppVersion)
-		fmt.Fprintf(stdout, "接入地址: 当前=%s 已配置=%d metrics_interval=%ds desired_autostart=%t terminal=%s\n",
+		fmt.Fprintf(stdout, "配置：device_id=%s name=%s platform=%s app_version=%s\n", config.DeviceID, config.Name, config.Platform, config.AppVersion)
+		fmt.Fprintf(stdout, "接入地址：当前=%s 已配置=%d metrics_interval=%ds desired_autostart=%t terminal=%s\n",
 			applog.RedactText(orNone(config.CurrentURL)), len(config.BaseURLs), config.MetricsIntervalMS/1000, config.DesiredAutostart, enabledText(config.TerminalEnabled))
 	}
 	manager := cliNewManager(getenv)
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
 	defer cancel()
 	status := manager.Status(ctx)
-	fmt.Fprintf(stdout, "服务: installed=%t enabled=%t active=%t\n", status.Installed, status.Enabled, status.Active)
+	fmt.Fprintf(stdout, "服务：installed=%t enabled=%t active=%t\n", status.Installed, status.Enabled, status.Active)
 	if status.LastError != "" {
-		fmt.Fprintf(stdout, "服务错误: %s\n", applog.RedactText(status.LastError))
+		fmt.Fprintf(stdout, "服务错误：%s\n", applog.RedactText(status.LastError))
 	}
 	printServiceEnvironment(stdout, manager)
 	stateDir := filepath.Join(dir, "durable", "supervisor")
@@ -361,16 +361,16 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 		_, probeErr := supervisor.NewClient(endpoint, stateDir).List(probeCtx)
 		probeCancel()
 		if probeErr != nil {
-			fmt.Fprintf(stdout, "supervisor helper: 未运行 (%s)\n", applog.RedactText(probeErr.Error()))
+			fmt.Fprintf(stdout, "持久终端组件：未运行（%s）\n", applog.RedactText(probeErr.Error()))
 		} else {
-			fmt.Fprintf(stdout, "supervisor helper: 正常 (%s)\n", endpoint)
+			fmt.Fprintf(stdout, "持久终端组件：正常（%s）\n", endpoint)
 		}
 	}
 	collector := NewCollector(dir, time.Now)
 	if _, err := collector.Collect(); err != nil {
-		fmt.Fprintf(stdout, "指标采集: 不可用 (%s)\n", applog.RedactText(err.Error()))
+		fmt.Fprintf(stdout, "指标采集：不可用（%s）\n", applog.RedactText(err.Error()))
 	} else {
-		fmt.Fprintln(stdout, "指标采集: 正常")
+		fmt.Fprintln(stdout, "指标采集：正常")
 	}
 	return ExitOK
 }

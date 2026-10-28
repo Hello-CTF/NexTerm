@@ -242,7 +242,7 @@ func DescribeLoginFailure(err error, portOnly bool) (kind, message string) {
 	}
 	var connectErr *ConnectError
 	if !errors.As(err, &connectErr) {
-		return "internal", "测试没有完成，请重试；如果反复出现，请查看应用日志"
+		return "internal", "测试未完成，请重试；如果问题持续出现，请查看应用日志"
 	}
 	target := "目标主机"
 	if connectErr.Host != "" {
@@ -264,13 +264,13 @@ func DescribeLoginFailure(err error, portOnly bool) (kind, message string) {
 		if keyErr != nil {
 			fingerprint = "（指纹 " + keyErr.Presented.Fingerprint + "）"
 		}
-		return string(connectErr.Kind), target + " 的主机指纹还没有被信任" + fingerprint + "，连接测试不会自动信任它。请先打开该主机的终端，核对指纹并确认后再重新测试"
+		return string(connectErr.Kind), target + " 的主机指纹尚未受信任" + fingerprint + "。连接测试不会自动信任指纹，请先打开该主机的终端核对并确认，然后重新测试"
 	case ErrorKindHostKeyChanged:
 		fingerprint := ""
 		if keyErr != nil {
 			fingerprint = "（新指纹 " + keyErr.Presented.Fingerprint + "）"
 		}
-		return string(connectErr.Kind), target + " 的主机指纹和上次记录的不一样" + fingerprint + "。可能是服务器重装过，也可能被人冒充，请先向管理员核对，确认无误后再在终端里选择替换"
+		return string(connectErr.Kind), target + " 的主机指纹与上次记录的不一致" + fingerprint + "。服务器可能已重装，也可能被冒充；请先向管理员核对，确认无误后在终端中选择替换"
 	case ErrorKindCanceled:
 		return string(connectErr.Kind), "已取消"
 	}
@@ -287,7 +287,7 @@ func DescribeLoginFailure(err error, portOnly bool) (kind, message string) {
 		case ErrorKindProxy:
 			return string(connectErr.Kind), "通过代理连接 " + target + " 失败，请检查代理设置"
 		}
-		return string(connectErr.Kind), "无法连到 " + target + "，请检查网络和防火墙"
+		return string(connectErr.Kind), "无法连接到 " + target + "，请检查网络和防火墙"
 	}
 	return string(connectErr.Kind), connectErr.UserMessage()
 }
@@ -299,13 +299,13 @@ func credentialProblem(err error) string {
 	}
 	switch {
 	case strings.Contains(text, "read SSH private key"):
-		return "读取不到私钥文件，请检查路径和文件权限"
+		return "无法读取私钥文件，请检查路径和文件权限"
 	case strings.Contains(text, "parse encrypted SSH private key"):
 		return "私钥口令不正确，或私钥格式不受支持"
 	case strings.Contains(text, "parse SSH private key"):
-		return "私钥无法识别；如果私钥设置了口令，请在凭据里补上口令"
+		return "无法识别私钥；如果私钥设有口令，请在凭据中补充口令"
 	case strings.Contains(text, "agent"):
-		return "SSH agent 不可用，请确认 agent 已启动并加载了密钥"
+		return "SSH Agent 不可用，请确认其已启动并已加载密钥"
 	}
 	return "请检查资产的认证设置"
 }

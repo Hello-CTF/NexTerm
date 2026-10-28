@@ -23,13 +23,13 @@ function Fail([string]$Message) {
 }
 
 if ($PSVersionTable.PSVersion -lt [version]'5.1') {
-  Fail "需要 PowerShell 5.1+, 当前版本: $($PSVersionTable.PSVersion)"
+  Fail "需要 PowerShell 5.1 或更高版本，当前版本：$($PSVersionTable.PSVersion)"
 }
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 if ($Version -notmatch '^[0-9A-Za-z.-]+$') {
-  Fail "非法 -Version: $Version"
+  Fail "-Version 无效：$Version"
 }
 
 $arch = $env:PROCESSOR_ARCHITECTURE
@@ -40,7 +40,7 @@ $AssetArch = $null
 switch ($arch) {
   'AMD64' { $AssetArch = 'amd64' }
   'ARM64' { $AssetArch = 'arm64' }
-  default { Fail "不支持的 CPU 架构: $arch (仅支持 AMD64/ARM64)" }
+  default { Fail "不支持的 CPU 架构：$arch（仅支持 AMD64 与 ARM64）" }
 }
 
 $ReleaseBase = 'https://github.com/Hello-CTF/NexTerm/releases/download'
@@ -57,7 +57,7 @@ try {
     Invoke-WebRequest -UseBasicParsing -Uri $AssetUrl -OutFile (Join-Path $Work $Asset)
     Invoke-WebRequest -UseBasicParsing -Uri $SumsUrl -OutFile (Join-Path $Work 'SHA256SUMS')
   } catch {
-    Fail "下载失败: $($_.Exception.Message)"
+    Fail "下载失败：$($_.Exception.Message)"
   }
 
   $Expected = $null
@@ -69,16 +69,16 @@ try {
     }
   }
   if (-not $Expected -or $Expected -notmatch '^[0-9a-fA-F]{64}$') {
-    Fail "SHA256SUMS 中没有 $Asset 的合法条目, 拒绝安装"
+    Fail "SHA256SUMS 中没有 $Asset 的有效条目，已拒绝安装"
   }
   $Actual = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $Work $Asset)).Hash
   if ($Actual -ne $Expected) {
-    Fail "SHA256 校验失败 ($Asset): 期望 $Expected, 实际 $Actual, 拒绝安装"
+    Fail "SHA256 校验失败（$Asset）：期望 $Expected，实际 $Actual，已拒绝安装"
   }
 
   $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\NexTerm'
   $Target = Join-Path $InstallDir 'nexterm-agent.exe'
-  Write-Host "==> 校验通过, 解压并安装到 $Target"
+  Write-Host "==> 校验通过，正在解压并安装到 $Target"
   $ExtractDir = Join-Path $Work 'extract'
   Expand-Archive -Path (Join-Path $Work $Asset) -DestinationPath $ExtractDir
   $Extracted = Join-Path $ExtractDir 'nexterm-agent.exe'
@@ -102,10 +102,10 @@ try {
       $NewPath = $UserPath.TrimEnd(';') + ';' + $InstallDir
     }
     [Environment]::SetEnvironmentVariable('Path', $NewPath, 'User')
-    Write-Host "==> 已把 $InstallDir 加入用户 PATH (新开终端生效)"
+    Write-Host "==> 已将 $InstallDir 加入用户 PATH（新开终端后生效）"
   }
 
-  Write-Host '==> 注册设备 enroll (接入码不在日志回显)'
+  Write-Host '==> 注册设备（接入码不会显示在日志中）'
   $InsecureArgs = @()
   $InsecureText = ''
   if ($Insecure) {
@@ -115,17 +115,17 @@ try {
   Write-Host "    $Target enroll --server $Server --code ******** --data-dir $DataDir$InsecureText"
   & $Target enroll --server $Server --code $Code --data-dir $DataDir @InsecureArgs
   if ($LASTEXITCODE -ne 0) {
-    Fail "设备注册失败 (exit $LASTEXITCODE)"
+    Fail "设备注册失败（退出码 $LASTEXITCODE）"
   }
 
-  Write-Host '==> 注册计划任务 NexTermAgent (登录自启, 当前用户, 免管理员, 无窗口)'
+  Write-Host '==> 注册计划任务 NexTermAgent（登录时自动启动，当前用户，无需管理员权限，无窗口）'
   & $Target install --data-dir $DataDir
   if ($LASTEXITCODE -ne 0) {
-    Fail "计划任务注册失败 (exit $LASTEXITCODE)"
+    Fail "计划任务注册失败（退出码 $LASTEXITCODE）"
   }
 
-  Write-Host "==> 完成。数据目录: $DataDir"
-  Write-Host "    查看状态: `"$Target`" status --data-dir `"$DataDir`""
+  Write-Host "==> 完成。数据目录：$DataDir"
+  Write-Host "    查看状态：`"$Target`" status --data-dir `"$DataDir`""
 } finally {
   Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
 }

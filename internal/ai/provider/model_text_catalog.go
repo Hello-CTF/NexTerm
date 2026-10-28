@@ -729,7 +729,7 @@ var modelStaticText = map[string]string{
 	"表名不能为空":                  "table name cannot be empty",
 	"TLS CA 文件没有有效证书":         "TLS CA file contains no valid certificates",
 
-	"内容疑似包含密钥（如 password/token/api_key 赋值），已拒绝保存；请去掉密钥后再保存": "content appears to contain secrets such as password/token/api_key assignments; save was rejected, remove the secrets and try again",
+	"内容疑似包含密钥（如 password、token、api_key 的赋值），已拒绝保存；请移除密钥后重试": "content appears to contain secrets such as password/token/api_key assignments; save was rejected, remove the secrets and try again",
 	"（该主题下没有记忆）": "(no memories under this topic)",
 	"（记忆库为空）":    "(memory store is empty)",
 	"ids 不能为空":   "ids cannot be empty",
