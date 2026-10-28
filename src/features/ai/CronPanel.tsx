@@ -584,9 +584,9 @@ export function CronPanel({
             </button>
           </div>
           <p className="nx-hint text-[11px]">
-            cron 表达式为 5 段（分、时、日、月、周），时区默认为 UTC，超时默认为 60 秒。重新启用后从现在起计算下次执行时间，不会补做停用期间错过的任务。
+            cron 表达式为 5 段（分、时、日、月、周），时区默认为 UTC，超时默认为 60 秒。重新启用后从现在起计算执行时间，不会补做停用期间错过的任务。
             {editingJob
-              ? " 保存时会重新创建任务，原来的执行记录不会保留，下次执行时间从现在起重新计算。"
+              ? " 保存时会重新创建任务，原来的执行记录不会保留，执行时间从现在起重新计算。"
               : ""}
           </p>
           {registerError && (
@@ -699,7 +699,7 @@ export function CronPanel({
                       )}
                     </div>
                     <div className="nx-hint text-[11px]">
-                      {nextRun ? `下次执行 ${nextRun}` : "暂无下次执行时间"}
+                      {nextRun ? `下次执行 ${nextRun}` : "暂无待执行时间"}
                       {lastRun ? ` · 上次执行 ${lastRun}` : ""}
                     </div>
                     {job.lastError && (

@@ -453,7 +453,7 @@ describe("CronPanel", () => {
     mounted = mountPanel();
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("暂无下次执行时间");
+    expect(text).toContain("暂无待执行时间");
     expect(text).not.toContain("对账");
   });
 
@@ -1003,7 +1003,7 @@ describe("CronPanel", () => {
     await flush();
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("已停用");
-    expect(text).toContain("暂无下次执行时间");
+    expect(text).toContain("暂无待执行时间");
     const badges = [...mounted.container.querySelectorAll(".nx-badge")].map((badge) => badge.textContent);
     expect(badges).not.toContain("执行中");
     expect(badges).not.toContain("已暂停");
