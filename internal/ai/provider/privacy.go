@@ -18,6 +18,15 @@ func WithPrivacy(resolve func(context.Context) (*privacy.Exchange, error)) Optio
 	return func(options *clientOptions) { options.privacy = resolve }
 }
 
+// privacyFailure names the local model only when it or its runtime failed;
+// other causes such as a locked vault keep a neutral prefix.
+func privacyFailure(err error) error {
+	if privacy.IsModelError(err) {
+		return fmt.Errorf("AI 脱敏失败，请求未发送（请检查本地隐私模型）：%w", err)
+	}
+	return fmt.Errorf("AI 脱敏失败，请求未发送：%w", err)
+}
+
 func (c *Client) runNative(ctx context.Context, input []*schema.Message, options []model.Option, preferStream bool, onFrame nativeFrameHandler) (nativeResult, error) {
 	input = ProjectModelMessages(input)
 	if c.privacy == nil {
@@ -25,14 +34,14 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 	}
 	exchange, err := c.privacy(ctx)
 	if err != nil {
-		return nativeResult{}, fmt.Errorf("AI 隐私保护不可用，请检查本地模型：%w", err)
+		return nativeResult{}, privacyFailure(err)
 	}
 	if exchange == nil {
 		return c.runNativePlain(ctx, input, options, preferStream, onFrame)
 	}
 	input, options, err = protectNativeRequest(ctx, exchange, input, options)
 	if err != nil {
-		return nativeResult{}, fmt.Errorf("AI 脱敏失败，请求未发送：%w", err)
+		return nativeResult{}, privacyFailure(err)
 	}
 	var protectedHandler nativeFrameHandler
 	var frameErr error

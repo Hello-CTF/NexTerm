@@ -36,6 +36,17 @@ func (s *memoryPrivacySettings) SettingSet(_ context.Context, key, value string)
 	s.values[key] = value
 	return nil
 }
+func (s *memoryPrivacySettings) SettingListPrefix(_ context.Context, prefix string) (map[string]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values := map[string]string{}
+	for key, value := range s.values {
+		if strings.HasPrefix(key, prefix) {
+			values[key] = value
+		}
+	}
+	return values, nil
+}
 func (s *memoryPrivacySettings) SecretProtector() store.SecretProtector { return s.protector }
 
 type fixtureProtector struct {
