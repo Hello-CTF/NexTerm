@@ -33,7 +33,7 @@ else
 fi
 
 echo "[lzc-build] repository root: $ROOT"
-echo "[lzc-build] target architecture: ${LZC_ARCH} (linux/${LZC_ARCH}, CGO server linked by zig against glibc 2.28)"
+echo "[lzc-build] target architecture: ${LZC_ARCH} (linux/${LZC_ARCH}, static CGO_ENABLED=0 server)"
 echo "[lzc-build] binary version: ${LZC_VERSION}"
 
 BASE_REF="$(grep -E '^FROM ' "$HERE/Dockerfile" | tail -1 | awk '{print $NF}')"
@@ -91,11 +91,10 @@ cp "$HERE"/../injects/*.js "$CONTENT/lazycat-injects/"
 echo "[lzc-build]     inject scripts ready: $CONTENT/lazycat-injects"
 
 echo "[lzc-build] 3/4 building the server and nine SSH target helpers"
-# zig links the CGO server against glibc 2.28, below the bookworm base image.
 node scripts/build.mjs server --release --os=linux --arch="$LZC_ARCH"
 SERVER_OUTPUT="$ROOT/target/go-build"
 SERVER_BINARY="$SERVER_OUTPUT/nexterm-server-linux-${LZC_ARCH}"
-node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$SERVER_BINARY" "server-linux-$LZC_ARCH" linux "$LZC_ARCH" 1
+node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$SERVER_BINARY" "server-linux-$LZC_ARCH" linux "$LZC_ARCH" 0
 node "$ROOT/scripts/lib/privacy-runtime.mjs" "$SERVER_OUTPUT/ai-runtime-linux-$LZC_ARCH" linux "$LZC_ARCH" "$SERVER_BINARY.manifest.json"
 if [ -z "${NEXTERM_HELPERS_DIR:-}" ]; then
   node scripts/build.mjs helpers --release
@@ -141,7 +140,7 @@ check_elf() {
 }
 
 echo "[lzc-build] 4/4 self-check"
-check_elf "$IMAGE_CONTEXT/nexterm-server" "$ELF_ARCH" 1
+check_elf "$IMAGE_CONTEXT/nexterm-server" "$ELF_ARCH" 0
 node "$ROOT/scripts/lib/privacy-runtime.mjs" "$IMAGE_CONTEXT/ai-runtime" linux "$LZC_ARCH" "$SERVER_BINARY.manifest.json"
 while IFS='|' read -r HELPER_OS HELPER_ARCH HELPER_NAME; do
   [ -x "$IMAGE_CONTEXT/$HELPER_NAME" ] || { echo "[lzc-build] error: helper is not executable: $HELPER_NAME" >&2; exit 1; }

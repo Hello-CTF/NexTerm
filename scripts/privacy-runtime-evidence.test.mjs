@@ -9,13 +9,14 @@ function fixture(t, platform = "linux", arch = "amd64") {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-runtime-evidence-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const files = {};
-  for (const name of [...runtimeFiles(platform, arch), ...RUNTIME_LICENSES]) {
+  const crt = platform === "windows" ? ["msvcp140.dll", "vcruntime140_1.dll"] : [];
+  for (const name of [...runtimeFiles(platform, crt), ...RUNTIME_LICENSES]) {
     const file = path.join(directory, name);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, name);
     files[name] = fileDigest(file);
   }
-  fs.writeFileSync(path.join(directory, "runtime.json"), JSON.stringify({ abi: RUNTIME_ABI, platform, arch, files }));
+  fs.writeFileSync(path.join(directory, "runtime.json"), JSON.stringify({ abi: RUNTIME_ABI, platform, arch, ...(crt.length ? { crt: { files: Object.fromEntries(crt.map((name) => [name, files[name]])) } } : {}), files }));
   return directory;
 }
 

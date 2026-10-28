@@ -21,9 +21,8 @@ both `ID` and `ID_LIKE`. An unrecognized or missing os-release prints a
 warning and continues: the installed layout is identical across systemd
 distributions.
 
-The server binary and its bundled ONNX Runtime library (`ai-runtime/`) link
-against glibc 2.28 or newer (RHEL 8, Debian 11, Ubuntu 20.04 or later); musl
-distributions are not supported. Before changing anything, `install.sh` runs
+The server binary is static and runs on any Linux. The optional ONNX Runtime library (`ai-runtime/`) needs glibc 2.27 or newer; musl
+distributions are not supported for it. Before changing anything, `install.sh` runs
 the payload's `nexterm-server --version` and stops if it cannot execute on
 this host. ONNX Runtime also needs `libstdc++.so.6`; when it is missing the
 installer warns and only optional local AI redaction is unavailable.

@@ -320,7 +320,7 @@ func writeStubPrivacyRuntime(binary, goos, goarch string) error {
 		digest := sha256.Sum256(content)
 		files[name] = hex.EncodeToString(digest[:])
 	}
-	manifest, err := json.Marshal(map[string]interface{}{"abi": 2, "platform": goos, "arch": goarch, "onnxRuntime": "1.23.2", "files": files})
+	manifest, err := json.Marshal(map[string]interface{}{"abi": 2, "platform": goos, "arch": goarch, "onnxRuntime": "fixture", "files": files})
 	if err != nil {
 		return err
 	}

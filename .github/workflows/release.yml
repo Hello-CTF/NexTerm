@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       desktop-matrix: ${{ steps.desktop-matrix.outputs.value }}
+      ort-version: ${{ steps.toolchain.outputs.ort_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,6 +81,15 @@ jobs:
         env:
           NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
         run: node scripts/build.mjs desktop-ldflags --os=linux >/dev/null
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Resolve the latest ONNX Runtime once for the whole release
+        id: toolchain
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXTERM_ORT_VERSION: ${{ vars.NEXTERM_ORT_VERSION }}
+        run: node scripts/resolve-toolchain.mjs >> "$GITHUB_OUTPUT"
       - name: Generate the desktop release matrix from the native matrix
         id: desktop-matrix
         run: echo "value=$(node scripts/release-matrix.mjs)" >> "$GITHUB_OUTPUT"
@@ -98,6 +108,7 @@ jobs:
     with:
       release_version: ${{ github.ref_name }}
       updater_public_key: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
+      ort_version: ${{ needs.version.outputs.ort-version }}
 
   desktop:
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
@@ -120,7 +131,10 @@ jobs:
           persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
-        run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        run: |
+          echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "NEXTERM_ORT_VERSION=${{ needs.version.outputs.ort-version }}" >> "$GITHUB_ENV"
+          echo "GITHUB_TOKEN=${{ github.token }}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
@@ -270,7 +284,7 @@ jobs:
 
   server:
     name: Linux ${{ matrix.arch }} full package with optional restricted runtime
-    needs: ci
+    needs: [ci, version]
     strategy:
       fail-fast: false
       matrix:
@@ -287,7 +301,10 @@ jobs:
           persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
-        run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        run: |
+          echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "NEXTERM_ORT_VERSION=${{ needs.version.outputs.ort-version }}" >> "$GITHUB_ENV"
+          echo "GITHUB_TOKEN=${{ github.token }}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
@@ -411,7 +428,7 @@ jobs:
 
   mobile:
     name: Android mobile package
-    needs: ci
+    needs: [ci, version]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -422,7 +439,10 @@ jobs:
           persist-credentials: false
       - name: Resolve the release version from the tag
         shell: bash
-        run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        run: |
+          echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "NEXTERM_ORT_VERSION=${{ needs.version.outputs.ort-version }}" >> "$GITHUB_ENV"
+          echo "GITHUB_TOKEN=${{ github.token }}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0

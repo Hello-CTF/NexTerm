@@ -1253,7 +1253,7 @@ preflight_server_binary() {
   local output rc=0 missing
   output="$("$SOURCE_DIR/nexterm-server" --version 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    die "payload nexterm-server cannot run on this host (exit $rc): ${output:-no output}; it requires glibc 2.28 or newer (RHEL 8, Debian 11, Ubuntu 20.04 or later) and a matching CPU architecture"
+    die "payload nexterm-server cannot run on this host (exit $rc): ${output:-no output}; it requires a matching CPU architecture"
   fi
   log "payload server version: ${output:-unknown}"
   if [ -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] && command -v ldd >/dev/null 2>&1; then

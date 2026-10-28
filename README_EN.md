@@ -71,11 +71,11 @@ Mobile builds are previews and are not officially supported until real-device si
 
 **Quick start**: add an SSH or WinRM asset (or use the built-in "This device") → initialize the vault in Settings → Credential protection before saving passwords or keys → optionally add a model in Settings → AI models → optionally sign in under Settings → Account sync to sync across devices. The protection password only unlocks this device; if you forget it, saved credentials cannot be recovered.
 
-**AI privacy redaction**: off by default. Download the latest released `QuantumNous/astrlink-guard` model in Settings → 信息脱敏, select INT8, FP32, or FP16, then enable it. Model weights are not bundled and are downloaded from Hugging Face. The local inference runtime currently requires Linux (glibc 2.28 or newer with libstdc++; musl is not supported), Windows (the installer bundles the VC++ runtime), macOS 13.4+, iOS/iPadOS 15.1+, or Android 7.0+; the application’s minimum OS versions are unchanged. Detection runs on the device running AI, or on the server in browser mode. Placeholders stay stable across turns in a conversation; responses and tool arguments are restored. When enabled, unavailable models or runtimes block requests instead of sending plaintext. Images and other non-text content are not redacted and are sent to the AI provider unchanged; the first image attached while it is enabled shows a notice. Detection can miss sensitive information. The implementation reuses [AstrLink](https://github.com/Calcium-Ion/AstrLink); see the [source and license notice](internal/ai/privacy/third_party/ASTRLINK_NOTICE.md).
+**AI privacy redaction**: off by default. Download the latest released `QuantumNous/astrlink-guard` model in Settings → 信息脱敏, select INT8, FP32, or FP16, then enable it. Model weights are not bundled and are downloaded from Hugging Face. The local inference runtime currently requires Linux (the optional ONNX Runtime library needs glibc 2.27 or newer with libstdc++; musl is not supported), Windows (the installer bundles the VC++ runtime), macOS 13.4+, iOS/iPadOS 15.1+, or Android 7.0+; the application’s minimum OS versions are unchanged. Detection runs on the device running AI, or on the server in browser mode. Placeholders stay stable across turns in a conversation; responses and tool arguments are restored. When enabled, unavailable models or runtimes block requests instead of sending plaintext. Images and other non-text content are not redacted and are sent to the AI provider unchanged; the first image attached while it is enabled shows a notice. Detection can miss sensitive information. The implementation reuses [AstrLink](https://github.com/Calcium-Ion/AstrLink); see the [source and license notice](internal/ai/privacy/third_party/ASTRLINK_NOTICE.md).
 
 ## Deploy the server
 
-On Linux with systemd and glibc 2.28 or newer (amd64 / arm64; for example RHEL 8, Debian 11, Ubuntu 20.04 or later; musl distributions such as Alpine are not supported), run as root:
+On Linux with systemd (amd64 / arm64; the server is a static binary that does not depend on a glibc version, while the optional local AI redaction library needs glibc 2.27 or newer with libstdc++, so musl distributions such as Alpine lose only that feature), run as root:
 
 ```bash
 curl -fsSL https://nexterm.work/install.sh | sudo bash
@@ -95,7 +95,7 @@ The script downloads the latest server archive, verifies it against `SHA256SUMS`
 
 ## Development
 
-Toolchain: Go 1.27, Node 24+, pnpm; Linux server release builds also need the pinned zig installed by `node scripts/install-zig.mjs ~/.cache/nexterm-zig` (links against glibc 2.28).
+Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a static `CGO_ENABLED=0` build that can be produced on any host.
 
 ```bash
 pnpm install && pnpm build && go build ./...
