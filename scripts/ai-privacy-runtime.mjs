@@ -67,12 +67,11 @@ function parseDigest(value) {
 }
 
 async function podVersion(version, context) {
-  const exact = !!(context.env ?? process.env).NEXTERM_ORT_VERSION;
   const pod = await fetchJSON("https://trunk.cocoapods.org/api/v1/pods/onnxruntime-c", context);
   const available = (pod?.versions ?? []).map((entry) => entry.name).filter((name) => /^1\.\d+\.\d+$/.test(name) && Number(name.split(".")[1]) >= MIN_MINOR);
   if (available.includes(version)) return version;
-  if (exact) throw new Error(`The onnxruntime-c pod has no ${version} release`);
-  // The pod trails the GitHub release; use the newest published pod not newer than it.
+  // The pod trails the GitHub release, also when CI passes the resolved version down through
+  // NEXTERM_ORT_VERSION; use the newest published pod not newer than it.
   const fallback = available.filter((name) => compareVersions(name, version) <= 0).sort(compareVersions).pop();
   if (!fallback) throw new Error(`The onnxruntime-c pod has no stable release >= 1.${MIN_MINOR} up to ${version}`);
   console.warn(`warning: onnxruntime-c pod ${version} is not published; iOS uses ${fallback}`);
