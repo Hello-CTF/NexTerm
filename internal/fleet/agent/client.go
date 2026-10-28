@@ -19,6 +19,8 @@ type ServerError struct {
 	Message string
 	// ServerVersion is reported by the server only in version_mismatch errors; it is empty for all other errors.
 	ServerVersion string
+	// Reason refines a forbidden control frame; owner_unavailable marks a temporary owner-account block.
+	Reason string
 }
 
 func (e *ServerError) Error() string {
@@ -26,6 +28,10 @@ func (e *ServerError) Error() string {
 		return fmt.Sprintf("server returned status %d: %s", e.Status, e.Message)
 	}
 	return fmt.Sprintf("server returned status %d (%s): %s", e.Status, e.Code, e.Message)
+}
+
+func (e *ServerError) ownerUnavailable() bool {
+	return e.Code == ErrorCodeOwnerUnavailable || e.Reason == ErrorCodeOwnerUnavailable
 }
 
 func (e *ServerError) forbidden() bool {

@@ -61,6 +61,7 @@ type serverMessage struct {
 	Code              string `json:"code,omitempty"`
 	Message           string `json:"message,omitempty"`
 	ServerVersion     string `json:"server_version,omitempty"`
+	Reason            string `json:"reason,omitempty"`
 	DesiredAutostart  *bool  `json:"desired_autostart,omitempty"`
 	MetricsIntervalMS *int64 `json:"metrics_interval_ms,omitempty"`
 	TerminalEnabled   *bool  `json:"terminal_enabled,omitempty"`
@@ -135,7 +136,7 @@ func (c *Channel) handshake(ctx context.Context, hello HelloMessage) error {
 	case "hello_ok":
 		return nil
 	case "error":
-		return &ServerError{Code: first.Code, Message: first.Message, ServerVersion: first.ServerVersion}
+		return &ServerError{Code: first.Code, Message: first.Message, ServerVersion: first.ServerVersion, Reason: first.Reason}
 	default:
 		return fmt.Errorf("unexpected hello response %q", first.Type)
 	}
@@ -176,6 +177,9 @@ func (c *Channel) Run(ctx context.Context, handlers channelHandlers) error {
 				handlers.onBridge(message.BridgeID, message.Purpose)
 			}
 		case "revoke":
+			if message.Reason == ErrorCodeOwnerUnavailable {
+				return &ServerError{Code: ErrorCodeOwnerUnavailable, Message: message.Message, Reason: message.Reason}
+			}
 			if handlers.onRevoke != nil {
 				handlers.onRevoke()
 			}
@@ -184,7 +188,7 @@ func (c *Channel) Run(ctx context.Context, handlers channelHandlers) error {
 			if message.Code == "version_mismatch" {
 				return &ProtocolMismatchError{ServerVersion: message.ServerVersion}
 			}
-			return &ServerError{Code: message.Code, Message: message.Message, ServerVersion: message.ServerVersion}
+			return &ServerError{Code: message.Code, Message: message.Message, ServerVersion: message.ServerVersion, Reason: message.Reason}
 		default:
 			return fmt.Errorf("unknown control message %q", message.Type)
 		}
@@ -274,14 +278,21 @@ func DialBridge(ctx context.Context, wsURL string, hello HelloMessage, insecure 
 		return conn, nil
 	case "error":
 		_ = conn.Close(websocket.StatusPolicyViolation, message.Code)
-		return nil, &ServerError{Code: message.Code, Message: message.Message, ServerVersion: message.ServerVersion}
+		return nil, &ServerError{Code: message.Code, Message: message.Message, ServerVersion: message.ServerVersion, Reason: message.Reason}
 	default:
 		_ = conn.Close(websocket.StatusProtocolError, "bad handshake")
 		return nil, fmt.Errorf("unexpected bridge handshake response %q", message.Type)
 	}
 }
 
+// isForbidden reports a real revocation. The temporary owner_unavailable signal also arrives as 403 but is not one.
 func isForbidden(err error) bool {
 	var serverError *ServerError
-	return errors.As(err, &serverError) && (serverError.forbidden() || serverError.Code == "forbidden")
+	return errors.As(err, &serverError) && !serverError.ownerUnavailable() && (serverError.forbidden() || serverError.Code == "forbidden")
+}
+
+// isOwnerUnavailable reports that the owning account is disabled or reset-required; the device is not revoked.
+func isOwnerUnavailable(err error) bool {
+	var serverError *ServerError
+	return errors.As(err, &serverError) && serverError.ownerUnavailable()
 }

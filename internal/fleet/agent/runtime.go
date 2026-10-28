@@ -22,6 +22,9 @@ const (
 	helperEnsureTimeout = 30 * time.Second
 	retrySleep          = 2 * time.Second
 	channelMaxBackoff   = time.Minute
+	// The owner account being disabled can last hours, so the wait is longer and capped higher than a network blip.
+	ownerMinBackoff = 30 * time.Second
+	ownerMaxBackoff = 10 * time.Minute
 	// serviceRecheckCycles is how many reconcile cycles reuse a settled service status before the manager is asked again.
 	serviceRecheckCycles = 5
 	// reconnectJitter spreads reconnect delays by +-20% so a fleet that lost its server does not retry in lockstep.
@@ -55,6 +58,8 @@ type Options struct {
 	OnChannel func(connected bool)
 	Logger    *slog.Logger
 	Now       func() time.Time
+	// Sleep, when set, replaces the real wait between owner_unavailable retries (tests).
+	Sleep func(ctx context.Context, d time.Duration) bool
 }
 
 type Runtime struct {
@@ -73,6 +78,11 @@ type Runtime struct {
 	now          func() time.Time
 	// jitter returns a uniform value in [0,1) used to spread reconnect delays; tests inject a fixed source.
 	jitter func() float64
+	// sleep waits between owner_unavailable retries; tests inject a fake that records the delay.
+	sleep func(ctx context.Context, d time.Duration) bool
+
+	// owner tracks the temporary owner_unavailable state; guarded by mu.
+	owner ownerWait
 
 	// The last settled service manager Status is reused so the manager (systemctl, schtasks) is not forked on every sync:
 	// it is re-read when the desired autostart flips or after serviceRecheck reconcile cycles (default serviceRecheckCycles),
@@ -170,6 +180,7 @@ func New(options Options) (*Runtime, error) {
 		executable:      executable,
 		logger:          logger,
 		now:             now,
+		sleep:           options.Sleep,
 		purposeHandlers: make(map[string]PurposeHandler),
 		revokeCh:        make(chan struct{}),
 		fatalCh:         make(chan error, 1),
@@ -214,6 +225,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	r.runCtx = runCtx
+	r.clearOwnerMarker()
+	defer r.clearOwnerMarker()
 
 	client, err := r.selectEndpoint(runCtx)
 	if err != nil {
@@ -376,6 +389,9 @@ func (r *Runtime) selectEndpoint(ctx context.Context) (*EndpointClient, error) {
 }
 
 func (r *Runtime) syncOnce(ctx context.Context) {
+	if r.ownerWaiting() {
+		return
+	}
 	client := r.prober.Current()
 	if client == nil {
 		selected, err := r.prober.Select(ctx)
@@ -387,8 +403,7 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 	}
 	response, err := r.postSync(ctx, client)
 	if err != nil {
-		if isForbidden(err) {
-			r.revoke()
+		if r.handleDenied(err) {
 			return
 		}
 		r.logger.Warn("agent sync failed", "url", client.BaseURL(), "error", err)
@@ -403,8 +418,7 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 		}
 		response, err = r.postSync(ctx, selected)
 		if err != nil {
-			if isForbidden(err) {
-				r.revoke()
+			if r.handleDenied(err) {
 				return
 			}
 			r.logger.Warn("agent sync retry failed", "url", selected.BaseURL(), "error", err)
@@ -414,6 +428,7 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 		client = selected
 	}
 	r.prober.ReportSuccess(client)
+	r.ownerRecovered()
 	r.notifyCurrentURL(ctx, client)
 	r.applyDesired(ConfigUpdate{
 		DesiredAutostart:  response.DesiredAutostart,
@@ -453,8 +468,7 @@ func (r *Runtime) notifyCurrentURL(ctx context.Context, client *EndpointClient) 
 	reportCtx, cancel := context.WithTimeout(ctx, syncTimeout)
 	defer cancel()
 	if err := client.ReportCurrentURL(reportCtx, r.deviceID, r.secret, base, reason); err != nil {
-		if isForbidden(err) {
-			r.revoke()
+		if r.handleDenied(err) {
 			return
 		}
 		r.logger.Warn("failover report failed", "url", base, "error", err)
@@ -540,6 +554,12 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		}
 		channel, err := DialChannel(ctx, client.WSURL(), r.hello("", ""), client.Insecure(), defaultWSKeepAlive, defaultWSPingTimeout)
 		if err != nil {
+			if isOwnerUnavailable(err) {
+				if !r.waitOwner(ctx) {
+					return
+				}
+				continue
+			}
 			if isForbidden(err) {
 				r.revoke()
 				return
@@ -558,6 +578,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			continue
 		}
 		r.prober.ReportSuccess(client)
+		r.ownerRecovered()
 		r.notifyCurrentURL(ctx, client)
 		backoff = retrySleep
 		r.reportChannel(true)
@@ -574,6 +595,13 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		if errors.Is(err, ErrProtocolMismatch) {
 			r.selfUpgrade(ctx, mismatchServerVersion(err))
 			return
+		}
+		if isOwnerUnavailable(err) {
+			// The server kicked the channel because the owner account was disabled; wait for it to recover.
+			if !r.waitOwner(ctx) {
+				return
+			}
+			continue
 		}
 		r.logger.Warn("control channel lost; reconnecting", "error", err)
 		r.prober.ReportFailure(client)
@@ -726,8 +754,7 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 		}
 		conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.Insecure())
 		if err != nil {
-			if isForbidden(err) {
-				r.revoke()
+			if r.handleDenied(err) {
 				return
 			}
 			r.logger.Warn("bridge dial failed", "bridge_id", bridgeID, "error", err)
