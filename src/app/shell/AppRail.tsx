@@ -89,6 +89,17 @@ export function AppRail({
     onClick: () => void;
     badge?: number;
   }[  ] = [
+    ...(hasHost
+      ? [
+          {
+            key: "files",
+            label: "文件",
+            hint: "浏览当前主机的文件：从终端所在目录打开，双击文件进入编辑器",
+            icon: IconFolderOpen,
+            onClick: openFiles,
+          },
+        ]
+      : []),
     ...(backgroundAvailable ? [{
       key: "background",
       label: "后台会话",
@@ -108,13 +119,6 @@ export function AppRail({
     },
     ...(hasHost
       ? [
-          {
-            key: "files",
-            label: "文件",
-            hint: "浏览当前主机的文件：从终端所在目录打开，双击文件进入编辑器",
-            icon: IconFolderOpen,
-            onClick: openFiles,
-          },
           {
             key: "docker",
             label: "容器",
