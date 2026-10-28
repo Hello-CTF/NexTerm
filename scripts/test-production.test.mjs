@@ -22,6 +22,7 @@ const FIXTURE_FILES = [
   "scripts/lib/mobile.mjs",
   "scripts/lib/semver.mjs",
   "scripts/lib/spawn-spec.mjs",
+  "scripts/lib/tar.mjs",
 ];
 
 function fixture(t) {
