@@ -7,6 +7,7 @@ import (
 	"io"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/docker"
@@ -56,6 +57,9 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 		}
 		return connected.Info().Generation, nil
 	})
+	// The SDK factory records why a device's Docker socket was unreachable so the CLI fallback can name the cause
+	// instead of a generic "unavailable" message.
+	var deviceProbeFailures sync.Map
 	pool := docker.NewGenerationalProvider(generations,
 		func(ctx context.Context, sessionID string, _ uint64) (docker.Backend, error) {
 			ctx = productionSessionRequestContext(ctx)
@@ -75,7 +79,13 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 				return nil, err
 			}
 			if connected.Asset().Kind == session.KindDevice {
-				return newDeviceDockerSDKBackend(ctx, transport, deviceDockerSocket)
+				backend, err := newDeviceDockerSDKBackend(ctx, transport, "")
+				if err != nil {
+					deviceProbeFailures.Store(sessionID, err)
+				} else {
+					deviceProbeFailures.Delete(sessionID)
+				}
+				return backend, err
 			}
 			dialer, ok := transport.(base.Dialer)
 			if !ok {
@@ -104,6 +114,9 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 				}, err
 			})
 			opener := dockerCommandOpener{transport: transport}
+			if cause, ok := deviceProbeFailures.Load(sessionID); ok {
+				opener.cause, _ = cause.(error)
+			}
 			shell := dockerFallbackShell(connected.Asset())
 			// Device agents know their real platform; windows devices must use the PowerShell quoting the
 			// transport's exec wrapper speaks (the asset-level fallback defaults to POSIX for devices).
@@ -168,12 +181,14 @@ func windowsShell(shell string) bool {
 
 type dockerCommandOpener struct {
 	transport base.Transport
+	// cause is why the device Docker socket bridge could not be opened, when known.
+	cause error
 }
 
 func (o dockerCommandOpener) OpenCommand(ctx context.Context, command string, width, height uint) (docker.CommandStream, error) {
 	// Device exec streams have no stdin or PTY, so they cannot back interactive container exec.
 	if _, isDevice := o.transport.(*device.Transport); isDevice {
-		return nil, deviceDockerStreamsUnavailable{}
+		return nil, deviceDockerStreamsUnavailable{cause: o.cause}
 	}
 	opener, ok := o.transport.(base.ExecStreamTransport)
 	if !ok {
@@ -223,43 +238,83 @@ var _ docker.CommandStream = (*dockerCommandChannel)(nil)
 var _ io.ReadWriteCloser = (*dockerCommandChannel)(nil)
 
 const (
-	deviceDockerSocket       = "/var/run/docker.sock"
-	deviceDockerProbeTimeout = 15 * time.Second
+	deviceDockerProbeTimeout = 5 * time.Second
+	deviceDockerPipe         = "//./pipe/docker_engine"
 )
 
-// newDeviceDockerSDKBackend reaches the device's Docker Engine socket through a forward bridge, the same way the SSH
-// path uses a streamlocal channel, so container exec, log streaming and stats work without a streamed exec channel.
-// Windows agents expose Docker through a named pipe that the forward bridge cannot dial, so they keep the CLI backend.
+// deviceDockerSocketCandidates are tried in order on non-Windows devices. The agent expands "~" and
+// "$XDG_RUNTIME_DIR" itself, so Docker Desktop, Colima, OrbStack, rootless Docker and Podman sockets are reachable
+// even though the default /var/run/docker.sock is missing or inaccessible to the agent account.
+var deviceDockerSocketCandidates = []string{
+	"/var/run/docker.sock",
+	"~/.docker/run/docker.sock",
+	"~/.docker/desktop/docker.sock",
+	"~/.orbstack/run/docker.sock",
+	"~/.colima/default/docker.sock",
+	"$XDG_RUNTIME_DIR/docker.sock",
+	"$XDG_RUNTIME_DIR/podman/podman.sock",
+}
+
+// newDeviceDockerSDKBackend reaches the device's Docker Engine through a forward bridge, the same way the SSH path
+// uses a streamlocal channel, so container exec, log streaming and stats work without a streamed exec channel.
+// An empty socket probes the known candidates; Windows devices dial the Docker Engine named pipe.
 func newDeviceDockerSDKBackend(ctx context.Context, transport base.Transport, socket string) (docker.Backend, error) {
 	deviceTransport, ok := transport.(*device.Transport)
 	if !ok {
 		return nil, fmt.Errorf("%w: device Docker dialer", base.ErrUnsupported)
 	}
+	// The client dials lazily, so probe once: an unreachable engine must fall back to the CLI backend instead of
+	// failing every SDK mutation later.
 	if deviceTransport.Platform() == "windows" {
-		return nil, fmt.Errorf("%w: Windows 设备代理的 Docker 使用命名管道，无法通过桥接访问", base.ErrUnsupported)
+		if err := probeDeviceDial(ctx, deviceTransport, "npipe", deviceDockerPipe); err != nil {
+			return nil, fmt.Errorf("%w: 无法连接设备上的 Docker 命名管道 %s（升级设备代理后重试）: %v", base.ErrUnsupported, deviceDockerPipe, err)
+		}
+		client, err := docker.NewNamedPipeClient(deviceDockerPipe, deviceTransport)
+		if err != nil {
+			return nil, err
+		}
+		return docker.NewMobyBackend(client), nil
 	}
-	// The client dials lazily, so probe the socket once: an unreachable socket must fall back to the CLI backend
-	// instead of failing every SDK mutation later.
+	candidates := deviceDockerSocketCandidates
+	if socket != "" {
+		candidates = []string{socket}
+	}
+	var failures []string
+	for _, candidate := range candidates {
+		err := probeDeviceDial(ctx, deviceTransport, "unix", candidate)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", candidate, err))
+			continue
+		}
+		client, err := docker.NewSSHStreamlocalClient(candidate, deviceTransport)
+		if err != nil {
+			return nil, err
+		}
+		return docker.NewMobyBackend(client), nil
+	}
+	return nil, fmt.Errorf("%w: 无法连接设备上的 Docker 套接字（%s）", base.ErrUnsupported, strings.Join(failures, "; "))
+}
+
+func probeDeviceDial(ctx context.Context, transport *device.Transport, network, address string) error {
 	probeCtx, cancel := context.WithTimeout(ctx, deviceDockerProbeTimeout)
 	defer cancel()
-	conn, err := deviceTransport.DialContext(probeCtx, "unix", socket)
+	conn, err := transport.DialContext(probeCtx, network, address)
 	if err != nil {
-		return nil, fmt.Errorf("%w: 无法连接设备上的 Docker 套接字: %v", base.ErrUnsupported, err)
+		return err
 	}
-	_ = conn.Close()
-	client, err := docker.NewSSHStreamlocalClient(socket, deviceTransport)
-	if err != nil {
-		return nil, err
-	}
-	return docker.NewMobyBackend(client), nil
+	return conn.Close()
 }
 
 // deviceDockerStreamsUnavailable is the user-facing reason a device cannot stream container exec or logs: both need
 // the Docker socket bridge (the CLI fallback has no streamed exec channel on devices).
-type deviceDockerStreamsUnavailable struct{}
+type deviceDockerStreamsUnavailable struct{ cause error }
 
-func (deviceDockerStreamsUnavailable) Error() string {
-	return "无法通过设备代理连接 Docker 套接字，容器终端与日志流暂不可用：请确认设备上 Docker 正在运行、代理账号有权访问 /var/run/docker.sock，并把设备代理升级到最新版；Windows 设备代理暂不支持"
+func (e deviceDockerStreamsUnavailable) Error() string {
+	message := "无法通过设备代理连接 Docker，容器终端与日志流暂不可用：请确认设备上 Docker（或 Docker Desktop / Colima / OrbStack）正在运行、代理账号有权访问其套接字，并把设备代理升级到最新版"
+	if e.cause != nil {
+		message += "。原因：" + e.cause.Error()
+	}
+	return message
 }
 
 func (deviceDockerStreamsUnavailable) Unwrap() error { return docker.ErrUnsupported }

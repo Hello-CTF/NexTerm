@@ -94,3 +94,12 @@ func TestDeviceDockerCommandOpenerExplainsMissingStreams(t *testing.T) {
 		t.Fatalf("err = %q; want an actionable Chinese hint", err)
 	}
 }
+
+func TestDeviceDockerStreamsUnavailableNamesProbeCause(t *testing.T) {
+	cause := errors.New("permission denied")
+	err := dockerCommandOpener{cause: cause}.cause
+	message := deviceDockerStreamsUnavailable{cause: err}.Error()
+	if !strings.Contains(message, "permission denied") {
+		t.Fatalf("message = %q; want the probe failure cause", message)
+	}
+}

@@ -68,6 +68,20 @@ func NewSSHStreamlocalClient(socket string, dialer Dialer) (*client.Client, erro
 	})
 }
 
+// NewNamedPipeClient reaches a Windows Docker Engine named pipe through a dialer that understands the "npipe"
+// network, such as a managed device bridge.
+func NewNamedPipeClient(pipe string, dialer Dialer) (*client.Client, error) {
+	if dialer == nil {
+		return nil, errors.New("docker named pipe dialer is required")
+	}
+	return NewClient(ClientConfig{
+		Host: "tcp://" + client.DummyHost,
+		Dialer: DialerFunc(func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "npipe", pipe)
+		}),
+	})
+}
+
 type StdioOpener interface {
 	OpenDockerStdio(ctx context.Context) (io.ReadWriteCloser, error)
 }

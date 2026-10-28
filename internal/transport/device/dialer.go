@@ -14,7 +14,7 @@ import (
 // channels, so callers get CloseWrite for half-close propagation.
 func (t *Transport) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	switch network {
-	case "tcp", "tcp4", "tcp6", "unix":
+	case "tcp", "tcp4", "tcp6", "unix", "npipe":
 	default:
 		return nil, fmt.Errorf("unsupported device dial network %q", network)
 	}
