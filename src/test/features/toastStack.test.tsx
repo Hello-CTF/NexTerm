@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { ToastStack } from "../../app/shell/ToastStack";
 import { useUi } from "../../app/store";
+import { describeError } from "../../ui/errorText";
 import { mount } from "./reactTestUtils";
 
 beforeEach(() => {
@@ -50,6 +51,21 @@ describe("ToastStack", () => {
       act(() => useUi.getState().releaseToast(id));
       act(() => { vi.advanceTimersByTime(1600); });
       expect(useUi.getState().toasts.length).toBe(0);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("keeps raw error text behind a details disclosure", () => {
+    const view = mount(createElement(ToastStack));
+    try {
+      act(() => {
+        useUi.getState().pushToast("error", describeError({ code: "db", message: "SQLITE_BUSY: database is locked" }));
+      });
+      const details = view.container.querySelector("details");
+      expect(details?.textContent).toContain("详情");
+      expect(details?.textContent).toContain("SQLITE_BUSY");
+      expect(view.container.querySelector("span")?.textContent).not.toContain("SQLITE_BUSY");
     } finally {
       view.unmount();
     }

@@ -229,7 +229,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       for (const tab of closePlan.runningAiTabs) {
         const cancelAndConfirm = aiTabRunControls.get(tab.id);
         if (!cancelAndConfirm) {
-          get().pushToast("error", "停止未确认：运行状态不可用，标签已保留");
+          get().pushToast("error", "未能确认是否已停止，标签已保留，请稍后重试");
           return false;
         }
         if (!(await confirmAiRunCancellation(cancelAndConfirm))) return false;
@@ -378,12 +378,12 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         workspaceId !== undefined &&
         (!explicitWorkspace || !explicitWorkspaceMatchesTab(tab, explicitWorkspace))
       ) {
-        get().pushToast("info", "标签与目标工作区不一致");
+        get().pushToast("info", "该标签不属于当前工作区，未执行操作");
         return;
       }
       const id = resolveWorkspaceId(tab, st, workspaceId);
       if (workspaceId !== undefined && id !== workspaceId) {
-        get().pushToast("info", "标签与目标工作区不一致");
+        get().pushToast("info", "该标签不属于当前工作区，未执行操作");
         return;
       }
       const w = get().workspaces.find((x) => x.id === id);

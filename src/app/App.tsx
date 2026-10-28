@@ -71,7 +71,7 @@ function AppShell() {
   useTabRecencyTracker();
 
   const queryClient = useQueryClient();
-  const { vaultStatus, vaultLocked, lockVault } = useVaultStatus();
+  const { vaultStatus, vaultLocked, lockVault, retryVault } = useVaultStatus();
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list() });
   const groupsQuery = useQuery({
     queryKey: ["groups"],
@@ -129,6 +129,7 @@ function AppShell() {
     lockVault,
     openCommandPalette,
     openQuickConnect,
+    openSettings,
   });
   useAppDialogHandlers();
   useAppBootEffects(queryClient);
@@ -200,6 +201,7 @@ function AppShell() {
     },
     statusBar: {
       vaultStatus,
+      onRetryVaultStatus: retryVault,
       sync,
       onOpenVaultProtection: actions.openVaultProtection,
       onOpenSyncSettings: actions.openSyncSettings,

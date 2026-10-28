@@ -8,6 +8,8 @@ import { formatTime } from "../../ui/format";
 import { trackWebSyncRequests, WEB_SYNC_ERROR_EVENT, WEB_SYNC_RESULT_EVENT } from "../syncEvents";
 
 export interface VaultStatusSummary {
+  // attention is the only reason the status bar shows the vault: nothing is rendered for a healthy or loading vault.
+  attention: "uninitialized" | "locked" | "unknown" | null;
   uninitialized: boolean;
   passwordless: boolean;
   text: string;
@@ -21,6 +23,11 @@ export function useVaultStatus() {
   const vaultQuery = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status() });
   const vaultStatus: VaultStatusSummary = vaultQuery.data
     ? {
+        attention: !vaultQuery.data.initialized
+          ? "uninitialized"
+          : !vaultQuery.data.passwordless && !vaultQuery.data.unlocked
+            ? "locked"
+            : null,
         uninitialized: !vaultQuery.data.initialized,
         passwordless: vaultQuery.data.passwordless,
         text: !vaultQuery.data.initialized
@@ -32,8 +39,10 @@ export function useVaultStatus() {
               : "凭据库已锁定",
       }
     : vaultQuery.isError
-      ? { text: "凭据库不可用", uninitialized: false, passwordless: false }
-      : { text: "…", uninitialized: false, passwordless: false };
+      ? { text: "凭据库状态未知", attention: "unknown", uninitialized: false, passwordless: false }
+      : { text: "…", attention: null, uninitialized: false, passwordless: false };
+  const refetchVault = vaultQuery.refetch;
+  const retryVault = useCallback(() => void refetchVault(), [refetchVault]);
 
   const lockVault = useCallback(async () => {
     if (vaultStatus.uninitialized) {
@@ -54,7 +63,7 @@ export function useVaultStatus() {
   }, [queryClient, pushToast, vaultStatus.uninitialized, vaultStatus.passwordless]);
 
   const vaultLocked = !!vaultQuery.data?.initialized && !vaultQuery.data.unlocked;
-  return { vaultStatus, vaultLocked, lockVault };
+  return { vaultStatus, vaultLocked, lockVault, retryVault };
 }
 
 type SyncStatusWithHealth = import("../../ipc/types").SyncStatus & {
@@ -102,6 +111,8 @@ export interface SyncStatusSummary {
   className: string;
   warnings: string[];
   showWarnings: boolean;
+  // failed is the only sync state the status bar shows as its own item; every other state is quiet.
+  failed: boolean;
 }
 
 // useSyncStatusSummary is the status bar's sync label: desktop reads the sync link and status queries,
@@ -208,5 +219,5 @@ export function useSyncStatusSummary(vaultLocked: boolean): SyncStatusSummary {
   const warnings = WEB ? webSyncHealth.warnings : syncStatus.data?.warnings ?? [];
   const showWarnings = warnings.length > 0 && !pauseReason;
   const className = syncFailed ? "text-red-300" : pauseReason && (WEB || syncConfigured) ? "text-amber-300" : "";
-  return { text, title, className, warnings, showWarnings };
+  return { text, title, className, warnings, showWarnings, failed: syncFailed };
 }

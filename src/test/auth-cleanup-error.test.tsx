@@ -84,7 +84,7 @@ describe("AuthCard cleanup evidence", () => {
 		mountCard();
 		await flush();
 		const alert = mounted!.container.querySelector("[role=alert]");
-		expect(alert?.textContent).toContain("cleanup_failed");
+		expect(alert?.textContent).toContain("设备清理未完成");
 		expect(alert?.textContent).toContain("t1");
 		expect(alert?.textContent).toContain("8 秒");
 		expect(alert?.textContent).toContain("补充清理");
@@ -111,7 +111,7 @@ describe("AuthCard cleanup evidence", () => {
 		await flush();
 		expect(useAuth.getState().error).toBeNull();
 		alert = mounted!.container.querySelector("[role=alert]");
-		expect(alert?.textContent).toContain("cleanup_failed");
+		expect(alert?.textContent).toContain("设备清理未完成");
 		expect(alert?.textContent).toContain("补充清理");
 		expect(useAuth.getState().cleanupError).toEqual(CLEANUP_ERROR);
 	});

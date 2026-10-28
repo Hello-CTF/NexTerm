@@ -233,6 +233,18 @@ describe("rebound app shortcuts", () => {
     expect(mounted?.container.querySelector('[data-testid="command-palette"]')).not.toBeNull();
   });
 
+  it("opens settings with Mod+, and focuses the AI input with Mod+Shift+A", async () => {
+    mounted = mountApp();
+    await flush();
+
+    keyDown(window, ",", { ctrlKey: true });
+    await flushUntil(() => useUi.getState().workspaces.some((w) => w.panes.some((p) => p.tabs.some((t) => t.kind === "settings"))));
+
+    keyDown(window, "a", { ctrlKey: true, shiftKey: true });
+    await flush();
+    expect(useUi.getState().rightOpen).toBe(true);
+  });
+
   it("closes the active tab via a rebound closeTab binding", async () => {
     setKeybinding("closeTab", "Mod+Shift+W");
     mounted = mountApp();

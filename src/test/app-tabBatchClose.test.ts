@@ -81,9 +81,9 @@ describe("partial failures during batch close", () => {
 
     expect(tabById("t1")).toBeUndefined();
     expect(tabById("t3")).toBeUndefined();
-    expect(tabById("t2")?.closeError).toBe("已断开：network unavailable");
+    expect(tabById("t2")?.closeError).toBe("连接已断开，请重新连接后再试");
     const texts = useUi.getState().toasts.map((t) => t.text);
-    expect(texts.some((t) => t.includes("终端操作失败：已断开：network unavailable"))).toBe(true);
+    expect(texts.some((t) => t.includes("终端操作失败：连接已断开，请重新连接后再试"))).toBe(true);
     expect(texts).toContain("1 个标签未能关闭，已保留并在标签上标出原因");
   });
 
@@ -154,7 +154,7 @@ describe("partial failures during batch close", () => {
     await requestCloseTabs(["t1", "db1"]);
 
     expect(tabById("t1")).toBeUndefined();
-    expect(tabById("db1")?.closeError).toBe("IO 错误：connection reset");
+    expect(tabById("db1")?.closeError).toBe("读写文件失败，请检查磁盘空间和文件权限后重试");
     expect(useUi.getState().toasts.map((t) => t.text)).toContain(
       "1 个标签未能关闭，已保留并在标签上标出原因",
     );

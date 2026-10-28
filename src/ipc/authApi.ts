@@ -211,13 +211,13 @@ export async function request<T>(method: string, path: string, body?: unknown, o
     try {
       payload = JSON.parse(text);
     } catch {
-      throw new AuthApiError("internal", `服务器返回了非 JSON 响应（HTTP ${response.status}）`, response.status);
+      throw new AuthApiError("internal", "服务未返回有效结果，请稍后重试；若持续出现，请检查服务版本或网络代理", response.status);
     }
   }
   if (!response.ok) {
     const failure = payload as { error?: { code?: string; message?: string } } | null;
     const code = failure?.error?.code ?? "internal";
-    const message = failure?.error?.message ?? `HTTP ${response.status}`;
+    const message = failure?.error?.message ?? "请求未成功，请稍后重试";
     if (response.status === 401) {
       window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
     }

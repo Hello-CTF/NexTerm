@@ -56,11 +56,11 @@ export function createTabSlice(set: UiSet, get: UiGet) {
         ? get().workspaces.find((w) => w.panes.some((p) => p.id === paneId))
         : undefined;
       if (paneId && (!paneWorkspace || !explicitWorkspaceMatchesTab(tab, paneWorkspace))) {
-        get().pushToast("info", "标签与目标工作区不一致");
+        get().pushToast("info", "该标签不属于当前工作区，未执行操作");
         return;
       }
       if (tab.kind === "background" && !tab.sessionId && paneWorkspace?.kind !== "session") {
-        get().pushToast("info", "后台会话需要明确的主机工作区");
+        get().pushToast("info", "请先打开这台主机的工作区，再查看它的后台会话");
         return;
       }
 
@@ -76,7 +76,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
       if (tab.kind === "background") {
         const sessionId = tab.sessionId ?? paneWorkspace?.sessionId;
         if (w.kind !== "session" || !sessionId || w.sessionId !== sessionId) {
-          get().pushToast("info", "后台会话需要明确的主机工作区");
+          get().pushToast("info", "请先打开这台主机的工作区，再查看它的后台会话");
           return;
         }
         scopedTab = {
@@ -92,7 +92,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
         ? panes.find((p) => p.id === paneId)
         : pickPaneForTab(panes, w.activePaneId, scopedTab);
       if (!target) {
-        get().pushToast("info", "标签与目标工作区不一致");
+        get().pushToast("info", "该标签不属于当前工作区，未执行操作");
         return;
       }
 

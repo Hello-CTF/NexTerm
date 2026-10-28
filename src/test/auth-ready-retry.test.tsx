@@ -303,7 +303,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     // Before login: asset tree sits in the 401 error state, status bar vault unavailable
     await flushUntil(() => text().includes("加载失败："));
     expect(text()).toContain("访问令牌无效或缺失");
-    expect(vaultStatusText()).toContain("凭据库不可用");
+    expect(vaultStatusText()).toContain("凭据库状态未知");
     expect(text()).not.toContain("web-01");
 
     // Toasts left over from before login: one auth-context 401, one non-401 layout error, one non-auth terminal error
@@ -323,7 +323,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     expect(text()).toContain("生产");
     expect(assetTreeFooterCount("凭据库（左栏查看）")).toBe("");
     expect(assetTreeFooterCount("命令片段（插入当前终端）")).toContain("1");
-    expect(vaultStatusText()).toContain("凭据库已解锁");
+    expect(vaultStatusText()).toBe("");
     expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");
 
     // Toasts are not all cleared on ready: non-auth errors and non-401 layout errors remain valid feedback after login, all kept
@@ -376,7 +376,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     await flushUntil(() => text().includes("加载失败："));
     expect(text()).not.toContain("web-01");
     expect(useUi.getState().sessions).toEqual([]);
-    expect(vaultStatusText()).not.toContain("凭据库已解锁");
+    expect(vaultStatusText()).not.toContain("凭据库已锁定");
     expect(useUi.getState().getWorkspaceRuntime("ws-account")?.sqlDraft).toBeUndefined();
 
     authed = true;
@@ -504,7 +504,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     await login();
     await flushUntil(() => text().includes("web-01"));
     expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");
-    expect(vaultStatusText()).toContain("凭据库已解锁");
+    expect(vaultStatusText()).toBe("");
 
     // The old account's slow request goes out via the header refresh button and stays in flight, then logout happens
     const staleSessions = deferred<(typeof SESSION)[]>();
@@ -535,11 +535,11 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     // vault-status fetch was cancelled by resetQueries; both write-backs must be discarded
     await act(async () => {
       staleSessions.resolve([SESSION]);
-      staleVault.resolve({ initialized: true, unlocked: true });
+      staleVault.resolve({ initialized: true, unlocked: false });
       await flush();
     });
     expect(useUi.getState().sessions).toEqual([]);
-    expect(vaultStatusText()).not.toContain("凭据库已解锁");
+    expect(vaultStatusText()).not.toContain("凭据库已锁定");
   });
 
   it("does not let in-flight pre-login requests pollute the new session (asset queries and vault state)", async () => {
@@ -559,12 +559,12 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
         el.textContent?.includes("加载失败"),
       ),
     ).toBe(false);
-    expect(vaultStatusText()).not.toContain("凭据库不可用");
+    expect(vaultStatusText()).not.toContain("凭据库状态未知");
 
     authed = true;
     await login();
     await flushUntil(() => text().includes("web-01"));
-    await flushUntil(() => vaultStatusText().includes("凭据库已解锁"));
+    await flush();
 
     // The late pre-login responses arrive only now: query results are discarded, the status bar is not overwritten by the old 401
     await act(async () => {
@@ -573,7 +573,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
       await flush();
     });
     expect(text()).toContain("web-01");
-    expect(vaultStatusText()).toContain("凭据库已解锁");
+    expect(vaultStatusText()).toBe("");
   });
 });
 

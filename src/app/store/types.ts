@@ -247,6 +247,8 @@ export interface ToastItem {
   kind: "info" | "error" | "success";
   text: string;
   action?: ToastAction;
+  // detail is the raw technical text, shown only after the user opens 「详情」.
+  detail?: string;
 }
 
 export interface TextPromptState {

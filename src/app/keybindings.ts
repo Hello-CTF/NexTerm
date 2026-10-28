@@ -25,6 +25,8 @@ export type KeybindingActionId =
   | "restoreClosedTab"
   | "terminalSearch"
   | "reclaimTakeover"
+  | "openSettings"
+  | "focusAiInput"
   | "lockVault";
 
 export interface KeybindingAction {
@@ -60,7 +62,10 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "restoreClosedTab", label: "恢复关闭的标签", defaultBinding: "Mod+Shift+t" },
   // Ctrl+F is readline's forward-char, so off macOS the search takes Ctrl+Shift+F and leaves Ctrl+F to the shell.
   { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
-  { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Escape" },
+  // A bare Escape also closes dialogs and menus and is a terminal key (vim, readline), so the default is a chord.
+  { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Mod+Shift+e" },
+  { id: "openSettings", label: "打开设置", defaultBinding: "Mod+," },
+  { id: "focusAiInput", label: "聚焦 AI 输入框", defaultBinding: "Mod+Shift+a" },
   { id: "lockVault", label: "锁定凭据库", defaultBinding: "Mod+Shift+l" },
 ];
 
@@ -84,6 +89,8 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "closePane",
   "switchTab",
   "restoreClosedTab",
+  "openSettings",
+  "focusAiInput",
   "lockVault",
 ];
 
