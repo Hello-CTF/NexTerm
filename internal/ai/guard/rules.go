@@ -3,7 +3,9 @@ package guard
 import (
 	"context"
 	"errors"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -105,6 +107,11 @@ func NormalizePath(p string) (string, bool) {
 	if p == "" {
 		return "", true
 	}
+	if runtime.GOOS != "windows" {
+		if cleaned, ok, handled := normalizeWindowsStyle(p); handled {
+			return cleaned, ok
+		}
+	}
 	cleaned := filepath.Clean(p)
 	volume := filepath.VolumeName(cleaned)
 	for _, segment := range strings.Split(strings.TrimPrefix(cleaned, volume), string(filepath.Separator)) {
@@ -113,6 +120,43 @@ func NormalizePath(p string) (string, bool) {
 		}
 	}
 	return cleaned, true
+}
+
+// normalizeWindowsStyle normalizes drive-letter and UNC paths with Windows semantics (both
+// backslash and slash separate segments) regardless of the host OS, since the target device may be
+// Windows while the host is not. handled is false for paths that are not Windows-style.
+func normalizeWindowsStyle(p string) (cleaned string, ok, handled bool) {
+	var volume, rest string
+	switch {
+	case len(p) >= 2 && p[1] == ':' && (p[0] >= 'a' && p[0] <= 'z' || p[0] >= 'A' && p[0] <= 'Z'):
+		volume, rest = p[:2], p[2:]
+	case strings.HasPrefix(p, `\\`):
+		parts := strings.SplitN(strings.ReplaceAll(p[2:], `\`, "/"), "/", 3)
+		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+			return "", false, true
+		}
+		volume = "//" + parts[0] + "/" + parts[1]
+		if len(parts) == 3 {
+			rest = "/" + parts[2]
+		}
+	default:
+		return "", false, false
+	}
+	rest = strings.ReplaceAll(rest, `\`, "/")
+	if rest == "" {
+		return volume, true, true
+	}
+	rooted := strings.HasPrefix(rest, "/")
+	rest = path.Clean(rest)
+	if !rooted && rest == "." {
+		return volume, true, true
+	}
+	for _, segment := range strings.Split(rest, "/") {
+		if segment == ".." {
+			return "", false, true
+		}
+	}
+	return volume + rest, true, true
 }
 
 // MatchPath matches a path pattern segment by segment: whole segments match exactly, * and ? are

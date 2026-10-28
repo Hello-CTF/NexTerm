@@ -192,6 +192,11 @@ func protectNativeMessages(ctx context.Context, e *privacy.Exchange, input []*sc
 		if err != nil {
 			return nil, err
 		}
+		// The OpenAI adapter serializes Name into the request body; ToolName and Extra stay local.
+		copy.Name, err = protect(message.Name)
+		if err != nil {
+			return nil, err
+		}
 		// Media parts are sent unchanged; the user is told images are not redacted.
 		copy.MultiContent = slices.Clone(message.MultiContent)
 		for i := range copy.MultiContent {

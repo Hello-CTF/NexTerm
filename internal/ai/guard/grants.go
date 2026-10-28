@@ -215,6 +215,9 @@ func (g *Grants) Reload(ctx context.Context) error {
 	defer g.mu.Unlock()
 	entry, err := g.loadGrants(ctx)
 	if err != nil {
+		// Never keep serving a cache that a sync apply may have just revoked: drop it so the
+		// next access reloads from storage and fails closed while storage is unreadable.
+		delete(g.states, ownerID)
 		return err
 	}
 	g.states[ownerID] = &entry

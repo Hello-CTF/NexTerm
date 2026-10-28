@@ -273,7 +273,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				}
 				config := input.Profile.ProviderConfig()
 				if strings.TrimSpace(config.APIKey) == profiles.MaskedAPIKey {
-					key, err := resolveMaskedProfileKey(ctx, manager, database, input.Profile.ID)
+					key, err := resolveMaskedProfileKey(ctx, manager, database, input.Profile.ID, config.BaseURL)
 					if err != nil {
 						return provider.ModelList{}, aiIPCError(err)
 					}
@@ -326,7 +326,7 @@ func aiIPCError(err error) error {
 	}
 }
 
-func resolveMaskedProfileKey(ctx context.Context, manager *profiles.Manager, database *store.Store, id string) (string, error) {
+func resolveMaskedProfileKey(ctx context.Context, manager *profiles.Manager, database *store.Store, id, baseURL string) (string, error) {
 	if err := manager.Reload(ctx); err != nil {
 		return "", err
 	}
@@ -337,7 +337,16 @@ func resolveMaskedProfileKey(ctx context.Context, manager *profiles.Manager, dat
 	if !found {
 		return "", fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id)
 	}
+	// The stored key may only be sent to the endpoint it was saved for; otherwise a caller could
+	// exfiltrate it by pairing the masked placeholder with an arbitrary baseUrl.
+	if normalizeBaseURL(baseURL) != normalizeBaseURL(stored.BaseURL) {
+		return "", ipc.WrapError(ipc.CodeBadParam, "baseUrl differs from the saved profile; re-enter the API key to use a different endpoint", profiles.ErrProfileKeyUnavailable)
+	}
 	return resolveStoredProfileKey(ctx, database, stored.APIKey)
+}
+
+func normalizeBaseURL(value string) string {
+	return strings.TrimRight(strings.TrimSpace(value), "/")
 }
 
 func resolveStoredProfileKey(ctx context.Context, database *store.Store, stored string) (string, error) {

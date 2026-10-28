@@ -74,7 +74,7 @@ func TestAIModelRefreshMaskedKeyOtherOwnerFailsBeforeNetwork(t *testing.T) {
 	var hits atomic.Int32
 	server := newModelsServer(t, &authorization, &hits)
 	const profileID = "same-profile"
-	response := dispatchWithOwner(dispatcher, "owner-a", "ai_model_save", `{"profile":{"id":"`+profileID+`","baseUrl":"https://owner-a.invalid/v1","apiKey":"secret-a","model":"m1","contextWindow":1000,"stream":true}}`)
+	response := dispatchWithOwner(dispatcher, "owner-a", "ai_model_save", `{"profile":{"id":"`+profileID+`","baseUrl":"`+server.URL+`","apiKey":"secret-a","model":"m1","contextWindow":1000,"stream":true}}`)
 	var saved profiles.Profile
 	requireStoreTestResponse(t, response, &saved)
 	refresh := func(ownerID string) ipc.Response {

@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+var (
+	acceptBackoffMin = 5 * time.Millisecond
+	acceptBackoffMax = time.Second
+)
+
 type Server struct {
 	supervisor      *Supervisor
 	stateDigest     string
@@ -108,11 +113,27 @@ func (s *Server) finishShutdown(listenErr error) {
 
 func (s *Server) acceptLoop() {
 	defer s.wg.Done()
+	delay := time.Duration(0)
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			return
+			// Only a closed listener or shutdown ends the loop; transient failures (EMFILE,
+			// ECONNABORTED, timeouts) must not strand the helper's sessions unattachable.
+			s.mu.Lock()
+			closed := s.closed
+			s.mu.Unlock()
+			if closed || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if delay == 0 {
+				delay = acceptBackoffMin
+			} else if delay *= 2; delay > acceptBackoffMax {
+				delay = acceptBackoffMax
+			}
+			time.Sleep(delay)
+			continue
 		}
+		delay = 0
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()

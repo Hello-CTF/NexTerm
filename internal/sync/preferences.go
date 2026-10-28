@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
@@ -18,6 +19,9 @@ import (
 )
 
 const preferenceObjectPrefix = "preference:"
+
+// aiGrantFutureTolerance bounds how far ahead of the local clock a remote grant revision may be.
+const aiGrantFutureTolerance = 5 * time.Minute
 
 // aiGrantObjectID prefixes split the ai_grant kind into its three entity families (see object.go).
 const (
@@ -268,6 +272,15 @@ func (e *Engine) applyAIPermissionObject(ctx context.Context, plaintext []byte, 
 func (e *Engine) applyAIGrantObject(ctx context.Context, objectID string, plaintext []byte, report *SyncReport) (bool, bool) {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		report.warnf("AI 授权应用需要账号身份: %v", err)
+		return false, false
+	}
+	// A remote revision far in the future would outrank every later revocation tombstone (LWW), so such
+	// objects are refused until the clock catches up.
+	var clock struct {
+		UpdatedAt int64 `json:"updatedAt"`
+	}
+	if err := unmarshalObject(plaintext, &clock); err == nil && clock.UpdatedAt > time.Now().Add(aiGrantFutureTolerance).UnixMilli() {
+		report.warnf("AI 授权对象 %s 的时间戳超前本机时钟，已拒绝", objectID)
 		return false, false
 	}
 	switch {

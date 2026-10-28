@@ -82,12 +82,12 @@ func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest)
 		}
 		if s.permissionsReload != nil {
 			if err := s.permissionsReload(ctx); err != nil {
-				s.engine.logger.Warn("reload synced AI permission failed", "error", err)
+				s.engine.logger.Error("reload synced AI permission failed; cached entries invalidated and denied until reload succeeds", "error", err)
 			}
 		}
 		if s.grantsReload != nil {
 			if err := s.grantsReload(ctx); err != nil {
-				s.engine.logger.Warn("reload synced AI grants failed", "error", err)
+				s.engine.logger.Error("reload synced AI grants failed; cached entries invalidated and denied until reload succeeds", "error", err)
 			}
 		}
 		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: userID, Applied: true})
