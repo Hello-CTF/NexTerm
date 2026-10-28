@@ -2,8 +2,10 @@ package local
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/Hello-CTF/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -20,11 +22,13 @@ func (t *Transport) openPTY(ctx context.Context, args []string, options base.PTY
 	if err := t.check(ctx, options.ExpectedGeneration); err != nil {
 		return nil, err
 	}
+	env := environment(t.env, true, options.Term)
+	env = append(env, shellintegr.BashBannerEnv(runtime.GOOS, t.shell, env)...)
 	session, err := pty.Start(ctx, pty.Config{
 		Path:       t.shell,
 		Args:       args,
 		Dir:        t.cwd,
-		Env:        environment(t.env, true, options.Term),
+		Env:        env,
 		Cols:       options.Cols,
 		Rows:       options.Rows,
 		ID:         t.channelID("pty"),

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/staterule"
 )
 
@@ -185,6 +187,9 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		command, commandEnv := options.Command, options.Env
 		if wrapped {
 			command, commandEnv = launch.command, launch.env
+		}
+		if extra := shellintegr.BashBannerEnv(runtime.GOOS, options.Command[0], options.Env); extra != nil {
+			commandEnv = append(append([]string(nil), commandEnv...), extra...)
 		}
 		ptySession, err := s.ptyStart(s.ctx, pty.Config{
 			Path: command[0],
