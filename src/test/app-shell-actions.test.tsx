@@ -375,7 +375,7 @@ describe("App workspace actions", () => {
     { name: "no workspace", workspace: null },
     { name: "tools workspace", workspace: nonHostWorkspace("tools") },
     { name: "database workspace", workspace: nonHostWorkspace("db") },
-  ])("host actions require an explicit host: $name", async ({ workspace }) => {
+  ])("host tools are not offered without an explicit host: $name", async ({ workspace }) => {
     mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
     useUi.setState({
       sessions: [sessionOf("s1")],
@@ -385,14 +385,11 @@ describe("App workspace actions", () => {
     mounted = mountApp();
     await flush();
 
-    for (const label of ["文件", "容器", "磁盘挂载", "端口转发"]) {
-      await clickRail(label);
+    for (const label of ["文件", "容器", "磁盘挂载", "端口转发", "日志", "后台会话"]) {
+      expect(mounted.container.querySelector(`button[aria-label="${label}"]`)).toBeNull();
     }
-    expect(mounted.container.querySelector('button[aria-label="后台会话"]')).toBeNull();
-
-    expect(allTabs().filter((tab) => ["files", "docker", "mount", "forward", "background"].includes(tab.kind))).toEqual([]);
-    expect(useUi.getState().workspaces).toHaveLength(workspace ? 1 : 0);
-    expect(useUi.getState().toasts.some((toast) => toast.text === needSessionText)).toBe(true);
+    // History needs no host, so it stays.
+    expect(railButton("终端历史")).toBeTruthy();
   });
 
   it("opens files, mount, docker, forward and logs in the explicit current host", async () => {

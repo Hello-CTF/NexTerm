@@ -46,6 +46,8 @@ export function AppRail({
   const backgroundCount = useBackgroundSessionCount(workspace, backgroundAvailable);
   const leftMode = useUi((s) => s.leftMode);
   const setLeftMode = useUi((s) => s.setLeftMode);
+  // Host tools act on the active workspace's session; without one they cannot run, so they are not offered.
+  const hasHost = workspace?.kind === "session" && Boolean(workspace.sessionId);
   const { openBackground, openHistory, openFiles, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
 
   const railPanels: {
@@ -85,7 +87,6 @@ export function AppRail({
     hint: string;
     icon: typeof IconServer;
     onClick: () => void;
-    unavailableReason?: string;
     badge?: number;
   }[  ] = [
     ...(backgroundAvailable ? [{
@@ -105,20 +106,24 @@ export function AppRail({
       icon: IconClock,
       onClick: openHistory,
     },
-    {
-      key: "files",
-      label: "文件",
-      hint: "浏览当前主机的文件：从终端所在目录打开，双击文件进入编辑器",
-      icon: IconFolderOpen,
-      onClick: openFiles,
-    },
-    {
-      key: "docker",
-      label: "容器",
-      hint: "打开 Docker 面板：查看容器状态与日志，进入容器终端",
-      icon: IconBox,
-      onClick: openDocker,
-    },
+    ...(hasHost
+      ? [
+          {
+            key: "files",
+            label: "文件",
+            hint: "浏览当前主机的文件：从终端所在目录打开，双击文件进入编辑器",
+            icon: IconFolderOpen,
+            onClick: openFiles,
+          },
+          {
+            key: "docker",
+            label: "容器",
+            hint: "打开 Docker 面板：查看容器状态与日志，进入容器终端",
+            icon: IconBox,
+            onClick: openDocker,
+          },
+        ]
+      : []),
     ...(hasDbAssets
       ? [
           {
@@ -130,7 +135,7 @@ export function AppRail({
           },
         ]
       : []),
-    ...(mountUnavailableReason()
+    ...(!hasHost || mountUnavailableReason()
       ? []
       : [{
           key: "mount",
@@ -139,20 +144,24 @@ export function AppRail({
           icon: IconDrive,
           onClick: openMount,
         }]),
-    {
-      key: "forward",
-      label: "端口转发",
-      hint: "把远程端口转发到本地：本地端口映射或 SOCKS5 代理",
-      icon: IconNetwork,
-      onClick: openForward,
-    },
-    {
-      key: "logs",
-      label: "日志",
-      hint: "跟随日志文件、journalctl 或容器日志：默认选中当前主机，可合并多台主机（仅 SSH 与非 Windows 受管设备）",
-      icon: IconList,
-      onClick: openLogs,
-    },
+    ...(hasHost
+      ? [
+          {
+            key: "forward",
+            label: "端口转发",
+            hint: "把远程端口转发到本地：本地端口映射或 SOCKS5 代理",
+            icon: IconNetwork,
+            onClick: openForward,
+          },
+          {
+            key: "logs",
+            label: "日志",
+            hint: "跟随日志文件、journalctl 或容器日志：默认选中当前主机，可合并多台主机（仅 SSH 与非 Windows 受管设备）",
+            icon: IconList,
+            onClick: openLogs,
+          },
+        ]
+      : []),
   ];
 
   const railBottom = [
@@ -186,13 +195,9 @@ export function AppRail({
       {railItems.map((it) => (
         <button
           key={it.key}
-          className={`nx-rail-btn ${it.unavailableReason ? "is-unavailable" : ""}`}
-          data-tip={
-            it.unavailableReason ? `${it.hint}（暂不可用：${it.unavailableReason}）` : it.hint
-          }
-          aria-label={
-            it.unavailableReason ? `${it.label}暂不可用：${it.unavailableReason}` : it.label
-          }
+          className="nx-rail-btn"
+          data-tip={it.hint}
+          aria-label={it.label}
           onClick={() => {
             // Overlay drawers would otherwise stay on top of the page the rail item opens.
             if (overlaySidebars) setOverlayDock(null);
@@ -200,7 +205,6 @@ export function AppRail({
           }}
         >
           <it.icon size={17} />
-          {it.unavailableReason ? <span className="nx-rail-off" aria-hidden /> : null}
           {it.badge ? <span className="nx-rail-count" aria-hidden>{it.badge > 99 ? "99+" : it.badge}</span> : null}
         </button>
       ))}
