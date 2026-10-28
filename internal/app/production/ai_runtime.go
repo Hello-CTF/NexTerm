@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"gorm.io/gorm"
 	"sort"
 	"strings"
 	"time"
@@ -336,6 +338,14 @@ func (r *productionScopeResolver) ValidateScope(ctx context.Context, scope tools
 
 func (r *productionScopeResolver) ResolveScope(ctx context.Context, conversationID string, scope tools.Scope) (tools.Scope, error) {
 	resolved, changed, err := r.resolve(ctx, scope, conversationID != "")
+	if err != nil && conversationID != "" && errors.Is(err, errStaleDeviceScope) {
+		// Unbind the dead device so the conversation stays usable: the next turn
+		// runs without that terminal, and this one reports which device went away.
+		if persistErr := r.persist(ctx, conversationID, tools.Scope{ConnID: scope.ConnID}); persistErr != nil {
+			return tools.Scope{}, persistErr
+		}
+		return tools.Scope{}, ipc.WrapError(ipc.CodeForbidden, err.Error()+"；此对话已解除对该设备的终端绑定，重新发送消息即可继续", err)
+	}
 	if err != nil || !changed || conversationID == "" {
 		return resolved, err
 	}
@@ -438,23 +448,42 @@ func (r *productionScopeResolver) validateScopeAsset(ctx context.Context, assetI
 		return ipc.NewError(ipc.CodeUnsupported, "资产存储未配置")
 	}
 	if deviceID, ok := strings.CutPrefix(assetID, "device/"); ok {
-		userDevice := query.Use(r.storage.GORM()).UserDevice
-		deviceQuery := userDevice.WithContext(ctx).
-			Where(userDevice.ID.Eq(deviceID), userDevice.RevokedAt.IsNull())
-		if ownerID := ipc.OwnerID(ctx); ownerID != "" {
-			deviceQuery = deviceQuery.Where(userDevice.UserID.Eq(ownerID))
-		}
-		count, err := deviceQuery.Count()
-		if err != nil {
-			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-		if count != 1 {
-			return ipc.NewError(ipc.CodeForbidden, "AI 终端范围中的设备不存在、已撤销或不属于当前用户")
-		}
-		return nil
+		return r.validateDeviceScope(ctx, deviceID)
 	}
 	if _, err := r.storage.AssetGetLive(ctx, assetID); err != nil {
 		return productionScopeError(err)
+	}
+	return nil
+}
+
+// errStaleDeviceScope marks a device scope whose device is revoked or gone, as
+// opposed to one the caller may not touch.
+var errStaleDeviceScope = errors.New("stale device scope")
+
+// validateDeviceScope authorizes a device/<id> scope. Desktop has no user_device
+// rows: its devices belong to the linked server account, which authorizes every
+// bridge at the server edge, and the session layer already bound the scope to a
+// session the caller owns. Server mode checks the fleet registry.
+func (r *productionScopeResolver) validateDeviceScope(ctx context.Context, deviceID string) error {
+	if r.desktop {
+		if !ids.Valid(deviceID) {
+			return ipc.NewError(ipc.CodeForbidden, "AI 终端范围中的设备 ID 无效")
+		}
+		return nil
+	}
+	userDevice := query.Use(r.storage.GORM()).UserDevice
+	row, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	if ownerID := ipc.OwnerID(ctx); err == nil && ownerID != "" && row.UserID != ownerID {
+		return ipc.NewError(ipc.CodeForbidden, "AI 终端范围中的设备不属于当前用户")
+	}
+	if err != nil {
+		return ipc.WrapError(ipc.CodeForbidden, "AI 终端范围中的设备不存在；请重新选择主机后再试", errStaleDeviceScope)
+	}
+	if row.RevokedAt != nil {
+		return ipc.WrapError(ipc.CodeForbidden, "设备「"+row.Name+"」已吊销，无法使用它的终端；请重新连接或选择其他主机", errStaleDeviceScope)
 	}
 	return nil
 }
