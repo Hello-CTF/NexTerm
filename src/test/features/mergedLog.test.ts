@@ -3,8 +3,11 @@ import {
   compileLogFilters,
   exportMergedLines,
   filterMergedLines,
+  HOST_COLOR_COUNT,
   highlightSegments,
+  hostColor,
   MergedLogBuffer,
+  resetHostColors,
   type MergedLogLine,
 } from "../../features/logs/mergedLog";
 
@@ -92,5 +95,25 @@ describe("merged log regex filters and highlighting", () => {
     const invalid = compileLogFilters("[", "");
     expect(invalid.error).toBeTruthy();
     expect(filterMergedLines(lines, invalid)).toHaveLength(lines.length);
+  });
+});
+
+describe("hostColor", () => {
+  it("is stable per host and gives distinct hosts distinct colors up to the palette size", () => {
+    resetHostColors();
+    const ids = Array.from({ length: HOST_COLOR_COUNT }, (_, i) => `session-${i}`);
+    const colors = ids.map(hostColor);
+    expect(new Set(colors).size).toBe(HOST_COLOR_COUNT);
+    expect(ids.map(hostColor)).toEqual(colors);
+    expect(hostColor("extra")).toBe(colors[0]);
+  });
+
+  it("uses theme variables and never the warning or stderr hues", () => {
+    resetHostColors();
+    for (let i = 0; i < HOST_COLOR_COUNT; i += 1) {
+      const color = hostColor(`h${i}`);
+      expect(color).toMatch(/^text-\(--nx-host-\d+\)$/);
+      expect(color).not.toMatch(/amber|rose|red/);
+    }
   });
 });

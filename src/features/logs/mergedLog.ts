@@ -118,24 +118,34 @@ export class MergedLogBuffer {
   }
 }
 
+// Theme-aware host colors (--nx-host-N in tokens.css). Amber and rose are
+// excluded so host labels never look like warnings or stderr.
 const HOST_COLORS = [
-  "text-sky-300",
-  "text-cyan-300",
-  "text-violet-300",
-  "text-amber-300",
-  "text-rose-300",
-  "text-green-300",
-  "text-teal-300",
-  "text-fuchsia-300",
+  "text-(--nx-host-1)",
+  "text-(--nx-host-2)",
+  "text-(--nx-host-3)",
+  "text-(--nx-host-4)",
+  "text-(--nx-host-5)",
+  "text-(--nx-host-6)",
 ] as const;
 
+export const HOST_COLOR_COUNT = HOST_COLORS.length;
+
+// Colors are handed out by order of first appearance so distinct hosts only
+// share a color once more hosts than palette entries are in play.
+const hostColorIndex = new Map<string, number>();
+
 export function hostColor(sessionId: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < sessionId.length; index += 1) {
-    hash ^= sessionId.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
+  let index = hostColorIndex.get(sessionId);
+  if (index === undefined) {
+    index = hostColorIndex.size % HOST_COLORS.length;
+    hostColorIndex.set(sessionId, index);
   }
-  return HOST_COLORS[(hash >>> 0) % HOST_COLORS.length];
+  return HOST_COLORS[index];
+}
+
+export function resetHostColors(): void {
+  hostColorIndex.clear();
 }
 
 export function formatExportedLine(line: MergedLogLine): string {
