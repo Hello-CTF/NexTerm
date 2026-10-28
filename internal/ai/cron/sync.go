@@ -85,18 +85,24 @@ func nextRun(job SyncedJob, now time.Time) (time.Time, error) {
 // equals expected (nil: no job). It keeps the local run bookkeeping, refuses
 // a job that is running here, and reschedules from now when the schedule or
 // the enabled state changed.
-func (s *SQLStore) PutSynced(ctx context.Context, job SyncedJob, expected *Job, now time.Time) error {
+//
+// A job bound to this device that another device created, or whose executed
+// content another device changed, is stored disabled until the local user
+// enables it, and held reports that. The revision then moves past the received
+// one so the disabled state syncs back instead of flapping against the peer.
+func (s *SQLStore) PutSynced(ctx context.Context, job SyncedJob, expected *Job, now time.Time) (held bool, err error) {
 	if err := s.validateAccess(ctx); err != nil {
-		return err
+		return false, err
 	}
 	if err := validateSyncedJob(job); err != nil {
-		return err
+		return false, err
 	}
 	next, err := nextRun(job, now)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		held = false
 		cronJob := query.Use(tx).CronJob
 		current, err := cronJob.WithContext(ctx).
 			Where(cronJob.ID.Eq(job.ID)).
@@ -110,6 +116,14 @@ func (s *SQLStore) PutSynced(ctx context.Context, job SyncedJob, expected *Job, 
 		if (current == nil) != (expected == nil) || current != nil && current.Revision != expected.Revision {
 			return ErrSyncConflict
 		}
+		synced := job
+		if job.DeviceID == s.device.ID && job.Enabled &&
+			(current == nil || current.DeviceID != s.device.ID || !current.Enabled || syncedContentChanged(*current, job)) {
+			held = true
+			synced.Enabled = false
+			synced.ConfigUpdatedAt = laterConfigRevision(job.ConfigUpdatedAt, now)
+		}
+		job := synced
 		if current == nil {
 			ownerID, ownerKind := ownerFromContext(ctx)
 			row := store.CronJob{
@@ -154,6 +168,13 @@ func (s *SQLStore) PutSynced(ctx context.Context, job SyncedJob, expected *Job, 
 		}
 		return nil
 	})
+	return held && err == nil, err
+}
+
+// syncedContentChanged reports whether job changes what the stored job runs.
+func syncedContentChanged(current store.CronJob, job SyncedJob) bool {
+	return current.SessionID != job.SessionID || current.Prompt != job.Prompt || current.Schedule != job.Schedule ||
+		current.Timezone != job.Timezone || current.ModelProfileID != job.ModelProfileID || current.TimeoutMS != job.Timeout.Milliseconds()
 }
 
 // Adopt binds a job of another device to this device, for example after

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
@@ -34,6 +35,14 @@ func DevicePermissionSettingKeyForUser(ctx context.Context) string {
 		return DevicePermissionSettingKey + ".user." + userID
 	}
 	return DevicePermissionSettingKey
+}
+
+// DeviceModeClockSettingKeyForUser names the per-device revision map that
+// accompanies the device mode map: {deviceID: lastChangedMS}. Sync uses it as
+// each mode's LWW clock, so changing one device's mode never lets a stale value
+// of another device win. Absent entries fall back to the mode map's revision.
+func DeviceModeClockSettingKeyForUser(ctx context.Context) string {
+	return DevicePermissionSettingKeyForUser(ctx) + ".clocks"
 }
 
 type Settings interface {
@@ -285,12 +294,58 @@ func (m *Manager) SetDeviceMode(ctx context.Context, deviceID string, mode Mode)
 	if err != nil {
 		return err
 	}
-	if err := m.settings.SettingSet(ctx, DevicePermissionSettingKeyForUser(ctx), string(encoded)); err != nil {
+	clocks, err := m.nextDeviceModeClocks(ctx, deviceID, mode == "")
+	if err != nil {
+		return err
+	}
+	values := map[string]string{
+		DevicePermissionSettingKeyForUser(ctx): string(encoded),
+		DeviceModeClockSettingKeyForUser(ctx):  clocks,
+	}
+	if err := writeSettings(ctx, m.settings, values); err != nil {
 		return err
 	}
 	entry.modes = next
 	if mode == "" {
 		if err := recordAIGrantTombstone(ctx, m.settings, AIGrantSyncModePrefix+deviceID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// nextDeviceModeClocks returns the encoded clock map after deviceID's mode was
+// changed (or removed) now. Unreadable clock data is rebuilt rather than
+// blocking a permission change.
+func (m *Manager) nextDeviceModeClocks(ctx context.Context, deviceID string, removed bool) (string, error) {
+	clocks := map[string]int64{}
+	raw, found, err := m.settings.SettingGet(ctx, DeviceModeClockSettingKeyForUser(ctx))
+	if err != nil {
+		return "", err
+	}
+	if found && raw != "" && json.Unmarshal([]byte(raw), &clocks) != nil || clocks == nil {
+		clocks = map[string]int64{}
+	}
+	if removed {
+		delete(clocks, deviceID)
+	} else {
+		clocks[deviceID] = max(ids.NowMS(), clocks[deviceID]+1)
+	}
+	encoded, err := json.Marshal(clocks)
+	return string(encoded), err
+}
+
+type settingsBatchWriter interface {
+	SettingSetMany(context.Context, map[string]string) error
+}
+
+// writeSettings stores values atomically when the backend can, else one by one.
+func writeSettings(ctx context.Context, settings Settings, values map[string]string) error {
+	if batch, ok := settings.(settingsBatchWriter); ok {
+		return batch.SettingSetMany(ctx, values)
+	}
+	for key, value := range values {
+		if err := settings.SettingSet(ctx, key, value); err != nil {
 			return err
 		}
 	}

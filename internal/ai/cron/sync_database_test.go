@@ -50,7 +50,7 @@ func TestSyncedJobRunsOnlyOnItsDeviceDatabase(t *testing.T) {
 	if job.DeviceID != deviceA.Device().ID {
 		t.Fatalf("new job bound to %q, want device A", job.DeviceID)
 	}
-	if err := deviceB.PutSynced(ctx, syncedFrom(job), nil, start); err != nil {
+	if _, err := deviceB.PutSynced(ctx, syncedFrom(job), nil, start); err != nil {
 		t.Fatal(err)
 	}
 	listed, err := deviceB.List(ctx)
@@ -97,7 +97,7 @@ func TestSyncedJobWritesDatabase(t *testing.T) {
 		Enabled: true, Timeout: time.Minute, DeviceID: "elsewhere", DeviceName: "laptop",
 		CreatedAt: now.Add(-time.Hour), ConfigUpdatedAt: now.Add(-time.Minute),
 	}
-	if err := jobs.PutSynced(ctx, synced, nil, now); err != nil {
+	if _, err := jobs.PutSynced(ctx, synced, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	listed, err := jobs.List(ctx)
@@ -108,20 +108,20 @@ func TestSyncedJobWritesDatabase(t *testing.T) {
 	if !stored.ConfigUpdatedAt.Equal(synced.ConfigUpdatedAt) || stored.DeviceName != "laptop" || !stored.NextRunAt.After(now) {
 		t.Fatalf("stored job=%+v", stored)
 	}
-	if err := jobs.PutSynced(ctx, synced, nil, now); !errors.Is(err, ErrSyncConflict) {
+	if _, err := jobs.PutSynced(ctx, synced, nil, now); !errors.Is(err, ErrSyncConflict) {
 		t.Fatalf("a write expecting no job over an existing one: %v", err)
 	}
 	update := synced
 	update.Enabled, update.ConfigUpdatedAt = false, now
-	if err := jobs.PutSynced(ctx, update, &stored, now); err != nil {
+	if _, err := jobs.PutSynced(ctx, update, &stored, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := jobs.PutSynced(ctx, update, &stored, now); !errors.Is(err, ErrSyncConflict) {
+	if _, err := jobs.PutSynced(ctx, update, &stored, now); !errors.Is(err, ErrSyncConflict) {
 		t.Fatalf("a write bound to a stale revision: %v", err)
 	}
 	invalid := synced
 	invalid.ID, invalid.Schedule = "job-invalid", "not a schedule"
-	if err := jobs.PutSynced(ctx, invalid, nil, now); err == nil {
+	if _, err := jobs.PutSynced(ctx, invalid, nil, now); err == nil {
 		t.Fatal("an invalid schedule must be rejected")
 	}
 
@@ -145,5 +145,32 @@ func TestSyncedJobWritesDatabase(t *testing.T) {
 	var tombstone model.SyncTombstone
 	if err := jobs.db.WithContext(ctx).Where("id = ?", created.ID).First(&tombstone).Error; err != nil || tombstone.Kind != SyncTombstoneKind {
 		t.Fatalf("deletion tombstone=%+v err=%v", tombstone, err)
+	}
+}
+
+// A job arriving from another device that names this device stays disabled until the local user
+// enables it, and its content changes disable it again; the held revision outranks the received one.
+func TestSyncedJobBoundToThisDeviceArrivesDisabledDatabase(t *testing.T) {
+	ctx := context.Background()
+	jobs := openDatabaseStore(t)
+	now := time.Date(2026, time.March, 1, 8, 0, 0, 0, time.UTC)
+	synced := SyncedJob{
+		ID: "job-bound", SessionID: "session", Prompt: "check disks", Schedule: "0 9 * * *", Timezone: "UTC",
+		Enabled: true, Timeout: time.Minute, DeviceID: jobs.Device().ID, DeviceName: "this",
+		CreatedAt: now.Add(-time.Hour), ConfigUpdatedAt: now.Add(-time.Minute),
+	}
+	held, err := jobs.PutSynced(ctx, synced, nil, now)
+	if err != nil || !held {
+		t.Fatalf("held=%v err=%v", held, err)
+	}
+	listed, err := jobs.List(ctx)
+	if err != nil || len(listed) != 1 || listed[0].Enabled || !listed[0].ConfigUpdatedAt.After(synced.ConfigUpdatedAt) {
+		t.Fatalf("jobs=%+v err=%v", listed, err)
+	}
+	stored := listed[0]
+	again := synced
+	again.ConfigUpdatedAt = now.Add(time.Minute)
+	if held, err := jobs.PutSynced(ctx, again, &stored, now.Add(time.Minute)); err != nil || !held {
+		t.Fatalf("remote re-enable held=%v err=%v", held, err)
 	}
 }

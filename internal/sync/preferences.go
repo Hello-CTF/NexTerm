@@ -90,6 +90,32 @@ func (e *Engine) settingRow(ctx context.Context, key string) (string, int64, boo
 	return row.Value, row.UpdatedAt, true, nil
 }
 
+// deviceModeClocks reads the per-device mode revisions; unreadable data counts as empty, which makes every entry
+// fall back to the row revision.
+func (e *Engine) deviceModeClocks(ctx context.Context) map[string]int64 {
+	clocks := map[string]int64{}
+	value, _, found, err := e.settingRow(ctx, guard.DeviceModeClockSettingKeyForUser(ctx))
+	if err != nil || !found || value == "" || json.Unmarshal([]byte(value), &clocks) != nil || clocks == nil {
+		return map[string]int64{}
+	}
+	return clocks
+}
+
+func (e *Engine) putDeviceModeClocks(ctx context.Context, clocks map[string]int64, updatedAt int64) error {
+	encoded, err := json.Marshal(clocks)
+	if err != nil {
+		return err
+	}
+	return e.settingPut(ctx, guard.DeviceModeClockSettingKeyForUser(ctx), string(encoded), updatedAt)
+}
+
+func modeClock(clocks map[string]int64, deviceID string, rowRevision int64) int64 {
+	if clock := clocks[deviceID]; clock > 0 {
+		return clock
+	}
+	return rowRevision
+}
+
 func aiGrantModeValid(mode guard.Mode) bool {
 	return mode == guard.ReadOnly || mode == guard.ReadWrite || mode == guard.Silent || mode == guard.Unattended
 }
@@ -159,12 +185,13 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 		if err := json.Unmarshal([]byte(value), &modes); err != nil {
 			return ipc.WrapError(ipc.CodeBadParam, "AI 设备权限模式数据损坏", err)
 		}
+		clocks := e.deviceModeClocks(ctx)
 		for deviceID, mode := range modes {
 			if !aiGrantModeValid(mode) {
 				continue
 			}
 			id := aiGrantModePrefix + deviceID
-			payload, err := marshalObject(aiGrantModeObject{ID: id, DeviceID: deviceID, Mode: string(mode), UpdatedAt: revision})
+			payload, err := marshalObject(aiGrantModeObject{ID: id, DeviceID: deviceID, Mode: string(mode), UpdatedAt: modeClock(clocks, deviceID, revision)})
 			if err != nil {
 				return err
 			}
@@ -514,22 +541,29 @@ func (e *Engine) applyAIGrantMode(ctx context.Context, plaintext []byte, report 
 			modes = map[string]guard.Mode{}
 		}
 	}
+	clocks := e.deviceModeClocks(ctx)
 	if local, exists := modes[payload.DeviceID]; exists {
-		localPlaintext, err := marshalObject(aiGrantModeObject{ID: payload.ID, DeviceID: payload.DeviceID, Mode: string(local), UpdatedAt: revision})
+		localPlaintext, err := marshalObject(aiGrantModeObject{ID: payload.ID, DeviceID: payload.DeviceID, Mode: string(local), UpdatedAt: modeClock(clocks, payload.DeviceID, revision)})
 		if err != nil {
 			return false, false
 		}
 		if bytes.Equal(plaintext, localPlaintext) {
 			return false, true
 		}
-		// Mode entries share the map row's revision as their LWW clock (same tradeoff as ai_profiles): revisions only increase.
-		if !remoteWins(payload.UpdatedAt, revision, plaintext, localPlaintext) {
+		// Each entry has its own clock (entries written before clocks existed fall back to the row revision), so a
+		// change to one device's mode can never roll back a tightening of another's.
+		if !remoteWins(payload.UpdatedAt, modeClock(clocks, payload.DeviceID, revision), plaintext, localPlaintext) {
 			return false, false
 		}
 	}
 	modes[payload.DeviceID] = guard.Mode(payload.Mode)
+	clocks[payload.DeviceID] = payload.UpdatedAt
 	if err := e.aiGrantSettingPut(ctx, key, modes, max(revision, payload.UpdatedAt)); err != nil {
 		report.warnf("AI 设备权限模式应用失败: %v", err)
+		return false, false
+	}
+	if err := e.putDeviceModeClocks(ctx, clocks, max(revision, payload.UpdatedAt)); err != nil {
+		report.warnf("AI 设备权限模式时钟记录失败: %v", err)
 		return false, false
 	}
 	if err := e.clearTombstone(ctx, payload.ID); err != nil {
@@ -684,8 +718,8 @@ func (e *Engine) applyAIGrantModeTombstone(ctx context.Context, objectID string,
 		}
 	}
 	deviceID := strings.TrimPrefix(objectID, aiGrantModePrefix)
-	// Mode entries share the map row's revision as their LWW clock (same tradeoff as ai_profiles).
-	if _, exists := modes[deviceID]; exists && revision > deletedAt {
+	clocks := e.deviceModeClocks(ctx)
+	if _, exists := modes[deviceID]; exists && modeClock(clocks, deviceID, revision) > deletedAt {
 		return false, false
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindAIGrant, deletedAt); err != nil {
@@ -694,8 +728,13 @@ func (e *Engine) applyAIGrantModeTombstone(ctx context.Context, objectID string,
 	}
 	if _, exists := modes[deviceID]; exists {
 		delete(modes, deviceID)
+		delete(clocks, deviceID)
 		if err := e.aiGrantSettingPut(ctx, key, modes, max(revision, deletedAt)); err != nil {
 			report.warnf("应用 AI 设备权限模式的删除标记失败：%v", err)
+			return false, false
+		}
+		if err := e.putDeviceModeClocks(ctx, clocks, max(revision, deletedAt)); err != nil {
+			report.warnf("AI 设备权限模式时钟记录失败：%v", err)
 			return false, false
 		}
 	}
