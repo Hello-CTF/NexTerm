@@ -227,22 +227,18 @@ describe("StatusWall", () => {
     }
   });
 
-  it("names hosts whose sessions are unknown and leaves room for card actions", () => {
+  it("names hosts whose sessions are unknown", () => {
     applyAggregateList(listing([
       host("device:box", { name: "build box" }),
       host("device:off", { name: "laptop", status: "offline", fetchedAt: undefined }),
       host("asset:db", { kind: "ssh", name: "db-02", sessionId: "s9", status: "offline", errorCode: "helper_not_ready", fetchedAt: undefined }),
     ], [item("device:box", "ask", "needs_me", 1)]));
-    const view = mount(createElement(StatusWall, {
-      onOpened: vi.fn(),
-      cardActions: (card) => (card.state === "needs_me" ? createElement("button", { type: "button" }, "允许") : null),
-    }));
+    const view = mount(createElement(StatusWall, { onOpened: vi.fn() }));
     try {
       const offline = view.container.querySelector('[data-wall-host="device:off"]');
       expect(offline?.textContent).toContain("laptop");
       expect(offline?.textContent).toContain("会话状态未知");
       expect(view.container.querySelector('[data-wall-host="asset:db"]')?.textContent).toContain("在这台主机上打开一个终端");
-      expect(view.container.querySelector('[data-wall-card="ask"] [data-wall-actions] button')?.textContent).toBe("允许");
     } finally {
       view.unmount();
     }

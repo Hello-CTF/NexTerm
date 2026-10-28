@@ -6,7 +6,6 @@ import { systemNotifier, type SystemNotificationStatus } from "./systemNotificat
 
 const CATEGORIES: readonly { key: Exclude<keyof NotificationPrefs, "system">; label: string; hint: string }[] = [
   { key: "needsMe", label: "需要我处理", hint: "终端响铃或程序发出通知（OSC 9/777/99）" },
-  { key: "inferred", label: "根据屏幕推测的提问", hint: "屏幕看起来停在提问处，可能误判" },
   { key: "finished", label: "长命令结束", hint: "运行 10 秒以上的命令结束（需要 shell 集成）" },
   { key: "ai", label: "AI 通知", hint: "AI 助手的通知，仅在窗口不在前台时弹出" },
 ];

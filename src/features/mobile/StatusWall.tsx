@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { useUi, useWorkspaceList } from "../../app/store";
 import { useAwarenessStore } from "../../app/sessionAwarenessStore";
 import { aggregateRows, reloadSessionAggregate, useSessionAggregate } from "../../app/sessionAggregate";
@@ -19,9 +19,6 @@ export interface StatusWallProps {
   onOpened: () => void;
   // Opens the asset drawer, for the empty wall.
   onOpenAssets?: () => void;
-  // Extra controls on a card, such as the choice buttons of a session that needs the user. Clicks in them do not
-  // open the session; open opens it as a click on the card does.
-  cardActions?: (card: WallCard, controls: { open: () => void; opening: boolean }) => ReactNode;
 }
 
 function ago(at: number, now: number): string {
@@ -47,13 +44,11 @@ function WallCardView({
   now,
   onOpen,
   opening,
-  actions,
 }: {
   card: WallCard;
   now: number;
   onOpen: () => void;
   opening: boolean;
-  actions?: ReactNode;
 }) {
   const reachable = card.uiTabId !== undefined || card.host !== undefined;
   const id = `nx-wall-${card.tabId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
@@ -99,11 +94,6 @@ function WallCardView({
           {body}
         </div>
       )}
-      {actions && (
-        <div className="px-3 pb-2.5" data-wall-actions="">
-          {actions}
-        </div>
-      )}
     </li>
   );
 }
@@ -113,7 +103,7 @@ function WallCardView({
 // what is already known (this client's tabs and the last cross-host listing) and fills in as hosts answer. Cards keep
 // their place while the wall is shown; a refresh or a return to the app re-sorts them. A card that changes state
 // moves to its new group at once.
-export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallProps) {
+export function StatusWall({ onOpened, onOpenAssets }: StatusWallProps) {
   const byTabId = useAwarenessStore((state) => state.byTabId);
   const workspaces = useWorkspaceList();
   const hosts = useSessionAggregate((state) => state.hosts);
@@ -271,7 +261,6 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
                   now={now}
                   opening={opening === entry.tabId}
                   onOpen={() => open(entry)}
-                  actions={cardActions?.(entry, { open: () => open(entry), opening: opening === entry.tabId })}
                 />
               ))}
             </ul>

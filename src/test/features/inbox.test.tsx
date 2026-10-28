@@ -130,7 +130,7 @@ describe("inbox entries", () => {
     applyAwareness([
       attention({ tabId: "T1", state: "just_finished", reason: "command_end", exitCode: 2, since: "2026-10-27T10:05:00Z" }),
       attention({ tabId: "T2", reason: "notify", title: "Deploy", body: "approve?", since: "2026-10-27T10:01:00Z" }),
-      attention({ tabId: "T9", reason: "prompt", confidence: "heuristic", since: "2026-10-27T10:03:00Z" }),
+      attention({ tabId: "T9", reason: "bell", since: "2026-10-27T10:03:00Z" }),
       attention({ tabId: "T3", seen: true }),
       attention({ tabId: "T4", state: "running", reason: "output" }),
     ]);
@@ -142,7 +142,7 @@ describe("inbox entries", () => {
     expect(build.badge.kind).toBe("just_finished");
     // A session no workspace here shows stays visible, but cannot be opened from this client.
     expect(unopened.uiTabId).toBeUndefined();
-    expect(unopened.badge.inferred).toBe(true);
+    expect(unopened.badge.kind).toBe("needs_me");
   });
 });
 
@@ -200,7 +200,7 @@ describe("system notifications", () => {
     expect(notifier.shown.map((n) => n.tabId)).toEqual(["T1"]);
   });
 
-  it("notifies only long finished commands, signalled prompts by default, and follows the device preferences", async () => {
+  it("notifies only long finished commands, needs_me by default, and follows the device preferences", async () => {
     live(attention({ tabId: "T2", state: "just_finished", reason: "command_end", exitCode: 0 }));
     await grace();
     expect(notifier.shown).toEqual([]);
@@ -208,19 +208,10 @@ describe("system notifications", () => {
     await grace();
     expect(notifier.shown.map((n) => n.title)).toEqual(["db-01 · 命令已结束"]);
 
-    // A prompt guessed from the screen stays in the inbox only, unless the user asks for it.
-    live(attention({ tabId: "T2", reason: "prompt", confidence: "heuristic", since: "2026-10-27T11:30:00Z" }));
-    await grace();
-    expect(notifier.shown).toHaveLength(1);
-    setNotificationPrefs({ inferred: true });
-    live(attention({ tabId: "T2", reason: "prompt", confidence: "heuristic", since: "2026-10-27T11:40:00Z" }));
-    await grace();
-    expect(notifier.shown).toHaveLength(2);
-
     setNotificationPrefs({ needsMe: false });
     live(attention({ tabId: "T2", since: "2026-10-27T12:00:00Z" }));
     await grace();
-    expect(notifier.shown).toHaveLength(2);
+    expect(notifier.shown).toHaveLength(1);
     expect(toasts).toEqual([]);
   });
 

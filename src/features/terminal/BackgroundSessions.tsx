@@ -139,18 +139,17 @@ function statusView(tab: BackgroundTab): StatusView {
 
 // backgroundBadge is the tab strip's badge for a row's state, so a session reads the same in both places. Unlike a
 // tab, a row keeps its needs_me or just_finished badge after the state was seen: the list shows the state itself.
-export function backgroundBadge(tab: Pick<BackgroundTab, "state" | "attentionInferred" | "exitCode">): AwarenessBadge | null {
-  const inferred = tab.attentionInferred === true;
+export function backgroundBadge(tab: Pick<BackgroundTab, "state" | "exitCode">): AwarenessBadge | null {
   switch (tab.state) {
     case "needs_me":
-      return { kind: "needs_me", inferred, label: inferred ? "可能需要你处理（根据屏幕推测）" : "需要你处理" };
+      return { kind: "needs_me", label: "需要你处理" };
     case "just_finished": {
       const code = tab.exitCode;
       const failed = typeof code === "number" && code !== 0;
-      return { kind: "just_finished", inferred, label: failed ? `命令刚结束，退出码 ${code}` : "命令刚结束", outcome: failed ? "failed" : "ok" };
+      return { kind: "just_finished", label: failed ? `命令刚结束，退出码 ${code}` : "命令刚结束", outcome: failed ? "failed" : "ok" };
     }
     case "running":
-      return { kind: "running", inferred, label: "运行中" };
+      return { kind: "running", label: "运行中" };
     default:
       return null;
   }

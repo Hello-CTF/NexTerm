@@ -98,11 +98,6 @@ describe("aggregateAttention", () => {
     );
     expect(aggregateAttention(states, ["r", "u", "i", "s", "missing"])).toBeNull();
   });
-
-  it("prefers a signalled state over an inferred one", () => {
-    const states = map(event("h", { confidence: "heuristic" }), event("s"));
-    expect(aggregateAttention(states, ["h", "s"])?.inferred).toBe(false);
-  });
 });
 
 describe("workspace strip attention badge", () => {
