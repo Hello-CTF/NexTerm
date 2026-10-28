@@ -103,8 +103,10 @@ func checkPair(before, after graphemeCategory) pairResult {
 }
 
 // graphemeBoundary decides whether an extended grapheme boundary lies at a
-// character boundary i strictly inside s.
-func graphemeBoundary(s string, i int) bool {
+// character boundary i strictly inside s. regionalRun counts the consecutive
+// regional indicators ending at i; the caller tracks it forward like
+// unicode-segmentation's ris_count so GB12/GB13 stay linear.
+func graphemeBoundary(s string, i, regionalRun int) bool {
 	beforeRune, _ := utf8.DecodeLastRuneInString(s[:i])
 	afterRune, _ := utf8.DecodeRuneInString(s[i:])
 	switch checkPair(graphemeCategoryOf(beforeRune), graphemeCategoryOf(afterRune)) {
@@ -142,28 +144,28 @@ func graphemeBoundary(s string, i int) bool {
 		}
 		return true
 	case pairRegional:
-		count := 0
-		for prefix := s[:i]; prefix != ""; {
-			r, size := utf8.DecodeLastRuneInString(prefix)
-			if graphemeCategoryOf(r) != gcRegionalIndicator {
-				break
-			}
-			count++
-			prefix = prefix[:len(prefix)-size]
-		}
-		return count%2 == 0
+		return regionalRun%2 == 0
 	default:
 		return true
 	}
 }
 
-func forEachGrapheme(s string, yield func(string)) {
-	start := 0
+// forEachGrapheme yields each extended grapheme cluster of s in order and
+// stops when yield returns false.
+func forEachGrapheme(s string, yield func(string) bool) {
+	start, regionalRun := 0, 0
 	for i := 0; i < len(s); {
-		_, size := utf8.DecodeRuneInString(s[i:])
+		r, size := utf8.DecodeRuneInString(s[i:])
 		i += size
-		if i == len(s) || graphemeBoundary(s, i) {
-			yield(s[start:i])
+		if graphemeCategoryOf(r) == gcRegionalIndicator {
+			regionalRun++
+		} else {
+			regionalRun = 0
+		}
+		if i == len(s) || graphemeBoundary(s, i, regionalRun) {
+			if !yield(s[start:i]) {
+				return
+			}
 			start = i
 		}
 	}

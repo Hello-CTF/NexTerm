@@ -205,7 +205,7 @@ func (d *detector) detect(ctx context.Context, text string, run runModel) (spans
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	encoding, err := d.tokenizer.encode(text)
+	encoding, err := d.tokenizer.encode(ctx, text)
 	if err != nil {
 		return nil, err
 	}

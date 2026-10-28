@@ -1,12 +1,15 @@
 package inference
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -52,7 +55,7 @@ type tokenView struct {
 
 func encodeView(t *testing.T, tok *tokenizer, text string) []tokenView {
 	t.Helper()
-	e, err := tok.encode(text)
+	e, err := tok.encode(context.Background(), text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +68,7 @@ func encodeView(t *testing.T, tok *tokenizer, text string) []tokenView {
 
 func TestTokenizerOffsetsSkipRemovedWhitespace(t *testing.T) {
 	tok := loadSynthetic(t)
-	e, err := tok.encode("你好 secret 你好 secret")
+	e, err := tok.encode(context.Background(), "你好 secret 你好 secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +115,7 @@ func TestTokenizerAddedTokensStripLeftWhitespace(t *testing.T) {
 
 func TestTokenizerFusesUnknownCharacters(t *testing.T) {
 	tok := loadSynthetic(t)
-	e, err := tok.encode("😀😀a")
+	e, err := tok.encode(context.Background(), "😀😀a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +126,7 @@ func TestTokenizerFusesUnknownCharacters(t *testing.T) {
 
 func TestTokenizerTemplateWrapsEveryWindow(t *testing.T) {
 	tok := loadSynthetic(t)
-	e, err := tok.encode("你好 secret 你好 secret")
+	e, err := tok.encode(context.Background(), "你好 secret 你好 secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,10 +187,56 @@ func TestGraphemeClusters(t *testing.T) {
 		"a\u0300\u0301":            {"a\u0300\u0301"},
 	} {
 		var got []string
-		forEachGrapheme(text, func(g string) { got = append(got, g) })
+		forEachGrapheme(text, func(g string) bool { got = append(got, g); return true })
 		if !slices.Equal(got, want) {
 			t.Errorf("%q: got %q want %q", text, got, want)
 		}
+	}
+}
+
+func TestGraphemeRegionalIndicatorPairs(t *testing.T) {
+	const flag, half = "🇨🇳", "🇺"
+	for text, want := range map[string][]string{
+		flag + flag + half:        {flag, flag, half},
+		"a" + flag + half:         {"a", flag, half},
+		half + "a" + flag + half:  {half, "a", flag, half},
+		half + "́" + flag:         {half + "́", flag},
+		half + half + half + "\n": {half + half, half, "\n"},
+	} {
+		var got []string
+		forEachGrapheme(text, func(g string) bool { got = append(got, g); return true })
+		if !slices.Equal(got, want) {
+			t.Errorf("%q: got %q want %q", text, got, want)
+		}
+	}
+}
+
+// A long run of regional indicators must segment in linear time.
+func TestGraphemeRegionalIndicatorRunScales(t *testing.T) {
+	text := strings.Repeat("🇺", (1<<20)/len("🇺")+1)
+	started := time.Now()
+	count := 0
+	forEachGrapheme(text, func(g string) bool {
+		if len(g) != 2*len("🇺") && !(len(g) == len("🇺") && count == utf8.RuneCountInString(text)/2) {
+			t.Fatalf("cluster %d has %d bytes", count, len(g))
+		}
+		count++
+		return true
+	})
+	if want := (utf8.RuneCountInString(text) + 1) / 2; count != want {
+		t.Fatalf("got %d clusters, want %d", count, want)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("segmenting %d bytes of regional indicators took %v", len(text), elapsed)
+	}
+}
+
+func TestEncodeHonorsCancellation(t *testing.T) {
+	tok := loadSynthetic(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := tok.encode(ctx, strings.Repeat("secret ", 4096)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
 	}
 }
 
@@ -225,7 +274,7 @@ func TestAstrLinkGuardTokenizerOffsets(t *testing.T) {
 		}
 	}
 	for _, text := range texts {
-		e, err := tok.encode(text)
+		e, err := tok.encode(context.Background(), text)
 		if err != nil {
 			t.Fatalf("%q: %v", text, err)
 		}
@@ -237,7 +286,7 @@ func TestAstrLinkGuardTokenizerOffsets(t *testing.T) {
 			previous = o[0]
 		}
 	}
-	e, err := tok.encode("ＡＢＣ")
+	e, err := tok.encode(context.Background(), "ＡＢＣ")
 	if err != nil || len(e.ids) == 0 {
 		t.Fatal(err)
 	}
