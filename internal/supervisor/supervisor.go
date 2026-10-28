@@ -36,6 +36,8 @@ type Supervisor struct {
 	eventSeq       atomic.Uint64
 	// stateRules are the user state rules of each rule owner.
 	stateRules *stateRuleOwners
+	// log is the helper's diagnostic log; nil outside RunHelper.
+	log *helperLog
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -251,6 +253,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		return abort(ErrClosed)
 	}
 	s.sessions[id] = session
+	s.log.logCreate(id, usePTY, options.Command, options.Dir)
 	s.finishActivityStartLocked(usePTY)
 	starting = false
 	if usePTY {

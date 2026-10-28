@@ -229,6 +229,9 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 		return err
 	}
 	defer unlock()
+	hlog := newHelperLog(stateDir)
+	defer hlog.close()
+	hlog.logStart(stateDir)
 	// Resolve the login-shell environment now so the first terminal does not wait for it.
 	shellenv.Default().Start()
 	if err := os.WriteFile(filepath.Join(stateDir, "helper.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
@@ -239,6 +242,7 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 	if err != nil {
 		return err
 	}
+	supervisor.log = hlog
 	endpoint, err := helperEndpoint(stateDir)
 	if err != nil {
 		_ = supervisor.Close()
@@ -249,10 +253,14 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 		_ = supervisor.Close()
 		return err
 	}
+	hlog.event("ready", "endpoint", endpoint)
 	<-awaitHelperStop(ctx)
+	hlog.event("shutdown_begin")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), helperShutdownTimeout)
 	defer cancel()
-	return errors.Join(server.Shutdown(shutdownCtx), supervisor.Close())
+	err = errors.Join(server.Shutdown(shutdownCtx), supervisor.Close())
+	hlog.event("shutdown_done", "error", err)
+	return err
 }
 
 func RunHelperCLI(args []string) int {

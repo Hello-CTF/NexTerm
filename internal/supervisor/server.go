@@ -403,6 +403,7 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	options := AttachOptions{Offset: msg.Offset, Tail: msg.Tail, Retain: msg.Retain}
 	attachment, err := c.server.supervisor.attachFrom(context.Background(), msg.ID, options, expected, msg.ExpectGeneration)
 	if err != nil {
+		c.server.supervisor.log.event("attach_error", "id", msg.ID, "error", err)
 		c.replyOperationError(err)
 		return true
 	}
@@ -411,7 +412,10 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	c.sessionMu.Unlock()
 	info := attachment.session.canonicalInfo()
 	if err := c.reply(frameAttached, attachedMsg{Info: info, Replay: attachment.Replay()}); err != nil {
-		_ = attachment.Detach()
+		c.server.supervisor.log.event("attach_error", "id", msg.ID, "error", err)
+		if detachErr := attachment.Detach(); detachErr != nil {
+			c.server.supervisor.log.event("detach_error", "id", msg.ID, "error", detachErr)
+		}
 		return false
 	}
 	go c.streamOutput(attachment)

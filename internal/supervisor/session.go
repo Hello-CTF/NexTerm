@@ -698,6 +698,7 @@ func (s *Session) finish(waitErr error) {
 			persistErr = writeEntry(sessionsRoot(s.supervisor.stateDir), s.entry)
 		}
 		s.mu.Unlock()
+		s.supervisor.log.logExit(s.entry.ID, code, signal)
 		if s.state != nil {
 			s.state.exit(code, now)
 		}

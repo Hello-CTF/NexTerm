@@ -306,6 +306,8 @@ func stopHelper(ctx context.Context, stateDir string, expected RunningHelper) (S
 	if err != nil {
 		return result, fmt.Errorf("%w: helper state directory: %v", ErrInvalidInput, err)
 	}
+	logHelperRequest(absolute, "stop_request", "expected_pid", expected.PID, "protocol", expected.Protocol,
+		"sessions", expected.Activity.Total(), "consent", HelperConsentToken(expected))
 	current, conn, err := inspectHelperConn(ctx, absolute, expected.Protocol)
 	if err != nil {
 		if ctx.Err() != nil {

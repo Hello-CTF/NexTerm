@@ -132,6 +132,7 @@ func replaceStaleHelper(ctx context.Context, config HelperConfig, token string, 
 	}
 	config.StateDir = stateDir
 	config.NoSpawn = false
+	logHelperRequest(stateDir, "replace_request", "consent", token, "protocol", consent.Protocol, "pid", consent.PID, "sessions", consent.Activity.Total())
 	unlock, err := waitReplaceLock(ctx, stateDir)
 	if err != nil {
 		return nil, ReplaceResult{}, &HelperReplaceError{Stage: ReplaceVerify, Cause: err}
