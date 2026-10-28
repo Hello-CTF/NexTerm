@@ -668,7 +668,10 @@ describe("SettingsView skills navigation", () => {
         return {
           config: { enabled: false, precision: "int8", revision: "", version: "" },
           installed: [],
-          download: { running: false, precision: "", progress: { file: "", downloaded: 0, total: 0 } },
+          runtime: { supported: true },
+          diskUsage: 0,
+          canManage: true,
+          download: { running: false, precision: "int8", progress: { file: "", downloaded: 0, total: 0 } },
         };
       }
       if (cmd === "vault_status") {
