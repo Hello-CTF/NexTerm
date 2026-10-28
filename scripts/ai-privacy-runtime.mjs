@@ -176,7 +176,7 @@ async function stageLibrary(plan, source, output) {
     await mkdir(framework, { recursive: true });
     const archive = path.join(source, "onnxruntime.xcframework", slice, "onnxruntime.framework/onnxruntime");
     const sdkPath = command("xcrun", ["--sdk", sdk, "--show-sdk-path"], { stdio: "pipe" });
-    command("xcrun", ["--sdk", sdk, "clang++", "-target", target, "-isysroot", sdkPath, "-dynamiclib", `-Wl,-force_load,${archive}`, "-framework", "Foundation", "-framework", "CoreML", "-framework", "Accelerate", "-install_name", "@rpath/onnxruntime.framework/onnxruntime", "-o", path.join(output, plan.library)]);
+    command("xcrun", ["--sdk", sdk, "clang++", "-target", target, "-isysroot", sdkPath, "-dynamiclib", `-Wl,-force_load,${archive}`, "-framework", "Foundation", "-framework", "CoreML", "-framework", "Accelerate", "-framework", "UIKit", "-framework", "Network", "-install_name", "@rpath/onnxruntime.framework/onnxruntime", "-o", path.join(output, plan.library)]);
     await writeFile(path.join(framework, "Info.plist"), frameworkPlist("onnxruntime", plan.version, plan.minimumOS, simulator ? "iPhoneSimulator" : "iPhoneOS"));
     return;
   }
