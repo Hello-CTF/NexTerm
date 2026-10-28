@@ -464,7 +464,6 @@ func describeHelperBuild(build supervisor.HelperBuild, started string) []string 
 	}
 	lines := []string{
 		fmt.Sprintf("主机端组件: 进程=%d 启动时间=%s 版本=%s 持久终端=%s", build.Helper.PID, started, release, sessions),
-		"新终端的 shell 与 PATH: 由本代理在每次创建时按账号登录 shell 解析并显式指定，不沿用主机端组件启动时的环境",
 	}
 	switch {
 	case build.Notice() != "":

@@ -25,7 +25,6 @@ func TestDescribeHelperBuildReportsStaleHelperWithSessions(t *testing.T) {
 	text := strings.Join(describeHelperBuild(build, "Mon Oct 26 09:00:00 2026"), "\n")
 	for _, want := range []string{
 		"进程=4242", "启动时间=Mon Oct 26 09:00:00 2026", "版本=1.3.0", "持久终端=3",
-		"新终端的 shell 与 PATH",
 		"主机端组件版本较旧（1.3.0，当前 1.3.2），仍有 3 个持久终端在运行；全部结束后将自动更新。",
 	} {
 		if !strings.Contains(text, want) {
@@ -75,19 +74,13 @@ func TestBridgePipeMakesTheHostAuthoritativeForTheShell(t *testing.T) {
 	_ = attachment.Close()
 }
 
-func TestDescribeHelperBuildEnvStaleLineOnlyWithSessions(t *testing.T) {
+func TestDescribeHelperBuildEnvStaleSaysNothing(t *testing.T) {
 	build := supervisor.HelperBuild{
 		Helper: supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 7, ActivityKnown: true,
 			Activity: supervisor.ActivitySnapshot{PTY: 2}},
 		Stale: true, StaleReason: "env", StartShell: "/bin/bash", ExpectedShell: "/bin/zsh", Sessions: 2, SessionsKnown: true,
 	}
-	want := "持久终端组件：运行环境较早（shell：bash，当前为 zsh），无持久终端时将自动更新"
-	if text := strings.Join(describeHelperBuild(build, ""), "\n"); !strings.Contains(text, want) {
-		t.Fatalf("status lacks %q:\n%s", want, text)
-	}
-	build.Sessions = 0
-	build.Helper.Activity = supervisor.ActivitySnapshot{}
-	if text := strings.Join(describeHelperBuild(build, ""), "\n"); strings.Contains(text, "运行环境较早") {
-		t.Fatalf("an idle helper is replaced silently:\n%s", text)
+	if text := strings.Join(describeHelperBuild(build, ""), "\n"); strings.Contains(text, "运行环境较早") || strings.Contains(text, "bash") {
+		t.Fatalf("an environment-stale helper is replaced silently and prints nothing about shells:\n%s", text)
 	}
 }

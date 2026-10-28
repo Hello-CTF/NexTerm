@@ -36,27 +36,13 @@ type HelperBuild struct {
 	Replaced bool
 }
 
-// Notice is the text shown while a stale helper still runs sessions; empty when there is nothing to say.
+// Notice is the text shown while a helper of an older build still runs sessions; empty when there is
+// nothing to say. A helper that is stale only by environment is replaced silently, so it has no notice.
 func (b HelperBuild) Notice() string {
-	if !b.Stale || !b.SessionsKnown || b.Sessions == 0 {
+	if !b.Stale || b.StaleReason == "env" || !b.SessionsKnown || b.Sessions == 0 {
 		return ""
 	}
-	if b.StaleReason == "env" {
-		return StaleEnvNotice(b.StartShell, b.ExpectedShell, b.Sessions)
-	}
 	return StaleHelperNotice(helperRelease(b.Helper.Runtime), helperRelease(&b.Local), b.Sessions)
-}
-
-// StaleEnvNotice is the calm line for a helper that runs terminals in an earlier environment.
-func StaleEnvNotice(running, current string, sessions int) string {
-	return fmt.Sprintf("持久终端组件：运行环境较早（shell：%s，当前为 %s），无持久终端时将自动更新", shellLabel(running), shellLabel(current))
-}
-
-func shellLabel(path string) string {
-	if path == "" {
-		return "未设置"
-	}
-	return filepath.Base(path)
 }
 
 func helperRelease(metadata *RuntimeMetadata) string {

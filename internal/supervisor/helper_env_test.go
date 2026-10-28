@@ -36,18 +36,10 @@ func TestStaleReasonByBuildAndStartEnvironment(t *testing.T) {
 	}
 }
 
-func TestStaleEnvNoticeText(t *testing.T) {
-	want := "持久终端组件：运行环境较早（shell：bash，当前为 zsh），无持久终端时将自动更新"
-	if got := StaleEnvNotice("/bin/bash", "/usr/bin/zsh", 2); got != want {
-		t.Fatalf("notice = %q, want %q", got, want)
-	}
+func TestStaleEnvHasNoNotice(t *testing.T) {
 	build := HelperBuild{Stale: true, StaleReason: "env", StartShell: "/bin/bash", ExpectedShell: "/bin/zsh", Sessions: 1, SessionsKnown: true}
-	if build.Notice() != want {
-		t.Fatalf("env notice with sessions = %q", build.Notice())
-	}
-	build.Sessions = 0
-	if build.Notice() != "" {
-		t.Fatalf("an idle stale helper is replaced, not reported: %q", build.Notice())
+	if got := build.Notice(); got != "" {
+		t.Fatalf("a helper stale only by environment is replaced silently, got notice %q", got)
 	}
 }
 
