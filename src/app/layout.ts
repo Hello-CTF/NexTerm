@@ -40,7 +40,7 @@ import {
   type DeviceLayoutState,
 } from "./layoutFocus";
 import { ALL_PROJECTS } from "./projectFocus";
-import { dismissLayoutResetNotice, noteLayoutReset, noteNewerLayout } from "./layoutResetNotice";
+import { noteNewerLayout } from "./newerLayoutNotice";
 import { useClosedTabs } from "./closedTabs";
 import { useGroupCollapse } from "../features/explorer/groupCollapse";
 import {
@@ -64,10 +64,6 @@ export const LAYOUT_SAVE_DEBOUNCE_MS = 600;
 
 export const LAYOUT_RETRY_MS = 3000;
 export const LAYOUT_MAX_RETRY = 3;
-
-// Versions 2 and 3 predate the split tree. Their workspaces are rebuilt as one pane holding all of
-// the workspace's tabs, and the reset is reported to the user (see layoutResetNotice).
-const LEGACY_LAYOUT_VERSIONS = new Set<unknown>([2, 3]);
 
 const PANE_KINDS = new Set<PaneKind>([
   "terminal",
@@ -127,8 +123,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
     directory: kind === "files" && !optStr(raw.path) ? optStr(raw.directory) : undefined,
     closable: boolOr(raw.closable, true),
     exited: raw.exited === true ? true : undefined,
-    // A legacy lock without customTitleAt may hold an OSC title an older build recorded as a
-    // rename: it is dropped, so the tab follows OSC titles again.
+    // A rename lock without customTitleAt is dropped, so the tab follows OSC titles again.
     renamedByUser: raw.renamedByUser === true && customTitleAtOf(raw.customTitleAt) !== undefined ? true : undefined,
     customTitleAt: customTitleAtOf(raw.customTitleAt),
     restorePending: raw.restorePending === true ? true : undefined,
@@ -161,12 +156,6 @@ function sanitizeQuickTarget(raw: unknown): QuickWorkspaceTarget | undefined {
   return { id, host, port, username, authKind };
 }
 
-interface SanitizedWorkspace {
-  workspace: Workspace;
-  // True when a legacy split (more than one pane with tabs) was folded into a single pane.
-  layoutReset: boolean;
-}
-
 function uniquePanes(panes: Pane[]): Pane[] {
   const seen = new Set<string>();
   return panes.filter((pane) => {
@@ -176,27 +165,7 @@ function uniquePanes(panes: Pane[]): Pane[] {
   });
 }
 
-// legacySinglePane folds a pre-tree workspace into one pane: every tab is kept, in pane order, and
-// the tab that was active in the active pane stays active.
-function legacySinglePane(parsed: Pane[], activePaneId: unknown, fallbackId: string): Pane {
-  const seen = new Set<string>();
-  const tabs: AppTab[] = [];
-  for (const pane of parsed) {
-    for (const tab of pane.tabs) {
-      if (seen.has(tab.id)) continue;
-      seen.add(tab.id);
-      tabs.push(tab);
-    }
-  }
-  const activePane = parsed.find((pane) => pane.id === activePaneId) ?? parsed[0];
-  const activeTabId =
-    activePane?.activeTabId && tabs.some((tab) => tab.id === activePane.activeTabId)
-      ? activePane.activeTabId
-      : (tabs[tabs.length - 1]?.id ?? null);
-  return { id: parsed[0]?.id ?? fallbackId, tabs, activeTabId };
-}
-
-function sanitizeWorkspace(raw: unknown, legacy: boolean): SanitizedWorkspace | null {
+function sanitizeWorkspace(raw: unknown): Workspace | null {
   if (!isObj(raw)) return null;
   const id = optStr(raw.id);
   const kind = raw.kind;
@@ -206,24 +175,16 @@ function sanitizeWorkspace(raw: unknown, legacy: boolean): SanitizedWorkspace | 
   );
   // A deterministic fallback id keeps repeated serializations of a pane-less workspace identical.
   const fallbackPaneId = `pane-${id}`;
-  let panes: Pane[];
-  let layoutTree: Workspace["layoutTree"];
-  let layoutReset = false;
-  if (legacy) {
-    layoutReset = parsed.filter((pane) => pane.tabs.length > 0).length > 1;
-    panes = [legacySinglePane(parsed, raw.activePaneId, fallbackPaneId)];
-  } else {
-    const decoded = raw.layoutTree === undefined
-      ? null
-      : decodeSplitTree({ v: SPLIT_TREE_FORMAT_VERSION, root: raw.layoutTree });
-    layoutTree = decoded?.ok ? decoded.tree : undefined;
-    // An empty pane the tree places is a deliberate split waiting for tabs; other empty panes are
-    // leftovers and go, as long as some pane remains.
-    const placed = new Set(layoutTree ? paneIdsInOrder(layoutTree) : []);
-    const kept = parsed.filter((p) => p.tabs.length > 0 || placed.has(p.id));
-    panes = kind === "tools" ? parsed : kept.length > 0 ? kept : parsed.slice(0, 1);
-    if (panes.length === 0) panes = [{ id: fallbackPaneId, tabs: [], activeTabId: null }];
-  }
+  const decoded = raw.layoutTree === undefined
+    ? null
+    : decodeSplitTree({ v: SPLIT_TREE_FORMAT_VERSION, root: raw.layoutTree });
+  const layoutTree = decoded?.ok ? decoded.tree : undefined;
+  // An empty pane the tree places is a deliberate split waiting for tabs; other empty panes are
+  // leftovers and go, as long as some pane remains.
+  const placed = new Set(layoutTree ? paneIdsInOrder(layoutTree) : []);
+  const kept = parsed.filter((p) => p.tabs.length > 0 || placed.has(p.id));
+  let panes = kind === "tools" ? parsed : kept.length > 0 ? kept : parsed.slice(0, 1);
+  if (panes.length === 0) panes = [{ id: fallbackPaneId, tabs: [], activeTabId: null }];
   const activePaneId = panes.some((p) => p.id === raw.activePaneId)
     ? (raw.activePaneId as string)
     : panes[0].id;
@@ -243,11 +204,10 @@ function sanitizeWorkspace(raw: unknown, legacy: boolean): SanitizedWorkspace | 
     panes,
     activePaneId,
     layoutTree,
-    layoutUpdatedAt:
-      !legacy && typeof updatedAt === "number" && Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0,
+    layoutUpdatedAt: typeof updatedAt === "number" && Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0,
     closable: boolOr(raw.closable, true),
   });
-  return { workspace, layoutReset };
+  return workspace;
 }
 
 function sanitizeAiDockTab(raw: unknown): AiDockTab | null {
@@ -464,8 +424,6 @@ function activateLayoutTab(workspaces: Workspace[], location: TabLocation): Work
 
 interface LayoutMigrationNotice {
   droppedBackgrounds: string[];
-  // Set when the document predates the split tree; lists the workspaces whose split was folded.
-  legacyLayoutReset?: string[];
 }
 
 const layoutMigrationNotices = new WeakMap<PersistedLayout, LayoutMigrationNotice>();
@@ -478,19 +436,17 @@ export function newerLayoutVersion(raw: unknown): number | null {
 }
 
 /**
- * Parses a stored layout document. Version 4 is read as is; versions 2 and 3 are rebuilt with one
- * pane per workspace (see LEGACY_LAYOUT_VERSIONS); any other version is rejected rather than guessed.
+ * Parses a stored layout document. Version 4 is read as is; any other version is rejected rather
+ * than guessed.
  */
 export function sanitizeLayout(raw: unknown): PersistedLayout | null {
   if (!isObj(raw)) return null;
-  const legacy = LEGACY_LAYOUT_VERSIONS.has(raw.v);
-  if (!legacy && raw.v !== LAYOUT_VERSION) return null;
+  if (raw.v !== LAYOUT_VERSION) return null;
   if (!Array.isArray(raw.workspaces)) return null;
   if (!isObj(raw.aiBoards)) return null;
-  const entries = raw.workspaces
-    .map((workspace) => sanitizeWorkspace(workspace, legacy))
-    .filter((entry): entry is SanitizedWorkspace => entry !== null);
-  const sanitized = entries.map((entry) => entry.workspace);
+  const sanitized = raw.workspaces
+    .map((workspace) => sanitizeWorkspace(workspace))
+    .filter((workspace): workspace is Workspace => workspace !== null);
   const activeWorkspace = sanitized.find((w) => w.id === raw.activeWorkspaceId);
   const activePane = activeWorkspace?.panes.find((pane) => pane.id === activeWorkspace.activePaneId);
   const activeTabs = activePane?.tabs.filter((tab) => tab.id === activePane.activeTabId) ?? [];
@@ -552,12 +508,7 @@ export function sanitizeLayout(raw: unknown): PersistedLayout | null {
     activeWorkspaceId,
     aiBoards: sanitizeAiBoards(raw.aiBoards, workspaces),
   };
-  layoutMigrationNotices.set(result, {
-    droppedBackgrounds: backgrounds.dropped,
-    ...(legacy
-      ? { legacyLayoutReset: entries.filter((entry) => entry.layoutReset).map((entry) => entry.workspace.title) }
-      : {}),
-  });
+  layoutMigrationNotices.set(result, { droppedBackgrounds: backgrounds.dropped });
   return result;
 }
 
@@ -646,8 +597,6 @@ let restoreCommitInFlight = false;
 let restoreCommitToken = 0;
 
 const RESTORE_CHANGED = "nexterm:layout-restore-changed";
-// Never equal to a real shared layout key: forces the next save after reading a legacy document.
-const LEGACY_BASE_KEY = "legacy-layout";
 
 // The version of a stored layout written by a newer client; while set, this device neither reads
 // nor overwrites the account layout.
@@ -1260,11 +1209,8 @@ async function pullLatest(reason: "boot" | "remote" | "conflict"): Promise<Persi
       setNewerRemote(newer);
       if (parsed) {
         result = parsed;
-        const reset = layoutMigrationNotices.get(parsed)?.legacyLayoutReset;
-        if (reset) noteLayoutReset(reset);
         if (restorePaused || requiresRestoreReview(parsed)) {
           setSyncedBase(parsed);
-          if (reset) baseSharedKey = LEGACY_BASE_KEY;
           restorePaused = true;
           pendingRestore = parsed;
           notifyRestoreChanged();
@@ -1273,9 +1219,6 @@ async function pullLatest(reason: "boot" | "remote" | "conflict"): Promise<Persi
           const merged = mergeRemoteLayout(parsed);
           const removed = reason === "remote" ? collectRemovedTerminals(merged) : [];
           setSyncedBase(parsed);
-          // A legacy document is rewritten in the current format right away, so other devices read
-          // the reset layout instead of folding the old one again.
-          if (reset) baseSharedKey = LEGACY_BASE_KEY;
           applyToStore(merged);
           if (sharedLayoutKey(merged) !== baseSharedKey) scheduleSharedSave();
           if (reason === "conflict") {
@@ -1441,7 +1384,6 @@ export function advanceLayoutAccount(): void {
   saveErrorNotified = false;
   pendingRestore = null;
   previewRestore = null;
-  dismissLayoutResetNotice();
   setNewerRemote(null);
   accountTransitionHold = true;
   restorePaused = restoreDecisionKey() !== null;
@@ -1476,7 +1418,6 @@ export function resetLayoutSyncForTest(): void {
   pendingDeviceLayoutLoaded = false;
   pendingRestore = null;
   previewRestore = null;
-  dismissLayoutResetNotice();
   setNewerRemote(null);
   restorePaused = false;
   accountTransitionHold = false;

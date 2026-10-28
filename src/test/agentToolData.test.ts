@@ -172,7 +172,7 @@ describe("approvalFromConfirmCard", () => {
 
   it("maps every stamped resolution back to its decision", () => {
     expect(approvalFromConfirmCard(card({ resolution: "已允许一次" }))?.decision).toBe("approve_once");
-    expect(approvalFromConfirmCard(card({ resolution: "本轮已允许此类" }))?.decision).toBe("approve_session");
+    expect(approvalFromConfirmCard(card({ resolution: "本会话已允许此类" }))?.decision).toBe("approve_session");
     expect(
       approvalFromConfirmCard(card({ resolution: "已永久允许（可随时在授权管理中撤销）" }))?.decision,
     ).toBe("approve_persistent");

@@ -52,7 +52,7 @@ function workspace(tabs: AppTab[]): Workspace {
 }
 function layout(workspaces: Workspace[]): PersistedLayout {
   return {
-    v: 2,
+    v: 4,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,

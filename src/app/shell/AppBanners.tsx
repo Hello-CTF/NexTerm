@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useUi, type Workspace } from "../store";
 import { layoutRestoreStatus, reviewPendingLayoutRestore, subscribeLayoutRestore } from "../layout";
-import { dismissLayoutResetNotice, useLayoutResetNotice, useNewerLayoutNotice } from "../layoutResetNotice";
+import { useNewerLayoutNotice } from "../newerLayoutNotice";
 import { TakeoverBanner } from "../TakeoverBanner";
 import { UpdateBanner } from "../UpdateBanner";
 import { DekUnlockBanner } from "../DekUnlockBanner";
@@ -18,7 +18,6 @@ export function AppBanners({ ws, onOpenSettings, onPickOtherAsset }: AppBannersP
   const closeWorkspace = useUi((s) => s.closeWorkspace);
   const [layoutRestore, setLayoutRestore] = useState(layoutRestoreStatus);
   useEffect(() => subscribeLayoutRestore(() => setLayoutRestore(layoutRestoreStatus())), []);
-  const layoutReset = useLayoutResetNotice();
   const newerLayout = useNewerLayoutNotice();
   return (
     <>
@@ -38,17 +37,6 @@ export function AppBanners({ ws, onOpenSettings, onPickOtherAsset }: AppBannersP
           <span>
             账号布局由更新版本的 NexTerm 保存（格式 v{newerLayout}）。本设备不会读取或覆盖它，布局同步已暂停；请升级 NexTerm 后再同步布局。
           </span>
-        </div>
-      )}
-      {layoutReset && (
-        <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
-          <span>
-            布局已重置：分屏升级为可嵌套布局，旧版分屏无法沿用。以下工作区的标签已合并到一个窗格（标签与会话均保留）：
-            {layoutReset.join("、")}
-          </span>
-          <button type="button" className="nx-btn-ghost" onClick={dismissLayoutResetNotice}>
-            知道了
-          </button>
         </div>
       )}
       <WorkspaceRestoreBanner />
