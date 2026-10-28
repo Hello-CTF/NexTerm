@@ -226,12 +226,12 @@ function taskRunner() {
   return null;
 }
 
-function runTask(cwd, args, version) {
+function runTask(cwd, args, version, extraEnv = {}) {
   const runner = taskRunner();
   assert.ok(runner, "a go-task runner is required (install task or the pinned wails3 CLI)");
   return spawnSync(runner[0], [...runner.slice(1), ...args], {
     cwd,
-    env: { ...process.env, NEXTERM_RELEASE_VERSION: version || "" },
+    env: { ...process.env, NEXTERM_RELEASE_VERSION: version || "", ...extraEnv },
     encoding: "utf8",
   });
 }
@@ -286,7 +286,9 @@ test("release package tasks compile every architecture with production tags", ()
     ["android:bundle:fat", 2],
     ["ios:package", 1],
   ]) {
-    const result = runTask(ROOT, [target, "--dry"], "1.2.3");
+    // A dry run prints the go build lines without invoking a JDK; the android
+    // tasks only precondition on a Java location, so the host need not have one.
+    const result = runTask(ROOT, [target, "--dry"], "1.2.3", { JAVA_HOME: process.env.JAVA_HOME || os.tmpdir() });
     assert.equal(result.status, 0, `${target}: ${result.stderr}`);
     const builds = `${result.stdout}\n${result.stderr}`.split(/\r?\n/).filter((line) => line.includes("go build -buildmode="));
     assert.equal(builds.length, expectedBuilds, `${target}: expected ${expectedBuilds} go build lines`);
