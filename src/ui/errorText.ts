@@ -60,7 +60,17 @@ function plain(code: string, message: string): string {
   if (RAW_HTTP.test(message)) return BAD_RESPONSE;
   if (NETWORK_ERROR.test(message)) return NETWORK_FAILURE;
   if (DIAL_ERROR.test(message)) return DIAL_FAILURE;
-  return ERROR_CODE_TEXT[code] ?? GENERIC_FAILURE;
+  const text = ERROR_CODE_TEXT[code] ?? GENERIC_FAILURE;
+  // A rejected input or an unsupported request carries the reason the user needs to correct it; keep it visible.
+  if (REASON_CODES.has(code) && shortReason(message)) return `${text}（原因：${message.trim()}）`;
+  return text;
+}
+
+const REASON_CODES = new Set(["bad_param", "unsupported"]);
+
+function shortReason(message: string): boolean {
+  const trimmed = message.trim();
+  return trimmed !== "" && trimmed.length <= 160 && !RAW_HTTP.test(trimmed) && !/\n/.test(trimmed);
 }
 
 // Most callers show describeError(e) in a toast without a detail argument. The raw text of recent errors is remembered
