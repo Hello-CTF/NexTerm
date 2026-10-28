@@ -6,6 +6,7 @@ import { forwardApi, type ForwardSpec } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { useUi, useSessionList } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import { describeForwardError } from "./forwardErrors";
 import { ForwardRules } from "./ForwardRules";
 import { useCompactWidth } from "../docker/useCompactWidth";
 import { ForwardSettingsSection } from "./ForwardSettingsSection";
@@ -227,7 +228,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       return;
     }
     if (!sessionId) {
-      pushToast("info", "先连接一台机器：端口转发需要一条 SSH 会话作为出口");
+      pushToast("info", "请先连接一台主机。端口转发需要通过主机的 SSH 连接建立。");
       return;
     }
     if (localSession) {
@@ -305,12 +306,12 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             }
             refresh();
           } catch (retryError) {
-            pushToast("error", `创建失败：${describeError(retryError)}`);
+            pushToast("error", `无法创建转发：${describeForwardError(retryError, port)}`);
           }
         }
         return;
       }
-      pushToast("error", `创建失败：${describeError(e)}`);
+      pushToast("error", `无法创建转发：${describeForwardError(e, port)}`);
     } finally {
       setBusy(false);
     }

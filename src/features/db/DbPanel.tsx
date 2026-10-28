@@ -564,7 +564,7 @@ function SqlView({
         </select>
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
         <span className="nx-hint hidden min-[560px]:inline">
-          {dialect === "postgres" ? "个对象" : "张表"}
+          {dialect === "postgres" ? "张表和视图" : "张表"}
         </span>
         <div className="nx-spacer" />
         {(workspaceProblems?.length ?? 0) > 0 && (
@@ -912,12 +912,21 @@ function SqlErrorView({
   onShowProblems: () => void;
 }) {
   const unknown = label === "结果未知";
+  const summary = unknown
+    ? "无法确认该 SQL 是否已生效。请先在数据库中确认结果，避免重复执行。"
+    : label === "连接错误"
+      ? "无法连接数据库，该 SQL 未执行。请检查连接后重新运行。"
+      : "该 SQL 执行失败。请根据详细信息修改后重新运行。";
   return (
-    <div className={`p-3 font-mono text-xs leading-relaxed ${unknown ? "text-amber-300" : "text-red-300"}`}>
+    <div className={`p-3 text-xs leading-relaxed ${unknown ? "text-amber-300" : "text-red-300"}`}>
       <div>
         <span className={`nx-badge ${unknown ? "" : "nx-badge-red"} mr-2`}>{label}</span>
-        {error}
+        {summary}
       </div>
+      <details className="mt-1.5 font-mono">
+        <summary className="cursor-pointer font-sans text-neutral-400">查看详细信息</summary>
+        <div className="mt-1 whitespace-pre-wrap break-words">{error}</div>
+      </details>
       <div className="mt-2 flex items-center gap-2 font-sans">
         <button type="button" className="nx-link" onClick={onCopy}>
           复制
@@ -954,7 +963,15 @@ function ResultTable({
     return (
       <div className="p-3 text-xs text-neutral-400">
         <span className="nx-badge nx-badge-green mr-2">运行成功</span>
-        {result.rowsAffected} 行受影响 · 耗时 {result.durationMs}ms
+        {result.rowsAffected} 行受影响，耗时 {result.durationMs}ms
+      </div>
+    );
+  }
+  if (result.rows.length === 0) {
+    return (
+      <div className="p-3 text-xs text-neutral-400">
+        <span className="nx-badge nx-badge-green mr-2">运行成功</span>
+        查询未返回数据（{result.columns.length} 列，0 行），耗时 {result.durationMs}ms
       </div>
     );
   }
@@ -990,9 +1007,9 @@ function ResultTable({
       </table>
       <div className="flex items-center gap-3 px-3 py-2 text-[11px] text-neutral-500">
         <span>
-          {result.rows.length} 行 · {result.durationMs}ms
+          {result.rows.length} 行，耗时 {result.durationMs}ms
         </span>
-        {result.truncated && <span className="text-amber-300">超过 5000 行，仅显示前 5000 行</span>}
+        {result.truncated && <span className="text-amber-300">结果超过 5000 行，仅显示前 5000 行。可添加 LIMIT 缩小范围</span>}
         <span className="nx-spacer" />
         <button className="nx-link" onClick={() => void copyCsv()}>
           复制 CSV

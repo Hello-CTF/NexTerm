@@ -6,6 +6,7 @@ import { ask } from "../../ui/dialogs";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { useCompactWidth } from "../docker/useCompactWidth";
 import { describeError } from "../../ui/errorText";
+import { describeForwardError } from "./forwardErrors";
 import {
   IconChevronDown,
   IconChevronRight,
@@ -146,7 +147,7 @@ export function ForwardRules({
       pushToast("success", `规则已启动 → 127.0.0.1:${rule.listenPort}`);
     } catch (error) {
       refreshAll();
-      pushToast("error", `启动规则失败：${describeError(error)}`);
+      pushToast("error", `无法启动规则：${describeForwardError(error, rule.listenPort)}`);
     } finally {
       setBusy(null);
     }

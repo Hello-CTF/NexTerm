@@ -102,6 +102,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const [password, setPassword] = useState("");
   const [credsOpen, setCredsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState<Set<string>>(() => new Set());
   const localPointErrorId = useId();
   const remotePathErrorId = useId();
   const credsPanelId = useId();
@@ -198,7 +199,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
         username: username || undefined,
         password: password || undefined,
       });
-      pushToast("success", `已挂载 ${localPoint}`);
+      pushToast("success", `已挂载 ${localPoint.trim()}。可在本机访问远端文件`);
       remotePathEdited.current = false;
       setRemotePath(assetPrefill);
       setUsername("");
@@ -206,20 +207,29 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       setCredsOpen(false);
       refresh();
     } catch (e) {
-      pushToast("error", `挂载失败：${describeError(e)}`);
+      pushToast("error", `挂载失败：${describeError(e)}。请检查远端路径和凭据后重试。`);
     } finally {
       setBusy(false);
     }
   };
 
   const remove = async (point: string) => {
-    if (!(await ask(`断开 ${point}？`, { kind: "warning" }))) return;
+    if (removing.has(point)) return;
+    if (!(await ask(`断开挂载点 ${point}？\n\n断开后本机无法再通过该挂载点访问远端文件；远端文件不会被删除。`, { kind: "warning" }))) return;
+    if (removing.has(point)) return;
+    setRemoving((prev) => new Set(prev).add(point));
     try {
       await mountApi.remove(point, sessionId);
       refresh();
-      pushToast("success", "已断开");
+      pushToast("success", `已断开挂载点 ${point}`);
     } catch (e) {
-      pushToast("error", `断开失败：${describeError(e)}`);
+      pushToast("error", `断开 ${point} 失败：${describeError(e)}。请确认没有程序正在使用该挂载点，然后重试。`);
+    } finally {
+      setRemoving((prev) => {
+        const next = new Set(prev);
+        next.delete(point);
+        return next;
+      });
     }
   };
 
@@ -280,7 +290,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             ) : list.length === 0 ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
-                  当前会话没有挂载点
+                  当前会话暂无挂载点，可在下方新建
                 </td>
               </tr>
             ) : (
@@ -291,10 +301,11 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
                 <td className="nx-right">
                   <button
                     className="nx-btn nx-btn-danger nx-btn-xs"
+                    disabled={removing.has(m.localPoint)}
                     onClick={() => void remove(m.localPoint)}
                   >
-                    <IconTrash size={11} />
-                    断开
+                    {removing.has(m.localPoint) ? <IconRefresh size={11} className="animate-spin" /> : <IconTrash size={11} />}
+                    {removing.has(m.localPoint) ? "正在断开…" : "断开"}
                   </button>
                 </td>
               </tr>
@@ -360,7 +371,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             onClick={() => void create()}
           >
             {busy ? <IconRefresh size={13} className="animate-spin" /> : null}
-            挂载
+            {busy ? "正在挂载…" : "挂载"}
           </button>
         </div>
         <button
@@ -404,7 +415,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             "当前是「当前设备」会话，不能建立 SSH 挂载；请先连接 SSH 资产。"
           ) : (
             <>
-              目标默认为当前资产{asset.data?.name ? `「${asset.data.name}」` : ""}的主机；用户名和密码仅用于本次挂载，不会保存。未填写时，Linux 使用本机密钥或 agent，Windows 使用当前登录凭据
+              目标默认为当前资产{asset.data?.name ? `「${asset.data.name}」` : ""}的主机；用户名和密码仅用于本次挂载，不会保存。未填写时，Linux 使用本机密钥或 SSH agent，Windows 使用当前登录凭据
             </>
           )}
         </div>

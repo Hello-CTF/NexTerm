@@ -94,7 +94,7 @@ describe("Mount disconnect confirmation (warning level)", () => {
     await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
     const modal = mounted!.container.querySelector(".nx-modal")!;
     expect(modal.getAttribute("role")).toBe("alertdialog");
-    expect(modal.querySelector(".nx-modal-body")?.textContent).toContain("断开 Z:？");
+    expect(modal.querySelector(".nx-modal-body")?.textContent).toContain("断开挂载点 Z:？");
 
     clickButton(modal, "取消");
     await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).toBeNull());
@@ -123,7 +123,7 @@ describe("Mount disconnect confirmation (warning level)", () => {
     await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
     clickButton(mounted!.container.querySelector(".nx-modal")!, "确定");
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("Z:", "s1"));
-    expect(mocks.toast).toHaveBeenCalledWith("error", "断开失败：device busy");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "断开 Z: 失败：device busy。请确认没有程序正在使用该挂载点，然后重试。");
   });
 
   it("passes optional mount credentials only to create and clears them after success", async () => {

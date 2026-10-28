@@ -914,7 +914,7 @@ describe("BackgroundSessions host-scoped view", () => {
       });
       expect(mocks.resyncSessions).toHaveBeenCalledWith({ silent: true });
       expect(view.container.textContent).toContain("构建");
-      expect(toastText()).toContain("结束进程失败：boom");
+      expect(toastText()).toContain("无法结束终端中的程序：boom");
     } finally {
       view.unmount();
     }
@@ -1380,7 +1380,7 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(view, "结束进程").click();
         await flush();
       });
-      await waitForRendered(() => expect(toastText()).toContain("结束进程失败：kill failed"));
+      await waitForRendered(() => expect(toastText()).toContain("无法结束终端中的程序：kill failed"));
       expect(view.container.textContent).toContain("构建");
     } finally {
       view.unmount();

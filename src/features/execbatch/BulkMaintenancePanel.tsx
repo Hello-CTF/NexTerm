@@ -673,9 +673,9 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
               onChange={setLoginSelected}
               disabled={busy !== null}
               maxTargets={MAX_TARGETS}
-              legend="测试对象"
+              legend="测试主机"
               emptyMessage="没有可测试的资产。"
-              searchAriaLabel="搜索连接测试对象"
+              searchAriaLabel="搜索要测试的主机"
               metadataError={assetsQuery.isError ? describeError(assetsQuery.error) : null}
             />
             {selected.length > 0 && (

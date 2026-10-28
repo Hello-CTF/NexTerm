@@ -369,7 +369,7 @@ export function TranscriptHistoryPanel({
 
   const removeTranscript = async (summary: TranscriptSummary) => {
     const ok = await ask(
-      `删除「${summary.assetName}」在 ${formatTranscriptTime(summary.startedAt)} 的终端记录？\n\n此操作无法撤销。`,
+      `删除「${summary.assetName}」在 ${formatTranscriptTime(summary.startedAt)} 的终端记录？\n\n删除后无法恢复。`,
       { title: "删除终端记录", kind: "warning" },
     );
     if (!ok) return;
@@ -495,7 +495,7 @@ export function TranscriptHistoryPanel({
                         {formatTranscriptDuration(summary.startedAt, summary.endedAt)} ·{" "}
                         {formatTranscriptBytes(summary.storedBytes || summary.bytes)}
                         {summary.truncated && " · 已截断"}
-                        {summary.contentOmitted && " · 仅保留元数据"}
+                        {summary.contentOmitted && " · 仅保留记录信息，没有输出内容"}
                         {summary.assetDeleted && " · 主机已删除"}
                       </div>
                     </td>
@@ -707,7 +707,7 @@ export function TranscriptHistoryPanel({
             )}
             {selected?.contentOmitted && !readerLoading && !readerError && (
               <div className="flex h-full items-center justify-center text-[12px] text-neutral-500">
-                仅保留元数据
+                仅保留记录信息，没有输出内容
               </div>
             )}
             {selected && !selected.contentOmitted && !readerLoading && !readerError && (
@@ -729,7 +729,7 @@ export function TranscriptHistoryPanel({
             {selected ? (
               <>
                 {formatTranscriptTime(selected.startedAt)} 开始 ·{" "}
-                {formatTranscriptBytes(selected.storedBytes || selected.bytes)} · {selected.chunks} 个分块
+                {formatTranscriptBytes(selected.storedBytes || selected.bytes)} · {selected.chunks} 段输出
                 {selected.truncated && " · 已达到大小上限，后续输出未记录"}
               </>
             ) : (

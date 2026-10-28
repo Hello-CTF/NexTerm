@@ -155,7 +155,7 @@ export function ExecBatchHistory() {
             刷新
           </button>
         )}
-        <span className="nx-hint">仅保存哈希、状态与时间；不保存命令、stdout/stderr 或原始错误文本</span>
+        <span className="nx-hint">只记录命令摘要、状态和时间；不保存命令原文、命令输出和原始错误信息。</span>
       </div>
       {open && (
         <div className="mt-3">

@@ -461,16 +461,15 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
 
   const act = async (c: ContainerSummary, action: string) => {
     const key = c.id;
+    if (pending.has(key)) return;
     if (action === "remove") {
-      if (pending.has(key)) return;
       const go = await ask(
-        `删除容器 ${c.name}？\n\n容器内未挂载到卷或主机目录的数据会丢失，不可恢复；挂载卷和主机目录不会被删除。`,
+        `删除容器 ${c.name}（${c.state === "running" ? "正在运行" : "已停止"}，其数据卷不会删除）？\n\n容器内未挂载到卷或主机目录的数据会丢失，无法恢复；挂载卷和主机目录不会被删除。`,
         { kind: "warning" },
       );
       if (!go) return;
     }
     if (action === "stop" || action === "restart") {
-      if (pending.has(key)) return;
       const go = await ask(
         action === "stop"
           ? `停止容器 ${c.name}？\n\n容器内正在运行的进程会退出，它对外提供的服务会中断；容器本身和它的数据保留，之后可以重新启动。`
@@ -479,6 +478,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       );
       if (!go) return;
     }
+    if (pending.has(key)) return;
     markPending(key, true);
     const snapshot = qc.getQueryData<ContainerSummary[]>(["docker-ps", sessionId]);
     if (action === "remove") {
@@ -488,12 +488,12 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     }
     try {
       await dockerApi.action(sessionId, c.id, action);
-      pushToast("success", `已${CONTAINER_ACTION_LABELS[action] ?? action} ${c.name}`);
+      pushToast("success", `已${CONTAINER_ACTION_LABELS[action] ?? action}容器 ${c.name}`);
     } catch (e) {
       if (action === "remove" && snapshot) qc.setQueryData(["docker-ps", sessionId], snapshot);
       pushToast(
         "error",
-        `${CONTAINER_ACTION_LABELS[action] ?? action} ${c.name} 失败：${describeError(e)}`,
+        `${CONTAINER_ACTION_LABELS[action] ?? action}容器 ${c.name} 失败：${describeError(e)}。请刷新列表后重试。`,
       );
     } finally {
       markPending(key, false);
@@ -517,10 +517,10 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     );
     try {
       await dockerApi.imageRemove(sessionId, ref, false);
-      pushToast("success", `已删除 ${ref}`);
+      pushToast("success", `已删除镜像 ${ref}`);
     } catch (e) {
       if (snapshot) qc.setQueryData(["docker-images", sessionId], snapshot);
-      pushToast("error", `删除 ${ref} 失败：${describeError(e)}`);
+      pushToast("error", `删除镜像 ${ref} 失败：${describeError(e)}。如有容器仍在使用该镜像，请先删除这些容器。`);
     } finally {
       markPending(key, false);
       void qc.invalidateQueries({ queryKey: ["docker-images", sessionId] });
@@ -694,9 +694,9 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   const containerMenu = (c: ContainerSummary): MenuItem[] => [
     { kind: "item", label: "查看日志", icon: <IconList size={13} />, onSelect: () => void openLogs(c.id, c.name) },
     { kind: "item", label: "进入容器终端", icon: <IconTerminal size={13} />, disabled: c.state !== "running", onSelect: () => openExec(c) },
-    { kind: "item", label: "重启", icon: <IconRestart size={13} />, onSelect: () => void act(c, "restart") },
+    { kind: "item", label: "重启", icon: <IconRestart size={13} />, disabled: pending.has(c.id), onSelect: () => void act(c, "restart") },
     ...(canRemoveContainer(c)
-      ? [{ kind: "item" as const, label: "删除", icon: <IconTrash size={13} />, danger: true, disabled: pending.has(c.id), onSelect: () => void act(c, "remove") }]
+      ? [{ kind: "item" as const, label: "删除容器", icon: <IconTrash size={13} />, danger: true, disabled: pending.has(c.id), onSelect: () => void act(c, "remove") }]
       : []),
   ];
 
@@ -771,12 +771,12 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                     <IconMonitor size={13} />
                   </button>
                   {c.state === "running" ? (
-                    <button className={COMPACT_BTN} title="停止" onClick={() => void act(c, "stop")}>
-                      <IconStop size={12} />
+                    <button className={COMPACT_BTN} title="停止" disabled={pending.has(c.id)} onClick={() => void act(c, "stop")}>
+                      {pending.has(c.id) ? <IconRefresh size={12} className="animate-spin" /> : <IconStop size={12} />}
                     </button>
                   ) : (
-                    <button className={COMPACT_BTN} title="启动" onClick={() => void act(c, "start")}>
-                      <IconPlay size={12} />
+                    <button className={COMPACT_BTN} title="启动" disabled={pending.has(c.id)} onClick={() => void act(c, "start")}>
+                      {pending.has(c.id) ? <IconRefresh size={12} className="animate-spin" /> : <IconPlay size={12} />}
                     </button>
                   )}
                   <MoreButton label={`${c.name} 更多操作`} onOpen={(e) => setMenu(menuAt(e, containerMenu(c), c.name))} />
@@ -1083,14 +1083,16 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                       <button
                         className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8"
                         title="重启"
+                        disabled={pending.has(c.id)}
                         onClick={() => void act(c, "restart")}
                       >
-                        <IconRestart size={13} />
+                        {pending.has(c.id) ? <IconRefresh size={13} className="animate-spin" /> : <IconRestart size={13} />}
                       </button>
                       {c.state === "running" ? (
                         <button
                           className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8"
                           title="停止"
+                          disabled={pending.has(c.id)}
                           onClick={() => void act(c, "stop")}
                         >
                           <IconStop size={12} />
@@ -1099,20 +1101,25 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                         <button
                           className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8"
                           title="启动"
+                          disabled={pending.has(c.id)}
                           onClick={() => void act(c, "start")}
                         >
                           <IconPlay size={12} />
                         </button>
                       )}
                       {canRemoveContainer(c) && (
-                        <button
-                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-8 pointer-coarse:w-8 is-danger"
-                          title="删除"
-                          disabled={pending.has(c.id)}
-                          onClick={() => void act(c, "remove")}
-                        >
-                          <IconTrash size={13} />
-                        </button>
+                        <MoreButton
+                          label={`${c.name} 更多操作`}
+                          onOpen={(e) =>
+                            setMenu(
+                              menuAt(
+                                e,
+                                containerMenu(c).filter((item) => item.kind === "item" && item.danger),
+                                c.name,
+                              ),
+                            )
+                          }
+                        />
                       )}
                     </span>
                   </td>

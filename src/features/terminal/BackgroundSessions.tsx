@@ -671,7 +671,7 @@ export function BackgroundSessions({
         if (!result.ok) {
           if (ownerGeneration === ownerGenerationRef.current) {
             restore();
-            if ("error" in result) pushToast("error", `结束进程失败：${result.error}`);
+            if ("error" in result) pushToast("error", `无法结束终端中的程序：${result.error}`);
           }
           return;
         }
@@ -679,11 +679,11 @@ export function BackgroundSessions({
         await terminalApi.closeTab(info.tabId, "kill", info.sessionId);
       }
       forgetAggregateSession(info.tabId);
-      if (ownerGeneration === ownerGenerationRef.current) pushToast("success", "已结束进程");
+      if (ownerGeneration === ownerGenerationRef.current) pushToast("success", "已结束终端中的程序");
     } catch (e) {
       if (ownerGeneration === ownerGenerationRef.current) {
         restore();
-        pushToast("error", `结束进程失败：${describeError(e)}`);
+        pushToast("error", `无法结束终端中的程序：${describeError(e)}`);
       }
     } finally {
       void useUi.getState().resyncSessions({ silent: true });

@@ -336,7 +336,7 @@ describe("MountPanel inline validation on submit", () => {
       password: undefined,
     });
     expect(mounted!.container.querySelector('[role="alert"]')).toBeNull();
-    expect(mocks.toast).toHaveBeenCalledWith("success", "已挂载 Z:");
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已挂载 Z:。可在本机访问远端文件");
   });
 
   it("error text wraps without overflow at 320/390 narrow widths", async () => {
