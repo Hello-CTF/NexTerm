@@ -27,20 +27,17 @@ const status = (patch: Partial<PrivacyStatus>): PrivacyStatus => ({
 });
 function Probe() {
   const guard = usePrivacyGuard();
-  return createElement("div", null,
-    createElement("button", { "aria-label": "添加图片", disabled: guard.enabled, title: guard.enabled ? "已开启 AI 信息脱敏，暂不支持图片" : "添加图片" }),
-    createElement(PrivacyIndicator, { guard }));
+  return createElement("div", null, createElement(PrivacyIndicator, { guard }));
 }
 let mounted: MountedView | undefined;
 beforeEach(() => { vi.resetAllMocks(); });
 afterEach(() => { mounted?.unmount(); mounted = undefined; });
 
 describe("AI chat privacy indicator", () => {
-  it("shows the guard is active and blocks image attachment", async () => {
+  it("shows the guard is active", async () => {
     mocks.status.mockResolvedValue(status({}));
     mounted = mount(createElement(Probe));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("脱敏已开启"));
-    expect(mounted.container.querySelector<HTMLButtonElement>('[aria-label="添加图片"]')!.disabled).toBe(true);
   });
 
   it("links a broken guard to the privacy settings", async () => {
@@ -58,6 +55,5 @@ describe("AI chat privacy indicator", () => {
     mounted = mount(createElement(Probe));
     await waitForRendered(() => expect(mocks.status).toHaveBeenCalled());
     expect(mounted.container.textContent).not.toContain("脱敏");
-    expect(mounted.container.querySelector<HTMLButtonElement>('[aria-label="添加图片"]')!.disabled).toBe(false);
   });
 });

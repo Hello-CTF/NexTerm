@@ -24,7 +24,7 @@ export function usePrivacyGuard(): PrivacyGuardState {
 export function PrivacyIndicator({ guard }: { guard: PrivacyGuardState }) {
   if (!guard.enabled) return null;
   if (!guard.broken) {
-    return <span className="nx-chip text-[11px]" title="已开启 AI 信息脱敏，敏感片段在发送前替换为占位符">脱敏已开启</span>;
+    return <span className="nx-chip text-[11px]" title="已开启 AI 信息脱敏，文本中的敏感片段在发送前替换为占位符；图片不会脱敏">脱敏已开启</span>;
   }
   return (
     <button

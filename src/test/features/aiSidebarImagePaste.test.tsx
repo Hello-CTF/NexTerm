@@ -6,6 +6,7 @@ import { click, flush, flushUntil, mount, setInputValue, type MountedView } from
 
 const mocks = vi.hoisted(() => ({
   desktop: false,
+  privacyEnabled: false,
   chat: vi.fn(),
   cancel: vi.fn(),
   confirm: vi.fn(),
@@ -27,6 +28,18 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../ipc/commands", () => ({
+  call: (command: string) => {
+    if (command !== "ai_privacy_status" || !mocks.privacyEnabled) return Promise.reject(new Error("unavailable"));
+    return Promise.resolve({
+      config: { enabled: true, precision: "int8", revision: "a".repeat(40), version: "v0.1.3" },
+      installed: [],
+      runtime: { supported: true },
+      selection: { available: true },
+      diskUsage: 0,
+      canManage: true,
+      download: { running: false, precision: "int8", progress: { file: "", downloaded: 0, total: 0 } },
+    });
+  },
   aiApi: {
     chat: mocks.chat,
     cancel: mocks.cancel,
@@ -75,6 +88,7 @@ vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: vi.fn() }));
 import { AiSidebar } from "../../features/ai/AiSidebar";
 import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../../features/ai/runOwnership";
 import { GLOBAL_AI_BOARD_KEY, useUi } from "../../app/store";
+import { PRIVACY_IMAGE_NOTICE, resetPrivacyImageNoticeForTest } from "../../features/ai/privacyImageNotice";
 
 beforeEach(() => {
   clearAiTabRuns([...aiTabBusyIds, ...aiTabRunControls.keys()]);
@@ -121,6 +135,7 @@ describe("AiSidebar image paste and attachment", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mocks.desktop = false;
+    mocks.privacyEnabled = false;
     mocks.channels.length = 0;
     mocks.chat.mockResolvedValue({ jobId: "job-1", conversationId: "conv-1" });
     mocks.cancel.mockResolvedValue(undefined);
@@ -145,6 +160,7 @@ describe("AiSidebar image paste and attachment", () => {
     mocks.messages.mockResolvedValue([]);
     mocks.ask.mockResolvedValue(true);
     localStorage.clear();
+    resetPrivacyImageNoticeForTest();
     useUi.setState({
       rightOpen: true,
       aiBusy: false,
@@ -234,6 +250,51 @@ describe("AiSidebar image paste and attachment", () => {
         images: [expect.stringContaining("data:image/png;base64")],
       }),
     );
+  });
+
+  it("allows images under the privacy guard and explains once that they are not redacted", async () => {
+    view?.unmount();
+    mocks.privacyEnabled = true;
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flushUntil(() => view!.container.textContent?.includes("脱敏已开启") ?? false);
+    const button = view!.container.querySelector<HTMLButtonElement>('button[aria-label="添加图片"]')!;
+    expect(button.disabled).toBe(false);
+    expect(button.title).toContain("图片不会脱敏");
+    expect(view!.container.textContent).not.toContain(PRIVACY_IMAGE_NOTICE);
+
+    const event = dispatchPaste(view!, pasteDataTransfer([imageItem(png("guarded.png"))], []));
+    expect(event.defaultPrevented).toBe(true);
+    await flushUntil(() => view!.container.querySelectorAll(".nx-attach").length === 1);
+    expect(view!.container.textContent).toContain(PRIVACY_IMAGE_NOTICE);
+
+    await send(view!, "Look at the guarded image");
+    expect(mocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Look at the guarded image", images: [expect.stringContaining("data:image/png;base64")] }),
+    );
+    expect(view!.container.textContent).not.toContain(PRIVACY_IMAGE_NOTICE);
+
+    view?.unmount();
+    resetPrivacyImageNoticeForTest();
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flushUntil(() => view!.container.textContent?.includes("脱敏已开启") ?? false);
+    dispatchPaste(view!, pasteDataTransfer([imageItem(png("again.png"))], []));
+    await flushUntil(() => view!.container.querySelectorAll(".nx-attach").length === 1);
+    expect(view!.container.textContent).not.toContain(PRIVACY_IMAGE_NOTICE);
+  });
+
+  it("hides the privacy image notice for good once acknowledged", async () => {
+    view?.unmount();
+    mocks.privacyEnabled = true;
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flushUntil(() => view!.container.textContent?.includes("脱敏已开启") ?? false);
+    dispatchPaste(view!, pasteDataTransfer([imageItem(png("ack.png"))], []));
+    await flushUntil(() => view!.container.textContent?.includes(PRIVACY_IMAGE_NOTICE) ?? false);
+    const ack = [...view!.container.querySelectorAll("button")].find((item) => item.textContent === "知道了")!;
+    click(ack);
+    await flush();
+    expect(view!.container.textContent).not.toContain(PRIVACY_IMAGE_NOTICE);
+    expect(view!.container.querySelectorAll(".nx-attach")).toHaveLength(1);
+    expect(localStorage.getItem("nexterm.ai-privacy-image-notice.v1")).toBe("seen");
   });
 
   it("uses platform-specific placeholders: web promises direct paste while desktop does not", async () => {
