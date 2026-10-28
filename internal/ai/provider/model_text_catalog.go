@@ -592,7 +592,6 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "创建数据库目录失败: %w", target: "failed to create database directory: %w"},
 	{source: "准备数据库文件失败: %w", target: "failed to prepare database file: %w"},
 	{source: "保护数据库文件失败: %w", target: "failed to protect database file: %w"},
-	{source: "备份旧版数据库失败: %w", target: "failed to back up legacy database: %w"},
 	{source: "数据库错误: %w", target: "database error: %w"},
 	{source: "数据库迁移错误: %w", target: "database migration error: %w"},
 	{source: "数据编码失败: %w", target: "failed to encode data: %w"},

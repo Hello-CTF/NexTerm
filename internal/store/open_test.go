@@ -40,7 +40,7 @@ func TestOpenRejectsPreGormDatabaseWithoutMigrating(t *testing.T) {
 			t.Fatal("pre-GORM open returned a store")
 		}
 		requireCode(t, err, ipc.CodeUnsupported)
-		if !strings.Contains(err.Error(), "pre-GORM") {
+		if !strings.Contains(err.Error(), "schema_migrations") {
 			t.Fatalf("error does not name the unsupported database: %v", err)
 		}
 	}

@@ -17,7 +17,6 @@ var (
 	ErrStorage          = errors.New("定时任务存储失败，请重试")
 	ErrExecutionTimeout = errors.New("定时任务执行超时")
 	ErrLeaseLost        = errors.New("定时任务租约丢失，本次运行已中断")
-	ErrOwnerless        = errors.New("旧版本定时任务缺少所有者信息，已停用，请重新创建（或先升级到 1.2.x 最终版）")
 	ErrInvalidOwner     = errors.New("定时任务所有者信息无效")
 	ErrForeignScope     = errors.New("定时任务会话不属于任务所有者")
 	ErrForeignDevice    = errors.New("定时任务绑定在其他设备上，只能在该设备上修改；可在同步设置中删除")

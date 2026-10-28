@@ -107,13 +107,7 @@ func TestWindowsUTF16LEEncoding(t *testing.T) {
 func TestSchtasksInstallCommandsAndXML(t *testing.T) {
 	runner := &fakeRunner{
 		responses: map[string]string{
-			"sc.exe stop NexTermAgent":           "[SC] ControlService FAILED 1062:\n",
-			"sc.exe delete NexTermAgent":         "[SC] OpenService FAILED 1060:\n",
 			"schtasks.exe /Run /TN NexTermAgent": "",
-		},
-		errors: map[string]error{
-			"sc.exe stop NexTermAgent":   realExitError(t),
-			"sc.exe delete NexTermAgent": realExitError(t),
 		},
 	}
 	capture := &xmlCaptureRunner{fakeRunner: runner}
@@ -123,20 +117,14 @@ func TestSchtasksInstallCommandsAndXML(t *testing.T) {
 	if err := manager.Install(context.Background(), exe, dataDir); err != nil {
 		t.Fatal(err)
 	}
-	if len(capture.commands) != 4 {
+	if len(capture.commands) != 2 {
 		t.Fatalf("install commands = %+v", capture.commands)
 	}
-	if capture.commands[0].name != "sc.exe" || strings.Join(capture.commands[0].args, " ") != "stop NexTermAgent" {
-		t.Fatalf("first step must stop the legacy system service: %+v", capture.commands[0])
-	}
-	if capture.commands[1].name != "sc.exe" || strings.Join(capture.commands[1].args, " ") != "delete NexTermAgent" {
-		t.Fatalf("second step must delete the legacy system service: %+v", capture.commands[1])
-	}
-	create := capture.commands[2]
+	create := capture.commands[0]
 	if create.name != "schtasks.exe" || create.args[0] != "/Create" || create.args[1] != "/TN" || create.args[2] != "NexTermAgent" || create.args[3] != "/XML" || create.args[5] != "/F" {
 		t.Fatalf("registration command has an invalid shape: %+v", create)
 	}
-	if last := capture.commands[3]; last.name != "schtasks.exe" || strings.Join(last.args, " ") != "/Run /TN NexTermAgent" {
+	if last := capture.commands[1]; last.name != "schtasks.exe" || strings.Join(last.args, " ") != "/Run /TN NexTermAgent" {
 		t.Fatalf("task must start immediately after registration: %+v", last)
 	}
 	xml := utf16LEToString(t, capture.xml)
@@ -155,47 +143,9 @@ func TestSchtasksInstallCommandsAndXML(t *testing.T) {
 	}
 }
 
-func TestSchtasksInstallMigratesLegacyService(t *testing.T) {
-	runner := &fakeRunner{
-		responses: map[string]string{
-			"sc.exe stop NexTermAgent":           "",
-			"sc.exe delete NexTermAgent":         "[SC] DeleteService SUCCESS\n",
-			"schtasks.exe /Run /TN NexTermAgent": "",
-		},
-	}
-	capture := &xmlCaptureRunner{fakeRunner: runner}
-	manager := newTestWindowsManager(capture)
-	if err := manager.Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`); err != nil {
-		t.Fatal(err)
-	}
-	if capture.createCalls != 1 {
-		t.Fatalf("scheduled task must be registered after legacy service cleanup, createCalls = %d", capture.createCalls)
-	}
-
-	runner.responses["sc.exe delete NexTermAgent"] = "[SC] OpenService FAILED 5:\n\nAccess is denied.\n"
-	runner.errors = map[string]error{"sc.exe delete NexTermAgent": realExitError(t)}
-	err := manager.Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
-	if err == nil || !strings.Contains(err.Error(), "管理员") {
-		t.Fatalf("legacy service deletion denial must mention administrator privileges, got %v", err)
-	}
-	if capture.createCalls != 1 {
-		t.Fatal("scheduled task must not be registered before legacy service cleanup")
-	}
-}
-
 func TestSchtasksInstallReportsCreateAndRunFailures(t *testing.T) {
-	baseResponses := func() map[string]string {
-		return map[string]string{
-			"sc.exe stop NexTermAgent":   "[SC] OpenService FAILED 1060:\n",
-			"sc.exe delete NexTermAgent": "[SC] OpenService FAILED 1060:\n",
-		}
-	}
-	baseErrors := func() map[string]error {
-		return map[string]error{
-			"sc.exe stop NexTermAgent":   realExitError(t),
-			"sc.exe delete NexTermAgent": realExitError(t),
-		}
-	}
+	baseResponses := func() map[string]string { return map[string]string{} }
+	baseErrors := func() map[string]error { return map[string]error{} }
 
 	capture := &xmlCaptureRunner{fakeRunner: &fakeRunner{responses: baseResponses(), errors: baseErrors()}}
 	capture.createOut, capture.createErr = "ERROR: Access is denied.\n", realExitError(t)
@@ -277,13 +227,9 @@ func TestSchtasksUninstall(t *testing.T) {
 		responses: map[string]string{
 			"schtasks.exe /End /TN NexTermAgent":       "",
 			"schtasks.exe /Delete /TN NexTermAgent /F": "",
-			"sc.exe stop NexTermAgent":                 "[SC] OpenService FAILED 1060:\n",
-			"sc.exe delete NexTermAgent":               "[SC] OpenService FAILED 1060:\n",
 		},
 		errors: map[string]error{
 			"schtasks.exe /End /TN NexTermAgent": realExitError(t),
-			"sc.exe stop NexTermAgent":           realExitError(t),
-			"sc.exe delete NexTermAgent":         realExitError(t),
 		},
 	}
 	manager := newTestWindowsManager(runner)
@@ -293,8 +239,6 @@ func TestSchtasksUninstall(t *testing.T) {
 	expectedOrder := []string{
 		"schtasks.exe /End /TN NexTermAgent",
 		"schtasks.exe /Delete /TN NexTermAgent /F",
-		"sc.exe stop NexTermAgent",
-		"sc.exe delete NexTermAgent",
 	}
 	if len(runner.commands) != len(expectedOrder) {
 		t.Fatalf("uninstall commands = %+v", runner.commands)
@@ -321,14 +265,6 @@ func TestSchtasksUninstall(t *testing.T) {
 	err := manager.Uninstall(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "拒绝访问") {
 		t.Fatalf("deletion denial must be actionable, got %v", err)
-	}
-
-	runner.responses[deleteKey] = ""
-	runner.errors = map[string]error{"sc.exe delete NexTermAgent": realExitError(t)}
-	runner.responses["sc.exe delete NexTermAgent"] = "[SC] OpenService FAILED 5:\n"
-	err = manager.Uninstall(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "管理员") {
-		t.Fatalf("legacy system service cleanup failure must mention administrator privileges, got %v", err)
 	}
 }
 

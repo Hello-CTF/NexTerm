@@ -59,9 +59,6 @@ func ownerExecutionError(ownerID string, kind OwnerKind) error {
 			return fmt.Errorf("%w: open owner ID is not empty", ErrInvalidOwner)
 		}
 	case "":
-		if ownerID == "" {
-			return ErrOwnerless
-		}
 		return fmt.Errorf("%w: owner kind is empty", ErrInvalidOwner)
 	default:
 		return fmt.Errorf("%w: kind %q", ErrInvalidOwner, kind)

@@ -32,7 +32,7 @@ type keychainState int
 
 const (
 	keychainEmpty keychainState = iota
-	keychainLegacy
+	keychainUnprotected
 	keychainProtected
 )
 
@@ -43,49 +43,28 @@ func Current() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	if state == keychainLegacy && migrateLegacyItem() {
-		state = keychainProtected
-	}
-	status.HasMaterial = state != keychainEmpty
+	status.HasMaterial = state == keychainProtected
 	return status, nil
 }
 
 // Unlock returns the Keychain unlock material after triggering the system face/fingerprint verification.
-// ACL-protected items get their verification prompt from SecItemCopyMatching itself (single path);
-// legacy items not yet migrated keep the old flow of explicit LAContext verification before reading the value.
+// The verification prompt comes from SecItemCopyMatching itself; an item without access control is not unlock material.
 // User cancellation or verification failure returns an error (message is display-ready); the material never leaks.
 func Unlock() (string, error) {
 	state, err := keychainItemState()
 	if err != nil {
 		return "", err
 	}
-	if state == keychainEmpty {
+	if state != keychainProtected {
 		return "", ErrNoMaterial
 	}
-	if state == keychainProtected {
-		value, found, err := keychainRead(evaluateReason)
-		if err != nil {
-			return "", err
-		}
-		if !found {
-			return "", ErrNoMaterial
-		}
-		return value, nil
-	}
-	if !bool(C.nx_biometric_can_evaluate()) {
-		return "", ErrUnavailable
-	}
-	if err := evaluate(); err != nil {
-		return "", err
-	}
-	value, found, err := keychainRead("")
+	value, found, err := keychainRead(evaluateReason)
 	if err != nil {
 		return "", err
 	}
 	if !found {
 		return "", ErrNoMaterial
 	}
-	migrateMaterial(value)
 	return value, nil
 }
 
@@ -121,34 +100,6 @@ func Disable() error {
 		return errors.New("钥匙串删除失败")
 	}
 	return nil
-}
-
-func evaluate() error {
-	reason, free := cString(evaluateReason)
-	defer free()
-	var errMsg *C.char
-	if !bool(C.nx_biometric_evaluate(reason, &errMsg)) {
-		if msg := cStr(errMsg); msg != "" {
-			return errors.New(msg)
-		}
-		return errors.New("生物识别验证未通过")
-	}
-	return nil
-}
-
-// migrateLegacyItem silently rebuilds a legacy item without ACL into an ACL item: direct reads while the device is unlocked
-// show no prompt; the ACL is prepared before deleting the old and creating the new, a failed creation leaves the original item
-// untouched, and a failed rebuild can be recovered by re-enabling, with Unlock's explicit verification path as the fallback.
-func migrateLegacyItem() bool {
-	value, found, err := keychainRead("")
-	if err != nil || !found {
-		return false
-	}
-	return migrateMaterial(value)
-}
-
-func migrateMaterial(value string) bool {
-	return Enable(value) == nil
 }
 
 func keychainItemState() (keychainState, error) {
