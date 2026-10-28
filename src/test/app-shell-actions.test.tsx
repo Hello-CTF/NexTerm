@@ -123,7 +123,9 @@ vi.mock("../features/terminal/TranscriptHistoryPanel", () => ({
   },
 }));
 vi.mock("../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
-vi.mock("../features/files/FileTree", () => ({ FileTree: () => null }));
+vi.mock("../features/files/FileTree", () => ({
+  FileTree: (props: { sessionId: string }) => <div data-testid="file-tree" data-session={props.sessionId} />,
+}));
 vi.mock("../features/files/MountPanel", () => ({ MountPanel: () => null }));
 vi.mock("../features/files/FileEditor", () => ({ FileEditor: () => null }));
 vi.mock("../features/files/LogViewer", () => ({ LogViewer: () => null }));
@@ -371,6 +373,47 @@ describe("App workspace actions", () => {
     expect(tabs.some((tab) => tab.kind === "files" && tab.sessionId === "s2")).toBe(true);
   });
 
+  it("the file tree rail button opens the left dock tree for the active host session", async () => {
+    const first = hostWorkspace("ws-a", "s1");
+    const second = hostWorkspace("ws-b", "s2");
+    useUi.setState({
+      sessions: [sessionOf("s1"), sessionOf("s2")],
+      workspaces: [first, second],
+      activeWorkspaceId: second.id,
+      leftMode: "assets",
+    });
+    mounted = mountApp();
+    await flush();
+
+    await clickRail("文件树");
+    await flush();
+
+    expect(useUi.getState().leftMode).toBe("files");
+    expect(mounted.container.querySelector('[data-testid="file-tree"]')?.getAttribute("data-session")).toBe("s2");
+    // No files tab is opened: the tree lives in the sidebar.
+    expect(useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).some((t) => t.kind === "files")).toBe(false);
+
+    act(() => useUi.getState().setActiveWorkspace(first.id));
+    await flush();
+    expect(mounted.container.querySelector('[data-testid="file-tree"]')?.getAttribute("data-session")).toBe("s1");
+  });
+
+  it("a saved files mode shows the asset tree without a host session and keeps the mode", async () => {
+    mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
+    useUi.setState({
+      sessions: [sessionOf("s1")],
+      workspaces: [nonHostWorkspace("tools")],
+      activeWorkspaceId: "tools",
+      leftMode: "files",
+      leftOpen: true,
+    });
+    mounted = mountApp();
+    await flush();
+
+    expect(mounted.container.querySelector('[data-testid="file-tree"]')).toBeNull();
+    expect(useUi.getState().leftMode).toBe("files");
+  });
+
   it.each([
     { name: "no workspace", workspace: null },
     { name: "tools workspace", workspace: nonHostWorkspace("tools") },
@@ -385,7 +428,7 @@ describe("App workspace actions", () => {
     mounted = mountApp();
     await flush();
 
-    for (const label of ["文件", "容器", "磁盘挂载", "端口转发", "日志", "后台会话"]) {
+    for (const label of ["文件树", "容器", "磁盘挂载", "端口转发", "日志", "后台会话"]) {
       expect(mounted.container.querySelector(`button[aria-label="${label}"]`)).toBeNull();
     }
     // History needs no host, so it stays.
@@ -403,7 +446,7 @@ describe("App workspace actions", () => {
     mounted = mountApp();
     await flush();
 
-    for (const label of ["文件", "磁盘挂载", "容器", "端口转发", "日志"]) {
+    for (const label of ["磁盘挂载", "容器", "端口转发", "日志"]) {
       await clickRail(label);
     }
 
@@ -412,13 +455,12 @@ describe("App workspace actions", () => {
       .workspaces.find((workspace) => workspace.id === second.id)
       ?.panes.flatMap((pane) => pane.tabs);
     expect(secondTabs).toEqual([
-      expect.objectContaining({ kind: "files", sessionId: "s2" }),
       expect.objectContaining({ kind: "mount", sessionId: "s2" }),
       expect.objectContaining({ kind: "docker", sessionId: "s2" }),
       expect.objectContaining({ kind: "forward", sessionId: "s2" }),
       expect.objectContaining({ kind: "log", title: "日志" }),
     ]);
-    expect(isMultiHostLogTabId(secondTabs?.[4]?.id ?? "")).toBe(true);
+    expect(isMultiHostLogTabId(secondTabs?.[3]?.id ?? "")).toBe(true);
     expect(
       useUi
         .getState()

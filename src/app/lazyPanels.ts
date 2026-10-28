@@ -15,6 +15,7 @@ export const BackgroundSessions = lazy(() =>
 export const TranscriptHistoryPanel = lazy(() =>
   import("../features/terminal/TranscriptHistoryPanel").then((m) => ({ default: m.TranscriptHistoryPanel })),
 );
+export const FileTree = lazy(() => import("../features/files/FileTree").then((m) => ({ default: m.FileTree })));
 export const FileBrowser = lazy(() => import("../features/files/FileBrowser").then((m) => ({ default: m.FileBrowser })));
 export const MountPanel = lazy(() => import("../features/files/MountPanel").then((m) => ({ default: m.MountPanel })));
 export const FileEditor = lazy(() => import("../features/files/FileEditor").then((m) => ({ default: m.FileEditor })));
