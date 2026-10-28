@@ -74,3 +74,20 @@ func TestBridgePipeMakesTheHostAuthoritativeForTheShell(t *testing.T) {
 	}
 	_ = attachment.Close()
 }
+
+func TestDescribeHelperBuildEnvStaleLineOnlyWithSessions(t *testing.T) {
+	build := supervisor.HelperBuild{
+		Helper: supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 7, ActivityKnown: true,
+			Activity: supervisor.ActivitySnapshot{PTY: 2}},
+		Stale: true, StaleReason: "env", StartShell: "/bin/bash", ExpectedShell: "/bin/zsh", Sessions: 2, SessionsKnown: true,
+	}
+	want := "持久终端组件：运行环境较早（shell：bash，当前为 zsh），无持久终端时将自动更新"
+	if text := strings.Join(describeHelperBuild(build, ""), "\n"); !strings.Contains(text, want) {
+		t.Fatalf("status lacks %q:\n%s", want, text)
+	}
+	build.Sessions = 0
+	build.Helper.Activity = supervisor.ActivitySnapshot{}
+	if text := strings.Join(describeHelperBuild(build, ""), "\n"); strings.Contains(text, "运行环境较早") {
+		t.Fatalf("an idle helper is replaced silently:\n%s", text)
+	}
+}

@@ -32,6 +32,8 @@ type RunningHelper struct {
 	PTYListed bool
 	// Runtime is nil when the helper did not report the executable it runs.
 	Runtime *RuntimeMetadata
+	// StartEnv is the SHELL and PATH digest the helper inherited at start; nil when it did not report them.
+	StartEnv *StartEnv
 	// StartTime identifies the process beside its pid (Linux: start time in
 	// clock ticks since boot; Windows: creation time); zero when unknown.
 	StartTime uint64
@@ -68,6 +70,7 @@ type probeHelloMsg struct {
 	Generation  string            `json:"generation,omitempty"`
 	Runtime     *RuntimeMetadata  `json:"runtime,omitempty"`
 	Activity    *ActivitySnapshot `json:"activity,omitempty"`
+	StartEnv    *StartEnv         `json:"start_env,omitempty"`
 }
 
 // InspectHelper reports the helper that serves stateDir on this build's
@@ -217,6 +220,10 @@ func inspectHelperConn(ctx context.Context, stateDir string, version int) (_ Run
 	if ack.Runtime != nil && validateRuntimeMetadata(*ack.Runtime, version) == nil {
 		runtime := *ack.Runtime
 		helper.Runtime = &runtime
+	}
+	if ack.StartEnv != nil {
+		env := *ack.StartEnv
+		helper.StartEnv = &env
 	}
 	_ = conn.SetDeadline(time.Time{})
 	return helper, conn, nil

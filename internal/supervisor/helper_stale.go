@@ -19,8 +19,13 @@ func (h RunningHelper) StaleAgainst(local RuntimeMetadata) bool {
 type HelperBuild struct {
 	Helper RunningHelper
 	Local  RuntimeMetadata
-	// Stale is set when the helper runs an older build of the same protocol.
+	// Stale is set when the helper runs an older build of the same protocol, or was started in another
+	// SHELL or PATH than a helper started now would get.
 	Stale bool
+	// StaleReason is "build" or "env" while Stale, and empty otherwise.
+	StaleReason string
+	// StartShell is the SHELL the stale helper inherited; ExpectedShell is the one a new helper gets.
+	StartShell, ExpectedShell string
 	// Sessions is the number of live sessions the helper runs; SessionsKnown is false when it did not
 	// report them.
 	Sessions      int
@@ -36,7 +41,22 @@ func (b HelperBuild) Notice() string {
 	if !b.Stale || !b.SessionsKnown || b.Sessions == 0 {
 		return ""
 	}
+	if b.StaleReason == "env" {
+		return StaleEnvNotice(b.StartShell, b.ExpectedShell, b.Sessions)
+	}
 	return StaleHelperNotice(helperRelease(b.Helper.Runtime), helperRelease(&b.Local), b.Sessions)
+}
+
+// StaleEnvNotice is the calm line for a helper that runs terminals in an earlier environment.
+func StaleEnvNotice(running, current string, sessions int) string {
+	return fmt.Sprintf("持久终端组件：运行环境较早（shell：%s，当前为 %s），无持久终端时将自动更新", shellLabel(running), shellLabel(current))
+}
+
+func shellLabel(path string) string {
+	if path == "" {
+		return "未设置"
+	}
+	return filepath.Base(path)
 }
 
 func helperRelease(metadata *RuntimeMetadata) string {
@@ -67,7 +87,12 @@ func inspectHelperBuild(ctx context.Context, stateDir string, local RuntimeMetad
 	if err != nil {
 		return HelperBuild{}, err
 	}
-	build := HelperBuild{Helper: running, Local: local, Stale: running.StaleAgainst(local)}
+	expected := expectedStartEnv()
+	reason := running.StaleReason(local, expected)
+	build := HelperBuild{Helper: running, Local: local, Stale: reason != "", StaleReason: reason}
+	if reason == "env" {
+		build.StartShell, build.ExpectedShell = running.StartEnv.Shell, expected.Shell
+	}
 	build.SessionsKnown = running.ActivityKnown
 	if running.ActivityKnown {
 		build.Sessions = running.Activity.Total()
@@ -98,12 +123,21 @@ func ensureHelperBuild(ctx context.Context, config HelperConfig, local RuntimeMe
 		}
 		return HelperBuild{}, err
 	}
-	if !build.Stale || !build.SessionsKnown || build.Sessions != 0 {
+	if !build.Stale {
+		return build, nil
+	}
+	logHelperRequest(config.StateDir, "stale_detected", "reason", build.StaleReason, "pid", build.Helper.PID,
+		"sessions", build.Sessions, "sessions_known", build.SessionsKnown)
+	if !build.SessionsKnown || build.Sessions != 0 {
+		logHelperRequest(config.StateDir, "stale_deferred", "reason", build.StaleReason, "pid", build.Helper.PID,
+			"sessions", build.Sessions, "sessions_known", build.SessionsKnown)
 		return build, nil
 	}
 	if _, _, err := replaceStaleHelper(ctx, config, build.ConsentToken, local); err != nil {
+		logHelperRequest(config.StateDir, "stale_replace_refused", "reason", build.StaleReason, "pid", build.Helper.PID, "error", err.Error())
 		return build, err
 	}
+	logHelperRequest(config.StateDir, "stale_replaced", "reason", build.StaleReason, "pid", build.Helper.PID)
 	build.Replaced = true
 	return build, nil
 }
@@ -156,7 +190,7 @@ func replaceStaleHelper(ctx context.Context, config HelperConfig, token string, 
 			return restoreHelper(ctx, stateDir, executable, protocol)
 		},
 		sameProtocol: true,
-		stillOlder:   func(running RunningHelper) bool { return running.StaleAgainst(local) },
+		stillOlder:   func(running RunningHelper) bool { return running.StaleReason(local, expectedStartEnv()) != "" },
 	}
 	helper, result, _, err := steps.run(ctx, consent)
 	return helper, result, err

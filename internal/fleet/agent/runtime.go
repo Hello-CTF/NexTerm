@@ -591,7 +591,7 @@ func (r *Runtime) checkHelperBuild(ctx context.Context) {
 	case err != nil:
 		r.logger.Warn("supervisor helper build check failed", "error", err)
 	case build.Replaced:
-		r.logger.Info("replaced the older supervisor helper that ran no terminals", "from", build.Helper.Runtime.Version, "to", build.Local.Version)
+		r.logger.Info("replaced the stale supervisor helper that ran no terminals", "reason", build.StaleReason, "to", build.Local.Version)
 	case build.Notice() != "":
 		r.logger.Warn(build.Notice())
 	}

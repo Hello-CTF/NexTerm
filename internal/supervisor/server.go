@@ -21,6 +21,7 @@ type Server struct {
 	supervisor      *Supervisor
 	stateDigest     string
 	runtimeMetadata *RuntimeMetadata
+	startEnv        StartEnv
 	endpoint        endpointIdentity
 	listener        net.Listener
 	unlock          func()
@@ -55,6 +56,7 @@ func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
 		supervisor:      supervisor,
 		stateDigest:     stateDigest,
 		runtimeMetadata: provenRuntimeMetadata(),
+		startEnv:        CurrentStartEnv(),
 		endpoint:        endpoint,
 		listener:        listener,
 		unlock:          unlock,
@@ -240,8 +242,9 @@ func (c *serverConn) serve() {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
+	startEnv := c.server.startEnv
 	ack := helloMsg{
-		Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity,
+		Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity, StartEnv: &startEnv,
 		StateRules: &stateRulesAck{Revision: c.server.supervisor.stateRulesSeen(c.rulesOwner)},
 	}
 	if err := c.reply(frameHelloAck, ack); err != nil {

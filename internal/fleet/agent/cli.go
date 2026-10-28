@@ -469,6 +469,8 @@ func describeHelperBuild(build supervisor.HelperBuild, started string) []string 
 	switch {
 	case build.Notice() != "":
 		lines = append(lines, "提示: "+build.Notice())
+	case build.Stale && build.StaleReason == "env":
+		// Idle: it is replaced on the next check, so there is nothing to tell.
 	case build.Stale:
 		lines = append(lines, "提示: 主机端组件版本较旧，当前没有持久终端，将自动更新。")
 	}
