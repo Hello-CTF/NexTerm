@@ -307,6 +307,28 @@ describe("StatusWall", () => {
     }
   });
 
+  it("says a failed first load failed, retries on demand and toasts a failed manual refresh", async () => {
+    useUi.setState({ toasts: [] });
+    mocks.sessionsAggregate.mockRejectedValueOnce(new Error("boom"));
+    const view = mount(createElement(StatusWall, { onOpened: vi.fn() }));
+    try {
+      await act(async () => { await flush(); });
+      expect(view.container.querySelector('[data-testid="wall-progress"]')?.textContent).toBe("读取失败");
+      expect(view.container.querySelector('[data-testid="wall-empty"]')?.textContent).toContain("读取失败");
+      expect(view.container.textContent).not.toContain("正在读取各主机的会话");
+      mocks.sessionsAggregate.mockRejectedValueOnce(new Error("boom"));
+      const retry = [...view.container.querySelectorAll("button")].find((b) => b.textContent === "重试")!;
+      await act(async () => { retry.click(); await flush(); });
+      expect(useUi.getState().toasts.some((toast) => toast.kind === "error")).toBe(true);
+      mocks.sessionsAggregate.mockResolvedValueOnce(listing([host("device:a")], [item("device:a", "one", "running", 1)]));
+      await act(async () => { view.container.querySelector<HTMLButtonElement>("button.nx-btn-ghost")!.click(); await flush(); });
+      expect(cards(view, "running")).toEqual(["one"]);
+      expect(view.container.querySelector('[data-testid="wall-empty"]')).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("guides an empty wall to the assets", async () => {
     applyAggregateList(listing([], []));
     const onOpenAssets = vi.fn();

@@ -119,6 +119,7 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
   const hosts = useSessionAggregate((state) => state.hosts);
   const sessionsByHost = useSessionAggregate((state) => state.sessionsByHost);
   const loaded = useSessionAggregate((state) => state.loaded);
+  const loadError = useSessionAggregate((state) => state.error);
   const [now, setNow] = useState(() => Date.now());
   const [orderToken, setOrderToken] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -154,6 +155,7 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
     setRefreshing(true);
     try {
       await reloadSessionAggregate();
+      if (useSessionAggregate.getState().error) useUi.getState().pushToast("error", "刷新会话列表失败，请稍后重试");
     } finally {
       setRefreshing(false);
       setNow(Date.now());
@@ -236,7 +238,7 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
       <div className="nx-toolbar">
         <h2 id="nx-wall-heading" className="nx-toolbar-title">会话状态</h2>
         <span className="nx-hint" role="status" aria-live="polite" data-testid="wall-progress">
-          {refreshing ? "正在刷新…" : pending.length > 0 ? `正在查询 ${pending.length} 台主机…` : !loaded ? "正在读取各主机的会话…" : ""}
+          {refreshing ? "正在刷新…" : loadError && !loaded ? "读取失败" : pending.length > 0 ? `正在查询 ${pending.length} 台主机…` : !loaded ? "正在读取各主机的会话…" : ""}
         </span>
         <div className="nx-spacer" />
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={refreshing} onClick={() => void refresh()}>
@@ -295,7 +297,14 @@ export function StatusWall({ onOpened, onOpenAssets, cardActions }: StatusWallPr
         )}
         {total === 0 && (
           <div className="flex flex-col items-center gap-2 px-6 pt-12 text-center text-[13px] text-[var(--nx-fg-soft)]" data-testid="wall-empty">
-            {!loaded || pending.length > 0 ? (
+            {loadError && !loaded ? (
+              <>
+                <span role="alert">读取失败，无法获取各主机的会话。</span>
+                <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={refreshing} onClick={() => void refresh()}>
+                  重试
+                </button>
+              </>
+            ) : !loaded || pending.length > 0 ? (
               <span>正在读取各主机的会话…</span>
             ) : (
               <>

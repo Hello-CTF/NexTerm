@@ -27,9 +27,11 @@ interface SessionAggregateState {
   hosts: ReadonlyMap<string, AggregateHostStatus>;
   sessionsByHost: ReadonlyMap<string, readonly AggregateSession[]>;
   loaded: boolean;
+  // The last listing request failed; cleared by the next successful one.
+  error: boolean;
 }
 
-const EMPTY: SessionAggregateState = { hosts: new Map(), sessionsByHost: new Map(), loaded: false };
+const EMPTY: SessionAggregateState = { hosts: new Map(), sessionsByHost: new Map(), loaded: false, error: false };
 
 export const useSessionAggregate = create<SessionAggregateState>(() => EMPTY);
 
@@ -79,7 +81,7 @@ export function applyAggregateList(list: AggregateList): void {
       hosts.set(host.key, host);
       sessionsByHost.set(host.key, withoutEnded(replied.get(host.key) ?? []));
     }
-    return { hosts, sessionsByHost, loaded: true };
+    return { hosts, sessionsByHost, loaded: true, error: false };
   });
 }
 
@@ -95,7 +97,7 @@ export function applyAggregateUpdate(update: TerminalSessionsEvent): void {
     hosts.set(update.host.key, update.host);
     const sessionsByHost = new Map(current.sessionsByHost);
     sessionsByHost.set(update.host.key, withoutEnded(update.sessions));
-    return { hosts, sessionsByHost, loaded: current.loaded };
+    return { hosts, sessionsByHost, loaded: current.loaded, error: current.error };
   });
 }
 
@@ -151,10 +153,12 @@ async function runReload(waitMs: number): Promise<void> {
   try {
     list = await terminalApi.sessionsAggregate(waitMs);
   } catch {
-    // The listing is a supplement; the inbox keeps what the awareness store knows.
+    // The listing is a supplement; the inbox keeps what the awareness store knows. The failure is recorded so the
+    // status wall can say so instead of waiting forever.
   }
   if (current !== epoch) return;
   inFlight = false;
+  if (!list) useSessionAggregate.setState({ error: true });
   const pending = buffered;
   buffered = null;
   if (list) applyAggregateList(list);
