@@ -224,7 +224,7 @@ func TestQualityStaysStaticAndRequiredUnitOwnsGoTests(t *testing.T) {
 func TestRaceDefaultsToFullUncachedRunAndVerifyDoesNotNarrowIt(t *testing.T) {
 	tasks := loadTaskfile(t)
 	race := tasks.Tasks["test:race"]
-	const selectedRace = `go test -race -count=1 -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}`
+	const selectedRace = `go test -race -count=1 -timeout=25m -p={{.RACE_PACKAGE_PARALLELISM | default "4"}} {{.RACE_PACKAGES | default "./..."}}`
 	if len(race.Commands) != 1 || normalize(race.Commands[0].Run) != selectedRace {
 		t.Fatalf("test:race must select packages and bounded parallelism for an uncached full run: %#v", race.Commands)
 	}
