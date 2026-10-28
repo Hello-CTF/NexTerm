@@ -1,0 +1,51 @@
+name: Debian build host
+description: >-
+  Installs the shared Debian build packages inside the debian:trixie job
+  container that every Linux-hosted build and test job uses. Jobs install
+  ca-certificates and git before actions/checkout so the checkout keeps its
+  .git directory; this action owns the rest of the package list.
+inputs:
+  gui:
+    description: Also install the GTK 4 and WebKitGTK 6.0 development packages that Wails cgo links
+    required: false
+    default: "false"
+  packages:
+    description: Additional space-separated Debian packages a single job needs
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install Debian build packages
+      shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
+        INPUT_GUI: ${{ inputs.gui }}
+        INPUT_PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+        packages=(
+          build-essential
+          ca-certificates
+          curl
+          file
+          git
+          openssl
+          pkg-config
+          procps
+          unzip
+          xz-utils
+          zip
+          zstd
+        )
+        if [ "$INPUT_GUI" = "true" ]; then
+          packages+=(libgtk-4-dev libwebkitgtk-6.0-dev)
+        fi
+        read -r -a extra <<< "$INPUT_PACKAGES"
+        apt-get update
+        apt-get install -y --no-install-recommends "${packages[@]}" "${extra[@]}"
+        . /etc/os-release
+        echo "$PRETTY_NAME, $(getconf GNU_LIBC_VERSION)"
+        if [ "$INPUT_GUI" = "true" ]; then
+          echo "gtk4 $(pkg-config --modversion gtk4), webkitgtk-6.0 $(pkg-config --modversion webkitgtk-6.0)"
+        fi
