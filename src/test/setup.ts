@@ -10,6 +10,19 @@ if (typeof HTMLCanvasElement !== "undefined") {
   } as typeof getContext;
 }
 
+// @wailsio/runtime arms a 50ms setInterval at import time (drag.js polling for its environment) and never clears it
+// unless it fires. A test file that finishes sooner lets the tick run after the jsdom window is gone and throw
+// "window is not defined" as an unhandled error. Track the intervals a file creates and clear them at file teardown.
+const openIntervals = new Set<ReturnType<typeof setInterval>>();
+if (typeof window !== "undefined") {
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+    const id = realSetInterval(...args);
+    openIntervals.add(id);
+    return id;
+  }) as typeof setInterval;
+}
+
 const reactWarnings: string[] = [];
 const REACT_WARNING = /not wrapped in act|overlapping act|unmounted component|Can't perform a React state update|testing environment is not configured to support act/;
 const originalConsoleError = console.error;
@@ -31,6 +44,8 @@ afterEach(() => {
 });
 
 afterAll(() => {
+  for (const id of openIntervals) clearInterval(id);
+  openIntervals.clear();
   console.error = originalConsoleError;
   expect(reactWarnings, "React act/unmounted-update warnings during teardown").toEqual([]);
 });
