@@ -649,6 +649,33 @@ func TestRuntimeSelfUpgradeSkipsCurrentVersion(t *testing.T) {
 	}
 }
 
+func TestRuntimeSelfUpgradeRefusesDowngrade(t *testing.T) {
+	previous := version.Version
+	version.Version = "1.2.0"
+	t.Cleanup(func() { version.Version = previous })
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl("1.1.0"))
+	release := newReleaseServer(t, map[string][]byte{})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
+	}
+	if got := release.requestCount("/"); got != 0 {
+		t.Fatalf("server-driven downgrade must skip the download, got %d requests", got)
+	}
+}
+
 func TestRuntimeSyncContinuesWithoutMetrics(t *testing.T) {
 	server := newFakeFleetServer(t)
 	dataDir := t.TempDir()

@@ -601,7 +601,7 @@ func mismatchServerVersion(err error) string {
 // selfUpgrade tries to upgrade the local agent to the version reported by the server when the protocol mismatches.
 // Successful staging -> fatal(errUpgradeStaged) exits so the replacement script takes over; self-upgrade unavailable
 // (embedded distribution), or the server did not report a version (old server), or the target version already equals the current version
-// (a mismatch would persist after upgrading, and downloading would only form a replace-restart-mismatch loop), or retries exhausted ->
+// (a mismatch would persist after upgrading, and downloading would only form a replace-restart-mismatch loop), or the target is lower than the running version (no server-driven downgrade), or retries exhausted ->
 // fatal(ErrProtocolMismatch) stays in the pending-manual state; the log clearly distinguishes the two paths.
 // A ctx cancellation during download is an intentional user stop: return directly and take the clean stop path, not recorded as fatal.
 func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
@@ -617,6 +617,12 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 	}
 	if serverVersion == version.Version {
 		r.logger.Error("control channel protocol mismatch but already at the server-reported version; refusing a replace-and-restart loop, manual intervention required", "target_version", serverVersion)
+		r.fatal(ErrProtocolMismatch)
+		return
+	}
+	// The server-driven path never downgrades (only `update --force` may); non-semver dev builds are not compared.
+	if cmp, ok := compareReleaseVersions(version.Version, serverVersion); ok && cmp > 0 {
+		r.logger.Error("control channel protocol mismatch but the server-reported version is lower than the running version; refusing a server-driven downgrade, use 'nexterm-agent update --force' to downgrade manually", "current_version", version.Version, "target_version", serverVersion)
 		r.fatal(ErrProtocolMismatch)
 		return
 	}
