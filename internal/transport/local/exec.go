@@ -32,7 +32,7 @@ func (t *Transport) OpenExec(ctx context.Context, command string, options base.E
 	}
 	cmd := exec.Command(t.shell, shellArguments(t.loginShell, command)...)
 	cmd.Dir = t.cwd
-	cmd.Env = environment(t.env, false, "")
+	cmd.Env = environmentFor(t.shell, t.env, false, "")
 	channel, err := openExecChannel(opCtx, cancel, cmd, t.channelID("exec"), t.generation)
 	if err != nil {
 		return nil, err

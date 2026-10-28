@@ -1,15 +1,31 @@
 package local
 
 import (
-	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 )
 
 const utf8Locale = "C.UTF-8"
 
+// resolveWait bounds how long a terminal waits for the first login-shell environment resolution.
+const resolveWait = 3 * time.Second
+
 func environment(extra map[string]string, terminal bool, term string) []string {
-	env := append([]string(nil), os.Environ()...)
+	return environmentFor("", extra, terminal, term)
+}
+
+// environmentFor builds the environment of a local terminal or command: the process environment overlaid
+// with the one the user's login shell provides (a GUI app launched from Finder starts with a minimal PATH),
+// SHELL set to the shell actually run, then the caller's extras.
+func environmentFor(shell string, extra map[string]string, terminal bool, term string) []string {
+	env := shellenv.Default().Env(resolveWait)
+	if runtime.GOOS != "windows" && filepath.IsAbs(shell) {
+		env = setEnvironment(env, "SHELL", shell)
+	}
 	for key, value := range extra {
 		env = setEnvironment(env, key, value)
 	}

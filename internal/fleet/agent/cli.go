@@ -17,6 +17,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/applog"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
+	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
@@ -207,6 +208,8 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		printCLIError(stderr, "agent run:", err)
 		return ExitUsage
 	}
+	useDataDirShell(dir)
+	shellenv.Default().Start()
 	if err := os.MkdirAll(filepath.Join(dir, "fleet"), 0o700); err != nil {
 		printCLIError(stderr, "agent run:", err)
 		return ExitError
@@ -295,6 +298,7 @@ func cliUninstall(args []string, getenv func(string) string, stdout, stderr io.W
 func cliServiceChange(command string, args []string, getenv func(string) string, stdout, stderr io.Writer, action func(context.Context, ServiceManager, string, string) error) int {
 	set := newFlagSet(command, stderr)
 	dataDir := set.String("data-dir", "", "数据目录 (默认 NEXTERM_DATA_DIR)")
+	shell := set.String("shell", "", "终端使用的 shell 绝对路径 (install 专用; auto 表示清除设置, 使用账户登录 shell)")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -302,6 +306,16 @@ func cliServiceChange(command string, args []string, getenv func(string) string,
 	if err != nil {
 		printCLIError(stderr, "agent "+command+":", err)
 		return ExitUsage
+	}
+	if *shell != "" && command != "install" {
+		fmt.Fprintf(stderr, "agent %s: --shell 仅适用于 install\n", command)
+		return ExitUsage
+	}
+	if message, err := applyShellFlag(dir, *shell); err != nil {
+		printCLIError(stderr, "agent "+command+":", err)
+		return ExitUsage
+	} else if message != "" {
+		fmt.Fprintln(stdout, message)
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -355,6 +369,7 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 		fmt.Fprintf(stdout, "服务错误: %s\n", applog.RedactText(status.LastError))
 	}
 	printServiceEnvironment(stdout, manager)
+	printRuntimeShell(stdout, dir, getenv, 8*time.Second)
 	stateDir := filepath.Join(dir, "durable", "supervisor")
 	if endpoint, err := supervisor.HelperEndpoint(stateDir); err == nil {
 		probeCtx, probeCancel := context.WithTimeout(ctx, 3*time.Second)

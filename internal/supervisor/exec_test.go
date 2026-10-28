@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 	"golang.org/x/sys/unix"
 )
 
@@ -386,10 +387,21 @@ func TestExecCloseClosesPipesHeldByDescendant(t *testing.T) {
 }
 
 func TestExecEnvUsesLoginShellPATH(t *testing.T) {
+	shell := filepath.Join(t.TempDir(), "login-shell")
+	script := "#!/bin/sh\nfor a; do cmd=\"$a\"; done\nPATH=/resolved/login/bin:$PATH\nexport PATH\neval \"$cmd\"\n"
+	if err := os.WriteFile(shell, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previous := shellenv.Default()
+	shellenv.SetDefault(shellenv.New(shellenv.Options{
+		Account: func() string { return shell },
+		GOOS:    "darwin",
+	}))
+	t.Cleanup(func() { shellenv.SetDefault(previous) })
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	client := testClient(t, server)
-	t.Setenv("PATH", "/nonexistent")
+	t.Setenv("PATH", "/usr/bin:/bin")
 	stdout, _, exitCode, _, err := client.Exec(context.Background(), ExecSpec{Command: []string{"/bin/sh", "-c", `printf %s "$PATH"`}})
 	if err != nil {
 		t.Fatal(err)
@@ -397,7 +409,7 @@ func TestExecEnvUsesLoginShellPATH(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d", exitCode)
 	}
-	if path := string(stdout); path == "" || path == "/nonexistent" {
-		t.Fatalf("exec PATH = %q, want the login-shell PATH overlay", path)
+	if path := string(stdout); !strings.HasPrefix(path, "/resolved/login/bin:") {
+		t.Fatalf("exec PATH = %q, want the login-shell PATH first", path)
 	}
 }

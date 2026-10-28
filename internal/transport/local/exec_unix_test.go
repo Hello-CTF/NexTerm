@@ -175,42 +175,6 @@ func TestShellArgumentsUsesLoginFlagOnlyForLoginShells(t *testing.T) {
 	}
 }
 
-func pinAccountShell(t *testing.T, shell string) {
-	t.Helper()
-	previous := accountShell
-	accountShell = func() string { return shell }
-	t.Cleanup(func() { accountShell = previous })
-}
-
-func TestDefaultShellUsesAccountShellWithoutSHELL(t *testing.T) {
-	pinAccountShell(t, "/bin/zsh")
-	unsetEnv(t, "SHELL")
-	if shell, login := defaultShell(); shell != "/bin/zsh" || !login {
-		t.Fatalf("defaultShell = (%q, %v), want (/bin/zsh, true)", shell, login)
-	}
-}
-
-func TestDefaultShellFallbackIsNotALoginShell(t *testing.T) {
-	pinAccountShell(t, "")
-	unsetEnv(t, "SHELL")
-	shell, login := defaultShell()
-	if shell != "/bin/sh" || login {
-		t.Fatalf("defaultShell without SHELL = (%q, %v)", shell, login)
-	}
-	transport := NewWithConfig(Config{CWD: t.TempDir()})
-	if transport.loginShell {
-		t.Fatal("fallback transport must not use login-shell flags")
-	}
-	result, err := transport.Exec(context.Background(), "printf fallback-ok", base.ExecOptions{Timeout: 5 * time.Second})
-	if err != nil || result.Stdout != "fallback-ok" {
-		t.Fatalf("Exec via fallback shell = %#v, %v", result, err)
-	}
-	t.Setenv("SHELL", "/bin/sh")
-	if shell, login := defaultShell(); shell != "/bin/sh" || !login {
-		t.Fatalf("defaultShell with explicit SHELL = (%q, %v)", shell, login)
-	}
-}
-
 func unixTransport(t *testing.T) *Transport {
 	t.Helper()
 	return NewWithConfig(Config{Shell: "/bin/sh", CWD: t.TempDir(), Env: map[string]string{"LANG": "C.UTF-8"}})

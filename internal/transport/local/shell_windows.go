@@ -14,3 +14,8 @@ func defaultShell() (shell string, login bool) {
 func shellArguments(_ bool, command string) []string {
 	return []string{"-NoLogo", "-NoProfile", "-Command", command}
 }
+
+func defaultShellChoice() (shell string, login bool, source, note string) {
+	shell, login = defaultShell()
+	return shell, login, "default", ""
+}

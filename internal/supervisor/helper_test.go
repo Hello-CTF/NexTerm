@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"go.uber.org/goleak"
 	"golang.org/x/sys/unix"
@@ -34,6 +35,7 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == HelperCommand {
 		os.Exit(RunHelperCLI(os.Args[2:]))
 	}
+	shellenv.SetDefault(shellenv.New(shellenv.Options{Disabled: true}))
 	goleak.VerifyTestMain(m)
 }
 

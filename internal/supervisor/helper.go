@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 )
 
 const (
@@ -227,6 +229,8 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 		return err
 	}
 	defer unlock()
+	// Resolve the login-shell environment now so the first terminal does not wait for it.
+	shellenv.Default().Start()
 	if err := os.WriteFile(filepath.Join(stateDir, "helper.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		return fmt.Errorf("write supervisor helper pid: %w", err)
 	}

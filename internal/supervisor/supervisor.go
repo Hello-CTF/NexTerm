@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -231,7 +230,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 	} else {
 		// Shell integration wraps interactive shells for PTY rendering; a
 		// non-PTY exec runs the argv exactly as given.
-		state, err := execStart(s.ctx, options.Command, options.Dir, execEnv(sessionEnv(options.Env), loginPATH(), !hasEnvPATH(options.Env)))
+		state, err := execStart(s.ctx, options.Command, options.Dir, sessionEnv(options.Env))
 		if err != nil {
 			return abort(err)
 		}
@@ -267,30 +266,6 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		go session.execWait()
 	}
 	return session, nil
-}
-
-// execEnv overlays the login-shell PATH when the caller did not set one explicitly, so CLIs installed outside
-// the service manager's minimal PATH resolve the same way they do in an interactive tab.
-func execEnv(env []string, path string, allowOverlay bool) []string {
-	if path == "" || !allowOverlay {
-		return env
-	}
-	for i, entry := range env {
-		if strings.HasPrefix(entry, "PATH=") {
-			env[i] = "PATH=" + path
-			return env
-		}
-	}
-	return append(env, "PATH="+path)
-}
-
-func hasEnvPATH(env []string) bool {
-	for _, entry := range env {
-		if strings.HasPrefix(entry, "PATH=") {
-			return true
-		}
-	}
-	return false
 }
 
 func execStart(ctx context.Context, command []string, dir string, env []string) (*execState, error) {

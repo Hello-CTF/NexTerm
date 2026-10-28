@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -632,41 +633,9 @@ func TestSessionEnvRespectsExplicitValues(t *testing.T) {
 
 func pinAccountShell(t *testing.T, shell string) {
 	t.Helper()
-	previous := accountShell
-	accountShell = func() string { return shell }
-	t.Cleanup(func() { accountShell = previous })
-}
-
-func TestDefaultShellCommandUsesAccountShellWithoutSHELL(t *testing.T) {
-	pinAccountShell(t, "/bin/zsh")
-	t.Setenv("SHELL", "")
-	if err := os.Unsetenv("SHELL"); err != nil {
-		t.Fatal(err)
-	}
-	if got := defaultShellCommand([]string{"PATH=/usr/bin"}); !slices.Equal(got, []string{"/bin/zsh", "-l"}) {
-		t.Fatalf("defaultShellCommand = %v, want [/bin/zsh -l]", got)
-	}
-}
-
-func TestDefaultShellCommandFallbackIsNotALoginShell(t *testing.T) {
-	pinAccountShell(t, "")
-	t.Setenv("SHELL", "")
-	if err := os.Unsetenv("SHELL"); err != nil {
-		t.Fatal(err)
-	}
-	if got := defaultShellCommand(nil); !slices.Equal(got, []string{"/bin/sh"}) {
-		t.Fatalf("defaultShellCommand without SHELL = %v, want [/bin/sh]", got)
-	}
-	t.Setenv("SHELL", "/bin/sh")
-	if got := defaultShellCommand(nil); !slices.Equal(got, []string{"/bin/sh", "-l"}) {
-		t.Fatalf("defaultShellCommand with explicit SHELL=/bin/sh = %v, want [/bin/sh -l]", got)
-	}
-}
-
-func TestDefaultShellCommandEnvironmentShellKeepsLoginFlag(t *testing.T) {
-	if got := defaultShellCommand([]string{"SHELL=/bin/zsh"}); !slices.Equal(got, []string{"/bin/zsh", "-l"}) {
-		t.Fatalf("defaultShellCommand with environment SHELL = %v, want [/bin/zsh -l]", got)
-	}
+	previous := shellenv.Default()
+	shellenv.SetDefault(shellenv.New(shellenv.Options{Disabled: true, Account: func() string { return shell }}))
+	t.Cleanup(func() { shellenv.SetDefault(previous) })
 }
 
 func TestCreateDefaultCommandSpawnsFallbackShell(t *testing.T) {
