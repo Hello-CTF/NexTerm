@@ -38,7 +38,7 @@ Windows 安装器不含 Authenticode 签名，首次运行可能显示未知发�
 | macOS（Apple Silicon / Intel） | `nexterm-agent_macos_arm64_*.tar.gz` / `nexterm-agent_macos_amd64_*.tar.gz` |
 | Windows 10/11 x64 | `nexterm-agent_windows_amd64_*.zip` |
 
-tar.gz 内只有 `nexterm-agent`、zip 内只有 `nexterm-agent.exe` 单个可执行文件；主机一键接入用 `install-device.sh`（Linux/macOS）或 `install-device.ps1`（Windows PowerShell），脚本自动下载对应资产并完成设备接入。
+tar.gz 内只有 `nexterm-agent`、zip 内只有 `nexterm-agent.exe` 单个可执行文件；主机一键接入用 `install-device.sh`（Linux/macOS）或 `install-device.ps1`（Windows PowerShell），脚本自动下载对应资产并完成设备接入。已接入且版本 >= 1.3.0 的 agent 可在设备上执行 `nexterm-agent update`（别名 `upgrade`；`--check` 只检查，`--yes` 跳过确认，`--force` 允许重装或降级）从官方 release 升级；1.2.x 的 agent 没有该命令，需再执行一次 install-device 脚本。
 
 服务端默认要求登录且只监听回环地址；`--auth off` 会关闭账号与访问控制，不能用于公网。公网部署、备份与数据库选项见 [README 的「部署服务端」](https://github.com/Hello-CTF/NexTerm#部署服务端)。
 

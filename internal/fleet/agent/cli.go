@@ -63,6 +63,8 @@ func RunCLI(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		return cliUninstall(rest, getenv, stdout, stderr)
 	case "status":
 		return cliStatus(rest, getenv, stdout, stderr)
+	case "update", "upgrade":
+		return cliUpdate(rest, getenv, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, version.Version)
 		return 0
@@ -85,7 +87,8 @@ func RunCLIWithServicePrefix(args []string, servicePrefix []string, getenv func(
 }
 
 func printCLIUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "用法: agent <enroll|run|install|uninstall|status|version> [选项]")
+	fmt.Fprintln(stderr, "用法: agent <enroll|run|install|uninstall|status|update|version> [选项]")
+	fmt.Fprintln(stderr, "  update|upgrade [--version <版本>] [--yes|-y] [--force|-f] [--check]  从官方 release 升级已安装的 agent")
 }
 
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
@@ -269,7 +272,7 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, "agent: 设备已被吊销，已停止运行；请执行 agent enroll 接入新设备")
 		return ExitRevoked
 	case errors.Is(err, ErrProtocolMismatch):
-		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容，自动升级不可用或已失败，请使用 install-device.sh 重新安装")
+		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容，自动升级不可用或已失败，请执行 agent update --force 或使用 install-device.sh 重新安装")
 		return ExitProtocol
 	default:
 		printCLIError(stderr, "agent run:", err)
