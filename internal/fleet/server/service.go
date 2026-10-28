@@ -93,6 +93,9 @@ type Service struct {
 	shareRevalidateInterval time.Duration
 
 	sessionList sessionListState
+
+	// afterAuthenticate is a test seam fired between a successful device authentication and channel registration.
+	afterAuthenticate func(deviceID string)
 }
 
 type Option func(*Service)
@@ -152,6 +155,7 @@ func New(config Config, options ...Option) (*Service, error) {
 		return nil, err
 	}
 	s.sharing = sharingService
+	config.Accounts.OnUserBlocked(s.kickUserDevices)
 	for _, option := range options {
 		option(s)
 	}
@@ -472,6 +476,9 @@ func (s *Service) ConsumeEnrollCodeKind(ctx context.Context, code, name, platfor
 			return dbError(err)
 		}
 		ownerID := consumed.UserID
+		if err := requireOwnerUsable(ctx, tx, ownerID); err != nil {
+			return err
+		}
 		if err := q.UserDevice.WithContext(ctx).Create(&store.UserDevice{
 			ID: deviceID, UserID: ownerID, Name: name, Kind: deviceKind, CreatedAt: now,
 		}); err != nil {
@@ -548,6 +555,9 @@ func (s *Service) AuthenticateAgent(ctx context.Context, deviceID, secret string
 	case device.RevokedAt != nil:
 		return "", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	}
+	if err := s.requireOwnerUsable(ctx, device.UserID); err != nil {
+		return "", err
+	}
 	now := s.now()
 	if _, err := syncCredential.WithContext(ctx).
 		Where(syncCredential.DeviceID.Eq(deviceID), syncCredential.Purpose.Eq(PurposeDeviceAgent)).
@@ -564,6 +574,56 @@ func (s *Service) AuthenticateAgent(ctx context.Context, deviceID, secret string
 		return "", dbError(err)
 	}
 	return credential.UserID, nil
+}
+
+// requireOwnerUsable rejects devices whose owner account is disabled or must reset its password.
+func (s *Service) requireOwnerUsable(ctx context.Context, ownerID string) error {
+	return requireOwnerUsable(ctx, s.db, ownerID)
+}
+
+func requireOwnerUsable(ctx context.Context, db *gorm.DB, ownerID string) error {
+	appUser := query.Use(db).AppUser
+	owner, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(ownerID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return dbError(err)
+	}
+	if owner.State == string(account.StateDisabled) || owner.State == string(account.StateResetRequired) {
+		return ipc.NewError(ipc.CodeForbidden, "设备所属账号已禁用或需要重置密码")
+	}
+	return nil
+}
+
+// recheckDevice re-reads the device and owner after a channel was registered, closing the window in which a
+// revocation or account disable lands between authentication and registration.
+func (s *Service) recheckDevice(ctx context.Context, deviceID string) error {
+	userDevice := query.Use(s.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ipc.NewError(ipc.CodeForbidden, "设备凭证无效")
+	}
+	if err != nil {
+		return dbError(err)
+	}
+	if device.RevokedAt != nil {
+		return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+	}
+	return s.requireOwnerUsable(ctx, device.UserID)
+}
+
+// kickUserDevices closes the control channels and bridges of every device owned by a user that was just disabled or reset.
+func (s *Service) kickUserDevices(userID string) {
+	userDevice := query.Use(s.db).UserDevice
+	rows, err := userDevice.WithContext(context.Background()).Where(userDevice.UserID.Eq(userID)).Find()
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		s.registry.KickDevice(row.ID)
+		s.deviceOffline(row.ID)
+	}
 }
 
 func (s *Service) ListDevices(ctx context.Context, identity *account.Identity) ([]*Device, error) {
