@@ -29,9 +29,21 @@ const (
 	maxPushBatchBytes = 32 << 20
 	maxSyncAttempts   = 3
 	maxPullPages      = 10000
-	// Payload hashes are SHA-256 hex strings; this distinct value persists an undecryptable remote object's quarantine across sync rounds.
+	// Payload hashes are SHA-256 hex strings; this distinct prefix persists an undecryptable remote object's quarantine across sync rounds.
 	quarantinedPayloadHash = "undecryptable"
 )
+
+// quarantineMarker is the payload hash stored for an undecryptable remote object. It carries a fingerprint of the
+// kinds this build can read, so an object written by a newer peer (a kind this build does not know yet) is read again
+// after an upgrade instead of staying quarantined behind an unchanged blob hash.
+func quarantineMarker() string {
+	digest := sha256.Sum256([]byte(strings.Join(objectKinds, ",")))
+	return quarantinedPayloadHash + ":" + hex.EncodeToString(digest[:8])
+}
+
+func isQuarantined(payloadHash string) bool {
+	return payloadHash == quarantinedPayloadHash || strings.HasPrefix(payloadHash, quarantinedPayloadHash+":")
+}
 
 // maxPullBytes is the client-side per-page pull budget; tests may lower it temporarily to construct pagination scenarios.
 var maxPullBytes int64 = maxPullWireBytes
@@ -551,6 +563,17 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 			}
 		}
 	}
+	// A quarantine recorded by a build that knew other kinds is re-evaluated: the object may be readable now.
+	marker := quarantineMarker()
+	queued := make(map[string]bool, len(unreconciled))
+	for _, id := range unreconciled {
+		queued[id] = true
+	}
+	for id, state := range syncStates {
+		if _, onServer := server[id]; onServer && !queued[id] && isQuarantined(state.payloadHash) && state.payloadHash != marker {
+			unreconciled = append(unreconciled, id)
+		}
+	}
 	completed, err := e.pullAllAndApply(ctx, session, &cursor, unreconciled, report, optIn)
 	if err != nil {
 		return false, err
@@ -584,7 +607,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		state, found := syncStates[id]
 		statePayloadHash, stateBlobHash := state.payloadHash, state.blobHash
 		serverEntry, onServer := server[id]
-		if found && statePayloadHash == quarantinedPayloadHash && onServer && stateBlobHash == serverEntry.BlobHash {
+		if found && isQuarantined(statePayloadHash) && onServer && stateBlobHash == serverEntry.BlobHash {
 			// A matching undecryptable cloud object needs an explicit repair decision. A changed blob is pulled and evaluated above.
 			continue
 		}
