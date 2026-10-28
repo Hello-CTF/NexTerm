@@ -217,7 +217,7 @@ describe("Desktop login - reset_required branch", () => {
     expect(mocks.resetPassword).toHaveBeenCalledWith("new-password-1");
     // Masked by default: the key itself does not appear on the page
     expect(document.body.textContent).not.toContain(RECOVERY_KEY);
-    const finish = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement;
+    const finish = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，继续")) as HTMLButtonElement;
     expect(finish.disabled).toBe(true);
 
     // The show toggle reveals the key; entry is allowed only after copying
@@ -227,7 +227,7 @@ describe("Desktop login - reset_required branch", () => {
     await flushUntil(() => writeText.mock.calls.length === 1 && !finish.disabled);
     expect(writeText).toHaveBeenCalledWith(RECOVERY_KEY);
 
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，继续")) as HTMLButtonElement);
     await waitForConsole();
     expect(document.body.textContent).not.toContain(RECOVERY_KEY);
     expect(mocks.toast).toHaveBeenCalledWith("success", "登录信息已保存，自动同步已开启");
@@ -249,10 +249,10 @@ describe("Desktop login - reset_required branch", () => {
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制") as HTMLButtonElement);
     await flushUntil(() =>
       document.body.textContent?.includes("复制失败，请手动复制恢复密钥") === true &&
-      !([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement).disabled,
+      !([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，继续")) as HTMLButtonElement).disabled,
     );
     expect(document.body.textContent).toContain(RECOVERY_KEY);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，继续")) as HTMLButtonElement);
     await waitForConsole();
   });
 

@@ -44,11 +44,11 @@ describe("Shared SyncOptInSection toggles", () => {
     expect(rendered[2]).toBe("同步 AI 权限与拦截规则默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。");
     expect(rendered[3]).toBe("同步 AI 授权与权限模式默认开启。设备授权、路径授权规则与设备权限模式端到端加密同步；会话内临时授权不同步。");
     expect(rendered[4]).toBe("同步外观与快捷键默认开启。关闭后不再同步界面外观和快捷键覆盖；定时任务由单独的开关控制。");
-    expect(rendered[5]).toBe("同步会话状态规则默认开启。同步后的规则会推送到本机的会话助手；规则顺序按各设备收到的先后排列。");
+    expect(rendered[5]).toBe("同步会话状态规则默认开启。同步后的规则将应用到本机的会话助手；规则顺序取决于各设备收到的先后。");
     expect(rendered[6]).toBe("同步 Runbook 模板默认开启。模板中的命令按保存时的快照同步。");
-    expect(rendered[7]).toBe("同步自定义 AI 技能与内置技能的修改默认开启。只同步你的自定义技能、对内置技能的修改和禁用；内置技能本身随应用提供。");
+    expect(rendered[7]).toBe("同步自定义 AI 技能与内置技能的修改默认开启。仅同步自定义技能，以及对内置技能的修改和禁用；内置技能本身随应用提供。");
     expect(rendered[8]).toBe("同步 AI 记忆默认关闭。记忆内容端到端加密同步，离开本机前和写入前都会再次脱敏疑似密钥。");
-    expect(rendered[9]).toBe("同步 AI 定时任务默认关闭。每个任务只在它绑定的设备上运行；其他设备只显示，可在此改由本机运行或删除。");
+    expect(rendered[9]).toBe("同步 AI 定时任务默认关闭。每个任务只在它绑定的设备上运行；其他设备仅显示该任务，可在此改由本机运行或删除。");
     // Rendered output matches the exported constants verbatim: both consoles get this exact same copy
     for (const [i, item] of SYNC_OPT_IN_ITEMS.entries()) {
       expect(rendered[i]).toBe(item.label + item.hint);
@@ -108,6 +108,6 @@ describe("Both consoles share unified copy constants", () => {
     expect(SYNC_CONSOLE_TITLE).toBe("账号同步");
     expect(SYNC_AUTO_BADGE).toBe("自动同步");
     expect(SYNC_INTERVAL_LABEL).toBe("每 60 秒");
-    expect(SYNC_MERGE_GUIDE).toBe("数据会自动在本机与服务端之间同步。");
+    expect(SYNC_MERGE_GUIDE).toBe("数据将在本机与服务端之间自动同步。");
   });
 });

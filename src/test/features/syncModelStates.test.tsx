@@ -174,7 +174,7 @@ describe("SyncCard desktop states", () => {
         password: "correct horse battery staple",
       }),
     );
-    expect(text()).toContain("登录后，数据会自动在本机与服务端之间同步");
+    expect(text()).toContain("登录后，数据将在本机与服务端之间自动同步");
     expect(text()).not.toContain("立即同步");
   });
 

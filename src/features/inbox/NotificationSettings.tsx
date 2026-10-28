@@ -7,7 +7,7 @@ import { systemNotifier, type SystemNotificationStatus } from "./systemNotificat
 const CATEGORIES: readonly { key: Exclude<keyof NotificationPrefs, "system">; label: string; hint: string }[] = [
   { key: "needsMe", label: "需要我处理", hint: "终端响铃，或程序发出通知" },
   { key: "finished", label: "长命令结束", hint: "运行 10 秒以上的命令结束（需要 shell 集成）" },
-  { key: "ai", label: "AI 通知", hint: "AI 助手的通知，仅在窗口不在前台时弹出" },
+  { key: "ai", label: "AI 通知", hint: "AI 助手的通知，仅在窗口不在前台时显示" },
 ];
 
 function statusText(status: SystemNotificationStatus | null): string {
@@ -58,9 +58,9 @@ export function NotificationSettings() {
     <div className="mt-3.5" data-setting="system-notifications">
       <label className="flex cursor-pointer items-start gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[12.5px] text-neutral-200">在此设备弹出系统通知</div>
+          <div className="text-[12.5px] text-neutral-200">在本机显示系统通知</div>
           <p className="nx-hint mt-0.5">
-            其他工作区或主机的会话需要处理时弹出系统通知，点击后回到该终端；正在查看的终端不弹出。关闭或系统不支持时改为应用内提示，顶栏铃铛始终列出这些会话。仅影响本设备。
+            其他工作区或主机的会话需要处理时显示系统通知，单击通知可返回该终端；正在查看的终端不显示通知。关闭或系统不支持时改为应用内提示，顶栏铃铛始终列出这些会话。仅影响本机。
           </p>
           <p className="nx-hint mt-0.5" role="status">
             {statusText(status)}

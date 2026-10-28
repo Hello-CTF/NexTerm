@@ -203,7 +203,7 @@ describe("UpdateCard check flow", () => {
     });
     await flushUntil(() => (mounted?.container.textContent ?? "").includes(hint));
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("不在应用内更新");
+    expect(text).toContain("不支持应用内更新");
     expect(text).not.toContain("检查失败");
     expect([...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.includes("立即检查"))).toBe(false);
   });

@@ -592,9 +592,9 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </div>
             <p className="nx-hint mt-1.5">
               {terminalPrefs.defaultMode === "durable"
-                ? "持久终端断开后进程继续运行，可在「后台会话」接管。打开主机时会在后台准备持久组件；准备好之前新建的是临时终端，标签上会标明原因。"
+                ? "持久终端断开后进程继续运行，可在「后台会话」中接管。打开主机时将在后台准备持久组件；准备完成前新建的是临时终端，标签页上会标明原因。"
                 : "临时终端随连接断开而结束，打开主机时不会准备或安装持久组件。"}
-              资产单独设置优先；只影响新开的终端。
+              资产自身的设置优先；仅影响新建的终端。
             </p>
           </div>
           <LocalHelperSettings />
@@ -604,8 +604,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               <div className="text-[12.5px] text-neutral-200" data-setting="osc52">允许远程主机写入剪贴板（OSC 52）</div>
               <p className="nx-hint mt-0.5">
                 {terminalOsc52
-                  ? "开启后，远程主机可以通过转义序列直接改写你的系统剪贴板，不再逐次询问。仅在可信的主机与网络环境下保持开启。"
-                  : "默认关闭。远程主机每次请求写剪贴板时都会先询问你，可选择允许本次、允许本会话或拒绝。"}
+                  ? "开启后，远程主机可通过转义序列直接改写系统剪贴板，且不再逐次询问。请仅在可信的主机与网络环境中开启。"
+                  : "默认关闭。远程主机每次请求写入剪贴板时都会先询问，可选择允许本次、允许本会话或拒绝。"}
               </p>
             </div>
             <input
@@ -618,7 +618,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                   setTerminalOsc52(false);
                   return;
                 }
-                void ask("允许远程主机直接写入你的剪贴板？\n开启后将不再逐次询问，恶意主机可能改写剪贴板内容。仅在可信的主机和网络下开启。", {
+                void ask("确定要允许远程主机直接写入剪贴板吗？\n开启后将不再逐次询问，恶意主机可能改写剪贴板内容。请仅在可信的主机与网络中开启。", {
                   title: "开启剪贴板写入",
                   kind: "warning",
                 }).then((ok) => {
@@ -628,8 +628,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             />
           </label>
           <div className="mt-3.5">
-            <div className="nx-setting-label mb-1.5" data-setting="close-action">关闭运行中的终端标签时</div>
-            <div className="nx-segment" role="group" aria-label="关闭运行中的终端标签时">
+            <div className="nx-setting-label mb-1.5" data-setting="close-action">关闭运行中的终端标签页时</div>
+            <div className="nx-segment" role="group" aria-label="关闭运行中的终端标签页时">
               {CLOSE_ACTION_OPTIONS.map((option) => (
                 <button
                   key={option.value}
@@ -644,12 +644,12 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </div>
             <p className="nx-hint mt-1.5">
               {terminalPrefs.closeAction === "ask" &&
-                "每次关闭前询问：转到后台运行（可在「后台会话」接管）或直接关闭结束进程。弹窗里勾选「以后都按此选择」将记住该选择。"}
-              {terminalPrefs.closeAction === "kill" && "直接结束进程并关闭标签，不再询问。"}
-              {terminalPrefs.closeAction === "detach" && "进程转入后台继续运行，可在「后台会话」中随时接管。"}
+                "每次关闭前询问：转到后台运行（可在「后台会话」中接管）或直接关闭并结束进程。在对话框中勾选「以后都按此选择」可记住该选择。"}
+              {terminalPrefs.closeAction === "kill" && "直接结束进程并关闭标签页，不再询问。"}
+              {terminalPrefs.closeAction === "detach" && "进程转入后台继续运行，可随时在「后台会话」中接管。"}
             </p>
             <p className="nx-hint mt-1.5">
-              以上策略适用于支持后台的交互终端；本机后台终端仅在宿主应用运行期间保留，不是 durable SSH。
+              以上策略适用于支持后台运行的交互终端。本机后台终端仅在应用运行期间保留，不等同于持久 SSH 终端。
             </p>
           </div>
           <div className="mt-3.5">
@@ -690,7 +690,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               onChange={(value) => setTerminalScrollback(normalizeTerminalScrollback(Number(value)))}
             />
             <p className="nx-hint mt-1.5">
-              历史仅保存在本机；调小后会丢弃最早的行。持久终端的更早输出由下方上限单独控制。
+              历史仅保存在本机；调小后将丢弃最早的行。持久终端的更早输出由下方的上限单独控制。
             </p>
           </div>
           <div className="mt-3.5">
@@ -716,7 +716,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </div>
             <p className="nx-hint mt-1.5">
               超出后丢弃最早的输出，只影响新开的持久终端，随账号同步。
-              {!durableHistoryAccount && "当前没有账号，使用默认上限。"}
+              {!durableHistoryAccount && "当前未登录账号，使用默认上限。"}
             </p>
           </div>
           <div className="mt-3.5">
@@ -736,7 +736,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </div>
             <p className="nx-hint mt-1.5">
               {terminalPrefs.linkActivation === "modifier"
-                ? "按住 Ctrl（macOS 为 Cmd）单击链接打开；触屏可长按。"
+                ? "按住 Ctrl（macOS 为 Cmd）并单击链接可打开；触屏设备可长按。"
                 : "单击链接即打开。"}
               终端程序捕获鼠标时需同时按住 Shift。
             </p>
@@ -766,7 +766,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                 <div className="text-[12.5px] text-neutral-200" data-setting="close-to-tray">关闭时保留后台运行（最小化到托盘）</div>
                 <p className="nx-hint mt-0.5">
                   {closeToTray
-                    ? "关闭窗口后 NexTerm 保留在系统托盘中，终端会话保持连接；右键托盘图标可彻底退出。"
+                    ? "关闭窗口后 NexTerm 保留在系统托盘中，终端会话保持连接；右键单击托盘图标可完全退出。"
                     : "关闭窗口后直接退出 NexTerm，所有本机会话随之结束。"}
                 </p>
               </div>
@@ -782,7 +782,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
           <div className="mt-3.5">
             <div className="nx-setting-label mb-1.5" data-setting="quick-commands">快捷命令</div>
             <p className="nx-hint mb-2">
-              常用命令可在终端按键条的「命令」中一键发送；登录账号后在桌面和手机间同步。终端开启括号粘贴时按粘贴发送，多行内容发送前会确认。
+              常用命令可在终端按键条的「命令」中发送；登录账号后在桌面与移动设备间同步。终端开启括号粘贴时按粘贴方式发送，多行内容发送前将要求确认。
             </p>
             <QuickCommandsEditor />
           </div>
@@ -850,10 +850,10 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                     ) : (
                       <IconZap size={13} className="shrink-0" />
                     )}
-                    {testing ? "测试中…" : "测试当前模型连通性"}
+                    {testing ? "正在测试…" : "测试当前模型连通性"}
                   </button>
                   <span className="nx-hint">
-                    只能测试已生效的当前模型；未保存的草稿请用上方的「刷新模型列表」验证。
+                    仅可测试已生效的当前模型；未保存的修改请通过上方的「刷新模型列表」验证。
                   </span>
                 </div>
 

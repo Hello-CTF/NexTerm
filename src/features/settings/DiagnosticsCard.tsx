@@ -106,11 +106,11 @@ export function DiagnosticsCard() {
       if (mounted.current) setPacked((prev) => ({ ...prev, [capture.name]: result.path }));
       const next = await diagnosticsApi.status();
       if (mounted.current) setStatus(next);
-      return `已打包 ${capture.name}，压缩包在：${result.path}`;
+      return `已打包 ${capture.name}，压缩包位置：${result.path}`;
     });
 
   const remove = async (capture: DiagnosticsCapture) => {
-    if (!(await ask(`删除调试记录 ${capture.name}？\n\n文件夹和已打包的压缩包都会被删除，无法恢复。`, { kind: "warning" }))) return;
+    if (!(await ask(`确定要删除调试记录 ${capture.name} 吗？\n\n文件夹和已打包的压缩包将一并删除，且无法恢复。`, { kind: "warning" }))) return;
     await run("正在删除…", capture.name, async () => {
       const next = await diagnosticsApi.remove(capture.path);
       if (mounted.current) setStatus(next);
@@ -119,7 +119,7 @@ export function DiagnosticsCard() {
   };
 
   const clearAll = async () => {
-    if (!(await ask("清空全部调试记录？\n\n除本次正在记录的以外，所有文件夹和压缩包都会被删除，无法恢复。", { kind: "warning" }))) return;
+    if (!(await ask("确定要清空全部调试记录吗？\n\n除本次正在记录的以外，所有文件夹和压缩包将被删除，且无法恢复。", { kind: "warning" }))) return;
     await run("正在清空…", undefined, async () => {
       const next = await diagnosticsApi.clear();
       if (mounted.current) setStatus(next);
@@ -135,7 +135,7 @@ export function DiagnosticsCard() {
           <IconActivity size={15} className="text-neutral-400" />
           <span className="nx-card-title">诊断与调试</span>
         </div>
-        <div className="nx-hint">仅管理员可以使用调试模式。</div>
+        <div className="nx-hint">仅管理员可使用调试模式。</div>
       </section>
     );
   }
@@ -179,7 +179,7 @@ export function DiagnosticsCard() {
       )}
 
       <p className="nx-hint">
-        只在下次启动时生效，最长记录 30 分钟、约 200 MB，期间运行会稍慢。会记录性能数据、调试日志和系统信息，不含终端输入输出，密码、令牌、私钥已隐去。发送前请自行检查主机名、路径等信息。
+        仅在下次启动时生效，最长记录 30 分钟、约 200 MB，记录期间运行速度可能略有下降。将记录性能数据、调试日志和系统信息，不含终端输入输出，密码、令牌和私钥已隐去。发送前请自行检查主机名、路径等信息。
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {status?.armed ? (
@@ -212,7 +212,7 @@ export function DiagnosticsCard() {
       </div>
       {error && (
         <div className="nx-alert nx-alert-danger mt-3" role="alert">
-          未能完成：{error}（可稍后重试）
+          未能完成：{error}。请稍后重试。
         </div>
       )}
 

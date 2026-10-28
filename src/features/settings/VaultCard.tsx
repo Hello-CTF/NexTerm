@@ -46,7 +46,7 @@ export function VaultCard() {
       refreshVault();
       return true;
     } catch (e) {
-      pushToast("error", `${describeError(e)}。凭据没有改动，请检查后重试。`);
+      pushToast("error", `${describeError(e)}。凭据未改动，请检查后重试。`);
       return false;
     } finally {
       setBusy(false);
@@ -100,15 +100,15 @@ export function VaultCard() {
   };
 
   const disableVaultEncryption = async () => {
-    const ok = await ask("关闭加密？\n关闭后凭据改由系统级密钥保护，无需密码即可使用。");
+    const ok = await ask("确定要关闭加密吗？\n关闭后凭据改由系统级密钥保护，无需密码即可使用。");
     if (!ok) return;
     await run(() => vaultApi.initDpapi(""), "已关闭加密 · 凭据改由系统级密钥保护");
   };
 
   const disablePasswordProtection = async () => {
     const confirmText = systemProtection
-      ? "关闭密码保护？\n关闭后凭据改由系统级密钥保护，无需密码即可使用。"
-      : "关闭密码保护？\n关闭后凭据无需密码即可使用，但任何拿到数据目录的人都能解密。";
+      ? "确定要关闭密码保护吗？\n关闭后凭据改由系统级密钥保护，无需密码即可使用。"
+      : "确定要关闭密码保护吗？\n关闭后凭据无需密码即可使用，但任何获得数据目录的人均可解密。";
     if (!(await ask(confirmText))) return;
     const old = await promptText("输入当前保护密码：", "", { secret: true });
     if (old === null) return;
@@ -129,7 +129,7 @@ export function VaultCard() {
           ) : vault.mode === "not_init" ? (
             <span className="nx-badge nx-badge-amber">未初始化</span>
           ) : vaultPasswordless ? (
-            <span className="nx-badge nx-badge-amber">加密已启用 · 未设密码</span>
+            <span className="nx-badge nx-badge-amber">加密已启用 · 未设置密码</span>
           ) : (
             <span className="nx-badge">未开启</span>
           ))}
@@ -149,7 +149,7 @@ export function VaultCard() {
               : vault?.mode === "not_init"
                 ? "尚未初始化：启用保护后才能保存密码或私钥。"
                 : vaultPasswordless
-                  ? "已启用：凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密；设置密码后，每次启动需输入密码。"
+                  ? "已启用：凭据加密保存、无需密码即可使用，但任何获得数据目录的人均可解密；设置密码后，每次启动需输入密码。"
                   : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
           </p>
         </div>
@@ -177,7 +177,7 @@ export function VaultCard() {
             type="password"
             className="nx-input max-w-[240px]"
             aria-label="保护密码"
-            placeholder="设置保护密码（至少 8 位，留空则不设置）"
+            placeholder="设置保护密码（至少 8 位，留空表示不设置）"
             value={protPwd}
             autoComplete="off"
             disabled={busy}
@@ -203,7 +203,7 @@ export function VaultCard() {
             取消
           </button>
           <p className="nx-hint w-full text-[11px]">
-            保护密码仅用于此处凭据库，不会随账号同步。留空则不设密码，任何拿到数据目录的人都能解密；忘记密码后，已保存的凭据将无法恢复。
+            保护密码仅用于此处凭据库，不会随账号同步。留空则不设密码，任何获得数据目录的人均可解密；忘记密码后，已保存的凭据将无法恢复。
           </p>
         </div>
       )}
@@ -218,13 +218,13 @@ export function VaultCard() {
             onSubmit={changeVaultPassword}
             onCancel={() => setVaultPasswordOpen(false)}
           />
-          <p className="nx-hint mt-1.5 text-[11px]">保护密码只用于这台设备上的凭据库，忘记后已保存的凭据无法恢复。</p>
+          <p className="nx-hint mt-1.5 text-[11px]">保护密码仅用于本机的凭据库，忘记后已保存的凭据将无法恢复。</p>
         </div>
       )}
 
       {vault?.mode === "master" && !vaultPasswordOpen && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {!vaultPasswordless && <span className="nx-hint">锁定与解锁在「凭据」页</span>}
+          {!vaultPasswordless && <span className="nx-hint">锁定与解锁请在「凭据」页中操作</span>}
           <button
             type="button"
             className={`nx-btn nx-btn-sm ${vaultPasswordless ? "nx-btn-primary" : "nx-btn-outline"}`}
@@ -272,7 +272,7 @@ export function VaultCard() {
               type="button"
               className="nx-btn nx-btn-outline nx-btn-sm"
               disabled={busy || autoLockUnchanged}
-              title={autoLockUnchanged ? "没有改动" : undefined}
+              title={autoLockUnchanged ? "尚无改动" : undefined}
               onClick={saveAutoLock}
             >
               保存

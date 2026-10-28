@@ -113,7 +113,7 @@ function RuleScreenPicker({ onScreen }: { onScreen: (screen: StateRuleScreenDTO 
             onScreen(null);
           }}
         >
-          <option value="">{choices.length === 0 ? "没有打开的终端" : "选择终端…"}</option>
+          <option value="">{choices.length === 0 ? "暂无已打开的终端" : "选择终端…"}</option>
           {choices.map((choice) => (
             <option key={choice.appTabId} value={choice.appTabId}>
               {choice.label}
@@ -256,7 +256,7 @@ export function SessionRulesCard() {
   };
 
   const remove = async (rule: StateRuleDTO) => {
-    const ok = await ask(`删除状态规则「${rule.name}」？`, { title: "删除状态规则", kind: "warning" });
+    const ok = await ask(`确定要删除状态规则「${rule.name}」吗？`, { title: "删除状态规则", kind: "warning" });
     if (!ok) return;
     await run(() => stateRuleApi.delete(rule.id), "删除失败");
   };
@@ -303,7 +303,7 @@ export function SessionRulesCard() {
     }
     await run(async () => {
       const result = await stateRuleApi.import(parsed);
-      pushToast("success", `导入完成：新增 ${result.created} 条，更新 ${result.updated} 条，未变 ${result.unchanged} 条`);
+      pushToast("success", `导入完成：新增 ${result.created} 条，更新 ${result.updated} 条，未变更 ${result.unchanged} 条`);
     }, "导入失败");
   };
 
@@ -335,7 +335,7 @@ export function SessionRulesCard() {
         </button>
       </div>
       <p className="nx-hint mb-3">
-        屏幕底部或窗口标题匹配规则时，会话按规则显示为需要我、运行中、空闲或刚结束。规则按顺序尝试，第一条匹配的生效，主机规则先于全局规则；规则由持久终端在各主机上执行。在标签菜单选择「状态不对」或「这就是需要我」，可按当前屏幕起草规则。
+        屏幕底部或窗口标题与规则匹配时，会话将显示为需要我、运行中、空闲或刚结束。规则按顺序匹配，第一条匹配的规则生效，主机规则优先于全局规则；规则由持久终端在各主机上执行。在标签页菜单中选择「状态不对」或「这就是需要我」，可根据当前屏幕起草规则。
       </p>
 
       {error && (
@@ -453,7 +453,7 @@ export function SessionRulesCard() {
               )}
             </li>
           ))}
-          {visible.length === 0 && <li className="nx-hint py-2 text-[12px]">没有匹配的规则。</li>}
+          {visible.length === 0 && <li className="nx-hint py-2 text-[12px]">无匹配的规则。</li>}
         </ol>
       )}
       {!sortable && rules && rules.length > 1 && <p className="nx-hint mt-2 text-[11.5px]">清空搜索后可调整顺序。</p>}

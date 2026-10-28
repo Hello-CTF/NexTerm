@@ -105,7 +105,7 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
         <span className="nx-badge">{current}</span>
       </div>
       <p className="nx-hint mb-3.5">
-        界面配色随主题切换；终端与代码编辑器有独立的主题和字号设置，默认深色，也可选择跟随界面主题。
+        界面配色随主题切换。终端与代码编辑器拥有独立的主题和字号设置，默认为深色，也可选择跟随界面主题。
       </p>
       <div className="nx-segment" role="group" aria-label="界面主题" data-setting="ui-theme">
         {THEME_OPTIONS.map((option) => (
@@ -287,7 +287,7 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
                 <IconRefresh size={11} />
                 恢复默认
               </button>
-              <span className="nx-hint min-w-0 text-[10.5px]">只重置主题与外观偏好，布局、凭据与模型档案不受影响。</span>
+              <span className="nx-hint min-w-0 text-[10.5px]">仅重置主题与外观偏好，布局、凭据与模型档案不受影响。</span>
             </div>
           </div>
         )}

@@ -64,7 +64,7 @@ describe("AI privacy settings", () => {
     expect(mounted.container.textContent).toContain("当前 NexTerm 服务端");
     expect(mounted.container.textContent).toContain("模型从官方渠道下载，不随安装包分发。");
     expect(mounted.container.textContent).not.toContain("Hugging Face");
-    expect(mounted.container.textContent).toContain("脱敏可能漏检或误报，不要把它当作唯一的保护。");
+    expect(mounted.container.textContent).toContain("脱敏可能漏检或误报，请勿将其作为唯一的保护措施。");
     expect(mounted.container.textContent).not.toContain("每台设备需单独下载");
     choose("下载模型精度", "FP32");
     mocks.download.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true, precision: "fp32" } });
@@ -148,7 +148,7 @@ describe("AI privacy settings", () => {
     state.selection = { available: false, error: "本地隐私模型文件缺失，请重新下载模型" };
     mocks.status.mockResolvedValue(state);
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("已启用脱敏，但所选模型不可用：本地隐私模型文件缺失，请重新下载模型。在恢复或关闭前，所有 AI 请求都会被阻止。"));
+    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("已启用脱敏，但所选模型不可用：本地隐私模型文件缺失，请重新下载模型。在恢复或关闭脱敏前，所有 AI 请求都将被阻止。"));
     await waitForRendered(() => expect(control("使用的本地隐私模型").textContent).toContain("（文件缺失）"));
     const toggle = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(toggle.disabled).toBe(false);
@@ -204,7 +204,7 @@ describe("AI privacy settings", () => {
     await waitForRendered(() => expect(button("删除").disabled).toBe(false));
     mocks.confirm.mockResolvedValue(false);
     click(button("删除"));
-    await waitForRendered(() => expect(mocks.confirm).toHaveBeenCalledWith("删除模型 AstrLink Guard v0.1.3 FP32（2.0 MiB）？"));
+    await waitForRendered(() => expect(mocks.confirm).toHaveBeenCalledWith("确定要删除模型 AstrLink Guard v0.1.3 FP32（2.0 MiB）吗？"));
     expect(mocks.remove).not.toHaveBeenCalled();
     mocks.confirm.mockResolvedValue(true);
     mocks.remove.mockResolvedValue({ ...baseline() });

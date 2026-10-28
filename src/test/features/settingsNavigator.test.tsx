@@ -237,7 +237,7 @@ describe("AI interception rule copy", () => {
     const text = document.getElementById("settings-ai-rules")?.textContent ?? "";
     expect(text).toContain("读写和自动执行模式要求确认");
     expect(text).toContain("只读和无人值守模式直接拒绝");
-    expect(text).toContain("不可逆操作（格式化磁盘、清空系统目录、删除数据库）会直接拒绝");
+    expect(text).toContain("不可逆操作（格式化磁盘、清空系统目录、删除数据库）将被直接拒绝");
     expect(text).not.toContain("规则命中 → 读写/完全静默先确认");
     expect(text).not.toContain("命中即拦截");
   });
@@ -285,7 +285,7 @@ describe("Unified login entry (Web logged out)", () => {
     expect(text).not.toContain("去登录");
     // The share card keeps its description but has no buttons
     const share = document.getElementById("settings-share")!;
-    expect(share.textContent).toContain("登录后可以把你接入的设备分享给其他注册用户");
+    expect(share.textContent).toContain("登录后可将已接入的受管设备分享给其他注册用户");
     expect(share.querySelectorAll("button").length).toBe(0);
     // The single login button opens the account gate
     click(loginButtons[0]);
