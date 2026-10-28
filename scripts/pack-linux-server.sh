@@ -26,7 +26,7 @@ while [ $# -gt 0 ]; do
       cat <<'PACK_HELP_EOF'
 Usage: scripts/pack-linux-server.sh [options]
 
-Package one full CGO_ENABLED=1 Go server tar.gz with both runtime units and
+Package one full static CGO_ENABLED=0 Go server tar.gz with both runtime units and
 all nine SSH target helpers. scripts/build.mjs owns compilation/versioning;
 scripts/e2e-harness retains --sync-only acceptance.
 
@@ -70,13 +70,12 @@ case "$ARCH:$FILE_INFO" in
   *) echo "ELF architecture does not match $ARCH: $FILE_INFO" >&2; exit 1 ;;
 esac
 GO_INFO="$(go version -m "$BIN")"
-printf '%s' "$GO_INFO" | grep -q 'CGO_ENABLED=1' || { echo "server was not built with CGO_ENABLED=1" >&2; exit 1; }
+printf '%s' "$GO_INFO" | grep -q 'CGO_ENABLED=0' || { echo "server was not built with CGO_ENABLED=0" >&2; exit 1; }
+case "$FILE_INFO" in *statically\ linked*|*static-pie\ linked*) ;; *) echo "server is not a static ELF binary: $FILE_INFO" >&2; exit 1 ;; esac
 export NEXTERM_RELEASE_VERSION="$VERSION"
-node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$BIN" "server-linux-$ARCH" linux "$ARCH" 1
+node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$BIN" "server-linux-$ARCH" linux "$ARCH" 0
 RUNTIME_DIR="$(dirname "$BIN")/ai-runtime-linux-$ARCH"
 node "$ROOT/scripts/lib/privacy-runtime.mjs" "$RUNTIME_DIR" linux "$ARCH" "$BIN.manifest.json"
-# The archive installs on RHEL 8 / Debian 11 / Ubuntu 20.04; refuse newer glibc symbol requirements.
-node "$ROOT/scripts/lib/elf-glibc.mjs" 2.28 "$BIN" "$RUNTIME_DIR/libonnxruntime.so"
 
 for unit in nexterm-server.service nexterm-onlyserver.service; do
   [ -f "$ROOT/deploy/systemd/$unit" ] || { echo "missing systemd unit: deploy/systemd/$unit" >&2; exit 1; }
@@ -123,11 +122,14 @@ package_full() {
   chmod 0644 "$OUT/$name.tar.gz"
 
   local archive_members
+  # Targets whose ONNX Runtime release has no library ship only the unavailable manifest.
+  local RUNTIME_LIBRARY_MEMBER=ai-runtime/libonnxruntime.so
+  if grep -q '"unavailable"' "$RUNTIME_DIR/runtime.json"; then RUNTIME_LIBRARY_MEMBER=ai-runtime/runtime.json; fi
   archive_members="$(tar -tzf "$OUT/$name.tar.gz")"
   for member in \
     nexterm-server \
     ai-runtime/runtime.json \
-    ai-runtime/libonnxruntime.so \
+    ${RUNTIME_LIBRARY_MEMBER} \
     nexterm-server.service \
     nexterm-onlyserver.service \
     install.sh \

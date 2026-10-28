@@ -12,8 +12,7 @@ Usage: bash lazycat/build.sh [-o FILE|--output FILE]
 
 Build the frontend, linux/amd64 server and nine SSH target helpers, then
 package from a temporary directory. Node/pnpm and Go build everything on the
-host; the CGO server also needs the pinned zig (NEXTERM_ZIG, or run
-node scripts/install-zig.mjs ~/.cache/nexterm-zig). The tracked package.yml remains at 0.0.0.
+host; the static server is built on the host. The tracked package.yml remains at 0.0.0.
 NEXTERM_RELEASE_VERSION overrides version resolution; otherwise an exact git
 tag is used, with 0.0.0 as the non-tag fallback. A relative output path is
 resolved against the caller's working directory.

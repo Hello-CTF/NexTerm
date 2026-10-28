@@ -228,7 +228,7 @@ tasks:
       - node scripts/build.mjs frontend --repro-check
 
   server:build:
-    summary: Build a stripped CGO Linux server against glibc 2.28 with pinned zig (NEXTERM_ZIG; node scripts/install-zig.mjs ~/.cache/nexterm-zig) and the ONNX Runtime privacy runtime; amd64/arm64 build from either Linux host
+    summary: Build a stripped static CGO_ENABLED=0 Linux server with the ONNX Runtime privacy runtime staged beside it; amd64/arm64 build from any host
     cmds:
       - node scripts/build.mjs server --release --repro-check --os={{.GOOS | default "linux"}} --arch={{.GOARCH | default "amd64"}}
 

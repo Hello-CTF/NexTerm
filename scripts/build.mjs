@@ -6,8 +6,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyRuntime, runtimeLibrary, fileDigest } from "./lib/privacy-runtime.mjs";
-import { assertGlibcFloor, maxVersion, LINUX_SERVER_GLIBC_FLOOR } from "./lib/elf-glibc.mjs";
-import { ZIG_VERSION } from "./install-zig.mjs";
 import { resolveMakensis } from "./lib/makensis.mjs";
 import { readHostHelperProtocolMetadata } from "../.github/scripts/helper-metadata.mjs";
 import { commitLabel, dirtyPaths, sourceState } from "./lib/mobile.mjs";
@@ -32,10 +30,9 @@ import {
 
 const HELP_TEXT = `#!/usr/bin/env node
 /**
- * Go/Wails delivery entry point. Desktop and server builds use CGO and stage the
- * checksum-pinned ONNX Runtime library in ai-runtime/ (no model weights are
- * bundled). Linux server builds link with zig ${ZIG_VERSION} (NEXTERM_ZIG or zig on
- * PATH; node scripts/install-zig.mjs DIR) against glibc ${LINUX_SERVER_GLIBC_FLOOR}. The Windows
+ * Go/Wails delivery entry point. Desktop and server builds stage the latest stable
+ * ONNX Runtime 1.x library (NEXTERM_ORT_VERSION pins one) in ai-runtime/ (no model
+ * weights are bundled); the Linux server is a static CGO_ENABLED=0 binary. The Windows
  * desktop needs a MinGW-w64 CC for the target; non-Windows hosts must set CC.
  * Artifact versions come from NEXTERM_RELEASE_VERSION (set from the release
  * tag in CI); the wails.json/package.json versions are 0.0.0 placeholders.
@@ -193,7 +190,7 @@ function assertTarget(kind, goos, goarch) {
 }
 
 function buildEnvironment(goos, goarch, kind) {
-  const cgo = kind === "desktop" || kind === "server" ? "1" : "0";
+  const cgo = kind === "desktop" ? "1" : "0";
   const target = kind === "helper" ? helperTarget(goos, goarch) : null;
   const env = {
     ...process.env,
@@ -620,45 +617,23 @@ function copyPrivacyRuntime(binary, destination, goos, goarch) {
   fs.cpSync(privacyRuntimeDirectory(binary, goos, goarch), destination, { recursive: true });
 }
 
-function privacyRuntimeAssertions(directory, goos, goarch, libraryDirectory = directory, { glibcFloor = false } = {}) {
+function privacyRuntimeAssertions(directory, goos, goarch, libraryDirectory = directory) {
   try {
-    const { manifest, library, sizeBytes } = verifyRuntime(directory, goos, goarch, undefined, libraryDirectory);
+    const { manifest, library, sizeBytes, unavailable } = verifyRuntime(directory, goos, goarch, undefined, libraryDirectory);
+    if (unavailable) return [{ ...assertion("privacy-runtime", true, `privacy runtime unavailable for ${goos}/${goarch}: ${unavailable}`), evidence: { unavailable, onnx_runtime: manifest.onnxRuntime ?? null } }];
     const file = path.join(libraryDirectory, library);
     const binary = inspectBinary(file);
     if (binary.architecture !== goarch || binary.format !== ({ darwin: "mach-o", linux: "elf", windows: "pe" })[goos]) throw new Error(`Privacy runtime architecture mismatch: ${library}`);
     const evidence = { library, onnx_runtime: manifest.onnxRuntime ?? null, size_bytes: sizeBytes, sha256: manifest.files[library] };
-    let detail = `ONNX Runtime ${evidence.onnx_runtime} ${library}: ${sizeBytes} bytes, architecture, SHA256 and third-party licenses verified`;
-    if (glibcFloor) {
-      evidence.max_glibc = assertGlibcFloor(file);
-      evidence.max_glibcxx = maxVersion(file, "GLIBCXX");
-      detail += `; requires GLIBC_${evidence.max_glibc} and GLIBCXX_${evidence.max_glibcxx}`;
-    }
+    const detail = `ONNX Runtime ${evidence.onnx_runtime} ${library}: ${sizeBytes} bytes, architecture, SHA256 and third-party licenses verified`;
     return [{ ...assertion("privacy-runtime", true, detail), evidence }];
   } catch (error) {
     return [assertion("privacy-runtime", false, error.message)];
   }
 }
 
-function linuxServerCompiler(goarch) {
-  const zig = process.env.NEXTERM_ZIG || "zig";
-  const version = output(zig, ["version"], { allowFailure: true })?.trim();
-  if (version !== ZIG_VERSION) {
-    die(`the CGO Linux server links against glibc ${LINUX_SERVER_GLIBC_FLOOR} with zig ${ZIG_VERSION}; found ${version || "no zig"} (install with: node scripts/install-zig.mjs ~/.cache/nexterm-zig, then set NEXTERM_ZIG to the printed path)`);
-  }
-  // With zig inside the checkout, -trimpath rewrites its path and the Go build
-  // ID then differs between the build and the cross-checkout reproduction.
-  if (path.isAbsolute(zig) && !path.relative(ROOT, zig).startsWith("..")) die(`NEXTERM_ZIG must live outside the checkout for reproducible builds: ${zig}`);
-  const target = `${goarch === "arm64" ? "aarch64" : "x86_64"}-linux-gnu.${LINUX_SERVER_GLIBC_FLOOR}`;
-  const quoted = /\s/.test(zig) ? `'${zig}'` : zig;
-  // zig's linker keeps C debug sections that embed toolchain paths; strip them
-  // so the release stays stripped and reproducible across checkouts.
-  const ldflags = [process.env.CGO_LDFLAGS, "-Wl,--strip-debug"].filter(Boolean).join(" ");
-  return { CC: `${quoted} cc -target ${target}`, CXX: `${quoted} c++ -target ${target}`, CGO_LDFLAGS: ldflags };
-}
-
 function compileEnvironment(goos, goarch, kind) {
   const env = buildEnvironment(goos, goarch, kind);
-  if (kind === "server" && goos === "linux") Object.assign(env, linuxServerCompiler(goarch));
   if (kind === "desktop" && goos === "windows" && HOST_OS !== "windows" && !process.env.CC) {
     die("the CGO Windows desktop cannot be cross-built without a MinGW-w64 C compiler; set CC for the target (for example x86_64-w64-mingw32-gcc) or build on Windows");
   }
@@ -814,15 +789,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
     result.push(assertion("binary-format", inspected.format === ({ windows: "pe", darwin: "mach-o", linux: "elf" })[goos], JSON.stringify(inspected)));
     result.push(assertion("binary-architecture", inspected.architecture === expectedGOARCH, `expected ${goos}/${goarch} (GOARCH=${expectedGOARCH}); actual ${inspected.format}/${inspected.architecture}`));
     if (kind === "desktop" && goos === "windows") result.push(assertion("windows-icon-resource", inspected.resourceRva > 0, inspected.resourceRva > 0 ? `PE resource directory RVA 0x${inspected.resourceRva.toString(16)}` : "PE resource directory is empty; the .syso icon resource was not linked"));
-    if (kind === "agent" && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
-    if (kind === "server" && goos === "linux") {
-      try {
-        const maximum = assertGlibcFloor(file);
-        result.push(assertion("linux-server-glibc-floor", true, `requires GLIBC_${maximum ?? "none"} <= GLIBC_${LINUX_SERVER_GLIBC_FLOOR}`));
-      } catch (error) {
-        result.push(assertion("linux-server-glibc-floor", false, error.message));
-      }
-    }
+    if ((kind === "agent" || kind === "server") && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
     if (kind === "helper" && goos === "linux") result.push(assertion("static-linux-helper", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
   } catch (error) {
     result.push(assertion("binary-format", false, String(error)));
@@ -844,7 +811,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
       });
     }
   }
-  if (kind === "desktop" || kind === "server") result.push(...privacyRuntimeAssertions(privacyRuntimeDirectory(file, goos, goarch), goos, goarch, undefined, { glibcFloor: kind === "server" && goos === "linux" }));
+  if (kind === "desktop" || kind === "server") result.push(...privacyRuntimeAssertions(privacyRuntimeDirectory(file, goos, goarch), goos, goarch));
   const moduleInfo = output("go", ["version", "-m", file], { allowFailure: true });
   result.push(assertion("cgo-boundary", Boolean(moduleInfo?.includes(`CGO_ENABLED=${cgo}`)), `expected CGO_ENABLED=${cgo} in go version -m`));
   if (target?.goarm) result.push(assertion("goarm", moduleInfo?.includes(`GOARM=${target.goarm}`) === true, `expected GOARM=${target.goarm} in go version -m`));
@@ -1041,7 +1008,7 @@ function packageAssertions(kind, file, goos, goarch) {
       checks.push(assertion("server-archive-helper-extract", extracted !== null, "all nine helpers must extract from the server archive"));
       if (extracted !== null) {
         checks.push(...packagedHelperAssertions(work, root, true));
-        checks.push(...privacyRuntimeAssertions(path.join(work, root, "ai-runtime"), goos, goarch, undefined, { glibcFloor: true }));
+        checks.push(...privacyRuntimeAssertions(path.join(work, root, "ai-runtime"), goos, goarch));
       }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
@@ -1277,8 +1244,11 @@ function packageDarwin(binary, goarch) {
   const runtimeDirectory = path.join(app, "Contents/Frameworks/ai-runtime");
   const runtimeResources = path.join(app, "Contents/Resources/ai-runtime");
   copyPrivacyRuntime(binary, runtimeResources, "darwin", goarch);
-  fs.mkdirSync(runtimeDirectory, { recursive: true });
-  fs.renameSync(path.join(runtimeResources, runtimeLibrary("darwin")), path.join(runtimeDirectory, runtimeLibrary("darwin")));
+  const runtimeAvailable = fs.existsSync(path.join(runtimeResources, runtimeLibrary("darwin")));
+  if (runtimeAvailable) {
+    fs.mkdirSync(runtimeDirectory, { recursive: true });
+    fs.renameSync(path.join(runtimeResources, runtimeLibrary("darwin")), path.join(runtimeDirectory, runtimeLibrary("darwin")));
+  }
   const icon = path.join(ROOT, "public/brand/icon.icns");
   if (!fs.existsSync(icon)) die("macOS icon.icns asset is missing");
   fs.copyFileSync(icon, path.join(app, "Contents/Resources/icon.icns"));
@@ -1293,7 +1263,7 @@ function packageDarwin(binary, goarch) {
   const runtimeManifestPath = path.join(runtimeResources, "runtime.json");
   const runtimeManifest = loadManifest(runtimeManifestPath);
   runtimeManifest.unsigned_manifest_sha256 = fileDigest(runtimeManifestPath);
-  runtimeManifest.files[runtimeLibrary("darwin")] = fileDigest(path.join(runtimeDirectory, runtimeLibrary("darwin")));
+  if (runtimeAvailable) runtimeManifest.files[runtimeLibrary("darwin")] = fileDigest(path.join(runtimeDirectory, runtimeLibrary("darwin")));
   fs.writeFileSync(runtimeManifestPath, `${JSON.stringify(runtimeManifest, null, 2)}\n`);
   run("codesign", [...signArgs, app]);
   run("codesign", ["--verify", "--deep", "--strict", app]);

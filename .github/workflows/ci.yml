@@ -13,6 +13,10 @@ on:
         description: "Non-secret minisign updater public key embedded in release desktop binaries"
         required: false
         type: string
+      ort_version:
+        description: "ONNX Runtime version resolved once by the caller; empty resolves the latest stable 1.x here"
+        required: false
+        type: string
     secrets:
       NEXTERM_ANDROID_KEYSTORE_BASE64:
         required: false
@@ -47,6 +51,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       version: ${{ steps.resolve.outputs.version }}
+      ort-version: ${{ steps.toolchain.outputs.ort_version }}
       native-matrix: ${{ steps.plan.outputs.matrix }}
       scope: ${{ steps.plan.outputs.scope }}
     steps:
@@ -61,6 +66,15 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: node .github/scripts/ci-plan.mjs
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Resolve the latest ONNX Runtime once for every job
+        id: toolchain
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXTERM_ORT_VERSION: ${{ inputs.ort_version || vars.NEXTERM_ORT_VERSION }}
+        run: node scripts/resolve-toolchain.mjs >> "$GITHUB_OUTPUT"
       - id: resolve
         env:
           INPUT_VERSION: ${{ inputs.release_version }}
@@ -84,6 +98,8 @@ jobs:
     timeout-minutes: 15
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      NEXTERM_ORT_VERSION: ${{ needs.version.outputs.ort-version }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -122,6 +138,8 @@ jobs:
     timeout-minutes: 20
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      NEXTERM_ORT_VERSION: ${{ needs.version.outputs.ort-version }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -296,6 +314,8 @@ jobs:
     timeout-minutes: 60
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      NEXTERM_ORT_VERSION: ${{ needs.version.outputs.ort-version }}
+      GITHUB_TOKEN: ${{ github.token }}
       NEXTERM_RELEASE_REF: ${{ github.ref }}
       NEXTERM_MINISIGN_PUBLIC_KEY: ${{ inputs.updater_public_key }}
     strategy:
@@ -313,12 +333,6 @@ jobs:
         with:
           go-version: 1.27.3
           cache: true
-      - name: Install the pinned Zig linker for the glibc 2.28 Linux server
-        if: matrix.os == 'linux' && contains(matrix.kinds, 'server')
-        run: |
-          zig="$(node scripts/install-zig.mjs "$RUNNER_TEMP/zig")"
-          "$zig" version
-          echo "NEXTERM_ZIG=$zig" >> "$GITHUB_ENV"
       - name: Install the Windows CGO compiler
         if: matrix.os == 'windows' && contains(matrix.kinds, 'desktop')
         shell: pwsh
@@ -446,6 +460,8 @@ jobs:
     timeout-minutes: 60
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      NEXTERM_ORT_VERSION: ${{ needs.version.outputs.ort-version }}
+      GITHUB_TOKEN: ${{ github.token }}
     strategy:
       fail-fast: false
       matrix:
@@ -538,6 +554,8 @@ jobs:
     timeout-minutes: 60
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      NEXTERM_ORT_VERSION: ${{ needs.version.outputs.ort-version }}
+      GITHUB_TOKEN: ${{ github.token }}
     strategy:
       fail-fast: false
       matrix:
@@ -675,6 +693,8 @@ jobs:
     timeout-minutes: 60
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      NEXTERM_ORT_VERSION: ${{ needs.version.outputs.ort-version }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

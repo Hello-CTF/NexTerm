@@ -17,7 +17,7 @@ Reply in the user's language. Keep this file limited to rules that prevent regre
 - `scripts`, `.github/scripts`, `.github/workflows`, `Taskfile.yml`: builds, tests, CI, and releases.
 - `website`: GitHub Pages site. `lazycat`: Lazycat package. `build`: native build configuration and mobile projects. `deploy/systemd`: server units.
 
-Toolchain: Go 1.27, Node 24+, pnpm; Linux server builds also need the pinned zig from `scripts/install-zig.mjs` (glibc 2.28 floor). Exact versions and commands live in `go.mod`, `package.json`, `scripts/install-zig.mjs`, and the workflows.
+Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a static `CGO_ENABLED=0` binary, and the privacy runtime uses the latest ONNX Runtime 1.x (>= 1.23) resolved by `scripts/ai-privacy-runtime.mjs`; `NEXTERM_ORT_VERSION` pins a version. Exact versions and commands live in `go.mod`, `package.json`, `scripts/install-zig.mjs`, and the workflows.
 
 ## Working Rules
 

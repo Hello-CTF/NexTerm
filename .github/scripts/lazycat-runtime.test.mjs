@@ -43,7 +43,7 @@ esac
 `,
     file: `#!/bin/sh
 case "$2" in
-  */nexterm-server) printf 'ELF 64-bit x86-64 dynamically linked\\n' ;;
+  */nexterm-server) printf 'ELF 64-bit x86-64 statically linked\\n' ;;
   *linux-amd64) printf 'ELF 64-bit x86-64 statically linked\\n' ;;
   *linux-arm64) printf 'ELF 64-bit aarch64 statically linked\\n' ;;
   *linux-armv7) printf 'ELF 32-bit ARM statically linked\\n' ;;
@@ -52,21 +52,21 @@ case "$2" in
 esac
 `,
     go: `#!/bin/sh
-case "$3" in */nexterm-server) printf 'CGO_ENABLED=1\\n' ;; *) printf 'CGO_ENABLED=0\\n' ;; esac
+printf 'CGO_ENABLED=0\\n'
 `,
   };
   for (const [name, content] of Object.entries(scripts)) fs.writeFileSync(path.join(root, "bin", name), content, { mode: 0o755 });
   return { root, run: () => spawnSync("bash", [path.join(root, "lazycat/image/build-server.sh")], { cwd: root, encoding: "utf8", env: { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, REAL_NODE: process.execPath, FIXTURE_ROOT: root, NEXTERM_HELPERS_DIR: path.join(root, "helpers"), LZC_ARCH: "amd64", LZC_VERSION: "0.0.0", NEXTERM_RELEASE_VERSION: "", SOURCE_DATE_EPOCH: "1" } }) };
 }
 
-test("Lazycat stages the verified CGO server runtime and retains static helper checks", (t) => {
+test("Lazycat stages the verified static server runtime and retains static helper checks", (t) => {
   const { root, run } = fixture(t);
   const result = run();
   assert.equal(result.status, 0, result.stderr + result.stdout);
   const runtime = path.join(root, "lazycat/image-context/ai-runtime");
   assert.equal(fs.readFileSync(path.join(runtime, "libonnxruntime.so"), "utf8"), "libonnxruntime.so");
   assert.equal(fs.readFileSync(path.join(runtime, "licenses/ASTRLINK-LICENSE"), "utf8"), "licenses/ASTRLINK-LICENSE");
-  assert.match(fs.readFileSync(path.join(root, "verified"), "utf8"), /server-linux-amd64 linux amd64 1/);
+  assert.match(fs.readFileSync(path.join(root, "verified"), "utf8"), /server-linux-amd64 linux amd64 0/);
   assert.match(fs.readFileSync(path.join(root, "server-build-args"), "utf8"), /server --release --os=linux --arch=amd64/);
 });
 
