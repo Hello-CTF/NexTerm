@@ -175,7 +175,7 @@ function RuleEditor({
           取消
         </button>
         <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={!canSave} onClick={() => void save()}>
-          {saving ? "保存中…" : "保存"}
+          {saving ? "正在保存…" : "保存"}
         </button>
       </div>
     </div>
@@ -377,9 +377,9 @@ export function SessionRulesCard() {
       )}
 
       {rules === null ? (
-        !error && <div className="nx-hint py-2 text-[12px]">读取中…</div>
+        !error && <div className="nx-hint py-2 text-[12px]">正在读取…</div>
       ) : rules.length === 0 ? (
-        <div className="nx-hint py-2 text-[12px]">还没有状态规则。</div>
+        <div className="nx-hint py-2 text-[12px]">暂无状态规则。</div>
       ) : (
         <ol className="flex flex-col gap-1.5" aria-label="状态规则">
           {visible.map(({ rule, index }) => (
@@ -461,7 +461,7 @@ export function SessionRulesCard() {
       <div className="mt-4">
         <div className="nx-setting-label mb-1.5" data-setting="state-rules-status">各主机的规则状态</div>
         {statuses.length === 0 ? (
-          <p className="nx-hint text-[12px]">还没有主机使用过持久终端，暂无规则状态。</p>
+          <p className="nx-hint text-[12px]">尚无主机使用持久终端，暂无规则状态。</p>
         ) : (
           <ul className="flex flex-col gap-1" aria-label="各主机的规则状态">
             {statuses.map((status) => (

@@ -359,7 +359,7 @@ describe("SkillsCard", () => {
 
   it("shows an empty hint when no skills exist", async () => {
     mounted = mount(createElement(SkillsCard, { api: createSkillsMockBackend([]).apiFor("owner-a") }));
-    await expectText(mounted.container, "还没有技能");
+    await expectText(mounted.container, "暂无技能");
   });
 
   it("surfaces a list failure with a working retry", async () => {
@@ -507,7 +507,7 @@ describe("SkillsCard", () => {
     await flush();
     expect(mounted.container.querySelector('textarea[aria-label="技能内容"]')).toBeNull();
     expect(apiB.saveOverride).not.toHaveBeenCalled();
-    await expectText(mounted.container, "还没有技能");
+    await expectText(mounted.container, "暂无技能");
     expect(mounted.container.textContent).not.toContain("alpha-skill");
   });
 
@@ -552,7 +552,7 @@ describe("SkillsCard", () => {
 
     expect(apiA.list).toHaveBeenCalledTimes(1);
     expect(toast).not.toHaveBeenCalledWith("success", expect.anything());
-    await expectText(mounted.container, "还没有技能");
+    await expectText(mounted.container, "暂无技能");
   });
 
   it("hides owner-A rows while owner B's list is still loading", async () => {
@@ -570,7 +570,7 @@ describe("SkillsCard", () => {
     expect(mounted.container.textContent).not.toContain("alpha-skill");
     expect(mounted.container.textContent).toContain("读取中…");
     slow.resolve([]);
-    await expectText(mounted.container, "还没有技能");
+    await expectText(mounted.container, "暂无技能");
   });
 });
 

@@ -337,7 +337,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
   it("shows the shared console title, status copy and deletion caveats in the web console", async () => {
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("个对象"));
+    await flushUntil(() => text().includes("项数据"));
     const titles = [...mounted.container.querySelectorAll(".nx-card-title")].map((el) => el.textContent);
     expect(titles).toContain("账号同步");
     expect(text()).toContain("自动同步");
@@ -373,14 +373,14 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("服务端对象 a-1 解密失败"));
+    await flushUntil(() => text().includes("服务端数据 a-1 解密失败"));
     expect(text()).toContain("已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复");
     expect(text()).toContain("无法解密");
-    expect(text()).toContain("服务端 1 个对象");
+    expect(text()).toContain("服务端共 1 项数据");
     expect(text()).toContain("待推送 0 项");
     await runAutoSync();
     expect(mocks.syncPush).not.toHaveBeenCalled();
-    expect(text()).toContain("服务端对象 a-1 解密失败");
+    expect(text()).toContain("服务端数据 a-1 解密失败");
     expect(text()).toContain("无法解密");
   });
 
@@ -405,7 +405,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     const { runWebSync } = await import("../features/settings/SyncCard");
     const result = await runWebSync(new Uint8Array(DEK), { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false });
 
-    expect(result?.warnings).toContain("服务端对象 a-1 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复");
+    expect(result?.warnings).toContain("服务端数据 a-1 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复");
     expect(result?.pushed).toBe(0);
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -423,13 +423,13 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("服务端对象 cloud-only 解密失败"));
+    await flushUntil(() => text().includes("服务端数据 cloud-only 解密失败"));
     expect(text()).toContain("本次对比没有可用的同 ID 本机副本，可在对比详情中重试读取或确认清除服务端副本");
     expect(text()).toContain("无法解密");
-    expect(text()).toContain("服务端 1 个对象");
+    expect(text()).toContain("服务端共 1 项数据");
     await runAutoSync();
     await flushUntil(() => mocks.syncIds.mock.calls.some(([head]) => head === "head-1"));
-    expect(text()).toContain("服务端对象 cloud-only 解密失败");
+    expect(text()).toContain("服务端数据 cloud-only 解密失败");
     expect(text()).toContain("无法解密");
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -450,12 +450,12 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
 
     mounted = mountSyncCard();
     openDetails();
-    await flushUntil(() => text().includes("服务端对象 budget-b 解密失败"));
+    await flushUntil(() => text().includes("服务端数据 budget-b 解密失败"));
 
-    expect(text()).toContain("服务端对象 budget-a 解密失败");
+    expect(text()).toContain("服务端数据 budget-a 解密失败");
     expect(mocks.syncPull).toHaveBeenCalledWith(88, ["budget-a", "budget-b"]);
     expect(mocks.syncPull).toHaveBeenCalledWith(88, ["budget-b"]);
-    expect(text()).toContain("服务端 2 个对象");
+    expect(text()).toContain("服务端共 2 项数据");
   });
 
   it("reports an index/pull head change instead of silently omitting a cloud row", async () => {
@@ -468,10 +468,10 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     });
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("服务端对象在读取期间发生变化"));
+    await flushUntil(() => text().includes("服务端数据在读取期间发生变化"));
 
     expect(mocks.syncPull).toHaveBeenCalledWith(5, ["changing"]);
-    expect(text()).not.toContain("本机与服务端都还没有可同步的内容");
+    expect(text()).not.toContain("本机与服务端均暂无可同步的内容");
   });
 
   it.each([
@@ -491,7 +491,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     openDetails();
     await flushUntil(() => text().includes("同步失败："));
 
-    expect(text()).not.toContain(`服务端对象 ${id} 解密失败`);
+    expect(text()).not.toContain(`服务端数据 ${id} 解密失败`);
     expect(text()).not.toContain("清除服务端副本");
     expect(mocks.syncDelete).not.toHaveBeenCalled();
   });
@@ -622,7 +622,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     currentBlob = readableBlob;
     currentHead = "head-2";
     clickButton(mounted.container, "用本机副本修复");
-    await flushUntil(() => text().includes("服务端对象在对比后发生变化"));
+    await flushUntil(() => text().includes("服务端数据在对比后发生变化"));
 
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -681,7 +681,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     await flushUntil(() => text().includes(action));
     replaced = true;
     clickButton(mounted.container, action);
-    await flushUntil(() => text().includes("服务端对象在对比后发生变化"));
+    await flushUntil(() => text().includes("服务端数据在对比后发生变化"));
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush).not.toHaveBeenCalled();
@@ -781,7 +781,7 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     clickButton(mounted.container, "清除服务端副本");
     await flushUntil(() => mocks.syncDelete.mock.calls.length === 1);
     expect(mocks.syncDelete).toHaveBeenCalledWith("head-1", "cloud-only", "hash-1");
-    await flushUntil(() => text().includes("本机与服务端都还没有可同步的内容"));
+    await flushUntil(() => text().includes("本机与服务端均暂无可同步的内容"));
   });
 
   it("refuses cloud deletion when a locked local credential makes collection incomplete", async () => {

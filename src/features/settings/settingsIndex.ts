@@ -127,6 +127,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "terminal-scrollback", section: "settings-terminal", label: "终端回滚行数", description: "每个终端在这台设备上保留的滚动历史行数，不随账号同步", keywords: ["scrollback", "history", "buffer", "lines", "滚动", "回滚", "历史", "行数"] },
   { id: "terminal-durable-history", section: "settings-terminal", label: "持久终端历史上限", description: "主机为每个新开的持久终端保留的输出量，随账号同步", keywords: ["history", "durable", "limit", "quota", "scrollback", "历史", "持久", "上限", "配额"] },
   { id: "quick-commands", section: "settings-terminal", label: "快捷命令", description: "在终端按键条中一键发送的常用命令，随账号同步", keywords: ["quick command", "snippet", "macro", "命令", "常用命令", "片段", "按键条"] },
+  { id: "close-to-tray", section: "settings-terminal", label: "关闭时保留后台运行", description: "关闭窗口后最小化到系统托盘（仅 Windows 桌面版）", keywords: ["tray", "minimize", "background", "托盘", "最小化", "后台运行", "退出"] },
   { id: "terminal-link-activation", section: "settings-terminal", label: "链接打开方式", description: "Ctrl/Cmd+单击或单击打开终端中的链接", keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", "链接", "超链接", "单击"] },
   { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: "多行粘贴确认", description: "程序未开启括号粘贴时、每次或从不在粘贴多行文本前确认，随账号同步", keywords: ["paste", "bracketed paste", "括号粘贴", "multiline", "multi-line", "confirm", "clipboard", "粘贴", "多行", "确认", "提示", "剪贴板"] },
   { id: "system-notifications", section: "settings-terminal", label: "系统通知", description: "会话需要你或长命令结束时在此设备弹出系统通知", keywords: ["notification", "notify", "bell", "inbox", "osc9", "通知", "系统通知", "响铃", "铃铛", "收件箱"] },

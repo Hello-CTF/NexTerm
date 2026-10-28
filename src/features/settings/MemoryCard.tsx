@@ -389,7 +389,7 @@ export function MemoryCard() {
           </div>
         )
       ) : topics.length === 0 ? (
-        <div className="nx-hint py-2 text-[12px]">还没有记忆。新建后，可在 AI 运行时使用。</div>
+        <div className="nx-hint py-2 text-[12px]">暂无记忆。新建后，AI 运行时可以使用。</div>
       ) : (
         <div className="flex flex-col gap-2">
           {topics.map((t) => (

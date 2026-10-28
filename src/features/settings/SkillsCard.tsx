@@ -258,7 +258,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        技能是你写给 AI 的操作手册。AI 会根据「什么时候用」自动判断要不要使用；在 AI 对话框输入 <code>/</code> 也可以直接选一个技能。
+        技能是提供给 AI 的操作手册。AI 会根据「适用场景」自动判断是否使用；在 AI 对话框输入 <code>/</code> 也可以直接选择技能。
       </p>
 
       {draft === null ? (
@@ -304,7 +304,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               value={draft.description}
               onChange={(e) => setDraft({ ...draft, description: e.target.value })}
             />
-            <span className="nx-hint text-[11px]">AI 靠这一句判断要不要使用这个技能，写清楚适用的场景</span>
+            <span className="nx-hint text-[11px]">AI 据此判断是否使用该技能，请写明适用场景</span>
           </label>
           <label className="flex flex-col gap-1 text-[11.5px] text-neutral-400">
             内容
@@ -352,7 +352,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
           </div>
         )
       ) : visibleEntries.length === 0 ? (
-        draft === null && <div className="nx-hint py-2 text-[12px]">还没有技能。把你常用的排查或运维步骤写成技能，AI 遇到类似任务时会照着做。</div>
+        draft === null && <div className="nx-hint py-2 text-[12px]">暂无技能。可将常用的排查或运维步骤写成技能，AI 遇到类似任务时将按其执行。</div>
       ) : (
         <div className="flex flex-col gap-1.5">
           {visibleEntries.map((entry) => (
@@ -377,7 +377,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               </div>
               <button
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                title="编辑这个技能"
+                title="编辑该技能"
                 aria-label={`编辑技能 ${entry.name}`}
                 onClick={() => void openEdit(entry)}
               >
@@ -398,7 +398,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               ) : (
                 <button
                   className="nx-icon-btn nx-icon-btn-sm is-danger shrink-0"
-                  title="删除这个技能"
+                  title="删除该技能"
                   aria-label={`删除技能 ${entry.name}`}
                   disabled={busyName !== null}
                   onClick={() => void remove(entry)}

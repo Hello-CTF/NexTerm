@@ -126,7 +126,7 @@ describe("MemoryCard", () => {
     mocks.index.mockResolvedValue([]);
     mounted = mount(createElement(MemoryCard));
     await flush();
-    expect(mounted.container.textContent).toContain("还没有记忆");
+    expect(mounted.container.textContent).toContain("暂无记忆");
   });
 
   it("surfaces a list failure with a working retry", async () => {
@@ -291,7 +291,7 @@ describe("MemoryCard", () => {
     expect(mocks.delete).toHaveBeenCalledWith("m-1", 2);
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已删除"));
     expect(mocks.index).toHaveBeenCalledTimes(2);
-    expect(mounted.container.textContent).toContain("还没有记忆");
+    expect(mounted.container.textContent).toContain("暂无记忆");
   });
 
   it("keeps the entry and reports when the delete itself fails", async () => {
@@ -369,13 +369,13 @@ describe("MemoryCard", () => {
     mocks.index.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("disk failure"));
     mounted = mount(createElement(MemoryCard));
     await flush();
-    expect(mounted.container.textContent).toContain("还没有记忆");
+    expect(mounted.container.textContent).toContain("暂无记忆");
 
     clickButton(mounted.container, "刷新");
     await flush();
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("disk failure");
-    expect(text).not.toContain("还没有记忆");
+    expect(text).not.toContain("暂无记忆");
 
     clickButton(mounted.container, "重试");
     await flush();

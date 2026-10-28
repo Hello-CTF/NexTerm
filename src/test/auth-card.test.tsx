@@ -74,7 +74,7 @@ describe("AuthCard signed-out account card", () => {
     seed({ initialized: false, auth: "loopback" });
     mounted = mountCard();
     await flush();
-    expect(mounted.container.textContent).toContain("这台服务器还没有任何账号");
+    expect(mounted.container.textContent).toContain("这台服务器尚无任何账号");
     expect(mounted.container.textContent).toContain("当前允许匿名使用");
     clickButton(mounted.container, "初始化账号");
     expect(useAuth.getState().gate).toBe("setup");
@@ -84,7 +84,7 @@ describe("AuthCard signed-out account card", () => {
     seed({ initialized: false, auth: "on" });
     mounted = mountCard();
     await flush();
-    expect(mounted.container.textContent).toContain("这台服务器还没有任何账号");
+    expect(mounted.container.textContent).toContain("这台服务器尚无任何账号");
     expect(mounted.container.textContent).not.toContain("当前允许匿名使用");
     clickButton(mounted.container, "初始化账号");
     expect(useAuth.getState().gate).toBe("setup");

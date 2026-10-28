@@ -440,7 +440,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       )}
       {shares === null && !listError && <div className="nx-hint py-1.5 text-[11.5px]">分享数据加载中…</div>}
       {shares !== null && shares.length === 0 && !listError && (
-        <div className="nx-hint py-1.5 text-[11.5px]">还没有主机分享。</div>
+        <div className="nx-hint py-1.5 text-[11.5px]">暂无主机分享。</div>
       )}
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">

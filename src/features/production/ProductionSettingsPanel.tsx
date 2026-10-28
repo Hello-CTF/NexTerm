@@ -145,7 +145,7 @@ export function ProductionSettingsPanel() {
         <span className="nx-badge" title="这些设置只对当前登录的账号生效，不影响其他账号">仅对当前账号生效</span>
       </div>
       <p className="nx-hint mb-3">
-        防止在生产主机上误操作。对生产主机执行会改动系统的操作（向多个终端广播输入、批量执行命令、Docker 变更、AI 执行命令）时，会弹出确认框，需要手动输入环境名才能继续。这个确认无法在设置中关闭。
+        防止在生产主机上误操作。对生产主机执行会改动系统的操作（向多个终端广播输入、批量执行命令、Docker 变更、AI 执行命令）时，会弹出确认框，需手动输入环境名才能继续。该确认无法在设置中关闭。
       </p>
       <p className="nx-hint mb-3">
         怎样让主机算作生产环境：给主机加标签 <code>production</code> 或 <code>prod</code>，始终生效；其他名称则在主机标签里写 <code>env:名称</code>，再把该名称添加到下面的列表。
@@ -166,7 +166,7 @@ export function ProductionSettingsPanel() {
       ) : (
         <>
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
-            {names.length === 0 && <span className="nx-hint">还没有自定义名称。目前只有带 production 或 prod 标签的主机按生产环境对待；需要更多环境时，在下方输入名称并点击添加。</span>}
+            {names.length === 0 && <span className="nx-hint">暂无自定义名称。目前只有带 production 或 prod 标签的主机按生产环境对待；需要更多环境时，在下方输入名称并点击添加。</span>}
             {names.map((name) => (
               <span key={name} className="nx-chip" title={name}>
                 <span className="truncate">{name}</span>

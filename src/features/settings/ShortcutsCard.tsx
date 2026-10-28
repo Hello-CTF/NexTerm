@@ -64,7 +64,7 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
   };
 
   const resetAll = async () => {
-    const ok = await ask("恢复全部快捷键的默认设置？\n你自定义的所有快捷键都会被重置。", { title: "全部恢复默认", kind: "warning" });
+    const ok = await ask("恢复全部快捷键的默认设置？\n所有自定义快捷键将被重置。", { title: "全部恢复默认", kind: "warning" });
     if (ok) resetAllKeybindings();
   };
 

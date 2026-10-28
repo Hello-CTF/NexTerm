@@ -84,7 +84,9 @@ describe("SettingsView vault idle auto-lock", () => {
     await flushUntil(() => autoLockInput() !== null);
     expect(autoLockInput()!.value).toBe("30");
     setInputValue(autoLockInput()!, "5");
-    clickButton(mounted.container, "保存");
+    await act(async () => {
+      clickButton(mounted!.container, "保存");
+    });
     await flushUntil(() => mocks.setAutoLock.mock.calls.length > 0);
     expect(mocks.setAutoLock).toHaveBeenCalledWith(5);
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
@@ -108,11 +110,13 @@ describe("SettingsView vault idle auto-lock", () => {
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => autoLockInput() !== null);
     setInputValue(autoLockInput()!, "0");
-    clickButton(mounted.container, "保存");
+    await act(async () => {
+      clickButton(mounted!.container, "保存");
+    });
     await flushUntil(() => mocks.setAutoLock.mock.calls.length > 0);
     expect(mocks.setAutoLock).toHaveBeenCalledWith(0);
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
-    expect(mocks.toast).toHaveBeenCalledWith("success", "已禁用闲置自动锁定");
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭闲置自动锁定");
   });
 
   it("rejects out-of-range and non-integer input without making a call", async () => {
@@ -120,10 +124,12 @@ describe("SettingsView vault idle auto-lock", () => {
     await flushUntil(() => autoLockInput() !== null);
     for (const bad of ["1441", "-1", "1.5", ""]) {
       setInputValue(autoLockInput()!, bad);
-      clickButton(mounted.container, "保存");
+      await act(async () => {
+        clickButton(mounted!.container, "保存");
+      });
       await flush();
       expect(mocks.setAutoLock).not.toHaveBeenCalled();
-      expect(mocks.toast).toHaveBeenCalledWith("error", "自动锁定时长须为 0 至 1440 的整数分钟，0 表示禁用");
+      expect(mocks.toast).toHaveBeenCalledWith("error", "自动锁定时长须为 0 至 1440 的整数分钟，0 表示不自动锁定");
       mocks.toast.mockClear();
     }
   });
@@ -133,9 +139,11 @@ describe("SettingsView vault idle auto-lock", () => {
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => autoLockInput() !== null);
     setInputValue(autoLockInput()!, "1440");
-    clickButton(mounted.container, "保存");
+    await act(async () => {
+      clickButton(mounted!.container, "保存");
+    });
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
-    expect(mocks.toast).toHaveBeenCalledWith("error", "参数错误：auto-lock minutes must be between 0 (disabled) and 1440");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "参数错误：auto-lock minutes must be between 0 (disabled) and 1440。凭据没有改动，请检查后重试。");
     expect(autoLockInput()!.value).toBe("1440");
   });
 

@@ -82,6 +82,20 @@ export function AuthCard() {
     : pendingRecoveryKey;
 
   const [pwdOpen, setPwdOpen] = useState(false);
+  // pending names the account action in flight so a second click cannot submit it again.
+  const [pending, setPending] = useState<string | null>(null);
+  const pendingRef = useRef<string | null>(null);
+  const guarded = async (key: string, action: () => Promise<void>) => {
+    if (pendingRef.current) return;
+    pendingRef.current = key;
+    setPending(key);
+    try {
+      await action();
+    } finally {
+      pendingRef.current = null;
+      setPending(null);
+    }
+  };
 
   useEffect(() => {
     passwordRequest.current += 1;
@@ -166,18 +180,20 @@ export function AuthCard() {
       kind: "warning",
     });
     if (!ok || !actionAccount || accountKeyRef.current !== actionAccount) return;
-    try {
-      if (DESKTOP) {
-        await remoteAccountApi.deviceRevoke(device.id);
-      } else {
-        await authApi.deviceRevoke(device.id);
+    await guarded(`device:${device.id}`, async () => {
+      try {
+        if (DESKTOP) {
+          await remoteAccountApi.deviceRevoke(device.id);
+        } else {
+          await authApi.deviceRevoke(device.id);
+        }
+        if (accountKeyRef.current !== actionAccount) return;
+        pushToast("success", `已吊销「${device.name}」，该设备已退出登录`);
+        void loadDevices();
+      } catch (e) {
+        if (accountKeyRef.current === actionAccount) pushToast("error", `吊销失败：${describeError(e)}。请重试。`);
       }
-      if (accountKeyRef.current !== actionAccount) return;
-      pushToast("success", `已吊销「${device.name}」`);
-      void loadDevices();
-    } catch (e) {
-      if (accountKeyRef.current === actionAccount) pushToast("error", describeError(e));
-    }
+    });
   };
 
   const revokeSession = async (session: AccountLoginSession) => {
@@ -187,21 +203,23 @@ export function AuthCard() {
       { title: "退出登录会话", kind: "warning" },
     );
     if (!ok || !actionAccount || accountKeyRef.current !== actionAccount) return;
-    try {
-      if (session.current) await logout();
-      else await authApi.sessionRevoke(session.id);
-      if (accountKeyRef.current !== actionAccount) return;
-      if (session.current) {
-        void qc.invalidateQueries();
-      } else {
-        setSessionResult((current) => current?.accountKey === actionAccount
-          ? { accountKey: actionAccount, sessions: current.sessions.filter((item) => item.id !== session.id) }
-          : current);
-        pushToast("success", `已退出「${session.name}」`);
+    await guarded(`session:${session.id}`, async () => {
+      try {
+        if (session.current) await logout();
+        else await authApi.sessionRevoke(session.id);
+        if (accountKeyRef.current !== actionAccount) return;
+        if (session.current) {
+          void qc.invalidateQueries();
+        } else {
+          setSessionResult((current) => current?.accountKey === actionAccount
+            ? { accountKey: actionAccount, sessions: current.sessions.filter((item) => item.id !== session.id) }
+            : current);
+          pushToast("success", `已退出「${session.name}」，对方需重新登录`);
+        }
+      } catch (e) {
+        if (accountKeyRef.current === actionAccount) pushToast("error", `退出失败：${describeError(e)}。请重试。`);
       }
-    } catch (e) {
-      if (accountKeyRef.current === actionAccount) pushToast("error", describeError(e));
-    }
+    });
   };
 
   if (!user || (DESKTOP && !desktopScope)) {
@@ -249,7 +267,7 @@ export function AuthCard() {
             <span className="nx-card-title">账号</span>
           </div>
           <p className="nx-hint mb-3">
-            这台服务器还没有任何账号{status.auth === "loopback" ? "，当前允许匿名使用" : ""}。
+            这台服务器尚无任何账号{status.auth === "loopback" ? "，当前允许匿名使用" : ""}。
             初始化后创建超级管理员，资产、分组、片段会端到端加密同步到你的账号，在其他设备上可用；
             也可以继续匿名本地使用。
           </p>
@@ -340,19 +358,29 @@ export function AuthCard() {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
+              disabled={pending !== null}
+              aria-busy={pending === "logout"}
               onClick={() =>
                 void (async () => {
                   const ok = await ask("退出当前账号？\n\n本机浏览器会话立即失效。", { title: "退出登录" });
                   if (!ok) return;
-                  await logout();
-                  void qc.invalidateQueries();
+                  await guarded("logout", async () => {
+                    try {
+                      await logout();
+                      void qc.invalidateQueries();
+                    } catch (e) {
+                      pushToast("error", `退出失败：${describeError(e)}。请重试。`);
+                    }
+                  });
                 })()
               }
             >
-              退出登录
+              {pending === "logout" ? "正在退出…" : "退出登录"}
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm"
+              disabled={pending !== null}
+              aria-busy={pending === "logout-all"}
               onClick={() =>
                 void (async () => {
                   const ok = await ask("退出所有设备上的会话？\n\n包括这台浏览器，退出后需重新登录。", {
@@ -360,16 +388,18 @@ export function AuthCard() {
                     kind: "warning",
                   });
                   if (!ok) return;
-                  try {
-                    await logout({ all: true });
-                    void qc.invalidateQueries();
-                  } catch (e) {
-                    pushToast("error", describeError(e));
-                  }
+                  await guarded("logout-all", async () => {
+                    try {
+                      await logout({ all: true });
+                      void qc.invalidateQueries();
+                    } catch (e) {
+                      pushToast("error", `退出失败：${describeError(e)}。请重试。`);
+                    }
+                  });
                 })()
               }
             >
-              退出全部会话
+              {pending === "logout-all" ? "正在退出…" : "退出全部会话"}
             </button>
           </div>
         )}
@@ -382,7 +412,7 @@ export function AuthCard() {
             <span className="nx-card-title">修改密码</span>
           </div>
           <p className="nx-hint mb-3">
-            修改密码会用新密码重新加密数据密钥，服务端已保存的加密内容不受影响。修改成功后会签发新的恢复密钥（旧的立即作废），并退出其他设备上的会话。
+            修改密码后，数据将改用新密码保护，服务端已保存的内容不受影响。修改成功后会生成新的恢复密钥（旧的立即作废），并退出其他设备上的登录。
           </p>
           {pwdOpen ? (
             <PasswordChangeForm
@@ -469,7 +499,7 @@ export function AuthCard() {
           {sessionsError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2">
               <IconXCircle size={13} className="mt-0.5 shrink-0" />
-              <span className="min-w-0 flex-1 break-words">会话列表读取失败 · {sessionsError}</span>
+              <span className="min-w-0 flex-1 break-words">未能读取登录会话：{sessionsError}。请选择「重试」。</span>
               <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void loadSessions()}>
                 <IconRefresh size={12} />重试
               </button>
@@ -485,8 +515,14 @@ export function AuthCard() {
                   {session.current && <span className="nx-badge nx-badge-green">当前会话</span>}
                   <span className="nx-hint text-[11px]">最近活动 {formatTime(session.last_seen_at)}</span>
                   <span className="nx-hint text-[11px]">到期 {formatTime(session.expires_at)}</span>
-                  <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void revokeSession(session)}>
-                    <IconTrash size={11} />退出会话
+                  <button
+                    className="nx-btn nx-btn-ghost nx-btn-sm"
+                    disabled={pending !== null}
+                    aria-busy={pending === `session:${session.id}`}
+                    title={pending !== null && pending !== `session:${session.id}` ? "正在处理另一项操作，请稍候" : undefined}
+                    onClick={() => void revokeSession(session)}
+                  >
+                    <IconTrash size={11} />{pending === `session:${session.id}` ? "正在退出…" : "退出会话"}
                   </button>
                 </div>
               ))}
@@ -494,7 +530,7 @@ export function AuthCard() {
           )}
           <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
             <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-            会话有效期 12 小时（滑动续期），最长 7 天；修改密码或管理员重置会使会话立即失效。
+            登录后 12 小时内有操作会自动延长，最长 7 天；修改密码或被管理员重置密码后，所有登录立即失效。
           </p>
         </section>
       )}
@@ -516,7 +552,7 @@ export function AuthCard() {
         {devicesError && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
-            <span className="min-w-0 flex-1 break-words">设备列表读取失败 · {devicesError}</span>
+            <span className="min-w-0 flex-1 break-words">未能读取设备列表：{devicesError}。请选择「重试」。</span>
             <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void loadDevices()}>
               <IconRefresh size={12} />
               重试
@@ -525,7 +561,7 @@ export function AuthCard() {
         )}
 
         {devices && devices.length === 0 && (
-          <div className="nx-hint py-1 text-[12px]">还没有登记设备。</div>
+          <div className="nx-hint py-1 text-[12px]">尚未登记设备。</div>
         )}
 
         {devices && devices.length > 0 && (
@@ -547,12 +583,13 @@ export function AuthCard() {
                   <span className="nx-hint shrink-0 text-[11px]">最近活动 {formatTime(d.last_seen_at)}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-                    disabled={revoked}
-                    title={revoked ? "已吊销" : "吊销后该设备立即退出登录"}
+                    disabled={revoked || pending !== null}
+                    aria-busy={pending === `device:${d.id}`}
+                    title={revoked ? "已吊销" : pending !== null && pending !== `device:${d.id}` ? "正在处理另一项操作，请稍候" : "吊销后该设备立即退出登录"}
                     onClick={() => void revokeDevice(d)}
                   >
                     <IconTrash size={11} />
-                    吊销
+                    {pending === `device:${d.id}` ? "正在吊销…" : "吊销"}
                   </button>
                 </div>
               );
@@ -690,7 +727,7 @@ function TotpCard() {
       {loadError && (
         <div className="nx-alert nx-alert-danger flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">两步验证状态读取失败 · {loadError}</span>
+          <span className="min-w-0 flex-1 break-words">未能读取两步验证状态：{loadError}。请选择「重试」。</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
             <IconRefresh size={12} />
             重试
@@ -702,7 +739,7 @@ function TotpCard() {
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconInfo size={14} className="mt-0.5 shrink-0" />
           <div>
-            管理员已要求所有账号启用两步验证，完成绑定前只能使用绑定功能。
+            管理员已要求所有账号启用两步验证，完成绑定前，只能使用绑定功能。
           </div>
         </div>
       )}
@@ -712,7 +749,7 @@ function TotpCard() {
           <div className="flex items-start gap-2">
             <IconInfo size={14} className="mt-0.5 shrink-0" />
             <div>
-              恢复码仅显示一次。手机丢失时，可用任一恢复码代替动态码登录，每个只能使用一次。服务端只保存散列，关闭后无法再次查看。
+              恢复码仅显示一次。手机丢失时，可用任一恢复码代替动态码登录，每个只能使用一次。服务端只保存校验值、不保存原文，关闭两步验证后无法再次查看。
             </div>
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
@@ -876,7 +913,7 @@ function TotpCard() {
           ) : (
             <div>
               <p className="nx-hint mb-2">
-                开启后，登录时除密码外还需输入认证器 App 中的 6 位动态码。即使密码泄露，账号也多一层保护。服务端加密保存密钥，只保存恢复码散列。
+                开启后，登录时除密码外还需输入认证器 App 中的 6 位动态码。即使密码泄露，账号也多一层保护。服务端加密保存认证密钥，恢复码只保存校验值。
               </p>
               <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy} onClick={() => void startSetup()}>
                 {busy ? "生成中…" : status.pending ? "继续绑定" : "开启两步验证"}

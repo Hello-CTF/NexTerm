@@ -112,7 +112,7 @@ describe("Settings search", () => {
     const labels = resultLabels();
     expect(labels).toContain("终端");
     expect(labels).toContain("终端字体");
-    expect(labels).not.toContain("拦截规则");
+    expect(labels).not.toContain("AI 拦截规则");
     // Each result names the section it lives in.
     const font = [...mounted!.container.querySelectorAll('[role="option"]')].find((o) => o.textContent?.includes("终端字体"));
     expect(font?.textContent).toContain("外观");
@@ -130,7 +130,7 @@ describe("Settings search", () => {
     search("credential");
     expect(resultLabels()).toEqual(expect.arrayContaining(["凭据保护", "用密码保护凭据"]));
     search("sync");
-    expect(resultLabels()).toContain("账号同步");
+    expect(resultLabels()).toContain("账号与同步");
     search("主题 theme");
     expect(resultLabels()).toContain("界面主题");
   });
@@ -244,7 +244,7 @@ describe("Settings search", () => {
 
   it("moves through results with the arrow keys and opens the active one with Enter", async () => {
     search("rule");
-    expect(resultLabels()).toEqual(["状态规则", "拦截规则"]);
+    expect(resultLabels()).toEqual(["状态规则", "AI 拦截规则"]);
     search("shortcut");
     const before = mounted!.container.querySelectorAll('[role="option"]');
     expect(before[0].getAttribute("aria-selected")).toBe("true");
@@ -334,7 +334,7 @@ describe("Settings search focus and anchors", () => {
     }
     await flush();
     const missing = SETTINGS_ITEMS.filter(
-      (item) => !mounted!.container.querySelector(`[data-setting="${item.id}"]`),
+      (item) => item.id !== "close-to-tray" && !mounted!.container.querySelector(`[data-setting="${item.id}"]`),
     ).map((item) => item.id);
     expect(missing).toEqual([]);
   });
