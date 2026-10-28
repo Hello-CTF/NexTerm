@@ -163,6 +163,41 @@ describe("main navigation tooltips", () => {
   });
 });
 
+function accessibleName(element: HTMLElement): string {
+  const labelledBy = element.getAttribute("aria-labelledby");
+  const referenced = labelledBy
+    ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? "").join(" ")
+    : "";
+  return (
+    element.getAttribute("aria-label") ||
+    referenced ||
+    element.textContent ||
+    element.getAttribute("title") ||
+    ""
+  ).trim();
+}
+
+describe("button accessible names", () => {
+  it("gives every button in the app shell a name and never repeats it on adjacent buttons", async () => {
+    mounted = mountApp();
+    await flush();
+
+    const buttons = [...document.querySelectorAll<HTMLElement>("button, [role='button']")];
+    expect(buttons.length).toBeGreaterThan(0);
+    const unnamed = buttons.filter((button) => accessibleName(button) === "").map((button) => button.outerHTML.slice(0, 120));
+    expect(unnamed, "icon-only buttons need aria-label").toEqual([]);
+
+    const duplicates: string[] = [];
+    for (const button of buttons) {
+      const next = button.nextElementSibling;
+      if (next instanceof HTMLElement && next.matches("button, [role='button']") && accessibleName(next) === accessibleName(button)) {
+        duplicates.push(accessibleName(button));
+      }
+    }
+    expect(duplicates, "adjacent buttons must not share a label").toEqual([]);
+  });
+});
+
 describe("toast announcements", () => {
   it("politely announces regular toasts through role=status", async () => {
     useUi.setState({ toasts: [toast(1, "info", "已取消连接")] });

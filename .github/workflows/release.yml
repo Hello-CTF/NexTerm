@@ -247,6 +247,20 @@ jobs:
           fi
       - name: Package the verified production desktop with updater evidence
         run: node scripts/build.mjs desktop --release --package --package-only --consume-dist=target/release-work/verified-dist/dist --dist-manifest=target/release-work/verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
+      # Extracts the finished dmg/exe/deb and loads the bundled ONNX Runtime from it
+      # (macOS also checks the hardened-runtime entitlement), so a package that
+      # builds and hashes fine but cannot load its runtime fails before upload.
+      - name: Smoke-test the packaged privacy runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          suffix=""; if [ "${{ matrix.os }}" = "windows" ]; then suffix=".exe"; fi
+          CGO_ENABLED=0 go build -o "target/release-work/ort-load-check${suffix}" ./scripts/ort-load-check
+          case "${{ matrix.os }}" in darwin) kind=macos; ext=dmg;; windows) kind=windows; ext=exe;; *) kind=linux; ext=deb;; esac
+          shopt -s nullglob
+          artifacts=(target/release-assets/nexterm-desktop_${kind}_${{ matrix.arch }}_*.${ext})
+          test "${#artifacts[@]}" -eq 1 || { echo "::error::expected exactly one packaged ${ext}, found ${#artifacts[@]}"; exit 1; }
+          node .github/scripts/verify-packaged-runtime.mjs "${artifacts[0]}" "${{ matrix.os }}" "${{ matrix.arch }}" "target/release-work/ort-load-check${suffix}"
       - name: Clean up macOS signing material (optional)
         if: always() && matrix.os == 'darwin' && env.NEXTERM_MACOS_SIGNING == 'true'
         shell: bash

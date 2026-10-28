@@ -13,6 +13,8 @@
 | Linux amd64 | `nexterm-desktop_linux_amd64_*.deb`（`apt install ./nexterm-desktop_linux_amd64_*.deb`，自动装 GTK4 / WebKitGTK 6.0 依赖） |
 | Linux ARM64 | `nexterm-desktop_linux_arm64_*.deb`（`apt install ./nexterm-desktop_linux_arm64_*.deb`，自动装 GTK4 / WebKitGTK 6.0 依赖） |
 
+Linux 桌面端从 1.2.x 升级到 1.3.x 及以后：1.2.x 的应用内更新无法安装新增的 `ai-runtime` 运行时，请先手动重装一次 deb（`apt install ./nexterm-desktop_linux_*.deb`），此后应用内更新可正常使用。
+
 Windows 安装器不含 Authenticode 签名，首次运行可能显示未知发布者；应用内更新仍使用 Minisign 校验。
 
 **移动端**

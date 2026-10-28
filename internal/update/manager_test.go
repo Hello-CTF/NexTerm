@@ -65,16 +65,18 @@ func (fixture *releaseFixture) server(t *testing.T) *httptest.Server {
 	return server
 }
 
-func tarGz(t *testing.T, name, content string) []byte {
+func tarGz(t *testing.T, name, content string, extra ...payloadEntry) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
 	compressed := gzip.NewWriter(&buffer)
 	writer := tar.NewWriter(compressed)
-	if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.Write([]byte(content)); err != nil {
-		t.Fatal(err)
+	for _, entry := range append([]payloadEntry{{name: name, body: content}}, extra...) {
+		if err := writer.WriteHeader(&tar.Header{Name: entry.name, Mode: 0o755, Size: int64(len(entry.body)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write([]byte(entry.body)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
@@ -87,7 +89,7 @@ func tarGz(t *testing.T, name, content string) []byte {
 
 func debArchive(t *testing.T, version, content string) []byte {
 	t.Helper()
-	dataTarGz := tarGz(t, "usr/bin/nexterm-desktop", content)
+	dataTarGz := tarGz(t, "usr/bin/nexterm-desktop", content, payloadEntry{name: "usr/bin/ai-runtime/runtime.json", body: `{"unavailable":"test"}`})
 	controlTarGz := tarGz(t, "control", "Package: nexterm\nVersion: "+version+"\n")
 	var buffer bytes.Buffer
 	buffer.WriteString("!<arch>\n")

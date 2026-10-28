@@ -565,3 +565,20 @@ func (e *Engine) Close() error {
 	e.release()
 	return nil
 }
+
+// LoadRuntime loads the ONNX Runtime from runtimeDirectory and returns its
+// version. Packaged-artifact smoke checks use it to prove the shipped library
+// loads under the shipped signature without needing a model.
+func LoadRuntime(runtimeDirectory string) (string, error) {
+	if err := CheckPlatform(); err != nil {
+		return "", err
+	}
+	onnxPath, err := runtimePath(runtimeDirectory)
+	if err != nil {
+		return "", err
+	}
+	if err := initializeRuntime(onnxPath); err != nil {
+		return "", err
+	}
+	return runtimeVersion(), nil
+}

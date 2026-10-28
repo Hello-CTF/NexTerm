@@ -66,7 +66,7 @@ func TestLinuxPayloadStagesAndRejectsInvalidRuntime(t *testing.T) {
 		entries      []payloadEntry
 		cancel, fail bool
 	}{
-		{name: "complete", entries: valid}, {name: "legacy", entries: valid[:1]},
+		{name: "complete", entries: valid}, {name: "payload without runtime", entries: valid[:1], fail: true},
 		{name: "incomplete", entries: valid[:2], fail: true},
 		{name: "unavailable runtime manifest", entries: []payloadEntry{valid[0], {"usr/bin/ai-runtime/runtime.json", `{"unavailable":"no library for this target"}`, 0}}},
 		{name: "empty unavailable reason", entries: []payloadEntry{valid[0], {"usr/bin/ai-runtime/runtime.json", `{"unavailable":""}`, 0}}, fail: true},
