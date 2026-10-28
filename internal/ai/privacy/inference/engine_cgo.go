@@ -51,11 +51,25 @@ func initializeRuntime(path string) error {
 	}
 	value := C.CString(path)
 	defer C.free(unsafe.Pointer(value))
-	if C.ng_ort_init(value) != C.NG_OK {
+	var detail [512]C.char
+	if C.ng_ort_init(value, &detail[0], C.size_t(len(detail))) != C.NG_OK {
+		if message := strings.TrimSpace(C.GoString(&detail[0])); message != "" {
+			return fmt.Errorf("%w: %s", ErrUnavailable, message)
+		}
 		return ErrUnavailable
 	}
 	onnxRuntime.path = path
 	return nil
+}
+
+// runtimeVersion reports the loaded ONNX Runtime version, or "" before the
+// runtime is initialized.
+func runtimeVersion() string {
+	version := C.ng_ort_version()
+	if version == nil {
+		return ""
+	}
+	return C.GoString(version)
 }
 
 type Engine struct {
