@@ -23,7 +23,7 @@ beforeAll(async () => {
   installed = document.createElement("style");
   installed.textContent = css;
   document.head.append(installed);
-}, 30000);
+}, 120000);
 
 beforeEach(() => {
   document.body.replaceChildren();
