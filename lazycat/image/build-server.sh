@@ -33,7 +33,7 @@ else
 fi
 
 echo "[lzc-build] repository root: $ROOT"
-echo "[lzc-build] target architecture: ${LZC_ARCH} (linux/${LZC_ARCH}, static CGO_ENABLED=0 server)"
+echo "[lzc-build] target architecture: ${LZC_ARCH} (linux/${LZC_ARCH}, glibc-portable CGO_ENABLED=0 server)"
 echo "[lzc-build] binary version: ${LZC_VERSION}"
 
 BASE_REF="$(grep -E '^FROM ' "$HERE/Dockerfile" | tail -1 | awk '{print $NF}')"
@@ -115,7 +115,7 @@ install -m 0755 "$HERE/entrypoint.sh" "$IMAGE_CONTEXT/entrypoint.sh"
 echo "[lzc-build]     image context ready: $IMAGE_CONTEXT"
 
 check_elf() {
-  local binary="$1" expected_arch="$2" cgo="$3" file_out
+  local binary="$1" expected_arch="$2" cgo="$3" binary_kind="${4:-static}" file_out
   file_out="$(file -b "$binary" || true)"
   case "$file_out" in
     *ELF*"$expected_arch"*) ;;
@@ -126,11 +126,29 @@ check_elf() {
   esac
   if [ "$cgo" = "0" ]; then
     case "$file_out" in
-    *statically\ linked*) ;;
-    *)
-      echo "[lzc-build] error: $binary is not statically linked: $file_out" >&2
-      exit 1
-      ;;
+      *statically\ linked*|*static-pie\ linked*) ;;
+      *)
+        if [ "$binary_kind" = "server" ]; then
+          # The server loads ONNX Runtime through purego, so it links glibc dynamically.
+          local want_interp elf_interp needed
+          command -v readelf >/dev/null || { echo "[lzc-build] error: readelf is required to verify the dynamic server binary" >&2; exit 1; }
+          want_interp=/lib64/ld-linux-x86-64.so.2
+          elf_interp="$(readelf -lW "$binary" | sed -n 's/.*Requesting program interpreter: \(.*\)\]/\1/p')"
+          if [ "$elf_interp" != "$want_interp" ]; then
+            echo "[lzc-build] error: $binary interpreter is not the glibc loader $want_interp: ${elf_interp:-none}" >&2
+            exit 1
+          fi
+          while read -r needed; do
+            case "$needed" in
+              libc.so.6|libdl.so.2|libpthread.so.0) ;;
+              *) echo "[lzc-build] error: $binary needs a non-glibc-portable library: $needed" >&2; exit 1 ;;
+            esac
+          done < <(readelf -dW "$binary" | sed -n 's/.*(NEEDED).*Shared library: \[\(.*\)\]/\1/p')
+        else
+          echo "[lzc-build] error: $binary is not statically linked: $file_out" >&2
+          exit 1
+        fi
+        ;;
     esac
   fi
   if ! go version -m "$binary" | grep -q "CGO_ENABLED=$cgo"; then
@@ -140,7 +158,7 @@ check_elf() {
 }
 
 echo "[lzc-build] 4/4 self-check"
-check_elf "$IMAGE_CONTEXT/nexterm-server" "$ELF_ARCH" 0
+check_elf "$IMAGE_CONTEXT/nexterm-server" "$ELF_ARCH" 0 server
 node "$ROOT/scripts/lib/privacy-runtime.mjs" "$IMAGE_CONTEXT/ai-runtime" linux "$LZC_ARCH" "$SERVER_BINARY.manifest.json"
 while IFS='|' read -r HELPER_OS HELPER_ARCH HELPER_NAME; do
   [ -x "$IMAGE_CONTEXT/$HELPER_NAME" ] || { echo "[lzc-build] error: helper is not executable: $HELPER_NAME" >&2; exit 1; }
