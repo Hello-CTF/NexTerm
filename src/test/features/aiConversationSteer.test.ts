@@ -216,7 +216,7 @@ describe("AiSidebar mid-run steering", () => {
     expect(mocks.steer).toHaveBeenCalledWith("job-1", "Actually, do not run it");
     expect(textOf(view!)).toContain("未送达");
     expect(textareaOf(view!).value).toBe("Actually, do not run it");
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("补充指令未送达"));
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("追加的指令没有送达"));
   });
 
   it("settles steer bubbles in FIFO order — dropped first, then delivered", async () => {

@@ -55,7 +55,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
           const liveMatches = live.filter((tab) => tab.tabId === tabId);
           if (liveMatches.length > 1) {
             // Fail closed: ambiguous backend ownership never picks arbitrarily.
-            pushToast("error", `句柄 ${entry.handle} 的终端在多个会话中命中，无法安全定位`);
+            pushToast("error", `终端 ${entry.handle} 匹配到多个会话，无法确定要打开哪一个`);
             return;
           }
           let sessionId = liveMatches[0]?.sessionId;
@@ -79,7 +79,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
               .filter((id): id is string => id !== undefined);
             const failures = probed.length - probed.filter((result) => result.status === "fulfilled").length;
             if (hits.length > 1) {
-              pushToast("error", `句柄 ${entry.handle} 的终端在多个会话中命中，无法安全定位`);
+              pushToast("error", `终端 ${entry.handle} 匹配到多个会话，无法确定要打开哪一个`);
               return;
             }
             if (hits.length === 0) {
@@ -95,7 +95,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
           }
           const session = state.sessions.find((item) => item.id === sessionId);
           if (!session) {
-            pushToast("error", `句柄 ${entry.handle} 的终端会话不在当前会话列表中，请刷新句柄列表`);
+            pushToast("error", `没有在当前会话列表中找到终端 ${entry.handle}，请刷新后重试`);
             return;
           }
           const workspaceId = state.ensureWorkspace({
@@ -115,7 +115,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
             closable: true,
           });
         } catch (e) {
-          pushToast("error", `打开句柄终端失败：${describeError(e)}`);
+          pushToast("error", `无法打开终端：${describeError(e)}`);
         }
       })();
     },
@@ -197,7 +197,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
 
   const openConversation = async (id: string, title?: string) => {
     if (busy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", "这一轮仍在运行，请先停止再切换会话");
+      pushToast("info", "AI 还在回答，请先停止再切换会话");
       return;
     }
     const restoreGeneration = ++restoreGenerationRef.current;
@@ -225,14 +225,14 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       void restoreConversationRuns(id, restoreGeneration, runs);
     } catch (e) {
       if (isRestoreActive(restoreGeneration)) {
-        pushToast("error", `打开会话失败：${describeError(e)}`);
+        pushToast("error", `无法打开会话：${describeError(e)}`);
       }
     }
   };
 
   const newConversation = () => {
     if (busy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", "这一轮仍在运行，请先停止再新建会话");
+      pushToast("info", "AI 还在回答，请先停止再新建会话");
       return;
     }
     restoreGenerationRef.current += 1;
@@ -249,7 +249,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     const blocksReset = (id: string) =>
       id === conversationIdRef.current && aiRunBlocksStart(activeRunRef.current);
     if (blocksReset(c.id)) {
-      pushToast("info", "这一轮仍在运行，请先停止再删除当前会话");
+      pushToast("info", "AI 还在回答，请先停止再删除当前会话");
       return;
     }
     try {
@@ -259,8 +259,8 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
         pushToast(
           "info",
           inFlight === "running"
-            ? "这个会话还有正在运行的 AI 任务，等它结束或先停止再删除"
-            : "这个会话还有中断待恢复的 AI 任务，先打开会话处理完再删除",
+            ? "这个会话里 AI 还在工作，等它结束或先停止再删除"
+            : "这个会话里有被中断的 AI 任务，请先打开会话处理完再删除",
         );
         return;
       }
@@ -271,13 +271,13 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     });
     if (!ok) return;
     if (blocksReset(c.id)) {
-      pushToast("info", "这一轮仍在运行，请先停止再删除当前会话");
+      pushToast("info", "AI 还在回答，请先停止再删除当前会话");
       return;
     }
     try {
       await aiApi.conversationDelete(c.id);
     } catch (e) {
-      pushToast("error", `删除会话失败：${describeError(e)}`);
+      pushToast("error", `无法删除会话：${describeError(e)}`);
       return;
     }
     setConversations((prev) => prev.filter((it) => it.id !== c.id));
@@ -320,7 +320,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       return;
     }
     if (busy) {
-      pushToast("info", "这一轮仍在运行，结束后再压缩");
+      pushToast("info", "AI 还在回答，结束后再压缩");
       return;
     }
     setCompacting(true);
@@ -329,7 +329,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       pushToast("success", `已把 ${result.messages} 条消息压缩成摘要，之后的回答基于摘要`);
       await restoreConversation(id);
     } catch (e) {
-      pushToast("error", `压缩失败：${describeError(e)}`);
+      pushToast("error", `无法压缩对话：${describeError(e)}`);
     } finally {
       setCompacting(false);
     }
@@ -342,7 +342,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       useUi.getState().bumpModelProfilesRevision();
       pushToast("success", `已切换到 ${profile.name}`);
     } catch (e) {
-      pushToast("error", `切换模型失败：${describeError(e)}`);
+      pushToast("error", `无法切换模型：${describeError(e)}`);
     }
   };
 
@@ -581,7 +581,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     const allowWrite = choice === "allow";
 
     if (anyAiBusy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", "另一轮 AI 仍在运行，请先停止再接管");
+      pushToast("info", "AI 还在回答，请先停止再接管终端");
       return;
     }
     takeoverPausedRef.current = false;

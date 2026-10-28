@@ -150,6 +150,9 @@ describe("AiSidebar multiple tabs", () => {
     await flush();
     expect(stripTabs(view!)).toHaveLength(1);
 
+    // A tab holding a draft is not "empty", so the plus button adds a new one.
+    setInputValue(view!.container.querySelector("textarea")!, "草稿");
+    await flush();
     click(view!.container.querySelector('button[title="新建会话"]')!);
     await flush();
     expect(stripTabs(view!)).toHaveLength(2);
@@ -176,6 +179,23 @@ describe("AiSidebar multiple tabs", () => {
     expect(stripTabs(view!)).toHaveLength(1);
     expect(textOf(view!)).toContain("问题乙");
     expect(textOf(view!)).not.toContain("问题甲");
+  });
+
+  it("focuses the existing empty tab instead of stacking another blank one", async () => {
+    await flush();
+    const plus = () => view!.container.querySelector('button[title="新建会话"]')!;
+    click(plus());
+    await flush();
+    click(plus());
+    await flush();
+    expect(stripTabs(view!)).toHaveLength(1);
+    expect(stripTabs(view!)[0].getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("shows how to get started when no model is configured", async () => {
+    await flush();
+    expect(textOf(view!)).toContain("还没有配置模型");
+    expect(textOf(view!)).toContain("添加模型");
   });
 
   it("allows two tabs to run in parallel without one busy tab blocking messages in the other", async () => {
@@ -210,7 +230,7 @@ describe("AiSidebar multiple tabs", () => {
     click(stripTabs(view!)[0].querySelector("button")!);
     await flush();
     expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("关闭将停止它"),
+      expect.stringContaining("会停止它"),
       expect.objectContaining({ kind: "warning" }),
     );
     expect(mocks.cancel).not.toHaveBeenCalled();
@@ -226,7 +246,7 @@ describe("AiSidebar multiple tabs", () => {
     expect(useUi.getState().aiBusy).toBe(true);
     expect(textOf(view!)).toContain("正在停止");
 
-    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    emit({ type: "canceled", message: "已停止" }, 0);
     await flush();
     const board = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY];
     expect(board.tabs).toHaveLength(1);
@@ -254,7 +274,7 @@ describe("AiSidebar multiple tabs", () => {
     await flush();
     expect(mocks.cancel).toHaveBeenCalledTimes(2);
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
-    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    emit({ type: "canceled", message: "已停止" }, 0);
     await flush();
     expect(useUi.getState().aiBusy).toBe(false);
   });
@@ -277,7 +297,7 @@ describe("AiSidebar multiple tabs", () => {
     expect(mocks.cancel).toHaveBeenCalledWith("job-pending");
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
 
-    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    emit({ type: "canceled", message: "已停止" }, 0);
     await flush();
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).not.toBe(before);
     expect(useUi.getState().aiBusy).toBe(false);
@@ -296,7 +316,7 @@ describe("AiSidebar multiple tabs", () => {
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.cancel).toHaveBeenCalledTimes(1);
-    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    emit({ type: "canceled", message: "已停止" }, 0);
     await flush();
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(1);
     expect(textOf(view!)).not.toContain("Long-running task");

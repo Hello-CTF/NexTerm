@@ -83,6 +83,23 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     [boardKey, updateAiTab, aiAccountEpoch],
   );
 
+  // Clicking "new" while an unused empty tab exists focuses it instead of
+  // stacking more blank tabs.
+  const handleNewTab = () => {
+    const blank = tabs.find((t) => !t.conversationId && !(t.draft ?? "").trim() && !aiTabBusyIds.has(t.id));
+    if (blank) {
+      setActiveAiTab(boardKey, blank.id);
+      return;
+    }
+    addAiTab(boardKey);
+  };
+
+  useEffect(() => {
+    if (!activeTabId) return;
+    const el = document.querySelector<HTMLElement>(`[data-ai-tab-id="${CSS.escape(activeTabId)}"]`);
+    el?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeTabId, tabs.length]);
+
   const retitleTab = async (tab: AiDockTab) => {
     if (!tab.conversationId || retitlingTabId) return;
     setRetitlingTabId(tab.id);
@@ -90,7 +107,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const title = await aiApi.conversationRetitle(tab.conversationId);
       updateAiTab(boardKey, tab.id, { title }, aiAccountEpoch);
     } catch (e) {
-      pushToast("error", `重新生成标题失败：${describeError(e)}`);
+      pushToast("error", `无法重新生成标题：${describeError(e)}`);
     } finally {
       setRetitlingTabId(null);
     }
@@ -102,7 +119,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (existing) return existing;
     const request = (async () => {
       if (aiTabBusyIds.has(tab.id)) {
-        const ok = await ask("这一轮仍在运行，关闭将停止它。关闭这个标签？", {
+        const ok = await ask("AI 还在回答，关闭标签会停止它。确定关闭？", {
           title: "关闭 AI 标签",
           kind: "warning",
         });
@@ -110,7 +127,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         if (aiTabBusyIds.has(tab.id)) {
           const cancelAndConfirm = aiTabRunControls.get(tab.id);
           if (!cancelAndConfirm) {
-            pushToast("error", "停止未确认：运行状态不可用，标签已保留");
+            pushToast("error", "没能确认 AI 已停止，标签已保留。请稍后再试");
             return false;
           }
           if (!(await cancelAndConfirm())) return false;
@@ -207,6 +224,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <div
                 key={t.id}
                 role="tab"
+                data-ai-tab-id={t.id}
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
                 draggable
@@ -306,7 +324,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 }}
               >
                 {aiTabBusyIds.has(t.id) && (
-                  <span className="nx-dot nx-dot-pulse shrink-0" aria-label="运行中" />
+                  <span className="nx-dot shrink-0" role="img" aria-label="AI 正在回答" title="AI 正在回答" />
                 )}
                 <span className="truncate">{t.title}</span>
                 <button
@@ -329,7 +347,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           className="nx-icon-btn nx-icon-btn-sm shrink-0"
           title="新建会话"
           aria-label="新建会话"
-          onClick={() => addAiTab(boardKey)}
+          onClick={handleNewTab}
         >
           <IconPlus size={13} />
         </button>

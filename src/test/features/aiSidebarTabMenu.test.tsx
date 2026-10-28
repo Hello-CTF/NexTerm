@@ -177,7 +177,7 @@ describe("AiSidebar tab context menu", () => {
 
     expect(mocks.toast).toHaveBeenCalledWith(
       "error",
-      expect.stringContaining("重新生成标题失败"),
+      expect.stringContaining("无法重新生成标题"),
     );
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].title).toBe("主机名: 旧主题");
   });
@@ -275,13 +275,13 @@ describe("AiSidebar tab context menu", () => {
     click(menuItem(view!, "关闭左侧全部标签"));
     await flushUntil(() => mocks.cancel.mock.calls.length > 0);
     expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("关闭将停止它"),
+      expect.stringContaining("会停止它"),
       expect.objectContaining({ kind: "warning" }),
     );
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(2);
     expect(useUi.getState().aiBusy).toBe(true);
 
-    act(() => mocks.channels[0].onEvent({ type: "canceled", message: "已停止本轮" }));
+    act(() => mocks.channels[0].onEvent({ type: "canceled", message: "已停止" }));
     await flushUntil(() => useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.length === 1);
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
     expect(useUi.getState().aiBusy).toBe(false);
@@ -326,7 +326,7 @@ describe("AiSidebar tab context menu", () => {
 
     openTabMenu(view!, 2);
     click(menuItem(view!, "关闭左侧全部标签"));
-    await flushUntil(() => mocks.toast.mock.calls.some(([, text]) => String(text).includes("停止未确认")));
+    await flushUntil(() => mocks.toast.mock.calls.some(([, text]) => String(text).includes("没能确认任务已停止")));
 
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(3);
     expect(mocks.cancel).toHaveBeenCalledTimes(1);

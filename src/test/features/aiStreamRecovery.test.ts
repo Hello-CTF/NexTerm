@@ -215,15 +215,15 @@ describe("stream recovery: sequence cursor and reorder", () => {
       confirmationNonce: "n1",
       seq: 2,
     });
-    const result = s.pushEvent(1, { type: "canceled", message: "已停止本轮", seq: 3 });
+    const result = s.pushEvent(1, { type: "canceled", message: "已停止", seq: 3 });
     expect(result.terminal).toBe("canceled");
     const state = s.getState();
     expect(state.attempts[0].outcome).toBe("canceled");
     const tool = state.items.find((i) => i.role === "tool");
     expect(tool).toMatchObject({ summary: "已停止" });
     const card = state.items.find((i) => i.role === "confirm");
-    expect(card).toMatchObject({ resolution: "本轮已停止，无需再处理" });
-    expect(state.items.at(-1)).toMatchObject({ role: "outcome", outcome: "canceled", text: "已停止本轮" });
+    expect(card).toMatchObject({ resolution: "这次回答已停止，无需再处理" });
+    expect(state.items.at(-1)).toMatchObject({ role: "outcome", outcome: "canceled", text: "已停止" });
   });
 
   it("error and done outcomes settle still-running tools and record retryability", () => {
@@ -232,7 +232,7 @@ describe("stream recovery: sequence cursor and reorder", () => {
     errored.s.pushEvent(1, { type: "toolCall", id: "c1", name: "exec", display: "ls", seq: 1 });
     errored.s.pushEvent(1, { type: "error", message: "boom", retryable: true, seq: 2 });
     const errorState = errored.s.getState();
-    expect(errorState.items.find((i) => i.role === "tool")).toMatchObject({ summary: "本轮出错中断" });
+    expect(errorState.items.find((i) => i.role === "tool")).toMatchObject({ summary: "回答出错而中断" });
     expect(errorState.items.at(-1)).toMatchObject({ outcome: "error", retryable: true });
 
     const nonRetryable = stream();
@@ -267,7 +267,7 @@ describe("stream recovery: sequence cursor and reorder", () => {
     expect(replayed.terminal).toBe("done");
     const outcomes = s.getState().items.filter((i) => i.role === "outcome");
     expect(outcomes).toHaveLength(1);
-    expect(outcomes[0]).toMatchObject({ outcome: "done", text: "本轮已完成" });
+    expect(outcomes[0]).toMatchObject({ outcome: "done", text: "回答已完成" });
   });
 
   it("rejected fillers drain buffered error and canceled terminals without duplicate outcomes", () => {
@@ -280,13 +280,13 @@ describe("stream recovery: sequence cursor and reorder", () => {
     expect(errorFiller.terminal).toBe("error");
     const errorState = errored.s.getState();
     expect(errorState.attempts[0].outcome).toBe("error");
-    expect(errorState.items.find((i) => i.role === "tool")).toMatchObject({ summary: "本轮出错中断" });
+    expect(errorState.items.find((i) => i.role === "tool")).toMatchObject({ summary: "回答出错而中断" });
     expect(errorState.items.filter((i) => i.role === "outcome")).toHaveLength(1);
 
     const canceled = stream();
     canceled.s.beginRun(1);
     canceled.s.pushEvent(1, { type: "toolCall", id: "c1", name: "exec", display: "ls", seq: 1 });
-    canceled.s.pushEvent(1, { type: "canceled", message: "已停止本轮", seq: 3 });
+    canceled.s.pushEvent(1, { type: "canceled", message: "已停止", seq: 3 });
     const cancelFiller = canceled.s.pushEvent(1, { type: "steered", text: "More", seq: 2 });
     expect(cancelFiller.accepted).toBe(false);
     expect(cancelFiller.terminal).toBe("canceled");
@@ -407,10 +407,10 @@ describe("AiSidebar stream recovery", () => {
   it("settles with a canceled outcome when the server reports user cancel", async () => {
     await send("Hello");
     emit({ type: "delta", text: "半截", seq: 1 });
-    emit({ type: "canceled", message: "已停止本轮", seq: 2 });
+    emit({ type: "canceled", message: "已停止", seq: 2 });
     await flush();
 
-    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).toContain("已停止");
     expect(textOf(view!)).not.toContain("本轮出错");
     expect(useUi.getState().aiBusy).toBe(false);
   });
@@ -433,7 +433,7 @@ describe("AiSidebar stream recovery", () => {
     emit({ type: "error", message: "模型超时", retryable: true, seq: 1 });
     await flush();
 
-    expect(textOf(view!)).toContain("本轮出错：模型超时");
+    expect(textOf(view!)).toContain("这次回答失败：模型超时");
     clickButton(view!.container, "重试");
     await flush();
 
@@ -455,8 +455,8 @@ describe("AiSidebar stream recovery", () => {
     expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 1, 200);
     expect(useUi.getState().aiBusy).toBe(false);
     const text = textOf(view!);
-    expect(text).toContain("本轮已完成");
-    expect(text.split("本轮已完成").length - 1).toBe(1);
+    expect(text).toContain("回答已完成");
+    expect(text.split("回答已完成").length - 1).toBe(1);
   });
 
   it("settles when a rejected filler arrives live after a buffered terminal", async () => {
@@ -472,8 +472,8 @@ describe("AiSidebar stream recovery", () => {
     emit({ type: "steered", text: "More", seq: 2 });
     await flush();
     expect(useUi.getState().aiBusy).toBe(false);
-    expect(textOf(view!)).toContain("本轮已完成");
-    expect(textOf(view!).split("本轮已完成").length - 1).toBe(1);
+    expect(textOf(view!)).toContain("回答已完成");
+    expect(textOf(view!).split("回答已完成").length - 1).toBe(1);
   });
 
   it("keeps an honest syncing state on replay failure and succeeds on retry", async () => {
@@ -548,7 +548,7 @@ describe("AiSidebar stream recovery", () => {
 
     expect(useUi.getState().aiBusy).toBe(false);
     const settledText = textOf(view!);
-    expect(settledText).toContain("本轮已完成");
+    expect(settledText).toContain("回答已完成");
     expect(settledText).not.toContain("正在补齐");
 
     const callsBefore = mocks.runEvents.mock.calls.length;
@@ -657,7 +657,7 @@ describe("AiSidebar stream recovery", () => {
     ]);
     mocks.runEvents.mockResolvedValue([
       { type: "delta", text: "半截回答", seq: 1 },
-      { type: "canceled", message: "已停止本轮", seq: 2 },
+      { type: "canceled", message: "已停止", seq: 2 },
     ]);
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
@@ -666,7 +666,7 @@ describe("AiSidebar stream recovery", () => {
     await flushReplay();
 
     expect(textOf(view!)).toContain("半截回答");
-    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).toContain("已停止");
     expect(textOf(view!)).not.toContain("本轮出错");
     expect(useUi.getState().aiBusy).toBe(false);
   });

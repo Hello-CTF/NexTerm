@@ -158,7 +158,7 @@ export function currentAiBoardKey(): string {
 }
 
 export function terminalEventOf(run: AiRunDto): Record<string, unknown> | null {
-  if (run.status === "canceled") return { type: "canceled", message: "已停止本轮" };
+  if (run.status === "canceled") return { type: "canceled", message: "已停止" };
   if (run.status === "completed") {
     return {
       type: "done",
@@ -170,10 +170,10 @@ export function terminalEventOf(run: AiRunDto): Record<string, unknown> | null {
       latencyMs: run.latencyMs,
     };
   }
-  if (run.status === "failed") return { type: "error", message: run.error || "AI 任务失败" };
-  if (run.status === "expired") return { type: "error", message: run.error || "AI 任务已过期" };
+  if (run.status === "failed") return { type: "error", message: run.error || "AI 任务失败，请重试" };
+  if (run.status === "expired") return { type: "error", message: run.error || "AI 任务已过期，请重新发送" };
   if (run.status === "interrupted" && run.finishedAt != null) {
-    return { type: "error", message: run.error || "AI 任务已中断" };
+    return { type: "error", message: run.error || "AI 任务被中断，请重试" };
   }
   return null;
 }

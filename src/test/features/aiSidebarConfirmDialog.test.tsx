@@ -582,7 +582,7 @@ describe("AiSidebar permission request dialogs", () => {
     mocks.getPermission.mockRejectedValueOnce(new Error("权限服务不可用"));
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
-    expect(mounted!.container.textContent).toContain("权限读取失败 · 权限服务不可用");
+    expect(mounted!.container.textContent).toContain("无法读取权限设置：权限服务不可用");
     expect(mounted!.container.textContent).not.toContain("查看直接执行");
 
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
