@@ -33,7 +33,8 @@ var ErrTokenLimit = errors.New("隐私检测文本超过 131072 token 上限")
 var errModelIncompatible = errors.New("隐私模型格式、文件或算子与运行时不兼容")
 
 // DefaultRuntimeDirectory locates libraries shipped with this application.
-// Android's executable is app_process, so its CGO library location is used.
+// Android's executable is app_process, so the directory of the shared
+// library holding this package is used.
 func DefaultRuntimeDirectory() string {
 	if runtime.GOOS == "android" {
 		if path := selfLibraryPath(); path != "" {
