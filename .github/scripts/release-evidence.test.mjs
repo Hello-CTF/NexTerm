@@ -28,7 +28,7 @@ function makeCandidate(t, version = VERSION) {
       commit: HEAD,
       status: "passed",
       artifact: { size_bytes: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex") },
-      assertions: [{ id: "package", status: "passed" }],
+      assertions: [{ id: "package", status: "passed" }, { id: "privacy-runtime", status: "passed" }],
     };
     fs.writeFileSync(`${file}.artifact.json`, `${JSON.stringify(report, null, 2)}\n`);
   }
@@ -51,7 +51,7 @@ function writeIntermediateReport(directory, name, edit) {
     commit: HEAD,
     status: "passed",
     artifact: { path: "target/go-build/nexterm-desktop-windows-amd64.exe", size_bytes: 123, sha256: "a".repeat(64) },
-    assertions: [{ id: "binary-format", status: "passed" }],
+    assertions: [{ id: "binary-format", status: "passed" }, { id: "privacy-runtime", status: "passed" }],
   };
   edit?.(report);
   const file = path.join(directory, name);
@@ -225,4 +225,14 @@ test("the CLI requires NEXTERM_RELEASE_VERSION instead of reading the placeholde
   assert.equal(result.status, 1);
   assert.match(result.stderr, /invalid-version/);
   assert.equal(fs.existsSync(path.join(directory, "SHA256SUMS")), false);
+});
+
+
+test("rejects desktop packages without native privacy runtime verification", (t) => {
+  const directory = makeCandidate(t);
+  const name = [...releaseArtifacts(VERSION).keys()].find((name) => name.endsWith(".dmg"));
+  editReport(directory, name, (report) => { report.assertions = report.assertions.filter((item) => item.id !== "privacy-runtime"); });
+  const result = withVersion(t, VERSION, () => verifyReleaseEvidence(directory));
+  assert.equal(result.passed, false);
+  assert.ok(result.artifacts.find((artifact) => artifact.name === name).failures.includes("privacy-runtime"));
 });

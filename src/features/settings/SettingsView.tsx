@@ -32,6 +32,7 @@ import { isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { isWindows } from "../../app/platform";
 import { isMobileShell, isTouchShell } from "../../app/shell";
 import { ModelManager } from "../ai/ModelPanel";
+import { PrivacyCard } from "./PrivacyCard";
 import { AppearanceCard } from "./AppearanceCard";
 import { LocalHelperSettings } from "./LocalHelperSettings";
 import { NotificationSettings } from "../inbox/NotificationSettings";
@@ -103,6 +104,7 @@ const ALL_SETTINGS_SECTIONS = [
   { id: "settings-update", label: "软件更新", icon: IconDownload, group: "general" },
   { id: "settings-diagnostics", label: "诊断与调试", icon: IconActivity, group: "general" },
   { id: "settings-ai-model", label: "模型", icon: IconSparkles, group: "ai" },
+  { id: "settings-ai-privacy", label: "信息脱敏", icon: IconShield, group: "ai" },
   { id: "settings-ai-rules", label: "拦截规则", icon: IconShield, group: "ai" },
   { id: "settings-ai-skills", label: "技能", icon: IconLayers, group: "ai" },
   { id: "settings-memory", label: "记忆", icon: IconBot, group: "ai" },
@@ -1014,6 +1016,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             )}
           </div>
         </section>
+
+        <PrivacyCard />
 
         <section id="settings-ai-rules" className="nx-card scroll-mt-12">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">

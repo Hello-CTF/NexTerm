@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
@@ -35,7 +36,7 @@ func (r *Runner) CompactConversation(ctx context.Context, conversationID string)
 	if err != nil {
 		return CompactResult{}, err
 	}
-	executionCtx := conversationExecutionContext(ctx, row.OwnerID)
+	executionCtx := privacy.WithConversation(conversationExecutionContext(ctx, row.OwnerID), conversationID)
 	unlock := r.lockConversation(conversationID)
 	defer unlock()
 	if r.conversationHasJob(conversationID) {

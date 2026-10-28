@@ -7,6 +7,14 @@ const FRAME_SIZE = 64 * 1024;
 type EventHandler = (event: { data: unknown }) => void;
 
 let runtime: WailsMock;
+const nativeBase64Descriptor = Object.getOwnPropertyDescriptor(Uint8Array, "fromBase64");
+const base64Decoder = Uint8Array as unknown as { fromBase64?: (text: string) => Uint8Array };
+
+function spyActiveDecoder() {
+  return typeof base64Decoder.fromBase64 === "function"
+    ? vi.spyOn(base64Decoder, "fromBase64")
+    : vi.spyOn(globalThis, "atob");
+}
 
 beforeEach(() => {
   vi.resetModules();
@@ -18,6 +26,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.doUnmock("@wailsio/runtime");
+  if (nativeBase64Descriptor) Object.defineProperty(Uint8Array, "fromBase64", nativeBase64Descriptor);
+  else delete base64Decoder.fromBase64;
 });
 
 function base64Of(bytes: Uint8Array): string {
@@ -42,7 +52,7 @@ async function ready(channel: unknown): Promise<void> {
 
 describe("desktop binary channel wire compatibility", () => {
   it("decodes a typed base64 Wails payload exactly once", async () => {
-    const decode = vi.spyOn(globalThis, "atob");
+    const decode = spyActiveDecoder();
     const { createBinaryChannel } = await import("../ipc/events");
     const received: Uint8Array[] = [];
     const channel = createBinaryChannel((bytes) => received.push(bytes));
@@ -58,7 +68,7 @@ describe("desktop binary channel wire compatibility", () => {
   });
 
   it("replays 4 MiB without loss, corruption, or reordering", async () => {
-    const decode = vi.spyOn(globalThis, "atob");
+    const decode = spyActiveDecoder();
     const { createBinaryChannel } = await import("../ipc/events");
     const received: Uint8Array[] = [];
     const channel = createBinaryChannel((bytes) => received.push(bytes));
@@ -94,7 +104,7 @@ describe("desktop binary channel wire compatibility", () => {
   it("unsubscribes once and does not decode typed payloads after disposal", async () => {
     const off = vi.fn();
     runtime.Events.On.mockReturnValue(off);
-    const decode = vi.spyOn(globalThis, "atob");
+    const decode = spyActiveDecoder();
     const { createBinaryChannel, disposeChannel } = await import("../ipc/events");
     const received: Uint8Array[] = [];
     const channel = createBinaryChannel((bytes) => received.push(bytes));
@@ -111,10 +121,6 @@ describe("desktop binary channel wire compatibility", () => {
   });
 
   describe("base64 decoding branches", () => {
-    afterEach(() => {
-      delete (Uint8Array as unknown as { fromBase64?: unknown }).fromBase64;
-    });
-
     it("uses Uint8Array.fromBase64 when the runtime provides it", async () => {
       const expected = sourceBytes(1024);
       const native = vi.fn((_text: string) => expected.slice());
@@ -134,6 +140,7 @@ describe("desktop binary channel wire compatibility", () => {
     });
 
     it("falls back to atob when fromBase64 is absent, including padding lengths", async () => {
+      delete base64Decoder.fromBase64;
       const { createBinaryChannel } = await import("../ipc/events");
       const received: Uint8Array[] = [];
       const channel = createBinaryChannel((bytes) => received.push(bytes));

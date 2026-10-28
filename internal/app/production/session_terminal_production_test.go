@@ -481,6 +481,9 @@ func newTerminalTestProduction(t *testing.T, dataDir string, factory *bridgeTest
 
 func connectLocalTerminalTest(t *testing.T, production *Production) sessionInfoDTO {
 	t.Helper()
+	// These protocol tests must not execute the developer's interactive shell startup files.
+	t.Setenv("SHELL", "")
+	t.Setenv("ENV", "")
 	connectedResponse := dispatchDurableTest(t, production, "session_connect_local", `null`, "", "")
 	var connected sessionInfoDTO
 	requireStoreTestResponse(t, connectedResponse, &connected)

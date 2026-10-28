@@ -14,7 +14,8 @@ import (
 
 // applyInstall runs the NSIS silent install (/S; MUI2 pages are auto-skipped in silent mode).
 // When the currently running exe is the install target, NSIS cannot overwrite the running executable,
-// so the current exe is first renamed to .old and rolled back on install failure; loose copies leave the original file alone and restart into the installed version.
+// so loaded executable/runtime images are moved aside and restored on failure.
+// Loose copies leave the original file alone and restart into the installed version.
 func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	target, inPlace := installTargetFor(m.ExePath, registeredInstallTarget(), defaultInstallDir(), canonicalExeName())
 	if !inPlace {
@@ -28,17 +29,8 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 		return nil
 	}
 	executable := m.ExePath
-	backup := executable + ".old"
-	if err := os.Rename(executable, backup); err != nil {
-		return userErrorf(UserErrorIO, "备份当前可执行文件失败: %w", err)
-	}
-	if err := runInstaller(ctx, archive); err != nil {
-		_ = os.Rename(backup, executable)
-		return err
-	}
-	if _, err := os.Stat(executable); err != nil {
-		_ = os.Rename(backup, executable)
-		return userErrorf(UserErrorIO, "安装完成后未找到新可执行文件 %s", executable)
+	if err := installWindowsPayload(executable, func() error { return runInstaller(ctx, archive) }); err != nil {
+		return userErrorf(UserErrorIO, "安装更新文件失败: %w", err)
 	}
 	m.restartTarget = executable
 	return nil

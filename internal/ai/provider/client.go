@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 )
 
 const maxErrorBody = 64 << 10
@@ -39,6 +41,7 @@ func DefaultTimeouts() Timeouts {
 type Option func(*clientOptions)
 
 type clientOptions struct {
+	privacy  func(context.Context) (*privacy.Exchange, error)
 	timeouts Timeouts
 	retry    RetryPolicy
 	circuit  *CircuitBreaker
@@ -82,6 +85,7 @@ func WithCircuitBreaker(breaker *CircuitBreaker) Option {
 }
 
 type Client struct {
+	privacy  func(context.Context) (*privacy.Exchange, error)
 	config   Config
 	http     *http.Client
 	timeouts Timeouts
@@ -121,6 +125,7 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 	return &Client{
+		privacy:  settings.privacy,
 		config:   config,
 		http:     &http.Client{Transport: &wireTransport{base: transport, idle: settings.timeouts.Idle}},
 		timeouts: settings.timeouts,

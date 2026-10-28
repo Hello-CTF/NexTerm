@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -164,13 +165,15 @@ func TestInputWindowBackpressure(t *testing.T) {
 	}
 	provider := NewRemoteProvider(client)
 	attachment, err := provider.Create(context.Background(), base.DurableCreateOptions{
-		Command: []string{"/bin/sh", "-c", "stty raw -echo; cat " + gate + " >/dev/null; head -c " + strconv.Itoa(total) + " | wc -c"},
+		Command: []string{"/bin/sh", "-c", "stty raw -echo; printf 'input-window-ready\\n'; cat '" + strings.ReplaceAll(gate, "'", "'\"'\"'") + "' >/dev/null; head -c " + strconv.Itoa(total) + " | wc -c"},
 		Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	stream := attachment.(*streamAttachment).Stream
+	// Input sent before stty completes can be discarded by the canonical PTY buffer.
+	readUntil(t, stream, "input-window-ready")
 	done := make(chan error, 1)
 	go func() {
 		payload := bytes.Repeat([]byte("x"), total)

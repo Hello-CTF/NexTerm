@@ -15,7 +15,9 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
@@ -121,7 +123,8 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		}
 		config.Config.Logger.Info("credential vault was not initialized; completed passwordless initialization automatically")
 	}
-	profileManager, err := profiles.NewManager(ctx, database, profiles.WithShared(config.Desktop))
+	privacyManager := privacy.NewManager(database, filepath.Join(config.DataDir, "ai-privacy", "models"), config.Desktop, loadPrivacyEngine)
+	profileManager, err := profiles.NewManager(ctx, database, profiles.WithShared(config.Desktop), profiles.WithClientOptions(provider.WithPrivacy(privacyManager.Exchange)))
 	if err != nil {
 		return nil, err
 	}
@@ -373,7 +376,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		LocalHelper:   localHelper,
 		stateRules:    stateRules,
 		deviceInstall: deviceInstall,
-		Store:         database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
+		Store:         database, Vault: credentialVault, Sync: syncService, Profiles: profileManager, Privacy: privacyManager,
 		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
 		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)

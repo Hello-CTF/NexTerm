@@ -158,7 +158,7 @@ func run(args []string, stderr io.Writer) int {
 	}
 	output := report{
 		SchemaVersion: 2, ID: id, Kind: "mobile",
-		Platform:        platform{OS: osName, Arch: "arm64", CGO: "enabled-only-for-wails-platform-layer"},
+		Platform:        platform{OS: osName, Arch: "arm64", CGO: "enabled-for-platform-and-local-ai-inference"},
 		Version:         version,
 		Commit:          commit,
 		SourceDateEpoch: epoch,
@@ -287,6 +287,7 @@ func (c *checker) run() error {
 		return nil
 	}
 	c.manifest = manifest
+	c.checkPrivacyRuntime()
 	c.add("zip-structure", "passed", fmt.Sprintf("central directory contains %d unique safe entries totaling %d uncompressed bytes", manifest.entryCount, manifest.totalUncompressedBytes))
 	if c.id == "mobile-ios" {
 		c.checkIOS()

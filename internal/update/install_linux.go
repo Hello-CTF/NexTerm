@@ -13,8 +13,7 @@ import (
 	"strings"
 )
 
-// applyInstall extracts nexterm-desktop from the deb (usr/bin/nexterm-desktop inside data.tar.gz),
-// atomically replacing the current executable (renaming over a running exe is safe on Linux).
+// applyInstall installs the executable and bundled privacy runtime from the signed deb.
 func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	file, err := os.Open(archive)
 	if err != nil {
@@ -30,47 +29,8 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 		return userErrorf(UserErrorIO, "解压 %s 失败: %w", filepath.Base(archive), err)
 	}
 	defer compressed.Close()
-	staged := m.ExePath + ".new"
-	found := false
-	reader := tar.NewReader(compressed)
-	for {
-		header, err := reader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return userErrorf(UserErrorIO, "读取 %s 失败: %w", filepath.Base(archive), err)
-		}
-		if header.Typeflag != tar.TypeReg || !strings.HasSuffix(header.Name, "/nexterm-desktop") {
-			continue
-		}
-		output, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(output, reader)
-		closeErr := output.Close()
-		if copyErr != nil {
-			_ = os.Remove(staged)
-			return userErrorf(UserErrorIO, "写入新可执行文件失败：%w", copyErr)
-		}
-		if closeErr != nil {
-			_ = os.Remove(staged)
-			return closeErr
-		}
-		found = true
-		break
-	}
-	if !found {
-		return userErrorf(UserErrorIO, "%s 中没有 nexterm-desktop", filepath.Base(archive))
-	}
-	if err := ctx.Err(); err != nil {
-		_ = os.Remove(staged)
-		return err
-	}
-	if err := os.Rename(staged, m.ExePath); err != nil {
-		_ = os.Remove(staged)
-		return userErrorf(UserErrorIO, "替换当前可执行文件失败: %w", err)
+	if err := installLinuxPayload(ctx, tar.NewReader(compressed), m.ExePath); err != nil {
+		return userErrorf(UserErrorIO, "安装更新文件失败: %w", err)
 	}
 	m.restartTarget = m.ExePath
 	return nil

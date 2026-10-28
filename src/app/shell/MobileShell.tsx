@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
-import type { WallCard } from "../../features/mobile/statusWall";
+import type { WallCard } from "../../features/mobile/statusWallModel";
 import { SessionPromptChoices } from "../../features/terminal/ChoiceButtons";
 import { IconHome } from "../../ui/icons";
 import { Lazy } from "../../ui/LazyBoundary";

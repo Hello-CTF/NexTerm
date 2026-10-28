@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
+	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
@@ -192,7 +193,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		conversationID = row.ID
 		ownerID = row.OwnerID
 	}
-	executionCtx := conversationExecutionContext(ctx, ownerID)
+	executionCtx := privacy.WithConversation(conversationExecutionContext(ctx, ownerID), conversationID)
 	if persisted {
 		resolved, resolveErr := r.resolveScope(executionCtx, conversationID, persistedScope)
 		if resolveErr != nil {

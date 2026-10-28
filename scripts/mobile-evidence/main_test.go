@@ -230,6 +230,11 @@ func makePlistIPA(t *testing.T, plist []byte, options ipaOptions) string {
 		{name: "Payload/nexterm.app/Info.plist", data: plist, mode: 0o644},
 		{name: "Payload/nexterm.app/" + options.executableName, data: options.executable, mode: options.executableMode},
 	}
+	for _, name := range []string{"NexTermPrivacy", "onnxruntime"} {
+		base := "Payload/nexterm.app/Frameworks/" + name + ".framework/"
+		entries = append(entries, zipFixture{name: base + name, data: thinMachO(2), mode: 0o755}, zipFixture{name: base + "Info.plist", data: []byte("<plist><dict><key>CFBundleExecutable</key><string>" + name + "</string></dict></plist>"), mode: 0o644})
+	}
+	entries = append(entries, privacyLicenseFixtures("Payload/nexterm.app/Frameworks/", "ios", "arm64")...)
 	if !options.noProfile {
 		profile := options.profile
 		if profile == nil {
@@ -255,7 +260,9 @@ func makeAndroidAPK(t *testing.T, name string, data []byte) string {
 		data = []byte("fixture")
 	}
 	path := filepath.Join(t.TempDir(), "test.apk")
-	writeZip(t, path, zip.Store, []zipFixture{{name: name, data: data}})
+	entries := privacyLicenseFixtures("assets/ai-runtime/arm64-v8a/", "android", "arm64")
+	entries = append(entries, zipFixture{name: "lib/arm64-v8a/libwails.so", data: []byte("fixture")}, zipFixture{name: "lib/arm64-v8a/libnexterm_privacy.so", data: privacyELF(183)}, zipFixture{name: "lib/arm64-v8a/libonnxruntime.so", data: privacyELF(183)}, zipFixture{name: name, data: data})
+	writeZip(t, path, zip.Store, entries)
 	return path
 }
 
@@ -945,4 +952,14 @@ func (e *plistEncoder) bytes(top int) []byte {
 	binary.BigEndian.PutUint64(trailer[16:], uint64(top))
 	binary.BigEndian.PutUint64(trailer[24:], table)
 	return append(out, trailer...)
+}
+
+func privacyELF(machine uint16) []byte {
+	data := make([]byte, 64)
+	copy(data, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+	binary.LittleEndian.PutUint16(data[16:], 3)
+	binary.LittleEndian.PutUint16(data[18:], machine)
+	binary.LittleEndian.PutUint32(data[20:], 1)
+	binary.LittleEndian.PutUint16(data[52:], 64)
+	return data
 }

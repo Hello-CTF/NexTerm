@@ -17,6 +17,7 @@ const FIXTURE_FILES = [
   "scripts/build.mjs",
   "scripts/test-production.mjs",
   "scripts/lib/build-manifest.mjs",
+  "scripts/lib/privacy-runtime.mjs",
   "scripts/lib/makensis.mjs",
   "scripts/lib/mobile.mjs",
   "scripts/lib/semver.mjs",

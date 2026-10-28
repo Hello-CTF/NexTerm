@@ -288,7 +288,7 @@ func TestProtocol2HelperUpgrade(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _, err = ReplaceLegacyHelper(context.Background(), HelperConfig{StateDir: stateDir, Executable: "/bin/false", SpawnTimeout: 10 * time.Second}, HelperConsentToken(running))
+		_, _, err = ReplaceLegacyHelper(context.Background(), HelperConfig{StateDir: stateDir, Executable: supervisorTestExecutable(t, "false"), SpawnTimeout: 10 * time.Second}, HelperConsentToken(running))
 		var failed *HelperReplaceError
 		if !errors.As(err, &failed) || failed.Stage != ReplaceStart || !failed.Stopped {
 			t.Fatalf("replacement with a helper that cannot start = %v, want a start failure after the stop", err)
