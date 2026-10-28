@@ -7,7 +7,7 @@ import { type ChatItem, type ConfirmItem, pendingInteraction, type ToolItem } fr
 import { confirmationInput, answerInput } from "../aiWire";
 import { useAuth } from "../../auth/store";
 import type { AgentApprovalDecision, AgentRosterEntry, AgentToolCall } from "../agentTypes";
-import { createAgentRosterApi, createAgentRunHistoryApi } from "../agentProduction";
+import { createAgentRosterApi } from "../agentProduction";
 import { useAgentRosterSnapshot, refreshAgentRosterSnapshot } from "../agentRosterSnapshot";
 import { runSummaryFromAttempt, buildAgentToolCall, approvalFromConfirmCard } from "../agentToolData";
 import { type RefChip, latestPlanApproved, PLAN_EXECUTE_MESSAGE, CONFIRM_RESOLUTION, type AiChatBase } from "./aiSidebarShared";
@@ -434,7 +434,6 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
           }),
     [conversationId, agentOwnerId, agentOwnerName, resolveAgentApproval, activeRunRef],
   );
-  const agentHistoryApi = useMemo(() => createAgentRunHistoryApi(), []);
   const watchOwner = agentOwnerId === "" ? "local" : agentOwnerId;
 
   // The roster snapshot joins the recorded handles onto real roster rows,
@@ -502,7 +501,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     inputRef.current?.focus();
   }, [inputRef, setInput]);
 
-  return { setEditing, agentRosterApi, mentionAgentHandle, agentHistoryApi, agentOwnerId, watchOwner, handleApprovePlan, handleRetryRun, handleEditResend, agentToolCallFor, submitAgentApproval, confirm, answer, editing, editSubmitting, submitEditResend, steer, send };
+  return { setEditing, agentRosterApi, mentionAgentHandle, watchOwner, handleApprovePlan, handleRetryRun, handleEditResend, agentToolCallFor, submitAgentApproval, confirm, answer, editing, editSubmitting, submitEditResend, steer, send };
 }
 
 export type UseChatActionsOut = ReturnType<typeof useChatActions>;

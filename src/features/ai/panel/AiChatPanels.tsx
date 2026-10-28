@@ -1,16 +1,12 @@
 import { IconShield, IconClose, IconRefresh, IconList } from "../../../ui/icons";
 import { GrantPanel } from "../GrantPanel";
 import { useUi } from "../../../app/store";
-import { CronPanel } from "../CronPanel";
-import { AgentRosterPanel } from "../AgentRosterPanel";
-import { AgentRunHistoryPanel } from "../AgentRunHistoryPanel";
-import { WatchPanel } from "../WatchPanel";
-import { watchPanelApi } from "../../../ipc/watchApi";
 import { MODE_OPTIONS, PLAN_MODE_HINT } from "./aiSidebarShared";
+import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import type { AiChatCtx } from "./aiChatCtx";
 
 export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
-  const { permOpen, setPermOpen, permError, loadPermission, perm, permScope, permDeviceOverride, followGlobalMode, switchMode, planMode, setPlanMode, aiScopeAssetId, cronOpen, conversationId, activeWorkspace, setCronOpen, agentOpen, agentRosterApi, mentionAgentHandle, openAgentTerminal, agentHistoryApi, agentOwnerId, watchOpen, watchOwner, setWatchOpen } = ctx;
+  const { permOpen, setPermOpen, permError, loadPermission, perm, permScope, permDeviceOverride, followGlobalMode, switchMode, planMode, setPlanMode, aiScopeAssetId, tasksOpen } = ctx;
   return (
     <>
       {permOpen && (
@@ -120,39 +116,7 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
         </div>
       )}
 
-      {cronOpen && conversationId && (
-        <CronPanel
-          conversationId={conversationId}
-          hostName={activeWorkspace?.kind === "session" ? activeWorkspace.title : undefined}
-          onClose={() => setCronOpen(false)}
-        />
-      )}
-
-      {agentOpen && conversationId && agentRosterApi && (
-        // Keyed by conversation: a switch remounts both panels, so the first
-        // committed frame of the new conversation can never show, and the
-        // composer can never mention, the previous conversation's rows —
-        // regardless of how the new conversation's load settles or fails.
-        <>
-          <AgentRosterPanel
-            key={`roster-${conversationId}`}
-            api={agentRosterApi}
-            onMention={mentionAgentHandle}
-            onOpened={openAgentTerminal}
-          />
-          <AgentRunHistoryPanel
-            key={`history-${conversationId}`}
-            api={agentHistoryApi}
-            scope={{ ownerId: agentOwnerId, conversationId }}
-          />
-        </>
-      )}
-
-      {watchOpen && (
-        <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60">
-          <WatchPanel api={watchPanelApi} owner={watchOwner} onClose={() => setWatchOpen(false)} />
-        </div>
-      )}
+      {tasksOpen && <BackgroundTasksPanel key={ctx.conversationId ?? "none"} ctx={ctx} />}
     </>
   );
 }

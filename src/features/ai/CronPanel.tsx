@@ -68,11 +68,16 @@ export function CronPanel({
   conversationId,
   hostName,
   onClose,
+  onJobsChanged,
 }: {
   conversationId: string;
   hostName?: string;
   onClose: () => void;
+  // Called after each successful list load so the caller can refresh counts.
+  onJobsChanged?: () => void;
 }) {
+  const onJobsChangedRef = useRef(onJobsChanged);
+  onJobsChangedRef.current = onJobsChanged;
   const pushToast = useUi((s) => s.pushToast);
   const profilesRevision = useUi((s) => s.modelProfilesRevision);
 
@@ -140,6 +145,7 @@ export function CronPanel({
       if (!aliveRef.current || gen !== loadGenRef.current) return;
       setJobs(sessionJobs ?? []);
       setJobsGen(gen);
+      onJobsChangedRef.current?.();
     } catch (e) {
       if (!aliveRef.current || gen !== loadGenRef.current) return;
       setJobs(null);
@@ -430,6 +436,8 @@ export function CronPanel({
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="刷新"
+          aria-label="刷新定时任务"
+          aria-busy={loading}
           onClick={() => {
             void reload();
             void loadProfiles();

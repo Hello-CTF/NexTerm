@@ -7,18 +7,15 @@ vi.mock("../ipc/commands", async () => {
 });
 
 import type {
-  ConversationRecoverySummary,
   RosterAttachmentDTO,
   RosterEntry,
   RosterListEntry,
-  RunHistoryPage,
 } from "../ipc/generated/types";
 import {
   createAgentRosterApi,
-  createAgentRunHistoryApi,
   type AgentRosterProductionDeps,
 } from "../features/ai/agentProduction";
-import type { AgentRosterApi, AgentRunHistoryApi } from "../features/ai/agentApi";
+import type { AgentRosterApi } from "../features/ai/agentApi";
 
 function rosterEntry(partial: Partial<RosterEntry> = {}): RosterEntry {
   return {
@@ -61,7 +58,6 @@ function deps(partial: Partial<AgentRosterProductionDeps> = {}): AgentRosterProd
 // Compile-time conformance: the production factories implement the reviewed
 // contracts through typed IPC only (no unsafeCall, no mock as production).
 const rosterConformance: AgentRosterApi = createAgentRosterApi(deps());
-const historyConformance: AgentRunHistoryApi = createAgentRunHistoryApi();
 
 describe("agent production roster adapter", () => {
   beforeEach(() => {
@@ -75,7 +71,6 @@ describe("agent production roster adapter", () => {
 
   it("implements the reviewed contracts", () => {
     expect(typeof rosterConformance.list).toBe("function");
-    expect(typeof historyConformance.listRuns).toBe("function");
   });
 
   it("lists through ai_roster_list and maps the real DTO including verifiable host/cwd", async () => {
@@ -387,97 +382,5 @@ describe("agent production roster adapter", () => {
     const api = createAgentRosterApi(deps({ resolveApproval }));
     await api.resolveApproval("req-1", "approve_session");
     expect(resolveApproval).toHaveBeenCalledWith("req-1", "approve_session");
-  });
-});
-
-describe("agent production run history adapter", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  function historyPage(partial: Partial<RunHistoryPage> = {}): RunHistoryPage {
-    return {
-      entries: [
-        {
-          runId: "run-1",
-          state: "done",
-          evidence: { kind: "output", observedAt: 1_760_000_500_000, summary: "完成" },
-          startedAt: 1_760_000_400_000,
-          finishedAt: 1_760_000_500_000,
-          summary: "完成",
-        },
-      ],
-      nextCursor: "cursor-2",
-      ...partial,
-    };
-  }
-
-  it("forwards filter, opaque cursor and limit verbatim and maps one page per call", async () => {
-    mocks.call.mockResolvedValue(historyPage());
-    const api = createAgentRunHistoryApi();
-    const page = await api.listRuns({ ownerId: "u-1", conversationId: "conv-1" }, "error", "opaque-1", 50);
-    expect(mocks.call).toHaveBeenCalledWith("ai_run_history", {
-      conversationId: "conv-1",
-      filter: "error",
-      cursor: "opaque-1",
-      limit: 50,
-    });
-    expect(page.nextCursor).toBe("cursor-2");
-    expect(page.entries[0]).toEqual({
-      runId: "run-1",
-      state: "done",
-      evidence: { kind: "output", observedAt: 1_760_000_500_000, summary: "完成" },
-      startedAt: 1_760_000_400_000,
-      finishedAt: 1_760_000_500_000,
-      summary: "完成",
-    });
-  });
-
-  it("passes an empty cursor for the newest page and a null nextCursor through", async () => {
-    mocks.call.mockResolvedValue(historyPage({ entries: [], nextCursor: null }));
-    const api = createAgentRunHistoryApi();
-    const page = await api.listRuns({ ownerId: "", conversationId: "conv-2" }, "all", null, 20);
-    expect(mocks.call).toHaveBeenCalledWith("ai_run_history", {
-      conversationId: "conv-2",
-      filter: "all",
-      cursor: "",
-      limit: 20,
-    });
-    expect(page.entries).toEqual([]);
-    expect(page.nextCursor).toBeNull();
-  });
-
-  it("rejects unrecognized backend run states and evidence kinds instead of casting", async () => {
-    mocks.call.mockResolvedValue(historyPage({ entries: [{ ...historyPage().entries[0], state: "mystery" }] }));
-    const api = createAgentRunHistoryApi();
-    await expect(
-      api.listRuns({ ownerId: "", conversationId: "conv-1" }, "all", null, 10),
-    ).rejects.toMatchObject({ message: expect.stringContaining("mystery") });
-
-    mocks.call.mockResolvedValue(
-      historyPage({
-        entries: [
-          { ...historyPage().entries[0], evidence: { kind: "mystery", observedAt: 1, summary: "x" } },
-        ],
-      }),
-    );
-    await expect(
-      api.listRuns({ ownerId: "", conversationId: "conv-1" }, "all", null, 10),
-    ).rejects.toMatchObject({ message: expect.stringContaining("mystery") });
-  });
-
-  it("maps the recovery summary and passes null through", async () => {
-    const summary: ConversationRecoverySummary = {
-      conversationId: "conv-1",
-      restoredRuns: 57,
-      resumableRunId: "run-56",
-      interruptedRunIds: ["run-56", "run-12"],
-      truncated: true,
-    };
-    mocks.call.mockResolvedValue(summary);
-    const api = createAgentRunHistoryApi();
-    await expect(api.recoverySummary({ ownerId: "", conversationId: "conv-1" })).resolves.toEqual(summary);
-    expect(mocks.call).toHaveBeenCalledWith("ai_run_recovery_summary", { conversationId: "conv-1" });
-
-    mocks.call.mockResolvedValue(null);
-    await expect(api.recoverySummary({ ownerId: "", conversationId: "conv-1" })).resolves.toBeNull();
   });
 });

@@ -14,7 +14,7 @@ import { type RefChip, type AiChatBase } from "./aiSidebarShared";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
 
 export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
-  const { isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, conversationId, pushToast, input, sessionId, workspaces } = p;
+  const { isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, pushToast, input, sessionId, workspaces } = p;
 
   const updateConversationId = useCallback((id: string | undefined, title?: string) => {
     if (!isLifecycleActive()) return;
@@ -77,9 +77,6 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
   const [permError, setPermError] = useState<string | null>(null);
   const [permOpen, setPermOpen] = useState(false);
-  const [cronOpen, setCronOpen] = useState(false);
-  const [agentOpen, setAgentOpen] = useState(false);
-  const [watchOpen, setWatchOpen] = useState(false);
   const [atOpen, setAtOpen] = useState(false);
   // Typing "/" at the start of the message opens the command menu: built-in
   // commands first, then the user's enabled skills. Lists load when the menu
@@ -158,13 +155,6 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
   useEffect(() => {
     if (permOpen) void loadPermission();
   }, [permOpen, loadPermission]);
-
-  useEffect(() => {
-    if (!conversationId) {
-      setCronOpen(false);
-      setAgentOpen(false);
-    }
-  }, [conversationId]);
 
   const savePerm = async (next: AiPermissionConfig) => {
     const prev = perm;
@@ -292,7 +282,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     return `[引用对象]\n${list}\n\n${text}`;
   };
 
-  return { isRestoreActive, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, cronOpen, setCronOpen, agentOpen, setAgentOpen, watchOpen, setWatchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, imageInputRef };
+  return { isRestoreActive, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, imageInputRef };
 }
 
 export type UseChatPanelStateOut = ReturnType<typeof useChatPanelState>;
