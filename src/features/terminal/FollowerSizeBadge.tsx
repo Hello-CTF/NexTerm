@@ -1,5 +1,4 @@
 import { useId, useState } from "react";
-import { useCoarsePointer } from "../../app/platform";
 import { followerReadable, type FollowerScale, type FollowerZoom } from "./followerScale";
 
 export interface FollowerSizeBadgeProps {
@@ -17,7 +16,8 @@ export interface FollowerSizeBadgeProps {
 // rows and pans the columns (a pinch on the terminal does the same).
 export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom }: FollowerSizeBadgeProps) {
   const id = useId();
-  const touch = useCoarsePointer();
+  // A pinch is only suggested where a touch screen is the primary pointer.
+  const touch = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
   const [expanded, setExpanded] = useState(false);
   const percent = scale && scale.ratio < 1 ? Math.round(scale.ratio * 100) : null;
   const zoomable = zoom === "height" || percent !== null;

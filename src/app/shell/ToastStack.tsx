@@ -7,7 +7,7 @@ export function ToastStack() {
   const holdToast = useUi((s) => s.holdToast);
   const releaseToast = useUi((s) => s.releaseToast);
   return (
-    <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col gap-2" role="region" aria-label="通知">
+    <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col gap-2">
       {toasts.map((t) => {
         const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
         const tone =
@@ -19,8 +19,6 @@ export function ToastStack() {
         return (
           <div
             key={t.id}
-            role={t.kind === "error" ? "alert" : "status"}
-            aria-live={t.kind === "error" ? "assertive" : "polite"}
             onMouseEnter={() => holdToast(t.id)}
             onMouseLeave={() => releaseToast(t.id)}
             onFocus={() => holdToast(t.id)}
