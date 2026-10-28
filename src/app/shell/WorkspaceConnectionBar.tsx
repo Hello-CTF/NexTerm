@@ -75,7 +75,7 @@ export function WorkspaceConnectionBar({
   const retryNow = () => {
     if (ws.sessionId) void sessionApi.probeLiveness(ws.sessionId).catch(() => undefined);
   };
-  const dot = reconnecting || suspect ? "bg-[var(--nx-fg-tertiary)] animate-pulse" : "bg-red-500";
+  const dot = reconnecting || suspect ? "bg-[var(--nx-fg-tertiary)]" : "bg-red-500";
   return (
     <div
       role="status"
