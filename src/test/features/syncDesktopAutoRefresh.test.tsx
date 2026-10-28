@@ -114,7 +114,7 @@ describe("Desktop account sync card - automatic status refresh", () => {
     await flushUntil(() =>
       document.body.textContent?.includes("已登录 alice") === true &&
       document.body.textContent?.includes("已知主机 已关闭") === true &&
-      document.body.textContent?.includes("服务端 0 个对象") === true,
+      document.body.textContent?.includes("服务端共 0 项数据") === true,
     );
     expect(mocks.status.mock.calls.length).toBeGreaterThan(statusCalls);
   });

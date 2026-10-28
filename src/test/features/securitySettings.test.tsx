@@ -758,7 +758,7 @@ describe("SyncCard (web account sync)", () => {
 
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
-    await flushUntil(() => mounted!.container.textContent?.includes("服务端对象在读取期间发生变化") ?? false);
+    await flushUntil(() => mounted!.container.textContent?.includes("服务端数据在读取期间发生变化") ?? false);
     clickButton(mounted.container, "刷新对比");
     await flushUntil(() => mounted!.container.textContent?.includes("服务端较新"));
     // Cloud is newer, the winner set is empty, no push should happen

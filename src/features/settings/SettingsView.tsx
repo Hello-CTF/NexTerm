@@ -1,6 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { aiApi, biometricApi, desktopTrayApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
+import { aiApi, desktopTrayApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import {
   setTerminalCloseAction,
@@ -22,18 +21,19 @@ import {
   type TerminalLinkActivation,
   type TerminalMultilinePasteConfirm,
 } from "../../app/preferences";
-import { ask, promptText } from "../../ui/dialogs";
-import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
+import { ask } from "../../ui/dialogs";
 import { Select } from "../../ui/Select";
 import { onSettingsSection } from "./settingsNavigation";
 import { SettingsSearch } from "./SettingsSearch";
 import { searchSettings, type SettingsPanelId, type SettingsSearchResult, type SettingsSectionId } from "./settingsIndex";
 import "./settingsSearch.css";
-import { isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
+import { isEditableTarget } from "../../ui/DialogHost";
 import { isWindows } from "../../app/platform";
-import { isMobileShell, isTouchShell } from "../../app/shell";
+import { isTouchShell } from "../../app/shell";
 import { ModelManager } from "../ai/ModelPanel";
 import { PrivacyCard } from "./PrivacyCard";
+import { AiRulesCard } from "./AiRulesCard";
+import { VaultCard } from "./VaultCard";
 import { AppearanceCard } from "./AppearanceCard";
 import { LocalHelperSettings } from "./LocalHelperSettings";
 import { NotificationSettings } from "../inbox/NotificationSettings";
@@ -62,7 +62,6 @@ import {
   IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
-  IconClose,
   IconCommand,
   IconDownload,
   IconFlag,
@@ -70,7 +69,6 @@ import {
   IconLayers,
   IconLock,
   IconMonitor,
-  IconPlus,
   IconRefresh,
   IconSearch,
   IconServer,
@@ -86,13 +84,14 @@ import {
 // Settings are split into a few groups shown one at a time; each group lists
 // its sections in the navigation. Hidden groups stay mounted, so switching
 // groups never drops an open form.
-type SettingsGroupId = "general" | "ai" | "security" | "account";
+type SettingsGroupId = "general" | "ai" | "security" | "account" | "app";
 
 const SETTINGS_GROUPS: readonly { id: SettingsGroupId; label: string; icon: typeof IconMonitor }[] = [
-  { id: "general", label: "通用", icon: IconSettings },
+  { id: "general", label: "界面与终端", icon: IconMonitor },
   { id: "ai", label: "AI", icon: IconSparkles },
   { id: "security", label: "安全", icon: IconLock },
-  { id: "account", label: "账号与同步", icon: IconServer },
+  { id: "account", label: "账号与数据", icon: IconServer },
+  { id: "app", label: "更新与诊断", icon: IconSettings },
 ];
 
 type SettingsSectionDef = { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId };
@@ -102,17 +101,17 @@ const ALL_SETTINGS_SECTIONS = [
   { id: "settings-terminal", label: "终端", icon: IconTerminal, group: "general" },
   { id: "settings-state-rules", label: "状态规则", icon: IconFlag, group: "general" },
   { id: "settings-shortcuts", label: "快捷键", icon: IconCommand, group: "general" },
-  { id: "settings-update", label: "软件更新", icon: IconDownload, group: "general" },
-  { id: "settings-diagnostics", label: "诊断与调试", icon: IconActivity, group: "general" },
+  { id: "settings-update", label: "软件更新", icon: IconDownload, group: "app" },
+  { id: "settings-diagnostics", label: "诊断与调试", icon: IconActivity, group: "app" },
   { id: "settings-ai-model", label: "模型", icon: IconSparkles, group: "ai" },
-  { id: "settings-ai-privacy", label: "信息脱敏", icon: IconShield, group: "ai" },
-  { id: "settings-ai-rules", label: "拦截规则", icon: IconShield, group: "ai" },
+  { id: "settings-ai-privacy", label: "AI 信息脱敏", icon: IconShield, group: "ai" },
+  { id: "settings-ai-rules", label: "AI 拦截规则", icon: IconShield, group: "ai" },
   { id: "settings-ai-skills", label: "技能", icon: IconLayers, group: "ai" },
   { id: "settings-memory", label: "记忆", icon: IconBot, group: "ai" },
   { id: "settings-vault", label: "凭据保护", icon: IconLock, group: "security" },
   { id: "settings-known-hosts", label: "已知主机", icon: IconShieldCheck, group: "security" },
   { id: "settings-production", label: "生产安全", icon: IconAlert, group: "security" },
-  { id: "settings-account", label: "账号同步", icon: IconServer, group: "account" },
+  { id: "settings-account", label: "账号与同步", icon: IconServer, group: "account" },
   { id: "settings-bundle", label: "资产包", icon: IconArchive, group: "account" },
   { id: "settings-share", label: "分享", icon: IconGlobe, group: "account" },
 ] as const satisfies readonly SettingsSectionDef[];
@@ -277,27 +276,6 @@ export function SettingsView({ active = true }: { active?: boolean }) {
   const connTestPanelId = useId();
   const [connTestOpen, setConnTestOpen] = useState(false);
 
-  const [protPwd, setProtPwd] = useState("");
-  const [pendingEnable, setPendingEnable] = useState(false);
-  const [vaultPasswordOpen, setVaultPasswordOpen] = useState(false);
-  const [autoLockDraft, setAutoLockDraft] = useState("");
-
-  const qc = useQueryClient();
-  // refetchOnWindowFocus off: refetches triggered by window focus would overwrite the auto-lock draft being edited with stale server values;
-  // refreshes only follow explicit invalidations such as save/header buttons.
-  const vault = useQuery({
-    queryKey: ["vault-status"],
-    queryFn: () => vaultApi.status(),
-    refetchOnWindowFocus: false,
-  }).data ?? null;
-  const vaultPasswordProtected = vault?.mode === "master" && !vault.passwordless;
-  const vaultPasswordless = vault?.mode === "master" && !!vault?.passwordless;
-  const systemProtection = DESKTOP && !!vault?.systemProtection;
-  const refreshVault = () => void qc.invalidateQueries({ queryKey: ["vault-status"] });
-  useEffect(() => {
-    setAutoLockDraft(vault ? String(vault.autoLockMinutes) : "");
-  }, [vault]);
-
   const [navOpen, setNavOpenState] = useState(loadNavOpen);
   const setNavOpen = (open: boolean) => {
     setNavOpenState(open);
@@ -420,6 +398,10 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         const node = el.querySelector<HTMLElement>(`#${s.id}`);
         if (node && node.getBoundingClientRect().top - top <= 64) current = s.id;
       }
+      // Short last sections can never reach the top; at the bottom, the last one is current.
+      if (el.scrollHeight > el.clientHeight && el.scrollTop + el.clientHeight >= el.scrollHeight - 2) {
+        current = visible[visible.length - 1]?.id ?? current;
+      }
       setActiveSection((prev) => (prev === current ? prev : current));
     };
     const onScroll = () => {
@@ -433,135 +415,6 @@ export function SettingsView({ active = true }: { active?: boolean }) {
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, [group]);
-
-  const saveAutoLock = () => {
-    const trimmed = autoLockDraft.trim();
-    const minutes = Number(trimmed);
-    if (trimmed === "" || !Number.isInteger(minutes) || minutes < 0 || minutes > 1440) {
-      pushToast("error", "自动锁定时长须为 0 至 1440 的整数分钟，0 表示禁用");
-      return;
-    }
-    void vaultApi
-      .setAutoLock(minutes)
-      .then(() => {
-        pushToast("success", minutes === 0 ? "已禁用闲置自动锁定" : `闲置 ${minutes} 分钟后自动锁定`);
-        void qc.invalidateQueries({ queryKey: ["vault-status"] });
-      })
-      .catch((e) => pushToast("error", describeError(e)));
-  };
-
-  // changeVaultPassword runs from PasswordChangeForm: it verifies the current
-  // password, then sets the new one. An empty new password removes password
-  // protection; errors are thrown so the form shows them inline.
-  const changeVaultPassword = async (old: string, next: string) => {
-    await vaultApi.unlock(old);
-    if (next === "" && systemProtection) {
-      await vaultApi.initDpapi(old);
-      pushToast("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
-    } else {
-      await vaultApi.changePassword(old, next);
-      // On iOS/Android with biometric material enrolled, silently re-store it with the new password after a change; otherwise biometric unlock would consistently fail
-      if (next !== "" && isMobileShell()) {
-        try {
-          const bio = await biometricApi.status();
-          if (bio.canEvaluate && bio.hasMaterial) await biometricApi.enable(next);
-        } catch {
-          // A failed re-store only means the password unlock is needed again next time
-        }
-      }
-      pushToast(
-        "success",
-        next === ""
-          ? "已关闭密码保护 · 凭据不受影响"
-          : vaultPasswordless
-            ? "已开启密码保护 · 凭据不受影响"
-            : "密码已修改 · 凭据不受影响",
-      );
-    }
-    setVaultPasswordOpen(false);
-    refreshVault();
-  };
-
-  const disableVaultEncryption = async () => {
-    const ok = await ask("关闭加密？\n关闭后凭据改由系统级密钥保护，无需密码即可使用。");
-    if (!ok) return;
-    try {
-      await vaultApi.initDpapi("");
-      pushToast("success", "已关闭加密 · 凭据改由系统级密钥保护");
-      refreshVault();
-    } catch (e) {
-      pushToast("error", describeError(e));
-    }
-  };
-
-  const [aiPerm, setAiPerm] = useState<AiPermissionConfig | null>(null);
-  const [ruleDraft, setRuleDraft] = useState("");
-  const [ruleDraftOpen, setRuleDraftOpen] = useState(false);
-  const [ruleQuery, setRuleQuery] = useState("");
-  const [rulePage, setRulePage] = useState(0);
-  const rulePageSize = 8;
-  const ruleQ = ruleQuery.trim().toLowerCase();
-  const filteredRules = useMemo(
-    () => (aiPerm?.dangerRules ?? []).filter((r) => !ruleQ || r.toLowerCase().includes(ruleQ)),
-    [aiPerm?.dangerRules, ruleQ],
-  );
-  const rulePageCount = Math.max(1, Math.ceil(filteredRules.length / rulePageSize));
-  const currentRulePage = Math.min(rulePage, rulePageCount - 1);
-  const pageRules = filteredRules.slice(
-    currentRulePage * rulePageSize,
-    (currentRulePage + 1) * rulePageSize,
-  );
-  const rulePrefill = useUi((s) => s.aiRulePrefill);
-
-  useEffect(() => {
-    void aiApi
-      .getPermission()
-      .then(setAiPerm)
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    if (rulePrefill === null) return;
-    setRuleDraft(rulePrefill);
-    setRuleDraftOpen(true);
-    useUi.getState().setAiRulePrefill(null);
-    jumpRef.current("settings-ai-rules");
-  }, [rulePrefill]);
-
-  const saveRules = async (rules: string[]) => {
-    try {
-      const latest = await aiApi.getPermission();
-      const next = { ...latest, dangerRules: rules };
-      setAiPerm(next);
-      await aiApi.setPermission(next);
-    } catch (e) {
-      pushToast("error", `保存拦截规则失败：${describeError(e)}`);
-      void aiApi
-        .getPermission()
-        .then(setAiPerm)
-        .catch(() => undefined);
-    }
-  };
-
-  const addRule = () => {
-    const r = ruleDraft.trim();
-    setRuleDraft("");
-    setRuleDraftOpen(false);
-    if (!r || !aiPerm) return;
-    if (aiPerm.dangerRules.some((x) => x.toLowerCase() === r.toLowerCase())) return;
-    void saveRules([...aiPerm.dangerRules, r]);
-  };
-
-  const editRule = (orig: string, next: string): boolean => {
-    if (!aiPerm) return false;
-    const r = next.trim();
-    if (!r || r === orig) return false;
-    if (aiPerm.dangerRules.some((x) => x !== orig && x.toLowerCase() === r.toLowerCase())) {
-      return false;
-    }
-    void saveRules(aiPerm.dangerRules.map((x) => (x === orig ? r : x)));
-    return true;
-  };
 
   const test = async () => {
     setTesting(true);
@@ -759,7 +612,19 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               type="checkbox"
               className="mt-0.5 h-4 w-4 shrink-0"
               checked={terminalOsc52}
-              onChange={(e) => setTerminalOsc52(e.target.checked)}
+              onChange={(e) => {
+                const enable = e.target.checked;
+                if (!enable) {
+                  setTerminalOsc52(false);
+                  return;
+                }
+                void ask("允许远程主机直接写入你的剪贴板？\n开启后不再逐次询问，恶意主机可能改写剪贴板内容。只在可信的主机和网络下开启。", {
+                  title: "开启剪贴板写入",
+                  kind: "warning",
+                }).then((ok) => {
+                  if (ok) setTerminalOsc52(true);
+                });
+              }}
             />
           </label>
           <div className="mt-3.5">
@@ -898,7 +763,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
           {showCloseToTray && (
             <label className="mt-3.5 flex cursor-pointer items-start gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-[12.5px] text-neutral-200">关闭时保留后台运行（最小化到托盘）</div>
+                <div className="text-[12.5px] text-neutral-200" data-setting="close-to-tray">关闭时保留后台运行（最小化到托盘）</div>
                 <p className="nx-hint mt-0.5">
                   {closeToTray
                     ? "关闭窗口后 NexTerm 保留在系统托盘中，终端会话保持连接；右键托盘图标可彻底退出。"
@@ -932,6 +797,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
           <ShortcutsCard reveal={reveal} />
         </div>
 
+        </div>
+        <div className="flex flex-col gap-4" hidden={group !== "app"} data-settings-group="app">
         {DESKTOP && (
           <div id="settings-update" className="scroll-mt-12">
             <UpdateCard />
@@ -1012,114 +879,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
 
         <PrivacyCard />
 
-        <section id="settings-ai-rules" className="nx-card scroll-mt-12">
-          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-            <IconShield size={15} className="text-neutral-400" />
-            <span className="nx-card-title">AI 拦截规则</span>
-            {aiPerm && (
-              <span className={`nx-badge ${aiPerm.dangerRules.length ? "nx-badge-amber" : ""}`}>
-                {aiPerm.dangerRules.length} 条
-              </span>
-            )}
-          </div>
-          <p className="nx-hint mb-3.5">
-            命中命令、路径或 SQL 时，读写和自动执行模式要求确认，只读和无人值守模式直接拒绝。按整词匹配，不区分大小写。
-          </p>
-
-          {aiPerm && aiPerm.dangerRules.length > 0 && (
-            <input
-              className="nx-input nx-input-sm mb-1.5 w-full font-mono"
-              aria-label="搜索拦截规则"
-              placeholder="搜索规则"
-              value={ruleQuery}
-              onChange={(e) => {
-                setRuleQuery(e.target.value);
-                setRulePage(0);
-              }}
-            />
-          )}
-          <div className="mb-1.5 flex flex-col gap-1">
-            {pageRules.map((r) => (
-              <div key={r} className="flex items-center gap-1">
-                <input
-                  className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
-                  defaultValue={r}
-                  title={r}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !isImeKeyEvent(e)) {
-                      e.preventDefault();
-                      e.currentTarget.blur();
-                    }
-                  }}
-                  onBlur={(e) => {
-                    if (!editRule(r, e.currentTarget.value)) e.currentTarget.value = r;
-                  }}
-                />
-                <button
-                  className="nx-icon-btn"
-                  title="删除这条规则"
-                  onClick={() =>
-                    void saveRules((aiPerm?.dangerRules ?? []).filter((x) => x !== r))
-                  }
-                >
-                  <IconClose size={11} />
-                </button>
-              </div>
-            ))}
-            {ruleDraftOpen && (
-              <input
-                autoFocus
-                className="nx-input nx-input-sm w-full font-mono"
-                placeholder="例如 kubectl delete，Enter 保存，Esc 取消"
-                value={ruleDraft}
-                onChange={(e) => setRuleDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !isImeKeyEvent(e)) {
-                    e.preventDefault();
-                    addRule();
-                  }
-                  if (e.key === "Escape") {
-                    setRuleDraft("");
-                    setRuleDraftOpen(false);
-                  }
-                }}
-              />
-            )}
-            {aiPerm && aiPerm.dangerRules.length === 0 && !ruleDraftOpen && (
-              <div className="nx-hint text-[11px]">还没有拦截规则</div>
-            )}
-          </div>
-          {filteredRules.length > rulePageSize && (
-            <div className="mb-1.5 flex items-center gap-2 text-[11px] text-neutral-500">
-              <span>
-                第 {currentRulePage + 1} / {rulePageCount} 页
-              </span>
-              <div className="nx-spacer" />
-              <button
-                className="nx-btn nx-btn-ghost nx-btn-xs"
-                disabled={currentRulePage === 0}
-                onClick={() => setRulePage((p) => Math.max(0, p - 1))}
-              >
-                上一页
-              </button>
-              <button
-                className="nx-btn nx-btn-ghost nx-btn-xs"
-                disabled={currentRulePage >= rulePageCount - 1}
-                onClick={() => setRulePage((p) => Math.min(rulePageCount - 1, p + 1))}
-              >
-                下一页
-              </button>
-            </div>
-          )}
-          <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => setRuleDraftOpen(true)}>
-            <IconPlus size={11} />
-            添加一条规则
-          </button>
-
-          <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-            不可逆操作（格式化磁盘、清空系统目录、删除数据库）会直接拒绝。
-          </p>
-        </section>
+        <AiRulesCard />
 
         <div id="settings-ai-skills" className="scroll-mt-12">
           <SkillsCard api={productionSkillsApi} />
@@ -1130,161 +890,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         </div>
         </div>
         <div className="flex flex-col gap-4" hidden={group !== "security"} data-settings-group="security">
-        <section id="settings-vault" className="nx-card scroll-mt-12">
-          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-            <IconLock size={15} className="text-neutral-400" />
-            <span className="nx-card-title">凭据保护</span>
-            {vault &&
-              (vaultPasswordProtected ? (
-                <span className="nx-badge nx-badge-green">已开启</span>
-              ) : vault.mode === "not_init" ? (
-                <span className="nx-badge nx-badge-amber">未初始化</span>
-              ) : vaultPasswordless ? (
-                <span className="nx-badge nx-badge-amber">加密已启用 · 未设密码</span>
-              ) : (
-                <span className="nx-badge">未开启</span>
-              ))}
-          </div>
-
-          <label className="flex cursor-pointer items-start gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] text-neutral-200" data-setting="vault-password">用密码保护凭据</div>
-              <p className="nx-hint mt-0.5">
-                {vaultPasswordProtected
-                  ? "开启：每次启动需输入密码后方可使用凭据。"
-                  : vault?.mode === "not_init"
-                    ? "尚未初始化：启用保护后才能保存密码或私钥。"
-                    : vaultPasswordless
-                      ? "已启用：凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密；设置密码后，每次启动需输入密码。"
-                      : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
-              </p>
-            </div>
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 shrink-0"
-              checked={vaultPasswordProtected}
-              onChange={() => {
-                if (vaultPasswordProtected) {
-                  const confirmText = systemProtection
-                    ? "关闭密码保护？\n关闭后凭据改由系统级密钥保护，无需密码即可使用。"
-                    : "关闭密码保护？\n关闭后凭据无需密码即可使用，但任何拿到数据目录的人都能解密。";
-                  void ask(confirmText).then(async (ok) => {
-                    if (!ok) return;
-                    const old = await promptText("输入当前保护密码：", "", { secret: true });
-                    if (old === null) return;
-                    void (systemProtection ? vaultApi.initDpapi(old) : vaultApi.changePassword(old, ""))
-                      .then(() => {
-                        pushToast("success", "已关闭密码保护");
-                        return refreshVault();
-                      })
-                      .catch((e) => pushToast("error", describeError(e)));
-                  });
-                } else if (vaultPasswordless) {
-                  setVaultPasswordOpen(true);
-                } else {
-                  setProtPwd("");
-                  setPendingEnable(true);
-                }
-              }}
-            />
-          </label>
-
-          {pendingEnable && !vaultPasswordProtected && (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <input
-                type="password"
-                className="nx-input max-w-[240px]"
-                placeholder="设置保护密码（留空则不设置）"
-                value={protPwd}
-                autoComplete="off"
-                onChange={(e) => setProtPwd(e.target.value)}
-              />
-              <button
-                className="nx-btn nx-btn-primary"
-                disabled={protPwd.length > 0 && protPwd.length < 8}
-                onClick={() =>
-                  void vaultApi
-                    .initMaster(protPwd)
-                    .then(() => {
-                      setPendingEnable(false);
-                      pushToast(
-                        "success",
-                        protPwd === "" ? "已完成初始化，未设置密码" : "已开启密码保护",
-                      );
-                      return refreshVault();
-                    })
-                    .catch((e) => pushToast("error", describeError(e)))
-                }
-              >
-                启用保护
-              </button>
-              <button className="nx-btn nx-btn-ghost" onClick={() => setPendingEnable(false)}>
-                取消
-              </button>
-              <p className="nx-hint w-full text-[11px]">
-                保护密码仅用于此处凭据库，不会随账号同步。留空则不设密码，任何拿到数据目录的人都能解密；忘记密码后，已保存的凭据将无法恢复。
-              </p>
-            </div>
-          )}
-
-          {vault?.mode === "master" && vaultPasswordOpen && (
-            <div className="mt-3">
-              <PasswordChangeForm
-                requireCurrent={!vaultPasswordless}
-                submitLabel={vaultPasswordless ? "设置密码" : "确认修改"}
-                allowEmpty={!vaultPasswordless}
-                emptyLabel="关闭密码保护"
-                onSubmit={changeVaultPassword}
-                onCancel={() => setVaultPasswordOpen(false)}
-              />
-              <p className="nx-hint mt-1.5 text-[11px]">保护密码只用于这台设备上的凭据库，忘记后已保存的凭据无法恢复。</p>
-            </div>
-          )}
-
-          {vault?.mode === "master" && !vaultPasswordOpen && (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {!vaultPasswordless && <span className="nx-hint">锁定与解锁在「凭据」页</span>}
-              <button
-                className={`nx-btn nx-btn-sm ${vaultPasswordless ? "nx-btn-primary" : "nx-btn-outline"}`}
-                onClick={() => setVaultPasswordOpen(true)}
-              >
-                {vaultPasswordless ? "设置密码" : "修改密码"}
-              </button>
-              {vaultPasswordless && systemProtection && (
-                <button
-                  className="nx-btn nx-btn-outline nx-btn-sm"
-                  onClick={() => void disableVaultEncryption()}
-                >
-                  关闭加密
-                </button>
-              )}
-            </div>
-          )}
-
-          {vaultPasswordProtected && (
-            <div className="mt-3 border-t border-neutral-800/60 pt-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[12.5px] text-neutral-200" data-setting="vault-auto-lock">闲置自动锁定</span>
-                <input
-                  type="number"
-                  className="nx-input nx-input-sm w-[96px]"
-                  min={0}
-                  max={1440}
-                  step={1}
-                  value={autoLockDraft}
-                  onChange={(e) => setAutoLockDraft(e.target.value)}
-                />
-                <span className="nx-hint">分钟，0 为禁用</span>
-                <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void saveAutoLock()}>
-                  保存
-                </button>
-              </div>
-              <p className="nx-hint mt-1.5">
-                闲置超过该时长后凭据库自动锁定，再次使用需输入保护密码。
-              </p>
-            </div>
-          )}
-        </section>
+        <VaultCard />
 
         <div id="settings-known-hosts" className="scroll-mt-12">
           <KnownHostsCard />

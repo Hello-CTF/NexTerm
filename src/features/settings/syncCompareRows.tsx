@@ -62,7 +62,7 @@ export function compareRowLabel(state: CompareRowState): { text: string; tone: s
     case "remote-deleted":
       return { text: "服务端已删", tone: "nx-badge-amber", hint: "这条在服务端已被删除。" };
     case "remote-undecryptable":
-      return { text: "无法解密", tone: "nx-badge-amber", hint: "服务端对象与当前数据密钥不匹配或已损坏；自动同步已跳过此对象，修复需要手动确认。" };
+      return { text: "无法解密", tone: "nx-badge-amber", hint: "服务端数据与当前数据密钥不匹配或已损坏；自动同步已跳过这项数据，修复需要手动确认。" };
   }
 }
 
@@ -74,7 +74,7 @@ const SUMMARY_KIND_ORDER = [
 // Internal bookkeeping objects are not worth a count when they match; a differing one is described plainly.
 function summaryKindLabel(kind: string): string {
   if (kind === "tombstone") return "已删除的项目";
-  if (!kind) return "无法识别的对象";
+  if (!kind) return "无法识别的数据";
   return COMPARE_KIND_LABELS[kind] ?? kind;
 }
 
@@ -85,7 +85,7 @@ export function compareRowTitle(r: CompareRowView): { title: string; secondary?:
   if (r.kind === "tombstone") return { title: "已删除的项目", secondary: r.name || r.id };
   if (r.kind === "ai_grant") return { title: "AI 授权", secondary: r.name };
   if (!r.name || r.name === r.id || OPAQUE_ID_RE.test(r.name)) {
-    return { title: r.kind ? (COMPARE_KIND_LABELS[r.kind] ?? r.kind) : "无法识别的对象", secondary: r.name || r.id };
+    return { title: r.kind ? (COMPARE_KIND_LABELS[r.kind] ?? r.kind) : "无法识别的数据", secondary: r.name || r.id };
   }
   return { title: r.name };
 }
