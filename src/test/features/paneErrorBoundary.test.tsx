@@ -154,7 +154,8 @@ describe("panel-level error boundary", () => {
 
 describe("shell-level error boundary", () => {
   it("falls back to a retry-only shell when chrome outside any panel crashes", async () => {
-    useUi.setState({ leftOpen: true });
+    // A host workspace shows its file tree; the asset tree is a temporary override.
+    useUi.setState({ leftOpen: true, leftOverride: "assets" });
     mounted = mountApp();
     await flush();
 

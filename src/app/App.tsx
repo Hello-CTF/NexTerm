@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUi, useActiveWorkspace, useWorkspaceList, dbKindOf } from "./store";
+import { useUi, useActiveWorkspace, useWorkspaceList, dbKindOf, showLeftPanel } from "./store";
 import { formatBinding, useKeybindings } from "./keybindings";
 import { assetApi, type Asset } from "../ipc/commands";
 import { ALL_PROJECTS, focusedWorkspaces } from "./projectFocus";
@@ -49,7 +49,6 @@ function AppShell() {
   const projectInventory = useUi((s) => s.projectInventory);
   const setProjectInventory = useUi((s) => s.setProjectInventory);
   const setActiveWorkspace = useUi((s) => s.setActiveWorkspace);
-  const setLeftMode = useUi((s) => s.setLeftMode);
   const rightWidth = useUi((s) => s.rightWidth);
   const accountEpoch = useUi((s) => s.accountEpoch);
   const reconcileDeletedTargets = useUi((s) => s.reconcileDeletedTargets);
@@ -146,6 +145,7 @@ function AppShell() {
       overlaySidebars,
       setOverlayDock: docks.setOverlayDock,
       setLeftOpen,
+      leftDockOpen,
       backgroundAvailable,
       workspace: ws,
       hasDbAssets,
@@ -181,8 +181,7 @@ function AppShell() {
       ws,
       onOpenSettings: openSettings,
       onPickOtherAsset: () => {
-        setLeftMode("assets");
-        setLeftOpen(true);
+        if (showLeftPanel("assets", false)) setLeftOpen(true);
       },
     },
     body: {
@@ -207,7 +206,6 @@ function AppShell() {
     dialogs: {
       jumpScope,
       setJumpScope,
-      onOpenFiles: actions.openFiles,
       editingAsset: paletteEditingAsset,
       setEditingAsset: setPaletteEditingAsset,
       workspaceMenu: wsMenu,

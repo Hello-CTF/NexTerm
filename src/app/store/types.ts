@@ -25,8 +25,9 @@ export type PaneKind =
   | "execBatch"
   | "host";
 
-// The left dock no longer has a file tree mode; a stored "files" mode reads as "assets".
-export type LeftMode = "assets" | "credentials" | "files";
+// LeftMode is the user's explicit left dock choice, used in the tools area. A host workspace shows its file tree by
+// default (see leftView.ts); a stored legacy "files" mode reads as "assets".
+export type LeftMode = "assets" | "credentials";
 
 export type DbKind = "mysql" | "postgres" | "redis";
 
@@ -42,8 +43,6 @@ export interface AppTab {
   dbKind?: DbKind;
   credId?: string;
   path?: string;
-  // A file browser tab opened at a directory (a terminal file link); persisted with the layout.
-  directory?: string;
   shell?: "powershell" | "cmd" | "posix" | "unknown";
   pendingDirectory?: string;
   closable: boolean;
@@ -335,6 +334,9 @@ export interface BroadcastTargetUpdate extends BroadcastTargetReport {
 export interface UiState {
   leftOpen: boolean;
   leftMode: LeftMode;
+  // leftOverride is a transient, never persisted switch of a host workspace sidebar away from its file tree.
+  leftOverride: LeftMode | null;
+  setLeftOverride: (m: LeftMode | null) => void;
   rightOpen: boolean;
   themeMode: ThemeMode;
   resolvedTheme: ResolvedTheme;

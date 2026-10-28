@@ -337,10 +337,12 @@ describe("rail and toast accessibility", () => {
     const buttons = [...mounted.container.querySelectorAll<HTMLButtonElement>(".nx-rail button")];
     expect(buttons.length).toBeGreaterThan(0);
     expect(buttons.every((b) => b.getAttribute("aria-label"))).toBe(true);
+    // The test workspace is a host workspace: its sidebar shows the file tree, so no panel button is active.
     const assets = buttons.find((b) => b.getAttribute("aria-label") === "资产");
-    expect(assets?.getAttribute("aria-current")).toBe("true");
+    expect(assets?.getAttribute("aria-current")).toBeNull();
     const credentials = buttons.find((b) => b.getAttribute("aria-label") === "凭据");
     expect(credentials?.getAttribute("aria-current")).toBeNull();
+    expect(buttons.find((b) => b.getAttribute("aria-label") === "文件树")).toBeUndefined();
   });
 
   it("renders the success toast with semantic tokens instead of raw colors", async () => {

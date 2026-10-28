@@ -17,7 +17,6 @@ import {
   DbPanel,
   DockerPanel,
   ExecBatchPanel,
-  FileBrowser,
   FileEditor,
   FleetHealthPanel,
   ForwardPanel,
@@ -205,15 +204,9 @@ export const PaneForTab = memo(function PaneForTab({
       return <Lazy><ForwardPanel sessionId={tab.sessionId} /></Lazy>;
     case "files":
       if (!tab.sessionId) return <EmptyState />;
-      return (
-        <Lazy>
-          {tab.path ? (
-            <FileEditor sessionId={tab.sessionId} path={tab.path} onClose={close} />
-          ) : (
-            <FileBrowser sessionId={tab.sessionId} initialPath={tab.directory} />
-          )}
-        </Lazy>
-      );
+      // A files tab is a file editor; a legacy browser tab (no path) has no view any more.
+      if (!tab.path) return <EmptyState />;
+      return <Lazy><FileEditor sessionId={tab.sessionId} path={tab.path} onClose={close} /></Lazy>;
     case "log":
       if (isMultiHostLogTabId(tab.id)) return <MultiHostLogTailTab workspaceId={workspaceId} />;
       if (isFleetHealthTabId(tab.id)) return <FleetHealthTab visible={active} />;

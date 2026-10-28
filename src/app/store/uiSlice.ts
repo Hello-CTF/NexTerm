@@ -87,6 +87,8 @@ export function createUiSlice(set: UiSet, get: UiGet) {
 
     setLeftOpen: (v) => set({ leftOpen: v }),
     setLeftMode: (m) => set({ leftMode: m }),
+    leftOverride: null,
+    setLeftOverride: (m) => set({ leftOverride: m }),
     setRightOpen: (v) => set({ rightOpen: v }),
     setLeftWidth: (w) => {
       const next = clampWidth(w, LEFT_MIN, LEFT_MAX);

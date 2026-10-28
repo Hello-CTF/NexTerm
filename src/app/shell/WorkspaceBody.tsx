@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import {
   useUi,
   useHasSessions,
@@ -18,6 +18,7 @@ import { focusNeighbor, paneIdsInOrder, type FocusDirection } from "../splitTree
 import { EmptyState, WorkspaceEmpty } from "../workspace/EmptyStates";
 import { type OverlayDocks } from "./useOverlayDocks";
 import { WorkspaceConnectionBar } from "./WorkspaceConnectionBar";
+import { useLeftView } from "./leftView";
 
 export interface WorkspaceBodyProps {
   ws: Workspace | null | undefined;
@@ -57,7 +58,23 @@ export function WorkspaceBody({
   const covered = home !== undefined && home !== null;
   const workspaces = useWorkspaceList();
   const hasSessions = useHasSessions();
-  const leftMode = useUi((s) => s.leftMode);
+  const leftView = useLeftView(ws);
+  const connectFocusRevision = useUi((s) => s.connectFocusRevision);
+  const setLeftOverride = useUi((s) => s.setLeftOverride);
+  const wsId = ws?.id;
+  // The temporary asset/credentials sidebar of a host workspace reverts to the file tree when the active workspace
+  // changes or something is connected/opened (connectFocusRevision).
+  const lastTrigger = useRef({ wsId, connectFocusRevision });
+  useEffect(() => {
+    const last = lastTrigger.current;
+    if (last.wsId === wsId && last.connectFocusRevision === connectFocusRevision) return;
+    lastTrigger.current = { wsId, connectFocusRevision };
+    setLeftOverride(null);
+  }, [wsId, connectFocusRevision, setLeftOverride]);
+  // ...and when the user moves into the work area.
+  const leaveSidebar = useCallback(() => {
+    if (useUi.getState().leftOverride) useUi.getState().setLeftOverride(null);
+  }, []);
   const leftWidth = useUi((s) => s.leftWidth);
   const setLeftWidth = useUi((s) => s.setLeftWidth);
   const rightWidth = useUi((s) => s.rightWidth);
@@ -84,10 +101,9 @@ export function WorkspaceBody({
       )}
       {leftDockOpen && (
         <div className="nx-left-dock" role="navigation" aria-label="左栏">
-          {leftMode === "credentials" ? (
+          {leftView === "credentials" ? (
             <Lazy><CredentialsSidebar /></Lazy>
-          ) : leftMode === "files" && ws?.kind === "session" && ws.sessionId ? (
-            // Without a session the saved mode is kept and the asset tree shows instead.
+          ) : leftView === "files" && ws?.sessionId ? (
             <Lazy><FileTree key={ws.sessionId} sessionId={ws.sessionId} /></Lazy>
           ) : (
             // Keyed by account epoch: on account switch the tree remounts so template, runbook,
@@ -105,7 +121,7 @@ export function WorkspaceBody({
         </div>
       )}
 
-      <main id="nx-main" tabIndex={-1} className={`nx-workspace-main min-w-0 flex-1${workspaces.length > 0 || covered ? " flex flex-col" : ""}`}>
+      <main id="nx-main" tabIndex={-1} onPointerDownCapture={leaveSidebar} onFocusCapture={leaveSidebar} className={`nx-workspace-main min-w-0 flex-1${workspaces.length > 0 || covered ? " flex flex-col" : ""}`}>
         {home}
         <WorkspaceArea wrapped={home !== undefined} covered={covered}>
         {workspaces.length === 0 ? (

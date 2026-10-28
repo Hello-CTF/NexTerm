@@ -121,13 +121,11 @@ function SessionAttentionBadge({ terminalId }: { terminalId: string | null }) {
 export function JumpPalette({
   onClose,
   scope: initialScope = "all",
-  onOpenFiles,
   onEditAsset,
   attentionOf,
 }: {
   onClose: () => void;
   scope?: JumpScope;
-  onOpenFiles?: () => void;
   onEditAsset?: (asset: Asset) => void;
   // attentionOf ranks sessions by attention state once the session awareness store provides it.
   attentionOf?: (session: JumpSessionEntry) => JumpAttention | undefined;
@@ -197,7 +195,7 @@ export function JumpPalette({
     setQuery("");
     setCursor(0);
   }, [changeScope]);
-  const commands = useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, onShowHosts: showHosts });
+  const commands = useJumpCommands({ assets, snippets, onEditAsset, onShowHosts: showHosts });
 
   const hostAssets = useMemo(
     () =>
