@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -662,6 +664,73 @@ func TestDurableCloseRemoteAlreadyEndedStillRemovesLocalTab(t *testing.T) {
 	}
 	if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
 		t.Fatalf("already-ended durable tab remains registered: %v", err)
+	}
+}
+
+// An unreachable helper must not turn a close into "unsupported": the kill
+// fails as a disconnect with the tab kept, and detaching it needs no remote
+// call, so the client can still drop its attachment and leave the process
+// running for a later takeover.
+func TestDurableCloseUnreachableKeepsTabAndDetachStillSucceeds(t *testing.T) {
+	provider := newFakeDurableProvider()
+	manager, _, _, connected := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, manager, connected, "unreachable", "a-1", false)
+	provider.mu.Lock()
+	provider.killErr = durable.ErrUnavailable
+	provider.mu.Unlock()
+
+	err := manager.CloseTab(info.ID)
+	if !errors.Is(err, durable.ErrUnavailable) {
+		t.Fatalf("kill on an unreachable helper = %v, want durable.ErrUnavailable", err)
+	}
+	if got := IPCError(err); got.Code != ipc.CodeDisconnected || !strings.Contains(got.Message, "无法访问") {
+		t.Fatalf("kill error = %s %q, want a disconnected code with the unreachable reason", got.Code, got.Message)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatalf("failed kill unregistered the tab: %v", err)
+	}
+	if tab.Info().Exited {
+		t.Fatal("failed kill marked the durable tab exited")
+	}
+
+	if err := manager.BackgroundTab(context.Background(), info.ID, "client-a"); err != nil {
+		t.Fatalf("detach while the helper is unreachable = %v, want nil", err)
+	}
+	if subscribers := tab.Info().Subscribers; subscribers != 0 {
+		t.Fatalf("detached tab keeps %d subscribers", subscribers)
+	}
+	if _, _, killed := provider.counts(); killed != 0 {
+		t.Fatalf("detach killed %d processes", killed)
+	}
+	if _, err := manager.Tab(info.ID); err != nil {
+		t.Fatalf("detach on a connected session dropped the background tab: %v", err)
+	}
+}
+
+// Once a session has stopped reconnecting, detaching its last viewer drops
+// the local record without any remote call, so the process stays on the host
+// and a later connection can recover the same ID instead of hitting the stale
+// record.
+func TestDurableDetachOnFailedSessionReleasesLocalRecord(t *testing.T) {
+	provider := newFakeDurableProvider()
+	manager, _, _, connected := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, manager, connected, "stale-record", "a-1", false)
+	provider.mu.Lock()
+	provider.killErr = durable.ErrUnavailable
+	provider.mu.Unlock()
+	connected.mu.Lock()
+	connected.status = StatusFailed
+	connected.mu.Unlock()
+
+	if err := manager.BackgroundTab(context.Background(), info.ID, "client-a"); err != nil {
+		t.Fatalf("detach on a failed session = %v, want nil", err)
+	}
+	if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("stale durable record remains after detach: %v", err)
+	}
+	if _, _, killed := provider.counts(); killed != 0 {
+		t.Fatalf("releasing the local record killed %d processes", killed)
 	}
 }
 

@@ -69,8 +69,12 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.Code("client_upgrade_required"), userMessage(err), err)
 	case errors.Is(err, ErrAmbiguousDurable):
 		return ipc.WrapError(ipc.CodeBadParam, userMessage(err), err)
-	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
+	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported):
 		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
+	// durable.ErrUnavailable is transient: the host or its helper cannot be
+	// reached right now, which is a disconnect, not a missing capability.
+	case errors.Is(err, durable.ErrUnavailable):
+		return ipc.WrapError(ipc.CodeDisconnected, userMessage(err), err)
 	case errors.Is(err, ErrInvalidSize), errors.Is(err, ErrHidden), errors.Is(err, ErrInvalidOptions), errors.Is(err, ErrInvalidTitle), errors.Is(err, ErrTabExists), errors.Is(err, durable.ErrInvalidInput), errors.Is(err, durable.ErrAlreadyExists), errors.Is(err, hub.ErrInvalidChannel):
 		return ipc.WrapError(ipc.CodeBadParam, "参数错误: "+userMessage(err), err)
 	case errors.Is(err, context.DeadlineExceeded):
@@ -119,8 +123,14 @@ func userMessage(err error) string {
 		return "持久终端组件已达到会话数量或创建频率上限，已拒绝新建终端；请结束不用的后台会话后重试（" + err.Error() + "）"
 	case errors.Is(err, ErrAmbiguousDurable):
 		return "多个已连接主机存在同一持久终端，请指定会话后重试"
-	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
+	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported):
 		return "当前会话不支持此操作"
+	case errors.Is(err, durable.ErrUnavailable):
+		message := "持久终端组件暂时无法访问：主机连接可能已断开或不可达，或 helper 暂时不可用；请重新连接后重试"
+		if detail := err.Error(); detail != durable.ErrUnavailable.Error() {
+			message += "（" + detail + "）"
+		}
+		return message
 	case errors.Is(err, ErrInvalidSize):
 		return "终端尺寸无效"
 	case errors.Is(err, ErrHidden):

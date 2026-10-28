@@ -236,6 +236,12 @@ export interface ToastAction {
   onSelect: () => void;
 }
 
+// CloseTabReport tells a caller of closeTab what happened beyond the local close: a kill that could not reach the
+// host, so the process still runs and stays listed in 后台会话.
+export interface CloseTabReport {
+  remoteKillSkipped?: boolean;
+}
+
 export interface ToastItem {
   id: number;
   kind: "info" | "error" | "success";
@@ -425,7 +431,12 @@ export interface UiState {
 
   setActiveTab: (id: string) => void;
   addTab: (tab: AppTab, paneId?: string) => void;
-  closeTab: (id: string, mode?: "kill" | "detach", suppressErrorToast?: boolean) => Promise<boolean>;
+  closeTab: (
+    id: string,
+    mode?: "kill" | "detach",
+    suppressErrorToast?: boolean,
+    report?: CloseTabReport,
+  ) => Promise<boolean>;
   updateTab: (id: string, patch: Partial<AppTab>) => void;
   migrateFileEditorLocators: (sessionId: string, from: string, to: string, kind: string) => void;
   resolveUnknownFileEditorRename: (sessionId: string, path: string, renamed: boolean) => void;

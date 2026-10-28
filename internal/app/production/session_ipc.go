@@ -1568,7 +1568,7 @@ func terminalIPCError(err error) error {
 	if errors.Is(err, durable.ErrSeenUnsupported) {
 		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err).WithDetail(map[string]any{"reason": "seen_unsupported"})
 	}
-	if errors.Is(err, docker.ErrUnsupported) || errors.Is(err, docker.ErrNoBackend) || errors.Is(err, durable.ErrUnavailable) {
+	if errors.Is(err, docker.ErrUnsupported) || errors.Is(err, docker.ErrNoBackend) {
 		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err)
 	}
 	if errors.Is(err, durable.ErrNotFound) {

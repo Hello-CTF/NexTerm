@@ -492,8 +492,8 @@ func TestProductionAttachTabRemoteResolverFailurePropagatesMapping(t *testing.T)
 	if response.Error.Code == ipc.CodeNotFound {
 		t.Fatalf("attach tab %s = %+v, resolver failure must not collapse into not_found", missing, response)
 	}
-	if response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("attach tab %s = %+v, want unsupported for an unavailable daemon", missing, response)
+	if response.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("attach tab %s = %+v, want disconnected for an unavailable daemon", missing, response)
 	}
 }
 
@@ -520,8 +520,8 @@ func TestProductionAttachTabRemoteListFailurePropagatesMapping(t *testing.T) {
 	if response.Error.Code == ipc.CodeNotFound {
 		t.Fatalf("attach tab %s = %+v, enumeration failure must not collapse into not_found", missing, response)
 	}
-	if response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("attach tab %s = %+v, want unsupported for an unenumerable daemon", missing, response)
+	if response.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("attach tab %s = %+v, want disconnected for an unenumerable daemon", missing, response)
 	}
 }
 
@@ -583,8 +583,8 @@ func TestProductionTerminalAttachFallsBackOnceWhenHelperUnavailable(t *testing.T
 		t.Fatalf("helper resolution calls = %d; want one per session", calls)
 	}
 	strict := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "strict-ssh-channel", "client-a")
-	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("explicit durable attach = %+v; want unsupported", strict)
+	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("explicit durable attach = %+v; want disconnected for a transiently unavailable helper", strict)
 	}
 	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 3 {
 		t.Fatalf("tabs after fallback and strict failure = %+v", tabs)
@@ -613,8 +613,8 @@ func TestProductionTerminalAttachFallsBackWhenDurableCreateBecomesUnavailable(t 
 		t.Fatalf("durable Create calls = %d, resolver calls = %d; want one each", provider.calls, len(resolver.recorded()))
 	}
 	strict := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "create-strict", "client-a")
-	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("explicit durable attach = %+v; want unsupported", strict)
+	if strict.OK || strict.Error == nil || strict.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("explicit durable attach = %+v; want disconnected for a transiently unavailable helper", strict)
 	}
 	if provider.calls != 2 {
 		t.Fatalf("explicit durable Create calls = %d; want a retry after automatic fallback", provider.calls)
@@ -942,8 +942,8 @@ func TestProductionListDurableResolverFailureIsNotAnEmptyList(t *testing.T) {
 	connected := connectRemoteSSHAsset(t, production)
 
 	response := dispatchDurableTest(t, production, "terminal_list", `{"sessionId":"`+connected.ID+`","durable":true}`, "", "client-a")
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("descriptor resolver failure = %+v, want unsupported instead of an empty list", response)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("descriptor resolver failure = %+v, want disconnected instead of an empty list", response)
 	}
 }
 
@@ -963,8 +963,8 @@ func TestProductionListDurableEnumerationFailureIsNotAnEmptyList(t *testing.T) {
 	connected := connectRemoteSSHAsset(t, production)
 
 	response := dispatchDurableTest(t, production, "terminal_list", `{"sessionId":"`+connected.ID+`","durable":true}`, "", "client-a")
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("descriptor enumeration failure = %+v, want unsupported instead of an empty list", response)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("descriptor enumeration failure = %+v, want disconnected instead of an empty list", response)
 	}
 }
 
