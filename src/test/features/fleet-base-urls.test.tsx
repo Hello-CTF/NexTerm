@@ -269,7 +269,7 @@ describe("BaseUrlsSection save race (R1-5)", () => {
     const saveButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存修改"));
     await flushUntil(() => !(saveButton as HTMLButtonElement).disabled);
     click(saveButton as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("保存中") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("正在保存") ?? false);
 
     const input = document.querySelector<HTMLInputElement>('input[aria-label="新接入地址"]');
     const addButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "添加");
@@ -286,7 +286,7 @@ describe("BaseUrlsSection save race (R1-5)", () => {
       status: 200,
       text: async () => JSON.stringify({ base_urls: [{ url: "https://b.example.com" }, { url: "https://a.example.com" }] }),
     });
-    await flushUntil(() => document.body.textContent?.includes("保存中") === false);
+    await flushUntil(() => document.body.textContent?.includes("正在保存") === false);
 
     expect(input?.disabled).toBe(false);
     const order = [...document.querySelectorAll("code")].map((c) => c.textContent);

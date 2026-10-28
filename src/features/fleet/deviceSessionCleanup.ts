@@ -120,7 +120,7 @@ function timeoutFailures(operations: TrackedOperation[]): DeviceSessionCleanupFa
 		return {
 			operation: operation.operation,
 			id: operation.id,
-			error: { code: "timeout", message: `设备清理等待超过 ${DEVICE_SESSION_CLEANUP_TIMEOUT_MS / 1000} 秒` },
+			error: { code: "timeout", message: `关闭设备连接超过 ${DEVICE_SESSION_CLEANUP_TIMEOUT_MS / 1000} 秒仍未完成` },
 		};
 	}).filter((result): result is DeviceSessionCleanupFailure => result !== null);
 }
@@ -168,7 +168,7 @@ export function deviceSessionCleanupMessage(failures: DeviceSessionCleanupFailur
 		const operation = failure.operation === "kill" ? `终端 ${failure.id} 关闭失败` : `会话 ${failure.id} 断开失败`;
 		return failure.error === undefined ? operation : `${operation}（${describeError(failure.error)}）`;
 	});
-	return `设备清理未完成：${details.join("；")}`;
+	return `设备连接未能全部关闭：${details.join("；")}`;
 }
 
 export function reportDeviceSessionCleanup(failures: DeviceSessionCleanupFailure[]): void {

@@ -298,7 +298,7 @@ describe("Device management - desktop logged in", () => {
     expect(mocks.issueEnrollCode).toHaveBeenCalledWith(15 * 60_000);
     const text = document.body.textContent ?? "";
     expect(text).toContain("完成后不再显示");
-    expect(text).toContain("设备凭证原文仅保存在设备本地，服务端只保存散列");
+    expect(text).toContain("设备凭证只保存在设备上，服务器只保存校验信息");
     expect(text).toContain("install-device.sh");
     expect(text).toContain("--version '1.2.3'");
     expect(text).toContain("install-device.ps1");

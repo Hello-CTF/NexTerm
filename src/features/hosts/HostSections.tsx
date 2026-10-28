@@ -180,7 +180,7 @@ export function ContainersSection({ workspace, visible }: { workspace: Workspace
       {!connected ? (
         <SectionHint>打开并连接工作区后可查看容器。</SectionHint>
       ) : query.isError ? (
-        <p className="m-0 text-[12px] text-red-300">读取容器失败：{describeError(query.error)}</p>
+        <p className="m-0 text-[12px] text-red-300">无法读取容器：{describeError(query.error)}</p>
       ) : query.isPending ? (
         <SectionHint>正在读取容器…</SectionHint>
       ) : containers.length === 0 ? (
@@ -222,10 +222,10 @@ function SchemaList({ connId, visible }: { connId: string; visible: boolean }) {
     retry: false,
     staleTime: 30_000,
   });
-  if (query.isError) return <div className="text-[11.5px] text-red-300">读取库列表失败：{describeError(query.error)}</div>;
-  if (query.isPending) return <div className="nx-hint text-[11.5px]">正在读取库列表…</div>;
+  if (query.isError) return <div className="text-[11.5px] text-red-300">无法读取数据库列表：{describeError(query.error)}</div>;
+  if (query.isPending) return <div className="nx-hint text-[11.5px]">正在读取数据库列表…</div>;
   const schemas = query.data ?? [];
-  if (schemas.length === 0) return <div className="nx-hint text-[11.5px]">没有可见的库。</div>;
+  if (schemas.length === 0) return <div className="nx-hint text-[11.5px]">没有可见的数据库。</div>;
   return (
     <div className="flex flex-wrap gap-1" aria-label="库列表">
       {schemas.slice(0, MAX_SCHEMAS).map((schema) => (
@@ -374,7 +374,7 @@ export function SshHealthSection({
       }
     >
       {error ? (
-        <p className="m-0 text-[12px] text-red-300">检查失败：{error}</p>
+        <p className="m-0 text-[12px] text-red-300">检查未成功：{error}</p>
       ) : running && !result ? (
         <SectionHint>正在检查…</SectionHint>
       ) : !result ? (

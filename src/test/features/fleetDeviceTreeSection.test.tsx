@@ -496,7 +496,7 @@ describe("Asset tree device rows - row behavior", () => {
     expect(offline.textContent).toContain("离线");
     expect(offline.querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
     expect(noAgent.getAttribute("aria-disabled")).toBe("true");
-    expect(noAgent.textContent).toContain("未接入 Agent");
+    expect(noAgent.textContent).toContain("未安装设备代理");
     expect(noAgent.querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
 
     const noTerm = deviceRow("noterm-01");
@@ -526,7 +526,7 @@ describe("Asset tree device rows - row behavior", () => {
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
     expect(tree().textContent).not.toContain("old-laptop");
-    expect(tree().textContent).not.toContain("已吊销");
+    expect(tree().textContent).not.toContain("已撤销接入");
   });
 
   it("renders no device rows when every device is revoked", async () => {
@@ -536,7 +536,7 @@ describe("Asset tree device rows - row behavior", () => {
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices"));
     await flush();
     expect(tree().textContent).not.toContain("old-laptop");
-    expect(tree().textContent).not.toContain("已吊销");
+    expect(tree().textContent).not.toContain("已撤销接入");
   });
 
   it("keeps device management actions in the context menu", async () => {
@@ -550,7 +550,7 @@ describe("Asset tree device rows - row behavior", () => {
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
     expect(document.body.textContent).toContain("详情");
     const revokeItem = [...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")].find((b) =>
-      b.textContent?.includes("吊销"),
+      b.textContent?.includes("撤销接入"),
     );
     expect(revokeItem?.classList.contains("is-danger")).toBe(true);
   });
@@ -581,7 +581,7 @@ describe("Asset tree device rows - row behavior", () => {
       vi.advanceTimersByTime(100);
       row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(document.body.textContent).toContain("吊销");
+    expect(document.body.textContent).toContain("撤销接入");
     expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
 
     act(() => {
@@ -716,15 +716,15 @@ describe("Asset tree device rows - two-step revoke confirmation", () => {
 
     openDeviceMenu("web-01");
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
-    clickDeviceMenuItem("吊销");
+    clickDeviceMenuItem("撤销接入");
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-1/revoke" && c.method === "POST"));
     await flushUntil(() => !(tree().textContent ?? "").includes("web-01"));
 
     expect(mocks.ask).toHaveBeenCalledTimes(2);
     expect(String(mocks.ask.mock.calls[0]?.[1]?.kind)).toBe("warning");
     expect(String(mocks.ask.mock.calls[1]?.[1]?.kind)).toBe("warning");
-    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("凭证立即失效");
-    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("设备仍显示为已吊销但无法连接");
+    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("撤销后无法恢复");
+    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("撤销后无法恢复");
     expect(tree().textContent).not.toContain("web-01");
     expect(tree().textContent).toContain("nas-01");
   });
@@ -738,7 +738,7 @@ describe("Asset tree device rows - two-step revoke confirmation", () => {
 
     openDeviceMenu("web-01");
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
-    clickDeviceMenuItem("吊销");
+    clickDeviceMenuItem("撤销接入");
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
     await flush();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
@@ -755,7 +755,7 @@ describe("Asset tree device rows - two-step revoke confirmation", () => {
 
     openDeviceMenu("web-01");
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
-    clickDeviceMenuItem("吊销");
+    clickDeviceMenuItem("撤销接入");
     await flushUntil(() => mocks.ask.mock.calls.length === 2);
     await flush();
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);

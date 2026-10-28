@@ -582,7 +582,7 @@ describe("Device management view - device list and metrics", () => {
     await flushUntil(() => container.textContent?.includes(formatTime(latest.ts)) ?? false);
 
     expect(container.textContent).toContain("66.0%");
-    expect(container.textContent).toContain("当前时间窗口没有采样点");
+    expect(container.textContent).toContain("这段时间内没有数据");
     expect(container.textContent).not.toContain("采样点数");
   });
 
@@ -597,10 +597,10 @@ describe("Device management view - device list and metrics", () => {
       },
     }));
     const container = mountMetrics("d-1", false);
-    await flushUntil(() => container.textContent?.includes("设备离线") || container.textContent?.includes("趋势加载失败") || false);
+    await flushUntil(() => container.textContent?.includes("设备离线") || container.textContent?.includes("无法加载趋势") || false);
 
     expect(container.textContent).toContain("66.0%");
-    expect(container.textContent).toContain("趋势加载失败");
+    expect(container.textContent).toContain("无法加载趋势");
     expect(container.textContent).toContain("context deadline exceeded");
     expect(container.textContent).not.toContain("设备离线，没有近期指标");
   });
@@ -615,7 +615,7 @@ describe("Device management view - device list and metrics", () => {
       },
     }));
     const container = mountMetrics("d-1", false);
-    await flushUntil(() => container.textContent?.includes("趋势加载失败") ?? false);
+    await flushUntil(() => container.textContent?.includes("无法加载趋势") ?? false);
 
     expect(container.textContent).toContain("database unavailable");
     expect(container.textContent).not.toContain("设备离线，没有近期指标");
@@ -709,7 +709,7 @@ describe("Device management view - device list and metrics", () => {
     const container = mountMetrics("d-1", false);
     await flushUntil(() => container.textContent?.includes("设备离线，没有近期指标") ?? false);
 
-    expect(container.textContent).not.toContain("趋势加载失败");
+    expect(container.textContent).not.toContain("无法加载趋势");
   });
 
   it("filters the current list locally by search and all/online/offline/revoked status without new requests", async () => {
@@ -1049,7 +1049,7 @@ describe("Device management view - device list and metrics", () => {
     expect(buttonByText(card, "打开工作区")).toBeUndefined();
     expect(buttonByText(card, "离线原因")).toBeDefined();
     expandDetails(card);
-    expect(card?.textContent).toContain("设备离线：修改只会保存为期望状态，上线后生效");
+    expect(card?.textContent).toContain("设备离线：设置已保存，设备上线后生效");
     expect(card?.textContent).toContain("未运行");
   });
 
@@ -1080,7 +1080,7 @@ describe("Device management view - device list and metrics", () => {
 
     route(() => ({ status: 500, payload: { error: { code: "internal", message: "数据库错误" } } }));
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("设备列表加载失败") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("无法加载设备列表") ?? false);
     expect(document.body.textContent).toContain("数据库错误");
   });
 });
@@ -1105,7 +1105,7 @@ describe("Device management view - enrollment code issuance", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("只能使用一次");
     expect(text).toContain("完成后不再显示");
-    expect(text).toContain("设备凭证原文仅保存在设备本地，服务端只保存散列");
+    expect(text).toContain("设备凭证只保存在设备上，服务器只保存校验信息");
     expect(text).toContain("高级说明：多地址、手动接入与服务管理");
     expect(text).toContain("执行完成后刷新列表");
     expect(text).toContain("随用户登录自动启动");
@@ -1254,7 +1254,7 @@ describe("Device management view - enrollment code issuance", () => {
     const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement;
     expect(issueButton.disabled).toBe(true);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "展开编辑") as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("接入地址读取中") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("正在读取接入地址") ?? false);
     expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
     expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("保存修改"))).toBe(false);
 
@@ -1262,7 +1262,7 @@ describe("Device management view - enrollment code issuance", () => {
       firstBaseUrls.reject(new Error("地址服务不可用"));
       await firstBaseUrls.promise.catch(() => {});
     });
-    await flushUntil(() => document.body.textContent?.includes("接入地址读取失败") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("无法读取接入地址") ?? false);
     expect(document.body.textContent).toContain("地址服务不可用");
     expect(issueButton.disabled).toBe(true);
     expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
@@ -1363,7 +1363,7 @@ describe("Device management view - revocation and autostart", () => {
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("离线");
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("期望状态");
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("设置已保存");
     const autostartCall = calls.find((c) => c.url === "/fleet/devices/d-2/autostart");
     expect(autostartCall?.body).toEqual({ desired: true });
   });
@@ -1443,13 +1443,14 @@ describe("Device management view - remote terminal switch and version note", () 
     await flushUntil(() => cardWith("web-01")?.textContent?.includes("远程终端已关闭") ?? false);
   });
 
-  it("notes a differing agent version only when both are release versions and the device is online", async () => {
+  it("hints an outdated agent only when it is older than the server, both are release versions and the device is online", async () => {
     route(
       fleetHandler({
         devices: {
           server_version: "0.3.0",
           devices: [
             { ...AGENT_DEVICE, id: "d-old", name: "old-01", agent: { ...AGENT_DEVICE.agent, app_version: "0.2.2" } },
+            { ...AGENT_DEVICE, id: "d-new", name: "new-01", agent: { ...AGENT_DEVICE.agent, app_version: "0.10.0" } },
             { ...AGENT_DEVICE, id: "d-same", name: "same-01", agent: { ...AGENT_DEVICE.agent, app_version: "v0.3.0" } },
             { ...AGENT_DEVICE, id: "d-dev", name: "dev-01", agent: { ...AGENT_DEVICE.agent, app_version: "dev" } },
             { ...AGENT_DEVICE, id: "d-zero", name: "zero-01", agent: { ...AGENT_DEVICE.agent, app_version: "0.0.0" } },
@@ -1462,9 +1463,9 @@ describe("Device management view - remote terminal switch and version note", () 
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("old-01") ?? false);
 
-    expect(cardWith("old-01")?.textContent).toContain("代理版本 0.2.2，服务端 0.3.0");
-    expect(cardWith("old-01")?.textContent).toContain("仅当控制通道协议不兼容时");
-    for (const name of ["same-01", "dev-01", "zero-01", "db-02"]) {
+    expect(cardWith("old-01")?.textContent).toContain("agent 版本过旧（代理版本 0.2.2，服务端 0.3.0）");
+    expect(cardWith("old-01")?.textContent).toContain("nexterm-agent update");
+    for (const name of ["new-01", "same-01", "dev-01", "zero-01", "db-02"]) {
       expect(cardWith(name)?.textContent).not.toContain("服务端 0.3.0");
     }
   });
@@ -1719,7 +1720,7 @@ describe("Device management view - account isolation during issuance", () => {
     await flush();
     await flush();
     expect(document.body.textContent).not.toContain("old-admin-code");
-    expect(document.body.textContent).not.toContain("生成中");
+    expect(document.body.textContent).not.toContain("正在生成");
 
     // The new account can reopen the enrollment panel and issue normally; issuing is not stuck by the old finally.
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
