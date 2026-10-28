@@ -39,7 +39,7 @@ describe("AI chat privacy indicator", () => {
   it("shows the guard is active and blocks image attachment", async () => {
     mocks.status.mockResolvedValue(status({}));
     mounted = mount(createElement(Probe));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("已脱敏"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("脱敏已开启"));
     expect(mounted.container.querySelector<HTMLButtonElement>('[aria-label="添加图片"]')!.disabled).toBe(true);
   });
 

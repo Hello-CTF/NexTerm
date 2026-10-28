@@ -15,6 +15,20 @@ import type { UseChatPanelStateOut } from "./useChatPanelState";
 import type { UseChatRunRecoveryOut } from "./useChatRunRecovery";
 import type { UseChatActionsOut } from "./useChatActions";
 
+/** Image files on a paste, deduplicated across the items and files views. */
+export function clipboardImageFiles(data: DataTransfer): File[] {
+  const files = Array.from(data.items)
+    .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+    .map((it) => it.getAsFile())
+    .filter((f): f is File => f !== null);
+  for (const file of Array.from(data.files)) {
+    if (!file.type.startsWith("image/")) continue;
+    if (files.some((f) => f.name === file.name && f.size === file.size && f.type === file.type)) continue;
+    files.push(file);
+  }
+  return files;
+}
+
 export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & UseChatPanelStateOut & UseChatRunRecoveryOut & UseChatActionsOut) {
   const { pushToast, requestCancellation, stopRef, tabKey, runControl, cancelWaitersRef, activeRunRef, cancelOperationRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, conversationIdRef, onTitleChange, historyOpen, setHistoryOpen, busy, restoreGenerationRef, isRestoreActive, updateConversationId, resetMessageHistory, setConversationError, setEditing, restoreConversationRuns, clearMessageHistory, setConversationRuns, stream, isLifecycleActive, deletedConversationIdsRef, setInput, setAtOpen, inputRef, setCompacting, restoreConversation, planMode, setPlanMode, compacting, setPermOpen, slashQuery, modelQuery, modelOptions, skillOptions, setRefs, setImages, pushAgentEvent, settleRestoredRun, runChannelRef, tabId, activeRun, takeoverState, active, runSequenceRef, setActiveRun, setBusy, anyAiBusy, beginRun, driveCancellation, bindings, reclaimKeyLabel, unconfirmCancellation } = p;
 
@@ -399,18 +413,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
   };
 
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const fromItems = Array.from(e.clipboardData.items)
-      .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
-      .map((it) => it.getAsFile())
-      .filter((f): f is File => f !== null);
-    const files = [...fromItems];
-    for (const file of Array.from(e.clipboardData.files)) {
-      if (!file.type.startsWith("image/")) continue;
-      if (files.some((f) => f.name === file.name && f.size === file.size && f.type === file.type)) {
-        continue;
-      }
-      files.push(file);
-    }
+    const files = clipboardImageFiles(e.clipboardData);
     if (files.length === 0) return;
     e.preventDefault();
     appendImages(files);

@@ -85,6 +85,7 @@ function PrivacyCardBody() {
   const missingSelection = !!status && !!selected && !status.installed.some((item) => keyOf(item) === selected);
   const selectedSize = status?.latestSizes?.[precision];
   const completed = status?.download.completed;
+  const noModelHint = status && !status.canManage && status.installed.length === 0 ? "请联系管理员下载模型" : "需先下载并选择模型";
   const hasLatest = !!status?.latest && status.installed.some((item) => item.revision === status.latest?.revision);
 
   return (
@@ -98,7 +99,7 @@ function PrivacyCardBody() {
         默认关闭。开启后，在{WEB ? "当前 NexTerm 服务端" : "当前设备"}检测发送给 AI 的文本，将敏感片段替换为占位符；AI 回复和工具参数在本地还原后再显示或执行，同一会话跨轮保持稳定占位符。
       </p>
       <p className="nx-hint mb-3">
-        对{WEB ? "当前账号" : "这台设备"}的所有 AI 请求生效：对话、定时任务、上下文压缩、子代理和工具输出。设置和模型不参与同步，每台设备需单独下载。模型不可用时请求会被阻止，不会以明文发送。目前仅支持文本。
+        对{WEB ? "当前账号" : "这台设备"}的所有 AI 请求生效：对话、定时任务、上下文压缩、子代理和工具输出。{WEB ? "设置不参与同步；模型由管理员在服务端下载，所有账号共用。" : "设置和模型不参与同步，每台设备需单独下载。"}模型不可用时请求会被阻止，不会以明文发送。目前仅支持文本。
       </p>
       {error && <div role="alert" className="nx-alert nx-alert-danger mb-3 text-[12px]">{error}</div>}
       {!status || !config ? (
@@ -107,7 +108,10 @@ function PrivacyCardBody() {
         <div className="flex flex-col gap-3">
           {broken ? (
             <div role="alert" className="nx-alert nx-alert-danger text-[12px]">
-              已启用脱敏，但所选模型不可用：{supported ? status.selection?.error : status.runtime.reason}。在恢复或关闭前，所有 AI 请求都会被阻止。
+              {supported
+                ? `已启用脱敏，但所选模型不可用：${status.selection?.error ?? "未知原因"}。`
+                : `${WEB ? "服务端" : "本设备"}的脱敏运行时不可用：${status.runtime.reason ?? "未知原因"}。`}
+              在恢复或关闭前，所有 AI 请求都会被阻止。{supported && !status.canManage ? "请联系管理员下载模型。" : ""}
             </div>
           ) : !supported && (
             <div role="alert" className="nx-alert nx-alert-danger text-[12px]">此设备无法运行本地脱敏：{status.runtime.reason}。</div>
@@ -121,7 +125,7 @@ function PrivacyCardBody() {
             </label>
             {enabling ? (
               <p role="status" className="nx-hint text-[11.5px]">正在校验并加载本地模型…</p>
-            ) : !config.enabled && !selected && <p className="nx-hint text-[11.5px]">需先下载并选择模型</p>}
+            ) : !config.enabled && !selected && <p className="nx-hint text-[11.5px]">{noModelHint}</p>}
           </div>
           <label className="flex flex-col gap-1 text-xs text-neutral-400">
             使用的本地模型
@@ -130,7 +134,7 @@ function PrivacyCardBody() {
                 const installation = status.installed.find((item) => keyOf(item) === event.target.value);
                 if (installation) void run(() => configure({ ...config, ...installation }));
               }}>
-              <option value="" disabled>请先下载并选择模型</option>
+              <option value="" disabled>{status.installed.length === 0 && !status.canManage ? "请联系管理员下载模型" : "请先下载并选择模型"}</option>
               {missingSelection && (
                 <option value={selected} disabled>{config.version || config.revision.slice(0, 7)} · {config.precision.toUpperCase()}（文件缺失）</option>
               )}

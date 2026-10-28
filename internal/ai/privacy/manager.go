@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -29,6 +31,14 @@ type Engine interface {
 	Close() error
 }
 type EngineLoader func(context.Context, string, Installation) (Engine, error)
+
+// maxCachedEngines bounds resident native sessions; each may hold hundreds of MiB.
+const maxCachedEngines = 2
+
+type cachedEngine struct {
+	engine Engine
+	used   uint64
+}
 
 type Config struct {
 	Enabled   bool      `json:"enabled"`
@@ -110,11 +120,17 @@ type Manager struct {
 	workers     sync.WaitGroup
 	// engineSlot serializes engine use; waiting on it honors the caller's
 	// context. Never acquire mu while holding the slot.
-	engineSlot   chan struct{}
-	engine       Engine
-	engineID     string
-	failureMu    sync.Mutex
-	failures     map[string]string
+	engineSlot chan struct{}
+	// engines caches loaded engines by model directory so accounts selecting
+	// different models do not reload on every alternation; guarded by the slot.
+	engines   map[string]*cachedEngine
+	engineUse uint64
+	// failureMu guards failures and verified.
+	failureMu sync.Mutex
+	failures  map[string]string
+	// verified remembers the file fingerprint of each directory whose hashes
+	// last matched, so reloading an unchanged model skips full hashing.
+	verified     map[string]string
 	lifetime     context.Context
 	stop         context.CancelFunc
 	shutdownOnce sync.Once
@@ -128,7 +144,7 @@ func NewManager(settings Settings, root string, shared bool, load EngineLoader) 
 		lifetime: lifetime, stop: stop, shutdownDone: make(chan struct{}),
 		settings: settings, root: root, shared: shared, catalog: NewCatalog(), load: load, runtime: defaultRuntimeCheck,
 		downloads: map[string]DownloadState{}, cancels: map[string]context.CancelFunc{},
-		engineSlot: make(chan struct{}, 1), failures: map[string]string{},
+		engineSlot: make(chan struct{}, 1), engines: map[string]*cachedEngine{}, failures: map[string]string{}, verified: map[string]string{},
 	}
 	if source, ok := settings.(interface{ SecretProtector() store.SecretProtector }); ok {
 		m.protector = source.SecretProtector()
@@ -136,11 +152,13 @@ func NewManager(settings Settings, root string, shared bool, load EngineLoader) 
 	return m
 }
 
+const userConfigPrefix = "user.ai.privacy."
+
 func configKey(id string) string {
 	if id == "" {
 		return "ai.privacy"
 	}
-	return "user.ai.privacy." + id
+	return userConfigPrefix + id
 }
 func (m *Manager) read(ctx context.Context, id string) (savedConfig, error) {
 	state := savedConfig{Config: Config{Precision: INT8}}
@@ -462,15 +480,37 @@ func (d managedDetector) Detect(ctx context.Context, text string) ([]Span, error
 		return nil, err
 	}
 	defer m.releaseEngine()
-	if err := m.ensureEngine(ctx, d.config); err != nil {
-		return nil, err
+	engine, err := m.ensureEngine(ctx, d.config)
+	if err != nil {
+		return nil, modelFailure(ctx, err)
 	}
-	spans, err := m.engine.Detect(ctx, text)
+	spans, err := engine.Detect(ctx, text)
 	if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, inference.ErrTokenLimit) {
 		// The native engine may be in an undefined state; the next request reloads it.
-		m.dropEngine()
+		_ = m.dropEngine(m.modelDir(d.config))
+		return nil, modelError{err}
 	}
 	return spans, err
+}
+
+// modelError marks a failure of the local model or its runtime, as opposed to
+// settings, credentials or cancellation; its text is the cause's.
+type modelError struct{ err error }
+
+func (e modelError) Error() string { return e.err.Error() }
+func (e modelError) Unwrap() error { return e.err }
+
+// IsModelError reports whether err came from loading or running the local model.
+func IsModelError(err error) bool {
+	var target modelError
+	return errors.As(err, &target)
+}
+
+func modelFailure(ctx context.Context, err error) error {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return modelError{err}
 }
 
 func (m *Manager) acquireEngine(ctx context.Context) error {
@@ -483,27 +523,70 @@ func (m *Manager) acquireEngine(ctx context.Context) error {
 }
 func (m *Manager) releaseEngine() { <-m.engineSlot }
 
-// dropEngine closes the cached engine; the caller holds the engine slot.
-func (m *Manager) dropEngine() {
-	if m.engine != nil {
-		_ = m.engine.Close()
-		m.engine = nil
-		m.engineID = ""
+// dropEngine closes directory's cached engine; the caller holds the engine slot.
+func (m *Manager) dropEngine(directory string) error {
+	cached := m.engines[directory]
+	if cached == nil {
+		return nil
+	}
+	delete(m.engines, directory)
+	return cached.engine.Close()
+}
+
+// evictEngines closes least recently used engines until one more fits; the
+// caller holds the engine slot.
+func (m *Manager) evictEngines() {
+	for len(m.engines) >= maxCachedEngines {
+		oldest := ""
+		for directory, cached := range m.engines {
+			if oldest == "" || cached.used < m.engines[oldest].used {
+				oldest = directory
+			}
+		}
+		_ = m.dropEngine(oldest)
 	}
 }
 
-// releaseDirectory closes the cached engine if it uses directory, so its files
-// can be replaced or removed.
+// releaseDirectory closes the cached engine that uses directory and forgets
+// its verification, so its files can be replaced or removed.
 func (m *Manager) releaseDirectory(ctx context.Context, directory string) error {
 	if err := m.acquireEngine(ctx); err != nil {
 		return err
 	}
 	defer m.releaseEngine()
-	if m.engineID == directory {
-		m.dropEngine()
-	}
+	_ = m.dropEngine(directory)
 	m.setFailure(directory, "")
+	m.setVerified(directory, "")
 	return nil
+}
+
+func (m *Manager) verifiedFingerprint(directory string) string {
+	m.failureMu.Lock()
+	defer m.failureMu.Unlock()
+	return m.verified[directory]
+}
+func (m *Manager) setVerified(directory, fingerprint string) {
+	m.failureMu.Lock()
+	defer m.failureMu.Unlock()
+	if fingerprint == "" {
+		delete(m.verified, directory)
+	} else {
+		m.verified[directory] = fingerprint
+	}
+}
+
+// installationFingerprint summarizes the size and modification time of every
+// file a load reads, so any replacement or rewrite forces a full verification.
+func installationFingerprint(directory string, installation Installation) (string, error) {
+	var fingerprint strings.Builder
+	for _, name := range append([]string{"installation.json"}, requiredModelFiles(installation.Precision)...) {
+		info, err := os.Stat(filepath.Join(directory, name))
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&fingerprint, "%s:%d:%d;", name, info.Size(), info.ModTime().UnixNano())
+	}
+	return fingerprint.String(), nil
 }
 
 func (m *Manager) failure(directory string) string {
@@ -526,61 +609,73 @@ func (m *Manager) validateEngine(ctx context.Context, config Config) error {
 		return err
 	}
 	defer m.releaseEngine()
-	return m.ensureEngine(ctx, config)
+	_, err := m.ensureEngine(ctx, config)
+	return err
 }
 
-// ensureEngine loads config's engine; the caller holds the engine slot. A
-// failure other than cancellation is remembered for Status until a load succeeds.
-func (m *Manager) ensureEngine(ctx context.Context, config Config) error {
+// ensureEngine returns config's engine, loading it if needed; the caller holds
+// the engine slot. A failure other than cancellation is remembered for Status
+// until a load succeeds.
+func (m *Manager) ensureEngine(ctx context.Context, config Config) (Engine, error) {
 	if m.stopped.Load() {
-		return userError("隐私服务已关闭")
+		return nil, userError("隐私服务已关闭")
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	if config.Revision == "" {
-		return userError("本地隐私模型尚未下载")
+		return nil, userError("本地隐私模型尚未下载")
 	}
 	directory := m.modelDir(config)
-	if m.engine != nil && m.engineID == directory {
-		return nil
+	m.engineUse++
+	if cached := m.engines[directory]; cached != nil {
+		cached.used = m.engineUse
+		return cached.engine, nil
 	}
-	err := m.loadEngine(ctx, directory, config)
+	engine, err := m.loadEngine(ctx, directory, config)
 	if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) {
 		m.setFailure(directory, safeMessage(err, "本地隐私模型加载失败"))
 	} else if err == nil {
 		m.setFailure(directory, "")
 	}
-	return err
+	return engine, err
 }
-func (m *Manager) loadEngine(ctx context.Context, directory string, config Config) error {
+func (m *Manager) loadEngine(ctx context.Context, directory string, config Config) (Engine, error) {
 	if m.load == nil {
-		return userError("本地隐私推理运行时不可用")
+		return nil, userError("本地隐私推理运行时不可用")
 	}
 	installation, err := ReadInstallation(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		err = userError("本地隐私模型文件缺失，请重新下载模型")
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if installation.Revision != config.Revision || installation.Precision != config.Precision {
-		return userError("隐私模型清单不匹配")
+		return nil, userError("隐私模型清单不匹配")
 	}
-	if err := VerifyInstallation(ctx, directory, installation); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return userError("本地隐私模型文件缺失，请重新下载模型")
+	// The fingerprint is taken before hashing: a rewrite during verification
+	// changes it, so the next load verifies again.
+	fingerprint, fingerprintErr := installationFingerprint(directory, installation)
+	if fingerprintErr != nil || fingerprint != m.verifiedFingerprint(directory) {
+		m.setVerified(directory, "")
+		if err := VerifyInstallation(ctx, directory, installation); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, userError("本地隐私模型文件缺失，请重新下载模型")
+			}
+			return nil, err
 		}
-		return err
+		if fingerprintErr == nil {
+			m.setVerified(directory, fingerprint)
+		}
 	}
-	m.dropEngine()
+	m.evictEngines()
 	engine, err := m.load(ctx, directory, installation)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	m.engine = engine
-	m.engineID = directory
-	return nil
+	m.engines[directory] = &cachedEngine{engine: engine, used: m.engineUse}
+	return engine, nil
 }
 
 func (m *Manager) StartDownload(ctx context.Context, precision Precision) (Status, error) {
@@ -715,6 +810,15 @@ func (m *Manager) Remove(ctx context.Context, revision string, precision Precisi
 	if state.Enabled && state.Revision == revision && state.Precision == precision {
 		return Status{}, userError("该模型正在用于脱敏，请先关闭脱敏或切换到其他模型后再删除")
 	}
+	if !m.shared {
+		users, err := m.enabledAccounts(ctx, target)
+		if err != nil {
+			return Status{}, err
+		}
+		if users > 0 {
+			return Status{}, userError(fmt.Sprintf("有 %d 个账号正在使用该模型进行脱敏，请让这些账号关闭脱敏或切换到其他模型后再删除", users))
+		}
+	}
 	if _, err := os.Lstat(directory); errors.Is(err, os.ErrNotExist) {
 		return Status{}, userError("模型不存在或已被删除")
 	} else if err != nil {
@@ -739,6 +843,28 @@ func (m *Manager) Remove(ctx context.Context, revision string, precision Precisi
 	return m.Status(ctx)
 }
 
+// enabledAccounts counts server accounts whose enabled protection uses target.
+func (m *Manager) enabledAccounts(ctx context.Context, target Config) (int, error) {
+	lister, ok := m.settings.(interface {
+		SettingListPrefix(context.Context, string) (map[string]string, error)
+	})
+	if !ok {
+		return 0, nil
+	}
+	values, err := lister.SettingListPrefix(ctx, userConfigPrefix)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, raw := range values {
+		var state Config
+		if json.Unmarshal([]byte(raw), &state) == nil && state.Enabled && state.Revision == target.Revision && state.Precision == target.Precision {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // Start removes leftovers of interrupted downloads and, when the shared
 // configuration is enabled, loads its engine in the background so the first
 // request does not pay for hashing and loading.
@@ -758,7 +884,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			return
 		}
 		defer m.releaseEngine()
-		_ = m.ensureEngine(m.lifetime, state.Config)
+		_, _ = m.ensureEngine(m.lifetime, state.Config)
 	}()
 	return nil
 }
@@ -777,11 +903,11 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 			m.workers.Wait()
 			m.engineSlot <- struct{}{}
 			defer m.releaseEngine()
-			if m.engine != nil {
-				m.shutdownErr = m.engine.Close()
-				m.engine = nil
-				m.engineID = ""
+			var failures []error
+			for directory := range m.engines {
+				failures = append(failures, m.dropEngine(directory))
 			}
+			m.shutdownErr = errors.Join(failures...)
 		}()
 	})
 	select {

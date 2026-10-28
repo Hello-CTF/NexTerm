@@ -54,7 +54,13 @@ func NewExchange(detector Detector) (*Exchange, error) {
 	if _, err := rand.Read(key[:]); err != nil {
 		return nil, err
 	}
-	return NewScopedExchange(detector, key)
+	e, err := NewScopedExchange(detector, key)
+	if err != nil {
+		return nil, err
+	}
+	// A random key can never be looked up again, so do not fill the shared cache.
+	e.shared = false
+	return e, nil
 }
 
 // NewScopedExchange uses a stable, secret conversation key while keeping the

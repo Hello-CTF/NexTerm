@@ -508,3 +508,10 @@ func TestPrivacyRestoredExtraReasoning(t *testing.T) {
 		t.Fatal("empty restored reasoning kept the placeholder mirror")
 	}
 }
+
+func TestPrivacyFailureNamesTheModelOnlyForModelErrors(t *testing.T) {
+	err := privacyFailure(errors.New("vault locked"))
+	if !strings.HasPrefix(err.Error(), "AI 脱敏失败，请求未发送：") || strings.Contains(err.Error(), "模型") {
+		t.Fatalf("non-model failure = %q", err)
+	}
+}
