@@ -180,7 +180,6 @@ describe("render counts for session-bound views", () => {
   it("the header follows only the active workspace session", () => {
     const probe = profiled(createElement(AppHeader, {
       ws: workspaces[0],
-      activeSessionId: "s-0",
       activeTab: null,
       rightDockOpen: false,
       commandPaletteLabel: "Ctrl+K",

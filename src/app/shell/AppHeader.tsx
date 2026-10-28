@@ -55,8 +55,6 @@ function WorkspaceStatusGlyph({ status, liveness }: { status: SessionInfo["statu
 
 export interface AppHeaderProps {
   ws: Workspace | null | undefined;
-  // Retained for callers; the header shows only a quiet status glyph and reconnecting lives in the connection bar.
-  activeSessionId: string | undefined;
   activeTab: AppTab | null;
   rightDockOpen: boolean;
   commandPaletteLabel: string;

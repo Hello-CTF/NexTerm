@@ -91,9 +91,9 @@ export function CommandBlockPanel({
 
       {blocks.length === 0 ? (
         <div className="nx-hint p-3">
-          还没有命令记录。
+          暂无命令记录。
           <br />
-          在终端里执行命令后，可以按命令复制输出，或跳回终端中的位置。
+          在终端中执行命令后，可按命令复制输出或定位到终端中的位置。
         </div>
       ) : (
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -150,7 +150,7 @@ export function CommandBlockPanel({
                     <span className="mt-0.5 flex shrink-0 items-center gap-0.5">
                       <button
                         className="nx-icon-btn nx-icon-btn-sm"
-                        title="跳到这条命令"
+                        title="定位到此命令"
                         onClick={() => onLocate(b.index)}
                       >
                         <IconLocate size={11} />

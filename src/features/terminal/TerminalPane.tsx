@@ -369,6 +369,7 @@ export function TerminalPane({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const exitedCloseBtnRef = useRef<HTMLButtonElement>(null);
   const reconnectBtnRef = useRef<HTMLButtonElement>(null);
+  const reconnectBusyRef = useRef(false);
   const switchingTimerRef = useRef<number | null>(null);
   const wasVisibleRef = useRef(visible !== false);
   const pushToast = useUi((s) => s.pushToast);
@@ -965,7 +966,7 @@ export function TerminalPane({
         st.updateTab(storeTabId, { dead: true });
         setKernelTabId(null);
         setAttachDead(true);
-        pushToast("error", "无法新建临时终端：连接已不存在，原持久终端没有被改动。请重新连接这台主机");
+        pushToast("error", "无法新建临时终端：连接已不存在，原持久终端没有被改动。请先重新连接");
         return;
       }
       if (!containerId && !effectiveWinrm && session?.kind !== "ssh" && session?.kind !== "device" && tab?.tabId !== undefined && session?.status === "connected") {
@@ -996,6 +997,8 @@ export function TerminalPane({
       pushToast("error", "找不到这台主机的资产信息，请到左侧资产树里手动连接");
       return;
     }
+    if (reconnectBusyRef.current) return;
+    reconnectBusyRef.current = true;
     const assetId = ws.assetId;
     setReconnecting(true);
     try {
@@ -1023,10 +1026,10 @@ export function TerminalPane({
       setOrdinaryStarting(false);
       setKernelTabId(null);
       setEpoch((n) => n + 1);
-      pushToast("info", "已重新连接");
     } catch (e) {
       pushToast("error", `重新连接失败：${describeError(e)}。请检查网络后重试`);
     } finally {
+      reconnectBusyRef.current = false;
       setReconnecting(false);
       useUi.getState().setConnectProgress(assetId, null);
     }
@@ -1072,6 +1075,18 @@ export function TerminalPane({
   };
 
   const reconnectSession = async () => {
+    if (reconnectBusyRef.current) return;
+    reconnectBusyRef.current = true;
+    setReconnecting(true);
+    try {
+      await reconnectSessionOnce();
+    } finally {
+      reconnectBusyRef.current = false;
+      setReconnecting(false);
+    }
+  };
+
+  const reconnectSessionOnce = async () => {
     const workspace = useUi.getState().workspaces.find((item) =>
       item.panes.some((pane) => pane.tabs.some((tab) => tab.id === storeTabId)),
     );
@@ -1079,7 +1094,7 @@ export function TerminalPane({
       if (isSessionSuspect(sessionStatus, sessionLiveness) && !(await confirmSuspectReconnect(workspace?.id))) return;
       const result = await reconnectLiveSession(sessionId, workspace?.id);
       if (result.kind === "missing") {
-        pushToast("error", "原连接已不存在，请改用「重新连接这台主机」");
+        pushToast("error", "原连接已不存在。请再次选择「重新连接」，将重新连接该主机");
         return;
       }
       if (result.kind === "pending") return;
@@ -1104,10 +1119,9 @@ export function TerminalPane({
       setOrdinaryStarting(false);
       setKernelTabId(null);
       setEpoch((n) => n + 1);
-      pushToast("info", "已重新连接");
     } catch (e) {
       if ((e as { code?: string } | null)?.code === "not_found") {
-        pushToast("error", "原连接已不存在，请改用「重新连接这台主机」");
+        pushToast("error", "原连接已不存在。请再次选择「重新连接」，将重新连接该主机");
         return;
       }
       pushToast("error", `重新连接失败：${describeError(e)}。请检查网络后重试`);
@@ -1254,7 +1268,7 @@ export function TerminalPane({
     // A toast instead of opening the dialog keeps focus with whatever the user is typing.
     pushToast(
       helperOperation.kind === "reattach" ? "error" : "info",
-      helperOperation.kind === "reattach" ? "没能恢复原持久终端，请选择重试或新建临时终端" : "暂时无法使用持久终端，这个标签已改用临时终端",
+      helperOperation.kind === "reattach" ? "未能恢复原持久终端，请选择重试或新建临时终端" : "暂时无法使用持久终端，该标签页已改用临时终端",
       { label: "查看选项", onSelect: () => setHelperPanelOpen(true) },
     );
   }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
@@ -1430,7 +1444,7 @@ export function TerminalPane({
         where ? `已导出到 ${where}` : "已取消保存",
       );
     } catch (e) {
-      pushToast("error", `导出失败：${describeError(e)}。请换一个位置重试`);
+      pushToast("error", `导出失败：${describeError(e)}。请更换保存位置后重试`);
     }
   };
 
@@ -1447,7 +1461,7 @@ export function TerminalPane({
       // /tmp and the file channel only make sense for POSIX hosts: WinRM has no /tmp and a 48 KiB write limit,
       // and a container terminal would receive files on the host instead of in the container.
       if (effectiveWinrm || sessionKind === "docker" || containerId) {
-        pushToast("info", "这种终端不能直接粘贴文件，请在文件面板里上传");
+        pushToast("info", "当前终端类型不支持粘贴上传文件，请在文件面板中上传");
         return;
       }
       if (!kernelTabId) return;
@@ -1663,14 +1677,14 @@ export function TerminalPane({
           { kind: "group", label: "命令列表" },
           {
             kind: "item",
-            label: "跳到上一条命令",
+            label: "上一条命令",
             icon: <IconArrowUp size={13} />,
             disabled: !blocks.length,
             onSelect: () => handleRef.current?.navigateBlock("prev"),
           },
           {
             kind: "item",
-            label: "跳到下一条命令",
+            label: "下一条命令",
             icon: <IconArrowDown size={13} />,
             disabled: !blocks.length,
             onSelect: () => handleRef.current?.navigateBlock("next"),
@@ -1870,10 +1884,10 @@ export function TerminalPane({
       },
       {
         kind: "item",
-        label: staleSession ? "重新连接这台主机" : "重新连接（保留当前终端）",
+        label: "重新连接",
         icon: <IconRefresh size={13} />,
-        hint: staleSession ? "连接已失效，这个标签会打开新终端" : statusText,
-        disabled: staleSession ? reconnecting : !canReconnect,
+        hint: staleSession ? "连接已失效，该标签页将换成新终端" : reconnecting ? "正在重新连接…" : statusText,
+        disabled: reconnecting || (!staleSession && !canReconnect),
         onSelect: () => void (staleSession ? reconnectNow() : reconnectSession()),
       },
       {
@@ -1965,7 +1979,7 @@ export function TerminalPane({
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm"
-              disabled={!canReconnect}
+              disabled={!canReconnect || reconnecting}
               title="用新的资产配置重新连接，当前终端保留"
               onClick={() => void reconnectSession()}
             >
@@ -1998,8 +2012,8 @@ export function TerminalPane({
           </span>
         )}
         {throttleNow?.resyncing && (
-          <span className="nx-badge" role="status" title="输出太快，画面会自动补上，无需操作">
-            正在补齐输出
+          <span className="nx-badge" role="status" title="输出速度较快，画面将自动同步，无需操作">
+            正在同步输出
           </span>
         )}
         {throttleNow?.recovered && (
@@ -2052,7 +2066,7 @@ export function TerminalPane({
               className="nx-icon-btn nx-icon-btn-sm @max-[560px]:hidden"
               disabled={!blocks.length}
               aria-label="上一条命令"
-              title="跳到上一条命令"
+              title="上一条命令"
               onClick={() => handleRef.current?.navigateBlock("prev")}
             >
               <IconArrowUp size={13} />
@@ -2061,14 +2075,14 @@ export function TerminalPane({
               className="nx-icon-btn nx-icon-btn-sm @max-[560px]:hidden"
               disabled={!blocks.length}
               aria-label="下一条命令"
-              title="跳到下一条命令"
+              title="下一条命令"
               onClick={() => handleRef.current?.navigateBlock("next")}
             >
               <IconArrowDown size={13} />
             </button>
             <button
               className={`nx-btn nx-btn-sm @max-[560px]:hidden ${blocksOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
-              title="命令列表：按命令查看、复制或跳转输出"
+              title="命令列表：按命令查看、复制或定位输出"
               onClick={toggleBlocksPanel}
             >
               <IconList size={13} />
@@ -2101,7 +2115,7 @@ export function TerminalPane({
 
       {containerId && execInterrupted && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-800/50 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-300">
-          <span>容器里的命令已中断，原进程和输入无法恢复。重新打开会启动新的命令。</span>
+          <span>容器内的命令已中断，原进程和输入无法恢复。重新打开将启动新的命令。</span>
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -2446,12 +2460,12 @@ export function TerminalPane({
             >
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
                 <IconRefresh size={15} className="nx-term-overlay-warn text-amber-300" />
-                这个终端已失效
+                该终端已失效
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
                 {ordinaryStarting
-                  ? "正在新建临时终端。原持久终端没有恢复，其中的进程状态未知；完成后这个标签会换成新终端"
-                  : "这个终端所属的连接已不存在。重新连接会先尝试恢复原终端；恢复不了时，你可以选择新建临时终端。之前的输出可在「终端历史」中查看"}
+                  ? "正在新建临时终端。原持久终端未恢复，其中的进程状态未知；完成后该标签页将换成新终端"
+                  : "该终端所属的连接已不存在。重新连接将先尝试恢复原终端；无法恢复时，可选择新建临时终端。此前的输出可在「终端历史」中查看"}
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -2465,7 +2479,7 @@ export function TerminalPane({
                   ) : (
                     <IconRefresh size={13} />
                   )}
-                  重新连接这台主机
+                  {reconnecting ? "正在重新连接…" : "重新连接"}
                 </button>
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-sm"

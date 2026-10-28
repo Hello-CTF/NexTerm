@@ -34,7 +34,7 @@ export function reconnectingText(
 
 // WorkspaceConnectionBar is the workspace-level connection notice: it follows the host session of the active
 // workspace whatever tab is open, and is the only reconnect surface when the workspace has no terminal.
-// While the active tab is a terminal that shows its own "这个终端已失效" overlay (tab.dead), the pane already
+// While the active tab is a terminal that shows its own "该终端已失效" overlay (tab.dead), the pane already
 // offers a reconnect for the same host, so the bar steps aside instead of stacking a second one.
 export function WorkspaceConnectionBar({
   ws,

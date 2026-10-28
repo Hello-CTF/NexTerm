@@ -254,7 +254,7 @@ describe("PaneForTab", () => {
       useUi.setState({ workspaces: [workspace({ restorePending: true })] });
       render(tab({ kind: "terminal", sessionId: "s1" }));
       expect(view!.container.querySelector('[data-panel="terminal"]')).toBeNull();
-      expect(view!.container.textContent).toContain("「prod」还没有连接");
+      expect(view!.container.textContent).toContain("「prod」尚未连接");
       expect(view!.container.textContent).toContain("后台会话");
       click(button("连接"));
       await flushUntil(() => mocks.reconnectWorkspace.mock.calls.length === 1);
@@ -291,20 +291,23 @@ describe("PaneForTab", () => {
     it("uses the plain message for restored non-durable terminals and file tabs", () => {
       useUi.setState({ workspaces: [workspace({ assetKind: "local" })] });
       render(tab({ kind: "terminal", restorePending: true }));
-      expect(view!.container.textContent).toContain("原终端已经结束");
+      expect(view!.container.textContent).toContain("原终端已结束");
       remount(tab({ kind: "files", sessionId: "s1", restorePending: true }));
-      expect(view!.container.textContent).toContain("连接主机后才能打开这个标签");
+      expect(view!.container.textContent).toContain("连接主机后才能打开此标签页");
       expect(button("连接并打开")).toBeDefined();
     });
 
     it("opens the background sessions tab after reconnecting a durable host", async () => {
       useUi.setState({ workspaces: [workspace({ sessionId: "live" })] });
       render(tab({ kind: "terminal", restorePending: true }));
-      click(button("查看后台会话"));
-      await flushUntil(() => mocks.reconnectWorkspace.mock.calls.length === 1);
-      await flushUntil(() =>
+      await act(async () => {
+        click(button("查看后台会话"));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(mocks.reconnectWorkspace).toHaveBeenCalledTimes(1);
+      expect(
         useUi.getState().workspaces.some((w) => w.panes.some((p) => p.tabs.some((t) => t.id === "background-ws"))),
-      );
+      ).toBe(true);
     });
 
     it("tells container terminals to be reopened from the container list and closes the tab", () => {

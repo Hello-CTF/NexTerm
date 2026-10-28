@@ -119,7 +119,7 @@ export async function reconnectRestoredWorkspaces(
         if (outcome.ok) {
           setRestoreResult(epoch, candidate.workspaceId, {
             status: "success",
-            detail: candidate.containerExecSkipped ? "主机已连接；容器内命令标签未重新打开" : undefined,
+            detail: candidate.containerExecSkipped ? "主机已连接；容器内命令标签页未重新打开" : undefined,
           });
         } else if (outcome.canceled) {
           setRestoreResult(epoch, candidate.workspaceId, { status: "canceled", detail: "用户取消" });

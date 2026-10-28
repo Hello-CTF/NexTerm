@@ -53,21 +53,33 @@ function LazyDevicesView() {
 function RestoredTabPlaceholder({ tab, workspaceId }: { tab: AppTab; workspaceId: string }) {
   const assetKind = useUi((state) => state.workspaces.find((workspace) => workspace.id === workspaceId)?.assetKind);
   const durableHost = tab.kind === "terminal" && (assetKind === "ssh" || assetKind === "device");
+  const [busy, setBusy] = useState(false);
   const reopen = () => {
-    void reconnectRestoredTab(tab.id).then((result) => {
-      if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
-    });
+    if (busy) return;
+    setBusy(true);
+    void reconnectRestoredTab(tab.id)
+      .then((result) => {
+        if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
+      })
+      .finally(() => setBusy(false));
   };
   const openBackground = () => {
+    if (busy) return;
+    setBusy(true);
     void reconnectRestoredWorkspace(workspaceId).then((result) => {
       const state = useUi.getState();
       if (!result.ok) {
         if (result.error) state.pushToast("error", result.error);
+        setBusy(false);
         return;
       }
       const workspace = state.workspaces.find((item) => item.id === workspaceId);
-      if (!workspace?.sessionId) return;
+      if (!workspace?.sessionId) {
+        setBusy(false);
+        return;
+      }
       state.addTab({ id: `background-${workspaceId}`, kind: "background", title: "后台会话", sessionId: workspace.sessionId, closable: true });
+      setBusy(false);
     });
   };
   return (
@@ -75,16 +87,16 @@ function RestoredTabPlaceholder({ tab, workspaceId }: { tab: AppTab; workspaceId
       <span>
         {tab.kind === "terminal"
           ? durableHost
-            ? "这个终端还没有连接。点「新开终端」会打开一个新终端；如果原来是持久终端，可在「后台会话」里接管。"
-            : "原终端已经结束。点「新开终端」会打开一个新终端。"
-          : "连接主机后才能打开这个标签。"}
+            ? "该终端尚未连接。选择「新开终端」将打开新的终端；如原为持久终端，可在「后台会话」中接管。"
+            : "原终端已结束。选择「新开终端」将打开新的终端。"
+          : "连接主机后才能打开此标签页。"}
       </span>
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <button type="button" className="nx-btn nx-btn-outline" onClick={reopen}>
-          {tab.kind === "terminal" ? "新开终端" : "连接并打开"}
+        <button type="button" className="nx-btn nx-btn-outline" disabled={busy} onClick={reopen}>
+          {busy ? "正在连接…" : tab.kind === "terminal" ? "新开终端" : "连接并打开"}
         </button>
         {durableHost && (
-          <button type="button" className="nx-btn nx-btn-ghost" onClick={openBackground}>
+          <button type="button" className="nx-btn nx-btn-ghost" disabled={busy} onClick={openBackground}>
             查看后台会话
           </button>
         )}
@@ -112,7 +124,7 @@ function RestoredWorkspacePlaceholder({ workspaceId }: { workspaceId: string }) 
       <span>
         {workspace.deletedTarget
           ? `「${workspace.title}」的资产已删除，无法重新连接。`
-          : `「${workspace.title}」还没有连接。连接后可以新建终端${durableHost ? "，之前的持久终端可在「后台会话」里接管" : ""}。`}
+          : `「${workspace.title}」尚未连接。连接后可新建终端${durableHost ? "，原有持久终端可在「后台会话」中接管" : ""}。`}
       </span>
       {!workspace.deletedTarget && (
         <button type="button" className="nx-btn nx-btn-outline" disabled={connecting} onClick={connect}>

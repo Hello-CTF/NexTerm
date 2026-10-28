@@ -198,8 +198,8 @@ describe("terminal toolbar overflow", () => {
 
     expect(menuLabels()).toEqual([
       "搜索终端内容",
-      "跳到上一条命令",
-      "跳到下一条命令",
+      "上一条命令",
+      "下一条命令",
       "命令列表",
       "广播到当前分屏",
       "广播到全部终端",
@@ -306,8 +306,8 @@ describe("terminal toolbar overflow", () => {
     if (!toolbar) throw new Error("toolbar not found");
     const collapsible = [
       toolbar.querySelector('button[title^="搜索终端内容"]'),
-      toolbar.querySelector('button[title="跳到上一条命令"]'),
-      toolbar.querySelector('button[title="跳到下一条命令"]'),
+      toolbar.querySelector('button[title="上一条命令"]'),
+      toolbar.querySelector('button[title="下一条命令"]'),
       [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.includes("命令列表")),
       toolbar.querySelector(".nx-divider-v"),
     ];

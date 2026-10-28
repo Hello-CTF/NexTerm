@@ -366,7 +366,7 @@ describe("persistence hint bar", () => {
     await flush();
     operations(startOp(), failOp("磁盘空间不足"));
 
-    expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("暂时无法使用持久终端，这个标签已改用临时终端");
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("暂时无法使用持久终端，该标签页已改用临时终端");
   });
 
   it("names a failed restore of a durable terminal as such", async () => {
