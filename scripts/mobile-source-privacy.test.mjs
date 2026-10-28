@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -21,13 +21,16 @@ for name in onnxruntime; do
  mkdir -p "$output/$name.framework"
  printf 'binary' > "$output/$name.framework/$name"
 done
+mkdir -p "$output/licenses"
+printf '{}' > "$output/runtime.json"
+printf 'license' > "$output/licenses/ONNX-RUNTIME-LICENSE"
 `, { mode: 0o755 });
       writeFileSync(join(tools, 'codesign'), '#!/bin/sh\nprintf "%s\\n" "$@" >> "$TEST_SIGN_LOG"\n', { mode: 0o755 });
       const result = spawnSync('/bin/sh', [resolve('build/ios/scripts/privacy-xcode.sh')], {
         encoding: 'utf8',
         env: { ...process.env, PATH: `${tools}:${process.env.PATH}`, PROJECT_DIR: project,
           PLATFORM_NAME: platform, DERIVED_FILE_DIR: join(root, 'derived'), TARGET_BUILD_DIR: join(root, 'built'),
-          FRAMEWORKS_FOLDER_PATH: 'NexTerm.app/Frameworks', CODE_SIGNING_ALLOWED: 'YES', EXPANDED_CODE_SIGN_IDENTITY: 'test-identity',
+          FRAMEWORKS_FOLDER_PATH: 'NexTerm.app/Frameworks', CONTENTS_FOLDER_PATH: 'NexTerm.app', CODE_SIGNING_ALLOWED: 'YES', EXPANDED_CODE_SIGN_IDENTITY: 'test-identity',
           TEST_LOG: join(root, 'args'), TEST_SIGN_LOG: join(root, 'sign') },
       });
       assert.equal(result.status, 0, result.stderr);
@@ -36,6 +39,9 @@ done
         assert.ok(existsSync(join(root, `built/NexTerm.app/Frameworks/${name}.framework/${name}`)));
         assert.ok(readFileSync(join(root, 'sign'), 'utf8').includes(`${name}.framework`));
       }
+      assert.deepEqual(readdirSync(join(root, 'built/NexTerm.app/Frameworks')), ['onnxruntime.framework']);
+      assert.ok(existsSync(join(root, 'built/NexTerm.app/ai-runtime/runtime.json')));
+      assert.ok(existsSync(join(root, 'built/NexTerm.app/ai-runtime/licenses/ONNX-RUNTIME-LICENSE')));
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 }

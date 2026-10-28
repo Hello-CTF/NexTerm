@@ -498,7 +498,7 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
     commit: COMMIT,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
   });
-  if (kind === "desktop" || kind === "server") manifest.privacy_runtime_sha256 = fileDigest(path.join(privacyRuntimeDirectory(file), "runtime.json"));
+  if (kind === "desktop" || kind === "server") manifest.privacy_runtime_sha256 = fileDigest(path.join(privacyRuntimeDirectory(file, goos, goarch), "runtime.json"));
   if (kind === "desktop") {
     manifest.source_ref = RELEASE_REF;
     manifest.updater_public_key_sha256 = desktopMinisignPublicKeyDigest();
@@ -597,14 +597,13 @@ function reproduceBinary(args, outputPath, kind, goos, goarch) {
 
 // Staged per target so builds for another os/arch never overwrite each other;
 // packages and archives map it back to the plain ai-runtime name.
-function privacyRuntimeDirectory(binary) {
-  const target = /^nexterm-(?:desktop|server)-([a-z]+)-([a-z0-9]+)(?:\.exe)?$/.exec(path.basename(binary));
-  if (!target) die(`cannot derive the privacy runtime target from ${binary}`);
-  return path.join(path.dirname(binary), `ai-runtime-${target[1]}-${target[2]}`);
+function privacyRuntimeDirectory(binary, goos, goarch) {
+  if (!goos || !goarch) die(`privacy runtime target is missing for ${binary}`);
+  return path.join(path.dirname(binary), `ai-runtime-${goos}-${goarch}`);
 }
 
 function preparePrivacyRuntime(binary, goos, goarch, packageOnly) {
-  const directory = privacyRuntimeDirectory(binary);
+  const directory = privacyRuntimeDirectory(binary, goos, goarch);
   if (!packageOnly) {
     fs.rmSync(directory, { recursive: true, force: true });
     run(process.execPath, ["scripts/ai-privacy-runtime.mjs", `--os=${goos}`, `--arch=${goarch}`, `--output=${directory}`]);
@@ -617,8 +616,8 @@ function preparePrivacyRuntime(binary, goos, goarch, packageOnly) {
 function copyPrivacyRuntime(binary, destination, goos, goarch) {
   const manifest = loadManifest(path.resolve(ROOT, option("binary-manifest", `${binary}.manifest.json`)));
   if (!manifest.privacy_runtime_sha256) die("producing binary manifest lacks privacy runtime evidence");
-  verifyRuntime(privacyRuntimeDirectory(binary), goos, goarch, manifest.privacy_runtime_sha256);
-  fs.cpSync(privacyRuntimeDirectory(binary), destination, { recursive: true });
+  verifyRuntime(privacyRuntimeDirectory(binary, goos, goarch), goos, goarch, manifest.privacy_runtime_sha256);
+  fs.cpSync(privacyRuntimeDirectory(binary, goos, goarch), destination, { recursive: true });
 }
 
 function privacyRuntimeAssertions(directory, goos, goarch, libraryDirectory = directory, { glibcFloor = false } = {}) {
@@ -845,7 +844,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
       });
     }
   }
-  if (kind === "desktop" || kind === "server") result.push(...privacyRuntimeAssertions(privacyRuntimeDirectory(file), goos, goarch, undefined, { glibcFloor: kind === "server" && goos === "linux" }));
+  if (kind === "desktop" || kind === "server") result.push(...privacyRuntimeAssertions(privacyRuntimeDirectory(file, goos, goarch), goos, goarch, undefined, { glibcFloor: kind === "server" && goos === "linux" }));
   const moduleInfo = output("go", ["version", "-m", file], { allowFailure: true });
   result.push(assertion("cgo-boundary", Boolean(moduleInfo?.includes(`CGO_ENABLED=${cgo}`)), `expected CGO_ENABLED=${cgo} in go version -m`));
   if (target?.goarm) result.push(assertion("goarm", moduleInfo?.includes(`GOARM=${target.goarm}`) === true, `expected GOARM=${target.goarm} in go version -m`));
@@ -1334,7 +1333,7 @@ function packageWindows(binary, goarch) {
   const installer = path.join(assets, `nexterm-desktop_windows_${goarch}_${VERSION}.exe`);
   const defines = [
     `NEXTERM_BINARY=${binary}`,
-    `NEXTERM_AI_RUNTIME=${privacyRuntimeDirectory(binary)}`,
+    `NEXTERM_AI_RUNTIME=${privacyRuntimeDirectory(binary, "windows", goarch)}`,
     `NEXTERM_VERSION=${VERSION}`,
     `NEXTERM_NUMERIC_VERSION=${VERSION_INFO.core}.0`,
     `NEXTERM_OUT=${installer}`,
